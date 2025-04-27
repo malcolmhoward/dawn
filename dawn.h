@@ -33,7 +33,7 @@
 
 
 #define OPENAI_VISION
-#define OPENAI_MODEL       "gpt-4o"
+#define OPENAI_MODEL       "gpt-4.1-mini"
 #define GPT_MAX_TOKENS     4096
 
 //#define ALSA_DEVICE

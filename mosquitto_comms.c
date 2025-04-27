@@ -19,6 +19,7 @@
  * part of the project and are adopted by the project author(s).
  */
 
+#define _GNU_SOURCE
 #include <dirent.h>
 #include <fnmatch.h>
 #include <pthread.h>
@@ -268,6 +269,14 @@ void on_connect(struct mosquitto *mosq, void *obj, int reason_code)
       LOG_WARNING("MQTT disconnecting?");
       mosquitto_disconnect(mosq);
       return;
+   }
+
+   // Subscribe in the on_connect callback
+   rc = mosquitto_subscribe(mosq, NULL, APPLICATION_NAME, 0);
+   if(rc != MOSQ_ERR_SUCCESS) {
+      LOG_ERROR("Error on mosquitto_subscribe(): %s", mosquitto_strerror(rc));
+   } else {
+      LOG_INFO("Subscribed to \"%s\" MQTT.", APPLICATION_NAME);
    }
 }
 

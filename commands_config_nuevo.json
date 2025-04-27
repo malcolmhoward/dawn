@@ -3,7 +3,7 @@
      "boolean": {
         "actions": {
            "enable": {
-              "action_words": ["enable %device_name%", "turn on %device_name%", "switch on %device_name%", "show %device_name%", "display %device_name%", "open %device_name%", "start %device_name%"],
+              "action_words": ["enable %device_name%", "turn on %device_name%", "switch on %device_name%", "show %device_name%", "display %device_name%", "open %device_name%", "start %device_name%", "switch to %device_name%"],
               "action_command": "{\"device\": \"%device_name%\", \"action\": \"enable\"}"
            },
            "disable": {

@@ -1133,6 +1133,9 @@ int main(int argc, char *argv[])
    mosquitto_subscribe_callback_set(mosq, on_subscribe);
    mosquitto_message_callback_set(mosq, on_message);
 
+   /* Set reconnect parameters (min delay, max delay, exponential backoff) */
+   mosquitto_reconnect_delay_set(mosq, 2, 30, true);
+
    /* Connect to local MQTT server. */
    rc = mosquitto_connect(mosq, MQTT_IP, MQTT_PORT, 60);
    if (rc != MOSQ_ERR_SUCCESS){
@@ -1141,16 +1144,6 @@ int main(int argc, char *argv[])
       return 1;
    } else {
       LOG_INFO("Connected to local MQTT server.\n");
-   }
-
-   rc = mosquitto_subscribe(mosq, NULL, APPLICATION_NAME, 0);
-   if (rc != MOSQ_ERR_SUCCESS) {
-      mosquitto_destroy(mosq);
-      LOG_ERROR("Error on mosquitto_subscribe():\"/%s\" : %s\n",
-              APPLICATION_NAME, mosquitto_strerror(rc));
-      return 1;
-   } else {
-      LOG_INFO("Subscribed to \"%s\" MQTT.\n", APPLICATION_NAME);
    }
 
    /* Start processing MQTT events. */
@@ -1204,7 +1197,7 @@ int main(int argc, char *argv[])
                if (vosk_output == NULL) {
                   LOG_ERROR("vosk_recognizer_partial_result() returned NULL!\n");
                } else {
-                  //LOG_WARNING("Partial Input: %s\n", vosk_output);
+                  LOG_WARNING("Partial Input: %s\n", vosk_output);
                }
             }
             break;
@@ -1220,7 +1213,7 @@ int main(int argc, char *argv[])
             rms = calculateRMS((int16_t*)max_buff, buff_size / (DEFAULT_CHANNELS * 2));
 
             if (rms >= (backgroundRMS + TALKING_THRESHOLD_OFFSET)) {
-               //LOG_WARNING("WAKEWORD_LISTEN: Talking still in progress.\n");
+               LOG_WARNING("WAKEWORD_LISTEN: Talking still in progress.\n");
                /* For an additional layer of "silence," I'm getting the length of the
                 * vosk output to see if the volume was up but no one was saying
                 * anything. */
@@ -1231,7 +1224,7 @@ int main(int argc, char *argv[])
                if (vosk_output == NULL) {
                   LOG_ERROR("vosk_recognizer_partial_result() returned NULL!\n");
                } else {
-                  //LOG_WARNING("Partial Input: %s\n", vosk_output);
+                  LOG_WARNING("Partial Input: %s\n", vosk_output);
                   if (strlen(vosk_output) == vosk_output_length) {
                      vosk_nochange = 1;
                   }
