@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.10)
 
 # For native CUDA code
-set(CUDA_TOOLKIT_ROOT_DIR "/usr/local/cuda-12.2")
+set(CUDA_TOOLKIT_ROOT_DIR "/usr/local/cuda-12.6")
 project(dawn LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
