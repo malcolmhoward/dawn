@@ -71,6 +71,11 @@
       "unit": "pixels",
       "topic": "hud"
     },
+    "hud": {
+       "type": "analog",
+       "aliases": ["display", "screen"],
+       "topic": "hud"
+    },
     "mask": {
        "type": "boolean",
        "aliases": ["face mask", "helmet", "bucket", "facemask"],
