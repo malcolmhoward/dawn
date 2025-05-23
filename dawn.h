@@ -58,6 +58,12 @@
 extern "C" {
 #endif
 
+typedef enum {
+    CMD_MODE_DIRECT_ONLY = 0,    // Direct command processing only (default)
+    CMD_MODE_LLM_ONLY = 1,       // LLM handles all commands
+    CMD_MODE_DIRECT_FIRST = 2    // Try direct commands first, then LLM
+} command_processing_mode_t;
+
 /**
  * @brief Retrieves the current value of the quit flag.
  *

@@ -110,7 +110,7 @@ void log_message(log_level_t level, const char *file, int line, const char *func
     }
 
     // Prepare the log message
-    char log_message[1024];
+    char log_message[MAX_LOG_LENGTH];
     vsnprintf(log_message, sizeof(log_message), fmt, args);
     remove_newlines(log_message);
 

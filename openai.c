@@ -39,6 +39,8 @@
 #include "secrets.h"
 #include "text_to_speech.h"
 
+extern command_processing_mode_t command_processing_mode;
+
 /**
  * @brief A static buffer to store the URL of the selected LLM service.
  *
@@ -257,7 +259,6 @@ char *getGptResponse(struct json_object *conversation_history, const char *input
    int total_tokens = 0;
 
    json_object *root = NULL;
-
    json_object *user_message = NULL;
 
    json_object *parsed_json = NULL;
@@ -290,6 +291,7 @@ char *getGptResponse(struct json_object *conversation_history, const char *input
 
    json_object *image_obj = json_object_new_object();
    json_object *image_url_obj = json_object_new_object();
+
    if (vision_ai_image != NULL && vision_ai_image_size > 0) {
       json_object_object_add(image_obj, "type", json_object_new_string("image_url"));
 
