@@ -77,4 +77,7 @@ int checkInternetConnectionWithTimeout(const char *url, int timeout_seconds);
 char *getGptResponse(struct json_object *conversation_history, const char *input_text,
                      char *vision_ai_image, size_t vision_ai_image_size);
 
+// Function to get the command prompt
+const char* get_command_prompt(void);
+
 #endif // OPENAI_H

@@ -102,6 +102,12 @@ void close_logging(void);
 #define LOG_TO_FILE 1
 
 /**
+ * @def MAX_LOG_LENGTH
+ * @brief Maximum length of each line of the log messages
+ */
+#define MAX_LOG_LENGTH 1024
+
+/**
  * @brief Macro for logging informational messages.
  *
  * This macro simplifies logging of informational messages by automatically including the file name,

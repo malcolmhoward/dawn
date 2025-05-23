@@ -82,7 +82,7 @@ add_executable(dawn
                audio_utils.c
                dawn.c
                flac_playback.c
-               #llama_lib.cpp
+               llm_command_parser.c
                logging.c
                mic_passthrough.c
                mosquitto_comms.c

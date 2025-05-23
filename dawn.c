@@ -45,6 +45,7 @@
 /* Local */
 #include "audio_utils.h"
 #include "dawn.h"
+#include "llm_command_parser.h"
 #include "logging.h"
 #include "mosquitto_comms.h"
 #include "openai.h"
@@ -294,6 +295,9 @@ volatile sig_atomic_t quit = 0;
 
 /* MQTT */
 static struct mosquitto *mosq;
+
+// Global variable for command processing mode
+command_processing_mode_t command_processing_mode = CMD_MODE_DIRECT_ONLY;
 
 sig_atomic_t get_quit(void) {
     return quit;
@@ -862,17 +866,21 @@ int publish_ai_state(listeningState newState) {
  */
 void display_help(int argc, char *argv[]) {
    if (argc > 0) {
-      LOG_INFO("Usage: %s [options]\n", argv[0]);
+      printf("Usage: %s [options]\n\n", argv[0]);
    } else {
-      LOG_INFO("Usage: [options]\n");
+      printf("Usage: [options]\n\n");
    }
 
    // Print the list of available command-line options.
-   LOG_INFO("Options:\n");
-   LOG_INFO("  -c, --capture DEVICE   Specify the PCM capture device.");
-   LOG_INFO("  -l, --logfile LOGFILE  Specify the log filename instead of stdout/stderr.");
-   LOG_INFO("  -d, --playback DEVICE  Specify the PCM playback device.");
-   LOG_INFO("  -h, --help             Display this help message and exit.");
+   printf("Options:\n");
+   printf("  -c, --capture DEVICE   Specify the PCM capture device.\n");
+   printf("  -d, --playback DEVICE  Specify the PCM playback device.\n");
+   printf("  -l, --logfile LOGFILE  Specify the log filename instead of stdout/stderr.\n");
+   printf("  -h, --help             Display this help message and exit.\n");
+   printf("Command Processing Modes:\n");
+   printf("  -D, --commands-only    Direct command processing only (default).\n");
+   printf("  -C, --llm-commands     Try direct commands first, then LLM if no match.\n");
+   printf("  -L, --llm-only         LLM handles all commands, skip direct processing.\n");
 }
 
 int main(int argc, char *argv[])
@@ -936,6 +944,9 @@ int main(int argc, char *argv[])
       {"logfile", required_argument, NULL, 'l'},
       {"playback", required_argument, NULL, 'd'},
       {"help", no_argument, NULL, 'h'},
+      {"llm-only", no_argument, NULL, 'L'},           // LLM handles everything
+      {"llm-commands", no_argument, NULL, 'C'},       // Commands first, then LLM
+      {"commands-only", no_argument, NULL, 'D'},      // Direct commands only (explicit)
       {0, 0, 0, 0}
    };
    int option_index = 0;
@@ -945,7 +956,7 @@ int main(int argc, char *argv[])
    // TODO: I'm adding this here but it will need better error clean-ups.
    curl_global_init(CURL_GLOBAL_DEFAULT);
 
-   while ((opt = getopt_long(argc, argv, "c:d:hl:", long_options, &option_index)) != -1) {
+   while ((opt = getopt_long(argc, argv, "c:d:hl:LCD", long_options, &option_index)) != -1) {
       switch (opt) {
       case 'c':
          strncpy(pcm_capture_device, optarg, sizeof(pcm_capture_device));
@@ -961,6 +972,18 @@ int main(int argc, char *argv[])
       case 'l':
          log_filename = optarg;
          break;
+      case 'L':
+         command_processing_mode = CMD_MODE_LLM_ONLY;
+         LOG_INFO("LLM-only command processing enabled");
+         break;
+      case 'C':
+         command_processing_mode = CMD_MODE_DIRECT_FIRST;
+         LOG_INFO("Commands-first with LLM fallback enabled");
+         break;
+      case 'D':
+         command_processing_mode = CMD_MODE_DIRECT_ONLY;
+         LOG_INFO("Direct commands only mode enabled");
+         break;
       case '?':
          display_help(argc, argv);
          exit(EXIT_FAILURE);
@@ -969,7 +992,6 @@ int main(int argc, char *argv[])
          exit(EXIT_FAILURE);
       }
    }
-
 
    // Initialize logging
    if (log_filename) {
@@ -1033,9 +1055,19 @@ int main(int argc, char *argv[])
    system_message = json_object_new_object();
 
    json_object_object_add(system_message, "role", json_object_new_string("system"));
-   json_object_object_add(system_message, "content",
-                          json_object_new_string
-                          (AI_DESCRIPTION));
+
+   // Set the appropriate system message content based on processing mode
+   if (command_processing_mode == CMD_MODE_LLM_ONLY ||
+       command_processing_mode == CMD_MODE_DIRECT_FIRST) {
+      // LLM modes get the enhanced prompt with command information
+      json_object_object_add(system_message, "content", json_object_new_string(get_command_prompt()));
+      LOG_INFO("Using enhanced system prompt for LLM command processing");
+   } else {
+      // Direct-only mode gets the original AI description
+      json_object_object_add(system_message, "content", json_object_new_string(AI_DESCRIPTION));
+      LOG_INFO("Using standard system prompt for direct command processing");
+   }
+
    json_object_array_add(conversation_history, system_message);
 
 #ifdef ALSA_DEVICE
@@ -1392,54 +1424,71 @@ int main(int argc, char *argv[])
             buff_size = 0;
             break;
          case PROCESS_COMMAND:
-            /* Process Commands before AI. */
-            for (i = 0; i < numCommands; i++) {
-               if (searchString(commands[i].actionWordsWildcard, command_text) == 1) {
-                  char thisValue[1024];   // FIXME: These are abnormally large.
-                                          // I'm in a hurry and don't want overflows.
-                  char thisCommand[2048];
-                  char thisSubstring[2048];
-                  int strLength = 0;
+            int direct_command_found = 0;
 
-                  pthread_mutex_lock(&tts_mutex);
-                  if (tts_playback_state == TTS_PLAYBACK_PAUSE) {
-                     tts_playback_state = TTS_PLAYBACK_DISCARD;
-                     pthread_cond_signal(&tts_cond);
+            /* Process Commands before AI if LLM command processing is disabled */
+            if (command_processing_mode != CMD_MODE_LLM_ONLY) {
+               /* Process Commands before AI. */
+               for (i = 0; i < numCommands; i++) {
+                  if (searchString(commands[i].actionWordsWildcard, command_text) == 1) {
+                     char thisValue[1024];   // FIXME: These are abnormally large.
+                                             // I'm in a hurry and don't want overflows.
+                     char thisCommand[2048];
+                     char thisSubstring[2048];
+                     int strLength = 0;
+
+                     pthread_mutex_lock(&tts_mutex);
+                     if (tts_playback_state == TTS_PLAYBACK_PAUSE) {
+                        tts_playback_state = TTS_PLAYBACK_DISCARD;
+                        pthread_cond_signal(&tts_cond);
+                     }
+                     pthread_mutex_unlock(&tts_mutex);
+
+                     memset(thisValue, '\0', sizeof(thisValue));
+                     LOG_WARNING("Found command \"%s\".\n\tLooking for value in \"%s\".\n",
+                            commands[i].actionWordsWildcard, commands[i].actionWordsRegex);
+
+                     strLength = strlen(commands[i].actionWordsRegex);
+                     if ((strLength >= 2) && (commands[i].actionWordsRegex[strLength - 2] == '%') &&
+                         (commands[i].actionWordsRegex[strLength - 1] == 's')) {
+                        strncpy(thisSubstring, commands[i].actionWordsRegex, strLength - 2);
+                        thisSubstring[strLength - 2] = '\0';
+                        strcpy(thisValue, extract_remaining_after_substring(command_text, thisSubstring));
+                     } else {
+                        int retSs = sscanf(command_text, commands[i].actionWordsRegex, thisValue);
+                     }
+                     snprintf(thisCommand, sizeof(thisCommand),
+                              commands[i].actionCommand, thisValue);
+                     LOG_WARNING("Sending: \"%s\"\n", thisCommand);
+
+                     rc = mosquitto_publish(mosq, NULL, commands[i].topic, strlen(thisCommand),
+                                            thisCommand, 0, false);
+                     if(rc != MOSQ_ERR_SUCCESS){
+                        LOG_ERROR("Error publishing: %s\n", mosquitto_strerror(rc));
+                     }
+
+                     direct_command_found = 1;
+                     break;
                   }
-                  pthread_mutex_unlock(&tts_mutex);
-
-                  memset(thisValue, '\0', sizeof(thisValue));
-                  LOG_WARNING("Found command \"%s\".\n\tLooking for value in \"%s\".\n",
-                         commands[i].actionWordsWildcard, commands[i].actionWordsRegex);
-
-                  strLength = strlen(commands[i].actionWordsRegex);
-                  if ((strLength >= 2) && (commands[i].actionWordsRegex[strLength - 2] == '%') &&
-                      (commands[i].actionWordsRegex[strLength - 1] == 's')) {
-                     strncpy(thisSubstring, commands[i].actionWordsRegex, strLength - 2);
-                     thisSubstring[strLength - 2] = '\0';
-                     strcpy(thisValue, extract_remaining_after_substring(command_text, thisSubstring));
-                  } else {
-                     int retSs = sscanf(command_text, commands[i].actionWordsRegex, thisValue);
-                  }
-                  snprintf(thisCommand, sizeof(thisCommand),
-                           commands[i].actionCommand, thisValue);
-                  LOG_WARNING("Sending: \"%s\"\n", thisCommand);
-
-                  rc = mosquitto_publish(mosq, NULL, commands[i].topic, strlen(thisCommand),
-                                         thisCommand, 0, false);
-                  if(rc != MOSQ_ERR_SUCCESS){
-                     LOG_ERROR("Error publishing: %s\n", mosquitto_strerror(rc));
-                  }
-
-                  break;
                }
             }
 
-            if (i >= numCommands) {
-               LOG_WARNING("Not detected as a command.\n");
+            /* Try LLM processing if:
+             * - We're in LLM-only mode, OR
+             * - We're in direct-first mode but no direct command was found, OR
+             * - We're in direct-only mode but no direct command was found (for ignore word processing)
+             */
+            if (command_processing_mode == CMD_MODE_LLM_ONLY ||
+                (command_processing_mode == CMD_MODE_DIRECT_FIRST && !direct_command_found) ||
+                (command_processing_mode == CMD_MODE_DIRECT_ONLY && !direct_command_found)) {
+
+               LOG_WARNING("Processing with LLM (mode: %d, direct found: %d).\n",
+                           command_processing_mode, direct_command_found);
 #ifndef DISABLE_AI
                int ignoreCount = 0;
 
+               // Check ignore words (only if we're in direct-only mode and no command found)
+               if (command_processing_mode == CMD_MODE_DIRECT_ONLY && !direct_command_found) {
                for (ignoreCount = 0; ignoreCount < numIgnoreWords; ignoreCount++) {
                   if (strcmp(command_text, ignoreWords[ignoreCount]) == 0) {
                      LOG_WARNING("Ignore word detected.\n");
@@ -1454,8 +1503,9 @@ int main(int argc, char *argv[])
                      break;
                   }
                }
+               }
 
-               if (ignoreCount < numIgnoreWords) {
+               if (ignoreCount < numIgnoreWords && command_processing_mode == CMD_MODE_DIRECT_ONLY) {
                   LOG_WARNING("Input ignored. Found in ignore list.\n");
                   silenceNextState = WAKEWORD_LISTEN;
                   recState = SILENCE;
@@ -1463,6 +1513,34 @@ int main(int argc, char *argv[])
                   response_text = getGptResponse(conversation_history, command_text, NULL, 0);
                   if (response_text != NULL) {
                      LOG_WARNING("AI: %s\n", response_text);
+
+                     // Process any commands in the LLM response
+                     if (command_processing_mode == CMD_MODE_LLM_ONLY ||
+                         command_processing_mode == CMD_MODE_DIRECT_FIRST) {
+                        int cmds_processed = parse_llm_response_for_commands(response_text, mosq);
+                        if (cmds_processed > 0) {
+                           LOG_INFO("Processed %d commands from LLM response", cmds_processed);
+                        }
+
+                        // Clean up command tags from the response before TTS
+                        char *clean_response = strdup(response_text);
+                        if (clean_response) {
+                           char *cmd_start, *cmd_end;
+                           while ((cmd_start = strstr(clean_response, "<command>")) != NULL) {
+                              cmd_end = strstr(cmd_start, "</command>");
+                              if (cmd_end) {
+                                 cmd_end += strlen("</command>");
+                                 memmove(cmd_start, cmd_end, strlen(cmd_end) + 1);
+                              } else {
+                                 break;
+                              }
+                           }
+
+                           // Use the clean response for TTS
+                           free(response_text);
+                           response_text = clean_response;
+                        }
+                     }
 
                      /* This match section was added for local AI models that return extra data that needs
                       * to be filtered out.
