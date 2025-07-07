@@ -50,9 +50,9 @@
      }
   },
   "devices": {
-    "armor": {
+    "armor_display": {
       "type": "boolean",
-      "aliases": ["armor", "armor display","enabled devices"],
+      "aliases": ["armor", "armor display"],
       "topic": "hud"
     },
     "detect": {
