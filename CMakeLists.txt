@@ -52,12 +52,6 @@ include_directories(${FLAC_INCLUDE_DIRS})
 find_package(OpenSSL REQUIRED)
 include_directories(${OpenSSL_INCLUDE_DIR})
 
-# If llama-config.cmake is not found by default, set CMAKE_PREFIX_PATH
-set(CMAKE_PREFIX_PATH "/usr/local/lib/cmake/llama")
-
-# Use find_package for llama and ggml if CMake config files are provided
-find_package(llama REQUIRED)
-
 # Find the required CUDA libraries and add them to the link libraries
 find_library(CUDA_LIBRARIES NAMES cuda HINTS ${CUDA_TOOLKIT_ROOT_DIR}/targets/aarch64-linux/lib)
 find_library(CUDART_LIBRARIES NAMES cudart HINTS ${CUDA_TOOLKIT_ROOT_DIR}/targets/aarch64-linux/lib)
