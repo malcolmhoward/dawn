@@ -171,6 +171,7 @@ FLAC__StreamDecoderWriteStatus write_callback(
 }
 
 void *playFlacAudio(void *arg) {
+   int should_respond = 0;
    PlaybackArgs *args = (PlaybackArgs *)arg;
 
    // Initialize PulseAudio for playback.
@@ -231,7 +232,7 @@ void *playFlacAudio(void *arg) {
    pa_simple_free(pa_handle);
 
    if (error) {
-      musicCallback("next", NULL);
+      musicCallback("next", NULL, &should_respond);
    }
 
    return NULL;

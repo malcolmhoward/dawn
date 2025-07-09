@@ -43,6 +43,7 @@
 #include "logging.h"
 #include "mic_passthrough.h"
 #include "mosquitto_comms.h"
+#include "text_to_speech.h"
 #include "word_to_number.h"
 
 #define MAX_FILENAME_LENGTH 1024
@@ -70,6 +71,7 @@ static deviceCallback deviceCallbackArray[] = {
 
 static pthread_t music_thread = -1;
 static pthread_t voice_thread = -1;
+static char *pending_command_result = NULL;
 
 /**
  * Retrieves the current user's home directory.
@@ -184,9 +186,16 @@ void parseJsonCommandandExecute(const char *input)
    struct json_object *actionObject = NULL;
    struct json_object *valueObject = NULL;
 
+   extern struct json_object *conversation_history;
+   char *response_text = NULL;
+   char gpt_response[512];
+
    const char *deviceName = NULL;
    const char *actionName = NULL;
    const char *value = NULL;
+
+   char *callback_result = NULL;
+   int should_respond = 0;
 
    int i = 0;
 
@@ -241,17 +250,73 @@ void parseJsonCommandandExecute(const char *input)
       LOG_WARNING("Notice: 'value' field not found in JSON.");
    }
 
+   /* Before we process, make sure nothing's left over. */
+   if (pending_command_result != NULL) {
+      free(pending_command_result);
+      pending_command_result = NULL;
+   }
+
    /* Loop through device names for device types. */
    for (i = 0; i < MAX_DEVICE_TYPES; i++) {
       if (strcmp(deviceName, deviceTypeStrings[i]) == 0) {
          if (deviceCallbackArray[i].callback != NULL)
          {
-            deviceCallbackArray[i].callback(actionName, (void *) value);
+            callback_result = deviceCallbackArray[i].callback(actionName,
+                  (char *)value, &should_respond);
+
+            // If in AI mode and callback returned data, store it for AI response
+            if (callback_result != NULL && should_respond &&
+                (command_processing_mode == CMD_MODE_LLM_ONLY ||
+                 command_processing_mode == CMD_MODE_DIRECT_FIRST)) {
+               size_t dest_len = (pending_command_result == NULL) ? 0 :
+                                 strlen(pending_command_result);
+               size_t src_len = strlen(callback_result);
+
+               // Resize memory to fit both strings plus space and null terminator
+               pending_command_result = realloc(pending_command_result, dest_len + src_len + 2);
+               if (pending_command_result == NULL) {
+                  continue;
+               }
+
+               // Copy the new string to the end
+               strcpy(pending_command_result + dest_len, " ");
+               strcpy(pending_command_result + dest_len + 1, callback_result);
+            }
          } else {
             LOG_WARNING("Skipping callback, value NULL.");
          }
       }
    }
+
+   LOG_INFO("Command result for AI: %s", pending_command_result);
+   snprintf(gpt_response, 512, "{\"response\": \"%s\"}", pending_command_result);
+
+   response_text = getGptResponse(conversation_history, gpt_response, NULL, 0);
+   if (response_text != NULL) {
+      // AI returned successfully, vocalize response.
+      LOG_WARNING("AI: %s\n", response_text);
+      char *match = NULL;
+      if ((match = strstr(response_text, "<end_of_turn>")) != NULL) {
+         *match = '\0';
+         LOG_WARNING("AI: %s\n", response_text);
+      }
+      text_to_speech(response_text);
+
+      // Add the successful AI response to the conversation.
+      struct json_object *ai_message = json_object_new_object();
+      json_object_object_add(ai_message, "role", json_object_new_string("assistant"));
+      json_object_object_add(ai_message, "content", json_object_new_string(response_text));
+      json_object_array_add(conversation_history, ai_message);
+
+      free(response_text);
+      response_text = NULL;
+   } else {
+      // Error on AI response
+      LOG_ERROR("GPT error.\n");
+      text_to_speech("I'm sorry but I'm currently unavailable boss.");
+   }
+   free(pending_command_result);
+   pending_command_result = NULL;
 
    // Cleanup: Release the parsed_json object
    json_object_put(parsedJson);
@@ -307,59 +372,100 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
    parseJsonCommandandExecute((char *)msg->payload);
 }
 
-void dateCallback(const char *actionName, char *value) {
+char* dateCallback(const char *actionName, char *value, int *should_respond) {
    time_t current_time;
    struct tm *time_info;
    char buffer[80];
+   static char return_buffer[384];
    int choice;
+
+   *should_respond = 1;  // Default to responding
 
    time(&current_time);
    time_info = localtime(&current_time);
-   srand(time(NULL));
-   choice = rand() % 3;
 
-   switch (choice) {
-      case 0:
-         strftime(buffer, sizeof(buffer), "Today's date, dear Sir, is %A, %B %d, %Y. You're welcome.", time_info);
-         break;
-      case 1:
-         strftime(buffer, sizeof(buffer), "In case you've forgotten, Sir, it's %A, %B %d, %Y today.", time_info);
-         break;
-      case 2:
-         strftime(buffer, sizeof(buffer), "The current date is %A, %B %d, %Y.", time_info);
-         break;
+   // Format the date data
+   strftime(buffer, sizeof(buffer), "%A, %B %d, %Y", time_info);
+
+   if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
+      // Direct mode: use text-to-speech with personality
+      srand(time(NULL));
+      choice = rand() % 3;
+
+      switch (choice) {
+         case 0:
+            snprintf(return_buffer, sizeof(return_buffer),
+                     "Today's date, dear Sir, is %s. You're welcome.", buffer);
+            break;
+         case 1:
+            snprintf(return_buffer, sizeof(return_buffer),
+                     "In case you've forgotten, Sir, it's %s today.", buffer);
+            break;
+         case 2:
+            snprintf(return_buffer, sizeof(return_buffer),
+                     "The current date is %s.", buffer);
+            break;
+      }
+
+      int local_should_respond = 0;
+      textToSpeechCallback(NULL, return_buffer, &local_should_respond);
+      return NULL;  // Already handled
+   } else {
+      // AI modes: return the raw data for AI to process
+      snprintf(return_buffer, sizeof(return_buffer),
+               "The current date is %s", buffer);
+      return return_buffer;
    }
-
-   textToSpeechCallback(NULL, buffer);
 }
 
-void timeCallback(const char *actionName, char *value) {
+char* timeCallback(const char *actionName, char *value, int *should_respond) {
    time_t current_time;
    struct tm *time_info;
    char buffer[80];
+   static char return_buffer[384];
    int choice;
+
+   *should_respond = 1;
 
    time(&current_time);
    time_info = localtime(&current_time);
-   srand(time(NULL));
-   choice = rand() % 4;
 
-   switch (choice) {
-      case 0:
-         strftime(buffer, sizeof(buffer), "The current time, in case your wristwatch has failed you, is %I:%M %p.", time_info);
-         break;
-      case 1:
-         strftime(buffer, sizeof(buffer), "I trust you have something important planned, Sir? It's %I:%M %p.", time_info);
-         break;
-      case 2:
-         strftime(buffer, sizeof(buffer), "Oh, you want to know the time again? It's %I:%M %p, not that I'm keeping track.", time_info);
-         break;
-      case 3:
-         strftime(buffer, sizeof(buffer), "The time is %I:%M %p.", time_info);
-         break;
+   // Format the time data
+   strftime(buffer, sizeof(buffer), "%I:%M %p", time_info);
+
+   if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
+      // Direct mode: use text-to-speech with personality
+      srand(time(NULL));
+      choice = rand() % 4;
+
+      switch (choice) {
+         case 0:
+            snprintf(return_buffer, sizeof(return_buffer),
+                     "The current time, in case your wristwatch has failed you, is %s.", buffer);
+            break;
+         case 1:
+            snprintf(return_buffer, sizeof(return_buffer),
+                     "I trust you have something important planned, Sir? It's %s.", buffer);
+            break;
+         case 2:
+            snprintf(return_buffer, sizeof(return_buffer),
+                     "Oh, you want to know the time again? It's %s, not that I'm keeping track.", buffer);
+            break;
+         case 3:
+            snprintf(return_buffer, sizeof(return_buffer),
+                     "The time is %s.", buffer);
+            break;
+      }
+
+      int local_should_respond = 0;
+      textToSpeechCallback(NULL, return_buffer, &local_should_respond);
+      return NULL;
+   } else {
+      // AI modes: return the raw data
+      snprintf(return_buffer, sizeof(return_buffer),
+               "The time is %s.", buffer);
+      return return_buffer;
    }
-
-   textToSpeechCallback(NULL, buffer);
 }
 
 // Custom comparison function for qsort
@@ -367,10 +473,13 @@ int compare(const void *p1, const void *p2) {
     return strcmp((char *)p1, (char *)p2);
 }
 
-void musicCallback(const char *actionName, char *value) {
+char* musicCallback(const char *actionName, char *value, int *should_respond) {
    PlaybackArgs args;
    char strWildcards[MAX_FILENAME_LENGTH];
+   static char return_buffer[512];
    int i = 0;
+
+   *should_respond = 1;  // Default to responding
 
    if (strcmp(actionName, "play") == 0) {
       if ((music_thread != -1) && (pthread_kill(music_thread, 0) == 0)) {
@@ -384,7 +493,14 @@ void musicCallback(const char *actionName, char *value) {
       if ((strlen(value) + 8) > MAX_FILENAME_LENGTH) {
          LOG_ERROR("\"%s\" is too long to search for.", value);
 
-         return;
+         if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
+            *should_respond = 0;
+            return NULL;
+         } else {
+            snprintf(return_buffer, sizeof(return_buffer),
+                     "Search term '%s' is too long", value);
+            return return_buffer;
+         }
       }
 
       // Construct the full path to the user's music directory
@@ -392,7 +508,13 @@ void musicCallback(const char *actionName, char *value) {
       if (!musicDir) {
          LOG_ERROR("Error constructing music path.");
 
-         return;
+         if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
+            *should_respond = 0;
+            return NULL;
+         } else {
+            strcpy(return_buffer, "Failed to access music directory");
+            return return_buffer;
+         }
       }
 
       strWildcards[0] = '*';
@@ -429,14 +551,48 @@ void musicCallback(const char *actionName, char *value) {
          // Create the playback thread
          if (pthread_create(&music_thread, NULL, playFlacAudio, &args)) {
             LOG_ERROR("Error creating thread");
-            return;
+
+            if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
+               *should_respond = 0;
+               return NULL;
+            } else {
+               strcpy(return_buffer, "Failed to start music playback");
+               return return_buffer;
+            }
+         }
+
+         if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
+            *should_respond = 0;  // Music starts playing, no verbal response needed
+            return NULL;
+         } else {
+            *should_respond = 0;
+            snprintf(return_buffer, sizeof(return_buffer),
+                     "Playing %s - found %d matching tracks", value, playlist.count);
+            return return_buffer;
          }
       } else {
          LOG_WARNING("No music matching that description was found.");
+
+         if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
+            *should_respond = 0;
+            return NULL;
+         } else {
+            snprintf(return_buffer, sizeof(return_buffer),
+                     "No music found matching '%s'", value);
+            return return_buffer;
+         }
       }
    } else if (strcmp(actionName, "stop") == 0) {
       LOG_WARNING("Stopping music playback.");
       setMusicPlay(0);
+
+      if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
+         *should_respond = 0;
+         return NULL;
+      } else {
+         strcpy(return_buffer, "Music playback stopped");
+         return return_buffer;
+      }
    } else if (strcmp(actionName, "next") == 0) {
       if ((music_thread != -1) && (pthread_kill(music_thread, 0) == 0)) {
          setMusicPlay(0);
@@ -458,11 +614,42 @@ void musicCallback(const char *actionName, char *value) {
          // Create the playback thread
          if (pthread_create(&music_thread, NULL, playFlacAudio, &args)) {
             LOG_ERROR("Error creating music thread");
-            return;
+
+            if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
+               *should_respond = 0;
+               return NULL;
+            } else {
+               strcpy(return_buffer, "Failed to play next track");
+               return return_buffer;
+            }
+         }
+
+         if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
+            *should_respond = 0;
+            return NULL;
+         } else {
+            // Extract just the filename from the full path
+            const char *filename = strrchr(playlist.filenames[current_track], '/');
+            if (filename) {
+               filename++; // Skip the '/'
+            } else {
+               filename = playlist.filenames[current_track];
+            }
+            snprintf(return_buffer, sizeof(return_buffer),
+                     "Playing next track: %s", filename);
+            return return_buffer;
+         }
+      } else {
+         if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
+            *should_respond = 0;
+            return NULL;
+         } else {
+            strcpy(return_buffer, "No playlist available");
+            return return_buffer;
          }
       }
    } else if (strcmp(actionName, "previous") == 0) {
-      if ((music_thread != -1) && (pthread_kill(music_thread, 0)) == 0) {
+      if ((music_thread != -1) && (pthread_kill(music_thread, 0) == 0)) {
          setMusicPlay(0);
          pthread_join(music_thread, NULL);
       }
@@ -482,36 +669,122 @@ void musicCallback(const char *actionName, char *value) {
          // Create the playback thread
          if (pthread_create(&music_thread, NULL, playFlacAudio, &args)) {
             LOG_ERROR("Error creating music thread");
-            return;
+
+            if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
+               *should_respond = 0;
+               return NULL;
+            } else {
+               strcpy(return_buffer, "Failed to play previous track");
+               return return_buffer;
+            }
+         }
+
+         if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
+            *should_respond = 0;
+            return NULL;
+         } else {
+            // Extract just the filename from the full path
+            const char *filename = strrchr(playlist.filenames[current_track], '/');
+            if (filename) {
+               filename++; // Skip the '/'
+            } else {
+               filename = playlist.filenames[current_track];
+            }
+            snprintf(return_buffer, sizeof(return_buffer),
+                     "Playing previous track: %s", filename);
+            return return_buffer;
+         }
+      } else {
+         if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
+            *should_respond = 0;
+            return NULL;
+         } else {
+            strcpy(return_buffer, "No playlist available");
+            return return_buffer;
          }
       }
    }
+
+   return NULL;
 }
 
-void voiceAmplifierCallback(const char *actionName, char *value) {
+char* voiceAmplifierCallback(const char *actionName, char *value, int *should_respond) {
+   static char return_buffer[256];
+
+   *should_respond = 1;
+
    if (strcmp(actionName, "enable") == 0) {
       if ((voice_thread != -1) && (pthread_kill(voice_thread, 0) == 0)) {
-         LOG_WARNING("Voice amplificiation thread already running.");
-         return;
+         LOG_WARNING("Voice amplification thread already running.");
+
+         if (command_processing_mode != CMD_MODE_DIRECT_ONLY) {
+            strcpy(return_buffer, "Voice amplifier is already enabled");
+            return return_buffer;
+         }
+         *should_respond = 0;
+         return NULL;
       }
 
       // Create the playback thread
       if (pthread_create(&voice_thread, NULL, voiceAmplificationThread, NULL)) {
          LOG_ERROR("Error creating voice thread");
-         return;
+
+         if (command_processing_mode != CMD_MODE_DIRECT_ONLY) {
+            strcpy(return_buffer, "Failed to enable voice amplifier");
+            return return_buffer;
+         }
+         *should_respond = 0;
+         return NULL;
       }
+
+      if (command_processing_mode != CMD_MODE_DIRECT_ONLY) {
+         strcpy(return_buffer, "Voice amplifier enabled");
+         return return_buffer;
+      }
+      *should_respond = 0;
+      return NULL;
+
    } else if (strcmp(actionName, "disable") == 0) {
       if ((voice_thread != -1) && (pthread_kill(voice_thread, 0) == 0)) {
          setStopVA();
+
+         if (command_processing_mode != CMD_MODE_DIRECT_ONLY) {
+            strcpy(return_buffer, "Voice amplifier disabled");
+            return return_buffer;
+         }
       } else {
-         LOG_WARNING("Voice amplificiation thread not running.");
+         LOG_WARNING("Voice amplification thread not running.");
+
+         if (command_processing_mode != CMD_MODE_DIRECT_ONLY) {
+            strcpy(return_buffer, "Voice amplifier was not running");
+            return return_buffer;
+         }
       }
+      *should_respond = 0;
+      return NULL;
    }
+
+   return NULL;
 }
 
-void shutdownCallback(const char *actionName, char *value) {
-   system("sudo shutdown -h now");
-   textToSpeechCallback(NULL, "Emergency shutdown initiated.");
+// Shutdown callback
+char* shutdownCallback(const char *actionName, char *value, int *should_respond) {
+   static char return_buffer[256];
+
+   *should_respond = 1;
+
+   if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
+      system("sudo shutdown -h now");
+      int local_should_respond = 0;
+      textToSpeechCallback(NULL, "Emergency shutdown initiated.", &local_should_respond);
+      return NULL;
+   } else {
+      // In AI modes, confirm before shutting down
+      strcpy(return_buffer, "Shutdown command received. Initiating emergency shutdown.");
+      // Still execute the shutdown
+      system("sudo shutdown -h now");
+      return return_buffer;
+   }
 }
 
 /**
@@ -642,8 +915,11 @@ char *base64_encode(const unsigned char *buffer, size_t length) {
    return b64text;
 }
 
-void viewingCallback(const char *actionName, char *value) {
+char* viewingCallback(const char *actionName, char *value, int *should_respond) {
    size_t image_size = 0;
+   static char return_buffer[256];
+
+   *should_respond = 1;  // Always respond for viewing
 
    LOG_INFO("Viewing image received: %s", value);
 
@@ -659,32 +935,77 @@ void viewingCallback(const char *actionName, char *value) {
          free(base64_image);
       }
       free(image_content);
+
+      if (command_processing_mode != CMD_MODE_DIRECT_ONLY) {
+         strcpy(return_buffer, "Image captured and ready for vision processing");
+         return return_buffer;
+      }
    } else {
       LOG_ERROR("Error reading image file.");
+
+      if (command_processing_mode != CMD_MODE_DIRECT_ONLY) {
+         snprintf(return_buffer, sizeof(return_buffer),
+                  "Failed to read image file: %s", value);
+         return return_buffer;
+      }
    }
+
+   *should_respond = 0;  // In direct mode, no response needed
+   return NULL;
 }
 
-void volumeCallback(const char *actionName, char *value) {
+char* volumeCallback(const char *actionName, char *value, int *should_respond) {
+   static char return_buffer[256];
    float floatVol = wordToNumber(value);
 
    LOG_WARNING("Music volume: %s/%0.2f", value, floatVol);
 
    if (floatVol >= 0 && floatVol <= 2.0) {
       setMusicVolume(floatVol);
+
+      if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
+         *should_respond = 0;  // No response in direct mode for volume
+         return NULL;
+      } else {
+         // AI modes: return confirmation
+         snprintf(return_buffer, sizeof(return_buffer),
+                  "Music volume set to %.1f", floatVol);
+         *should_respond = 1;
+         return return_buffer;
+      }
+   } else {
+      if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
+         int local_should_respond = 0;
+         textToSpeechCallback(NULL, "Invalid volume level requested.", &local_should_respond);
+         *should_respond = 0;
+         return NULL;
+      } else {
+         snprintf(return_buffer, sizeof(return_buffer),
+                  "Invalid volume level %.1f requested. Volume must be between 0 and 2.", floatVol);
+         *should_respond = 1;
+         return return_buffer;
+      }
    }
 }
 
-void localLLMCallback(const char *actionName, char *value) {
+char* localLLMCallback(const char *actionName, char *value, int *should_respond) {
+   static char return_buffer[256];
+
    LOG_WARNING("Setting AI to local LLM.");
-
    setLLM(LOCAL_LLM);
+
+   *should_respond = 0;  // setLLM already does TTS
+   return NULL;
 }
 
-void cloudLLMCallback(const char *actionName, char *value) {
+char* cloudLLMCallback(const char *actionName, char *value, int *should_respond) {
+   static char return_buffer[256];
+
    LOG_WARNING("Setting AI to cloud LLM.");
-
    setLLM(CLOUD_LLM);
-}
 
+   *should_respond = 0;  // setLLM already does TTS
+   return NULL;
+}
 /* End Mosquitto Stuff */
 

@@ -77,11 +77,12 @@ static const char *deviceTypeStrings[] = {
  * @brief Associates a device type with a callback function that processes actions for that device.
  *
  * This structure maps a `deviceType` to its corresponding callback function,
- * allowing dynamic handling of device actions.
+ * allowing dynamic handling of device actions. The callback can optionally return
+ * data instead of directly using text-to-speech when in AI modes.
  */
 typedef struct {
-   deviceType device;                        /**< The device type. */
-   void (*callback)(const char *, char *);   /**< The callback function to process actions for the device. */
+   deviceType device;                                    /**< The device type. */
+   char* (*callback)(const char *, char *, int*);       /**< The callback function. Returns data or NULL. */
 } deviceCallback;
 
 /* MQTT callbacks */
@@ -124,8 +125,9 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
  *
  * @param actionName The name of the action triggering this callback.
  * @param value      Additional value or parameters for the action (may be unused).
+ * @param should_respond Should the callback return data to the AI or just handle it.
  */
-void dateCallback(const char *actionName, char *value);
+char *dateCallback(const char *actionName, char *value, int *should_respond);
 
 /**
  * @brief Callback function to handle time requests.
@@ -134,8 +136,9 @@ void dateCallback(const char *actionName, char *value);
  *
  * @param actionName The name of the action triggering this callback.
  * @param value      Additional value or parameters for the action (may be unused).
+ * @param should_respond Should the callback return data to the AI or just handle it.
  */
-void timeCallback(const char *actionName, char *value);
+char *timeCallback(const char *actionName, char *value, int *should_respond);
 
 /**
  * @brief Callback function to handle music playback control.
@@ -144,8 +147,9 @@ void timeCallback(const char *actionName, char *value);
  *
  * @param actionName The name of the action triggering this callback.
  * @param value      Additional value or parameters for the action (e.g., song name or control command).
+ * @param should_respond Should the callback return data to the AI or just handle it.
  */
-void musicCallback(const char *actionName, char *value);
+char *musicCallback(const char *actionName, char *value, int *should_respond);
 
 /**
  * @brief Callback function to control the voice amplifier.
@@ -154,8 +158,9 @@ void musicCallback(const char *actionName, char *value);
  *
  * @param actionName The name of the action triggering this callback.
  * @param value      Additional value or parameters for the action (e.g., "on" or "off").
+ * @param should_respond Should the callback return data to the AI or just handle it.
  */
-void voiceAmplifierCallback(const char *actionName, char *value);
+char *voiceAmplifierCallback(const char *actionName, char *value, int *should_respond);
 
 /**
  * @brief Callback function to handle system shutdown requests.
@@ -164,8 +169,9 @@ void voiceAmplifierCallback(const char *actionName, char *value);
  *
  * @param actionName The name of the action triggering this callback.
  * @param value      Additional value or parameters for the action (may be unused).
+ * @param should_respond Should the callback return data to the AI or just handle it.
  */
-void shutdownCallback(const char *actionName, char *value);
+char *shutdownCallback(const char *actionName, char *value, int *should_respond);
 
 /**
  * @brief Callback function to handle the viewing of an image.
@@ -176,8 +182,9 @@ void shutdownCallback(const char *actionName, char *value);
  * @param actionName The name of the action triggering this callback. Not used in this function,
  *                   but included to match expected callback signature.
  * @param value      The file path to the image to be viewed and processed.
+ * @param should_respond Should the callback return data to the AI or just handle it.
  */
-void viewingCallback(const char *actionName, char *value);
+char *viewingCallback(const char *actionName, char *value, int *should_respond);
 
 /**
  * @brief Adjusts music volume based on user input.
@@ -186,8 +193,9 @@ void viewingCallback(const char *actionName, char *value);
  *
  * @param actionName Unused but included for callback signature consistency.
  * @param value      String representing the desired volume level, converted to a float and validated.
+ * @param should_respond Should the callback return data to the AI or just handle it.
  */
-void volumeCallback(const char *actionName, char *value);
+char *volumeCallback(const char *actionName, char *value, int *should_respond);
 
 /**
  * @brief Callback function for setting the AI to use the local LLM.
@@ -196,8 +204,9 @@ void volumeCallback(const char *actionName, char *value);
  *
  * @param actionName The name of the action triggering the callback.
  * @param value The value associated with the action (unused in this implementation).
+ * @param should_respond Should the callback return data to the AI or just handle it.
  */
-void localLLMCallback(const char *actionName, char *value);
+char *localLLMCallback(const char *actionName, char *value, int *should_respond);
 
 /**
  * @brief Callback function for setting the AI to use the cloud LLM.
@@ -206,8 +215,9 @@ void localLLMCallback(const char *actionName, char *value);
  *
  * @param actionName The name of the action triggering the callback.
  * @param value The value associated with the action (unused in this implementation).
+ * @param should_respond Should the callback return data to the AI or just handle it.
  */
-void cloudLLMCallback(const char *actionName, char *value);
+char *cloudLLMCallback(const char *actionName, char *value, int *should_respond);
 
 #endif // MOSQUITTO_COMMS_H
 

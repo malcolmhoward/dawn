@@ -180,9 +180,12 @@ static void initialize_command_prompt(void) {
                         "1. A conversational response (e.g., \"I'll turn that on for you, sir.\")\n"
                         "2. The exact JSON command enclosed in <command> tags\n\n"
                         "For example: \"Let me turn on the map for you, sir. <command>{\"device\": \"map\", \"action\": \"enable\"}</command>\"\n\n"
+                        "The very next message I send you will be an automated response from the system. You should use that information then to "
+                        "reply with the information I requested or information on whether the command was successful.\n"
                         "Command hints:\n"
                         "The \"viewing\" command will return an image to you so you can visually answer a query.\n"
-                        "When running \"play\", the value is a simply string to search the media files for.\n");
+                        "When running \"play\", the value is a simply string to search the media files for.\n"
+                        "Current HUD names are \"default\", \"environmental\", and \"armor\".\n");
 
    json_object_put(parsedJson);
    prompt_initialized = 1;

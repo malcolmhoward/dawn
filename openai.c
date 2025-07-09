@@ -328,7 +328,8 @@ char *getGptResponse(struct json_object *conversation_history, const char *input
    json_object_object_add(root, "max_tokens", json_object_new_int(GPT_MAX_TOKENS));
 
    payload = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN | JSON_C_TO_STRING_NOSLASHESCAPE);
-   LOG_INFO("JSON Payload (PLAIN): %s", payload);
+   printf("JSON Payload (PLAIN): %s", payload);
+   printf("\n");
 
    chunk.memory = malloc(1);
    if (chunk.memory == NULL) {
@@ -373,7 +374,8 @@ char *getGptResponse(struct json_object *conversation_history, const char *input
       curl_slist_free_all(headers);
    }
 
-   LOG_INFO("Raw receive from ChatGPT: %s", (char *) chunk.memory);
+   printf("Raw receive from ChatGPT: %s", (char *) chunk.memory);
+   printf("\n");
 
    parsed_json = json_tokener_parse(chunk.memory);
    if (!parsed_json) {

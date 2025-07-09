@@ -33,7 +33,7 @@
 
 
 #define OPENAI_VISION
-#define OPENAI_MODEL       "gpt-4.1-mini"
+#define OPENAI_MODEL       "gpt-4o"
 #define GPT_MAX_TOKENS     4096
 
 //#define ALSA_DEVICE
@@ -63,6 +63,9 @@ typedef enum {
     CMD_MODE_LLM_ONLY = 1,       // LLM handles all commands
     CMD_MODE_DIRECT_FIRST = 2    // Try direct commands first, then LLM
 } command_processing_mode_t;
+
+// Make command processing mode accessible globally
+extern command_processing_mode_t command_processing_mode;
 
 /**
  * @brief Retrieves the current value of the quit flag.
@@ -120,7 +123,7 @@ const char *getPcmCaptureDevice(void);
  * @param actionName Unused.
  * @param value The name of the audio playback device to set.
  */
-void setPcmPlaybackDevice(const char *actioName, char *value);
+char *setPcmPlaybackDevice(const char *actioName, char *value, int *should_respond);
 
 /**
  * Sets the current PCM capture device based on the specified device name.
@@ -134,7 +137,7 @@ void setPcmPlaybackDevice(const char *actioName, char *value);
  * @param actionName Unused.
  * @param value The name of the audio capture device to set.
  */
-void setPcmCaptureDevice(const char *actioName, char *value);
+char *setPcmCaptureDevice(const char *actioName, char *value, int *should_respond);
 
 /**
  * Searches for an audio playback device by name.
@@ -176,6 +179,6 @@ void process_vision_ai(const char *base64_image, size_t image_size);
  * This function prints the received text command and then calls the text_to_speech function
  * to play it through the PCM playback device.
  */
-void textToSpeechCallback(const char *actionName, char *value);
+char *textToSpeechCallback(const char *actionName, char *value, int *should_respond);
 
 #endif // DAWN_H

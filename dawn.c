@@ -298,6 +298,7 @@ static struct mosquitto *mosq;
 
 // Global variable for command processing mode
 command_processing_mode_t command_processing_mode = CMD_MODE_DIRECT_ONLY;
+struct json_object *conversation_history = NULL;
 
 sig_atomic_t get_quit(void) {
     return quit;
@@ -364,9 +365,13 @@ void signal_handler(int signal) {
     }
 }
 
-void textToSpeechCallback(const char *actionName, char *value) {
+char *textToSpeechCallback(const char *actionName, char *value, int *should_respond) {
    LOG_INFO("Received text to speech command: \"%s\"\n", value);
+
+   // TTS commands always execute directly, regardless of mode
+   *should_respond = 0;  // No need to respond about TTS
    text_to_speech(value);
+   return NULL;
 }
 
 const char *getPcmPlaybackDevice(void) {
@@ -390,48 +395,91 @@ char *findAudioPlaybackDevice(char *name) {
    return NULL;
 }
 
-void setPcmPlaybackDevice(const char *actionName, char *value) {
+char* setPcmPlaybackDevice(const char *actionName, char *value, int *should_respond) {
    int i = 0;
    char speech[MAX_COMMAND_LENGTH];
+   static char return_buffer[MAX_COMMAND_LENGTH];
+
+   *should_respond = 1;  // We always respond for device changes
 
    for (i = 0; i < numAudioPlaybackDevices; i++) {
       if (strcmp(playbackDevices[i].name, value) == 0) {
          LOG_INFO("Setting audio playback device to \"%s\".\n", playbackDevices[i].device);
          strncpy(pcm_playback_device, playbackDevices[i].device, MAX_WORD_LENGTH);
          pcm_playback_device[MAX_WORD_LENGTH] = '\0'; // Ensure null termination
-         snprintf(speech, MAX_COMMAND_LENGTH, "Switching playback device to %s.", value);
-         text_to_speech(speech);
-         break;
+
+         if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
+            snprintf(speech, MAX_COMMAND_LENGTH, "Switching playback device to %s.", value);
+            text_to_speech(speech);
+            return NULL;  // Already handled
+         } else {
+            // AI modes: return the result for AI to process
+            snprintf(return_buffer, MAX_COMMAND_LENGTH,
+                     "Audio playback device switched to %s", value);
+            return return_buffer;
+         }
       }
    }
 
    if (i >= numAudioPlaybackDevices) {
       LOG_ERROR("Requested audio playback device not found.\n");
-      snprintf(speech, MAX_COMMAND_LENGTH, "Sorry sir. A playback devices called %s was not found.", value);
-      text_to_speech(speech);
+
+      if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
+         snprintf(speech, MAX_COMMAND_LENGTH,
+                  "Sorry sir. A playback device called %s was not found.", value);
+         text_to_speech(speech);
+         return NULL;
+      } else {
+         snprintf(return_buffer, MAX_COMMAND_LENGTH,
+                  "Audio playback device '%s' not found", value);
+         return return_buffer;
+      }
    }
+
+   return NULL;  // Should never reach here
 }
 
-void setPcmCaptureDevice(const char *actionName, char *value) {
+char* setPcmCaptureDevice(const char *actionName, char *value, int *should_respond) {
    int i = 0;
    char speech[MAX_COMMAND_LENGTH];
+   static char return_buffer[MAX_COMMAND_LENGTH];
+
+   *should_respond = 1;
 
    for (i = 0; i < numAudioCaptureDevices; i++) {
       if (strcmp(captureDevices[i].name, value) == 0) {
          LOG_INFO("Setting audio capture device to \"%s\".\n", captureDevices[i].device);
          strncpy(pcm_capture_device, captureDevices[i].device, MAX_WORD_LENGTH);
          pcm_capture_device[MAX_WORD_LENGTH] = '\0'; // Ensure null termination
-         snprintf(speech, MAX_COMMAND_LENGTH, "Switching capture device to %s.", value);
-         text_to_speech(speech);
-         break;
+
+         if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
+            snprintf(speech, MAX_COMMAND_LENGTH, "Switching capture device to %s.", value);
+            text_to_speech(speech);
+            return NULL;
+         } else {
+            snprintf(return_buffer, MAX_COMMAND_LENGTH,
+                     "Audio capture device switched to %s", value);
+            return return_buffer;
+         }
       }
    }
 
    if (i >= numAudioCaptureDevices) {
       LOG_ERROR("Requested audio capture device not found.\n");
-      snprintf(speech, MAX_COMMAND_LENGTH, "Sorry sir. A capture devices called %s was not found.", value);
-      text_to_speech(speech);
+
+      if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
+         snprintf(speech, MAX_COMMAND_LENGTH,
+                  "Sorry sir. A capture device called %s was not found.", value);
+         text_to_speech(speech);
+         return NULL;
+      } else {
+         snprintf(return_buffer, MAX_COMMAND_LENGTH,
+                  "Audio capture device '%s' not found", value);
+         return return_buffer;
+      }
    }
+
+   return NULL;
 }
 
 /**
@@ -891,7 +939,6 @@ int main(int argc, char *argv[])
    const char *vosk_output = NULL;
    size_t vosk_output_length = 0;
    int vosk_nochange = 0;
-   struct json_object *conversation_history = NULL;
    struct json_object *system_message = NULL;
    int rc = 0;
    int opt = 0;
@@ -1489,20 +1536,20 @@ int main(int argc, char *argv[])
 
                // Check ignore words (only if we're in direct-only mode and no command found)
                if (command_processing_mode == CMD_MODE_DIRECT_ONLY && !direct_command_found) {
-               for (ignoreCount = 0; ignoreCount < numIgnoreWords; ignoreCount++) {
-                  if (strcmp(command_text, ignoreWords[ignoreCount]) == 0) {
-                     LOG_WARNING("Ignore word detected.\n");
+                  for (ignoreCount = 0; ignoreCount < numIgnoreWords; ignoreCount++) {
+                     if (strcmp(command_text, ignoreWords[ignoreCount]) == 0) {
+                        LOG_WARNING("Ignore word detected.\n");
 
-                     pthread_mutex_lock(&tts_mutex);
-                     if (tts_playback_state == TTS_PLAYBACK_PAUSE) {
-                        tts_playback_state = TTS_PLAYBACK_PLAY;
-                        pthread_cond_signal(&tts_cond);
+                        pthread_mutex_lock(&tts_mutex);
+                        if (tts_playback_state == TTS_PLAYBACK_PAUSE) {
+                           tts_playback_state = TTS_PLAYBACK_PLAY;
+                           pthread_cond_signal(&tts_cond);
+                        }
+                        pthread_mutex_unlock(&tts_mutex);
+
+                        break;
                      }
-                     pthread_mutex_unlock(&tts_mutex);
-
-                     break;
                   }
-               }
                }
 
                if (ignoreCount < numIgnoreWords && command_processing_mode == CMD_MODE_DIRECT_ONLY) {
