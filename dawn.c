@@ -866,6 +866,64 @@ void process_vision_ai(const char *base64_image, size_t image_size) {
 
 listeningState currentState = INVALID_STATE;
 
+/**
+ * @brief Saves the conversation history JSON to a timestamped file.
+ *
+ * This function creates a filename with the current date and time, then writes
+ * the entire conversation history JSON object to that file for later analysis
+ * or debugging purposes.
+ *
+ * @param conversation_history The JSON object containing the chat conversation
+ * @return 0 on success, -1 on failure
+ */
+int save_conversation_history(struct json_object *conversation_history) {
+   FILE *chat_file = NULL;
+   time_t current_time;
+   struct tm *time_info;
+   char filename[256];
+   const char *json_string = NULL;
+
+   if (conversation_history == NULL) {
+      LOG_ERROR("Cannot save NULL conversation history");
+      return -1;
+   }
+
+   // Get current time for filename
+   time(&current_time);
+   time_info = localtime(&current_time);
+
+   // Create timestamped filename: chat_history_YYYYMMDD_HHMMSS.json
+   strftime(filename, sizeof(filename), "chat_history_%Y%m%d_%H%M%S.json", time_info);
+
+   // Open file for writing
+   chat_file = fopen(filename, "w");
+   if (chat_file == NULL) {
+      LOG_ERROR("Failed to open chat history file: %s", filename);
+      return -1;
+   }
+
+   // Convert JSON object to pretty-printed string
+   json_string = json_object_to_json_string_ext(conversation_history,
+                                                JSON_C_TO_STRING_PRETTY | JSON_C_TO_STRING_NOSLASHESCAPE);
+   if (json_string == NULL) {
+      LOG_ERROR("Failed to convert conversation history to JSON string");
+      fclose(chat_file);
+      return -1;
+   }
+
+   // Write JSON string to file
+   if (fprintf(chat_file, "%s\n", json_string) < 0) {
+      LOG_ERROR("Failed to write conversation history to file: %s", filename);
+      fclose(chat_file);
+      return -1;
+   }
+
+   fclose(chat_file);
+   LOG_INFO("Conversation history saved to: %s", filename);
+
+   return 0;
+}
+
 /* Publish AI State. Only send state if it's changed.
  *
  * FIXME: Build this JSON correctly.
@@ -1107,6 +1165,7 @@ void display_help(int argc, char *argv[]) {
    printf("  -l, --logfile LOGFILE  Specify the log filename instead of stdout/stderr.\n");
    printf("  -N, --network-audio    Enable network audio processing server\n");
    printf("  -h, --help             Display this help message and exit.\n");
+   printf("  -m, --llm TYPE         Set default LLM type (cloud or local).\n");
    printf("Command Processing Modes:\n");
    printf("  -D, --commands-only    Direct command processing only (default).\n");
    printf("  -C, --llm-commands     Try direct commands first, then LLM if no match.\n");
@@ -1177,6 +1236,7 @@ int main(int argc, char *argv[])
       {"llm-commands", no_argument, NULL, 'C'},       // Commands first, then LLM
       {"commands-only", no_argument, NULL, 'D'},      // Direct commands only (explicit)
       {"network-audio", no_argument, NULL, 'N'},      // Start server for remote DAWN access
+      {"llm", required_argument, NULL, 'm'},          // Set default LLM type
       {0, 0, 0, 0}
    };
    int option_index = 0;
@@ -1186,7 +1246,7 @@ int main(int argc, char *argv[])
    // TODO: I'm adding this here but it will need better error clean-ups.
    curl_global_init(CURL_GLOBAL_DEFAULT);
 
-   while ((opt = getopt_long(argc, argv, "c:d:hl:LCDN", long_options, &option_index)) != -1) {
+   while ((opt = getopt_long(argc, argv, "c:d:hl:LCDNm:", long_options, &option_index)) != -1) {
       switch (opt) {
       case 'c':
          strncpy(pcm_capture_device, optarg, sizeof(pcm_capture_device));
@@ -1218,6 +1278,17 @@ int main(int argc, char *argv[])
         enable_network_audio = 1;
         LOG_INFO("Network audio enabled");
         break;
+      case 'm':
+         if (strcasecmp(optarg, "cloud") == 0) {
+            setLLM(CLOUD_LLM);
+            LOG_INFO("Using cloud LLM by default");
+         } else if (strcasecmp(optarg, "local") == 0) {
+            setLLM(LOCAL_LLM);
+            LOG_INFO("Using local LLM by default");
+         } else {
+            LOG_ERROR("Unknown LLM type: %s. Using auto-detection.", optarg);
+         }
+         break;
       case '?':
          display_help(argc, argv);
          exit(EXIT_FAILURE);
@@ -1427,12 +1498,14 @@ int main(int argc, char *argv[])
       exit(EXIT_FAILURE);
    }
 
-   if (checkInternetConnectionWithTimeout(CLOUDAI_URL, 4)) {
-      setLLM(CLOUD_LLM);
-      text_to_speech("Setting to AI to cloud LLM.");
-   } else {
-      setLLM(LOCAL_LLM);
-      text_to_speech("Setting to AI to local LLM.");
+   if (getLLM() == UNDEFINED_LLM) {
+      if (checkInternetConnectionWithTimeout(CLOUDAI_URL, 4)) {
+         setLLM(CLOUD_LLM);
+         text_to_speech("Setting to AI to cloud LLM.");
+      } else {
+         setLLM(LOCAL_LLM);
+         text_to_speech("Setting to AI to local LLM.");
+      }
    }
 
    if (enable_network_audio) {
@@ -2290,6 +2363,11 @@ int main(int argc, char *argv[])
    mosquitto_disconnect(mosq);
    mosquitto_loop_stop(mosq, false);
    mosquitto_lib_cleanup();
+
+   // Save conversation history before cleanup
+   if (conversation_history != NULL) {
+      save_conversation_history(conversation_history);
+   }
 
    json_object_put(conversation_history);
 

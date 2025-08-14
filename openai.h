@@ -34,7 +34,8 @@
  */
 typedef enum {
    CLOUD_LLM,  /**< Cloud-based large language model */
-   LOCAL_LLM   /**< Local large language model */
+   LOCAL_LLM,  /**< Local large language model */
+   UNDEFINED_LLM  /**< The large language model has not been set */
 } llm_t;
 
 /**
@@ -47,6 +48,13 @@ typedef enum {
  * @param type The LLM type to be set (either CLOUD_LLM or LOCAL_LLM).
  */
 void setLLM(llm_t type);
+
+/**
+ * @brief Get the current LLM setting. This established a single source of truth.
+ *
+ * @return The LLM type
+ */
+llm_t getLLM(void);
 
 /**
  * @brief Check internet connection with timeout.

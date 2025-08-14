@@ -47,19 +47,35 @@ extern command_processing_mode_t command_processing_mode;
  * This buffer stores the URL for the currently selected LLM,
  * either cloud or local. Its maximum length is 2048 characters.
  */
-static char llm_url[2048];
+static char llm_url[2048] = "";
 
+static llm_t llm_type = UNDEFINED_LLM;
+
+/**
+ * @brief Sets the LLM (Large Language Model) type to either cloud or local.
+ */
 void setLLM(llm_t type) {
    switch (type) {
       case CLOUD_LLM:
          snprintf(llm_url, 2048, "%s", CLOUDAI_URL);
+         llm_type = CLOUD_LLM;
          break;
       case LOCAL_LLM:
          snprintf(llm_url, 2048, "%s", LOCALAI_URL);
+         llm_type = LOCAL_LLM;
          break;
+      case UNDEFINED_LLM:
       default:
-         LOG_ERROR("Unknown LLM type requested");
+         /* We're not actually going to do anything if an unknown argument is send. */
+         text_to_speech("Unknown AI requested.");
    }
+}
+
+/**
+ * @brief Get the current LLM setting. This established a single source of truth.
+ */
+llm_t getLLM(void) {
+   return llm_type;
 }
 
 /**

@@ -141,7 +141,7 @@ static void initialize_command_prompt(void) {
 
       // Add a list of devices for this type
       prompt_len += snprintf(command_prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len,
-                           "  Valid devices: ");
+                           "  Valid devices for this command only: ");
 
       // Find all devices of this type
       int device_count = 0;
@@ -184,7 +184,7 @@ static void initialize_command_prompt(void) {
                         "reply with the information I requested or information on whether the command was successful.\n"
                         "Command hints:\n"
                         "The \"viewing\" command will return an image to you so you can visually answer a query.\n"
-                        "When running \"play\", the value is a simply string to search the media files for.\n"
+                        "When running \"play\", the value is a simple string to search the media files for.\n"
                         "Current HUD names are \"default\", \"environmental\", and \"armor\".\n");
 
    json_object_put(parsedJson);
