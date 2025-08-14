@@ -93,7 +93,6 @@ target_link_libraries(dawn
                       piper
                       piper_phonemize
                       espeak-ng
-                      llama
                       onnxruntime
                       pthread
                       sndfile
