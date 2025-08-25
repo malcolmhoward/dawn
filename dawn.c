@@ -54,7 +54,7 @@
 #include "version.h"
 
 // Define the default sample rate for audio capture.
-#define DEFAULT_RATE             44100
+#define DEFAULT_RATE             16000
 
 // Define the default number of audio channels (1 for mono).
 #define DEFAULT_CHANNELS         1
