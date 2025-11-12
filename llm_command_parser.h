@@ -19,16 +19,15 @@
  * part of the project and are adopted by the project author(s).
  */
 
-#include <mosquitto.h>  /* Needed got struct mosquitto */
+#include <mosquitto.h> /* Needed got struct mosquitto */
 
 #ifndef LLM_COMMAND_PARSER_H
 #define LLM_COMMAND_PARSER_H
 
 // Function to build command prompt from commands_config_nuevo.json
-char* build_command_prompt(void);
+char *build_command_prompt(void);
 
 // Function to parse LLM responses for commands
 int parse_llm_response_for_commands(const char *llm_response, struct mosquitto *mosq);
 
-#endif // LLM_COMMAND_PARSER_H
-
+#endif  // LLM_COMMAND_PARSER_H

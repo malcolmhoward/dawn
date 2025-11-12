@@ -20,18 +20,20 @@
  */
 
 #include "dawn_wav_utils.h"
-#include "logging.h"
+
+#include <endian.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <endian.h>
+
+#include "logging.h"
 
 /**
  * Check if a WAV file fits within ESP32 buffer limits
- * 
+ *
  * Compares the WAV file size against the safe response limit for ESP32 clients.
  * Logs appropriate warnings if the size exceeds the limit.
- * 
+ *
  * @param wav_size Size of the WAV file in bytes
  * @return 1 if within limits, 0 if exceeds limits
  */
@@ -42,7 +44,7 @@ int check_response_size_limit(size_t wav_size) {
       LOG_INFO("Response fits within ESP32 buffer limits");
       return 1;
    } else {
-      LOG_WARNING("Response exceeds ESP32 buffer limits by %zu bytes", 
+      LOG_WARNING("Response exceeds ESP32 buffer limits by %zu bytes",
                   wav_size - SAFE_RESPONSE_LIMIT);
       return 0;
    }
@@ -50,21 +52,22 @@ int check_response_size_limit(size_t wav_size) {
 
 /**
  * Truncate a WAV file to fit within ESP32 buffer limits
- * 
+ *
  * Creates a new WAV file by truncating the audio data from the original file.
  * The truncation maintains sample alignment (2-byte boundaries for 16-bit audio)
  * and updates the WAV header accordingly. Proper endianness conversion is applied
  * for cross-platform compatibility.
- * 
+ *
  * @param wav_data Pointer to original WAV data (must be valid WAV format)
  * @param wav_size Size of original WAV data in bytes (must be >= 44)
  * @param truncated_data_out Receives pointer to new truncated buffer (or NULL if not needed)
  * @param truncated_size_out Receives size of truncated buffer (or 0 if not needed)
  * @return 0 on success, -1 on error
  */
-int truncate_wav_response(const uint8_t *wav_data, size_t wav_size,
-                         uint8_t **truncated_data_out, size_t *truncated_size_out) {
-   
+int truncate_wav_response(const uint8_t *wav_data,
+                          size_t wav_size,
+                          uint8_t **truncated_data_out,
+                          size_t *truncated_size_out) {
    // Validate input parameters
    if (!wav_data || !truncated_data_out || !truncated_size_out) {
       LOG_ERROR("Invalid NULL parameters for WAV truncation");
@@ -72,8 +75,7 @@ int truncate_wav_response(const uint8_t *wav_data, size_t wav_size,
    }
 
    if (wav_size < sizeof(WAVHeader)) {
-      LOG_ERROR("WAV data too small (%zu bytes, minimum %zu bytes)", 
-                wav_size, sizeof(WAVHeader));
+      LOG_ERROR("WAV data too small (%zu bytes, minimum %zu bytes)", wav_size, sizeof(WAVHeader));
       return -1;
    }
 

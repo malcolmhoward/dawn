@@ -64,10 +64,10 @@
 #ifndef DAWN_NETWORK_AUDIO_H
 #define DAWN_NETWORK_AUDIO_H
 
-#include <stdint.h>
-#include <stddef.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stddef.h>
+#include <stdint.h>
 
 // Include the server header for callback types
 #include "dawn_server.h"
@@ -80,7 +80,7 @@ extern "C" {
 
 /**
  * Mutex for protecting processing result variables
- * SCOPE: Protects processing_result_data, processing_result_size, 
+ * SCOPE: Protects processing_result_data, processing_result_size,
  *        processing_complete
  * DEFINED IN: dawn.c (main application)
  */
@@ -138,7 +138,7 @@ extern int processing_complete;
 /**
  * Initialize the network audio system
  * This must be called before starting the server
- * 
+ *
  * @return 0 on success, -1 on error
  */
 int dawn_network_audio_init(void);
@@ -205,10 +205,10 @@ void dawn_network_audio_cleanup(void);
  * @see dawn.c:NETWORK_PROCESSING for main thread processing
  * @see dawn_server.c:dawn_handle_client_connection for caller
  */
-uint8_t* dawn_process_network_audio(const uint8_t *audio_data, 
-                                   size_t audio_size,
-                                   const char *client_info,
-                                   size_t *response_size);
+uint8_t *dawn_process_network_audio(const uint8_t *audio_data,
+                                    size_t audio_size,
+                                    const char *client_info,
+                                    size_t *response_size);
 
 /**
  * Check if network audio is available and retrieve it
@@ -259,4 +259,4 @@ void dawn_clear_network_audio(void);
 }
 #endif
 
-#endif // DAWN_NETWORK_AUDIO_H
+#endif  // DAWN_NETWORK_AUDIO_H

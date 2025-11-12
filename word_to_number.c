@@ -22,9 +22,6 @@
 #include <stdio.h>
 #include <string.h>
 
-#include <stdio.h>
-#include <string.h>
-
 typedef struct {
    char *name;
    double multiplier;
@@ -38,23 +35,19 @@ typedef struct {
  * @param token The textual representation of a number (e.g., "one", "twenty", "fourteen").
  * @return The integer value of the number, or 0 if the token does not represent a known number.
  *
- * Note: This function returns 0 both for the textual representation "zero" and for any unrecognized token.
- *       Consider improving error handling to distinguish these cases if necessary.
+ * Note: This function returns 0 both for the textual representation "zero" and for any unrecognized
+ * token. Consider improving error handling to distinguish these cases if necessary.
  */
-int parseNumericalWord(const char *token)
-{
+int parseNumericalWord(const char *token) {
    char *units[] = {
       "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"
    };
 
-   char *tens[] = {
-      "", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"
-   };
+   char *tens[] = { "",      "",      "twenty",  "thirty", "forty",
+                    "fifty", "sixty", "seventy", "eighty", "ninety" };
 
-   char *teens[] = {
-      "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen",
-      "eighteen", "nineteen"
-   };
+   char *teens[] = { "ten",     "eleven",  "twelve",    "thirteen", "fourteen",
+                     "fifteen", "sixteen", "seventeen", "eighteen", "nineteen" };
 
    for (int i = 0; i < 10; i++) {
       if (strcmp(token, units[i]) == 0)
@@ -65,33 +58,32 @@ int parseNumericalWord(const char *token)
          return 10 + i;
    }
 
-   return 0;                    // or handle error
+   return 0;  // or handle error
 }
 
-double wordToNumber(char *originalWord)
-{
-   char word[1024]; // Temporary buffer for tokenization.
-   strncpy(word, originalWord, sizeof(word) - 1); // Ensure null-termination.
+double wordToNumber(char *originalWord) {
+   char word[1024];                                // Temporary buffer for tokenization.
+   strncpy(word, originalWord, sizeof(word) - 1);  // Ensure null-termination.
    word[sizeof(word) - 1] = '\0';
 
    Magnitude magnitudes[] = {
-      {"thousand", 1000},
-      {"million", 1000000},
-      {"billion", 1000000000},
-      {"trillion", 1000000000000} // Extendable for more magnitudes.
+      { "thousand", 1000 },
+      { "million", 1000000 },
+      { "billion", 1000000000 },
+      { "trillion", 1000000000000 }  // Extendable for more magnitudes.
    };
 
-   double result = 0.0; // Accumulator for the result.
-   double tempValue = 0.0; // Temporary accumulator for the current numeric segment.
-   char *token = strtok(word, " "); // Tokenize the input string by spaces.
+   double result = 0.0;              // Accumulator for the result.
+   double tempValue = 0.0;           // Temporary accumulator for the current numeric segment.
+   char *token = strtok(word, " ");  // Tokenize the input string by spaces.
 
    while (token != NULL) {
       if (strcmp(token, "point") == 0) {
-         break; // Transition to processing the fractional part.
+         break;  // Transition to processing the fractional part.
       } else if (strcmp(token, "hundred") == 0) {
          tempValue *= 100;
       } else {
-         int found = 0; // Flag to track if the token matches a magnitude.
+         int found = 0;  // Flag to track if the token matches a magnitude.
          for (int i = 0; i < sizeof(magnitudes) / sizeof(Magnitude); i++) {
             if (strcmp(token, magnitudes[i].name) == 0) {
                result += tempValue * magnitudes[i].multiplier;
@@ -101,14 +93,14 @@ double wordToNumber(char *originalWord)
             }
          }
 
-         if (!found) { // If not a magnitude, attempt to parse as a number.
+         if (!found) {  // If not a magnitude, attempt to parse as a number.
             tempValue += parseNumericalWord(token);
          }
       }
 
       token = strtok(NULL, " ");
    }
-   result += tempValue; // Add any remaining value to the result.
+   result += tempValue;  // Add any remaining value to the result.
 
    // Process fractional part if "point" was found.
    strncpy(word, originalWord, sizeof(word));
@@ -125,7 +117,7 @@ double wordToNumber(char *originalWord)
       for (int i = 0; i < decimalDigits; i++) {
          fractionalValue /= 10;
       }
-      result += fractionalValue;        // Add the fractional part to the result
+      result += fractionalValue;  // Add the fractional part to the result
    }
 
    return result;

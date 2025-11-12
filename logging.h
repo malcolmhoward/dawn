@@ -31,16 +31,16 @@
 #ifndef LOGGING_H
 #define LOGGING_H
 
-#include <stdarg.h>  /* For va_list */
-#include <stdio.h>   /* For FILE */
+#include <stdarg.h> /* For va_list */
+#include <stdio.h>  /* For FILE */
 
 /**
  * @brief Log level enumeration for specifying the severity of log messages.
  */
 typedef enum {
-    LOG_INFO,    /**< Informational messages that represent normal operation. */
-    LOG_WARNING, /**< Warning messages indicating potential issues. */
-    LOG_ERROR,   /**< Error messages indicating failures or critical issues. */
+   LOG_INFO,    /**< Informational messages that represent normal operation. */
+   LOG_WARNING, /**< Warning messages indicating potential issues. */
+   LOG_ERROR,   /**< Error messages indicating failures or critical issues. */
 } log_level_t;
 
 #ifdef __cplusplus
@@ -53,14 +53,21 @@ extern "C" {
  * This function logs a message with the given format and arguments, including the file name,
  * line number, and function name for context. It supports variable arguments similar to `printf`.
  *
- * @param level The log level indicating the severity of the message (e.g., `LOG_INFO`, `LOG_WARNING`, `LOG_ERROR`).
+ * @param level The log level indicating the severity of the message (e.g., `LOG_INFO`,
+ * `LOG_WARNING`, `LOG_ERROR`).
  * @param file  The name of the source file where the log function was called (usually `__FILE__`).
- * @param line  The line number in the source file where the log function was called (usually `__LINE__`).
+ * @param line  The line number in the source file where the log function was called (usually
+ * `__LINE__`).
  * @param func  The name of the function where the log function was called (usually `__func__`).
  * @param fmt   The format string for the log message, similar to `printf`.
  * @param ...   Additional arguments for the format string.
  */
-void log_message(log_level_t level, const char *file, int line, const char *func, const char *fmt, ...);
+void log_message(log_level_t level,
+                 const char *file,
+                 int line,
+                 const char *func,
+                 const char *fmt,
+                 ...);
 
 #ifdef __cplusplus
 }
@@ -84,8 +91,9 @@ int init_logging(const char *filename, int to_file);
 /**
  * @brief Closes the logging system.
  *
- * This function closes the logging system and releases any resources allocated during initialization.
- * It should be called when logging is no longer needed, typically at the end of the application.
+ * This function closes the logging system and releases any resources allocated during
+ * initialization. It should be called when logging is no longer needed, typically at the end of the
+ * application.
  */
 void close_logging(void);
 
@@ -127,7 +135,8 @@ void close_logging(void);
  * @param fmt  The format string for the log message.
  * @param ...  Additional arguments for the format string.
  */
-#define LOG_WARNING(fmt, ...) log_message(LOG_WARNING, __FILE__, __LINE__, __func__, fmt, ##__VA_ARGS__)
+#define LOG_WARNING(fmt, ...) \
+   log_message(LOG_WARNING, __FILE__, __LINE__, __func__, fmt, ##__VA_ARGS__)
 
 /**
  * @brief Macro for logging error messages.
@@ -140,5 +149,4 @@ void close_logging(void);
  */
 #define LOG_ERROR(fmt, ...) log_message(LOG_ERROR, __FILE__, __LINE__, __func__, fmt, ##__VA_ARGS__)
 
-#endif // LOGGING_H
-
+#endif  // LOGGING_H

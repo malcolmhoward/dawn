@@ -21,7 +21,8 @@
 
 /**
  * @file mosquitto_comms.h
- * @brief Defines device types, associated strings, and callback functions for handling device actions.
+ * @brief Defines device types, associated strings, and callback functions for handling device
+ * actions.
  *
  * This header contains the definitions for device types supported by the application,
  * their string representations for MQTT messages, and the callback functions that process
@@ -37,19 +38,19 @@
  * @brief Enumerates the types of devices or actions supported by the application.
  */
 typedef enum {
-   AUDIO_PLAYBACK_DEVICE,  /**< Set an audio playback device. */
-   AUDIO_CAPTURE_DEVICE,   /**< Set an audio capture device. */
-   TEXT_TO_SPEECH,         /**< A text-to-speech action. */
-   DATE,                   /**< Request for the current date. */
-   TIME,                   /**< Request for the current time. */
-   MUSIC,                  /**< Music playback control. */
-   VOICE_AMPLIFIER,        /**< Voice amplifier control. */
-   SHUTDOWN,               /**< System shutdown action. */
-   VIEWING,                /**< Viewing or display actions. */
-   VOLUME,                 /**< Music playback volume, */
-   LOCAL_LLM_SWITCH,       /**< Local LLM switch. */
-   CLOUD_LLM_SWITCH,       /**< Cloud LLM switch. */
-   MAX_DEVICE_TYPES        /**< Used to determine the number of device types. */
+   AUDIO_PLAYBACK_DEVICE, /**< Set an audio playback device. */
+   AUDIO_CAPTURE_DEVICE,  /**< Set an audio capture device. */
+   TEXT_TO_SPEECH,        /**< A text-to-speech action. */
+   DATE,                  /**< Request for the current date. */
+   TIME,                  /**< Request for the current time. */
+   MUSIC,                 /**< Music playback control. */
+   VOICE_AMPLIFIER,       /**< Voice amplifier control. */
+   SHUTDOWN,              /**< System shutdown action. */
+   VIEWING,               /**< Viewing or display actions. */
+   VOLUME,                /**< Music playback volume, */
+   LOCAL_LLM_SWITCH,      /**< Local LLM switch. */
+   CLOUD_LLM_SWITCH,      /**< Cloud LLM switch. */
+   MAX_DEVICE_TYPES       /**< Used to determine the number of device types. */
 } deviceType;
 
 /**
@@ -58,20 +59,18 @@ typedef enum {
  * These strings correspond to the device types and are used in MQTT JSON messages.
  * They should match the order of the `deviceType` enumeration.
  */
-static const char *deviceTypeStrings[] = {
-   "audio playback device",
-   "audio capture device",
-   "text to speech",
-   "date",
-   "time",
-   "music",
-   "voice amplifier",
-   "shutdown alpha bravo charlie",
-   "viewing",
-   "volume",
-   "local llm",
-   "cloud llm"
-};
+static const char *deviceTypeStrings[] = { "audio playback device",
+                                           "audio capture device",
+                                           "text to speech",
+                                           "date",
+                                           "time",
+                                           "music",
+                                           "voice amplifier",
+                                           "shutdown alpha bravo charlie",
+                                           "viewing",
+                                           "volume",
+                                           "local llm",
+                                           "cloud llm" };
 
 /**
  * @brief Associates a device type with a callback function that processes actions for that device.
@@ -81,8 +80,10 @@ static const char *deviceTypeStrings[] = {
  * data instead of directly using text-to-speech when in AI modes.
  */
 typedef struct {
-   deviceType device;                                    /**< The device type. */
-   char* (*callback)(const char *, char *, int*);       /**< The callback function. Returns data or NULL. */
+   deviceType device; /**< The device type. */
+   char *(*callback)(const char *,
+                     char *,
+                     int *); /**< The callback function. Returns data or NULL. */
 } deviceCallback;
 
 /* MQTT callbacks */
@@ -105,7 +106,11 @@ void on_connect(struct mosquitto *mosq, void *obj, int reason_code);
  * @param qos_count   The number of granted QoS levels.
  * @param granted_qos Array of granted QoS levels.
  */
-void on_subscribe(struct mosquitto *mosq, void *obj, int mid, int qos_count, const int *granted_qos);
+void on_subscribe(struct mosquitto *mosq,
+                  void *obj,
+                  int mid,
+                  int qos_count,
+                  const int *granted_qos);
 
 /**
  * @brief Callback function invoked when a message is received from the subscribed topics.
@@ -146,7 +151,8 @@ char *timeCallback(const char *actionName, char *value, int *should_respond);
  * Processes actions related to music playback, such as play, pause, or stop.
  *
  * @param actionName The name of the action triggering this callback.
- * @param value      Additional value or parameters for the action (e.g., song name or control command).
+ * @param value      Additional value or parameters for the action (e.g., song name or control
+ * command).
  * @param should_respond Should the callback return data to the AI or just handle it.
  */
 char *musicCallback(const char *actionName, char *value, int *should_respond);
@@ -192,7 +198,8 @@ char *viewingCallback(const char *actionName, char *value, int *should_respond);
  * Sets the music playback volume to a value between 0.0 (silence) and 2.0 (maximum).
  *
  * @param actionName Unused but included for callback signature consistency.
- * @param value      String representing the desired volume level, converted to a float and validated.
+ * @param value      String representing the desired volume level, converted to a float and
+ * validated.
  * @param should_respond Should the callback return data to the AI or just handle it.
  */
 char *volumeCallback(const char *actionName, char *value, int *should_respond);
@@ -219,5 +226,4 @@ char *localLLMCallback(const char *actionName, char *value, int *should_respond)
  */
 char *cloudLLMCallback(const char *actionName, char *value, int *should_respond);
 
-#endif // MOSQUITTO_COMMS_H
-
+#endif  // MOSQUITTO_COMMS_H

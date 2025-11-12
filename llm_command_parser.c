@@ -20,10 +20,10 @@
  */
 
 /* Std C */
+#include <json-c/json.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <json-c/json.h>
 
 /* Local */
 #include "dawn.h"
@@ -48,17 +48,18 @@ static void initialize_command_prompt(void) {
    }
 
    FILE *configFile = NULL;
-   char buffer[10*1024];
+   char buffer[10 * 1024];
    int bytes_read = 0;
    struct json_object *parsedJson = NULL;
    struct json_object *typesObject = NULL;
    struct json_object *devicesObject = NULL;
 
    // Start with a simple instruction
-   int prompt_len = snprintf(command_prompt, PROMPT_BUFFER_SIZE,
-      "%s\n\n"  // Include the original AI_DESCRIPTION first
-      "You can also execute commands for me. These are the commands available:\n\n",
-      AI_DESCRIPTION);
+   int prompt_len = snprintf(
+       command_prompt, PROMPT_BUFFER_SIZE,
+       "%s\n\n"  // Include the original AI_DESCRIPTION first
+       "You can also execute commands for me. These are the commands available:\n\n",
+       AI_DESCRIPTION);
 
    LOG_INFO("Static prompt processed. Length: %d", prompt_len);
 
@@ -113,7 +114,7 @@ static void initialize_command_prompt(void) {
       json_object_object_get_ex(typesObject, type_name, &type_obj);
 
       prompt_len += snprintf(command_prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len,
-                           "== %s Commands ==\n", type_name);
+                             "== %s Commands ==\n", type_name);
 
       // Get the actions for this type
       struct json_object *actions_obj;
@@ -132,7 +133,7 @@ static void initialize_command_prompt(void) {
 
                // Add the command format
                prompt_len += snprintf(command_prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len,
-                                   "- %s: %s\n", action_name, command);
+                                      "- %s: %s\n", action_name, command);
             }
 
             json_object_iter_next(&action_it);
@@ -141,7 +142,7 @@ static void initialize_command_prompt(void) {
 
       // Add a list of devices for this type
       prompt_len += snprintf(command_prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len,
-                           "  Valid devices for this command only: ");
+                             "  Valid devices for this command only: ");
 
       // Find all devices of this type
       int device_count = 0;
@@ -159,9 +160,11 @@ static void initialize_command_prompt(void) {
 
             if (strcmp(device_type, type_name) == 0) {
                if (device_count > 0) {
-                  prompt_len += snprintf(command_prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len, ", ");
+                  prompt_len += snprintf(command_prompt + prompt_len,
+                                         PROMPT_BUFFER_SIZE - prompt_len, ", ");
                }
-               prompt_len += snprintf(command_prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len, "%s", device_name);
+               prompt_len += snprintf(command_prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len,
+                                      "%s", device_name);
                device_count++;
             }
          }
@@ -175,17 +178,21 @@ static void initialize_command_prompt(void) {
    }
 
    // Add response format instructions
-   prompt_len += snprintf(command_prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len,
-                        "When I ask for an action that matches one of these commands, respond with both:\n"
-                        "1. A conversational response (e.g., \"I'll turn that on for you, sir.\")\n"
-                        "2. The exact JSON command enclosed in <command> tags\n\n"
-                        "For example: \"Let me turn on the map for you, sir. <command>{\"device\": \"map\", \"action\": \"enable\"}</command>\"\n\n"
-                        "The very next message I send you will be an automated response from the system. You should use that information then to "
-                        "reply with the information I requested or information on whether the command was successful.\n"
-                        "Command hints:\n"
-                        "The \"viewing\" command will return an image to you so you can visually answer a query.\n"
-                        "When running \"play\", the value is a simple string to search the media files for.\n"
-                        "Current HUD names are \"default\", \"environmental\", and \"armor\".\n");
+   prompt_len += snprintf(
+       command_prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len,
+       "When I ask for an action that matches one of these commands, respond with both:\n"
+       "1. A conversational response (e.g., \"I'll turn that on for you, sir.\")\n"
+       "2. The exact JSON command enclosed in <command> tags\n\n"
+       "For example: \"Let me turn on the map for you, sir. <command>{\"device\": \"map\", "
+       "\"action\": \"enable\"}</command>\"\n\n"
+       "The very next message I send you will be an automated response from the system. You should "
+       "use that information then to "
+       "reply with the information I requested or information on whether the command was "
+       "successful.\n"
+       "Command hints:\n"
+       "The \"viewing\" command will return an image to you so you can visually answer a query.\n"
+       "When running \"play\", the value is a simple string to search the media files for.\n"
+       "Current HUD names are \"default\", \"environmental\", and \"armor\".\n");
 
    json_object_put(parsedJson);
    prompt_initialized = 1;
@@ -199,7 +206,7 @@ static void initialize_command_prompt(void) {
  *
  * @return The command prompt string
  */
-const char* get_command_prompt(void) {
+const char *get_command_prompt(void) {
    if (!prompt_initialized) {
       initialize_command_prompt();
    }
@@ -248,7 +255,7 @@ int parse_llm_response_for_commands(const char *llm_response, struct mosquitto *
             struct json_object *cmd_json = json_tokener_parse(command);
             if (cmd_json) {
                struct json_object *device_obj, *topic_obj;
-               const char *topic = "dawn"; // Default topic
+               const char *topic = "dawn";  // Default topic
 
                // Find topic based on device
                if (json_object_object_get_ex(cmd_json, "device", &device_obj)) {
@@ -257,7 +264,7 @@ int parse_llm_response_for_commands(const char *llm_response, struct mosquitto *
                   // Read config to get topic for device
                   FILE *configFile = fopen(CONFIG_FILE, "r");
                   if (configFile) {
-                     char buffer[10*1024];
+                     char buffer[10 * 1024];
                      int bytes_read = fread(buffer, 1, sizeof(buffer), configFile);
                      fclose(configFile);
 

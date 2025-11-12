@@ -58,39 +58,39 @@
 #include "version.h"
 
 // Define the default sample rate for audio capture.
-#define DEFAULT_RATE             16000
+#define DEFAULT_RATE 16000
 
 // Define the default number of audio channels (1 for mono).
-#define DEFAULT_CHANNELS         1
+#define DEFAULT_CHANNELS 1
 
 // Define the default duration of audio capture in seconds.
-#define DEFAULT_CAPTURE_SECONDS  0.5f
+#define DEFAULT_CAPTURE_SECONDS 0.5f
 
 // Define the default command timeout in terms of iterations of DEFAULT_CAPTURE_SECONDS.
-#define DEFAULT_COMMAND_TIMEOUT  3
+#define DEFAULT_COMMAND_TIMEOUT 3
 
 // Define the duration for background audio capture in seconds.
-#define BACKGROUND_CAPTURE_SECONDS  6
+#define BACKGROUND_CAPTURE_SECONDS 6
 
 // Check if ALSA_DEVICE is defined to include ALSA-specific headers and define ALSA-specific macros.
 #ifdef ALSA_DEVICE
 #include <alsa/asoundlib.h>
 
 // Define the default ALSA PCM access type (read/write interleaved).
-#define DEFAULT_ACCESS     SND_PCM_ACCESS_RW_INTERLEAVED
+#define DEFAULT_ACCESS SND_PCM_ACCESS_RW_INTERLEAVED
 
 // Define the default ALSA PCM format (16-bit signed little-endian).
-#define DEFAULT_FORMAT     SND_PCM_FORMAT_S16_LE
+#define DEFAULT_FORMAT SND_PCM_FORMAT_S16_LE
 
 // Define the default number of frames per ALSA PCM period.
-#define DEFAULT_FRAMES     64
+#define DEFAULT_FRAMES 64
 #else
 // Include PulseAudio simple API and error handling headers for non-ALSA configurations.
-#include <pulse/simple.h>
 #include <pulse/error.h>
+#include <pulse/simple.h>
 
 // Define the default PulseAudio sample format (16-bit signed little-endian).
-#define DEFAULT_PULSE_FORMAT  PA_SAMPLE_S16LE
+#define DEFAULT_PULSE_FORMAT PA_SAMPLE_S16LE
 #endif
 
 // Define the threshold offset for detecting talking in the audio stream.
@@ -100,11 +100,11 @@ static char pcm_capture_device[MAX_WORD_LENGTH + 1] = "";
 static char pcm_playback_device[MAX_WORD_LENGTH + 1] = "";
 
 /* Parsed audio devices. */
-static audioDevices captureDevices[MAX_AUDIO_DEVICES];   /**< Audio capture devices. */
-static int numAudioCaptureDevices = 0;                   /**< How many capture devices. */
+static audioDevices captureDevices[MAX_AUDIO_DEVICES]; /**< Audio capture devices. */
+static int numAudioCaptureDevices = 0;                 /**< How many capture devices. */
 
-static audioDevices playbackDevices[MAX_AUDIO_DEVICES];  /**< Audio playback devices. */
-static int numAudioPlaybackDevices = 0;                  /**< How many playback devices. */
+static audioDevices playbackDevices[MAX_AUDIO_DEVICES]; /**< Audio playback devices. */
+static int numAudioPlaybackDevices = 0;                 /**< How many playback devices. */
 
 /**
  * @struct audioControl
@@ -142,11 +142,9 @@ typedef struct {
 } audioControl;
 
 #ifndef ALSA_DEVICE
-static const pa_sample_spec sample_spec = {
-   .format = DEFAULT_PULSE_FORMAT,
-   .rate = DEFAULT_RATE,
-   .channels = DEFAULT_CHANNELS
-};
+static const pa_sample_spec sample_spec = { .format = DEFAULT_PULSE_FORMAT,
+                                            .rate = DEFAULT_RATE,
+                                            .channels = DEFAULT_CHANNELS };
 #endif
 
 // Holds the current RMS (Root Mean Square) level of the background audio.
@@ -155,80 +153,34 @@ static double backgroundRMS = 0.002;
 
 // Holds the current RMS (Root Mean Square) level of the background audio.
 // Used to monitor ambient noise levels and potentially adjust listening sensitivity.
-static char *wakeWords[] = {
-   "hello " AI_NAME,
-   "okay " AI_NAME,
-   "alright " AI_NAME,
-   "hey " AI_NAME,
-   "hi " AI_NAME,
-   "good evening " AI_NAME,
-   "good day " AI_NAME,
-   "good morning " AI_NAME
-};
+static char *wakeWords[] = { "hello " AI_NAME,    "okay " AI_NAME,        "alright " AI_NAME,
+                             "hey " AI_NAME,      "hi " AI_NAME,          "good evening " AI_NAME,
+                             "good day " AI_NAME, "good morning " AI_NAME };
 
 // Array of words/phrases used to signal the end of an interaction with the AI.
-static char *goodbyeWords[] = {
-   "good bye",
-   "goodbye",
-   "good night",
-   "bye",
-   "quit",
-   "exit"
-};
+static char *goodbyeWords[] = { "good bye", "goodbye", "good night", "bye", "quit", "exit" };
 
 // Array of predefined responses the AI can use upon recognizing a wake word/phrase.
-const char* wakeResponses[] = {
-   "Hello Sir.",
-   "At your service Sir.",
-   "Yes Sir?",
-   "How may I assist you Sir?",
-   "Listening Sir."
-};
+const char *wakeResponses[] = { "Hello Sir.", "At your service Sir.", "Yes Sir?",
+                                "How may I assist you Sir?", "Listening Sir." };
 
 // Array of words/phrases that the AI should explicitly ignore during interaction.
 // This includes common filler words or phrases signaling to disregard the prior input.
-static char *ignoreWords[] = {
-   "",
-   "the",
-   "cancel",
-   "never mind",
-   "nevermind",
-   "ignore"
-};
+static char *ignoreWords[] = { "", "the", "cancel", "never mind", "nevermind", "ignore" };
 
 // Array of words/phrases that we accept as a way to tell the AI to cancel its current
 // text to speech instead of requiring another command.
-static char *cancelWords[] = {
-   "stop",
-   "stop it",
-   "cancel",
-   "hold on",
-   "wait",
-   "never mind",
-   "abort",
-   "pause",
-   "enough",
-   "disregard",
-   "no thanks",
-   "forget it",
-   "leave it",
-   "drop it",
-   "stand by",
-   "cease",
-   "interrupt",
-   "say no more",
-   "shut up",
-   "silence",
-   "zip it",
-   "enough already",
-   "that's enough",
-   "stop right there"
-};
+static char *cancelWords[] = { "stop",      "stop it",        "cancel",        "hold on",
+                               "wait",      "never mind",     "abort",         "pause",
+                               "enough",    "disregard",      "no thanks",     "forget it",
+                               "leave it",  "drop it",        "stand by",      "cease",
+                               "interrupt", "say no more",    "shut up",       "silence",
+                               "zip it",    "enough already", "that's enough", "stop right there" };
 
 // Standard greeting messages based on the time of day.
-const char* morning_greeting = "Good morning boss.";
-const char* day_greeting = "Good day Sir.";
-const char* evening_greeting = "Good evening Sir.";
+const char *morning_greeting = "Good morning boss.";
+const char *day_greeting = "Good day Sir.";
+const char *evening_greeting = "Good evening Sir.";
 
 /**
  * @enum listeningState
@@ -317,12 +269,12 @@ static pthread_mutex_t network_processing_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 // PCM Data Structure for network processing
 typedef struct {
-    uint8_t *pcm_data;
-    size_t pcm_size;
-    uint32_t sample_rate;
-    uint16_t num_channels;
-    uint16_t bits_per_sample;
-    int is_valid;
+   uint8_t *pcm_data;
+   size_t pcm_size;
+   uint32_t sample_rate;
+   uint16_t num_channels;
+   uint16_t bits_per_sample;
+   int is_valid;
 } NetworkPCMData;
 
 // Global variable for command processing mode
@@ -330,7 +282,7 @@ command_processing_mode_t command_processing_mode = CMD_MODE_DIRECT_ONLY;
 struct json_object *conversation_history = NULL;
 
 sig_atomic_t get_quit(void) {
-    return quit;
+   return quit;
 }
 
 #if 0
@@ -389,9 +341,9 @@ void drawWaveform(const int16_t *audioBuffer, size_t numSamples) {
  * @param signal The signal number received, expected to be SIGINT.
  */
 void signal_handler(int signal) {
-    if (signal == SIGINT) {
-        quit = 1;
-    }
+   if (signal == SIGINT) {
+      quit = 1;
+   }
 }
 
 char *textToSpeechCallback(const char *actionName, char *value, int *should_respond) {
@@ -406,11 +358,11 @@ char *textToSpeechCallback(const char *actionName, char *value, int *should_resp
 }
 
 const char *getPcmPlaybackDevice(void) {
-   return (const char*) pcm_playback_device;
+   return (const char *)pcm_playback_device;
 }
 
 const char *getPcmCaptureDevice(void) {
-   return (const char*) pcm_capture_device;
+   return (const char *)pcm_capture_device;
 }
 
 char *findAudioPlaybackDevice(char *name) {
@@ -426,7 +378,7 @@ char *findAudioPlaybackDevice(char *name) {
    return NULL;
 }
 
-char* setPcmPlaybackDevice(const char *actionName, char *value, int *should_respond) {
+char *setPcmPlaybackDevice(const char *actionName, char *value, int *should_respond) {
    int i = 0;
    char speech[MAX_COMMAND_LENGTH];
    static char return_buffer[MAX_COMMAND_LENGTH];
@@ -437,7 +389,7 @@ char* setPcmPlaybackDevice(const char *actionName, char *value, int *should_resp
       if (strcmp(playbackDevices[i].name, value) == 0) {
          LOG_INFO("Setting audio playback device to \"%s\".\n", playbackDevices[i].device);
          strncpy(pcm_playback_device, playbackDevices[i].device, MAX_WORD_LENGTH);
-         pcm_playback_device[MAX_WORD_LENGTH] = '\0'; // Ensure null termination
+         pcm_playback_device[MAX_WORD_LENGTH] = '\0';  // Ensure null termination
 
          if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
             snprintf(speech, MAX_COMMAND_LENGTH, "Switching playback device to %s.", value);
@@ -445,8 +397,8 @@ char* setPcmPlaybackDevice(const char *actionName, char *value, int *should_resp
             return NULL;  // Already handled
          } else {
             // AI modes: return the result for AI to process
-            snprintf(return_buffer, MAX_COMMAND_LENGTH,
-                     "Audio playback device switched to %s", value);
+            snprintf(return_buffer, MAX_COMMAND_LENGTH, "Audio playback device switched to %s",
+                     value);
             return return_buffer;
          }
       }
@@ -461,8 +413,7 @@ char* setPcmPlaybackDevice(const char *actionName, char *value, int *should_resp
          text_to_speech(speech);
          return NULL;
       } else {
-         snprintf(return_buffer, MAX_COMMAND_LENGTH,
-                  "Audio playback device '%s' not found", value);
+         snprintf(return_buffer, MAX_COMMAND_LENGTH, "Audio playback device '%s' not found", value);
          return return_buffer;
       }
    }
@@ -470,7 +421,7 @@ char* setPcmPlaybackDevice(const char *actionName, char *value, int *should_resp
    return NULL;  // Should never reach here
 }
 
-char* setPcmCaptureDevice(const char *actionName, char *value, int *should_respond) {
+char *setPcmCaptureDevice(const char *actionName, char *value, int *should_respond) {
    int i = 0;
    char speech[MAX_COMMAND_LENGTH];
    static char return_buffer[MAX_COMMAND_LENGTH];
@@ -481,15 +432,15 @@ char* setPcmCaptureDevice(const char *actionName, char *value, int *should_respo
       if (strcmp(captureDevices[i].name, value) == 0) {
          LOG_INFO("Setting audio capture device to \"%s\".\n", captureDevices[i].device);
          strncpy(pcm_capture_device, captureDevices[i].device, MAX_WORD_LENGTH);
-         pcm_capture_device[MAX_WORD_LENGTH] = '\0'; // Ensure null termination
+         pcm_capture_device[MAX_WORD_LENGTH] = '\0';  // Ensure null termination
 
          if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
             snprintf(speech, MAX_COMMAND_LENGTH, "Switching capture device to %s.", value);
             text_to_speech(speech);
             return NULL;
          } else {
-            snprintf(return_buffer, MAX_COMMAND_LENGTH,
-                     "Audio capture device switched to %s", value);
+            snprintf(return_buffer, MAX_COMMAND_LENGTH, "Audio capture device switched to %s",
+                     value);
             return return_buffer;
          }
       }
@@ -504,8 +455,7 @@ char* setPcmCaptureDevice(const char *actionName, char *value, int *should_respo
          text_to_speech(speech);
          return NULL;
       } else {
-         snprintf(return_buffer, MAX_COMMAND_LENGTH,
-                  "Audio capture device '%s' not found", value);
+         snprintf(return_buffer, MAX_COMMAND_LENGTH, "Audio capture device '%s' not found", value);
          return return_buffer;
       }
    }
@@ -525,25 +475,24 @@ char* setPcmCaptureDevice(const char *actionName, char *value, int *should_respo
  * @param audHandle A void pointer to an audioControl structure containing audio capture settings.
  * @return NULL always, indicating the thread's work is complete.
  */
-void *measureBackgroundAudio(void *audHandle)
-{
-   audioControl *myControl = (audioControl *) audHandle;
+void *measureBackgroundAudio(void *audHandle) {
+   audioControl *myControl = (audioControl *)audHandle;
 
    // Allocate Audio Buffers based on the backend and specified parameters.
    char *buff = (char *)malloc(myControl->full_buff_size);
    if (buff == NULL) {
       LOG_ERROR("malloc() failed on buff.\n");
-      return NULL; // Early return on allocation failure for buff.
+      return NULL;  // Early return on allocation failure for buff.
    }
 
-   uint32_t max_buff_size = // Calculate maximum buffer size based on backend.
-      DEFAULT_RATE * DEFAULT_CHANNELS * sizeof(int16_t) * BACKGROUND_CAPTURE_SECONDS;
+   uint32_t max_buff_size =  // Calculate maximum buffer size based on backend.
+       DEFAULT_RATE * DEFAULT_CHANNELS * sizeof(int16_t) * BACKGROUND_CAPTURE_SECONDS;
 
    char *max_buff = (char *)malloc(max_buff_size);
    if (max_buff == NULL) {
       LOG_ERROR("malloc() failed on max_buff.\n");
-      free(buff); // Ensure buff is freed to avoid a memory leak.
-      return NULL; // Early return on allocation failure for max_buff.
+      free(buff);   // Ensure buff is freed to avoid a memory leak.
+      return NULL;  // Early return on allocation failure for max_buff.
    }
 
    uint32_t buff_size = 0;
@@ -560,7 +509,7 @@ void *measureBackgroundAudio(void *audHandle)
          if (rc <= 0) {
             LOG_ERROR("Error reading PCM.\n");
          }
-         break; // Exit loop on read error or buffer full.
+         break;  // Exit loop on read error or buffer full.
       }
    }
 #else
@@ -569,7 +518,7 @@ void *measureBackgroundAudio(void *audHandle)
    for (size_t i = 0; i < max_buff_size / myControl->full_buff_size; ++i) {
       if (pa_simple_read(myControl->pa_handle, buff, myControl->pa_framesize, &error) < 0) {
          LOG_ERROR("Could not read audio: %s\n", pa_strerror(error));
-         break; // Exit loop on read error.
+         break;  // Exit loop on read error.
       }
       memcpy(max_buff + buff_size, buff, myControl->full_buff_size);
       buff_size += myControl->full_buff_size;
@@ -577,9 +526,9 @@ void *measureBackgroundAudio(void *audHandle)
 #endif
 
    // Compute RMS for captured audio.
-   double rms = calculateRMS((int16_t*)max_buff, buff_size / (DEFAULT_CHANNELS * 2));
+   double rms = calculateRMS((int16_t *)max_buff, buff_size / (DEFAULT_CHANNELS * 2));
    LOG_INFO("RMS of background recording is %g.\n", rms);
-   backgroundRMS = rms; // Store RMS value in a global variable.
+   backgroundRMS = rms;  // Store RMS value in a global variable.
 
    // Clean up allocated buffers.
    free(buff);
@@ -644,16 +593,18 @@ char *getTextResponse(const char *input) {
  * Opens an ALSA PCM capture device and configures it with default hardware parameters.
  *
  * This function initializes an ALSA PCM capture device using specified settings for audio capture.
- * It sets parameters such as the audio format, rate, channels, and period size to defaults defined elsewhere.
+ * It sets parameters such as the audio format, rate, channels, and period size to defaults defined
+ * elsewhere.
  *
  * @param handle Pointer to a snd_pcm_t pointer where the opened PCM device handle will be stored.
- * @param pcm_device String name of the PCM device to open (e.g., "default" or a specific hardware device).
- * @param frames Pointer to a snd_pcm_uframes_t variable where the period size in frames will be stored.
+ * @param pcm_device String name of the PCM device to open (e.g., "default" or a specific hardware
+ * device).
+ * @param frames Pointer to a snd_pcm_uframes_t variable where the period size in frames will be
+ * stored.
  *
  * @return 0 on success, 1 on error, with an error message printed to stderr.
  */
-int openAlsaPcmCaptureDevice(snd_pcm_t **handle, char *pcm_device, snd_pcm_uframes_t *frames)
-{
+int openAlsaPcmCaptureDevice(snd_pcm_t **handle, char *pcm_device, snd_pcm_uframes_t *frames) {
    snd_pcm_hw_params_t *params = NULL;
    unsigned int rate = DEFAULT_RATE;
    int dir = 0;
@@ -693,23 +644,23 @@ int openAlsaPcmCaptureDevice(snd_pcm_t **handle, char *pcm_device, snd_pcm_ufram
  * Opens a PulseAudio capture stream for a given PCM device.
  *
  * This function initializes a PulseAudio capture stream, using the PulseAudio Simple API,
- * for audio recording. It requires specifying the PCM device and uses predefined sample specifications
- * and application name defined elsewhere in the code.
+ * for audio recording. It requires specifying the PCM device and uses predefined sample
+ * specifications and application name defined elsewhere in the code.
  *
  * @param pcm_capture_device String name of the PCM capture device or NULL for the default device.
  *
- * @return A pointer to the initialized pa_simple structure representing the capture stream, or NULL on error,
- * with an error message printed to stderr.
+ * @return A pointer to the initialized pa_simple structure representing the capture stream, or NULL
+ * on error, with an error message printed to stderr.
  */
-pa_simple *openPulseaudioCaptureDevice(char *pcm_capture_device)
-{
+pa_simple *openPulseaudioCaptureDevice(char *pcm_capture_device) {
    pa_simple *pa_handle = NULL;
    int rc = 0;
 
    LOG_INFO("PULSEAUDIO CAPTURE DRIVER: %s\n", pcm_capture_device);
 
    /* Create a new capture stream */
-   if (!(pa_handle = pa_simple_new(NULL, APPLICATION_NAME, PA_STREAM_RECORD, pcm_capture_device, "record", &sample_spec, NULL, NULL, &rc))) {
+   if (!(pa_handle = pa_simple_new(NULL, APPLICATION_NAME, PA_STREAM_RECORD, pcm_capture_device,
+                                   "record", &sample_spec, NULL, NULL, &rc))) {
       LOG_ERROR("Error opening PulseAudio record: %s\n", pa_strerror(rc));
       return NULL;
    }
@@ -730,19 +681,19 @@ pa_simple *openPulseaudioCaptureDevice(char *pcm_capture_device)
  * @return A pointer to a constant character string containing the selected greeting.
  *         The return value points to a global variable and should not be modified or freed.
  */
-const char* timeOfDayGreeting(void) {
+const char *timeOfDayGreeting(void) {
    time_t t = time(NULL);
-   struct tm *local_time = localtime(&t); // Obtain local time from the system clock.
+   struct tm *local_time = localtime(&t);  // Obtain local time from the system clock.
 
-   int hour = local_time->tm_hour; // Extract the hour component of the current time.
+   int hour = local_time->tm_hour;  // Extract the hour component of the current time.
 
    // Select the appropriate greeting based on the hour of the day.
    if (hour >= 3 && hour < 12) {
-      return morning_greeting; // Morning greeting from 3 AM to before 12 PM.
+      return morning_greeting;  // Morning greeting from 3 AM to before 12 PM.
    } else if (hour >= 12 && hour < 18) {
-      return day_greeting; // Day greeting from 12 PM to before 6 PM.
+      return day_greeting;  // Day greeting from 12 PM to before 6 PM.
    } else {
-      return evening_greeting; // Evening greeting for 6 PM onwards.
+      return evening_greeting;  // Evening greeting for 6 PM onwards.
    }
 }
 
@@ -753,72 +704,75 @@ const char* timeOfDayGreeting(void) {
  * being activated by a wake word. It randomly selects one of the predefined
  * responses from the global `wakeResponses` array each time it's called.
  *
- * @return A pointer to a constant character string containing the selected wake word acknowledgment.
- *         The return value points to an element within the global `wakeResponses` array and
+ * @return A pointer to a constant character string containing the selected wake word
+ * acknowledgment. The return value points to an element within the global `wakeResponses` array and
  *         should not be modified or freed.
  */
-const char* wakeWordAcknowledgment() {
-   int numWakeResponses = sizeof(wakeResponses) / sizeof(wakeResponses[0]); // Calculate the number of available responses.
+const char *wakeWordAcknowledgment() {
+   int numWakeResponses = sizeof(wakeResponses) /
+                          sizeof(wakeResponses[0]);  // Calculate the number of available responses.
    int choice;
 
-   srand(time(NULL)); // Seed the random number generator.
-   choice = rand() % numWakeResponses; // Generate a random index to select a response.
+   srand(time(NULL));                   // Seed the random number generator.
+   choice = rand() % numWakeResponses;  // Generate a random index to select a response.
 
-   return wakeResponses[choice]; // Return the randomly selected wake word acknowledgment.
+   return wakeResponses[choice];  // Return the randomly selected wake word acknowledgment.
 }
 
 /**
  * Captures audio into a buffer until it is full or an error occurs, managing its own local buffer.
- * 
+ *
  * This function abstracts the audio capture process to work with either ALSA or PulseAudio,
  * depending on compilation flags. It allocates a local buffer for audio data capture,
  * copies captured data into a larger buffer provided by the caller, and ensures
  * that the larger buffer does not overflow. The local buffer is dynamically allocated
  * and managed within the function.
  *
- * @param myAudioControls A pointer to an audioControl structure containing audio capture settings and state.
+ * @param myAudioControls A pointer to an audioControl structure containing audio capture settings
+ * and state.
  * @param max_buff A pointer to the buffer where captured audio data will be accumulated.
  * @param max_buff_size The maximum size of max_buff, indicating how much data can be stored.
- * @param ret_buff_size A pointer to an integer where the function will store the total size of captured
- *                      audio data stored in max_buff upon successful completion.
+ * @param ret_buff_size A pointer to an integer where the function will store the total size of
+ * captured audio data stored in max_buff upon successful completion.
  * @return Returns 0 on successful capture of audio data without filling the buffer.
- *         Returns 1 if a memory allocation failure occurs or an error occurred during audio capture,
- *         such as a failure to read from the audio device.
+ *         Returns 1 if a memory allocation failure occurs or an error occurred during audio
+ * capture, such as a failure to read from the audio device.
  *
  * @note The function updates *ret_buff_size with the total size of captured audio data.
  *       It's crucial to ensure that max_buff is large enough to hold the expected amount of data.
  */
 int capture_buffer(audioControl *myAudioControls,
-                   char *max_buff, uint32_t max_buff_size,
+                   char *max_buff,
+                   uint32_t max_buff_size,
                    int *ret_buff_size) {
-   int rc = 0; ///< Return code from audio read functions.
-   int buffer_full = 0; ///< Flag to indicate if the buffer is full.
-   int error = 0; ///< Error code for PulseAudio operations.
+   int rc = 0;           ///< Return code from audio read functions.
+   int buffer_full = 0;  ///< Flag to indicate if the buffer is full.
+   int error = 0;        ///< Error code for PulseAudio operations.
 
-   *ret_buff_size = 0; // Initialize the returned buffer size to 0.
+   *ret_buff_size = 0;  // Initialize the returned buffer size to 0.
 
    // Allocate a local buffer for audio data capture.
    char *buff = (char *)malloc(myAudioControls->full_buff_size);
    if (buff == NULL) {
       LOG_ERROR("malloc() failed on buff.\n");
-      return 1; // Return error code on memory allocation failure.
+      return 1;  // Return error code on memory allocation failure.
    }
 
-   while (!buffer_full) { // Continue until the buffer is full or an error occurs.
+   while (!buffer_full) {  // Continue until the buffer is full or an error occurs.
 #ifdef ALSA_DEVICE
       // Attempt to read audio frames using ALSA.
       rc = snd_pcm_readi(myAudioControls->handle, buff, myAudioControls->frames);
       if ((rc > 0) && (*ret_buff_size + myAudioControls->full_buff_size <= max_buff_size)) {
          // Copy the read data into max_buff if there's enough space.
          memcpy(max_buff + *ret_buff_size, buff, myAudioControls->full_buff_size);
-         *ret_buff_size += myAudioControls->full_buff_size; // Update the size of captured data.
+         *ret_buff_size += myAudioControls->full_buff_size;  // Update the size of captured data.
       } else {
          if (rc <= 0) {
             LOG_ERROR("Error reading PCM.\n");
-            free(buff); // Free the local buffer on error.
-            return 1; // Return error code on read failure.
+            free(buff);  // Free the local buffer on error.
+            return 1;    // Return error code on read failure.
          }
-         buffer_full = 1; // Set buffer_full flag if max_buff is filled.
+         buffer_full = 1;  // Set buffer_full flag if max_buff is filled.
       }
 #else
       // Attempt to read audio frames using PulseAudio.
@@ -826,25 +780,25 @@ int capture_buffer(audioControl *myAudioControls,
       if ((rc == 0) && (*ret_buff_size + myAudioControls->full_buff_size <= max_buff_size)) {
          // Copy the read data into max_buff if there's enough space.
          memcpy(max_buff + *ret_buff_size, buff, myAudioControls->full_buff_size);
-         *ret_buff_size += myAudioControls->full_buff_size; // Update the size of captured data.
+         *ret_buff_size += myAudioControls->full_buff_size;  // Update the size of captured data.
       } else {
          if (rc < 0) {
             LOG_ERROR("pa_simple_read() failed: %s\n", pa_strerror(error));
-            free(buff); // Free the local buffer on error.
+            free(buff);  // Free the local buffer on error.
             pa_simple_free(myAudioControls->pa_handle);
             myAudioControls->pa_handle = openPulseaudioCaptureDevice(pcm_capture_device);
             if (myAudioControls->pa_handle == NULL) {
                LOG_ERROR("Error creating Pulse capture device.\n");
             }
-            return 1; // Return error code on read failure.
+            return 1;  // Return error code on read failure.
          }
-         buffer_full = 1; // Set buffer_full flag if max_buff is filled.
+         buffer_full = 1;  // Set buffer_full flag if max_buff is filled.
       }
 #endif
    }
 
-   free(buff); // Free the local buffer before exiting.
-   return 0; // Return success.
+   free(buff);  // Free the local buffer before exiting.
+   return 0;    // Return success.
 }
 
 void process_vision_ai(const char *base64_image, size_t image_size) {
@@ -903,8 +857,8 @@ int save_conversation_history(struct json_object *conversation_history) {
    }
 
    // Convert JSON object to pretty-printed string
-   json_string = json_object_to_json_string_ext(conversation_history,
-                                                JSON_C_TO_STRING_PRETTY | JSON_C_TO_STRING_NOSLASHESCAPE);
+   json_string = json_object_to_json_string_ext(
+       conversation_history, JSON_C_TO_STRING_PRETTY | JSON_C_TO_STRING_NOSLASHESCAPE);
    if (json_string == NULL) {
       LOG_ERROR("Failed to convert conversation history to JSON string");
       fclose(chat_file);
@@ -967,7 +921,7 @@ int publish_ai_state(listeningState newState) {
    /* "- 4" is from substracting the two %s but adding the term char */
    aiStateLength = strlen(stateTemplate) + strlen(AI_NAME) + strlen(state) - 4 + 1;
    aiState = malloc(aiStateLength);
-   if (aiState == NULL ) {
+   if (aiState == NULL) {
       LOG_ERROR("Error allocating memory for AI state.");
       return 1;
    }
@@ -979,9 +933,8 @@ int publish_ai_state(listeningState newState) {
       return 1;
    }
 
-   rc = mosquitto_publish(mosq, NULL, "hud", strlen(aiState),
-                          aiState, 0, false);
-   if(rc != MOSQ_ERR_SUCCESS){
+   rc = mosquitto_publish(mosq, NULL, "hud", strlen(aiState), aiState, 0, false);
+   if (rc != MOSQ_ERR_SUCCESS) {
       LOG_ERROR("Error publishing: %s\n", mosquitto_strerror(rc));
       free(aiState);
       return 1;
@@ -1022,18 +975,16 @@ int publish_ai_state(listeningState newState) {
  * @see free_network_pcm_data() for proper cleanup
  * @see WAVHeader structure definition in dawn_tts_wrapper.h
  */
-NetworkPCMData* extract_pcm_from_network_wav(const uint8_t *wav_data, size_t wav_size) {
+NetworkPCMData *extract_pcm_from_network_wav(const uint8_t *wav_data, size_t wav_size) {
    // Validate parameters
    if (!wav_data || wav_size == 0) {
-      LOG_ERROR("Invalid parameters: wav_data=%p, wav_size=%zu",
-                (void*)wav_data, wav_size);
+      LOG_ERROR("Invalid parameters: wav_data=%p, wav_size=%zu", (void *)wav_data, wav_size);
       return NULL;
    }
 
    // Validate minimum size
    if (wav_size < sizeof(WAVHeader)) {
-      LOG_ERROR("WAV data too small for header: %zu bytes (need %zu)",
-                wav_size, sizeof(WAVHeader));
+      LOG_ERROR("WAV data too small for header: %zu bytes (need %zu)", wav_size, sizeof(WAVHeader));
       return NULL;
    }
 
@@ -1062,20 +1013,20 @@ NetworkPCMData* extract_pcm_from_network_wav(const uint8_t *wav_data, size_t wav
    // Validate data_bytes against actual buffer size
    size_t expected_total_size = sizeof(WAVHeader) + data_bytes;
    if (expected_total_size > wav_size) {
-      LOG_WARNING("WAV header claims %u data bytes, but only %zu available",
-                  data_bytes, wav_size - sizeof(WAVHeader));
+      LOG_WARNING("WAV header claims %u data bytes, but only %zu available", data_bytes,
+                  wav_size - sizeof(WAVHeader));
       data_bytes = wav_size - sizeof(WAVHeader);
    }
 
    // Sanity check for unreasonably large data
    if (data_bytes > ESP32_MAX_RESPONSE_BYTES) {
-      LOG_ERROR("WAV data size unreasonably large: %u bytes (max: %ld)",
-                data_bytes, (long)ESP32_MAX_RESPONSE_BYTES);
+      LOG_ERROR("WAV data size unreasonably large: %u bytes (max: %ld)", data_bytes,
+                (long)ESP32_MAX_RESPONSE_BYTES);
       return NULL;
    }
 
-   LOG_INFO("WAV format: %uHz, %u channels, %u-bit, %u data bytes",
-            sample_rate, num_channels, bits_per_sample, data_bytes);
+   LOG_INFO("WAV format: %uHz, %u channels, %u-bit, %u data bytes", sample_rate, num_channels,
+            bits_per_sample, data_bytes);
 
    // Allocate PCM structure
    NetworkPCMData *pcm = malloc(sizeof(NetworkPCMData));
@@ -1138,15 +1089,17 @@ NetworkPCMData* extract_pcm_from_network_wav(const uint8_t *wav_data, size_t wav
  * @endcode
  */
 void free_network_pcm_data(NetworkPCMData *pcm) {
-    if (!pcm) return;
-    if (pcm->pcm_data) free(pcm->pcm_data);
-    free(pcm);
+   if (!pcm)
+      return;
+   if (pcm->pcm_data)
+      free(pcm->pcm_data);
+   free(pcm);
 }
 
 /**
- * Displays help information for the program, outlining the usage and available command-line options.
- * The function dynamically adjusts the usage message based on whether the program name is available
- * from the command-line arguments.
+ * Displays help information for the program, outlining the usage and available command-line
+ * options. The function dynamically adjusts the usage message based on whether the program name is
+ * available from the command-line arguments.
  *
  * @param argc The number of command-line arguments passed to the program.
  * @param argv The array of command-line arguments. argv[0] is expected to contain the program name.
@@ -1172,8 +1125,7 @@ void display_help(int argc, char *argv[]) {
    printf("  -L, --llm-only         LLM handles all commands, skip direct processing.\n");
 }
 
-int main(int argc, char *argv[])
-{
+int main(int argc, char *argv[]) {
    char *input_text = NULL;
    char *command_text = NULL;
    char *response_text = NULL;
@@ -1192,14 +1144,15 @@ int main(int argc, char *argv[])
 
    // Audio Buffer
    uint32_t buff_size = 0;
-   float temp_buff_size = DEFAULT_RATE * DEFAULT_CHANNELS * sizeof(int16_t) * DEFAULT_CAPTURE_SECONDS;
+   float temp_buff_size = DEFAULT_RATE * DEFAULT_CHANNELS * sizeof(int16_t) *
+                          DEFAULT_CAPTURE_SECONDS;
    uint32_t max_buff_size = (uint32_t)ceil(temp_buff_size);
    char *max_buff = NULL;
    double rms = 0.0;
 
    // Command Configuration
    FILE *configFile = NULL;
-   char buffer[10*1024];
+   char buffer[10 * 1024];
    int bytes_read = 0;
 
    // Command Parsing
@@ -1228,16 +1181,16 @@ int main(int argc, char *argv[])
    listeningState silenceNextState = WAKEWORD_LISTEN;
 
    static struct option long_options[] = {
-      {"capture", required_argument, NULL, 'c'},
-      {"logfile", required_argument, NULL, 'l'},
-      {"playback", required_argument, NULL, 'd'},
-      {"help", no_argument, NULL, 'h'},
-      {"llm-only", no_argument, NULL, 'L'},           // LLM handles everything
-      {"llm-commands", no_argument, NULL, 'C'},       // Commands first, then LLM
-      {"commands-only", no_argument, NULL, 'D'},      // Direct commands only (explicit)
-      {"network-audio", no_argument, NULL, 'N'},      // Start server for remote DAWN access
-      {"llm", required_argument, NULL, 'm'},          // Set default LLM type
-      {0, 0, 0, 0}
+      { "capture", required_argument, NULL, 'c' },
+      { "logfile", required_argument, NULL, 'l' },
+      { "playback", required_argument, NULL, 'd' },
+      { "help", no_argument, NULL, 'h' },
+      { "llm-only", no_argument, NULL, 'L' },       // LLM handles everything
+      { "llm-commands", no_argument, NULL, 'C' },   // Commands first, then LLM
+      { "commands-only", no_argument, NULL, 'D' },  // Direct commands only (explicit)
+      { "network-audio", no_argument, NULL, 'N' },  // Start server for remote DAWN access
+      { "llm", required_argument, NULL, 'm' },      // Set default LLM type
+      { 0, 0, 0, 0 }
    };
    int option_index = 0;
 
@@ -1248,53 +1201,53 @@ int main(int argc, char *argv[])
 
    while ((opt = getopt_long(argc, argv, "c:d:hl:LCDNm:", long_options, &option_index)) != -1) {
       switch (opt) {
-      case 'c':
-         strncpy(pcm_capture_device, optarg, sizeof(pcm_capture_device));
-         pcm_capture_device[sizeof(pcm_capture_device) - 1] = '\0';
-         break;
-      case 'd':
-         strncpy(pcm_playback_device, optarg, sizeof(pcm_playback_device));
-         pcm_playback_device[sizeof(pcm_playback_device) - 1] = '\0';
-         break;
-      case 'h':
-         display_help(argc, argv);
-         exit(EXIT_SUCCESS);
-      case 'l':
-         log_filename = optarg;
-         break;
-      case 'L':
-         command_processing_mode = CMD_MODE_LLM_ONLY;
-         LOG_INFO("LLM-only command processing enabled");
-         break;
-      case 'C':
-         command_processing_mode = CMD_MODE_DIRECT_FIRST;
-         LOG_INFO("Commands-first with LLM fallback enabled");
-         break;
-      case 'D':
-         command_processing_mode = CMD_MODE_DIRECT_ONLY;
-         LOG_INFO("Direct commands only mode enabled");
-         break;
-      case 'N':
-        enable_network_audio = 1;
-        LOG_INFO("Network audio enabled");
-        break;
-      case 'm':
-         if (strcasecmp(optarg, "cloud") == 0) {
-            setLLM(CLOUD_LLM);
-            LOG_INFO("Using cloud LLM by default");
-         } else if (strcasecmp(optarg, "local") == 0) {
-            setLLM(LOCAL_LLM);
-            LOG_INFO("Using local LLM by default");
-         } else {
-            LOG_ERROR("Unknown LLM type: %s. Using auto-detection.", optarg);
-         }
-         break;
-      case '?':
-         display_help(argc, argv);
-         exit(EXIT_FAILURE);
-      default:
-         display_help(argc, argv);
-         exit(EXIT_FAILURE);
+         case 'c':
+            strncpy(pcm_capture_device, optarg, sizeof(pcm_capture_device));
+            pcm_capture_device[sizeof(pcm_capture_device) - 1] = '\0';
+            break;
+         case 'd':
+            strncpy(pcm_playback_device, optarg, sizeof(pcm_playback_device));
+            pcm_playback_device[sizeof(pcm_playback_device) - 1] = '\0';
+            break;
+         case 'h':
+            display_help(argc, argv);
+            exit(EXIT_SUCCESS);
+         case 'l':
+            log_filename = optarg;
+            break;
+         case 'L':
+            command_processing_mode = CMD_MODE_LLM_ONLY;
+            LOG_INFO("LLM-only command processing enabled");
+            break;
+         case 'C':
+            command_processing_mode = CMD_MODE_DIRECT_FIRST;
+            LOG_INFO("Commands-first with LLM fallback enabled");
+            break;
+         case 'D':
+            command_processing_mode = CMD_MODE_DIRECT_ONLY;
+            LOG_INFO("Direct commands only mode enabled");
+            break;
+         case 'N':
+            enable_network_audio = 1;
+            LOG_INFO("Network audio enabled");
+            break;
+         case 'm':
+            if (strcasecmp(optarg, "cloud") == 0) {
+               setLLM(CLOUD_LLM);
+               LOG_INFO("Using cloud LLM by default");
+            } else if (strcasecmp(optarg, "local") == 0) {
+               setLLM(LOCAL_LLM);
+               LOG_INFO("Using local LLM by default");
+            } else {
+               LOG_ERROR("Unknown LLM type: %s. Using auto-detection.", optarg);
+            }
+            break;
+         case '?':
+            display_help(argc, argv);
+            exit(EXIT_FAILURE);
+         default:
+            display_help(argc, argv);
+            exit(EXIT_FAILURE);
       }
    }
 
@@ -1342,8 +1295,7 @@ int main(int argc, char *argv[])
    fclose(configFile);
    LOG_INFO("Done.\n");
 
-   if (parseCommandConfig(buffer, actions, &numActions,
-                          captureDevices, &numAudioCaptureDevices,
+   if (parseCommandConfig(buffer, actions, &numActions, captureDevices, &numAudioCaptureDevices,
                           playbackDevices, &numAudioPlaybackDevices)) {
       LOG_ERROR("Error parsing json.\n");
       return 1;
@@ -1365,7 +1317,8 @@ int main(int argc, char *argv[])
    if (command_processing_mode == CMD_MODE_LLM_ONLY ||
        command_processing_mode == CMD_MODE_DIRECT_FIRST) {
       // LLM modes get the enhanced prompt with command information
-      json_object_object_add(system_message, "content", json_object_new_string(get_command_prompt()));
+      json_object_object_add(system_message, "content",
+                             json_object_new_string(get_command_prompt()));
       LOG_INFO("Using enhanced system prompt for LLM command processing");
    } else {
       // Direct-only mode gets the original AI description
@@ -1377,7 +1330,8 @@ int main(int argc, char *argv[])
 
 #ifdef ALSA_DEVICE
    // Open Audio Capture Device
-   rc = openAlsaPcmCaptureDevice(myAudioControls.handle, pcm_capture_device, myAudioControls.frames);
+   rc = openAlsaPcmCaptureDevice(myAudioControls.handle, pcm_capture_device,
+                                 myAudioControls.frames);
    if (rc) {
       LOG_ERROR("Error creating ALSA capture device.\n");
       return 1;
@@ -1395,7 +1349,8 @@ int main(int argc, char *argv[])
    myAudioControls.full_buff_size = myAudioControls.pa_framesize;
 #endif
 
-   LOG_INFO("max_buff_size: %u, full_buff_size: %u\n", max_buff_size, myAudioControls.full_buff_size);
+   LOG_INFO("max_buff_size: %u, full_buff_size: %u\n", max_buff_size,
+            myAudioControls.full_buff_size);
 
    max_buff = (char *)malloc(max_buff_size);
    if (max_buff == NULL) {
@@ -1416,7 +1371,7 @@ int main(int argc, char *argv[])
       LOG_ERROR("Error creating background audio detection thread.\n");
    }
 #else
-   measureBackgroundAudio((void *) &myAudioControls);
+   measureBackgroundAudio((void *)&myAudioControls);
 #endif
 
    LOG_INFO("Init vosk.");
@@ -1460,7 +1415,7 @@ int main(int argc, char *argv[])
    mosquitto_lib_init();
 
    mosq = mosquitto_new(NULL, true, NULL);
-   if (mosq == NULL){
+   if (mosq == NULL) {
       LOG_ERROR("Error: Out of memory.\n");
       return 1;
    }
@@ -1475,7 +1430,7 @@ int main(int argc, char *argv[])
 
    /* Connect to local MQTT server. */
    rc = mosquitto_connect(mosq, MQTT_IP, MQTT_PORT, 60);
-   if (rc != MOSQ_ERR_SUCCESS){
+   if (rc != MOSQ_ERR_SUCCESS) {
       mosquitto_destroy(mosq);
       LOG_ERROR("Error on mosquitto_connect(): %s\n", mosquitto_strerror(rc));
       return 1;
@@ -1490,7 +1445,7 @@ int main(int argc, char *argv[])
    /* Initialize text to speech processing. */
    initialize_text_to_speech(pcm_playback_device);
 
-   text_to_speech((char *) timeOfDayGreeting());
+   text_to_speech((char *)timeOfDayGreeting());
 
    // Register the signal handler for SIGINT.
    if (signal(SIGINT, signal_handler) == SIG_ERR) {
@@ -1529,7 +1484,7 @@ int main(int argc, char *argv[])
    // Main loop
    LOG_INFO("Listening...\n");
    while (!quit) {
-      if (vision_ai_ready){
+      if (vision_ai_ready) {
          recState = VISION_AI_READY;
       }
 
@@ -1550,41 +1505,43 @@ int main(int argc, char *argv[])
 
             // State transition safety check
             if (recState == PROCESS_COMMAND || recState == VISION_AI_READY) {
-                LOG_WARNING("Network audio received during %s - deferring",
+               LOG_WARNING("Network audio received during %s - deferring",
                            recState == PROCESS_COMMAND ? "command processing" : "vision AI");
 
-                // Send busy message TTS
-                size_t busy_wav_size = 0;
-                uint8_t *busy_wav = error_to_wav("I'm currently busy. Please try again in a moment.", &busy_wav_size);
-                if (busy_wav) {
-                   pthread_mutex_lock(&processing_mutex);
-                   processing_result_data = busy_wav;
-                   processing_result_size = busy_wav_size;
-                   processing_complete = 1;
-                   pthread_cond_signal(&processing_done);
-                   pthread_mutex_unlock(&processing_mutex);
+               // Send busy message TTS
+               size_t busy_wav_size = 0;
+               uint8_t *busy_wav = error_to_wav("I'm currently busy. Please try again in a moment.",
+                                                &busy_wav_size);
+               if (busy_wav) {
+                  pthread_mutex_lock(&processing_mutex);
+                  processing_result_data = busy_wav;
+                  processing_result_size = busy_wav_size;
+                  processing_complete = 1;
+                  pthread_cond_signal(&processing_done);
+                  pthread_mutex_unlock(&processing_mutex);
 
-                   LOG_INFO("Sent busy message to %s", client_info);
-                } else {
-                   // Fallback: signal with no data (triggers echo fallback in server)
-                   LOG_ERROR("Failed to generate busy TTS - client will timeout");
-                   pthread_mutex_lock(&processing_mutex);
-                   processing_result_data = NULL;
-                   processing_result_size = 0;
-                   processing_complete = 1;
-                   pthread_cond_signal(&processing_done);
-                   pthread_mutex_unlock(&processing_mutex);
-                }
+                  LOG_INFO("Sent busy message to %s", client_info);
+               } else {
+                  // Fallback: signal with no data (triggers echo fallback in server)
+                  LOG_ERROR("Failed to generate busy TTS - client will timeout");
+                  pthread_mutex_lock(&processing_mutex);
+                  processing_result_data = NULL;
+                  processing_result_size = 0;
+                  processing_complete = 1;
+                  pthread_cond_signal(&processing_done);
+                  pthread_mutex_unlock(&processing_mutex);
+               }
 
-                dawn_clear_network_audio();
-                continue; // Skip to next loop iteration
+               dawn_clear_network_audio();
+               continue;  // Skip to next loop iteration
             }
 
             // Safe to process - save current state and transition
             LOG_INFO("Interrupting %s state for network processing",
-                    recState == SILENCE ? "SILENCE" :
-                    recState == WAKEWORD_LISTEN ? "WAKEWORD_LISTEN" :
-                    recState == COMMAND_RECORDING ? "COMMAND_RECORDING" : "OTHER");
+                     recState == SILENCE             ? "SILENCE"
+                     : recState == WAKEWORD_LISTEN   ? "WAKEWORD_LISTEN"
+                     : recState == COMMAND_RECORDING ? "COMMAND_RECORDING"
+                                                     : "OTHER");
 
             previous_state_before_network = recState;
 
@@ -1627,7 +1584,7 @@ int main(int argc, char *argv[])
                      processing_complete = 1;
                      pthread_cond_signal(&processing_done);
                      pthread_mutex_unlock(&processing_mutex);
-                  } 
+                  }
                }
 
                pthread_mutex_unlock(&network_processing_mutex);
@@ -1654,9 +1611,10 @@ int main(int argc, char *argv[])
                   processing_complete = 1;
                   pthread_cond_signal(&processing_done);
                   pthread_mutex_unlock(&processing_mutex);
-               } 
+               }
 
-               if (pcm) free_network_pcm_data(pcm);
+               if (pcm)
+                  free_network_pcm_data(pcm);
             }
 
             dawn_clear_network_audio();
@@ -1675,7 +1633,7 @@ int main(int argc, char *argv[])
 
             capture_buffer(&myAudioControls, max_buff, max_buff_size, &buff_size);
 
-            rms = calculateRMS((int16_t*)max_buff, buff_size / (DEFAULT_CHANNELS * 2));
+            rms = calculateRMS((int16_t *)max_buff, buff_size / (DEFAULT_CHANNELS * 2));
 
             if (rms >= (backgroundRMS + TALKING_THRESHOLD_OFFSET)) {
                LOG_WARNING("SILENCE: Talking detected. Going into WAKEWORD_LISTENING.\n");
@@ -1699,7 +1657,7 @@ int main(int argc, char *argv[])
 
             capture_buffer(&myAudioControls, max_buff, max_buff_size, &buff_size);
 
-            rms = calculateRMS((int16_t*)max_buff, buff_size / (DEFAULT_CHANNELS * 2));
+            rms = calculateRMS((int16_t *)max_buff, buff_size / (DEFAULT_CHANNELS * 2));
 
             if (rms >= (backgroundRMS + TALKING_THRESHOLD_OFFSET)) {
                LOG_WARNING("WAKEWORD_LISTEN: Talking still in progress.\n");
@@ -1832,7 +1790,7 @@ int main(int argc, char *argv[])
 
             capture_buffer(&myAudioControls, max_buff, max_buff_size, &buff_size);
 
-            rms = calculateRMS((int16_t*)max_buff, buff_size / (DEFAULT_CHANNELS * 2));
+            rms = calculateRMS((int16_t *)max_buff, buff_size / (DEFAULT_CHANNELS * 2));
 
             if (rms >= (backgroundRMS + TALKING_THRESHOLD_OFFSET)) {
                LOG_WARNING("COMMAND_RECORDING: Talking still in progress.\n");
@@ -1888,8 +1846,8 @@ int main(int argc, char *argv[])
                /* Process Commands before AI. */
                for (i = 0; i < numCommands; i++) {
                   if (searchString(commands[i].actionWordsWildcard, command_text) == 1) {
-                     char thisValue[1024];   // FIXME: These are abnormally large.
-                                             // I'm in a hurry and don't want overflows.
+                     char thisValue[1024];  // FIXME: These are abnormally large.
+                                            // I'm in a hurry and don't want overflows.
                      char thisCommand[2048];
                      char thisSubstring[2048];
                      int strLength = 0;
@@ -1903,24 +1861,25 @@ int main(int argc, char *argv[])
 
                      memset(thisValue, '\0', sizeof(thisValue));
                      LOG_WARNING("Found command \"%s\".\n\tLooking for value in \"%s\".\n",
-                            commands[i].actionWordsWildcard, commands[i].actionWordsRegex);
+                                 commands[i].actionWordsWildcard, commands[i].actionWordsRegex);
 
                      strLength = strlen(commands[i].actionWordsRegex);
                      if ((strLength >= 2) && (commands[i].actionWordsRegex[strLength - 2] == '%') &&
                          (commands[i].actionWordsRegex[strLength - 1] == 's')) {
                         strncpy(thisSubstring, commands[i].actionWordsRegex, strLength - 2);
                         thisSubstring[strLength - 2] = '\0';
-                        strcpy(thisValue, extract_remaining_after_substring(command_text, thisSubstring));
+                        strcpy(thisValue,
+                               extract_remaining_after_substring(command_text, thisSubstring));
                      } else {
                         int retSs = sscanf(command_text, commands[i].actionWordsRegex, thisValue);
                      }
-                     snprintf(thisCommand, sizeof(thisCommand),
-                              commands[i].actionCommand, thisValue);
+                     snprintf(thisCommand, sizeof(thisCommand), commands[i].actionCommand,
+                              thisValue);
                      LOG_WARNING("Sending: \"%s\"\n", thisCommand);
 
                      rc = mosquitto_publish(mosq, NULL, commands[i].topic, strlen(thisCommand),
                                             thisCommand, 0, false);
-                     if(rc != MOSQ_ERR_SUCCESS){
+                     if (rc != MOSQ_ERR_SUCCESS) {
                         LOG_ERROR("Error publishing: %s\n", mosquitto_strerror(rc));
                      }
 
@@ -1933,12 +1892,12 @@ int main(int argc, char *argv[])
             /* Try LLM processing if:
              * - We're in LLM-only mode, OR
              * - We're in direct-first mode but no direct command was found, OR
-             * - We're in direct-only mode but no direct command was found (for ignore word processing)
+             * - We're in direct-only mode but no direct command was found (for ignore word
+             * processing)
              */
             if (command_processing_mode == CMD_MODE_LLM_ONLY ||
                 (command_processing_mode == CMD_MODE_DIRECT_FIRST && !direct_command_found) ||
                 (command_processing_mode == CMD_MODE_DIRECT_ONLY && !direct_command_found)) {
-
                LOG_WARNING("Processing with LLM (mode: %d, direct found: %d).\n",
                            command_processing_mode, direct_command_found);
 #ifndef DISABLE_AI
@@ -1962,7 +1921,8 @@ int main(int argc, char *argv[])
                   }
                }
 
-               if (ignoreCount < numIgnoreWords && command_processing_mode == CMD_MODE_DIRECT_ONLY) {
+               if (ignoreCount < numIgnoreWords &&
+                   command_processing_mode == CMD_MODE_DIRECT_ONLY) {
                   LOG_WARNING("Input ignored. Found in ignore list.\n");
                   silenceNextState = WAKEWORD_LISTEN;
                   recState = SILENCE;
@@ -1999,8 +1959,8 @@ int main(int argc, char *argv[])
                         }
                      }
 
-                     /* This match section was added for local AI models that return extra data that needs
-                      * to be filtered out.
+                     /* This match section was added for local AI models that return extra data that
+                      * needs to be filtered out.
                       */
                      // <end_of_turn> is being added by Gemma 2B
                      char *match = NULL;
@@ -2024,8 +1984,10 @@ int main(int argc, char *argv[])
                      text_to_speech(response_text);
 
                      struct json_object *ai_message = json_object_new_object();
-                     json_object_object_add(ai_message, "role", json_object_new_string("assistant"));
-                     json_object_object_add(ai_message, "content", json_object_new_string(response_text));
+                     json_object_object_add(ai_message, "role",
+                                            json_object_new_string("assistant"));
+                     json_object_object_add(ai_message, "content",
+                                            json_object_new_string(response_text));
                      json_object_array_add(conversation_history, ai_message);
 
                      free(response_text);
@@ -2065,17 +2027,18 @@ int main(int argc, char *argv[])
             pthread_mutex_unlock(&tts_mutex);
 
             // Get the AI response using the image recognition.
-            response_text = getGptResponse(conversation_history,
-                  "What am I looking at? Ignore the overlay unless asked about it specifically.",
-                  vision_ai_image, vision_ai_image_size);
+            response_text = getGptResponse(
+                conversation_history,
+                "What am I looking at? Ignore the overlay unless asked about it specifically.",
+                vision_ai_image, vision_ai_image_size);
             if (response_text != NULL) {
                // AI returned successfully, vocalize response.
                LOG_WARNING("AI: %s\n", response_text);
-	            char *match = NULL;
-	            if ((match = strstr(response_text, "<end_of_turn>")) != NULL) {
+               char *match = NULL;
+               if ((match = strstr(response_text, "<end_of_turn>")) != NULL) {
                   *match = '\0';
                   LOG_WARNING("AI: %s\n", response_text);
-	            }
+               }
                text_to_speech(response_text);
 
                // Add the successful AI response to the conversation.
@@ -2105,227 +2068,238 @@ int main(int argc, char *argv[])
 
             break;
          case NETWORK_PROCESSING:
-             LOG_INFO("Processing network audio from client");
+            LOG_INFO("Processing network audio from client");
 
-             pthread_mutex_lock(&network_processing_mutex);
+            pthread_mutex_lock(&network_processing_mutex);
 
-             if (network_pcm_buffer && network_pcm_size > 0) {
-                 // Reset Vosk for new session
-                 vosk_recognizer_reset(recognizer);
+            if (network_pcm_buffer && network_pcm_size > 0) {
+               // Reset Vosk for new session
+               vosk_recognizer_reset(recognizer);
 
-                 // Process PCM data with Vosk
-                 vosk_recognizer_accept_waveform(recognizer, (const char*)network_pcm_buffer, network_pcm_size);
-                 vosk_output = vosk_recognizer_final_result(recognizer);
+               // Process PCM data with Vosk
+               vosk_recognizer_accept_waveform(recognizer, (const char *)network_pcm_buffer,
+                                               network_pcm_size);
+               vosk_output = vosk_recognizer_final_result(recognizer);
 
-                 if (vosk_output) {
-                     LOG_INFO("Network transcription result: %s", vosk_output);
+               if (vosk_output) {
+                  LOG_INFO("Network transcription result: %s", vosk_output);
 
-                     // Extract text using existing function
-                     input_text = getTextResponse(vosk_output);
+                  // Extract text using existing function
+                  input_text = getTextResponse(vosk_output);
 
-                     /* Process Commands before AI if LLM command processing is disabled */
-                     if (command_processing_mode != CMD_MODE_LLM_ONLY) {
-                        /* Process Commands before AI. */
-                        direct_command_found = 0;
-                        for (i = 0; i < numCommands; i++) {
-                           if (searchString(commands[i].actionWordsWildcard, input_text) == 1) {
-                              char thisValue[1024];   // FIXME: These are abnormally large.
-                                                      // I'm in a hurry and don't want overflows.
-                              char thisCommand[2048];
-                              char thisSubstring[2048];
-                              int strLength = 0;
+                  /* Process Commands before AI if LLM command processing is disabled */
+                  if (command_processing_mode != CMD_MODE_LLM_ONLY) {
+                     /* Process Commands before AI. */
+                     direct_command_found = 0;
+                     for (i = 0; i < numCommands; i++) {
+                        if (searchString(commands[i].actionWordsWildcard, input_text) == 1) {
+                           char thisValue[1024];  // FIXME: These are abnormally large.
+                                                  // I'm in a hurry and don't want overflows.
+                           char thisCommand[2048];
+                           char thisSubstring[2048];
+                           int strLength = 0;
 
-                              pthread_mutex_lock(&tts_mutex);
-                              if (tts_playback_state == TTS_PLAYBACK_PAUSE) {
-                                 tts_playback_state = TTS_PLAYBACK_DISCARD;
-                                 pthread_cond_signal(&tts_cond);
-                              }
-                              pthread_mutex_unlock(&tts_mutex);
-
-                              memset(thisValue, '\0', sizeof(thisValue));
-                              LOG_WARNING("Found command \"%s\".\n\tLooking for value in \"%s\".\n",
-                                     commands[i].actionWordsWildcard, commands[i].actionWordsRegex);
-
-                              strLength = strnlen(commands[i].actionWordsRegex, MAX_COMMAND_LENGTH);
-                              if ((strLength >= 2) && (commands[i].actionWordsRegex[strLength - 2] == '%') &&
-                                  (commands[i].actionWordsRegex[strLength - 1] == 's')) {
-                                 strncpy(thisSubstring, commands[i].actionWordsRegex, strLength - 2);
-                                 thisSubstring[strLength - 2] = '\0';
-                                 strcpy(thisValue, extract_remaining_after_substring(input_text, thisSubstring));
-                              } else {
-                                 int retSs = sscanf(input_text, commands[i].actionWordsRegex, thisValue);
-                              }
-                              snprintf(thisCommand, sizeof(thisCommand),
-                                       commands[i].actionCommand, thisValue);
-                              LOG_WARNING("Sending: \"%s\"\n", thisCommand);
-
-                              rc = mosquitto_publish(mosq, NULL, commands[i].topic, strlen(thisCommand),
-                                                     thisCommand, 0, false);
-                              if(rc != MOSQ_ERR_SUCCESS){
-                                 LOG_ERROR("Error publishing: %s\n", mosquitto_strerror(rc));
-                              }
-
-                              direct_command_found = 1;
-                              break;
+                           pthread_mutex_lock(&tts_mutex);
+                           if (tts_playback_state == TTS_PLAYBACK_PAUSE) {
+                              tts_playback_state = TTS_PLAYBACK_DISCARD;
+                              pthread_cond_signal(&tts_cond);
                            }
+                           pthread_mutex_unlock(&tts_mutex);
+
+                           memset(thisValue, '\0', sizeof(thisValue));
+                           LOG_WARNING("Found command \"%s\".\n\tLooking for value in \"%s\".\n",
+                                       commands[i].actionWordsWildcard,
+                                       commands[i].actionWordsRegex);
+
+                           strLength = strnlen(commands[i].actionWordsRegex, MAX_COMMAND_LENGTH);
+                           if ((strLength >= 2) &&
+                               (commands[i].actionWordsRegex[strLength - 2] == '%') &&
+                               (commands[i].actionWordsRegex[strLength - 1] == 's')) {
+                              strncpy(thisSubstring, commands[i].actionWordsRegex, strLength - 2);
+                              thisSubstring[strLength - 2] = '\0';
+                              strcpy(thisValue,
+                                     extract_remaining_after_substring(input_text, thisSubstring));
+                           } else {
+                              int retSs = sscanf(input_text, commands[i].actionWordsRegex,
+                                                 thisValue);
+                           }
+                           snprintf(thisCommand, sizeof(thisCommand), commands[i].actionCommand,
+                                    thisValue);
+                           LOG_WARNING("Sending: \"%s\"\n", thisCommand);
+
+                           rc = mosquitto_publish(mosq, NULL, commands[i].topic,
+                                                  strlen(thisCommand), thisCommand, 0, false);
+                           if (rc != MOSQ_ERR_SUCCESS) {
+                              LOG_ERROR("Error publishing: %s\n", mosquitto_strerror(rc));
+                           }
+
+                           direct_command_found = 1;
+                           break;
                         }
                      }
+                  }
 
-                     if (input_text && strlen(input_text) > 0 && !direct_command_found) {
-                         LOG_INFO("Network speech recognized: \"%s\"", input_text);
+                  if (input_text && strlen(input_text) > 0 && !direct_command_found) {
+                     LOG_INFO("Network speech recognized: \"%s\"", input_text);
 
-                         // Get LLM response using existing function
-                         response_text = getGptResponse(conversation_history, input_text, NULL, 0);
+                     // Get LLM response using existing function
+                     response_text = getGptResponse(conversation_history, input_text, NULL, 0);
 
-                         if (response_text && strlen(response_text) > 0) {
+                     if (response_text && strlen(response_text) > 0) {
+                        // Now be sure to filter out special characters that give us problems.
+                        remove_chars(response_text, "*");
+                        remove_emojis(response_text);
 
-                             // Now be sure to filter out special characters that give us problems.
-                             remove_chars(response_text, "*");
-                             remove_emojis(response_text);
+                        LOG_INFO("Network LLM response: \"%s\"", response_text);
 
-                             LOG_INFO("Network LLM response: \"%s\"", response_text);
+                        // Generate TTS WAV for network transmission with ESP32 size limits
+                        size_t response_wav_size = 0;
+                        uint8_t *response_wav = NULL;
 
-                             // Generate TTS WAV for network transmission with ESP32 size limits
-                             size_t response_wav_size = 0;
-                             uint8_t *response_wav = NULL;
+                        if (text_to_speech_to_wav(response_text, &response_wav,
+                                                  &response_wav_size) == 0 &&
+                            response_wav) {
+                           LOG_INFO("Network TTS generated: %zu bytes", response_wav_size);
 
-                             if (text_to_speech_to_wav(response_text, &response_wav, &response_wav_size) == 0 && response_wav) {
-                                 LOG_INFO("Network TTS generated: %zu bytes", response_wav_size);
+                           // Check ESP32 buffer limits
+                           if (check_response_size_limit(response_wav_size)) {
+                              // Fits within ESP32 limits - send as-is
+                              pthread_mutex_lock(&processing_mutex);
+                              processing_result_data = response_wav;
+                              processing_result_size = response_wav_size;
+                              processing_complete = 1;
+                              pthread_cond_signal(&processing_done);
+                              pthread_mutex_unlock(&processing_mutex);
 
-                                 // Check ESP32 buffer limits
-                                 if (check_response_size_limit(response_wav_size)) {
-                                     // Fits within ESP32 limits - send as-is
-                                     pthread_mutex_lock(&processing_mutex);
-                                     processing_result_data = response_wav;
-                                     processing_result_size = response_wav_size;
-                                     processing_complete = 1;
-                                     pthread_cond_signal(&processing_done);
-                                     pthread_mutex_unlock(&processing_mutex);
+                              LOG_INFO("Network TTS response ready (%zu bytes)", response_wav_size);
+                           } else {
+                              // Too large for ESP32 - truncate
+                              LOG_WARNING("TTS response too large for ESP32, truncating...");
 
-                                     LOG_INFO("Network TTS response ready (%zu bytes)", response_wav_size);
-                                 } else {
-                                     // Too large for ESP32 - truncate
-                                     LOG_WARNING("TTS response too large for ESP32, truncating...");
+                              uint8_t *truncated_wav = NULL;
+                              size_t truncated_size = 0;
 
-                                     uint8_t *truncated_wav = NULL;
-                                     size_t truncated_size = 0;
+                              if (truncate_wav_response(response_wav, response_wav_size,
+                                                        &truncated_wav, &truncated_size) == 0) {
+                                 // Truncation successful
+                                 free(response_wav);  // Free original
 
-                                     if (truncate_wav_response(response_wav, response_wav_size,
-                                                             &truncated_wav, &truncated_size) == 0) {
-                                         // Truncation successful
-                                         free(response_wav);  // Free original
-
-                                         pthread_mutex_lock(&processing_mutex);
-                                         processing_result_data = truncated_wav;
-                                         processing_result_size = truncated_size;
-                                         processing_complete = 1;
-                                         pthread_cond_signal(&processing_done);
-                                         pthread_mutex_unlock(&processing_mutex);
-
-                                         LOG_INFO("Network TTS truncated and ready (%zu bytes)", truncated_size);
-                                     } else {
-                                         // Truncation failed - send error TTS
-                                         free(response_wav);
-                                         LOG_ERROR("Failed to truncate TTS response");
-
-                                         size_t error_wav_size = 0;
-                                         uint8_t *error_wav = error_to_wav("Response too long. Please ask for a shorter answer.", &error_wav_size);
-                                         if (error_wav) {
-                                             pthread_mutex_lock(&processing_mutex);
-                                             processing_result_data = error_wav;
-                                             processing_result_size = error_wav_size;
-                                             processing_complete = 1;
-                                             pthread_cond_signal(&processing_done);
-                                             pthread_mutex_unlock(&processing_mutex);
-
-                                             LOG_INFO("Sent 'too long' error TTS (%zu bytes)", error_wav_size);
-                                         }
-                                     }
-                                 }
-                             } else {
-                                 // Send TTS error
-                                 size_t error_wav_size = 0;
-                                 uint8_t *error_wav = error_to_wav(ERROR_MSG_TTS_FAILED, &error_wav_size);
-                                 if (error_wav) {
-                                     pthread_mutex_lock(&processing_mutex);
-                                     processing_result_data = error_wav;
-                                     processing_result_size = error_wav_size;
-                                     processing_complete = 1;
-                                     pthread_cond_signal(&processing_done);
-                                     pthread_mutex_unlock(&processing_mutex);
-                                 }
-                             }
-
-                             free(response_text);
-                         } else {
-                             LOG_WARNING("Network LLM processing failed");
-
-                             // Send LLM timeout error
-                             size_t error_wav_size = 0;
-                             uint8_t *error_wav = error_to_wav(ERROR_MSG_LLM_TIMEOUT, &error_wav_size);
-                             if (error_wav) {
                                  pthread_mutex_lock(&processing_mutex);
-                                 processing_result_data = error_wav;
-                                 processing_result_size = error_wav_size;
+                                 processing_result_data = truncated_wav;
+                                 processing_result_size = truncated_size;
                                  processing_complete = 1;
                                  pthread_cond_signal(&processing_done);
                                  pthread_mutex_unlock(&processing_mutex);
-                             }
-                         }
 
-                         free(input_text);
+                                 LOG_INFO("Network TTS truncated and ready (%zu bytes)",
+                                          truncated_size);
+                              } else {
+                                 // Truncation failed - send error TTS
+                                 free(response_wav);
+                                 LOG_ERROR("Failed to truncate TTS response");
+
+                                 size_t error_wav_size = 0;
+                                 uint8_t *error_wav = error_to_wav(
+                                     "Response too long. Please ask for a shorter answer.",
+                                     &error_wav_size);
+                                 if (error_wav) {
+                                    pthread_mutex_lock(&processing_mutex);
+                                    processing_result_data = error_wav;
+                                    processing_result_size = error_wav_size;
+                                    processing_complete = 1;
+                                    pthread_cond_signal(&processing_done);
+                                    pthread_mutex_unlock(&processing_mutex);
+
+                                    LOG_INFO("Sent 'too long' error TTS (%zu bytes)",
+                                             error_wav_size);
+                                 }
+                              }
+                           }
+                        } else {
+                           // Send TTS error
+                           size_t error_wav_size = 0;
+                           uint8_t *error_wav = error_to_wav(ERROR_MSG_TTS_FAILED, &error_wav_size);
+                           if (error_wav) {
+                              pthread_mutex_lock(&processing_mutex);
+                              processing_result_data = error_wav;
+                              processing_result_size = error_wav_size;
+                              processing_complete = 1;
+                              pthread_cond_signal(&processing_done);
+                              pthread_mutex_unlock(&processing_mutex);
+                           }
+                        }
+
+                        free(response_text);
                      } else {
-                         // Send speech error
-                         size_t error_wav_size = 0;
-                         uint8_t *error_wav = NULL;
+                        LOG_WARNING("Network LLM processing failed");
 
-                         if (direct_command_found) {
-                            LOG_WARNING("Direct command found.");
-                            error_wav = error_to_wav("Direct command found and acted upon.", &error_wav_size);
-                         } else {
-                            LOG_WARNING("Network speech recognition failed");
-                            error_wav = error_to_wav(ERROR_MSG_SPEECH_FAILED, &error_wav_size);
-                         }
-                         if (error_wav) {
-                             pthread_mutex_lock(&processing_mutex);
-                             processing_result_data = error_wav;
-                             processing_result_size = error_wav_size;
-                             processing_complete = 1;
-                             pthread_cond_signal(&processing_done);
-                             pthread_mutex_unlock(&processing_mutex);
-                         }
+                        // Send LLM timeout error
+                        size_t error_wav_size = 0;
+                        uint8_t *error_wav = error_to_wav(ERROR_MSG_LLM_TIMEOUT, &error_wav_size);
+                        if (error_wav) {
+                           pthread_mutex_lock(&processing_mutex);
+                           processing_result_data = error_wav;
+                           processing_result_size = error_wav_size;
+                           processing_complete = 1;
+                           pthread_cond_signal(&processing_done);
+                           pthread_mutex_unlock(&processing_mutex);
+                        }
                      }
-                 } else {
-                     LOG_WARNING("Vosk processing returned no output");
 
+                     free(input_text);
+                  } else {
                      // Send speech error
                      size_t error_wav_size = 0;
-                     uint8_t *error_wav = error_to_wav(ERROR_MSG_SPEECH_FAILED, &error_wav_size);
-                     if (error_wav) {
-                         pthread_mutex_lock(&processing_mutex);
-                         processing_result_data = error_wav;
-                         processing_result_size = error_wav_size;
-                         processing_complete = 1;
-                         pthread_cond_signal(&processing_done);
-                         pthread_mutex_unlock(&processing_mutex);
+                     uint8_t *error_wav = NULL;
+
+                     if (direct_command_found) {
+                        LOG_WARNING("Direct command found.");
+                        error_wav = error_to_wav("Direct command found and acted upon.",
+                                                 &error_wav_size);
+                     } else {
+                        LOG_WARNING("Network speech recognition failed");
+                        error_wav = error_to_wav(ERROR_MSG_SPEECH_FAILED, &error_wav_size);
                      }
-                 }
+                     if (error_wav) {
+                        pthread_mutex_lock(&processing_mutex);
+                        processing_result_data = error_wav;
+                        processing_result_size = error_wav_size;
+                        processing_complete = 1;
+                        pthread_cond_signal(&processing_done);
+                        pthread_mutex_unlock(&processing_mutex);
+                     }
+                  }
+               } else {
+                  LOG_WARNING("Vosk processing returned no output");
 
-                 // Cleanup network buffers
-                 if (network_pcm_buffer) {
-                    free(network_pcm_buffer);
-                    network_pcm_buffer = NULL;
-                    network_pcm_size = 0;
-                 }
-             }
+                  // Send speech error
+                  size_t error_wav_size = 0;
+                  uint8_t *error_wav = error_to_wav(ERROR_MSG_SPEECH_FAILED, &error_wav_size);
+                  if (error_wav) {
+                     pthread_mutex_lock(&processing_mutex);
+                     processing_result_data = error_wav;
+                     processing_result_size = error_wav_size;
+                     processing_complete = 1;
+                     pthread_cond_signal(&processing_done);
+                     pthread_mutex_unlock(&processing_mutex);
+                  }
+               }
 
-             pthread_mutex_unlock(&network_processing_mutex);
+               // Cleanup network buffers
+               if (network_pcm_buffer) {
+                  free(network_pcm_buffer);
+                  network_pcm_buffer = NULL;
+                  network_pcm_size = 0;
+               }
+            }
 
-             // Return to previous state
-             recState = previous_state_before_network;
-             LOG_INFO("Network processing complete, returned to %s",
-                      recState == SILENCE ? "SILENCE" : "previous state");
-             break;
+            pthread_mutex_unlock(&network_processing_mutex);
+
+            // Return to previous state
+            recState = previous_state_before_network;
+            LOG_INFO("Network processing complete, returned to %s",
+                     recState == SILENCE ? "SILENCE" : "previous state");
+            break;
          default:
             LOG_ERROR("I really shouldn't be here.\n");
       }

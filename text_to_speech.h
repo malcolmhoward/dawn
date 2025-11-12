@@ -26,12 +26,16 @@
 extern "C" {
 #endif
 
+#include <pthread.h>
+#include <signal.h>
+#include <stdint.h>
+
 // Enumeration for playback state
 typedef enum {
-    TTS_PLAYBACK_IDLE = 0,    /**< Idle playback state */
-    TTS_PLAYBACK_PLAY,        /**< Playing state */
-    TTS_PLAYBACK_PAUSE,       /**< Pause playback */
-    TTS_PLAYBACK_DISCARD      /**< Discard current playback */
+   TTS_PLAYBACK_IDLE = 0, /**< Idle playback state */
+   TTS_PLAYBACK_PLAY,     /**< Playing state */
+   TTS_PLAYBACK_PAUSE,    /**< Pause playback */
+   TTS_PLAYBACK_DISCARD   /**< Discard current playback */
 } tts_playback_state_t;
 
 // Declare the shared variables as extern
@@ -47,7 +51,7 @@ extern volatile sig_atomic_t tts_playback_state;
  *
  * @param pcm_device The name of the PCM device to use for audio playback.
  */
-void initialize_text_to_speech(char* pcm_device);
+void initialize_text_to_speech(char *pcm_device);
 
 /**
  * @brief Enqueues a text string for conversion to speech.
@@ -57,7 +61,7 @@ void initialize_text_to_speech(char* pcm_device);
  *
  * @param text The text to be converted to speech.
  */
-void text_to_speech(char* text);
+void text_to_speech(char *text);
 
 /**
  * @brief Generate WAV audio data from text for network transmission
@@ -70,9 +74,9 @@ void text_to_speech(char* text);
  * @param wav_size_out Pointer to receive WAV data size in bytes
  * @return 0 on success, -1 on error
  */
-int text_to_speech_to_wav(const char* text, uint8_t** wav_data_out, size_t* wav_size_out);
+int text_to_speech_to_wav(const char *text, uint8_t **wav_data_out, size_t *wav_size_out);
 
-uint8_t* error_to_wav(const char* error_message, size_t* tts_size_out);
+uint8_t *error_to_wav(const char *error_message, size_t *tts_size_out);
 
 /**
  * @brief Cleans up the text-to-speech system.
@@ -100,7 +104,8 @@ void cleanup_text_to_speech();
  * - The input string `str` must be mutable and large enough to hold the modified string.
  * - If `str` is `NULL`, the function has no effect.
  * - If `remove_chars` is `NULL` or empty, `str` remains unchanged.
- * - The function compares characters based on their exact value and does not account for locale-specific variations.
+ * - The function compares characters based on their exact value and does not account for
+ * locale-specific variations.
  */
 void remove_chars(char *str, const char *remove_chars);
 
@@ -124,4 +129,4 @@ void remove_emojis(char *str);
 }
 #endif
 
-#endif // TEXT_TO_SPEECH_H
+#endif  // TEXT_TO_SPEECH_H

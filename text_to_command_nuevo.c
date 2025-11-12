@@ -43,26 +43,27 @@
  * @license GPLv3
  */
 
+#include "text_to_command_nuevo.h"
+
+#include <fnmatch.h>
+#include <json-c/json.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
-#include <json-c/json.h>
-#include <fnmatch.h>
 
 #include "logging.h"
-#include "text_to_command_nuevo.h"
 
-char* extract_remaining_after_substring(const char* input, const char* substring) {
-    char *pos = strstr(input, substring);
+char *extract_remaining_after_substring(const char *input, const char *substring) {
+   char *pos = strstr(input, substring);
 
-    if (pos == NULL) {
-        return NULL;  // Substring not found
-    }
+   if (pos == NULL) {
+      return NULL;  // Substring not found
+   }
 
-    return pos + strlen(substring);
+   return pos + strlen(substring);
 }
 
-int searchString(const char* templateStr, const char* secondStr) {
+int searchString(const char *templateStr, const char *secondStr) {
    if ((templateStr == NULL) || (secondStr == NULL)) {
       return -1;
    }
@@ -91,8 +92,8 @@ int searchString(const char* templateStr, const char* secondStr) {
 }
 
 // Function to replace placeholders with given values
-char* replaceWithValues(const char* templateStr, const char* deviceName, const char* value) {
-   char* modifiedStr = NULL;
+char *replaceWithValues(const char *templateStr, const char *deviceName, const char *value) {
+   char *modifiedStr = NULL;
    int slDeviceName = 0;
    int slValue = 0;
 
@@ -114,27 +115,28 @@ char* replaceWithValues(const char* templateStr, const char* deviceName, const c
       slValue = strlen(value);
    }
 
-   modifiedStr = (char*)malloc(strlen(templateStr) + slDeviceName + slValue +
-                               15 /* datetime */ + 1 /* '\0' */); // This isn't perfect but it's safe.
+   modifiedStr = (char *)malloc(strlen(templateStr) + slDeviceName + slValue + 15 /* datetime */ +
+                                1 /* '\0' */);  // This isn't perfect but it's safe.
    if (modifiedStr == NULL) {
       LOG_ERROR("Memory allocation failed.");
       return NULL;
    }
 
-   char* modPtr = modifiedStr;
+   char *modPtr = modifiedStr;
 
    while (*templateStr) {
       if (*templateStr == '%') {
-         const char* placeholder = ++templateStr; // Skip the '%'
+         const char *placeholder = ++templateStr;  // Skip the '%'
          while (*templateStr && *templateStr != '%') {
             templateStr++;
          }
 
          if (*templateStr == '%') {
             size_t placeholderLen = templateStr - placeholder;
-            *templateStr++; // Skip the trailing '%'
+            *templateStr++;  // Skip the trailing '%'
 
-            if ((deviceName != NULL) && (strncmp(placeholder, "device_name", placeholderLen) == 0)) {
+            if ((deviceName != NULL) &&
+                (strncmp(placeholder, "device_name", placeholderLen) == 0)) {
                strcpy(modPtr, deviceName);
                modPtr += slDeviceName;
             } else if ((value != NULL) && (strncmp(placeholder, "value", placeholderLen) == 0)) {
@@ -164,8 +166,10 @@ char* replaceWithValues(const char* templateStr, const char* deviceName, const c
  * We need nice strings that can be filtered for in the audio to text section.
  * This should do that.
  */
-void convertActionsToCommands(actionType *actions, int *numActions,
-                              commandSearchElement *commands, int *numCommands) {
+void convertActionsToCommands(actionType *actions,
+                              int *numActions,
+                              commandSearchElement *commands,
+                              int *numCommands) {
    int i = 0, j = 0, k = 0, m = 0, n = 0;
 
    const char *thisActionCommand = NULL;
@@ -194,11 +198,14 @@ void convertActionsToCommands(actionType *actions, int *numActions,
                thisDevice = actions[i].devices[m].name;
 
                newActionWordsWildcard = replaceWithValues(thisActionWord, thisDevice, "*");
-               //newActionWordsRegex = replaceWithValues(thisActionWord, thisDevice, "%1024[^\\t\\n]");
+               //newActionWordsRegex = replaceWithValues(thisActionWord, thisDevice,
+               //"%1024[^\\t\\n]");
                newActionWordsRegex = replaceWithValues(thisActionWord, thisDevice, "%s");
                newActionCommand = replaceWithValues(thisActionCommand, thisDevice, "%s");
-               strncpy(commands[*numCommands].actionWordsWildcard, newActionWordsWildcard, MAX_COMMAND_LENGTH);
-               strncpy(commands[*numCommands].actionWordsRegex, newActionWordsRegex, MAX_COMMAND_LENGTH);
+               strncpy(commands[*numCommands].actionWordsWildcard, newActionWordsWildcard,
+                       MAX_COMMAND_LENGTH);
+               strncpy(commands[*numCommands].actionWordsRegex, newActionWordsRegex,
+                       MAX_COMMAND_LENGTH);
                strncpy(commands[*numCommands].actionCommand, newActionCommand, MAX_COMMAND_LENGTH);
                strncpy(commands[*numCommands].topic, thisTopic, MAX_WORD_LENGTH);
                (*numCommands)++;
@@ -215,12 +222,16 @@ void convertActionsToCommands(actionType *actions, int *numActions,
                   thisAlias = actions[i].devices[m].aliases[n];
 
                   newActionWordsWildcard = replaceWithValues(thisActionWord, thisAlias, "*");
-                  //newActionWordsRegex = replaceWithValues(thisActionWord, thisAlias, "%1024[^\\t\\n]");
+                  //newActionWordsRegex = replaceWithValues(thisActionWord, thisAlias,
+                  //"%1024[^\\t\\n]");
                   newActionWordsRegex = replaceWithValues(thisActionWord, thisAlias, "%s");
                   newActionCommand = replaceWithValues(thisActionCommand, thisDevice, "%s");
-                  strncpy(commands[*numCommands].actionWordsWildcard, newActionWordsWildcard, MAX_COMMAND_LENGTH);
-                  strncpy(commands[*numCommands].actionWordsRegex, newActionWordsRegex, MAX_COMMAND_LENGTH);
-                  strncpy(commands[*numCommands].actionCommand, newActionCommand, MAX_COMMAND_LENGTH);
+                  strncpy(commands[*numCommands].actionWordsWildcard, newActionWordsWildcard,
+                          MAX_COMMAND_LENGTH);
+                  strncpy(commands[*numCommands].actionWordsRegex, newActionWordsRegex,
+                          MAX_COMMAND_LENGTH);
+                  strncpy(commands[*numCommands].actionCommand, newActionCommand,
+                          MAX_COMMAND_LENGTH);
                   strncpy(commands[*numCommands].topic, thisTopic, MAX_WORD_LENGTH);
                   (*numCommands)++;
                   free(newActionWordsWildcard);
@@ -247,27 +258,27 @@ void printParsedData(actionType *actions, int numActions) {
 
    printf("Data Struct: %d\n", numActions);
    for (i = 0; i < numActions; i++) {
-       printf("Action Type: %s\n", actions[i].name);
-       printf("Sub-Actions:\n");
-       for (j = 0; j < actions[i].numSubActions; j++) {
-          printf("\tName: %s\n", actions[i].subActions[j].name);
-          printf("\tAction Words:\n");
-          for (k = 0; k < actions[i].subActions[j].numActionWords; k++) {
-             printf("\t\t%s \n", actions[i].subActions[j].actionWords[k]);
-          }
-          printf("\tAction Command: %s\n", actions[i].subActions[j].actionCommand);
-       }
-       printf("Devices:\n");
-       for (j = 0; j < actions[i].numDevices; j++) {
-          printf("\tName: %s\n", actions[i].devices[j].name);
-          printf("\tAliases:\n");
-          for (k = 0; k < actions[i].devices[j].numAliases; k++) {
-             printf("\t\t%s\n", actions[i].devices[j].aliases[k]);
-          }
-          printf("\tUnit: %s\n", actions[i].devices[j].unit);
-          printf("\tTopic: %s\n", actions[i].devices[j].topic);
-       }
-       printf("\n");
+      printf("Action Type: %s\n", actions[i].name);
+      printf("Sub-Actions:\n");
+      for (j = 0; j < actions[i].numSubActions; j++) {
+         printf("\tName: %s\n", actions[i].subActions[j].name);
+         printf("\tAction Words:\n");
+         for (k = 0; k < actions[i].subActions[j].numActionWords; k++) {
+            printf("\t\t%s \n", actions[i].subActions[j].actionWords[k]);
+         }
+         printf("\tAction Command: %s\n", actions[i].subActions[j].actionCommand);
+      }
+      printf("Devices:\n");
+      for (j = 0; j < actions[i].numDevices; j++) {
+         printf("\tName: %s\n", actions[i].devices[j].name);
+         printf("\tAliases:\n");
+         for (k = 0; k < actions[i].devices[j].numAliases; k++) {
+            printf("\t\t%s\n", actions[i].devices[j].aliases[k]);
+         }
+         printf("\tUnit: %s\n", actions[i].devices[j].unit);
+         printf("\tTopic: %s\n", actions[i].devices[j].topic);
+      }
+      printf("\n");
    }
 }
 
@@ -278,8 +289,7 @@ void printParsedAudioDevices(audioDevices *devices, int numDevices) {
    int i = 0, j = 0;
 
    printf("Audio Devices:\n");
-   switch (devices[0].type)
-   {
+   switch (devices[0].type) {
       case AUDIO_DEVICE_CAPTURE:
          printf("\tCapture Devices\n");
          break;
@@ -308,18 +318,20 @@ void printCommands(commandSearchElement *commands, int numCommands) {
    int i = 0;
 
    for (i = 0; i < numCommands; i++) {
-      printf("%d:\t%s\n\t%s\n\t%s\n\t%s\n", i,
-             commands[i].actionWordsWildcard, commands[i].actionWordsRegex,
-             commands[i].actionCommand, commands[i].topic);
+      printf("%d:\t%s\n\t%s\n\t%s\n\t%s\n", i, commands[i].actionWordsWildcard,
+             commands[i].actionWordsRegex, commands[i].actionCommand, commands[i].topic);
    }
 }
 
 // Parse the passed in json string into the actionType struct.
-int parseCommandConfig(char *json, actionType *actions, int *numActions,
-                       audioDevices *captureDevices, int *numAudioCaptureDevices,
-                       audioDevices *playbackDevices, int *numAudioPlaybackDevices)
-{
-   struct json_object* parsedJson = NULL;
+int parseCommandConfig(char *json,
+                       actionType *actions,
+                       int *numActions,
+                       audioDevices *captureDevices,
+                       int *numAudioCaptureDevices,
+                       audioDevices *playbackDevices,
+                       int *numAudioPlaybackDevices) {
+   struct json_object *parsedJson = NULL;
 
    struct json_object_iterator it;
    struct json_object_iterator itEnd;
@@ -411,7 +423,7 @@ int parseCommandConfig(char *json, actionType *actions, int *numActions,
          actionName = json_object_iter_peek_name(&itSub);
 
          strncpy(actions[*numActions].subActions[actions[*numActions].numSubActions].name,
-                 actionName, MAX_WORD_LENGTH); // actionName to struct.
+                 actionName, MAX_WORD_LENGTH);  // actionName to struct.
 
          if (!json_object_object_get_ex(actionsObject, actionName, &nextActionObject)) {
             LOG_ERROR("\"%s\" object not found in json.", actionName);
@@ -436,10 +448,16 @@ int parseCommandConfig(char *json, actionType *actions, int *numActions,
 
             actionWord = json_object_get_string(actionWordObject);
 
-            strncpy(actions[*numActions].subActions[actions[*numActions].numSubActions].actionWords[actions[*numActions].subActions[actions[*numActions].numSubActions].numActionWords],
-                    actionWord, MAX_WORD_LENGTH); // actionWord to struct.
+            strncpy(actions[*numActions]
+                        .subActions[actions[*numActions].numSubActions]
+                        .actionWords[actions[*numActions]
+                                         .subActions[actions[*numActions].numSubActions]
+                                         .numActionWords],
+                    actionWord, MAX_WORD_LENGTH);  // actionWord to struct.
 
-            actions[*numActions].subActions[actions[*numActions].numSubActions].numActionWords++;   // Increment numActionWords to struct.
+            actions[*numActions]
+                .subActions[actions[*numActions].numSubActions]
+                .numActionWords++;  // Increment numActionWords to struct.
          }
 
          if (!json_object_object_get_ex(nextActionObject, "action_command", &actionCommandObject)) {
@@ -450,7 +468,8 @@ int parseCommandConfig(char *json, actionType *actions, int *numActions,
 
          actionCommand = json_object_get_string(actionCommandObject);
 
-         strncpy(actions[*numActions].subActions[actions[*numActions].numSubActions].actionCommand, actionCommand, MAX_WORD_LENGTH); // actionCommand to struct.
+         strncpy(actions[*numActions].subActions[actions[*numActions].numSubActions].actionCommand,
+                 actionCommand, MAX_WORD_LENGTH);  // actionCommand to struct.
 
          json_object_iter_next(&itSub);
 
@@ -506,7 +525,8 @@ int parseCommandConfig(char *json, actionType *actions, int *numActions,
          break;
       }
 
-      strncpy(actions[deviceNum].devices[actions[deviceNum].numDevices].name, deviceName, MAX_WORD_LENGTH); // deviceName to struct.
+      strncpy(actions[deviceNum].devices[actions[deviceNum].numDevices].name, deviceName,
+              MAX_WORD_LENGTH);  // deviceName to struct.
 
       /* the next object must be aliases, strictly not required */
       if (!json_object_object_get_ex(nextDeviceObject, "aliases", &deviceAliasesArrayObject)) {
@@ -524,8 +544,12 @@ int parseCommandConfig(char *json, actionType *actions, int *numActions,
             deviceAlias = json_object_get_string(deviceAliasObject);
 
             if (deviceAlias != NULL) {
-               strncpy(actions[deviceNum].devices[actions[deviceNum].numDevices].aliases[actions[deviceNum].devices[actions[deviceNum].numDevices].numAliases], deviceAlias, MAX_WORD_LENGTH); // deviceAlias to struct.
-               actions[deviceNum].devices[actions[deviceNum].numDevices].numAliases++; // Increment numAliases
+               strncpy(actions[deviceNum].devices[actions[deviceNum].numDevices].aliases
+                           [actions[deviceNum].devices[actions[deviceNum].numDevices].numAliases],
+                       deviceAlias, MAX_WORD_LENGTH);  // deviceAlias to struct.
+               actions[deviceNum]
+                   .devices[actions[deviceNum].numDevices]
+                   .numAliases++;  // Increment numAliases
             }
          }
       }
@@ -536,7 +560,8 @@ int parseCommandConfig(char *json, actionType *actions, int *numActions,
       } else {
          deviceUnit = json_object_get_string(deviceUnitObject);
 
-         strncpy(actions[deviceNum].devices[actions[deviceNum].numDevices].unit, deviceUnit, MAX_WORD_LENGTH);
+         strncpy(actions[deviceNum].devices[actions[deviceNum].numDevices].unit, deviceUnit,
+                 MAX_WORD_LENGTH);
       }
 
       /* the next object must be topic, required */
@@ -546,10 +571,11 @@ int parseCommandConfig(char *json, actionType *actions, int *numActions,
       } else {
          deviceTopic = json_object_get_string(deviceTopicObject);
 
-         strncpy(actions[deviceNum].devices[actions[deviceNum].numDevices].topic, deviceTopic, MAX_WORD_LENGTH);
+         strncpy(actions[deviceNum].devices[actions[deviceNum].numDevices].topic, deviceTopic,
+                 MAX_WORD_LENGTH);
       }
 
-      actions[deviceNum].numDevices++; // Increment number of devices.
+      actions[deviceNum].numDevices++;  // Increment number of devices.
 
       json_object_iter_next(&it);
    }
@@ -598,10 +624,12 @@ int parseCommandConfig(char *json, actionType *actions, int *numActions,
       }
 
       thisDeviceType[*thisDeviceCount].type = adTypeNum;
-      strncpy(thisDeviceType[*thisDeviceCount].name, audioDeviceName, MAX_WORD_LENGTH);  // audioDeviceName to struct.
+      strncpy(thisDeviceType[*thisDeviceCount].name, audioDeviceName,
+              MAX_WORD_LENGTH);  // audioDeviceName to struct.
 
       /* the next object must be aliases, not strictly equired */
-      if (!json_object_object_get_ex(nextAudioDeviceObject, "aliases", &audioDeviceAliasesArrayObject)) {
+      if (!json_object_object_get_ex(nextAudioDeviceObject, "aliases",
+                                     &audioDeviceAliasesArrayObject)) {
          LOG_ERROR("\"aliases\" object not found in json.");
       } else {
          arrayLength = json_object_array_length(audioDeviceAliasesArrayObject);
@@ -615,8 +643,10 @@ int parseCommandConfig(char *json, actionType *actions, int *numActions,
 
             audioDeviceAlias = json_object_get_string(audioDeviceAliasObject);
 
-            strncpy(thisDeviceType[*thisDeviceCount].aliases[thisDeviceType[*thisDeviceCount].numAliases], audioDeviceAlias, MAX_WORD_LENGTH); // deviceAlias to struct.
-            thisDeviceType[*thisDeviceCount].numAliases++; // Increment numAliases
+            strncpy(thisDeviceType[*thisDeviceCount]
+                        .aliases[thisDeviceType[*thisDeviceCount].numAliases],
+                    audioDeviceAlias, MAX_WORD_LENGTH);     // deviceAlias to struct.
+            thisDeviceType[*thisDeviceCount].numAliases++;  // Increment numAliases
          }
       }
 
@@ -631,7 +661,7 @@ int parseCommandConfig(char *json, actionType *actions, int *numActions,
 
       strncpy(thisDeviceType[*thisDeviceCount].device, audioDeviceDevice, MAX_WORD_LENGTH);
 
-      (*thisDeviceCount)++; // Increment number of devices.
+      (*thisDeviceCount)++;  // Increment number of devices.
 
       json_object_iter_next(&it);
    }
@@ -642,8 +672,7 @@ int parseCommandConfig(char *json, actionType *actions, int *numActions,
 }
 
 // Initialize all of the action structs' counters.
-void initActions(actionType *actions)
-{
+void initActions(actionType *actions) {
    int i = 0, j = 0, k = 0;
 
    for (i = 0; i < MAX_ACTIONS; i++) {

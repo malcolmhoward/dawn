@@ -19,16 +19,17 @@
  * part of the project and are adopted by the project author(s).
  */
 
-#include <pulse/simple.h>
-#include <pulse/error.h>
-#include <FLAC/stream_decoder.h>
-#include <pthread.h>
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
-#include <mosquitto.h>
-
 #include "flac_playback.h"
+
+#include <FLAC/stream_decoder.h>
+#include <mosquitto.h>
+#include <pthread.h>
+#include <pulse/error.h>
+#include <pulse/simple.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
 #include "logging.h"
 #include "mosquitto_comms.h"
 
@@ -42,8 +43,9 @@
  * Values above 1.0 may result in amplification and potentially introduce distortion or clipping.
  *
  * Usage:
- * Assign a value to this variable to adjust the playback volume before starting or during audio playback.
- * For example, setting `global_volume = 0.75;` adjusts the volume to 75% of the maximum level.
+ * Assign a value to this variable to adjust the playback volume before starting or during audio
+ * playback. For example, setting `global_volume = 0.75;` adjusts the volume to 75% of the maximum
+ * level.
  */
 static float global_volume = 0.5f;
 
@@ -68,18 +70,19 @@ int getMusicPlay(void) {
  * @param metadata The metadata object encountered in the stream.
  * @param client_data Optional user data provided to the decoder.
  */
-void metadata_callback(const FLAC__StreamDecoder *decoder, const FLAC__StreamMetadata *metadata, void *client_data) {
-   if(metadata->type == FLAC__METADATA_TYPE_STREAMINFO) {
+void metadata_callback(const FLAC__StreamDecoder *decoder,
+                       const FLAC__StreamMetadata *metadata,
+                       void *client_data) {
+   if (metadata->type == FLAC__METADATA_TYPE_STREAMINFO) {
       FLAC__StreamMetadata_StreamInfo info = metadata->data.stream_info;
       LOG_INFO("Sample rate: %u Hz", info.sample_rate);
       LOG_INFO("Channels: %u", info.channels);
       LOG_INFO("Bits per sample: %u", info.bits_per_sample);
-   }
-   else if(metadata->type == FLAC__METADATA_TYPE_PICTURE) {
+   } else if (metadata->type == FLAC__METADATA_TYPE_PICTURE) {
       LOG_INFO("*** Got FLAC__METADATA_TYPE_PICTURE.");
       FLAC__StreamMetadata_Picture picture = metadata->data.picture;
 
-      if(picture.type == FLAC__STREAM_METADATA_PICTURE_TYPE_FRONT_COVER) {
+      if (picture.type == FLAC__STREAM_METADATA_PICTURE_TYPE_FRONT_COVER) {
          LOG_INFO("Found front cover art. MIME type: %s", picture.mime_type);
 
          // Now, picture.data contains the image data of length picture.data_length
@@ -96,10 +99,9 @@ void metadata_callback(const FLAC__StreamDecoder *decoder, const FLAC__StreamMet
  * @param status The error status code indicating the type of error.
  * @param client_data Optional user data provided to the decoder.
  */
-void error_callback(
-   const FLAC__StreamDecoder *decoder,
-   FLAC__StreamDecoderErrorStatus status,
-   void *client_data) {
+void error_callback(const FLAC__StreamDecoder *decoder,
+                    FLAC__StreamDecoderErrorStatus status,
+                    void *client_data) {
    const char *status_str = FLAC__StreamDecoderErrorStatusString[status];
    LOG_ERROR("FLAC Error callback: %s", status_str);
 }
@@ -112,18 +114,17 @@ void error_callback(
  * @param decoder The FLAC stream decoder instance calling this callback.
  * @param frame The decoded audio frame containing audio samples to be processed.
  * @param buffer An array of pointers to the decoded audio samples for each channel.
- * @param client_data A pointer to user-defined data, in this case, used to pass the PulseAudio simple API playback stream.
+ * @param client_data A pointer to user-defined data, in this case, used to pass the PulseAudio
+ * simple API playback stream.
  *
- * @return A FLAC__StreamDecoderWriteStatus value indicating whether the write operation was successful.
- *         Returns FLAC__STREAM_DECODER_WRITE_STATUS_CONTINUE to continue decoding,
- *         or FLAC__STREAM_DECODER_WRITE_STATUS_ABORT to stop decoding due to an error.
+ * @return A FLAC__StreamDecoderWriteStatus value indicating whether the write operation was
+ * successful. Returns FLAC__STREAM_DECODER_WRITE_STATUS_CONTINUE to continue decoding, or
+ * FLAC__STREAM_DECODER_WRITE_STATUS_ABORT to stop decoding due to an error.
  */
-FLAC__StreamDecoderWriteStatus write_callback(
-   const FLAC__StreamDecoder *decoder,
-   const FLAC__Frame *frame,
-   const FLAC__int32 *const buffer[],
-   void *client_data) {
-
+FLAC__StreamDecoderWriteStatus write_callback(const FLAC__StreamDecoder *decoder,
+                                              const FLAC__Frame *frame,
+                                              const FLAC__int32 *const buffer[],
+                                              void *client_data) {
    // Check if music playback has been stopped externally.
    if (!music_play) {
       LOG_WARNING("Stop playback requested.");
@@ -134,10 +135,11 @@ FLAC__StreamDecoderWriteStatus write_callback(
    pa_simple *s = (pa_simple *)client_data;
 
    // Allocate memory for interleaved audio samples.
-   int16_t *interleaved = malloc(frame->header.blocksize * frame->header.channels * sizeof(int16_t));
+   int16_t *interleaved = malloc(frame->header.blocksize * frame->header.channels *
+                                 sizeof(int16_t));
    if (!interleaved) {
-       LOG_ERROR("Memory allocation failed for interleaved audio buffer.");
-       return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
+      LOG_ERROR("Memory allocation failed for interleaved audio buffer.");
+      return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
    }
 
    // Interleave audio samples from all channels into a single buffer.
@@ -158,7 +160,9 @@ FLAC__StreamDecoderWriteStatus write_callback(
    }
 
    // Write the interleaved audio samples to the PulseAudio stream.
-   if (pa_simple_write(s, interleaved, frame->header.blocksize * frame->header.channels * sizeof(int16_t), NULL) < 0) {
+   if (pa_simple_write(s, interleaved,
+                       frame->header.blocksize * frame->header.channels * sizeof(int16_t),
+                       NULL) < 0) {
       free(interleaved);
       return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
    }
@@ -176,11 +180,7 @@ void *playFlacAudio(void *arg) {
 
    // Initialize PulseAudio for playback.
    pa_simple *pa_handle = NULL;
-   pa_sample_spec ss = {
-      .format = PA_SAMPLE_S16LE,
-      .channels = 2,
-      .rate = 44100
-   };
+   pa_sample_spec ss = { .format = PA_SAMPLE_S16LE, .channels = 2, .rate = 44100 };
 
    FLAC__StreamDecoderInitStatus init_status;
 
@@ -209,11 +209,13 @@ void *playFlacAudio(void *arg) {
       return NULL;
    }
 
-   music_play = 1; // Ensure playback is enabled.
+   music_play = 1;  // Ensure playback is enabled.
    if ((init_status = FLAC__stream_decoder_init_file(decoder, args->file_name, write_callback,
-                                                     metadata_callback, error_callback, pa_handle))
-         != FLAC__STREAM_DECODER_INIT_STATUS_OK) {
-      LOG_ERROR("ERROR: initializing decoder: %s", FLAC__StreamDecoderInitStatusString[init_status]);
+                                                     metadata_callback, error_callback,
+                                                     pa_handle)) !=
+       FLAC__STREAM_DECODER_INIT_STATUS_OK) {
+      LOG_ERROR("ERROR: initializing decoder: %s",
+                FLAC__StreamDecoderInitStatusString[init_status]);
       FLAC__stream_decoder_delete(decoder);
       pa_simple_free(pa_handle);
       return NULL;

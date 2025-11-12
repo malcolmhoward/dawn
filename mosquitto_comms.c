@@ -39,10 +39,10 @@
 /* Local */
 #include "dawn.h"
 #include "flac_playback.h"
-#include "openai.h"
 #include "logging.h"
 #include "mic_passthrough.h"
 #include "mosquitto_comms.h"
+#include "openai.h"
 #include "text_to_speech.h"
 #include "word_to_number.h"
 
@@ -51,27 +51,26 @@
 
 /**
  * Array of device callbacks associating device types with their respective handling functions.
- * This facilitates dynamic invocation of actions based on the device type, enhancing the application's
- * modularity and scalability.
+ * This facilitates dynamic invocation of actions based on the device type, enhancing the
+ * application's modularity and scalability.
  *
  * FIXME:
- *    1. The static returns are not threadsafe or safe in general. Have the caller pass a pointer to fill.
+ *    1. The static returns are not threadsafe or safe in general. Have the caller pass a pointer to
+ * fill.
  *    2. I am not currently using should_respond correctly. This needs fixing.
  */
-static deviceCallback deviceCallbackArray[] = {
-   {AUDIO_PLAYBACK_DEVICE, setPcmPlaybackDevice},
-   {AUDIO_CAPTURE_DEVICE, setPcmCaptureDevice},
-   {TEXT_TO_SPEECH, textToSpeechCallback},
-   {DATE, dateCallback},
-   {TIME, timeCallback},
-   {MUSIC, musicCallback},
-   {VOICE_AMPLIFIER, voiceAmplifierCallback},
-   {SHUTDOWN, shutdownCallback},
-   {VIEWING, viewingCallback},
-   {VOLUME, volumeCallback},
-   {LOCAL_LLM_SWITCH, localLLMCallback},
-   {CLOUD_LLM_SWITCH, cloudLLMCallback}
-};
+static deviceCallback deviceCallbackArray[] = { { AUDIO_PLAYBACK_DEVICE, setPcmPlaybackDevice },
+                                                { AUDIO_CAPTURE_DEVICE, setPcmCaptureDevice },
+                                                { TEXT_TO_SPEECH, textToSpeechCallback },
+                                                { DATE, dateCallback },
+                                                { TIME, timeCallback },
+                                                { MUSIC, musicCallback },
+                                                { VOICE_AMPLIFIER, voiceAmplifierCallback },
+                                                { SHUTDOWN, shutdownCallback },
+                                                { VIEWING, viewingCallback },
+                                                { VOLUME, volumeCallback },
+                                                { LOCAL_LLM_SWITCH, localLLMCallback },
+                                                { CLOUD_LLM_SWITCH, cloudLLMCallback } };
 
 static pthread_t music_thread = -1;
 static pthread_t voice_thread = -1;
@@ -83,8 +82,8 @@ static char *pending_command_result = NULL;
  * @return A pointer to a string containing the path to the home directory. This string
  *         should not be modified or freed by the caller, as it points to an environment variable.
  */
-const char* getUserHomeDirectory() {
-   const char* homeDir = getenv("HOME");
+const char *getUserHomeDirectory() {
+   const char *homeDir = getenv("HOME");
    if (!homeDir) {
       LOG_ERROR("Error: HOME environment variable not set.");
       return NULL;
@@ -100,8 +99,8 @@ const char* getUserHomeDirectory() {
  * @return A dynamically allocated string containing the full path. The caller is responsible
  *         for freeing this memory using free().
  */
-char* constructPathWithSubdirectory(const char* subdirectory) {
-   const char* homeDir = getUserHomeDirectory();
+char *constructPathWithSubdirectory(const char *subdirectory) {
+   const char *homeDir = getUserHomeDirectory();
    if (!homeDir) {
       // getUserHomeDirectory already prints an error message if needed.
 
@@ -112,7 +111,7 @@ char* constructPathWithSubdirectory(const char* subdirectory) {
    size_t fullPathSize = strlen(homeDir) + strlen(subdirectory) + 1;
 
    // Allocate memory for the full path
-   char* fullPath = (char*)malloc(fullPathSize);
+   char *fullPath = (char *)malloc(fullPathSize);
    if (!fullPath) {
       LOG_ERROR("Error: Memory allocation failed for full path.");
 
@@ -130,8 +129,8 @@ char* constructPathWithSubdirectory(const char* subdirectory) {
  * @brief   Structure to hold the list of matching filenames.
  */
 typedef struct {
-    char filenames[MAX_PLAYLIST_LENGTH][MAX_FILENAME_LENGTH]; /**< Array of matching filenames */
-    int count; /**< Number of matching filenames */
+   char filenames[MAX_PLAYLIST_LENGTH][MAX_FILENAME_LENGTH]; /**< Array of matching filenames */
+   int count;                                                /**< Number of matching filenames */
 } Playlist;
 
 static Playlist playlist = { .count = 0 };
@@ -169,7 +168,7 @@ void searchDirectory(const char *rootDir, const char *pattern, Playlist *playlis
       if (entry->d_type == DT_REG) {
          char filePath[MAX_FILENAME_LENGTH];
          int written = snprintf(filePath, sizeof(filePath), "%s/%s", rootDir, entry->d_name);
-         
+
          // Check if path was truncated
          if (written >= MAX_FILENAME_LENGTH) {
             LOG_WARNING("Path too long, skipping: %s/%s", rootDir, entry->d_name);
@@ -181,17 +180,17 @@ void searchDirectory(const char *rootDir, const char *pattern, Playlist *playlis
             playlist->filenames[playlist->count][MAX_FILENAME_LENGTH - 1] = '\0';
             playlist->count++;
          }
-      } else if (entry->d_type == DT_DIR && strcmp(entry->d_name, ".") != 0 && 
+      } else if (entry->d_type == DT_DIR && strcmp(entry->d_name, ".") != 0 &&
                  strcmp(entry->d_name, "..") != 0) {
          char subPath[MAX_FILENAME_LENGTH];
          int written = snprintf(subPath, sizeof(subPath), "%s/%s", rootDir, entry->d_name);
-         
+
          // Check if path was truncated
          if (written >= MAX_FILENAME_LENGTH) {
             LOG_WARNING("Path too long, skipping directory: %s/%s", rootDir, entry->d_name);
             continue;
          }
-         
+
          searchDirectory(subPath, pattern, playlist);
       }
    }
@@ -201,8 +200,7 @@ void searchDirectory(const char *rootDir, const char *pattern, Playlist *playlis
 
 #define GPT_RESPONSE_BUFFER_SIZE 512
 
-void parseJsonCommandandExecute(const char *input)
-{
+void parseJsonCommandandExecute(const char *input) {
    struct json_object *parsedJson = NULL;
    struct json_object *deviceObject = NULL;
    struct json_object *actionObject = NULL;
@@ -281,21 +279,21 @@ void parseJsonCommandandExecute(const char *input)
    /* Loop through device names for device types. */
    for (i = 0; i < MAX_DEVICE_TYPES; i++) {
       if (strcmp(deviceName, deviceTypeStrings[i]) == 0) {
-         if (deviceCallbackArray[i].callback != NULL)
-         {
-            callback_result = deviceCallbackArray[i].callback(actionName,
-                  (char *)value, &should_respond);
+         if (deviceCallbackArray[i].callback != NULL) {
+            callback_result = deviceCallbackArray[i].callback(actionName, (char *)value,
+                                                              &should_respond);
 
             // If in AI mode and callback returned data, store it for AI response
             if (callback_result != NULL && should_respond &&
                 (command_processing_mode == CMD_MODE_LLM_ONLY ||
                  command_processing_mode == CMD_MODE_DIRECT_FIRST)) {
-               size_t dest_len = (pending_command_result == NULL) ? 0 :
-                                 strlen(pending_command_result);
+               size_t dest_len = (pending_command_result == NULL) ? 0
+                                                                  : strlen(pending_command_result);
                size_t src_len = strlen(callback_result);
 
                // Resize memory to fit both strings plus space and null terminator
-               char *temp = pending_command_result = realloc(pending_command_result, dest_len + src_len + 2);
+               char *temp = pending_command_result = realloc(pending_command_result,
+                                                             dest_len + src_len + 2);
                if (temp == NULL) {
                   free(pending_command_result);
                   pending_command_result = NULL;
@@ -313,7 +311,8 @@ void parseJsonCommandandExecute(const char *input)
       }
    }
 
-   LOG_INFO("Command result for AI: %s", pending_command_result ? pending_command_result : "(null)");
+   LOG_INFO("Command result for AI: %s",
+            pending_command_result ? pending_command_result : "(null)");
    if (pending_command_result == NULL) {
       LOG_WARNING("pending_command_result is NULL. That probably shouldn't happen.");
       json_object_put(parsedJson);
@@ -357,13 +356,12 @@ void parseJsonCommandandExecute(const char *input)
 
 /* Mosquitto */
 /* Callback called when the client receives a CONNACK message from the broker. */
-void on_connect(struct mosquitto *mosq, void *obj, int reason_code)
-{
+void on_connect(struct mosquitto *mosq, void *obj, int reason_code) {
    int rc;
 
    LOG_INFO("MQTT Connecting.");
 
-   if(reason_code != 0){
+   if (reason_code != 0) {
       LOG_WARNING("MQTT disconnecting?");
       mosquitto_disconnect(mosq);
       return;
@@ -371,7 +369,7 @@ void on_connect(struct mosquitto *mosq, void *obj, int reason_code)
 
    // Subscribe in the on_connect callback
    rc = mosquitto_subscribe(mosq, NULL, APPLICATION_NAME, 0);
-   if(rc != MOSQ_ERR_SUCCESS) {
+   if (rc != MOSQ_ERR_SUCCESS) {
       LOG_ERROR("Error on mosquitto_subscribe(): %s", mosquitto_strerror(rc));
    } else {
       LOG_INFO("Subscribed to \"%s\" MQTT.", APPLICATION_NAME);
@@ -379,33 +377,35 @@ void on_connect(struct mosquitto *mosq, void *obj, int reason_code)
 }
 
 /* Callback called when the broker sends a SUBACK in response to a SUBSCRIBE. */
-void on_subscribe(struct mosquitto *mosq, void *obj, int mid, int qos_count, const int *granted_qos)
-{
-	int i;
-	bool have_subscription = false;
+void on_subscribe(struct mosquitto *mosq,
+                  void *obj,
+                  int mid,
+                  int qos_count,
+                  const int *granted_qos) {
+   int i;
+   bool have_subscription = false;
 
    LOG_INFO("MQTT subscribed.");
 
-	for(i=0; i<qos_count; i++){
-		if(granted_qos[i] <= 2){
-			have_subscription = true;
-		}
-	}
-	if(have_subscription == false){
-		LOG_ERROR("Error: All subscriptions rejected.");
-		mosquitto_disconnect(mosq);
-	}
+   for (i = 0; i < qos_count; i++) {
+      if (granted_qos[i] <= 2) {
+         have_subscription = true;
+      }
+   }
+   if (have_subscription == false) {
+      LOG_ERROR("Error: All subscriptions rejected.");
+      mosquitto_disconnect(mosq);
+   }
 }
 
 /* Callback called when the client receives a message. */
-void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_message *msg)
-{
-	LOG_INFO("%s %d %s", msg->topic, msg->qos, (char *)msg->payload);
+void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_message *msg) {
+   LOG_INFO("%s %d %s", msg->topic, msg->qos, (char *)msg->payload);
 
    parseJsonCommandandExecute((char *)msg->payload);
 }
 
-char* dateCallback(const char *actionName, char *value, int *should_respond) {
+char *dateCallback(const char *actionName, char *value, int *should_respond) {
    time_t current_time;
    struct tm *time_info;
    char buffer[80];
@@ -435,8 +435,7 @@ char* dateCallback(const char *actionName, char *value, int *should_respond) {
                      "In case you've forgotten, Sir, it's %s today.", buffer);
             break;
          case 2:
-            snprintf(return_buffer, sizeof(return_buffer),
-                     "The current date is %s.", buffer);
+            snprintf(return_buffer, sizeof(return_buffer), "The current date is %s.", buffer);
             break;
       }
 
@@ -445,13 +444,12 @@ char* dateCallback(const char *actionName, char *value, int *should_respond) {
       return NULL;  // Already handled
    } else {
       // AI modes: return the raw data for AI to process
-      snprintf(return_buffer, sizeof(return_buffer),
-               "The current date is %s", buffer);
+      snprintf(return_buffer, sizeof(return_buffer), "The current date is %s", buffer);
       return return_buffer;
    }
 }
 
-char* timeCallback(const char *actionName, char *value, int *should_respond) {
+char *timeCallback(const char *actionName, char *value, int *should_respond) {
    time_t current_time;
    struct tm *time_info;
    char buffer[80];
@@ -482,11 +480,11 @@ char* timeCallback(const char *actionName, char *value, int *should_respond) {
             break;
          case 2:
             snprintf(return_buffer, sizeof(return_buffer),
-                     "Oh, you want to know the time again? It's %s, not that I'm keeping track.", buffer);
+                     "Oh, you want to know the time again? It's %s, not that I'm keeping track.",
+                     buffer);
             break;
          case 3:
-            snprintf(return_buffer, sizeof(return_buffer),
-                     "The time is %s.", buffer);
+            snprintf(return_buffer, sizeof(return_buffer), "The time is %s.", buffer);
             break;
       }
 
@@ -495,20 +493,19 @@ char* timeCallback(const char *actionName, char *value, int *should_respond) {
       return NULL;
    } else {
       // AI modes: return the raw data
-      snprintf(return_buffer, sizeof(return_buffer),
-               "The time is %s.", buffer);
+      snprintf(return_buffer, sizeof(return_buffer), "The time is %s.", buffer);
       return return_buffer;
    }
 }
 
 // Custom comparison function for qsort
 int compare(const void *p1, const void *p2) {
-    return strcmp((char *)p1, (char *)p2);
+   return strcmp((char *)p1, (char *)p2);
 }
 
 #define MUSIC_CALLBACK_BUFFER_SIZE 512
 
-char* musicCallback(const char *actionName, char *value, int *should_respond) {
+char *musicCallback(const char *actionName, char *value, int *should_respond) {
    PlaybackArgs args;
    char strWildcards[MAX_FILENAME_LENGTH];
    static char return_buffer[MUSIC_CALLBACK_BUFFER_SIZE];
@@ -535,14 +532,13 @@ char* musicCallback(const char *actionName, char *value, int *should_respond) {
             *should_respond = 0;
             return NULL;
          } else {
-            snprintf(return_buffer, sizeof(return_buffer),
-                     "Search term '%s' is too long", value);
+            snprintf(return_buffer, sizeof(return_buffer), "Search term '%s' is too long", value);
             return return_buffer;
          }
       }
 
       // Construct the full path to the user's music directory
-      char* musicDir = constructPathWithSubdirectory(MUSIC_DIR);
+      char *musicDir = constructPathWithSubdirectory(MUSIC_DIR);
       if (!musicDir) {
          LOG_ERROR("Error constructing music path.");
 
@@ -558,18 +554,18 @@ char* musicCallback(const char *actionName, char *value, int *should_respond) {
       strWildcards[0] = '*';
       for (i = 0; value[i] != '\0'; i++) {
          if (value[i] == ' ') {
-            strWildcards[i+1] = '*';
+            strWildcards[i + 1] = '*';
          } else {
-            strWildcards[i+1] = value[i];
+            strWildcards[i + 1] = value[i];
          }
       }
-      strWildcards[i+1] = '*';
-      strWildcards[i+2] = '\0';
+      strWildcards[i + 1] = '*';
+      strWildcards[i + 2] = '\0';
       strcat(strWildcards, ".flac");
 
       searchDirectory(musicDir, strWildcards, &playlist);
 
-      free(musicDir); // free the allocated memory
+      free(musicDir);  // free the allocated memory
 
       // Sort the array using qsort
       qsort(playlist.filenames, playlist.count, MAX_FILENAME_LENGTH, compare);
@@ -582,7 +578,7 @@ char* musicCallback(const char *actionName, char *value, int *should_respond) {
       if (playlist.count > 0) {
          args.sink_name = getPcmPlaybackDevice();
          args.file_name = playlist.filenames[current_track];
-         args.start_time = 0;       /* For now set to zero. We may support other modes later. */
+         args.start_time = 0; /* For now set to zero. We may support other modes later. */
 
          LOG_INFO("Playing: %s %s %d", args.sink_name, args.file_name, args.start_time);
 
@@ -604,8 +600,8 @@ char* musicCallback(const char *actionName, char *value, int *should_respond) {
             return NULL;
          } else {
             *should_respond = 0;
-            snprintf(return_buffer, sizeof(return_buffer),
-                     "Playing %s - found %d matching tracks", value, playlist.count);
+            snprintf(return_buffer, sizeof(return_buffer), "Playing %s - found %d matching tracks",
+                     value, playlist.count);
             return return_buffer;
          }
       } else {
@@ -615,8 +611,7 @@ char* musicCallback(const char *actionName, char *value, int *should_respond) {
             *should_respond = 0;
             return NULL;
          } else {
-            snprintf(return_buffer, sizeof(return_buffer),
-                     "No music found matching '%s'", value);
+            snprintf(return_buffer, sizeof(return_buffer), "No music found matching '%s'", value);
             return return_buffer;
          }
       }
@@ -648,7 +643,7 @@ char* musicCallback(const char *actionName, char *value, int *should_respond) {
 
          args.sink_name = getPcmPlaybackDevice();
          args.file_name = playlist.filenames[current_track];
-         args.start_time = 0;       /* For now set to zero. We may support other modes later. */
+         args.start_time = 0; /* For now set to zero. We may support other modes later. */
 
          LOG_INFO("Playing: %s %s %d", args.sink_name, args.file_name, args.start_time);
 
@@ -672,12 +667,11 @@ char* musicCallback(const char *actionName, char *value, int *should_respond) {
             // Extract just the filename from the full path
             const char *filename = strrchr(playlist.filenames[current_track], '/');
             if (filename) {
-               filename++; // Skip the '/'
+               filename++;  // Skip the '/'
             } else {
                filename = playlist.filenames[current_track];
             }
-            snprintf(return_buffer, sizeof(return_buffer),
-                     "Playing next track: %s", filename);
+            snprintf(return_buffer, sizeof(return_buffer), "Playing next track: %s", filename);
             return return_buffer;
          }
       } else {
@@ -706,7 +700,7 @@ char* musicCallback(const char *actionName, char *value, int *should_respond) {
 
          args.sink_name = getPcmPlaybackDevice();
          args.file_name = playlist.filenames[current_track];
-         args.start_time = 0;       /* For now set to zero. We may support other modes later. */
+         args.start_time = 0; /* For now set to zero. We may support other modes later. */
 
          LOG_INFO("Playing: %s %s %d", args.sink_name, args.file_name, args.start_time);
 
@@ -730,12 +724,11 @@ char* musicCallback(const char *actionName, char *value, int *should_respond) {
             // Extract just the filename from the full path
             const char *filename = strrchr(playlist.filenames[current_track], '/');
             if (filename) {
-               filename++; // Skip the '/'
+               filename++;  // Skip the '/'
             } else {
                filename = playlist.filenames[current_track];
             }
-            snprintf(return_buffer, sizeof(return_buffer),
-                     "Playing previous track: %s", filename);
+            snprintf(return_buffer, sizeof(return_buffer), "Playing previous track: %s", filename);
             return return_buffer;
          }
       } else {
@@ -752,7 +745,7 @@ char* musicCallback(const char *actionName, char *value, int *should_respond) {
    return NULL;
 }
 
-char* voiceAmplifierCallback(const char *actionName, char *value, int *should_respond) {
+char *voiceAmplifierCallback(const char *actionName, char *value, int *should_respond) {
    static char return_buffer[256];
 
    *should_respond = 1;
@@ -812,7 +805,7 @@ char* voiceAmplifierCallback(const char *actionName, char *value, int *should_re
 }
 
 // Shutdown callback
-char* shutdownCallback(const char *actionName, char *value, int *should_respond) {
+char *shutdownCallback(const char *actionName, char *value, int *should_respond) {
    static char return_buffer[256];
 
    *should_respond = 1;
@@ -840,7 +833,7 @@ char* shutdownCallback(const char *actionName, char *value, int *should_respond)
  *         is responsible for freeing this memory. Returns NULL on failure.
  */
 unsigned char *read_file(const char *filename, size_t *length) {
-   *length = 0; // Ensure length is set to 0 initially
+   *length = 0;  // Ensure length is set to 0 initially
    FILE *file = fopen(filename, "rb");
    if (!file) {
       LOG_ERROR("File opening failed: %s", filename);
@@ -905,7 +898,7 @@ char *base64_encode(const unsigned char *buffer, size_t length) {
    bio = BIO_new(BIO_s_mem());
    if (bio == NULL) {
       LOG_ERROR("Failed to create memory BIO.");
-      BIO_free_all(b64); // Ensure cleanup
+      BIO_free_all(b64);  // Ensure cleanup
       return NULL;
    }
 
@@ -921,7 +914,7 @@ char *base64_encode(const unsigned char *buffer, size_t length) {
    // This data gets Base64 encoded by 'b64', then stored in the memory managed by 'bio'.
    if (BIO_write(bio, buffer, length) <= 0) {
       LOG_ERROR("Failed to write data to BIO.");
-      BIO_free_all(bio); // Also frees 'b64' since it's pushed onto 'bio'
+      BIO_free_all(bio);  // Also frees 'b64' since it's pushed onto 'bio'
       return NULL;
    }
 
@@ -951,7 +944,7 @@ char *base64_encode(const unsigned char *buffer, size_t length) {
    }
 
    memcpy(b64text, bufferPtr->data, bufferPtr->length);
-   b64text[bufferPtr->length] = '\0'; // Null-terminate the Base64 encoded string.
+   b64text[bufferPtr->length] = '\0';  // Null-terminate the Base64 encoded string.
 
    // Free the entire BIO chain, automatically freeing both 'b64' and 'bio'.
    BIO_free_all(bio);
@@ -959,7 +952,7 @@ char *base64_encode(const unsigned char *buffer, size_t length) {
    return b64text;
 }
 
-char* viewingCallback(const char *actionName, char *value, int *should_respond) {
+char *viewingCallback(const char *actionName, char *value, int *should_respond) {
    size_t image_size = 0;
    static char return_buffer[256];
 
@@ -988,8 +981,7 @@ char* viewingCallback(const char *actionName, char *value, int *should_respond) 
       LOG_ERROR("Error reading image file.");
 
       if (command_processing_mode != CMD_MODE_DIRECT_ONLY) {
-         snprintf(return_buffer, sizeof(return_buffer),
-                  "Failed to read image file: %s", value);
+         snprintf(return_buffer, sizeof(return_buffer), "Failed to read image file: %s", value);
          return return_buffer;
       }
    }
@@ -998,7 +990,7 @@ char* viewingCallback(const char *actionName, char *value, int *should_respond) 
    return NULL;
 }
 
-char* volumeCallback(const char *actionName, char *value, int *should_respond) {
+char *volumeCallback(const char *actionName, char *value, int *should_respond) {
    static char return_buffer[256];
    float floatVol = wordToNumber(value);
 
@@ -1012,8 +1004,7 @@ char* volumeCallback(const char *actionName, char *value, int *should_respond) {
          return NULL;
       } else {
          // AI modes: return confirmation
-         snprintf(return_buffer, sizeof(return_buffer),
-                  "Music volume set to %.1f", floatVol);
+         snprintf(return_buffer, sizeof(return_buffer), "Music volume set to %.1f", floatVol);
          *should_respond = 1;
          return return_buffer;
       }
@@ -1032,7 +1023,7 @@ char* volumeCallback(const char *actionName, char *value, int *should_respond) {
    }
 }
 
-char* localLLMCallback(const char *actionName, char *value, int *should_respond) {
+char *localLLMCallback(const char *actionName, char *value, int *should_respond) {
    static char return_buffer[256];
 
    LOG_INFO("Setting AI to local LLM.");
@@ -1044,7 +1035,7 @@ char* localLLMCallback(const char *actionName, char *value, int *should_respond)
    return return_buffer;
 }
 
-char* cloudLLMCallback(const char *actionName, char *value, int *should_respond) {
+char *cloudLLMCallback(const char *actionName, char *value, int *should_respond) {
    static char return_buffer[256];
 
    LOG_INFO("Setting AI to cloud LLM.");
@@ -1056,4 +1047,3 @@ char* cloudLLMCallback(const char *actionName, char *value, int *should_respond)
    return return_buffer;
 }
 /* End Mosquitto Stuff */
-

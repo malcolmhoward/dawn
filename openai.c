@@ -19,23 +19,23 @@
  * part of the project and are adopted by the project author(s).
  */
 
+#include "openai.h"
+
+#include <curl/curl.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
-#include <netinet/in.h>
+#include <json-c/json.h>
 #include <netdb.h>
+#include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/select.h>
 #include <unistd.h>
 
-#include <curl/curl.h>
-#include <json-c/json.h>
-
 #include "dawn.h"
 #include "logging.h"
-#include "openai.h"
 #include "secrets.h"
 #include "text_to_speech.h"
 
@@ -109,8 +109,7 @@ struct MemoryStruct {
  * amount passed to your function, it'll signal an error to the libcurl. Returning 0
  * will signal an out-of-memory error.
  */
-static size_t WriteMemoryCallback(void *contents, size_t size, size_t nmemb, void *userp)
-{
+static size_t WriteMemoryCallback(void *contents, size_t size, size_t nmemb, void *userp) {
    size_t realsize = size * nmemb;
    struct MemoryStruct *mem = (struct MemoryStruct *)userp;
 
@@ -154,10 +153,10 @@ int extract_host_and_port(const char *url, char *host, char *port) {
 
    // Determine protocol and set default port
    if (strncmp(url, "http://", 7) == 0) {
-      start = url + 7;  // Skip "http://"
+      start = url + 7;     // Skip "http://"
       strcpy(port, "80");  // Default port for http
    } else if (strncmp(url, "https://", 8) == 0) {
-      start = url + 8;  // Skip "https://"
+      start = url + 8;      // Skip "https://"
       strcpy(port, "443");  // Default port for https
    } else {
       // If no recognizable protocol, assume http and continue
@@ -189,8 +188,8 @@ int checkInternetConnectionWithTimeout(const char *url, int timeout_seconds) {
 
    // Extract host from the URL (ignores path and protocol)
    if (extract_host_and_port(url, host, port) == -1) {
-       LOG_ERROR("Error: Invalid URL format");
-       return 0;
+      LOG_ERROR("Error: Invalid URL format");
+      return 0;
    }
 
    // Set up address resolution hints
@@ -258,10 +257,11 @@ int checkInternetConnectionWithTimeout(const char *url, int timeout_seconds) {
    return result;
 }
 
-char *getGptResponse(struct json_object *conversation_history, const char *input_text,
-                     char *vision_ai_image, size_t vision_ai_image_size)
-{
-   CURL *curl_handle = NULL;  /* Handle for curl library. */
+char *getGptResponse(struct json_object *conversation_history,
+                     const char *input_text,
+                     char *vision_ai_image,
+                     size_t vision_ai_image_size) {
+   CURL *curl_handle = NULL; /* Handle for curl library. */
    CURLcode res = -1;
    struct curl_slist *headers = NULL;
    char full_url[2048 + 20] = "";
@@ -311,7 +311,8 @@ char *getGptResponse(struct json_object *conversation_history, const char *input
 
       // Construct the full data URI for the image
       char *data_uri_prefix = "data:image/jpeg;base64,";
-      size_t data_uri_length = strlen(data_uri_prefix) + strlen(vision_ai_image) + 1; // +1 for the null terminator
+      size_t data_uri_length = strlen(data_uri_prefix) + strlen(vision_ai_image) +
+                               1;  // +1 for the null terminator
       char *data_uri = malloc(data_uri_length);
 
       if (data_uri != NULL) {
@@ -341,7 +342,8 @@ char *getGptResponse(struct json_object *conversation_history, const char *input
    // Max Tokens
    json_object_object_add(root, "max_tokens", json_object_new_int(GPT_MAX_TOKENS));
 
-   payload = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN | JSON_C_TO_STRING_NOSLASHESCAPE);
+   payload = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN |
+                                                      JSON_C_TO_STRING_NOSLASHESCAPE);
    printf("JSON Payload (PLAIN): %s", payload);
    printf("\n");
 
@@ -389,7 +391,7 @@ char *getGptResponse(struct json_object *conversation_history, const char *input
       curl_slist_free_all(headers);
    }
 
-   printf("Raw receive from ChatGPT: %s", (char *) chunk.memory);
+   printf("Raw receive from ChatGPT: %s", (char *)chunk.memory);
    printf("\n");
 
    parsed_json = json_tokener_parse(chunk.memory);
@@ -400,10 +402,9 @@ char *getGptResponse(struct json_object *conversation_history, const char *input
    }
 
    if (!json_object_object_get_ex(parsed_json, "choices", &choices) ||
-      json_object_get_type(choices) != json_type_array ||
-      json_object_array_length(choices) < 1) {
+       json_object_get_type(choices) != json_type_array || json_object_array_length(choices) < 1) {
       LOG_ERROR("Error in parsing response: 'choices' missing or invalid.");
-      json_object_put(parsed_json); // Correctly free JSON object
+      json_object_put(parsed_json);  // Correctly free JSON object
       free(chunk.memory);
       return NULL;
    }
@@ -417,7 +418,7 @@ char *getGptResponse(struct json_object *conversation_history, const char *input
    }
 
    if (!json_object_object_get_ex(first_choice, "message", &message) ||
-      !json_object_object_get_ex(message, "content", &content)) {
+       !json_object_object_get_ex(message, "content", &content)) {
       LOG_ERROR("Error: 'message' or 'content' field missing.");
       json_object_put(parsed_json);
       free(chunk.memory);
@@ -428,7 +429,7 @@ char *getGptResponse(struct json_object *conversation_history, const char *input
    json_object_object_get_ex(first_choice, "finish_reason", &finish_reason);
 
    if (!json_object_object_get_ex(parsed_json, "usage", &usage_obj) ||
-      !json_object_object_get_ex(usage_obj, "total_tokens", &total_tokens_obj)) {
+       !json_object_object_get_ex(usage_obj, "total_tokens", &total_tokens_obj)) {
       LOG_ERROR("Error: 'usage' or 'total_tokens' field missing.");
       json_object_put(parsed_json);
       free(chunk.memory);
@@ -439,7 +440,7 @@ char *getGptResponse(struct json_object *conversation_history, const char *input
    LOG_WARNING("Total tokens: %d", total_tokens);
 
    // Duplicate the response content string safely
-   const char* content_str = json_object_get_string(content);
+   const char *content_str = json_object_get_string(content);
    if (!content_str) {
       LOG_ERROR("Error: 'content' field is empty or not a string.");
       json_object_put(parsed_json);
@@ -448,8 +449,7 @@ char *getGptResponse(struct json_object *conversation_history, const char *input
    }
    response = strdup(content_str);
 
-   if ((finish_reason != NULL) && (strcmp(json_object_get_string(finish_reason), "stop") != 0))
-   {
+   if ((finish_reason != NULL) && (strcmp(json_object_get_string(finish_reason), "stop") != 0)) {
 #if 0 /* They change this API, so for now, remove the reason. */
       if (strcmp(json_object_get_string(type), "length") == 0)
       {
