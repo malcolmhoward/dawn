@@ -28,7 +28,9 @@
 
 #include "dawn.h"
 #include "llm_interface.h"
+#include "llm_streaming.h"
 #include "logging.h"
+#include "sse_parser.h"
 
 /**
  * @brief Structure to hold dynamically allocated response data from CURL
@@ -262,6 +264,182 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
 
    json_object_put(parsed_json);
    free(chunk.memory);
+   json_object_put(root);
+
+   return response;
+}
+
+/**
+ * @brief Context for streaming callbacks
+ */
+typedef struct {
+   sse_parser_t *sse_parser;
+   llm_stream_context_t *stream_ctx;
+} openai_streaming_context_t;
+
+/**
+ * @brief CURL write callback for streaming responses
+ *
+ * Feeds incoming SSE data to the SSE parser, which processes it
+ * and calls the LLM streaming callbacks.
+ */
+static size_t streaming_write_callback(void *contents, size_t size, size_t nmemb, void *userp) {
+   size_t realsize = size * nmemb;
+   openai_streaming_context_t *ctx = (openai_streaming_context_t *)userp;
+
+   // Feed data to SSE parser
+   sse_parser_feed(ctx->sse_parser, contents, realsize);
+
+   return realsize;
+}
+
+/**
+ * @brief SSE event callback that forwards events to LLM stream handler
+ */
+static void openai_sse_event_handler(const char *event_type,
+                                     const char *event_data,
+                                     void *userdata) {
+   openai_streaming_context_t *ctx = (openai_streaming_context_t *)userdata;
+
+   // Forward event data to LLM streaming parser
+   llm_stream_handle_event(ctx->stream_ctx, event_data);
+}
+
+char *llm_openai_chat_completion_streaming(struct json_object *conversation_history,
+                                           const char *input_text,
+                                           char *vision_image,
+                                           size_t vision_image_size,
+                                           const char *base_url,
+                                           const char *api_key,
+                                           llm_openai_text_chunk_callback chunk_callback,
+                                           void *callback_userdata) {
+   CURL *curl_handle = NULL;
+   CURLcode res = -1;
+   struct curl_slist *headers = NULL;
+   char full_url[2048 + 20] = "";
+
+   const char *payload = NULL;
+   char *response = NULL;
+
+   json_object *root = NULL;
+
+   // SSE and streaming contexts
+   sse_parser_t *sse_parser = NULL;
+   llm_stream_context_t *stream_ctx = NULL;
+   openai_streaming_context_t streaming_ctx;
+
+   // Root JSON Container
+   root = json_object_new_object();
+
+   // Model
+   json_object_object_add(root, "model", json_object_new_string(OPENAI_MODEL));
+
+   // Enable streaming
+   json_object_object_add(root, "stream", json_object_new_boolean(1));
+
+   // Handle vision if provided
+#if defined(OPENAI_VISION)
+   if (vision_image != NULL && vision_image_size > 0) {
+      int msg_count = json_object_array_length(conversation_history);
+      if (msg_count > 0) {
+         json_object *last_msg = json_object_array_get_idx(conversation_history, msg_count - 1);
+         json_object *role_obj;
+         if (json_object_object_get_ex(last_msg, "role", &role_obj) &&
+             strcmp(json_object_get_string(role_obj), "user") == 0) {
+            // Last message is user message - add vision content
+            json_object *content_array = json_object_new_array();
+            json_object *text_obj = json_object_new_object();
+            json_object_object_add(text_obj, "type", json_object_new_string("text"));
+            json_object_object_add(text_obj, "text", json_object_new_string(input_text));
+            json_object_array_add(content_array, text_obj);
+
+            json_object *image_obj = json_object_new_object();
+            json_object_object_add(image_obj, "type", json_object_new_string("image_url"));
+
+            json_object *image_url_obj = json_object_new_object();
+            char *data_uri_prefix = "data:image/jpeg;base64,";
+            size_t data_uri_length = strlen(data_uri_prefix) + strlen(vision_image) + 1;
+            char *data_uri = malloc(data_uri_length);
+            if (data_uri != NULL) {
+               snprintf(data_uri, data_uri_length, "%s%s", data_uri_prefix, vision_image);
+               json_object_object_add(image_url_obj, "url", json_object_new_string(data_uri));
+               free(data_uri);
+            }
+            json_object_object_add(image_obj, "image_url", image_url_obj);
+            json_object_array_add(content_array, image_obj);
+
+            json_object_object_add(last_msg, "content", content_array);
+         }
+      }
+   }
+#endif
+
+   json_object_get(conversation_history);  // Increment refcount to prevent freeing caller's array
+   json_object_object_add(root, "messages", conversation_history);
+
+   // Max Tokens
+   json_object_object_add(root, "max_tokens", json_object_new_int(OPENAI_MAX_TOKENS));
+
+   payload = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN |
+                                                      JSON_C_TO_STRING_NOSLASHESCAPE);
+   printf("JSON Payload (STREAMING): %s\n", payload);
+
+   // Check connection
+   if (!llm_check_connection(base_url, 4)) {
+      LOG_ERROR("URL did not return. Unavailable.");
+      json_object_put(root);
+      return NULL;
+   }
+
+   // Create streaming context
+   stream_ctx = llm_stream_create(LLM_CLOUD, CLOUD_PROVIDER_OPENAI, chunk_callback,
+                                  callback_userdata);
+   if (!stream_ctx) {
+      LOG_ERROR("Failed to create LLM stream context");
+      json_object_put(root);
+      return NULL;
+   }
+
+   // Create SSE parser
+   sse_parser = sse_parser_create(openai_sse_event_handler, &streaming_ctx);
+   if (!sse_parser) {
+      LOG_ERROR("Failed to create SSE parser");
+      llm_stream_free(stream_ctx);
+      json_object_put(root);
+      return NULL;
+   }
+
+   // Setup streaming context
+   streaming_ctx.sse_parser = sse_parser;
+   streaming_ctx.stream_ctx = stream_ctx;
+
+   curl_handle = curl_easy_init();
+   if (curl_handle) {
+      headers = build_openai_headers(api_key);
+
+      snprintf(full_url, sizeof(full_url), "%s%s", base_url, OPENAI_CHAT_ENDPOINT);
+
+      curl_easy_setopt(curl_handle, CURLOPT_URL, full_url);
+      curl_easy_setopt(curl_handle, CURLOPT_POSTFIELDS, payload);
+      curl_easy_setopt(curl_handle, CURLOPT_HTTPHEADER, headers);
+      curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, streaming_write_callback);
+      curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&streaming_ctx);
+
+      res = curl_easy_perform(curl_handle);
+      if (res != CURLE_OK) {
+         LOG_ERROR("curl_easy_perform() failed: %s", curl_easy_strerror(res));
+      }
+
+      curl_easy_cleanup(curl_handle);
+      curl_slist_free_all(headers);
+   }
+
+   // Get accumulated response
+   response = llm_stream_get_response(stream_ctx);
+
+   // Cleanup
+   sse_parser_free(sse_parser);
+   llm_stream_free(stream_ctx);
    json_object_put(root);
 
    return response;

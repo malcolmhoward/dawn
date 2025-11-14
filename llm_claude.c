@@ -28,7 +28,9 @@
 
 #include "dawn.h"
 #include "llm_interface.h"
+#include "llm_streaming.h"
 #include "logging.h"
+#include "sse_parser.h"
 
 /**
  * @brief Structure to hold dynamically allocated response data from CURL
@@ -364,6 +366,153 @@ char *llm_claude_chat_completion(struct json_object *conversation_history,
 
    json_object_put(parsed);
    free(chunk.memory);
+
+   return response;
+}
+
+/**
+ * @brief Context for streaming callbacks
+ */
+typedef struct {
+   sse_parser_t *sse_parser;
+   llm_stream_context_t *stream_ctx;
+} claude_streaming_context_t;
+
+/**
+ * @brief CURL write callback for streaming responses
+ *
+ * Feeds incoming SSE data to the SSE parser, which processes it
+ * and calls the LLM streaming callbacks.
+ */
+static size_t claude_streaming_write_callback(void *contents,
+                                              size_t size,
+                                              size_t nmemb,
+                                              void *userp) {
+   size_t realsize = size * nmemb;
+   claude_streaming_context_t *ctx = (claude_streaming_context_t *)userp;
+
+   // Feed data to SSE parser
+   sse_parser_feed(ctx->sse_parser, contents, realsize);
+
+   return realsize;
+}
+
+/**
+ * @brief SSE event callback that forwards events to LLM stream handler
+ */
+static void claude_sse_event_handler(const char *event_type,
+                                     const char *event_data,
+                                     void *userdata) {
+   claude_streaming_context_t *ctx = (claude_streaming_context_t *)userdata;
+
+   // Forward event data to LLM streaming parser
+   llm_stream_handle_event(ctx->stream_ctx, event_data);
+}
+
+char *llm_claude_chat_completion_streaming(struct json_object *conversation_history,
+                                           const char *input_text,
+                                           char *vision_image,
+                                           size_t vision_image_size,
+                                           const char *base_url,
+                                           const char *api_key,
+                                           llm_claude_text_chunk_callback chunk_callback,
+                                           void *callback_userdata) {
+   CURL *curl_handle = NULL;
+   CURLcode res = -1;
+   struct curl_slist *headers = NULL;
+   char full_url[2048 + 20] = "";
+
+   const char *payload = NULL;
+   char *response = NULL;
+
+   json_object *request = NULL;
+
+   // SSE and streaming contexts
+   sse_parser_t *sse_parser = NULL;
+   llm_stream_context_t *stream_ctx = NULL;
+   claude_streaming_context_t streaming_ctx;
+
+   if (!api_key) {
+      LOG_ERROR("Claude API key is required");
+      return NULL;
+   }
+
+   // Check connection
+   if (!llm_check_connection(base_url, 4)) {
+      LOG_ERROR("URL did not return. Unavailable.");
+      return NULL;
+   }
+
+   // Convert OpenAI format to Claude format
+   request = convert_to_claude_format(conversation_history, input_text, vision_image,
+                                      vision_image_size);
+   if (!request) {
+      LOG_ERROR("Failed to convert conversation to Claude format");
+      return NULL;
+   }
+
+   // Enable streaming
+   json_object_object_add(request, "stream", json_object_new_boolean(1));
+
+   payload = json_object_to_json_string_ext(request, JSON_C_TO_STRING_PLAIN |
+                                                         JSON_C_TO_STRING_NOSLASHESCAPE);
+   printf("JSON Payload (STREAMING): %s\n", payload);
+
+   // Create streaming context
+   stream_ctx = llm_stream_create(LLM_CLOUD, CLOUD_PROVIDER_CLAUDE, chunk_callback,
+                                  callback_userdata);
+   if (!stream_ctx) {
+      LOG_ERROR("Failed to create LLM stream context");
+      json_object_put(request);
+      return NULL;
+   }
+
+   // Create SSE parser
+   sse_parser = sse_parser_create(claude_sse_event_handler, &streaming_ctx);
+   if (!sse_parser) {
+      LOG_ERROR("Failed to create SSE parser");
+      llm_stream_free(stream_ctx);
+      json_object_put(request);
+      return NULL;
+   }
+
+   // Setup streaming context
+   streaming_ctx.sse_parser = sse_parser;
+   streaming_ctx.stream_ctx = stream_ctx;
+
+   curl_handle = curl_easy_init();
+   if (!curl_handle) {
+      LOG_ERROR("Failed to initialize CURL");
+      sse_parser_free(sse_parser);
+      llm_stream_free(stream_ctx);
+      json_object_put(request);
+      return NULL;
+   }
+
+   headers = build_claude_headers(api_key);
+   snprintf(full_url, sizeof(full_url), "%s%s", base_url, CLAUDE_MESSAGES_ENDPOINT);
+
+   curl_easy_setopt(curl_handle, CURLOPT_URL, full_url);
+   curl_easy_setopt(curl_handle, CURLOPT_POSTFIELDS, payload);
+   curl_easy_setopt(curl_handle, CURLOPT_HTTPHEADER, headers);
+   curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, claude_streaming_write_callback);
+   curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&streaming_ctx);
+
+   res = curl_easy_perform(curl_handle);
+   if (res != CURLE_OK) {
+      LOG_ERROR("CURL failed: %s", curl_easy_strerror(res));
+   }
+
+   curl_easy_cleanup(curl_handle);
+   curl_slist_free_all(headers);
+   json_object_put(request);
+
+   // Get accumulated response
+   response = llm_stream_get_response(stream_ctx);
+
+   // Cleanup
+   sse_parser_free(sse_parser);
+   llm_stream_free(stream_ctx);
 
    return response;
 }

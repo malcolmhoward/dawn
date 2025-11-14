@@ -83,9 +83,12 @@ add_executable(dawn
                llm_interface.c
                llm_openai.c
                llm_claude.c
+               llm_streaming.c
                logging.c
                mic_passthrough.c
                mosquitto_comms.c
+               sentence_buffer.c
+               sse_parser.c
                text_to_command_nuevo.c
                text_to_speech.cpp
                word_to_number.c)
@@ -132,4 +135,10 @@ set(DESTINATION_DIR
 file(COPY ${SOURCE_FILES} DESTINATION ${DESTINATION_DIR})
 execute_process(COMMAND ${CMAKE_COMMAND} -E create_symlink ${CMAKE_SOURCE_DIR}/vosk-model-en-us-0.22 ${CMAKE_BINARY_DIR}/model)
 execute_process(COMMAND ${CMAKE_COMMAND} -E create_symlink ${CMAKE_SOURCE_DIR}/commands_config_nuevo.json ${CMAKE_BINARY_DIR}/commands_config_nuevo.json)
+
+# Optional: Build tests (enable with -DBUILD_TESTS=ON)
+option(BUILD_TESTS "Build test programs" OFF)
+if(BUILD_TESTS)
+   add_subdirectory(tests)
+endif()
 

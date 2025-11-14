@@ -149,13 +149,14 @@ static const pa_sample_spec sample_spec = { .format = DEFAULT_PULSE_FORMAT,
 
 // Holds the current RMS (Root Mean Square) level of the background audio.
 // Used to monitor ambient noise levels and potentially adjust listening sensitivity.
-static double backgroundRMS = 0.002;
+static double backgroundRMS = 0.02;
 
 // Holds the current RMS (Root Mean Square) level of the background audio.
 // Used to monitor ambient noise levels and potentially adjust listening sensitivity.
-static char *wakeWords[] = { "hello " AI_NAME,    "okay " AI_NAME,        "alright " AI_NAME,
-                             "hey " AI_NAME,      "hi " AI_NAME,          "good evening " AI_NAME,
-                             "good day " AI_NAME, "good morning " AI_NAME };
+static char *wakeWords[] = { "hello " AI_NAME,    "okay " AI_NAME,         "alright " AI_NAME,
+                             "hey " AI_NAME,      "hi " AI_NAME,           "good evening " AI_NAME,
+                             "good day " AI_NAME, "good morning " AI_NAME, "yeah " AI_NAME,
+                             "k " AI_NAME };
 
 // Array of words/phrases used to signal the end of an interaction with the AI.
 static char *goodbyeWords[] = { "good bye", "goodbye", "good night", "bye", "quit", "exit" };
@@ -280,6 +281,63 @@ typedef struct {
 // Global variable for command processing mode
 command_processing_mode_t command_processing_mode = CMD_MODE_DIRECT_ONLY;
 struct json_object *conversation_history = NULL;
+
+/**
+ * @brief Callback for streaming LLM responses with TTS
+ *
+ * This callback is called for each complete sentence from the streaming LLM.
+ * It cleans the sentence and sends it directly to TTS for immediate playback.
+ */
+static void dawn_tts_sentence_callback(const char *sentence, void *userdata) {
+   if (!sentence || strlen(sentence) == 0) {
+      return;
+   }
+
+   // Make a copy for cleaning
+   char *cleaned = strdup(sentence);
+   if (!cleaned) {
+      return;
+   }
+
+   // Remove command tags (they'll be processed from the full response later)
+   char *cmd_start, *cmd_end;
+   while ((cmd_start = strstr(cleaned, "<command>")) != NULL) {
+      cmd_end = strstr(cmd_start, "</command>");
+      if (cmd_end) {
+         cmd_end += strlen("</command>");
+         memmove(cmd_start, cmd_end, strlen(cmd_end) + 1);
+      } else {
+         break;
+      }
+   }
+
+   // Remove <end_of_turn> tags (local AI models)
+   char *match = NULL;
+   if ((match = strstr(cleaned, "<end_of_turn>")) != NULL) {
+      *match = '\0';
+   }
+
+   // Remove special characters that cause problems
+   remove_chars(cleaned, "*");
+   remove_emojis(cleaned);
+
+   // Trim whitespace
+   size_t len = strlen(cleaned);
+   while (len > 0 && (cleaned[len - 1] == ' ' || cleaned[len - 1] == '\t' ||
+                      cleaned[len - 1] == '\n' || cleaned[len - 1] == '\r')) {
+      cleaned[--len] = '\0';
+   }
+
+   // Only send to TTS if there's actual content
+   if (len > 0) {
+      text_to_speech(cleaned);
+
+      // Add natural pause between sentences (300ms)
+      usleep(300000);
+   }
+
+   free(cleaned);
+}
 
 sig_atomic_t get_quit(void) {
    return quit;
@@ -1950,7 +2008,11 @@ int main(int argc, char *argv[]) {
                   recState = SILENCE;
                } else {
                   // User message already added at top of PROCESS_COMMAND
-                  response_text = llm_chat_completion(conversation_history, command_text, NULL, 0);
+                  // Use streaming with TTS sentence buffering for immediate response
+                  response_text = llm_chat_completion_streaming_tts(conversation_history,
+                                                                    command_text, NULL, 0,
+                                                                    dawn_tts_sentence_callback,
+                                                                    NULL);
                   if (response_text != NULL) {
                      LOG_WARNING("AI: %s\n", response_text);
 
@@ -2006,8 +2068,8 @@ int main(int argc, char *argv[]) {
                      }
                      pthread_mutex_unlock(&tts_mutex);
 
-                     // Use cleaned response for TTS
-                     text_to_speech(tts_response ? tts_response : response_text);
+                     // TTS already handled by streaming callback - no need to call text_to_speech
+                     // here Just process commands and save to conversation history
 
                      // Save original response (with command tags) to conversation history
                      // but trim trailing whitespace for Claude API compatibility
@@ -2072,19 +2134,15 @@ int main(int argc, char *argv[]) {
             // Get the AI response using the image recognition.
             // The user message was already added in PROCESS_COMMAND state
             // The vision image will be added by llm_claude.c/llm_openai.c to the last user message
-            response_text = llm_chat_completion(
+            // Use streaming with TTS sentence buffering for immediate response
+            response_text = llm_chat_completion_streaming_tts(
                 conversation_history,
                 "What am I looking at? Ignore the overlay unless asked about it specifically.",
-                vision_ai_image, vision_ai_image_size);
+                vision_ai_image, vision_ai_image_size, dawn_tts_sentence_callback, NULL);
             if (response_text != NULL) {
-               // AI returned successfully, vocalize response.
+               // AI returned successfully
                LOG_WARNING("AI: %s\n", response_text);
-               char *match = NULL;
-               if ((match = strstr(response_text, "<end_of_turn>")) != NULL) {
-                  *match = '\0';
-                  LOG_WARNING("AI: %s\n", response_text);
-               }
-               text_to_speech(response_text);
+               // TTS already handled by streaming callback
 
                // Add the successful AI response to the conversation.
                struct json_object *ai_message = json_object_new_object();
@@ -2194,8 +2252,9 @@ int main(int argc, char *argv[]) {
                                             json_object_new_string(input_text));
                      json_object_array_add(conversation_history, user_message);
 
-                     // Get LLM response using existing function
-                     response_text = llm_chat_completion(conversation_history, input_text, NULL, 0);
+                     // Get LLM response using streaming (no TTS callback - we generate WAV below)
+                     response_text = llm_chat_completion_streaming(conversation_history, input_text,
+                                                                   NULL, 0, NULL, NULL);
 
                      if (response_text && strlen(response_text) > 0) {
                         // Now be sure to filter out special characters that give us problems.

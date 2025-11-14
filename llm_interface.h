@@ -60,7 +60,29 @@ typedef enum {
 void llm_init(const char *cloud_provider_override);
 
 /**
- * @brief Get chat completion from configured LLM
+ * @brief Callback function type for streaming text chunks from LLM
+ *
+ * Called for each incremental text chunk received from the LLM during streaming.
+ * The text should be processed immediately (e.g., sent to TTS).
+ *
+ * @param chunk Incremental text chunk
+ * @param userdata User-provided context pointer
+ */
+typedef void (*llm_text_chunk_callback)(const char *chunk, void *userdata);
+
+/**
+ * @brief Callback function type for complete sentences from streaming
+ *
+ * Called for each complete sentence extracted from the LLM stream.
+ * Use this for TTS to ensure natural speech boundaries.
+ *
+ * @param sentence Complete sentence text
+ * @param userdata User-provided context pointer
+ */
+typedef void (*llm_sentence_callback)(const char *sentence, void *userdata);
+
+/**
+ * @brief Get chat completion from configured LLM (non-streaming)
  *
  * Routes to appropriate provider based on current configuration.
  * Handles local/cloud fallback automatically on connection failure.
@@ -77,6 +99,51 @@ char *llm_chat_completion(struct json_object *conversation_history,
                           const char *input_text,
                           char *vision_image,
                           size_t vision_image_size);
+
+/**
+ * @brief Get chat completion from configured LLM with streaming
+ *
+ * Routes to appropriate provider based on current configuration.
+ * Calls chunk_callback for each incremental text chunk as it arrives.
+ * The complete accumulated response is returned when streaming completes.
+ * Handles local/cloud fallback automatically on connection failure.
+ *
+ * @param conversation_history JSON array of conversation messages (OpenAI format)
+ * @param input_text User's input text
+ * @param vision_image Optional base64 image for vision models (NULL if not used)
+ * @param vision_image_size Size of vision image data (0 if not used)
+ * @param chunk_callback Function to call for each text chunk (NULL for non-streaming)
+ * @param callback_userdata User context passed to chunk_callback
+ * @return Complete response text (caller must free), or NULL on error
+ */
+char *llm_chat_completion_streaming(struct json_object *conversation_history,
+                                    const char *input_text,
+                                    char *vision_image,
+                                    size_t vision_image_size,
+                                    llm_text_chunk_callback chunk_callback,
+                                    void *callback_userdata);
+
+/**
+ * @brief Get chat completion with streaming and sentence-boundary buffering for TTS
+ *
+ * Similar to llm_chat_completion_streaming, but buffers chunks and sends complete
+ * sentences to the callback. This ensures TTS receives natural speech boundaries
+ * (sentences ending with ., !, ?, :) for better prosody and intonation.
+ *
+ * @param conversation_history JSON array of conversation messages (OpenAI format)
+ * @param input_text User's input text
+ * @param vision_image Optional base64 image for vision models (NULL if not used)
+ * @param vision_image_size Size of vision image data (0 if not used)
+ * @param sentence_callback Function to call for each complete sentence
+ * @param callback_userdata User context passed to sentence_callback
+ * @return Complete response text (caller must free), or NULL on error
+ */
+char *llm_chat_completion_streaming_tts(struct json_object *conversation_history,
+                                        const char *input_text,
+                                        char *vision_image,
+                                        size_t vision_image_size,
+                                        llm_sentence_callback sentence_callback,
+                                        void *callback_userdata);
 
 /**
  * @brief Switch between local and cloud LLM

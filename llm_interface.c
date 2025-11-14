@@ -34,6 +34,7 @@
 
 #include "logging.h"
 #include "secrets.h"
+#include "sentence_buffer.h"
 #include "text_to_speech.h"
 
 // Provider implementations
@@ -375,6 +376,152 @@ char *llm_chat_completion(struct json_object *conversation_history,
 #endif
       }
    }
+
+   return response;
+}
+
+char *llm_chat_completion_streaming(struct json_object *conversation_history,
+                                    const char *input_text,
+                                    char *vision_image,
+                                    size_t vision_image_size,
+                                    llm_text_chunk_callback chunk_callback,
+                                    void *callback_userdata) {
+   char *response = NULL;
+
+   if (current_type == LLM_LOCAL) {
+      // Local LLM uses OpenAI-compatible API
+#ifdef OPENAI_API_KEY
+      response = llm_openai_chat_completion_streaming(conversation_history, input_text,
+                                                      vision_image, vision_image_size, llm_url,
+                                                      NULL,  // No API key for local
+                                                      chunk_callback, callback_userdata);
+#else
+      LOG_ERROR("Local LLM requires OpenAI-compatible implementation");
+      return NULL;
+#endif
+   } else {
+      // Route to cloud provider
+      switch (current_cloud_provider) {
+#ifdef OPENAI_API_KEY
+         case CLOUD_PROVIDER_OPENAI:
+            response = llm_openai_chat_completion_streaming(conversation_history, input_text,
+                                                            vision_image, vision_image_size,
+                                                            llm_url, OPENAI_API_KEY, chunk_callback,
+                                                            callback_userdata);
+            break;
+#endif
+
+#ifdef CLAUDE_API_KEY
+         case CLOUD_PROVIDER_CLAUDE:
+            response = llm_claude_chat_completion_streaming(conversation_history, input_text,
+                                                            vision_image, vision_image_size,
+                                                            llm_url, CLAUDE_API_KEY, chunk_callback,
+                                                            callback_userdata);
+            break;
+#endif
+
+         default:
+            LOG_ERROR("No cloud provider configured");
+            return NULL;
+      }
+   }
+
+   // If cloud LLM failed, try falling back to local
+   if (response == NULL && current_type == LLM_CLOUD) {
+      if (strcmp(CLOUDAI_URL, llm_url) == 0 || strcmp(CLAUDE_URL, llm_url) == 0) {
+         LOG_WARNING("Falling back to local LLM.");
+         text_to_speech("Unable to contact cloud LLM.");
+         llm_set_type(LLM_LOCAL);
+         text_to_speech("Setting AI to local LLM.");
+
+         // Retry with local LLM
+#ifdef OPENAI_API_KEY
+         response = llm_openai_chat_completion_streaming(conversation_history, input_text,
+                                                         vision_image, vision_image_size, llm_url,
+                                                         NULL, chunk_callback, callback_userdata);
+#endif
+      }
+   }
+
+   return response;
+}
+
+/**
+ * @brief Context for TTS streaming
+ *
+ * THREADING SAFETY CONTRACT:
+ * This structure is stack-allocated in llm_chat_completion_streaming_tts() and relies
+ * on synchronous CURL execution. The context remains valid throughout the entire CURL
+ * request because curl_easy_perform() blocks until completion, invoking all callbacks
+ * from the calling thread before returning.
+ *
+ * IMPORTANT: If migrating to asynchronous CURL (curl_easy_multi) or background threads:
+ * 1. This structure MUST be heap-allocated with explicit lifetime management
+ * 2. Add reference counting or retain until all callbacks complete
+ * 3. Callbacks may execute after the original function returns
+ * 4. Consider using atomic reference counts for multi-threaded access
+ *
+ * CURRENT IMPLEMENTATION STATUS:
+ * - Single-threaded network client processing (dawn.c state machine)
+ * - Synchronous CURL execution (safe with stack allocation)
+ * - Per-request contexts (no sharing between requests)
+ *
+ * FUTURE MULTI-CLIENT ARCHITECTURE:
+ * - Worker threads will each have their own stack and contexts
+ * - No shared state between workers (inherently thread-safe)
+ * - Each worker calls this function independently
+ * - Stack allocation remains safe as long as CURL stays synchronous
+ */
+typedef struct {
+   sentence_buffer_t *sentence_buffer;
+   llm_sentence_callback user_callback;
+   void *user_userdata;
+} tts_streaming_context_t;
+
+/**
+ * @brief Chunk callback that feeds to sentence buffer
+ */
+static void tts_chunk_callback(const char *chunk, void *userdata) {
+   tts_streaming_context_t *ctx = (tts_streaming_context_t *)userdata;
+   sentence_buffer_feed(ctx->sentence_buffer, chunk);
+}
+
+/**
+ * @brief Sentence callback wrapper
+ */
+static void tts_sentence_callback(const char *sentence, void *userdata) {
+   tts_streaming_context_t *ctx = (tts_streaming_context_t *)userdata;
+   ctx->user_callback(sentence, ctx->user_userdata);
+}
+
+char *llm_chat_completion_streaming_tts(struct json_object *conversation_history,
+                                        const char *input_text,
+                                        char *vision_image,
+                                        size_t vision_image_size,
+                                        llm_sentence_callback sentence_callback,
+                                        void *callback_userdata) {
+   char *response = NULL;
+   tts_streaming_context_t ctx;
+
+   // Create sentence buffer
+   ctx.sentence_buffer = sentence_buffer_create(tts_sentence_callback, &ctx);
+   if (!ctx.sentence_buffer) {
+      LOG_ERROR("Failed to create sentence buffer for TTS streaming");
+      return NULL;
+   }
+
+   ctx.user_callback = sentence_callback;
+   ctx.user_userdata = callback_userdata;
+
+   // Call streaming with chunk callback that feeds sentence buffer
+   response = llm_chat_completion_streaming(conversation_history, input_text, vision_image,
+                                            vision_image_size, tts_chunk_callback, &ctx);
+
+   // Flush any remaining sentence
+   sentence_buffer_flush(ctx.sentence_buffer);
+
+   // Cleanup
+   sentence_buffer_free(ctx.sentence_buffer);
 
    return response;
 }
