@@ -39,10 +39,10 @@
 /* Local */
 #include "dawn.h"
 #include "flac_playback.h"
+#include "llm_interface.h"
 #include "logging.h"
 #include "mic_passthrough.h"
 #include "mosquitto_comms.h"
-#include "openai.h"
 #include "text_to_speech.h"
 #include "word_to_number.h"
 
@@ -318,9 +318,26 @@ void parseJsonCommandandExecute(const char *input) {
       json_object_put(parsedJson);
       return;
    }
+
+   // Skip LLM call for viewing - it will be handled in VISION_AI_READY state with the image
+   if (strcmp(deviceName, "viewing") == 0) {
+      LOG_INFO(
+          "Viewing command completed - skipping LLM call, will process in VISION_AI_READY state");
+      free(pending_command_result);
+      pending_command_result = NULL;
+      json_object_put(parsedJson);
+      return;
+   }
+
    snprintf(gpt_response, sizeof(gpt_response), "{\"response\": \"%s\"}", pending_command_result);
 
-   response_text = getGptResponse(conversation_history, gpt_response, NULL, 0);
+   // Add system response as user message to conversation history
+   struct json_object *system_response_message = json_object_new_object();
+   json_object_object_add(system_response_message, "role", json_object_new_string("user"));
+   json_object_object_add(system_response_message, "content", json_object_new_string(gpt_response));
+   json_object_array_add(conversation_history, system_response_message);
+
+   response_text = llm_chat_completion(conversation_history, gpt_response, NULL, 0);
    if (response_text != NULL) {
       // AI returned successfully, vocalize response.
       LOG_INFO("AI: %s\n", response_text);
@@ -1027,7 +1044,7 @@ char *localLLMCallback(const char *actionName, char *value, int *should_respond)
    static char return_buffer[256];
 
    LOG_INFO("Setting AI to local LLM.");
-   setLLM(LOCAL_LLM);
+   llm_set_type(LLM_LOCAL);
 
    // Always return string for AI modes (ignored in DIRECT_ONLY)
    strcpy(return_buffer, "AI switched to local LLM");
@@ -1039,7 +1056,7 @@ char *cloudLLMCallback(const char *actionName, char *value, int *should_respond)
    static char return_buffer[256];
 
    LOG_INFO("Setting AI to cloud LLM.");
-   setLLM(CLOUD_LLM);
+   llm_set_type(LLM_CLOUD);
 
    // Always return string for AI modes (ignored in DIRECT_ONLY)
    strcpy(return_buffer, "AI switched to cloud LLM");

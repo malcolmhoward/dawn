@@ -50,9 +50,9 @@
 #include "dawn_server.h"
 #include "dawn_wav_utils.h"
 #include "llm_command_parser.h"
+#include "llm_interface.h"
 #include "logging.h"
 #include "mosquitto_comms.h"
-#include "openai.h"
 #include "text_to_command_nuevo.h"
 #include "text_to_speech.h"
 #include "version.h"
@@ -67,7 +67,7 @@
 #define DEFAULT_CAPTURE_SECONDS 0.5f
 
 // Define the default command timeout in terms of iterations of DEFAULT_CAPTURE_SECONDS.
-#define DEFAULT_COMMAND_TIMEOUT 3
+#define DEFAULT_COMMAND_TIMEOUT 3  // 3 * 0.5s = 1.5 seconds of silence before timeout
 
 // Define the duration for background audio capture in seconds.
 #define BACKGROUND_CAPTURE_SECONDS 6
@@ -1119,6 +1119,7 @@ void display_help(int argc, char *argv[]) {
    printf("  -N, --network-audio    Enable network audio processing server\n");
    printf("  -h, --help             Display this help message and exit.\n");
    printf("  -m, --llm TYPE         Set default LLM type (cloud or local).\n");
+   printf("  -P, --cloud-provider PROVIDER  Set cloud provider (openai or claude).\n");
    printf("Command Processing Modes:\n");
    printf("  -D, --commands-only    Direct command processing only (default).\n");
    printf("  -C, --llm-commands     Try direct commands first, then LLM if no match.\n");
@@ -1185,21 +1186,23 @@ int main(int argc, char *argv[]) {
       { "logfile", required_argument, NULL, 'l' },
       { "playback", required_argument, NULL, 'd' },
       { "help", no_argument, NULL, 'h' },
-      { "llm-only", no_argument, NULL, 'L' },       // LLM handles everything
-      { "llm-commands", no_argument, NULL, 'C' },   // Commands first, then LLM
-      { "commands-only", no_argument, NULL, 'D' },  // Direct commands only (explicit)
-      { "network-audio", no_argument, NULL, 'N' },  // Start server for remote DAWN access
-      { "llm", required_argument, NULL, 'm' },      // Set default LLM type
+      { "llm-only", no_argument, NULL, 'L' },              // LLM handles everything
+      { "llm-commands", no_argument, NULL, 'C' },          // Commands first, then LLM
+      { "commands-only", no_argument, NULL, 'D' },         // Direct commands only (explicit)
+      { "network-audio", no_argument, NULL, 'N' },         // Start server for remote DAWN access
+      { "llm", required_argument, NULL, 'm' },             // Set default LLM type (local/cloud)
+      { "cloud-provider", required_argument, NULL, 'P' },  // Cloud provider (openai/claude)
       { 0, 0, 0, 0 }
    };
    int option_index = 0;
+   const char *cloud_provider_override = NULL;
 
    LOG_INFO("%s Version %s: %s\n", APP_NAME, VERSION_NUMBER, GIT_SHA);
 
    // TODO: I'm adding this here but it will need better error clean-ups.
    curl_global_init(CURL_GLOBAL_DEFAULT);
 
-   while ((opt = getopt_long(argc, argv, "c:d:hl:LCDNm:", long_options, &option_index)) != -1) {
+   while ((opt = getopt_long(argc, argv, "c:d:hl:LCDNm:P:", long_options, &option_index)) != -1) {
       switch (opt) {
          case 'c':
             strncpy(pcm_capture_device, optarg, sizeof(pcm_capture_device));
@@ -1233,14 +1236,18 @@ int main(int argc, char *argv[]) {
             break;
          case 'm':
             if (strcasecmp(optarg, "cloud") == 0) {
-               setLLM(CLOUD_LLM);
+               llm_set_type(LLM_CLOUD);
                LOG_INFO("Using cloud LLM by default");
             } else if (strcasecmp(optarg, "local") == 0) {
-               setLLM(LOCAL_LLM);
+               llm_set_type(LLM_LOCAL);
                LOG_INFO("Using local LLM by default");
             } else {
                LOG_ERROR("Unknown LLM type: %s. Using auto-detection.", optarg);
             }
+            break;
+         case 'P':
+            cloud_provider_override = optarg;
+            LOG_INFO("Cloud provider override: %s", cloud_provider_override);
             break;
          case '?':
             display_help(argc, argv);
@@ -1453,13 +1460,17 @@ int main(int argc, char *argv[]) {
       exit(EXIT_FAILURE);
    }
 
-   if (getLLM() == UNDEFINED_LLM) {
-      if (checkInternetConnectionWithTimeout(CLOUDAI_URL, 4)) {
-         setLLM(CLOUD_LLM);
-         text_to_speech("Setting to AI to cloud LLM.");
+   // Initialize LLM system
+   llm_init(cloud_provider_override);
+
+   // Auto-detect local vs cloud if not set via command-line
+   if (llm_get_type() == LLM_UNDEFINED) {
+      if (llm_check_connection("https://api.openai.com", 4)) {
+         llm_set_type(LLM_CLOUD);
+         text_to_speech("Setting AI to cloud LLM.");
       } else {
-         setLLM(LOCAL_LLM);
-         text_to_speech("Setting to AI to local LLM.");
+         llm_set_type(LLM_LOCAL);
+         text_to_speech("Setting AI to local LLM.");
       }
    }
 
@@ -1816,6 +1827,7 @@ int main(int argc, char *argv[]) {
                vosk_nochange = 0;
             } else {
                commandTimeout = 0;
+               vosk_nochange = 0;
             }
 
             if (commandTimeout >= DEFAULT_COMMAND_TIMEOUT) {
@@ -1840,6 +1852,16 @@ int main(int argc, char *argv[]) {
             break;
          case PROCESS_COMMAND:
             int direct_command_found = 0;
+
+            // Add user message to conversation history first (needed for vision context)
+            // We'll add it regardless of whether it's a direct command or LLM processing
+            if (command_processing_mode != CMD_MODE_DIRECT_ONLY) {
+               struct json_object *user_message_early = json_object_new_object();
+               json_object_object_add(user_message_early, "role", json_object_new_string("user"));
+               json_object_object_add(user_message_early, "content",
+                                      json_object_new_string(command_text));
+               json_object_array_add(conversation_history, user_message_early);
+            }
 
             /* Process Commands before AI if LLM command processing is disabled */
             if (command_processing_mode != CMD_MODE_LLM_ONLY) {
@@ -1927,9 +1949,13 @@ int main(int argc, char *argv[]) {
                   silenceNextState = WAKEWORD_LISTEN;
                   recState = SILENCE;
                } else {
-                  response_text = getGptResponse(conversation_history, command_text, NULL, 0);
+                  // User message already added at top of PROCESS_COMMAND
+                  response_text = llm_chat_completion(conversation_history, command_text, NULL, 0);
                   if (response_text != NULL) {
                      LOG_WARNING("AI: %s\n", response_text);
+
+                     // Create cleaned version for TTS (keep original for conversation history)
+                     char *tts_response = strdup(response_text);
 
                      // Process any commands in the LLM response
                      if (command_processing_mode == CMD_MODE_LLM_ONLY ||
@@ -1938,12 +1964,10 @@ int main(int argc, char *argv[]) {
                         if (cmds_processed > 0) {
                            LOG_INFO("Processed %d commands from LLM response", cmds_processed);
                         }
-
-                        // Clean up command tags from the response before TTS
-                        char *clean_response = strdup(response_text);
-                        if (clean_response) {
+                        if (tts_response) {
+                           // Remove command tags
                            char *cmd_start, *cmd_end;
-                           while ((cmd_start = strstr(clean_response, "<command>")) != NULL) {
+                           while ((cmd_start = strstr(tts_response, "<command>")) != NULL) {
                               cmd_end = strstr(cmd_start, "</command>");
                               if (cmd_end) {
                                  cmd_end += strlen("</command>");
@@ -1953,25 +1977,27 @@ int main(int argc, char *argv[]) {
                               }
                            }
 
-                           // Use the clean response for TTS
-                           free(response_text);
-                           response_text = clean_response;
+                           // Remove <end_of_turn> tags (local AI models)
+                           char *match = NULL;
+                           if ((match = strstr(tts_response, "<end_of_turn>")) != NULL) {
+                              *match = '\0';
+                           }
+
+                           // Remove special characters that cause problems
+                           remove_chars(tts_response, "*");
+                           remove_emojis(tts_response);
+
+                           // Trim trailing whitespace (important for Claude API conversation
+                           // history)
+                           size_t len = strlen(tts_response);
+                           while (len > 0 &&
+                                  (tts_response[len - 1] == ' ' || tts_response[len - 1] == '\t' ||
+                                   tts_response[len - 1] == '\n' ||
+                                   tts_response[len - 1] == '\r')) {
+                              tts_response[--len] = '\0';
+                           }
                         }
                      }
-
-                     /* This match section was added for local AI models that return extra data that
-                      * needs to be filtered out.
-                      */
-                     // <end_of_turn> is being added by Gemma 2B
-                     char *match = NULL;
-                     if ((match = strstr(response_text, "<end_of_turn>")) != NULL) {
-                        *match = '\0';
-                        LOG_WARNING("AI: %s\n", response_text);
-                     }
-
-                     // Now be sure to filter out special characters that give us problems.
-                     remove_chars(response_text, "*");
-                     remove_emojis(response_text);
 
                      pthread_mutex_lock(&tts_mutex);
                      if (tts_playback_state == TTS_PLAYBACK_PAUSE) {
@@ -1980,17 +2006,34 @@ int main(int argc, char *argv[]) {
                      }
                      pthread_mutex_unlock(&tts_mutex);
 
-                     // Now let's see how it sounds.
-                     text_to_speech(response_text);
+                     // Use cleaned response for TTS
+                     text_to_speech(tts_response ? tts_response : response_text);
+
+                     // Save original response (with command tags) to conversation history
+                     // but trim trailing whitespace for Claude API compatibility
+                     char *history_response = strdup(response_text);
+                     if (history_response) {
+                        size_t len = strlen(history_response);
+                        while (len > 0 && (history_response[len - 1] == ' ' ||
+                                           history_response[len - 1] == '\t' ||
+                                           history_response[len - 1] == '\n' ||
+                                           history_response[len - 1] == '\r')) {
+                           history_response[--len] = '\0';
+                        }
+                     }
 
                      struct json_object *ai_message = json_object_new_object();
                      json_object_object_add(ai_message, "role",
                                             json_object_new_string("assistant"));
                      json_object_object_add(ai_message, "content",
-                                            json_object_new_string(response_text));
+                                            json_object_new_string(history_response
+                                                                       ? history_response
+                                                                       : response_text));
                      json_object_array_add(conversation_history, ai_message);
 
                      free(response_text);
+                     free(tts_response);
+                     free(history_response);
                   } else {
                      pthread_mutex_lock(&tts_mutex);
                      if (tts_playback_state == TTS_PLAYBACK_PAUSE) {
@@ -2027,7 +2070,9 @@ int main(int argc, char *argv[]) {
             pthread_mutex_unlock(&tts_mutex);
 
             // Get the AI response using the image recognition.
-            response_text = getGptResponse(
+            // The user message was already added in PROCESS_COMMAND state
+            // The vision image will be added by llm_claude.c/llm_openai.c to the last user message
+            response_text = llm_chat_completion(
                 conversation_history,
                 "What am I looking at? Ignore the overlay unless asked about it specifically.",
                 vision_ai_image, vision_ai_image_size);
@@ -2142,8 +2187,15 @@ int main(int argc, char *argv[]) {
                   if (input_text && strlen(input_text) > 0 && !direct_command_found) {
                      LOG_INFO("Network speech recognized: \"%s\"", input_text);
 
+                     // Add user message to conversation history
+                     struct json_object *user_message = json_object_new_object();
+                     json_object_object_add(user_message, "role", json_object_new_string("user"));
+                     json_object_object_add(user_message, "content",
+                                            json_object_new_string(input_text));
+                     json_object_array_add(conversation_history, user_message);
+
                      // Get LLM response using existing function
-                     response_text = getGptResponse(conversation_history, input_text, NULL, 0);
+                     response_text = llm_chat_completion(conversation_history, input_text, NULL, 0);
 
                      if (response_text && strlen(response_text) > 0) {
                         // Now be sure to filter out special characters that give us problems.

@@ -1,0 +1,111 @@
+/*
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ * By contributing to this project, you agree to license your contributions
+ * under the GPLv3 (or any later version) or any future licenses chosen by
+ * the project author(s). Contributions include any modifications,
+ * enhancements, or additions to the project. These contributions become
+ * part of the project and are adopted by the project author(s).
+ */
+
+#ifndef LLM_INTERFACE_H
+#define LLM_INTERFACE_H
+
+#include <json-c/json.h>
+#include <stddef.h>
+
+/**
+ * @brief Cloud provider types
+ *
+ * Automatically detected based on secrets.h API key definitions.
+ * If both OPENAI_API_KEY and CLAUDE_API_KEY are defined, provider
+ * can be selected via --cloud-provider command-line argument.
+ */
+typedef enum {
+   CLOUD_PROVIDER_OPENAI, /**< OpenAI (GPT models) */
+   CLOUD_PROVIDER_CLAUDE, /**< Anthropic Claude models */
+   CLOUD_PROVIDER_NONE    /**< No cloud provider configured */
+} cloud_provider_t;
+
+/**
+ * @brief LLM type (local vs cloud)
+ */
+typedef enum {
+   LLM_LOCAL,    /**< Local LLM server (e.g., llama.cpp) */
+   LLM_CLOUD,    /**< Cloud LLM provider (OpenAI or Claude) */
+   LLM_UNDEFINED /**< Not yet initialized */
+} llm_type_t;
+
+/**
+ * @brief Initialize the LLM system
+ *
+ * Detects available cloud providers based on secrets.h API key definitions.
+ * If command-line override provided, validates and uses it.
+ * If both providers available and no override, defaults to OpenAI.
+ *
+ * @param cloud_provider_override Optional provider override from command line
+ *                                 ("openai", "claude", or NULL to auto-detect)
+ */
+void llm_init(const char *cloud_provider_override);
+
+/**
+ * @brief Get chat completion from configured LLM
+ *
+ * Routes to appropriate provider based on current configuration.
+ * Handles local/cloud fallback automatically on connection failure.
+ * Conversation history is always stored in OpenAI format internally,
+ * but converted as needed for Claude API calls.
+ *
+ * @param conversation_history JSON array of conversation messages (OpenAI format)
+ * @param input_text User's input text
+ * @param vision_image Optional base64 image for vision models (NULL if not used)
+ * @param vision_image_size Size of vision image data (0 if not used)
+ * @return Response text (caller must free), or NULL on error
+ */
+char *llm_chat_completion(struct json_object *conversation_history,
+                          const char *input_text,
+                          char *vision_image,
+                          size_t vision_image_size);
+
+/**
+ * @brief Switch between local and cloud LLM
+ *
+ * @param type LLM_LOCAL or LLM_CLOUD
+ */
+void llm_set_type(llm_type_t type);
+
+/**
+ * @brief Get current LLM type
+ *
+ * @return Current LLM type (LLM_LOCAL, LLM_CLOUD, or LLM_UNDEFINED)
+ */
+llm_type_t llm_get_type(void);
+
+/**
+ * @brief Get current cloud provider name (for display/logging)
+ *
+ * @return String name of provider ("OpenAI", "Claude", "None")
+ */
+const char *llm_get_cloud_provider_name(void);
+
+/**
+ * @brief Check internet connectivity to LLM endpoint
+ *
+ * @param url URL to check
+ * @param timeout_seconds Timeout in seconds
+ * @return 1 if reachable, 0 otherwise
+ */
+int llm_check_connection(const char *url, int timeout_seconds);
+
+#endif  // LLM_INTERFACE_H

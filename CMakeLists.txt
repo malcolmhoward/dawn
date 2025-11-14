@@ -80,10 +80,12 @@ add_executable(dawn
                dawn_wav_utils.c
                flac_playback.c
                llm_command_parser.c
+               llm_interface.c
+               llm_openai.c
+               llm_claude.c
                logging.c
                mic_passthrough.c
                mosquitto_comms.c
-               openai.c
                text_to_command_nuevo.c
                text_to_speech.cpp
                word_to_number.c)

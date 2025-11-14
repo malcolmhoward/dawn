@@ -22,8 +22,24 @@
 #ifndef SECRETS_H
 #define SECRETS_H
 
-/* This is the API key from OpenAI. This is an INVALID key. Change this to your key after
- * registering for one on their site. */
-#define OPENAI_HEADER   "Authorization: Bearer KEY"
+/*
+ * Cloud LLM API Keys
+ *
+ * Define API keys for cloud providers you want to enable.
+ * Comment out any you don't want to use.
+ *
+ * If both defined: use --cloud-provider=openai or --cloud-provider=claude at runtime
+ * If one defined: that provider is used automatically
+ */
 
-#endif // SECRETS_H
+/* OpenAI API Key */
+#define OPENAI_API_KEY \
+   "sk-proj-"          \
+   ""
+
+/* Anthropic Claude API Key */
+#define CLAUDE_API_KEY \
+   "sk-ant-"           \
+   ""
+
+#endif  // SECRETS_H

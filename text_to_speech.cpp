@@ -281,6 +281,15 @@ void *tts_thread_function(void *arg) {
                   }
                }
             }
+
+         // Drain audio buffer to ensure all audio is played before returning
+#ifdef ALSA_DEVICE
+            snd_pcm_drain(tts_handle.handle);
+#else
+            if (pa_simple_drain(tts_handle.pa_handle, &error) < 0) {
+               LOG_ERROR("PulseAudio drain error: %s", pa_strerror(error));
+            }
+#endif
 #endif
                      // Clear the audio buffer for the next request
                      audioBuffer.clear();

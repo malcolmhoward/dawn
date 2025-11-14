@@ -25,7 +25,7 @@
 #define LLM_COMMAND_PARSER_H
 
 // Function to build command prompt from commands_config_nuevo.json
-char *build_command_prompt(void);
+const char *get_command_prompt(void);
 
 // Function to parse LLM responses for commands
 int parse_llm_response_for_commands(const char *llm_response, struct mosquitto *mosq);
