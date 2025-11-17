@@ -47,7 +47,7 @@ void setStopVA(void) {
 
 #ifdef ALSA_DEVICE
 void *voiceAmplificationThread(void *arg) {
-   char *pcmCaptureDevice = getPcmCaptureDevice();
+   const char *pcmCaptureDevice = getPcmCaptureDevice();
    char *pcmPlaybackDevice = findAudioPlaybackDevice("speakers");
    snd_pcm_t *inputHandle = NULL;
    snd_pcm_t *outputHandle = NULL;

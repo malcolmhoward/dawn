@@ -73,6 +73,7 @@ target_link_libraries(piper onnxruntime)
 link_directories(${CMAKE_SOURCE_DIR})
 
 add_executable(dawn
+               audio_capture_thread.c
                audio_utils.c
                dawn.c
                dawn_network_audio.c
@@ -87,6 +88,7 @@ add_executable(dawn
                logging.c
                mic_passthrough.c
                mosquitto_comms.c
+               ring_buffer.c
                sentence_buffer.c
                sse_parser.c
                text_to_command_nuevo.c

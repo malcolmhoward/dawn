@@ -44,6 +44,7 @@
 #include "vosk_api.h"
 
 /* Local */
+#include "audio_capture_thread.h"
 #include "audio_utils.h"
 #include "dawn.h"
 #include "dawn_network_audio.h"
@@ -69,8 +70,10 @@
 // Define the default command timeout in terms of iterations of DEFAULT_CAPTURE_SECONDS.
 #define DEFAULT_COMMAND_TIMEOUT 3  // 3 * 0.5s = 1.5 seconds of silence before timeout
 
-// Define the duration for background audio capture in seconds.
-#define BACKGROUND_CAPTURE_SECONDS 6
+// Define the duration for each background audio capture sample in seconds.
+#define BACKGROUND_CAPTURE_SECONDS 2
+// Number of samples to take (will use minimum RMS to get true silence baseline)
+#define BACKGROUND_CAPTURE_SAMPLES 3
 
 // Check if ALSA_DEVICE is defined to include ALSA-specific headers and define ALSA-specific macros.
 #ifdef ALSA_DEVICE
@@ -146,6 +149,9 @@ static const pa_sample_spec sample_spec = { .format = DEFAULT_PULSE_FORMAT,
                                             .rate = DEFAULT_RATE,
                                             .channels = DEFAULT_CHANNELS };
 #endif
+
+// Audio capture thread context (dedicated thread for continuous audio capture)
+static audio_capture_context_t *audio_capture_ctx = NULL;
 
 // Holds the current RMS (Root Mean Square) level of the background audio.
 // Used to monitor ambient noise levels and potentially adjust listening sensitivity.
@@ -534,83 +540,71 @@ char *setPcmCaptureDevice(const char *actionName, char *value, int *should_respo
  * @return NULL always, indicating the thread's work is complete.
  */
 void *measureBackgroundAudio(void *audHandle) {
-   audioControl *myControl = (audioControl *)audHandle;
+   (void)audHandle;  // Unused - kept for API compatibility
 
-   // Allocate Audio Buffers based on the backend and specified parameters.
-   char *buff = (char *)malloc(myControl->full_buff_size);
-   if (buff == NULL) {
-      LOG_ERROR("malloc() failed on buff.\n");
-      return NULL;  // Early return on allocation failure for buff.
+   // Use the dedicated capture thread instead of direct device access
+   if (!audio_capture_ctx) {
+      LOG_ERROR("Audio capture thread not initialized for background measurement\n");
+      return NULL;
    }
 
-   uint32_t max_buff_size =  // Calculate maximum buffer size based on backend.
-       DEFAULT_RATE * DEFAULT_CHANNELS * sizeof(int16_t) * BACKGROUND_CAPTURE_SECONDS;
+   // Calculate buffer size for background audio measurement
+   uint32_t max_buff_size = DEFAULT_RATE * DEFAULT_CHANNELS * sizeof(int16_t) *
+                            BACKGROUND_CAPTURE_SECONDS;
 
    char *max_buff = (char *)malloc(max_buff_size);
    if (max_buff == NULL) {
       LOG_ERROR("malloc() failed on max_buff.\n");
-      free(buff);   // Ensure buff is freed to avoid a memory leak.
-      return NULL;  // Early return on allocation failure for max_buff.
+      return NULL;
    }
 
-   uint32_t buff_size = 0;
-   int rc = 0, error = 0;
+   // Clear any old data from ring buffer to get fresh background audio
+   audio_capture_clear(audio_capture_ctx);
 
-#ifdef ALSA_DEVICE
-   // ALSA audio capture and RMS calculation loop.
-   while (1) {
-      rc = snd_pcm_readi(myControl->handle, buff, myControl->frames);
-      if (rc > 0) {
-         if (buff_size + myControl->full_buff_size <= max_buff_size) {
-            memcpy(max_buff + buff_size, buff, myControl->full_buff_size);
-            buff_size += myControl->full_buff_size;
-         } else {
-            break;  // Buffer full
-         }
-      } else if (rc == -EPIPE) {
-         LOG_WARNING("ALSA overrun occurred during background measurement, recovering\n");
-         snd_pcm_prepare(myControl->handle);
-         continue;  // Retry after recovery
-      } else if (rc == -ESTRPIPE) {
-         LOG_WARNING("ALSA stream suspended, attempting resume\n");
-         while ((rc = snd_pcm_resume(myControl->handle)) == -EAGAIN) {
-            sleep(1);  // Wait until suspend flag is released
-         }
-         if (rc < 0) {
-            LOG_ERROR("Resume failed, preparing PCM\n");
-            snd_pcm_prepare(myControl->handle);
-         }
-         continue;  // Retry after recovery
-      } else if (rc == -EINTR) {
-         LOG_WARNING("ALSA read interrupted by signal, retrying\n");
-         continue;  // Retry after interrupt
-      } else {
-         LOG_ERROR("Error reading PCM: %s\n", snd_strerror(rc));
-         break;  // Fatal error, exit loop
+   // Take multiple samples and use the minimum RMS to get true silence baseline
+   double min_rms = 1.0;  // Start with maximum possible value
+   LOG_INFO("Measuring background audio: taking %d samples of %d seconds each...\n",
+            BACKGROUND_CAPTURE_SAMPLES, BACKGROUND_CAPTURE_SECONDS);
+
+   for (int sample = 0; sample < BACKGROUND_CAPTURE_SAMPLES; sample++) {
+      // Wait for fresh audio data to accumulate
+      size_t available = audio_capture_wait_for_data(audio_capture_ctx, max_buff_size,
+                                                     (BACKGROUND_CAPTURE_SECONDS + 1) * 1000);
+      if (available < max_buff_size) {
+         LOG_WARNING(
+             "Timeout waiting for background audio data on sample %d (got %zu bytes, needed %u)\n",
+             sample + 1, available, max_buff_size);
+         continue;  // Try next sample
+      }
+
+      // Read the captured audio data
+      size_t buff_size = audio_capture_read(audio_capture_ctx, max_buff, max_buff_size);
+      if (buff_size == 0) {
+         LOG_WARNING("Failed to read background audio data on sample %d\n", sample + 1);
+         continue;  // Try next sample
+      }
+
+      // Compute RMS for this sample
+      double rms = calculateRMS((int16_t *)max_buff, buff_size / (DEFAULT_CHANNELS * 2));
+      LOG_INFO("Sample %d RMS: %g\n", sample + 1, rms);
+
+      // Keep the minimum (quietest) RMS
+      if (rms < min_rms) {
+         min_rms = rms;
       }
    }
-#else
-   pa_simple_flush(myControl->pa_handle, NULL);
-   // PulseAudio audio capture loop.
-   for (size_t i = 0; i < max_buff_size / myControl->full_buff_size; ++i) {
-      if (pa_simple_read(myControl->pa_handle, buff, myControl->pa_framesize, &error) < 0) {
-         LOG_ERROR("Could not read audio: %s\n", pa_strerror(error));
-         break;  // Exit loop on read error.
-      }
-      memcpy(max_buff + buff_size, buff, myControl->full_buff_size);
-      buff_size += myControl->full_buff_size;
+
+   if (min_rms < 1.0) {
+      backgroundRMS = min_rms;
+      LOG_INFO("Background RMS set to minimum: %g (threshold will be %g)\n", backgroundRMS,
+               backgroundRMS + TALKING_THRESHOLD_OFFSET);
+   } else {
+      LOG_ERROR("Failed to get valid background audio samples\n");
+      free(max_buff);
+      return NULL;
    }
-#endif
 
-   // Compute RMS for captured audio.
-   double rms = calculateRMS((int16_t *)max_buff, buff_size / (DEFAULT_CHANNELS * 2));
-   LOG_INFO("RMS of background recording is %g.\n", rms);
-   backgroundRMS = rms;  // Store RMS value in a global variable.
-
-   // Clean up allocated buffers.
-   free(buff);
    free(max_buff);
-
    return NULL;
 }
 
@@ -861,82 +855,55 @@ const char *wakeWordAcknowledgment() {
  * @note The function updates *ret_buff_size with the total size of captured audio data.
  *       It's crucial to ensure that max_buff is large enough to hold the expected amount of data.
  */
+/**
+ * @brief Capture audio from the ring buffer filled by the capture thread
+ *
+ * This function reads audio data from the ring buffer that is continuously
+ * filled by the dedicated audio capture thread. This replaces the old
+ * direct device reading approach with a non-blocking ring buffer read.
+ *
+ * @param myAudioControls Audio control structure (unused, kept for API compatibility)
+ * @param max_buff Destination buffer for audio data
+ * @param max_buff_size Maximum size of destination buffer
+ * @param ret_buff_size Pointer to store actual bytes read
+ * @return 0 on success, 1 on error
+ */
 int capture_buffer(audioControl *myAudioControls,
                    char *max_buff,
                    uint32_t max_buff_size,
                    int *ret_buff_size) {
-   int rc = 0;           ///< Return code from audio read functions.
-   int buffer_full = 0;  ///< Flag to indicate if the buffer is full.
-   int error = 0;        ///< Error code for PulseAudio operations.
+   (void)myAudioControls;  // Unused parameter (kept for API compatibility)
 
-   *ret_buff_size = 0;  // Initialize the returned buffer size to 0.
+   *ret_buff_size = 0;
 
-   // Allocate a local buffer for audio data capture.
-   char *buff = (char *)malloc(myAudioControls->full_buff_size);
-   if (buff == NULL) {
-      LOG_ERROR("malloc() failed on buff.\n");
-      return 1;  // Return error code on memory allocation failure.
+   if (!audio_capture_ctx) {
+      LOG_ERROR("Audio capture thread not initialized");
+      return 1;
    }
 
-   while (!buffer_full) {  // Continue until the buffer is full or an error occurs.
-#ifdef ALSA_DEVICE
-      // Attempt to read audio frames using ALSA.
-      rc = snd_pcm_readi(myAudioControls->handle, buff, myAudioControls->frames);
-      if (rc > 0) {
-         if (*ret_buff_size + myAudioControls->full_buff_size <= max_buff_size) {
-            // Copy the read data into max_buff if there's enough space.
-            memcpy(max_buff + *ret_buff_size, buff, myAudioControls->full_buff_size);
-            *ret_buff_size += myAudioControls->full_buff_size;  // Update the size of captured data.
-         } else {
-            buffer_full = 1;  // Set buffer_full flag if max_buff is filled.
-         }
-      } else if (rc == -EPIPE) {
-         LOG_WARNING("ALSA overrun occurred during capture, recovering\n");
-         snd_pcm_prepare(myAudioControls->handle);
-         continue;  // Retry after recovery
-      } else if (rc == -ESTRPIPE) {
-         LOG_WARNING("ALSA stream suspended during capture, attempting resume\n");
-         while ((rc = snd_pcm_resume(myAudioControls->handle)) == -EAGAIN) {
-            sleep(1);  // Wait until suspend flag is released
-         }
-         if (rc < 0) {
-            LOG_ERROR("Resume failed, preparing PCM\n");
-            snd_pcm_prepare(myAudioControls->handle);
-         }
-         continue;  // Retry after recovery
-      } else if (rc == -EINTR) {
-         LOG_WARNING("ALSA read interrupted by signal, retrying\n");
-         continue;  // Retry after interrupt
-      } else {
-         LOG_ERROR("Error reading PCM: %s\n", snd_strerror(rc));
-         free(buff);  // Free the local buffer on error.
-         return 1;    // Return error code on fatal read failure.
-      }
-#else
-      // Attempt to read audio frames using PulseAudio.
-      rc = pa_simple_read(myAudioControls->pa_handle, buff, myAudioControls->pa_framesize, &error);
-      if ((rc == 0) && (*ret_buff_size + myAudioControls->full_buff_size <= max_buff_size)) {
-         // Copy the read data into max_buff if there's enough space.
-         memcpy(max_buff + *ret_buff_size, buff, myAudioControls->full_buff_size);
-         *ret_buff_size += myAudioControls->full_buff_size;  // Update the size of captured data.
-      } else {
-         if (rc < 0) {
-            LOG_ERROR("pa_simple_read() failed: %s\n", pa_strerror(error));
-            free(buff);  // Free the local buffer on error.
-            pa_simple_free(myAudioControls->pa_handle);
-            myAudioControls->pa_handle = openPulseaudioCaptureDevice(pcm_capture_device);
-            if (myAudioControls->pa_handle == NULL) {
-               LOG_ERROR("Error creating Pulse capture device.\n");
-            }
-            return 1;  // Return error code on read failure.
-         }
-         buffer_full = 1;  // Set buffer_full flag if max_buff is filled.
-      }
-#endif
+   // Check if capture thread is still running
+   if (!audio_capture_is_running(audio_capture_ctx)) {
+      LOG_ERROR("Audio capture thread has stopped unexpectedly");
+      return 1;
    }
 
-   free(buff);  // Free the local buffer before exiting.
-   return 0;    // Return success.
+   // Wait for enough data to be available in ring buffer (at least max_buff_size)
+   // Timeout of 2 seconds to prevent indefinite blocking
+   size_t available = audio_capture_wait_for_data(audio_capture_ctx, max_buff_size, 2000);
+   if (available < max_buff_size) {
+      LOG_WARNING("Timeout waiting for audio data (got %zu bytes, needed %u)", available,
+                  max_buff_size);
+      // Read whatever is available
+      if (available > 0) {
+         *ret_buff_size = audio_capture_read(audio_capture_ctx, max_buff, available);
+      }
+      return 0;  // Not a fatal error, return partial data
+   }
+
+   // Read the requested amount of data from ring buffer
+   *ret_buff_size = audio_capture_read(audio_capture_ctx, max_buff, max_buff_size);
+
+   return 0;  // Success
 }
 
 void process_vision_ai(const char *base64_image, size_t image_size) {
@@ -1473,24 +1440,24 @@ int main(int argc, char *argv[]) {
 
    json_object_array_add(conversation_history, system_message);
 
-#ifdef ALSA_DEVICE
-   // Open Audio Capture Device
-   rc = openAlsaPcmCaptureDevice(&myAudioControls.handle, pcm_capture_device,
-                                 &myAudioControls.frames);
-   if (rc) {
-      LOG_ERROR("Error creating ALSA capture device.\n");
+   // Start dedicated audio capture thread with ring buffer
+   // Ring buffer size: 262144 bytes = ~8 seconds of audio at 16kHz mono 16-bit
+   // Increased to prevent audio loss during Vosk processing which can take 100-500ms per iteration
+   // Realtime priority: enabled (requires cap_sys_nice capability or root)
+   LOG_INFO("Starting audio capture thread...");
+   audio_capture_ctx = audio_capture_start(pcm_capture_device, 262144, 1);
+   if (!audio_capture_ctx) {
+      LOG_ERROR("Failed to start audio capture thread");
       return 1;
    }
+
+   // Legacy audioControl structure kept for compatibility
+   // (no longer used for actual capture, but needed by measureBackgroundAudio)
+#ifdef ALSA_DEVICE
+   myAudioControls.frames = DEFAULT_FRAMES;
    myAudioControls.full_buff_size = myAudioControls.frames * DEFAULT_CHANNELS * 2;
 #else
-   myAudioControls.pa_handle = openPulseaudioCaptureDevice(pcm_capture_device);
-   if (myAudioControls.pa_handle == NULL) {
-      LOG_ERROR("Error creating Pulse capture device.\n");
-      return 1;
-   }
-
    myAudioControls.pa_framesize = pa_frame_size(&sample_spec);
-
    myAudioControls.full_buff_size = myAudioControls.pa_framesize;
 #endif
 
@@ -1501,11 +1468,10 @@ int main(int argc, char *argv[]) {
    if (max_buff == NULL) {
       LOG_ERROR("malloc() failed on max_buff.\n");
 
-#ifdef ALSA_DEVICE
-      snd_pcm_close(myAudioControls.handle);
-#else
-      pa_simple_free(myAudioControls.pa_handle);
-#endif
+      if (audio_capture_ctx) {
+         audio_capture_stop(audio_capture_ctx);
+         audio_capture_ctx = NULL;
+      }
 
       return 1;
    }
@@ -1530,11 +1496,10 @@ int main(int argc, char *argv[]) {
 
       free(max_buff);
 
-#ifdef ALSA_DEVICE
-      snd_pcm_close(myAudioControls.handle);
-#else
-      pa_simple_free(myAudioControls.pa_handle);
-#endif
+      if (audio_capture_ctx) {
+         audio_capture_stop(audio_capture_ctx);
+         audio_capture_ctx = NULL;
+      }
 
       return 1;
    }
@@ -2540,12 +2505,12 @@ int main(int argc, char *argv[]) {
    vosk_recognizer_free(recognizer);
    vosk_model_free(model);
 
-#ifdef ALSA_DEVICE
-   snd_pcm_drop(myAudioControls.handle);
-   snd_pcm_close(myAudioControls.handle);
-#else
-   pa_simple_free(myAudioControls.pa_handle);
-#endif
+   // Stop audio capture thread and clean up resources
+   if (audio_capture_ctx) {
+      audio_capture_stop(audio_capture_ctx);
+      audio_capture_ctx = NULL;
+   }
+
    free(max_buff);
 
    curl_global_cleanup();
