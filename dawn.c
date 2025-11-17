@@ -560,14 +560,33 @@ void *measureBackgroundAudio(void *audHandle) {
    // ALSA audio capture and RMS calculation loop.
    while (1) {
       rc = snd_pcm_readi(myControl->handle, buff, myControl->frames);
-      if ((rc > 0) && (buff_size + myControl->full_buff_size <= max_buff_size)) {
-         memcpy(max_buff + buff_size, buff, myControl->full_buff_size);
-         buff_size += myControl->full_buff_size;
-      } else {
-         if (rc <= 0) {
-            LOG_ERROR("Error reading PCM.\n");
+      if (rc > 0) {
+         if (buff_size + myControl->full_buff_size <= max_buff_size) {
+            memcpy(max_buff + buff_size, buff, myControl->full_buff_size);
+            buff_size += myControl->full_buff_size;
+         } else {
+            break;  // Buffer full
          }
-         break;  // Exit loop on read error or buffer full.
+      } else if (rc == -EPIPE) {
+         LOG_WARNING("ALSA overrun occurred during background measurement, recovering\n");
+         snd_pcm_prepare(myControl->handle);
+         continue;  // Retry after recovery
+      } else if (rc == -ESTRPIPE) {
+         LOG_WARNING("ALSA stream suspended, attempting resume\n");
+         while ((rc = snd_pcm_resume(myControl->handle)) == -EAGAIN) {
+            sleep(1);  // Wait until suspend flag is released
+         }
+         if (rc < 0) {
+            LOG_ERROR("Resume failed, preparing PCM\n");
+            snd_pcm_prepare(myControl->handle);
+         }
+         continue;  // Retry after recovery
+      } else if (rc == -EINTR) {
+         LOG_WARNING("ALSA read interrupted by signal, retrying\n");
+         continue;  // Retry after interrupt
+      } else {
+         LOG_ERROR("Error reading PCM: %s\n", snd_strerror(rc));
+         break;  // Fatal error, exit loop
       }
    }
 #else
@@ -679,14 +698,57 @@ int openAlsaPcmCaptureDevice(snd_pcm_t **handle, char *pcm_device, snd_pcm_ufram
    }
 
    snd_pcm_hw_params_alloca(&params);
-   snd_pcm_hw_params_any(*handle, params);
-   snd_pcm_hw_params_set_access(*handle, params, DEFAULT_ACCESS);
-   snd_pcm_hw_params_set_format(*handle, params, DEFAULT_FORMAT);
-   snd_pcm_hw_params_set_channels(*handle, params, DEFAULT_CHANNELS);
-   snd_pcm_hw_params_set_rate_near(*handle, params, &rate, &dir);
+
+   rc = snd_pcm_hw_params_any(*handle, params);
+   if (rc < 0) {
+      LOG_ERROR("Unable to get hardware parameter structure: %s\n", snd_strerror(rc));
+      snd_pcm_close(*handle);
+      *handle = NULL;
+      return 1;
+   }
+
+   rc = snd_pcm_hw_params_set_access(*handle, params, DEFAULT_ACCESS);
+   if (rc < 0) {
+      LOG_ERROR("Unable to set access type: %s\n", snd_strerror(rc));
+      snd_pcm_close(*handle);
+      *handle = NULL;
+      return 1;
+   }
+
+   rc = snd_pcm_hw_params_set_format(*handle, params, DEFAULT_FORMAT);
+   if (rc < 0) {
+      LOG_ERROR("Unable to set sample format: %s\n", snd_strerror(rc));
+      snd_pcm_close(*handle);
+      *handle = NULL;
+      return 1;
+   }
+
+   rc = snd_pcm_hw_params_set_channels(*handle, params, DEFAULT_CHANNELS);
+   if (rc < 0) {
+      LOG_ERROR("Unable to set channel count: %s\n", snd_strerror(rc));
+      snd_pcm_close(*handle);
+      *handle = NULL;
+      return 1;
+   }
+
+   rc = snd_pcm_hw_params_set_rate_near(*handle, params, &rate, &dir);
+   if (rc < 0) {
+      LOG_ERROR("Unable to set sample rate: %s\n", snd_strerror(rc));
+      snd_pcm_close(*handle);
+      *handle = NULL;
+      return 1;
+   }
    LOG_INFO("Capture rate set to %u\n", rate);
-   snd_pcm_hw_params_set_period_size_near(*handle, params, frames, &dir);
+
+   rc = snd_pcm_hw_params_set_period_size_near(*handle, params, frames, &dir);
+   if (rc < 0) {
+      LOG_ERROR("Unable to set period size: %s\n", snd_strerror(rc));
+      snd_pcm_close(*handle);
+      *handle = NULL;
+      return 1;
+   }
    LOG_INFO("Frames set to %lu\n", *frames);
+
    rc = snd_pcm_hw_params(*handle, params);
    if (rc < 0) {
       LOG_ERROR("Unable to set hw parameters: %s\n", snd_strerror(rc));
@@ -820,17 +882,35 @@ int capture_buffer(audioControl *myAudioControls,
 #ifdef ALSA_DEVICE
       // Attempt to read audio frames using ALSA.
       rc = snd_pcm_readi(myAudioControls->handle, buff, myAudioControls->frames);
-      if ((rc > 0) && (*ret_buff_size + myAudioControls->full_buff_size <= max_buff_size)) {
-         // Copy the read data into max_buff if there's enough space.
-         memcpy(max_buff + *ret_buff_size, buff, myAudioControls->full_buff_size);
-         *ret_buff_size += myAudioControls->full_buff_size;  // Update the size of captured data.
-      } else {
-         if (rc <= 0) {
-            LOG_ERROR("Error reading PCM.\n");
-            free(buff);  // Free the local buffer on error.
-            return 1;    // Return error code on read failure.
+      if (rc > 0) {
+         if (*ret_buff_size + myAudioControls->full_buff_size <= max_buff_size) {
+            // Copy the read data into max_buff if there's enough space.
+            memcpy(max_buff + *ret_buff_size, buff, myAudioControls->full_buff_size);
+            *ret_buff_size += myAudioControls->full_buff_size;  // Update the size of captured data.
+         } else {
+            buffer_full = 1;  // Set buffer_full flag if max_buff is filled.
          }
-         buffer_full = 1;  // Set buffer_full flag if max_buff is filled.
+      } else if (rc == -EPIPE) {
+         LOG_WARNING("ALSA overrun occurred during capture, recovering\n");
+         snd_pcm_prepare(myAudioControls->handle);
+         continue;  // Retry after recovery
+      } else if (rc == -ESTRPIPE) {
+         LOG_WARNING("ALSA stream suspended during capture, attempting resume\n");
+         while ((rc = snd_pcm_resume(myAudioControls->handle)) == -EAGAIN) {
+            sleep(1);  // Wait until suspend flag is released
+         }
+         if (rc < 0) {
+            LOG_ERROR("Resume failed, preparing PCM\n");
+            snd_pcm_prepare(myAudioControls->handle);
+         }
+         continue;  // Retry after recovery
+      } else if (rc == -EINTR) {
+         LOG_WARNING("ALSA read interrupted by signal, retrying\n");
+         continue;  // Retry after interrupt
+      } else {
+         LOG_ERROR("Error reading PCM: %s\n", snd_strerror(rc));
+         free(buff);  // Free the local buffer on error.
+         return 1;    // Return error code on fatal read failure.
       }
 #else
       // Attempt to read audio frames using PulseAudio.
@@ -1395,8 +1475,8 @@ int main(int argc, char *argv[]) {
 
 #ifdef ALSA_DEVICE
    // Open Audio Capture Device
-   rc = openAlsaPcmCaptureDevice(myAudioControls.handle, pcm_capture_device,
-                                 myAudioControls.frames);
+   rc = openAlsaPcmCaptureDevice(&myAudioControls.handle, pcm_capture_device,
+                                 &myAudioControls.frames);
    if (rc) {
       LOG_ERROR("Error creating ALSA capture device.\n");
       return 1;

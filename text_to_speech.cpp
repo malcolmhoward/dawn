@@ -68,12 +68,55 @@ int openAlsaPcmPlaybackDevice(snd_pcm_t **handle, char *pcm_device, snd_pcm_ufra
    }
 
    snd_pcm_hw_params_alloca(&params);
-   snd_pcm_hw_params_any(*handle, params);
-   snd_pcm_hw_params_set_access(*handle, params, DEFAULT_ACCESS);
-   snd_pcm_hw_params_set_format(*handle, params, DEFAULT_FORMAT);
-   snd_pcm_hw_params_set_channels(*handle, params, DEFAULT_CHANNELS);
-   snd_pcm_hw_params_set_rate_near(*handle, params, &rate, &dir);
-   snd_pcm_hw_params_set_period_size_near(*handle, params, frames, &dir);
+
+   rc = snd_pcm_hw_params_any(*handle, params);
+   if (rc < 0) {
+      LOG_ERROR("Unable to get hardware parameter structure: %s", snd_strerror(rc));
+      snd_pcm_close(*handle);
+      *handle = NULL;
+      return 1;
+   }
+
+   rc = snd_pcm_hw_params_set_access(*handle, params, DEFAULT_ACCESS);
+   if (rc < 0) {
+      LOG_ERROR("Unable to set access type: %s", snd_strerror(rc));
+      snd_pcm_close(*handle);
+      *handle = NULL;
+      return 1;
+   }
+
+   rc = snd_pcm_hw_params_set_format(*handle, params, DEFAULT_FORMAT);
+   if (rc < 0) {
+      LOG_ERROR("Unable to set sample format: %s", snd_strerror(rc));
+      snd_pcm_close(*handle);
+      *handle = NULL;
+      return 1;
+   }
+
+   rc = snd_pcm_hw_params_set_channels(*handle, params, DEFAULT_CHANNELS);
+   if (rc < 0) {
+      LOG_ERROR("Unable to set channel count: %s", snd_strerror(rc));
+      snd_pcm_close(*handle);
+      *handle = NULL;
+      return 1;
+   }
+
+   rc = snd_pcm_hw_params_set_rate_near(*handle, params, &rate, &dir);
+   if (rc < 0) {
+      LOG_ERROR("Unable to set sample rate: %s", snd_strerror(rc));
+      snd_pcm_close(*handle);
+      *handle = NULL;
+      return 1;
+   }
+
+   rc = snd_pcm_hw_params_set_period_size_near(*handle, params, frames, &dir);
+   if (rc < 0) {
+      LOG_ERROR("Unable to set period size: %s", snd_strerror(rc));
+      snd_pcm_close(*handle);
+      *handle = NULL;
+      return 1;
+   }
+
    rc = snd_pcm_hw_params(*handle, params);
    if (rc < 0) {
       LOG_ERROR("unable to set hw parameters: %s", snd_strerror(rc));
@@ -190,28 +233,36 @@ void *tts_thread_function(void *arg) {
                      for (size_t i = 0; i < audioBuffer.size(); i += tts_handle.frames) {
                         // Check playback state
                         pthread_mutex_lock(&tts_mutex);
+                        bool was_paused = false;
                         while (tts_playback_state == TTS_PLAYBACK_PAUSE) {
-                           LOG_WARNING("TTS playback is PAUSED.");
+                           if (!was_paused) {
+                              LOG_WARNING("TTS playback is PAUSED.");
+                              was_paused = true;
+                           }
                            pthread_cond_wait(&tts_cond, &tts_mutex);
                         }
-                        if (tts_playback_state == TTS_PLAYBACK_DISCARD) {
-                           LOG_WARNING("TTS unpaused to DISCARD.");
-                           tts_playback_state = TTS_PLAYBACK_IDLE;
-                           audioBuffer.clear();
-                           LOG_WARNING("Emptying TTS queue.");
-                           while (!tts_queue.empty()) {
-                              tts_queue.pop();
-                           }
-                           pthread_mutex_unlock(&tts_mutex);
 
-                           tts_stop_processing.store(true);
-                           return;
-                        } else if (tts_playback_state == TTS_PLAYBACK_PLAY) {
-                           LOG_WARNING("TTS unpaused to PLAY.");
-                        } else if (tts_playback_state == TTS_PLAYBACK_IDLE) {
-                           LOG_WARNING("TTS unpaused to IDLE.");
-                        } else {
-                           LOG_ERROR("TTS unpaused to UNKNOWN.");
+                        // Only log state transitions after being paused
+                        if (was_paused) {
+                           if (tts_playback_state == TTS_PLAYBACK_DISCARD) {
+                              LOG_WARNING("TTS unpaused to DISCARD.");
+                              tts_playback_state = TTS_PLAYBACK_IDLE;
+                              audioBuffer.clear();
+                              LOG_WARNING("Emptying TTS queue.");
+                              while (!tts_queue.empty()) {
+                                 tts_queue.pop();
+                              }
+                              pthread_mutex_unlock(&tts_mutex);
+
+                              tts_stop_processing.store(true);
+                              return;
+                           } else if (tts_playback_state == TTS_PLAYBACK_PLAY) {
+                              LOG_WARNING("TTS unpaused to PLAY.");
+                           } else if (tts_playback_state == TTS_PLAYBACK_IDLE) {
+                              LOG_WARNING("TTS unpaused to IDLE.");
+                           } else {
+                              LOG_ERROR("TTS unpaused to UNKNOWN.");
+                           }
                         }
                         pthread_mutex_unlock(&tts_mutex);
 
@@ -233,28 +284,36 @@ void *tts_thread_function(void *arg) {
             for (size_t i = 0; i < total_bytes; i += chunk_bytes) {
                // Check playback state
                pthread_mutex_lock(&tts_mutex);
+               bool was_paused = false;
                while (tts_playback_state == TTS_PLAYBACK_PAUSE) {
-                  LOG_WARNING("TTS playback is PAUSED.");
+                  if (!was_paused) {
+                     LOG_WARNING("TTS playback is PAUSED.");
+                     was_paused = true;
+                  }
                   pthread_cond_wait(&tts_cond, &tts_mutex);
                }
-               if (tts_playback_state == TTS_PLAYBACK_DISCARD) {
-                  LOG_WARNING("TTS unpaused to DISCARD.");
-                  tts_playback_state = TTS_PLAYBACK_IDLE;
-                  audioBuffer.clear();
-                  LOG_WARNING("Emptying TTS queue.");
-                  while (!tts_queue.empty()) {
-                     tts_queue.pop();
-                  }
-                  pthread_mutex_unlock(&tts_mutex);
 
-                  tts_stop_processing.store(true);
-                  return;
-               } else if (tts_playback_state == TTS_PLAYBACK_PLAY) {
-                  //LOG_WARNING("TTS unpaused to PLAY.");
-               } else if (tts_playback_state == TTS_PLAYBACK_IDLE) {
-                  LOG_WARNING("TTS unpaused to IDLE.");
-               } else {
-                  LOG_ERROR("TTS unpaused to UNKNOWN.");
+               // Only log state transitions after being paused
+               if (was_paused) {
+                  if (tts_playback_state == TTS_PLAYBACK_DISCARD) {
+                     LOG_WARNING("TTS unpaused to DISCARD.");
+                     tts_playback_state = TTS_PLAYBACK_IDLE;
+                     audioBuffer.clear();
+                     LOG_WARNING("Emptying TTS queue.");
+                     while (!tts_queue.empty()) {
+                        tts_queue.pop();
+                     }
+                     pthread_mutex_unlock(&tts_mutex);
+
+                     tts_stop_processing.store(true);
+                     return;
+                  } else if (tts_playback_state == TTS_PLAYBACK_PLAY) {
+                     LOG_WARNING("TTS unpaused to PLAY.");
+                  } else if (tts_playback_state == TTS_PLAYBACK_IDLE) {
+                     LOG_WARNING("TTS unpaused to IDLE.");
+                  } else {
+                     LOG_ERROR("TTS unpaused to UNKNOWN.");
+                  }
                }
                pthread_mutex_unlock(&tts_mutex);
 
