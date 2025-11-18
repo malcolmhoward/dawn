@@ -489,6 +489,14 @@ void text_to_speech(char *text) {
    assert(text != nullptr && "Received a null pointer");
    std::string inputText(text);
 
+   // Preprocess: Replace em-dashes with commas for better TTS phrasing
+   // Em-dash (—) doesn't create proper pauses in Piper, but commas do
+   size_t pos = 0;
+   while ((pos = inputText.find("—", pos)) != std::string::npos) {
+      inputText.replace(pos, 3, ",");  // UTF-8 em-dash is 3 bytes
+      pos += 1;
+   }
+
    // Add text to the processing queue
    pthread_mutex_lock(&tts_queue_mutex);
    tts_queue.push(inputText);
@@ -523,12 +531,19 @@ int text_to_speech_to_wav(const char *text, uint8_t **wav_data_out, size_t *wav_
          LOG_INFO("Paused local TTS for network generation");
       }
 
+      // Preprocess: Replace em-dashes with commas for better TTS phrasing
+      std::string processedText(text);
+      size_t pos = 0;
+      while ((pos = processedText.find("—", pos)) != std::string::npos) {
+         processedText.replace(pos, 3, ",");  // UTF-8 em-dash is 3 bytes
+         pos += 1;
+      }
+
       std::ostringstream audioStream;
       piper::SynthesisResult result;
 
       // Generate WAV using shared TTS handle (now thread-safe)
-      piper::textToWavFile(tts_handle.config, tts_handle.voice, std::string(text), audioStream,
-                           result);
+      piper::textToWavFile(tts_handle.config, tts_handle.voice, processedText, audioStream, result);
 
       // Restore local TTS state
       tts_playback_state = original_state;
