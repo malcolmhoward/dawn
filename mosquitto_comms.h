@@ -158,6 +158,16 @@ char *timeCallback(const char *actionName, char *value, int *should_respond);
 char *musicCallback(const char *actionName, char *value, int *should_respond);
 
 /**
+ * @brief Sets custom music directory path.
+ *
+ * Sets an absolute path to the music directory. If set, this overrides
+ * the default MUSIC_DIR from dawn.h. Pass NULL to use the default.
+ *
+ * @param path Absolute path to music directory, or NULL for default
+ */
+void set_music_directory(const char *path);
+
+/**
  * @brief Callback function to control the voice amplifier.
  *
  * Processes actions to enable or disable the voice amplifier functionality.

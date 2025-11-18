@@ -46,6 +46,7 @@ typedef struct {
    size_t capacity;            /**< Total capacity of buffer */
    sentence_callback callback; /**< Callback for complete sentences */
    void *callback_userdata;    /**< User context passed to callback */
+   int inside_command_tag;     /**< 1 if currently inside <command> tag, 0 otherwise */
 } sentence_buffer_t;
 
 /**

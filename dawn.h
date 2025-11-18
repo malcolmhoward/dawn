@@ -81,7 +81,7 @@
 #define OPENAI_MODEL "gpt-4o"
 #define GPT_MAX_TOKENS 4096
 
-//#define ALSA_DEVICE
+// ALSA_DEVICE is now defined via CMakeLists.txt option USE_ALSA
 #ifdef ALSA_DEVICE
 #define DEFAULT_PCM_PLAYBACK_DEVICE "default"
 #define DEFAULT_PCM_CAPTURE_DEVICE "default"

@@ -24,11 +24,16 @@
 #include <FLAC/stream_decoder.h>
 #include <mosquitto.h>
 #include <pthread.h>
-#include <pulse/error.h>
-#include <pulse/simple.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifdef ALSA_DEVICE
+#include <alsa/asoundlib.h>
+#else
+#include <pulse/error.h>
+#include <pulse/simple.h>
+#endif
 
 #include "logging.h"
 #include "mosquitto_comms.h"
@@ -109,13 +114,13 @@ void error_callback(const FLAC__StreamDecoder *decoder,
 /**
  * Callback function for handling decoded audio frames from the FLAC stream.
  * This function is called by the FLAC decoder each time an audio frame is successfully decoded.
- * It interleaves the decoded audio samples and writes them to the PulseAudio playback stream.
+ * It interleaves the decoded audio samples and writes them to the audio playback stream.
  *
  * @param decoder The FLAC stream decoder instance calling this callback.
  * @param frame The decoded audio frame containing audio samples to be processed.
  * @param buffer An array of pointers to the decoded audio samples for each channel.
- * @param client_data A pointer to user-defined data, in this case, used to pass the PulseAudio
- * simple API playback stream.
+ * @param client_data A pointer to user-defined data, used to pass the audio playback handle
+ *                    (ALSA snd_pcm_t* or PulseAudio pa_simple*).
  *
  * @return A FLAC__StreamDecoderWriteStatus value indicating whether the write operation was
  * successful. Returns FLAC__STREAM_DECODER_WRITE_STATUS_CONTINUE to continue decoding, or
@@ -131,8 +136,13 @@ FLAC__StreamDecoderWriteStatus write_callback(const FLAC__StreamDecoder *decoder
       return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
    }
 
+#ifdef ALSA_DEVICE
+   // Cast client_data back to ALSA PCM handle for audio playback.
+   snd_pcm_t *pcm_handle = (snd_pcm_t *)client_data;
+#else
    // Cast client_data back to pa_simple pointer for audio playback.
    pa_simple *s = (pa_simple *)client_data;
+#endif
 
    // Allocate memory for interleaved audio samples.
    int16_t *interleaved = malloc(frame->header.blocksize * frame->header.channels *
@@ -159,13 +169,27 @@ FLAC__StreamDecoderWriteStatus write_callback(const FLAC__StreamDecoder *decoder
       }
    }
 
-   // Write the interleaved audio samples to the PulseAudio stream.
+   // Write the interleaved audio samples to the audio stream.
+#ifdef ALSA_DEVICE
+   snd_pcm_sframes_t frames_written = snd_pcm_writei(pcm_handle, interleaved,
+                                                     frame->header.blocksize);
+   if (frames_written < 0) {
+      // Handle buffer underrun
+      frames_written = snd_pcm_recover(pcm_handle, frames_written, 0);
+      if (frames_written < 0) {
+         LOG_ERROR("ALSA write error: %s", snd_strerror(frames_written));
+         free(interleaved);
+         return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
+      }
+   }
+#else
    if (pa_simple_write(s, interleaved,
                        frame->header.blocksize * frame->header.channels * sizeof(int16_t),
                        NULL) < 0) {
       free(interleaved);
       return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
    }
+#endif
 
    // Free the allocated memory for the interleaved buffer after writing to the audio stream.
    free(interleaved);
@@ -177,27 +201,67 @@ FLAC__StreamDecoderWriteStatus write_callback(const FLAC__StreamDecoder *decoder
 void *playFlacAudio(void *arg) {
    int should_respond = 0;
    PlaybackArgs *args = (PlaybackArgs *)arg;
+   FLAC__StreamDecoderInitStatus init_status;
+   int error = 0;
 
+#ifdef ALSA_DEVICE
+   // Initialize ALSA for playback.
+   snd_pcm_t *alsa_handle = NULL;
+   snd_pcm_hw_params_t *hw_params = NULL;
+   unsigned int sample_rate = 44100;
+   int dir = 0;
+
+   // Open ALSA playback device
+   if ((error = snd_pcm_open(&alsa_handle, args->sink_name, SND_PCM_STREAM_PLAYBACK, 0)) < 0) {
+      LOG_ERROR("Error opening ALSA device %s for playback: %s", args->sink_name,
+                snd_strerror(error));
+      return NULL;
+   }
+
+   // Allocate hardware parameters object
+   snd_pcm_hw_params_alloca(&hw_params);
+   snd_pcm_hw_params_any(alsa_handle, hw_params);
+
+   // Set hardware parameters
+   snd_pcm_hw_params_set_access(alsa_handle, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED);
+   snd_pcm_hw_params_set_format(alsa_handle, hw_params, SND_PCM_FORMAT_S16_LE);
+   snd_pcm_hw_params_set_channels(alsa_handle, hw_params, 2);
+   snd_pcm_hw_params_set_rate_near(alsa_handle, hw_params, &sample_rate, &dir);
+
+   if ((error = snd_pcm_hw_params(alsa_handle, hw_params)) < 0) {
+      LOG_ERROR("Error setting ALSA hardware parameters: %s", snd_strerror(error));
+      snd_pcm_close(alsa_handle);
+      return NULL;
+   }
+
+   // Prepare the PCM device
+   if ((error = snd_pcm_prepare(alsa_handle)) < 0) {
+      LOG_ERROR("Error preparing ALSA device: %s", snd_strerror(error));
+      snd_pcm_close(alsa_handle);
+      return NULL;
+   }
+#else
    // Initialize PulseAudio for playback.
    pa_simple *pa_handle = NULL;
    pa_sample_spec ss = { .format = PA_SAMPLE_S16LE, .channels = 2, .rate = 44100 };
 
-   FLAC__StreamDecoderInitStatus init_status;
-
-   int error = 0;
-
-   // Open PulsAudio for playback.
+   // Open PulseAudio for playback.
    if (!(pa_handle = pa_simple_new(NULL, "FLAC Player", PA_STREAM_PLAYBACK, args->sink_name,
                                    "playback", &ss, NULL, NULL, &error))) {
       LOG_ERROR("Error opening PulseAudio for playback: %s", pa_strerror(error));
       return NULL;
    }
+#endif
 
    // Initialize FLAC decoder.
    FLAC__StreamDecoder *decoder = FLAC__stream_decoder_new();
    if (decoder == NULL) {
-      LOG_ERROR("Error creating FLAC decorder.");
+      LOG_ERROR("Error creating FLAC decoder.");
+#ifdef ALSA_DEVICE
+      snd_pcm_close(alsa_handle);
+#else
       pa_simple_free(pa_handle);
+#endif
       return NULL;
    }
 
@@ -205,35 +269,79 @@ void *playFlacAudio(void *arg) {
    if (!FLAC__stream_decoder_set_md5_checking(decoder, true)) {
       LOG_ERROR("Error setting FLAC md5 checking.");
       FLAC__stream_decoder_delete(decoder);
+#ifdef ALSA_DEVICE
+      snd_pcm_close(alsa_handle);
+#else
       pa_simple_free(pa_handle);
+#endif
       return NULL;
    }
 
    music_play = 1;  // Ensure playback is enabled.
+
+   // Pass the appropriate audio handle to the FLAC decoder
+#ifdef ALSA_DEVICE
+   void *audio_handle = alsa_handle;
+#else
+   void *audio_handle = pa_handle;
+#endif
+
    if ((init_status = FLAC__stream_decoder_init_file(decoder, args->file_name, write_callback,
                                                      metadata_callback, error_callback,
-                                                     pa_handle)) !=
+                                                     audio_handle)) !=
        FLAC__STREAM_DECODER_INIT_STATUS_OK) {
       LOG_ERROR("ERROR: initializing decoder: %s",
                 FLAC__StreamDecoderInitStatusString[init_status]);
       FLAC__stream_decoder_delete(decoder);
+#ifdef ALSA_DEVICE
+      snd_pcm_close(alsa_handle);
+#else
       pa_simple_free(pa_handle);
+#endif
       return NULL;
    }
 
-   // Process the FLAC stream until the end or an error occurs.
-   if (!(error = FLAC__stream_decoder_process_until_end_of_stream(decoder))) {
-      LOG_ERROR("Error during FLAC decoding process.");
-   } else {
+   // Process the FLAC stream frame by frame, checking for stop signal
+   error = 1;  // Assume success unless we get an error
+   while (getMusicPlay() &&
+          FLAC__stream_decoder_get_state(decoder) < FLAC__STREAM_DECODER_END_OF_STREAM) {
+      if (!FLAC__stream_decoder_process_single(decoder)) {
+         LOG_ERROR("Error during FLAC frame decoding.");
+         error = 0;
+         break;
+      }
+   }
+
+   int stopped_by_user = (getMusicPlay() == 0);
+
+   int song_finished_naturally = 0;
+
+   if (stopped_by_user) {
+      LOG_INFO("Playback stopped by user.");
+   } else if (FLAC__stream_decoder_get_state(decoder) == FLAC__STREAM_DECODER_END_OF_STREAM) {
       LOG_INFO("Decoding completed successfully.");
+      song_finished_naturally = 1;
    }
 
    // Cleanup and resource management.
    FLAC__stream_decoder_finish(decoder);
    FLAC__stream_decoder_delete(decoder);
-   pa_simple_free(pa_handle);
 
-   if (error) {
+#ifdef ALSA_DEVICE
+   if (stopped_by_user) {
+      // Drop buffered audio immediately for responsive stop
+      snd_pcm_drop(alsa_handle);
+   } else {
+      // Drain buffered audio for smooth playback finish
+      snd_pcm_drain(alsa_handle);
+   }
+   snd_pcm_close(alsa_handle);
+#else
+   pa_simple_free(pa_handle);
+#endif
+
+   // Auto-play next track only if song finished naturally (not manually stopped or error)
+   if (error && song_finished_naturally) {
       musicCallback("next", NULL, &should_respond);
    }
 

@@ -65,10 +65,10 @@
 #define DEFAULT_CHANNELS 1
 
 // Define the default duration of audio capture in seconds.
-#define DEFAULT_CAPTURE_SECONDS 0.5f
+#define DEFAULT_CAPTURE_SECONDS 0.1f  // 100ms for responsive VAD (Phase 2/3)
 
 // Define the default command timeout in terms of iterations of DEFAULT_CAPTURE_SECONDS.
-#define DEFAULT_COMMAND_TIMEOUT 3  // 3 * 0.5s = 1.5 seconds of silence before timeout
+#define DEFAULT_COMMAND_TIMEOUT 15  // 15 * 0.1s = 1.5 seconds of silence before timeout
 
 // Define the duration for each background audio capture sample in seconds.
 #define BACKGROUND_CAPTURE_SECONDS 2
@@ -313,6 +313,9 @@ static void dawn_tts_sentence_callback(const char *sentence, void *userdata) {
          cmd_end += strlen("</command>");
          memmove(cmd_start, cmd_end, strlen(cmd_end) + 1);
       } else {
+         // Incomplete command tag - strip from <command> to end of string
+         // This handles cases where the stream breaks between tags
+         *cmd_start = '\0';
          break;
       }
    }
@@ -1267,6 +1270,8 @@ void display_help(int argc, char *argv[]) {
           "base).\n");
    printf("  -w, --whisper-path PATH          Path to Whisper models directory (default: "
           "../whisper.cpp/models).\n");
+   printf("  -M, --music-dir PATH             Absolute path to music directory (default: "
+          "~/Music).\n");
    printf("Command Processing Modes:\n");
    printf("  -D, --commands-only    Direct command processing only (default).\n");
    printf("  -C, --llm-commands     Try direct commands first, then LLM if no match.\n");
@@ -1342,6 +1347,7 @@ int main(int argc, char *argv[]) {
       { "asr-engine", required_argument, NULL, 'A' },      // ASR engine (vosk/whisper)
       { "whisper-model", required_argument, NULL, 'W' },   // Whisper model (tiny/base/small)
       { "whisper-path", required_argument, NULL, 'w' },    // Whisper models directory
+      { "music-dir", required_argument, NULL, 'M' },       // Music directory (absolute path)
       { 0, 0, 0, 0 }
    };
    int option_index = 0;
@@ -1350,8 +1356,9 @@ int main(int argc, char *argv[]) {
        ASR_ENGINE_WHISPER;              // Default: Whisper base (best performance + accuracy)
    const char *asr_model_path = NULL;   // Will be set based on engine
    const char *whisper_model = "base";  // Default Whisper model (tiny/base/small)
-   const char *whisper_path = "whisper.cpp/models";  // Default Whisper models directory
-   char whisper_full_path[512];                      // Buffer to construct full model path
+   const char *whisper_path =
+       "../whisper.cpp/models";  // Default Whisper models directory (relative to build/)
+   char whisper_full_path[512];  // Buffer to construct full model path
 
    // Construct default Whisper base model path
    snprintf(whisper_full_path, sizeof(whisper_full_path), "%s/ggml-%s.bin", whisper_path,
@@ -1363,7 +1370,7 @@ int main(int argc, char *argv[]) {
    // TODO: I'm adding this here but it will need better error clean-ups.
    curl_global_init(CURL_GLOBAL_DEFAULT);
 
-   while ((opt = getopt_long(argc, argv, "c:d:hl:LCDNm:P:A:W:w:", long_options, &option_index)) !=
+   while ((opt = getopt_long(argc, argv, "c:d:hl:LCDNm:P:A:W:w:M:", long_options, &option_index)) !=
           -1) {
       switch (opt) {
          case 'c':
@@ -1423,7 +1430,7 @@ int main(int argc, char *argv[]) {
 #ifdef ENABLE_VOSK
             if (strcmp(optarg, "vosk") == 0) {
                asr_engine = ASR_ENGINE_VOSK;
-               asr_model_path = "model";
+               asr_model_path = "../model";  // Relative to build/
                LOG_INFO("Using Vosk ASR engine");
             } else
 #endif
@@ -1442,6 +1449,10 @@ int main(int argc, char *argv[]) {
                          optarg);
 #endif
             }
+            break;
+         case 'M':
+            set_music_directory(optarg);
+            LOG_INFO("Music directory set to: %s", optarg);
             break;
          case '?':
             display_help(argc, argv);
@@ -1820,7 +1831,9 @@ int main(int argc, char *argv[]) {
             rms = calculateRMS((int16_t *)max_buff, buff_size / (DEFAULT_CHANNELS * 2));
 
             if (rms >= (backgroundRMS + TALKING_THRESHOLD_OFFSET)) {
-               LOG_WARNING("SILENCE: Talking detected. Going into WAKEWORD_LISTENING.\n");
+               LOG_INFO("SILENCE: Speech detected, transitioning to %s\n",
+                        silenceNextState == WAKEWORD_LISTEN ? "WAKEWORD_LISTEN"
+                                                            : "COMMAND_RECORDING");
                recState = silenceNextState;
 
                asr_result = asr_process_partial(asr_ctx, (const int16_t *)max_buff,
@@ -1828,7 +1841,6 @@ int main(int argc, char *argv[]) {
                if (asr_result == NULL) {
                   LOG_ERROR("asr_process_partial() returned NULL!\n");
                } else {
-                  LOG_WARNING("Partial Input: %s\n", asr_result->text ? asr_result->text : "");
                   asr_result_free(asr_result);
                   asr_result = NULL;
                }
@@ -1846,7 +1858,7 @@ int main(int argc, char *argv[]) {
             rms = calculateRMS((int16_t *)max_buff, buff_size / (DEFAULT_CHANNELS * 2));
 
             if (rms >= (backgroundRMS + TALKING_THRESHOLD_OFFSET)) {
-               LOG_WARNING("WAKEWORD_LISTEN: Talking still in progress.\n");
+               // Reduced logging to avoid noise with 100ms polling
                /* For an additional layer of "silence," check if ASR output is changing */
                asr_result = asr_process_partial(asr_ctx, (const int16_t *)max_buff,
                                                 buff_size / sizeof(int16_t));
@@ -1854,7 +1866,6 @@ int main(int argc, char *argv[]) {
                   LOG_ERROR("asr_process_partial() returned NULL!\n");
                } else {
                   size_t current_length = asr_result->text ? strlen(asr_result->text) : 0;
-                  LOG_WARNING("Partial Input: %s\n", asr_result->text ? asr_result->text : "");
                   if (current_length == prev_text_length) {
                      text_nochange = 1;
                   }
@@ -2030,7 +2041,7 @@ int main(int argc, char *argv[]) {
             rms = calculateRMS((int16_t *)max_buff, buff_size / (DEFAULT_CHANNELS * 2));
 
             if (rms >= (backgroundRMS + TALKING_THRESHOLD_OFFSET)) {
-               LOG_WARNING("COMMAND_RECORDING: Talking still in progress.\n");
+               // Reduced logging to avoid noise with 100ms polling
                /* For an additional layer of "silence," check if ASR output is changing */
                asr_result = asr_process_partial(asr_ctx, (const int16_t *)max_buff,
                                                 buff_size / sizeof(int16_t));
@@ -2038,7 +2049,6 @@ int main(int argc, char *argv[]) {
                   LOG_ERROR("asr_process_partial() returned NULL!\n");
                } else {
                   size_t current_length = asr_result->text ? strlen(asr_result->text) : 0;
-                  LOG_WARNING("Partial Input: %s\n", asr_result->text ? asr_result->text : "");
                   if (current_length == prev_text_length) {
                      text_nochange = 1;
                   }
@@ -2086,6 +2096,20 @@ int main(int argc, char *argv[]) {
             buff_size = 0;
             break;
          case PROCESS_COMMAND:
+            // Skip processing if command is empty, whitespace, or [BLANK_AUDIO]
+            if (!command_text || strlen(command_text) == 0 ||
+                strspn(command_text, " \t\n\r") == strlen(command_text) ||
+                strstr(command_text, "[BLANK_AUDIO]") != NULL) {
+               LOG_INFO("Ignoring empty or invalid command\n");
+               if (command_text) {
+                  free(command_text);
+                  command_text = NULL;
+               }
+               silenceNextState = WAKEWORD_LISTEN;
+               recState = SILENCE;
+               break;
+            }
+
             int direct_command_found = 0;
 
             // Add user message to conversation history first (needed for vision context)

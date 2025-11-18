@@ -98,6 +98,7 @@ sentence_buffer_t *sentence_buffer_create(sentence_callback callback, void *user
    buf->size = 0;
    buf->callback = callback;
    buf->callback_userdata = userdata;
+   buf->inside_command_tag = 0;
 
    return buf;
 }
@@ -142,7 +143,20 @@ void sentence_buffer_feed(sentence_buffer_t *buf, const char *chunk) {
       size_t terminator_pos = 0;
 
       for (i = search_start; i < buf->size; i++) {
-         if (is_sentence_terminator(buf->buffer[i])) {
+         // Check for command tag boundaries
+         if (i + 9 <= buf->size && strncmp(buf->buffer + i, "<command>", 9) == 0) {
+            buf->inside_command_tag = 1;
+            i += 8;  // Skip ahead (loop will increment by 1)
+            continue;
+         }
+         if (i + 10 <= buf->size && strncmp(buf->buffer + i, "</command>", 10) == 0) {
+            buf->inside_command_tag = 0;
+            i += 9;  // Skip ahead (loop will increment by 1)
+            continue;
+         }
+
+         // Only look for sentence terminators when NOT inside command tags
+         if (!buf->inside_command_tag && is_sentence_terminator(buf->buffer[i])) {
             // Found a terminator - check if followed by space/newline/end
             if (i + 1 >= buf->size) {
                // At end of buffer - not complete yet (might get more text)

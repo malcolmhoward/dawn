@@ -76,6 +76,10 @@ static pthread_t music_thread = -1;
 static pthread_t voice_thread = -1;
 static char *pending_command_result = NULL;
 
+// Custom music directory path (if set via command line)
+// If NULL, uses default MUSIC_DIR from dawn.h
+static char *custom_music_dir = NULL;
+
 /**
  * Retrieves the current user's home directory.
  *
@@ -520,6 +524,22 @@ int compare(const void *p1, const void *p2) {
 
 #define MUSIC_CALLBACK_BUFFER_SIZE 512
 
+void set_music_directory(const char *path) {
+   if (custom_music_dir) {
+      free(custom_music_dir);
+      custom_music_dir = NULL;
+   }
+
+   if (path) {
+      custom_music_dir = strdup(path);
+      if (!custom_music_dir) {
+         LOG_ERROR("Failed to allocate memory for custom music directory");
+      } else {
+         LOG_INFO("Music directory set to: %s", custom_music_dir);
+      }
+   }
+}
+
 char *musicCallback(const char *actionName, char *value, int *should_respond) {
    PlaybackArgs args;
    char strWildcards[MAX_FILENAME_LENGTH];
@@ -552,8 +572,14 @@ char *musicCallback(const char *actionName, char *value, int *should_respond) {
          }
       }
 
-      // Construct the full path to the user's music directory
-      char *musicDir = constructPathWithSubdirectory(MUSIC_DIR);
+      // Use custom music directory if set, otherwise use default from dawn.h
+      char *musicDir = NULL;
+      if (custom_music_dir) {
+         musicDir = strdup(custom_music_dir);
+      } else {
+         musicDir = constructPathWithSubdirectory(MUSIC_DIR);
+      }
+
       if (!musicDir) {
          LOG_ERROR("Error constructing music path.");
 
@@ -633,6 +659,17 @@ char *musicCallback(const char *actionName, char *value, int *should_respond) {
    } else if (strcmp(actionName, "stop") == 0) {
       LOG_INFO("Stopping music playback.");
       setMusicPlay(0);
+
+      // Wait for the playback thread to finish
+      if (music_thread != -1) {
+         int join_result = pthread_join(music_thread, NULL);
+         if (join_result == 0) {
+            music_thread = -1;
+            LOG_INFO("Music playback thread stopped successfully.");
+         } else {
+            LOG_ERROR("Failed to join music thread: %d", join_result);
+         }
+      }
 
       if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
          *should_respond = 0;
@@ -826,7 +863,10 @@ char *shutdownCallback(const char *actionName, char *value, int *should_respond)
    *should_respond = 1;
 
    if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
-      system("sudo shutdown -h now");
+      int ret = system("sudo shutdown -h now");
+      if (ret != 0) {
+         LOG_ERROR("Shutdown command failed with return code: %d", ret);
+      }
       int local_should_respond = 0;
       textToSpeechCallback(NULL, "Emergency shutdown initiated.", &local_should_respond);
       return NULL;
@@ -834,7 +874,10 @@ char *shutdownCallback(const char *actionName, char *value, int *should_respond)
       // In AI modes, confirm before shutting down
       strcpy(return_buffer, "Shutdown command received. Initiating emergency shutdown.");
       // Still execute the shutdown
-      system("sudo shutdown -h now");
+      int ret = system("sudo shutdown -h now");
+      if (ret != 0) {
+         LOG_ERROR("Shutdown command failed with return code: %d", ret);
+      }
       return return_buffer;
    }
 }

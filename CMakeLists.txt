@@ -32,10 +32,6 @@ add_definitions(-DGIT_SHA=\"${GIT_SHA}\")
 find_package(CURL REQUIRED)
 include_directories(${CURL_INCLUDE_DIRS})
 
-# Audio input and output
-find_package(PulseAudio REQUIRED)
-include_directories(${PULSEAUDIO_INCLUDE_DIRS})
-
 # Local config, MQTT commmands, AI APIs
 pkg_check_modules(JSONC REQUIRED json-c)
 include_directories(${JSONC_INCLUDE_DIRS})
@@ -69,6 +65,20 @@ find_library(CURAND_LIBRARIES NAMES curand HINTS ${CUDA_TOOLKIT_ROOT_DIR}/target
 # Text to Speech
 add_library(piper STATIC piper.cpp)
 target_link_libraries(piper onnxruntime)
+
+# Audio Backend Options - choose one
+option(USE_ALSA "Use ALSA for all audio (capture and playback)" ON)
+
+# Audio dependencies based on backend selection
+if(USE_ALSA)
+    # ALSA-only mode (no PulseAudio dependency)
+    message(STATUS "Audio backend: ALSA (fully embedded mode)")
+else()
+    # PulseAudio mode (desktop/server systems)
+    find_package(PulseAudio REQUIRED)
+    include_directories(${PULSEAUDIO_INCLUDE_DIRS})
+    message(STATUS "Audio backend: PulseAudio (desktop mode)")
+endif()
 
 # ASR Engine Options
 option(ENABLE_VOSK "Enable Vosk ASR engine (legacy support)" OFF)
@@ -108,6 +118,11 @@ set(DAWN_SOURCES
     word_to_number.c
 )
 
+# Define ALSA_DEVICE for conditional compilation
+if(USE_ALSA)
+    add_definitions(-DALSA_DEVICE)
+endif()
+
 # Conditionally add Vosk support
 if(ENABLE_VOSK)
     list(APPEND DAWN_SOURCES asr_vosk.c)
@@ -120,7 +135,6 @@ endif()
 add_executable(dawn ${DAWN_SOURCES})
 
 target_link_libraries(dawn
-                      asound
                       piper
                       piper_phonemize
                       espeak-ng
@@ -130,8 +144,6 @@ target_link_libraries(dawn
                       ${CURL_LIBRARIES}
                       ${JSONC_LIBRARIES}
                       ${SPDLOG_LIBRARIES}
-                      pulse-simple
-                      pulse
                       whisper
                       ${CUDA_LIBRARIES}
                       ${CUDART_LIBRARIES}
@@ -143,6 +155,13 @@ target_link_libraries(dawn
                       ${FLAC_LIBRARIES}
                       OpenSSL::SSL
                       OpenSSL::Crypto)
+
+# Link appropriate audio library based on backend selection
+if(USE_ALSA)
+    target_link_libraries(dawn asound)
+else()
+    target_link_libraries(dawn pulse-simple pulse)
+endif()
 
 # Conditionally link Vosk library
 if(ENABLE_VOSK)
