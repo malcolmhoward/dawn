@@ -266,8 +266,6 @@ void parseJsonCommandandExecute(const char *input) {
       if (value == NULL) {
          LOG_WARNING("Notice: Unable to get value name from json command.");
       }
-   } else {
-      LOG_WARNING("Notice: 'value' field not found in JSON.");
    }
 
    /* Before we process, make sure nothing's left over. */

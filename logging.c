@@ -85,7 +85,7 @@ void log_message(log_level_t level,
 
    const char *level_str = NULL;
    const char *color_code = NULL;
-   FILE *output_stream = log_file ? log_file : stdout;
+   FILE *output_stream = log_file ? log_file : stderr;
 
    switch (level) {
       case LOG_INFO:
