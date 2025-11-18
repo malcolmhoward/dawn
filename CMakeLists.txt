@@ -70,30 +70,54 @@ find_library(CURAND_LIBRARIES NAMES curand HINTS ${CUDA_TOOLKIT_ROOT_DIR}/target
 add_library(piper STATIC piper.cpp)
 target_link_libraries(piper onnxruntime)
 
+# ASR Engine Options
+option(ENABLE_VOSK "Enable Vosk ASR engine (legacy support)" OFF)
+
+# Whisper ASR (disable examples, tests, and server for DAWN integration)
+set(WHISPER_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(WHISPER_BUILD_SERVER OFF CACHE BOOL "" FORCE)
+add_subdirectory(whisper.cpp)
+
 link_directories(${CMAKE_SOURCE_DIR})
 
-add_executable(dawn
-               audio_capture_thread.c
-               audio_utils.c
-               dawn.c
-               dawn_network_audio.c
-               dawn_server.c
-               dawn_wav_utils.c
-               flac_playback.c
-               llm_command_parser.c
-               llm_interface.c
-               llm_openai.c
-               llm_claude.c
-               llm_streaming.c
-               logging.c
-               mic_passthrough.c
-               mosquitto_comms.c
-               ring_buffer.c
-               sentence_buffer.c
-               sse_parser.c
-               text_to_command_nuevo.c
-               text_to_speech.cpp
-               word_to_number.c)
+# Base source files (always compiled)
+set(DAWN_SOURCES
+    asr_interface.c
+    asr_whisper.c
+    audio_capture_thread.c
+    audio_utils.c
+    dawn.c
+    dawn_network_audio.c
+    dawn_server.c
+    dawn_wav_utils.c
+    flac_playback.c
+    llm_command_parser.c
+    llm_interface.c
+    llm_openai.c
+    llm_claude.c
+    llm_streaming.c
+    logging.c
+    mic_passthrough.c
+    mosquitto_comms.c
+    ring_buffer.c
+    sentence_buffer.c
+    sse_parser.c
+    text_to_command_nuevo.c
+    text_to_speech.cpp
+    word_to_number.c
+)
+
+# Conditionally add Vosk support
+if(ENABLE_VOSK)
+    list(APPEND DAWN_SOURCES asr_vosk.c)
+    add_definitions(-DENABLE_VOSK)
+    message(STATUS "Vosk ASR support: ENABLED")
+else()
+    message(STATUS "Vosk ASR support: DISABLED (Whisper only)")
+endif()
+
+add_executable(dawn ${DAWN_SOURCES})
 
 target_link_libraries(dawn
                       asound
@@ -108,7 +132,7 @@ target_link_libraries(dawn
                       ${SPDLOG_LIBRARIES}
                       pulse-simple
                       pulse
-                      vosk
+                      whisper
                       ${CUDA_LIBRARIES}
                       ${CUDART_LIBRARIES}
                       ${CUSPARSE_LIBRARIES}
@@ -119,6 +143,11 @@ target_link_libraries(dawn
                       ${FLAC_LIBRARIES}
                       OpenSSL::SSL
                       OpenSSL::Crypto)
+
+# Conditionally link Vosk library
+if(ENABLE_VOSK)
+    target_link_libraries(dawn vosk)
+endif()
 
 target_include_directories(piper PUBLIC
                            /usr/local/include/piper-phonemize
@@ -135,7 +164,12 @@ set(DESTINATION_DIR
 )
 
 file(COPY ${SOURCE_FILES} DESTINATION ${DESTINATION_DIR})
-execute_process(COMMAND ${CMAKE_COMMAND} -E create_symlink ${CMAKE_SOURCE_DIR}/vosk-model-en-us-0.22 ${CMAKE_BINARY_DIR}/model)
+
+# Conditionally create Vosk model symlink
+if(ENABLE_VOSK)
+    execute_process(COMMAND ${CMAKE_COMMAND} -E create_symlink ${CMAKE_SOURCE_DIR}/vosk-model-en-us-0.22 ${CMAKE_BINARY_DIR}/model)
+endif()
+
 execute_process(COMMAND ${CMAKE_COMMAND} -E create_symlink ${CMAKE_SOURCE_DIR}/commands_config_nuevo.json ${CMAKE_BINARY_DIR}/commands_config_nuevo.json)
 
 # Optional: Build tests (enable with -DBUILD_TESTS=ON)

@@ -49,3 +49,35 @@ target_link_libraries(test_streaming
                       ${JSONC_LIBRARIES}
                       OpenSSL::SSL
                       OpenSSL::Crypto)
+
+# Test: ASR Benchmark
+# Find CUDA libraries (required by Vosk)
+set(CUDA_TOOLKIT_ROOT_DIR "/usr/local/cuda-12.6")
+find_library(CUDA_LIBRARIES NAMES cuda HINTS ${CUDA_TOOLKIT_ROOT_DIR}/targets/aarch64-linux/lib)
+find_library(CUDART_LIBRARIES NAMES cudart HINTS ${CUDA_TOOLKIT_ROOT_DIR}/targets/aarch64-linux/lib)
+find_library(CUSPARSE_LIBRARIES NAMES cusparse HINTS ${CUDA_TOOLKIT_ROOT_DIR}/targets/aarch64-linux/lib)
+find_library(CUBLAS_LIBRARIES NAMES cublas HINTS ${CUDA_TOOLKIT_ROOT_DIR}/targets/aarch64-linux/lib)
+find_library(CUSOLVER_LIBRARIES NAMES cusolver HINTS ${CUDA_TOOLKIT_ROOT_DIR}/targets/aarch64-linux/lib)
+find_library(CURAND_LIBRARIES NAMES curand HINTS ${CUDA_TOOLKIT_ROOT_DIR}/targets/aarch64-linux/lib)
+
+add_executable(asr_benchmark
+               asr_benchmark.c
+               ${PARENT_DIR}/asr_interface.c
+               ${PARENT_DIR}/asr_vosk.c
+               ${PARENT_DIR}/asr_whisper.c
+               ${PARENT_DIR}/logging.c)
+
+target_include_directories(asr_benchmark PRIVATE
+                           ${PARENT_DIR}/whisper.cpp/include)
+
+target_link_libraries(asr_benchmark
+                      vosk
+                      whisper
+                      sndfile
+                      ${JSONC_LIBRARIES}
+                      ${CUDA_LIBRARIES}
+                      ${CUDART_LIBRARIES}
+                      ${CUSPARSE_LIBRARIES}
+                      ${CUBLAS_LIBRARIES}
+                      ${CUSOLVER_LIBRARIES}
+                      ${CURAND_LIBRARIES})

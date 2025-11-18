@@ -42,6 +42,7 @@ EXCLUDE_DIRS=(
    "third_party"
    "external"
    "utf8"
+   "whisper.cpp"
 )
 
 EXCLUDE_FILES=(

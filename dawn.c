@@ -41,7 +41,7 @@
 #include <mosquitto.h>
 
 /* Speech to Text */
-#include "vosk_api.h"
+#include "asr_interface.h"
 
 /* Local */
 #include "audio_capture_thread.h"
@@ -606,6 +606,42 @@ void *measureBackgroundAudio(void *audHandle) {
 
    free(max_buff);
    return NULL;
+}
+
+/**
+ * Normalize text for wake word/command matching
+ * Converts to lowercase and removes punctuation/special characters
+ *
+ * @param input Original text
+ * @return Normalized text (caller must free), or NULL on error
+ */
+static char *normalize_for_matching(const char *input) {
+   if (!input) {
+      return NULL;
+   }
+
+   size_t len = strlen(input);
+   char *normalized = (char *)malloc(len + 1);
+   if (!normalized) {
+      return NULL;
+   }
+
+   size_t j = 0;
+   for (size_t i = 0; i < len; i++) {
+      char c = input[i];
+      // Convert to lowercase
+      if (c >= 'A' && c <= 'Z') {
+         normalized[j++] = c + 32;
+      }
+      // Keep lowercase letters, digits, and spaces
+      else if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == ' ') {
+         normalized[j++] = c;
+      }
+      // Skip punctuation and other characters
+   }
+   normalized[j] = '\0';
+
+   return normalized;
 }
 
 /**
@@ -1224,7 +1260,13 @@ void display_help(int argc, char *argv[]) {
    printf("  -N, --network-audio    Enable network audio processing server\n");
    printf("  -h, --help             Display this help message and exit.\n");
    printf("  -m, --llm TYPE         Set default LLM type (cloud or local).\n");
-   printf("  -P, --cloud-provider PROVIDER  Set cloud provider (openai or claude).\n");
+   printf("  -P, --cloud-provider PROVIDER    Set cloud provider (openai or claude).\n");
+   printf(
+       "  -A, --asr-engine ENGINE          Set ASR engine (vosk or whisper, default: whisper).\n");
+   printf("  -W, --whisper-model MODEL        Whisper model size (tiny, base, small, default: "
+          "base).\n");
+   printf("  -w, --whisper-path PATH          Path to Whisper models directory (default: "
+          "../whisper.cpp/models).\n");
    printf("Command Processing Modes:\n");
    printf("  -D, --commands-only    Direct command processing only (default).\n");
    printf("  -C, --llm-commands     Try direct commands first, then LLM if no match.\n");
@@ -1235,9 +1277,9 @@ int main(int argc, char *argv[]) {
    char *input_text = NULL;
    char *command_text = NULL;
    char *response_text = NULL;
-   const char *vosk_output = NULL;
-   size_t vosk_output_length = 0;
-   int vosk_nochange = 0;
+   asr_result_t *asr_result = NULL;
+   size_t prev_text_length = 0;
+   int text_nochange = 0;
    struct json_object *system_message = NULL;
    int rc = 0;
    int opt = 0;
@@ -1297,17 +1339,32 @@ int main(int argc, char *argv[]) {
       { "network-audio", no_argument, NULL, 'N' },         // Start server for remote DAWN access
       { "llm", required_argument, NULL, 'm' },             // Set default LLM type (local/cloud)
       { "cloud-provider", required_argument, NULL, 'P' },  // Cloud provider (openai/claude)
+      { "asr-engine", required_argument, NULL, 'A' },      // ASR engine (vosk/whisper)
+      { "whisper-model", required_argument, NULL, 'W' },   // Whisper model (tiny/base/small)
+      { "whisper-path", required_argument, NULL, 'w' },    // Whisper models directory
       { 0, 0, 0, 0 }
    };
    int option_index = 0;
    const char *cloud_provider_override = NULL;
+   asr_engine_type_t asr_engine =
+       ASR_ENGINE_WHISPER;              // Default: Whisper base (best performance + accuracy)
+   const char *asr_model_path = NULL;   // Will be set based on engine
+   const char *whisper_model = "base";  // Default Whisper model (tiny/base/small)
+   const char *whisper_path = "whisper.cpp/models";  // Default Whisper models directory
+   char whisper_full_path[512];                      // Buffer to construct full model path
+
+   // Construct default Whisper base model path
+   snprintf(whisper_full_path, sizeof(whisper_full_path), "%s/ggml-%s.bin", whisper_path,
+            whisper_model);
+   asr_model_path = whisper_full_path;
 
    LOG_INFO("%s Version %s: %s\n", APP_NAME, VERSION_NUMBER, GIT_SHA);
 
    // TODO: I'm adding this here but it will need better error clean-ups.
    curl_global_init(CURL_GLOBAL_DEFAULT);
 
-   while ((opt = getopt_long(argc, argv, "c:d:hl:LCDNm:P:", long_options, &option_index)) != -1) {
+   while ((opt = getopt_long(argc, argv, "c:d:hl:LCDNm:P:A:W:w:", long_options, &option_index)) !=
+          -1) {
       switch (opt) {
          case 'c':
             strncpy(pcm_capture_device, optarg, sizeof(pcm_capture_device));
@@ -1353,6 +1410,38 @@ int main(int argc, char *argv[]) {
          case 'P':
             cloud_provider_override = optarg;
             LOG_INFO("Cloud provider override: %s", cloud_provider_override);
+            break;
+         case 'W':
+            whisper_model = optarg;
+            LOG_INFO("Whisper model set to: %s", whisper_model);
+            break;
+         case 'w':
+            whisper_path = optarg;
+            LOG_INFO("Whisper models path set to: %s", whisper_path);
+            break;
+         case 'A':
+#ifdef ENABLE_VOSK
+            if (strcmp(optarg, "vosk") == 0) {
+               asr_engine = ASR_ENGINE_VOSK;
+               asr_model_path = "model";
+               LOG_INFO("Using Vosk ASR engine");
+            } else
+#endif
+                if (strcmp(optarg, "whisper") == 0) {
+               asr_engine = ASR_ENGINE_WHISPER;
+               // Construct full path: whisper_path/ggml-MODEL.bin
+               snprintf(whisper_full_path, sizeof(whisper_full_path), "%s/ggml-%s.bin",
+                        whisper_path, whisper_model);
+               asr_model_path = whisper_full_path;
+               LOG_INFO("Using Whisper ASR engine with model: %s", asr_model_path);
+            } else {
+#ifdef ENABLE_VOSK
+               LOG_ERROR("Unknown ASR engine: %s. Using Whisper (default).", optarg);
+#else
+               LOG_ERROR("Unknown ASR engine: %s (Vosk support not compiled in). Using Whisper.",
+                         optarg);
+#endif
+            }
             break;
          case '?':
             display_help(argc, argv);
@@ -1485,14 +1574,11 @@ int main(int argc, char *argv[]) {
    measureBackgroundAudio((void *)&myAudioControls);
 #endif
 
-   LOG_INFO("Init vosk.");
-   // Vosk
-   vosk_gpu_init();
-   vosk_gpu_thread_init();
-
-   VoskModel *model = vosk_model_new("model");
-   if (model == NULL) {
-      LOG_ERROR("Error creating new Vosk model.\n");
+   LOG_INFO("Init ASR: %s", asr_engine_name(asr_engine));
+   // Initialize ASR engine (Vosk or Whisper)
+   asr_context_t *asr_ctx = asr_init(asr_engine, asr_model_path, DEFAULT_RATE);
+   if (asr_ctx == NULL) {
+      LOG_ERROR("Error initializing ASR engine: %s\n", asr_engine_name(asr_engine));
 
       free(max_buff);
 
@@ -1500,22 +1586,6 @@ int main(int argc, char *argv[]) {
          audio_capture_stop(audio_capture_ctx);
          audio_capture_ctx = NULL;
       }
-
-      return 1;
-   }
-   VoskRecognizer *recognizer = vosk_recognizer_new(model, DEFAULT_RATE);
-   if (recognizer == NULL) {
-      LOG_ERROR("Error creating new Vosk recognizer.\n");
-
-      vosk_model_free(model);
-
-      free(max_buff);
-
-#ifdef ALSA_DEVICE
-      snd_pcm_close(myAudioControls.handle);
-#else
-      pa_simple_free(myAudioControls.pa_handle);
-#endif
 
       return 1;
    }
@@ -1753,12 +1823,14 @@ int main(int argc, char *argv[]) {
                LOG_WARNING("SILENCE: Talking detected. Going into WAKEWORD_LISTENING.\n");
                recState = silenceNextState;
 
-               vosk_recognizer_accept_waveform(recognizer, max_buff, buff_size);
-               vosk_output = vosk_recognizer_partial_result(recognizer);
-               if (vosk_output == NULL) {
-                  LOG_ERROR("vosk_recognizer_partial_result() returned NULL!\n");
+               asr_result = asr_process_partial(asr_ctx, (const int16_t *)max_buff,
+                                                buff_size / sizeof(int16_t));
+               if (asr_result == NULL) {
+                  LOG_ERROR("asr_process_partial() returned NULL!\n");
                } else {
-                  LOG_WARNING("Partial Input: %s\n", vosk_output);
+                  LOG_WARNING("Partial Input: %s\n", asr_result->text ? asr_result->text : "");
+                  asr_result_free(asr_result);
+                  asr_result = NULL;
                }
             }
             break;
@@ -1775,26 +1847,30 @@ int main(int argc, char *argv[]) {
 
             if (rms >= (backgroundRMS + TALKING_THRESHOLD_OFFSET)) {
                LOG_WARNING("WAKEWORD_LISTEN: Talking still in progress.\n");
-               /* For an additional layer of "silence," I'm getting the length of the
-                * vosk output to see if the volume was up but no one was saying
-                * anything. */
-               vosk_output_length = strlen(vosk_output);
-
-               vosk_recognizer_accept_waveform(recognizer, max_buff, buff_size);
-               vosk_output = vosk_recognizer_partial_result(recognizer);
-               if (vosk_output == NULL) {
-                  LOG_ERROR("vosk_recognizer_partial_result() returned NULL!\n");
+               /* For an additional layer of "silence," check if ASR output is changing */
+               asr_result = asr_process_partial(asr_ctx, (const int16_t *)max_buff,
+                                                buff_size / sizeof(int16_t));
+               if (asr_result == NULL) {
+                  LOG_ERROR("asr_process_partial() returned NULL!\n");
                } else {
-                  LOG_WARNING("Partial Input: %s\n", vosk_output);
-                  if (strlen(vosk_output) == vosk_output_length) {
-                     vosk_nochange = 1;
+                  size_t current_length = asr_result->text ? strlen(asr_result->text) : 0;
+                  LOG_WARNING("Partial Input: %s\n", asr_result->text ? asr_result->text : "");
+                  if (current_length == prev_text_length) {
+                     text_nochange = 1;
                   }
+                  prev_text_length = current_length;
+                  asr_result_free(asr_result);
+                  asr_result = NULL;
                }
             }
 
-            if (rms < (backgroundRMS + TALKING_THRESHOLD_OFFSET) || vosk_nochange) {
+            // Only use text_nochange for Vosk (which has meaningful partials).
+            // Whisper always returns empty partials, so rely solely on RMS for silence
+            // detection.
+            if (rms < (backgroundRMS + TALKING_THRESHOLD_OFFSET) ||
+                (text_nochange && asr_engine == ASR_ENGINE_VOSK)) {
                commandTimeout++;
-               vosk_nochange = 0;
+               text_nochange = 0;
             } else {
                commandTimeout = 0;
             }
@@ -1802,16 +1878,24 @@ int main(int argc, char *argv[]) {
             if (commandTimeout >= DEFAULT_COMMAND_TIMEOUT) {
                commandTimeout = 0;
                LOG_WARNING("WAKEWORD_LISTEN: Checking for wake word.\n");
-               vosk_recognizer_accept_waveform(recognizer, max_buff, buff_size);
-               vosk_output = vosk_recognizer_final_result(recognizer);
-               if (vosk_output == NULL) {
-                  LOG_ERROR("vosk_recognizer_final_result() returned NULL!\n");
+               asr_result = asr_finalize(asr_ctx);
+               if (asr_result == NULL) {
+                  LOG_ERROR("asr_finalize() returned NULL!\n");
                } else {
-                  LOG_WARNING("Input: %s\n", vosk_output);
-                  input_text = getTextResponse(vosk_output);
+                  LOG_WARNING("Input: %s\n", asr_result->text ? asr_result->text : "");
+                  if (asr_result->text) {
+                     input_text = strdup(asr_result->text);
+                  } else {
+                     input_text = NULL;
+                  }
+                  asr_result_free(asr_result);
+                  asr_result = NULL;
+
+                  // Normalize for wake word/command matching
+                  char *normalized_text = normalize_for_matching(input_text);
 
                   for (i = 0; i < numGoodbyeWords; i++) {
-                     if (strcmp(input_text, goodbyeWords[i]) == 0) {
+                     if (normalized_text && strcmp(normalized_text, goodbyeWords[i]) == 0) {
                         pthread_mutex_lock(&tts_mutex);
                         if (tts_playback_state == TTS_PLAYBACK_PAUSE) {
                            tts_playback_state = TTS_PLAYBACK_DISCARD;
@@ -1828,7 +1912,7 @@ int main(int argc, char *argv[]) {
                   pthread_mutex_lock(&tts_mutex);
                   if (tts_playback_state == TTS_PLAYBACK_PAUSE) {
                      for (i = 0; i < numCancelWords; i++) {
-                        if (strcmp(input_text, cancelWords[i]) == 0) {
+                        if (normalized_text && strcmp(normalized_text, cancelWords[i]) == 0) {
                            LOG_WARNING("Cancel word detected.\n");
 
                            tts_playback_state = TTS_PLAYBACK_DISCARD;
@@ -1841,17 +1925,42 @@ int main(int argc, char *argv[]) {
                   }
                   pthread_mutex_unlock(&tts_mutex);
 
+                  // Search for wake word in normalized text
                   for (i = 0; i < numWakeWords; i++) {
-                     char *found_ptr = strstr(input_text, wakeWords[i]);
+                     char *found_ptr = normalized_text ? strstr(normalized_text, wakeWords[i])
+                                                       : NULL;
                      if (found_ptr != NULL) {
                         LOG_WARNING("Wake word detected.\n");
 
-                        // Calculate the length of the wake word
+                        // Calculate offset in normalized text
+                        size_t offset = found_ptr - normalized_text;
                         size_t wakeWordLength = strlen(wakeWords[i]);
 
-                        // Advance the pointer to the next character after wakeWords[i]
-                        next_char_ptr = found_ptr + wakeWordLength;
+                        // Find corresponding position in original text
+                        // (accounting for removed punctuation)
+                        size_t orig_offset = 0;
+                        size_t norm_offset = 0;
+                        while (norm_offset < offset && input_text[orig_offset] != '\0') {
+                           char c = input_text[orig_offset];
+                           if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                               (c >= '0' && c <= '9') || c == ' ') {
+                              norm_offset++;
+                           }
+                           orig_offset++;
+                        }
 
+                        // Advance past wake word in original text
+                        while (norm_offset < offset + wakeWordLength &&
+                               input_text[orig_offset] != '\0') {
+                           char c = input_text[orig_offset];
+                           if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                               (c >= '0' && c <= '9') || c == ' ') {
+                              norm_offset++;
+                           }
+                           orig_offset++;
+                        }
+
+                        next_char_ptr = input_text + orig_offset;
                         break;
                      }
                   }
@@ -1871,6 +1980,9 @@ int main(int argc, char *argv[]) {
                         commandTimeout = 0;
                         silenceNextState = COMMAND_RECORDING;
                         recState = SILENCE;
+
+                        // Reset ASR for next utterance
+                        asr_reset(asr_ctx);
                      } else {
                         /* FIXME: Below I simply add one to make sure to skip the most likely
                          * space. I need to properly remove leading spaces. */
@@ -1878,6 +1990,9 @@ int main(int argc, char *argv[]) {
                         free(input_text);
 
                         recState = PROCESS_COMMAND;
+
+                        // Reset ASR for next utterance
+                        asr_reset(asr_ctx);
                      }
                   } else {
                      pthread_mutex_lock(&tts_mutex);
@@ -1889,6 +2004,14 @@ int main(int argc, char *argv[]) {
 
                      silenceNextState = WAKEWORD_LISTEN;
                      recState = SILENCE;
+
+                     // Reset ASR for next utterance (no wake word detected)
+                     asr_reset(asr_ctx);
+                  }
+
+                  // Cleanup normalized text
+                  if (normalized_text) {
+                     free(normalized_text);
                   }
                }
             }
@@ -1908,47 +2031,56 @@ int main(int argc, char *argv[]) {
 
             if (rms >= (backgroundRMS + TALKING_THRESHOLD_OFFSET)) {
                LOG_WARNING("COMMAND_RECORDING: Talking still in progress.\n");
-               /* For an additional layer of "silence," I'm getting the length of the
-                * vosk output to see if the volume was up but no one was saying
-                * anything. */
-               vosk_output_length = strlen(vosk_output);
-
-               vosk_recognizer_accept_waveform(recognizer, max_buff, buff_size);
-               vosk_output = vosk_recognizer_partial_result(recognizer);
-               if (vosk_output == NULL) {
-                  LOG_ERROR("vosk_recognizer_partial_result() returned NULL!\n");
+               /* For an additional layer of "silence," check if ASR output is changing */
+               asr_result = asr_process_partial(asr_ctx, (const int16_t *)max_buff,
+                                                buff_size / sizeof(int16_t));
+               if (asr_result == NULL) {
+                  LOG_ERROR("asr_process_partial() returned NULL!\n");
                } else {
-                  LOG_WARNING("Partial Input: %s\n", vosk_output);
-                  if (strlen(vosk_output) == vosk_output_length) {
-                     vosk_nochange = 1;
+                  size_t current_length = asr_result->text ? strlen(asr_result->text) : 0;
+                  LOG_WARNING("Partial Input: %s\n", asr_result->text ? asr_result->text : "");
+                  if (current_length == prev_text_length) {
+                     text_nochange = 1;
                   }
+                  prev_text_length = current_length;
+                  asr_result_free(asr_result);
+                  asr_result = NULL;
                }
             }
 
-            if (rms < (backgroundRMS + TALKING_THRESHOLD_OFFSET) || vosk_nochange) {
+            // Only use text_nochange for Vosk (which has meaningful partials).
+            // Whisper always returns empty partials, so rely solely on RMS for silence
+            // detection.
+            if (rms < (backgroundRMS + TALKING_THRESHOLD_OFFSET) ||
+                (text_nochange && asr_engine == ASR_ENGINE_VOSK)) {
                commandTimeout++;
-               vosk_nochange = 0;
+               text_nochange = 0;
             } else {
                commandTimeout = 0;
-               vosk_nochange = 0;
+               text_nochange = 0;
             }
 
             if (commandTimeout >= DEFAULT_COMMAND_TIMEOUT) {
                commandTimeout = 0;
                LOG_WARNING("COMMAND_RECORDING: Command processing.\n");
-               vosk_recognizer_accept_waveform(recognizer, max_buff, buff_size);
-               vosk_output = vosk_recognizer_final_result(recognizer);
-               if (vosk_output == NULL) {
-                  LOG_ERROR("vosk_recognizer_final_result() returned NULL!\n");
+               asr_result = asr_finalize(asr_ctx);
+               if (asr_result == NULL) {
+                  LOG_ERROR("asr_finalize() returned NULL!\n");
                } else {
-                  LOG_WARNING("Input: %s\n", vosk_output);
+                  LOG_WARNING("Input: %s\n", asr_result->text ? asr_result->text : "");
 
-                  input_text = getTextResponse(vosk_output);
-
-                  command_text = strdup(input_text);
-                  free(input_text);
+                  if (asr_result->text) {
+                     command_text = strdup(asr_result->text);
+                  } else {
+                     command_text = NULL;
+                  }
+                  asr_result_free(asr_result);
+                  asr_result = NULL;
 
                   recState = PROCESS_COMMAND;
+
+                  // Reset ASR for next utterance
+                  asr_reset(asr_ctx);
                }
             }
             buff_size = 0;
@@ -2051,6 +2183,9 @@ int main(int argc, char *argv[]) {
                   LOG_WARNING("Input ignored. Found in ignore list.\n");
                   silenceNextState = WAKEWORD_LISTEN;
                   recState = SILENCE;
+
+                  // Reset ASR for next utterance (ignored input)
+                  asr_reset(asr_ctx);
                } else {
                   // User message already added at top of PROCESS_COMMAND
                   // Use streaming with TTS sentence buffering for immediate response
@@ -2167,6 +2302,9 @@ int main(int argc, char *argv[]) {
             silenceNextState = WAKEWORD_LISTEN;
             recState = SILENCE;
 
+            // Reset ASR for next utterance (command processing complete)
+            asr_reset(asr_ctx);
+
             break;
          case VISION_AI_READY:
             pthread_mutex_lock(&tts_mutex);
@@ -2214,6 +2352,9 @@ int main(int argc, char *argv[]) {
             silenceNextState = WAKEWORD_LISTEN;
             recState = SILENCE;
 
+            // Reset ASR for next utterance (vision AI complete)
+            asr_reset(asr_ctx);
+
             break;
          case NETWORK_PROCESSING:
             LOG_INFO("Processing network audio from client");
@@ -2221,19 +2362,23 @@ int main(int argc, char *argv[]) {
             pthread_mutex_lock(&network_processing_mutex);
 
             if (network_pcm_buffer && network_pcm_size > 0) {
-               // Reset Vosk for new session
-               vosk_recognizer_reset(recognizer);
+               // Reset ASR for new session
+               asr_reset(asr_ctx);
 
-               // Process PCM data with Vosk
-               vosk_recognizer_accept_waveform(recognizer, (const char *)network_pcm_buffer,
-                                               network_pcm_size);
-               vosk_output = vosk_recognizer_final_result(recognizer);
+               // Process PCM data with ASR
+               asr_result = asr_process_partial(asr_ctx, (const int16_t *)network_pcm_buffer,
+                                                network_pcm_size / sizeof(int16_t));
+               if (asr_result) {
+                  asr_result_free(asr_result);
+                  asr_result = NULL;
+               }
 
-               if (vosk_output) {
-                  LOG_INFO("Network transcription result: %s", vosk_output);
+               asr_result = asr_finalize(asr_ctx);
+               if (asr_result && asr_result->text) {
+                  LOG_INFO("Network transcription result: %s", asr_result->text);
 
-                  // Extract text using existing function
-                  input_text = getTextResponse(vosk_output);
+                  // Use transcription text directly
+                  input_text = strdup(asr_result->text);
 
                   /* Process Commands before AI if LLM command processing is disabled */
                   if (command_processing_mode != CMD_MODE_LLM_ONLY) {
@@ -2426,7 +2571,7 @@ int main(int argc, char *argv[]) {
                      }
                   }
                } else {
-                  LOG_WARNING("Vosk processing returned no output");
+                  LOG_WARNING("ASR processing returned no output");
 
                   // Send speech error
                   size_t error_wav_size = 0;
@@ -2439,6 +2584,12 @@ int main(int argc, char *argv[]) {
                      pthread_cond_signal(&processing_done);
                      pthread_mutex_unlock(&processing_mutex);
                   }
+               }
+
+               // Cleanup ASR result
+               if (asr_result) {
+                  asr_result_free(asr_result);
+                  asr_result = NULL;
                }
 
                // Cleanup network buffers
@@ -2501,9 +2652,8 @@ int main(int argc, char *argv[]) {
 
    json_object_put(conversation_history);
 
-   // Cleanup
-   vosk_recognizer_free(recognizer);
-   vosk_model_free(model);
+   // Cleanup ASR
+   asr_cleanup(asr_ctx);
 
    // Stop audio capture thread and clean up resources
    if (audio_capture_ctx) {
