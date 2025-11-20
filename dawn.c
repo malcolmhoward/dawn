@@ -60,6 +60,9 @@
 #include "vad_silero.h"
 #include "version.h"
 
+// Whisper chunking manager
+#include "chunking_manager.h"
+
 // Define the default sample rate for audio capture.
 #define DEFAULT_RATE 16000
 
@@ -67,19 +70,19 @@
 #define DEFAULT_CHANNELS 1
 
 // Define the default duration of audio capture in seconds.
-#define DEFAULT_CAPTURE_SECONDS 0.1f  // 100ms for responsive VAD (Phase 2/3)
+#define DEFAULT_CAPTURE_SECONDS 0.1f  // 100ms for responsive VAD
 
 // Define the default command timeout in terms of iterations of DEFAULT_CAPTURE_SECONDS.
 #define DEFAULT_COMMAND_TIMEOUT 15  // 15 * 0.1s = 1.5 seconds of silence before timeout
 
-// VAD configuration (Phase 2/3)
+// VAD configuration
 #define VAD_SAMPLE_SIZE 512               // Silero VAD requires 512 samples (32ms at 16kHz)
 #define VAD_SPEECH_THRESHOLD 0.5f         // Probability threshold for speech detection
 #define VAD_SILENCE_THRESHOLD 0.3f        // Probability threshold for silence detection
 #define VAD_END_OF_SPEECH_DURATION 1.5f   // Seconds of silence to consider speech ended
-#define VAD_MAX_RECORDING_DURATION 50.0f  // Maximum recording duration (prevents buffer overflow)
+#define VAD_MAX_RECORDING_DURATION 30.0f  // Maximum recording duration (semantic timeout)
 
-// Chunking configuration for Whisper (Use Case 3 - Phase 2/3)
+// Chunking configuration for Whisper
 #define VAD_CHUNK_PAUSE_DURATION 0.5f  // Seconds of silence to detect natural pause for chunking
 #define VAD_MIN_CHUNK_DURATION 1.0f    // Minimum speech duration before allowing chunk
 #define VAD_MAX_CHUNK_DURATION 10.0f   // Maximum chunk duration before forcing finalization
@@ -111,7 +114,7 @@
 #endif
 
 // Define the threshold offset for detecting talking in the audio stream.
-// RMS detection removed - using VAD only (Phase 2/3)
+// RMS detection removed - using VAD only
 
 static char pcm_capture_device[MAX_WORD_LENGTH + 1] = "";
 static char pcm_playback_device[MAX_WORD_LENGTH + 1] = "";
@@ -167,10 +170,10 @@ static const pa_sample_spec sample_spec = { .format = DEFAULT_PULSE_FORMAT,
 // Audio capture thread context (dedicated thread for continuous audio capture)
 static audio_capture_context_t *audio_capture_ctx = NULL;
 
-// Silero VAD context for voice activity detection (Phase 2/3)
+// Silero VAD context for voice activity detection
 static silero_vad_context_t *vad_ctx = NULL;
 
-// backgroundRMS removed - using VAD only (Phase 2/3)
+// backgroundRMS removed - using VAD only
 static char *wakeWords[] = { "hello " AI_NAME,    "okay " AI_NAME,         "alright " AI_NAME,
                              "hey " AI_NAME,      "hi " AI_NAME,           "good evening " AI_NAME,
                              "good day " AI_NAME, "good morning " AI_NAME, "yeah " AI_NAME,
@@ -573,7 +576,7 @@ void *measureBackgroundAudio(void *audHandle) {
       return NULL;
    }
 
-   // Background RMS measurement removed - VAD handles all voice detection now (Phase 2/3)
+   // Background RMS measurement removed - VAD handles all voice detection now
    // This eliminates the 6-second startup delay
    LOG_INFO("Using Silero VAD for voice activity detection (no RMS calibration needed)");
 
@@ -992,6 +995,53 @@ int save_conversation_history(struct json_object *conversation_history) {
    return 0;
 }
 
+/**
+ * @brief Reset all subsystems for a new utterance
+ *
+ * Resets VAD, ASR, chunking manager, duration tracking, and pre-roll buffer.
+ * Call this when transitioning back to WAKEWORD_LISTEN or SILENCE state
+ * to ensure clean state for the next interaction.
+ *
+ * @param vad_ctx Silero VAD context to reset (can be NULL)
+ * @param asr_ctx ASR context to reset (must not be NULL)
+ * @param chunk_mgr Chunking manager to reset (can be NULL if Vosk mode)
+ * @param silence_duration Pointer to silence duration to reset
+ * @param speech_duration Pointer to speech duration to reset
+ * @param recording_duration Pointer to recording duration to reset
+ * @param preroll_write_pos Pointer to pre-roll write position to reset
+ * @param preroll_valid_bytes Pointer to pre-roll valid bytes to reset
+ */
+static void reset_for_new_utterance(silero_vad_context_t *vad_ctx,
+                                    asr_context_t *asr_ctx,
+                                    chunking_manager_t *chunk_mgr,
+                                    float *silence_duration,
+                                    float *speech_duration,
+                                    float *recording_duration,
+                                    size_t *preroll_write_pos,
+                                    size_t *preroll_valid_bytes) {
+   // Reset VAD state for new interaction boundary
+   if (vad_ctx) {
+      vad_silero_reset(vad_ctx);
+   }
+
+   // Reset chunking manager (Whisper only)
+   if (chunk_mgr) {
+      chunking_manager_reset(chunk_mgr);
+   }
+
+   // Reset ASR for next utterance
+   asr_reset(asr_ctx);
+
+   // Reset duration tracking
+   *silence_duration = 0.0f;
+   *speech_duration = 0.0f;
+   *recording_duration = 0.0f;
+
+   // Reset pre-roll buffer
+   *preroll_write_pos = 0;
+   *preroll_valid_bytes = 0;
+}
+
 /* Publish AI State. Only send state if it's changed.
  *
  * FIXME: Build this JSON correctly.
@@ -1302,11 +1352,11 @@ int main(int argc, char *argv[]) {
    listeningState recState = SILENCE;
    listeningState silenceNextState = WAKEWORD_LISTEN;
 
-   // VAD state tracking (Phase 2/3)
+   // VAD state tracking
    float vad_speech_prob = 0.0f;
    int silence_count = 0;
    float silence_duration = 0.0f;
-   float speech_duration = 0.0f;     // For Use Case 3: pause detection / chunking
+   float speech_duration = 0.0f;     // For pause detection / chunking
    float recording_duration = 0.0f;  // Total recording time (prevents buffer overflow)
 
 // Pre-roll buffer: captures audio before VAD trigger to avoid missing first words
@@ -1585,6 +1635,22 @@ int main(int argc, char *argv[]) {
       return 1;
    }
 
+   // Initialize chunking manager (Whisper only, persistent lifecycle)
+   chunking_manager_t *chunk_mgr = NULL;
+   if (asr_engine == ASR_ENGINE_WHISPER) {
+      chunk_mgr = chunking_manager_init(asr_ctx);
+      if (!chunk_mgr) {
+         LOG_ERROR("Failed to initialize chunking manager");
+         asr_cleanup(asr_ctx);
+         free(max_buff);
+         if (audio_capture_ctx) {
+            audio_capture_stop(audio_capture_ctx);
+            audio_capture_ctx = NULL;
+         }
+         return 1;
+      }
+   }
+
    LOG_INFO("Init mosquitto.");
    /* MQTT Setup */
    mosquitto_lib_init();
@@ -1620,7 +1686,7 @@ int main(int argc, char *argv[]) {
    /* Initialize text to speech processing. */
    initialize_text_to_speech(pcm_playback_device);
 
-   // Initialize Silero VAD (Phase 2/3)
+   // Initialize Silero VAD
    LOG_INFO("Init Silero VAD for voice activity detection.");
    const char *home_dir = getenv("HOME");
    char vad_model_path[512];
@@ -1853,7 +1919,7 @@ int main(int argc, char *argv[]) {
                                          : preroll_valid_bytes + bytes_to_copy;
             }
 
-            // Use Case 1: VAD-based wake word detection (Phase 2/3)
+            // VAD-based wake word detection
             int speech_detected = 0;
             static int vad_debug_counter = 0;
             if (vad_ctx && buff_size >= VAD_SAMPLE_SIZE * sizeof(int16_t)) {
@@ -1898,11 +1964,9 @@ int main(int argc, char *argv[]) {
                silence_duration = 0.0f;
                speech_duration = 0.0f;
                recording_duration = 0.0f;
-               // Reset pre-roll buffer
-               preroll_write_pos = 0;
-               preroll_valid_bytes = 0;
 
                // Feed pre-roll buffer to ASR first (audio before VAD trigger)
+               // Note: Pre-roll buffer will be reset AFTER feeding to ASR (line 2011-2013)
                // Pre-roll buffer is circular, so read from correct position
                if (preroll_valid_bytes > 0) {
                   // Defensive assertions for buffer invariants
@@ -1956,7 +2020,7 @@ int main(int argc, char *argv[]) {
 
             capture_buffer(&myAudioControls, max_buff, max_buff_size, &buff_size);
 
-            // Use Case 2: VAD-based speech end detection (Phase 2/3)
+            // VAD-based speech end detection
             int is_silence = 0;
             static int ww_vad_debug_counter = 0;
             if (vad_ctx && buff_size >= VAD_SAMPLE_SIZE * sizeof(int16_t)) {
@@ -1974,15 +2038,26 @@ int main(int argc, char *argv[]) {
                } else {
                   is_silence = (vad_speech_prob < VAD_SILENCE_THRESHOLD);
 
-                  // Process partial ASR if speech detected
+                  // ENGINE-AWARE AUDIO ROUTING (chunk for Whisper, stream for Vosk)
                   if (!is_silence) {
-                     asr_result = asr_process_partial(asr_ctx, (const int16_t *)max_buff,
-                                                      buff_size / sizeof(int16_t));
-                     if (asr_result == NULL) {
-                        LOG_ERROR("asr_process_partial() returned NULL!\n");
-                     } else {
-                        asr_result_free(asr_result);
-                        asr_result = NULL;
+                     if (asr_engine == ASR_ENGINE_WHISPER && chunk_mgr) {
+                        // Whisper: Feed to chunking manager
+                        int result = chunking_manager_add_audio(chunk_mgr,
+                                                                (const int16_t *)max_buff,
+                                                                buff_size / sizeof(int16_t));
+                        if (result != 0) {
+                           LOG_ERROR("WAKEWORD_LISTEN: chunking_manager_add_audio() failed");
+                        }
+                     } else if (asr_engine == ASR_ENGINE_VOSK) {
+                        // Vosk: Direct streaming path
+                        asr_result = asr_process_partial(asr_ctx, (const int16_t *)max_buff,
+                                                         buff_size / sizeof(int16_t));
+                        if (asr_result == NULL) {
+                           LOG_ERROR("asr_process_partial() returned NULL!\n");
+                        } else {
+                           asr_result_free(asr_result);
+                           asr_result = NULL;
+                        }
                      }
                   }
                }
@@ -1995,16 +2070,59 @@ int main(int argc, char *argv[]) {
                is_silence = 1;  // Assume silence if VAD unavailable
             }
 
-            // Track silence duration for speech end detection
+            // Track silence and speech duration for speech end detection and chunking
             if (is_silence) {
                silence_duration += DEFAULT_CAPTURE_SECONDS;
             } else {
+               speech_duration += DEFAULT_CAPTURE_SECONDS;
                silence_duration = 0.0f;  // Reset on speech
+            }
+
+            // Pause detection for chunking (Whisper only, similar to COMMAND_RECORDING)
+            if (asr_engine == ASR_ENGINE_WHISPER && chunk_mgr) {
+               int should_finalize_chunk = 0;
+
+               // Detect natural pauses (silence after sufficient speech)
+               if (is_silence && speech_duration >= VAD_MIN_CHUNK_DURATION &&
+                   silence_duration >= VAD_CHUNK_PAUSE_DURATION) {
+                  LOG_INFO("WAKEWORD_LISTEN: Pause detected (%.1fs) after %.1fs speech - "
+                           "finalizing chunk",
+                           silence_duration, speech_duration);
+                  should_finalize_chunk = 1;
+               }
+
+               // Force chunk on max duration
+               if (speech_duration >= VAD_MAX_CHUNK_DURATION) {
+                  LOG_INFO("WAKEWORD_LISTEN: Max chunk duration reached (%.1fs) - forcing chunk",
+                           speech_duration);
+                  should_finalize_chunk = 1;
+               }
+
+               // Finalize chunk if triggered
+               if (should_finalize_chunk && !chunking_manager_is_finalizing(chunk_mgr)) {
+                  char *chunk_text = NULL;
+                  int result = chunking_manager_finalize_chunk(chunk_mgr, &chunk_text);
+
+                  if (result == 0) {
+                     if (chunk_text) {
+                        LOG_INFO("WAKEWORD_LISTEN: Chunk %zu finalized: \"%s\"",
+                                 chunking_manager_get_num_chunks(chunk_mgr) - 1, chunk_text);
+                        free(chunk_text);
+                     }
+                     // Reset speech duration after successful chunk
+                     speech_duration = 0.0f;
+                  } else {
+                     LOG_ERROR("WAKEWORD_LISTEN: Chunk finalization failed");
+                  }
+               }
             }
 
             // Track total recording duration (prevents buffer overflow from background
             // conversation)
             recording_duration += DEFAULT_CAPTURE_SECONDS;
+
+            // Flag to trigger wake word processing after finalization
+            int should_check_wake_word = 0;
 
             // Check for maximum recording duration (50s safety limit for 60s buffer)
             if (recording_duration >= VAD_MAX_RECORDING_DURATION) {
@@ -2014,12 +2132,38 @@ int main(int argc, char *argv[]) {
                recording_duration = 0.0f;
                silence_duration = 0.0f;
                speech_duration = 0.0f;
-               recording_duration = 0.0f;
                // Reset pre-roll buffer
                preroll_write_pos = 0;
                preroll_valid_bytes = 0;
-               asr_result = asr_finalize(asr_ctx);
-               // Continue with wake word check below (same as silence timeout)
+
+               // ENGINE-AWARE FINALIZATION
+               if (asr_engine == ASR_ENGINE_WHISPER && chunk_mgr) {
+                  // Whisper: Get concatenated text from chunks
+                  size_t num_chunks = chunking_manager_get_num_chunks(chunk_mgr);
+                  input_text = chunking_manager_get_full_text(chunk_mgr);
+                  if (input_text) {
+                     LOG_WARNING("Input (from %zu chunks): %s\n", num_chunks, input_text);
+                  } else {
+                     LOG_WARNING("Input: (no chunks at max duration timeout)\n");
+                  }
+                  should_check_wake_word =
+                      1;  // Set flag even with NULL input to trigger state transition
+               } else {
+                  // Vosk: Direct finalization
+                  asr_result = asr_finalize(asr_ctx);
+                  if (asr_result && asr_result->text) {
+                     input_text = strdup(asr_result->text);
+                     LOG_WARNING("Input: %s\n", input_text);
+                  } else {
+                     LOG_WARNING("Input: (Vosk finalize returned NULL or empty at max duration)\n");
+                  }
+                  if (asr_result) {
+                     asr_result_free(asr_result);
+                     asr_result = NULL;
+                  }
+                  should_check_wake_word =
+                      1;  // Set flag even with NULL input to trigger state transition
+               }
             }
             // Check if speech has ended (1.5s of silence)
             else if (silence_duration >= VAD_END_OF_SPEECH_DURATION) {
@@ -2032,19 +2176,42 @@ int main(int argc, char *argv[]) {
                LOG_WARNING(
                    "WAKEWORD_LISTEN: Speech ended (%.1fs silence), checking for wake word.\n",
                    VAD_END_OF_SPEECH_DURATION);
-               asr_result = asr_finalize(asr_ctx);
-               if (asr_result == NULL) {
-                  LOG_ERROR("asr_finalize() returned NULL!\n");
-               } else {
-                  LOG_WARNING("Input: %s\n", asr_result->text ? asr_result->text : "");
-                  if (asr_result->text) {
-                     input_text = strdup(asr_result->text);
-                  } else {
-                     input_text = NULL;
-                  }
-                  asr_result_free(asr_result);
-                  asr_result = NULL;
 
+               // ENGINE-AWARE FINALIZATION
+               if (asr_engine == ASR_ENGINE_WHISPER && chunk_mgr) {
+                  // Whisper: Get concatenated text from chunks
+                  size_t num_chunks = chunking_manager_get_num_chunks(chunk_mgr);
+                  input_text = chunking_manager_get_full_text(chunk_mgr);
+                  if (input_text) {
+                     LOG_WARNING("Input (from %zu chunks): %s\n", num_chunks, input_text);
+                  } else {
+                     LOG_WARNING("Input: (no chunks finalized)\n");
+                  }
+                  should_check_wake_word =
+                      1;  // Set flag even with NULL input to trigger state transition
+               } else {
+                  // Vosk: Direct finalization
+                  asr_result = asr_finalize(asr_ctx);
+                  if (asr_result == NULL) {
+                     LOG_ERROR("asr_finalize() returned NULL!\n");
+                  } else {
+                     LOG_WARNING("Input: %s\n", asr_result->text ? asr_result->text : "");
+                     if (asr_result->text) {
+                        input_text = strdup(asr_result->text);
+                     } else {
+                        input_text = NULL;
+                     }
+                     asr_result_free(asr_result);
+                     asr_result = NULL;
+                  }
+                  should_check_wake_word =
+                      1;  // Set flag even with NULL input to trigger state transition
+               }
+            }
+
+            // WAKE WORD PROCESSING (shared by max duration and speech end paths)
+            if (should_check_wake_word) {
+               if (input_text) {
                   // Normalize for wake word/command matching
                   char *normalized_text = normalize_for_matching(input_text);
 
@@ -2074,16 +2241,10 @@ int main(int argc, char *argv[]) {
 
                            silenceNextState = WAKEWORD_LISTEN;
                            recState = SILENCE;
-                           // Reset VAD state for new interaction boundary
-                           if (vad_ctx) {
-                              vad_silero_reset(vad_ctx);
-                           }
-                           silence_duration = 0.0f;
-                           speech_duration = 0.0f;
-                           recording_duration = 0.0f;
-                           // Reset pre-roll buffer
-                           preroll_write_pos = 0;
-                           preroll_valid_bytes = 0;
+                           // Reset all subsystems for new utterance
+                           reset_for_new_utterance(vad_ctx, asr_ctx, chunk_mgr, &silence_duration,
+                                                   &speech_duration, &recording_duration,
+                                                   &preroll_write_pos, &preroll_valid_bytes);
                         }
                      }
                   }
@@ -2156,19 +2317,10 @@ int main(int argc, char *argv[]) {
                         silenceNextState = COMMAND_RECORDING;
                         recState = SILENCE;
 
-                        // Reset VAD state for new interaction boundary
-                        if (vad_ctx) {
-                           vad_silero_reset(vad_ctx);
-                        }
-                        silence_duration = 0.0f;
-                        speech_duration = 0.0f;
-                        recording_duration = 0.0f;
-                        // Reset pre-roll buffer
-                        preroll_write_pos = 0;
-                        preroll_valid_bytes = 0;
-
-                        // Reset ASR for next utterance
-                        asr_reset(asr_ctx);
+                        // Reset all subsystems for new utterance
+                        reset_for_new_utterance(vad_ctx, asr_ctx, chunk_mgr, &silence_duration,
+                                                &speech_duration, &recording_duration,
+                                                &preroll_write_pos, &preroll_valid_bytes);
                      } else {
                         // Skip leading whitespace and punctuation to get actual command text
                         const char *cmd_start = next_char_ptr;
@@ -2179,11 +2331,14 @@ int main(int argc, char *argv[]) {
                         }
                         command_text = strdup(cmd_start);
                         free(input_text);
+                        input_text = NULL;
 
                         recState = PROCESS_COMMAND;
 
-                        // Reset ASR for next utterance
-                        asr_reset(asr_ctx);
+                        // Reset all subsystems for new utterance
+                        reset_for_new_utterance(vad_ctx, asr_ctx, chunk_mgr, &silence_duration,
+                                                &speech_duration, &recording_duration,
+                                                &preroll_write_pos, &preroll_valid_bytes);
                      }
                   } else {
                      pthread_mutex_lock(&tts_mutex);
@@ -2196,25 +2351,31 @@ int main(int argc, char *argv[]) {
                      silenceNextState = WAKEWORD_LISTEN;
                      recState = SILENCE;
 
-                     // Reset VAD state for new interaction boundary
-                     if (vad_ctx) {
-                        vad_silero_reset(vad_ctx);
-                     }
-                     speech_duration = 0.0f;
-                     recording_duration = 0.0f;
-                     silence_duration = 0.0f;
-                     // Reset pre-roll buffer
-                     preroll_write_pos = 0;
-                     preroll_valid_bytes = 0;
-
-                     // Reset ASR for next utterance (no wake word detected)
-                     asr_reset(asr_ctx);
+                     // Reset all subsystems for new utterance (no wake word detected)
+                     reset_for_new_utterance(vad_ctx, asr_ctx, chunk_mgr, &silence_duration,
+                                             &speech_duration, &recording_duration,
+                                             &preroll_write_pos, &preroll_valid_bytes);
                   }
 
                   // Cleanup normalized text
                   if (normalized_text) {
                      free(normalized_text);
                   }
+
+                  // Cleanup input text
+                  if (input_text) {
+                     free(input_text);
+                     input_text = NULL;
+                  }
+               } else {
+                  // No content to process, transition back to SILENCE to avoid infinite loop
+                  LOG_INFO("WAKEWORD_LISTEN: No content to process, returning to SILENCE.\n");
+                  silenceNextState = WAKEWORD_LISTEN;
+                  recState = SILENCE;
+                  // Reset all subsystems for new utterance
+                  reset_for_new_utterance(vad_ctx, asr_ctx, chunk_mgr, &silence_duration,
+                                          &speech_duration, &recording_duration, &preroll_write_pos,
+                                          &preroll_valid_bytes);
                }
             }
             buff_size = 0;
@@ -2229,7 +2390,7 @@ int main(int argc, char *argv[]) {
 
             capture_buffer(&myAudioControls, max_buff, max_buff_size, &buff_size);
 
-            // Use VAD for speech end detection in command recording (Phase 2/3)
+            // Use VAD for speech end detection in command recording
             int cmd_speech_detected = 0;
             static int cmd_vad_debug_counter = 0;
             if (vad_ctx && buff_size >= VAD_SAMPLE_SIZE * sizeof(int16_t)) {
@@ -2255,25 +2416,37 @@ int main(int argc, char *argv[]) {
                cmd_speech_detected = 0;
             }
 
-            if (cmd_speech_detected) {
-               // Reduced logging to avoid noise with 100ms polling
-               /* For an additional layer of "silence," check if ASR output is changing */
-               asr_result = asr_process_partial(asr_ctx, (const int16_t *)max_buff,
-                                                buff_size / sizeof(int16_t));
-               if (asr_result == NULL) {
-                  LOG_ERROR("asr_process_partial() returned NULL!\n");
-               } else {
-                  size_t current_length = asr_result->text ? strlen(asr_result->text) : 0;
-                  if (current_length == prev_text_length) {
-                     text_nochange = 1;
+            // ENGINE-AWARE AUDIO ROUTING (Architecture Review Issues #1, #2, #3)
+            if (asr_engine == ASR_ENGINE_WHISPER && chunk_mgr) {
+               // Whisper mode: Feed audio to chunking manager (which mediates ASR)
+               int result = chunking_manager_add_audio(chunk_mgr, (const int16_t *)max_buff,
+                                                       buff_size / sizeof(int16_t));
+               if (result != 0) {
+                  LOG_ERROR("COMMAND_RECORDING: chunking_manager_add_audio() failed");
+               }
+               // NO direct ASR calls in Whisper mode - chunking_manager owns ASR interactions
+            } else if (asr_engine == ASR_ENGINE_VOSK) {
+               // Vosk mode: Direct ASR path for streaming partials (unchanged)
+               if (cmd_speech_detected) {
+                  // Reduced logging to avoid noise with 100ms polling
+                  /* For an additional layer of "silence," check if ASR output is changing */
+                  asr_result = asr_process_partial(asr_ctx, (const int16_t *)max_buff,
+                                                   buff_size / sizeof(int16_t));
+                  if (asr_result == NULL) {
+                     LOG_ERROR("asr_process_partial() returned NULL!\n");
+                  } else {
+                     size_t current_length = asr_result->text ? strlen(asr_result->text) : 0;
+                     if (current_length == prev_text_length) {
+                        text_nochange = 1;
+                     }
+                     prev_text_length = current_length;
+                     asr_result_free(asr_result);
+                     asr_result = NULL;
                   }
-                  prev_text_length = current_length;
-                  asr_result_free(asr_result);
-                  asr_result = NULL;
                }
             }
 
-            // Track speech and silence duration for pause detection (Use Case 3)
+            // Track speech and silence duration for pause detection
             if (cmd_speech_detected) {
                speech_duration += DEFAULT_CAPTURE_SECONDS;
                silence_duration = 0.0f;  // Reset silence when speech detected
@@ -2281,24 +2454,42 @@ int main(int argc, char *argv[]) {
                silence_duration += DEFAULT_CAPTURE_SECONDS;  // Track silence duration
             }
 
-            // Use Case 3: Pause detection for chunking (Whisper only - Week 3 implementation)
-            if (asr_engine == ASR_ENGINE_WHISPER) {
+            // Pause detection for chunking (Whisper only - Week 3 implementation)
+            if (asr_engine == ASR_ENGINE_WHISPER && chunk_mgr) {
+               int should_finalize_chunk = 0;
+
                // Detect natural pauses for chunking (silence after sufficient speech)
                if (!cmd_speech_detected && speech_duration >= VAD_MIN_CHUNK_DURATION &&
                    silence_duration >= VAD_CHUNK_PAUSE_DURATION) {
-                  LOG_INFO("COMMAND_RECORDING: Pause detected (%.1fs) after %.1fs speech - ready "
-                           "for chunking",
+                  LOG_INFO("COMMAND_RECORDING: Pause detected (%.1fs) after %.1fs speech - "
+                           "finalizing chunk",
                            silence_duration, speech_duration);
-                  // TODO(Week 3): Call chunking_manager_finalize_chunk() here
-                  // TODO(Week 3): Reset speech_duration = 0.0f after chunk
+                  should_finalize_chunk = 1;
                }
 
                // Force chunk on max duration (even if speech continues)
                if (speech_duration >= VAD_MAX_CHUNK_DURATION) {
                   LOG_INFO("COMMAND_RECORDING: Max chunk duration reached (%.1fs) - forcing chunk",
                            speech_duration);
-                  // TODO(Week 3): Call chunking_manager_finalize_chunk() here
-                  // TODO(Week 3): Reset speech_duration = 0.0f after chunk
+                  should_finalize_chunk = 1;
+               }
+
+               // Finalize chunk if triggered (with re-entrance check)
+               if (should_finalize_chunk && !chunking_manager_is_finalizing(chunk_mgr)) {
+                  char *chunk_text = NULL;
+                  int result = chunking_manager_finalize_chunk(chunk_mgr, &chunk_text);
+
+                  if (result == 0) {
+                     if (chunk_text) {
+                        LOG_INFO("COMMAND_RECORDING: Chunk %zu finalized: \"%s\"",
+                                 chunking_manager_get_num_chunks(chunk_mgr) - 1, chunk_text);
+                        free(chunk_text);
+                     }
+                     // Reset speech duration after successful chunk finalization
+                     speech_duration = 0.0f;
+                  } else {
+                     LOG_ERROR("COMMAND_RECORDING: Chunk finalization failed");
+                  }
                }
             }
 
@@ -2315,24 +2506,47 @@ int main(int argc, char *argv[]) {
             if (commandTimeout >= DEFAULT_COMMAND_TIMEOUT) {
                commandTimeout = 0;
                LOG_WARNING("COMMAND_RECORDING: Command processing.\n");
-               asr_result = asr_finalize(asr_ctx);
-               if (asr_result == NULL) {
-                  LOG_ERROR("asr_finalize() returned NULL!\n");
-               } else {
-                  LOG_WARNING("Input: %s\n", asr_result->text ? asr_result->text : "");
 
-                  if (asr_result->text) {
-                     command_text = strdup(asr_result->text);
+               // ENGINE-AWARE FINALIZATION (Architecture Review Issue #3)
+               if (asr_engine == ASR_ENGINE_WHISPER && chunk_mgr) {
+                  // Whisper mode: Get concatenated text from all chunks
+                  size_t num_chunks = chunking_manager_get_num_chunks(chunk_mgr);
+                  command_text = chunking_manager_get_full_text(chunk_mgr);
+
+                  if (command_text) {
+                     LOG_WARNING("Input (from %zu chunks): %s\n", num_chunks, command_text);
                   } else {
-                     command_text = NULL;
+                     LOG_WARNING("Input: (no chunks finalized)\n");
                   }
-                  asr_result_free(asr_result);
-                  asr_result = NULL;
 
+                  // chunking_manager_get_full_text() internally calls reset(), so we're ready
+                  // for next utterance. ASR context is still owned by chunking_manager.
                   recState = PROCESS_COMMAND;
+               } else {
+                  // Vosk mode: Direct ASR finalization (unchanged)
+                  asr_result = asr_finalize(asr_ctx);
+                  if (asr_result == NULL) {
+                     LOG_ERROR("asr_finalize() returned NULL!\n");
+                  } else {
+                     LOG_WARNING("Input: %s\n", asr_result->text ? asr_result->text : "");
 
-                  // Reset ASR for next utterance
-                  asr_reset(asr_ctx);
+                     if (asr_result->text) {
+                        command_text = strdup(asr_result->text);
+                     } else {
+                        command_text = NULL;
+                     }
+                     asr_result_free(asr_result);
+                     asr_result = NULL;
+
+                     recState = PROCESS_COMMAND;
+
+                     // Reset ASR and chunking manager (durations will be reset when returning to
+                     // WAKEWORD_LISTEN)
+                     if (chunk_mgr) {
+                        chunking_manager_reset(chunk_mgr);
+                     }
+                     asr_reset(asr_ctx);
+                  }
                }
             }
             buff_size = 0;
@@ -2349,16 +2563,10 @@ int main(int argc, char *argv[]) {
                }
                silenceNextState = WAKEWORD_LISTEN;
                recState = SILENCE;
-               // Reset VAD state for new interaction boundary
-               if (vad_ctx) {
-                  vad_silero_reset(vad_ctx);
-               }
-               silence_duration = 0.0f;
-               speech_duration = 0.0f;
-               recording_duration = 0.0f;
-               // Reset pre-roll buffer
-               preroll_write_pos = 0;
-               preroll_valid_bytes = 0;
+               // Reset all subsystems for new utterance
+               reset_for_new_utterance(vad_ctx, asr_ctx, chunk_mgr, &silence_duration,
+                                       &speech_duration, &recording_duration, &preroll_write_pos,
+                                       &preroll_valid_bytes);
                break;
             }
 
@@ -2460,19 +2668,10 @@ int main(int argc, char *argv[]) {
                   silenceNextState = WAKEWORD_LISTEN;
                   recState = SILENCE;
 
-                  // Reset VAD state for new interaction boundary
-                  if (vad_ctx) {
-                     vad_silero_reset(vad_ctx);
-                     speech_duration = 0.0f;
-                     recording_duration = 0.0f;
-                  }
-                  silence_duration = 0.0f;
-                  // Reset pre-roll buffer
-                  preroll_write_pos = 0;
-                  preroll_valid_bytes = 0;
-
-                  // Reset ASR for next utterance (ignored input)
-                  asr_reset(asr_ctx);
+                  // Reset all subsystems for new utterance (ignored empty command)
+                  reset_for_new_utterance(vad_ctx, asr_ctx, chunk_mgr, &silence_duration,
+                                          &speech_duration, &recording_duration, &preroll_write_pos,
+                                          &preroll_valid_bytes);
                } else {
                   // User message already added at top of PROCESS_COMMAND
                   // Use streaming with TTS sentence buffering for immediate response
@@ -2598,19 +2797,10 @@ int main(int argc, char *argv[]) {
                silenceNextState = WAKEWORD_LISTEN;
                recState = SILENCE;
 
-               // Reset VAD state for new interaction boundary
-               if (vad_ctx) {
-                  speech_duration = 0.0f;
-                  recording_duration = 0.0f;
-                  vad_silero_reset(vad_ctx);
-               }
-               silence_duration = 0.0f;
-               // Reset pre-roll buffer
-               preroll_write_pos = 0;
-               preroll_valid_bytes = 0;
-
-               // Reset ASR for next utterance (command processing complete)
-               asr_reset(asr_ctx);
+               // Reset all subsystems for new utterance (command processing complete)
+               reset_for_new_utterance(vad_ctx, asr_ctx, chunk_mgr, &silence_duration,
+                                       &speech_duration, &recording_duration, &preroll_write_pos,
+                                       &preroll_valid_bytes);
             }
 
             break;
@@ -2644,7 +2834,8 @@ int main(int argc, char *argv[]) {
             // Use streaming with TTS sentence buffering for immediate response
             response_text = llm_chat_completion_streaming_tts(
                 conversation_history,
-                "What am I looking at? Ignore the overlay unless asked about it specifically.",
+                "Describe this image in detail. Ignore any overlay graphics unless specifically "
+                "asked.",
                 vision_ai_image, vision_ai_image_size, dawn_tts_sentence_callback, NULL);
             if (response_text != NULL) {
                // AI returned successfully
@@ -2676,19 +2867,10 @@ int main(int argc, char *argv[]) {
             silenceNextState = WAKEWORD_LISTEN;
             recState = SILENCE;
 
-            // Reset VAD state for new interaction boundary
-            speech_duration = 0.0f;
-            recording_duration = 0.0f;
-            if (vad_ctx) {
-               vad_silero_reset(vad_ctx);
-            }
-            silence_duration = 0.0f;
-            // Reset pre-roll buffer
-            preroll_write_pos = 0;
-            preroll_valid_bytes = 0;
-
-            // Reset ASR for next utterance (vision AI complete)
-            asr_reset(asr_ctx);
+            // Reset all subsystems for new utterance (vision AI complete)
+            reset_for_new_utterance(vad_ctx, asr_ctx, chunk_mgr, &silence_duration,
+                                    &speech_duration, &recording_duration, &preroll_write_pos,
+                                    &preroll_valid_bytes);
 
             break;
          case NETWORK_PROCESSING:
@@ -2697,7 +2879,10 @@ int main(int argc, char *argv[]) {
             pthread_mutex_lock(&network_processing_mutex);
 
             if (network_pcm_buffer && network_pcm_size > 0) {
-               // Reset ASR for new session
+               // Reset ASR and chunking manager for new network session
+               if (chunk_mgr) {
+                  chunking_manager_reset(chunk_mgr);
+               }
                asr_reset(asr_ctx);
 
                // Process PCM data with ASR
@@ -2976,7 +3161,7 @@ int main(int argc, char *argv[]) {
 
    cleanup_text_to_speech();
 
-   // Cleanup Silero VAD (Phase 2/3)
+   // Cleanup Silero VAD
    if (vad_ctx) {
       LOG_INFO("Cleaning up Silero VAD");
       vad_silero_cleanup(vad_ctx);
@@ -2993,6 +3178,11 @@ int main(int argc, char *argv[]) {
    }
 
    json_object_put(conversation_history);
+
+   // Cleanup chunking manager (if initialized)
+   if (chunk_mgr) {
+      chunking_manager_cleanup(chunk_mgr);
+   }
 
    // Cleanup ASR
    asr_cleanup(asr_ctx);

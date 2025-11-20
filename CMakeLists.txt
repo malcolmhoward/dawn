@@ -97,6 +97,7 @@ set(DAWN_SOURCES
     asr_whisper.c
     audio_capture_thread.c
     audio_utils.c
+    chunking_manager.c
     dawn.c
     dawn_network_audio.c
     dawn_server.c
@@ -173,11 +174,6 @@ target_include_directories(piper PUBLIC
                            /usr/local/include/piper-phonemize
                            ${SPDLOG_INCLUDE_DIRS}
                            /usr/local/include/onnxruntime/)
-
-set(SOURCE_FILES
-    ${CMAKE_SOURCE_DIR}/en_GB-alba-medium.onnx
-    ${CMAKE_SOURCE_DIR}/en_GB-alba-medium.onnx.json
-)
 
 set(DESTINATION_DIR
     ${CMAKE_BINARY_DIR}

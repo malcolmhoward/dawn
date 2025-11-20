@@ -143,14 +143,19 @@ asr_result_t *asr_finalize(asr_context_t *ctx);
  * @brief Reset ASR state for new utterance
  *
  * Clears internal audio buffer and resets recognition state.
- * Must be called before processing a new utterance to prevent
- * audio from previous utterances affecting current transcription.
  *
- * Clears internal state to prepare for processing a new utterance.
- * Call this between utterances to avoid context bleeding.
+ * **Usage:**
+ * - Before processing a new user command (after PROCESS_COMMAND)
+ * - Between chunks when using chunking_manager (mid-utterance)
+ *
+ * **Engine-Specific Behavior:**
+ * - **Whisper**: Safe to call mid-utterance for chunking (stateless per-chunk inference)
+ * - **Vosk**: May affect streaming context (avoid mid-utterance reset)
+ *
+ * **Thread Safety:** NOT thread-safe. Call from same thread as asr_process_partial().
  *
  * @param ctx ASR context
- * @return 0 on success, non-zero on error
+ * @return ASR_SUCCESS (0) on success, ASR_ERROR_GENERIC on error
  */
 int asr_reset(asr_context_t *ctx);
 
@@ -179,6 +184,17 @@ void asr_cleanup(asr_context_t *ctx);
  * @return String representation ("Vosk" or "Whisper")
  */
 const char *asr_engine_name(asr_engine_type_t engine_type);
+
+/**
+ * @brief Get the engine type of an ASR context
+ *
+ * Returns the engine type (Vosk or Whisper) that this context was initialized with.
+ * Useful for conditional logic and validation (e.g., chunking manager Whisper-only check).
+ *
+ * @param ctx ASR context (must not be NULL)
+ * @return Engine type (ASR_ENGINE_VOSK or ASR_ENGINE_WHISPER), or -1 if ctx is NULL
+ */
+asr_engine_type_t asr_get_engine_type(asr_context_t *ctx);
 
 #ifdef __cplusplus
 }

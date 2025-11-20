@@ -170,3 +170,11 @@ const char *asr_engine_name(asr_engine_type_t engine_type) {
          return "Unknown";
    }
 }
+
+asr_engine_type_t asr_get_engine_type(asr_context_t *ctx) {
+   if (!ctx) {
+      LOG_ERROR("ASR: asr_get_engine_type() called with NULL context");
+      return (asr_engine_type_t)-1;
+   }
+   return ctx->engine_type;
+}
