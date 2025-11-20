@@ -81,3 +81,21 @@ target_link_libraries(asr_benchmark
                       ${CUBLAS_LIBRARIES}
                       ${CUSOLVER_LIBRARIES}
                       ${CURAND_LIBRARIES})
+
+# Test: VAD Model Comparison
+add_executable(test_vad_models test_vad_models.c)
+target_include_directories(test_vad_models PRIVATE /usr/local/include/onnxruntime)
+target_link_libraries(test_vad_models onnxruntime m)
+
+# Test: VAD API Unit Test
+add_executable(test_vad_api
+               test_vad_api.c
+               ${PARENT_DIR}/vad_silero.c
+               ${PARENT_DIR}/logging.c)
+
+target_include_directories(test_vad_api PRIVATE /usr/local/include/onnxruntime)
+
+target_link_libraries(test_vad_api
+                      onnxruntime
+                      m
+                      ${JSONC_LIBRARIES})

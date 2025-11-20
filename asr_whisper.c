@@ -29,9 +29,13 @@
 #include "whisper.h"
 
 /**
- * @brief Maximum audio buffer size (30 seconds at 16kHz = 480,000 samples)
+ * @brief Maximum audio buffer size (60 seconds at 16kHz = 960,000 samples)
+ *
+ * Increased from 30s to 60s to handle background conversation and long utterances.
+ * WAKEWORD_LISTEN enforces 50s timeout to prevent overflow (see dawn.c).
+ * TODO(Week 3): Chunking will eliminate need for large buffer.
  */
-#define MAX_AUDIO_BUFFER_SIZE (30 * 16000)
+#define MAX_AUDIO_BUFFER_SIZE (60 * 16000)
 
 /**
  * @brief Whisper-specific context structure

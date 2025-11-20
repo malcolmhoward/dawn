@@ -115,6 +115,7 @@ set(DAWN_SOURCES
     sse_parser.c
     text_to_command_nuevo.c
     text_to_speech.cpp
+    vad_silero.c
     word_to_number.c
 )
 

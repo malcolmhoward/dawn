@@ -23,11 +23,11 @@
 #define TEXT_TO_SPEECH_H
 
 #ifdef __cplusplus
+#include <atomic>
 extern "C" {
 #endif
 
 #include <pthread.h>
-#include <signal.h>
 #include <stdint.h>
 
 // Enumeration for playback state
@@ -41,7 +41,9 @@ typedef enum {
 // Declare the shared variables as extern
 extern pthread_cond_t tts_cond;
 extern pthread_mutex_t tts_mutex;
-extern volatile sig_atomic_t tts_playback_state;
+
+// TTS playback state (mutex-protected, no atomics to avoid C/C++ boundary issues)
+extern int tts_playback_state;
 
 /**
  * @brief Initializes the text-to-speech system.

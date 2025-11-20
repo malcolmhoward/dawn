@@ -1,0 +1,28 @@
+Piper TTS - en_GB-alba-medium Voice Model
+==========================================
+
+License: Creative Commons Attribution 4.0 International (CC-BY 4.0)
+https://creativecommons.org/licenses/by/4.0/
+
+Training Dataset: VCTK Corpus
+https://datashare.ed.ac.uk/handle/10283/3270
+
+Model Details:
+- Voice: en_GB-alba-medium
+- Quality: Medium
+- Sample Rate: 22,050 Hz
+- Finetuned from: U.S. English lessac voice (medium quality)
+
+Attribution:
+This voice model is derived from the VCTK corpus and is provided under
+the CC-BY 4.0 license. You are free to use, share, and adapt this model
+for any purpose, including commercial use, provided you give appropriate
+credit to the original dataset and model creators.
+
+Original VCTK Corpus Citation:
+Yamagishi, Junichi; Veaux, Christophe; MacDonald, Kirsten. (2019).
+CSTR VCTK Corpus: English Multi-speaker Corpus for CSTR Voice Cloning Toolkit (version 0.92)
+[Dataset]. University of Edinburgh. The Centre for Speech Technology Research (CSTR).
+https://doi.org/10.7488/ds/2645
+
+Piper TTS: https://github.com/rhasspy/piper

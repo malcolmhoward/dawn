@@ -20,6 +20,7 @@
  */
 
 /* Std C */
+#include <assert.h>
 #include <getopt.h>
 #include <math.h>
 #include <pthread.h>
@@ -56,6 +57,7 @@
 #include "mosquitto_comms.h"
 #include "text_to_command_nuevo.h"
 #include "text_to_speech.h"
+#include "vad_silero.h"
 #include "version.h"
 
 // Define the default sample rate for audio capture.
@@ -69,6 +71,18 @@
 
 // Define the default command timeout in terms of iterations of DEFAULT_CAPTURE_SECONDS.
 #define DEFAULT_COMMAND_TIMEOUT 15  // 15 * 0.1s = 1.5 seconds of silence before timeout
+
+// VAD configuration (Phase 2/3)
+#define VAD_SAMPLE_SIZE 512               // Silero VAD requires 512 samples (32ms at 16kHz)
+#define VAD_SPEECH_THRESHOLD 0.5f         // Probability threshold for speech detection
+#define VAD_SILENCE_THRESHOLD 0.3f        // Probability threshold for silence detection
+#define VAD_END_OF_SPEECH_DURATION 1.5f   // Seconds of silence to consider speech ended
+#define VAD_MAX_RECORDING_DURATION 50.0f  // Maximum recording duration (prevents buffer overflow)
+
+// Chunking configuration for Whisper (Use Case 3 - Phase 2/3)
+#define VAD_CHUNK_PAUSE_DURATION 0.5f  // Seconds of silence to detect natural pause for chunking
+#define VAD_MIN_CHUNK_DURATION 1.0f    // Minimum speech duration before allowing chunk
+#define VAD_MAX_CHUNK_DURATION 10.0f   // Maximum chunk duration before forcing finalization
 
 // Define the duration for each background audio capture sample in seconds.
 #define BACKGROUND_CAPTURE_SECONDS 2
@@ -97,7 +111,7 @@
 #endif
 
 // Define the threshold offset for detecting talking in the audio stream.
-#define TALKING_THRESHOLD_OFFSET 0.025
+// RMS detection removed - using VAD only (Phase 2/3)
 
 static char pcm_capture_device[MAX_WORD_LENGTH + 1] = "";
 static char pcm_playback_device[MAX_WORD_LENGTH + 1] = "";
@@ -153,12 +167,10 @@ static const pa_sample_spec sample_spec = { .format = DEFAULT_PULSE_FORMAT,
 // Audio capture thread context (dedicated thread for continuous audio capture)
 static audio_capture_context_t *audio_capture_ctx = NULL;
 
-// Holds the current RMS (Root Mean Square) level of the background audio.
-// Used to monitor ambient noise levels and potentially adjust listening sensitivity.
-static double backgroundRMS = 0.02;
+// Silero VAD context for voice activity detection (Phase 2/3)
+static silero_vad_context_t *vad_ctx = NULL;
 
-// Holds the current RMS (Root Mean Square) level of the background audio.
-// Used to monitor ambient noise levels and potentially adjust listening sensitivity.
+// backgroundRMS removed - using VAD only (Phase 2/3)
 static char *wakeWords[] = { "hello " AI_NAME,    "okay " AI_NAME,         "alright " AI_NAME,
                              "hey " AI_NAME,      "hi " AI_NAME,           "good evening " AI_NAME,
                              "good day " AI_NAME, "good morning " AI_NAME, "yeah " AI_NAME,
@@ -222,7 +234,7 @@ typedef enum {
 // Define the shared variables for tts state
 pthread_cond_t tts_cond = PTHREAD_COND_INITIALIZER;
 pthread_mutex_t tts_mutex = PTHREAD_MUTEX_INITIALIZER;
-volatile sig_atomic_t tts_playback_state = TTS_PLAYBACK_IDLE;
+// Note: tts_playback_state is defined in text_to_speech.cpp (mutex-protected, not atomic)
 
 /**
  * @var static char *vision_ai_image
@@ -561,51 +573,9 @@ void *measureBackgroundAudio(void *audHandle) {
       return NULL;
    }
 
-   // Clear any old data from ring buffer to get fresh background audio
-   audio_capture_clear(audio_capture_ctx);
-
-   // Take multiple samples and use the minimum RMS to get true silence baseline
-   double min_rms = 1.0;  // Start with maximum possible value
-   LOG_INFO("Measuring background audio: taking %d samples of %d seconds each...\n",
-            BACKGROUND_CAPTURE_SAMPLES, BACKGROUND_CAPTURE_SECONDS);
-
-   for (int sample = 0; sample < BACKGROUND_CAPTURE_SAMPLES; sample++) {
-      // Wait for fresh audio data to accumulate
-      size_t available = audio_capture_wait_for_data(audio_capture_ctx, max_buff_size,
-                                                     (BACKGROUND_CAPTURE_SECONDS + 1) * 1000);
-      if (available < max_buff_size) {
-         LOG_WARNING(
-             "Timeout waiting for background audio data on sample %d (got %zu bytes, needed %u)\n",
-             sample + 1, available, max_buff_size);
-         continue;  // Try next sample
-      }
-
-      // Read the captured audio data
-      size_t buff_size = audio_capture_read(audio_capture_ctx, max_buff, max_buff_size);
-      if (buff_size == 0) {
-         LOG_WARNING("Failed to read background audio data on sample %d\n", sample + 1);
-         continue;  // Try next sample
-      }
-
-      // Compute RMS for this sample
-      double rms = calculateRMS((int16_t *)max_buff, buff_size / (DEFAULT_CHANNELS * 2));
-      LOG_INFO("Sample %d RMS: %g\n", sample + 1, rms);
-
-      // Keep the minimum (quietest) RMS
-      if (rms < min_rms) {
-         min_rms = rms;
-      }
-   }
-
-   if (min_rms < 1.0) {
-      backgroundRMS = min_rms;
-      LOG_INFO("Background RMS set to minimum: %g (threshold will be %g)\n", backgroundRMS,
-               backgroundRMS + TALKING_THRESHOLD_OFFSET);
-   } else {
-      LOG_ERROR("Failed to get valid background audio samples\n");
-      free(max_buff);
-      return NULL;
-   }
+   // Background RMS measurement removed - VAD handles all voice detection now (Phase 2/3)
+   // This eliminates the 6-second startup delay
+   LOG_INFO("Using Silero VAD for voice activity detection (no RMS calibration needed)");
 
    free(max_buff);
    return NULL;
@@ -1301,7 +1271,6 @@ int main(int argc, char *argv[]) {
                           DEFAULT_CAPTURE_SECONDS;
    uint32_t max_buff_size = (uint32_t)ceil(temp_buff_size);
    char *max_buff = NULL;
-   double rms = 0.0;
 
    // Command Configuration
    FILE *configFile = NULL;
@@ -1332,6 +1301,21 @@ int main(int argc, char *argv[]) {
 
    listeningState recState = SILENCE;
    listeningState silenceNextState = WAKEWORD_LISTEN;
+
+   // VAD state tracking (Phase 2/3)
+   float vad_speech_prob = 0.0f;
+   int silence_count = 0;
+   float silence_duration = 0.0f;
+   float speech_duration = 0.0f;     // For Use Case 3: pause detection / chunking
+   float recording_duration = 0.0f;  // Total recording time (prevents buffer overflow)
+
+// Pre-roll buffer: captures audio before VAD trigger to avoid missing first words
+// 500ms at 16kHz mono, 16-bit = 8000 samples * 2 bytes = 16000 bytes
+#define VAD_PREROLL_MS 500
+#define VAD_PREROLL_BYTES 16000  // (16000 Hz * 1 channel * 2 bytes/sample * 500ms / 1000)
+   static unsigned char preroll_buffer[VAD_PREROLL_BYTES];
+   size_t preroll_write_pos = 0;
+   size_t preroll_valid_bytes = 0;
 
    static struct option long_options[] = {
       { "capture", required_argument, NULL, 'c' },
@@ -1430,7 +1414,7 @@ int main(int argc, char *argv[]) {
 #ifdef ENABLE_VOSK
             if (strcmp(optarg, "vosk") == 0) {
                asr_engine = ASR_ENGINE_VOSK;
-               asr_model_path = "../model";  // Relative to build/
+               asr_model_path = "../models/vosk-model";  // Relative to build/
                LOG_INFO("Using Vosk ASR engine");
             } else
 #endif
@@ -1636,6 +1620,23 @@ int main(int argc, char *argv[]) {
    /* Initialize text to speech processing. */
    initialize_text_to_speech(pcm_playback_device);
 
+   // Initialize Silero VAD (Phase 2/3)
+   LOG_INFO("Init Silero VAD for voice activity detection.");
+   const char *home_dir = getenv("HOME");
+   char vad_model_path[512];
+   if (home_dir) {
+      snprintf(vad_model_path, sizeof(vad_model_path),
+               "%s/code/The-OASIS-Project/dawn/models/silero_vad_16k_op15.onnx", home_dir);
+      vad_ctx = vad_silero_init(vad_model_path, NULL);  // Option B: separate OrtEnv
+      if (!vad_ctx) {
+         LOG_WARNING("Failed to initialize Silero VAD - proceeding without VAD");
+      } else {
+         LOG_INFO("Silero VAD initialized successfully (opset15 model, 0.311ms inference)");
+      }
+   } else {
+      LOG_WARNING("HOME environment variable not set - VAD initialization skipped");
+   }
+
    text_to_speech((char *)timeOfDayGreeting());
 
    // Register the signal handler for SIGINT.
@@ -1681,6 +1682,10 @@ int main(int argc, char *argv[]) {
    while (!quit) {
       if (vision_ai_ready) {
          recState = VISION_AI_READY;
+         // Reset VAD state at interaction boundary (vision AI entry)
+         if (vad_ctx) {
+            vad_silero_reset(vad_ctx);
+         }
       }
 
       if (enable_network_audio) {
@@ -1828,14 +1833,106 @@ int main(int argc, char *argv[]) {
 
             capture_buffer(&myAudioControls, max_buff, max_buff_size, &buff_size);
 
-            rms = calculateRMS((int16_t *)max_buff, buff_size / (DEFAULT_CHANNELS * 2));
+            // Store audio in pre-roll buffer (circular buffer for speech padding)
+            if (buff_size > 0) {
+               size_t bytes_to_copy = buff_size;
+               // Wrap around if necessary
+               if (preroll_write_pos + bytes_to_copy > VAD_PREROLL_BYTES) {
+                  size_t first_chunk = VAD_PREROLL_BYTES - preroll_write_pos;
+                  size_t second_chunk = bytes_to_copy - first_chunk;
+                  memcpy(preroll_buffer + preroll_write_pos, max_buff, first_chunk);
+                  memcpy(preroll_buffer, max_buff + first_chunk, second_chunk);
+                  preroll_write_pos = second_chunk;
+               } else {
+                  memcpy(preroll_buffer + preroll_write_pos, max_buff, bytes_to_copy);
+                  preroll_write_pos += bytes_to_copy;
+               }
+               // Track valid bytes (up to buffer capacity)
+               preroll_valid_bytes = (preroll_valid_bytes + bytes_to_copy > VAD_PREROLL_BYTES)
+                                         ? VAD_PREROLL_BYTES
+                                         : preroll_valid_bytes + bytes_to_copy;
+            }
 
-            if (rms >= (backgroundRMS + TALKING_THRESHOLD_OFFSET)) {
-               LOG_INFO("SILENCE: Speech detected, transitioning to %s\n",
+            // Use Case 1: VAD-based wake word detection (Phase 2/3)
+            int speech_detected = 0;
+            static int vad_debug_counter = 0;
+            if (vad_ctx && buff_size >= VAD_SAMPLE_SIZE * sizeof(int16_t)) {
+               // Process through VAD (requires 512 samples = 32ms at 16kHz)
+               const int16_t *samples = (const int16_t *)max_buff;
+               vad_speech_prob = vad_silero_process(vad_ctx, samples, VAD_SAMPLE_SIZE);
+
+               // Debug logging every 50 iterations (~5 seconds)
+               if (vad_debug_counter++ % 50 == 0) {
+                  LOG_INFO("SILENCE: VAD=%.3f", vad_speech_prob);
+               }
+
+               if (vad_speech_prob < 0.0f) {
+                  LOG_ERROR("SILENCE: VAD processing failed - assuming silence");
+                  speech_detected = 0;  // Assume silence on error
+               } else {
+                  speech_detected = (vad_speech_prob >= VAD_SPEECH_THRESHOLD);
+               }
+            } else {
+               // VAD not available - log error
+               if (vad_debug_counter++ % 50 == 0) {
+                  LOG_ERROR("SILENCE: VAD unavailable - vad_ctx=%p, buff_size=%u, need=%zu",
+                            vad_ctx, buff_size, VAD_SAMPLE_SIZE * sizeof(int16_t));
+               }
+               speech_detected = 0;  // Assume silence if VAD unavailable
+            }
+
+            if (speech_detected) {
+               LOG_INFO("SILENCE: Speech detected (VAD: %.3f), transitioning to %s (pre-roll: %zu "
+                        "bytes)\n",
+                        vad_speech_prob,
                         silenceNextState == WAKEWORD_LISTEN ? "WAKEWORD_LISTEN"
-                                                            : "COMMAND_RECORDING");
+                                                            : "COMMAND_RECORDING",
+                        preroll_valid_bytes);
                recState = silenceNextState;
 
+               // Reset VAD state for new interaction (critical for preventing state accumulation)
+               if (vad_ctx) {
+                  vad_silero_reset(vad_ctx);
+               }
+               silence_count = 0;
+               silence_duration = 0.0f;
+               speech_duration = 0.0f;
+               recording_duration = 0.0f;
+               // Reset pre-roll buffer
+               preroll_write_pos = 0;
+               preroll_valid_bytes = 0;
+
+               // Feed pre-roll buffer to ASR first (audio before VAD trigger)
+               // Pre-roll buffer is circular, so read from correct position
+               if (preroll_valid_bytes > 0) {
+                  // Defensive assertions for buffer invariants
+                  assert(preroll_write_pos < VAD_PREROLL_BYTES);
+                  assert(preroll_valid_bytes <= VAD_PREROLL_BYTES);
+
+                  if (preroll_valid_bytes < VAD_PREROLL_BYTES) {
+                     // Buffer not yet full, read from beginning
+                     asr_result = asr_process_partial(asr_ctx, (const int16_t *)preroll_buffer,
+                                                      preroll_valid_bytes / sizeof(int16_t));
+                  } else {
+                     // Buffer full, read from write_pos to end, then beginning to write_pos
+                     size_t first_chunk_bytes = VAD_PREROLL_BYTES - preroll_write_pos;
+                     asr_result = asr_process_partial(
+                         asr_ctx, (const int16_t *)(preroll_buffer + preroll_write_pos),
+                         first_chunk_bytes / sizeof(int16_t));
+                     if (asr_result != NULL) {
+                        asr_result_free(asr_result);
+                        asr_result = NULL;
+                     }
+                     asr_result = asr_process_partial(asr_ctx, (const int16_t *)preroll_buffer,
+                                                      preroll_write_pos / sizeof(int16_t));
+                  }
+                  if (asr_result != NULL) {
+                     asr_result_free(asr_result);
+                     asr_result = NULL;
+                  }
+               }
+
+               // Then feed current chunk
                asr_result = asr_process_partial(asr_ctx, (const int16_t *)max_buff,
                                                 buff_size / sizeof(int16_t));
                if (asr_result == NULL) {
@@ -1844,6 +1941,10 @@ int main(int argc, char *argv[]) {
                   asr_result_free(asr_result);
                   asr_result = NULL;
                }
+
+               // Reset pre-roll buffer for next detection
+               preroll_write_pos = 0;
+               preroll_valid_bytes = 0;
             }
             break;
          case WAKEWORD_LISTEN:
@@ -1855,40 +1956,82 @@ int main(int argc, char *argv[]) {
 
             capture_buffer(&myAudioControls, max_buff, max_buff_size, &buff_size);
 
-            rms = calculateRMS((int16_t *)max_buff, buff_size / (DEFAULT_CHANNELS * 2));
+            // Use Case 2: VAD-based speech end detection (Phase 2/3)
+            int is_silence = 0;
+            static int ww_vad_debug_counter = 0;
+            if (vad_ctx && buff_size >= VAD_SAMPLE_SIZE * sizeof(int16_t)) {
+               // Process through VAD
+               vad_speech_prob = vad_silero_process(vad_ctx, (const int16_t *)max_buff,
+                                                    VAD_SAMPLE_SIZE);
 
-            if (rms >= (backgroundRMS + TALKING_THRESHOLD_OFFSET)) {
-               // Reduced logging to avoid noise with 100ms polling
-               /* For an additional layer of "silence," check if ASR output is changing */
-               asr_result = asr_process_partial(asr_ctx, (const int16_t *)max_buff,
-                                                buff_size / sizeof(int16_t));
-               if (asr_result == NULL) {
-                  LOG_ERROR("asr_process_partial() returned NULL!\n");
-               } else {
-                  size_t current_length = asr_result->text ? strlen(asr_result->text) : 0;
-                  if (current_length == prev_text_length) {
-                     text_nochange = 1;
-                  }
-                  prev_text_length = current_length;
-                  asr_result_free(asr_result);
-                  asr_result = NULL;
+               if (ww_vad_debug_counter++ % 50 == 0) {
+                  LOG_INFO("WAKEWORD_LISTEN: VAD=%.3f", vad_speech_prob);
                }
-            }
 
-            // Only use text_nochange for Vosk (which has meaningful partials).
-            // Whisper always returns empty partials, so rely solely on RMS for silence
-            // detection.
-            if (rms < (backgroundRMS + TALKING_THRESHOLD_OFFSET) ||
-                (text_nochange && asr_engine == ASR_ENGINE_VOSK)) {
-               commandTimeout++;
-               text_nochange = 0;
+               if (vad_speech_prob < 0.0f) {
+                  LOG_ERROR("WAKEWORD_LISTEN: VAD processing failed - assuming silence");
+                  is_silence = 1;  // Assume silence on error
+               } else {
+                  is_silence = (vad_speech_prob < VAD_SILENCE_THRESHOLD);
+
+                  // Process partial ASR if speech detected
+                  if (!is_silence) {
+                     asr_result = asr_process_partial(asr_ctx, (const int16_t *)max_buff,
+                                                      buff_size / sizeof(int16_t));
+                     if (asr_result == NULL) {
+                        LOG_ERROR("asr_process_partial() returned NULL!\n");
+                     } else {
+                        asr_result_free(asr_result);
+                        asr_result = NULL;
+                     }
+                  }
+               }
             } else {
-               commandTimeout = 0;
+               // VAD not available - log error
+               if (ww_vad_debug_counter++ % 50 == 0) {
+                  LOG_ERROR("WAKEWORD_LISTEN: VAD unavailable - vad_ctx=%p, buff_size=%u, need=%zu",
+                            vad_ctx, buff_size, VAD_SAMPLE_SIZE * sizeof(int16_t));
+               }
+               is_silence = 1;  // Assume silence if VAD unavailable
             }
 
-            if (commandTimeout >= DEFAULT_COMMAND_TIMEOUT) {
-               commandTimeout = 0;
-               LOG_WARNING("WAKEWORD_LISTEN: Checking for wake word.\n");
+            // Track silence duration for speech end detection
+            if (is_silence) {
+               silence_duration += DEFAULT_CAPTURE_SECONDS;
+            } else {
+               silence_duration = 0.0f;  // Reset on speech
+            }
+
+            // Track total recording duration (prevents buffer overflow from background
+            // conversation)
+            recording_duration += DEFAULT_CAPTURE_SECONDS;
+
+            // Check for maximum recording duration (50s safety limit for 60s buffer)
+            if (recording_duration >= VAD_MAX_RECORDING_DURATION) {
+               LOG_WARNING("WAKEWORD_LISTEN: Max recording duration reached (%.1fs), forcing "
+                           "finalization to prevent buffer overflow.\n",
+                           recording_duration);
+               recording_duration = 0.0f;
+               silence_duration = 0.0f;
+               speech_duration = 0.0f;
+               recording_duration = 0.0f;
+               // Reset pre-roll buffer
+               preroll_write_pos = 0;
+               preroll_valid_bytes = 0;
+               asr_result = asr_finalize(asr_ctx);
+               // Continue with wake word check below (same as silence timeout)
+            }
+            // Check if speech has ended (1.5s of silence)
+            else if (silence_duration >= VAD_END_OF_SPEECH_DURATION) {
+               silence_duration = 0.0f;
+               speech_duration = 0.0f;
+               recording_duration = 0.0f;
+               // Reset pre-roll buffer
+               preroll_write_pos = 0;
+               preroll_valid_bytes = 0;
+               LOG_WARNING(
+                   "WAKEWORD_LISTEN: Speech ended (%.1fs silence), checking for wake word.\n",
+                   VAD_END_OF_SPEECH_DURATION);
                asr_result = asr_finalize(asr_ctx);
                if (asr_result == NULL) {
                   LOG_ERROR("asr_finalize() returned NULL!\n");
@@ -1931,6 +2074,16 @@ int main(int argc, char *argv[]) {
 
                            silenceNextState = WAKEWORD_LISTEN;
                            recState = SILENCE;
+                           // Reset VAD state for new interaction boundary
+                           if (vad_ctx) {
+                              vad_silero_reset(vad_ctx);
+                           }
+                           silence_duration = 0.0f;
+                           speech_duration = 0.0f;
+                           recording_duration = 0.0f;
+                           // Reset pre-roll buffer
+                           preroll_write_pos = 0;
+                           preroll_valid_bytes = 0;
                         }
                      }
                   }
@@ -1984,20 +2137,47 @@ int main(int argc, char *argv[]) {
                      }
                      pthread_mutex_unlock(&tts_mutex);
 
-                     if (*next_char_ptr == '\0') {
-                        LOG_WARNING("wakeWords[i] was found at the end of input_text.\n");
+                     // Check if there's any meaningful text after wake word
+                     // Skip whitespace and punctuation to see if there's actual command text
+                     const char *check_ptr = next_char_ptr;
+                     while (*check_ptr != '\0' &&
+                            (*check_ptr == ' ' || *check_ptr == '.' || *check_ptr == ',' ||
+                             *check_ptr == '!' || *check_ptr == '?')) {
+                        check_ptr++;
+                     }
+
+                     if (*check_ptr == '\0') {
+                        // No command after wake word - transition to COMMAND_RECORDING
+                        LOG_WARNING("Wake word detected with no command, transitioning to "
+                                    "COMMAND_RECORDING.\n");
                         text_to_speech("Hello sir.");
 
                         commandTimeout = 0;
                         silenceNextState = COMMAND_RECORDING;
                         recState = SILENCE;
 
+                        // Reset VAD state for new interaction boundary
+                        if (vad_ctx) {
+                           vad_silero_reset(vad_ctx);
+                        }
+                        silence_duration = 0.0f;
+                        speech_duration = 0.0f;
+                        recording_duration = 0.0f;
+                        // Reset pre-roll buffer
+                        preroll_write_pos = 0;
+                        preroll_valid_bytes = 0;
+
                         // Reset ASR for next utterance
                         asr_reset(asr_ctx);
                      } else {
-                        /* FIXME: Below I simply add one to make sure to skip the most likely
-                         * space. I need to properly remove leading spaces. */
-                        command_text = strdup(next_char_ptr + 1);
+                        // Skip leading whitespace and punctuation to get actual command text
+                        const char *cmd_start = next_char_ptr;
+                        while (*cmd_start != '\0' &&
+                               (*cmd_start == ' ' || *cmd_start == '.' || *cmd_start == ',' ||
+                                *cmd_start == '!' || *cmd_start == '?')) {
+                           cmd_start++;
+                        }
+                        command_text = strdup(cmd_start);
                         free(input_text);
 
                         recState = PROCESS_COMMAND;
@@ -2015,6 +2195,17 @@ int main(int argc, char *argv[]) {
 
                      silenceNextState = WAKEWORD_LISTEN;
                      recState = SILENCE;
+
+                     // Reset VAD state for new interaction boundary
+                     if (vad_ctx) {
+                        vad_silero_reset(vad_ctx);
+                     }
+                     speech_duration = 0.0f;
+                     recording_duration = 0.0f;
+                     silence_duration = 0.0f;
+                     // Reset pre-roll buffer
+                     preroll_write_pos = 0;
+                     preroll_valid_bytes = 0;
 
                      // Reset ASR for next utterance (no wake word detected)
                      asr_reset(asr_ctx);
@@ -2038,9 +2229,33 @@ int main(int argc, char *argv[]) {
 
             capture_buffer(&myAudioControls, max_buff, max_buff_size, &buff_size);
 
-            rms = calculateRMS((int16_t *)max_buff, buff_size / (DEFAULT_CHANNELS * 2));
+            // Use VAD for speech end detection in command recording (Phase 2/3)
+            int cmd_speech_detected = 0;
+            static int cmd_vad_debug_counter = 0;
+            if (vad_ctx && buff_size >= VAD_SAMPLE_SIZE * sizeof(int16_t)) {
+               vad_speech_prob = vad_silero_process(vad_ctx, (const int16_t *)max_buff,
+                                                    VAD_SAMPLE_SIZE);
 
-            if (rms >= (backgroundRMS + TALKING_THRESHOLD_OFFSET)) {
+               if (cmd_vad_debug_counter++ % 50 == 0) {
+                  LOG_INFO("COMMAND_RECORDING: VAD=%.3f", vad_speech_prob);
+               }
+
+               if (vad_speech_prob < 0.0f) {
+                  LOG_ERROR("COMMAND_RECORDING: VAD processing failed - assuming silence");
+                  cmd_speech_detected = 0;
+               } else {
+                  cmd_speech_detected = (vad_speech_prob >= VAD_SPEECH_THRESHOLD);
+               }
+            } else {
+               if (cmd_vad_debug_counter++ % 50 == 0) {
+                  LOG_ERROR(
+                      "COMMAND_RECORDING: VAD unavailable - vad_ctx=%p, buff_size=%u, need=%zu",
+                      vad_ctx, buff_size, VAD_SAMPLE_SIZE * sizeof(int16_t));
+               }
+               cmd_speech_detected = 0;
+            }
+
+            if (cmd_speech_detected) {
                // Reduced logging to avoid noise with 100ms polling
                /* For an additional layer of "silence," check if ASR output is changing */
                asr_result = asr_process_partial(asr_ctx, (const int16_t *)max_buff,
@@ -2058,11 +2273,38 @@ int main(int argc, char *argv[]) {
                }
             }
 
+            // Track speech and silence duration for pause detection (Use Case 3)
+            if (cmd_speech_detected) {
+               speech_duration += DEFAULT_CAPTURE_SECONDS;
+               silence_duration = 0.0f;  // Reset silence when speech detected
+            } else {
+               silence_duration += DEFAULT_CAPTURE_SECONDS;  // Track silence duration
+            }
+
+            // Use Case 3: Pause detection for chunking (Whisper only - Week 3 implementation)
+            if (asr_engine == ASR_ENGINE_WHISPER) {
+               // Detect natural pauses for chunking (silence after sufficient speech)
+               if (!cmd_speech_detected && speech_duration >= VAD_MIN_CHUNK_DURATION &&
+                   silence_duration >= VAD_CHUNK_PAUSE_DURATION) {
+                  LOG_INFO("COMMAND_RECORDING: Pause detected (%.1fs) after %.1fs speech - ready "
+                           "for chunking",
+                           silence_duration, speech_duration);
+                  // TODO(Week 3): Call chunking_manager_finalize_chunk() here
+                  // TODO(Week 3): Reset speech_duration = 0.0f after chunk
+               }
+
+               // Force chunk on max duration (even if speech continues)
+               if (speech_duration >= VAD_MAX_CHUNK_DURATION) {
+                  LOG_INFO("COMMAND_RECORDING: Max chunk duration reached (%.1fs) - forcing chunk",
+                           speech_duration);
+                  // TODO(Week 3): Call chunking_manager_finalize_chunk() here
+                  // TODO(Week 3): Reset speech_duration = 0.0f after chunk
+               }
+            }
+
             // Only use text_nochange for Vosk (which has meaningful partials).
-            // Whisper always returns empty partials, so rely solely on RMS for silence
-            // detection.
-            if (rms < (backgroundRMS + TALKING_THRESHOLD_OFFSET) ||
-                (text_nochange && asr_engine == ASR_ENGINE_VOSK)) {
+            // Whisper always returns empty partials, so rely solely on VAD for silence detection.
+            if (!cmd_speech_detected || (text_nochange && asr_engine == ASR_ENGINE_VOSK)) {
                commandTimeout++;
                text_nochange = 0;
             } else {
@@ -2107,6 +2349,16 @@ int main(int argc, char *argv[]) {
                }
                silenceNextState = WAKEWORD_LISTEN;
                recState = SILENCE;
+               // Reset VAD state for new interaction boundary
+               if (vad_ctx) {
+                  vad_silero_reset(vad_ctx);
+               }
+               silence_duration = 0.0f;
+               speech_duration = 0.0f;
+               recording_duration = 0.0f;
+               // Reset pre-roll buffer
+               preroll_write_pos = 0;
+               preroll_valid_bytes = 0;
                break;
             }
 
@@ -2207,6 +2459,17 @@ int main(int argc, char *argv[]) {
                   LOG_WARNING("Input ignored. Found in ignore list.\n");
                   silenceNextState = WAKEWORD_LISTEN;
                   recState = SILENCE;
+
+                  // Reset VAD state for new interaction boundary
+                  if (vad_ctx) {
+                     vad_silero_reset(vad_ctx);
+                     speech_duration = 0.0f;
+                     recording_duration = 0.0f;
+                  }
+                  silence_duration = 0.0f;
+                  // Reset pre-roll buffer
+                  preroll_write_pos = 0;
+                  preroll_valid_bytes = 0;
 
                   // Reset ASR for next utterance (ignored input)
                   asr_reset(asr_ctx);
@@ -2323,11 +2586,32 @@ int main(int argc, char *argv[]) {
             }
 
             free(command_text);
-            silenceNextState = WAKEWORD_LISTEN;
-            recState = SILENCE;
 
-            // Reset ASR for next utterance (command processing complete)
-            asr_reset(asr_ctx);
+            // Check if vision AI processing is needed
+            if (vision_ai_ready) {
+               recState = VISION_AI_READY;
+               // Reset VAD state at interaction boundary (vision AI entry)
+               if (vad_ctx) {
+                  vad_silero_reset(vad_ctx);
+               }
+            } else {
+               silenceNextState = WAKEWORD_LISTEN;
+               recState = SILENCE;
+
+               // Reset VAD state for new interaction boundary
+               if (vad_ctx) {
+                  speech_duration = 0.0f;
+                  recording_duration = 0.0f;
+                  vad_silero_reset(vad_ctx);
+               }
+               silence_duration = 0.0f;
+               // Reset pre-roll buffer
+               preroll_write_pos = 0;
+               preroll_valid_bytes = 0;
+
+               // Reset ASR for next utterance (command processing complete)
+               asr_reset(asr_ctx);
+            }
 
             break;
          case VISION_AI_READY:
@@ -2337,6 +2621,22 @@ int main(int argc, char *argv[]) {
                pthread_cond_signal(&tts_cond);
             }
             pthread_mutex_unlock(&tts_mutex);
+
+            // Remove the assistant's command-only response from conversation history
+            // (otherwise LLM thinks it already responded)
+            size_t history_len = json_object_array_length(conversation_history);
+            if (history_len > 0) {
+               struct json_object *last_msg = json_object_array_get_idx(conversation_history,
+                                                                        history_len - 1);
+               struct json_object *role_obj;
+               if (json_object_object_get_ex(last_msg, "role", &role_obj)) {
+                  const char *role = json_object_get_string(role_obj);
+                  if (strcmp(role, "assistant") == 0) {
+                     // This was the assistant's command response - remove it
+                     json_object_array_del_idx(conversation_history, history_len - 1, 1);
+                  }
+               }
+            }
 
             // Get the AI response using the image recognition.
             // The user message was already added in PROCESS_COMMAND state
@@ -2375,6 +2675,17 @@ int main(int argc, char *argv[]) {
             // Set the next listening state
             silenceNextState = WAKEWORD_LISTEN;
             recState = SILENCE;
+
+            // Reset VAD state for new interaction boundary
+            speech_duration = 0.0f;
+            recording_duration = 0.0f;
+            if (vad_ctx) {
+               vad_silero_reset(vad_ctx);
+            }
+            silence_duration = 0.0f;
+            // Reset pre-roll buffer
+            preroll_write_pos = 0;
+            preroll_valid_bytes = 0;
 
             // Reset ASR for next utterance (vision AI complete)
             asr_reset(asr_ctx);
@@ -2664,6 +2975,13 @@ int main(int argc, char *argv[]) {
    }
 
    cleanup_text_to_speech();
+
+   // Cleanup Silero VAD (Phase 2/3)
+   if (vad_ctx) {
+      LOG_INFO("Cleaning up Silero VAD");
+      vad_silero_cleanup(vad_ctx);
+      vad_ctx = NULL;
+   }
 
    mosquitto_disconnect(mosq);
    mosquitto_loop_stop(mosq, false);

@@ -175,6 +175,14 @@ pthread_t tts_thread;
  */
 bool tts_thread_running = false;
 
+/**
+ * @brief TTS playback state (mutex-protected)
+ *
+ * All accesses must be protected by tts_mutex to ensure thread safety.
+ * Changed from std::atomic to plain int to avoid C/C++ boundary issues.
+ */
+int tts_playback_state = TTS_PLAYBACK_IDLE;
+
 extern "C" {
 /**
  * @brief Worker thread function that processes text-to-speech requests.
@@ -391,11 +399,11 @@ void initialize_text_to_speech(char *pcm_device) {
    strncpy(tts_handle.pcm_capture_device, pcm_device, MAX_WORD_LENGTH);
    tts_handle.pcm_capture_device[MAX_WORD_LENGTH] = '\0';
 
-   // Load the voice model
+   // Load the voice model from models/ directory
    std::optional<SpeakerId> speakerIdOpt = 0;
    try {
-      loadVoice(tts_handle.config, "en_GB-alba-medium.onnx", "en_GB-alba-medium.onnx.json",
-                tts_handle.voice, speakerIdOpt, false);
+      loadVoice(tts_handle.config, "../models/en_GB-alba-medium.onnx",
+                "../models/en_GB-alba-medium.onnx.json", tts_handle.voice, speakerIdOpt, false);
    } catch (const std::exception &e) {
       LOG_ERROR("Failed to load voice model: %s", e.what());
       return;
@@ -519,13 +527,13 @@ int text_to_speech_to_wav(const char *text, uint8_t **wav_data_out, size_t *wav_
    // THREAD SAFETY: Lock the TTS mutex to prevent conflicts with local TTS
    pthread_mutex_lock(&tts_mutex);
 
-   // Store original state (fix type and scope)
-   volatile sig_atomic_t original_state = tts_playback_state;
+   // Store original state (mutex already held)
+   int original_state = tts_playback_state;
 
    try {
       LOG_INFO("Generating network WAV: \"%s\"", text);
 
-      // Pause local TTS to prevent conflicts
+      // Pause local TTS to prevent conflicts (mutex already held)
       if (tts_playback_state == TTS_PLAYBACK_PLAY) {
          tts_playback_state = TTS_PLAYBACK_PAUSE;
          LOG_INFO("Paused local TTS for network generation");
@@ -545,7 +553,7 @@ int text_to_speech_to_wav(const char *text, uint8_t **wav_data_out, size_t *wav_
       // Generate WAV using shared TTS handle (now thread-safe)
       piper::textToWavFile(tts_handle.config, tts_handle.voice, processedText, audioStream, result);
 
-      // Restore local TTS state
+      // Restore local TTS state (mutex already held)
       tts_playback_state = original_state;
       if (original_state == TTS_PLAYBACK_PLAY) {
          pthread_cond_signal(&tts_cond);
@@ -577,7 +585,7 @@ int text_to_speech_to_wav(const char *text, uint8_t **wav_data_out, size_t *wav_
    } catch (const std::exception &e) {
       LOG_ERROR("TTS WAV generation failed: %s", e.what());
 
-      // Restore TTS state on error (original_state is now in scope)
+      // Restore TTS state on error (mutex already held)
       tts_playback_state = original_state;
       if (original_state == TTS_PLAYBACK_PLAY) {
          pthread_cond_signal(&tts_cond);
