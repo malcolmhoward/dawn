@@ -85,9 +85,19 @@ void *asr_whisper_init(const char *model_path, int sample_rate) {
 
    wctx->sample_rate = sample_rate;
 
-   // Initialize whisper context (CPU-only for stability on Jetson)
+   // Initialize whisper context with platform-appropriate configuration
    struct whisper_context_params cparams = whisper_context_default_params();
+
+#ifdef HAVE_CUDA_GPU
+   // Jetson: GPU-accelerated with flash attention disabled
+   // Flash attention causes KV cache alignment crash on Jetson (FATTN_KQ_STRIDE issue)
+   cparams.use_gpu = true;
+   cparams.flash_attn = false;  // Disable flash attention, keep other GPU acceleration
+#else
+   // Raspberry Pi and other platforms: CPU only
    cparams.use_gpu = false;
+   cparams.flash_attn = false;
+#endif
 
    wctx->ctx = whisper_init_from_file_with_params(model_path, cparams);
    if (!wctx->ctx) {

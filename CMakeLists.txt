@@ -1,11 +1,41 @@
 cmake_minimum_required(VERSION 3.10)
 
-# For native CUDA code
-set(CUDA_TOOLKIT_ROOT_DIR "/usr/local/cuda-12.6")
 project(dawn LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Platform selection
+set(PLATFORM "AUTO" CACHE STRING "Choose platform: AUTO, JETSON, RPI")
+set_property(CACHE PLATFORM PROPERTY STRINGS AUTO JETSON RPI)
+
+# Platform detection
+if(PLATFORM STREQUAL "AUTO")
+    # Check if it's a Jetson board first
+    if(EXISTS "/etc/nv_tegra_release")
+        set(PLATFORM "JETSON")
+        file(READ "/etc/nv_tegra_release" JETSON_MODEL)
+        message(STATUS "Detected Jetson: ${JETSON_MODEL}")
+    # Then check if it's a Raspberry Pi (both ARM and ARM64)
+    elseif(EXISTS "/sys/firmware/devicetree/base/model")
+        file(READ "/sys/firmware/devicetree/base/model" RPI_MODEL)
+        if(RPI_MODEL MATCHES "Raspberry Pi")
+            set(PLATFORM "RPI")
+            message(STATUS "Detected RPi: ${RPI_MODEL}")
+        endif()
+    # Default platform detection based on processor architecture
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
+        message(STATUS "Detected generic ARM64 platform (assuming no GPU)")
+        set(PLATFORM "RPI")
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "armv")
+        message(STATUS "Detected generic ARM platform (assuming no GPU)")
+        set(PLATFORM "RPI")
+    endif()
+endif()
+
+# Platform definitions
+add_definitions(-DPLATFORM_${PLATFORM})
+message(STATUS "Building for platform: ${PLATFORM}")
 
 # Define the version number in the header file directly
 set(VERSION_NUMBER "1.0.0")
@@ -48,13 +78,25 @@ include_directories(${FLAC_INCLUDE_DIRS})
 find_package(OpenSSL REQUIRED)
 include_directories(${OpenSSL_INCLUDE_DIR})
 
-# Find the required CUDA libraries and add them to the link libraries
-find_library(CUDA_LIBRARIES NAMES cuda HINTS ${CUDA_TOOLKIT_ROOT_DIR}/targets/aarch64-linux/lib)
-find_library(CUDART_LIBRARIES NAMES cudart HINTS ${CUDA_TOOLKIT_ROOT_DIR}/targets/aarch64-linux/lib)
-find_library(CUSPARSE_LIBRARIES NAMES cusparse HINTS ${CUDA_TOOLKIT_ROOT_DIR}/targets/aarch64-linux/lib)
-find_library(CUBLAS_LIBRARIES NAMES cublas HINTS ${CUDA_TOOLKIT_ROOT_DIR}/targets/aarch64-linux/lib)
-find_library(CUSOLVER_LIBRARIES NAMES cusolver HINTS ${CUDA_TOOLKIT_ROOT_DIR}/targets/aarch64-linux/lib)
-find_library(CURAND_LIBRARIES NAMES curand HINTS ${CUDA_TOOLKIT_ROOT_DIR}/targets/aarch64-linux/lib)
+# Platform-specific CUDA configuration (Jetson only)
+if(PLATFORM STREQUAL "JETSON")
+    set(CUDA_TOOLKIT_ROOT_DIR "/usr/local/cuda-12.6")
+    set(ENABLE_WHISPER_CUDA ON CACHE BOOL "Enable CUDA for Whisper on Jetson" FORCE)
+
+    # Find the required CUDA libraries and add them to the link libraries
+    find_library(CUDA_LIBRARIES NAMES cuda HINTS ${CUDA_TOOLKIT_ROOT_DIR}/targets/aarch64-linux/lib)
+    find_library(CUDART_LIBRARIES NAMES cudart HINTS ${CUDA_TOOLKIT_ROOT_DIR}/targets/aarch64-linux/lib)
+    find_library(CUSPARSE_LIBRARIES NAMES cusparse HINTS ${CUDA_TOOLKIT_ROOT_DIR}/targets/aarch64-linux/lib)
+    find_library(CUBLAS_LIBRARIES NAMES cublas HINTS ${CUDA_TOOLKIT_ROOT_DIR}/targets/aarch64-linux/lib)
+    find_library(CUSOLVER_LIBRARIES NAMES cusolver HINTS ${CUDA_TOOLKIT_ROOT_DIR}/targets/aarch64-linux/lib)
+    find_library(CURAND_LIBRARIES NAMES curand HINTS ${CUDA_TOOLKIT_ROOT_DIR}/targets/aarch64-linux/lib)
+
+    add_definitions(-DHAVE_CUDA_GPU)
+    message(STATUS "CUDA support: ENABLED (Jetson platform)")
+else()
+    set(ENABLE_WHISPER_CUDA OFF CACHE BOOL "CUDA disabled on non-Jetson platforms" FORCE)
+    message(STATUS "CUDA support: DISABLED (Raspberry Pi or other non-CUDA platform)")
+endif()
 
 # Wave file handling
 #find_package(PkgConfig QUIET)
@@ -87,6 +129,16 @@ option(ENABLE_VOSK "Enable Vosk ASR engine (legacy support)" OFF)
 set(WHISPER_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(WHISPER_BUILD_SERVER OFF CACHE BOOL "" FORCE)
+
+# Platform-specific Whisper CUDA configuration
+if(ENABLE_WHISPER_CUDA)
+    set(GGML_CUDA ON CACHE BOOL "Enable CUDA for Whisper" FORCE)
+    message(STATUS "Whisper CUDA: ENABLED")
+else()
+    set(GGML_CUDA OFF CACHE BOOL "Disable CUDA for Whisper" FORCE)
+    message(STATUS "Whisper CUDA: DISABLED")
+endif()
+
 add_subdirectory(whisper.cpp)
 
 link_directories(${CMAKE_SOURCE_DIR})
@@ -147,16 +199,21 @@ target_link_libraries(dawn
                       ${JSONC_LIBRARIES}
                       ${SPDLOG_LIBRARIES}
                       whisper
-                      ${CUDA_LIBRARIES}
-                      ${CUDART_LIBRARIES}
-                      ${CUSPARSE_LIBRARIES}
-                      ${CUBLAS_LIBRARIES}
-                      ${CUSOLVER_LIBRARIES}
-                      ${CURAND_LIBRARIES}
                       ${MOSQUITTO_LIBRARIES}
                       ${FLAC_LIBRARIES}
                       OpenSSL::SSL
                       OpenSSL::Crypto)
+
+# Conditionally link CUDA libraries (Jetson only)
+if(PLATFORM STREQUAL "JETSON")
+    target_link_libraries(dawn
+                          ${CUDA_LIBRARIES}
+                          ${CUDART_LIBRARIES}
+                          ${CUSPARSE_LIBRARIES}
+                          ${CUBLAS_LIBRARIES}
+                          ${CUSOLVER_LIBRARIES}
+                          ${CURAND_LIBRARIES})
+endif()
 
 # Link appropriate audio library based on backend selection
 if(USE_ALSA)

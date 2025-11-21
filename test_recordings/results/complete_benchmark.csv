@@ -1,201 +1,401 @@
 wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
-test_001.wav,5.00,80000,16000,Vosk,../model,1,0.375,18217.8,1873.8,-1.00,"friday"
-test_002.wav,5.00,80000,16000,Vosk,../model,1,0.394,17370.5,1968.9,-1.00,"okay friday"
-test_003.wav,5.00,80000,16000,Vosk,../model,1,0.361,17664.2,1806.9,-1.00,"hey friday"
-test_004.wav,5.00,80000,16000,Vosk,../model,1,0.380,17459.7,1900.4,-1.00,"friday are you there"
-test_005.wav,5.00,80000,16000,Vosk,../model,1,0.371,14577.9,1856.1,-1.00,"okay friday are you listening"
-test_006.wav,5.00,80000,16000,Vosk,../model,1,0.337,14413.8,1686.4,-1.00,"friday"
-test_007.wav,5.00,80000,16000,Vosk,../model,1,0.321,14516.3,1602.9,-1.00,"friday"
-test_008.wav,5.00,80000,16000,Vosk,../model,1,0.358,14456.8,1787.6,-1.00,"friday what time is it"
-test_009.wav,5.00,80000,16000,Vosk,../model,1,0.401,14303.5,2004.8,-1.00,"o k friday are you there"
-test_010.wav,5.00,80000,16000,Vosk,../model,1,0.642,14472.8,3208.8,-1.00,"friday"
-test_011.wav,5.00,80000,16000,Vosk,../model,1,0.362,14308.8,1809.2,-1.00,"friday what time is it"
-test_012.wav,5.00,80000,16000,Vosk,../model,1,0.353,14270.6,1764.2,-1.00,"friday turn on the lights"
-test_013.wav,5.00,80000,16000,Vosk,../model,1,0.358,14390.5,1787.5,-1.00,"friday turn off the lights"
-test_014.wav,5.00,80000,16000,Vosk,../model,1,0.400,14429.7,2000.3,-1.00,"friday what's the weather"
-test_015.wav,5.00,80000,16000,Vosk,../model,1,0.358,14656.1,1792.5,-1.00,"friday set a timer"
-test_016.wav,5.00,80000,16000,Vosk,../model,1,0.336,15139.2,1681.9,-1.00,"friday good morning"
-test_017.wav,5.00,80000,16000,Vosk,../model,1,0.335,15254.7,1676.5,-1.00,"friday good night"
-test_018.wav,5.00,80000,16000,Vosk,../model,1,0.337,14884.2,1683.8,-1.00,"friday thank you"
-test_019.wav,5.00,80000,16000,Vosk,../model,1,0.338,14930.6,1690.4,-1.00,"friday helped me"
-test_020.wav,5.00,80000,16000,Vosk,../model,1,0.389,14884.1,1947.2,-1.00,"friday's stop"
-test_021.wav,5.00,80000,16000,Vosk,../model,1,0.344,15101.7,1718.1,-1.00,"friday pause"
-test_022.wav,5.00,80000,16000,Vosk,../model,1,0.323,15099.4,1616.7,-1.00,"friday resume"
-test_023.wav,5.00,80000,16000,Vosk,../model,1,0.330,15125.0,1652.0,-1.00,"friday volume up"
-test_024.wav,5.00,80000,16000,Vosk,../model,1,0.361,15280.1,1804.6,-1.00,"friday volume down"
-test_025.wav,5.00,80000,16000,Vosk,../model,1,0.360,14892.7,1798.7,-1.00,"friday what can you do"
-test_026.wav,10.00,160000,16000,Vosk,../model,1,0.365,14678.9,3655.0,-1.00,"friday can you tell me what the current time is please"
-test_027.wav,10.00,160000,16000,Vosk,../model,1,0.388,17135.2,3878.7,-1.00,"friday i need you to turn on the living room lights"
-test_028.wav,10.00,160000,16000,Vosk,../model,1,0.358,14825.1,3576.6,-1.00,"friday could you please tell me what the weather is like today"
-test_029.wav,10.00,160000,16000,Vosk,../model,1,0.364,14655.9,3635.7,-1.00,"pretty set a timer for ten minutes from now"
-test_030.wav,10.00,160000,16000,Vosk,../model,1,0.343,14966.0,3431.9,-1.00,"friday what is the status of the oasis project"
-test_031.wav,10.00,160000,16000,Vosk,../model,1,0.343,15427.5,3430.7,-1.00,"friday turn on the lights in the bedroom and kitchen"
-test_032.wav,10.00,160000,16000,Vosk,../model,1,0.364,14783.9,3643.8,-1.00,"friday can you give me an update on the system status"
-test_033.wav,10.00,160000,16000,Vosk,../model,1,0.340,14602.8,3397.2,-1.00,"friday i'm going to do a little bit of testing"
-test_034.wav,10.00,160000,16000,Vosk,../model,1,0.346,14755.1,3458.3,-1.00,"friday remind me to check the server logs later"
-test_035.wav,10.00,160000,16000,Vosk,../model,1,0.344,14853.1,3437.6,-1.00,"friday what were the results of the last benchmark"
-test_036.wav,10.00,160000,16000,Vosk,../model,1,0.386,14716.6,3855.9,-1.00,"friday can you explain how the s r system works"
-test_037.wav,10.00,160000,16000,Vosk,../model,1,0.360,14832.6,3604.8,-1.00,"friday show me the current cpu and memory usage"
-test_038.wav,10.00,160000,16000,Vosk,../model,1,0.341,14626.2,3408.2,-1.00,"friday i need help troubleshooting a network issue"
-test_039.wav,10.00,160000,16000,Vosk,../model,1,0.363,14732.7,3629.3,-1.00,"friday what sensors are currently active in the house"
-test_040.wav,10.00,160000,16000,Vosk,../model,1,0.338,14657.2,3382.3,-1.00,"friday give me a summary of today's activities"
-test_041.wav,15.00,240000,16000,Vosk,../model,1,0.442,14534.8,6622.6,-1.00,"friday i'm going to do a little bit of testing just to see how my new text to speech as r is working and we're going to go ahead and run some benchmarks"
-test_042.wav,15.00,240000,16000,Vosk,../model,1,0.409,14540.5,6127.9,-1.00,"friday can you tell me about the oasis project specs including mirage dawn aura and spark and what each component does"
-test_043.wav,15.00,240000,16000,Vosk,../model,1,0.362,14345.3,5423.9,-1.00,"friday i need you to analyze the recent performance metrics and let me know if there are any anomalies or issues that need attention"
-test_044.wav,15.00,240000,16000,Vosk,../model,1,0.360,14385.5,5392.8,-1.00,"friday could you please walk me through the steps to configure a new sensor and integrated with the existing home automation system"
-test_045.wav,15.00,240000,16000,Vosk,../model,1,0.390,14452.9,5847.6,-1.00,"friday i'm experiencing some latency issues with the voice recognition and i'm wondering if it might be related to network bandwidth or processing power"
-test_046.wav,15.00,240000,16000,Vosk,../model,1,0.365,14594.8,5469.2,-1.00,"friday give me a detailed breakdown of the energy consumption across all connected devices for the past week and highlight any unusual patterns"
-test_047.wav,15.00,240000,16000,Vosk,../model,1,0.450,14536.1,6755.5,-1.00,"the friday i want to set up an automation routine that turns on the lights when i arrive home and adjust the thermostat based on the current weather"
-test_048.wav,15.00,240000,16000,Vosk,../model,1,0.390,14464.3,5842.5,-1.00,"friday can you compare the performance of waske vs whisper for speech recognition accuracy real time factor and overall system resource usage"
-test_049.wav,15.00,240000,16000,Vosk,../model,1,0.368,14424.7,5523.4,-1.00,"friday i need to know if the backup systems are functioning properly and when the last successful backup was completed for all critical data"
-test_050.wav,15.00,240000,16000,Vosk,../model,1,0.388,14326.4,5815.1,-1.00,"friday please explain the difference between streaming as r and batch processing and how that affects the responsiveness of the voice assistant"
-test_001.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.248,204.3,1240.5,-1.00," Friday."
-test_002.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.252,152.9,1262.1,-1.00," Okay Friday."
-test_003.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.252,147.4,1261.9,-1.00," Hey Friday."
-test_004.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.254,152.1,1271.8,-1.00," Friday are you there?"
-test_005.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.239,144.3,1193.6,-1.00," Okay, Friday, are you listening?"
-test_006.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.259,144.1,1294.0,-1.00," Friday."
-test_007.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.232,145.1,1159.0,-1.00," Friday"
-test_008.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.244,143.6,1219.6,-1.00," Friday, what time is it?"
-test_009.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.235,144.8,1175.7,-1.00," Okay Friday, are you there?"
-test_010.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.257,141.3,1285.6,-1.00," Friday."
-test_011.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.234,142.4,1172.1,-1.00," Friday what time is it?"
-test_012.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.235,140.6,1174.5,-1.00," Friday turn on the lights."
-test_013.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.234,146.6,1169.4,-1.00," Friday turn off the lights."
-test_014.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.242,141.5,1211.2,-1.00," Friday, what's the weather?"
-test_015.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.235,143.1,1176.3,-1.00," For out a set of timer."
-test_016.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.273,151.4,1367.1,-1.00," Friday, good morning."
-test_017.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.253,138.0,1264.7,-1.00," Friday Good Night."
-test_018.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.233,140.4,1165.6,-1.00," Friday, thank you."
-test_019.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.237,139.8,1185.1,-1.00," Friday help me."
-test_020.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.271,144.0,1354.3,-1.00," Friday stop."
-test_021.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.269,146.2,1346.3,-1.00," Friday pause."
-test_022.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.233,146.0,1165.5,-1.00," Friday, resume."
-test_023.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.254,143.0,1272.2,-1.00," Friday, volume up."
-test_024.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.242,144.7,1210.3,-1.00," Friday, volume down."
-test_025.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.257,141.1,1283.4,-1.00," Friday, what can you do?"
-test_026.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.126,142.7,1255.7,-1.00," Friday, can you tell me what the current time is please?"
-test_027.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.122,141.9,1219.5,-1.00," Friday, I need you to turn on the living room lights."
-test_028.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.124,144.5,1243.7,-1.00," Friday, could you please tell me what the weather is like today?"
-test_029.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.125,142.7,1248.8,-1.00," Friday, set a timer for 10 minutes from now."
-test_030.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.122,142.7,1215.6,-1.00," Friday, what is the status of the Oasis Project?"
-test_031.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.123,165.5,1230.5,-1.00," Friday, turn on the lights in the bedroom and kitchen."
-test_032.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.121,146.5,1205.8,-1.00," Friday, can you give me an update on the system status?"
-test_033.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.128,142.2,1279.7,-1.00," Friday, I'm going to do a little bit of testing."
-test_034.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.128,140.4,1281.7,-1.00," Friday remind me to check the server logs later."
-test_035.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.121,152.7,1212.7,-1.00," Friday, what were the results of the last benchmark?"
-test_036.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.129,141.4,1288.2,-1.00," Friday, can you explain how the ASR system works?"
-test_037.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.124,148.1,1235.9,-1.00," Friday show me the current CPU and memory usage."
-test_038.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.123,142.3,1228.7,-1.00," Friday, I need help troubleshooting a network issue."
-test_039.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.121,144.0,1206.4,-1.00," What sensors are currently active in the house?"
-test_040.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.128,139.0,1283.8,-1.00," Friday, give me a summary of today's activities."
-test_041.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.090,140.8,1344.8,-1.00," Friday, I'm going to do a little bit of testing just to see how my new text to speech ASR is working and we're going to go ahead and run some benchmarks."
-test_042.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.090,146.5,1345.5,-1.00," Friday, can you tell me about the Oasis Project specs, including Mirage, Dawn, Orra and Spark, and what each component does?"
-test_043.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.093,143.1,1396.6,-1.00," Friday, I need you to analyze the recent performance metrics and let me know if there are any anomalies or issues that need attention."
-test_044.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.086,148.2,1284.5,-1.00," Friday, could you please walk me through the steps to configure a new sensor and integrate it with the existing home automation system?"
-test_045.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.087,143.3,1298.4,-1.00," Friday, I'm experiencing some latency issues with the voice recognition and I'm wondering if it might be related to network bandwidth or processing power."
-test_046.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.086,142.4,1287.3,-1.00," Friday, give me a detailed breakdown of the energy consumption across all connected devices for the past week and highlight any unusual patterns."
-test_047.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.090,143.9,1346.7,-1.00," Friday, I want to set up an automation routine that turns on the lights when I arrive home and adjust the thermostat based on the current weather."
-test_048.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.097,140.7,1450.0,-1.00," Friday, can you compare the performance of VOSC versus Whisper for Speedtruck Ignition Accuracy, Real Time Factor, and Overall System Resource Usage?"
-test_049.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.093,148.7,1394.6,-1.00," For today, I need to know if the backup systems are functioning properly and when the last successful backup was completed for all critical data."
-test_050.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.086,143.7,1293.5,-1.00," Friday, please explain the difference between streaming ASR and batch processing and how that affects the responsiveness of the voice assistant."
-test_001.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.488,285.8,2438.7,-1.00," Friday."
-test_002.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.526,200.9,2629.5,-1.00," Okay Friday."
-test_003.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.545,190.1,2723.8,-1.00," Hey Friday."
-test_004.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.501,179.0,2507.5,-1.00," Friday or you there?"
-test_005.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.505,221.6,2522.9,-1.00," Okay, Friday are you listening?"
-test_006.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.488,190.5,2439.4,-1.00," Friday."
-test_007.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.500,182.8,2498.2,-1.00," Friday."
-test_008.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.502,177.8,2509.9,-1.00," Friday, what time is it?"
-test_009.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.509,180.2,2546.8,-1.00," Okay Friday, are you there?"
-test_010.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.517,182.8,2586.5,-1.00," Friday."
-test_011.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.502,184.9,2512.0,-1.00," Friday, what time is it?"
-test_012.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.523,182.7,2612.9,-1.00," Friday turn on the lights."
-test_013.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.498,181.5,2490.5,-1.00," Friday, turn off the lights."
-test_014.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.505,180.7,2523.4,-1.00," Friday, watch the weather."
-test_015.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.494,187.2,2468.9,-1.00," Friday set a timer."
-test_016.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.514,182.8,2570.9,-1.00," Friday, good morning."
-test_017.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.519,183.8,2595.8,-1.00," Friday Good Night."
-test_018.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.493,186.9,2464.6,-1.00," Friday, thank you."
-test_019.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.489,183.2,2445.3,-1.00," Friday help me."
-test_020.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.497,184.5,2483.5,-1.00," Friday, stop."
-test_021.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.488,183.1,2440.2,-1.00," Friday pause."
-test_022.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.489,185.0,2443.6,-1.00," Friday resume."
-test_023.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.523,182.8,2615.7,-1.00," Friday, volume up."
-test_024.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.505,181.6,2524.5,-1.00," Friday, volume down."
-test_025.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.504,183.9,2520.3,-1.00," Friday, what can you do?"
-test_026.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.252,183.3,2523.1,-1.00," Friday, can you tell me what the current time is please?"
-test_027.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.253,185.3,2533.0,-1.00," Friday, I need you to turn on the living room lights."
-test_028.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.256,182.6,2561.0,-1.00," Friday, could you please tell me what the weather is like today?"
-test_029.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.262,189.7,2621.7,-1.00," Friday, set a timer for 10 minutes from now."
-test_030.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.256,182.2,2556.6,-1.00," Friday, what is the status of the OASIS project?"
-test_031.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.252,180.3,2517.6,-1.00," Friday, turn on the lights in the bedroom and kitchen."
-test_032.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.251,185.6,2511.2,-1.00," Friday, can you give me an update on the system status?"
-test_033.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.256,181.2,2556.4,-1.00," Friday, I'm going to do a little bit of testing."
-test_034.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.250,180.2,2496.1,-1.00," Friday remind me to check the server logs later."
-test_035.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.251,186.3,2507.0,-1.00," Friday, what were the results of the last benchmark?"
-test_036.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.252,183.1,2516.6,-1.00," Friday, can you explain how the ASR system works?"
-test_037.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.251,181.6,2506.5,-1.00," Friday, show me the current CPU and memory usage."
-test_038.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.272,186.3,2724.1,-1.00," Friday, I need help troubleshooting a network issue."
-test_039.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.270,187.4,2696.3,-1.00," Friday, what sensors are currently active in the house?"
-test_040.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.249,188.5,2493.5,-1.00," Friday, give me a summary of today's activities."
-test_041.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.184,182.6,2766.9,-1.00," Friday, I'm going to do a little bit of testing just to see how my new text to speech ASR is working. And we're going to go ahead and run some benchmarks."
-test_042.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.180,184.8,2699.7,-1.00," Friday, can you tell me about the OASIS project, specs, including Mirage, Dawn, Aura, and Spark, and what each component does?"
-test_043.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.189,183.4,2831.8,-1.00," Friday, I need you to analyze the recent performance metrics and let me know if there are any anomalies or issues that need attention."
-test_044.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.180,183.6,2702.1,-1.00," Friday, could you please walk me through the steps to configure a new sensor and integrate it with the existing home automation system?"
-test_045.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.188,181.6,2819.2,-1.00," Friday, I'm experiencing some latency issues with the voice recognition and I'm wondering if it might be related to network bandwidth or processing power."
-test_046.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.176,181.9,2639.0,-1.00," Friday, give me a detailed breakdown of the energy consumption across all connected devices for the past week and highlight any unusual patterns."
-test_047.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.177,188.4,2661.3,-1.00," Friday, I want to set up an automation routine that turns on the lights when I arrive home and adjust the thermostat based on the current weather."
-test_048.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.184,184.2,2766.2,-1.00," Friday, can you compare the performance of VOSC versus Whisper for speech recognition accuracy, real-time factor, and overall system resource usage?"
-test_049.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.177,187.7,2659.4,-1.00," Friday, I need to know if the backup systems are functioning properly and when the last successful backup was completed for all critical data."
-test_050.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.175,182.5,2630.1,-1.00," Friday, please explain the difference between streaming ASR and batch processing and how that affects the responsiveness of the voice assistant."
-test_001.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,1.690,541.5,8449.6,-1.00," Friday."
-test_002.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,1.716,360.8,8581.7,-1.00," Okay, Friday."
-test_003.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,1.840,338.7,9198.9,-1.00," Hey Friday."
-test_004.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,1.725,327.8,8625.9,-1.00," Friday, are you there?"
-test_005.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,1.720,323.5,8598.6,-1.00," Okay, Friday, are you listening?"
-test_006.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,1.727,328.4,8635.4,-1.00," Friday."
-test_007.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,1.741,326.2,8705.1,-1.00," Friday."
-test_008.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,1.715,328.6,8575.6,-1.00," Friday, what time is it?"
-test_009.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,1.749,328.7,8745.4,-1.00," Okay Friday, are you there?"
-test_010.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,1.787,324.2,8937.0,-1.00," Friday."
-test_011.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,1.744,327.9,8721.0,-1.00," Friday, what time is it?"
-test_012.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,1.724,322.8,8619.1,-1.00," Friday, turn on the lights."
-test_013.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,1.725,332.0,8622.7,-1.00," Friday, turn off the lights."
-test_014.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,1.705,327.5,8523.2,-1.00," Friday, what's the weather?"
-test_015.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,1.710,325.9,8551.0,-1.00," Friday set of timer."
-test_016.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,1.721,334.9,8607.5,-1.00," Friday, good morning."
-test_017.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,1.721,327.2,8603.2,-1.00," Friday, good night."
-test_018.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,1.716,329.9,8579.0,-1.00," Friday, thank you."
-test_019.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,1.712,329.7,8561.3,-1.00," Friday, help me."
-test_020.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,1.713,321.4,8564.1,-1.00," Friday, stop."
-test_021.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,1.708,327.3,8540.3,-1.00," Friday, pause."
-test_022.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,1.716,332.7,8579.7,-1.00," Friday, resume."
-test_023.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,1.708,323.2,8540.9,-1.00," Friday volume up."
-test_024.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,1.701,320.0,8502.7,-1.00," Friday volume down."
-test_025.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,1.724,331.6,8620.4,-1.00," Friday, what can you do?"
-test_026.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.870,327.5,8701.0,-1.00," Friday, can you tell me what the current time is please?"
-test_027.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.892,325.8,8916.4,-1.00," Friday, I need you to turn on the living room lights."
-test_028.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.866,329.3,8662.0,-1.00," Friday, could you please tell me what the weather is like today?"
-test_029.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.866,340.5,8659.0,-1.00," Friday, set a timer for 10 minutes from now."
-test_030.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.866,325.1,8661.3,-1.00," Friday, what is the status of the OASIS project?"
-test_031.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.864,330.5,8636.1,-1.00," Friday, turn on the lights in the bedroom and kitchen."
-test_032.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.877,337.3,8769.1,-1.00," Friday, can you give me an update on the system status?"
-test_033.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.883,326.8,8828.1,-1.00," Friday, I'm going to do a little bit of testing."
-test_034.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.875,323.8,8746.3,-1.00," Friday, remind me to check the server logs later."
-test_035.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.876,324.1,8756.0,-1.00," Friday, what were the results of the last benchmark?"
-test_036.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.886,382.3,8860.2,-1.00," Friday, can you explain how the ASR system works?"
-test_037.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.870,321.4,8697.7,-1.00," Friday, show me the current CPU and memory usage."
-test_038.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.872,326.6,8717.2,-1.00," Friday, I need help troubleshooting a network issue."
-test_039.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.864,321.8,8635.7,-1.00," Friday, what sensors are currently active in the house?"
-test_040.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.874,323.3,8738.3,-1.00," Friday, give me a summary of today's activities."
-test_041.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.608,323.3,9117.3,-1.00," Friday, I'm going to do a little bit of testing just to see how my new text-to-speech ASR is working, and we're going to go ahead and run some benchmarks."
-test_042.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.607,327.3,9103.9,-1.00," Friday, can you tell me about the OASIS project specs, including Mirage, Dawn, Aura, and Spark, and what each component does?"
-test_043.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.597,326.2,8961.9,-1.00," Friday, I need you to analyze the recent performance metrics and let me know if there are any anomalies or issues that need attention."
-test_044.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.591,324.4,8866.3,-1.00," Friday, could you please walk me through the steps to configure a new sensor and integrate it with the existing home automation system?"
-test_045.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.599,321.9,8978.4,-1.00," Friday, I'm experiencing some latency issues with the voice recognition and I'm wondering if it might be related to network bandwidth or processing power."
-test_046.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.601,330.6,9018.2,-1.00," Friday, give me a detailed breakdown of the energy consumption across all connected devices for the past week and highlight any unusual patterns."
-test_047.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.604,322.8,9065.4,-1.00," Friday, I want to set up an automation routine that turns on the lights when I arrive home and adjust the thermostat based on the current weather."
-test_048.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.608,335.0,9119.4,-1.00," Friday, can you compare the performance of VOSC vs. Whisper for speech recognition accuracy, real-time factor, and overall system resource usage?"
-test_049.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.604,332.0,9054.0,-1.00," Friday, I need to know if the backup systems are functioning properly and when the last successful backup was completed for all critical data."
-test_050.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.591,330.2,8869.4,-1.00," Friday, please explain the difference between streaming ASR and batch processing and how that affects the responsiveness of the voice assistant."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_001.wav,5.00,80000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_002.wav,5.00,80000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_003.wav,5.00,80000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_004.wav,5.00,80000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_005.wav,5.00,80000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_006.wav,5.00,80000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_007.wav,5.00,80000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_008.wav,5.00,80000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_009.wav,5.00,80000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_010.wav,5.00,80000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_011.wav,5.00,80000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_012.wav,5.00,80000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_013.wav,5.00,80000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_014.wav,5.00,80000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_015.wav,5.00,80000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_016.wav,5.00,80000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_017.wav,5.00,80000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_018.wav,5.00,80000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_019.wav,5.00,80000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_020.wav,5.00,80000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_021.wav,5.00,80000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_022.wav,5.00,80000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_023.wav,5.00,80000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_024.wav,5.00,80000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_025.wav,5.00,80000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_026.wav,10.00,160000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_027.wav,10.00,160000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_028.wav,10.00,160000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_029.wav,10.00,160000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_030.wav,10.00,160000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_031.wav,10.00,160000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_032.wav,10.00,160000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_033.wav,10.00,160000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_034.wav,10.00,160000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_035.wav,10.00,160000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_036.wav,10.00,160000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_037.wav,10.00,160000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_038.wav,10.00,160000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_039.wav,10.00,160000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_040.wav,10.00,160000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_041.wav,15.00,240000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_042.wav,15.00,240000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_043.wav,15.00,240000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_044.wav,15.00,240000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_045.wav,15.00,240000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_046.wav,15.00,240000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_047.wav,15.00,240000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_048.wav,15.00,240000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_049.wav,15.00,240000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_050.wav,15.00,240000,16000,Unknown,../model,0,0.000,0.0,0.0,-1.00,""
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_001.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.103,408.1,512.9,-1.00," Friday."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_002.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.118,306.7,587.9,-1.00," Okay Friday."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_003.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.104,303.5,521.4,-1.00," Hey Friday."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_004.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.089,298.8,443.7,-1.00," Friday are you there?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_005.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.098,289.3,491.5,-1.00," Okay, Friday, are you listening?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_006.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.095,287.4,476.4,-1.00," Friday."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_007.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.104,299.2,522.5,-1.00," Friday."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_008.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.092,291.4,460.6,-1.00," Friday, what time is it?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_009.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.100,301.3,500.3,-1.00," Okay Friday, are you there?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_010.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.092,297.0,460.7,-1.00," Friday."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_011.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.099,299.0,496.4,-1.00," Friday what time is it?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_012.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.100,299.6,500.3,-1.00," Friday turn on the lights."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_013.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.100,297.3,502.3,-1.00," Friday turn off the lights."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_014.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.099,301.8,495.1,-1.00," Friday, what's the weather?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_015.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.104,301.2,518.9,-1.00," For out a set of timer."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_016.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.117,295.7,582.6,-1.00," Friday Good Morning."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_017.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.107,317.4,536.9,-1.00," Friday Good Night."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_018.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.119,314.4,594.9,-1.00," Friday, thank you."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_019.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.096,305.3,481.8,-1.00," Friday help me."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_020.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.116,296.4,582.1,-1.00," Friday stop."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_021.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.103,317.2,516.7,-1.00," Friday pause."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_022.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.111,302.5,556.4,-1.00," Friday, resume."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_023.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.099,309.1,492.7,-1.00," Friday, volume up."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_024.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.097,307.9,482.9,-1.00," Friday, volume down."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_025.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.099,304.1,496.4,-1.00," Friday, what can you do?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_026.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.055,297.4,550.2,-1.00," Friday, can you tell me what the current time is please?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_027.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.053,291.1,530.3,-1.00," Friday, I need you to turn on the living room lights."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_028.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.059,319.0,586.6,-1.00," Friday, could you please tell me what the weather is like today."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_029.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.057,308.1,570.8,-1.00," Friday, set a timer for 10 minutes from now."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_030.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.052,291.4,520.5,-1.00," Friday, what is the status of the Oasis Project?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_031.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.055,299.0,551.7,-1.00," Friday, turn on the lights in the bedroom and kitchen."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_032.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.057,296.3,567.0,-1.00," Friday, can you give me an update on the system status?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_033.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.054,292.4,537.5,-1.00," Friday I'm going to do a little bit of testing."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_034.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.052,313.8,517.1,-1.00," Friday remind me to check the server logs later."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_035.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.057,298.2,565.2,-1.00," Friday, what were the results of the last benchmark?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_036.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.059,298.2,591.3,-1.00," Friday, can you explain how the ASR system works?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_037.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.052,302.2,516.3,-1.00," Friday show me the current CPU and memory usage."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_038.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.055,320.7,552.0,-1.00," Friday, I need help troubleshooting a network issue."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_039.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.051,301.5,505.4,-1.00," What sensors are currently active in the house?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_040.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.052,298.7,521.1,-1.00," Friday, give me a summary of today's activities."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_041.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.063,306.9,951.7,-1.00," Friday, I'm going to do a little bit of testing just to see how my new text to speech ASR is working and we're going to go ahead and run some benchmarks."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_042.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.053,307.6,794.3,-1.00," Friday, can you tell me about the Oasis Project specs, including Mirage, Dawn, Orra and Spark, and what each component does?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_043.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.056,312.2,835.9,-1.00," Friday, I need you to analyze the recent performance metrics and let me know if there are any anomalies or issues that need attention."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_044.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.054,306.3,809.9,-1.00," Friday, could you please walk me through the steps to configure a new sensor and integrate it with the existing home automation system?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_045.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.057,315.1,850.3,-1.00," Friday, I'm experiencing some latency issues with the voice recognition and I'm wondering if it might be related to network bandwidth or processing power."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_046.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.052,308.8,773.8,-1.00," For a, give me a detailed breakdown of the energy consumption across all connected devices for the past week and highlight any unusual patterns."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_047.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.057,316.1,851.4,-1.00," Friday, I want to set up an automation routine that turns on the lights when I arrive home and adjust the thermostat based on the current weather."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_048.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.063,318.2,940.2,-1.00," Friday, can you compare the performance of VOSC versus Whisper for Speedtruck Ignition Accuracy, Real Time Factor, and Overall System Resource Usage?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_049.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.051,301.1,759.8,-1.00," For today, I need to know if the backup systems are functioning properly and when the last successful backup was completed for all critical data."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_050.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-tiny.bin,1,0.053,310.5,790.0,-1.00," Friday, please explain the difference between streaming ASR and batch processing and how that affects the responsiveness of the voice assistant."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_001.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.123,401.9,612.6,-1.00," Friday."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_002.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.157,373.1,783.9,-1.00," Okay Friday."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_003.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.155,385.0,775.7,-1.00," Hey Friday."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_004.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.137,411.8,682.6,-1.00," Friday, are you there?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_005.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.152,407.9,760.7,-1.00," Okay, Friday are you listening?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_006.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.133,402.2,664.6,-1.00," Friday."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_007.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.130,396.7,648.5,-1.00," Friday."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_008.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.152,407.6,758.5,-1.00," Friday, what time is it?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_009.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.144,387.2,721.4,-1.00," Okay Friday, are you there?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_010.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.137,400.3,684.8,-1.00," Friday."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_011.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.130,389.6,648.8,-1.00," Friday, what time is it?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_012.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.140,396.9,697.7,-1.00," Friday, turn on the lights."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_013.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.135,383.1,676.0,-1.00," Friday, turn off the lights."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_014.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.126,396.8,629.0,-1.00," Friday, watch the weather."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_015.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.127,387.0,636.9,-1.00," Friday, set a timer."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_016.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.135,397.2,674.4,-1.00," Friday, good morning."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_017.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.157,392.8,786.9,-1.00," Friday Good Night."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_018.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.137,396.5,685.2,-1.00," Friday, thank you."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_019.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.131,390.4,655.1,-1.00," Friday, help me."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_020.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.136,380.8,678.3,-1.00," Friday, stop."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_021.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.125,391.6,626.7,-1.00," Friday pause."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_022.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.126,403.2,630.6,-1.00," Friday resume."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_023.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.131,405.8,653.2,-1.00," Friday, volume up."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_024.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.128,419.5,641.6,-1.00," Friday, volume down."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_025.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.134,395.9,667.8,-1.00," Friday, what can you do?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_026.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.079,397.6,793.8,-1.00," Friday, can you tell me what the current time is please?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_027.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.083,406.3,832.1,-1.00," Friday, I need you to turn on the living room lights."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_028.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.088,412.6,882.8,-1.00," Friday, could you please tell me what the weather is like today?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_029.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.078,396.5,780.3,-1.00," Friday, set a timer for 10 minutes from now."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_030.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.081,381.9,806.7,-1.00," Friday, what is the status of the OASIS project?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_031.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.088,393.0,877.6,-1.00," Friday, turn on the lights in the bedroom and kitchen."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_032.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.085,397.4,848.2,-1.00," Friday, can you give me an update on the system status?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_033.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.080,393.8,800.2,-1.00," Friday, I'm going to do a little bit of testing."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_034.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.075,391.1,749.6,-1.00," Friday remind me to check the server logs later."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_035.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.080,405.6,802.4,-1.00," Friday, what were the results of the last benchmark?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_036.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.076,382.5,761.0,-1.00," Friday, can you explain how the ASR system works?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_037.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.075,383.5,747.2,-1.00," Friday, show me the current CPU and memory usage."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_038.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.077,381.6,768.6,-1.00," Friday, I need help troubleshooting a network issue."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_039.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.080,410.4,796.3,-1.00," Friday, what sensors are currently active in the house?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_040.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.086,403.9,857.9,-1.00," Friday, give me a summary of today's activities."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_041.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.093,408.9,1401.7,-1.00," Friday, I'm going to do a little bit of testing just to see how my new text to speech ASR is working. And we're going to go ahead and run some benchmarks."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_042.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.087,408.8,1298.2,-1.00," Friday, can you tell me about the OASIS project, specs, including Mirage, Dawn, Aura, and Spark, and what each component does?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_043.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.079,403.4,1186.8,-1.00," Friday, I need you to analyze the recent performance metrics and let me know if there are any anomalies or issues that need attention."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_044.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.076,399.0,1142.4,-1.00," Friday, could you please walk me through the steps to configure a new sensor and integrate it with the existing home automation system?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_045.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.083,453.5,1243.3,-1.00," Friday, I'm experiencing some latency issues with the voice recognition and I'm wondering if it might be related to network bandwidth or processing power."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_046.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.075,401.3,1129.9,-1.00," Friday, give me a detailed breakdown of the energy consumption across all connected devices for the past week and highlight any unusual patterns."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_047.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.080,429.5,1199.3,-1.00," Friday, I want to set up an automation routine that turns on the lights when I arrive home and adjust the thermostat based on the current weather."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_048.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.084,422.5,1263.3,-1.00," Friday, can you compare the performance of VOSC versus Whisper for speech recognition accuracy, real-time factor, and overall system resource usage?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_049.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.079,403.7,1185.9,-1.00," Friday, I need to know if the backup systems are functioning properly and when the last successful backup was completed for all critical data."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_050.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-base.bin,1,0.077,414.9,1154.2,-1.00," Friday, please explain the difference between streaming ASR and batch processing and how that affects the responsiveness of the voice assistant."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_001.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.272,1030.4,1358.0,-1.00," Friday."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_002.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.284,747.3,1421.6,-1.00," Okay, Friday."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_003.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.327,760.0,1634.0,-1.00," Hey Friday."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_004.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.286,701.6,1431.2,-1.00," Friday, are you there?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_005.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.296,718.0,1481.8,-1.00," Okay, Friday, are you listening?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_006.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.257,693.7,1287.5,-1.00," Friday."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_007.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.267,766.0,1332.7,-1.00," Friday."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_008.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.306,782.6,1530.2,-1.00," Friday, what time is it?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_009.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.306,735.1,1529.6,-1.00," Okay Friday, are you there?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_010.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.306,770.2,1530.0,-1.00," Friday."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_011.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.293,811.2,1465.5,-1.00," Friday, what time is it?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_012.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.289,764.6,1445.9,-1.00," Friday, turn on the lights."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_013.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.292,730.4,1458.8,-1.00," Friday, turn off the lights."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_014.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.290,698.6,1448.9,-1.00," Friday, what's the weather?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_015.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.279,726.8,1394.8,-1.00," Friday set of timer."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_016.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.277,713.4,1386.2,-1.00," Friday, good morning."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_017.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.279,734.8,1397.2,-1.00," Friday, good night."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_018.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.274,703.4,1368.3,-1.00," Friday, thank you."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_019.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.275,695.1,1377.2,-1.00," Friday, help me."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_020.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.276,762.8,1381.8,-1.00," Friday, stop."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_021.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.290,761.8,1449.4,-1.00," Friday, pause."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_022.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.284,735.1,1418.9,-1.00," Friday, resume."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_023.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.281,743.5,1404.4,-1.00," Friday volume up."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_024.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.291,752.0,1456.3,-1.00," Friday volume down."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_025.wav,5.00,80000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.306,772.3,1529.8,-1.00," Friday, what can you do?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_026.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.171,763.7,1712.4,-1.00," Friday, can you tell me what the current time is please?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_027.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.172,748.6,1723.8,-1.00," Friday, I need you to turn on the living room lights."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_028.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.177,751.7,1765.4,-1.00," Friday, could you please tell me what the weather is like today?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_029.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.168,745.3,1679.7,-1.00," Friday, set a timer for 10 minutes from now."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_030.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.169,735.0,1693.3,-1.00," Friday, what is the status of the OASIS project?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_031.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.168,761.3,1683.7,-1.00," Friday, turn on the lights in the bedroom and kitchen."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_032.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.174,789.3,1739.2,-1.00," Friday, can you give me an update on the system status?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_033.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.171,748.8,1706.0,-1.00," Friday, I'm going to do a little bit of testing."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_034.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.168,737.0,1681.9,-1.00," Friday, remind me to check the server logs later."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_035.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.168,763.7,1679.0,-1.00," Friday, what were the results of the last benchmark?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_036.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.170,757.2,1698.9,-1.00," Friday, can you explain how the ASR system works?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_037.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.170,788.3,1701.6,-1.00," Friday, show me the current CPU and memory usage."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_038.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.165,730.9,1650.4,-1.00," Friday, I need help troubleshooting a network issue."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_039.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.171,743.2,1711.9,-1.00," Friday. What sensors are currently active in the house?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_040.wav,10.00,160000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.170,707.0,1702.0,-1.00," Friday, give me a summary of today's activities."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_041.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.180,696.9,2702.7,-1.00," Friday, I'm going to do a little bit of testing just to see how my new text-to-speech ASR is working and we're going to go ahead and run some benchmarks."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_042.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.162,739.8,2433.0,-1.00," Friday, can you tell me about the OASIS project specs, including Mirage, Dawn, Aura, and Spark, and what each component does?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_043.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.143,707.8,2146.8,-1.00," Friday, I need you to analyze the recent performance metrics and let me know if there are any anomalies or issues that need attention."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_044.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.146,729.4,2189.1,-1.00," Friday, could you please walk me through the steps to configure a new sensor and integrate it with the existing home automation system?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_045.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.155,748.0,2326.9,-1.00," Friday, I'm experiencing some latency issues with the voice recognition and I'm wondering if it might be related to network bandwidth or processing power."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_046.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.146,795.2,2186.2,-1.00," Friday, give me a detailed breakdown of the energy consumption across all connected devices for the past week and highlight any unusual patterns."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_047.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.152,726.3,2274.8,-1.00," Friday, I want to set up an automation routine that turns on the lights when I arrive home and adjust the thermostat based on the current weather."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_048.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.159,732.7,2389.0,-1.00," Friday, can you compare the performance of VOSC vs. Whisper for speech recognition accuracy, real-time factor, and overall system resource usage?"
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_049.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.144,720.0,2165.7,-1.00," Friday, I need to know if the backup systems are functioning properly and when the last successful backup was completed for all critical data."
+wav_file,duration_sec,samples,sample_rate,engine,model,success,rtf,load_time_ms,transcription_time_ms,confidence,transcription
+test_050.wav,15.00,240000,16000,Whisper,../whisper.cpp/models/ggml-small.bin,1,0.144,719.9,2156.5,-1.00," Friday, please explain the difference between streaming ASR and batch processing and how that affects the responsiveness of the voice assistant."

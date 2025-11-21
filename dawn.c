@@ -70,22 +70,23 @@
 #define DEFAULT_CHANNELS 1
 
 // Define the default duration of audio capture in seconds.
-#define DEFAULT_CAPTURE_SECONDS 0.1f  // 100ms for responsive VAD
+#define DEFAULT_CAPTURE_SECONDS 0.05f  // 50ms for responsive VAD (optimized for latency)
 
 // Define the default command timeout in terms of iterations of DEFAULT_CAPTURE_SECONDS.
-#define DEFAULT_COMMAND_TIMEOUT 15  // 15 * 0.1s = 1.5 seconds of silence before timeout
+#define DEFAULT_COMMAND_TIMEOUT 24  // 24 * 0.05s = 1.2 seconds of silence before timeout
 
 // VAD configuration
 #define VAD_SAMPLE_SIZE 512               // Silero VAD requires 512 samples (32ms at 16kHz)
 #define VAD_SPEECH_THRESHOLD 0.5f         // Probability threshold for speech detection
 #define VAD_SILENCE_THRESHOLD 0.3f        // Probability threshold for silence detection
-#define VAD_END_OF_SPEECH_DURATION 1.5f   // Seconds of silence to consider speech ended
+#define VAD_END_OF_SPEECH_DURATION 1.2f   // Seconds of silence to consider speech ended (optimized)
 #define VAD_MAX_RECORDING_DURATION 30.0f  // Maximum recording duration (semantic timeout)
 
 // Chunking configuration for Whisper
-#define VAD_CHUNK_PAUSE_DURATION 0.5f  // Seconds of silence to detect natural pause for chunking
-#define VAD_MIN_CHUNK_DURATION 1.0f    // Minimum speech duration before allowing chunk
-#define VAD_MAX_CHUNK_DURATION 10.0f   // Maximum chunk duration before forcing finalization
+#define VAD_CHUNK_PAUSE_DURATION \
+   0.3f  // Seconds of silence to detect natural pause for chunking (optimized)
+#define VAD_MIN_CHUNK_DURATION 1.0f   // Minimum speech duration before allowing chunk
+#define VAD_MAX_CHUNK_DURATION 10.0f  // Maximum chunk duration before forcing finalization
 
 // Define the duration for each background audio capture sample in seconds.
 #define BACKGROUND_CAPTURE_SECONDS 2
@@ -2812,9 +2813,11 @@ int main(int argc, char *argv[]) {
             }
             pthread_mutex_unlock(&tts_mutex);
 
-            // Remove the assistant's command-only response from conversation history
-            // (otherwise LLM thinks it already responded)
+            // Remove assistant's viewing command and replace user's trigger phrase
+            // (otherwise LLM sees "what am I looking at?" and Rule #3 triggers again)
             size_t history_len = json_object_array_length(conversation_history);
+
+            // Remove assistant's command response (should be last message)
             if (history_len > 0) {
                struct json_object *last_msg = json_object_array_get_idx(conversation_history,
                                                                         history_len - 1);
@@ -2822,8 +2825,25 @@ int main(int argc, char *argv[]) {
                if (json_object_object_get_ex(last_msg, "role", &role_obj)) {
                   const char *role = json_object_get_string(role_obj);
                   if (strcmp(role, "assistant") == 0) {
-                     // This was the assistant's command response - remove it
                      json_object_array_del_idx(conversation_history, history_len - 1, 1);
+                     history_len--;  // Update length after deletion
+                  }
+               }
+            }
+
+            // Replace user's vision request with neutral prompt (avoids Rule #3 trigger)
+            if (history_len > 0) {
+               struct json_object *last_msg = json_object_array_get_idx(conversation_history,
+                                                                        history_len - 1);
+               struct json_object *role_obj;
+               if (json_object_object_get_ex(last_msg, "role", &role_obj)) {
+                  const char *role = json_object_get_string(role_obj);
+                  if (strcmp(role, "user") == 0) {
+                     // Replace the content with a neutral vision description request
+                     json_object_object_del(last_msg, "content");
+                     json_object_object_add(last_msg, "content",
+                                            json_object_new_string(
+                                                "Please describe this captured image."));
                   }
                }
             }
