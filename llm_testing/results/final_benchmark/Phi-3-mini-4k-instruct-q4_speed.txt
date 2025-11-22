@@ -1,0 +1,51 @@
+===================================================================
+DAWN Local LLM Performance Test
+===================================================================
+
+Test 1: Simple greeting
+-------------------------------------------------------------------
+Response:  Good day! I am Friday, your dedicated artificial intelligence companion for Mr. Anthony "Tony" Stark at the Avengers headquarters or wherever he may be currently located. How can I assist you today?
+
+If this is a friendly gre
+Tokens: 50
+Time: 2.98 seconds
+Tokens/sec: 16.77
+TTFT: 153.66 ms
+
+Test 2: Conversational query
+-------------------------------------------------------------------
+Response:  As an advanced artificial intelligence system named Friday designed to assist with information and research on various topics including technology tr ...
+Tokens: 100
+Time: 5.97 seconds
+Tokens/sec: 16.75
+TTFT: 95.83 ms
+
+Test 3: Multi-turn conversation
+-------------------------------------------------------------------
+Response:  Sir, your Iron Man Suit Alpha 9 has no reported damages or malfunctions currently and maintains optimal performance levels across all system parameters:
+
+1) Power Core - Fully charged with energy reserves at maximum capacity (87%). The power core is stable.
+2) Propulsion Systems- All thrusters are functioning within nominal limits, delivering efficient prop
+Tokens: 80
+Time: 4.93 seconds
+Tokens/sec: 16.21
+TTFT: 124.15 ms
+Prompt tokens: 56
+
+===================================================================
+Performance Summary
+===================================================================
+
+Target Performance:
+  - Tokens/sec: 25+ (acceptable), 40+ (excellent)
+  - TTFT: <200ms
+  - 50-token response: <2 seconds
+
+Current Model: Unknown
+
+If tokens/sec < 20, consider:
+  1. Download Q4_K_M quantization instead of Q6_K_L
+  2. Reduce context size: -c 1024
+  3. Increase batch size: -b 512 -ub 512
+  4. Try smaller model (Llama 3.2 3B)
+

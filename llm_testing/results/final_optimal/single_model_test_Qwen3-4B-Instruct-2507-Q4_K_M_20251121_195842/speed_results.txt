@@ -1,0 +1,52 @@
+===================================================================
+DAWN Local LLM Performance Test
+===================================================================
+
+Test 1: Simple greeting
+-------------------------------------------------------------------
+Response: *System startup sequence initiated... processing initialization protocols...*
+
+Ah, good to see you! I've been monitoring the Iron Man arc for a few hours now - just waiting for your signal. How can I assist you today? Whether it's a tactical
+Tokens: 50
+Time: 3.32 seconds
+Tokens/sec: 15.08
+TTFT: 122.53 ms
+
+Test 2: Conversational query
+-------------------------------------------------------------------
+Response: *The hum of a quiet server room fades into the background as I respond—calm, precise, and slightly amused.*
+
+Ah, "workshop systems"—that’s an interest ...
+Tokens: 100
+Time: 6.63 seconds
+Tokens/sec: 15.09
+TTFT: 105.65 ms
+
+Test 3: Multi-turn conversation
+-------------------------------------------------------------------
+Response: Suit status: Optimal. All systems—power core, armor plating, AI integration, and life support—are at 100%. Suit’s adaptive AI has been fine-tuned for maximum efficiency in high-risk environments. Just a small recalibration on the vibranium lattice stability to reduce thermal buildup during extended operations. Should be seamless once it's fully warmed up.
+
+Want me to initiate
+Tokens: 80
+Time: 5.3 seconds
+Tokens/sec: 15.09
+TTFT: 130.81 ms
+Prompt tokens: 62
+
+===================================================================
+Performance Summary
+===================================================================
+
+Target Performance:
+  - Tokens/sec: 25+ (acceptable), 40+ (excellent)
+  - TTFT: <200ms
+  - 50-token response: <2 seconds
+
+Current Model: Unknown
+
+If tokens/sec < 20, consider:
+  1. Download Q4_K_M quantization instead of Q6_K_L
+  2. Reduce context size: -c 1024
+  3. Increase batch size: -b 512 -ub 512
+  4. Try smaller model (Llama 3.2 3B)
+

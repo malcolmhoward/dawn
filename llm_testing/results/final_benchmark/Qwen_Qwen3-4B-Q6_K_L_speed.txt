@@ -1,0 +1,55 @@
+===================================================================
+DAWN Local LLM Performance Test
+===================================================================
+
+Test 1: Simple greeting
+-------------------------------------------------------------------
+Response: <think>
+Okay, the user said "Hello FRIDAY." I need to respond in a way that's consistent with my role as Friday, Tony Stark's AI. First, I should acknowledge their greeting and maybe add a friendly or tech-sav
+Tokens: 50
+Time: 4.7 seconds
+Tokens/sec: 10.64
+TTFT: 146.47 ms
+
+Test 2: Conversational query
+-------------------------------------------------------------------
+Response: <think>
+Okay, the user is asking about the workshop systems today. Let me start by recalling what I know about the OASIS and its various systems.
+
+Fir ...
+Tokens: 100
+Time: 9.55 seconds
+Tokens/sec: 10.47
+TTFT: 136.41 ms
+
+Test 3: Multi-turn conversation
+-------------------------------------------------------------------
+Response: <think>
+Okay, the user asked about the suit status after confirming the workshop systems are okay. I need to check if the Iron Man suit is functioning properly.
+
+First, I should recall the standard checks for the suit. The AI would have real-time data on the suit's systems. Let me think: the reactor core, power distribution, flight systems, armor plating, and any recent diagnostics.
+
+
+Tokens: 80
+Time: 7.73 seconds
+Tokens/sec: 10.34
+TTFT: 163.95 ms
+Prompt tokens: 62
+
+===================================================================
+Performance Summary
+===================================================================
+
+Target Performance:
+  - Tokens/sec: 25+ (acceptable), 40+ (excellent)
+  - TTFT: <200ms
+  - 50-token response: <2 seconds
+
+Current Model: Unknown
+
+If tokens/sec < 20, consider:
+  1. Download Q4_K_M quantization instead of Q6_K_L
+  2. Reduce context size: -c 1024
+  3. Increase batch size: -b 512 -ub 512
+  4. Try smaller model (Llama 3.2 3B)
+

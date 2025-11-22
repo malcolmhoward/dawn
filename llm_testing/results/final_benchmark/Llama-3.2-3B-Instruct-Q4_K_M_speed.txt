@@ -1,0 +1,54 @@
+===================================================================
+DAWN Local LLM Performance Test
+===================================================================
+
+Test 1: Simple greeting
+-------------------------------------------------------------------
+Response: Good morning! It's lovely to be of service again today at the Stark Industries headquarters in New York City or wherever our adventures take us this time around.
+
+I see you're up and about already? The coffee machine is still brewing, by the way
+Tokens: 50
+Time: 2.77 seconds
+Tokens/sec: 18.05
+TTFT: 108.56 ms
+
+Test 2: Conversational query
+-------------------------------------------------------------------
+Response: The Workshop Systems! Well, I've got a few updates for you.
+
+As of now, our team has made significant progress on integrating various artificial intel ...
+Tokens: 100
+Time: 5.53 seconds
+Tokens/sec: 18.07
+TTFT: 92.35 ms
+
+Test 3: Multi-turn conversation
+-------------------------------------------------------------------
+Response: The Iron Man suits in various states of readiness and maintenance throughout the facility.
+
+- Mark XLVII: Offline for routine diagnostics
+- Mark LXXXIII ( prototype): Online with all systems nominal, awaiting further testing.
+- Mark CXLVI "War Machine" variant is available for deployment as needed.
+Tokens: 62
+Time: 3.42 seconds
+Tokens/sec: 18.11
+TTFT: 110.0 ms
+Prompt tokens: 64
+
+===================================================================
+Performance Summary
+===================================================================
+
+Target Performance:
+  - Tokens/sec: 25+ (acceptable), 40+ (excellent)
+  - TTFT: <200ms
+  - 50-token response: <2 seconds
+
+Current Model: Unknown
+
+If tokens/sec < 20, consider:
+  1. Download Q4_K_M quantization instead of Q6_K_L
+  2. Reduce context size: -c 1024
+  3. Increase batch size: -b 512 -ub 512
+  4. Try smaller model (Llama 3.2 3B)
+

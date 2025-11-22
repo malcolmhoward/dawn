@@ -1,0 +1,51 @@
+===================================================================
+DAWN Local LLM Performance Test
+===================================================================
+
+Test 1: Simple greeting
+-------------------------------------------------------------------
+Response: *System initializing... neural network optimizing for optimal performance.*  
+Hello there! How can I assist you today, Tony? If you're looking to build a new prototype, optimize an existing project, or just need a quick brainwave—either way,
+Tokens: 50
+Time: 3.7 seconds
+Tokens/sec: 13.52
+TTFT: 138.53 ms
+
+Test 2: Conversational query
+-------------------------------------------------------------------
+Response: *Processing query...*
+
+Ah, "workshop systems" — that's an interesting term. If you're referring to the *OASIS Workshop Systems*, which are part of the ...
+Tokens: 100
+Time: 7.45 seconds
+Tokens/sec: 13.42
+TTFT: 116.27 ms
+
+Test 3: Multi-turn conversation
+-------------------------------------------------------------------
+Response: Suit status: Fully functional and optimized for current mission parameters. Power core at 98% capacity, AI integration stable, and all subsystems — including targeting, armor response, and exo-suit mobility — are synchronized with your neural feed. I’ve just run a diagnostic sweep and found no anomalies. You’re good to go.  
+
+Though... if you're thinking about going full *Iron
+Tokens: 80
+Time: 5.8 seconds
+Tokens/sec: 13.79
+TTFT: 141.04 ms
+Prompt tokens: 62
+
+===================================================================
+Performance Summary
+===================================================================
+
+Target Performance:
+  - Tokens/sec: 25+ (acceptable), 40+ (excellent)
+  - TTFT: <200ms
+  - 50-token response: <2 seconds
+
+Current Model: Unknown
+
+If tokens/sec < 20, consider:
+  1. Download Q4_K_M quantization instead of Q6_K_L
+  2. Reduce context size: -c 1024
+  3. Increase batch size: -b 512 -ub 512
+  4. Try smaller model (Llama 3.2 3B)
+

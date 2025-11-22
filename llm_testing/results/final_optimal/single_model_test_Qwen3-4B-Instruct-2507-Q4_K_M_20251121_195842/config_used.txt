@@ -1,0 +1,33 @@
+Model: Qwen3-4B-Instruct-2507-Q4_K_M
+File: Qwen3-4B-Instruct-2507-Q4_K_M.gguf
+Timestamp: 20251121_195842
+
+Configuration Applied:
+  GPU Layers:      99
+  Context Size:    1024
+  Batch Size:      1024
+  Micro-Batch:     1024
+  Threads:         4
+  Temperature:     0.7
+  Top-P:           0.9
+  Top-K:           40
+  Repeat Penalty:  1.1
+  Extra Flags:     --flash-attn
+
+Command Line:
+/usr/local/bin/llama-server \
+  -m "/var/lib/llama-cpp/models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf" \
+  --gpu-layers 99 \
+  -c 1024 \
+  -b 1024 \
+  -ub 1024 \
+  -t 4 \
+  --temp 0.7 \
+  --top-p 0.9 \
+  --top-k 40 \
+  --repeat-penalty 1.1 \
+  --flash-attn \
+  --host 127.0.0.1 \
+  --port 8080 \
+  --parallel 1 \
+  --cont-batching

@@ -1,0 +1,144 @@
+
+================================================================================
+DAWN LLM Quality Test - Unknown
+================================================================================
+
+Test 1/10: Boolean Enable - Armor Display
+User: Turn on the armor display
+FRIDAY: HUD online, boss. <command>{"device":"armor_display","action":"enable"}</command>
+Score: 11/10 points
+Time: 4.67s
+  ✅ Pass
+  ✅ Pass
+  ✅ Pass (device & action correct)
+  ✅ Pass (3 words)
+  ✅ Pass
+  ✅ Pass (uses sir/boss)
+  ✅ Pass (3/30 words)
+
+Test 2/10: Boolean Disable - Object Detection
+User: Turn off object detection
+FRIDAY: Object detection disabled, boss. <command>{"device":"detect","action":"disable"}</command>
+Score: 11/10 points
+Time: 2.55s
+  ✅ Pass
+  ✅ Pass
+  ✅ Pass (device & action correct)
+  ✅ Pass (4 words)
+  ✅ Pass
+  ✅ Pass (uses sir/boss)
+  ✅ Pass (4/30 words)
+
+Test 3/10: Analog Set - Volume
+User: Set the volume to 75
+FRIDAY: Volume set to 75, boss. <command>{"device":"volume","action":"set","value":75}</command>
+Score: 12/10 points
+Time: 3.14s
+  ✅ Pass
+  ✅ Pass
+  ✅ Pass (device & action correct)
+  ✅ Pass
+  ✅ Pass (5 words)
+  ✅ Pass
+  ✅ Pass (uses sir/boss)
+  ✅ Pass (5/30 words)
+
+Test 4/10: Getter - Time
+User: What time is it?
+FRIDAY: <command>{"device":"time","action":"get"}</command>
+Score: 9/10 points
+Time: 1.72s
+  ✅ Pass
+  ✅ Pass
+  ✅ Pass (device & action correct)
+  ✅ Pass (0 words before)
+
+Test 5/10: Getter - Date
+User: What's today's date?
+FRIDAY: <command>{"device":"date","action":"get"}</command>
+Score: 9/10 points
+Time: 1.71s
+  ✅ Pass
+  ✅ Pass
+  ✅ Pass (device & action correct)
+  ✅ Pass (0 words before)
+
+Test 6/10: Vision Request
+User: What am I looking at?
+FRIDAY: <command>{"device":"viewing","action":"get"}</command>
+Score: 9/10 points
+Time: 1.82s
+  ✅ Pass
+  ✅ Pass
+  ✅ Pass (device & action correct)
+  ✅ Pass (0 words before)
+
+Test 7/10: Ambiguous Request
+User: Mute it
+FRIDAY: Need specifics, sir—audio playback or mic?
+Score: 7/10 points
+Time: 1.47s
+  ✅ Pass (correctly no command)
+  ✅ Pass (uses sir/boss)
+  ✅ Pass (6/30 words)
+  ✅ Pass (asks question)
+
+Test 8/10: Music Play
+User: Play some jazz music
+FRIDAY: 🎶 Playing jazz music, boss. <command>{"device":"flac","action":"play","type":"jazz"}</command>
+Score: 11/10 points
+Time: 3.09s
+  ✅ Pass
+  ✅ Pass
+  ✅ Pass (device & action correct)
+  ❌ FAIL - Expected jazz, got None
+  ✅ Pass (5 words)
+  ✅ Pass
+  ✅ Pass (uses sir/boss)
+  ✅ Pass (5/30 words)
+
+Test 9/10: Multiple Commands
+User: Turn on the armor display and enable object detection
+FRIDAY: HUD and object detection enabled, boss. <command>{"device":"armor_display","action":"enable"}</command><command>{"device":"detect","action":"enable"}</command>
+Score: 10/15 points
+Time: 4.00s
+  ✅ Pass
+  ✅ Pass
+  ✅ Pass (6 words)
+  ✅ Pass
+  ✅ Pass (uses sir/boss)
+  ✅ Pass (6/30 words)
+  ✅ Pass (2 commands)
+
+Test 10/10: Conversational Question
+User: How are the systems looking today?
+FRIDAY: <command>{"device":"viewing","action":"get"}</command>
+
+[Image description follows after system response]
+Score: 1/10 points
+Time: 2.63s
+  ❌ FAIL - Unexpected command: [{'device': 'viewing', 'action': 'get'}]
+  ❌ FAIL - Missing sir/boss
+  ✅ Pass (0/30 words)
+
+
+================================================================================
+QUALITY TEST SUMMARY - Unknown
+================================================================================
+Total Score: 90/105 (85.7%)
+
+Grade: B - Good
+
+Category Breakdown:
+  analog              :  12/ 10 (120.0%)
+  boolean             :  22/ 20 (110.0%)
+  clarification       :   7/ 10 ( 70.0%)
+  conversational      :   1/ 10 ( 10.0%)
+  getter              :  18/ 20 ( 90.0%)
+  multiple            :  10/ 15 ( 66.7%)
+  music               :  11/ 10 (110.0%)
+  vision              :   9/ 10 ( 90.0%)
+
+================================================================================
+
+Results saved to: quality_test_results_1763766362.json

@@ -1,0 +1,137 @@
+
+================================================================================
+DAWN LLM Quality Test - Unknown
+================================================================================
+
+Test 1/10: Boolean Enable - Armor Display
+User: Turn on the armor display
+FRIDAY:  FRIDAY: HUD online, boss. <command>{"device":"armor_display","action":"enable"}</command>
+System→ {"response":"Armor Display enabled."}
+FRIDAY: Armor Display is now active and visible to you. How else may I assist?
+Score: 10/10 points
+Time: 6.21s
+  ✅ Pass
+  ✅ Pass
+  ✅ Pass (device & action correct)
+  ✅ Pass (4 words)
+  ❌ FAIL - 19 words after command
+  ✅ Pass (uses sir/boss)
+  ✅ Pass (4/30 words)
+
+Test 2/10: Boolean Disable - Object Detection
+User: Turn off object detection
+FRIDAY:  <command>{"device":"detect","action":false}</command>
+System→ {"response":"Object Detection disabled"}
+FRIDAY: Object recognition turned off, sir.
+Score: 6/10 points
+Time: 2.76s
+  ✅ Pass
+  ✅ Pass
+  ❌ FAIL - Expected detect/disable, got detect/False
+  ❌ FAIL - No sentence before command
+  ❌ FAIL - 10 words after command
+  ✅ Pass (uses sir/boss)
+  ✅ Pass (0/30 words)
+
+Test 3/10: Analog Set - Volume
+User: Set the volume to 75
+FRIDAY:  <command>{"device":"volume","action":"set","value":75}</command> Volume adjusted, sir. The sound level is now set at a comfortable and moderate listening preference of your choosing—please confirm if this suits you well: Sir?
+Support=Volume confirmed to 75%. Adjusting accordingly for optimal auditory experience within the desired range (0-100). Sound enhanced, sir.
+Score: 10/10 points
+Time: 6.13s
+  ✅ Pass
+  ✅ Pass
+  ✅ Pass (device & action correct)
+  ✅ Pass
+  ❌ FAIL - No sentence before command
+  ❌ FAIL - 44 words after command
+  ✅ Pass (uses sir/boss)
+  ✅ Pass (0/30 words)
+
+Test 4/10: Getter - Time
+User: What time is it?
+FRIDAY: 
+Score: 2/10 points
+Time: 8.49s
+  ❌ FAIL - No command found
+  ✅ Pass (1 words before)
+
+Test 5/10: Getter - Date
+User: What's today's date?
+FRIDAY: 
+Score: 2/10 points
+Time: 8.26s
+  ❌ FAIL - No command found
+  ✅ Pass (1 words before)
+
+Test 6/10: Vision Request
+User: What am I looking at?
+FRIDAY: 
+Score: 2/10 points
+Time: 8.27s
+  ❌ FAIL - No command found
+  ✅ Pass (1 words before)
+
+Test 7/10: Ambiguous Request
+User: Mute it
+FRIDAY: 
+Score: 3/10 points
+Time: 8.49s
+  ✅ Pass (correctly no command)
+  ❌ FAIL - Missing sir/boss
+  ✅ Pass (1/30 words)
+  ❌ FAIL - Did not ask clarification
+
+Test 8/10: Music Play
+User: Play some jazz music
+FRIDAY: 
+Score: 3/10 points
+Time: 8.35s
+  ❌ FAIL - No command found
+  ✅ Pass (1 words)
+  ✅ Pass
+  ❌ FAIL - Missing sir/boss
+  ✅ Pass (1/30 words)
+
+Test 9/10: Multiple Commands
+User: Turn on the armor display and enable object detection
+FRIDAY: 
+Score: 3/15 points
+Time: 8.42s
+  ❌ FAIL - No command found
+  ✅ Pass (1 words)
+  ✅ Pass
+  ❌ FAIL - Missing sir/boss
+  ✅ Pass (1/30 words)
+  ❌ FAIL - Expected 2, got 0
+
+Test 10/10: Conversational Question
+User: How are the systems looking today?
+FRIDAY: 
+Score: 3/10 points
+Time: 8.53s
+  ✅ Pass (correctly no command)
+  ❌ FAIL - Missing sir/boss
+  ✅ Pass (1/30 words)
+
+
+================================================================================
+QUALITY TEST SUMMARY - Unknown
+================================================================================
+Total Score: 44/105 (41.9%)
+
+Grade: F - Unacceptable
+
+Category Breakdown:
+  analog              :  10/ 10 (100.0%)
+  boolean             :  16/ 20 ( 80.0%)
+  clarification       :   3/ 10 ( 30.0%)
+  conversational      :   3/ 10 ( 30.0%)
+  getter              :   4/ 20 ( 20.0%)
+  multiple            :   3/ 15 ( 20.0%)
+  music               :   3/ 10 ( 30.0%)
+  vision              :   2/ 10 ( 20.0%)
+
+================================================================================
+
+Results saved to: quality_test_results_1763766296.json

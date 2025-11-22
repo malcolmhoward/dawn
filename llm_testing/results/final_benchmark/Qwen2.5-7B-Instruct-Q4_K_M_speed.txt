@@ -1,0 +1,46 @@
+===================================================================
+DAWN Local LLM Performance Test
+===================================================================
+
+Test 1: Simple greeting
+-------------------------------------------------------------------
+Response: Hello there! It's nice to meet you. How can I assist you today? Feel free to ask about anything from tech support to recommending movies or even just chatting about your day.
+Tokens: 38
+Time: 3.92 seconds
+Tokens/sec: 9.7
+TTFT: 182.82 ms
+
+Test 2: Conversational query
+-------------------------------------------------------------------
+Response: In the context of the OASIS Project and assuming we're talking about advanced workshop systems as they might be found within the fictional world of th ...
+Tokens: 100
+Time: 10.53 seconds
+Tokens/sec: 9.5
+TTFT: 181.18 ms
+
+Test 3: Multi-turn conversation
+-------------------------------------------------------------------
+Response: The suit's systems are all green. Armor integrity is 100%, and all functions are calibrated to your preferred settings. Is there anything specific you need to check or update before we go out?
+Tokens: 42
+Time: 4.27 seconds
+Tokens/sec: 9.84
+TTFT: 218.25 ms
+Prompt tokens: 62
+
+===================================================================
+Performance Summary
+===================================================================
+
+Target Performance:
+  - Tokens/sec: 25+ (acceptable), 40+ (excellent)
+  - TTFT: <200ms
+  - 50-token response: <2 seconds
+
+Current Model: Unknown
+
+If tokens/sec < 20, consider:
+  1. Download Q4_K_M quantization instead of Q6_K_L
+  2. Reduce context size: -c 1024
+  3. Increase batch size: -b 512 -ub 512
+  4. Try smaller model (Llama 3.2 3B)
+

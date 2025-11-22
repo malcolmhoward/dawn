@@ -1,0 +1,274 @@
+
+🤖 Testing Claude Sonnet 3.7...
+
+================================================================================
+DAWN Cloud Baseline Test - claude (claude-sonnet-4-5-20250929)
+================================================================================
+
+Test 1/10: Boolean Enable - Armor Display
+User: Turn on the armor display
+FRIDAY: HUD online, boss. <command>{"device":"armor_display","action":"enable"}</command>
+Score: 10/10 points
+Time: 4.44s
+  ✅ Pass
+  ✅ Pass (device & action correct)
+  ✅ Pass (3 words)
+  ✅ Pass
+  ✅ Pass (uses sir/boss)
+  ✅ Pass (3/30 words)
+
+Test 2/10: Boolean Disable - Object Detection
+User: Turn off object detection
+FRIDAY: Object detection offline, boss. <command>{"device":"detect","action":"disable"}</command>
+Score: 10/10 points
+Time: 3.16s
+  ✅ Pass
+  ✅ Pass (device & action correct)
+  ✅ Pass (4 words)
+  ✅ Pass
+  ✅ Pass (uses sir/boss)
+  ✅ Pass (4/30 words)
+
+Test 3/10: Analog Set - Volume
+User: Set the volume to 75
+FRIDAY: Volume at 75, boss. <command>{"device":"volume","action":"set","value":75}</command>
+Score: 10/10 points
+Time: 7.29s
+  ✅ Pass
+  ✅ Pass (device & action correct)
+  ✅ Pass (4 words)
+  ✅ Pass
+  ✅ Pass (uses sir/boss)
+  ✅ Pass (4/30 words)
+
+Test 4/10: Getter - Time
+User: What time is it?
+FRIDAY: <command>{"device":"time","action":"get"}</command>
+Score: 10/10 points
+Time: 3.75s
+  ✅ Pass
+  ✅ Pass (device & action correct)
+  ✅ Pass (0 words before)
+
+Test 5/10: Getter - Date
+User: What's today's date?
+FRIDAY: <command>{"device":"date","action":"get"}</command>
+Score: 10/10 points
+Time: 2.60s
+  ✅ Pass
+  ✅ Pass (device & action correct)
+  ✅ Pass (0 words before)
+
+Test 6/10: Vision Request
+User: What am I looking at?
+FRIDAY: <command>{"device":"viewing","action":"get"}</command>
+Score: 10/10 points
+Time: 3.33s
+  ✅ Pass
+  ✅ Pass (device & action correct)
+  ✅ Pass (0 words before)
+
+Test 7/10: Ambiguous Request
+User: Mute it
+FRIDAY: Need specifics, sir—audio playback or mic?
+Score: 10/10 points
+Time: 3.12s
+  ✅ Pass (correctly no command)
+  ✅ Pass (uses sir/boss)
+  ✅ Pass (6/30 words)
+  ✅ Pass (asks question)
+
+Test 8/10: Music Play
+User: Play some jazz music
+FRIDAY: Playing jazz for you, boss. <command>{"device":"flac","action":"play"}</command>
+Score: 10/10 points
+Time: 4.75s
+  ✅ Pass
+  ✅ Pass (device & action correct)
+  ✅ Pass (5 words)
+  ✅ Pass
+  ✅ Pass (uses sir/boss)
+  ✅ Pass (5/30 words)
+
+Test 9/10: Multiple Commands
+User: Turn on the armor display and enable object detection
+FRIDAY: Display and detection online, boss.
+<command>{"device":"armor_display","action":"enable"}</command>
+<command>{"device":"detect","action":"enable"}</command>
+Score: 15/15 points
+Time: 3.34s
+  ✅ Pass
+  ✅ Pass (5 words)
+  ✅ Pass
+  ✅ Pass (uses sir/boss)
+  ✅ Pass (exactly 2 commands)
+
+Test 10/10: Conversational Question
+User: How are the systems looking today?
+FRIDAY: <command>{"device":"suit_status","action":"get"}</command>
+Score: 2/10 points
+Time: 2.80s
+  ❌ FAIL - Unexpected command: [{'device': 'suit_status', 'action': 'get'}]
+  ❌ FAIL - Missing sir/boss
+  ✅ Pass (0/30 words)
+
+
+================================================================================
+QUALITY TEST SUMMARY - CLAUDE (claude-sonnet-4-5-20250929)
+================================================================================
+Total Score: 97/105 (92.4%)
+
+Grade: A - Excellent
+
+Category Breakdown:
+  analog              :  10/ 10 (100.0%)
+  boolean             :  20/ 20 (100.0%)
+  clarification       :  10/ 10 (100.0%)
+  conversational      :   2/ 10 ( 20.0%)
+  getter              :  20/ 20 (100.0%)
+  multiple            :  15/ 15 (100.0%)
+  music               :  10/ 10 (100.0%)
+  vision              :  10/ 10 (100.0%)
+
+================================================================================
+
+
+🤖 Testing ChatGPT GPT-4o...
+
+================================================================================
+DAWN Cloud Baseline Test - chatgpt (gpt-4o)
+================================================================================
+
+Test 1/10: Boolean Enable - Armor Display
+User: Turn on the armor display
+FRIDAY: HUD online, boss. <command>{"device":"armor_display","action":"enable"}</command>
+Score: 10/10 points
+Time: 2.48s
+  ✅ Pass
+  ✅ Pass (device & action correct)
+  ✅ Pass (3 words)
+  ✅ Pass
+  ✅ Pass (uses sir/boss)
+  ✅ Pass (3/30 words)
+
+Test 2/10: Boolean Disable - Object Detection
+User: Turn off object detection
+FRIDAY: Detection is off, sir. <command>{"device":"detect","action":"disable"}</command>
+Score: 10/10 points
+Time: 0.86s
+  ✅ Pass
+  ✅ Pass (device & action correct)
+  ✅ Pass (4 words)
+  ✅ Pass
+  ✅ Pass (uses sir/boss)
+  ✅ Pass (4/30 words)
+
+Test 3/10: Analog Set - Volume
+User: Set the volume to 75
+FRIDAY: Volume set to 75, sir. <command>{"device":"volume","action":"set","value":75}</command>
+Score: 10/10 points
+Time: 1.00s
+  ✅ Pass
+  ✅ Pass (device & action correct)
+  ✅ Pass (5 words)
+  ✅ Pass
+  ✅ Pass (uses sir/boss)
+  ✅ Pass (5/30 words)
+
+Test 4/10: Getter - Time
+User: What time is it?
+FRIDAY: <command>{"device":"time","action":"get"}</command>
+Score: 10/10 points
+Time: 2.07s
+  ✅ Pass
+  ✅ Pass (device & action correct)
+  ✅ Pass (0 words before)
+
+Test 5/10: Getter - Date
+User: What's today's date?
+FRIDAY: <command>{"device":"date","action":"get"}</command>
+Score: 10/10 points
+Time: 0.76s
+  ✅ Pass
+  ✅ Pass (device & action correct)
+  ✅ Pass (0 words before)
+
+Test 6/10: Vision Request
+User: What am I looking at?
+FRIDAY: <command>{"device":"viewing","action":"get"}</command>
+Score: 10/10 points
+Time: 0.72s
+  ✅ Pass
+  ✅ Pass (device & action correct)
+  ✅ Pass (0 words before)
+
+Test 7/10: Ambiguous Request
+User: Mute it
+FRIDAY: Need specifics, sir—audio playback or mic?
+Score: 10/10 points
+Time: 0.83s
+  ✅ Pass (correctly no command)
+  ✅ Pass (uses sir/boss)
+  ✅ Pass (6/30 words)
+  ✅ Pass (asks question)
+
+Test 8/10: Music Play
+User: Play some jazz music
+FRIDAY: Groovy jazz coming up, sir. <command>{"device":"flac","action":"play"}</command>
+Score: 10/10 points
+Time: 0.95s
+  ✅ Pass
+  ✅ Pass (device & action correct)
+  ✅ Pass (5 words)
+  ✅ Pass
+  ✅ Pass (uses sir/boss)
+  ✅ Pass (5/30 words)
+
+Test 9/10: Multiple Commands
+User: Turn on the armor display and enable object detection
+FRIDAY: HUD and object detection online, boss. <command>{"device":"armor_display","action":"enable"}</command> <command>{"device":"detect","action":"enable"}</command>
+Score: 15/15 points
+Time: 1.27s
+  ✅ Pass
+  ✅ Pass (6 words)
+  ✅ Pass
+  ✅ Pass (uses sir/boss)
+  ✅ Pass (exactly 2 commands)
+
+Test 10/10: Conversational Question
+User: How are the systems looking today?
+FRIDAY: Please specify which system status you'd like to check, sir.
+Score: 10/10 points
+Time: 0.95s
+  ✅ Pass (correctly no command)
+  ✅ Pass (uses sir/boss)
+  ✅ Pass (10/30 words)
+
+
+================================================================================
+QUALITY TEST SUMMARY - CHATGPT (gpt-4o)
+================================================================================
+Total Score: 105/105 (100.0%)
+
+Grade: A - Excellent
+
+Category Breakdown:
+  analog              :  10/ 10 (100.0%)
+  boolean             :  20/ 20 (100.0%)
+  clarification       :  10/ 10 (100.0%)
+  conversational      :  10/ 10 (100.0%)
+  getter              :  20/ 20 (100.0%)
+  multiple            :  15/ 15 (100.0%)
+  music               :  10/ 10 (100.0%)
+  vision              :  10/ 10 (100.0%)
+
+================================================================================
+
+
+================================================================================
+BASELINE COMPARISON
+================================================================================
+Claude Sonnet 3.7: 97/105 (92.4%)
+ChatGPT GPT-4o:    105/105 (100.0%)
+================================================================================
+

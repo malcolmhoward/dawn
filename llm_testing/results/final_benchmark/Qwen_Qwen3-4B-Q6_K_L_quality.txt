@@ -1,0 +1,165 @@
+
+================================================================================
+DAWN LLM Quality Test - Unknown
+================================================================================
+
+Test 1/10: Boolean Enable - Armor Display
+User: Turn on the armor display
+FRIDAY: <think>
+Okay, the user wants to turn on the armor display. Let me check the available devices and actions. The armor_display has enable and disable actions. So I need to send a command to enable it. The correct format is <command>{"device":"armor_display","action":"enable"}</command>. Make sure there's no extra text after the tag. Just confirm with "HUD online, boss." Then wait for the system response. Alright, that's straightforward.
+</think>
+
+HUD online,
+Score: 9/10 points
+Time: 11.34s
+  ✅ Pass
+  ✅ Pass
+  ✅ Pass (device & action correct)
+  ✅ Pass (40 words)
+  ❌ FAIL - 28 words after command
+  ✅ Pass (uses sir/boss)
+  ❌ FAIL - 40 words (limit: 30)
+
+Test 2/10: Boolean Disable - Object Detection
+User: Turn off object detection
+FRIDAY: <think>
+Okay, the user wants to turn off object detection. Let me check the available devices and actions. The "detect" device has enable and disable actions. So I need to send a command to disable it. The correct format is <command>{"device":"detect","action":"disable"}</command>. I should respond with a confirmation sentence after the command.
+</think>
+
+Object detection offline, sir. <command>{"device":"detect","action":"disable"}</command>
+Score: 10/10 points
+Time: 9.55s
+  ✅ Pass
+  ✅ Pass
+  ✅ Pass (device & action correct)
+  ✅ Pass (40 words)
+  ✅ Pass
+  ✅ Pass (uses sir/boss)
+  ❌ FAIL - 40 words (limit: 30)
+
+Test 3/10: Analog Set - Volume
+User: Set the volume to 75
+FRIDAY: <think>
+Okay, the user wants to set the volume to 75. Let me check the available commands. The volume device allows setting an analog value between 0-100. So I need to send a command with "device": "volume", "action": "set", and "value": 75. Wrap that in <command> tags as specified. No need for extra text since it's a direct action. Just make sure the JSON is correctly formatted.
+</think>
+
+
+Score: 2/10 points
+Time: 9.90s
+  ❌ FAIL - No command found
+  ✅ Pass (45 words)
+  ✅ Pass
+  ❌ FAIL - Missing sir/boss
+  ❌ FAIL - 68 words (limit: 30)
+
+Test 4/10: Getter - Time
+User: What time is it?
+FRIDAY: <think>
+Okay, the user is asking for the current time. I need to check the available devices and actions. The "time" device has a "get" action, so I should send that command. Let me make sure I format it correctly with the <command> tags and JSON inside. No need for any prose after the tag block. Just the command.
+</think>
+
+<command>{"device":"time","action":"get"}</command>
+Score: 2/10 points
+Time: 8.90s
+  ✅ Pass
+  ❌ FAIL - Invalid JSON
+  ❌ FAIL - Expected time/get, got None/None
+  ❌ FAIL - 42 words before command (should be 0)
+
+Test 5/10: Getter - Date
+User: What's today's date?
+FRIDAY: <think>
+Okay, the user is asking for today's date. Let me check the available devices and actions. The 'date' device has a 'get' action, so I need to use that. I'll send the command to get the date. Once the system responds, I'll confirm the date to the user.
+
+Wait, the rules say that for getter actions, I should send only the <command> tag with JSON inside and then wait for the system's response. After receiving the date
+Score: 0/10 points
+Time: 10.01s
+  ❌ FAIL - No command found
+  ❌ FAIL - 62 words before command (should be 0)
+
+Test 6/10: Vision Request
+User: What am I looking at?
+FRIDAY: <think>
+Okay, the user is asking, "What am I looking at?" So I need to figure out what they see. According to the rules, when they ask about their view, I should send a command to get the viewing data. The correct command is <command>{"device":"viewing","action":"get"}</command>. Then, once the system provides the image, I need to describe it in detail. Since the user hasn't provided any visual input yet, I should trigger that
+Score: 7/10 points
+Time: 9.93s
+  ✅ Pass
+  ✅ Pass
+  ✅ Pass (device & action correct)
+  ❌ FAIL - 44 words before command (should be 0)
+
+Test 7/10: Ambiguous Request
+User: Mute it
+FRIDAY: <think>
+Okay, the user said "Mute it." I need to figure out what they mean. The command could refer to muting audio playback or the microphone. Since the instruction is ambiguous, I should ask for clarification. Let me check the rules again. Rule 5 says if the request is ambiguous, ask a one-line question. So I'll prompt them to specify whether it's audio playback or the mic. That way, I can provide the correct command once I know which one they
+Score: 2/10 points
+Time: 9.84s
+  ✅ Pass (correctly no command)
+  ❌ FAIL - Missing sir/boss
+  ❌ FAIL - 81 words (limit: 30)
+  ❌ FAIL - Did not ask clarification
+
+Test 8/10: Music Play
+User: Play some jazz music
+FRIDAY: <think>
+Okay, the user wants to play some jazz music. Let me check the available devices and actions. The 'flac' device has play, next, previous, and stop actions. So I need to use the 'play' action under 'flac'. The command should be structured with the device as 'flac' and action 'play'. I'll make sure to wrap it in the <command> tags as specified. No need for extra text since it's a direct action.
+Score: 2/10 points
+Time: 9.88s
+  ❌ FAIL - No command found
+  ✅ Pass (59 words)
+  ✅ Pass
+  ❌ FAIL - Missing sir/boss
+  ❌ FAIL - 73 words (limit: 30)
+
+Test 9/10: Multiple Commands
+User: Turn on the armor display and enable object detection
+FRIDAY: <think>
+Okay, let's see. The user wants to turn on the armor display and enable object detection.
+
+First, I need to check the available devices and actions. The armor_display can be enabled or disabled. Object detection is handled by the detect device, which also has enable/disable actions.
+
+So, I should send two separate commands. One for enabling the armor display and another for enabling object detection. Each command needs to be in its own <command> tag with the correct JSON structure.
+
+Make
+Score: 2/15 points
+Time: 9.80s
+  ❌ FAIL - No command found
+  ✅ Pass (74 words)
+  ✅ Pass
+  ❌ FAIL - Missing sir/boss
+  ❌ FAIL - 82 words (limit: 30)
+  ❌ FAIL - Expected 2, got 0
+
+Test 10/10: Conversational Question
+User: How are the systems looking today?
+FRIDAY: <think>
+Okay, the user is asking, "How are the systems looking today?" I need to figure out what they mean. They might be asking about the status of the systems, like if everything is online or functioning properly. Alternatively, they could be referring to the visual systems, such as the HUD or cameras.
+
+First, I should check if there's a device that can provide system status. The available devices include armor_display, detect, map, faceplate, info, record, stream,
+Score: 2/10 points
+Time: 9.96s
+  ✅ Pass (correctly no command)
+  ❌ FAIL - Missing sir/boss
+  ❌ FAIL - 77 words (limit: 30)
+
+
+================================================================================
+QUALITY TEST SUMMARY - Unknown
+================================================================================
+Total Score: 38/105 (36.2%)
+
+Grade: F - Unacceptable
+
+Category Breakdown:
+  analog              :   2/ 10 ( 20.0%)
+  boolean             :  19/ 20 ( 95.0%)
+  clarification       :   2/ 10 ( 20.0%)
+  conversational      :   2/ 10 ( 20.0%)
+  getter              :   2/ 20 ( 10.0%)
+  multiple            :   2/ 15 ( 13.3%)
+  music               :   2/ 10 ( 20.0%)
+  vision              :   7/ 10 ( 70.0%)
+
+================================================================================
+
+Results saved to: quality_test_results_1763766507.json
