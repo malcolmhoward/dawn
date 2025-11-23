@@ -58,6 +58,9 @@ endif()
 # Pass the Git SHA to the compiler
 add_definitions(-DGIT_SHA=\"${GIT_SHA}\")
 
+# Include directories for new source layout
+include_directories(include)
+
 # HTTP connections (AI and such)
 find_package(CURL REQUIRED)
 include_directories(${CURL_INCLUDE_DIRS})
@@ -105,7 +108,7 @@ endif()
 #endif(PKG_CONFIG_FOUND)
 
 # Text to Speech
-add_library(piper STATIC piper.cpp)
+add_library(piper STATIC src/tts/piper.cpp)
 target_link_libraries(piper onnxruntime)
 
 # Audio Backend Options - choose one
@@ -125,51 +128,67 @@ endif()
 # ASR Engine Options
 option(ENABLE_VOSK "Enable Vosk ASR engine (legacy support)" OFF)
 
-# Whisper ASR (disable examples, tests, and server for DAWN integration)
-set(WHISPER_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(WHISPER_BUILD_SERVER OFF CACHE BOOL "" FORCE)
+# Whisper ASR (only build if Vosk is not enabled)
+if(NOT ENABLE_VOSK)
+    # Disable examples, tests, and server for DAWN integration
+    set(WHISPER_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(WHISPER_BUILD_SERVER OFF CACHE BOOL "" FORCE)
 
-# Platform-specific Whisper CUDA configuration
-if(ENABLE_WHISPER_CUDA)
-    set(GGML_CUDA ON CACHE BOOL "Enable CUDA for Whisper" FORCE)
-    message(STATUS "Whisper CUDA: ENABLED")
+    # Platform-specific Whisper CUDA configuration
+    if(ENABLE_WHISPER_CUDA)
+        set(GGML_CUDA ON CACHE BOOL "Enable CUDA for Whisper" FORCE)
+        message(STATUS "Whisper CUDA: ENABLED")
+    else()
+        set(GGML_CUDA OFF CACHE BOOL "Disable CUDA for Whisper" FORCE)
+        message(STATUS "Whisper CUDA: DISABLED")
+    endif()
+
+    add_subdirectory(whisper.cpp)
+    message(STATUS "Building Whisper ASR")
 else()
-    set(GGML_CUDA OFF CACHE BOOL "Disable CUDA for Whisper" FORCE)
-    message(STATUS "Whisper CUDA: DISABLED")
+    message(STATUS "Skipping Whisper build (Vosk enabled)")
 endif()
-
-add_subdirectory(whisper.cpp)
 
 link_directories(${CMAKE_SOURCE_DIR})
 
 # Base source files (always compiled)
 set(DAWN_SOURCES
-    asr_interface.c
-    asr_whisper.c
-    audio_capture_thread.c
-    audio_utils.c
-    chunking_manager.c
-    dawn.c
-    dawn_network_audio.c
-    dawn_server.c
-    dawn_wav_utils.c
-    flac_playback.c
-    llm_command_parser.c
-    llm_interface.c
-    llm_openai.c
-    llm_claude.c
-    llm_streaming.c
-    logging.c
-    mic_passthrough.c
-    mosquitto_comms.c
-    ring_buffer.c
-    sentence_buffer.c
-    sse_parser.c
-    text_to_command_nuevo.c
-    text_to_speech.cpp
-    vad_silero.c
-    word_to_number.c
+    # Core files
+    src/dawn.c
+    src/logging.c
+    src/audio_utils.c
+    src/mosquitto_comms.c
+    src/text_to_command_nuevo.c
+    src/word_to_number.c
+
+    # ASR subsystem
+    src/asr/asr_interface.c
+    src/asr/vad_silero.c
+    src/asr/chunking_manager.c
+
+    # LLM subsystem
+    src/llm/llm_interface.c
+    src/llm/llm_openai.c
+    src/llm/llm_claude.c
+    src/llm/llm_streaming.c
+    src/llm/llm_command_parser.c
+    src/llm/sse_parser.c
+    src/llm/sentence_buffer.c
+
+    # TTS subsystem
+    src/tts/text_to_speech.cpp
+
+    # Network subsystem
+    src/network/dawn_server.c
+    src/network/dawn_network_audio.c
+    src/network/dawn_wav_utils.c
+
+    # Audio subsystem
+    src/audio/audio_capture_thread.c
+    src/audio/ring_buffer.c
+    src/audio/flac_playback.c
+    src/audio/mic_passthrough.c
 )
 
 # Define ALSA_DEVICE for conditional compilation
@@ -177,13 +196,14 @@ if(USE_ALSA)
     add_definitions(-DALSA_DEVICE)
 endif()
 
-# Conditionally add Vosk support
+# Conditionally add ASR engine source files
 if(ENABLE_VOSK)
-    list(APPEND DAWN_SOURCES asr_vosk.c)
+    list(APPEND DAWN_SOURCES src/asr/asr_vosk.c)
     add_definitions(-DENABLE_VOSK)
-    message(STATUS "Vosk ASR support: ENABLED")
+    message(STATUS "ASR Engine: Vosk")
 else()
-    message(STATUS "Vosk ASR support: DISABLED (Whisper only)")
+    list(APPEND DAWN_SOURCES src/asr/asr_whisper.c)
+    message(STATUS "ASR Engine: Whisper")
 endif()
 
 add_executable(dawn ${DAWN_SOURCES})
@@ -198,22 +218,10 @@ target_link_libraries(dawn
                       ${CURL_LIBRARIES}
                       ${JSONC_LIBRARIES}
                       ${SPDLOG_LIBRARIES}
-                      whisper
                       ${MOSQUITTO_LIBRARIES}
                       ${FLAC_LIBRARIES}
                       OpenSSL::SSL
                       OpenSSL::Crypto)
-
-# Conditionally link CUDA libraries (Jetson only)
-if(PLATFORM STREQUAL "JETSON")
-    target_link_libraries(dawn
-                          ${CUDA_LIBRARIES}
-                          ${CUDART_LIBRARIES}
-                          ${CUSPARSE_LIBRARIES}
-                          ${CUBLAS_LIBRARIES}
-                          ${CUSOLVER_LIBRARIES}
-                          ${CURAND_LIBRARIES})
-endif()
 
 # Link appropriate audio library based on backend selection
 if(USE_ALSA)
@@ -222,9 +230,28 @@ else()
     target_link_libraries(dawn pulse-simple pulse)
 endif()
 
-# Conditionally link Vosk library
+# Conditionally link ASR library (Vosk OR Whisper, not both)
 if(ENABLE_VOSK)
     target_link_libraries(dawn vosk)
+    message(STATUS "Linking Vosk ASR library")
+else()
+    target_link_libraries(dawn whisper)
+    message(STATUS "Linking Whisper ASR library")
+endif()
+
+# Conditionally link CUDA libraries AFTER ASR libraries (linker order matters!)
+# CUDA is needed when:
+# 1. Jetson platform with Whisper (for GPU acceleration)
+# 2. Vosk is enabled (Vosk was built with CUDA support)
+if((PLATFORM STREQUAL "JETSON" AND NOT ENABLE_VOSK) OR ENABLE_VOSK)
+    target_link_libraries(dawn
+                          ${CUDA_LIBRARIES}
+                          ${CUDART_LIBRARIES}
+                          ${CUSPARSE_LIBRARIES}
+                          ${CUBLAS_LIBRARIES}
+                          ${CUSOLVER_LIBRARIES}
+                          ${CURAND_LIBRARIES})
+    message(STATUS "Linking CUDA libraries")
 endif()
 
 target_include_directories(piper PUBLIC

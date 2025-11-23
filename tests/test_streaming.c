@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "llm_interface.h"
+#include "llm/llm_interface.h"
 #include "logging.h"
 
 // Stub for text_to_speech (required by llm_interface.c)

@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "sse_parser.h"
+#include "llm/sse_parser.h"
 
 static int event_count = 0;
 

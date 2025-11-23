@@ -1,104 +1,535 @@
-# D.A.W.N.
+# D.A.W.N. - Digital Assistant for Workflow Neural-inference
+
+**D.A.W.N.** (Digital Assistant for Workflow Neural-inference) is the central intelligence layer of the OASIS ecosystem, responsible for interpreting user intent, fusing data from every subsystem, and routing commands. At its core, DAWN performs neural-inference to understand context and drive decision-making, acting as OASIS's orchestration hub for MIRAGE, AURA, SPARK, STAT, and any future modules. Instead of handling a single task, DAWN evaluates the entire system's workflow — what the user wants, what the hardware is reporting, and what action it should take next — transforming raw data into coordinated behavior across the entire platform.
+
+DAWN integrates modern speech recognition, large language models, and text-to-speech into a unified conversational AI system designed for embedded Linux platforms (Jetson, Raspberry Pi).
+
+## Features
+
+### Core Capabilities
+- **Dual ASR Engine Support**
+  - Whisper (base model) with GPU acceleration on Jetson (2.3x-5.5x speedup)
+  - Vosk (legacy support, optional, GPU-accelerated)
+  - Voice Activity Detection (VAD) using Silero model (included)
+  - Intelligent chunking for long utterances
+
+- **Multi-Provider LLM Integration**
+  - Cloud: OpenAI GPT-4o, Anthropic Claude 4.5 Sonnet
+  - Local: llama.cpp with optimized Qwen3-4B model (81.9% quality @ 138ms TTFT)
+  - Streaming responses with real-time TTS integration
+  - Sentence-boundary buffering for natural speech output
+
+- **High-Quality Text-to-Speech**
+  - Piper TTS with ONNX Runtime (en_GB-alba-medium model included)
+  - Text preprocessing for natural phrasing
+  - Streaming integration with LLM responses
+
+- **Network Audio Processing**
+  - Custom Dawn Audio Protocol (DAP) for ESP32 clients
+  - Reliable binary protocol with checksums and retries
+  - Remote voice command processing
+
+- **MQTT Integration**
+  - Device command/control system
+  - Integration with other OASIS components or external systems
+  - Extensible device callback architecture
+
+### Performance Highlights
+- **ASR Performance** (Jetson GPU acceleration):
+  - Whisper tiny: RTF 0.079 (12.7x faster than realtime)
+  - Whisper base: RTF 0.109 (9.2x faster than realtime)
+  - Whisper small: RTF 0.225 (4.4x faster than realtime)
+
+- **LLM Performance**:
+  - Cloud (GPT-4o): 100% quality, ~3.1s latency
+  - Cloud (Claude 4.5 Sonnet): 92.4% quality, ~3.5s latency
+  - Local (Qwen3-4B Q4): 81.9% quality, 116-138ms TTFT, FREE
+  - Streaming reduces perceived latency to ~1.3s (ASR + TTFT + TTS start)
+
+## Directory Structure
+
+```
+dawn/
+├── src/                          # Source files (.c, .cpp)
+│   ├── asr/                      # Speech recognition subsystem
+│   │   ├── asr_interface.c       # ASR abstraction layer
+│   │   ├── asr_whisper.c         # Whisper implementation
+│   │   ├── asr_vosk.c            # Vosk implementation (optional)
+│   │   ├── vad_silero.c          # Voice Activity Detection
+│   │   └── chunking_manager.c    # Long utterance handling
+│   ├── llm/                      # LLM integration subsystem
+│   │   ├── llm_interface.c       # LLM abstraction layer
+│   │   ├── llm_openai.c          # OpenAI API implementation
+│   │   ├── llm_claude.c          # Claude API implementation
+│   │   ├── llm_streaming.c       # Streaming response handler
+│   │   ├── sse_parser.c          # Server-Sent Events parser
+│   │   ├── sentence_buffer.c     # Sentence boundary detection
+│   │   └── llm_command_parser.c  # JSON command extraction
+│   ├── tts/                      # Text-to-speech subsystem
+│   │   ├── text_to_speech.cpp    # TTS engine wrapper
+│   │   └── piper.cpp             # Piper integration
+│   ├── network/                  # Network server subsystem
+│   │   ├── dawn_server.c         # Network audio server
+│   │   ├── dawn_network_audio.c  # Network audio processing
+│   │   └── dawn_wav_utils.c      # WAV file utilities
+│   ├── audio/                    # Audio capture/playback subsystem
+│   │   ├── audio_capture_thread.c # Dedicated capture thread
+│   │   ├── ring_buffer.c         # Thread-safe audio buffer
+│   │   ├── flac_playback.c       # Music playback
+│   │   └── mic_passthrough.c     # Microphone passthrough
+│   └── (core files)              # Core application files
+│       ├── dawn.c                # Main application & state machine
+│       ├── logging.c             # Centralized logging
+│       ├── audio_utils.c         # Audio utilities
+│       ├── mosquitto_comms.c     # MQTT integration
+│       ├── text_to_command_nuevo.c # Command parsing
+│       └── word_to_number.c      # Natural language number parsing
+│
+├── include/                      # Header files (mirrors src/)
+│   ├── asr/
+│   ├── llm/
+│   ├── tts/
+│   ├── network/
+│   ├── audio/
+│   ├── utf8/                     # UTF-8 library for TTS
+│   └── (core headers)
+│
+├── whisper.cpp/                  # Whisper ASR engine (submodule)
+├── models/                       # ML models (TTS, VAD)
+├── test_recordings/              # ASR test data & benchmarks
+├── tests/                        # Test programs
+├── llm_testing/                  # LLM testing infrastructure
+├── services/                     # Systemd services (llama-server)
+├── remote_dawn/                  # ESP32 client code
+├── vosk-model-en-us-0.22/        # Vosk model (if using Vosk)
+├── commands_config_nuevo.json    # Device/action mappings
+├── CMakeLists.txt                # Build configuration
+├── CODING_STYLE_GUIDE.md         # Code formatting standards
+├── LLM_INTEGRATION_GUIDE.md      # LLM setup guide
+├── ARCHITECTURE.md               # System architecture (see this for details)
+└── README.md                     # This file
+```
+
+## System Requirements
+
+### Recommended Platform
+- **NVIDIA Jetson** (Orin Nano, Orin NX, Xavier NX, etc.)
+  - CUDA 12.6 support for GPU acceleration
+  - 4GB+ RAM recommended
+  - 8GB+ storage for models
+
+### Supported Platforms
+- Raspberry Pi 4/5 (slower ASR without GPU)
+- Other ARM64 Linux systems
+- Any modern Linux platform with Debian/Ubuntu base
+
+### Software Requirements
+- Debian/Ubuntu-based distribution (tested on Ubuntu 20.04+ and Jetson Linux)
+- CMake 3.10+
+- GCC/G++ with C++17 support
+- CUDA 12.6 (for Jetson GPU acceleration)
+- Python 3.8+ (for testing tools)
+
+## Installation
+
+### 1. Install System Dependencies
+
+```bash
+# Core build tools
+sudo apt update
+sudo apt install -y build-essential cmake git pkg-config
+
+# Audio libraries
+sudo apt install -y libasound2-dev libpulse-dev libsndfile1-dev libflac-dev
+
+# MQTT
+sudo apt install -y libmosquitto-dev
+
+# JSON parsing
+sudo apt install -y libjson-c-dev
+
+# CURL for HTTP/API calls
+sudo apt install -y libcurl4-openssl-dev
+
+# OpenSSL
+sudo apt install -y libssl-dev
+```
+
+### 2. Install Core Dependencies
+
+#### CMake 3.27.1 (if needed)
+```bash
+wget https://github.com/Kitware/CMake/releases/download/v3.27.1/cmake-3.27.1.tar.gz
+tar xvf cmake-3.27.1.tar.gz
+cd cmake-3.27.1
+./configure --system-curl
+make -j8
+sudo make install
+```
+
+#### spdlog
+```bash
+git clone https://github.com/gabime/spdlog.git
+cd spdlog
+mkdir build && cd build
+cmake .. && make -j8
+sudo make install
+```
+
+#### espeak-ng (required for TTS)
+```bash
+# Remove conflicting packages
+sudo apt purge espeak-ng-data libespeak-ng1 speech-dispatcher-espeak-ng
+
+# Build from source
+git clone https://github.com/rhasspy/espeak-ng.git
+cd espeak-ng
+./autogen.sh
+./configure --prefix=/usr
+make -j8 src/espeak-ng src/speak-ng
+make
+sudo make LIBDIR=/usr/lib/aarch64-linux-gnu install
+```
+
+#### ONNX Runtime (with CUDA support for Jetson)
+```bash
+git clone --recursive https://github.com/microsoft/onnxruntime
+cd onnxruntime
+
+# For Jetson with CUDA 12.6
+./build.sh --use_cuda --cudnn_home /usr/local/cuda-12.6 --cuda_home /usr/local/cuda-12.6 \
+           --config MinSizeRel --update --build --parallel --build_shared_lib
+
+# Install
+sudo cp -a build/Linux/MinSizeRel/libonnxruntime.so* /usr/local/lib/
+sudo mkdir -p /usr/local/include/onnxruntime
+sudo cp include/onnxruntime/core/session/*.h /usr/local/include/onnxruntime
+sudo ldconfig
+```
+
+#### piper-phonemize (required for TTS)
+```bash
+git clone https://github.com/rhasspy/piper-phonemize.git
+cd piper-phonemize
+mkdir build && cd build
+cmake ..
+make -j8
+sudo make install
+```
+
+### 3. Install ASR Engine (Whisper)
+
+Whisper is included as a git submodule and will be built automatically by CMake.
+
+```bash
+# Initialize submodules when cloning DAWN
+git submodule update --init --recursive
+```
+
+### 4. (Optional) Install Vosk ASR
+
+If you want legacy Vosk support:
+
+#### Install Kaldi (long build!)
+```bash
+sudo apt-get install sox subversion
+sudo git clone -b vosk --single-branch --depth=1 https://github.com/alphacep/kaldi /opt/kaldi
+sudo chown -R $USER /opt/kaldi
+cd /opt/kaldi/tools
+
+# Edit Makefile: Remove `-msse -msse2` from `openfst_add_CXXFLAGS`
+vim Makefile
+
+make openfst cub  # Long build, -j doesn't work here
+./extras/install_openblas_clapack.sh
+
+cd ../src
+./configure --mathlib=OPENBLAS_CLAPACK --shared
+make -j8 online2 lm rnnlm
+```
+
+#### Install Vosk API
+```bash
+git clone https://github.com/alphacep/vosk-api --depth=1
+cd vosk-api/src
+KALDI_ROOT=/opt/kaldi make -j8
+
+cd ../c
+# Edit Makefile to add CUDA libs to LDFLAGS if needed
+make
+
+# Copy library and header
+sudo cp libvosk.so /usr/local/lib/
+sudo cp vosk_api.h /usr/local/include/
+sudo ldconfig
+```
+
+#### Download Vosk Model
+```bash
+cd /path/to/dawn
+wget https://alphacephei.com/vosk/models/vosk-model-en-us-0.22.zip
+unzip vosk-model-en-us-0.22.zip
+```
+
+### 5. Download Models
+
+#### TTS Model (Piper)
+The repository includes `en_GB-alba-medium` voice model in `models/`. Additional voices can be downloaded from:
+```bash
+# Browse available voices:
+# https://huggingface.co/rhasspy/piper-voices/tree/main/en
+
+# Example: Download a different voice
+cd models
+wget https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx
+wget https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json
+```
+
+#### Whisper Model
+Whisper models are downloaded automatically by whisper.cpp on first use, or you can download manually:
+```bash
+# Models are stored in ~/.cache/whisper or ./models/
+# Recommended: base.en (best balance of speed/accuracy with GPU)
+```
+
+#### VAD Model (Silero)
+The repository includes `silero_vad_16k_op15.onnx` in `models/`. No additional download needed.
+
+### 6. Create Configuration Files
+
+#### secrets.h (API keys)
+```c
+// Create include/secrets.h
+#ifndef SECRETS_H
+#define SECRETS_H
+
+#define OPENAI_API_KEY "your-openai-key-here"
+#define ANTHROPIC_API_KEY "your-claude-key-here"  // For Claude 4.5 Sonnet
+
+#endif
+```
+
+**Important**: Add `secrets.h` to `.gitignore` to avoid committing API keys!
+
+#### commands_config_nuevo.json (MQTT devices)
+See the example in the repository. Configure your MQTT broker and device mappings.
+
+## Building
+
+### Standard Build (Whisper only, GPU on Jetson)
+```bash
+mkdir build
+cd build
+cmake ..
+make -j8
+```
+
+### Build Options
+
+#### Enable Vosk (legacy ASR)
+```bash
+cmake -DENABLE_VOSK=ON ..
+make -j8
+```
+
+#### Use ALSA instead of PulseAudio
+```bash
+cmake -DUSE_ALSA=ON ..
+make -j8
+```
+
+#### Force platform (override auto-detection)
+```bash
+cmake -DPLATFORM=JETSON ..  # or PLATFORM=RPI
+make -j8
+```
+
+#### Build tests
+```bash
+cmake -DBUILD_TESTS=ON ..
+make -j8
+```
+
+### Code Formatting
+
+**All code must be formatted with clang-format before committing!**
+
+```bash
+# Format all code
+./format_code.sh
+
+# Check formatting (CI mode)
+./format_code.sh --check
+
+# Install pre-commit hook (auto-format on commit)
+./install-git-hooks.sh
+```
+
+See `CODING_STYLE_GUIDE.md` for detailed coding standards.
+
+## Configuration
+
+### Main Configuration (include/dawn.h)
+
+Key settings to customize:
+
+```c
+#define AI_NAME "friday"                    // Wake word
+#define OPENAI_MODEL "gpt-4o"              // Cloud LLM model
+#define DEFAULT_PCM_PLAYBACK_DEVICE "..."  // ALSA playback device
+#define DEFAULT_PCM_CAPTURE_DEVICE "..."   // ALSA capture device
+#define MQTT_IP "192.168.1.100"            // MQTT broker IP
+#define MQTT_PORT 1883                      // MQTT broker port
+```
+
+The `AI_DESCRIPTION` constant defines the system prompt/personality for the LLM.
+
+### LLM Configuration
+
+See `LLM_INTEGRATION_GUIDE.md` for detailed setup instructions for:
+- OpenAI API (cloud) - GPT-4o
+- Anthropic Claude API (cloud) - Claude 4.5 Sonnet
+- llama.cpp local server (free, on-device)
+
+**Recommended local configuration**:
+- Model: Qwen3-4B-Instruct-2507-Q4_K_M.gguf
+- Batch size: 768 (critical for quality!)
+- Context: 1024
+- Service: `services/llama-server/` (systemd service included)
+
+## Running
+
+### Local Mode (microphone input)
+```bash
+cd build
+./dawn
+```
+
+The system listens for the wake word ("friday" by default), then captures your command, processes it through ASR → LLM → TTS, and speaks the response.
+
+### Network Mode (ESP32 clients)
+
+DAWN includes a network server that accepts connections from ESP32 clients using the Dawn Audio Protocol (DAP).
+
+1. Build and flash the ESP32 client (`remote_dawn/remote_dawn.ino`)
+2. Configure WiFi credentials and DAWN server IP
+3. Run DAWN server (same `./dawn` command)
+4. ESP32 client connects and sends voice commands over WiFi
+
+See `remote_dawn/protocol_specification.md` for protocol details.
+
+## Testing
+
+### ASR Benchmarks
+```bash
+cd tests
+./asr_benchmark ../test_recordings/
+```
+
+Results are documented in `test_recordings/BENCHMARK_RESULTS.md`.
+
+### LLM Quality Testing
+```bash
+cd llm_testing/scripts
+./test_single_model.sh <model_name>
+./benchmark_all_models.sh
+python3 test_cloud_baseline.py
+```
+
+See `llm_testing/docs/MODEL_TEST_ANALYSIS.md` for optimization results.
+
+### Unit Tests
+```bash
+cd build
+./test_sse_parser
+./test_sentence_buffer
+./test_streaming
+```
+
+## Performance Optimization
+
+### ASR Performance Tips
+- Use Whisper **base** model (best accuracy/speed on Jetson GPU)
+- Enable GPU acceleration (automatic on Jetson)
+- Adjust VAD sensitivity in `include/asr/vad_silero.h`
+
+### LLM Performance Tips
+- For local LLM: Use batch size 768 and context 1024 (CRITICAL!)
+- Temperature, top-k, top-p have minimal effect on quality
+- See `llm_testing/scripts/model_configs.conf` for optimal settings
+
+### Latency Reduction
+- Streaming LLM + TTS reduces perceived latency to ~1.3s
+- GPU acceleration provides 2-5x speedup on ASR
+- Use Whisper tiny for fastest response (slight accuracy tradeoff)
+
+## Troubleshooting
+
+### Build Issues
+- **CUDA not found**: Check `/usr/local/cuda-12.6` symlink, adjust `CMakeLists.txt` if needed
+- **ONNX Runtime errors**: Verify library is in `/usr/local/lib`, run `sudo ldconfig`
+- **Missing headers**: Ensure all dependencies installed in correct paths
+
+### Runtime Issues
+- **No audio capture**: Check ALSA device names with `arecord -L`
+- **No audio playback**: Check ALSA device names with `aplay -L`
+- **Wake word not detected**: Adjust microphone sensitivity, check `pactl` or `alsamixer` levels
+- **LLM timeout**: Check API keys in `secrets.h`, network connectivity
+- **Slow ASR**: Verify GPU acceleration enabled (check logs for CUDA messages)
+
+### Network Protocol Issues
+- **Client can't connect**: Check firewall, DAWN server IP/port
+- **Checksum errors**: Verify client and server use same `PACKET_MAX_SIZE` (8192)
+- **Timeout errors**: Check network latency, adjust retry settings
+
+## Documentation
+
+- **ARCHITECTURE.md** - System architecture and data flow
+- **CODING_STYLE_GUIDE.md** - Code formatting and standards
+- **LLM_INTEGRATION_GUIDE.md** - LLM setup (cloud and local)
+- **services/llama-server/README.md** - Local LLM service setup
+- **llm_testing/docs/** - LLM optimization research
+- **remote_dawn/protocol_specification.md** - Network protocol spec
+- **test_recordings/BENCHMARK_RESULTS.md** - ASR performance benchmarks
+
+## Development
+
+### Project Structure
+- Core application: `src/dawn.c` (main loop, state machine)
+- Subsystems: `src/{asr,llm,tts,network,audio}/`
+- Headers: `include/` (mirrors src/)
+- Tests: `tests/`
+- Documentation: `*.md` files and `docs/`
+
+### Adding New Features
+1. Follow coding standards in `CODING_STYLE_GUIDE.md`
+2. Format code with `./format_code.sh`
+3. Add unit tests in `tests/`
+4. Update documentation
+5. Test on target platform (Jetson/RPi)
+
+### Contributing
+This is part of The OASIS Project. Contributions welcome!
+- Follow existing code style
+- Add tests for new features
+- Update documentation
+- Use descriptive commit messages
 
 ## Credits
 
-Initial adaptation from the piper project: https://github.com/rhasspy/piper
+- **Piper TTS**: https://github.com/rhasspy/piper (MIT License)
+- **Vosk ASR**: https://alphacephei.com/vosk/ (Apache 2.0)
+- **Whisper**: https://github.com/ggerganov/whisper.cpp (MIT License)
+- **Silero VAD**: https://github.com/snakers4/silero-vad (MIT License)
+- **ONNX Runtime**: https://github.com/microsoft/onnxruntime (MIT License)
+- **espeak-ng**: https://github.com/espeak-ng/espeak-ng (GPL v3+)
 
-Piper and the language models are covered under the MIT license.
-Vosk Licensed under the Apache License, Version 2.0.
+## License
 
-## Installation Notes
-### Cmake 3.27.1
-1. `tar xvf cmake-3.27.1.tar.gz`
-2. `cd cmake-3.27.1`
-3. `./configure --system-curl`
-4. `make -j8`
-5. `sudo make install`
+D.A.W.N. is licensed under the **GNU General Public License v3.0 or later**.
 
-### spdlog
-1. `git clone https://github.com/gabime/spdlog.git`
-2. `cd spdlog`
-3. `mkdir build && cd build`
-4. `cmake .. && make -j8`
-5. `sudo make install`
+See individual dependencies for their respective licenses.
 
-### espeak-ng (git)
-Before we begin:
-`sudo apt purge espeak-ng-data libespeak-ng1 speech-dispatcher-espeak-ng`
+---
 
-1. `git clone https://github.com/rhasspy/espeak-ng.git`
-2. `cd espeak-ng`
-3. `./autogen.sh`
-4. `./configure --prefix=/usr`
-5. `make -j8 src/espeak-ng src/speak-ng`
-6. `make`
-7. `# make docs` - Skip? bash: no: command not found
-8. `sudo make LIBDIR=/usr/lib/aarch64-linux-gnu install`
-
-### Onnxruntime (git)
-1. `git clone --recursive https://github.com/microsoft/onnxruntime`
-2. `cd onnxruntime`
-3. `./build.sh --use_cuda --cudnn_home /usr/local/cuda-11.4 --cuda_home  /usr/local/cuda-11.4 --config MinSizeRel --update --build --parallel --build_shared_lib`
-4. Needed? - `./build.sh --use_cuda --cudnn_home /usr/local/cuda-11.4 --cuda_home  /usr/local/cuda-11.4 --config MinSizeRel --enable_pybind --parallel --build_wheel`
-At this point, one test fails but it doesn't appear to be fatal to us.
-`67% tests passed, 1 tests failed out of 3
-
-Total Test time (real) = 342.80 sec
-
-The following tests FAILED:
-	  1 - onnxruntime_test_all (Failed)`
-5. `sudo cp -a build/Linux/MinSizeRel/libonnxruntime.so* /usr/local/lib/`
-6. `sudo mkdir -p /usr/local/include/onnxruntime`
-7. `sudo cp include/onnxruntime/core/session/*.h /usr/local/include/onnxruntime`
-
-
-### piper-phonemize (git)
-1. `git clone https://github.com/rhasspy/piper-phonemize.git`
-2. `cd piper-phonemize`
-2.1. `cd src && cp ../../onnxruntime/include/onnxruntime/core/session/*.h .`
-2.2. `cd ..`
-3. `mkdir build && cd build`
-4. `cmake ..`
-5. `make`
-6. `sudo make install`
-7. Needed? - `make python`
-
-### piper (git)
-1. `git clone https://github.com/rhasspy/piper.git`
-2. `cd piper`
-2.1. `vim src/cpp/CMakeLists.txt`
-2.2. Add `/usr/local/include/onnxruntime` and `/usr/local/include/piper-phonemize` to `target_include_directories`
-3. `make` - You'll get some errors on copies at the end but it builds.
-
-### kaldi (git) (This is a REALLY long build process!)
-1. `sudo apt-get install sox subversion`
-2. `sudo git clone -b vosk --single-branch --depth=1 https://github.com/alphacep/kaldi /opt/kaldi`
-3. `sudo chown -R $USER /opt/kaldi`
-4. `cd /opt/kaldi/tools`
-5. Edit Makefile. Remove `-msse -msse2` from `openfst_add_CXXFLAGS`
-6. `make openfst cub` (Note: -j# doesn't seem to work here.) *LONG BUILD*
-7. `./extras/install_openblas_clapack.sh`
-8. `cd ../src`
-9. `./configure --mathlib=OPENBLAS_CLAPACK --shared`
-10. `make -j 10 online2 lm rnnlm`
-11. `cd ../..`
-
-### vosk-api
-1. `sudo git clone https://github.com/alphacep/vosk-api --depth=1`
-2. `sudo chown -R $USER vosk-api`
-3. `cd vosk-api/src`
-4. `KALDI_ROOT=/opt/kaldi make -j8`
-5. `cd ../c`
-6. Edit Makefile. Add the following to LDFLAGS: `$(shell pkg-config --libs cuda-11.4 cudart-11.4) -lcusparse -lcublas -lcusolver -lcurand`
-7. `make`
-8. `wget https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip`
-  OR
-  THIS ONE -> `wget https://alphacephei.com/vosk/models/vosk-model-en-us-0.22.zip`
-9. `unzip vosk-model-en-us-0.22.zip`
-10. `ln -s vosk-model-en-us-0.22 model`
-11. `cp ../python/example/test.wav .`
-12. `./test_vosk`
-
-### Copy some files over for compiling
-1. `cp -r vosk-model-en-us-0.22 SOURCE_DIR`
-2. `cp ../src/vosk_api.h ../src/libvosk.so SOURCE_DIR`
+**Note**: This README reflects the reorganized codebase structure (as of November 2025). For historical reference, see git history before commit hash in `ARCHITECTURE.md`.

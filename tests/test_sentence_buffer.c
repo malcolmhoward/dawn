@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "sentence_buffer.h"
+#include "llm/sentence_buffer.h"
 
 static int sentence_count = 0;
 

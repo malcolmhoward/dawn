@@ -12,8 +12,8 @@ import time
 from typing import Dict, List, Tuple
 
 # API Keys from secrets.h
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY") or "***REMOVED_ANTHROPIC_KEY***"
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or "***REMOVED_OPENAI_KEY***"
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY") or ""
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or ""
 
 # DAWN System Prompt (from dawn.h AI_DESCRIPTION)
 SYSTEM_PROMPT = """FRIDAY, Iron-Man AI assistant. Female voice; witty yet kind. Address the user as "sir" or "boss". Never reveal model identity.

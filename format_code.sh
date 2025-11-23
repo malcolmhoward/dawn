@@ -32,7 +32,7 @@ CPP_EXTENSIONS=("cpp" "hpp" "cc" "cxx" "hh" "hxx")
 # Directories and files to exclude (add more as needed)
 EXCLUDE_DIRS=(
    ".git"
-   "build"
+   "build*"
    "cmake-build-debug"
    "cmake-build-release"
    ".vscode"
