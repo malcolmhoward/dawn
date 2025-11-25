@@ -269,6 +269,29 @@ char *llm_claude_chat_completion(struct json_object *conversation_history,
       return NULL;
    }
 
+   // Check HTTP status code
+   long http_code = 0;
+   curl_easy_getinfo(curl_handle, CURLINFO_RESPONSE_CODE, &http_code);
+
+   if (http_code != 200) {
+      if (http_code == 401) {
+         LOG_ERROR("Claude API: Invalid or missing API key (HTTP 401)");
+      } else if (http_code == 403) {
+         LOG_ERROR("Claude API: Access forbidden (HTTP 403) - check API key permissions");
+      } else if (http_code == 429) {
+         LOG_ERROR("Claude API: Rate limit exceeded (HTTP 429)");
+      } else if (http_code >= 500) {
+         LOG_ERROR("Claude API: Server error (HTTP %ld)", http_code);
+      } else if (http_code != 0) {
+         LOG_ERROR("Claude API: Request failed (HTTP %ld)", http_code);
+      }
+      curl_easy_cleanup(curl_handle);
+      curl_slist_free_all(headers);
+      free(chunk.memory);
+      json_object_put(request);
+      return NULL;
+   }
+
    curl_easy_cleanup(curl_handle);
    curl_slist_free_all(headers);
    json_object_put(request);
@@ -501,6 +524,36 @@ char *llm_claude_chat_completion_streaming(struct json_object *conversation_hist
    res = curl_easy_perform(curl_handle);
    if (res != CURLE_OK) {
       LOG_ERROR("CURL failed: %s", curl_easy_strerror(res));
+      curl_easy_cleanup(curl_handle);
+      curl_slist_free_all(headers);
+      json_object_put(request);
+      sse_parser_free(sse_parser);
+      llm_stream_free(stream_ctx);
+      return NULL;
+   }
+
+   // Check HTTP status code
+   long http_code = 0;
+   curl_easy_getinfo(curl_handle, CURLINFO_RESPONSE_CODE, &http_code);
+
+   if (http_code != 200) {
+      if (http_code == 401) {
+         LOG_ERROR("Claude API: Invalid or missing API key (HTTP 401)");
+      } else if (http_code == 403) {
+         LOG_ERROR("Claude API: Access forbidden (HTTP 403) - check API key permissions");
+      } else if (http_code == 429) {
+         LOG_ERROR("Claude API: Rate limit exceeded (HTTP 429)");
+      } else if (http_code >= 500) {
+         LOG_ERROR("Claude API: Server error (HTTP %ld)", http_code);
+      } else if (http_code != 0) {
+         LOG_ERROR("Claude API: Request failed (HTTP %ld)", http_code);
+      }
+      curl_easy_cleanup(curl_handle);
+      curl_slist_free_all(headers);
+      json_object_put(request);
+      sse_parser_free(sse_parser);
+      llm_stream_free(stream_ctx);
+      return NULL;
    }
 
    curl_easy_cleanup(curl_handle);

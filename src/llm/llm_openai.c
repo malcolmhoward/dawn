@@ -178,6 +178,34 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
       res = curl_easy_perform(curl_handle);
       if (res != CURLE_OK) {
          LOG_ERROR("curl_easy_perform() failed: %s", curl_easy_strerror(res));
+         curl_easy_cleanup(curl_handle);
+         curl_slist_free_all(headers);
+         free(chunk.memory);
+         json_object_put(root);
+         return NULL;
+      }
+
+      // Check HTTP status code
+      long http_code = 0;
+      curl_easy_getinfo(curl_handle, CURLINFO_RESPONSE_CODE, &http_code);
+
+      if (http_code != 200) {
+         if (http_code == 401) {
+            LOG_ERROR("OpenAI API: Invalid or missing API key (HTTP 401)");
+         } else if (http_code == 403) {
+            LOG_ERROR("OpenAI API: Access forbidden (HTTP 403) - check API key permissions");
+         } else if (http_code == 429) {
+            LOG_ERROR("OpenAI API: Rate limit exceeded (HTTP 429)");
+         } else if (http_code >= 500) {
+            LOG_ERROR("OpenAI API: Server error (HTTP %ld)", http_code);
+         } else if (http_code != 0) {
+            LOG_ERROR("OpenAI API: Request failed (HTTP %ld)", http_code);
+         }
+         curl_easy_cleanup(curl_handle);
+         curl_slist_free_all(headers);
+         free(chunk.memory);
+         json_object_put(root);
+         return NULL;
       }
 
       curl_easy_cleanup(curl_handle);
@@ -428,6 +456,36 @@ char *llm_openai_chat_completion_streaming(struct json_object *conversation_hist
       res = curl_easy_perform(curl_handle);
       if (res != CURLE_OK) {
          LOG_ERROR("curl_easy_perform() failed: %s", curl_easy_strerror(res));
+         curl_easy_cleanup(curl_handle);
+         curl_slist_free_all(headers);
+         sse_parser_free(sse_parser);
+         llm_stream_free(stream_ctx);
+         json_object_put(root);
+         return NULL;
+      }
+
+      // Check HTTP status code
+      long http_code = 0;
+      curl_easy_getinfo(curl_handle, CURLINFO_RESPONSE_CODE, &http_code);
+
+      if (http_code != 200) {
+         if (http_code == 401) {
+            LOG_ERROR("OpenAI API: Invalid or missing API key (HTTP 401)");
+         } else if (http_code == 403) {
+            LOG_ERROR("OpenAI API: Access forbidden (HTTP 403) - check API key permissions");
+         } else if (http_code == 429) {
+            LOG_ERROR("OpenAI API: Rate limit exceeded (HTTP 429)");
+         } else if (http_code >= 500) {
+            LOG_ERROR("OpenAI API: Server error (HTTP %ld)", http_code);
+         } else if (http_code != 0) {
+            LOG_ERROR("OpenAI API: Request failed (HTTP %ld)", http_code);
+         }
+         curl_easy_cleanup(curl_handle);
+         curl_slist_free_all(headers);
+         sse_parser_free(sse_parser);
+         llm_stream_free(stream_ctx);
+         json_object_put(root);
+         return NULL;
       }
 
       curl_easy_cleanup(curl_handle);
