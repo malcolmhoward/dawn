@@ -36,6 +36,7 @@
 #include <string.h>
 
 #include "logging.h"
+#include "ui/metrics.h"
 
 #define VAD_SAMPLE_SIZE 512           // 32ms at 16kHz
 #define VAD_CONTEXT_SIZE 64           // Context window for 16kHz (required by model)
@@ -308,6 +309,9 @@ float vad_silero_process(silero_vad_context_t *ctx,
       status = ctx->ort->GetTensorMutableData(outputs[0], (void **)&output_data);
       if (status == NULL) {
          speech_prob = output_data[0];
+
+         // Update VAD probability metric for TUI display
+         metrics_update_vad_probability(speech_prob);
 
          // Debug: Log inference result every 50 calls (aligned with normalization logging)
          // Note: debug_counter incremented above - not thread-safe

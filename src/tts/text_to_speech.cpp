@@ -14,6 +14,7 @@
 #include "network/dawn_wav_utils.h"
 #include "text_to_command_nuevo.h"
 #include "tts/piper.hpp"
+#include "ui/metrics.h"
 
 #define DEFAULT_RATE 22050
 #define DEFAULT_CHANNELS 1
@@ -378,6 +379,20 @@ void *tts_thread_function(void *arg) {
                      pthread_mutex_unlock(&tts_mutex);
                   });
 
+      // Record TTS timing metrics after synthesis completes
+      if (result.inferSeconds > 0 && !tts_stop_processing.load()) {
+         double tts_time_ms = result.inferSeconds * 1000.0;
+         metrics_record_tts_timing(tts_time_ms);
+      }
+
+      // Check if queue is empty and LLM is not streaming - signal done speaking
+      pthread_mutex_lock(&tts_queue_mutex);
+      bool queue_empty = tts_queue.empty();
+      pthread_mutex_unlock(&tts_queue_mutex);
+      if (queue_empty && !tts_stop_processing.load() && !is_llm_processing()) {
+         LOG_INFO("TTS complete - done speaking");
+      }
+
       tts_stop_processing.store(false);
    }
 
@@ -564,6 +579,11 @@ int text_to_speech_to_wav(const char *text, uint8_t **wav_data_out, size_t *wav_
 
       // Generate WAV using shared TTS handle (now thread-safe)
       piper::textToWavFile(tts_handle.config, tts_handle.voice, processedText, audioStream, result);
+
+      // Record TTS timing metrics (inferSeconds is in seconds, convert to ms)
+      double tts_time_ms = result.inferSeconds * 1000.0;
+      metrics_record_tts_timing(tts_time_ms);
+      LOG_INFO("TTS synthesis completed: %.1f ms (RTF: %.3f)", tts_time_ms, result.realTimeFactor);
 
       // Restore local TTS state (mutex already held)
       tts_playback_state = original_state;

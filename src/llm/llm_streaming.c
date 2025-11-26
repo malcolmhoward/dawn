@@ -24,11 +24,35 @@
 #include <json-c/json.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/time.h>
 
 #include "logging.h"
+#include "ui/metrics.h"
 
 #define DEFAULT_ACCUMULATED_CAPACITY 8192
 #define MAX_ACCUMULATED_SIZE (10 * 1024 * 1024)  // 10MB hard limit for LLM responses
+
+/**
+ * @brief Record TTFT metric if this is the first token
+ *
+ * Called when first text token is received from LLM stream.
+ */
+static void record_ttft_if_first_token(llm_stream_context_t *ctx) {
+   if (ctx->first_token_received) {
+      return;  // Already recorded
+   }
+
+   ctx->first_token_received = 1;
+
+   struct timeval now;
+   gettimeofday(&now, NULL);
+
+   double ttft_ms = (now.tv_sec - ctx->stream_start_time.tv_sec) * 1000.0 +
+                    (now.tv_usec - ctx->stream_start_time.tv_usec) / 1000.0;
+
+   LOG_INFO("LLM TTFT: %.1f ms", ttft_ms);
+   metrics_record_llm_ttft(ttft_ms);
+}
 
 /**
  * @brief Append text to accumulated response buffer
@@ -109,6 +133,9 @@ static void parse_openai_chunk(llm_stream_context_t *ctx, const char *event_data
          if (json_object_object_get_ex(delta, "content", &content)) {
             const char *text = json_object_get_string(content);
             if (text && strlen(text) > 0) {
+               // Record TTFT on first token
+               record_ttft_if_first_token(ctx);
+
                // Call user callback with chunk
                ctx->callback(text, ctx->callback_userdata);
 
@@ -124,6 +151,37 @@ static void parse_openai_chunk(llm_stream_context_t *ctx, const char *event_data
                ctx->stream_complete = 1;
             }
          }
+      }
+   }
+
+   // Check for usage stats (sent in final chunk when stream_options.include_usage is true)
+   json_object *usage_obj;
+   if (json_object_object_get_ex(chunk, "usage", &usage_obj)) {
+      json_object *prompt_tokens_obj, *completion_tokens_obj;
+      int input_tokens = 0, output_tokens = 0, cached_tokens = 0;
+
+      if (json_object_object_get_ex(usage_obj, "prompt_tokens", &prompt_tokens_obj)) {
+         input_tokens = json_object_get_int(prompt_tokens_obj);
+      }
+      if (json_object_object_get_ex(usage_obj, "completion_tokens", &completion_tokens_obj)) {
+         output_tokens = json_object_get_int(completion_tokens_obj);
+      }
+
+      // Check for cached tokens in prompt_tokens_details
+      json_object *prompt_details;
+      if (json_object_object_get_ex(usage_obj, "prompt_tokens_details", &prompt_details)) {
+         json_object *cached_obj;
+         if (json_object_object_get_ex(prompt_details, "cached_tokens", &cached_obj)) {
+            cached_tokens = json_object_get_int(cached_obj);
+         }
+      }
+
+      // Only record if we have actual token counts (final chunk has non-zero values)
+      if (input_tokens > 0 || output_tokens > 0) {
+         llm_type_t type = (ctx->llm_type == LLM_LOCAL) ? LLM_LOCAL : LLM_CLOUD;
+         metrics_record_llm_tokens(type, input_tokens, output_tokens, cached_tokens);
+         LOG_INFO("Stream usage: %d input, %d output, %d cached tokens", input_tokens,
+                  output_tokens, cached_tokens);
       }
    }
 
@@ -156,6 +214,16 @@ static void parse_claude_event(llm_stream_context_t *ctx, const char *event_data
 
    if (strcmp(type, "message_start") == 0) {
       ctx->message_started = 1;
+
+      // Extract input_tokens from message.usage
+      json_object *message_obj, *usage_obj, *input_tokens_obj;
+      if (json_object_object_get_ex(event, "message", &message_obj)) {
+         if (json_object_object_get_ex(message_obj, "usage", &usage_obj)) {
+            if (json_object_object_get_ex(usage_obj, "input_tokens", &input_tokens_obj)) {
+               ctx->claude_input_tokens = json_object_get_int(input_tokens_obj);
+            }
+         }
+      }
    } else if (strcmp(type, "content_block_start") == 0) {
       ctx->content_block_active = 1;
    } else if (strcmp(type, "content_block_delta") == 0) {
@@ -172,6 +240,9 @@ static void parse_claude_event(llm_stream_context_t *ctx, const char *event_data
                if (json_object_object_get_ex(delta, "text", &text_obj)) {
                   const char *text = json_object_get_string(text_obj);
                   if (text && strlen(text) > 0) {
+                     // Record TTFT on first token
+                     record_ttft_if_first_token(ctx);
+
                      // Call user callback with chunk
                      ctx->callback(text, ctx->callback_userdata);
 
@@ -185,10 +256,22 @@ static void parse_claude_event(llm_stream_context_t *ctx, const char *event_data
       }
    } else if (strcmp(type, "content_block_stop") == 0) {
       ctx->content_block_active = 0;
+   } else if (strcmp(type, "message_delta") == 0) {
+      // Extract output_tokens from usage
+      json_object *usage_obj, *output_tokens_obj;
+      if (json_object_object_get_ex(event, "usage", &usage_obj)) {
+         if (json_object_object_get_ex(usage_obj, "output_tokens", &output_tokens_obj)) {
+            int output_tokens = json_object_get_int(output_tokens_obj);
+            // Record token metrics (input was captured in message_start)
+            metrics_record_llm_tokens(LLM_CLOUD, ctx->claude_input_tokens, output_tokens, 0);
+            LOG_INFO("Claude usage: %d input, %d output tokens", ctx->claude_input_tokens,
+                     output_tokens);
+         }
+      }
    } else if (strcmp(type, "message_stop") == 0) {
       ctx->stream_complete = 1;
    }
-   // Note: message_delta, ping, and error events are ignored
+   // Note: ping and error events are ignored
 
    json_object_put(event);
 }
@@ -226,6 +309,10 @@ llm_stream_context_t *llm_stream_create(llm_type_t llm_type,
    ctx->message_started = 0;
    ctx->content_block_active = 0;
    ctx->stream_complete = 0;
+
+   // Initialize TTFT tracking
+   gettimeofday(&ctx->stream_start_time, NULL);
+   ctx->first_token_received = 0;
 
    return ctx;
 }

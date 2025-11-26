@@ -32,12 +32,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/select.h>
+#include <sys/time.h>
 #include <unistd.h>
 
 #include "llm/sentence_buffer.h"
 #include "logging.h"
 #include "secrets.h"
 #include "tts/text_to_speech.h"
+#include "ui/metrics.h"
 
 // Provider implementations
 #ifdef OPENAI_API_KEY
@@ -307,6 +309,9 @@ void llm_set_type(llm_type_t type) {
       text_to_speech("Setting AI to local LLM.");
       LOG_INFO("LLM set to LOCAL");
    }
+
+   // Update metrics with current LLM configuration
+   metrics_update_llm_config(type, current_cloud_provider);
 }
 
 llm_type_t llm_get_type(void) {
@@ -436,6 +441,13 @@ char *llm_chat_completion_streaming(struct json_object *conversation_history,
                                     void *callback_userdata) {
    char *response = NULL;
 
+   // Track LLM total time
+   struct timeval start_time, end_time;
+   gettimeofday(&start_time, NULL);
+
+   // Record query metrics
+   metrics_record_llm_query(current_type);
+
    if (current_type == LLM_LOCAL) {
       // Local LLM uses OpenAI-compatible API
 #ifdef OPENAI_API_KEY
@@ -488,7 +500,17 @@ char *llm_chat_completion_streaming(struct json_object *conversation_history,
                                                          vision_image, vision_image_size, llm_url,
                                                          NULL, chunk_callback, callback_userdata);
 #endif
+         // Record fallback event
+         metrics_record_fallback();
       }
+   }
+
+   // Record LLM total time
+   if (response != NULL) {
+      gettimeofday(&end_time, NULL);
+      double total_ms = (end_time.tv_sec - start_time.tv_sec) * 1000.0 +
+                        (end_time.tv_usec - start_time.tv_usec) / 1000.0;
+      metrics_record_llm_total_time(total_ms);
    }
 
    return response;

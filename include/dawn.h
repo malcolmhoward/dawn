@@ -128,6 +128,13 @@ extern command_processing_mode_t command_processing_mode;
  */
 sig_atomic_t get_quit(void);
 
+/**
+ * @brief Check if LLM is currently processing/streaming.
+ *
+ * @return 1 if LLM thread is running, 0 otherwise.
+ */
+int is_llm_processing(void);
+
 #ifdef __cplusplus
 }
 #endif

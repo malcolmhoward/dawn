@@ -26,6 +26,7 @@
 #include <sys/time.h>
 
 #include "logging.h"
+#include "ui/metrics.h"
 #include "whisper.h"
 
 /**
@@ -269,6 +270,9 @@ asr_result_t *asr_whisper_finalize(void *ctx) {
 
    LOG_INFO("Whisper: Final result: \"%s\" (%.1fms, RTF: %.3f)", result->text ? result->text : "",
             processing_time, rtf);
+
+   // Record ASR timing metrics
+   metrics_record_asr_timing(processing_time, rtf);
 
    return result;
 }

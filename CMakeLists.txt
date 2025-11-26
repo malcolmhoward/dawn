@@ -189,6 +189,9 @@ set(DAWN_SOURCES
     src/audio/ring_buffer.c
     src/audio/flac_playback.c
     src/audio/mic_passthrough.c
+
+    # UI subsystem (TUI metrics)
+    src/ui/metrics.c
 )
 
 # Define ALSA_DEVICE for conditional compilation

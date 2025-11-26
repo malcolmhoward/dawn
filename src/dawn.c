@@ -56,8 +56,10 @@
 #include "network/dawn_network_audio.h"
 #include "network/dawn_server.h"
 #include "network/dawn_wav_utils.h"
+#include "state_machine.h"
 #include "text_to_command_nuevo.h"
 #include "tts/text_to_speech.h"
+#include "ui/metrics.h"
 #include "version.h"
 
 // Whisper chunking manager
@@ -205,35 +207,7 @@ const char *morning_greeting = "Good morning boss.";
 const char *day_greeting = "Good day Sir.";
 const char *evening_greeting = "Good evening Sir.";
 
-/**
- * @enum listeningState
- * Enum representing the possible states of Dawn's listening process.
- *
- * @var SILENCE
- * The AI is not actively listening or processing commands.
- * It's waiting for a noise threshold to be exceeded.
- *
- * @var WAKEWORD_LISTEN
- * The AI is listening for a wake word to initiate interaction.
- *
- * @var COMMAND_RECORDING
- * The AI is recording a command after recognizing a wake word.
- *
- * @var PROCESS_COMMAND
- * The AI is processing a recorded command.
- *
- * @var VISION_AI_READY
- * Indicates that the vision AI component is ready for processing.
- */
-typedef enum {
-   SILENCE,
-   WAKEWORD_LISTEN,
-   COMMAND_RECORDING,
-   PROCESS_COMMAND,
-   VISION_AI_READY,
-   NETWORK_PROCESSING,
-   INVALID_STATE
-} listeningState;
+/* State machine enum defined in state_machine.h (dawn_state_t) */
 
 // Define the shared variables for tts state
 pthread_cond_t tts_cond = PTHREAD_COND_INITIALIZER;
@@ -243,7 +217,8 @@ pthread_mutex_t tts_mutex = PTHREAD_MUTEX_INITIALIZER;
 // Define the shared variables for LLM thread state
 pthread_mutex_t llm_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_t llm_thread;
-volatile int llm_processing = 0;  // Flag: 1 if LLM thread is running, 0 otherwise
+volatile int llm_processing = 0;     // Flag: 1 if LLM thread is running, 0 otherwise
+struct timeval pipeline_start_time;  // Track when pipeline processing starts
 
 /**
  * @var static char *vision_ai_image
@@ -290,7 +265,7 @@ size_t processing_result_size = 0;
 int processing_complete = 0;
 
 // Network processing state
-static listeningState previous_state_before_network = SILENCE;
+static dawn_state_t previous_state_before_network = DAWN_STATE_SILENCE;
 static uint8_t *network_pcm_buffer = NULL;
 static size_t network_pcm_size = 0;
 static pthread_mutex_t network_processing_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -377,6 +352,10 @@ static void dawn_tts_sentence_callback(const char *sentence, void *userdata) {
 
 sig_atomic_t get_quit(void) {
    return quit;
+}
+
+int is_llm_processing(void) {
+   return llm_processing;
 }
 
 #if 0
@@ -949,7 +928,7 @@ void process_vision_ai(const char *base64_image, size_t image_size) {
    vision_ai_ready = 1;
 }
 
-listeningState currentState = INVALID_STATE;
+dawn_state_t currentState = DAWN_STATE_INVALID;
 
 /**
  * @brief Saves the conversation history JSON to a timestamped file.
@@ -1013,7 +992,7 @@ int save_conversation_history(struct json_object *conversation_history) {
  * @brief Reset all subsystems for a new utterance
  *
  * Resets VAD, ASR, chunking manager, duration tracking, and pre-roll buffer.
- * Call this when transitioning back to WAKEWORD_LISTEN or SILENCE state
+ * Call this when transitioning back to DAWN_STATE_WAKEWORD_LISTEN or DAWN_STATE_SILENCE state
  * to ensure clean state for the next interaction.
  *
  * @param vad_ctx Silero VAD context to reset (can be NULL)
@@ -1061,40 +1040,23 @@ static void reset_for_new_utterance(silero_vad_context_t *vad_ctx,
  * FIXME: Build this JSON correctly.
  *        Also pick a better topic for general purpose use.
  */
-int publish_ai_state(listeningState newState) {
+int publish_ai_state(dawn_state_t newState) {
    const char stateTemplate[] = "{\"device\": \"ai\", \"name\":\"%s\", \"state\":\"%s\"}";
    char state[20] = "";
    char *aiState = NULL;
    int aiStateLength = 0;
    int rc = 0;
 
-   if (newState == currentState || newState == INVALID_STATE) {
+   if (newState == currentState || newState == DAWN_STATE_INVALID) {
       return 0;
    }
 
-   switch (newState) {
-      case SILENCE:
-         strcpy(state, "SILENCE");
-         break;
-      case WAKEWORD_LISTEN:
-         strcpy(state, "WAKEWORD_LISTEN");
-         break;
-      case COMMAND_RECORDING:
-         strcpy(state, "COMMAND_RECORDING");
-         break;
-      case PROCESS_COMMAND:
-         strcpy(state, "PROCESS_COMMAND");
-         break;
-      case VISION_AI_READY:
-         strcpy(state, "VISION_AI_READY");
-         break;
-      case NETWORK_PROCESSING:
-         strcpy(state, "NETWORK_PROCESSING");
-         break;
-      default:
-         LOG_ERROR("Unknown state: %d", newState);
-         return 1;
+   const char *state_name = dawn_state_name(newState);
+   if (strcmp(state_name, "UNKNOWN") == 0) {
+      LOG_ERROR("Unknown state: %d", newState);
+      return 1;
    }
+   strcpy(state, state_name);
 
    /* "- 4" is from substracting the two %s but adding the term char */
    aiStateLength = strlen(stateTemplate) + strlen(AI_NAME) + strlen(state) - 4 + 1;
@@ -1119,6 +1081,9 @@ int publish_ai_state(listeningState newState) {
    }
 
    free(aiState);
+
+   // Update metrics with state transition
+   metrics_update_state(newState);
 
    currentState = newState;  // Update the state after successful publish
 
@@ -1427,8 +1392,8 @@ int main(int argc, char *argv[]) {
 
    int i = 0;
 
-   listeningState recState = SILENCE;
-   listeningState silenceNextState = WAKEWORD_LISTEN;
+   dawn_state_t recState = DAWN_STATE_SILENCE;
+   dawn_state_t silenceNextState = DAWN_STATE_WAKEWORD_LISTEN;
 
    // VAD state tracking
    float vad_speech_prob = 0.0f;
@@ -1789,6 +1754,11 @@ int main(int argc, char *argv[]) {
       exit(EXIT_FAILURE);
    }
 
+   // Initialize metrics system (before LLM so config is tracked)
+   if (metrics_init() != 0) {
+      LOG_WARNING("Failed to initialize metrics system - continuing without metrics");
+   }
+
    // Initialize LLM system
    llm_init(cloud_provider_override);
 
@@ -1825,7 +1795,7 @@ int main(int argc, char *argv[]) {
    LOG_INFO("Listening...\n");
    while (!quit) {
       if (vision_ai_ready) {
-         recState = VISION_AI_READY;
+         recState = DAWN_STATE_VISION_AI_READY;
          // Reset VAD state at interaction boundary (vision AI entry)
          if (vad_ctx) {
             vad_silero_reset(vad_ctx);
@@ -1848,9 +1818,10 @@ int main(int argc, char *argv[]) {
             }
 
             // State transition safety check
-            if (recState == PROCESS_COMMAND || recState == VISION_AI_READY) {
+            if (recState == DAWN_STATE_PROCESS_COMMAND || recState == DAWN_STATE_VISION_AI_READY) {
                LOG_WARNING("Network audio received during %s - deferring",
-                           recState == PROCESS_COMMAND ? "command processing" : "vision AI");
+                           recState == DAWN_STATE_PROCESS_COMMAND ? "command processing"
+                                                                  : "vision AI");
 
                // Send busy message TTS
                size_t busy_wav_size = 0;
@@ -1881,11 +1852,7 @@ int main(int argc, char *argv[]) {
             }
 
             // Safe to process - save current state and transition
-            LOG_INFO("Interrupting %s state for network processing",
-                     recState == SILENCE             ? "SILENCE"
-                     : recState == WAKEWORD_LISTEN   ? "WAKEWORD_LISTEN"
-                     : recState == COMMAND_RECORDING ? "COMMAND_RECORDING"
-                                                     : "OTHER");
+            LOG_INFO("Interrupting %s state for network processing", dawn_state_name(recState));
 
             previous_state_before_network = recState;
 
@@ -1903,7 +1870,7 @@ int main(int argc, char *argv[]) {
                if (network_pcm_buffer) {
                   memcpy(network_pcm_buffer, pcm->pcm_data, pcm->pcm_size);
                   network_pcm_size = pcm->pcm_size;
-                  recState = NETWORK_PROCESSING;
+                  recState = DAWN_STATE_NETWORK_PROCESSING;
                   LOG_INFO("Transitioned to NETWORK_PROCESSING state");
                } else {
                   LOG_ERROR("Failed to allocate network PCM buffer");
@@ -1971,6 +1938,14 @@ int main(int argc, char *argv[]) {
          // LLM just completed - process the response
          LOG_INFO("LLM thread completed - processing response");
 
+         // Record pipeline completion time (ASR to LLM response complete)
+         struct timeval pipeline_end_time;
+         gettimeofday(&pipeline_end_time, NULL);
+         double pipeline_ms = (pipeline_end_time.tv_sec - pipeline_start_time.tv_sec) * 1000.0 +
+                              (pipeline_end_time.tv_usec - pipeline_start_time.tv_usec) / 1000.0;
+         metrics_record_pipeline_total(pipeline_ms);
+         LOG_INFO("Pipeline time (ASR to LLM complete): %.1f ms", pipeline_ms);
+
          pthread_mutex_lock(&llm_mutex);
          char *response_text = llm_response_text;
          llm_response_text = NULL;  // Transfer ownership
@@ -1992,6 +1967,8 @@ int main(int argc, char *argv[]) {
          } else if (response_text != NULL) {
             // Process successful response
             LOG_WARNING("AI: %s\n", response_text);
+            metrics_set_last_ai_response(response_text);
+            metrics_log_activity("FRIDAY: %s", response_text);
 
             // Create cleaned version for TTS (keep original for conversation history)
             char *tts_response = strdup(response_text);
@@ -2080,7 +2057,7 @@ int main(int argc, char *argv[]) {
 
       publish_ai_state(recState);
       switch (recState) {
-         case SILENCE:
+         case DAWN_STATE_SILENCE:
             pthread_mutex_lock(&tts_mutex);
             if (tts_playback_state == TTS_PLAYBACK_PAUSE) {
                tts_playback_state = TTS_PLAYBACK_PLAY;
@@ -2141,10 +2118,7 @@ int main(int argc, char *argv[]) {
             if (speech_detected) {
                LOG_INFO("SILENCE: Speech detected (VAD: %.3f), transitioning to %s (pre-roll: %zu "
                         "bytes)\n",
-                        vad_speech_prob,
-                        silenceNextState == WAKEWORD_LISTEN ? "WAKEWORD_LISTEN"
-                                                            : "COMMAND_RECORDING",
-                        preroll_valid_bytes);
+                        vad_speech_prob, dawn_state_name(silenceNextState), preroll_valid_bytes);
                recState = silenceNextState;
 
                // Reset VAD state for new interaction (critical for preventing state accumulation)
@@ -2202,7 +2176,7 @@ int main(int argc, char *argv[]) {
                preroll_valid_bytes = 0;
             }
             break;
-         case WAKEWORD_LISTEN:
+         case DAWN_STATE_WAKEWORD_LISTEN:
             pthread_mutex_lock(&tts_mutex);
             if (tts_playback_state == TTS_PLAYBACK_PLAY) {
                tts_playback_state = TTS_PLAYBACK_PAUSE;
@@ -2269,7 +2243,7 @@ int main(int argc, char *argv[]) {
                silence_duration = 0.0f;  // Reset on speech
             }
 
-            // Pause detection for chunking (Whisper only, similar to COMMAND_RECORDING)
+            // Pause detection for chunking (Whisper only, similar to DAWN_STATE_COMMAND_RECORDING)
             if (asr_engine == ASR_ENGINE_WHISPER && chunk_mgr) {
                int should_finalize_chunk = 0;
 
@@ -2389,6 +2363,8 @@ int main(int argc, char *argv[]) {
                      LOG_WARNING("Input: %s\n", asr_result->text ? asr_result->text : "");
                      if (asr_result->text) {
                         input_text = strdup(asr_result->text);
+                        metrics_set_last_user_command(asr_result->text);
+                        metrics_log_activity("User: \"%s\"", asr_result->text);
                      } else {
                         input_text = NULL;
                      }
@@ -2430,8 +2406,8 @@ int main(int argc, char *argv[]) {
                            tts_playback_state = TTS_PLAYBACK_DISCARD;
                            pthread_cond_signal(&tts_cond);
 
-                           silenceNextState = WAKEWORD_LISTEN;
-                           recState = SILENCE;
+                           silenceNextState = DAWN_STATE_WAKEWORD_LISTEN;
+                           recState = DAWN_STATE_SILENCE;
                            // Reset all subsystems for new utterance
                            reset_for_new_utterance(vad_ctx, asr_ctx, chunk_mgr, &silence_duration,
                                                    &speech_duration, &recording_duration,
@@ -2506,14 +2482,14 @@ int main(int argc, char *argv[]) {
                      }
 
                      if (*check_ptr == '\0') {
-                        // No command after wake word - transition to COMMAND_RECORDING
+                        // No command after wake word - transition to DAWN_STATE_COMMAND_RECORDING
                         LOG_WARNING("Wake word detected with no command, transitioning to "
                                     "COMMAND_RECORDING.\n");
                         text_to_speech("Hello sir.");
 
                         commandTimeout = 0;
-                        silenceNextState = COMMAND_RECORDING;
-                        recState = SILENCE;
+                        silenceNextState = DAWN_STATE_COMMAND_RECORDING;
+                        recState = DAWN_STATE_SILENCE;
 
                         // Reset all subsystems for new utterance
                         reset_for_new_utterance(vad_ctx, asr_ctx, chunk_mgr, &silence_duration,
@@ -2531,7 +2507,7 @@ int main(int argc, char *argv[]) {
                         free(input_text);
                         input_text = NULL;
 
-                        recState = PROCESS_COMMAND;
+                        recState = DAWN_STATE_PROCESS_COMMAND;
 
                         // Reset all subsystems for new utterance
                         reset_for_new_utterance(vad_ctx, asr_ctx, chunk_mgr, &silence_duration,
@@ -2546,8 +2522,8 @@ int main(int argc, char *argv[]) {
                      }
                      pthread_mutex_unlock(&tts_mutex);
 
-                     silenceNextState = WAKEWORD_LISTEN;
-                     recState = SILENCE;
+                     silenceNextState = DAWN_STATE_WAKEWORD_LISTEN;
+                     recState = DAWN_STATE_SILENCE;
 
                      // Reset all subsystems for new utterance (no wake word detected)
                      reset_for_new_utterance(vad_ctx, asr_ctx, chunk_mgr, &silence_duration,
@@ -2566,10 +2542,12 @@ int main(int argc, char *argv[]) {
                      input_text = NULL;
                   }
                } else {
-                  // No content to process, transition back to SILENCE to avoid infinite loop
-                  LOG_INFO("WAKEWORD_LISTEN: No content to process, returning to SILENCE.\n");
-                  silenceNextState = WAKEWORD_LISTEN;
-                  recState = SILENCE;
+                  // No content to process, transition back to DAWN_STATE_SILENCE to avoid infinite
+                  // loop
+                  LOG_INFO(
+                      "WAKEWORD_LISTEN: No content to process, returning to DAWN_STATE_SILENCE.\n");
+                  silenceNextState = DAWN_STATE_WAKEWORD_LISTEN;
+                  recState = DAWN_STATE_SILENCE;
                   // Reset all subsystems for new utterance
                   reset_for_new_utterance(vad_ctx, asr_ctx, chunk_mgr, &silence_duration,
                                           &speech_duration, &recording_duration, &preroll_write_pos,
@@ -2578,7 +2556,7 @@ int main(int argc, char *argv[]) {
             }
             buff_size = 0;
             break;
-         case COMMAND_RECORDING:
+         case DAWN_STATE_COMMAND_RECORDING:
             pthread_mutex_lock(&tts_mutex);
             if (tts_playback_state == TTS_PLAYBACK_PAUSE) {
                tts_playback_state = TTS_PLAYBACK_DISCARD;
@@ -2719,7 +2697,7 @@ int main(int argc, char *argv[]) {
 
                   // chunking_manager_get_full_text() internally calls reset(), so we're ready
                   // for next utterance. ASR context is still owned by chunking_manager.
-                  recState = PROCESS_COMMAND;
+                  recState = DAWN_STATE_PROCESS_COMMAND;
                } else {
                   // Vosk mode: Direct ASR finalization (unchanged)
                   asr_result = asr_finalize(asr_ctx);
@@ -2730,16 +2708,18 @@ int main(int argc, char *argv[]) {
 
                      if (asr_result->text) {
                         command_text = strdup(asr_result->text);
+                        metrics_set_last_user_command(asr_result->text);
+                        metrics_log_activity("User: \"%s\"", asr_result->text);
                      } else {
                         command_text = NULL;
                      }
                      asr_result_free(asr_result);
                      asr_result = NULL;
 
-                     recState = PROCESS_COMMAND;
+                     recState = DAWN_STATE_PROCESS_COMMAND;
 
                      // Reset ASR and chunking manager (durations will be reset when returning to
-                     // WAKEWORD_LISTEN)
+                     // DAWN_STATE_WAKEWORD_LISTEN)
                      if (chunk_mgr) {
                         chunking_manager_reset(chunk_mgr);
                      }
@@ -2749,7 +2729,7 @@ int main(int argc, char *argv[]) {
             }
             buff_size = 0;
             break;
-         case PROCESS_COMMAND:
+         case DAWN_STATE_PROCESS_COMMAND:
             // Skip processing if command is empty, whitespace, or [BLANK_AUDIO]
             if (!command_text || strlen(command_text) == 0 ||
                 strspn(command_text, " \t\n\r") == strlen(command_text) ||
@@ -2759,8 +2739,8 @@ int main(int argc, char *argv[]) {
                   free(command_text);
                   command_text = NULL;
                }
-               silenceNextState = WAKEWORD_LISTEN;
-               recState = SILENCE;
+               silenceNextState = DAWN_STATE_WAKEWORD_LISTEN;
+               recState = DAWN_STATE_SILENCE;
                // Reset all subsystems for new utterance
                reset_for_new_utterance(vad_ctx, asr_ctx, chunk_mgr, &silence_duration,
                                        &speech_duration, &recording_duration, &preroll_write_pos,
@@ -2863,15 +2843,15 @@ int main(int argc, char *argv[]) {
                if (ignoreCount < numIgnoreWords &&
                    command_processing_mode == CMD_MODE_DIRECT_ONLY) {
                   LOG_WARNING("Input ignored. Found in ignore list.\n");
-                  silenceNextState = WAKEWORD_LISTEN;
-                  recState = SILENCE;
+                  silenceNextState = DAWN_STATE_WAKEWORD_LISTEN;
+                  recState = DAWN_STATE_SILENCE;
 
                   // Reset all subsystems for new utterance (ignored empty command)
                   reset_for_new_utterance(vad_ctx, asr_ctx, chunk_mgr, &silence_duration,
                                           &speech_duration, &recording_duration, &preroll_write_pos,
                                           &preroll_valid_bytes);
                } else {
-                  // User message already added at top of PROCESS_COMMAND
+                  // User message already added at top of DAWN_STATE_PROCESS_COMMAND
 
                   // Check if an LLM thread is already running (from a previous request or
                   // interrupt)
@@ -2893,14 +2873,14 @@ int main(int argc, char *argv[]) {
                      }
 
                      // Return to listening state
-                     silenceNextState = WAKEWORD_LISTEN;
-                     recState = SILENCE;
+                     silenceNextState = DAWN_STATE_WAKEWORD_LISTEN;
+                     recState = DAWN_STATE_SILENCE;
 
                      // Reset all subsystems for new utterance
                      reset_for_new_utterance(vad_ctx, asr_ctx, chunk_mgr, &silence_duration,
                                              &speech_duration, &recording_duration,
                                              &preroll_write_pos, &preroll_valid_bytes);
-                     break;  // Exit PROCESS_COMMAND case
+                     break;  // Exit DAWN_STATE_PROCESS_COMMAND case
                   }
 
                   // Spawn LLM thread to process request (non-blocking)
@@ -2928,8 +2908,9 @@ int main(int argc, char *argv[]) {
                      llm_vision_image_size = 0;
                   }
 
-                  // Mark LLM as processing
+                  // Mark LLM as processing and record pipeline start time
                   llm_processing = 1;
+                  gettimeofday(&pipeline_start_time, NULL);
 
                   pthread_mutex_unlock(&llm_mutex);
 
@@ -2951,19 +2932,19 @@ int main(int argc, char *argv[]) {
                   }
 
                   // Return to listening state - audio processing continues while LLM works
-                  silenceNextState = WAKEWORD_LISTEN;
-                  recState = SILENCE;
+                  silenceNextState = DAWN_STATE_WAKEWORD_LISTEN;
+                  recState = DAWN_STATE_SILENCE;
 
                   // Reset all subsystems for new utterance
                   reset_for_new_utterance(vad_ctx, asr_ctx, chunk_mgr, &silence_duration,
                                           &speech_duration, &recording_duration, &preroll_write_pos,
                                           &preroll_valid_bytes);
-                  break;  // Exit PROCESS_COMMAND case - LLM will complete asynchronously
+                  break;  // Exit DAWN_STATE_PROCESS_COMMAND case - LLM will complete asynchronously
                }
             }
 
-            break;  // PROCESS_COMMAND case end
-         case VISION_AI_READY:
+            break;  // DAWN_STATE_PROCESS_COMMAND case end
+         case DAWN_STATE_VISION_AI_READY:
             pthread_mutex_lock(&tts_mutex);
             if (tts_playback_state == TTS_PLAYBACK_PAUSE) {
                tts_playback_state = TTS_PLAYBACK_PLAY;
@@ -3007,7 +2988,7 @@ int main(int argc, char *argv[]) {
             }
 
             // Get the AI response using the image recognition.
-            // The user message was already added in PROCESS_COMMAND state
+            // The user message was already added in DAWN_STATE_PROCESS_COMMAND state
             // The vision image will be added by llm_claude.c/llm_openai.c to the last user message
             // Use streaming with TTS sentence buffering for immediate response
             response_text = llm_chat_completion_streaming_tts(
@@ -3018,6 +2999,8 @@ int main(int argc, char *argv[]) {
             if (response_text != NULL) {
                // AI returned successfully
                LOG_WARNING("AI: %s\n", response_text);
+               metrics_set_last_ai_response(response_text);
+               metrics_log_activity("FRIDAY: %s", response_text);
                // TTS already handled by streaming callback
 
                // Add the successful AI response to the conversation.
@@ -3030,6 +3013,7 @@ int main(int argc, char *argv[]) {
             } else {
                // Error on AI response
                LOG_ERROR("GPT error.\n");
+               metrics_record_error();
                text_to_speech("I'm sorry but I'm currently unavailable boss.");
             }
 
@@ -3042,8 +3026,8 @@ int main(int argc, char *argv[]) {
             vision_ai_ready = 0;
 
             // Set the next listening state
-            silenceNextState = WAKEWORD_LISTEN;
-            recState = SILENCE;
+            silenceNextState = DAWN_STATE_WAKEWORD_LISTEN;
+            recState = DAWN_STATE_SILENCE;
 
             // Reset all subsystems for new utterance (vision AI complete)
             reset_for_new_utterance(vad_ctx, asr_ctx, chunk_mgr, &silence_duration,
@@ -3051,7 +3035,7 @@ int main(int argc, char *argv[]) {
                                     &preroll_valid_bytes);
 
             break;
-         case NETWORK_PROCESSING:
+         case DAWN_STATE_NETWORK_PROCESSING:
             LOG_INFO("Processing network audio from client");
 
             pthread_mutex_lock(&network_processing_mutex);
@@ -3132,6 +3116,8 @@ int main(int argc, char *argv[]) {
 
                   if (input_text && strlen(input_text) > 0 && !direct_command_found) {
                      LOG_INFO("Network speech recognized: \"%s\"", input_text);
+                     metrics_set_last_user_command(input_text);
+                     metrics_log_activity("User (network): \"%s\"", input_text);
 
                      // Add user message to conversation history
                      struct json_object *user_message = json_object_new_object();
@@ -3150,6 +3136,8 @@ int main(int argc, char *argv[]) {
                         remove_emojis(response_text);
 
                         LOG_INFO("Network LLM response: \"%s\"", response_text);
+                        metrics_set_last_ai_response(response_text);
+                        metrics_log_activity("FRIDAY (network): %s", response_text);
 
                         // Generate TTS WAV for network transmission with ESP32 size limits
                         size_t response_wav_size = 0;
@@ -3302,8 +3290,7 @@ int main(int argc, char *argv[]) {
 
             // Return to previous state
             recState = previous_state_before_network;
-            LOG_INFO("Network processing complete, returned to %s",
-                     recState == SILENCE ? "SILENCE" : "previous state");
+            LOG_INFO("Network processing complete, returned to %s", dawn_state_name(recState));
             break;
          default:
             LOG_ERROR("I really shouldn't be here.\n");
@@ -3374,6 +3361,19 @@ int main(int argc, char *argv[]) {
    free(max_buff);
 
    curl_global_cleanup();
+
+   // Export metrics on exit with timestamped filename
+   {
+      time_t current_time;
+      struct tm *time_info;
+      char stats_filename[64];
+
+      time(&current_time);
+      time_info = localtime(&current_time);
+      strftime(stats_filename, sizeof(stats_filename), "dawn_stats_%Y%m%d_%H%M%S.json", time_info);
+      metrics_export_json(stats_filename);
+   }
+   metrics_cleanup();
 
    // Close the log file properly
    close_logging();

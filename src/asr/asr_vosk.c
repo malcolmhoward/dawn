@@ -28,6 +28,7 @@
 
 #include "asr/vosk_api.h"
 #include "logging.h"
+#include "ui/metrics.h"
 
 /**
  * @brief Vosk-specific context structure
@@ -246,6 +247,9 @@ asr_result_t *asr_vosk_finalize(void *ctx) {
 
    LOG_INFO("Vosk: Final result: \"%s\" (confidence: %.2f)", result->text ? result->text : "(null)",
             result->confidence);
+
+   // Record ASR timing metrics (Vosk doesn't provide RTF, use 0)
+   metrics_record_asr_timing(processing_time, 0.0);
 
    return result;
 }

@@ -31,6 +31,7 @@
 #include "llm/llm_streaming.h"
 #include "llm/sse_parser.h"
 #include "logging.h"
+#include "ui/metrics.h"
 
 /**
  * @brief Structure to hold dynamically allocated response data from CURL
@@ -187,10 +188,16 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
       curl_easy_setopt(curl_handle, CURLOPT_XFERINFOFUNCTION, llm_curl_progress_callback);
       curl_easy_setopt(curl_handle, CURLOPT_XFERINFODATA, NULL);
 
+      // Set low-speed timeout: abort if transfer drops below 1 byte/sec for 30 seconds
+      curl_easy_setopt(curl_handle, CURLOPT_LOW_SPEED_LIMIT, 1L);
+      curl_easy_setopt(curl_handle, CURLOPT_LOW_SPEED_TIME, 30L);
+
       res = curl_easy_perform(curl_handle);
       if (res != CURLE_OK) {
          if (res == CURLE_ABORTED_BY_CALLBACK) {
             LOG_INFO("LLM transfer interrupted by user");
+         } else if (res == CURLE_OPERATION_TIMEDOUT) {
+            LOG_ERROR("LLM request stalled - no data for 30 seconds");
          } else {
             LOG_ERROR("curl_easy_perform() failed: %s", curl_easy_strerror(res));
          }
@@ -269,10 +276,23 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
    json_object_object_get_ex(first_choice, "finish_reason", &finish_reason);
 
    // Check for usage and cache information
+   int input_tokens = 0;
+   int output_tokens = 0;
+   int cached_tokens = 0;
    if (json_object_object_get_ex(parsed_json, "usage", &usage_obj)) {
       if (json_object_object_get_ex(usage_obj, "total_tokens", &total_tokens_obj)) {
          total_tokens = json_object_get_int(total_tokens_obj);
          LOG_WARNING("Total tokens: %d", total_tokens);
+      }
+
+      // Extract input/output tokens
+      json_object *prompt_tokens_obj = NULL;
+      json_object *completion_tokens_obj = NULL;
+      if (json_object_object_get_ex(usage_obj, "prompt_tokens", &prompt_tokens_obj)) {
+         input_tokens = json_object_get_int(prompt_tokens_obj);
+      }
+      if (json_object_object_get_ex(usage_obj, "completion_tokens", &completion_tokens_obj)) {
+         output_tokens = json_object_get_int(completion_tokens_obj);
       }
 
       // Log OpenAI automatic caching info (if available)
@@ -281,12 +301,15 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
          json_object *cached_tokens_obj = NULL;
          if (json_object_object_get_ex(prompt_tokens_details, "cached_tokens",
                                        &cached_tokens_obj)) {
-            int cached_tokens = json_object_get_int(cached_tokens_obj);
+            cached_tokens = json_object_get_int(cached_tokens_obj);
             if (cached_tokens > 0) {
                LOG_INFO("OpenAI cache hit: %d tokens cached (50%% savings)", cached_tokens);
             }
          }
       }
+
+      // Record metrics
+      metrics_record_llm_tokens(LLM_CLOUD, input_tokens, output_tokens, cached_tokens);
    }
 
    // Duplicate the response content string safely
@@ -378,8 +401,11 @@ char *llm_openai_chat_completion_streaming(struct json_object *conversation_hist
    // Model
    json_object_object_add(root, "model", json_object_new_string(OPENAI_MODEL));
 
-   // Enable streaming
+   // Enable streaming with usage reporting
    json_object_object_add(root, "stream", json_object_new_boolean(1));
+   json_object *stream_opts = json_object_new_object();
+   json_object_object_add(stream_opts, "include_usage", json_object_new_boolean(1));
+   json_object_object_add(root, "stream_options", stream_opts);
 
    // Handle vision if provided
 #if defined(OPENAI_VISION)
@@ -474,10 +500,17 @@ char *llm_openai_chat_completion_streaming(struct json_object *conversation_hist
       curl_easy_setopt(curl_handle, CURLOPT_XFERINFOFUNCTION, llm_curl_progress_callback);
       curl_easy_setopt(curl_handle, CURLOPT_XFERINFODATA, NULL);
 
+      // Set low-speed timeout: abort if transfer drops below 1 byte/sec for 30 seconds
+      // This catches hung/stalled streams from local LLM servers
+      curl_easy_setopt(curl_handle, CURLOPT_LOW_SPEED_LIMIT, 1L);
+      curl_easy_setopt(curl_handle, CURLOPT_LOW_SPEED_TIME, 30L);
+
       res = curl_easy_perform(curl_handle);
       if (res != CURLE_OK) {
          if (res == CURLE_ABORTED_BY_CALLBACK) {
             LOG_INFO("LLM transfer interrupted by user");
+         } else if (res == CURLE_OPERATION_TIMEDOUT) {
+            LOG_ERROR("LLM stream stalled - no data for 30 seconds");
          } else {
             LOG_ERROR("curl_easy_perform() failed: %s", curl_easy_strerror(res));
          }

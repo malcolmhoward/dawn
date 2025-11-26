@@ -23,6 +23,7 @@
 #define LLM_STREAMING_H
 
 #include <stddef.h>
+#include <sys/time.h>
 
 #include "llm/llm_interface.h"
 
@@ -52,6 +53,7 @@ typedef struct {
    // State tracking for Claude
    int message_started;      /**< Claude: message_start received */
    int content_block_active; /**< Claude: content block in progress */
+   int claude_input_tokens;  /**< Claude: input tokens from message_start */
 
    // Accumulated complete response for conversation history
    char *accumulated_response;
@@ -60,6 +62,10 @@ typedef struct {
 
    // Stream completion flag
    int stream_complete;
+
+   // TTFT (Time To First Token) tracking for metrics
+   struct timeval stream_start_time; /**< When stream request was initiated */
+   int first_token_received;         /**< Flag: 1 if first token has been received */
 } llm_stream_context_t;
 
 /**
