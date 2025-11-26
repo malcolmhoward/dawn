@@ -43,6 +43,13 @@ struct MemoryStruct {
 // External WriteMemoryCallback from llm_interface.c
 extern size_t WriteMemoryCallback(void *contents, size_t size, size_t nmemb, void *userp);
 
+// External CURL progress callback for interrupt support
+extern int llm_curl_progress_callback(void *clientp,
+                                      curl_off_t dltotal,
+                                      curl_off_t dlnow,
+                                      curl_off_t ultotal,
+                                      curl_off_t ulnow);
+
 /**
  * @brief Build HTTP headers for Claude API request
  *
@@ -259,9 +266,18 @@ char *llm_claude_chat_completion(struct json_object *conversation_history,
    curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
    curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
 
+   // Enable progress callback for interruption support
+   curl_easy_setopt(curl_handle, CURLOPT_NOPROGRESS, 0L);  // Enable progress callback
+   curl_easy_setopt(curl_handle, CURLOPT_XFERINFOFUNCTION, llm_curl_progress_callback);
+   curl_easy_setopt(curl_handle, CURLOPT_XFERINFODATA, NULL);
+
    res = curl_easy_perform(curl_handle);
    if (res != CURLE_OK) {
-      LOG_ERROR("CURL failed: %s", curl_easy_strerror(res));
+      if (res == CURLE_ABORTED_BY_CALLBACK) {
+         LOG_INFO("LLM transfer interrupted by user");
+      } else {
+         LOG_ERROR("CURL failed: %s", curl_easy_strerror(res));
+      }
       curl_easy_cleanup(curl_handle);
       curl_slist_free_all(headers);
       free(chunk.memory);
@@ -521,9 +537,18 @@ char *llm_claude_chat_completion_streaming(struct json_object *conversation_hist
    curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, claude_streaming_write_callback);
    curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&streaming_ctx);
 
+   // Enable progress callback for interruption support
+   curl_easy_setopt(curl_handle, CURLOPT_NOPROGRESS, 0L);  // Enable progress callback
+   curl_easy_setopt(curl_handle, CURLOPT_XFERINFOFUNCTION, llm_curl_progress_callback);
+   curl_easy_setopt(curl_handle, CURLOPT_XFERINFODATA, NULL);
+
    res = curl_easy_perform(curl_handle);
    if (res != CURLE_OK) {
-      LOG_ERROR("CURL failed: %s", curl_easy_strerror(res));
+      if (res == CURLE_ABORTED_BY_CALLBACK) {
+         LOG_INFO("LLM transfer interrupted by user");
+      } else {
+         LOG_ERROR("CURL failed: %s", curl_easy_strerror(res));
+      }
       curl_easy_cleanup(curl_handle);
       curl_slist_free_all(headers);
       json_object_put(request);

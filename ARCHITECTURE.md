@@ -4,7 +4,7 @@ This document describes the architecture of the D.A.W.N. (Digital Assistant for 
 
 **D.A.W.N.** is the central intelligence layer of the OASIS ecosystem, responsible for interpreting user intent, fusing data from every subsystem, and routing commands. At its core, DAWN performs neural-inference to understand context and drive decision-making, acting as OASIS's orchestration hub for MIRAGE, AURA, SPARK, STAT, and any future modules.
 
-**Last Updated**: November 2025 (after repository reorganization)
+**Last Updated**: November 25, 2025 (after LLM interrupt implementation)
 
 ## Table of Contents
 
@@ -1001,5 +1001,154 @@ Key settings:
 ---
 
 **Document Version**: 1.0
-**Last Updated**: November 2025
+**Last Updated**: November 25, 2025 (after LLM interrupt implementation)
 **Reorganization Commit**: [Git SHA to be added after commit]
+
+### LLM Threading Architecture (Post-Interrupt Implementation)
+
+**Status**: ✅ **Implemented** (November 2025)
+
+D.A.W.N. now uses **non-blocking LLM processing** via a dedicated worker thread:
+
+```
+┌───────────────────────────────────────────────────────────┐
+│                      Main Thread                          │
+│                                                           │
+│  - State machine (NEVER blocks on LLM)                    │
+│  - Audio capture + VAD  (continuous, 50ms intervals)      │
+│  - ASR processing (Whisper/Vosk)                          │
+│  - TTS synthesis (mutex protected)                        │
+│  - LLM completion detection (polling llm_processing flag) │
+│  - MQTT communication                                     │
+└────────────┬──────────────────────────────────────────────┘
+             │
+             │ Spawns on-demand, max 1 concurrent
+             ↓
+┌───────────────────────────────────────────────────────────┐
+│                   LLM Worker Thread                       │
+│                                                           │
+│  - Blocking CURL call to LLM API                          │
+│  - CURL progress callback (checks interrupt flag)         │
+│  - Returns response via shared buffer                     │
+│  - Thread-safe via llm_mutex                              │
+└───────────────────────────────────────────────────────────┘
+```
+
+#### Key Components
+
+- `pthread_t llm_thread` - Worker thread handle
+- `pthread_mutex_t llm_mutex` - Protects shared request/response buffers
+- `volatile int llm_processing` - Atomic flag: 1 = running, 0 = idle
+- `volatile sig_atomic_t llm_interrupt_requested` - Signal-safe interrupt flag
+
+#### Memory Ownership Transfer
+
+Request and response buffers use **ownership transfer** to prevent data races:
+
+```c
+// Main thread → Worker thread:
+llm_request_text = command_text;
+command_text = NULL;  // Ownership transferred
+
+// Worker thread → Main thread:
+char *response = llm_response_text;
+llm_response_text = NULL;  // Ownership transferred back
+```
+
+**Rules**:
+- Worker thread **owns** request buffer, frees after use
+- Main thread **owns** response buffer, frees after processing
+- Mutex held only during transfer, not during processing
+
+#### LLM Interrupt Mechanism
+
+**Purpose**: Allow users to interrupt ongoing LLM requests by saying the wake word.
+
+**Implementation**:
+- CURL progress callback checks `llm_interrupt_requested` flag periodically
+- Wake word detection in main loop sets flag via `llm_request_interrupt()`
+- Returns non-zero from callback to abort CURL transfer
+- Main thread detects interrupt, discards partial response, rolls back conversation history
+
+**See**: `LLM_INTERRUPT_IMPLEMENTATION.md` for complete implementation details.
+
+---
+
+## Mutex Lock Ordering Hierarchy
+
+**CRITICAL**: To prevent deadlocks, always acquire mutexes in this order when multiple locks needed:
+
+```
+Level 1 (acquire first):   metrics_mutex       (TUI metrics - future)
+Level 2 (acquire second):   llm_mutex           (LLM thread communication)
+                            tts_mutex           (TTS playback state)
+                            processing_mutex    (Network processing state)
+Level 3 (acquire last):     network_processing_mutex  (Network PCM buffer)
+```
+
+### Lock Ordering Rules
+
+1. **Never acquire a lower-level lock while holding a higher-level lock**
+   - ❌ BAD: Hold `tts_mutex` → acquire `metrics_mutex` (2→1 violates order)
+   - ✅ GOOD: Acquire `metrics_mutex` → then `tts_mutex` (1→2 correct)
+
+2. **Never hold multiple level-2 locks simultaneously**
+   - ❌ BAD: Hold `llm_mutex` → acquire `tts_mutex` (both level-2)
+   - ✅ GOOD: Release `llm_mutex` before acquiring `tts_mutex`
+
+3. **Keep critical sections minimal**
+   - Copy data, release lock, **then** process data
+   - Avoid I/O operations while holding locks
+
+4. **Prefer lock-free patterns for high-frequency updates**
+   - VAD probability: Use C11 atomics instead of mutex (future)
+   - State flags: Use `volatile` types for simple booleans
+
+### Testing Lock Discipline
+
+Use **ThreadSanitizer** during development:
+
+```bash
+cd build
+cmake -DCMAKE_C_FLAGS="-fsanitize=thread -g" ..
+make
+./dawn
+```
+
+ThreadSanitizer detects:
+- Data races (unsynchronized shared variable access)
+- Lock order inversions (potential deadlocks)
+- Use-after-free in threaded code
+
+---
+
+## Architectural Recommendations
+
+### High Priority (Before TUI Implementation)
+
+1. ✅ **Document lock ordering** (completed in this file)
+2. **ncurses non-blocking mode**: Set `nodelay(stdscr, TRUE)` to prevent keyboard blocking
+3. **ThreadSanitizer testing**: Run with `-fsanitize=thread` during TUI development
+
+### Medium Priority (During TUI Implementation)
+
+4. **Lock-free VAD probability**: Use C11 `atomic_uint` for high-frequency updates
+5. **Batch metrics updates**: Acquire `metrics_mutex` once for multiple changes
+
+### Low Priority (Post-TUI)
+
+6. **Session layer for multi-client**: Design per-client conversation history isolation
+7. **SIGSEGV crash stats**: Add signal handler to export metrics on crash (best-effort)
+
+### Performance Characteristics (Updated)
+
+| Component         | CPU Impact | Memory Impact | Notes                 |
+|-------------------|------------|---------------|-----------------------|
+| Main audio loop   | 15-20%     | Varies        | VAD + ASR processing  |
+| LLM worker thread | 0.01%      | ~8KB          | CURL callback polling |
+| TTS worker thread | 5-10%      | ~8KB          | During synthesis      |
+
+**LLM Threading Benefit**: Main audio loop **never blocks** during LLM processing, maintaining responsive wake word detection even during 10-15 second LLM calls.
+
+---
+

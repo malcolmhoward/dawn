@@ -260,6 +260,11 @@ void *tts_thread_function(void *arg) {
                               while (!tts_queue.empty()) {
                                  tts_queue.pop();
                               }
+
+                              // Drop (flush) audio device buffer immediately to stop playback
+                              snd_pcm_drop(tts_handle.handle);
+                              snd_pcm_prepare(tts_handle.handle);
+
                               pthread_mutex_unlock(&tts_mutex);
 
                               tts_stop_processing.store(true);
@@ -311,6 +316,13 @@ void *tts_thread_function(void *arg) {
                      while (!tts_queue.empty()) {
                         tts_queue.pop();
                      }
+
+                     // Flush PulseAudio buffer immediately to stop playback
+                     int pa_error;
+                     if (pa_simple_flush(tts_handle.pa_handle, &pa_error) < 0) {
+                        LOG_ERROR("PulseAudio flush error: %s", pa_strerror(pa_error));
+                     }
+
                      pthread_mutex_unlock(&tts_mutex);
 
                      tts_stop_processing.store(true);

@@ -21,10 +21,12 @@
 
 #include "llm/llm_interface.h"
 
+#include <curl/curl.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -55,6 +57,9 @@
 static llm_type_t current_type = LLM_UNDEFINED;
 static cloud_provider_t current_cloud_provider = CLOUD_PROVIDER_NONE;
 static char llm_url[2048] = "";
+
+// Global interrupt flag - set by main thread when wake word detected during LLM processing
+static volatile sig_atomic_t llm_interrupt_requested = 0;
 
 /**
  * @brief Structure to hold dynamically allocated response data from CURL
@@ -321,6 +326,49 @@ const char *llm_get_cloud_provider_name(void) {
    }
 }
 
+void llm_request_interrupt(void) {
+   llm_interrupt_requested = 1;
+}
+
+void llm_clear_interrupt(void) {
+   llm_interrupt_requested = 0;
+}
+
+int llm_is_interrupt_requested(void) {
+   return llm_interrupt_requested;
+}
+
+/**
+ * @brief CURL progress callback to check for interruption requests
+ *
+ * Called periodically by CURL during transfer. Returns non-zero to abort.
+ *
+ * @param clientp User data pointer (unused)
+ * @param dltotal Total bytes to download
+ * @param dlnow Bytes downloaded so far
+ * @param ultotal Total bytes to upload
+ * @param ulnow Bytes uploaded so far
+ * @return 0 to continue transfer, non-zero to abort
+ */
+int llm_curl_progress_callback(void *clientp,
+                               curl_off_t dltotal,
+                               curl_off_t dlnow,
+                               curl_off_t ultotal,
+                               curl_off_t ulnow) {
+   (void)clientp;  // Unused
+   (void)dltotal;
+   (void)dlnow;
+   (void)ultotal;
+   (void)ulnow;
+
+   // Check if interrupt was requested
+   if (llm_interrupt_requested) {
+      LOG_INFO("LLM transfer interrupted by user");
+      return 1;  // Non-zero aborts transfer
+   }
+   return 0;  // Zero continues transfer
+}
+
 char *llm_chat_completion(struct json_object *conversation_history,
                           const char *input_text,
                           char *vision_image,
@@ -361,10 +409,10 @@ char *llm_chat_completion(struct json_object *conversation_history,
       }
    }
 
-   // If cloud LLM failed, try falling back to local
-   if (response == NULL && current_type == LLM_CLOUD) {
+   // If cloud LLM failed (but not interrupted by user), try falling back to local
+   if (response == NULL && current_type == LLM_CLOUD && !llm_is_interrupt_requested()) {
       if (strcmp(CLOUDAI_URL, llm_url) == 0 || strcmp(CLAUDE_URL, llm_url) == 0) {
-         LOG_WARNING("Falling back to local LLM.");
+         LOG_WARNING("Falling back to local LLM due to connection failure.");
          text_to_speech("Unable to contact cloud LLM.");
          llm_set_type(LLM_LOCAL);
          text_to_speech("Setting AI to local LLM.");
@@ -426,10 +474,10 @@ char *llm_chat_completion_streaming(struct json_object *conversation_history,
       }
    }
 
-   // If cloud LLM failed, try falling back to local
-   if (response == NULL && current_type == LLM_CLOUD) {
+   // If cloud LLM failed (but not interrupted by user), try falling back to local
+   if (response == NULL && current_type == LLM_CLOUD && !llm_is_interrupt_requested()) {
       if (strcmp(CLOUDAI_URL, llm_url) == 0 || strcmp(CLAUDE_URL, llm_url) == 0) {
-         LOG_WARNING("Falling back to local LLM.");
+         LOG_WARNING("Falling back to local LLM due to connection failure.");
          text_to_speech("Unable to contact cloud LLM.");
          llm_set_type(LLM_LOCAL);
          text_to_speech("Setting AI to local LLM.");

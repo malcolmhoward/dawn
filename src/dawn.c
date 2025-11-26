@@ -240,6 +240,11 @@ pthread_cond_t tts_cond = PTHREAD_COND_INITIALIZER;
 pthread_mutex_t tts_mutex = PTHREAD_MUTEX_INITIALIZER;
 // Note: tts_playback_state is defined in text_to_speech.cpp (mutex-protected, not atomic)
 
+// Define the shared variables for LLM thread state
+pthread_mutex_t llm_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_t llm_thread;
+volatile int llm_processing = 0;  // Flag: 1 if LLM thread is running, 0 otherwise
+
 /**
  * @var static char *vision_ai_image
  * Pointer to a buffer containing the latest image captured for vision AI processing.
@@ -303,6 +308,12 @@ typedef struct {
 // Global variable for command processing mode
 command_processing_mode_t command_processing_mode = CMD_MODE_DIRECT_ONLY;
 struct json_object *conversation_history = NULL;
+
+// Shared buffers for LLM thread communication (protected by llm_mutex)
+static char *llm_request_text = NULL;     // Input: command text for LLM
+static char *llm_response_text = NULL;    // Output: LLM response
+static char *llm_vision_image = NULL;     // Input: vision image data
+static size_t llm_vision_image_size = 0;  // Input: vision image size
 
 /**
  * @brief Callback for streaming LLM responses with TTS
@@ -425,6 +436,8 @@ void drawWaveform(const int16_t *audioBuffer, size_t numSamples) {
  */
 void signal_handler(int signal) {
    if (signal == SIGINT) {
+      // Request LLM interrupt (safe to call from signal handler - uses sig_atomic_t)
+      llm_request_interrupt();
       quit = 1;
    }
 }
@@ -1299,6 +1312,70 @@ void display_help(int argc, char *argv[]) {
    printf("  -L, --llm-only         LLM handles all commands, skip direct processing.\n");
 }
 
+/**
+ * @brief LLM worker thread function
+ *
+ * This function runs in a separate thread to process LLM requests without blocking
+ * the main audio processing loop. It reads the request data from shared buffers,
+ * calls the LLM API, stores the response, and signals completion.
+ *
+ * @param arg Unused (required for pthread compatibility)
+ * @return NULL
+ */
+void *llm_worker_thread(void *arg) {
+   (void)arg;  // Unused
+
+   // Lock mutex to access shared data
+   pthread_mutex_lock(&llm_mutex);
+
+   // Copy request data to local variables (minimize time holding mutex)
+   char *request_text = llm_request_text ? strdup(llm_request_text) : NULL;
+   char *vision_image = llm_vision_image ? malloc(llm_vision_image_size) : NULL;
+   size_t vision_image_size = llm_vision_image_size;
+
+   if (vision_image && llm_vision_image) {
+      memcpy(vision_image, llm_vision_image, llm_vision_image_size);
+   }
+
+   pthread_mutex_unlock(&llm_mutex);
+
+   // Clear interrupt flag before calling LLM
+   llm_clear_interrupt();
+
+   // Call LLM (this can take 10+ seconds and blocks this thread, not main thread)
+   // Note: conversation_history is a global, but only main thread modifies it during setup
+   // and we only read it here, so no mutex needed for conversation_history itself
+   char *response = llm_chat_completion_streaming_tts(conversation_history, request_text,
+                                                      vision_image, vision_image_size,
+                                                      dawn_tts_sentence_callback, NULL);
+
+   // Free local copies
+   if (request_text) {
+      free(request_text);
+   }
+   if (vision_image) {
+      free(vision_image);
+   }
+
+   // Lock mutex to store response
+   pthread_mutex_lock(&llm_mutex);
+
+   // Store response (or NULL if interrupted/failed)
+   if (llm_response_text) {
+      free(llm_response_text);
+   }
+   llm_response_text = response;  // Transfer ownership
+
+   // Mark processing complete
+   llm_processing = 0;
+
+
+   pthread_mutex_unlock(&llm_mutex);
+
+   LOG_INFO("LLM worker thread finished");
+   return NULL;
+}
+
 int main(int argc, char *argv[]) {
    char *input_text = NULL;
    char *command_text = NULL;
@@ -1888,6 +1965,119 @@ int main(int argc, char *argv[]) {
          }
       }
 
+      // Check if LLM thread has completed (non-blocking check)
+      static int prev_llm_processing = 0;  // Track previous state
+      if (prev_llm_processing == 1 && llm_processing == 0) {
+         // LLM just completed - process the response
+         LOG_INFO("LLM thread completed - processing response");
+
+         pthread_mutex_lock(&llm_mutex);
+         char *response_text = llm_response_text;
+         llm_response_text = NULL;  // Transfer ownership
+         pthread_mutex_unlock(&llm_mutex);
+
+         // Join the thread to clean up resources
+         pthread_join(llm_thread, NULL);
+
+         // Check if response was interrupted
+         if (response_text == NULL && llm_is_interrupt_requested()) {
+            LOG_INFO("LLM was interrupted - discarding partial response");
+            llm_clear_interrupt();
+
+            // Remove the user message from conversation history (last item)
+            int history_len = json_object_array_length(conversation_history);
+            if (history_len > 0) {
+               json_object_array_del_idx(conversation_history, history_len - 1, 1);
+            }
+         } else if (response_text != NULL) {
+            // Process successful response
+            LOG_WARNING("AI: %s\n", response_text);
+
+            // Create cleaned version for TTS (keep original for conversation history)
+            char *tts_response = strdup(response_text);
+
+            // Process any commands in the LLM response
+            if (command_processing_mode == CMD_MODE_LLM_ONLY ||
+                command_processing_mode == CMD_MODE_DIRECT_FIRST) {
+               int cmds_processed = parse_llm_response_for_commands(response_text, mosq);
+               if (cmds_processed > 0) {
+                  LOG_INFO("Processed %d commands from LLM response", cmds_processed);
+               }
+               if (tts_response) {
+                  // Remove command tags
+                  char *cmd_start, *cmd_end;
+                  while ((cmd_start = strstr(tts_response, "<command>")) != NULL) {
+                     cmd_end = strstr(cmd_start, "</command>");
+                     if (cmd_end) {
+                        cmd_end += strlen("</command>");
+                        memmove(cmd_start, cmd_end, strlen(cmd_end) + 1);
+                     } else {
+                        break;
+                     }
+                  }
+
+                  // Remove <end_of_turn> tags (local AI models)
+                  char *match = NULL;
+                  if ((match = strstr(tts_response, "<end_of_turn>")) != NULL) {
+                     *match = '\0';
+                  }
+
+                  // Remove special characters that cause problems
+                  remove_chars(tts_response, "*");
+                  remove_emojis(tts_response);
+
+                  // Trim trailing whitespace
+                  size_t len = strlen(tts_response);
+                  while (len > 0 &&
+                         (tts_response[len - 1] == ' ' || tts_response[len - 1] == '\t' ||
+                          tts_response[len - 1] == '\n' || tts_response[len - 1] == '\r')) {
+                     tts_response[--len] = '\0';
+                  }
+               }
+            }
+
+            // TTS already handled by streaming callback - no need to call text_to_speech here
+            // Note: We don't touch TTS state here - let the state machine handle it
+            // If user interrupts with wake word, state machine will discard TTS
+            // If user interrupts without wake word, state machine will resume TTS
+
+            // Save original response (with command tags) to conversation history
+            // but trim trailing whitespace for Claude API compatibility
+            char *history_response = strdup(response_text);
+            if (history_response) {
+               size_t len = strlen(history_response);
+               while (len > 0 &&
+                      (history_response[len - 1] == ' ' || history_response[len - 1] == '\t' ||
+                       history_response[len - 1] == '\n' || history_response[len - 1] == '\r')) {
+                  history_response[--len] = '\0';
+               }
+            }
+
+            struct json_object *ai_message = json_object_new_object();
+            json_object_object_add(ai_message, "role", json_object_new_string("assistant"));
+            json_object_object_add(ai_message, "content",
+                                   json_object_new_string(history_response ? history_response
+                                                                           : response_text));
+            json_object_array_add(conversation_history, ai_message);
+
+            free(response_text);
+            free(tts_response);
+            free(history_response);
+         } else {
+            // Response is NULL but not interrupted - error case
+            pthread_mutex_lock(&tts_mutex);
+            if (tts_playback_state == TTS_PLAYBACK_PAUSE) {
+               tts_playback_state = TTS_PLAYBACK_DISCARD;
+               pthread_cond_signal(&tts_cond);
+            }
+            pthread_mutex_unlock(&tts_mutex);
+
+            LOG_ERROR("LLM error - no response");
+            text_to_speech("I'm sorry but I'm currently unavailable boss.");
+         }
+      }
+      prev_llm_processing = llm_processing;  // Update previous state
+
       publish_ai_state(recState);
       switch (recState) {
          case SILENCE:
@@ -2257,6 +2447,13 @@ int main(int argc, char *argv[]) {
                                                        : NULL;
                      if (found_ptr != NULL) {
                         LOG_WARNING("Wake word detected.\n");
+
+                        // Check if LLM is currently processing - if so, interrupt it
+                        if (llm_processing) {
+                           LOG_INFO(
+                               "Wake word detected during LLM processing - requesting interrupt");
+                           llm_request_interrupt();
+                        }
 
                         // Calculate offset in normalized text
                         size_t offset = found_ptr - normalized_text;
@@ -2642,7 +2839,7 @@ int main(int argc, char *argv[]) {
                 (command_processing_mode == CMD_MODE_DIRECT_ONLY && !direct_command_found)) {
                LOG_WARNING("Processing with LLM (mode: %d, direct found: %d).\n",
                            command_processing_mode, direct_command_found);
-#ifndef DISABLE_AI
+
                int ignoreCount = 0;
 
                // Check ignore words (only if we're in direct-only mode and no command found)
@@ -2675,136 +2872,97 @@ int main(int argc, char *argv[]) {
                                           &preroll_valid_bytes);
                } else {
                   // User message already added at top of PROCESS_COMMAND
-                  // Use streaming with TTS sentence buffering for immediate response
-                  response_text = llm_chat_completion_streaming_tts(conversation_history,
-                                                                    command_text, NULL, 0,
-                                                                    dawn_tts_sentence_callback,
-                                                                    NULL);
-                  if (response_text != NULL) {
-                     LOG_WARNING("AI: %s\n", response_text);
 
-                     // Create cleaned version for TTS (keep original for conversation history)
-                     char *tts_response = strdup(response_text);
+                  // Check if an LLM thread is already running (from a previous request or
+                  // interrupt)
+                  if (llm_processing) {
+                     LOG_WARNING(
+                         "LLM thread already running - ignoring new request (say command again "
+                         "after response completes)");
 
-                     // Process any commands in the LLM response
-                     if (command_processing_mode == CMD_MODE_LLM_ONLY ||
-                         command_processing_mode == CMD_MODE_DIRECT_FIRST) {
-                        int cmds_processed = parse_llm_response_for_commands(response_text, mosq);
-                        if (cmds_processed > 0) {
-                           LOG_INFO("Processed %d commands from LLM response", cmds_processed);
-                        }
-                        if (tts_response) {
-                           // Remove command tags
-                           char *cmd_start, *cmd_end;
-                           while ((cmd_start = strstr(tts_response, "<command>")) != NULL) {
-                              cmd_end = strstr(cmd_start, "</command>");
-                              if (cmd_end) {
-                                 cmd_end += strlen("</command>");
-                                 memmove(cmd_start, cmd_end, strlen(cmd_end) + 1);
-                              } else {
-                                 break;
-                              }
-                           }
-
-                           // Remove <end_of_turn> tags (local AI models)
-                           char *match = NULL;
-                           if ((match = strstr(tts_response, "<end_of_turn>")) != NULL) {
-                              *match = '\0';
-                           }
-
-                           // Remove special characters that cause problems
-                           remove_chars(tts_response, "*");
-                           remove_emojis(tts_response);
-
-                           // Trim trailing whitespace (important for Claude API conversation
-                           // history)
-                           size_t len = strlen(tts_response);
-                           while (len > 0 &&
-                                  (tts_response[len - 1] == ' ' || tts_response[len - 1] == '\t' ||
-                                   tts_response[len - 1] == '\n' ||
-                                   tts_response[len - 1] == '\r')) {
-                              tts_response[--len] = '\0';
-                           }
-                        }
+                     // Remove the user message we just added (last item in conversation history)
+                     int history_len = json_object_array_length(conversation_history);
+                     if (history_len > 0) {
+                        json_object_array_del_idx(conversation_history, history_len - 1, 1);
                      }
 
-                     pthread_mutex_lock(&tts_mutex);
-                     if (tts_playback_state == TTS_PLAYBACK_PAUSE) {
-                        tts_playback_state = TTS_PLAYBACK_DISCARD;
-                        pthread_cond_signal(&tts_cond);
-                     }
-                     pthread_mutex_unlock(&tts_mutex);
-
-                     // TTS already handled by streaming callback - no need to call text_to_speech
-                     // here Just process commands and save to conversation history
-
-                     // Save original response (with command tags) to conversation history
-                     // but trim trailing whitespace for Claude API compatibility
-                     char *history_response = strdup(response_text);
-                     if (history_response) {
-                        size_t len = strlen(history_response);
-                        while (len > 0 && (history_response[len - 1] == ' ' ||
-                                           history_response[len - 1] == '\t' ||
-                                           history_response[len - 1] == '\n' ||
-                                           history_response[len - 1] == '\r')) {
-                           history_response[--len] = '\0';
-                        }
+                     // Free command text
+                     if (command_text) {
+                        free(command_text);
+                        command_text = NULL;
                      }
 
-                     struct json_object *ai_message = json_object_new_object();
-                     json_object_object_add(ai_message, "role",
-                                            json_object_new_string("assistant"));
-                     json_object_object_add(ai_message, "content",
-                                            json_object_new_string(history_response
-                                                                       ? history_response
-                                                                       : response_text));
-                     json_object_array_add(conversation_history, ai_message);
+                     // Return to listening state
+                     silenceNextState = WAKEWORD_LISTEN;
+                     recState = SILENCE;
 
-                     free(response_text);
-                     free(tts_response);
-                     free(history_response);
-                  } else {
-                     pthread_mutex_lock(&tts_mutex);
-                     if (tts_playback_state == TTS_PLAYBACK_PAUSE) {
-                        tts_playback_state = TTS_PLAYBACK_DISCARD;
-                        pthread_cond_signal(&tts_cond);
-                     }
-                     pthread_mutex_unlock(&tts_mutex);
-
-
-                     LOG_ERROR("GPT error.\n");
-                     text_to_speech("I'm sorry but I'm currently unavailable boss.");
+                     // Reset all subsystems for new utterance
+                     reset_for_new_utterance(vad_ctx, asr_ctx, chunk_mgr, &silence_duration,
+                                             &speech_duration, &recording_duration,
+                                             &preroll_write_pos, &preroll_valid_bytes);
+                     break;  // Exit PROCESS_COMMAND case
                   }
+
+                  // Spawn LLM thread to process request (non-blocking)
+                  pthread_mutex_lock(&llm_mutex);
+
+                  // Free any previous request/response data
+                  if (llm_request_text) {
+                     free(llm_request_text);
+                  }
+                  if (llm_response_text) {
+                     free(llm_response_text);
+                     llm_response_text = NULL;
+                  }
+
+                  // Set up request data (transfer ownership of command_text to thread)
+                  llm_request_text = command_text;
+                  command_text = NULL;  // Thread will free this
+
+                  // Pass vision data if available
+                  if (vision_ai_ready && vision_ai_image != NULL) {
+                     llm_vision_image = vision_ai_image;
+                     llm_vision_image_size = vision_ai_image_size;
+                  } else {
+                     llm_vision_image = NULL;
+                     llm_vision_image_size = 0;
+                  }
+
+                  // Mark LLM as processing
+                  llm_processing = 1;
+
+                  pthread_mutex_unlock(&llm_mutex);
+
+                  // Spawn worker thread
+                  int thread_result = pthread_create(&llm_thread, NULL, llm_worker_thread, NULL);
+                  if (thread_result != 0) {
+                     LOG_ERROR("Failed to create LLM thread: %d", thread_result);
+                     pthread_mutex_lock(&llm_mutex);
+                     llm_processing = 0;
+                     if (llm_request_text) {
+                        free(llm_request_text);
+                        llm_request_text = NULL;
+                     }
+                     pthread_mutex_unlock(&llm_mutex);
+
+                     text_to_speech("I'm sorry but I'm currently unavailable boss.");
+                  } else {
+                     LOG_INFO("LLM thread spawned - continuing audio processing");
+                  }
+
+                  // Return to listening state - audio processing continues while LLM works
+                  silenceNextState = WAKEWORD_LISTEN;
+                  recState = SILENCE;
+
+                  // Reset all subsystems for new utterance
+                  reset_for_new_utterance(vad_ctx, asr_ctx, chunk_mgr, &silence_duration,
+                                          &speech_duration, &recording_duration, &preroll_write_pos,
+                                          &preroll_valid_bytes);
+                  break;  // Exit PROCESS_COMMAND case - LLM will complete asynchronously
                }
-#endif
             }
 
-            for (i = 0; i < numGoodbyeWords; i++) {
-               if (strcmp(command_text, goodbyeWords[i]) == 0) {
-                  quit = 1;
-               }
-            }
-
-            free(command_text);
-
-            // Check if vision AI processing is needed
-            if (vision_ai_ready) {
-               recState = VISION_AI_READY;
-               // Reset VAD state at interaction boundary (vision AI entry)
-               if (vad_ctx) {
-                  vad_silero_reset(vad_ctx);
-               }
-            } else {
-               silenceNextState = WAKEWORD_LISTEN;
-               recState = SILENCE;
-
-               // Reset all subsystems for new utterance (command processing complete)
-               reset_for_new_utterance(vad_ctx, asr_ctx, chunk_mgr, &silence_duration,
-                                       &speech_duration, &recording_duration, &preroll_write_pos,
-                                       &preroll_valid_bytes);
-            }
-
-            break;
+            break;  // PROCESS_COMMAND case end
          case VISION_AI_READY:
             pthread_mutex_lock(&tts_mutex);
             if (tts_playback_state == TTS_PLAYBACK_PAUSE) {

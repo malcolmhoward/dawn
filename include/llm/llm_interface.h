@@ -175,4 +175,26 @@ const char *llm_get_cloud_provider_name(void);
  */
 int llm_check_connection(const char *url, int timeout_seconds);
 
+/**
+ * @brief Request interruption of current LLM transfer
+ *
+ * Sets a flag that will cause the next CURL progress callback to abort
+ * the transfer. Safe to call from signal handlers.
+ */
+void llm_request_interrupt(void);
+
+/**
+ * @brief Clear the LLM interrupt flag
+ *
+ * Should be called after handling an interrupted LLM call.
+ */
+void llm_clear_interrupt(void);
+
+/**
+ * @brief Check if LLM interrupt was requested
+ *
+ * @return 1 if interrupt requested, 0 otherwise
+ */
+int llm_is_interrupt_requested(void);
+
 #endif  // LLM_INTERFACE_H
