@@ -30,6 +30,9 @@
 // Global variable for the log file
 static FILE *log_file = NULL;
 
+// Flag to suppress console logging (for TUI mode)
+static int g_suppress_console = 0;
+
 // ANSI color codes
 #define ANSI_COLOR_GREEN "\x1b[32m"
 #define ANSI_COLOR_YELLOW "\x1b[33m"
@@ -80,12 +83,17 @@ void log_message(log_level_t level,
                  const char *func,
                  const char *fmt,
                  ...) {
+   // If console is suppressed and no log file, skip logging entirely
+   if (g_suppress_console && !log_file) {
+      return;
+   }
+
    va_list args;
    va_start(args, fmt);
 
    const char *level_str = NULL;
    const char *color_code = NULL;
-   FILE *output_stream = log_file ? log_file : stderr;
+   FILE *output_stream = log_file ? log_file : (g_suppress_console ? NULL : stderr);
 
    switch (level) {
       case LOG_INFO:
@@ -124,25 +132,28 @@ void log_message(log_level_t level,
       preamble[PREAMBLE_WIDTH] = '\0';
    }
 
-   if (log_file) {
-      // Log to file without colors
-      fprintf(output_stream, "%s", preamble);
-   } else {
-      // Log to console with colors
-      fprintf(output_stream, "%s%s", color_code, preamble);
-   }
-
    // Prepare the log message
-   char log_message[MAX_LOG_LENGTH];
-   vsnprintf(log_message, sizeof(log_message), fmt, args);
-   remove_newlines(log_message);
+   char log_message_buf[MAX_LOG_LENGTH];
+   vsnprintf(log_message_buf, sizeof(log_message_buf), fmt, args);
+   remove_newlines(log_message_buf);
 
-   // Print the log message
-   fprintf(output_stream, "%s", log_message);
-   if (!log_file) {
-      fprintf(output_stream, "%s", ANSI_COLOR_RESET);
+   // Output to stream if available
+   if (output_stream) {
+      if (log_file) {
+         // Log to file without colors
+         fprintf(output_stream, "%s", preamble);
+      } else {
+         // Log to console with colors
+         fprintf(output_stream, "%s%s", color_code, preamble);
+      }
+
+      // Print the log message
+      fprintf(output_stream, "%s", log_message_buf);
+      if (!log_file) {
+         fprintf(output_stream, "%s", ANSI_COLOR_RESET);
+      }
+      fprintf(output_stream, "\n");
    }
-   fprintf(output_stream, "\n");
 
    va_end(args);
 }
@@ -177,4 +188,9 @@ void close_logging(void) {
       fclose(log_file);
       log_file = NULL;
    }
+}
+
+// Set console suppression (for TUI mode)
+void logging_suppress_console(int suppress) {
+   g_suppress_console = suppress;
 }

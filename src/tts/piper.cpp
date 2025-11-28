@@ -481,7 +481,7 @@ void textToAudio(PiperConfig &config,
    for (auto phonemesIter = phonemes.begin(); phonemesIter != phonemes.end(); ++phonemesIter) {
       // Check for interruption before processing the sentence
       if (tts_stop_processing.load()) {
-         spdlog::info("textToAudio(): Interruption requested, stopping processing.");
+         spdlog::debug("textToAudio(): Interruption requested, stopping processing.");
          break;
       }
 
@@ -594,7 +594,8 @@ void textToAudio(PiperConfig &config,
 
       // Check for interruption after the callback
       if (tts_stop_processing.load()) {
-         spdlog::info("textToAudio(): Interruption requested after callback, stopping processing.");
+         spdlog::debug(
+             "textToAudio(): Interruption requested after callback, stopping processing.");
          break;
       }
    }

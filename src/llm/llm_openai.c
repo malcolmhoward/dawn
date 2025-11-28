@@ -154,7 +154,6 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
 
    payload = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN |
                                                       JSON_C_TO_STRING_NOSLASHESCAPE);
-   printf("JSON Payload (PLAIN): %s\n", payload);
 
    chunk.memory = malloc(1);
    if (chunk.memory == NULL) {
@@ -234,8 +233,6 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
       curl_easy_cleanup(curl_handle);
       curl_slist_free_all(headers);
    }
-
-   printf("Raw receive from OpenAI: %s\n", (char *)chunk.memory);
 
    parsed_json = json_tokener_parse(chunk.memory);
    if (!parsed_json) {
@@ -452,7 +449,6 @@ char *llm_openai_chat_completion_streaming(struct json_object *conversation_hist
 
    payload = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN |
                                                       JSON_C_TO_STRING_NOSLASHESCAPE);
-   printf("JSON Payload (STREAMING): %s\n", payload);
 
    // Check connection
    if (!llm_check_connection(base_url, 4)) {

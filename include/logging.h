@@ -98,6 +98,16 @@ int init_logging(const char *filename, int to_file);
 void close_logging(void);
 
 /**
+ * @brief Suppress console logging (for TUI mode).
+ *
+ * When enabled, log messages will only go to file (if configured).
+ * Console output is suppressed to avoid interfering with TUI display.
+ *
+ * @param suppress 1 to suppress console logging, 0 to enable
+ */
+void logging_suppress_console(int suppress);
+
+/**
  * @def LOG_TO_CONSOLE
  * @brief Macro indicating that logs should be output to the console.
  */

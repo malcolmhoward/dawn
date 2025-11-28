@@ -81,6 +81,20 @@ include_directories(${FLAC_INCLUDE_DIRS})
 find_package(OpenSSL REQUIRED)
 include_directories(${OpenSSL_INCLUDE_DIR})
 
+# TUI (ncurses)
+option(ENABLE_TUI "Enable Terminal UI" ON)
+if(ENABLE_TUI)
+    find_package(Curses REQUIRED)
+    if(CURSES_FOUND)
+        include_directories(${CURSES_INCLUDE_DIR})
+        add_definitions(-DENABLE_TUI)
+        message(STATUS "TUI support: ENABLED (ncurses)")
+    else()
+        message(WARNING "ncurses not found, TUI support disabled")
+        set(ENABLE_TUI OFF)
+    endif()
+endif()
+
 # Platform-specific CUDA configuration (Jetson only)
 if(PLATFORM STREQUAL "JETSON")
     set(CUDA_TOOLKIT_ROOT_DIR "/usr/local/cuda-12.6")
@@ -194,6 +208,11 @@ set(DAWN_SOURCES
     src/ui/metrics.c
 )
 
+# Conditionally add TUI source file
+if(ENABLE_TUI)
+    list(APPEND DAWN_SOURCES src/ui/tui.c)
+endif()
+
 # Define ALSA_DEVICE for conditional compilation
 if(USE_ALSA)
     add_definitions(-DALSA_DEVICE)
@@ -231,6 +250,11 @@ if(USE_ALSA)
     target_link_libraries(dawn asound)
 else()
     target_link_libraries(dawn pulse-simple pulse)
+endif()
+
+# Conditionally link ncurses for TUI
+if(ENABLE_TUI)
+    target_link_libraries(dawn ${CURSES_LIBRARIES})
 endif()
 
 # Conditionally link ASR library (Vosk OR Whisper, not both)

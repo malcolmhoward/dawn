@@ -198,7 +198,6 @@ static void initialize_command_prompt(void) {
    prompt_initialized = 1;
 
    LOG_INFO("AI prompt initialized. Length: %d", prompt_len);
-   printf("AI Prompt: \"%s\"\n", command_prompt);
 }
 
 /**

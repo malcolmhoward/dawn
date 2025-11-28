@@ -230,8 +230,6 @@ char *llm_claude_chat_completion(struct json_object *conversation_history,
    const char *payload = json_object_to_json_string_ext(
        request, JSON_C_TO_STRING_PLAIN | JSON_C_TO_STRING_NOSLASHESCAPE);
 
-   printf("Claude JSON Payload: %s\n", payload);
-
    // Initialize response buffer
    chunk.memory = malloc(1);
    if (!chunk.memory) {
@@ -320,8 +318,6 @@ char *llm_claude_chat_completion(struct json_object *conversation_history,
    json_object_put(request);
 
    // Parse Claude response
-   printf("Raw receive from Claude: %s\n", (char *)chunk.memory);
-
    json_object *parsed = json_tokener_parse(chunk.memory);
    if (!parsed) {
       LOG_ERROR("Failed to parse Claude response");
@@ -508,7 +504,6 @@ char *llm_claude_chat_completion_streaming(struct json_object *conversation_hist
 
    payload = json_object_to_json_string_ext(request, JSON_C_TO_STRING_PLAIN |
                                                          JSON_C_TO_STRING_NOSLASHESCAPE);
-   printf("JSON Payload (STREAMING): %s\n", payload);
 
    // Create streaming context
    stream_ctx = llm_stream_create(LLM_CLOUD, CLOUD_PROVIDER_CLAUDE, chunk_callback,

@@ -41,6 +41,30 @@ static int g_initialized = 0;
  * ============================================================================ */
 
 /**
+ * @brief Strip non-printable ASCII and multi-byte UTF-8 characters
+ *
+ * Replaces non-printable characters with spaces for clean TUI display.
+ */
+static void sanitize_for_display(char *str) {
+   if (str == NULL)
+      return;
+
+   unsigned char *p = (unsigned char *)str;
+   while (*p) {
+      /* Keep printable ASCII (space through tilde) */
+      if (*p >= 32 && *p <= 126) {
+         p++;
+      } else if (*p == '\t' || *p == '\n' || *p == '\r') {
+         /* Replace tabs/newlines with space */
+         *p++ = ' ';
+      } else {
+         /* Replace any other character (including multi-byte UTF-8) with space */
+         *p++ = ' ';
+      }
+   }
+}
+
+/**
  * @brief Update rolling average
  *
  * Calculates new average given previous average, count, and new value.
@@ -405,6 +429,9 @@ void metrics_set_last_user_command(const char *command) {
    strncpy(g_metrics.last_user_command, command, METRICS_MAX_LOG_LENGTH - 1);
    g_metrics.last_user_command[METRICS_MAX_LOG_LENGTH - 1] = '\0';
    pthread_mutex_unlock(&g_metrics.mutex);
+
+   /* Also log to activity feed */
+   metrics_log_activity("USER: %s", command);
 }
 
 void metrics_set_last_ai_response(const char *response) {
@@ -415,7 +442,12 @@ void metrics_set_last_ai_response(const char *response) {
    pthread_mutex_lock(&g_metrics.mutex);
    strncpy(g_metrics.last_ai_response, response, METRICS_MAX_LOG_LENGTH - 1);
    g_metrics.last_ai_response[METRICS_MAX_LOG_LENGTH - 1] = '\0';
+   /* Sanitize for clean display */
+   sanitize_for_display(g_metrics.last_ai_response);
    pthread_mutex_unlock(&g_metrics.mutex);
+
+   /* Also log to activity feed (use sanitized version) */
+   metrics_log_activity("FRIDAY: %s", g_metrics.last_ai_response);
 }
 
 /* ============================================================================

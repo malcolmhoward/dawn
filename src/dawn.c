@@ -60,6 +60,9 @@
 #include "text_to_command_nuevo.h"
 #include "tts/text_to_speech.h"
 #include "ui/metrics.h"
+#ifdef ENABLE_TUI
+#include "ui/tui.h"
+#endif
 #include "version.h"
 
 // Whisper chunking manager
@@ -258,6 +261,12 @@ static struct mosquitto *mosq;
 
 // Is remote DAWN enabled
 static int enable_network_audio = 0;
+
+#ifdef ENABLE_TUI
+// TUI configuration
+static int enable_tui = 0;
+static tui_theme_t tui_theme = TUI_THEME_GREEN;  // Default: Apple ][ green
+#endif
 pthread_mutex_t processing_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t processing_done = PTHREAD_COND_INITIALIZER;
 uint8_t *processing_result_data = NULL;
@@ -1275,6 +1284,11 @@ void display_help(int argc, char *argv[]) {
    printf("  -D, --commands-only    Direct command processing only (default).\n");
    printf("  -C, --llm-commands     Try direct commands first, then LLM if no match.\n");
    printf("  -L, --llm-only         LLM handles all commands, skip direct processing.\n");
+#ifdef ENABLE_TUI
+   printf("\nTerminal UI Options:\n");
+   printf("  -T, --tui              Enable terminal UI dashboard.\n");
+   printf("  -t, --theme THEME      TUI color theme (green, blue, bw). Default: green.\n");
+#endif
 }
 
 /**
@@ -1425,6 +1439,10 @@ int main(int argc, char *argv[]) {
       { "whisper-model", required_argument, NULL, 'W' },   // Whisper model (tiny/base/small)
       { "whisper-path", required_argument, NULL, 'w' },    // Whisper models directory
       { "music-dir", required_argument, NULL, 'M' },       // Music directory (absolute path)
+#ifdef ENABLE_TUI
+      { "tui", no_argument, NULL, 'T' },          // Enable TUI mode
+      { "theme", required_argument, NULL, 't' },  // TUI theme (green/blue/bw)
+#endif
       { 0, 0, 0, 0 }
    };
    int option_index = 0;
@@ -1447,8 +1465,13 @@ int main(int argc, char *argv[]) {
    // TODO: I'm adding this here but it will need better error clean-ups.
    curl_global_init(CURL_GLOBAL_DEFAULT);
 
+#ifdef ENABLE_TUI
+   while (
+       (opt = getopt_long(argc, argv, "c:d:hl:LCDNm:P:A:W:w:M:Tt:", long_options, &option_index)) !=
+#else
    while ((opt = getopt_long(argc, argv, "c:d:hl:LCDNm:P:A:W:w:M:", long_options, &option_index)) !=
-          -1) {
+#endif
+       -1) {
       switch (opt) {
          case 'c':
             strncpy(pcm_capture_device, optarg, sizeof(pcm_capture_device));
@@ -1531,6 +1554,25 @@ int main(int argc, char *argv[]) {
             set_music_directory(optarg);
             LOG_INFO("Music directory set to: %s", optarg);
             break;
+#ifdef ENABLE_TUI
+         case 'T':
+            enable_tui = 1;
+            LOG_INFO("TUI mode enabled");
+            break;
+         case 't':
+            if (strcasecmp(optarg, "green") == 0) {
+               tui_theme = TUI_THEME_GREEN;
+            } else if (strcasecmp(optarg, "blue") == 0) {
+               tui_theme = TUI_THEME_BLUE;
+            } else if (strcasecmp(optarg, "bw") == 0) {
+               tui_theme = TUI_THEME_BW;
+            } else {
+               LOG_WARNING("Unknown TUI theme: %s. Using green.", optarg);
+               tui_theme = TUI_THEME_GREEN;
+            }
+            LOG_INFO("TUI theme set to: %s", optarg);
+            break;
+#endif
          case '?':
             display_help(argc, argv);
             exit(EXIT_FAILURE);
@@ -1552,6 +1594,23 @@ int main(int argc, char *argv[]) {
          return 1;
       }
    }
+
+#ifdef ENABLE_TUI
+   // Initialize TUI if enabled
+   if (enable_tui) {
+      if (tui_init(tui_theme) != 0) {
+         LOG_WARNING("TUI initialization failed, falling back to console mode");
+         enable_tui = 0;
+      } else {
+         LOG_INFO("TUI initialized with %s theme", tui_theme == TUI_THEME_GREEN  ? "green"
+                                                   : tui_theme == TUI_THEME_BLUE ? "blue"
+                                                   : tui_theme == TUI_THEME_BW   ? "black/white"
+                                                                                 : "unknown");
+         // Suppress console logging to avoid interfering with TUI
+         logging_suppress_console(1);
+      }
+   }
+#endif
 
    if (strcmp(pcm_capture_device, "") == 0) {
       strncpy(pcm_capture_device, DEFAULT_PCM_CAPTURE_DEVICE, sizeof(pcm_capture_device));
@@ -1794,6 +1853,18 @@ int main(int argc, char *argv[]) {
    // Main loop
    LOG_INFO("Listening...\n");
    while (!quit) {
+#ifdef ENABLE_TUI
+      // TUI update and input handling (runs at roughly 10-20 Hz based on loop timing)
+      if (enable_tui) {
+         tui_update();
+         if (tui_handle_input()) {
+            // User requested quit from TUI
+            quit = 1;
+            break;
+         }
+      }
+#endif
+
       if (vision_ai_ready) {
          recState = DAWN_STATE_VISION_AI_READY;
          // Reset VAD state at interaction boundary (vision AI entry)
@@ -1968,7 +2039,6 @@ int main(int argc, char *argv[]) {
             // Process successful response
             LOG_WARNING("AI: %s\n", response_text);
             metrics_set_last_ai_response(response_text);
-            metrics_log_activity("FRIDAY: %s", response_text);
 
             // Create cleaned version for TTS (keep original for conversation history)
             char *tts_response = strdup(response_text);
@@ -2303,7 +2373,17 @@ int main(int argc, char *argv[]) {
 
                // ENGINE-AWARE FINALIZATION
                if (asr_engine == ASR_ENGINE_WHISPER && chunk_mgr) {
-                  // Whisper: Get concatenated text from chunks
+                  // Whisper: Finalize any pending audio then get concatenated text
+                  if (chunking_manager_get_buffer_usage(chunk_mgr) > 0) {
+                     char *pending_chunk = NULL;
+                     LOG_INFO("WAKEWORD_LISTEN: Finalizing pending audio at max duration");
+                     int result = chunking_manager_finalize_chunk(chunk_mgr, &pending_chunk);
+                     if (result == 0 && pending_chunk) {
+                        LOG_INFO("WAKEWORD_LISTEN: Pending chunk finalized: \"%s\"", pending_chunk);
+                        free(pending_chunk);
+                     }
+                  }
+
                   size_t num_chunks = chunking_manager_get_num_chunks(chunk_mgr);
                   input_text = chunking_manager_get_full_text(chunk_mgr);
                   if (input_text) {
@@ -2344,7 +2424,19 @@ int main(int argc, char *argv[]) {
 
                // ENGINE-AWARE FINALIZATION
                if (asr_engine == ASR_ENGINE_WHISPER && chunk_mgr) {
-                  // Whisper: Get concatenated text from chunks
+                  // Whisper: Finalize any pending audio then get concatenated text
+                  // This ensures short utterances (< VAD_MIN_CHUNK_DURATION) are transcribed
+                  if (chunking_manager_get_buffer_usage(chunk_mgr) > 0) {
+                     char *pending_chunk = NULL;
+                     LOG_INFO(
+                         "WAKEWORD_LISTEN: Finalizing pending audio buffer before get_full_text");
+                     int result = chunking_manager_finalize_chunk(chunk_mgr, &pending_chunk);
+                     if (result == 0 && pending_chunk) {
+                        LOG_INFO("WAKEWORD_LISTEN: Pending chunk finalized: \"%s\"", pending_chunk);
+                        free(pending_chunk);
+                     }
+                  }
+
                   size_t num_chunks = chunking_manager_get_num_chunks(chunk_mgr);
                   input_text = chunking_manager_get_full_text(chunk_mgr);
                   if (input_text) {
@@ -2364,7 +2456,6 @@ int main(int argc, char *argv[]) {
                      if (asr_result->text) {
                         input_text = strdup(asr_result->text);
                         metrics_set_last_user_command(asr_result->text);
-                        metrics_log_activity("User: \"%s\"", asr_result->text);
                      } else {
                         input_text = NULL;
                      }
@@ -2475,11 +2566,14 @@ int main(int argc, char *argv[]) {
                      // Check if there's any meaningful text after wake word
                      // Skip whitespace and punctuation to see if there's actual command text
                      const char *check_ptr = next_char_ptr;
+                     LOG_INFO("Wake word found. next_char_ptr='%s'",
+                              next_char_ptr ? next_char_ptr : "(null)");
                      while (*check_ptr != '\0' &&
                             (*check_ptr == ' ' || *check_ptr == '.' || *check_ptr == ',' ||
                              *check_ptr == '!' || *check_ptr == '?')) {
                         check_ptr++;
                      }
+                     LOG_INFO("After skip, check_ptr='%s' (len=%zu)", check_ptr, strlen(check_ptr));
 
                      if (*check_ptr == '\0') {
                         // No command after wake word - transition to DAWN_STATE_COMMAND_RECORDING
@@ -2506,6 +2600,11 @@ int main(int argc, char *argv[]) {
                         command_text = strdup(cmd_start);
                         free(input_text);
                         input_text = NULL;
+
+                        // Log the user command for TUI activity feed
+                        if (command_text) {
+                           metrics_set_last_user_command(command_text);
+                        }
 
                         recState = DAWN_STATE_PROCESS_COMMAND;
 
@@ -2685,12 +2784,25 @@ int main(int argc, char *argv[]) {
 
                // ENGINE-AWARE FINALIZATION (Architecture Review Issue #3)
                if (asr_engine == ASR_ENGINE_WHISPER && chunk_mgr) {
-                  // Whisper mode: Get concatenated text from all chunks
+                  // Whisper mode: Finalize any pending audio then get concatenated text
+                  // This ensures short commands (< VAD_MIN_CHUNK_DURATION) are transcribed
+                  if (chunking_manager_get_buffer_usage(chunk_mgr) > 0) {
+                     char *pending_chunk = NULL;
+                     LOG_INFO("COMMAND_RECORDING: Finalizing pending audio buffer");
+                     int result = chunking_manager_finalize_chunk(chunk_mgr, &pending_chunk);
+                     if (result == 0 && pending_chunk) {
+                        LOG_INFO("COMMAND_RECORDING: Pending chunk finalized: \"%s\"",
+                                 pending_chunk);
+                        free(pending_chunk);
+                     }
+                  }
+
                   size_t num_chunks = chunking_manager_get_num_chunks(chunk_mgr);
                   command_text = chunking_manager_get_full_text(chunk_mgr);
 
                   if (command_text) {
                      LOG_WARNING("Input (from %zu chunks): %s\n", num_chunks, command_text);
+                     metrics_set_last_user_command(command_text);
                   } else {
                      LOG_WARNING("Input: (no chunks finalized)\n");
                   }
@@ -2709,7 +2821,6 @@ int main(int argc, char *argv[]) {
                      if (asr_result->text) {
                         command_text = strdup(asr_result->text);
                         metrics_set_last_user_command(asr_result->text);
-                        metrics_log_activity("User: \"%s\"", asr_result->text);
                      } else {
                         command_text = NULL;
                      }
@@ -3000,7 +3111,6 @@ int main(int argc, char *argv[]) {
                // AI returned successfully
                LOG_WARNING("AI: %s\n", response_text);
                metrics_set_last_ai_response(response_text);
-               metrics_log_activity("FRIDAY: %s", response_text);
                // TTS already handled by streaming callback
 
                // Add the successful AI response to the conversation.
@@ -3117,7 +3227,6 @@ int main(int argc, char *argv[]) {
                   if (input_text && strlen(input_text) > 0 && !direct_command_found) {
                      LOG_INFO("Network speech recognized: \"%s\"", input_text);
                      metrics_set_last_user_command(input_text);
-                     metrics_log_activity("User (network): \"%s\"", input_text);
 
                      // Add user message to conversation history
                      struct json_object *user_message = json_object_new_object();
@@ -3137,7 +3246,6 @@ int main(int argc, char *argv[]) {
 
                         LOG_INFO("Network LLM response: \"%s\"", response_text);
                         metrics_set_last_ai_response(response_text);
-                        metrics_log_activity("FRIDAY (network): %s", response_text);
 
                         // Generate TTS WAV for network transmission with ESP32 size limits
                         size_t response_wav_size = 0;
@@ -3374,6 +3482,15 @@ int main(int argc, char *argv[]) {
       metrics_export_json(stats_filename);
    }
    metrics_cleanup();
+
+#ifdef ENABLE_TUI
+   // Cleanup TUI before closing logging
+   if (enable_tui) {
+      tui_cleanup();
+      // Re-enable console logging for any final messages
+      logging_suppress_console(0);
+   }
+#endif
 
    // Close the log file properly
    close_logging();
