@@ -43,6 +43,7 @@ EXCLUDE_DIRS=(
    "external"
    "utf8"
    "whisper.cpp"
+   "webrtc-audio-processing"
 )
 
 EXCLUDE_FILES=(

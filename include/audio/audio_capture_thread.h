@@ -24,6 +24,7 @@
 
 #include <pthread.h>
 #include <stdatomic.h>
+#include <stdint.h>
 
 #include "audio/ring_buffer.h"
 
@@ -56,6 +57,12 @@ typedef struct {
 
    char *pcm_device;   /**< Device name */
    size_t buffer_size; /**< Size of capture buffer */
+
+#ifdef ENABLE_AEC
+   int16_t *aec_buffer;    /**< Pre-allocated AEC output buffer */
+   size_t aec_buffer_size; /**< AEC buffer size in samples */
+   int aec_rate_mismatch;  /**< True if device rate != AEC_SAMPLE_RATE */
+#endif
 } audio_capture_context_t;
 
 /**

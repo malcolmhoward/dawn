@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include <atomic>
 #include <queue>
@@ -11,6 +12,32 @@
 
 #include "dawn.h"
 #include "logging.h"
+
+#ifdef ENABLE_AEC
+#include "audio/aec_processor.h"
+#include "audio/resampler.h"
+
+// Separate resamplers for thread safety:
+// - g_tts_thread_resampler: Used by TTS playback thread to feed AEC reference
+//
+// NOTE: Network WAV generation (text_to_speech_to_wav) does NOT need to feed AEC reference
+// because network clients (ESP32) play audio on THEIR speaker, not DAWN's local speaker.
+// DAWN's microphone won't hear ESP32's output, so there's no echo to cancel.
+//
+// IMPORTANT: These must NOT be shared between threads - resampler_t is not thread-safe!
+static resampler_t *g_tts_thread_resampler = nullptr;
+
+// Pre-allocated resample buffer (one per resampler)
+static int16_t g_tts_resample_buffer[RESAMPLER_MAX_SAMPLES];
+
+// Rate-limited warning for resampler overflow (warn once per 60 seconds)
+static time_t g_last_resample_warning = 0;
+
+// Atomic sequence counter for detecting discard during unlocked audio write (TOCTOU protection).
+// Incremented each time TTS is discarded. Used to detect if discard happened between
+// releasing mutex and completing audio write.
+static std::atomic<uint32_t> g_tts_discard_sequence{ 0 };
+#endif
 #include "network/dawn_wav_utils.h"
 #include "text_to_command_nuevo.h"
 #include "tts/piper.hpp"
@@ -231,153 +258,263 @@ void *tts_thread_function(void *arg) {
       tts_stop_processing.store(false);
 
       // Convert text to audio data
-      textToAudio(tts_handle.config, tts_handle.voice, inputText, audioBuffer, result,
-                  tts_stop_processing, [&]() {
-                     pthread_mutex_lock(&tts_mutex);
-                     tts_playback_state = TTS_PLAYBACK_PLAY;
-                     pthread_mutex_unlock(&tts_mutex);
+      textToAudio(
+          tts_handle.config, tts_handle.voice, inputText, audioBuffer, result, tts_stop_processing,
+          [&]() {
+             pthread_mutex_lock(&tts_mutex);
+             tts_playback_state = TTS_PLAYBACK_PLAY;
+             pthread_mutex_unlock(&tts_mutex);
 
 #ifdef ALSA_DEVICE
-                     // Play audio data using ALSA
-                     for (size_t i = 0; i < audioBuffer.size(); i += tts_handle.frames) {
-                        // Check playback state
-                        pthread_mutex_lock(&tts_mutex);
-                        bool was_paused = false;
-                        while (tts_playback_state == TTS_PLAYBACK_PAUSE) {
-                           if (!was_paused) {
-                              LOG_WARNING("TTS playback is PAUSED.");
-                              was_paused = true;
-                           }
-                           pthread_cond_wait(&tts_cond, &tts_mutex);
-                        }
+             // Play audio data using ALSA
+             for (size_t i = 0; i < audioBuffer.size(); i += tts_handle.frames) {
+                // Check playback state
+                pthread_mutex_lock(&tts_mutex);
+                bool was_paused = false;
+                while (tts_playback_state == TTS_PLAYBACK_PAUSE) {
+                   if (!was_paused) {
+                      LOG_WARNING("TTS playback is PAUSED.");
+                      was_paused = true;
+                   }
+                   pthread_cond_wait(&tts_cond, &tts_mutex);
+                }
 
-                        // Only log state transitions after being paused
-                        if (was_paused) {
-                           if (tts_playback_state == TTS_PLAYBACK_DISCARD) {
-                              LOG_WARNING("TTS unpaused to DISCARD.");
-                              tts_playback_state = TTS_PLAYBACK_IDLE;
-                              audioBuffer.clear();
-                              LOG_WARNING("Emptying TTS queue.");
-                              while (!tts_queue.empty()) {
-                                 tts_queue.pop();
-                              }
+                // Only log state transitions after being paused
+                if (was_paused) {
+                   if (tts_playback_state == TTS_PLAYBACK_DISCARD) {
+                      LOG_WARNING("TTS unpaused to DISCARD.");
+                      tts_playback_state = TTS_PLAYBACK_IDLE;
+                      audioBuffer.clear();
+                      LOG_WARNING("Emptying TTS queue.");
+                      while (!tts_queue.empty()) {
+                         tts_queue.pop();
+                      }
 
-                              // Drop (flush) audio device buffer immediately to stop playback
-                              snd_pcm_drop(tts_handle.handle);
-                              snd_pcm_prepare(tts_handle.handle);
+#ifdef ENABLE_AEC
+                      // Increment sequence counter to signal any in-flight playback
+                      g_tts_discard_sequence.fetch_add(1, std::memory_order_release);
+#endif
 
-                              pthread_mutex_unlock(&tts_mutex);
+                      // Drop (flush) audio device buffer immediately to stop playback
+                      snd_pcm_drop(tts_handle.handle);
+                      snd_pcm_prepare(tts_handle.handle);
 
-                              tts_stop_processing.store(true);
-                              return;
-                           } else if (tts_playback_state == TTS_PLAYBACK_PLAY) {
-                              LOG_WARNING("TTS unpaused to PLAY.");
-                           } else if (tts_playback_state == TTS_PLAYBACK_IDLE) {
-                              LOG_WARNING("TTS unpaused to IDLE.");
-                           } else {
-                              LOG_ERROR("TTS unpaused to UNKNOWN.");
-                           }
-                        }
-                        pthread_mutex_unlock(&tts_mutex);
+                      pthread_mutex_unlock(&tts_mutex);
 
-                        // Write audio frames
-                        rc = snd_pcm_writei(tts_handle.handle, &audioBuffer[i],
-                                            std::min(tts_handle.frames, audioBuffer.size() - i));
-                        if (rc == -EPIPE) {
-                           LOG_ERROR("ALSA underrun occurred");
-                           snd_pcm_prepare(tts_handle.handle);
-                        } else if (rc < 0) {
-                           LOG_ERROR("ALSA error from writei: %s", snd_strerror(rc));
-                        }
-                     }
+                      tts_stop_processing.store(true);
+                      return;
+                   } else if (tts_playback_state == TTS_PLAYBACK_PLAY) {
+                      LOG_WARNING("TTS unpaused to PLAY.");
+                   } else if (tts_playback_state == TTS_PLAYBACK_IDLE) {
+                      LOG_WARNING("TTS unpaused to IDLE.");
+                   } else {
+                      LOG_ERROR("TTS unpaused to UNKNOWN.");
+                   }
+                }
+
+#ifdef ENABLE_AEC
+                // Capture sequence counter before releasing mutex (TOCTOU protection)
+                uint32_t seq_before_write = g_tts_discard_sequence.load(std::memory_order_acquire);
+
+                // Feed AEC reference BEFORE releasing mutex
+                // This ensures audio played = audio fed to AEC reference
+                if (tts_playback_state == TTS_PLAYBACK_PLAY && g_tts_thread_resampler &&
+                    aec_is_enabled()) {
+                   size_t frames_to_write = std::min(tts_handle.frames, audioBuffer.size() - i);
+                   size_t in_samples = frames_to_write;
+
+                   // Enforce maximum chunk size
+                   if (in_samples <= RESAMPLER_MAX_SAMPLES) {
+                      size_t out_max = resampler_get_output_size(g_tts_thread_resampler,
+                                                                 in_samples);
+
+                      if (out_max <= RESAMPLER_MAX_SAMPLES) {
+                         size_t resampled = resampler_process(g_tts_thread_resampler,
+                                                              &audioBuffer[i], in_samples,
+                                                              g_tts_resample_buffer,
+                                                              RESAMPLER_MAX_SAMPLES);
+
+                         if (resampled > 0) {
+                            aec_add_reference(g_tts_resample_buffer, resampled);
+                         }
+                      } else {
+                         // Rate-limited warning (once per 60 seconds)
+                         time_t now = time(NULL);
+                         if (now - g_last_resample_warning >= 60) {
+                            LOG_WARNING(
+                                "AEC resampler output too large (%zu > %d), skipping reference",
+                                out_max, RESAMPLER_MAX_SAMPLES);
+                            g_last_resample_warning = now;
+                         }
+                      }
+                   }
+                }
+#endif
+                pthread_mutex_unlock(&tts_mutex);
+
+                // Write audio frames (blocking I/O - cannot hold mutex here)
+                rc = snd_pcm_writei(tts_handle.handle, &audioBuffer[i],
+                                    std::min(tts_handle.frames, audioBuffer.size() - i));
+                if (rc == -EPIPE) {
+                   LOG_ERROR("ALSA underrun occurred");
+                   snd_pcm_prepare(tts_handle.handle);
+                } else if (rc < 0) {
+                   LOG_ERROR("ALSA error from writei: %s", snd_strerror(rc));
+                }
+
+#ifdef ENABLE_AEC
+                // Check if discard happened during audio write (TOCTOU detection)
+                if (g_tts_discard_sequence.load(std::memory_order_acquire) != seq_before_write) {
+                   // Discard occurred while we were writing - audio device already flushed
+                   LOG_INFO("TTS discarded during ALSA write - exiting playback");
+                   tts_stop_processing.store(true);
+                   return;
+                }
+#endif
+             }
 #else
-            const size_t chunk_frames = 1024;  // Adjust as needed
-            const size_t chunk_bytes = chunk_frames * sizeof(int16_t);
-            size_t total_bytes = audioBuffer.size() * sizeof(int16_t);
+             const size_t chunk_frames = 1024;  // Adjust as needed
+             const size_t chunk_bytes = chunk_frames * sizeof(int16_t);
+             size_t total_bytes = audioBuffer.size() * sizeof(int16_t);
 
-            for (size_t i = 0; i < total_bytes; i += chunk_bytes) {
-               // Check playback state
-               pthread_mutex_lock(&tts_mutex);
-               bool was_paused = false;
-               while (tts_playback_state == TTS_PLAYBACK_PAUSE) {
-                  if (!was_paused) {
-                     LOG_WARNING("TTS playback is PAUSED.");
-                     was_paused = true;
-                  }
-                  pthread_cond_wait(&tts_cond, &tts_mutex);
-               }
+             for (size_t i = 0; i < total_bytes; i += chunk_bytes) {
+                // Check playback state
+                pthread_mutex_lock(&tts_mutex);
+                bool was_paused = false;
+                while (tts_playback_state == TTS_PLAYBACK_PAUSE) {
+                   if (!was_paused) {
+                      LOG_WARNING("TTS playback is PAUSED.");
+                      was_paused = true;
+                   }
+                   pthread_cond_wait(&tts_cond, &tts_mutex);
+                }
 
-               // Only log state transitions after being paused
-               if (was_paused) {
-                  if (tts_playback_state == TTS_PLAYBACK_DISCARD) {
-                     LOG_WARNING("TTS unpaused to DISCARD.");
-                     tts_playback_state = TTS_PLAYBACK_IDLE;
-                     audioBuffer.clear();
-                     LOG_WARNING("Emptying TTS queue.");
-                     while (!tts_queue.empty()) {
-                        tts_queue.pop();
-                     }
+                // Only log state transitions after being paused
+                if (was_paused) {
+                   if (tts_playback_state == TTS_PLAYBACK_DISCARD) {
+                      LOG_WARNING("TTS unpaused to DISCARD.");
+                      tts_playback_state = TTS_PLAYBACK_IDLE;
+                      audioBuffer.clear();
+                      LOG_WARNING("Emptying TTS queue.");
+                      while (!tts_queue.empty()) {
+                         tts_queue.pop();
+                      }
 
-                     // Flush PulseAudio buffer immediately to stop playback
-                     int pa_error;
-                     if (pa_simple_flush(tts_handle.pa_handle, &pa_error) < 0) {
-                        LOG_ERROR("PulseAudio flush error: %s", pa_strerror(pa_error));
-                     }
+#ifdef ENABLE_AEC
+                      // Increment sequence counter to signal any in-flight playback
+                      g_tts_discard_sequence.fetch_add(1, std::memory_order_release);
+#endif
 
-                     pthread_mutex_unlock(&tts_mutex);
+                      // Flush PulseAudio buffer immediately to stop playback
+                      int pa_error;
+                      if (pa_simple_flush(tts_handle.pa_handle, &pa_error) < 0) {
+                         LOG_ERROR("PulseAudio flush error: %s", pa_strerror(pa_error));
+                      }
 
-                     tts_stop_processing.store(true);
-                     return;
-                  } else if (tts_playback_state == TTS_PLAYBACK_PLAY) {
-                     LOG_WARNING("TTS unpaused to PLAY.");
-                  } else if (tts_playback_state == TTS_PLAYBACK_IDLE) {
-                     LOG_WARNING("TTS unpaused to IDLE.");
-                  } else {
-                     LOG_ERROR("TTS unpaused to UNKNOWN.");
-                  }
-               }
-               pthread_mutex_unlock(&tts_mutex);
+                      pthread_mutex_unlock(&tts_mutex);
 
-               // Calculate bytes to write
-               size_t bytes_to_write = std::min(chunk_bytes, total_bytes - i);
+                      tts_stop_processing.store(true);
+                      return;
+                   } else if (tts_playback_state == TTS_PLAYBACK_PLAY) {
+                      LOG_WARNING("TTS unpaused to PLAY.");
+                   } else if (tts_playback_state == TTS_PLAYBACK_IDLE) {
+                      LOG_WARNING("TTS unpaused to IDLE.");
+                   } else {
+                      LOG_ERROR("TTS unpaused to UNKNOWN.");
+                   }
+                }
 
-               // Write audio data
-               rc = pa_simple_write(tts_handle.pa_handle, ((uint8_t*)audioBuffer.data()) + i,
-                                    bytes_to_write, &error);
-               if (rc < 0) {
-                  LOG_ERROR("PulseAudio error from pa_simple_write: %s", pa_strerror(error));
-                  //audioBuffer.clear();
+#ifdef ENABLE_AEC
+                // Capture sequence counter before releasing mutex (TOCTOU protection)
+                uint32_t seq_before_write = g_tts_discard_sequence.load(std::memory_order_acquire);
 
-                  // Close the current PulseAudio connection
-                  if (tts_handle.pa_handle) {
-                     pa_simple_free(tts_handle.pa_handle);
-                     tts_handle.pa_handle = NULL;
-                  }
+                // Feed AEC reference BEFORE releasing mutex
+                // This ensures audio played = audio fed to AEC reference
+                if (tts_playback_state == TTS_PLAYBACK_PLAY && g_tts_thread_resampler &&
+                    aec_is_enabled()) {
+                   size_t bytes_to_write_aec = std::min(chunk_bytes, total_bytes - i);
+                   size_t in_samples = bytes_to_write_aec / sizeof(int16_t);
 
-                  // Reopen the PulseAudio playback device
-                  tts_handle.pa_handle = openPulseaudioPlaybackDevice(tts_handle.pcm_capture_device);
-                  if (tts_handle.pa_handle == NULL) {
-                     LOG_ERROR("Error re-opening PulseAudio playback device.");
-                  }
-               }
-            }
+                   // Enforce maximum chunk size
+                   if (in_samples <= RESAMPLER_MAX_SAMPLES) {
+                      size_t out_max = resampler_get_output_size(g_tts_thread_resampler,
+                                                                 in_samples);
+
+                      if (out_max <= RESAMPLER_MAX_SAMPLES) {
+                         size_t resampled = resampler_process(
+                             g_tts_thread_resampler,
+                             (int16_t *)(((uint8_t *)audioBuffer.data()) + i), in_samples,
+                             g_tts_resample_buffer, RESAMPLER_MAX_SAMPLES);
+
+                         if (resampled > 0) {
+                            aec_add_reference(g_tts_resample_buffer, resampled);
+                         }
+                      } else {
+                         // Rate-limited warning (once per 60 seconds)
+                         time_t now = time(NULL);
+                         if (now - g_last_resample_warning >= 60) {
+                            LOG_WARNING(
+                                "AEC resampler output too large (%zu > %d), skipping reference",
+                                out_max, RESAMPLER_MAX_SAMPLES);
+                            g_last_resample_warning = now;
+                         }
+                      }
+                   }
+                }
+#endif
+                pthread_mutex_unlock(&tts_mutex);
+
+                // Calculate bytes to write
+                size_t bytes_to_write = std::min(chunk_bytes, total_bytes - i);
+
+                // Write audio data (blocking I/O - cannot hold mutex here)
+                rc = pa_simple_write(tts_handle.pa_handle, ((uint8_t *)audioBuffer.data()) + i,
+                                     bytes_to_write, &error);
+                if (rc < 0) {
+                   LOG_ERROR("PulseAudio error from pa_simple_write: %s", pa_strerror(error));
+                   //audioBuffer.clear();
+
+                   // Close the current PulseAudio connection
+                   if (tts_handle.pa_handle) {
+                      pa_simple_free(tts_handle.pa_handle);
+                      tts_handle.pa_handle = NULL;
+                   }
+
+                   // Reopen the PulseAudio playback device
+                   tts_handle.pa_handle = openPulseaudioPlaybackDevice(
+                       tts_handle.pcm_capture_device);
+                   if (tts_handle.pa_handle == NULL) {
+                      LOG_ERROR("Error re-opening PulseAudio playback device.");
+                   }
+                }
+
+#ifdef ENABLE_AEC
+                // Check if discard happened during audio write (TOCTOU detection)
+                if (g_tts_discard_sequence.load(std::memory_order_acquire) != seq_before_write) {
+                   // Discard occurred while we were writing - audio device already flushed
+                   LOG_INFO("TTS discarded during PulseAudio write - exiting playback");
+                   tts_stop_processing.store(true);
+                   return;
+                }
+#endif
+             }
 
          // Drain audio buffer to ensure all audio is played before returning
 #ifdef ALSA_DEVICE
-            snd_pcm_drain(tts_handle.handle);
+             snd_pcm_drain(tts_handle.handle);
 #else
-            if (pa_simple_drain(tts_handle.pa_handle, &error) < 0) {
-               LOG_ERROR("PulseAudio drain error: %s", pa_strerror(error));
-            }
+             if (pa_simple_drain(tts_handle.pa_handle, &error) < 0) {
+                LOG_ERROR("PulseAudio drain error: %s", pa_strerror(error));
+             }
 #endif
 #endif
-                     // Clear the audio buffer for the next request
-                     audioBuffer.clear();
+             // Clear the audio buffer for the next request
+             audioBuffer.clear();
 
-                     pthread_mutex_lock(&tts_mutex);
-                     tts_playback_state = TTS_PLAYBACK_IDLE;
-                     pthread_mutex_unlock(&tts_mutex);
-                  });
+             pthread_mutex_lock(&tts_mutex);
+             tts_playback_state = TTS_PLAYBACK_IDLE;
+             pthread_mutex_unlock(&tts_mutex);
+          });
 
       // Record TTS timing metrics after synthesis completes
       if (result.inferSeconds > 0 && !tts_stop_processing.load()) {
@@ -504,6 +641,17 @@ void initialize_text_to_speech(char *pcm_device) {
 
    // Only mark as initialized if everything succeeded
    tts_handle.is_initialized = 1;
+
+#ifdef ENABLE_AEC
+   // Create resampler for AEC reference (22050 -> 16000)
+   g_tts_thread_resampler = resampler_create(DEFAULT_RATE, AEC_SAMPLE_RATE, 1);
+   if (!g_tts_thread_resampler) {
+      LOG_WARNING("Failed to create TTS resampler for AEC - echo cancellation may be limited");
+   } else {
+      LOG_INFO("TTS resampler initialized for AEC (%d -> %d Hz)", DEFAULT_RATE, AEC_SAMPLE_RATE);
+   }
+#endif
+
    LOG_INFO("Text-to-Speech system initialized successfully");
 }
 
@@ -713,6 +861,15 @@ void cleanup_text_to_speech() {
    // Destroy synchronization primitives
    pthread_mutex_destroy(&tts_queue_mutex);
    pthread_cond_destroy(&tts_queue_cond);
+
+#ifdef ENABLE_AEC
+   // Clean up AEC resampler
+   if (g_tts_thread_resampler) {
+      resampler_destroy(g_tts_thread_resampler);
+      g_tts_thread_resampler = nullptr;
+   }
+   // Note: g_tts_resample_buffer is static, no free needed
+#endif
 
    // Clean up the TTS engine
    terminate(tts_handle.config);

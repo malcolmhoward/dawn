@@ -226,7 +226,17 @@ void parseJsonCommandandExecute(const char *input) {
    // Parse the JSON data
    parsedJson = json_tokener_parse(input);
    if (parsedJson == NULL) {
-      LOG_ERROR("Error: Unable to process mqtt command.");
+      // Log first 200 chars of malformed payload for debugging
+      char preview[201];
+      size_t len = strlen(input);
+      if (len > 200) {
+         strncpy(preview, input, 200);
+         preview[200] = '\0';
+      } else {
+         strncpy(preview, input, len + 1);
+      }
+      LOG_ERROR("Unable to parse MQTT JSON command. Payload preview: %.200s%s", preview,
+                len > 200 ? "..." : "");
 
       return;
    }

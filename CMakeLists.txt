@@ -139,6 +139,86 @@ else()
     message(STATUS "Audio backend: PulseAudio (desktop mode)")
 endif()
 
+# =============================================================================
+# AEC Support (Acoustic Echo Cancellation)
+# =============================================================================
+option(ENABLE_AEC "Enable Acoustic Echo Cancellation (WebRTC AEC3)" OFF)
+
+if(ENABLE_AEC)
+    message(STATUS "AEC: Checking dependencies...")
+
+    # -------------------------------------------------------------------------
+    # Resampler library (required)
+    # -------------------------------------------------------------------------
+    pkg_check_modules(SAMPLERATE samplerate)
+    if(NOT SAMPLERATE_FOUND)
+        message(FATAL_ERROR
+            "libsamplerate not found.\n"
+            "Install with: sudo apt-get install libsamplerate0-dev\n"
+            "Or disable AEC with: cmake -DENABLE_AEC=OFF ..")
+    endif()
+    include_directories(${SAMPLERATE_INCLUDE_DIRS})
+    message(STATUS "  libsamplerate: Found (${SAMPLERATE_VERSION})")
+
+    # -------------------------------------------------------------------------
+    # WebRTC audio processing - use local build from submodule
+    # -------------------------------------------------------------------------
+    set(WEBRTC_AP_ROOT ${CMAKE_SOURCE_DIR}/webrtc-audio-processing)
+    set(WEBRTC_AP_BUILD ${WEBRTC_AP_ROOT}/build)
+
+    # Check that submodule exists and was built
+    if(NOT EXISTS "${WEBRTC_AP_ROOT}/webrtc/modules/audio_processing/include/audio_processing.h")
+        message(FATAL_ERROR
+            "WebRTC audio processing submodule not found or not initialized.\n"
+            "Run: git submodule update --init --recursive\n"
+            "Then: cd webrtc-audio-processing && meson setup build && ninja -C build")
+    endif()
+
+    if(NOT EXISTS "${WEBRTC_AP_BUILD}/webrtc/modules/audio_processing/libwebrtc-audio-processing-1.a")
+        message(FATAL_ERROR
+            "WebRTC audio processing not built.\n"
+            "Run: cd webrtc-audio-processing && meson setup build && ninja -C build")
+    endif()
+
+    # Include paths for headers
+    # WebRTC headers use paths like "api/array_view.h" relative to webrtc/ dir
+    include_directories(${WEBRTC_AP_ROOT})
+    include_directories(${WEBRTC_AP_ROOT}/webrtc)
+    include_directories(${WEBRTC_AP_BUILD})
+    include_directories(${WEBRTC_AP_BUILD}/webrtc)
+
+    # Also need abseil includes for WebRTC
+    # WebRTC uses many abseil types including optional, variant, status, etc.
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(ABSL REQUIRED
+        absl_base
+        absl_strings
+        absl_synchronization
+        absl_bad_optional_access
+        absl_optional
+        absl_bad_variant_access
+        absl_variant
+        absl_status
+        absl_statusor
+        absl_flags
+        absl_flags_parse
+    )
+    include_directories(${ABSL_INCLUDE_DIRS})
+
+    message(STATUS "  webrtc-audio-processing: Found (local build v1.3)")
+
+    add_definitions(-DENABLE_AEC)
+    message(STATUS "AEC: ENABLED (WebRTC AEC3)")
+
+    # Add AEC source files to DAWN_SOURCES
+    set(AEC_SOURCES
+        src/audio/aec_processor.cpp
+        src/audio/resampler.c
+    )
+else()
+    message(STATUS "AEC: DISABLED (use -DENABLE_AEC=ON to enable)")
+endif()
+
 # ASR Engine Options
 option(ENABLE_VOSK "Enable Vosk ASR engine (legacy support)" OFF)
 
@@ -228,6 +308,11 @@ else()
     message(STATUS "ASR Engine: Whisper")
 endif()
 
+# Conditionally add AEC source files
+if(ENABLE_AEC)
+    list(APPEND DAWN_SOURCES ${AEC_SOURCES})
+endif()
+
 add_executable(dawn ${DAWN_SOURCES})
 
 target_link_libraries(dawn
@@ -279,6 +364,17 @@ if((PLATFORM STREQUAL "JETSON" AND NOT ENABLE_VOSK) OR ENABLE_VOSK)
                           ${CUSOLVER_LIBRARIES}
                           ${CURAND_LIBRARIES})
     message(STATUS "Linking CUDA libraries")
+endif()
+
+# Link AEC libraries (must come after add_executable)
+if(ENABLE_AEC)
+    # Link the static library from local build
+    target_link_libraries(dawn
+        ${WEBRTC_AP_BUILD}/webrtc/modules/audio_processing/libwebrtc-audio-processing-1.a
+        ${SAMPLERATE_LIBRARIES}
+        ${ABSL_LIBRARIES}
+    )
+    message(STATUS "Linking AEC libraries")
 endif()
 
 target_include_directories(piper PUBLIC

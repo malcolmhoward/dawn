@@ -112,22 +112,64 @@ dawn/
 
 ## System Requirements
 
-### Recommended Platform
-- **NVIDIA Jetson** (Orin Nano, Orin NX, Xavier NX, etc.)
-  - CUDA 12.6 support for GPU acceleration
-  - 4GB+ RAM recommended
-  - 8GB+ storage for models
+### Hardware Requirements Summary
 
-### Supported Platforms
-- Raspberry Pi 4/5 (slower ASR without GPU)
-- Other ARM64 Linux systems
-- Any modern Linux platform with Debian/Ubuntu base
+| Component | Minimum | Recommended | Optimal |
+|-----------|---------|-------------|---------|
+| **RAM** | 2 GB | 4 GB | 8 GB |
+| **Storage** | 4 GB | 8 GB | 16+ GB |
+| **CPU** | 4-core ARM64/x86-64 | 4-core 2.0+ GHz | Jetson GPU |
+| **GPU** | None (CPU-only) | RK3588 NPU / Coral TPU | NVIDIA CUDA |
+
+### Platform Recommendations
+
+#### Tier 1: Excellent (Production Ready)
+
+| Platform | Price | AI Performance | Notes |
+|----------|-------|----------------|-------|
+| **Jetson Orin Nano** | ~$250 | 40 TOPS | Primary target, GPU Whisper ~0.1s RTF |
+| **Jetson Orin NX** | ~$400 | 100 TOPS | Excellent headroom for all features |
+
+#### Tier 2: Good (Usable with minor tradeoffs)
+
+| Platform | Price | AI Performance | Notes |
+|----------|-------|----------------|-------|
+| **Raspberry Pi 5 (8GB)** | ~$80 | CPU-only, ~1.0 RTF | Whisper base: ~6s for 10s audio |
+| **Raspberry Pi 5 + AI Kit** | ~$180 | 13 TOPS | Hailo-8L accelerator helps vision, not ASR |
+| **Orange Pi 5 (RK3588)** | ~$100-150 | 6 TOPS NPU | Requires RKNN conversion for NPU; ONNX runs on CPU |
+| **Intel N100 Mini PC** | ~$150 | CPU AVX2 | Whisper tiny: ~1.5s; base: ~5-8s |
+
+#### Tier 3: Marginal (Works but slow)
+
+| Platform | Price | AI Performance | Notes |
+|----------|-------|----------------|-------|
+| **Raspberry Pi 4 (4GB)** | ~$55 | CPU-only | Whisper tiny: ~11s for 11s audio (barely real-time) |
+| **Raspberry Pi 4 (8GB)** | ~$75 | CPU-only | Same speed, more RAM headroom |
+| **Generic ARM64 SBC** | Varies | CPU-only | Performance depends on CPU speed |
+
+#### Tier 4: Not Recommended
+
+| Platform | Issue |
+|----------|-------|
+| **Raspberry Pi 3/Zero 2** | Too slow, insufficient RAM |
+| **32-bit ARM systems** | Limited memory, slow inference |
+| **Low-power x86 (Atom)** | Slower than ARM64 alternatives |
+
+### Recommendations by Use Case
+
+| Use Case | Recommended Platform | Why |
+|----------|---------------------|-----|
+| **Cost-conscious hobbyist** | Raspberry Pi 5 (4GB) ~$60 | Works with Whisper tiny/base, acceptable latency |
+| **Better performance on budget** | Orange Pi 5 (8GB) ~$100 | RK3588 CPU faster than RPi 5 |
+| **x86 preference** | Intel N100 Mini PC ~$150 | AVX2 support, can run local LLMs |
+| **Production/commercial** | Jetson Orin Nano ~$250 | Best price/performance for real-time voice AI |
+| **Maximum capability** | Jetson Orin NX ~$400+ | Handles everything including large local LLMs |
 
 ### Software Requirements
 - Debian/Ubuntu-based distribution (tested on Ubuntu 20.04+ and Jetson Linux)
 - CMake 3.10+
 - GCC/G++ with C++17 support
-- CUDA 12.6 (for Jetson GPU acceleration)
+- CUDA 12.6 (for Jetson GPU acceleration, optional on other platforms)
 - Python 3.8+ (for testing tools)
 
 ## Installation

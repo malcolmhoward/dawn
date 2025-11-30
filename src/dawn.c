@@ -63,6 +63,9 @@
 #ifdef ENABLE_TUI
 #include "ui/tui.h"
 #endif
+#ifdef ENABLE_AEC
+#include "audio/aec_processor.h"
+#endif
 #include "version.h"
 
 // Whisper chunking manager
@@ -81,9 +84,14 @@
 #define DEFAULT_COMMAND_TIMEOUT 24  // 24 * 0.05s = 1.2 seconds of silence before timeout
 
 // VAD configuration
-#define VAD_SAMPLE_SIZE 512               // Silero VAD requires 512 samples (32ms at 16kHz)
-#define VAD_SPEECH_THRESHOLD 0.5f         // Probability threshold for speech detection
-#define VAD_SILENCE_THRESHOLD 0.3f        // Probability threshold for silence detection
+#define VAD_SAMPLE_SIZE 512        // Silero VAD requires 512 samples (32ms at 16kHz)
+#define VAD_SPEECH_THRESHOLD 0.5f  // Probability threshold for speech detection
+#define VAD_SPEECH_THRESHOLD_TTS \
+   0.85f                            // Higher threshold when TTS is playing (reduce false triggers)
+#define VAD_SILENCE_THRESHOLD 0.3f  // Probability threshold for silence detection
+#define VAD_TTS_DEBOUNCE_COUNT 2    // Consecutive detections required during TTS playback
+#define VAD_TTS_COOLDOWN_MS \
+   1000  // Keep using TTS threshold for 1s after TTS stops (covers streaming gaps)
 #define VAD_END_OF_SPEECH_DURATION 1.2f   // Seconds of silence to consider speech ended (optimized)
 #define VAD_MAX_RECORDING_DURATION 30.0f  // Maximum recording duration (semantic timeout)
 
@@ -1788,6 +1796,22 @@ int main(int argc, char *argv[]) {
    /* Initialize text to speech processing. */
    initialize_text_to_speech(pcm_playback_device);
 
+#ifdef ENABLE_AEC
+   // Initialize AEC (must be after TTS which creates the resampler)
+   LOG_INFO("Init AEC for echo cancellation.");
+   aec_config_t aec_config = aec_get_default_config();
+
+   // Auto-detect platform for mobile mode
+#ifdef PLATFORM_RPI
+   aec_config.mobile_mode = true;
+   LOG_INFO("AEC: Using mobile mode for Raspberry Pi");
+#endif
+
+   if (aec_init(&aec_config) != 0) {
+      LOG_WARNING("AEC initialization failed - continuing without echo cancellation");
+   }
+#endif
+
    // Initialize Silero VAD
    LOG_INFO("Init Silero VAD for voice activity detection.");
    const char *home_dir = getenv("HOME");
@@ -2160,6 +2184,25 @@ int main(int argc, char *argv[]) {
             // VAD-based wake word detection
             int speech_detected = 0;
             static int vad_debug_counter = 0;
+            static int tts_vad_debounce = 0;  // Consecutive VAD detections during TTS
+            static struct timespec
+                tts_last_active;  // Timestamp when TTS was last active (monotonic)
+            static int tts_timer_initialized = 0;
+            static dawn_state_t prev_vad_state = DAWN_STATE_INVALID;  // Track state transitions
+
+            // Initialize timer on first run (ideally would be in main(), but keeping locality)
+            if (!tts_timer_initialized) {
+               clock_gettime(CLOCK_MONOTONIC, &tts_last_active);
+               tts_last_active.tv_sec -= 10;  // Start 10s in the past (no cooldown at startup)
+               tts_timer_initialized = 1;
+            }
+
+            // Reset debounce counter on state entry (prevents stale state from previous TTS)
+            if (prev_vad_state != DAWN_STATE_SILENCE) {
+               tts_vad_debounce = 0;
+            }
+            prev_vad_state = DAWN_STATE_SILENCE;
+
             if (vad_ctx && buff_size >= VAD_SAMPLE_SIZE * sizeof(int16_t)) {
                // Process through VAD (requires 512 samples = 32ms at 16kHz)
                const int16_t *samples = (const int16_t *)max_buff;
@@ -2170,11 +2213,66 @@ int main(int argc, char *argv[]) {
                   LOG_INFO("SILENCE: VAD=%.3f", vad_speech_prob);
                }
 
+#ifdef ENABLE_AEC
+               // AEC statistics logging every 600 iterations (~60 seconds)
+               static unsigned int aec_stats_counter = 0;
+               if (++aec_stats_counter >= 600) {
+                  aec_stats_counter = 0;
+                  aec_stats_t stats;
+                  if (aec_get_stats(&stats) == 0 && stats.is_active) {
+                     LOG_INFO("AEC Stats: delay=%dms, processed=%llu, passed=%llu, errors=%d, "
+                              "avg_time=%.1fus",
+                              stats.estimated_delay_ms, (unsigned long long)stats.frames_processed,
+                              (unsigned long long)stats.frames_passed_through,
+                              stats.consecutive_errors, stats.avg_processing_time_us);
+                  }
+               }
+#endif
+
                if (vad_speech_prob < 0.0f) {
                   LOG_ERROR("SILENCE: VAD processing failed - assuming silence");
                   speech_detected = 0;  // Assume silence on error
+                  tts_vad_debounce = 0;
                } else {
-                  speech_detected = (vad_speech_prob >= VAD_SPEECH_THRESHOLD);
+                  // Check if TTS is currently playing or paused (mutex-protected read)
+                  pthread_mutex_lock(&tts_mutex);
+                  int tts_playing_now = (tts_playback_state == TTS_PLAYBACK_PLAY ||
+                                         tts_playback_state == TTS_PLAYBACK_PAUSE);
+                  pthread_mutex_unlock(&tts_mutex);
+
+                  // Update last active timestamp if TTS is playing (monotonic clock)
+                  if (tts_playing_now) {
+                     clock_gettime(CLOCK_MONOTONIC, &tts_last_active);
+                  }
+
+                  // Calculate time since TTS was last active (monotonic - immune to clock changes)
+                  struct timespec now;
+                  clock_gettime(CLOCK_MONOTONIC, &now);
+                  long elapsed_ms = (now.tv_sec - tts_last_active.tv_sec) * 1000 +
+                                    (now.tv_nsec - tts_last_active.tv_nsec) / 1000000;
+
+                  // TTS-aware VAD: use higher threshold if TTS playing OR within cooldown
+                  int tts_is_active = tts_playing_now || (elapsed_ms < VAD_TTS_COOLDOWN_MS);
+                  float threshold = tts_is_active ? VAD_SPEECH_THRESHOLD_TTS : VAD_SPEECH_THRESHOLD;
+
+                  if (vad_speech_prob >= threshold) {
+                     if (tts_is_active) {
+                        // During TTS (or cooldown): require consecutive detections (debounce)
+                        tts_vad_debounce++;
+                        if (tts_vad_debounce >= VAD_TTS_DEBOUNCE_COUNT) {
+                           speech_detected = 1;
+                           LOG_INFO("SILENCE: TTS barge-in confirmed (debounce=%d, VAD=%.3f, "
+                                    "cooldown=%ldms)",
+                                    tts_vad_debounce, vad_speech_prob, elapsed_ms);
+                        }
+                     } else {
+                        // No TTS: immediate detection
+                        speech_detected = 1;
+                     }
+                  } else {
+                     // Below threshold - reset debounce counter
+                     tts_vad_debounce = 0;
+                  }
                }
             } else {
                // VAD not available - log error
@@ -3459,6 +3557,11 @@ int main(int argc, char *argv[]) {
 
    // Cleanup ASR
    asr_cleanup(asr_ctx);
+
+#ifdef ENABLE_AEC
+   // Cleanup AEC before stopping audio capture
+   aec_cleanup();
+#endif
 
    // Stop audio capture thread and clean up resources
    if (audio_capture_ctx) {
