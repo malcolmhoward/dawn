@@ -2255,15 +2255,42 @@ int main(int argc, char *argv[]) {
                   int tts_is_active = tts_playing_now || (elapsed_ms < VAD_TTS_COOLDOWN_MS);
                   float threshold = tts_is_active ? VAD_SPEECH_THRESHOLD_TTS : VAD_SPEECH_THRESHOLD;
 
+                  // ERLE-based VAD gating: when AEC is struggling, be more conservative
+                  float erle_db = 0.0f;
+                  bool erle_valid = false;
+#ifdef ENABLE_AEC
+                  if (tts_is_active) {
+                     erle_valid = aec_get_erle(&erle_db);
+                     // TODO: ERLE gating disabled for debugging - AEC3 not converging
+                     // When ERLE works (>6dB), re-enable this block
+                     if (false && erle_valid && erle_db < 6.0f) {
+                        // Poor echo cancellation - reject VAD entirely during TTS
+                        // This prevents false triggers from residual echo
+                        if (vad_speech_prob >= threshold) {
+                           LOG_INFO("ERLE gating: rejecting VAD=%.3f (ERLE=%.1fdB < 6dB)",
+                                    vad_speech_prob, erle_db);
+                        }
+                        tts_vad_debounce = 0;
+                        continue;  // Skip this VAD frame
+                     }
+                  }
+#endif
+
                   if (vad_speech_prob >= threshold) {
                      if (tts_is_active) {
                         // During TTS (or cooldown): require consecutive detections (debounce)
                         tts_vad_debounce++;
                         if (tts_vad_debounce >= VAD_TTS_DEBOUNCE_COUNT) {
                            speech_detected = 1;
+#ifdef ENABLE_AEC
+                           LOG_INFO("SILENCE: TTS barge-in confirmed (debounce=%d, VAD=%.3f, "
+                                    "ERLE=%.1fdB, cooldown=%ldms)",
+                                    tts_vad_debounce, vad_speech_prob, erle_db, elapsed_ms);
+#else
                            LOG_INFO("SILENCE: TTS barge-in confirmed (debounce=%d, VAD=%.3f, "
                                     "cooldown=%ldms)",
                                     tts_vad_debounce, vad_speech_prob, elapsed_ms);
+#endif
                         }
                      } else {
                         // No TTS: immediate detection

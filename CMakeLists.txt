@@ -142,7 +142,7 @@ endif()
 # =============================================================================
 # AEC Support (Acoustic Echo Cancellation)
 # =============================================================================
-option(ENABLE_AEC "Enable Acoustic Echo Cancellation (WebRTC AEC3)" OFF)
+option(ENABLE_AEC "Enable Acoustic Echo Cancellation (WebRTC AEC3)" ON)
 
 if(ENABLE_AEC)
     message(STATUS "AEC: Checking dependencies...")

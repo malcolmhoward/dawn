@@ -293,6 +293,10 @@ void *tts_thread_function(void *arg) {
 #ifdef ENABLE_AEC
                       // Increment sequence counter to signal any in-flight playback
                       g_tts_discard_sequence.fetch_add(1, std::memory_order_release);
+
+                      // Clear AEC reference buffer to prevent stale frames from
+                      // contaminating future captures after discard
+                      aec_reset();
 #endif
 
                       // Drop (flush) audio device buffer immediately to stop playback
@@ -316,39 +320,15 @@ void *tts_thread_function(void *arg) {
                 // Capture sequence counter before releasing mutex (TOCTOU protection)
                 uint32_t seq_before_write = g_tts_discard_sequence.load(std::memory_order_acquire);
 
-                // Feed AEC reference BEFORE releasing mutex
-                // This ensures audio played = audio fed to AEC reference
-                if (tts_playback_state == TTS_PLAYBACK_PLAY && g_tts_thread_resampler &&
-                    aec_is_enabled()) {
-                   size_t frames_to_write = std::min(tts_handle.frames, audioBuffer.size() - i);
-                   size_t in_samples = frames_to_write;
+                // Store info needed for AEC reference (will feed AFTER snd_pcm_writei)
+                size_t frames_to_write = std::min(tts_handle.frames, audioBuffer.size() - i);
+                bool should_feed_aec = (tts_playback_state == TTS_PLAYBACK_PLAY &&
+                                        g_tts_thread_resampler && aec_is_enabled());
 
-                   // Enforce maximum chunk size
-                   if (in_samples <= RESAMPLER_MAX_SAMPLES) {
-                      size_t out_max = resampler_get_output_size(g_tts_thread_resampler,
-                                                                 in_samples);
-
-                      if (out_max <= RESAMPLER_MAX_SAMPLES) {
-                         size_t resampled = resampler_process(g_tts_thread_resampler,
-                                                              &audioBuffer[i], in_samples,
-                                                              g_tts_resample_buffer,
-                                                              RESAMPLER_MAX_SAMPLES);
-
-                         if (resampled > 0) {
-                            aec_add_reference(g_tts_resample_buffer, resampled);
-                         }
-                      } else {
-                         // Rate-limited warning (once per 60 seconds)
-                         time_t now = time(NULL);
-                         if (now - g_last_resample_warning >= 60) {
-                            LOG_WARNING(
-                                "AEC resampler output too large (%zu > %d), skipping reference",
-                                out_max, RESAMPLER_MAX_SAMPLES);
-                            g_last_resample_warning = now;
-                         }
-                      }
-                   }
-                }
+                // Query ALSA delay BEFORE write - this tells us how much audio is
+                // already queued up ahead of what we're about to write
+                snd_pcm_sframes_t alsa_delay_before = 0;
+                snd_pcm_delay(tts_handle.handle, &alsa_delay_before);
 #endif
                 pthread_mutex_unlock(&tts_mutex);
 
@@ -363,6 +343,58 @@ void *tts_thread_function(void *arg) {
                 }
 
 #ifdef ENABLE_AEC
+                // Feed AEC reference AFTER snd_pcm_writei() completes
+                // Use the delay measured BEFORE write - this represents when the audio
+                // we just wrote will start playing (after all currently queued audio)
+                if (should_feed_aec && rc > 0) {
+                   // The audio we just wrote will play AFTER the already-queued audio
+                   // So: play_time = now + alsa_delay_before + time_for_this_chunk
+                   // But for the reference buffer, we just need the delay to first sample
+                   //
+                   // alsa_delay_before = frames already in buffer waiting to play
+                   // Convert to microseconds: frames * 1000000 / sample_rate
+                   // DEFAULT_RATE is 22050 Hz (Piper TTS output rate)
+                   //
+                   // Use actual delay value - PTS buffer will hold frames until their
+                   // scheduled echo arrival time
+                   snd_pcm_sframes_t delay_frames = alsa_delay_before;
+                   if (delay_frames < 0)
+                      delay_frames = 0;
+
+                   uint64_t playback_delay_us = ((uint64_t)delay_frames * 1000000ULL) /
+                                                DEFAULT_RATE;
+
+                   size_t in_samples = (size_t)rc;  // Actual samples written
+
+                   // Enforce maximum chunk size
+                   if (in_samples <= RESAMPLER_MAX_SAMPLES) {
+                      size_t out_max = resampler_get_output_size(g_tts_thread_resampler,
+                                                                 in_samples);
+
+                      if (out_max <= RESAMPLER_MAX_SAMPLES) {
+                         size_t resampled = resampler_process(g_tts_thread_resampler,
+                                                              &audioBuffer[i], in_samples,
+                                                              g_tts_resample_buffer,
+                                                              RESAMPLER_MAX_SAMPLES);
+
+                         if (resampled > 0) {
+                            // Use delay-aware version for proper PTS calculation
+                            aec_add_reference_with_delay(g_tts_resample_buffer, resampled,
+                                                         playback_delay_us);
+                         }
+                      } else {
+                         // Rate-limited warning (once per 60 seconds)
+                         time_t now = time(NULL);
+                         if (now - g_last_resample_warning >= 60) {
+                            LOG_WARNING(
+                                "AEC resampler output too large (%zu > %d), skipping reference",
+                                out_max, RESAMPLER_MAX_SAMPLES);
+                            g_last_resample_warning = now;
+                         }
+                      }
+                   }
+                }
+
                 // Check if discard happened during audio write (TOCTOU detection)
                 if (g_tts_discard_sequence.load(std::memory_order_acquire) != seq_before_write) {
                    // Discard occurred while we were writing - audio device already flushed
@@ -403,6 +435,10 @@ void *tts_thread_function(void *arg) {
 #ifdef ENABLE_AEC
                       // Increment sequence counter to signal any in-flight playback
                       g_tts_discard_sequence.fetch_add(1, std::memory_order_release);
+
+                      // Clear AEC reference buffer to prevent stale frames from
+                      // contaminating future captures after discard
+                      aec_reset();
 #endif
 
                       // Flush PulseAudio buffer immediately to stop playback
@@ -428,39 +464,10 @@ void *tts_thread_function(void *arg) {
                 // Capture sequence counter before releasing mutex (TOCTOU protection)
                 uint32_t seq_before_write = g_tts_discard_sequence.load(std::memory_order_acquire);
 
-                // Feed AEC reference BEFORE releasing mutex
-                // This ensures audio played = audio fed to AEC reference
-                if (tts_playback_state == TTS_PLAYBACK_PLAY && g_tts_thread_resampler &&
-                    aec_is_enabled()) {
-                   size_t bytes_to_write_aec = std::min(chunk_bytes, total_bytes - i);
-                   size_t in_samples = bytes_to_write_aec / sizeof(int16_t);
-
-                   // Enforce maximum chunk size
-                   if (in_samples <= RESAMPLER_MAX_SAMPLES) {
-                      size_t out_max = resampler_get_output_size(g_tts_thread_resampler,
-                                                                 in_samples);
-
-                      if (out_max <= RESAMPLER_MAX_SAMPLES) {
-                         size_t resampled = resampler_process(
-                             g_tts_thread_resampler,
-                             (int16_t *)(((uint8_t *)audioBuffer.data()) + i), in_samples,
-                             g_tts_resample_buffer, RESAMPLER_MAX_SAMPLES);
-
-                         if (resampled > 0) {
-                            aec_add_reference(g_tts_resample_buffer, resampled);
-                         }
-                      } else {
-                         // Rate-limited warning (once per 60 seconds)
-                         time_t now = time(NULL);
-                         if (now - g_last_resample_warning >= 60) {
-                            LOG_WARNING(
-                                "AEC resampler output too large (%zu > %d), skipping reference",
-                                out_max, RESAMPLER_MAX_SAMPLES);
-                            g_last_resample_warning = now;
-                         }
-                      }
-                   }
-                }
+                // Store info needed for AEC reference (will feed AFTER pa_simple_write)
+                size_t bytes_to_write_aec = std::min(chunk_bytes, total_bytes - i);
+                bool should_feed_aec = (tts_playback_state == TTS_PLAYBACK_PLAY &&
+                                        g_tts_thread_resampler && aec_is_enabled());
 #endif
                 pthread_mutex_unlock(&tts_mutex);
 
@@ -489,6 +496,49 @@ void *tts_thread_function(void *arg) {
                 }
 
 #ifdef ENABLE_AEC
+                // Feed AEC reference AFTER pa_simple_write() completes
+                // Query PulseAudio latency to calculate when audio will actually play
+                // Critical for correct AEC timing - reference must match actual playback time
+                if (should_feed_aec && rc >= 0) {
+                   // Query PulseAudio playback latency (microseconds until audio reaches speaker)
+                   int pa_latency_error = 0;
+                   pa_usec_t pa_latency = pa_simple_get_latency(tts_handle.pa_handle,
+                                                                &pa_latency_error);
+                   uint64_t playback_delay_us = (pa_latency_error >= 0 && pa_latency > 0)
+                                                    ? (uint64_t)pa_latency
+                                                    : 50000;  // Default 50ms if query fails
+
+                   size_t in_samples = bytes_to_write_aec / sizeof(int16_t);
+
+                   // Enforce maximum chunk size
+                   if (in_samples <= RESAMPLER_MAX_SAMPLES) {
+                      size_t out_max = resampler_get_output_size(g_tts_thread_resampler,
+                                                                 in_samples);
+
+                      if (out_max <= RESAMPLER_MAX_SAMPLES) {
+                         size_t resampled = resampler_process(
+                             g_tts_thread_resampler,
+                             (int16_t *)(((uint8_t *)audioBuffer.data()) + i), in_samples,
+                             g_tts_resample_buffer, RESAMPLER_MAX_SAMPLES);
+
+                         if (resampled > 0) {
+                            // Use delay-aware version for proper PTS calculation
+                            aec_add_reference_with_delay(g_tts_resample_buffer, resampled,
+                                                         playback_delay_us);
+                         }
+                      } else {
+                         // Rate-limited warning (once per 60 seconds)
+                         time_t now = time(NULL);
+                         if (now - g_last_resample_warning >= 60) {
+                            LOG_WARNING(
+                                "AEC resampler output too large (%zu > %d), skipping reference",
+                                out_max, RESAMPLER_MAX_SAMPLES);
+                            g_last_resample_warning = now;
+                         }
+                      }
+                   }
+                }
+
                 // Check if discard happened during audio write (TOCTOU detection)
                 if (g_tts_discard_sequence.load(std::memory_order_acquire) != seq_before_write) {
                    // Discard occurred while we were writing - audio device already flushed

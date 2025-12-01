@@ -115,6 +115,9 @@ typedef struct {
    float avg_processing_time_us;   /**< Average processing time per frame */
    uint64_t frames_processed;      /**< Total frames successfully processed */
    uint64_t frames_passed_through; /**< Frames passed without AEC (no ref data) */
+   float erle_db;                  /**< Echo Return Loss Enhancement in dB (higher = better) */
+   float residual_echo_likelihood; /**< Probability of residual echo [0.0-1.0] */
+   bool metrics_valid;             /**< True if ERLE/residual metrics are available */
 } aec_stats_t;
 
 /**
@@ -127,6 +130,9 @@ typedef struct {
    bool mobile_mode;                       /**< Use AECM instead of AEC3 (lower CPU) */
    size_t ref_buffer_ms;                   /**< Reference buffer size in ms (default: 500) */
    int16_t noise_gate_threshold; /**< Post-AEC noise gate threshold (0=disabled, default: 0) */
+   size_t acoustic_delay_ms;     /**< Delay from snd_pcm_writei to echo in mic (default: 70ms)
+                                      Components: ALSA buffer (~50ms) + acoustic path (~20ms)
+                                      Tune this per hardware if echo cancellation is poor */
 } aec_config_t;
 
 /**
@@ -178,7 +184,7 @@ bool aec_is_enabled(void);
 /**
  * @brief Add reference (far-end) audio from TTS playback
  *
- * Call this with TTS audio BEFORE it goes to the speaker.
+ * Call this with TTS audio AFTER it's been written to the audio device.
  * Audio must be 16kHz mono S16_LE format (resample if necessary).
  *
  * This function is lock-free and safe to call from TTS thread.
@@ -188,6 +194,25 @@ bool aec_is_enabled(void);
  * @param num_samples Number of samples
  */
 void aec_add_reference(const int16_t *samples, size_t num_samples);
+
+/**
+ * @brief Add reference audio with playback delay information
+ *
+ * Enhanced version that accepts the audio device's buffer delay.
+ * This allows the AEC to accurately predict when audio will actually
+ * play through the speaker, improving echo cancellation timing.
+ *
+ * Call this AFTER snd_pcm_writei() or pa_simple_write() returns.
+ * Query the delay using snd_pcm_delay() or pa_simple_get_latency().
+ *
+ * @param samples Audio samples (16-bit signed, 16kHz)
+ * @param num_samples Number of samples
+ * @param playback_delay_us Delay in microseconds until audio plays through speaker
+ *                          (from snd_pcm_delay or pa_simple_get_latency)
+ */
+void aec_add_reference_with_delay(const int16_t *samples,
+                                  size_t num_samples,
+                                  uint64_t playback_delay_us);
 
 /**
  * @brief Process microphone audio to remove echo
@@ -215,6 +240,28 @@ void aec_process(const int16_t *mic_in, int16_t *clean_out, size_t num_samples);
  * @return 0 on success, non-zero if AEC not initialized
  */
 int aec_get_stats(aec_stats_t *stats);
+
+/**
+ * @brief Get current ERLE value for VAD gating decisions
+ *
+ * Returns the Echo Return Loss Enhancement in dB. Higher values indicate
+ * better echo cancellation. Use this to gate VAD decisions:
+ * - ERLE > 12dB: Good cancellation, trust VAD
+ * - ERLE 6-12dB: Moderate cancellation, raise VAD threshold
+ * - ERLE < 6dB: Poor cancellation, reject VAD during TTS
+ *
+ * @param erle_db Output ERLE value in dB (set to 0 if unavailable)
+ * @return true if ERLE is valid, false if AEC not active or metrics unavailable
+ */
+bool aec_get_erle(float *erle_db);
+
+/**
+ * @brief Get residual echo likelihood for VAD gating
+ *
+ * @param likelihood Output probability [0.0-1.0], higher = more likely residual echo
+ * @return true if metric is valid, false if unavailable
+ */
+bool aec_get_residual_echo_likelihood(float *likelihood);
 
 /**
  * @brief Reset AEC state (clear buffers and error counters)
