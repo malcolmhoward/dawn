@@ -25,6 +25,7 @@
 #include <string.h>
 #include <sys/time.h>
 
+#include "dawn.h"
 #include "logging.h"
 #include "ui/metrics.h"
 #include "whisper.h"
@@ -130,6 +131,10 @@ void *asr_whisper_init(const char *model_path, int sample_rate) {
    wctx->wparams.offset_ms = 0;
    wctx->wparams.no_context = true;
    wctx->wparams.single_segment = false;
+
+   // Note: initial_prompt was tried to bias towards "Friday" but it causes Whisper
+   // to filter out the wake word from output (treats it as already-transcribed text).
+   // Left unset - Whisper will transcribe everything including wake word.
 
    LOG_INFO("Whisper: Initialized successfully (model: %s, sample_rate: %d)", model_path,
             sample_rate);

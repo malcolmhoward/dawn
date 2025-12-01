@@ -33,16 +33,19 @@
 
 #ifdef ENABLE_AEC
 #include "audio/aec_processor.h"
+#include "audio/resampler.h"
 #endif
 
-// Audio format constants (match dawn.c)
-#define DEFAULT_RATE 16000
+// Audio format constants
+// Capture at 48kHz for optimal AEC performance, downsample to 16kHz for ASR
+#define CAPTURE_RATE 48000
+#define ASR_RATE 16000
 #define DEFAULT_CHANNELS 1
 
 // Compile-time validation: AEC sample rate must match capture rate
 #ifdef ENABLE_AEC
-#if DEFAULT_RATE != AEC_SAMPLE_RATE
-#error "AEC requires capture rate (DEFAULT_RATE) to match AEC_SAMPLE_RATE (16000 Hz)"
+#if CAPTURE_RATE != AEC_SAMPLE_RATE
+#error "AEC requires capture rate (CAPTURE_RATE) to match AEC_SAMPLE_RATE (48000 Hz)"
 #endif
 #endif
 
@@ -65,11 +68,11 @@ static int open_alsa_capture(snd_pcm_t **handle,
                              snd_pcm_uframes_t *frames,
                              unsigned int *actual_rate) {
    snd_pcm_hw_params_t *params = NULL;
-   unsigned int rate = DEFAULT_RATE;
+   unsigned int rate = CAPTURE_RATE;
    int dir = 0;
-   // Use 512 frames (32ms at 16kHz) to match PulseAudio chunk size
+   // Use 1536 frames (32ms at 48kHz) to match previous chunk timing
    // This provides good balance between latency and efficiency
-   *frames = 512;
+   *frames = 1536;
    int rc = 0;
 
    LOG_INFO("Opening ALSA capture device: %s", pcm_device);
@@ -155,7 +158,7 @@ static int open_alsa_capture(snd_pcm_t **handle,
 #ifndef ALSA_DEVICE
 static pa_simple *open_pulse_capture(const char *pcm_device) {
    static const pa_sample_spec ss = { .format = DEFAULT_PULSE_FORMAT,
-                                      .rate = DEFAULT_RATE,
+                                      .rate = CAPTURE_RATE,
                                       .channels = DEFAULT_CHANNELS };
 
    int error;
@@ -237,26 +240,46 @@ static void *capture_thread_func(void *arg) {
    );
 
 #ifdef ALSA_DEVICE
-   // ALSA capture loop
+   // ALSA capture loop (captures at 48kHz, outputs 16kHz to ring buffer)
    while (atomic_load(&ctx->running)) {
       int rc = snd_pcm_readi(ctx->handle, buffer, ctx->frames);
 
       if (rc > 0) {
-         // Successful read
-         size_t bytes_read = rc * DEFAULT_CHANNELS * 2;  // 2 bytes per sample (S16_LE)
-         size_t samples_read = bytes_read / sizeof(int16_t);
+         // Successful read at 48kHz
+         size_t bytes_read_48k = rc * DEFAULT_CHANNELS * 2;  // 2 bytes per sample (S16_LE)
+         size_t samples_read_48k = bytes_read_48k / sizeof(int16_t);
 
 #ifdef ENABLE_AEC
-         // Process through AEC if enabled, buffer available, and sample rate matches
-         if (aec_is_enabled() && ctx->aec_buffer && !ctx->aec_rate_mismatch &&
-             samples_read <= ctx->aec_buffer_size) {
-            aec_process((int16_t *)buffer, ctx->aec_buffer, samples_read);
-            ring_buffer_write(ctx->ring_buffer, (char *)ctx->aec_buffer, bytes_read);
-         } else {
-            ring_buffer_write(ctx->ring_buffer, buffer, bytes_read);
+         // Process through AEC at 48kHz, then downsample to 16kHz for ASR
+         if (aec_is_enabled() && ctx->aec_buffer && ctx->asr_buffer && ctx->downsample_resampler &&
+             !ctx->aec_rate_mismatch && samples_read_48k <= ctx->aec_buffer_size) {
+            // AEC processing at native 48kHz
+            aec_process((int16_t *)buffer, ctx->aec_buffer, samples_read_48k);
+
+            // Downsample 48kHz → 16kHz for ASR
+            size_t samples_16k = resampler_process((resampler_t *)ctx->downsample_resampler,
+                                                   ctx->aec_buffer, samples_read_48k,
+                                                   ctx->asr_buffer, ctx->asr_buffer_size);
+
+            if (samples_16k > 0) {
+               ring_buffer_write(ctx->ring_buffer, (char *)ctx->asr_buffer,
+                                 samples_16k * sizeof(int16_t));
+            }
+         } else if (ctx->asr_buffer && ctx->downsample_resampler) {
+            // AEC disabled - still need to downsample 48kHz → 16kHz
+            size_t samples_16k = resampler_process((resampler_t *)ctx->downsample_resampler,
+                                                   (int16_t *)buffer, samples_read_48k,
+                                                   ctx->asr_buffer, ctx->asr_buffer_size);
+
+            if (samples_16k > 0) {
+               ring_buffer_write(ctx->ring_buffer, (char *)ctx->asr_buffer,
+                                 samples_16k * sizeof(int16_t));
+            }
          }
 #else
-         ring_buffer_write(ctx->ring_buffer, buffer, bytes_read);
+         // Without AEC, still need to downsample - but we don't have resampler
+         // This path shouldn't be used in practice (AEC is always enabled)
+         ring_buffer_write(ctx->ring_buffer, buffer, bytes_read_48k);
 #endif
       } else if (rc == -EPIPE) {
          LOG_WARNING("ALSA overrun in capture thread, recovering");
@@ -282,7 +305,7 @@ static void *capture_thread_func(void *arg) {
       }
    }
 #else
-   // PulseAudio capture loop
+   // PulseAudio capture loop (captures at 48kHz, outputs 16kHz to ring buffer)
    int error = 0;
 
    while (atomic_load(&ctx->running)) {
@@ -292,18 +315,37 @@ static void *capture_thread_func(void *arg) {
          continue;
       }
 
-      size_t samples_read = ctx->buffer_size / sizeof(int16_t);
+      size_t samples_read_48k = ctx->buffer_size / sizeof(int16_t);
 
 #ifdef ENABLE_AEC
-      // Process through AEC if enabled, buffer available, and sample rate matches
-      if (aec_is_enabled() && ctx->aec_buffer && !ctx->aec_rate_mismatch &&
-          samples_read <= ctx->aec_buffer_size) {
-         aec_process((int16_t *)buffer, ctx->aec_buffer, samples_read);
-         ring_buffer_write(ctx->ring_buffer, (char *)ctx->aec_buffer, ctx->buffer_size);
-      } else {
-         ring_buffer_write(ctx->ring_buffer, buffer, ctx->buffer_size);
+      // Process through AEC at 48kHz, then downsample to 16kHz for ASR
+      if (aec_is_enabled() && ctx->aec_buffer && ctx->asr_buffer && ctx->downsample_resampler &&
+          !ctx->aec_rate_mismatch && samples_read_48k <= ctx->aec_buffer_size) {
+         // AEC processing at native 48kHz
+         aec_process((int16_t *)buffer, ctx->aec_buffer, samples_read_48k);
+
+         // Downsample 48kHz → 16kHz for ASR
+         size_t samples_16k = resampler_process((resampler_t *)ctx->downsample_resampler,
+                                                ctx->aec_buffer, samples_read_48k, ctx->asr_buffer,
+                                                ctx->asr_buffer_size);
+
+         if (samples_16k > 0) {
+            ring_buffer_write(ctx->ring_buffer, (char *)ctx->asr_buffer,
+                              samples_16k * sizeof(int16_t));
+         }
+      } else if (ctx->asr_buffer && ctx->downsample_resampler) {
+         // AEC disabled - still need to downsample 48kHz → 16kHz
+         size_t samples_16k = resampler_process((resampler_t *)ctx->downsample_resampler,
+                                                (int16_t *)buffer, samples_read_48k,
+                                                ctx->asr_buffer, ctx->asr_buffer_size);
+
+         if (samples_16k > 0) {
+            ring_buffer_write(ctx->ring_buffer, (char *)ctx->asr_buffer,
+                              samples_16k * sizeof(int16_t));
+         }
       }
 #else
+      // Without AEC, still need to downsample - but we don't have resampler
       ring_buffer_write(ctx->ring_buffer, buffer, ctx->buffer_size);
 #endif
    }
@@ -366,14 +408,14 @@ audio_capture_context_t *audio_capture_start(const char *pcm_device,
       return NULL;
    }
    ctx->pa_framesize = pa_frame_size(&(pa_sample_spec){ .format = DEFAULT_PULSE_FORMAT,
-                                                        .rate = DEFAULT_RATE,
+                                                        .rate = CAPTURE_RATE,
                                                         .channels = DEFAULT_CHANNELS });
-   // Read chunks of 512 frames at a time (1024 bytes for 16-bit mono)
-   ctx->buffer_size = ctx->pa_framesize * 512;
+   // Read chunks of 1536 frames at a time (32ms at 48kHz) to match ALSA timing
+   ctx->buffer_size = ctx->pa_framesize * 1536;
 #endif
 
 #ifdef ENABLE_AEC
-   // Pre-allocate AEC buffer (same size as capture buffer)
+   // Pre-allocate AEC buffer for 48kHz processing (same size as capture buffer)
    ctx->aec_buffer_size = ctx->buffer_size / sizeof(int16_t);
    if (ctx->aec_buffer_size > AEC_MAX_SAMPLES) {
       ctx->aec_buffer_size = AEC_MAX_SAMPLES;
@@ -381,6 +423,20 @@ audio_capture_context_t *audio_capture_start(const char *pcm_device,
    ctx->aec_buffer = (int16_t *)malloc(ctx->aec_buffer_size * sizeof(int16_t));
    if (!ctx->aec_buffer) {
       LOG_WARNING("Failed to allocate AEC buffer - continuing without AEC");
+   }
+
+   // Create resampler for 48kHz → 16kHz downsampling (for ASR)
+   ctx->downsample_resampler = resampler_create(CAPTURE_RATE, ASR_RATE, 1);
+   if (!ctx->downsample_resampler) {
+      LOG_ERROR("Failed to create 48kHz→16kHz resampler");
+   }
+
+   // Pre-allocate ASR buffer for 16kHz output
+   // Output size = input size / 3 + margin for resampler filter
+   ctx->asr_buffer_size = (ctx->aec_buffer_size / 3) + 64;
+   ctx->asr_buffer = (int16_t *)malloc(ctx->asr_buffer_size * sizeof(int16_t));
+   if (!ctx->asr_buffer) {
+      LOG_WARNING("Failed to allocate ASR buffer");
    }
 
    // Runtime sample rate validation for AEC
@@ -392,13 +448,16 @@ audio_capture_context_t *audio_capture_start(const char *pcm_device,
       ctx->aec_rate_mismatch = 1;
    }
 #else
-   // PulseAudio uses DEFAULT_RATE which should match; verify at compile time
-   if (DEFAULT_RATE != AEC_SAMPLE_RATE) {
+   // PulseAudio uses CAPTURE_RATE which should match AEC_SAMPLE_RATE
+   if (CAPTURE_RATE != AEC_SAMPLE_RATE) {
       LOG_WARNING("AEC requires %d Hz but PulseAudio is configured for %d Hz - AEC disabled",
-                  AEC_SAMPLE_RATE, DEFAULT_RATE);
+                  AEC_SAMPLE_RATE, CAPTURE_RATE);
       ctx->aec_rate_mismatch = 1;
    }
 #endif
+
+   LOG_INFO("Audio capture: %dHz → AEC → %dHz for ASR (buffers: aec=%zu, asr=%zu samples)",
+            CAPTURE_RATE, ASR_RATE, ctx->aec_buffer_size, ctx->asr_buffer_size);
 #endif
 
    // Start capture thread
@@ -453,6 +512,18 @@ void audio_capture_stop(audio_capture_context_t *ctx) {
    if (ctx->aec_buffer) {
       free(ctx->aec_buffer);
       ctx->aec_buffer = NULL;
+   }
+
+   // Free ASR buffer
+   if (ctx->asr_buffer) {
+      free(ctx->asr_buffer);
+      ctx->asr_buffer = NULL;
+   }
+
+   // Destroy resampler
+   if (ctx->downsample_resampler) {
+      resampler_destroy((resampler_t *)ctx->downsample_resampler);
+      ctx->downsample_resampler = NULL;
    }
 #endif
 

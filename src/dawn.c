@@ -87,11 +87,11 @@
 #define VAD_SAMPLE_SIZE 512        // Silero VAD requires 512 samples (32ms at 16kHz)
 #define VAD_SPEECH_THRESHOLD 0.5f  // Probability threshold for speech detection
 #define VAD_SPEECH_THRESHOLD_TTS \
-   0.85f                            // Higher threshold when TTS is playing (reduce false triggers)
+   0.92f                            // Higher threshold when TTS is playing (reduce false triggers)
 #define VAD_SILENCE_THRESHOLD 0.3f  // Probability threshold for silence detection
-#define VAD_TTS_DEBOUNCE_COUNT 2    // Consecutive detections required during TTS playback
+#define VAD_TTS_DEBOUNCE_COUNT 3    // Consecutive detections required during TTS playback
 #define VAD_TTS_COOLDOWN_MS \
-   1000  // Keep using TTS threshold for 1s after TTS stops (covers streaming gaps)
+   1500  // Keep using TTS threshold for 1.5s after TTS stops (covers streaming gaps)
 #define VAD_END_OF_SPEECH_DURATION 1.2f   // Seconds of silence to consider speech ended (optimized)
 #define VAD_MAX_RECORDING_DURATION 30.0f  // Maximum recording duration (semantic timeout)
 
@@ -477,6 +477,15 @@ char *setPcmPlaybackDevice(const char *actionName, char *value, int *should_resp
 
    *should_respond = 1;  // We always respond for device changes
 
+   // Handle NULL value (e.g., from "get" action without a value)
+   if (value == NULL) {
+      LOG_WARNING("setPcmPlaybackDevice called with NULL value (action: %s)",
+                  actionName ? actionName : "NULL");
+      snprintf(return_buffer, MAX_COMMAND_LENGTH, "Current audio playback device: %s",
+               pcm_playback_device);
+      return return_buffer;
+   }
+
    for (i = 0; i < numAudioPlaybackDevices; i++) {
       if (strcmp(playbackDevices[i].name, value) == 0) {
          LOG_INFO("Setting audio playback device to \"%s\".\n", playbackDevices[i].device);
@@ -519,6 +528,15 @@ char *setPcmCaptureDevice(const char *actionName, char *value, int *should_respo
    static char return_buffer[MAX_COMMAND_LENGTH];
 
    *should_respond = 1;
+
+   // Handle NULL value (e.g., from "get" action without a value)
+   if (value == NULL) {
+      LOG_WARNING("setPcmCaptureDevice called with NULL value (action: %s)",
+                  actionName ? actionName : "NULL");
+      snprintf(return_buffer, MAX_COMMAND_LENGTH, "Current audio capture device: %s",
+               pcm_capture_device);
+      return return_buffer;
+   }
 
    for (i = 0; i < numAudioCaptureDevices; i++) {
       if (strcmp(captureDevices[i].name, value) == 0) {

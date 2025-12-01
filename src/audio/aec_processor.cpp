@@ -51,7 +51,9 @@
 #include <mutex>
 #include <vector>
 
-#include "audio/resampler.h"
+// Note: No resampler needed in AEC processor
+// - Mic input: native 48kHz from capture thread
+// - TTS reference: TTS module resamples 22050Hz→48kHz before calling aec_add_reference()
 
 // WebRTC build configuration - must be before WebRTC headers
 #ifndef WEBRTC_POSIX
@@ -75,33 +77,29 @@ extern "C" {
 }
 
 /**
- * AEC Internal Processing at 48kHz
+ * AEC Native 48kHz Processing
  *
  * CRITICAL: WebRTC AEC3 doesn't work properly at 16kHz!
  * Reports show that echo cancellation only works at 32kHz or 48kHz.
  * At 16kHz, ERL (detection) works but ERLE (cancellation) doesn't.
  *
- * Solution: Process internally at 48kHz, resample at boundaries:
- * - Mic input: 16kHz → 48kHz before AEC
- * - AEC output: 48kHz → 16kHz for ASR
- * - TTS reference: Already resampled to 48kHz before feeding to AEC
+ * Architecture (native 48kHz capture):
+ * - Mic input: Captured at 48kHz, processed directly by AEC
+ * - AEC output: 48kHz, downsampled to 16kHz in capture thread for ASR
+ * - TTS reference: 16kHz from TTS, upsampled to 48kHz here before feeding to AEC
+ *
+ * This eliminates the mic up/downsample path, reducing CPU and latency.
  */
 namespace {
 
-// Internal AEC processing rate - MUST be 32kHz or 48kHz for AEC3 to work!
-static constexpr int AEC_INTERNAL_RATE = 48000;
-
-// Frame size at 48kHz (10ms = 480 samples)
-static constexpr size_t AEC_INTERNAL_FRAME_SAMPLES = 480;
-
-// Resampling ratio (48000/16000 = 3)
-static constexpr int RESAMPLE_RATIO = AEC_INTERNAL_RATE / AEC_SAMPLE_RATE;
+// TTS module resamples 22050Hz → AEC_SAMPLE_RATE (48kHz) before calling aec_add_reference()
+// So reference audio arrives at 48kHz - no resampling needed here
 
 /**
- * A single audio frame at internal rate (10ms = 480 samples at 48kHz)
+ * A single audio frame (10ms = 480 samples at 48kHz = AEC_FRAME_SAMPLES)
  */
 struct AudioFrame {
-   int16_t samples[AEC_INTERNAL_FRAME_SAMPLES];
+   int16_t samples[AEC_FRAME_SAMPLES];
 };
 
 /**
@@ -170,21 +168,21 @@ class DelayLineBuffer {
       // Check if we have enough data to satisfy the delay
       // We need: delay_samples_ + frame_size samples in the buffer
       uint64_t samples_available = total_written_ - total_read_;
-      uint64_t samples_needed = delay_samples_ + AEC_INTERNAL_FRAME_SAMPLES;
+      uint64_t samples_needed = delay_samples_ + AEC_FRAME_SAMPLES;
 
       if (samples_available < samples_needed) {
          // Not enough data yet - return silence
-         memset(out_frame, 0, AEC_INTERNAL_FRAME_SAMPLES * sizeof(int16_t));
+         memset(out_frame, 0, AEC_FRAME_SAMPLES * sizeof(int16_t));
          frames_empty_++;
          return false;
       }
 
       // Read from the delayed position
-      for (size_t i = 0; i < AEC_INTERNAL_FRAME_SAMPLES; i++) {
+      for (size_t i = 0; i < AEC_FRAME_SAMPLES; i++) {
          out_frame[i] = buffer_[read_pos_];
          read_pos_ = (read_pos_ + 1) % BUFFER_SAMPLES;
       }
-      total_read_ += AEC_INTERNAL_FRAME_SAMPLES;
+      total_read_ += AEC_FRAME_SAMPLES;
       frames_read_++;
       return true;
    }
@@ -196,7 +194,7 @@ class DelayLineBuffer {
       std::lock_guard<std::mutex> lock(mutex_);
       if (total_written_ <= total_read_ + delay_samples_)
          return 0;
-      return (total_written_ - total_read_ - delay_samples_) / AEC_INTERNAL_FRAME_SAMPLES;
+      return (total_written_ - total_read_ - delay_samples_) / AEC_FRAME_SAMPLES;
    }
 
    uint64_t get_total_writes() const {
@@ -321,18 +319,13 @@ std::atomic<bool> g_active{ true };  // Can be disabled on repeated errors
 // AEC3's internal delay estimator finds correlation between reference and capture
 DelayLineBuffer *g_ref_buffer = nullptr;  // Simple delay line buffer
 
-// Pre-allocated frame buffers at 48kHz internal rate (10ms = 480 samples)
-int16_t g_ref_frame[AEC_INTERNAL_FRAME_SAMPLES];
-int16_t g_mic_frame_48k[AEC_INTERNAL_FRAME_SAMPLES];  // Upsampled mic input
-int16_t g_out_frame_48k[AEC_INTERNAL_FRAME_SAMPLES];  // AEC output at 48kHz
+// Pre-allocated frame buffers at 48kHz (10ms = 480 samples)
+int16_t g_ref_frame[AEC_FRAME_SAMPLES];
+int16_t g_mic_frame[AEC_FRAME_SAMPLES];  // Mic input frame (native 48kHz)
+int16_t g_out_frame[AEC_FRAME_SAMPLES];  // AEC output at 48kHz
 
-// Resamplers for mic path (16kHz ↔ 48kHz)
-resampler_t *g_mic_upsample = nullptr;    // 16kHz → 48kHz (before AEC)
-resampler_t *g_mic_downsample = nullptr;  // 48kHz → 16kHz (after AEC)
-
-// Resampler for TTS reference (16kHz → 48kHz)
-// Note: TTS already resamples from 22.05kHz → 16kHz, we upsample to 48kHz for AEC
-resampler_t *g_ref_upsample = nullptr;
+// Note: TTS module already resamples 22050Hz → 48kHz before calling aec_add_reference()
+// No resampler needed here - reference audio arrives at native 48kHz
 
 // Error tracking
 std::atomic<int> g_consecutive_errors{ 0 };
@@ -408,24 +401,24 @@ int aec_init(const aec_config_t *config) {
    // Initialize AudioProcessing with the internal sample rate (48kHz)
    // This is CRITICAL - the EchoControlFactory's Create() is called during this!
    webrtc::ProcessingConfig processing_config;
-   processing_config.input_stream().set_sample_rate_hz(AEC_INTERNAL_RATE);
+   processing_config.input_stream().set_sample_rate_hz(AEC_SAMPLE_RATE);
    processing_config.input_stream().set_num_channels(1);
-   processing_config.output_stream().set_sample_rate_hz(AEC_INTERNAL_RATE);
+   processing_config.output_stream().set_sample_rate_hz(AEC_SAMPLE_RATE);
    processing_config.output_stream().set_num_channels(1);
-   processing_config.reverse_input_stream().set_sample_rate_hz(AEC_INTERNAL_RATE);
+   processing_config.reverse_input_stream().set_sample_rate_hz(AEC_SAMPLE_RATE);
    processing_config.reverse_input_stream().set_num_channels(1);
-   processing_config.reverse_output_stream().set_sample_rate_hz(AEC_INTERNAL_RATE);
+   processing_config.reverse_output_stream().set_sample_rate_hz(AEC_SAMPLE_RATE);
    processing_config.reverse_output_stream().set_num_channels(1);
 
    int init_result = g_apm->Initialize(processing_config);
    if (init_result != 0) {
-      LOG_ERROR("Failed to initialize AudioProcessing at %dHz: error %d", AEC_INTERNAL_RATE,
+      LOG_ERROR("Failed to initialize AudioProcessing at %dHz: error %d", AEC_SAMPLE_RATE,
                 init_result);
       delete g_apm;
       g_apm = nullptr;
       return 1;
    }
-   LOG_INFO("AEC: AudioProcessing initialized at %dHz", AEC_INTERNAL_RATE);
+   LOG_INFO("AEC: AudioProcessing initialized at %dHz", AEC_SAMPLE_RATE);
 
    // Configure AEC3
    webrtc::AudioProcessing::Config apm_config;
@@ -461,45 +454,23 @@ int aec_init(const aec_config_t *config) {
 
    g_apm->ApplyConfig(apm_config);
 
-   // Create resamplers for 16kHz ↔ 48kHz conversion
-   // CRITICAL: AEC3 only works properly at 32kHz or 48kHz!
-   g_mic_upsample = resampler_create(AEC_SAMPLE_RATE, AEC_INTERNAL_RATE, 1);
-   g_mic_downsample = resampler_create(AEC_INTERNAL_RATE, AEC_SAMPLE_RATE, 1);
-   g_ref_upsample = resampler_create(AEC_SAMPLE_RATE, AEC_INTERNAL_RATE, 1);  // 16kHz → 48kHz
+   // Note: TTS module already resamples 22050Hz → 48kHz before calling aec_add_reference()
+   // No resampler needed here - reference audio arrives at native 48kHz
+   // Mic input is also native 48kHz from capture thread
 
-   if (!g_mic_upsample || !g_mic_downsample || !g_ref_upsample) {
-      LOG_ERROR("Failed to create AEC resamplers");
-      if (g_mic_upsample)
-         resampler_destroy(g_mic_upsample);
-      if (g_mic_downsample)
-         resampler_destroy(g_mic_downsample);
-      if (g_ref_upsample)
-         resampler_destroy(g_ref_upsample);
-      g_mic_upsample = g_mic_downsample = g_ref_upsample = nullptr;
-      delete g_apm;
-      g_apm = nullptr;
-      return 1;
-   }
-
-   LOG_INFO("AEC: Resamplers created (mic 16kHz ↔ 48kHz, ref 16kHz → 48kHz)");
-
-   // Create delay line buffer at 48kHz internal rate
+   // Create delay line buffer at 48kHz
    // The delay line introduces a fixed delay matching the acoustic path
    // This aligns reference audio with when echo arrives at the microphone
    //
    // Delay = ALSA buffer (~50ms) + acoustic path (~20ms) = ~70ms
    // At 48kHz: 70ms = 3360 samples
-   size_t delay_samples = (g_acoustic_delay_ms * AEC_INTERNAL_RATE) / 1000;
+   size_t delay_samples = (g_acoustic_delay_ms * AEC_SAMPLE_RATE) / 1000;
 
    g_ref_buffer = new DelayLineBuffer(delay_samples);
    LOG_INFO("AEC: Delay line buffer created with %zums (%zu samples at 48kHz) delay",
             g_acoustic_delay_ms, delay_samples);
    if (!g_ref_buffer) {
       LOG_ERROR("Failed to create AEC delay line buffer");
-      resampler_destroy(g_mic_upsample);
-      resampler_destroy(g_mic_downsample);
-      resampler_destroy(g_ref_upsample);
-      g_mic_upsample = g_mic_downsample = g_ref_upsample = nullptr;
       delete g_apm;
       g_apm = nullptr;
       return 1;
@@ -517,10 +488,10 @@ int aec_init(const aec_config_t *config) {
    g_active.store(true);
    g_initialized.store(true);
 
-   LOG_INFO("AEC3 initialized: internal=%dHz (external=%dHz), %zu samples/frame, "
+   LOG_INFO("AEC3 initialized: %dHz (native capture), %zu samples/frame, "
             "delay_hint=%zums, mobile=%d, NS=%d",
-            AEC_INTERNAL_RATE, AEC_SAMPLE_RATE, AEC_INTERNAL_FRAME_SAMPLES, g_acoustic_delay_ms,
-            g_config.mobile_mode, g_config.enable_noise_suppression);
+            AEC_SAMPLE_RATE, (size_t)AEC_FRAME_SAMPLES, g_acoustic_delay_ms, g_config.mobile_mode,
+            g_config.enable_noise_suppression);
 
    return 0;
 }
@@ -537,19 +508,7 @@ void aec_cleanup(void) {
       g_apm = nullptr;
    }
 
-   // Cleanup resamplers
-   if (g_mic_upsample) {
-      resampler_destroy(g_mic_upsample);
-      g_mic_upsample = nullptr;
-   }
-   if (g_mic_downsample) {
-      resampler_destroy(g_mic_downsample);
-      g_mic_downsample = nullptr;
-   }
-   if (g_ref_upsample) {
-      resampler_destroy(g_ref_upsample);
-      g_ref_upsample = nullptr;
-   }
+   // Note: No reference resampler to clean up - TTS sends 48kHz directly
 
    if (g_ref_buffer) {
       LOG_INFO("AEC buffer stats: read=%llu, empty=%llu",
@@ -568,29 +527,21 @@ bool aec_is_enabled(void) {
    return g_initialized.load() && g_active.load();
 }
 
-// Static buffer for resampling reference audio (16kHz → 48kHz)
-// Max input: RESAMPLER_MAX_SAMPLES at 16kHz
-// Max output: RESAMPLER_MAX_SAMPLES * 3 at 48kHz
-static int16_t g_ref_resample_buf[RESAMPLER_MAX_SAMPLES * RESAMPLE_RATIO];
+// Note: TTS module already resamples 22050Hz → 48kHz before calling these functions
+// Reference audio arrives at native 48kHz - no resampling needed here
 
 void aec_add_reference(const int16_t *samples, size_t num_samples) {
    // Quick checks without locking
    if (!g_initialized.load() || !g_active.load()) {
       return;
    }
-   if (!samples || num_samples == 0 || !g_ref_buffer || !g_ref_upsample) {
+   if (!samples || num_samples == 0 || !g_ref_buffer) {
       return;
    }
 
-   // Input is 16kHz from TTS, need to upsample to 48kHz for internal AEC processing
-   // Use dedicated resampler for reference path (separate from mic path)
-   size_t resampled = resampler_process(g_ref_upsample, samples, num_samples, g_ref_resample_buf,
-                                        sizeof(g_ref_resample_buf) / sizeof(int16_t));
-
-   if (resampled > 0) {
-      // Write 48kHz audio to reference buffer
-      g_ref_buffer->write(g_ref_resample_buf, resampled);
-   }
+   // Input is already 48kHz from TTS (TTS resamples 22050→48kHz)
+   // Write directly to reference buffer
+   g_ref_buffer->write(samples, num_samples);
 }
 
 void aec_add_reference_with_delay(const int16_t *samples,
@@ -600,33 +551,21 @@ void aec_add_reference_with_delay(const int16_t *samples,
    if (!g_initialized.load() || !g_active.load()) {
       return;
    }
-   if (!samples || num_samples == 0 || !g_ref_buffer || !g_ref_upsample) {
+   if (!samples || num_samples == 0 || !g_ref_buffer) {
       return;
    }
 
-   // Input is 16kHz from TTS, need to upsample to 48kHz for internal AEC processing
-   // Use dedicated resampler for reference path (separate from mic path)
-   size_t resampled = resampler_process(g_ref_upsample, samples, num_samples, g_ref_resample_buf,
-                                        sizeof(g_ref_resample_buf) / sizeof(int16_t));
-
-   if (resampled > 0) {
-      // Write 48kHz audio to reference buffer
-      // Note: playback_delay_us is ignored in current delay line implementation
-      g_ref_buffer->write_with_delay(g_ref_resample_buf, resampled, playback_delay_us);
-   }
+   // Input is already 48kHz from TTS (TTS resamples 22050→48kHz)
+   // Write directly to reference buffer
+   // Note: playback_delay_us is ignored in current delay line implementation
+   g_ref_buffer->write_with_delay(samples, num_samples, playback_delay_us);
 }
 
 /**
- * Buffers for 48kHz mic processing (used in aec_process)
- * Max chunk from external: AEC_MAX_SAMPLES at 16kHz = 8192
- * After upsampling to 48kHz: 8192 * 3 = 24576 samples
+ * Static buffer for processing mic input at 48kHz
+ * Since we now receive native 48kHz, we just need a working output buffer
  */
-static int16_t g_mic_in_48k[AEC_MAX_SAMPLES * RESAMPLE_RATIO];
-static int16_t g_mic_out_48k[AEC_MAX_SAMPLES * RESAMPLE_RATIO];
-
-// Output buffer for downsampling - needs extra margin for resampler filter delay
-// Size: max 16kHz samples + 64 margin
-static int16_t g_downsample_out[AEC_MAX_SAMPLES + 64];
+static int16_t g_mic_out[AEC_MAX_SAMPLES];
 
 void aec_process(const int16_t *mic_in, int16_t *clean_out, size_t num_samples) {
    // Handle NULL output buffer - zero it to prevent undefined behavior
@@ -657,48 +596,30 @@ void aec_process(const int16_t *mic_in, int16_t *clean_out, size_t num_samples) 
       return;
    }
 
-   // Check resamplers are available
-   if (!g_mic_upsample || !g_mic_downsample) {
-      memcpy(clean_out, mic_in, num_samples * sizeof(int16_t));
-      return;
-   }
-
    auto frame_start = std::chrono::high_resolution_clock::now();
 
    // =========================================================================
-   // STEP 1: Upsample entire mic input from 16kHz to 48kHz
+   // Process in 480-sample frames (10ms at 48kHz) - NO resampling needed
+   // Input is already 48kHz from native capture
    // =========================================================================
-   size_t samples_48k = resampler_process(g_mic_upsample, mic_in, num_samples, g_mic_in_48k,
-                                          sizeof(g_mic_in_48k) / sizeof(int16_t));
+   webrtc::StreamConfig stream_config(AEC_SAMPLE_RATE, 1);  // 48kHz, 1 channel
+   size_t processed = 0;
 
-   if (samples_48k == 0) {
-      // Resampling failed - pass through
-      memcpy(clean_out, mic_in, num_samples * sizeof(int16_t));
-      return;
-   }
-
-   // =========================================================================
-   // STEP 2: Process in 480-sample frames (10ms at 48kHz)
-   // =========================================================================
-   webrtc::StreamConfig stream_config_48k(AEC_INTERNAL_RATE, 1);  // 48kHz, 1 channel
-   size_t processed_48k = 0;
-
-   while (processed_48k < samples_48k) {
-      size_t chunk_48k = samples_48k - processed_48k;
-      if (chunk_48k > AEC_INTERNAL_FRAME_SAMPLES) {
-         chunk_48k = AEC_INTERNAL_FRAME_SAMPLES;
+   while (processed < num_samples) {
+      size_t chunk = num_samples - processed;
+      if (chunk > AEC_FRAME_SAMPLES) {
+         chunk = AEC_FRAME_SAMPLES;
       }
 
       // Copy mic chunk to frame buffer
-      memcpy(g_mic_frame_48k, g_mic_in_48k + processed_48k, chunk_48k * sizeof(int16_t));
+      memcpy(g_mic_frame, mic_in + processed, chunk * sizeof(int16_t));
 
       // Pad with zeros if partial frame
-      if (chunk_48k < AEC_INTERNAL_FRAME_SAMPLES) {
-         memset(g_mic_frame_48k + chunk_48k, 0,
-                (AEC_INTERNAL_FRAME_SAMPLES - chunk_48k) * sizeof(int16_t));
+      if (chunk < AEC_FRAME_SAMPLES) {
+         memset(g_mic_frame + chunk, 0, (AEC_FRAME_SAMPLES - chunk) * sizeof(int16_t));
       }
 
-      // Get reference audio from delay line buffer (already at 48kHz)
+      // Get reference audio from delay line buffer (at 48kHz)
       bool has_reference = false;
       if (g_ref_buffer) {
          has_reference = g_ref_buffer->read_frame(g_ref_frame);
@@ -706,7 +627,7 @@ void aec_process(const int16_t *mic_in, int16_t *clean_out, size_t num_samples) 
 
       if (!has_reference) {
          // Buffer empty - feed silence (AEC3 will adapt)
-         memset(g_ref_frame, 0, AEC_INTERNAL_FRAME_SAMPLES * sizeof(int16_t));
+         memset(g_ref_frame, 0, AEC_FRAME_SAMPLES * sizeof(int16_t));
          g_frames_passed_through.fetch_add(1);
       }
 
@@ -717,24 +638,22 @@ void aec_process(const int16_t *mic_in, int16_t *clean_out, size_t num_samples) 
 
          if (!g_apm) {
             // AEC was cleaned up while we were processing
-            memcpy(g_mic_out_48k + processed_48k, g_mic_in_48k + processed_48k,
-                   chunk_48k * sizeof(int16_t));
-            processed_48k += chunk_48k;
+            memcpy(g_mic_out + processed, mic_in + processed, chunk * sizeof(int16_t));
+            processed += chunk;
             continue;
          }
 
          // Feed reference signal (render/playback/far-end) at 48kHz
          int16_t *ref_ptr = g_ref_frame;
-         int reverse_result = g_apm->ProcessReverseStream(ref_ptr, stream_config_48k,
-                                                          stream_config_48k, ref_ptr);
+         int reverse_result = g_apm->ProcessReverseStream(ref_ptr, stream_config, stream_config,
+                                                          ref_ptr);
 
          // Set stream delay hint
          g_apm->set_stream_delay_ms(g_acoustic_delay_ms);
 
          // Process capture stream (microphone/near-end) at 48kHz
-         int16_t *mic_ptr = g_mic_frame_48k;
-         int stream_result = g_apm->ProcessStream(mic_ptr, stream_config_48k, stream_config_48k,
-                                                  mic_ptr);
+         int16_t *mic_ptr = g_mic_frame;
+         int stream_result = g_apm->ProcessStream(mic_ptr, stream_config, stream_config, mic_ptr);
 
          frame_success = (reverse_result == 0 && stream_result == 0);
 
@@ -753,14 +672,14 @@ void aec_process(const int16_t *mic_in, int16_t *clean_out, size_t num_samples) 
 
             // Calculate RMS for this 48kHz frame
             int64_t in_sum = 0, out_sum = 0, ref_sum = 0;
-            for (size_t i = 0; i < chunk_48k; i++) {
-               in_sum += (int64_t)g_mic_in_48k[processed_48k + i] * g_mic_in_48k[processed_48k + i];
-               out_sum += (int64_t)g_mic_frame_48k[i] * g_mic_frame_48k[i];
+            for (size_t i = 0; i < chunk; i++) {
+               in_sum += (int64_t)mic_in[processed + i] * mic_in[processed + i];
+               out_sum += (int64_t)g_mic_frame[i] * g_mic_frame[i];
                ref_sum += (int64_t)g_ref_frame[i] * g_ref_frame[i];
             }
-            double in_rms = sqrt((double)in_sum / chunk_48k);
-            double out_rms = sqrt((double)out_sum / chunk_48k);
-            double ref_rms = sqrt((double)ref_sum / chunk_48k);
+            double in_rms = sqrt((double)in_sum / chunk);
+            double out_rms = sqrt((double)out_sum / chunk);
+            double ref_rms = sqrt((double)ref_sum / chunk);
 
             // Calculate actual attenuation when both ref and mic have signal
             float attenuation_db = 0;
@@ -788,14 +707,13 @@ void aec_process(const int16_t *mic_in, int16_t *clean_out, size_t num_samples) 
       }
 
       if (frame_success) {
-         // Copy processed frame to 48kHz output buffer
-         memcpy(g_mic_out_48k + processed_48k, g_mic_frame_48k, chunk_48k * sizeof(int16_t));
+         // Copy processed frame to output buffer
+         memcpy(g_mic_out + processed, g_mic_frame, chunk * sizeof(int16_t));
          g_consecutive_errors.store(0);
          g_frames_processed.fetch_add(1);
       } else {
          // On error, pass through unprocessed
-         memcpy(g_mic_out_48k + processed_48k, g_mic_in_48k + processed_48k,
-                chunk_48k * sizeof(int16_t));
+         memcpy(g_mic_out + processed, mic_in + processed, chunk * sizeof(int16_t));
 
          int errors = g_consecutive_errors.fetch_add(1) + 1;
          if (errors == 1 || errors % 100 == 0) {
@@ -809,25 +727,11 @@ void aec_process(const int16_t *mic_in, int16_t *clean_out, size_t num_samples) 
          }
       }
 
-      processed_48k += chunk_48k;
+      processed += chunk;
    }
 
-   // =========================================================================
-   // STEP 3: Downsample from 48kHz back to 16kHz
-   // =========================================================================
-   // Use intermediate buffer with extra margin for resampler filter delay
-   size_t downsample_buf_size = sizeof(g_downsample_out) / sizeof(int16_t);
-   size_t output_samples = resampler_process(g_mic_downsample, g_mic_out_48k, samples_48k,
-                                             g_downsample_out, downsample_buf_size);
-
-   // Copy to output, clamping to requested size
-   size_t copy_samples = (output_samples < num_samples) ? output_samples : num_samples;
-   memcpy(clean_out, g_downsample_out, copy_samples * sizeof(int16_t));
-
-   // If downsample produced fewer samples than input, zero-pad the rest
-   if (copy_samples < num_samples) {
-      memset(clean_out + copy_samples, 0, (num_samples - copy_samples) * sizeof(int16_t));
-   }
+   // Copy processed audio to output (no downsampling needed - capture thread does that)
+   memcpy(clean_out, g_mic_out, num_samples * sizeof(int16_t));
 
    // Apply noise gate if configured
    if (g_config.noise_gate_threshold > 0) {
@@ -858,10 +762,10 @@ int aec_get_stats(aec_stats_t *stats) {
       return 1;
    }
 
-   // Get buffer stats from FIFO buffer (at 48kHz internal rate)
+   // Get buffer stats from FIFO buffer (at 48kHz)
    size_t ref_frames = g_ref_buffer ? g_ref_buffer->get_frame_count() : 0;
-   // Convert internal frame count to external 16kHz sample count
-   size_t ref_samples = (ref_frames * AEC_INTERNAL_FRAME_SAMPLES) / RESAMPLE_RATIO;
+   // Report 48kHz sample count (native rate)
+   size_t ref_samples = ref_frames * AEC_FRAME_SAMPLES;
 
    // Delay is estimated by AEC3 internally - we report 0 here
    stats->estimated_delay_ms = 0;

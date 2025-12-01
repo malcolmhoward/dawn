@@ -29,7 +29,7 @@
  * - aec_init/cleanup(): Call from main thread only during startup/shutdown
  *
  * Real-Time Constraints:
- * - aec_process() uses per-frame locking (~160 samples = 10ms)
+ * - aec_process() uses per-frame locking (~480 samples = 10ms at 48kHz)
  * - No dynamic allocation in processing path
  * - Graceful degradation on errors (pass-through mode)
  *
@@ -52,8 +52,12 @@ extern "C" {
 
 /*
  * Compile-time configuration validation
+ *
+ * AEC processes at 48kHz for optimal WebRTC AEC3 performance.
+ * Audio capture should also be at 48kHz - downsampling to 16kHz
+ * for ASR happens in the capture thread after AEC processing.
  */
-#define AEC_SAMPLE_RATE 16000
+#define AEC_SAMPLE_RATE 48000
 
 /* Verify AEC sample rate matches capture rate at compile time */
 #ifdef ENABLE_AEC
@@ -63,19 +67,19 @@ extern "C" {
 /**
  * @brief AEC processing constants
  *
- * WebRTC AEC3 processes in 10ms frames at 16kHz = 160 samples.
+ * WebRTC AEC3 processes in 10ms frames at 48kHz = 480 samples.
  * These values are fixed by the WebRTC API.
  */
-#define AEC_FRAME_SAMPLES 160
+#define AEC_FRAME_SAMPLES 480
 #define AEC_FRAME_BYTES (AEC_FRAME_SAMPLES * sizeof(int16_t))
 
 /**
  * @brief Maximum samples that can be processed in one call
  *
  * Limits memory allocation and prevents excessive lock hold times.
- * 8192 samples = 512ms at 16kHz, more than enough for any capture chunk.
+ * 24576 samples = 512ms at 48kHz, more than enough for any capture chunk.
  */
-#define AEC_MAX_SAMPLES 8192
+#define AEC_MAX_SAMPLES 24576
 
 /**
  * @brief Consecutive error threshold before AEC disables itself
@@ -154,7 +158,8 @@ aec_config_t aec_get_default_config(void);
  * Creates WebRTC AudioProcessing instance with AEC3 enabled.
  * Pre-allocates all buffers to avoid runtime allocation.
  *
- * Call AFTER TTS initialization (TTS creates the resampler).
+ * Call AFTER TTS initialization (to ensure audio subsystem is ready).
+ * TTS and AEC use separate resamplers - no shared resources.
  *
  * @param config Configuration options (NULL for defaults)
  * @return 0 on success, non-zero on error
@@ -185,12 +190,12 @@ bool aec_is_enabled(void);
  * @brief Add reference (far-end) audio from TTS playback
  *
  * Call this with TTS audio AFTER it's been written to the audio device.
- * Audio must be 16kHz mono S16_LE format (resample if necessary).
+ * Audio must be 16kHz mono S16_LE format - internally upsampled to 48kHz.
  *
  * This function is lock-free and safe to call from TTS thread.
  * Internally uses the thread-safe ring_buffer_write().
  *
- * @param samples Audio samples (16-bit signed)
+ * @param samples Audio samples (16-bit signed, 16kHz)
  * @param num_samples Number of samples
  */
 void aec_add_reference(const int16_t *samples, size_t num_samples);
@@ -205,7 +210,7 @@ void aec_add_reference(const int16_t *samples, size_t num_samples);
  * Call this AFTER snd_pcm_writei() or pa_simple_write() returns.
  * Query the delay using snd_pcm_delay() or pa_simple_get_latency().
  *
- * @param samples Audio samples (16-bit signed, 16kHz)
+ * @param samples Audio samples (16-bit signed, 16kHz - internally upsampled)
  * @param num_samples Number of samples
  * @param playback_delay_us Delay in microseconds until audio plays through speaker
  *                          (from snd_pcm_delay or pa_simple_get_latency)
@@ -217,8 +222,9 @@ void aec_add_reference_with_delay(const int16_t *samples,
 /**
  * @brief Process microphone audio to remove echo
  *
- * Takes raw microphone input and outputs echo-cancelled audio.
- * Audio must be 16kHz mono S16_LE format.
+ * Takes raw microphone input at 48kHz and outputs echo-cancelled audio.
+ * Audio must be 48kHz mono S16_LE format. The capture thread handles
+ * downsampling to 16kHz for ASR after AEC processing.
  *
  * Uses per-frame locking (10ms granularity) to minimize impact
  * on real-time audio thread. On error, passes through unprocessed
@@ -227,7 +233,7 @@ void aec_add_reference_with_delay(const int16_t *samples,
  * If mic_in or clean_out is NULL, the output buffer is zeroed
  * to prevent undefined behavior in the caller.
  *
- * @param mic_in Input microphone samples (NULL safe - outputs silence)
+ * @param mic_in Input microphone samples at 48kHz (NULL safe - outputs silence)
  * @param clean_out Output buffer for echo-cancelled samples (same size as input)
  * @param num_samples Number of samples (must be <= AEC_MAX_SAMPLES)
  */

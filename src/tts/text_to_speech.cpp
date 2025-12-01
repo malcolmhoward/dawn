@@ -693,7 +693,7 @@ void initialize_text_to_speech(char *pcm_device) {
    tts_handle.is_initialized = 1;
 
 #ifdef ENABLE_AEC
-   // Create resampler for AEC reference (22050 -> 16000)
+   // Create resampler for AEC reference (22050Hz TTS -> 48000Hz AEC native rate)
    g_tts_thread_resampler = resampler_create(DEFAULT_RATE, AEC_SAMPLE_RATE, 1);
    if (!g_tts_thread_resampler) {
       LOG_WARNING("Failed to create TTS resampler for AEC - echo cancellation may be limited");

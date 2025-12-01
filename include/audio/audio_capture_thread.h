@@ -59,9 +59,12 @@ typedef struct {
    size_t buffer_size; /**< Size of capture buffer */
 
 #ifdef ENABLE_AEC
-   int16_t *aec_buffer;    /**< Pre-allocated AEC output buffer */
-   size_t aec_buffer_size; /**< AEC buffer size in samples */
-   int aec_rate_mismatch;  /**< True if device rate != AEC_SAMPLE_RATE */
+   int16_t *aec_buffer;        /**< Pre-allocated AEC output buffer (48kHz) */
+   size_t aec_buffer_size;     /**< AEC buffer size in samples */
+   int aec_rate_mismatch;      /**< True if device rate != AEC_SAMPLE_RATE */
+   void *downsample_resampler; /**< Resampler for 48kHz → 16kHz (opaque, resampler_t*) */
+   int16_t *asr_buffer;        /**< Downsampled buffer for ASR (16kHz) */
+   size_t asr_buffer_size;     /**< ASR buffer size in samples */
 #endif
 } audio_capture_context_t;
 
