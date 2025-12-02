@@ -1,6 +1,22 @@
-# WebRTC AEC3 Integration Guide for DAWN
+# AEC Integration Guide for DAWN
 
 This document describes the Acoustic Echo Cancellation (AEC) implementation in DAWN, enabling barge-in (interrupt) capability without requiring special hardware like ReSpeaker arrays.
+
+## Backend Selection
+
+DAWN supports two AEC backends:
+
+| Backend | Status | Best For |
+|---------|--------|----------|
+| **WebRTC AEC3** | ✅ Recommended | General use, auto delay estimation |
+| **Speex** | ⚠️ Experimental | Legacy, requires manual delay tuning |
+
+Select backend at build time:
+```bash
+cmake -DAEC_BACKEND=WEBRTC ..   # Recommended (default)
+cmake -DAEC_BACKEND=SPEEX ..    # Experimental
+cmake -DAEC_BACKEND=OFF ..      # Disable AEC
+```
 
 ## Overview
 
@@ -134,7 +150,8 @@ typedef struct {
 | File | Purpose |
 |------|---------|
 | `include/audio/aec_processor.h` | Public API and constants |
-| `src/audio/aec_processor.cpp` | WebRTC AEC3 wrapper (48kHz native) |
+| `src/audio/aec_webrtc.cpp` | WebRTC AEC3 backend (48kHz native) |
+| `src/audio/aec_speex.cpp` | Speex AEC backend (experimental) |
 | `src/audio/audio_capture_thread.c` | 48kHz capture with AEC + downsampling |
 | `src/tts/text_to_speech.cpp` | TTS with 22050→48kHz resampling for AEC |
 | `include/audio/resampler.h` | Resampler interface |
@@ -142,10 +159,12 @@ typedef struct {
 
 ### Build Configuration
 
-AEC is enabled via CMake:
+AEC backend is selected via CMake:
 
 ```bash
-cmake -DENABLE_AEC=ON ..
+cmake -DAEC_BACKEND=WEBRTC ..  # WebRTC AEC3 (recommended)
+cmake -DAEC_BACKEND=SPEEX ..   # Speex AEC (experimental)
+cmake -DAEC_BACKEND=OFF ..     # Disable AEC entirely
 make -j4
 ```
 
@@ -218,18 +237,41 @@ AEC3@48k: ERL=14.2dB ERLE=0.2dB delay=48ms atten=-19.8dB div=0.00 queued=102 rea
 | Field | Meaning | Good Values |
 |-------|---------|-------------|
 | `ERL` | Echo Return Loss (detection) | 10-20 dB |
-| `ERLE` | Echo Return Loss Enhancement | >10 dB ideal |
-| `delay` | Estimated acoustic delay | 40-80 ms |
-| `atten` | Actual attenuation (mic RMS / out RMS) | -15 to -30 dB |
+| `ERLE` | Echo Return Loss Enhancement | >6 dB (see note below) |
+| `delay` | Estimated acoustic delay | 150-200 ms typical |
+| `atten` | Actual attenuation (mic RMS / out RMS) | Positive dB = reduction |
 | `mic` | Input mic RMS | Varies |
-| `ref` | Reference buffer RMS | >0 during TTS |
+| `ref` | Reference buffer RMS | **>0 during TTS** (critical!) |
 | `out` | Output RMS after AEC | Should be << mic |
+
+**Note on delay**: WebRTC auto-estimates delay at 150-200ms typically. This includes ALSA buffering, USB audio latency, and acoustic path. The old 40-80ms estimate was too conservative.
 
 ## Known Issues
 
+### WebRTC Backend
+
 1. **ERLE Metric Unreliable at 48kHz**: WebRTC's reported ERLE may show low values (0.2-2.8 dB) even when actual attenuation is excellent. Use the calculated `atten` field for real performance monitoring.
 
-2. **False VAD Triggers During TTS Transitions**: Can occur when TTS pauses between sentences or stops. Mitigated by VAD debounce and cooldown settings.
+2. **Noise Suppression Disabled**: NS is disabled by default (`enable_noise_suppression = false`) because it causes "underwater" audio distortion. Enable only if you have specific noise issues and can tolerate some distortion.
+
+3. **False VAD Triggers During TTS Transitions**: Can occur when TTS pauses between sentences or stops. Mitigated by VAD debounce and cooldown settings.
+
+### Speex Backend (Experimental)
+
+The Speex backend has significant issues and is not recommended for production use:
+
+1. **Reference Signal Not Captured (`ref=0`)**: The Speex implementation shows `ref=0` in logs, indicating the TTS reference audio is not reaching the AEC. This makes echo cancellation impossible.
+
+2. **Fixed Delay Mismatch**: Speex uses a hardcoded 50ms delay, but actual system delay is typically 150-200ms. This misalignment prevents proper echo cancellation.
+
+3. **Negative Attenuation**: Due to the above issues, Speex often shows negative attenuation values (-2 to -4 dB), meaning output is *louder* than input.
+
+**Speex log example (broken):**
+```
+SpeexAEC@48k: atten=-2.4dB ref=0 mic=309 out=235 match=3414 over=0 under=645
+```
+
+The `ref=0` is the critical indicator that the reference path is broken. Use WebRTC instead.
 
 ## Dependencies
 

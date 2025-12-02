@@ -23,8 +23,18 @@
 #define AUDIO_CAPTURE_THREAD_H
 
 #include <pthread.h>
-#include <stdatomic.h>
+#include <stdbool.h>
 #include <stdint.h>
+
+// Note: <stdatomic.h> is intentionally NOT included here to avoid conflicts
+// with C++ code. The atomic_bool type is defined as volatile int for the struct.
+#ifdef __cplusplus
+// C++ uses std::atomic in implementation
+typedef volatile int atomic_bool_t;
+#else
+#include <stdatomic.h>
+typedef atomic_bool atomic_bool_t;
+#endif
 
 #include "audio/ring_buffer.h"
 
@@ -32,6 +42,10 @@
 #include <alsa/asoundlib.h>
 #else
 #include <pulse/simple.h>
+#endif
+
+#ifdef __cplusplus
+extern "C" {
 #endif
 
 /**
@@ -44,7 +58,7 @@
 typedef struct {
    pthread_t thread;           /**< Capture thread handle */
    ring_buffer_t *ring_buffer; /**< Ring buffer for audio data */
-   atomic_bool running;        /**< Thread running flag */
+   atomic_bool_t running;      /**< Thread running flag */
    int use_realtime_priority;  /**< Enable realtime scheduling */
 
 #ifdef ALSA_DEVICE
@@ -58,13 +72,15 @@ typedef struct {
    char *pcm_device;   /**< Device name */
    size_t buffer_size; /**< Size of capture buffer */
 
-#ifdef ENABLE_AEC
-   int16_t *aec_buffer;        /**< Pre-allocated AEC output buffer (48kHz) */
-   size_t aec_buffer_size;     /**< AEC buffer size in samples */
-   int aec_rate_mismatch;      /**< True if device rate != AEC_SAMPLE_RATE */
+   // Resampler for 48kHz → 16kHz (always needed for ASR)
    void *downsample_resampler; /**< Resampler for 48kHz → 16kHz (opaque, resampler_t*) */
    int16_t *asr_buffer;        /**< Downsampled buffer for ASR (16kHz) */
    size_t asr_buffer_size;     /**< ASR buffer size in samples */
+
+#ifdef ENABLE_AEC
+   int16_t *aec_buffer;    /**< Pre-allocated AEC output buffer (48kHz) */
+   size_t aec_buffer_size; /**< AEC buffer size in samples */
+   int aec_rate_mismatch;  /**< True if device rate != AEC_SAMPLE_RATE */
 #endif
 } audio_capture_context_t;
 
@@ -143,5 +159,73 @@ int audio_capture_is_running(audio_capture_context_t *ctx);
  * @param ctx Capture context
  */
 void audio_capture_clear(audio_capture_context_t *ctx);
+
+// ============================================================================
+// Mic Recording API for Debugging (works with or without AEC)
+// ============================================================================
+
+/**
+ * @brief Set directory for mic recording output files
+ *
+ * @param dir Directory path (default: /tmp)
+ */
+void mic_set_recording_dir(const char *dir);
+
+/**
+ * @brief Enable or disable mic recording capability
+ *
+ * Must be called with true before mic_start_recording() will work.
+ *
+ * @param enable true to enable, false to disable
+ */
+void mic_enable_recording(bool enable);
+
+/**
+ * @brief Check if mic recording is currently active
+ *
+ * @return true if actively recording, false otherwise
+ */
+bool mic_is_recording(void);
+
+/**
+ * @brief Check if mic recording capability is enabled
+ *
+ * @return true if recording is enabled, false otherwise
+ */
+bool mic_is_recording_enabled(void);
+
+/**
+ * @brief Start recording mic input to WAV file
+ *
+ * Creates a WAV file with timestamped name:
+ * - mic_capture_YYYYMMDD_HHMMSS.wav - What VAD sees (16kHz mono)
+ *
+ * Recording must be enabled first with mic_enable_recording(true).
+ *
+ * @return 0 on success, non-zero on error
+ */
+int mic_start_recording(void);
+
+/**
+ * @brief Stop recording and finalize WAV file
+ *
+ * Closes recording file and updates WAV header with final size.
+ * Safe to call even if not recording.
+ */
+void mic_stop_recording(void);
+
+/**
+ * @brief Record samples to mic recording file (internal use)
+ *
+ * Called by capture thread to record samples going to ring buffer.
+ *
+ * @param samples Audio samples (16-bit)
+ * @param num_samples Number of samples
+ */
+void mic_record_samples(const int16_t *samples, size_t num_samples);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif  // AUDIO_CAPTURE_THREAD_H

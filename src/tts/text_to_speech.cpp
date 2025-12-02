@@ -10,6 +10,7 @@
 #include <sstream>
 #include <vector>
 
+#include "audio/audio_capture_thread.h"
 #include "dawn.h"
 #include "logging.h"
 
@@ -49,9 +50,13 @@ static std::atomic<uint32_t> g_tts_discard_sequence{ 0 };
 
 #ifdef ALSA_DEVICE
 #include <alsa/asoundlib.h>
+#include <samplerate.h>
 
 #define DEFAULT_ACCESS SND_PCM_ACCESS_RW_INTERLEAVED
 #define DEFAULT_FORMAT SND_PCM_FORMAT_S16_LE
+
+// Maximum conversion buffer size (10 seconds at 48kHz stereo)
+#define TTS_CONV_BUFFER_SIZE (48000 * 2 * 10)
 
 #else
 #include <pulse/error.h>
@@ -71,6 +76,19 @@ typedef struct {
 #ifdef ALSA_DEVICE
    snd_pcm_t *handle;
    snd_pcm_uframes_t frames;
+   // Actual hardware parameters (may differ from defaults)
+   snd_pcm_format_t hw_format;
+   unsigned int hw_rate;
+   unsigned int hw_channels;
+   // Conversion state
+   bool needs_conversion;
+   SRC_STATE *resampler;
+   double resample_ratio;
+   // Conversion buffers
+   float *resample_in;
+   float *resample_out;
+   uint8_t *convert_out;
+   size_t convert_out_size;
 #else
    pa_simple *pa_handle;
 #endif
@@ -80,14 +98,128 @@ typedef struct {
 static TTS_Handle tts_handle;
 
 #ifdef ALSA_DEVICE
+
+/**
+ * Convert S16_LE mono samples to hardware format
+ * Handles: rate conversion, mono→stereo, S16→S24_3LE
+ *
+ * @param in_samples Input S16_LE mono samples at DEFAULT_RATE
+ * @param num_in_samples Number of input samples
+ * @param out_buffer Output buffer (must be pre-allocated)
+ * @param out_buffer_size Size of output buffer in bytes
+ * @return Number of frames written to output, or -1 on error
+ */
+static ssize_t tts_convert_audio(const int16_t *in_samples,
+                                 size_t num_in_samples,
+                                 uint8_t *out_buffer,
+                                 size_t out_buffer_size) {
+   if (!tts_handle.needs_conversion) {
+      // No conversion needed - just copy
+      size_t bytes = num_in_samples * sizeof(int16_t);
+      if (bytes > out_buffer_size)
+         bytes = out_buffer_size;
+      memcpy(out_buffer, in_samples, bytes);
+      return num_in_samples;
+   }
+
+   // Step 1: Convert S16 to float for resampler
+   size_t max_in = num_in_samples;
+   if (max_in > TTS_CONV_BUFFER_SIZE)
+      max_in = TTS_CONV_BUFFER_SIZE;
+
+   for (size_t i = 0; i < max_in; i++) {
+      tts_handle.resample_in[i] = in_samples[i] / 32768.0f;
+   }
+
+   // Step 2: Resample if needed
+   float *resampled_data = tts_handle.resample_in;
+   size_t resampled_samples = max_in;
+
+   if (tts_handle.resampler && tts_handle.resample_ratio != 1.0) {
+      SRC_DATA src_data;
+      src_data.data_in = tts_handle.resample_in;
+      src_data.input_frames = (long)max_in;
+      src_data.data_out = tts_handle.resample_out;
+      src_data.output_frames = (long)(max_in * tts_handle.resample_ratio + 100);
+      src_data.src_ratio = tts_handle.resample_ratio;
+      src_data.end_of_input = 0;
+
+      int err = src_process(tts_handle.resampler, &src_data);
+      if (err) {
+         LOG_ERROR("Resampler error: %s", src_strerror(err));
+         return -1;
+      }
+
+      resampled_data = tts_handle.resample_out;
+      resampled_samples = src_data.output_frames_gen;
+   }
+
+   // Step 3: Convert to hardware format
+   size_t out_frames = resampled_samples;
+   size_t bytes_per_frame;
+
+   if (tts_handle.hw_format == SND_PCM_FORMAT_S24_3LE) {
+      // 24-bit packed (3 bytes per sample)
+      bytes_per_frame = 3 * tts_handle.hw_channels;
+   } else if (tts_handle.hw_format == SND_PCM_FORMAT_S32_LE) {
+      bytes_per_frame = 4 * tts_handle.hw_channels;
+   } else {
+      // S16_LE
+      bytes_per_frame = 2 * tts_handle.hw_channels;
+   }
+
+   size_t needed_bytes = out_frames * bytes_per_frame;
+   if (needed_bytes > out_buffer_size) {
+      out_frames = out_buffer_size / bytes_per_frame;
+   }
+
+   uint8_t *out = out_buffer;
+
+   for (size_t i = 0; i < out_frames; i++) {
+      float sample = resampled_data[i];
+      // Clamp
+      if (sample > 1.0f)
+         sample = 1.0f;
+      if (sample < -1.0f)
+         sample = -1.0f;
+
+      if (tts_handle.hw_format == SND_PCM_FORMAT_S24_3LE) {
+         // Convert float to 24-bit signed
+         int32_t s24 = (int32_t)(sample * 8388607.0f);
+         // Write for each channel (mono→stereo duplication)
+         for (unsigned int ch = 0; ch < tts_handle.hw_channels; ch++) {
+            out[0] = (uint8_t)(s24 & 0xFF);
+            out[1] = (uint8_t)((s24 >> 8) & 0xFF);
+            out[2] = (uint8_t)((s24 >> 16) & 0xFF);
+            out += 3;
+         }
+      } else if (tts_handle.hw_format == SND_PCM_FORMAT_S32_LE) {
+         int32_t s32 = (int32_t)(sample * 2147483647.0f);
+         for (unsigned int ch = 0; ch < tts_handle.hw_channels; ch++) {
+            memcpy(out, &s32, 4);
+            out += 4;
+         }
+      } else {
+         // S16_LE
+         int16_t s16 = (int16_t)(sample * 32767.0f);
+         for (unsigned int ch = 0; ch < tts_handle.hw_channels; ch++) {
+            memcpy(out, &s16, 2);
+            out += 2;
+         }
+      }
+   }
+
+   return (ssize_t)out_frames;
+}
+
 int openAlsaPcmPlaybackDevice(snd_pcm_t **handle, char *pcm_device, snd_pcm_uframes_t *frames) {
    snd_pcm_hw_params_t *params = NULL;
-   unsigned int rate = DEFAULT_RATE;
    int dir = 0;
    *frames = DEFAULT_FRAMES;
    int rc = 0;
 
-   LOG_INFO("ALSA PLAYBACK DRIVER\n");
+   LOG_INFO("ALSA PLAYBACK DRIVER: %s", pcm_device);
+
    /* Open PCM device for playback. */
    rc = snd_pcm_open(handle, pcm_device, SND_PCM_STREAM_PLAYBACK, 0);
    if (rc < 0) {
@@ -113,22 +245,58 @@ int openAlsaPcmPlaybackDevice(snd_pcm_t **handle, char *pcm_device, snd_pcm_ufra
       return 1;
    }
 
-   rc = snd_pcm_hw_params_set_format(*handle, params, DEFAULT_FORMAT);
-   if (rc < 0) {
-      LOG_ERROR("Unable to set sample format: %s", snd_strerror(rc));
+   // Try formats in order of preference
+   snd_pcm_format_t formats_to_try[] = {
+      SND_PCM_FORMAT_S16_LE,   // Preferred (matches TTS output)
+      SND_PCM_FORMAT_S24_3LE,  // ReSpeaker uses this
+      SND_PCM_FORMAT_S32_LE,   // Some devices use this
+   };
+   const char *format_names[] = { "S16_LE", "S24_3LE", "S32_LE" };
+
+   snd_pcm_format_t chosen_format = SND_PCM_FORMAT_UNKNOWN;
+   for (int i = 0; i < 3; i++) {
+      if (snd_pcm_hw_params_test_format(*handle, params, formats_to_try[i]) == 0) {
+         rc = snd_pcm_hw_params_set_format(*handle, params, formats_to_try[i]);
+         if (rc == 0) {
+            chosen_format = formats_to_try[i];
+            LOG_INFO("ALSA format: %s", format_names[i]);
+            break;
+         }
+      }
+   }
+
+   if (chosen_format == SND_PCM_FORMAT_UNKNOWN) {
+      LOG_ERROR("No compatible audio format found");
       snd_pcm_close(*handle);
       *handle = NULL;
       return 1;
    }
+   tts_handle.hw_format = chosen_format;
 
-   rc = snd_pcm_hw_params_set_channels(*handle, params, DEFAULT_CHANNELS);
-   if (rc < 0) {
-      LOG_ERROR("Unable to set channel count: %s", snd_strerror(rc));
+   // Try channel counts
+   unsigned int channels_to_try[] = { 1, 2 };
+   unsigned int chosen_channels = 0;
+   for (int i = 0; i < 2; i++) {
+      if (snd_pcm_hw_params_test_channels(*handle, params, channels_to_try[i]) == 0) {
+         rc = snd_pcm_hw_params_set_channels(*handle, params, channels_to_try[i]);
+         if (rc == 0) {
+            chosen_channels = channels_to_try[i];
+            LOG_INFO("ALSA channels: %u", chosen_channels);
+            break;
+         }
+      }
+   }
+
+   if (chosen_channels == 0) {
+      LOG_ERROR("No compatible channel count found");
       snd_pcm_close(*handle);
       *handle = NULL;
       return 1;
    }
+   tts_handle.hw_channels = chosen_channels;
 
+   // Set sample rate - try exact match first, then nearest
+   unsigned int rate = DEFAULT_RATE;
    rc = snd_pcm_hw_params_set_rate_near(*handle, params, &rate, &dir);
    if (rc < 0) {
       LOG_ERROR("Unable to set sample rate: %s", snd_strerror(rc));
@@ -136,14 +304,26 @@ int openAlsaPcmPlaybackDevice(snd_pcm_t **handle, char *pcm_device, snd_pcm_ufra
       *handle = NULL;
       return 1;
    }
+   tts_handle.hw_rate = rate;
+   LOG_INFO("ALSA rate: %u Hz (requested %d Hz)", rate, DEFAULT_RATE);
 
-   rc = snd_pcm_hw_params_set_period_size_near(*handle, params, frames, &dir);
+   // Set larger buffer to prevent underruns during conversion
+   unsigned int buffer_time = 100000;  // 100ms
+   rc = snd_pcm_hw_params_set_buffer_time_near(*handle, params, &buffer_time, &dir);
    if (rc < 0) {
-      LOG_ERROR("Unable to set period size: %s", snd_strerror(rc));
-      snd_pcm_close(*handle);
-      *handle = NULL;
-      return 1;
+      LOG_WARNING("Unable to set buffer time: %s", snd_strerror(rc));
+   } else {
+      LOG_INFO("ALSA buffer: %u us", buffer_time);
    }
+
+   // Set period size
+   snd_pcm_uframes_t period_size = rate / 50;  // 20ms periods
+   rc = snd_pcm_hw_params_set_period_size_near(*handle, params, &period_size, &dir);
+   if (rc < 0) {
+      LOG_WARNING("Unable to set period size: %s", snd_strerror(rc));
+   }
+   *frames = period_size;
+   LOG_INFO("ALSA period: %lu frames", period_size);
 
    rc = snd_pcm_hw_params(*handle, params);
    if (rc < 0) {
@@ -151,6 +331,52 @@ int openAlsaPcmPlaybackDevice(snd_pcm_t **handle, char *pcm_device, snd_pcm_ufra
       snd_pcm_close(*handle);
       *handle = NULL;
       return 1;
+   }
+
+   // Determine if conversion is needed
+   tts_handle.needs_conversion = (chosen_format != SND_PCM_FORMAT_S16_LE) ||
+                                 (chosen_channels != DEFAULT_CHANNELS) || (rate != DEFAULT_RATE);
+
+   if (tts_handle.needs_conversion) {
+      LOG_INFO("Audio conversion enabled: %dHz/%dch/S16 → %uHz/%uch/%s", DEFAULT_RATE,
+               DEFAULT_CHANNELS, rate, chosen_channels,
+               chosen_format == SND_PCM_FORMAT_S24_3LE  ? "S24_3LE"
+               : chosen_format == SND_PCM_FORMAT_S32_LE ? "S32_LE"
+                                                        : "S16_LE");
+
+      // Create resampler if rate differs
+      tts_handle.resample_ratio = (double)rate / (double)DEFAULT_RATE;
+      if (rate != DEFAULT_RATE) {
+         int error;
+         tts_handle.resampler = src_new(SRC_SINC_FASTEST, 1, &error);
+         if (!tts_handle.resampler) {
+            LOG_ERROR("Failed to create resampler: %s", src_strerror(error));
+            snd_pcm_close(*handle);
+            *handle = NULL;
+            return 1;
+         }
+         LOG_INFO("Resampler created: ratio=%.4f", tts_handle.resample_ratio);
+      }
+
+      // Allocate conversion buffers
+      tts_handle.resample_in = (float *)malloc(TTS_CONV_BUFFER_SIZE * sizeof(float));
+      tts_handle.resample_out = (float *)malloc(TTS_CONV_BUFFER_SIZE * sizeof(float));
+      // Output buffer: worst case is S32 stereo at 2x rate
+      tts_handle.convert_out_size = TTS_CONV_BUFFER_SIZE * 8;
+      tts_handle.convert_out = (uint8_t *)malloc(tts_handle.convert_out_size);
+
+      if (!tts_handle.resample_in || !tts_handle.resample_out || !tts_handle.convert_out) {
+         LOG_ERROR("Failed to allocate conversion buffers");
+         snd_pcm_close(*handle);
+         *handle = NULL;
+         return 1;
+      }
+   } else {
+      tts_handle.resampler = NULL;
+      tts_handle.resample_in = NULL;
+      tts_handle.resample_out = NULL;
+      tts_handle.convert_out = NULL;
+      LOG_INFO("No audio conversion needed");
    }
 
    return 0;
@@ -263,6 +489,16 @@ void *tts_thread_function(void *arg) {
           [&]() {
              pthread_mutex_lock(&tts_mutex);
              tts_playback_state = TTS_PLAYBACK_PLAY;
+#ifdef ENABLE_AEC
+             // Start AEC recording for this TTS session (if enabled)
+             if (aec_is_recording_enabled()) {
+                aec_start_recording();
+             }
+#endif
+             // Start mic recording for this TTS session (if enabled)
+             if (mic_is_recording_enabled()) {
+                mic_start_recording();
+             }
              pthread_mutex_unlock(&tts_mutex);
 
 #ifdef ALSA_DEVICE
@@ -274,6 +510,10 @@ void *tts_thread_function(void *arg) {
                 while (tts_playback_state == TTS_PLAYBACK_PAUSE) {
                    if (!was_paused) {
                       LOG_WARNING("TTS playback is PAUSED.");
+#ifdef ENABLE_AEC
+                      // Signal AEC that playback is paused - stop underflow counting
+                      aec_signal_playback_stop();
+#endif
                       was_paused = true;
                    }
                    pthread_cond_wait(&tts_cond, &tts_mutex);
@@ -297,7 +537,12 @@ void *tts_thread_function(void *arg) {
                       // Clear AEC reference buffer to prevent stale frames from
                       // contaminating future captures after discard
                       aec_reset();
+
+                      // Stop AEC recording on discard (barge-in)
+                      aec_stop_recording();
 #endif
+                      // Stop mic recording on discard (barge-in)
+                      mic_stop_recording();
 
                       // Drop (flush) audio device buffer immediately to stop playback
                       snd_pcm_drop(tts_handle.handle);
@@ -333,8 +578,26 @@ void *tts_thread_function(void *arg) {
                 pthread_mutex_unlock(&tts_mutex);
 
                 // Write audio frames (blocking I/O - cannot hold mutex here)
-                rc = snd_pcm_writei(tts_handle.handle, &audioBuffer[i],
-                                    std::min(tts_handle.frames, audioBuffer.size() - i));
+                size_t samples_this_chunk = std::min(tts_handle.frames, audioBuffer.size() - i);
+
+                if (tts_handle.needs_conversion) {
+                   // Convert audio to hardware format (rate/channels/bit-depth)
+                   ssize_t converted_frames = tts_convert_audio(&audioBuffer[i], samples_this_chunk,
+                                                                tts_handle.convert_out,
+                                                                tts_handle.convert_out_size);
+
+                   if (converted_frames > 0) {
+                      rc = snd_pcm_writei(tts_handle.handle, tts_handle.convert_out,
+                                          converted_frames);
+                   } else {
+                      rc = -1;
+                      LOG_ERROR("Audio conversion failed");
+                   }
+                } else {
+                   // No conversion needed - write directly
+                   rc = snd_pcm_writei(tts_handle.handle, &audioBuffer[i], samples_this_chunk);
+                }
+
                 if (rc == -EPIPE) {
                    LOG_ERROR("ALSA underrun occurred");
                    snd_pcm_prepare(tts_handle.handle);
@@ -361,8 +624,26 @@ void *tts_thread_function(void *arg) {
                    if (delay_frames < 0)
                       delay_frames = 0;
 
-                   uint64_t playback_delay_us = ((uint64_t)delay_frames * 1000000ULL) /
-                                                DEFAULT_RATE;
+                   // For AEC timing, we only care about the acoustic delay from
+                   // speaker to microphone, NOT the ALSA buffer depth.
+                   //
+                   // Why? Because we're calling aec_add_reference() RIGHT AFTER
+                   // snd_pcm_writei() completes. At that moment, the audio is
+                   // at the END of the ALSA buffer, about to play.
+                   //
+                   // The capture is running in real-time, so by the time this
+                   // audio plays and reaches the mic, the capture will be at
+                   // approximately: now + acoustic_delay
+                   //
+                   // ALSA buffer depth doesn't matter because we're adding
+                   // reference audio immediately after writing - it will play
+                   // in sequence regardless of buffer depth.
+                   //
+                   // Acoustic delay: speaker output -> microphone input
+                   const uint64_t acoustic_delay_us = 50000;  // 50ms (tunable)
+
+                   uint64_t playback_delay_us = acoustic_delay_us;
+                   (void)delay_frames;  // Not used - see comment above
 
                    size_t in_samples = (size_t)rc;  // Actual samples written
 
@@ -416,6 +697,10 @@ void *tts_thread_function(void *arg) {
                 while (tts_playback_state == TTS_PLAYBACK_PAUSE) {
                    if (!was_paused) {
                       LOG_WARNING("TTS playback is PAUSED.");
+#ifdef ENABLE_AEC
+                      // Signal AEC that playback is paused - stop underflow counting
+                      aec_signal_playback_stop();
+#endif
                       was_paused = true;
                    }
                    pthread_cond_wait(&tts_cond, &tts_mutex);
@@ -439,7 +724,12 @@ void *tts_thread_function(void *arg) {
                       // Clear AEC reference buffer to prevent stale frames from
                       // contaminating future captures after discard
                       aec_reset();
+
+                      // Stop AEC recording on discard (barge-in)
+                      aec_stop_recording();
 #endif
+                      // Stop mic recording on discard (barge-in)
+                      mic_stop_recording();
 
                       // Flush PulseAudio buffer immediately to stop playback
                       int pa_error;
@@ -563,6 +853,16 @@ void *tts_thread_function(void *arg) {
 
              pthread_mutex_lock(&tts_mutex);
              tts_playback_state = TTS_PLAYBACK_IDLE;
+#ifdef ENABLE_AEC
+             // Signal AEC that playback has stopped - this prevents
+             // underflow counting when no audio is playing
+             aec_signal_playback_stop();
+
+             // Stop AEC recording after TTS playback completes
+             aec_stop_recording();
+#endif
+             // Stop mic recording after TTS playback completes
+             mic_stop_recording();
              pthread_mutex_unlock(&tts_mutex);
           });
 
@@ -901,6 +1201,24 @@ void cleanup_text_to_speech() {
       snd_pcm_close(tts_handle.handle);
       tts_handle.handle = NULL;
    }
+   // Clean up conversion resources
+   if (tts_handle.resampler) {
+      src_delete(tts_handle.resampler);
+      tts_handle.resampler = NULL;
+   }
+   if (tts_handle.resample_in) {
+      free(tts_handle.resample_in);
+      tts_handle.resample_in = NULL;
+   }
+   if (tts_handle.resample_out) {
+      free(tts_handle.resample_out);
+      tts_handle.resample_out = NULL;
+   }
+   if (tts_handle.convert_out) {
+      free(tts_handle.convert_out);
+      tts_handle.convert_out = NULL;
+   }
+   tts_handle.needs_conversion = false;
 #else
    if (tts_handle.pa_handle) {
       pa_simple_free(tts_handle.pa_handle);

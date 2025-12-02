@@ -22,19 +22,83 @@
 #include "audio/audio_capture_thread.h"
 
 #include <errno.h>
+#include <pthread.h>
 #include <sched.h>
 #include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
+#include "audio/resampler.h"
 #include "dawn.h"
 #include "logging.h"
 
 #ifdef ENABLE_AEC
 #include "audio/aec_processor.h"
-#include "audio/resampler.h"
 #endif
+
+// ============================================================================
+// Mic Recording Implementation (works with or without AEC)
+// ============================================================================
+#define MIC_RECORDING_SAMPLE_RATE 16000
+#define MIC_RECORDING_CHANNELS 1
+
+static char g_mic_recording_dir[256] = "/tmp";
+static bool g_mic_recording_enabled = false;
+static bool g_mic_recording_active = false;
+static FILE *g_mic_recording_file = NULL;
+static size_t g_mic_recording_samples = 0;
+static pthread_mutex_t g_mic_recording_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+// WAV header structure
+typedef struct __attribute__((packed)) {
+   char riff[4];
+   uint32_t file_size;
+   char wave[4];
+   char fmt[4];
+   uint32_t fmt_size;
+   uint16_t audio_format;
+   uint16_t channels;
+   uint32_t sample_rate;
+   uint32_t byte_rate;
+   uint16_t block_align;
+   uint16_t bits_per_sample;
+   char data[4];
+   uint32_t data_size;
+} mic_wav_header_t;
+
+static void mic_write_wav_header(FILE *f, uint32_t sample_rate, uint16_t channels) {
+   mic_wav_header_t header = {
+      .riff = { 'R', 'I', 'F', 'F' },
+      .file_size = 0,  // Will be updated when closing
+      .wave = { 'W', 'A', 'V', 'E' },
+      .fmt = { 'f', 'm', 't', ' ' },
+      .fmt_size = 16,
+      .audio_format = 1,  // PCM
+      .channels = channels,
+      .sample_rate = sample_rate,
+      .byte_rate = sample_rate * channels * 2,
+      .block_align = (uint16_t)(channels * 2),
+      .bits_per_sample = 16,
+      .data = { 'd', 'a', 't', 'a' },
+      .data_size = 0  // Will be updated when closing
+   };
+   fwrite(&header, sizeof(header), 1, f);
+}
+
+static void mic_finalize_wav_header(FILE *f, size_t num_samples, uint16_t channels) {
+   uint32_t data_size = num_samples * channels * 2;
+   uint32_t file_size = data_size + sizeof(mic_wav_header_t) - 8;
+
+   fseek(f, 4, SEEK_SET);
+   fwrite(&file_size, 4, 1, f);
+
+   fseek(f, 40, SEEK_SET);
+   fwrite(&data_size, 4, 1, f);
+}
 
 // Audio format constants
 // Capture at 48kHz for optimal AEC performance, downsample to 16kHz for ASR
@@ -264,6 +328,8 @@ static void *capture_thread_func(void *arg) {
             if (samples_16k > 0) {
                ring_buffer_write(ctx->ring_buffer, (char *)ctx->asr_buffer,
                                  samples_16k * sizeof(int16_t));
+               // Record what VAD sees (16kHz after AEC)
+               mic_record_samples(ctx->asr_buffer, samples_16k);
             }
          } else if (ctx->asr_buffer && ctx->downsample_resampler) {
             // AEC disabled - still need to downsample 48kHz → 16kHz
@@ -274,12 +340,24 @@ static void *capture_thread_func(void *arg) {
             if (samples_16k > 0) {
                ring_buffer_write(ctx->ring_buffer, (char *)ctx->asr_buffer,
                                  samples_16k * sizeof(int16_t));
+               // Record what VAD sees (16kHz, no AEC)
+               mic_record_samples(ctx->asr_buffer, samples_16k);
             }
          }
 #else
-         // Without AEC, still need to downsample - but we don't have resampler
-         // This path shouldn't be used in practice (AEC is always enabled)
-         ring_buffer_write(ctx->ring_buffer, buffer, bytes_read_48k);
+         // Without AEC compiled, still need to downsample 48kHz → 16kHz for ASR
+         if (ctx->asr_buffer && ctx->downsample_resampler) {
+            size_t samples_16k = resampler_process((resampler_t *)ctx->downsample_resampler,
+                                                   (int16_t *)buffer, samples_read_48k,
+                                                   ctx->asr_buffer, ctx->asr_buffer_size);
+
+            if (samples_16k > 0) {
+               ring_buffer_write(ctx->ring_buffer, (char *)ctx->asr_buffer,
+                                 samples_16k * sizeof(int16_t));
+               // Record what VAD sees (16kHz)
+               mic_record_samples(ctx->asr_buffer, samples_16k);
+            }
+         }
 #endif
       } else if (rc == -EPIPE) {
          LOG_WARNING("ALSA overrun in capture thread, recovering");
@@ -332,6 +410,8 @@ static void *capture_thread_func(void *arg) {
          if (samples_16k > 0) {
             ring_buffer_write(ctx->ring_buffer, (char *)ctx->asr_buffer,
                               samples_16k * sizeof(int16_t));
+            // Record what VAD sees (16kHz after AEC)
+            mic_record_samples(ctx->asr_buffer, samples_16k);
          }
       } else if (ctx->asr_buffer && ctx->downsample_resampler) {
          // AEC disabled - still need to downsample 48kHz → 16kHz
@@ -342,11 +422,24 @@ static void *capture_thread_func(void *arg) {
          if (samples_16k > 0) {
             ring_buffer_write(ctx->ring_buffer, (char *)ctx->asr_buffer,
                               samples_16k * sizeof(int16_t));
+            // Record what VAD sees (16kHz, no AEC)
+            mic_record_samples(ctx->asr_buffer, samples_16k);
          }
       }
 #else
-      // Without AEC, still need to downsample - but we don't have resampler
-      ring_buffer_write(ctx->ring_buffer, buffer, ctx->buffer_size);
+      // Without AEC compiled, still need to downsample 48kHz → 16kHz for ASR
+      if (ctx->asr_buffer && ctx->downsample_resampler) {
+         size_t samples_16k = resampler_process((resampler_t *)ctx->downsample_resampler,
+                                                (int16_t *)buffer, samples_read_48k,
+                                                ctx->asr_buffer, ctx->asr_buffer_size);
+
+         if (samples_16k > 0) {
+            ring_buffer_write(ctx->ring_buffer, (char *)ctx->asr_buffer,
+                              samples_16k * sizeof(int16_t));
+            // Record what VAD sees (16kHz)
+            mic_record_samples(ctx->asr_buffer, samples_16k);
+         }
+      }
 #endif
    }
 #endif
@@ -414,18 +507,10 @@ audio_capture_context_t *audio_capture_start(const char *pcm_device,
    ctx->buffer_size = ctx->pa_framesize * 1536;
 #endif
 
-#ifdef ENABLE_AEC
-   // Pre-allocate AEC buffer for 48kHz processing (same size as capture buffer)
-   ctx->aec_buffer_size = ctx->buffer_size / sizeof(int16_t);
-   if (ctx->aec_buffer_size > AEC_MAX_SAMPLES) {
-      ctx->aec_buffer_size = AEC_MAX_SAMPLES;
-   }
-   ctx->aec_buffer = (int16_t *)malloc(ctx->aec_buffer_size * sizeof(int16_t));
-   if (!ctx->aec_buffer) {
-      LOG_WARNING("Failed to allocate AEC buffer - continuing without AEC");
-   }
+   // Calculate input buffer size in samples (for resampler allocation)
+   size_t input_samples = ctx->buffer_size / sizeof(int16_t);
 
-   // Create resampler for 48kHz → 16kHz downsampling (for ASR)
+   // Create resampler for 48kHz → 16kHz downsampling (always needed for ASR)
    ctx->downsample_resampler = resampler_create(CAPTURE_RATE, ASR_RATE, 1);
    if (!ctx->downsample_resampler) {
       LOG_ERROR("Failed to create 48kHz→16kHz resampler");
@@ -433,10 +518,21 @@ audio_capture_context_t *audio_capture_start(const char *pcm_device,
 
    // Pre-allocate ASR buffer for 16kHz output
    // Output size = input size / 3 + margin for resampler filter
-   ctx->asr_buffer_size = (ctx->aec_buffer_size / 3) + 64;
+   ctx->asr_buffer_size = (input_samples / 3) + 64;
    ctx->asr_buffer = (int16_t *)malloc(ctx->asr_buffer_size * sizeof(int16_t));
    if (!ctx->asr_buffer) {
       LOG_WARNING("Failed to allocate ASR buffer");
+   }
+
+#ifdef ENABLE_AEC
+   // Pre-allocate AEC buffer for 48kHz processing (same size as capture buffer)
+   ctx->aec_buffer_size = input_samples;
+   if (ctx->aec_buffer_size > AEC_MAX_SAMPLES) {
+      ctx->aec_buffer_size = AEC_MAX_SAMPLES;
+   }
+   ctx->aec_buffer = (int16_t *)malloc(ctx->aec_buffer_size * sizeof(int16_t));
+   if (!ctx->aec_buffer) {
+      LOG_WARNING("Failed to allocate AEC buffer - continuing without AEC");
    }
 
    // Runtime sample rate validation for AEC
@@ -458,6 +554,9 @@ audio_capture_context_t *audio_capture_start(const char *pcm_device,
 
    LOG_INFO("Audio capture: %dHz → AEC → %dHz for ASR (buffers: aec=%zu, asr=%zu samples)",
             CAPTURE_RATE, ASR_RATE, ctx->aec_buffer_size, ctx->asr_buffer_size);
+#else
+   LOG_INFO("Audio capture: %dHz → %dHz for ASR (no AEC, buffer=%zu samples)", CAPTURE_RATE,
+            ASR_RATE, ctx->asr_buffer_size);
 #endif
 
    // Start capture thread
@@ -507,23 +606,23 @@ void audio_capture_stop(audio_capture_context_t *ctx) {
    // Free ring buffer
    ring_buffer_free(ctx->ring_buffer);
 
-#ifdef ENABLE_AEC
-   // Free AEC buffer
-   if (ctx->aec_buffer) {
-      free(ctx->aec_buffer);
-      ctx->aec_buffer = NULL;
-   }
-
-   // Free ASR buffer
+   // Free ASR buffer (always allocated)
    if (ctx->asr_buffer) {
       free(ctx->asr_buffer);
       ctx->asr_buffer = NULL;
    }
 
-   // Destroy resampler
+   // Destroy resampler (always allocated)
    if (ctx->downsample_resampler) {
       resampler_destroy((resampler_t *)ctx->downsample_resampler);
       ctx->downsample_resampler = NULL;
+   }
+
+#ifdef ENABLE_AEC
+   // Free AEC buffer
+   if (ctx->aec_buffer) {
+      free(ctx->aec_buffer);
+      ctx->aec_buffer = NULL;
    }
 #endif
 
@@ -569,4 +668,119 @@ void audio_capture_clear(audio_capture_context_t *ctx) {
       return;
    }
    ring_buffer_clear(ctx->ring_buffer);
+}
+
+// ============================================================================
+// Mic Recording API Implementation
+// ============================================================================
+
+void mic_set_recording_dir(const char *dir) {
+   pthread_mutex_lock(&g_mic_recording_mutex);
+   if (dir) {
+      strncpy(g_mic_recording_dir, dir, sizeof(g_mic_recording_dir) - 1);
+      g_mic_recording_dir[sizeof(g_mic_recording_dir) - 1] = '\0';
+   }
+   LOG_INFO("Mic recording directory set to: %s", g_mic_recording_dir);
+   pthread_mutex_unlock(&g_mic_recording_mutex);
+}
+
+void mic_enable_recording(bool enable) {
+   pthread_mutex_lock(&g_mic_recording_mutex);
+   g_mic_recording_enabled = enable;
+   LOG_INFO("Mic recording %s", enable ? "enabled" : "disabled");
+
+   // If disabling while recording is active, stop it
+   if (!enable && g_mic_recording_active) {
+      pthread_mutex_unlock(&g_mic_recording_mutex);
+      mic_stop_recording();
+      return;
+   }
+   pthread_mutex_unlock(&g_mic_recording_mutex);
+}
+
+bool mic_is_recording(void) {
+   pthread_mutex_lock(&g_mic_recording_mutex);
+   bool active = g_mic_recording_active;
+   pthread_mutex_unlock(&g_mic_recording_mutex);
+   return active;
+}
+
+bool mic_is_recording_enabled(void) {
+   pthread_mutex_lock(&g_mic_recording_mutex);
+   bool enabled = g_mic_recording_enabled;
+   pthread_mutex_unlock(&g_mic_recording_mutex);
+   return enabled;
+}
+
+int mic_start_recording(void) {
+   pthread_mutex_lock(&g_mic_recording_mutex);
+
+   if (!g_mic_recording_enabled) {
+      pthread_mutex_unlock(&g_mic_recording_mutex);
+      return 1;
+   }
+
+   if (g_mic_recording_active) {
+      LOG_WARNING("Mic recording already active");
+      pthread_mutex_unlock(&g_mic_recording_mutex);
+      return 1;
+   }
+
+   // Generate timestamp for filename
+   time_t now = time(NULL);
+   struct tm *tm_info = localtime(&now);
+   char timestamp[32];
+   strftime(timestamp, sizeof(timestamp), "%Y%m%d_%H%M%S", tm_info);
+
+   // Create filename
+   char filename[512];
+   snprintf(filename, sizeof(filename), "%s/mic_capture_%s.wav", g_mic_recording_dir, timestamp);
+
+   // Open file
+   g_mic_recording_file = fopen(filename, "wb");
+   if (!g_mic_recording_file) {
+      LOG_ERROR("Failed to open mic recording file: %s", filename);
+      pthread_mutex_unlock(&g_mic_recording_mutex);
+      return 1;
+   }
+
+   // Write WAV header (will be finalized when stopping)
+   mic_write_wav_header(g_mic_recording_file, MIC_RECORDING_SAMPLE_RATE, MIC_RECORDING_CHANNELS);
+   g_mic_recording_samples = 0;
+   g_mic_recording_active = true;
+
+   LOG_INFO("Mic recording started: %s", filename);
+   pthread_mutex_unlock(&g_mic_recording_mutex);
+   return 0;
+}
+
+void mic_stop_recording(void) {
+   pthread_mutex_lock(&g_mic_recording_mutex);
+
+   if (!g_mic_recording_active || !g_mic_recording_file) {
+      pthread_mutex_unlock(&g_mic_recording_mutex);
+      return;
+   }
+
+   // Finalize WAV header with actual size
+   mic_finalize_wav_header(g_mic_recording_file, g_mic_recording_samples, MIC_RECORDING_CHANNELS);
+   fclose(g_mic_recording_file);
+   g_mic_recording_file = NULL;
+
+   float duration_secs = (float)g_mic_recording_samples / MIC_RECORDING_SAMPLE_RATE;
+   LOG_INFO("Mic recording stopped: %.2f seconds captured", duration_secs);
+
+   g_mic_recording_active = false;
+   pthread_mutex_unlock(&g_mic_recording_mutex);
+}
+
+void mic_record_samples(const int16_t *samples, size_t num_samples) {
+   pthread_mutex_lock(&g_mic_recording_mutex);
+
+   if (g_mic_recording_active && g_mic_recording_file && samples && num_samples > 0) {
+      size_t written = fwrite(samples, sizeof(int16_t), num_samples, g_mic_recording_file);
+      g_mic_recording_samples += written;
+   }
+
+   pthread_mutex_unlock(&g_mic_recording_mutex);
 }

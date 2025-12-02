@@ -301,6 +301,9 @@ typedef struct {
 command_processing_mode_t command_processing_mode = CMD_MODE_DIRECT_ONLY;
 struct json_object *conversation_history = NULL;
 
+// Barge-in control: when true, speech detection is disabled during TTS playback
+static int g_bargein_disabled = 0;
+
 // Shared buffers for LLM thread communication (protected by llm_mutex)
 static char *llm_request_text = NULL;     // Input: command text for LLM
 static char *llm_response_text = NULL;    // Output: LLM response
@@ -1315,6 +1318,14 @@ void display_help(int argc, char *argv[]) {
    printf("  -T, --tui              Enable terminal UI dashboard.\n");
    printf("  -t, --theme THEME      TUI color theme (green, blue, bw). Default: green.\n");
 #endif
+#ifdef ENABLE_AEC
+   printf("\nAEC Debug Options:\n");
+   printf("  -R, --aec-record[=DIR] Record mic/ref/out audio during TTS (default dir: /tmp).\n");
+#endif
+   printf("\nMic Debug Options:\n");
+   printf("  -r, --mic-record[=DIR] Record mic input during TTS (what VAD sees). "
+          "Default: /tmp.\n");
+   printf("  -B, --no-bargein       Disable barge-in (ignore speech during TTS playback).\n");
 }
 
 /**
@@ -1465,6 +1476,11 @@ int main(int argc, char *argv[]) {
       { "whisper-model", required_argument, NULL, 'W' },   // Whisper model (tiny/base/small)
       { "whisper-path", required_argument, NULL, 'w' },    // Whisper models directory
       { "music-dir", required_argument, NULL, 'M' },       // Music directory (absolute path)
+      { "mic-record", optional_argument, NULL, 'r' },      // Record mic input for debugging
+      { "no-bargein", no_argument, NULL, 'B' },            // Disable barge-in during TTS
+#ifdef ENABLE_AEC
+      { "aec-record", optional_argument, NULL, 'R' },  // Record AEC audio for debugging
+#endif
 #ifdef ENABLE_TUI
       { "tui", no_argument, NULL, 'T' },          // Enable TUI mode
       { "theme", required_argument, NULL, 't' },  // TUI theme (green/blue/bw)
@@ -1491,13 +1507,19 @@ int main(int argc, char *argv[]) {
    // TODO: I'm adding this here but it will need better error clean-ups.
    curl_global_init(CURL_GLOBAL_DEFAULT);
 
-#ifdef ENABLE_TUI
-   while (
-       (opt = getopt_long(argc, argv, "c:d:hl:LCDNm:P:A:W:w:M:Tt:", long_options, &option_index)) !=
+#if defined(ENABLE_TUI) && defined(ENABLE_AEC)
+   while ((opt = getopt_long(argc, argv, "c:d:hl:LCDNm:P:A:W:w:M:r::R::Tt:B", long_options,
+                             &option_index)) != -1) {
+#elif defined(ENABLE_TUI)
+   while ((opt = getopt_long(argc, argv, "c:d:hl:LCDNm:P:A:W:w:M:r::Tt:B", long_options,
+                             &option_index)) != -1) {
+#elif defined(ENABLE_AEC)
+   while ((opt = getopt_long(argc, argv, "c:d:hl:LCDNm:P:A:W:w:M:r::R::B", long_options,
+                             &option_index)) != -1) {
 #else
-   while ((opt = getopt_long(argc, argv, "c:d:hl:LCDNm:P:A:W:w:M:", long_options, &option_index)) !=
+   while ((opt = getopt_long(argc, argv, "c:d:hl:LCDNm:P:A:W:w:M:r::B", long_options,
+                             &option_index)) != -1) {
 #endif
-       -1) {
       switch (opt) {
          case 'c':
             strncpy(pcm_capture_device, optarg, sizeof(pcm_capture_device));
@@ -1599,6 +1621,28 @@ int main(int argc, char *argv[]) {
             LOG_INFO("TUI theme set to: %s", optarg);
             break;
 #endif
+         case 'r':
+            // Enable mic recording, optionally with a directory
+            mic_enable_recording(true);
+            if (optarg) {
+               mic_set_recording_dir(optarg);
+            }
+            LOG_INFO("Mic recording enabled (dir: %s)", optarg ? optarg : "/tmp");
+            break;
+#ifdef ENABLE_AEC
+         case 'R':
+            // Enable AEC recording, optionally with a directory
+            aec_enable_recording(true);
+            if (optarg) {
+               aec_set_recording_dir(optarg);
+            }
+            LOG_INFO("AEC recording enabled (dir: %s)", optarg ? optarg : "/tmp");
+            break;
+#endif
+         case 'B':
+            g_bargein_disabled = 1;
+            LOG_INFO("Barge-in disabled: speech during TTS will be ignored");
+            break;
          case '?':
             display_help(argc, argv);
             exit(EXIT_FAILURE);
@@ -2296,19 +2340,25 @@ int main(int argc, char *argv[]) {
 
                   if (vad_speech_prob >= threshold) {
                      if (tts_is_active) {
-                        // During TTS (or cooldown): require consecutive detections (debounce)
-                        tts_vad_debounce++;
-                        if (tts_vad_debounce >= VAD_TTS_DEBOUNCE_COUNT) {
-                           speech_detected = 1;
+                        // During TTS (or cooldown): check if barge-in is allowed
+                        if (g_bargein_disabled) {
+                           // Barge-in disabled - ignore speech during TTS
+                           tts_vad_debounce = 0;
+                        } else {
+                           // During TTS: require consecutive detections (debounce)
+                           tts_vad_debounce++;
+                           if (tts_vad_debounce >= VAD_TTS_DEBOUNCE_COUNT) {
+                              speech_detected = 1;
 #ifdef ENABLE_AEC
-                           LOG_INFO("SILENCE: TTS barge-in confirmed (debounce=%d, VAD=%.3f, "
-                                    "ERLE=%.1fdB, cooldown=%ldms)",
-                                    tts_vad_debounce, vad_speech_prob, erle_db, elapsed_ms);
+                              LOG_INFO("SILENCE: TTS barge-in confirmed (debounce=%d, VAD=%.3f, "
+                                       "ERLE=%.1fdB, cooldown=%ldms)",
+                                       tts_vad_debounce, vad_speech_prob, erle_db, elapsed_ms);
 #else
-                           LOG_INFO("SILENCE: TTS barge-in confirmed (debounce=%d, VAD=%.3f, "
-                                    "cooldown=%ldms)",
-                                    tts_vad_debounce, vad_speech_prob, elapsed_ms);
+                              LOG_INFO("SILENCE: TTS barge-in confirmed (debounce=%d, VAD=%.3f, "
+                                       "cooldown=%ldms)",
+                                       tts_vad_debounce, vad_speech_prob, elapsed_ms);
 #endif
+                           }
                         }
                      } else {
                         // No TTS: immediate detection

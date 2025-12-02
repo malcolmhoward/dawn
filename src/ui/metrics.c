@@ -400,7 +400,7 @@ void metrics_log_activity(const char *format, ...) {
    char timestamp[16];
    get_timestamp_str(timestamp, sizeof(timestamp));
 
-   char message[METRICS_MAX_LOG_LENGTH - 16]; /* Leave room for timestamp */
+   char message[METRICS_MAX_LOG_LENGTH - 20]; /* Leave room for timestamp + separator */
    va_list args;
    va_start(args, format);
    vsnprintf(message, sizeof(message), format, args);

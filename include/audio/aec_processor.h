@@ -280,6 +280,74 @@ bool aec_get_residual_echo_likelihood(float *likelihood);
  */
 void aec_reset(void);
 
+/**
+ * @brief Signal that TTS playback has stopped
+ *
+ * Call this when TTS playback completes normally or is interrupted.
+ * This stops the underflow counting (which only matters during active playback)
+ * and prepares the AEC for the next playback session.
+ *
+ * Thread-safe: can be called from TTS thread.
+ */
+void aec_signal_playback_stop(void);
+
+// ============================================================================
+// Audio Recording API for AEC Debugging
+// ============================================================================
+
+/**
+ * @brief Set directory for recording output files
+ *
+ * @param dir Directory path (default: /tmp)
+ */
+void aec_set_recording_dir(const char *dir);
+
+/**
+ * @brief Enable or disable recording capability
+ *
+ * Must be called with true before aec_start_recording() will work.
+ * When disabled with an active recording, stops the recording.
+ *
+ * @param enable true to enable, false to disable
+ */
+void aec_enable_recording(bool enable);
+
+/**
+ * @brief Check if recording is currently active
+ *
+ * @return true if actively recording, false otherwise
+ */
+bool aec_is_recording(void);
+
+/**
+ * @brief Check if recording capability is enabled
+ *
+ * @return true if recording is enabled, false otherwise
+ */
+bool aec_is_recording_enabled(void);
+
+/**
+ * @brief Start recording AEC audio streams
+ *
+ * Creates three WAV files with timestamped names:
+ * - aec_mic_YYYYMMDD_HHMMSS.wav - Raw microphone input (48kHz)
+ * - aec_ref_YYYYMMDD_HHMMSS.wav - TTS reference signal (48kHz)
+ * - aec_out_YYYYMMDD_HHMMSS.wav - AEC output after processing (48kHz)
+ *
+ * Recording must be enabled first with aec_enable_recording(true).
+ *
+ * @return 0 on success, non-zero on error
+ */
+int aec_start_recording(void);
+
+/**
+ * @brief Stop recording and finalize WAV files
+ *
+ * Closes all recording files and updates WAV headers with final sizes.
+ * Safe to call even if not recording.
+ */
+void aec_stop_recording(void);
+
 #ifdef __cplusplus
 }
 #endif
