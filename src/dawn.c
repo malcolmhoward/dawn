@@ -1325,6 +1325,7 @@ void display_help(int argc, char *argv[]) {
    printf("\nMic Debug Options:\n");
    printf("  -r, --mic-record[=DIR] Record mic input during TTS (what VAD sees). "
           "Default: /tmp.\n");
+   printf("  -a, --asr-record[=DIR] Record ASR input pre/post normalization. Default: /tmp.\n");
    printf("  -B, --no-bargein       Disable barge-in (ignore speech during TTS playback).\n");
 }
 
@@ -1477,6 +1478,7 @@ int main(int argc, char *argv[]) {
       { "whisper-path", required_argument, NULL, 'w' },    // Whisper models directory
       { "music-dir", required_argument, NULL, 'M' },       // Music directory (absolute path)
       { "mic-record", optional_argument, NULL, 'r' },      // Record mic input for debugging
+      { "asr-record", optional_argument, NULL, 'a' },      // Record ASR pre/post normalization
       { "no-bargein", no_argument, NULL, 'B' },            // Disable barge-in during TTS
 #ifdef ENABLE_AEC
       { "aec-record", optional_argument, NULL, 'R' },  // Record AEC audio for debugging
@@ -1508,16 +1510,16 @@ int main(int argc, char *argv[]) {
    curl_global_init(CURL_GLOBAL_DEFAULT);
 
 #if defined(ENABLE_TUI) && defined(ENABLE_AEC)
-   while ((opt = getopt_long(argc, argv, "c:d:hl:LCDNm:P:A:W:w:M:r::R::Tt:B", long_options,
+   while ((opt = getopt_long(argc, argv, "c:d:hl:LCDNm:P:A:W:w:M:r::a::R::Tt:B", long_options,
                              &option_index)) != -1) {
 #elif defined(ENABLE_TUI)
-   while ((opt = getopt_long(argc, argv, "c:d:hl:LCDNm:P:A:W:w:M:r::Tt:B", long_options,
+   while ((opt = getopt_long(argc, argv, "c:d:hl:LCDNm:P:A:W:w:M:r::a::Tt:B", long_options,
                              &option_index)) != -1) {
 #elif defined(ENABLE_AEC)
-   while ((opt = getopt_long(argc, argv, "c:d:hl:LCDNm:P:A:W:w:M:r::R::B", long_options,
+   while ((opt = getopt_long(argc, argv, "c:d:hl:LCDNm:P:A:W:w:M:r::a::R::B", long_options,
                              &option_index)) != -1) {
 #else
-   while ((opt = getopt_long(argc, argv, "c:d:hl:LCDNm:P:A:W:w:M:r::B", long_options,
+   while ((opt = getopt_long(argc, argv, "c:d:hl:LCDNm:P:A:W:w:M:r::a::B", long_options,
                              &option_index)) != -1) {
 #endif
       switch (opt) {
@@ -1628,6 +1630,15 @@ int main(int argc, char *argv[]) {
                mic_set_recording_dir(optarg);
             }
             LOG_INFO("Mic recording enabled (dir: %s)", optarg ? optarg : "/tmp");
+            break;
+         case 'a':
+            // Enable ASR recording, optionally with a directory
+            // Recording starts/stops per-utterance in asr_reset()/asr_finalize()
+            asr_enable_recording(true);
+            if (optarg) {
+               asr_set_recording_dir(optarg);
+            }
+            LOG_INFO("ASR recording enabled (dir: %s)", optarg ? optarg : "/tmp");
             break;
 #ifdef ENABLE_AEC
          case 'R':
@@ -3650,7 +3661,8 @@ int main(int argc, char *argv[]) {
       chunking_manager_cleanup(chunk_mgr);
    }
 
-   // Cleanup ASR
+   // Stop ASR recording if active and cleanup ASR
+   asr_stop_recording();
    asr_cleanup(asr_ctx);
 
 #ifdef ENABLE_AEC

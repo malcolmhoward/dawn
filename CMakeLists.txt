@@ -171,7 +171,7 @@ if(AEC_BACKEND STREQUAL "OFF")
     set(AEC_ENABLED FALSE)
 else()
     set(AEC_ENABLED TRUE)
-    add_definitions(-DENABLE_AEC)
+    # Note: ENABLE_AEC define is added via target_compile_definitions() after add_executable()
     message(STATUS "AEC: Checking dependencies for ${AEC_BACKEND} backend...")
 
     # -------------------------------------------------------------------------
@@ -179,7 +179,7 @@ else()
     # -------------------------------------------------------------------------
     if(AEC_BACKEND STREQUAL "WEBRTC")
         # WebRTC AEC3 backend
-        add_definitions(-DAEC_BACKEND_WEBRTC)
+        # Note: AEC_BACKEND_WEBRTC define is added via target_compile_definitions() after add_executable()
 
         set(WEBRTC_AP_ROOT ${CMAKE_SOURCE_DIR}/webrtc-audio-processing)
         set(WEBRTC_AP_BUILD ${WEBRTC_AP_ROOT}/build)
@@ -235,7 +235,7 @@ else()
 
     elseif(AEC_BACKEND STREQUAL "SPEEX")
         # Speex AEC backend
-        add_definitions(-DAEC_BACKEND_SPEEX)
+        # Note: AEC_BACKEND_SPEEX define is added via target_compile_definitions() after add_executable()
 
         pkg_check_modules(SPEEXDSP speexdsp)
         if(NOT SPEEXDSP_FOUND)
@@ -358,6 +358,16 @@ if(AEC_ENABLED)
 endif()
 
 add_executable(dawn ${DAWN_SOURCES})
+
+# AEC compile definitions (target-specific to avoid rebuilding whisper/ggml)
+if(AEC_ENABLED)
+    target_compile_definitions(dawn PRIVATE ENABLE_AEC)
+    if(AEC_BACKEND STREQUAL "WEBRTC")
+        target_compile_definitions(dawn PRIVATE AEC_BACKEND_WEBRTC)
+    elseif(AEC_BACKEND STREQUAL "SPEEX")
+        target_compile_definitions(dawn PRIVATE AEC_BACKEND_SPEEX)
+    endif()
+endif()
 
 target_link_libraries(dawn
                       piper

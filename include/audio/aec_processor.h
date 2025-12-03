@@ -133,10 +133,14 @@ typedef struct {
    bool enable_high_pass_filter;           /**< Remove DC offset */
    bool mobile_mode;                       /**< Use AECM instead of AEC3 (lower CPU) */
    size_t ref_buffer_ms;                   /**< Reference buffer size in ms (default: 500) */
-   int16_t noise_gate_threshold; /**< Post-AEC noise gate threshold (0=disabled, default: 0) */
-   size_t acoustic_delay_ms;     /**< Delay from snd_pcm_writei to echo in mic (default: 70ms)
-                                      Components: ALSA buffer (~50ms) + acoustic path (~20ms)
-                                      Tune this per hardware if echo cancellation is poor */
+   uint16_t noise_gate_threshold; /**< Envelope gate threshold (0=disabled, 0-32767 range) */
+   float gate_attack_ms;          /**< Gate attack time in ms (default: 2.0) */
+   float gate_hold_ms;            /**< Gate hold time in ms (default: 50.0) */
+   float gate_release_ms;         /**< Gate release time in ms (default: 100.0) */
+   float gate_range_db;           /**< Attenuation when gate closed in dB (default: -40.0) */
+   size_t acoustic_delay_ms;      /**< Delay from snd_pcm_writei to echo in mic (default: 70ms)
+                                       Components: ALSA buffer (~50ms) + acoustic path (~20ms)
+                                       Tune this per hardware if echo cancellation is poor */
 } aec_config_t;
 
 /**

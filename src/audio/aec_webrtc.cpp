@@ -459,6 +459,46 @@ std::atomic<int> g_last_delay_ms{ 0 };  // Last delay passed to AEC
 // Configuration (set at init)
 aec_config_t g_config;
 
+// ============================================================================
+// Envelope-following noise gate state
+// ============================================================================
+enum class GateState {
+   CLOSED,
+   ATTACK,
+   OPEN,
+   HOLD,
+   RELEASE
+};
+
+struct EnvelopeGate {
+   GateState state = GateState::CLOSED;
+   float envelope = 0.0f;      // Current envelope level (peak follower)
+   float gain = 0.01f;         // Current gate gain (range to 1.0)
+   float target_gain = 0.01f;  // Target gain for ramping
+   int hold_samples = 0;       // Samples remaining in hold state
+
+   // Coefficients computed from config at init
+   float attack_coeff = 0.0f;      // Gain ramp per sample during attack
+   float release_coeff = 0.0f;     // Gain ramp per sample during release
+   float envelope_attack = 0.0f;   // Envelope follower attack coefficient
+   float envelope_release = 0.0f;  // Envelope follower release coefficient
+   int hold_samples_max = 0;       // Hold time in samples
+   float range_linear = 0.01f;     // Linear gain when fully closed
+   uint16_t threshold = 0;         // Envelope threshold for gate open (0-32767)
+};
+
+/**
+ * Global envelope gate state.
+ *
+ * THREAD SAFETY: This state is only safe for single-threaded access.
+ * Currently only the local microphone capture thread calls aec_process().
+ *
+ * TODO: When implementing multi-client worker threads for network audio,
+ * this state must be moved to a per-stream context to prevent race conditions.
+ * See dawn_multi_client_architecture.md for the planned threading model.
+ */
+EnvelopeGate g_gate;
+
 }  // anonymous namespace
 
 extern "C" {
@@ -470,8 +510,12 @@ aec_config_t aec_get_default_config(void) {
       .enable_high_pass_filter = true,
       .mobile_mode = false,
       .ref_buffer_ms = 500,
-      .noise_gate_threshold = 0,  // Disabled - VAD threshold approach is more effective
-      .acoustic_delay_ms = 70     // ALSA buffer (~50ms) + acoustic path (~20ms)
+      .noise_gate_threshold = 600,  // Envelope gate threshold (0-32767 range, 0=disabled)
+      .gate_attack_ms = 2.0f,       // Fast attack to catch speech onset
+      .gate_hold_ms = 50.0f,        // Hold open during natural speech pauses
+      .gate_release_ms = 100.0f,    // Smooth fade out
+      .gate_range_db = -60.0f,      // -60dB attenuation when closed (effectively silence)
+      .acoustic_delay_ms = 70       // ALSA buffer (~50ms) + acoustic path (~20ms)
    };
    return config;
 }
@@ -591,6 +635,67 @@ int aec_init(const aec_config_t *config) {
 
    // Note: Delay line outputs samples that were written delay_samples ago
    // This naturally aligns reference with echo arrival time
+
+   // Initialize envelope gate coefficients
+   if (g_config.noise_gate_threshold > 0) {
+      g_gate.threshold = g_config.noise_gate_threshold;
+
+      // Validate and clamp gate timing parameters to safe ranges
+      if (g_config.gate_attack_ms < 0.1f || g_config.gate_attack_ms > 1000.0f) {
+         LOG_WARNING("AEC gate: attack_ms out of range (%.1f), clamping to 0.1-1000ms",
+                     g_config.gate_attack_ms);
+         g_config.gate_attack_ms = fmaxf(0.1f, fminf(g_config.gate_attack_ms, 1000.0f));
+      }
+      if (g_config.gate_hold_ms < 0.0f || g_config.gate_hold_ms > 5000.0f) {
+         LOG_WARNING("AEC gate: hold_ms out of range (%.1f), clamping to 0-5000ms",
+                     g_config.gate_hold_ms);
+         g_config.gate_hold_ms = fmaxf(0.0f, fminf(g_config.gate_hold_ms, 5000.0f));
+      }
+      if (g_config.gate_release_ms < 1.0f || g_config.gate_release_ms > 5000.0f) {
+         LOG_WARNING("AEC gate: release_ms out of range (%.1f), clamping to 1-5000ms",
+                     g_config.gate_release_ms);
+         g_config.gate_release_ms = fmaxf(1.0f, fminf(g_config.gate_release_ms, 5000.0f));
+      }
+      if (g_config.gate_range_db > 0.0f || g_config.gate_range_db < -96.0f) {
+         LOG_WARNING("AEC gate: range_db out of range (%.1f), clamping to -96 to 0dB",
+                     g_config.gate_range_db);
+         g_config.gate_range_db = fmaxf(-96.0f, fminf(g_config.gate_range_db, 0.0f));
+      }
+
+      // Convert time constants to per-sample coefficients
+      // For envelope follower: coeff = 1 - exp(-1 / (time_constant * sample_rate))
+      // Simplified: coeff ≈ 1 / (time_ms * sample_rate / 1000)
+      float attack_samples = g_config.gate_attack_ms * AEC_SAMPLE_RATE / 1000.0f;
+      float release_samples = g_config.gate_release_ms * AEC_SAMPLE_RATE / 1000.0f;
+
+      // Envelope follower coefficients (fast attack, slower release)
+      g_gate.envelope_attack = 1.0f - expf(-2.2f / attack_samples);  // ~3 time constants
+      g_gate.envelope_release = 1.0f - expf(-2.2f / release_samples);
+
+      // Gain ramp coefficients (linear ramp over attack/release time)
+      g_gate.attack_coeff = 1.0f / attack_samples;
+      g_gate.release_coeff = 1.0f / release_samples;
+
+      // Hold time in samples
+      g_gate.hold_samples_max = (int)(g_config.gate_hold_ms * AEC_SAMPLE_RATE / 1000.0f);
+
+      // Range: convert dB to linear gain
+      g_gate.range_linear = powf(10.0f, g_config.gate_range_db / 20.0f);
+
+      // Initialize state
+      g_gate.state = GateState::CLOSED;
+      g_gate.envelope = 0.0f;
+      g_gate.gain = g_gate.range_linear;
+      g_gate.target_gain = g_gate.range_linear;
+      g_gate.hold_samples = 0;
+
+      LOG_INFO("AEC gate: threshold=%d, attack=%.1fms, hold=%.0fms, release=%.0fms, range=%.1fdB",
+               g_gate.threshold, g_config.gate_attack_ms, g_config.gate_hold_ms,
+               g_config.gate_release_ms, g_config.gate_range_db);
+   } else {
+      g_gate.threshold = 0;  // Gate disabled
+      LOG_INFO("AEC gate: disabled");
+   }
 
    // Reset state
    g_consecutive_errors.store(0);
@@ -749,9 +854,12 @@ void aec_process(const int16_t *mic_in, int16_t *clean_out, size_t num_samples) 
       }
 
       if (!has_reference) {
-         // Buffer empty - feed silence (AEC3 will adapt)
-         memset(g_ref_frame, 0, AEC_FRAME_SAMPLES * sizeof(int16_t));
+         // No reference signal (no TTS playing) - pass through unmodified
+         // This avoids AEC artifacts when there's no echo to cancel
+         memcpy(g_mic_out + processed, mic_in + processed, chunk * sizeof(int16_t));
          g_frames_passed_through.fetch_add(1);
+         processed += chunk;
+         continue;
       }
 
       // Lock only for WebRTC API calls
@@ -830,6 +938,86 @@ void aec_process(const int16_t *mic_in, int16_t *clean_out, size_t num_samples) 
       }
 
       if (frame_success) {
+         // Apply envelope-following gate to AEC-processed audio only (not passthrough)
+         if (g_gate.threshold > 0) {
+            for (size_t i = 0; i < chunk; i++) {
+               int16_t sample = g_mic_frame[i];
+               float abs_sample = fabsf((float)sample);
+
+               // Update envelope (peak follower with attack/release)
+               if (abs_sample > g_gate.envelope) {
+                  // Attack: envelope rises quickly to follow peaks
+                  g_gate.envelope += g_gate.envelope_attack * (abs_sample - g_gate.envelope);
+               } else {
+                  // Release: envelope falls slowly
+                  g_gate.envelope += g_gate.envelope_release * (abs_sample - g_gate.envelope);
+               }
+
+               // State machine for gate
+               bool above_threshold = g_gate.envelope > (float)g_gate.threshold;
+
+               switch (g_gate.state) {
+                  case GateState::CLOSED:
+                     if (above_threshold) {
+                        g_gate.state = GateState::ATTACK;
+                        g_gate.target_gain = 1.0f;
+                     }
+                     break;
+
+                  case GateState::ATTACK:
+                     // Ramp gain up toward 1.0
+                     g_gate.gain += g_gate.attack_coeff;
+                     if (g_gate.gain >= 1.0f) {
+                        g_gate.gain = 1.0f;
+                        g_gate.state = GateState::OPEN;
+                     }
+                     if (!above_threshold) {
+                        // Signal dropped during attack - go to hold
+                        g_gate.state = GateState::HOLD;
+                        g_gate.hold_samples = g_gate.hold_samples_max;
+                     }
+                     break;
+
+                  case GateState::OPEN:
+                     g_gate.gain = 1.0f;
+                     if (!above_threshold) {
+                        g_gate.state = GateState::HOLD;
+                        g_gate.hold_samples = g_gate.hold_samples_max;
+                     }
+                     break;
+
+                  case GateState::HOLD:
+                     g_gate.gain = 1.0f;
+                     if (above_threshold) {
+                        // Signal returned during hold - stay open
+                        g_gate.state = GateState::OPEN;
+                     } else if (--g_gate.hold_samples <= 0) {
+                        // Hold time expired - start release
+                        g_gate.state = GateState::RELEASE;
+                        g_gate.target_gain = g_gate.range_linear;
+                     }
+                     break;
+
+                  case GateState::RELEASE:
+                     // Ramp gain down toward range
+                     g_gate.gain -= g_gate.release_coeff;
+                     if (g_gate.gain <= g_gate.range_linear) {
+                        g_gate.gain = g_gate.range_linear;
+                        g_gate.state = GateState::CLOSED;
+                     }
+                     if (above_threshold) {
+                        // Signal returned during release - attack again
+                        g_gate.state = GateState::ATTACK;
+                        g_gate.target_gain = 1.0f;
+                     }
+                     break;
+               }
+
+               // Apply gain to sample
+               g_mic_frame[i] = (int16_t)(sample * g_gate.gain);
+            }
+         }
+
          // Copy processed frame to output buffer
          memcpy(g_mic_out + processed, g_mic_frame, chunk * sizeof(int16_t));
          g_consecutive_errors.store(0);
@@ -862,15 +1050,6 @@ void aec_process(const int16_t *mic_in, int16_t *clean_out, size_t num_samples) 
       g_out_recorder.write(clean_out, num_samples);
    }
 
-   // Apply noise gate if configured
-   if (g_config.noise_gate_threshold > 0) {
-      int16_t threshold = g_config.noise_gate_threshold;
-      for (size_t i = 0; i < num_samples; i++) {
-         if (clean_out[i] > -threshold && clean_out[i] < threshold) {
-            clean_out[i] = 0;
-         }
-      }
-   }
 
    // Update performance tracking
    auto frame_end = std::chrono::high_resolution_clock::now();

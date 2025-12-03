@@ -59,9 +59,9 @@ resampler_t *resampler_create(int src_rate, int dst_rate, int channels) {
    rs->channels = channels;
 
    int error;
-   // SRC_SINC_FASTEST provides good quality with low CPU
-   // Use SRC_SINC_MEDIUM_QUALITY if artifacts are audible
-   rs->src_state = src_new(SRC_SINC_FASTEST, channels, &error);
+   // SRC_SINC_BEST_QUALITY for cleanest 48kHz→16kHz downsampling
+   // Critical for ASR - prevents aliasing artifacts that cause "underwater" audio
+   rs->src_state = src_new(SRC_SINC_BEST_QUALITY, channels, &error);
    if (!rs->src_state) {
       LOG_ERROR("Failed to create SRC state: %s", src_strerror(error));
       free(rs);

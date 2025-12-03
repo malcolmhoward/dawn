@@ -22,6 +22,7 @@
 #ifndef ASR_INTERFACE_H
 #define ASR_INTERFACE_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -195,6 +196,61 @@ const char *asr_engine_name(asr_engine_type_t engine_type);
  * @return Engine type (ASR_ENGINE_VOSK or ASR_ENGINE_WHISPER), or -1 if ctx is NULL
  */
 asr_engine_type_t asr_get_engine_type(asr_context_t *ctx);
+
+// ============================================================================
+// ASR Audio Recording API for Debugging
+// ============================================================================
+
+/**
+ * @brief Set directory for ASR recording output files
+ *
+ * @param dir Directory path (default: /tmp)
+ */
+void asr_set_recording_dir(const char *dir);
+
+/**
+ * @brief Enable or disable ASR recording capability
+ *
+ * Must be called with true before asr_start_recording() will work.
+ *
+ * @param enable true to enable, false to disable
+ */
+void asr_enable_recording(bool enable);
+
+/**
+ * @brief Check if ASR recording is currently active
+ *
+ * @return true if actively recording, false otherwise
+ */
+bool asr_is_recording(void);
+
+/**
+ * @brief Check if ASR recording capability is enabled
+ *
+ * @return true if recording is enabled, false otherwise
+ */
+bool asr_is_recording_enabled(void);
+
+/**
+ * @brief Start recording ASR audio streams
+ *
+ * Creates two WAV files with timestamped names:
+ * - asr_pre_YYYYMMDD_HHMMSS.wav - Pre-normalization audio (raw input)
+ * - asr_post_YYYYMMDD_HHMMSS.wav - Post-normalization audio (what ASR sees)
+ *
+ * Recording must be enabled first with asr_enable_recording(true).
+ *
+ * @return 0 on success, non-zero on error
+ */
+int asr_start_recording(void);
+
+/**
+ * @brief Stop recording and finalize WAV files
+ *
+ * Closes all recording files and updates WAV headers with final sizes.
+ * Safe to call even if not recording.
+ */
+void asr_stop_recording(void);
 
 #ifdef __cplusplus
 }
