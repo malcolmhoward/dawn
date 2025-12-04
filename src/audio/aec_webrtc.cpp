@@ -74,6 +74,7 @@
 #include <webrtc/modules/audio_processing/include/audio_processing_statistics.h>
 
 extern "C" {
+#include "audio/aec_calibration.h"
 #include "audio/ring_buffer.h"
 #include "logging.h"
 }
@@ -757,6 +758,11 @@ void aec_add_reference(const int16_t *samples, size_t num_samples) {
       return;
    }
 
+   // Feed calibration if active
+   if (aec_cal_is_active()) {
+      aec_cal_add_reference(samples, num_samples);
+   }
+
    // Input is already 48kHz from TTS (TTS resamples 22050→48kHz)
    // Write directly to reference buffer
    g_ref_buffer->write(samples, num_samples);
@@ -776,6 +782,11 @@ void aec_add_reference_with_delay(const int16_t *samples,
    }
    if (!samples || num_samples == 0 || !g_ref_buffer) {
       return;
+   }
+
+   // Feed calibration if active
+   if (aec_cal_is_active()) {
+      aec_cal_add_reference(samples, num_samples);
    }
 
    // Input is already 48kHz from TTS (TTS resamples 22050→48kHz)
@@ -822,6 +833,11 @@ void aec_process(const int16_t *mic_in, int16_t *clean_out, size_t num_samples) 
       // Pass through if AEC not available
       memcpy(clean_out, mic_in, num_samples * sizeof(int16_t));
       return;
+   }
+
+   // Feed calibration if active (before any processing)
+   if (aec_cal_is_active()) {
+      aec_cal_add_mic(mic_in, num_samples);
    }
 
    auto frame_start = std::chrono::high_resolution_clock::now();
@@ -1200,6 +1216,28 @@ void aec_reset(void) {
    // Some versions have Initialize() method, others don't expose reset
 
    LOG_INFO("AEC state reset - echo cancellation re-enabled");
+}
+
+// ============================================================================
+void aec_set_delay_hint(int delay_ms) {
+   if (delay_ms < 0) {
+      LOG_WARNING("AEC: ignoring negative delay hint (%d ms)", delay_ms);
+      return;
+   }
+   if (delay_ms > 500) {
+      LOG_WARNING("AEC: clamping excessive delay hint (%d ms) to 500ms", delay_ms);
+      delay_ms = 500;
+   }
+
+   size_t old_delay = g_acoustic_delay_ms;
+   g_acoustic_delay_ms = (size_t)delay_ms;
+
+   if ((size_t)delay_ms != old_delay) {
+      LOG_INFO("AEC: delay hint updated %zu ms -> %d ms", old_delay, delay_ms);
+   }
+
+   // Note: The delay hint is used in set_stream_delay_ms() during aec_process().
+   // No need to re-initialize AEC - the change takes effect on the next frame.
 }
 
 // ============================================================================

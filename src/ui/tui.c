@@ -34,6 +34,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "llm/llm_interface.h"
 #include "logging.h"
 #include "ui/metrics.h"
 
@@ -121,17 +122,18 @@ static void setup_theme_green(void) {
 static void setup_theme_blue(void) {
    /* JARVIS-inspired Blue theme */
    if (can_change_color()) {
-      init_color(COLOR_CYAN, 0, 850, 1000);   /* Cyan-blue primary */
-      init_color(COLOR_BLUE, 0, 600, 1000);   /* Electric blue borders */
-      init_color(COLOR_WHITE, 0, 1000, 1000); /* Bright cyan highlights */
-      init_color(COLOR_MAGENTA, 0, 800, 640); /* Teal accent */
+      init_color(COLOR_CYAN, 0, 850, 1000);    /* Cyan-blue primary */
+      init_color(COLOR_BLUE, 300, 850, 1000);  /* Light sky blue for borders */
+      init_color(COLOR_WHITE, 0, 1000, 1000);  /* Bright cyan highlights */
+      init_color(COLOR_MAGENTA, 0, 800, 640);  /* Teal accent */
+      init_color(COLOR_YELLOW, 900, 750, 300); /* Soft amber for dim text */
    }
 
    init_pair(COLOR_PAIR_BORDER, COLOR_BLUE, COLOR_BLACK);
    init_pair(COLOR_PAIR_TITLE, COLOR_CYAN, COLOR_BLACK);
    init_pair(COLOR_PAIR_TEXT, COLOR_CYAN, COLOR_BLACK);
    init_pair(COLOR_PAIR_HIGHLIGHT, COLOR_WHITE, COLOR_BLACK);
-   init_pair(COLOR_PAIR_DIM, COLOR_BLUE, COLOR_BLACK);
+   init_pair(COLOR_PAIR_DIM, COLOR_YELLOW, COLOR_BLACK);
    init_pair(COLOR_PAIR_VALUE, COLOR_CYAN, COLOR_BLACK);
    init_pair(COLOR_PAIR_BAR, COLOR_CYAN, COLOR_BLACK);
    init_pair(COLOR_PAIR_WARNING, COLOR_BLACK, COLOR_CYAN);
@@ -272,7 +274,10 @@ static void format_number(uint64_t num, char *buf, size_t buf_size) {
  * ============================================================================ */
 
 static void draw_status_panel(int y, int x, int width, dawn_metrics_t *metrics) {
-   draw_box(y, x, 4, width, "DAWN Status");
+   /* Build title with version info */
+   char title[64];
+   snprintf(title, sizeof(title), "DAWN v%s (%s)", VERSION_NUMBER, GIT_SHA);
+   draw_box(y, x, 5, width, title);
 
    char uptime_str[16];
    format_uptime(metrics_get_uptime(), uptime_str, sizeof(uptime_str));
@@ -296,18 +301,15 @@ static void draw_status_panel(int y, int x, int width, dawn_metrics_t *metrics) 
    const char *llm_type = (metrics->current_llm_type == LLM_LOCAL)
                               ? "Local"
                               : ((metrics->current_llm_type == LLM_CLOUD) ? "Cloud" : "N/A");
-   const char *provider = (metrics->current_cloud_provider == CLOUD_PROVIDER_OPENAI)
-                              ? "OpenAI"
-                              : ((metrics->current_cloud_provider == CLOUD_PROVIDER_CLAUDE)
-                                     ? "Claude"
-                                     : "");
+   const char *provider_name = llm_get_cloud_provider_name();
+   const char *model_name = llm_get_model_name();
 
    attron(COLOR_PAIR(COLOR_PAIR_TEXT));
    mvprintw(y + 2, x + 2, "LLM: ");
    attroff(COLOR_PAIR(COLOR_PAIR_TEXT));
    attron(COLOR_PAIR(COLOR_PAIR_VALUE));
-   if (strlen(provider) > 0) {
-      printw("%s (%s)", llm_type, provider);
+   if (metrics->current_cloud_provider != CLOUD_PROVIDER_NONE) {
+      printw("%s (%s: %s)", llm_type, provider_name, model_name);
    } else {
       printw("%s", llm_type);
    }
@@ -326,6 +328,51 @@ static void draw_status_panel(int y, int x, int width, dawn_metrics_t *metrics) 
    attron(COLOR_PAIR(COLOR_PAIR_VALUE));
    printw("Silero");
    attroff(COLOR_PAIR(COLOR_PAIR_VALUE));
+
+   /* Line 3: AEC status */
+   attron(COLOR_PAIR(COLOR_PAIR_TEXT));
+   mvprintw(y + 3, x + 2, "AEC: ");
+   attroff(COLOR_PAIR(COLOR_PAIR_TEXT));
+
+   /* Determine AEC backend name at compile time */
+#if defined(AEC_BACKEND_WEBRTC)
+   const char *aec_backend = "WebRTC";
+#elif defined(AEC_BACKEND_SPEEX)
+   const char *aec_backend = "Speex";
+#else
+   const char *aec_backend = NULL;
+#endif
+
+   if (metrics->aec_enabled) {
+      if (metrics->aec_calibrated) {
+         attron(COLOR_PAIR(COLOR_PAIR_VALUE));
+         printw("%s (%dms, corr:%.2f)", aec_backend, metrics->aec_delay_ms,
+                metrics->aec_correlation);
+         attroff(COLOR_PAIR(COLOR_PAIR_VALUE));
+      } else {
+         attron(COLOR_PAIR(COLOR_PAIR_WARNING));
+         printw("%s (not calibrated)", aec_backend);
+         attroff(COLOR_PAIR(COLOR_PAIR_WARNING));
+      }
+   } else {
+      attron(COLOR_PAIR(COLOR_PAIR_DIM));
+#if defined(ENABLE_AEC)
+      printw("%s (disabled)", aec_backend);
+#else
+      printw("Not compiled");
+#endif
+      attroff(COLOR_PAIR(COLOR_PAIR_DIM));
+   }
+
+   /* Barge-in count */
+   if (metrics->bargein_count > 0) {
+      attron(COLOR_PAIR(COLOR_PAIR_TEXT));
+      printw("    Barge-ins: ");
+      attroff(COLOR_PAIR(COLOR_PAIR_TEXT));
+      attron(COLOR_PAIR(COLOR_PAIR_VALUE));
+      printw("%u", metrics->bargein_count);
+      attroff(COLOR_PAIR(COLOR_PAIR_VALUE));
+   }
 }
 
 static void draw_session_stats_panel(int y, int x, int width, dawn_metrics_t *metrics) {
@@ -512,7 +559,7 @@ static void draw_performance_panel(int y, int x, int width, dawn_metrics_t *metr
 }
 
 static void draw_realtime_panel(int y, int x, int width, dawn_metrics_t *metrics) {
-   draw_box(y, x, 4, width, "Real-Time Audio");
+   draw_box(y, x, 5, width, "Real-Time Audio");
 
    /* VAD probability bar */
    attron(COLOR_PAIR(COLOR_PAIR_TEXT));
@@ -544,35 +591,132 @@ static void draw_realtime_panel(int y, int x, int width, dawn_metrics_t *metrics
    attroff(COLOR_PAIR(COLOR_PAIR_HIGHLIGHT) | A_BOLD | A_BLINK);
    attroff(COLOR_PAIR(COLOR_PAIR_VALUE));
    attroff(COLOR_PAIR(COLOR_PAIR_DIM));
+
+   /* Last ASR text (what was heard) */
+   attron(COLOR_PAIR(COLOR_PAIR_TEXT));
+   mvprintw(y + 3, x + 2, "Heard: ");
+   attroff(COLOR_PAIR(COLOR_PAIR_TEXT));
+   if (strlen(metrics->last_asr_text) > 0) {
+      attron(COLOR_PAIR(COLOR_PAIR_VALUE));
+      /* Truncate to fit in panel width */
+      int max_text_len = width - 12;
+      if ((int)strlen(metrics->last_asr_text) > max_text_len) {
+         printw("%.*s...", max_text_len - 3, metrics->last_asr_text);
+      } else {
+         printw("%s", metrics->last_asr_text);
+      }
+      attroff(COLOR_PAIR(COLOR_PAIR_VALUE));
+   } else {
+      attron(COLOR_PAIR(COLOR_PAIR_DIM));
+      printw("(listening...)");
+      attroff(COLOR_PAIR(COLOR_PAIR_DIM));
+   }
+}
+
+/**
+ * @brief Find word boundary for wrapping text
+ *
+ * @param text Text to search
+ * @param max_chars Maximum characters to consider
+ * @return Number of characters to print (breaks at last space if possible)
+ */
+static int find_word_break(const char *text, int max_chars) {
+   int text_len = strlen(text);
+   if (text_len <= max_chars) {
+      return text_len;
+   }
+
+   /* Look for last space within the max_chars range */
+   int break_pos = max_chars;
+   for (int j = max_chars - 1; j >= max_chars / 2; j--) {
+      if (text[j] == ' ') {
+         break_pos = j + 1; /* Include the space, next line starts after it */
+         break;
+      }
+   }
+   return break_pos;
+}
+
+/**
+ * @brief Count lines needed to display text with word wrapping
+ */
+static int count_wrapped_lines(const char *text, int text_width) {
+   int text_len = strlen(text);
+   if (text_len == 0)
+      return 1;
+
+   int lines = 0;
+   int pos = 0;
+   while (pos < text_len) {
+      int remaining = text_len - pos;
+      if (remaining <= text_width) {
+         lines++;
+         break;
+      }
+      int chars = find_word_break(text + pos, text_width);
+      pos += chars;
+      lines++;
+   }
+   return lines;
 }
 
 static void draw_activity_panel(int y, int x, int width, int height, dawn_metrics_t *metrics) {
    draw_box(y, x, height, width, "Recent Activity");
 
    int max_lines = height - 2;
-   int start_idx;
+   int text_width = width - 4; /* Account for borders and padding */
+   int current_line = 0;
 
-   if (metrics->log_count <= max_lines) {
-      start_idx = 0;
-   } else {
-      /* Show most recent entries */
-      start_idx = (metrics->log_head - max_lines + METRICS_MAX_LOG_ENTRIES) %
-                  METRICS_MAX_LOG_ENTRIES;
+   if (metrics->log_count == 0 || text_width <= 0) {
+      return;
    }
 
-   int lines_to_show = (metrics->log_count < max_lines) ? metrics->log_count : max_lines;
+   /* Calculate how many lines each entry needs, working backwards from newest */
+   /* We'll collect entries to display, then render them in chronological order */
+   int entries_to_show[METRICS_MAX_LOG_ENTRIES];
+   int entry_count = 0;
+   int total_lines_needed = 0;
 
-   for (int i = 0; i < lines_to_show; i++) {
-      int idx = (start_idx + i) % METRICS_MAX_LOG_ENTRIES;
-      attron(COLOR_PAIR(COLOR_PAIR_DIM));
-      mvprintw(y + 1 + i, x + 2, "%-*.*s", width - 4, width - 4, metrics->activity_log[idx]);
-      attroff(COLOR_PAIR(COLOR_PAIR_DIM));
+   /* Start from most recent entry (one before head) and work backwards */
+   for (int i = 0; i < metrics->log_count && total_lines_needed < max_lines; i++) {
+      int idx = (metrics->log_head - 1 - i + METRICS_MAX_LOG_ENTRIES) % METRICS_MAX_LOG_ENTRIES;
+      int lines_for_entry = count_wrapped_lines(metrics->activity_log[idx], text_width);
+
+      if (total_lines_needed + lines_for_entry <= max_lines) {
+         entries_to_show[entry_count++] = idx;
+         total_lines_needed += lines_for_entry;
+      } else {
+         break; /* Can't fit this entry */
+      }
    }
+
+   /* Render entries in chronological order (reverse of how we collected them) */
+   attron(COLOR_PAIR(COLOR_PAIR_DIM));
+   for (int i = entry_count - 1; i >= 0; i--) {
+      int idx = entries_to_show[i];
+      const char *text = metrics->activity_log[idx];
+      int text_len = strlen(text);
+      int pos = 0;
+
+      while (pos < text_len && current_line < max_lines) {
+         int remaining = text_len - pos;
+         int chars_to_print;
+         if (remaining <= text_width) {
+            chars_to_print = remaining;
+         } else {
+            chars_to_print = find_word_break(text + pos, text_width);
+         }
+         mvprintw(y + 1 + current_line, x + 2, "%.*s", chars_to_print, text + pos);
+         pos += chars_to_print;
+         current_line++;
+      }
+   }
+   attroff(COLOR_PAIR(COLOR_PAIR_DIM));
 }
 
 static void draw_footer(int y, int width) {
    attron(COLOR_PAIR(COLOR_PAIR_DIM));
-   mvprintw(y, 1, " [D]ebug Logs  [R]eset Stats  [1/2/3] Theme  [Q]uit");
+   mvprintw(y, 1, " [L]ocal  [C]loud  [D]ebug  [R]eset  [1/2/3] Theme  [Q]uit");
    attroff(COLOR_PAIR(COLOR_PAIR_DIM));
 
    /* Right-aligned help hint */
@@ -581,7 +725,7 @@ static void draw_footer(int y, int width) {
 }
 
 static void draw_help_overlay(void) {
-   int height = 14;
+   int height = 16;
    int width = 50;
    int start_y = (g_term_rows - height) / 2;
    int start_x = (g_term_cols - width) / 2;
@@ -595,15 +739,17 @@ static void draw_help_overlay(void) {
    mvprintw(start_y + 1, start_x + 2, "DAWN TUI Help");
    mvprintw(start_y + 2, start_x + 2, "---------------------------------------------");
 
-   mvprintw(start_y + 4, start_x + 4, "Q        Quit DAWN");
+   mvprintw(start_y + 4, start_x + 4, "Q/Esc    Quit DAWN");
    mvprintw(start_y + 5, start_x + 4, "D        Toggle Debug Log mode");
    mvprintw(start_y + 6, start_x + 4, "R        Reset session statistics");
-   mvprintw(start_y + 7, start_x + 4, "1        Green (Apple ][) theme");
-   mvprintw(start_y + 8, start_x + 4, "2        Blue (JARVIS) theme");
-   mvprintw(start_y + 9, start_x + 4, "3        B/W (High Contrast) theme");
-   mvprintw(start_y + 10, start_x + 4, "?        Toggle this help");
+   mvprintw(start_y + 7, start_x + 4, "L        Switch to Local LLM (session)");
+   mvprintw(start_y + 8, start_x + 4, "C        Switch to Cloud LLM (session)");
+   mvprintw(start_y + 9, start_x + 4, "1        Green (Apple ][) theme");
+   mvprintw(start_y + 10, start_x + 4, "2        Blue (JARVIS) theme");
+   mvprintw(start_y + 11, start_x + 4, "3        B/W (High Contrast) theme");
+   mvprintw(start_y + 12, start_x + 4, "?        Toggle this help");
 
-   mvprintw(start_y + 12, start_x + 2, "Press any key to close...");
+   mvprintw(start_y + 14, start_x + 2, "Press any key to close...");
    attroff(COLOR_PAIR(COLOR_PAIR_WARNING));
 }
 
@@ -748,7 +894,7 @@ void tui_update(void) {
 
    /* Draw panels */
    draw_status_panel(y, 1, panel_width, &metrics);
-   y += 4;
+   y += 5; /* Status panel: 5 lines (State, LLM/ASR/VAD, AEC) */
 
    draw_session_stats_panel(y, 1, panel_width, &metrics);
    y += 8;
@@ -757,7 +903,7 @@ void tui_update(void) {
    y += 10;
 
    draw_realtime_panel(y, 1, panel_width, &metrics);
-   y += 4;
+   y += 5; /* Real-Time Audio panel: 5 lines (VAD, State, Heard) */
 
    /* Activity panel fills remaining space */
    int activity_height = g_term_rows - y - 2;
@@ -796,6 +942,7 @@ int tui_handle_input(void) {
    switch (ch) {
       case 'q':
       case 'Q':
+      case 27:     /* ESC key */
          return 1; /* Request quit */
 
       case 'd':
@@ -822,6 +969,24 @@ int tui_handle_input(void) {
 
       case '?':
          g_show_help = !g_show_help;
+         break;
+
+      case 'l':
+      case 'L':
+         /* Switch to Local LLM (session-only, not persisted across restarts) */
+         if (llm_get_type() != LLM_LOCAL) {
+            llm_set_type(LLM_LOCAL);
+            metrics_log_activity("Switched to Local LLM");
+         }
+         break;
+
+      case 'c':
+      case 'C':
+         /* Switch to Cloud LLM (session-only, not persisted across restarts) */
+         if (llm_get_type() != LLM_CLOUD) {
+            llm_set_type(LLM_CLOUD);
+            metrics_log_activity("Switched to Cloud LLM (%s)", llm_get_model_name());
+         }
          break;
 
       case KEY_RESIZE:

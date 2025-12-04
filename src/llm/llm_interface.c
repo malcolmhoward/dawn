@@ -35,6 +35,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 
+#include "dawn.h"
 #include "llm/sentence_buffer.h"
 #include "logging.h"
 #include "secrets.h"
@@ -324,6 +325,27 @@ const char *llm_get_cloud_provider_name(void) {
          return "OpenAI";
       case CLOUD_PROVIDER_CLAUDE:
          return "Claude";
+      case CLOUD_PROVIDER_NONE:
+         return "None";
+      default:
+         return "Unknown";
+   }
+}
+
+const char *llm_get_model_name(void) {
+   switch (current_cloud_provider) {
+      case CLOUD_PROVIDER_OPENAI:
+#ifdef OPENAI_API_KEY
+         return OPENAI_MODEL;
+#else
+         return "N/A";
+#endif
+      case CLOUD_PROVIDER_CLAUDE:
+#ifdef CLAUDE_API_KEY
+         return CLAUDE_MODEL;
+#else
+         return "N/A";
+#endif
       case CLOUD_PROVIDER_NONE:
          return "None";
       default:

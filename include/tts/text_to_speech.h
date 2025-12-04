@@ -81,6 +81,20 @@ int text_to_speech_to_wav(const char *text, uint8_t **wav_data_out, size_t *wav_
 uint8_t *error_to_wav(const char *error_message, size_t *tts_size_out);
 
 /**
+ * @brief Speaks the greeting with AEC delay calibration
+ *
+ * This function plays the greeting TTS and uses it to calibrate the
+ * acoustic delay for echo cancellation. The measured delay is used
+ * to update the AEC delay hint for optimal performance.
+ *
+ * Should be called for the boot greeting to measure actual acoustic delay.
+ * If AEC is disabled or calibration fails, falls back to normal TTS.
+ *
+ * @param greeting The greeting text to speak
+ */
+void tts_speak_greeting_with_calibration(const char *greeting);
+
+/**
  * @brief Cleans up the text-to-speech system.
  *
  * This function signals the worker thread to terminate, waits for it to finish,

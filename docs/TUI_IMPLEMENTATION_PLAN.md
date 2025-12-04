@@ -274,13 +274,17 @@ DAWN_TUI_THEME=green ./dawn --tui
 
 | Key | Action |
 |-----|--------|
-| `Q` | Quit DAWN |
+| `Q` / `Esc` | Quit DAWN |
 | `D` | Toggle between TUI and debug log mode |
 | `R` | Reset session statistics |
+| `L` | Switch to Local LLM (session-only, not persisted) |
+| `C` | Switch to Cloud LLM (session-only, not persisted) |
 | `1` | Switch to Green (Apple ][) theme |
 | `2` | Switch to Blue (JARVIS) theme |
 | `3` | Switch to B/W (High Contrast) theme |
 | `?` | Show help screen |
+
+**Note:** LLM selection via `L`/`C` keys is session-only and reverts to the default (or command-line specified) setting on restart.
 
 ## Update Frequency
 
@@ -572,6 +576,104 @@ Follow `CODING_STYLE_GUIDE.md`:
 - Always check return values
 - Use Doxygen-style comments for public APIs
 - Format with clang-format before committing
+
+## Implementation Status
+
+### Completed (Dec 2024)
+
+#### Phase 1-4: Core TUI ✅
+All original phases completed. TUI is fully functional with:
+- Real-time metrics display at 10 Hz
+- Three color themes (Green/Blue/B&W)
+- Keyboard controls (Q, D, R, 1/2/3, ?)
+- Activity log with circular buffer
+- Session stats and performance metrics
+- JSON export on exit
+
+#### Recent Enhancements (Dec 3, 2024)
+
+**DAWN Status Panel:**
+- Added version display in panel title: `DAWN v1.0.0 (abc123)`
+- Added AEC status line showing backend and calibration: `AEC: WebRTC (55ms, corr:0.74)`
+- Added barge-in count display
+- LLM display now shows provider and model: `Cloud (OpenAI: gpt-4o)`
+
+**Real-Time Audio Panel:**
+- Added "Heard:" field showing last ASR transcription (works with Whisper chunks)
+- Shows what the system heard even without wake word detection
+
+**Keyboard Controls:**
+- Added Esc key as alternative quit (alongside Q)
+- Added `L` key to switch to Local LLM
+- Added `C` key to switch to Cloud LLM
+- Updated footer hints: `[L]ocal  [C]loud  [D]ebug  [R]eset  [1/2/3] Theme  [Q]uit`
+- Updated help overlay with new hotkeys
+
+**Activity Log:**
+- Long entries now wrap across multiple lines instead of truncating
+- Maintains chronological order with newest entries visible
+
+**Boot Sequence Improvements:**
+- Barge-in detection disabled during initial TTS greeting and AEC calibration
+- Audio buffer flushed after calibration to discard stale boot audio
+- VAD state reset after calibration to prevent false triggers
+- Prevents system from getting stuck in "listening" mode when background talking during startup
+
+---
+
+## Planned Features
+
+### Phase 5: Text Input Mode (Planned)
+
+**Objective:** Allow typing commands as alternative/parallel input to voice
+
+**Trigger:** Press `i` to enter input mode
+
+**UI Design:**
+```
+┌─ Text Input ─────────────────────────────────────────────────── 12/512 ─┐
+│ > Hello Friday, what time is it?█                                        │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+**Keyboard Controls in Input Mode:**
+| Key | Action |
+|-----|--------|
+| `Enter` | Submit text to DAWN |
+| `Esc` | Cancel input, return to normal TUI |
+| `Backspace` | Delete character |
+| Printable chars | Add to buffer |
+
+**Implementation Details:**
+
+1. **Input Buffer:**
+   - 512 character limit
+   - Character counter display: `?/512`
+   - Visual cursor indicator
+
+2. **Thread-Safe Event Queue:**
+   ```c
+   typedef struct {
+      char text[512];
+      bool pending;
+      pthread_mutex_t mutex;
+   } text_input_queue_t;
+   ```
+
+3. **Integration with State Machine:**
+   - Main loop polls queue during `DAWN_STATE_SILENCE`
+   - When text available: skip VAD/ASR, go directly to `PROCESS_COMMAND`
+   - Text treated same as transcribed voice command
+   - Optional: skip wake word check for typed input
+
+4. **File Changes:**
+   - `src/ui/tui.c`: Input mode, buffer, rendering
+   - `include/ui/tui.h`: Text queue API
+   - `src/dawn.c`: Poll text queue in SILENCE state
+
+**Estimated Scope:** ~150-200 lines of new code
+
+---
 
 ## References
 

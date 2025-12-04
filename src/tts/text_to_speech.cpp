@@ -13,8 +13,10 @@
 #include "audio/audio_capture_thread.h"
 #include "dawn.h"
 #include "logging.h"
+#include "ui/metrics.h"
 
 #ifdef ENABLE_AEC
+#include "audio/aec_calibration.h"
 #include "audio/aec_processor.h"
 #include "audio/resampler.h"
 
@@ -490,6 +492,11 @@ void *tts_thread_function(void *arg) {
              pthread_mutex_lock(&tts_mutex);
              tts_playback_state = TTS_PLAYBACK_PLAY;
 #ifdef ENABLE_AEC
+             // Start calibration capture if pending (checked via calibration module API)
+             if (aec_cal_is_pending()) {
+                aec_cal_start();
+                LOG_INFO("AEC calibration: started capture for greeting");
+             }
              // Start AEC recording for this TTS session (if enabled)
              if (aec_is_recording_enabled()) {
                 aec_start_recording();
@@ -854,6 +861,23 @@ void *tts_thread_function(void *arg) {
              pthread_mutex_lock(&tts_mutex);
              tts_playback_state = TTS_PLAYBACK_IDLE;
 #ifdef ENABLE_AEC
+             // Finish calibration if it was pending (atomically clear flag)
+             if (aec_cal_check_and_clear_pending()) {
+                int measured_delay_ms = 0;
+                int cal_result = aec_cal_finish(&measured_delay_ms);
+                if (cal_result == AEC_CAL_SUCCESS) {
+                   float correlation = aec_cal_get_last_correlation();
+                   LOG_INFO("AEC calibration: SUCCESS - measured delay = %d ms", measured_delay_ms);
+                   aec_set_delay_hint(measured_delay_ms);
+                   metrics_record_aec_calibration(true, measured_delay_ms, correlation);
+                   metrics_update_aec_enabled(true);  // AEC confirmed working
+                } else {
+                   LOG_WARNING("AEC calibration: failed (error %d), using default delay",
+                               cal_result);
+                   metrics_record_aec_calibration(false, 0, 0.0f);
+                }
+             }
+
              // Signal AEC that playback has stopped - this prevents
              // underflow counting when no audio is playing
              aec_signal_playback_stop();
@@ -1173,6 +1197,43 @@ uint8_t *error_to_wav(const char *error_message, size_t *tts_size_out) {
 }
 
 /**
+ * @brief Speaks the greeting with AEC delay calibration
+ *
+ * This function plays the greeting TTS and uses it to calibrate the
+ * acoustic delay for echo cancellation. The measured delay is used
+ * to update the AEC delay hint for optimal performance.
+ *
+ * @param greeting The greeting text to speak
+ */
+void tts_speak_greeting_with_calibration(const char *greeting) {
+   if (!greeting || !tts_handle.is_initialized) {
+      if (greeting) {
+         text_to_speech((char *)greeting);
+      }
+      return;
+   }
+
+#ifdef ENABLE_AEC
+   // Initialize calibration system if not already done
+   if (!aec_cal_is_initialized()) {
+      int cal_init = aec_cal_init(AEC_SAMPLE_RATE, 200);  // Max 200ms delay search
+      if (cal_init != AEC_CAL_SUCCESS) {
+         LOG_WARNING("AEC calibration init failed (%d), speaking without calibration", cal_init);
+         text_to_speech((char *)greeting);
+         return;
+      }
+   }
+
+   // Request calibration via calibration module API (decouples TTS from calibration state)
+   aec_cal_set_pending();
+   LOG_INFO("AEC calibration: queued for next TTS playback");
+#endif
+
+   // Queue the greeting for playback
+   text_to_speech((char *)greeting);
+}
+
+/**
  * @brief Cleans up the text-to-speech system.
  *
  * This function signals the worker thread to terminate, waits for it to finish,
@@ -1231,6 +1292,9 @@ void cleanup_text_to_speech() {
    pthread_cond_destroy(&tts_queue_cond);
 
 #ifdef ENABLE_AEC
+   // Clean up AEC calibration
+   aec_cal_cleanup();
+
    // Clean up AEC resampler
    if (g_tts_thread_resampler) {
       resampler_destroy(g_tts_thread_resampler);

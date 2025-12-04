@@ -35,6 +35,7 @@
 #include "audio/resampler.h"
 #include "dawn.h"
 #include "logging.h"
+#include "ui/metrics.h"
 
 #ifdef ENABLE_AEC
 #include "audio/aec_processor.h"
@@ -302,6 +303,13 @@ static void *capture_thread_func(void *arg) {
             "not compiled"
 #endif
    );
+
+   // Update TUI metrics with AEC status
+#ifdef ENABLE_AEC
+   metrics_update_aec_enabled(aec_is_enabled() && ctx->aec_buffer && !ctx->aec_rate_mismatch);
+#else
+   metrics_update_aec_enabled(false);
+#endif
 
 #ifdef ALSA_DEVICE
    // ALSA capture loop (captures at 48kHz, outputs 16kHz to ring buffer)

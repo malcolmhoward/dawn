@@ -167,6 +167,13 @@ llm_type_t llm_get_type(void);
 const char *llm_get_cloud_provider_name(void);
 
 /**
+ * @brief Get current LLM model name (for display/logging)
+ *
+ * @return String name of model (e.g., "gpt-4o", "claude-sonnet-4-5-20250929")
+ */
+const char *llm_get_model_name(void);
+
+/**
  * @brief Check internet connectivity to LLM endpoint
  *
  * @param url URL to check

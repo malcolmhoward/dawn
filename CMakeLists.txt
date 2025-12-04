@@ -55,8 +55,9 @@ if(NOT GIT_SHA_RESULT EQUAL 0)
     set(GIT_SHA "unknown")
 endif()
 
-# Pass the Git SHA to the compiler
+# Pass version info to the compiler
 add_definitions(-DGIT_SHA=\"${GIT_SHA}\")
+add_definitions(-DVERSION_NUMBER=\"${VERSION_NUMBER}\")
 
 # Include directories for new source layout
 include_directories(include)
@@ -226,6 +227,7 @@ else()
 
         set(AEC_SOURCES
             src/audio/aec_webrtc.cpp
+            src/audio/aec_calibration.c
         )
         set(AEC_LIBRARIES
             ${WEBRTC_AP_BUILD}/webrtc/modules/audio_processing/libwebrtc-audio-processing-1.a
@@ -251,6 +253,7 @@ else()
 
         set(AEC_SOURCES
             src/audio/aec_speex.cpp
+            src/audio/aec_calibration.c
         )
         set(AEC_LIBRARIES
             ${SPEEXDSP_LIBRARIES}

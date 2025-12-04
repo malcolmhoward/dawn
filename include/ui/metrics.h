@@ -31,6 +31,7 @@
 #define METRICS_H
 
 #include <pthread.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <time.h>
 
@@ -102,6 +103,18 @@ typedef struct {
    llm_type_t current_llm_type;             /**< Current LLM type (local/cloud) */
    cloud_provider_t current_cloud_provider; /**< Current cloud provider */
 
+   /* AEC status and calibration */
+   bool aec_enabled;      /**< Is AEC compiled and active? */
+   bool aec_calibrated;   /**< Was boot calibration successful? */
+   int aec_delay_ms;      /**< Measured acoustic delay (0 if uncalibrated) */
+   float aec_correlation; /**< Calibration correlation quality (0.0-1.0) */
+
+   /* Audio status */
+   float audio_buffer_fill_pct;                /**< Ring buffer fill percentage (0-100) */
+   uint32_t bargein_count;                     /**< Times user interrupted TTS */
+   char last_asr_text[METRICS_MAX_LOG_LENGTH]; /**< Last ASR result (even without wake word) */
+   double last_asr_text_time_ms;               /**< When last ASR text was captured */
+
    /* Last command/response text for display */
    char last_user_command[METRICS_MAX_LOG_LENGTH]; /**< Last user command text */
    char last_ai_response[METRICS_MAX_LOG_LENGTH];  /**< Last AI response text */
@@ -172,6 +185,56 @@ void metrics_update_state(dawn_state_t new_state);
  * @param probability Speech probability (0.0-1.0)
  */
 void metrics_update_vad_probability(float probability);
+
+/* ============================================================================
+ * AEC Status
+ * ============================================================================ */
+
+/**
+ * @brief Update AEC enabled status
+ *
+ * Called at startup to indicate if AEC is compiled and active.
+ *
+ * @param enabled true if AEC is enabled, false otherwise
+ */
+void metrics_update_aec_enabled(bool enabled);
+
+/**
+ * @brief Record AEC calibration result
+ *
+ * Called after boot calibration completes.
+ *
+ * @param success true if calibration succeeded
+ * @param delay_ms Measured acoustic delay in milliseconds
+ * @param correlation Peak correlation value (0.0-1.0)
+ */
+void metrics_record_aec_calibration(bool success, int delay_ms, float correlation);
+
+/* ============================================================================
+ * Audio Status
+ * ============================================================================ */
+
+/**
+ * @brief Update audio ring buffer fill percentage
+ *
+ * @param fill_pct Buffer fill percentage (0.0-100.0)
+ */
+void metrics_update_audio_buffer_fill(float fill_pct);
+
+/**
+ * @brief Record a barge-in event (user interrupted TTS)
+ */
+void metrics_record_bargein(void);
+
+/**
+ * @brief Set last ASR text result (even without wake word)
+ *
+ * Used to show what was heard in real-time display.
+ *
+ * @param text ASR result text
+ * @param processing_time_ms ASR processing time
+ */
+void metrics_set_last_asr_text(const char *text, double processing_time_ms);
 
 /* ============================================================================
  * ASR Timing

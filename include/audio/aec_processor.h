@@ -285,6 +285,19 @@ bool aec_get_residual_echo_likelihood(float *likelihood);
 void aec_reset(void);
 
 /**
+ * @brief Update the acoustic delay hint for AEC processing
+ *
+ * Call this after measuring the actual speaker-to-microphone delay
+ * (e.g., via calibration using boot greeting). The delay hint helps
+ * the AEC align the reference signal with the echo in the mic input.
+ *
+ * The new delay takes effect immediately on subsequent frames.
+ *
+ * @param delay_ms Acoustic delay in milliseconds (0-500ms, clamped if out of range)
+ */
+void aec_set_delay_hint(int delay_ms);
+
+/**
  * @brief Signal that TTS playback has stopped
  *
  * Call this when TTS playback completes normally or is interrupted.

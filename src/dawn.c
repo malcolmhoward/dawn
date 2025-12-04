@@ -302,7 +302,8 @@ command_processing_mode_t command_processing_mode = CMD_MODE_DIRECT_ONLY;
 struct json_object *conversation_history = NULL;
 
 // Barge-in control: when true, speech detection is disabled during TTS playback
-static int g_bargein_disabled = 0;
+static int g_bargein_disabled = 1;       // Start disabled until after boot calibration
+static int g_bargein_user_disabled = 0;  // Set by --no-bargein CLI option
 
 // Shared buffers for LLM thread communication (protected by llm_mutex)
 static char *llm_request_text = NULL;     // Input: command text for LLM
@@ -1651,7 +1652,7 @@ int main(int argc, char *argv[]) {
             break;
 #endif
          case 'B':
-            g_bargein_disabled = 1;
+            g_bargein_user_disabled = 1;
             LOG_INFO("Barge-in disabled: speech during TTS will be ignored");
             break;
          case '?':
@@ -1902,7 +1903,26 @@ int main(int argc, char *argv[]) {
       LOG_WARNING("HOME environment variable not set - VAD initialization skipped");
    }
 
-   text_to_speech((char *)timeOfDayGreeting());
+   // Speak greeting with AEC delay calibration (uses boot greeting to measure acoustic delay)
+   tts_speak_greeting_with_calibration(timeOfDayGreeting());
+
+   // Flush audio buffer to discard any stale audio captured during boot
+   if (audio_capture_ctx) {
+      audio_capture_clear(audio_capture_ctx);
+      LOG_INFO("Audio buffer cleared after boot calibration");
+   }
+
+   // Reset VAD state to clear any detections from boot audio
+   if (vad_ctx) {
+      vad_silero_reset(vad_ctx);
+      LOG_INFO("VAD state reset after boot calibration");
+   }
+
+   // Enable barge-in now that calibration is complete (unless user disabled it)
+   g_bargein_disabled = g_bargein_user_disabled;
+   if (!g_bargein_disabled) {
+      LOG_INFO("Barge-in enabled after boot calibration");
+   }
 
    // Register the signal handler for SIGINT.
    if (signal(SIGINT, signal_handler) == SIG_ERR) {
@@ -2350,26 +2370,24 @@ int main(int argc, char *argv[]) {
 #endif
 
                   if (vad_speech_prob >= threshold) {
-                     if (tts_is_active) {
-                        // During TTS (or cooldown): check if barge-in is allowed
-                        if (g_bargein_disabled) {
-                           // Barge-in disabled - ignore speech during TTS
-                           tts_vad_debounce = 0;
-                        } else {
-                           // During TTS: require consecutive detections (debounce)
-                           tts_vad_debounce++;
-                           if (tts_vad_debounce >= VAD_TTS_DEBOUNCE_COUNT) {
-                              speech_detected = 1;
+                     // If barge-in is disabled (boot phase or CLI option), ignore all speech
+                     if (g_bargein_disabled) {
+                        tts_vad_debounce = 0;
+                     } else if (tts_is_active) {
+                        // During TTS (or cooldown): require consecutive detections (debounce)
+                        tts_vad_debounce++;
+                        if (tts_vad_debounce >= VAD_TTS_DEBOUNCE_COUNT) {
+                           speech_detected = 1;
 #ifdef ENABLE_AEC
-                              LOG_INFO("SILENCE: TTS barge-in confirmed (debounce=%d, VAD=%.3f, "
-                                       "ERLE=%.1fdB, cooldown=%ldms)",
-                                       tts_vad_debounce, vad_speech_prob, erle_db, elapsed_ms);
+                           LOG_INFO("SILENCE: TTS barge-in confirmed (debounce=%d, VAD=%.3f, "
+                                    "ERLE=%.1fdB, cooldown=%ldms)",
+                                    tts_vad_debounce, vad_speech_prob, erle_db, elapsed_ms);
 #else
-                              LOG_INFO("SILENCE: TTS barge-in confirmed (debounce=%d, VAD=%.3f, "
-                                       "cooldown=%ldms)",
-                                       tts_vad_debounce, vad_speech_prob, elapsed_ms);
+                           LOG_INFO("SILENCE: TTS barge-in confirmed (debounce=%d, VAD=%.3f, "
+                                    "cooldown=%ldms)",
+                                    tts_vad_debounce, vad_speech_prob, elapsed_ms);
 #endif
-                           }
+                           metrics_record_bargein();
                         }
                      } else {
                         // No TTS: immediate detection
@@ -2494,6 +2512,10 @@ int main(int argc, char *argv[]) {
                         if (asr_result == NULL) {
                            LOG_ERROR("asr_process_partial() returned NULL!\n");
                         } else {
+                           // Record what ASR is hearing for TUI display
+                           if (asr_result->text && strlen(asr_result->text) > 0) {
+                              metrics_set_last_asr_text(asr_result->text, 0);
+                           }
                            asr_result_free(asr_result);
                            asr_result = NULL;
                         }
@@ -2546,6 +2568,8 @@ int main(int argc, char *argv[]) {
                      if (chunk_text) {
                         LOG_INFO("WAKEWORD_LISTEN: Chunk %zu finalized: \"%s\"",
                                  chunking_manager_get_num_chunks(chunk_mgr) - 1, chunk_text);
+                        // Update TUI with what was heard
+                        metrics_set_last_asr_text(chunk_text, 0);
                         free(chunk_text);
                      }
                      // Reset speech duration after successful chunk
@@ -2915,6 +2939,10 @@ int main(int argc, char *argv[]) {
                      LOG_ERROR("asr_process_partial() returned NULL!\n");
                   } else {
                      size_t current_length = asr_result->text ? strlen(asr_result->text) : 0;
+                     // Record what ASR is hearing for TUI display
+                     if (current_length > 0) {
+                        metrics_set_last_asr_text(asr_result->text, 0);
+                     }
                      if (current_length == prev_text_length) {
                         text_nochange = 1;
                      }
@@ -2962,6 +2990,8 @@ int main(int argc, char *argv[]) {
                      if (chunk_text) {
                         LOG_INFO("COMMAND_RECORDING: Chunk %zu finalized: \"%s\"",
                                  chunking_manager_get_num_chunks(chunk_mgr) - 1, chunk_text);
+                        // Update TUI with what was heard
+                        metrics_set_last_asr_text(chunk_text, 0);
                         free(chunk_text);
                      }
                      // Reset speech duration after successful chunk finalization

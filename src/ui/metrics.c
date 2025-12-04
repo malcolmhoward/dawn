@@ -27,6 +27,7 @@
 #include "ui/metrics.h"
 
 #include <stdarg.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -178,6 +179,12 @@ void metrics_reset(void) {
 
    memset(g_metrics.last_user_command, 0, sizeof(g_metrics.last_user_command));
    memset(g_metrics.last_ai_response, 0, sizeof(g_metrics.last_ai_response));
+   memset(g_metrics.last_asr_text, 0, sizeof(g_metrics.last_asr_text));
+   g_metrics.last_asr_text_time_ms = 0;
+
+   /* Reset audio status counters (but preserve AEC calibration - it's session-persistent) */
+   g_metrics.audio_buffer_fill_pct = 0;
+   g_metrics.bargein_count = 0;
 
    /* Restore preserved values */
    g_metrics.session_start_time = start_time;
@@ -224,6 +231,78 @@ void metrics_update_vad_probability(float probability) {
 
    pthread_mutex_lock(&g_metrics.mutex);
    g_metrics.current_vad_probability = probability;
+   pthread_mutex_unlock(&g_metrics.mutex);
+}
+
+/* ============================================================================
+ * AEC Status
+ * ============================================================================ */
+
+void metrics_update_aec_enabled(bool enabled) {
+   if (!g_initialized) {
+      return;
+   }
+
+   pthread_mutex_lock(&g_metrics.mutex);
+   g_metrics.aec_enabled = enabled;
+   pthread_mutex_unlock(&g_metrics.mutex);
+}
+
+void metrics_record_aec_calibration(bool success, int delay_ms, float correlation) {
+   if (!g_initialized) {
+      return;
+   }
+
+   pthread_mutex_lock(&g_metrics.mutex);
+   g_metrics.aec_calibrated = success;
+   g_metrics.aec_delay_ms = delay_ms;
+   g_metrics.aec_correlation = correlation;
+   pthread_mutex_unlock(&g_metrics.mutex);
+
+   if (success) {
+      metrics_log_activity("AEC calibration: %dms delay (corr: %.2f)", delay_ms, correlation);
+   } else {
+      metrics_log_activity("AEC calibration failed");
+   }
+}
+
+/* ============================================================================
+ * Audio Status
+ * ============================================================================ */
+
+void metrics_update_audio_buffer_fill(float fill_pct) {
+   if (!g_initialized) {
+      return;
+   }
+
+   pthread_mutex_lock(&g_metrics.mutex);
+   g_metrics.audio_buffer_fill_pct = fill_pct;
+   pthread_mutex_unlock(&g_metrics.mutex);
+}
+
+void metrics_record_bargein(void) {
+   if (!g_initialized) {
+      return;
+   }
+
+   pthread_mutex_lock(&g_metrics.mutex);
+   g_metrics.bargein_count++;
+   pthread_mutex_unlock(&g_metrics.mutex);
+
+   metrics_log_activity("Barge-in detected");
+}
+
+void metrics_set_last_asr_text(const char *text, double processing_time_ms) {
+   if (!g_initialized || text == NULL) {
+      return;
+   }
+
+   pthread_mutex_lock(&g_metrics.mutex);
+   strncpy(g_metrics.last_asr_text, text, METRICS_MAX_LOG_LENGTH - 1);
+   g_metrics.last_asr_text[METRICS_MAX_LOG_LENGTH - 1] = '\0';
+   g_metrics.last_asr_text_time_ms = processing_time_ms;
+   /* Sanitize for clean display */
+   sanitize_for_display(g_metrics.last_asr_text);
    pthread_mutex_unlock(&g_metrics.mutex);
 }
 
@@ -562,6 +641,17 @@ int metrics_export_json(const char *filepath) {
    fprintf(fp, "      \"tts_ms\": %.1f,\n", snapshot.last_tts_time_ms);
    fprintf(fp, "      \"total_pipeline_ms\": %.1f\n", snapshot.last_total_pipeline_ms);
    fprintf(fp, "    }\n");
+   fprintf(fp, "  },\n");
+
+   fprintf(fp, "  \"aec\": {\n");
+   fprintf(fp, "    \"enabled\": %s,\n", snapshot.aec_enabled ? "true" : "false");
+   fprintf(fp, "    \"calibrated\": %s,\n", snapshot.aec_calibrated ? "true" : "false");
+   fprintf(fp, "    \"delay_ms\": %d,\n", snapshot.aec_delay_ms);
+   fprintf(fp, "    \"correlation\": %.3f\n", snapshot.aec_correlation);
+   fprintf(fp, "  },\n");
+
+   fprintf(fp, "  \"audio\": {\n");
+   fprintf(fp, "    \"bargein_count\": %u\n", snapshot.bargein_count);
    fprintf(fp, "  },\n");
 
    fprintf(fp, "  \"state_distribution_seconds\": {\n");
