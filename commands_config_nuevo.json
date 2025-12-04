@@ -47,6 +47,14 @@
               "action_command": "{\"device\": \"music\", \"action\": \"stop\"}"
            }
         }
+     },
+     "trigger": {
+        "actions": {
+           "trigger": {
+              "action_words": ["%device_name%", "please %device_name%", "can you %device_name%"],
+              "action_command": "{\"device\": \"%device_name%\", \"action\": \"trigger\"}"
+           }
+        }
      }
   },
   "devices": {
@@ -152,6 +160,11 @@
     "shutdown alpha bravo charlie": {
        "type": "boolean",
        "aliases": ["shut down alpha bravo charlie"],
+       "topic": "dawn"
+    },
+    "reset conversation": {
+       "type": "trigger",
+       "aliases": ["reset context", "clear conversation", "clear context", "start fresh", "new conversation", "fresh start"],
        "topic": "dawn"
     }
   },

@@ -50,6 +50,7 @@ typedef enum {
    VOLUME,                /**< Music playback volume, */
    LOCAL_LLM_SWITCH,      /**< Local LLM switch. */
    CLOUD_LLM_SWITCH,      /**< Cloud LLM switch. */
+   RESET_CONVERSATION,    /**< Reset conversation context. */
    MAX_DEVICE_TYPES       /**< Used to determine the number of device types. */
 } deviceType;
 
@@ -70,7 +71,8 @@ static const char *deviceTypeStrings[] = { "audio playback device",
                                            "viewing",
                                            "volume",
                                            "local llm",
-                                           "cloud llm" };
+                                           "cloud llm",
+                                           "reset conversation" };
 
 /**
  * @brief Associates a device type with a callback function that processes actions for that device.
@@ -235,5 +237,17 @@ char *localLLMCallback(const char *actionName, char *value, int *should_respond)
  * @param should_respond Should the callback return data to the AI or just handle it.
  */
 char *cloudLLMCallback(const char *actionName, char *value, int *should_respond);
+
+/**
+ * @brief Callback function to reset the conversation context.
+ *
+ * Saves the current conversation to JSON, clears the LLM context,
+ * and resets session statistics.
+ *
+ * @param actionName The name of the action triggering this callback.
+ * @param value      Additional value or parameters for the action (may be unused).
+ * @param should_respond Should the callback return data to the AI or just handle it.
+ */
+char *resetConversationCallback(const char *actionName, char *value, int *should_respond);
 
 #endif  // MOSQUITTO_COMMS_H

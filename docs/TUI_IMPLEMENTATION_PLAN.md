@@ -619,17 +619,19 @@ All original phases completed. TUI is fully functional with:
 - VAD state reset after calibration to prevent false triggers
 - Prevents system from getting stuck in "listening" mode when background talking during startup
 
----
-
-## Planned Features
-
-### Phase 5: Text Input Mode (Planned)
+#### Phase 5: Text Input Mode ✅ (Dec 4, 2024)
 
 **Objective:** Allow typing commands as alternative/parallel input to voice
 
-**Trigger:** Press `i` to enter input mode
+**Implementation:**
+- Press `I` to enter text input mode
+- 512 character input buffer with visual cursor
+- Character counter display in panel title bar
+- Thread-safe text queue with mutex protection
+- Arrow keys, Home/End, Delete key support
+- Enter submits, Esc cancels
 
-**UI Design:**
+**UI:**
 ```
 ┌─ Text Input ─────────────────────────────────────────────────── 12/512 ─┐
 │ > Hello Friday, what time is it?█                                        │
@@ -641,37 +643,21 @@ All original phases completed. TUI is fully functional with:
 |-----|--------|
 | `Enter` | Submit text to DAWN |
 | `Esc` | Cancel input, return to normal TUI |
-| `Backspace` | Delete character |
-| Printable chars | Add to buffer |
+| `Backspace` | Delete character before cursor |
+| `Delete` | Delete character at cursor |
+| `←/→` | Move cursor |
+| `Home/End` | Jump to start/end |
+| Printable chars | Insert at cursor |
 
-**Implementation Details:**
+**File Changes:**
+- `src/ui/tui.c`: Input mode state, buffer, panel rendering, keyboard handling
+- `include/ui/tui.h`: Text queue API (`tui_has_text_input()`, `tui_get_text_input()`, `tui_is_input_mode()`)
+- `src/dawn.c`: Poll text queue in SILENCE and WAKEWORD_LISTEN states
 
-1. **Input Buffer:**
-   - 512 character limit
-   - Character counter display: `?/512`
-   - Visual cursor indicator
-
-2. **Thread-Safe Event Queue:**
-   ```c
-   typedef struct {
-      char text[512];
-      bool pending;
-      pthread_mutex_t mutex;
-   } text_input_queue_t;
-   ```
-
-3. **Integration with State Machine:**
-   - Main loop polls queue during `DAWN_STATE_SILENCE`
-   - When text available: skip VAD/ASR, go directly to `PROCESS_COMMAND`
-   - Text treated same as transcribed voice command
-   - Optional: skip wake word check for typed input
-
-4. **File Changes:**
-   - `src/ui/tui.c`: Input mode, buffer, rendering
-   - `include/ui/tui.h`: Text queue API
-   - `src/dawn.c`: Poll text queue in SILENCE state
-
-**Estimated Scope:** ~150-200 lines of new code
+**Integration:**
+- Main loop polls queue during idle states
+- Text input bypasses VAD/ASR, goes directly to PROCESS_COMMAND
+- Works same as voice commands (no wake word needed for typed input)
 
 ---
 

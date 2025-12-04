@@ -28,12 +28,15 @@
 
 #include "ui/tui.h"
 
+#include <ctype.h>
 #include <fcntl.h>
 #include <locale.h>
 #include <ncurses.h>
+#include <pthread.h>
 #include <string.h>
 #include <unistd.h>
 
+#include "conversation_manager.h"
 #include "llm/llm_interface.h"
 #include "logging.h"
 #include "ui/metrics.h"
@@ -64,6 +67,17 @@ static int g_term_rows = 0;
 static int g_term_cols = 0;
 static int g_saved_stderr = -1; /* Saved stderr fd for restoration */
 static int g_dev_null_fd = -1;  /* /dev/null fd */
+
+/* Text input mode state */
+static int g_input_mode = 0;                       /* 1 when in input mode */
+static char g_input_buffer[TUI_INPUT_MAX_LEN + 1]; /* Current input text */
+static int g_input_len = 0;                        /* Current input length */
+static int g_input_cursor = 0;                     /* Cursor position */
+
+/* Thread-safe text input queue */
+static char g_text_queue[TUI_INPUT_MAX_LEN + 1]; /* Submitted text waiting for processing */
+static int g_text_pending = 0;                   /* 1 if text is pending */
+static pthread_mutex_t g_text_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /* Use ASCII box drawing for maximum compatibility */
 #define USE_ASCII_BOX 1
@@ -716,16 +730,100 @@ static void draw_activity_panel(int y, int x, int width, int height, dawn_metric
 
 static void draw_footer(int y, int width) {
    attron(COLOR_PAIR(COLOR_PAIR_DIM));
-   mvprintw(y, 1, " [L]ocal  [C]loud  [D]ebug  [R]eset  [1/2/3] Theme  [Q]uit");
+   if (g_input_mode) {
+      mvprintw(y, 1, " [Enter] Send  [Esc] Cancel  [Backspace] Delete");
+   } else {
+      mvprintw(y, 1, " [I]nput  [L]ocal  [C]loud  [D]ebug  [R]eset Context  [1/2/3] Theme  [Q]uit");
+   }
    attroff(COLOR_PAIR(COLOR_PAIR_DIM));
 
    /* Right-aligned help hint */
-   const char *help_text = "Press ? for help";
+   const char *help_text = g_input_mode ? "Type your message" : "Press ? for help";
    mvprintw(y, width - strlen(help_text) - 1, "%s", help_text);
 }
 
+/**
+ * @brief Draw the text input panel overlay
+ */
+static void draw_input_panel(void) {
+   int panel_height = 3;
+   int panel_width = g_term_cols - 4;
+   int start_y = g_term_rows - 5; /* Just above footer */
+   int start_x = 2;
+
+   /* Draw panel box */
+   attron(COLOR_PAIR(COLOR_PAIR_HIGHLIGHT));
+
+   /* Top border with title */
+   mvaddch(start_y, start_x, '+');
+   for (int i = 1; i < panel_width - 1; i++) {
+      addch('-');
+   }
+   addch('+');
+
+   /* Title */
+   char title[64];
+   snprintf(title, sizeof(title), " Text Input ");
+   mvprintw(start_y, start_x + 2, "%s", title);
+
+   /* Character count on right side of title bar */
+   char count_str[16];
+   snprintf(count_str, sizeof(count_str), " %d/%d ", g_input_len, TUI_INPUT_MAX_LEN);
+   mvprintw(start_y, start_x + panel_width - strlen(count_str) - 2, "%s", count_str);
+
+   /* Input line */
+   mvaddch(start_y + 1, start_x, '|');
+   attron(COLOR_PAIR(COLOR_PAIR_TEXT));
+
+   /* Clear input area */
+   for (int i = 1; i < panel_width - 1; i++) {
+      mvaddch(start_y + 1, start_x + i, ' ');
+   }
+
+   /* Draw prompt and input text */
+   mvprintw(start_y + 1, start_x + 2, "> ");
+
+   /* Calculate visible portion of input (scroll if needed) */
+   int visible_width = panel_width - 7; /* Account for borders, prompt, cursor */
+   int display_start = 0;
+   if (g_input_cursor > visible_width - 1) {
+      display_start = g_input_cursor - visible_width + 1;
+   }
+
+   /* Display input text */
+   int display_len = g_input_len - display_start;
+   if (display_len > visible_width) {
+      display_len = visible_width;
+   }
+   if (display_len > 0) {
+      mvprintw(start_y + 1, start_x + 4, "%.*s", display_len, g_input_buffer + display_start);
+   }
+
+   /* Draw cursor */
+   int cursor_x = start_x + 4 + (g_input_cursor - display_start);
+   attron(A_REVERSE);
+   if (g_input_cursor < g_input_len) {
+      mvaddch(start_y + 1, cursor_x, g_input_buffer[g_input_cursor]);
+   } else {
+      mvaddch(start_y + 1, cursor_x, ' ');
+   }
+   attroff(A_REVERSE);
+
+   attron(COLOR_PAIR(COLOR_PAIR_HIGHLIGHT));
+   mvaddch(start_y + 1, start_x + panel_width - 1, '|');
+
+   /* Bottom border */
+   mvaddch(start_y + 2, start_x, '+');
+   for (int i = 1; i < panel_width - 1; i++) {
+      addch('-');
+   }
+   addch('+');
+
+   attroff(COLOR_PAIR(COLOR_PAIR_HIGHLIGHT));
+}
+
 static void draw_help_overlay(void) {
-   int height = 16;
+   int height = 18;
    int width = 50;
    int start_y = (g_term_rows - height) / 2;
    int start_x = (g_term_cols - width) / 2;
@@ -740,16 +838,17 @@ static void draw_help_overlay(void) {
    mvprintw(start_y + 2, start_x + 2, "---------------------------------------------");
 
    mvprintw(start_y + 4, start_x + 4, "Q/Esc    Quit DAWN");
-   mvprintw(start_y + 5, start_x + 4, "D        Toggle Debug Log mode");
-   mvprintw(start_y + 6, start_x + 4, "R        Reset session statistics");
-   mvprintw(start_y + 7, start_x + 4, "L        Switch to Local LLM (session)");
-   mvprintw(start_y + 8, start_x + 4, "C        Switch to Cloud LLM (session)");
-   mvprintw(start_y + 9, start_x + 4, "1        Green (Apple ][) theme");
-   mvprintw(start_y + 10, start_x + 4, "2        Blue (JARVIS) theme");
-   mvprintw(start_y + 11, start_x + 4, "3        B/W (High Contrast) theme");
-   mvprintw(start_y + 12, start_x + 4, "?        Toggle this help");
+   mvprintw(start_y + 5, start_x + 4, "I        Enter text input mode");
+   mvprintw(start_y + 6, start_x + 4, "D        Toggle Debug Log mode");
+   mvprintw(start_y + 7, start_x + 4, "R        Reset conversation (save & clear)");
+   mvprintw(start_y + 8, start_x + 4, "L        Switch to Local LLM (session)");
+   mvprintw(start_y + 9, start_x + 4, "C        Switch to Cloud LLM (session)");
+   mvprintw(start_y + 10, start_x + 4, "1        Green (Apple ][) theme");
+   mvprintw(start_y + 11, start_x + 4, "2        Blue (JARVIS) theme");
+   mvprintw(start_y + 12, start_x + 4, "3        B/W (High Contrast) theme");
+   mvprintw(start_y + 13, start_x + 4, "?        Toggle this help");
 
-   mvprintw(start_y + 14, start_x + 2, "Press any key to close...");
+   mvprintw(start_y + 15, start_x + 2, "Press any key to close...");
    attroff(COLOR_PAIR(COLOR_PAIR_WARNING));
 }
 
@@ -914,6 +1013,11 @@ void tui_update(void) {
    /* Footer */
    draw_footer(g_term_rows - 1, g_term_cols);
 
+   /* Input panel if in input mode */
+   if (g_input_mode) {
+      draw_input_panel();
+   }
+
    /* Help overlay if active */
    if (g_show_help) {
       draw_help_overlay();
@@ -921,6 +1025,97 @@ void tui_update(void) {
 
    /* Refresh display */
    refresh();
+}
+
+/**
+ * @brief Handle input mode keyboard events
+ * @param ch The character/key pressed
+ * @return 1 if input was submitted, 0 otherwise
+ */
+static int handle_input_mode_key(int ch) {
+   switch (ch) {
+      case 27: /* ESC - cancel input */
+         g_input_mode = 0;
+         g_input_len = 0;
+         g_input_cursor = 0;
+         g_input_buffer[0] = '\0';
+         break;
+
+      case '\n':
+      case '\r':
+      case KEY_ENTER: /* Enter - submit input */
+         if (g_input_len > 0) {
+            /* Copy to thread-safe queue */
+            pthread_mutex_lock(&g_text_mutex);
+            strncpy(g_text_queue, g_input_buffer, TUI_INPUT_MAX_LEN);
+            g_text_queue[TUI_INPUT_MAX_LEN] = '\0';
+            g_text_pending = 1;
+            pthread_mutex_unlock(&g_text_mutex);
+
+            /* Log activity */
+            metrics_log_activity("USER (text input): %s", g_input_buffer);
+         }
+         /* Clear input state */
+         g_input_mode = 0;
+         g_input_len = 0;
+         g_input_cursor = 0;
+         g_input_buffer[0] = '\0';
+         break;
+
+      case KEY_BACKSPACE:
+      case 127:
+      case 8: /* Backspace */
+         if (g_input_cursor > 0) {
+            /* Delete char before cursor */
+            memmove(&g_input_buffer[g_input_cursor - 1], &g_input_buffer[g_input_cursor],
+                    g_input_len - g_input_cursor + 1);
+            g_input_cursor--;
+            g_input_len--;
+         }
+         break;
+
+      case KEY_DC: /* Delete key */
+         if (g_input_cursor < g_input_len) {
+            /* Delete char at cursor */
+            memmove(&g_input_buffer[g_input_cursor], &g_input_buffer[g_input_cursor + 1],
+                    g_input_len - g_input_cursor);
+            g_input_len--;
+         }
+         break;
+
+      case KEY_LEFT:
+         if (g_input_cursor > 0) {
+            g_input_cursor--;
+         }
+         break;
+
+      case KEY_RIGHT:
+         if (g_input_cursor < g_input_len) {
+            g_input_cursor++;
+         }
+         break;
+
+      case KEY_HOME:
+         g_input_cursor = 0;
+         break;
+
+      case KEY_END:
+         g_input_cursor = g_input_len;
+         break;
+
+      default:
+         /* Printable character */
+         if (isprint(ch) && g_input_len < TUI_INPUT_MAX_LEN) {
+            /* Insert character at cursor */
+            memmove(&g_input_buffer[g_input_cursor + 1], &g_input_buffer[g_input_cursor],
+                    g_input_len - g_input_cursor + 1);
+            g_input_buffer[g_input_cursor] = (char)ch;
+            g_input_cursor++;
+            g_input_len++;
+         }
+         break;
+   }
+   return 0;
 }
 
 int tui_handle_input(void) {
@@ -933,17 +1128,39 @@ int tui_handle_input(void) {
       return 0; /* No input */
    }
 
+   /* Handle resize in any mode */
+   if (ch == KEY_RESIZE) {
+      tui_handle_resize();
+      return 0;
+   }
+
+   /* If in input mode, handle input keys */
+   if (g_input_mode) {
+      handle_input_mode_key(ch);
+      return 0;
+   }
+
    /* If help is showing, any key closes it */
    if (g_show_help) {
       g_show_help = 0;
       return 0;
    }
 
+   /* Normal mode key handling */
    switch (ch) {
       case 'q':
       case 'Q':
       case 27:     /* ESC key */
          return 1; /* Request quit */
+
+      case 'i':
+      case 'I':
+         /* Enter text input mode */
+         g_input_mode = 1;
+         g_input_len = 0;
+         g_input_cursor = 0;
+         g_input_buffer[0] = '\0';
+         break;
 
       case 'd':
       case 'D':
@@ -952,7 +1169,7 @@ int tui_handle_input(void) {
 
       case 'r':
       case 'R':
-         metrics_reset();
+         reset_conversation();
          break;
 
       case '1':
@@ -989,10 +1206,6 @@ int tui_handle_input(void) {
          }
          break;
 
-      case KEY_RESIZE:
-         tui_handle_resize();
-         break;
-
       default:
          break;
    }
@@ -1026,4 +1239,35 @@ void tui_handle_resize(void) {
       clear();
       tui_update();
    }
+}
+
+int tui_has_text_input(void) {
+   int result;
+   pthread_mutex_lock(&g_text_mutex);
+   result = g_text_pending;
+   pthread_mutex_unlock(&g_text_mutex);
+   return result;
+}
+
+int tui_get_text_input(char *buffer) {
+   int result = 0;
+   if (buffer == NULL) {
+      return 0;
+   }
+
+   pthread_mutex_lock(&g_text_mutex);
+   if (g_text_pending) {
+      strncpy(buffer, g_text_queue, TUI_INPUT_MAX_LEN);
+      buffer[TUI_INPUT_MAX_LEN] = '\0';
+      g_text_pending = 0;
+      g_text_queue[0] = '\0';
+      result = 1;
+   }
+   pthread_mutex_unlock(&g_text_mutex);
+
+   return result;
+}
+
+int tui_is_input_mode(void) {
+   return g_input_mode;
 }

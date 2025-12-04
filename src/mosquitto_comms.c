@@ -39,6 +39,7 @@
 /* Local */
 #include "audio/flac_playback.h"
 #include "audio/mic_passthrough.h"
+#include "conversation_manager.h"
 #include "dawn.h"
 #include "llm/llm_interface.h"
 #include "logging.h"
@@ -70,7 +71,8 @@ static deviceCallback deviceCallbackArray[] = { { AUDIO_PLAYBACK_DEVICE, setPcmP
                                                 { VIEWING, viewingCallback },
                                                 { VOLUME, volumeCallback },
                                                 { LOCAL_LLM_SWITCH, localLLMCallback },
-                                                { CLOUD_LLM_SWITCH, cloudLLMCallback } };
+                                                { CLOUD_LLM_SWITCH, cloudLLMCallback },
+                                                { RESET_CONVERSATION, resetConversationCallback } };
 
 static pthread_t music_thread = -1;
 static pthread_t voice_thread = -1;
@@ -1111,6 +1113,17 @@ char *cloudLLMCallback(const char *actionName, char *value, int *should_respond)
 
    // Always return string for AI modes (ignored in DIRECT_ONLY)
    strcpy(return_buffer, "AI switched to cloud LLM");
+   *should_respond = 1;
+   return return_buffer;
+}
+
+char *resetConversationCallback(const char *actionName, char *value, int *should_respond) {
+   static char return_buffer[256];
+
+   LOG_INFO("Resetting conversation context via command.");
+   reset_conversation();
+
+   strcpy(return_buffer, "Conversation context has been reset. Starting fresh.");
    *should_respond = 1;
    return return_buffer;
 }

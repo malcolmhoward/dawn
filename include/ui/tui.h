@@ -52,6 +52,11 @@ typedef enum {
 } tui_mode_t;
 
 /**
+ * @brief Maximum characters for text input buffer
+ */
+#define TUI_INPUT_MAX_LEN 512
+
+/**
  * @brief Minimum terminal dimensions for TUI
  */
 #define TUI_MIN_COLS 80
@@ -165,6 +170,34 @@ int tui_check_terminal_size(void);
  * Called when SIGWINCH is received to adapt to new terminal size.
  */
 void tui_handle_resize(void);
+
+/**
+ * @brief Check if text input is pending
+ *
+ * Thread-safe check for pending text input from TUI.
+ * Call this from the main loop to check for typed commands.
+ *
+ * @return 1 if text input is available, 0 otherwise
+ */
+int tui_has_text_input(void);
+
+/**
+ * @brief Get pending text input
+ *
+ * Thread-safe retrieval of text input. Clears the pending flag.
+ * Buffer must be at least TUI_INPUT_MAX_LEN bytes.
+ *
+ * @param buffer Output buffer for the text (must be TUI_INPUT_MAX_LEN bytes)
+ * @return 1 if text was retrieved, 0 if no text available
+ */
+int tui_get_text_input(char *buffer);
+
+/**
+ * @brief Check if TUI is in text input mode
+ *
+ * @return 1 if in input mode, 0 otherwise
+ */
+int tui_is_input_mode(void);
 
 #ifdef __cplusplus
 }

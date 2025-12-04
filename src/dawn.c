@@ -1027,6 +1027,57 @@ int save_conversation_history(struct json_object *conversation_history) {
    return 0;
 }
 
+/* Mutex for thread-safe conversation management */
+static pthread_mutex_t conversation_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+/**
+ * @brief Reset conversation context (save current, start fresh)
+ *
+ * Saves the current conversation to a JSON file, then resets the
+ * conversation history to just the system message. Also resets metrics.
+ * Can be triggered by TUI 'R' key or voice command.
+ *
+ * @note Thread-safe: Uses conversation_mutex for synchronization.
+ */
+void reset_conversation(void) {
+   pthread_mutex_lock(&conversation_mutex);
+
+   LOG_INFO("Resetting conversation context...");
+
+   /* Save current conversation before clearing */
+   if (conversation_history != NULL &&
+       json_object_array_length(conversation_history) > 1) {
+      save_conversation_history(conversation_history);
+   }
+
+   /* Free old conversation */
+   if (conversation_history != NULL) {
+      json_object_put(conversation_history);
+   }
+
+   /* Create fresh conversation with system message */
+   conversation_history = json_object_new_array();
+   struct json_object *new_system_message = json_object_new_object();
+   json_object_object_add(new_system_message, "role", json_object_new_string("system"));
+
+   if (command_processing_mode == CMD_MODE_LLM_ONLY ||
+       command_processing_mode == CMD_MODE_DIRECT_FIRST) {
+      json_object_object_add(new_system_message, "content",
+                             json_object_new_string(get_command_prompt()));
+   } else {
+      json_object_object_add(new_system_message, "content", json_object_new_string(AI_DESCRIPTION));
+   }
+   json_object_array_add(conversation_history, new_system_message);
+
+   /* Reset metrics */
+   metrics_reset();
+
+   LOG_INFO("Conversation reset complete - fresh context ready");
+   metrics_log_activity("Conversation reset - fresh context");
+
+   pthread_mutex_unlock(&conversation_mutex);
+}
+
 /**
  * @brief Reset all subsystems for a new utterance
  *
@@ -2252,6 +2303,22 @@ int main(int argc, char *argv[]) {
             }
             pthread_mutex_unlock(&tts_mutex);
 
+#ifdef ENABLE_TUI
+            /* Check for text input from TUI (skip voice path entirely) */
+            if (tui_has_text_input()) {
+               char tui_text[TUI_INPUT_MAX_LEN + 1];
+               if (tui_get_text_input(tui_text)) {
+                  LOG_INFO("TUI text input received: %s", tui_text);
+                  command_text = strdup(tui_text);
+                  if (command_text) {
+                     silenceNextState = DAWN_STATE_WAKEWORD_LISTEN;
+                     recState = DAWN_STATE_PROCESS_COMMAND;
+                     break;
+                  }
+               }
+            }
+#endif
+
             capture_buffer(&myAudioControls, max_buff, max_buff_size, &buff_size);
 
             // Store audio in pre-roll buffer (circular buffer for speech padding)
@@ -2474,6 +2541,22 @@ int main(int argc, char *argv[]) {
                tts_playback_state = TTS_PLAYBACK_PAUSE;
             }
             pthread_mutex_unlock(&tts_mutex);
+
+#ifdef ENABLE_TUI
+            /* Check for text input from TUI (skip voice path entirely) */
+            if (tui_has_text_input()) {
+               char tui_text[TUI_INPUT_MAX_LEN + 1];
+               if (tui_get_text_input(tui_text)) {
+                  LOG_INFO("TUI text input received: %s", tui_text);
+                  command_text = strdup(tui_text);
+                  if (command_text) {
+                     silenceNextState = DAWN_STATE_WAKEWORD_LISTEN;
+                     recState = DAWN_STATE_PROCESS_COMMAND;
+                     break;
+                  }
+               }
+            }
+#endif
 
             capture_buffer(&myAudioControls, max_buff, max_buff_size, &buff_size);
 
