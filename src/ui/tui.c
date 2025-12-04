@@ -37,6 +37,7 @@
 #include <unistd.h>
 
 #include "conversation_manager.h"
+#include "input_queue.h"
 #include "llm/llm_interface.h"
 #include "logging.h"
 #include "ui/metrics.h"
@@ -74,10 +75,7 @@ static char g_input_buffer[TUI_INPUT_MAX_LEN + 1]; /* Current input text */
 static int g_input_len = 0;                        /* Current input length */
 static int g_input_cursor = 0;                     /* Cursor position */
 
-/* Thread-safe text input queue */
-static char g_text_queue[TUI_INPUT_MAX_LEN + 1]; /* Submitted text waiting for processing */
-static int g_text_pending = 0;                   /* 1 if text is pending */
-static pthread_mutex_t g_text_mutex = PTHREAD_MUTEX_INITIALIZER;
+/* Text input now uses unified input_queue.h instead of internal queue */
 
 /* Use ASCII box drawing for maximum compatibility */
 #define USE_ASCII_BOX 1
@@ -1045,12 +1043,8 @@ static int handle_input_mode_key(int ch) {
       case '\r':
       case KEY_ENTER: /* Enter - submit input */
          if (g_input_len > 0) {
-            /* Copy to thread-safe queue */
-            pthread_mutex_lock(&g_text_mutex);
-            strncpy(g_text_queue, g_input_buffer, TUI_INPUT_MAX_LEN);
-            g_text_queue[TUI_INPUT_MAX_LEN] = '\0';
-            g_text_pending = 1;
-            pthread_mutex_unlock(&g_text_mutex);
+            /* Push to unified input queue */
+            input_queue_push(INPUT_SOURCE_TUI, g_input_buffer);
 
             /* Log activity */
             metrics_log_activity("USER (text input): %s", g_input_buffer);
@@ -1242,30 +1236,25 @@ void tui_handle_resize(void) {
 }
 
 int tui_has_text_input(void) {
-   int result;
-   pthread_mutex_lock(&g_text_mutex);
-   result = g_text_pending;
-   pthread_mutex_unlock(&g_text_mutex);
-   return result;
+   /* Delegate to unified input queue */
+   return input_queue_has_item();
 }
 
 int tui_get_text_input(char *buffer) {
-   int result = 0;
+   queued_input_t input;
+
    if (buffer == NULL) {
       return 0;
    }
 
-   pthread_mutex_lock(&g_text_mutex);
-   if (g_text_pending) {
-      strncpy(buffer, g_text_queue, TUI_INPUT_MAX_LEN);
+   /* Delegate to unified input queue */
+   if (input_queue_pop(&input)) {
+      strncpy(buffer, input.text, TUI_INPUT_MAX_LEN);
       buffer[TUI_INPUT_MAX_LEN] = '\0';
-      g_text_pending = 0;
-      g_text_queue[0] = '\0';
-      result = 1;
+      return 1;
    }
-   pthread_mutex_unlock(&g_text_mutex);
 
-   return result;
+   return 0;
 }
 
 int tui_is_input_mode(void) {

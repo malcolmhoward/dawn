@@ -49,6 +49,7 @@
 #include "audio/audio_capture_thread.h"
 #include "audio_utils.h"
 #include "dawn.h"
+#include "input_queue.h"
 #include "llm/llm_command_parser.h"
 #include "llm/llm_interface.h"
 #include "logging.h"
@@ -1045,8 +1046,7 @@ void reset_conversation(void) {
    LOG_INFO("Resetting conversation context...");
 
    /* Save current conversation before clearing */
-   if (conversation_history != NULL &&
-       json_object_array_length(conversation_history) > 1) {
+   if (conversation_history != NULL && json_object_array_length(conversation_history) > 1) {
       save_conversation_history(conversation_history);
    }
 
@@ -1123,6 +1123,43 @@ static void reset_for_new_utterance(silero_vad_context_t *vad_ctx,
    // Reset pre-roll buffer
    *preroll_write_pos = 0;
    *preroll_valid_bytes = 0;
+}
+
+/**
+ * @brief Check input queue and process any pending text commands.
+ *
+ * Checks the unified input queue for pending commands from any source
+ * (TUI, future REST, WebSocket, etc.) and processes them if found.
+ *
+ * @param command_text_out Pointer to command text buffer to populate.
+ * @param rec_state Output state to transition to on success.
+ * @param silence_next_state State to return to after processing.
+ * @return 1 if input was processed and state should change, 0 otherwise.
+ */
+static int check_and_process_input_queue(char **command_text_out,
+                                         dawn_state_t *rec_state,
+                                         dawn_state_t *silence_next_state) {
+   if (!input_queue_has_item()) {
+      return 0;
+   }
+
+   queued_input_t input;
+   if (!input_queue_pop(&input)) {
+      return 0;
+   }
+
+   LOG_INFO("Text input from %s: %s", input_source_name(input.source), input.text);
+
+   *command_text_out = strdup(input.text);
+   if (*command_text_out == NULL) {
+      LOG_ERROR("Failed to allocate memory for text input from %s",
+                input_source_name(input.source));
+      return 0;
+   }
+
+   *silence_next_state = DAWN_STATE_WAKEWORD_LISTEN;
+   *rec_state = DAWN_STATE_PROCESS_COMMAND;
+   return 1;
 }
 
 /* Publish AI State. Only send state if it's changed.
@@ -2303,21 +2340,10 @@ int main(int argc, char *argv[]) {
             }
             pthread_mutex_unlock(&tts_mutex);
 
-#ifdef ENABLE_TUI
-            /* Check for text input from TUI (skip voice path entirely) */
-            if (tui_has_text_input()) {
-               char tui_text[TUI_INPUT_MAX_LEN + 1];
-               if (tui_get_text_input(tui_text)) {
-                  LOG_INFO("TUI text input received: %s", tui_text);
-                  command_text = strdup(tui_text);
-                  if (command_text) {
-                     silenceNextState = DAWN_STATE_WAKEWORD_LISTEN;
-                     recState = DAWN_STATE_PROCESS_COMMAND;
-                     break;
-                  }
-               }
+            /* Check for text input from any source (TUI, future REST, etc.) */
+            if (check_and_process_input_queue(&command_text, &recState, &silenceNextState)) {
+               break;
             }
-#endif
 
             capture_buffer(&myAudioControls, max_buff, max_buff_size, &buff_size);
 
@@ -2542,21 +2568,10 @@ int main(int argc, char *argv[]) {
             }
             pthread_mutex_unlock(&tts_mutex);
 
-#ifdef ENABLE_TUI
-            /* Check for text input from TUI (skip voice path entirely) */
-            if (tui_has_text_input()) {
-               char tui_text[TUI_INPUT_MAX_LEN + 1];
-               if (tui_get_text_input(tui_text)) {
-                  LOG_INFO("TUI text input received: %s", tui_text);
-                  command_text = strdup(tui_text);
-                  if (command_text) {
-                     silenceNextState = DAWN_STATE_WAKEWORD_LISTEN;
-                     recState = DAWN_STATE_PROCESS_COMMAND;
-                     break;
-                  }
-               }
+            /* Check for text input from any source (TUI, future REST, etc.) */
+            if (check_and_process_input_queue(&command_text, &recState, &silenceNextState)) {
+               break;
             }
-#endif
 
             capture_buffer(&myAudioControls, max_buff, max_buff_size, &buff_size);
 
