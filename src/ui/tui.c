@@ -346,14 +346,8 @@ static void draw_status_panel(int y, int x, int width, dawn_metrics_t *metrics) 
    mvprintw(y + 3, x + 2, "AEC: ");
    attroff(COLOR_PAIR(COLOR_PAIR_TEXT));
 
-   /* Determine AEC backend name at compile time */
-#if defined(AEC_BACKEND_WEBRTC)
+   /* AEC backend is WebRTC when enabled */
    const char *aec_backend = "WebRTC";
-#elif defined(AEC_BACKEND_SPEEX)
-   const char *aec_backend = "Speex";
-#else
-   const char *aec_backend = NULL;
-#endif
 
    if (metrics->aec_enabled) {
       if (metrics->aec_calibrated) {

@@ -153,116 +153,75 @@ include_directories(${SAMPLERATE_INCLUDE_DIRS})
 message(STATUS "libsamplerate: Found (${SAMPLERATE_VERSION})")
 
 # =============================================================================
-# AEC Support (Acoustic Echo Cancellation)
+# AEC Support (Acoustic Echo Cancellation) - WebRTC AEC3
 # =============================================================================
-# AEC_BACKEND options: WEBRTC, SPEEX, OFF
-set(AEC_BACKEND "WEBRTC" CACHE STRING "AEC backend: WEBRTC, SPEEX, or OFF")
-set_property(CACHE AEC_BACKEND PROPERTY STRINGS "WEBRTC" "SPEEX" "OFF")
+# Note: Speex AEC was evaluated but removed due to ineffective echo cancellation
+# in our architecture. WebRTC AEC3 provides significantly better performance.
+# See git history for Speex implementation if needed.
+#
+# Options: ON (WebRTC), OFF
+option(ENABLE_AEC "Enable WebRTC AEC3 echo cancellation" ON)
 
-# Legacy option for compatibility
-option(ENABLE_AEC "Enable AEC (deprecated, use AEC_BACKEND instead)" ON)
-
-# Handle legacy ENABLE_AEC=OFF
 if(NOT ENABLE_AEC)
-    set(AEC_BACKEND "OFF")
-endif()
-
-if(AEC_BACKEND STREQUAL "OFF")
-    message(STATUS "AEC: DISABLED (use -DAEC_BACKEND=SPEEX or -DAEC_BACKEND=WEBRTC to enable)")
+    message(STATUS "AEC: DISABLED (use -DENABLE_AEC=ON to enable WebRTC AEC3)")
     set(AEC_ENABLED FALSE)
 else()
     set(AEC_ENABLED TRUE)
-    # Note: ENABLE_AEC define is added via target_compile_definitions() after add_executable()
-    message(STATUS "AEC: Checking dependencies for ${AEC_BACKEND} backend...")
+    message(STATUS "AEC: Checking WebRTC dependencies...")
 
-    # -------------------------------------------------------------------------
-    # Backend-specific configuration
-    # -------------------------------------------------------------------------
-    if(AEC_BACKEND STREQUAL "WEBRTC")
-        # WebRTC AEC3 backend
-        # Note: AEC_BACKEND_WEBRTC define is added via target_compile_definitions() after add_executable()
+    # WebRTC AEC3 backend
+    set(WEBRTC_AP_ROOT ${CMAKE_SOURCE_DIR}/webrtc-audio-processing)
+    set(WEBRTC_AP_BUILD ${WEBRTC_AP_ROOT}/build)
 
-        set(WEBRTC_AP_ROOT ${CMAKE_SOURCE_DIR}/webrtc-audio-processing)
-        set(WEBRTC_AP_BUILD ${WEBRTC_AP_ROOT}/build)
-
-        # Check that submodule exists and was built
-        if(NOT EXISTS "${WEBRTC_AP_ROOT}/webrtc/modules/audio_processing/include/audio_processing.h")
-            message(FATAL_ERROR
-                "WebRTC audio processing submodule not found or not initialized.\n"
-                "Run: git submodule update --init --recursive\n"
-                "Then: cd webrtc-audio-processing && meson setup build && ninja -C build")
-        endif()
-
-        if(NOT EXISTS "${WEBRTC_AP_BUILD}/webrtc/modules/audio_processing/libwebrtc-audio-processing-1.a")
-            message(FATAL_ERROR
-                "WebRTC audio processing not built.\n"
-                "Run: cd webrtc-audio-processing && meson setup build && ninja -C build")
-        endif()
-
-        # Include paths for headers
-        include_directories(${WEBRTC_AP_ROOT})
-        include_directories(${WEBRTC_AP_ROOT}/webrtc)
-        include_directories(${WEBRTC_AP_BUILD})
-        include_directories(${WEBRTC_AP_BUILD}/webrtc)
-
-        # Abseil includes for WebRTC
-        find_package(PkgConfig REQUIRED)
-        pkg_check_modules(ABSL REQUIRED
-            absl_base
-            absl_strings
-            absl_synchronization
-            absl_bad_optional_access
-            absl_optional
-            absl_bad_variant_access
-            absl_variant
-            absl_status
-            absl_statusor
-            absl_flags
-            absl_flags_parse
-        )
-        include_directories(${ABSL_INCLUDE_DIRS})
-
-        message(STATUS "  webrtc-audio-processing: Found (local build v1.3)")
-        message(STATUS "AEC: ENABLED (WebRTC AEC3)")
-
-        set(AEC_SOURCES
-            src/audio/aec_webrtc.cpp
-            src/audio/aec_calibration.c
-        )
-        set(AEC_LIBRARIES
-            ${WEBRTC_AP_BUILD}/webrtc/modules/audio_processing/libwebrtc-audio-processing-1.a
-            ${SAMPLERATE_LIBRARIES}
-            ${ABSL_LIBRARIES}
-        )
-
-    elseif(AEC_BACKEND STREQUAL "SPEEX")
-        # Speex AEC backend
-        # Note: AEC_BACKEND_SPEEX define is added via target_compile_definitions() after add_executable()
-
-        pkg_check_modules(SPEEXDSP speexdsp)
-        if(NOT SPEEXDSP_FOUND)
-            message(FATAL_ERROR
-                "libspeexdsp not found.\n"
-                "Install with: sudo apt-get install libspeexdsp-dev\n"
-                "Or use WebRTC: cmake -DAEC_BACKEND=WEBRTC ..")
-        endif()
-        include_directories(${SPEEXDSP_INCLUDE_DIRS})
-
-        message(STATUS "  speexdsp: Found (${SPEEXDSP_VERSION})")
-        message(STATUS "AEC: ENABLED (Speex)")
-
-        set(AEC_SOURCES
-            src/audio/aec_speex.cpp
-            src/audio/aec_calibration.c
-        )
-        set(AEC_LIBRARIES
-            ${SPEEXDSP_LIBRARIES}
-            ${SAMPLERATE_LIBRARIES}
-        )
-
-    else()
-        message(FATAL_ERROR "Invalid AEC_BACKEND: ${AEC_BACKEND}. Use WEBRTC, SPEEX, or OFF")
+    # Check that submodule exists and was built
+    if(NOT EXISTS "${WEBRTC_AP_ROOT}/webrtc/modules/audio_processing/include/audio_processing.h")
+        message(FATAL_ERROR
+            "WebRTC audio processing submodule not found or not initialized.\n"
+            "Run: git submodule update --init --recursive\n"
+            "Then: cd webrtc-audio-processing && meson setup build && ninja -C build")
     endif()
+
+    if(NOT EXISTS "${WEBRTC_AP_BUILD}/webrtc/modules/audio_processing/libwebrtc-audio-processing-1.a")
+        message(FATAL_ERROR
+            "WebRTC audio processing not built.\n"
+            "Run: cd webrtc-audio-processing && meson setup build && ninja -C build")
+    endif()
+
+    # Include paths for headers
+    include_directories(${WEBRTC_AP_ROOT})
+    include_directories(${WEBRTC_AP_ROOT}/webrtc)
+    include_directories(${WEBRTC_AP_BUILD})
+    include_directories(${WEBRTC_AP_BUILD}/webrtc)
+
+    # Abseil includes for WebRTC
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(ABSL REQUIRED
+        absl_base
+        absl_strings
+        absl_synchronization
+        absl_bad_optional_access
+        absl_optional
+        absl_bad_variant_access
+        absl_variant
+        absl_status
+        absl_statusor
+        absl_flags
+        absl_flags_parse
+    )
+    include_directories(${ABSL_INCLUDE_DIRS})
+
+    message(STATUS "  webrtc-audio-processing: Found (local build v1.3)")
+    message(STATUS "AEC: ENABLED (WebRTC AEC3)")
+
+    set(AEC_SOURCES
+        src/audio/aec_webrtc.cpp
+        src/audio/aec_calibration.c
+    )
+    set(AEC_LIBRARIES
+        ${WEBRTC_AP_BUILD}/webrtc/modules/audio_processing/libwebrtc-audio-processing-1.a
+        ${SAMPLERATE_LIBRARIES}
+        ${ABSL_LIBRARIES}
+    )
 endif()
 
 # ASR Engine Options
@@ -366,11 +325,7 @@ add_executable(dawn ${DAWN_SOURCES})
 # AEC compile definitions (target-specific to avoid rebuilding whisper/ggml)
 if(AEC_ENABLED)
     target_compile_definitions(dawn PRIVATE ENABLE_AEC)
-    if(AEC_BACKEND STREQUAL "WEBRTC")
-        target_compile_definitions(dawn PRIVATE AEC_BACKEND_WEBRTC)
-    elseif(AEC_BACKEND STREQUAL "SPEEX")
-        target_compile_definitions(dawn PRIVATE AEC_BACKEND_SPEEX)
-    endif()
+    target_compile_definitions(dawn PRIVATE AEC_BACKEND_WEBRTC)
 endif()
 
 target_link_libraries(dawn

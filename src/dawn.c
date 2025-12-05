@@ -93,6 +93,8 @@
 #define VAD_TTS_DEBOUNCE_COUNT 3    // Consecutive detections required during TTS playback
 #define VAD_TTS_COOLDOWN_MS \
    1500  // Keep using TTS threshold for 1.5s after TTS stops (covers streaming gaps)
+#define VAD_TTS_STARTUP_COOLDOWN_MS \
+   300  // Block barge-in for 300ms after TTS starts (AEC needs time to converge)
 #define VAD_END_OF_SPEECH_DURATION 1.2f   // Seconds of silence to consider speech ended (optimized)
 #define VAD_MAX_RECORDING_DURATION 30.0f  // Maximum recording duration (semantic timeout)
 
@@ -2373,6 +2375,9 @@ int main(int argc, char *argv[]) {
             static int tts_vad_debounce = 0;  // Consecutive VAD detections during TTS
             static struct timespec
                 tts_last_active;  // Timestamp when TTS was last active (monotonic)
+            static struct timespec
+                tts_started_at;          // Timestamp when TTS started playing (for startup cooldown)
+            static int tts_was_playing = 0;  // Track TTS state transitions
             static int tts_timer_initialized = 0;
             static dawn_state_t prev_vad_state = DAWN_STATE_INVALID;  // Track state transitions
 
@@ -2380,6 +2385,7 @@ int main(int argc, char *argv[]) {
             if (!tts_timer_initialized) {
                clock_gettime(CLOCK_MONOTONIC, &tts_last_active);
                tts_last_active.tv_sec -= 10;  // Start 10s in the past (no cooldown at startup)
+               tts_started_at = tts_last_active;  // Also initialize startup timer
                tts_timer_initialized = 1;
             }
 
@@ -2426,16 +2432,28 @@ int main(int argc, char *argv[]) {
                                          tts_playback_state == TTS_PLAYBACK_PAUSE);
                   pthread_mutex_unlock(&tts_mutex);
 
-                  // Update last active timestamp if TTS is playing (monotonic clock)
-                  if (tts_playing_now) {
-                     clock_gettime(CLOCK_MONOTONIC, &tts_last_active);
-                  }
-
-                  // Calculate time since TTS was last active (monotonic - immune to clock changes)
+                  // Track TTS start transition for startup cooldown
                   struct timespec now;
                   clock_gettime(CLOCK_MONOTONIC, &now);
+
+                  if (tts_playing_now && !tts_was_playing) {
+                     // TTS just started - record start time for startup cooldown
+                     tts_started_at = now;
+                  }
+                  tts_was_playing = tts_playing_now;
+
+                  // Update last active timestamp if TTS is playing (monotonic clock)
+                  if (tts_playing_now) {
+                     tts_last_active = now;
+                  }
+
+                  // Calculate time since TTS was last active (for post-TTS cooldown)
                   long elapsed_ms = (now.tv_sec - tts_last_active.tv_sec) * 1000 +
                                     (now.tv_nsec - tts_last_active.tv_nsec) / 1000000;
+
+                  // Calculate time since TTS started (for startup cooldown)
+                  long startup_elapsed_ms = (now.tv_sec - tts_started_at.tv_sec) * 1000 +
+                                            (now.tv_nsec - tts_started_at.tv_nsec) / 1000000;
 
                   // TTS-aware VAD: use higher threshold if TTS playing OR within cooldown
                   int tts_is_active = tts_playing_now || (elapsed_ms < VAD_TTS_COOLDOWN_MS);
@@ -2466,6 +2484,10 @@ int main(int argc, char *argv[]) {
                      // If barge-in is disabled (boot phase or CLI option), ignore all speech
                      if (g_bargein_disabled) {
                         tts_vad_debounce = 0;
+                     } else if (tts_playing_now &&
+                                startup_elapsed_ms < VAD_TTS_STARTUP_COOLDOWN_MS) {
+                        // During TTS startup cooldown: AEC needs time to converge, block barge-in
+                        tts_vad_debounce = 0;  // Reset debounce during startup
                      } else if (tts_is_active) {
                         // During TTS (or cooldown): require consecutive detections (debounce)
                         tts_vad_debounce++;
@@ -2473,12 +2495,12 @@ int main(int argc, char *argv[]) {
                            speech_detected = 1;
 #ifdef ENABLE_AEC
                            LOG_INFO("SILENCE: TTS barge-in confirmed (debounce=%d, VAD=%.3f, "
-                                    "ERLE=%.1fdB, cooldown=%ldms)",
-                                    tts_vad_debounce, vad_speech_prob, erle_db, elapsed_ms);
+                                    "ERLE=%.1fdB, startup=%ldms)",
+                                    tts_vad_debounce, vad_speech_prob, erle_db, startup_elapsed_ms);
 #else
                            LOG_INFO("SILENCE: TTS barge-in confirmed (debounce=%d, VAD=%.3f, "
-                                    "cooldown=%ldms)",
-                                    tts_vad_debounce, vad_speech_prob, elapsed_ms);
+                                    "startup=%ldms)",
+                                    tts_vad_debounce, vad_speech_prob, startup_elapsed_ms);
 #endif
                            metrics_record_bargein();
                         }

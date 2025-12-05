@@ -4,19 +4,24 @@ This document describes the Acoustic Echo Cancellation (AEC) implementation in D
 
 ## Backend Selection
 
-DAWN supports two AEC backends:
+DAWN uses WebRTC AEC3 for echo cancellation:
 
-| Backend | Status | Best For |
-|---------|--------|----------|
-| **WebRTC AEC3** | ✅ Recommended | General use, auto delay estimation |
-| **Speex** | ⚠️ Experimental | Legacy, requires manual delay tuning |
+| Backend | Status | Notes |
+|---------|--------|-------|
+| **WebRTC AEC3** | ✅ Active | Auto delay estimation, excellent performance |
 
-Select backend at build time:
+Build options:
 ```bash
-cmake -DAEC_BACKEND=WEBRTC ..   # Recommended (default)
-cmake -DAEC_BACKEND=SPEEX ..    # Experimental
-cmake -DAEC_BACKEND=OFF ..      # Disable AEC
+cmake -DENABLE_AEC=ON ..   # Enable WebRTC AEC3 (default)
+cmake -DENABLE_AEC=OFF ..  # Disable AEC entirely
 ```
+
+> **Historical Note**: A Speex AEC backend was evaluated but removed due to
+> ineffective echo cancellation. Speex's synchronous API doesn't handle the
+> timing variability between ALSA playback and capture well, resulting in
+> negative attenuation (output louder than input). WebRTC AEC3's internal
+> delay estimation handles this automatically. See git history for the
+> Speex implementation if needed.
 
 ## Overview
 
@@ -151,7 +156,6 @@ typedef struct {
 |------|---------|
 | `include/audio/aec_processor.h` | Public API and constants |
 | `src/audio/aec_webrtc.cpp` | WebRTC AEC3 backend (48kHz native) |
-| `src/audio/aec_speex.cpp` | Speex AEC backend (experimental) |
 | `src/audio/audio_capture_thread.c` | 48kHz capture with AEC + downsampling |
 | `src/tts/text_to_speech.cpp` | TTS with 22050→48kHz resampling for AEC |
 | `include/audio/resampler.h` | Resampler interface |
@@ -159,12 +163,11 @@ typedef struct {
 
 ### Build Configuration
 
-AEC backend is selected via CMake:
+AEC is enabled/disabled via CMake (see Backend Selection above for options):
 
 ```bash
-cmake -DAEC_BACKEND=WEBRTC ..  # WebRTC AEC3 (recommended)
-cmake -DAEC_BACKEND=SPEEX ..   # Speex AEC (experimental)
-cmake -DAEC_BACKEND=OFF ..     # Disable AEC entirely
+cmake -DENABLE_AEC=ON ..   # Enable WebRTC AEC3 (default)
+cmake -DENABLE_AEC=OFF ..  # Disable AEC entirely
 make -j4
 ```
 
@@ -256,22 +259,17 @@ AEC3@48k: ERL=14.2dB ERLE=0.2dB delay=48ms atten=-19.8dB div=0.00 queued=102 rea
 
 3. **False VAD Triggers During TTS Transitions**: Can occur when TTS pauses between sentences or stops. Mitigated by VAD debounce and cooldown settings.
 
-### Speex Backend (Experimental)
+### Historical: Speex Backend (Removed)
 
-The Speex backend has significant issues and is not recommended for production use:
+A Speex AEC backend was evaluated in December 2025 but removed due to fundamental architectural incompatibilities:
 
-1. **Reference Signal Not Captured (`ref=0`)**: The Speex implementation shows `ref=0` in logs, indicating the TTS reference audio is not reaching the AEC. This makes echo cancellation impossible.
+1. **Synchronous API Mismatch**: Speex expects perfectly synchronized capture and playback streams. ALSA's timing variability between playback and capture caused chronic reference/capture desync.
 
-2. **Fixed Delay Mismatch**: Speex uses a hardcoded 50ms delay, but actual system delay is typically 150-200ms. This misalignment prevents proper echo cancellation.
+2. **No Auto Delay Estimation**: Unlike WebRTC AEC3, Speex requires manual delay configuration. The actual system delay (150-200ms including ALSA buffering) varied too much for a static setting.
 
-3. **Negative Attenuation**: Due to the above issues, Speex often shows negative attenuation values (-2 to -4 dB), meaning output is *louder* than input.
+3. **Negative Attenuation**: The above issues caused Speex to often *amplify* rather than cancel echo, showing negative attenuation values (-2 to -4 dB).
 
-**Speex log example (broken):**
-```
-SpeexAEC@48k: atten=-2.4dB ref=0 mic=309 out=235 match=3414 over=0 under=645
-```
-
-The `ref=0` is the critical indicator that the reference path is broken. Use WebRTC instead.
+The implementation is preserved in git history (see `src/audio/aec_speex.cpp` before commit removing Speex support) for reference if future hardware with better timing guarantees is used.
 
 ## Dependencies
 
