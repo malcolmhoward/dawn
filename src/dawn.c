@@ -2376,7 +2376,7 @@ int main(int argc, char *argv[]) {
             static struct timespec
                 tts_last_active;  // Timestamp when TTS was last active (monotonic)
             static struct timespec
-                tts_started_at;          // Timestamp when TTS started playing (for startup cooldown)
+                tts_started_at;  // Timestamp when TTS started playing (for startup cooldown)
             static int tts_was_playing = 0;  // Track TTS state transitions
             static int tts_timer_initialized = 0;
             static dawn_state_t prev_vad_state = DAWN_STATE_INVALID;  // Track state transitions
@@ -2384,7 +2384,7 @@ int main(int argc, char *argv[]) {
             // Initialize timer on first run (ideally would be in main(), but keeping locality)
             if (!tts_timer_initialized) {
                clock_gettime(CLOCK_MONOTONIC, &tts_last_active);
-               tts_last_active.tv_sec -= 10;  // Start 10s in the past (no cooldown at startup)
+               tts_last_active.tv_sec -= 10;      // Start 10s in the past (no cooldown at startup)
                tts_started_at = tts_last_active;  // Also initialize startup timer
                tts_timer_initialized = 1;
             }
@@ -2491,6 +2491,15 @@ int main(int argc, char *argv[]) {
                      } else if (tts_is_active) {
                         // During TTS (or cooldown): require consecutive detections (debounce)
                         tts_vad_debounce++;
+#ifdef ENABLE_AEC
+                        LOG_INFO("TTS_VAD: prob=%.3f debounce=%d/%d ERLE=%.1fdB tts_playing=%d",
+                                 vad_speech_prob, tts_vad_debounce, VAD_TTS_DEBOUNCE_COUNT, erle_db,
+                                 tts_playing_now);
+#else
+                        LOG_INFO("TTS_VAD: prob=%.3f debounce=%d/%d tts_playing=%d",
+                                 vad_speech_prob, tts_vad_debounce, VAD_TTS_DEBOUNCE_COUNT,
+                                 tts_playing_now);
+#endif
                         if (tts_vad_debounce >= VAD_TTS_DEBOUNCE_COUNT) {
                            speech_detected = 1;
 #ifdef ENABLE_AEC
@@ -2510,6 +2519,10 @@ int main(int argc, char *argv[]) {
                      }
                   } else {
                      // Below threshold - reset debounce counter
+                     if (tts_is_active && tts_vad_debounce > 0) {
+                        LOG_INFO("TTS_VAD: prob=%.3f RESET (was %d)", vad_speech_prob,
+                                 tts_vad_debounce);
+                     }
                      tts_vad_debounce = 0;
                   }
                }
