@@ -135,3 +135,115 @@ int truncate_wav_response(const uint8_t *wav_data,
    LOG_INFO("WAV truncation complete: %zu bytes allocated", truncated_total_size);
    return 0;  // Success - new buffer allocated
 }
+
+/**
+ * Extract PCM audio data from a network WAV file
+ *
+ * Parses a WAV file received from an ESP32 client and extracts the raw PCM
+ * audio data along with format information. Validates header and checksums.
+ *
+ * @param wav_data Pointer to complete WAV file data
+ * @param wav_size Size of WAV data in bytes
+ * @return Allocated NetworkPCMData structure (caller must free with free_network_pcm_data)
+ *         Returns NULL on error (invalid format, allocation failure)
+ */
+NetworkPCMData *extract_pcm_from_network_wav(const uint8_t *wav_data, size_t wav_size) {
+   // Validate parameters
+   if (!wav_data || wav_size == 0) {
+      LOG_ERROR("Invalid parameters: wav_data=%p, wav_size=%zu", (void *)wav_data, wav_size);
+      return NULL;
+   }
+
+   // Validate minimum size
+   if (wav_size < sizeof(WAVHeader)) {
+      LOG_ERROR("WAV data too small for header: %zu bytes (need %zu)", wav_size, sizeof(WAVHeader));
+      return NULL;
+   }
+
+   const WAVHeader *header = (const WAVHeader *)wav_data;
+
+   // Validate RIFF/WAVE headers
+   if (strncmp(header->riff_header, "RIFF", 4) != 0 ||
+       strncmp(header->wave_header, "WAVE", 4) != 0) {
+      LOG_ERROR("Invalid WAV header format");
+      return NULL;
+   }
+
+   // Extract format information (little-endian)
+   uint32_t sample_rate = le32toh(header->sample_rate);
+   uint16_t num_channels = le16toh(header->num_channels);
+   uint16_t bits_per_sample = le16toh(header->bits_per_sample);
+   uint16_t audio_format = le16toh(header->audio_format);
+   uint32_t data_bytes = le32toh(header->data_bytes);
+
+   // Validate audio format (must be PCM)
+   if (audio_format != 1) {
+      LOG_ERROR("Not PCM format: %u", audio_format);
+      return NULL;
+   }
+
+   // Validate data_bytes against actual buffer size
+   size_t expected_total_size = sizeof(WAVHeader) + data_bytes;
+   if (expected_total_size > wav_size) {
+      LOG_WARNING("WAV header claims %u data bytes, but only %zu available", data_bytes,
+                  wav_size - sizeof(WAVHeader));
+      data_bytes = wav_size - sizeof(WAVHeader);
+   }
+
+   // Sanity check for unreasonably large data
+   if (data_bytes > ESP32_MAX_RESPONSE_BYTES) {
+      LOG_ERROR("WAV data size unreasonably large: %u bytes (max: %ld)", data_bytes,
+                (long)ESP32_MAX_RESPONSE_BYTES);
+      return NULL;
+   }
+
+   LOG_INFO("WAV format: %uHz, %u channels, %u-bit, %u data bytes", sample_rate, num_channels,
+            bits_per_sample, data_bytes);
+
+   // Allocate PCM structure
+   NetworkPCMData *pcm = malloc(sizeof(NetworkPCMData));
+   if (!pcm) {
+      LOG_ERROR("Failed to allocate NetworkPCMData structure");
+      return NULL;
+   }
+
+   // Allocate PCM data buffer
+   pcm->pcm_data = malloc(data_bytes);
+   if (!pcm->pcm_data) {
+      LOG_ERROR("Failed to allocate %u bytes for PCM data", data_bytes);
+      free(pcm);
+      return NULL;
+   }
+
+   // Copy PCM data (skip WAV header)
+   memcpy(pcm->pcm_data, wav_data + sizeof(WAVHeader), data_bytes);
+
+   // Populate structure
+   pcm->pcm_size = data_bytes;
+   pcm->sample_rate = sample_rate;
+   pcm->num_channels = num_channels;
+   pcm->bits_per_sample = bits_per_sample;
+   pcm->is_valid = (num_channels == 1 && bits_per_sample == 16);
+
+   if (!pcm->is_valid) {
+      LOG_WARNING("WAV format not pipeline-compatible (need mono 16-bit)");
+   }
+
+   return pcm;
+}
+
+/**
+ * Free memory allocated for NetworkPCMData structure
+ *
+ * Safely deallocates a NetworkPCMData structure and its associated
+ * PCM data buffer that was allocated by extract_pcm_from_network_wav().
+ *
+ * @param pcm Pointer to NetworkPCMData structure to free (may be NULL)
+ */
+void free_network_pcm_data(NetworkPCMData *pcm) {
+   if (!pcm)
+      return;
+   if (pcm->pcm_data)
+      free(pcm->pcm_data);
+   free(pcm);
+}

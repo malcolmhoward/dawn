@@ -61,6 +61,19 @@ typedef struct __attribute__((packed)) {
    uint32_t data_bytes;       // Size of audio data
 } WAVHeader;
 
+/**
+ * Extracted PCM audio data from a network WAV file
+ * Used to extract and validate PCM data from ESP32 client audio
+ */
+typedef struct {
+   uint8_t *pcm_data;         // Raw PCM audio data (caller must free via free_network_pcm_data)
+   size_t pcm_size;           // Size of PCM data in bytes
+   uint32_t sample_rate;      // Sample rate in Hz
+   uint16_t num_channels;     // Number of audio channels
+   uint16_t bits_per_sample;  // Bits per sample
+   int is_valid;              // 1 if data is valid, 0 otherwise
+} NetworkPCMData;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -96,6 +109,26 @@ int truncate_wav_response(const uint8_t *wav_data,
                           size_t wav_size,
                           uint8_t **truncated_data_out,
                           size_t *truncated_size_out);
+
+/**
+ * Extract PCM audio data from a network WAV file
+ *
+ * Parses a WAV file received from an ESP32 client and extracts the raw PCM
+ * audio data along with format information. Validates header and checksums.
+ *
+ * @param wav_data Pointer to complete WAV file data
+ * @param wav_size Size of WAV data in bytes
+ * @return Allocated NetworkPCMData structure (caller must free with free_network_pcm_data)
+ *         Returns NULL on error (invalid format, allocation failure)
+ */
+NetworkPCMData *extract_pcm_from_network_wav(const uint8_t *wav_data, size_t wav_size);
+
+/**
+ * Free memory allocated for NetworkPCMData structure
+ *
+ * @param pcm Pointer to NetworkPCMData structure to free (may be NULL)
+ */
+void free_network_pcm_data(NetworkPCMData *pcm);
 
 #ifdef __cplusplus
 }

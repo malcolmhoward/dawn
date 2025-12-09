@@ -11,15 +11,15 @@ find_package(CURL REQUIRED)
 pkg_check_modules(JSONC REQUIRED json-c)
 find_package(OpenSSL REQUIRED)
 
-include_directories(${PARENT_DIR})
+include_directories(${PARENT_DIR}/include)
 include_directories(${CURL_INCLUDE_DIRS})
 include_directories(${JSONC_INCLUDE_DIRS})
 
 # Test: SSE Parser
 add_executable(test_sse_parser
                test_sse_parser.c
-               ${PARENT_DIR}/sse_parser.c
-               ${PARENT_DIR}/logging.c)
+               ${PARENT_DIR}/src/llm/sse_parser.c
+               ${PARENT_DIR}/src/logging.c)
 
 target_link_libraries(test_sse_parser
                       ${JSONC_LIBRARIES})
@@ -27,8 +27,8 @@ target_link_libraries(test_sse_parser
 # Test: Sentence Buffer
 add_executable(test_sentence_buffer
                test_sentence_buffer.c
-               ${PARENT_DIR}/sentence_buffer.c
-               ${PARENT_DIR}/logging.c)
+               ${PARENT_DIR}/src/llm/sentence_buffer.c
+               ${PARENT_DIR}/src/logging.c)
 
 target_link_libraries(test_sentence_buffer
                       ${JSONC_LIBRARIES})
@@ -36,13 +36,14 @@ target_link_libraries(test_sentence_buffer
 # Test: End-to-End Streaming
 add_executable(test_streaming
                test_streaming.c
-               ${PARENT_DIR}/llm_interface.c
-               ${PARENT_DIR}/llm_openai.c
-               ${PARENT_DIR}/llm_claude.c
-               ${PARENT_DIR}/llm_streaming.c
-               ${PARENT_DIR}/sentence_buffer.c
-               ${PARENT_DIR}/sse_parser.c
-               ${PARENT_DIR}/logging.c)
+               ${PARENT_DIR}/src/llm/llm_interface.c
+               ${PARENT_DIR}/src/llm/llm_openai.c
+               ${PARENT_DIR}/src/llm/llm_claude.c
+               ${PARENT_DIR}/src/llm/llm_streaming.c
+               ${PARENT_DIR}/src/llm/sentence_buffer.c
+               ${PARENT_DIR}/src/llm/sse_parser.c
+               ${PARENT_DIR}/src/ui/metrics.c
+               ${PARENT_DIR}/src/logging.c)
 
 target_link_libraries(test_streaming
                       ${CURL_LIBRARIES}
@@ -62,10 +63,10 @@ find_library(CURAND_LIBRARIES NAMES curand HINTS ${CUDA_TOOLKIT_ROOT_DIR}/target
 
 add_executable(asr_benchmark
                asr_benchmark.c
-               ${PARENT_DIR}/asr_interface.c
-               ${PARENT_DIR}/asr_vosk.c
-               ${PARENT_DIR}/asr_whisper.c
-               ${PARENT_DIR}/logging.c)
+               ${PARENT_DIR}/src/asr/asr_interface.c
+               ${PARENT_DIR}/src/asr/asr_vosk.c
+               ${PARENT_DIR}/src/asr/asr_whisper.c
+               ${PARENT_DIR}/src/logging.c)
 
 target_include_directories(asr_benchmark PRIVATE
                            ${PARENT_DIR}/whisper.cpp/include)
@@ -90,8 +91,8 @@ target_link_libraries(test_vad_models onnxruntime m)
 # Test: VAD API Unit Test
 add_executable(test_vad_api
                test_vad_api.c
-               ${PARENT_DIR}/vad_silero.c
-               ${PARENT_DIR}/logging.c)
+               ${PARENT_DIR}/src/asr/vad_silero.c
+               ${PARENT_DIR}/src/logging.c)
 
 target_include_directories(test_vad_api PRIVATE /usr/local/include/onnxruntime)
 
@@ -99,3 +100,27 @@ target_link_libraries(test_vad_api
                       onnxruntime
                       m
                       ${JSONC_LIBRARIES})
+
+# Test: ASR Concurrent Context
+# Verifies multi-context support for multi-client architecture (Phase 1 requirement)
+add_executable(test_asr_concurrent
+               test_asr_concurrent.c
+               ${PARENT_DIR}/src/asr/asr_interface.c
+               ${PARENT_DIR}/src/asr/asr_whisper.c
+               ${PARENT_DIR}/src/ui/metrics.c
+               ${PARENT_DIR}/src/logging.c)
+
+target_include_directories(test_asr_concurrent PRIVATE
+                           ${PARENT_DIR}/whisper.cpp/include)
+
+target_link_libraries(test_asr_concurrent
+                      whisper
+                      pthread
+                      m
+                      ${JSONC_LIBRARIES}
+                      ${CUDA_LIBRARIES}
+                      ${CUDART_LIBRARIES}
+                      ${CUSPARSE_LIBRARIES}
+                      ${CUBLAS_LIBRARIES}
+                      ${CUSOLVER_LIBRARIES}
+                      ${CURAND_LIBRARIES})

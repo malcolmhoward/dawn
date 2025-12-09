@@ -48,12 +48,16 @@
 #include "asr/vad_silero.h"
 #include "audio/audio_capture_thread.h"
 #include "audio_utils.h"
+#include "core/command_router.h"
+#include "core/session_manager.h"
+#include "core/worker_pool.h"
 #include "dawn.h"
 #include "input_queue.h"
 #include "llm/llm_command_parser.h"
 #include "llm/llm_interface.h"
 #include "logging.h"
 #include "mosquitto_comms.h"
+#include "network/accept_thread.h"
 #include "network/dawn_network_audio.h"
 #include "network/dawn_server.h"
 #include "network/dawn_wav_utils.h"
@@ -284,24 +288,15 @@ uint8_t *processing_result_data = NULL;
 size_t processing_result_size = 0;
 int processing_complete = 0;
 
-// Network processing state
-static dawn_state_t previous_state_before_network = DAWN_STATE_SILENCE;
-static uint8_t *network_pcm_buffer = NULL;
-static size_t network_pcm_size = 0;
-static pthread_mutex_t network_processing_mutex = PTHREAD_MUTEX_INITIALIZER;
-
-// PCM Data Structure for network processing
-typedef struct {
-   uint8_t *pcm_data;
-   size_t pcm_size;
-   uint32_t sample_rate;
-   uint16_t num_channels;
-   uint16_t bits_per_sample;
-   int is_valid;
-} NetworkPCMData;
+// NetworkPCMData struct is defined in network/dawn_wav_utils.h
+// NOTE: Network audio is now handled by worker threads (see worker_pool.c)
 
 // Global variable for command processing mode
 command_processing_mode_t command_processing_mode = CMD_MODE_DIRECT_ONLY;
+
+// Pointer to local session's conversation history
+// NOTE: This is a convenience pointer to session_get_local()->conversation_history
+// For multi-client support, each session has its own history (see session_manager.c)
 struct json_object *conversation_history = NULL;
 
 // Barge-in control: when true, speech detection is disabled during TTS playback
@@ -1047,29 +1042,30 @@ void reset_conversation(void) {
 
    LOG_INFO("Resetting conversation context...");
 
+   session_t *local_session = session_get_local();
+   if (!local_session) {
+      LOG_ERROR("Failed to get local session for reset");
+      pthread_mutex_unlock(&conversation_mutex);
+      return;
+   }
+
    /* Save current conversation before clearing */
    if (conversation_history != NULL && json_object_array_length(conversation_history) > 1) {
       save_conversation_history(conversation_history);
    }
 
-   /* Free old conversation */
-   if (conversation_history != NULL) {
-      json_object_put(conversation_history);
-   }
-
-   /* Create fresh conversation with system message */
-   conversation_history = json_object_new_array();
-   struct json_object *new_system_message = json_object_new_object();
-   json_object_object_add(new_system_message, "role", json_object_new_string("system"));
-
+   /* Reset local session with appropriate system prompt */
+   const char *system_prompt;
    if (command_processing_mode == CMD_MODE_LLM_ONLY ||
        command_processing_mode == CMD_MODE_DIRECT_FIRST) {
-      json_object_object_add(new_system_message, "content",
-                             json_object_new_string(get_command_prompt()));
+      system_prompt = get_local_command_prompt();
    } else {
-      json_object_object_add(new_system_message, "content", json_object_new_string(AI_DESCRIPTION));
+      system_prompt = AI_DESCRIPTION;
    }
-   json_object_array_add(conversation_history, new_system_message);
+   session_init_system_prompt(local_session, system_prompt);
+
+   /* Update global pointer to the new history */
+   conversation_history = local_session->conversation_history;
 
    /* Reset metrics */
    metrics_reset();
@@ -1220,155 +1216,6 @@ int publish_ai_state(dawn_state_t newState) {
 }
 
 /**
- * @brief Extract PCM audio data from a WAV file received over the network
- *
- * This function parses a WAV file buffer, validates the header format, and extracts
- * the raw PCM audio data for processing by Vosk speech recognition. The function
- * performs basic validation to ensure the WAV format is compatible with the DAWN
- * audio pipeline (16-bit mono PCM).
- *
- * @param wav_data Pointer to buffer containing complete WAV file data
- * @param wav_size Total size of WAV data buffer in bytes
- *
- * @return NetworkPCMData* Pointer to allocated structure containing extracted PCM data
- *                         and format information, or NULL on error
- * @retval NULL if:
- *         - wav_size is smaller than WAV header (44 bytes)
- *         - RIFF/WAVE header validation fails
- *         - Memory allocation fails
- *
- * @note Caller is responsible for freeing returned structure using free_network_pcm_data()
- * @note The function uses le32toh/le16toh for endian conversion (assumes little-endian WAV)
- * @note is_valid flag is set only if format is mono 16-bit (compatible with pipeline)
- *
- * @warning Does not validate data_bytes field against actual buffer size - potential
- *          buffer overflow vulnerability
- *
- * @see free_network_pcm_data() for proper cleanup
- * @see WAVHeader structure definition in dawn_tts_wrapper.h
- */
-NetworkPCMData *extract_pcm_from_network_wav(const uint8_t *wav_data, size_t wav_size) {
-   // Validate parameters
-   if (!wav_data || wav_size == 0) {
-      LOG_ERROR("Invalid parameters: wav_data=%p, wav_size=%zu", (void *)wav_data, wav_size);
-      return NULL;
-   }
-
-   // Validate minimum size
-   if (wav_size < sizeof(WAVHeader)) {
-      LOG_ERROR("WAV data too small for header: %zu bytes (need %zu)", wav_size, sizeof(WAVHeader));
-      return NULL;
-   }
-
-   const WAVHeader *header = (const WAVHeader *)wav_data;
-
-   // Validate RIFF/WAVE headers
-   if (strncmp(header->riff_header, "RIFF", 4) != 0 ||
-       strncmp(header->wave_header, "WAVE", 4) != 0) {
-      LOG_ERROR("Invalid WAV header format");
-      return NULL;
-   }
-
-   // Extract format information (little-endian)
-   uint32_t sample_rate = le32toh(header->sample_rate);
-   uint16_t num_channels = le16toh(header->num_channels);
-   uint16_t bits_per_sample = le16toh(header->bits_per_sample);
-   uint16_t audio_format = le16toh(header->audio_format);
-   uint32_t data_bytes = le32toh(header->data_bytes);
-
-   // Validate audio format (must be PCM)
-   if (audio_format != 1) {
-      LOG_ERROR("Not PCM format: %u", audio_format);
-      return NULL;
-   }
-
-   // Validate data_bytes against actual buffer size
-   size_t expected_total_size = sizeof(WAVHeader) + data_bytes;
-   if (expected_total_size > wav_size) {
-      LOG_WARNING("WAV header claims %u data bytes, but only %zu available", data_bytes,
-                  wav_size - sizeof(WAVHeader));
-      data_bytes = wav_size - sizeof(WAVHeader);
-   }
-
-   // Sanity check for unreasonably large data
-   if (data_bytes > ESP32_MAX_RESPONSE_BYTES) {
-      LOG_ERROR("WAV data size unreasonably large: %u bytes (max: %ld)", data_bytes,
-                (long)ESP32_MAX_RESPONSE_BYTES);
-      return NULL;
-   }
-
-   LOG_INFO("WAV format: %uHz, %u channels, %u-bit, %u data bytes", sample_rate, num_channels,
-            bits_per_sample, data_bytes);
-
-   // Allocate PCM structure
-   NetworkPCMData *pcm = malloc(sizeof(NetworkPCMData));
-   if (!pcm) {
-      LOG_ERROR("Failed to allocate NetworkPCMData structure");
-      return NULL;
-   }
-
-   // Allocate PCM data buffer
-   pcm->pcm_data = malloc(data_bytes);
-   if (!pcm->pcm_data) {
-      LOG_ERROR("Failed to allocate %u bytes for PCM data", data_bytes);
-      free(pcm);
-      return NULL;
-   }
-
-   // Copy PCM data (skip WAV header)
-   memcpy(pcm->pcm_data, wav_data + sizeof(WAVHeader), data_bytes);
-
-   // Populate structure
-   pcm->pcm_size = data_bytes;
-   pcm->sample_rate = sample_rate;
-   pcm->num_channels = num_channels;
-   pcm->bits_per_sample = bits_per_sample;
-   pcm->is_valid = (num_channels == 1 && bits_per_sample == 16);
-
-   if (!pcm->is_valid) {
-      LOG_WARNING("WAV format not pipeline-compatible (need mono 16-bit)");
-   }
-
-   return pcm;
-}
-
-/**
- * @brief Free memory allocated for NetworkPCMData structure
- *
- * This function safely deallocates a NetworkPCMData structure and its associated
- * PCM data buffer that was allocated by extract_pcm_from_network_wav(). The function
- * performs NULL checks before freeing to prevent crashes.
- *
- * @param pcm Pointer to NetworkPCMData structure to free (may be NULL)
- *
- * @note This function is safe to call with NULL pointer (no-op)
- * @note The pcm pointer becomes invalid after this call - do not use after freeing
- * @note This function does NOT modify any global state or mutexes
- *
- * @warning Calling this function twice on the same pointer causes undefined behavior
- *          (double-free). Caller must set pointer to NULL after freeing.
- *
- * @see extract_pcm_from_network_wav() for structure allocation
- *
- * @par Example Usage:
- * @code
- *   NetworkPCMData *pcm = extract_pcm_from_network_wav(wav_data, wav_size);
- *   if (pcm) {
- *      // Use pcm...
- *      free_network_pcm_data(pcm);
- *      pcm = NULL;  // Good practice to prevent double-free
- *   }
- * @endcode
- */
-void free_network_pcm_data(NetworkPCMData *pcm) {
-   if (!pcm)
-      return;
-   if (pcm->pcm_data)
-      free(pcm->pcm_data);
-   free(pcm);
-}
-
-/**
  * Displays help information for the program, outlining the usage and available command-line
  * options. The function dynamically adjusts the usage message based on whether the program name is
  * available from the command-line arguments.
@@ -1491,7 +1338,6 @@ int main(int argc, char *argv[]) {
    asr_result_t *asr_result = NULL;
    size_t prev_text_length = 0;
    int text_nochange = 0;
-   struct json_object *system_message = NULL;
    int rc = 0;
    int opt = 0;
    const char *log_filename = NULL;
@@ -1827,26 +1673,43 @@ int main(int argc, char *argv[]) {
    LOG_INFO("Processed %d commands.", numCommands);
    //printCommands(commands, numCommands);
 
-   // JSON setup for OpenAI
-   conversation_history = json_object_new_array();
-   system_message = json_object_new_object();
+   // Initialize session manager first (creates local session)
+   // NOTE: accept_thread_start() will skip re-initialization since it's already done
+   if (session_manager_init() != 0) {
+      LOG_ERROR("Failed to initialize session manager");
+      return 1;
+   }
 
-   json_object_object_add(system_message, "role", json_object_new_string("system"));
+   // Initialize command router for worker thread request/response
+   if (command_router_init() != 0) {
+      LOG_ERROR("Failed to initialize command router");
+      return 1;
+   }
+
+   session_t *local_session = session_get_local();
+   if (!local_session) {
+      LOG_ERROR("Failed to get local session");
+      return 1;
+   }
 
    // Set the appropriate system message content based on processing mode
+   const char *system_prompt;
    if (command_processing_mode == CMD_MODE_LLM_ONLY ||
        command_processing_mode == CMD_MODE_DIRECT_FIRST) {
       // LLM modes get the enhanced prompt with command information
-      json_object_object_add(system_message, "content",
-                             json_object_new_string(get_command_prompt()));
+      system_prompt = get_local_command_prompt();
       LOG_INFO("Using enhanced system prompt for LLM command processing");
    } else {
       // Direct-only mode gets the original AI description
-      json_object_object_add(system_message, "content", json_object_new_string(AI_DESCRIPTION));
+      system_prompt = AI_DESCRIPTION;
       LOG_INFO("Using standard system prompt for direct command processing");
    }
 
-   json_object_array_add(conversation_history, system_message);
+   session_init_system_prompt(local_session, system_prompt);
+
+   // Point global conversation_history to local session's history for compatibility
+   // NOTE: This allows existing code to continue using the global pointer
+   conversation_history = local_session->conversation_history;
 
    // Start dedicated audio capture thread with ring buffer
    // Ring buffer size: 262144 bytes = ~8 seconds of audio at 16kHz mono 16-bit
@@ -2045,9 +1908,11 @@ int main(int argc, char *argv[]) {
          LOG_ERROR("Failed to initialize network audio system");
          enable_network_audio = 0;
       } else {
-         LOG_INFO("Starting DAWN network server...");
-         if (dawn_server_start() != DAWN_SUCCESS) {
-            LOG_ERROR("Failed to start DAWN server - network audio disabled");
+         LOG_INFO("Starting DAWN network server (multi-client worker pool)...");
+         // Pass mosquitto to worker pool for command processing
+         worker_pool_set_mosq(mosq);
+         if (accept_thread_start(asr_engine, asr_model_path) != 0) {
+            LOG_ERROR("Failed to start accept thread - network audio disabled");
             dawn_network_audio_cleanup();
             enable_network_audio = 0;
          } else {
@@ -2080,135 +1945,9 @@ int main(int argc, char *argv[]) {
          }
       }
 
-      if (enable_network_audio) {
-         uint8_t *network_audio = NULL;
-         size_t network_audio_size = 0;
-         char client_info[64];
-
-         if (dawn_get_network_audio(&network_audio, &network_audio_size, client_info)) {
-            LOG_INFO("Network audio received from %s (%zu bytes)", client_info, network_audio_size);
-
-            // Validate returned data
-            if (!network_audio || network_audio_size == 0) {
-               LOG_ERROR("dawn_get_network_audio returned invalid data");
-               dawn_clear_network_audio();
-               continue;
-            }
-
-            // State transition safety check
-            if (recState == DAWN_STATE_PROCESS_COMMAND || recState == DAWN_STATE_VISION_AI_READY) {
-               LOG_WARNING("Network audio received during %s - deferring",
-                           recState == DAWN_STATE_PROCESS_COMMAND ? "command processing"
-                                                                  : "vision AI");
-
-               // Send busy message TTS
-               size_t busy_wav_size = 0;
-               uint8_t *busy_wav = error_to_wav("I'm currently busy. Please try again in a moment.",
-                                                &busy_wav_size);
-               if (busy_wav) {
-                  pthread_mutex_lock(&processing_mutex);
-                  processing_result_data = busy_wav;
-                  processing_result_size = busy_wav_size;
-                  processing_complete = 1;
-                  pthread_cond_signal(&processing_done);
-                  pthread_mutex_unlock(&processing_mutex);
-
-                  LOG_INFO("Sent busy message to %s", client_info);
-               } else {
-                  // Fallback: signal with no data (triggers echo fallback in server)
-                  LOG_ERROR("Failed to generate busy TTS - client will timeout");
-                  pthread_mutex_lock(&processing_mutex);
-                  processing_result_data = NULL;
-                  processing_result_size = 0;
-                  processing_complete = 1;
-                  pthread_cond_signal(&processing_done);
-                  pthread_mutex_unlock(&processing_mutex);
-               }
-
-               dawn_clear_network_audio();
-               continue;  // Skip to next loop iteration
-            }
-
-            // Safe to process - save current state and transition
-            LOG_INFO("Interrupting %s state for network processing", dawn_state_name(recState));
-
-            previous_state_before_network = recState;
-
-            // Extract PCM from WAV
-            NetworkPCMData *pcm = extract_pcm_from_network_wav(network_audio, network_audio_size);
-            if (pcm && pcm->is_valid) {
-               // Store PCM data for processing
-               pthread_mutex_lock(&network_processing_mutex);
-
-               if (network_pcm_buffer) {
-                  free(network_pcm_buffer);
-               }
-
-               network_pcm_buffer = malloc(pcm->pcm_size);
-               if (network_pcm_buffer) {
-                  memcpy(network_pcm_buffer, pcm->pcm_data, pcm->pcm_size);
-                  network_pcm_size = pcm->pcm_size;
-                  recState = DAWN_STATE_NETWORK_PROCESSING;
-                  LOG_INFO("Transitioned to NETWORK_PROCESSING state");
-               } else {
-                  LOG_ERROR("Failed to allocate network PCM buffer");
-
-                  // Send error response to client
-                  size_t error_wav_size = 0;
-                  uint8_t *error_wav = error_to_wav("Sorry, I ran out of memory. Please try again.",
-                                                    &error_wav_size);
-                  if (error_wav) {
-                     pthread_mutex_lock(&processing_mutex);
-                     processing_result_data = error_wav;
-                     processing_result_size = error_wav_size;
-                     processing_complete = 1;
-                     pthread_cond_signal(&processing_done);
-                     pthread_mutex_unlock(&processing_mutex);
-                  } else {
-                     // Fallback: signal with no data (triggers echo fallback in server)
-                     LOG_ERROR("Failed to generate busy TTS - client will timeout");
-                     pthread_mutex_lock(&processing_mutex);
-                     processing_result_data = NULL;
-                     processing_result_size = 0;
-                     processing_complete = 1;
-                     pthread_cond_signal(&processing_done);
-                     pthread_mutex_unlock(&processing_mutex);
-                  }
-               }
-
-               pthread_mutex_unlock(&network_processing_mutex);
-               free_network_pcm_data(pcm);
-            } else {
-               LOG_ERROR("Invalid WAV format from network client");
-
-               // Send error TTS
-               size_t error_wav_size = 0;
-               uint8_t *error_wav = error_to_wav(ERROR_MSG_WAV_INVALID, &error_wav_size);
-               if (error_wav) {
-                  pthread_mutex_lock(&processing_mutex);
-                  processing_result_data = error_wav;
-                  processing_result_size = error_wav_size;
-                  processing_complete = 1;
-                  pthread_cond_signal(&processing_done);
-                  pthread_mutex_unlock(&processing_mutex);
-               } else {
-                  // Fallback: signal with no data (triggers echo fallback in server)
-                  LOG_ERROR("Failed to generate busy TTS - client will timeout");
-                  pthread_mutex_lock(&processing_mutex);
-                  processing_result_data = NULL;
-                  processing_result_size = 0;
-                  processing_complete = 1;
-                  pthread_cond_signal(&processing_done);
-                  pthread_mutex_unlock(&processing_mutex);
-               }
-
-               if (pcm)
-                  free_network_pcm_data(pcm);
-            }
-
-            dawn_clear_network_audio();
-         }
-      }
+      // NOTE: Network audio handling removed - will be handled by worker threads (Phase 3/4)
+      // Legacy network client support via dawn_server is disabled until worker pipeline is
+      // complete.
 
       // Check if LLM thread has completed (non-blocking check)
       static int prev_llm_processing = 0;  // Track previous state
@@ -2245,6 +1984,8 @@ int main(int argc, char *argv[]) {
          } else if (response_text != NULL) {
             // Process successful response
             LOG_WARNING("AI: %s\n", response_text);
+
+            // Update TUI with full LLM response (including commands for debugging)
             metrics_set_last_ai_response(response_text);
 
             // Create cleaned version for TTS (keep original for conversation history)
@@ -3274,16 +3015,41 @@ int main(int argc, char *argv[]) {
                               thisValue);
                      LOG_WARNING("Sending: \"%s\"\n", thisCommand);
 
+                     // Log direct match to TUI (command bypassed LLM)
+                     metrics_log_activity("Direct match: %s", commands[i].actionWordsWildcard);
+
                      rc = mosquitto_publish(mosq, NULL, commands[i].topic, strlen(thisCommand),
                                             thisCommand, 0, false);
                      if (rc != MOSQ_ERR_SUCCESS) {
                         LOG_ERROR("Error publishing: %s\n", mosquitto_strerror(rc));
+                     } else {
+                        // Log direct command to TUI activity
+                        metrics_log_activity("MQTT: %s", thisCommand);
                      }
 
                      direct_command_found = 1;
                      break;
                   }
                }
+            }
+
+            // Handle direct command found - transition back to listening state
+            if (direct_command_found) {
+               // Free command text since we're done processing
+               if (command_text) {
+                  free(command_text);
+                  command_text = NULL;
+               }
+
+               // Return to listening state
+               silenceNextState = DAWN_STATE_WAKEWORD_LISTEN;
+               recState = DAWN_STATE_SILENCE;
+
+               // Reset all subsystems for new utterance
+               reset_for_new_utterance(vad_ctx, asr_ctx, chunk_mgr, &silence_duration,
+                                       &speech_duration, &recording_duration, &preroll_write_pos,
+                                       &preroll_valid_bytes);
+               break;  // Exit DAWN_STATE_PROCESS_COMMAND case
             }
 
             /* Try LLM processing if:
@@ -3512,261 +3278,7 @@ int main(int argc, char *argv[]) {
                                     &preroll_valid_bytes);
 
             break;
-         case DAWN_STATE_NETWORK_PROCESSING:
-            LOG_INFO("Processing network audio from client");
-
-            pthread_mutex_lock(&network_processing_mutex);
-
-            if (network_pcm_buffer && network_pcm_size > 0) {
-               // Reset ASR and chunking manager for new network session
-               if (chunk_mgr) {
-                  chunking_manager_reset(chunk_mgr);
-               }
-               asr_reset(asr_ctx);
-
-               // Process PCM data with ASR
-               asr_result = asr_process_partial(asr_ctx, (const int16_t *)network_pcm_buffer,
-                                                network_pcm_size / sizeof(int16_t));
-               if (asr_result) {
-                  asr_result_free(asr_result);
-                  asr_result = NULL;
-               }
-
-               asr_result = asr_finalize(asr_ctx);
-               if (asr_result && asr_result->text) {
-                  LOG_INFO("Network transcription result: %s", asr_result->text);
-
-                  // Use transcription text directly
-                  input_text = strdup(asr_result->text);
-
-                  /* Process Commands before AI if LLM command processing is disabled */
-                  if (command_processing_mode != CMD_MODE_LLM_ONLY) {
-                     /* Process Commands before AI. */
-                     direct_command_found = 0;
-                     for (i = 0; i < numCommands; i++) {
-                        if (searchString(commands[i].actionWordsWildcard, input_text) == 1) {
-                           char thisValue[1024];  // FIXME: These are abnormally large.
-                                                  // I'm in a hurry and don't want overflows.
-                           char thisCommand[2048];
-                           char thisSubstring[2048];
-                           int strLength = 0;
-
-                           pthread_mutex_lock(&tts_mutex);
-                           if (tts_playback_state == TTS_PLAYBACK_PAUSE) {
-                              tts_playback_state = TTS_PLAYBACK_DISCARD;
-                              pthread_cond_signal(&tts_cond);
-                           }
-                           pthread_mutex_unlock(&tts_mutex);
-
-                           memset(thisValue, '\0', sizeof(thisValue));
-                           LOG_WARNING("Found command \"%s\".\n\tLooking for value in \"%s\".\n",
-                                       commands[i].actionWordsWildcard,
-                                       commands[i].actionWordsRegex);
-
-                           strLength = strnlen(commands[i].actionWordsRegex, MAX_COMMAND_LENGTH);
-                           if ((strLength >= 2) &&
-                               (commands[i].actionWordsRegex[strLength - 2] == '%') &&
-                               (commands[i].actionWordsRegex[strLength - 1] == 's')) {
-                              strncpy(thisSubstring, commands[i].actionWordsRegex, strLength - 2);
-                              thisSubstring[strLength - 2] = '\0';
-                              strcpy(thisValue,
-                                     extract_remaining_after_substring(input_text, thisSubstring));
-                           } else {
-                              int retSs = sscanf(input_text, commands[i].actionWordsRegex,
-                                                 thisValue);
-                           }
-                           snprintf(thisCommand, sizeof(thisCommand), commands[i].actionCommand,
-                                    thisValue);
-                           LOG_WARNING("Sending: \"%s\"\n", thisCommand);
-
-                           rc = mosquitto_publish(mosq, NULL, commands[i].topic,
-                                                  strlen(thisCommand), thisCommand, 0, false);
-                           if (rc != MOSQ_ERR_SUCCESS) {
-                              LOG_ERROR("Error publishing: %s\n", mosquitto_strerror(rc));
-                           }
-
-                           direct_command_found = 1;
-                           break;
-                        }
-                     }
-                  }
-
-                  if (input_text && strlen(input_text) > 0 && !direct_command_found) {
-                     LOG_INFO("Network speech recognized: \"%s\"", input_text);
-                     metrics_set_last_user_command(input_text);
-
-                     // Add user message to conversation history
-                     struct json_object *user_message = json_object_new_object();
-                     json_object_object_add(user_message, "role", json_object_new_string("user"));
-                     json_object_object_add(user_message, "content",
-                                            json_object_new_string(input_text));
-                     json_object_array_add(conversation_history, user_message);
-
-                     // Get LLM response using streaming (no TTS callback - we generate WAV below)
-                     response_text = llm_chat_completion_streaming(conversation_history, input_text,
-                                                                   NULL, 0, NULL, NULL);
-
-                     if (response_text && strlen(response_text) > 0) {
-                        // Now be sure to filter out special characters that give us problems.
-                        remove_chars(response_text, "*");
-                        remove_emojis(response_text);
-
-                        LOG_INFO("Network LLM response: \"%s\"", response_text);
-                        metrics_set_last_ai_response(response_text);
-
-                        // Generate TTS WAV for network transmission with ESP32 size limits
-                        size_t response_wav_size = 0;
-                        uint8_t *response_wav = NULL;
-
-                        if (text_to_speech_to_wav(response_text, &response_wav,
-                                                  &response_wav_size) == 0 &&
-                            response_wav) {
-                           LOG_INFO("Network TTS generated: %zu bytes", response_wav_size);
-
-                           // Check ESP32 buffer limits
-                           if (check_response_size_limit(response_wav_size)) {
-                              // Fits within ESP32 limits - send as-is
-                              pthread_mutex_lock(&processing_mutex);
-                              processing_result_data = response_wav;
-                              processing_result_size = response_wav_size;
-                              processing_complete = 1;
-                              pthread_cond_signal(&processing_done);
-                              pthread_mutex_unlock(&processing_mutex);
-
-                              LOG_INFO("Network TTS response ready (%zu bytes)", response_wav_size);
-                           } else {
-                              // Too large for ESP32 - truncate
-                              LOG_WARNING("TTS response too large for ESP32, truncating...");
-
-                              uint8_t *truncated_wav = NULL;
-                              size_t truncated_size = 0;
-
-                              if (truncate_wav_response(response_wav, response_wav_size,
-                                                        &truncated_wav, &truncated_size) == 0) {
-                                 // Truncation successful
-                                 free(response_wav);  // Free original
-
-                                 pthread_mutex_lock(&processing_mutex);
-                                 processing_result_data = truncated_wav;
-                                 processing_result_size = truncated_size;
-                                 processing_complete = 1;
-                                 pthread_cond_signal(&processing_done);
-                                 pthread_mutex_unlock(&processing_mutex);
-
-                                 LOG_INFO("Network TTS truncated and ready (%zu bytes)",
-                                          truncated_size);
-                              } else {
-                                 // Truncation failed - send error TTS
-                                 free(response_wav);
-                                 LOG_ERROR("Failed to truncate TTS response");
-
-                                 size_t error_wav_size = 0;
-                                 uint8_t *error_wav = error_to_wav(
-                                     "Response too long. Please ask for a shorter answer.",
-                                     &error_wav_size);
-                                 if (error_wav) {
-                                    pthread_mutex_lock(&processing_mutex);
-                                    processing_result_data = error_wav;
-                                    processing_result_size = error_wav_size;
-                                    processing_complete = 1;
-                                    pthread_cond_signal(&processing_done);
-                                    pthread_mutex_unlock(&processing_mutex);
-
-                                    LOG_INFO("Sent 'too long' error TTS (%zu bytes)",
-                                             error_wav_size);
-                                 }
-                              }
-                           }
-                        } else {
-                           // Send TTS error
-                           size_t error_wav_size = 0;
-                           uint8_t *error_wav = error_to_wav(ERROR_MSG_TTS_FAILED, &error_wav_size);
-                           if (error_wav) {
-                              pthread_mutex_lock(&processing_mutex);
-                              processing_result_data = error_wav;
-                              processing_result_size = error_wav_size;
-                              processing_complete = 1;
-                              pthread_cond_signal(&processing_done);
-                              pthread_mutex_unlock(&processing_mutex);
-                           }
-                        }
-
-                        free(response_text);
-                     } else {
-                        LOG_WARNING("Network LLM processing failed");
-
-                        // Send LLM timeout error
-                        size_t error_wav_size = 0;
-                        uint8_t *error_wav = error_to_wav(ERROR_MSG_LLM_TIMEOUT, &error_wav_size);
-                        if (error_wav) {
-                           pthread_mutex_lock(&processing_mutex);
-                           processing_result_data = error_wav;
-                           processing_result_size = error_wav_size;
-                           processing_complete = 1;
-                           pthread_cond_signal(&processing_done);
-                           pthread_mutex_unlock(&processing_mutex);
-                        }
-                     }
-
-                     free(input_text);
-                  } else {
-                     // Send speech error
-                     size_t error_wav_size = 0;
-                     uint8_t *error_wav = NULL;
-
-                     if (direct_command_found) {
-                        LOG_WARNING("Direct command found.");
-                        error_wav = error_to_wav("Direct command found and acted upon.",
-                                                 &error_wav_size);
-                     } else {
-                        LOG_WARNING("Network speech recognition failed");
-                        error_wav = error_to_wav(ERROR_MSG_SPEECH_FAILED, &error_wav_size);
-                     }
-                     if (error_wav) {
-                        pthread_mutex_lock(&processing_mutex);
-                        processing_result_data = error_wav;
-                        processing_result_size = error_wav_size;
-                        processing_complete = 1;
-                        pthread_cond_signal(&processing_done);
-                        pthread_mutex_unlock(&processing_mutex);
-                     }
-                  }
-               } else {
-                  LOG_WARNING("ASR processing returned no output");
-
-                  // Send speech error
-                  size_t error_wav_size = 0;
-                  uint8_t *error_wav = error_to_wav(ERROR_MSG_SPEECH_FAILED, &error_wav_size);
-                  if (error_wav) {
-                     pthread_mutex_lock(&processing_mutex);
-                     processing_result_data = error_wav;
-                     processing_result_size = error_wav_size;
-                     processing_complete = 1;
-                     pthread_cond_signal(&processing_done);
-                     pthread_mutex_unlock(&processing_mutex);
-                  }
-               }
-
-               // Cleanup ASR result
-               if (asr_result) {
-                  asr_result_free(asr_result);
-                  asr_result = NULL;
-               }
-
-               // Cleanup network buffers
-               if (network_pcm_buffer) {
-                  free(network_pcm_buffer);
-                  network_pcm_buffer = NULL;
-                  network_pcm_size = 0;
-               }
-            }
-
-            pthread_mutex_unlock(&network_processing_mutex);
-
-            // Return to previous state
-            recState = previous_state_before_network;
-            LOG_INFO("Network processing complete, returned to %s", dawn_state_name(recState));
-            break;
+         // NOTE: DAWN_STATE_NETWORK_PROCESSING removed - worker threads handle network clients
          default:
             LOG_ERROR("I really shouldn't be here.\n");
       }
@@ -3776,7 +3288,7 @@ int main(int argc, char *argv[]) {
 
    if (enable_network_audio) {
       LOG_INFO("Stopping network audio system...");
-      dawn_server_stop();
+      accept_thread_stop();
       dawn_network_audio_cleanup();
 
       // Cleanup IPC resources
@@ -3787,16 +3299,7 @@ int main(int argc, char *argv[]) {
          processing_complete = 0;
       }
       pthread_mutex_unlock(&processing_mutex);
-
-      pthread_mutex_lock(&network_processing_mutex);
-      if (network_pcm_buffer) {
-         free(network_pcm_buffer);
-         network_pcm_buffer = NULL;
-         network_pcm_size = 0;
-      }
-      pthread_mutex_unlock(&network_processing_mutex);
-
-      LOG_INFO("Network audio cleanup complete");
+      // NOTE: Network audio resources are now cleaned up by worker threads
    }
 
    cleanup_text_to_speech();
@@ -3813,11 +3316,20 @@ int main(int argc, char *argv[]) {
    mosquitto_lib_cleanup();
 
    // Save conversation history before cleanup
+   // NOTE: conversation_history points to local session's history (owned by session_manager)
    if (conversation_history != NULL) {
       save_conversation_history(conversation_history);
    }
 
-   json_object_put(conversation_history);
+   // Don't json_object_put here - session_manager owns the history
+   // Clear the global pointer before session cleanup to prevent use-after-free
+   conversation_history = NULL;
+
+   // Cleanup session manager (frees local session and its conversation history)
+   session_manager_cleanup();
+
+   // Cleanup command router (after workers are stopped)
+   command_router_shutdown();
 
    // Cleanup chunking manager (if initialized)
    if (chunk_mgr) {

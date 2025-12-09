@@ -40,11 +40,13 @@
 #include "audio/flac_playback.h"
 #include "audio/mic_passthrough.h"
 #include "conversation_manager.h"
+#include "core/command_router.h"
 #include "dawn.h"
 #include "llm/llm_interface.h"
 #include "logging.h"
 #include "mosquitto_comms.h"
 #include "tts/text_to_speech.h"
+#include "ui/metrics.h"
 #include "word_to_number.h"
 
 #define MAX_FILENAME_LENGTH 1024
@@ -327,6 +329,12 @@ void parseJsonCommandandExecute(const char *input) {
 
    LOG_INFO("Command result for AI: %s",
             pending_command_result ? pending_command_result : "(null)");
+
+   // Log device callback data to TUI for debugging
+   if (pending_command_result) {
+      metrics_log_activity("DATA: %s", pending_command_result);
+   }
+
    if (pending_command_result == NULL) {
       LOG_WARNING("pending_command_result is NULL. That probably shouldn't happen.");
       json_object_put(parsedJson);
@@ -343,11 +351,15 @@ void parseJsonCommandandExecute(const char *input) {
       return;
    }
 
-   snprintf(gpt_response, sizeof(gpt_response), "{\"response\": \"%s\"}", pending_command_result);
+   // Format system data with clear instruction to speak it to the user
+   // Using "system" role so LLM knows this is data to relay, not user input
+   snprintf(gpt_response, sizeof(gpt_response),
+            "[DEVICE DATA] Speak this information naturally to the user: %s",
+            pending_command_result);
 
-   // Add system response as user message to conversation history
+   // Add as system message so LLM knows to relay it, not just confirm it
    struct json_object *system_response_message = json_object_new_object();
-   json_object_object_add(system_response_message, "role", json_object_new_string("user"));
+   json_object_object_add(system_response_message, "role", json_object_new_string("system"));
    json_object_object_add(system_response_message, "content", json_object_new_string(gpt_response));
    json_object_array_add(conversation_history, system_response_message);
 
@@ -363,6 +375,9 @@ void parseJsonCommandandExecute(const char *input) {
       /* FIXME: This is a quick workaround for null responses. */
       if (response_text[0] != '{') {
          text_to_speech(response_text);
+
+         // Update TUI with the AI response
+         metrics_set_last_ai_response(response_text);
 
          // Add the successful AI response to the conversation.
          struct json_object *ai_message = json_object_new_object();
@@ -429,11 +444,105 @@ void on_subscribe(struct mosquitto *mosq,
    }
 }
 
+/**
+ * @brief Execute command for a worker thread and deliver result
+ *
+ * This is called when a command has a request_id, indicating it came from
+ * a worker thread that is waiting for the result.
+ *
+ * IMPORTANT: Callbacks return static buffers which is safe here because:
+ * 1. All MQTT message processing happens in main thread's on_message callback
+ * 2. Only one callback executes at a time
+ * 3. command_router_deliver() copies the result via strdup() before returning
+ *
+ * If callbacks are refactored to heap-allocate returns, this code will need
+ * to free callback_result after delivery. (Technical debt: Phase 4)
+ *
+ * @param parsed_json Parsed JSON command object
+ * @param request_id Request ID to deliver result to
+ */
+static void execute_command_for_worker(struct json_object *parsed_json, const char *request_id) {
+   struct json_object *deviceObject = NULL;
+   struct json_object *actionObject = NULL;
+   struct json_object *valueObject = NULL;
+
+   const char *deviceName = NULL;
+   const char *actionName = NULL;
+   const char *value = NULL;
+
+   char *callback_result = NULL;
+   int should_respond = 0;
+
+   // Get the "device" object from the JSON
+   if (!json_object_object_get_ex(parsed_json, "device", &deviceObject)) {
+      LOG_ERROR("Worker command missing 'device' field");
+      command_router_deliver(request_id, "");
+      return;
+   }
+   deviceName = json_object_get_string(deviceObject);
+
+   // Get the "action" object from the JSON
+   if (!json_object_object_get_ex(parsed_json, "action", &actionObject)) {
+      LOG_ERROR("Worker command missing 'action' field");
+      command_router_deliver(request_id, "");
+      return;
+   }
+   actionName = json_object_get_string(actionObject);
+
+   // Get the "value" object (optional)
+   if (json_object_object_get_ex(parsed_json, "value", &valueObject)) {
+      value = json_object_get_string(valueObject);
+   }
+
+   LOG_INFO("Executing command for worker: device=%s, action=%s, request_id=%s", deviceName,
+            actionName, request_id);
+
+   // Loop through device names for device types and execute callback
+   for (int i = 0; i < MAX_DEVICE_TYPES; i++) {
+      if (strcmp(deviceName, deviceTypeStrings[i]) == 0) {
+         if (deviceCallbackArray[i].callback != NULL) {
+            callback_result = deviceCallbackArray[i].callback(actionName, (char *)value,
+                                                              &should_respond);
+         }
+         break;
+      }
+   }
+
+   // Deliver result to waiting worker
+   if (callback_result && should_respond) {
+      command_router_deliver(request_id, callback_result);
+      LOG_INFO("Delivered result to worker: %s", callback_result);
+   } else {
+      // Command executed but no data returned
+      command_router_deliver(request_id, "");
+      LOG_INFO("Delivered empty result to worker (command executed, no data)");
+   }
+}
+
 /* Callback called when the client receives a message. */
 void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_message *msg) {
    LOG_INFO("%s %d %s", msg->topic, msg->qos, (char *)msg->payload);
 
-   parseJsonCommandandExecute((char *)msg->payload);
+   // Parse the JSON to check for request_id
+   struct json_object *parsed_json = json_tokener_parse((char *)msg->payload);
+   if (parsed_json == NULL) {
+      LOG_ERROR("Failed to parse MQTT message as JSON");
+      return;
+   }
+
+   // Check if this is a worker request (has request_id)
+   struct json_object *request_id_obj = NULL;
+   if (json_object_object_get_ex(parsed_json, "request_id", &request_id_obj)) {
+      const char *request_id = json_object_get_string(request_id_obj);
+
+      // WORKER PATH: Execute callback and route result to worker
+      execute_command_for_worker(parsed_json, request_id);
+   } else {
+      // LOCAL PATH: Existing flow (executes callback + calls LLM)
+      parseJsonCommandandExecute((char *)msg->payload);
+   }
+
+   json_object_put(parsed_json);
 }
 
 char *dateCallback(const char *actionName, char *value, int *should_respond) {
@@ -492,8 +601,8 @@ char *timeCallback(const char *actionName, char *value, int *should_respond) {
    time(&current_time);
    time_info = localtime(&current_time);
 
-   // Format the time data
-   strftime(buffer, sizeof(buffer), "%I:%M %p", time_info);
+   // Format the time data with timezone
+   strftime(buffer, sizeof(buffer), "%I:%M %p %Z", time_info);
 
    if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
       // Direct mode: use text-to-speech with personality

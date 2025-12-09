@@ -55,13 +55,8 @@ static pthread_mutex_t callback_mutex = PTHREAD_MUTEX_INITIALIZER;
 // === Forward Declarations ===
 static void *dawn_server_thread(void *arg);
 static int dawn_handle_client_connection(int client_fd, struct sockaddr_in *client_addr);
-static int dawn_handle_handshake(dawn_client_session_t *session);
-static int dawn_receive_data_chunks(dawn_client_session_t *session,
-                                    uint8_t **data_out,
-                                    size_t *size_out);
-static int dawn_send_data_chunks(dawn_client_session_t *session, const uint8_t *data, size_t size);
-static int dawn_send_ack(int socket_fd);
-static int dawn_send_nack(int socket_fd);
+
+// Note: These functions are non-static for worker thread access (see dawn_server.h)
 
 // === Utility Functions ===
 
@@ -184,19 +179,19 @@ int dawn_send_exact(int socket_fd, const uint8_t *buffer, size_t n) {
 
 // === Protocol Implementation ===
 
-static int dawn_send_ack(int socket_fd) {
+int dawn_send_ack(int socket_fd) {
    uint8_t header[PACKET_HEADER_SIZE];
    dawn_build_packet_header(header, 0, PACKET_TYPE_ACK, 0);
    return dawn_send_exact(socket_fd, header, PACKET_HEADER_SIZE);
 }
 
-static int dawn_send_nack(int socket_fd) {
+int dawn_send_nack(int socket_fd) {
    uint8_t header[PACKET_HEADER_SIZE];
    dawn_build_packet_header(header, 0, PACKET_TYPE_NACK, 0);
    return dawn_send_exact(socket_fd, header, PACKET_HEADER_SIZE);
 }
 
-static int dawn_handle_handshake(dawn_client_session_t *session) {
+int dawn_handle_handshake(dawn_client_session_t *session) {
    if (!session)
       return DAWN_ERROR;
 
@@ -262,9 +257,7 @@ static int dawn_handle_handshake(dawn_client_session_t *session) {
 #define MAX_SEQUENCE_RETRIES 10
 #define MAX_PACKETS_PER_TRANSFER 10000  // ~80MB at 8KB chunks
 
-static int dawn_receive_data_chunks(dawn_client_session_t *session,
-                                    uint8_t **data_out,
-                                    size_t *size_out) {
+int dawn_receive_data_chunks(dawn_client_session_t *session, uint8_t **data_out, size_t *size_out) {
    if (!session || !data_out || !size_out)
       return DAWN_ERROR;
 
@@ -276,6 +269,7 @@ static int dawn_receive_data_chunks(dawn_client_session_t *session,
    }
 
    int packet_count = 0;
+   int sequence_retry_count = 0;
    size_t total_received = 0;
 
    while (1) {
@@ -330,11 +324,18 @@ static int dawn_receive_data_chunks(dawn_client_session_t *session,
       uint16_t packet_sequence = ((uint16_t)seq_bytes[0] << 8) | (uint16_t)seq_bytes[1];
 
       // Verify sequence number with max retry
-      int sequence_retry_count = 0;
       if (packet_sequence != session->receive_sequence) {
          LOG_WARNING("%s: Sequence mismatch: expected %u, got %u (retry %d/%d)", session->client_ip,
                      session->receive_sequence, packet_sequence, sequence_retry_count,
                      MAX_SEQUENCE_RETRIES);
+
+         // Must consume the chunk data to stay in sync with the stream
+         uint8_t *discard = malloc(header.data_length);
+         if (discard) {
+            dawn_read_exact(session->socket_fd, discard, header.data_length);
+            free(discard);
+         }
+
          dawn_send_nack(session->socket_fd);
 
          sequence_retry_count++;
@@ -435,9 +436,48 @@ static int dawn_receive_data_chunks(dawn_client_session_t *session,
  * @note Uses 2-second ACK timeout per chunk
  * @note Maximum 5 retries per chunk with exponential backoff
  */
-static int dawn_send_data_chunks(dawn_client_session_t *session, const uint8_t *data, size_t size) {
+/**
+ * @brief Drain any stale data from socket receive buffer
+ *
+ * This is needed because after receiving audio from the client,
+ * the client might still be retransmitting the last chunk (race condition).
+ * We need to drain this stale data before starting to send our response.
+ */
+static void drain_stale_data(int socket_fd) {
+   // Set very short timeout for non-blocking drain
+   struct timeval timeout;
+   timeout.tv_sec = 0;
+   timeout.tv_usec = 50000;  // 50ms
+   setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+
+   uint8_t drain_buffer[8192];
+   int total_drained = 0;
+   int max_drain = 100000;  // Max 100KB to prevent infinite loop
+
+   while (total_drained < max_drain) {
+      ssize_t n = recv(socket_fd, drain_buffer, sizeof(drain_buffer), 0);
+      if (n <= 0) {
+         break;  // No more data or error
+      }
+      total_drained += n;
+   }
+
+   if (total_drained > 0) {
+      LOG_WARNING("Drained %d bytes of stale data from socket", total_drained);
+   }
+
+   // Restore normal timeout
+   timeout.tv_sec = SOCKET_TIMEOUT_SEC;
+   timeout.tv_usec = 0;
+   setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+}
+
+int dawn_send_data_chunks(dawn_client_session_t *session, const uint8_t *data, size_t size) {
    if (!session || !data || size == 0)
       return DAWN_ERROR;
+
+   // Drain any stale retransmission data from client before starting send
+   drain_stale_data(session->socket_fd);
 
    // Client synchronization delay
    usleep(100000);  // 100ms
@@ -504,13 +544,22 @@ static int dawn_send_data_chunks(dawn_client_session_t *session, const uint8_t *
             LOG_WARNING("%s: Failed to set send timeout: %s", __func__, strerror(errno));
          }
 
-         if (result != DAWN_SUCCESS)
+         if (result != DAWN_SUCCESS) {
+            LOG_WARNING("%s: ACK read failed (attempt %d)", session->client_ip, retry + 1);
             continue;
+         }
+
+         // Debug: log raw ACK bytes received
+         LOG_INFO("%s: ACK bytes: %02X %02X %02X %02X %02X %02X %02X %02X", session->client_ip,
+                  ack_header[0], ack_header[1], ack_header[2], ack_header[3], ack_header[4],
+                  ack_header[5], ack_header[6], ack_header[7]);
 
          dawn_packet_header_t ack_info;
          result = dawn_parse_packet_header(ack_header, &ack_info);
-         if (result != DAWN_SUCCESS)
+         if (result != DAWN_SUCCESS) {
+            LOG_WARNING("%s: ACK parse failed", session->client_ip);
             continue;
+         }
 
          if (ack_info.packet_type == PACKET_TYPE_ACK) {
             chunk_sent = 1;

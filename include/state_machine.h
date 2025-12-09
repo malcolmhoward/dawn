@@ -41,9 +41,6 @@
  * @var DAWN_STATE_VISION_AI_READY
  * Indicates that the vision AI component is ready for processing.
  *
- * @var DAWN_STATE_NETWORK_PROCESSING
- * Processing audio from a network client.
- *
  * @var DAWN_STATE_INVALID
  * Invalid state marker (used as array size sentinel).
  */
@@ -53,7 +50,6 @@ typedef enum {
    DAWN_STATE_COMMAND_RECORDING,
    DAWN_STATE_PROCESS_COMMAND,
    DAWN_STATE_VISION_AI_READY,
-   DAWN_STATE_NETWORK_PROCESSING,
    DAWN_STATE_INVALID
 } dawn_state_t;
 
@@ -75,8 +71,6 @@ static inline const char *dawn_state_name(dawn_state_t state) {
          return "PROCESS_COMMAND";
       case DAWN_STATE_VISION_AI_READY:
          return "VISION_AI_READY";
-      case DAWN_STATE_NETWORK_PROCESSING:
-         return "NETWORK_PROCESSING";
       case DAWN_STATE_INVALID:
       default:
          return "UNKNOWN";

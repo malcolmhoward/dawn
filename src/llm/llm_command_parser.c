@@ -30,11 +30,19 @@
 #include "logging.h"
 #include "mosquitto_comms.h"
 #include "text_to_command_nuevo.h"
+#include "ui/metrics.h"
 
 // Static buffer for command prompt - make it static, make it large
 #define PROMPT_BUFFER_SIZE 65536
 static char command_prompt[PROMPT_BUFFER_SIZE];
 static int prompt_initialized = 0;
+
+// Static buffer for remote command prompt (excludes local-only topics)
+static char remote_command_prompt[PROMPT_BUFFER_SIZE];
+static int remote_prompt_initialized = 0;
+
+// Topics excluded from remote clients (local-only commands)
+static const char *excluded_remote_topics[] = { "hud", "helmet", NULL };
 
 /**
  * @brief Builds a simple command prompt string from the commands_config_nuevo.json file
@@ -177,22 +185,9 @@ static void initialize_command_prompt(void) {
       json_object_iter_next(&type_it);
    }
 
-   // Add response format instructions
-   prompt_len += snprintf(
-       command_prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len,
-       "When I ask for an action that matches one of these commands, respond with both:\n"
-       "1. A conversational response (e.g., \"I'll turn that on for you, sir.\")\n"
-       "2. The exact JSON command enclosed in <command> tags\n\n"
-       "For example: \"Let me turn on the map for you, sir. <command>{\"device\": \"map\", "
-       "\"action\": \"enable\"}</command>\"\n\n"
-       "The very next message I send you will be an automated response from the system. You should "
-       "use that information then to "
-       "reply with the information I requested or information on whether the command was "
-       "successful.\n"
-       "Command hints:\n"
-       "The \"viewing\" command will return an image to you so you can visually answer a query.\n"
-       "When running \"play\", the value is a simple string to search the media files for.\n"
-       "Current HUD names are \"default\", \"environmental\", and \"armor\".\n");
+   // Add response format instructions (from dawn.h)
+   prompt_len += snprintf(command_prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len, "%s",
+                          AI_LOCAL_COMMAND_INSTRUCTIONS);
 
    json_object_put(parsedJson);
    prompt_initialized = 1;
@@ -201,15 +196,238 @@ static void initialize_command_prompt(void) {
 }
 
 /**
- * @brief Gets the command prompt string
+ * @brief Gets the local command prompt string (all commands including HUD/helmet)
  *
- * @return The command prompt string
+ * @return The local command prompt string
  */
-const char *get_command_prompt(void) {
+const char *get_local_command_prompt(void) {
    if (!prompt_initialized) {
       initialize_command_prompt();
    }
    return command_prompt;
+}
+
+/**
+ * @brief Check if a topic is excluded for remote clients
+ */
+static int is_topic_excluded(const char *topic) {
+   if (!topic)
+      return 0;
+   for (int i = 0; excluded_remote_topics[i] != NULL; i++) {
+      if (strcmp(topic, excluded_remote_topics[i]) == 0) {
+         return 1;
+      }
+   }
+   return 0;
+}
+
+/**
+ * @brief Builds the remote command prompt (excludes local-only topics like hud, helmet)
+ *
+ * This creates a prompt for network satellite clients that only includes
+ * general commands (date, time, etc.) but excludes HUD and helmet controls.
+ */
+static void initialize_remote_command_prompt(void) {
+   if (remote_prompt_initialized) {
+      return;
+   }
+
+   FILE *configFile = NULL;
+   char buffer[10 * 1024];
+   int bytes_read = 0;
+   struct json_object *parsedJson = NULL;
+   struct json_object *typesObject = NULL;
+   struct json_object *devicesObject = NULL;
+
+   // Start with a simple instruction
+   int prompt_len = snprintf(
+       remote_command_prompt, PROMPT_BUFFER_SIZE,
+       "%s\n\n"
+       "You can also execute commands for me. These are the commands available:\n\n",
+       AI_DESCRIPTION);
+
+   // Read the config file
+   configFile = fopen(CONFIG_FILE, "r");
+   if (configFile == NULL) {
+      LOG_ERROR("Unable to open config file: %s", CONFIG_FILE);
+      remote_prompt_initialized = 1;
+      return;
+   }
+
+   if ((bytes_read = fread(buffer, 1, sizeof(buffer), configFile)) > 0) {
+      buffer[bytes_read] = '\0';
+   } else {
+      LOG_ERROR("Failed to read config file for remote prompt");
+      fclose(configFile);
+      remote_prompt_initialized = 1;
+      return;
+   }
+
+   if (bytes_read == sizeof(buffer)) {
+      LOG_ERROR("Config file buffer is too small.");
+      fclose(configFile);
+      remote_prompt_initialized = 1;
+      return;
+   }
+
+   fclose(configFile);
+
+   // Parse JSON
+   parsedJson = json_tokener_parse(buffer);
+   if (parsedJson == NULL) {
+      LOG_ERROR("Failed to parse config JSON for remote prompt");
+      remote_prompt_initialized = 1;
+      return;
+   }
+
+   // Get the "types" and "devices" objects
+   if (!json_object_object_get_ex(parsedJson, "types", &typesObject) ||
+       !json_object_object_get_ex(parsedJson, "devices", &devicesObject)) {
+      LOG_ERROR("Required objects not found in json for remote prompt");
+      json_object_put(parsedJson);
+      remote_prompt_initialized = 1;
+      return;
+   }
+
+   // Add a section for each command type (only if it has non-excluded devices)
+   struct json_object_iterator type_it = json_object_iter_begin(typesObject);
+   struct json_object_iterator type_it_end = json_object_iter_end(typesObject);
+
+   while (!json_object_iter_equal(&type_it, &type_it_end)) {
+      const char *type_name = json_object_iter_peek_name(&type_it);
+      struct json_object *type_obj;
+      json_object_object_get_ex(typesObject, type_name, &type_obj);
+
+      // First, check if there are any non-excluded devices of this type
+      int has_devices = 0;
+      struct json_object_iterator dev_check = json_object_iter_begin(devicesObject);
+      struct json_object_iterator dev_check_end = json_object_iter_end(devicesObject);
+
+      while (!json_object_iter_equal(&dev_check, &dev_check_end)) {
+         struct json_object *device_obj;
+         const char *device_name = json_object_iter_peek_name(&dev_check);
+         json_object_object_get_ex(devicesObject, device_name, &device_obj);
+
+         struct json_object *device_type_obj, *topic_obj;
+         if (json_object_object_get_ex(device_obj, "type", &device_type_obj)) {
+            const char *device_type = json_object_get_string(device_type_obj);
+            if (strcmp(device_type, type_name) == 0) {
+               // Check if topic is excluded
+               const char *topic = NULL;
+               if (json_object_object_get_ex(device_obj, "topic", &topic_obj)) {
+                  topic = json_object_get_string(topic_obj);
+               }
+               if (!is_topic_excluded(topic)) {
+                  has_devices = 1;
+                  break;
+               }
+            }
+         }
+         json_object_iter_next(&dev_check);
+      }
+
+      // Skip this type if no devices are available for remote clients
+      if (!has_devices) {
+         json_object_iter_next(&type_it);
+         continue;
+      }
+
+      prompt_len += snprintf(remote_command_prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len,
+                             "== %s Commands ==\n", type_name);
+
+      // Get the actions for this type
+      struct json_object *actions_obj;
+      if (json_object_object_get_ex(type_obj, "actions", &actions_obj)) {
+         struct json_object_iterator action_it = json_object_iter_begin(actions_obj);
+         struct json_object_iterator action_it_end = json_object_iter_end(actions_obj);
+
+         while (!json_object_iter_equal(&action_it, &action_it_end)) {
+            const char *action_name = json_object_iter_peek_name(&action_it);
+            struct json_object *action_obj;
+            json_object_object_get_ex(actions_obj, action_name, &action_obj);
+
+            struct json_object *command_obj;
+            if (json_object_object_get_ex(action_obj, "action_command", &command_obj)) {
+               const char *command = json_object_get_string(command_obj);
+
+               prompt_len += snprintf(remote_command_prompt + prompt_len,
+                                      PROMPT_BUFFER_SIZE - prompt_len, "- %s: %s\n", action_name,
+                                      command);
+            }
+
+            json_object_iter_next(&action_it);
+         }
+      }
+
+      // Add a list of devices for this type (only non-excluded ones)
+      prompt_len += snprintf(remote_command_prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len,
+                             "  Valid devices for this command only: ");
+
+      // Find all non-excluded devices of this type
+      int device_count = 0;
+      struct json_object_iterator dev_it = json_object_iter_begin(devicesObject);
+      struct json_object_iterator dev_it_end = json_object_iter_end(devicesObject);
+
+      while (!json_object_iter_equal(&dev_it, &dev_it_end)) {
+         const char *device_name = json_object_iter_peek_name(&dev_it);
+         struct json_object *device_obj;
+         json_object_object_get_ex(devicesObject, device_name, &device_obj);
+
+         struct json_object *device_type_obj, *topic_obj;
+         if (json_object_object_get_ex(device_obj, "type", &device_type_obj)) {
+            const char *device_type = json_object_get_string(device_type_obj);
+
+            if (strcmp(device_type, type_name) == 0) {
+               // Check if topic is excluded
+               const char *topic = NULL;
+               if (json_object_object_get_ex(device_obj, "topic", &topic_obj)) {
+                  topic = json_object_get_string(topic_obj);
+               }
+
+               if (!is_topic_excluded(topic)) {
+                  if (device_count > 0) {
+                     prompt_len += snprintf(remote_command_prompt + prompt_len,
+                                            PROMPT_BUFFER_SIZE - prompt_len, ", ");
+                  }
+                  prompt_len += snprintf(remote_command_prompt + prompt_len,
+                                         PROMPT_BUFFER_SIZE - prompt_len, "%s", device_name);
+                  device_count++;
+               }
+            }
+         }
+
+         json_object_iter_next(&dev_it);
+      }
+
+      prompt_len += snprintf(remote_command_prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len,
+                             "\n\n");
+
+      json_object_iter_next(&type_it);
+   }
+
+   // Add response format instructions (from dawn.h)
+   prompt_len += snprintf(remote_command_prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len, "%s",
+                          AI_REMOTE_COMMAND_INSTRUCTIONS);
+
+   json_object_put(parsedJson);
+   remote_prompt_initialized = 1;
+
+   LOG_INFO("Remote AI prompt initialized. Length: %d", prompt_len);
+}
+
+/**
+ * @brief Gets the remote command prompt string (for network satellite clients)
+ *
+ * This prompt excludes local-only commands (HUD, helmet) and only includes
+ * general commands like date, time, etc.
+ *
+ * @return The remote command prompt string
+ */
+const char *get_remote_command_prompt(void) {
+   if (!remote_prompt_initialized) {
+      initialize_remote_command_prompt();
+   }
+   return remote_command_prompt;
 }
 
 /**
@@ -289,6 +507,8 @@ int parse_llm_response_for_commands(const char *llm_response, struct mosquitto *
                   if (rc != MOSQ_ERR_SUCCESS) {
                      LOG_ERROR("Error publishing command: %s", mosquitto_strerror(rc));
                   } else {
+                     // Log LLM-generated command to TUI activity
+                     metrics_log_activity("MQTT: %s", command);
                      commands_found++;
                   }
                }

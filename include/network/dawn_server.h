@@ -229,4 +229,47 @@ int dawn_read_exact(int socket_fd, uint8_t *buffer, size_t n);
  */
 int dawn_send_exact(int socket_fd, const uint8_t *buffer, size_t n);
 
+// =============================================================================
+// DAP Protocol Functions (for worker thread use)
+// =============================================================================
+
+/**
+ * Handle DAP handshake with client
+ * @param session Client session with initialized socket
+ * @return DAWN_SUCCESS on success, error code on failure
+ */
+int dawn_handle_handshake(dawn_client_session_t *session);
+
+/**
+ * Receive data chunks from client
+ * @param session Client session with initialized socket
+ * @param data_out Pointer to receive allocated data buffer (caller must free)
+ * @param size_out Pointer to receive data size
+ * @return DAWN_SUCCESS on success, error code on failure
+ */
+int dawn_receive_data_chunks(dawn_client_session_t *session, uint8_t **data_out, size_t *size_out);
+
+/**
+ * Send data to client in chunks with retry logic
+ * @param session Client session with initialized socket
+ * @param data Data to send
+ * @param size Size of data in bytes
+ * @return DAWN_SUCCESS on success, error code on failure
+ */
+int dawn_send_data_chunks(dawn_client_session_t *session, const uint8_t *data, size_t size);
+
+/**
+ * Send ACK packet to client
+ * @param socket_fd Client socket
+ * @return DAWN_SUCCESS on success, error code on failure
+ */
+int dawn_send_ack(int socket_fd);
+
+/**
+ * Send NACK packet to client
+ * @param socket_fd Client socket
+ * @return DAWN_SUCCESS on success, error code on failure
+ */
+int dawn_send_nack(int socket_fd);
+
 #endif  // DAWN_SERVER_H

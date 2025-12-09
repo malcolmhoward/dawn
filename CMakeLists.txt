@@ -262,6 +262,11 @@ set(DAWN_SOURCES
     src/text_to_command_nuevo.c
     src/word_to_number.c
 
+    # Multi-threaded core (session management, worker pool, command routing)
+    src/core/session_manager.c
+    src/core/worker_pool.c
+    src/core/command_router.c
+
     # ASR subsystem
     src/asr/asr_interface.c
     src/asr/vad_silero.c
@@ -283,6 +288,7 @@ set(DAWN_SOURCES
     src/network/dawn_server.c
     src/network/dawn_network_audio.c
     src/network/dawn_wav_utils.c
+    src/network/accept_thread.c
 
     # Audio subsystem
     src/audio/audio_capture_thread.c

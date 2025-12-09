@@ -42,27 +42,63 @@ static int g_initialized = 0;
  * ============================================================================ */
 
 /**
- * @brief Strip non-printable ASCII and multi-byte UTF-8 characters
+ * @brief Sanitize string for TUI display
  *
- * Replaces non-printable characters with spaces for clean TUI display.
+ * Replaces multi-byte UTF-8 characters with ASCII equivalents where possible,
+ * and removes/replaces non-printable characters.
  */
 static void sanitize_for_display(char *str) {
    if (str == NULL)
       return;
 
-   unsigned char *p = (unsigned char *)str;
-   while (*p) {
-      /* Keep printable ASCII (space through tilde) */
-      if (*p >= 32 && *p <= 126) {
-         p++;
-      } else if (*p == '\t' || *p == '\n' || *p == '\r') {
-         /* Replace tabs/newlines with space */
-         *p++ = ' ';
+   unsigned char *src = (unsigned char *)str;
+   unsigned char *dst = (unsigned char *)str;
+
+   while (*src) {
+      /* Check for multi-byte UTF-8 sequences */
+      if ((src[0] & 0xE0) == 0xC0 && (src[1] & 0xC0) == 0x80) {
+         /* 2-byte UTF-8: common accented characters, skip and replace with base */
+         src += 2;
+         /* Skip entirely - most are accents we don't need */
+      } else if ((src[0] & 0xF0) == 0xE0 && (src[1] & 0xC0) == 0x80 && (src[2] & 0xC0) == 0x80) {
+         /* 3-byte UTF-8: includes smart quotes, em-dashes, etc. */
+         /* Check for common replaceable characters */
+         if (src[0] == 0xE2 && src[1] == 0x80) {
+            /* U+2018-U+201F: various quotation marks */
+            if (src[2] == 0x98 || src[2] == 0x99) {
+               *dst++ = '\''; /* ' or ' → ' */
+            } else if (src[2] == 0x9C || src[2] == 0x9D) {
+               *dst++ = '"'; /* " or " → " */
+            } else if (src[2] == 0x93 || src[2] == 0x94) {
+               *dst++ = '-'; /* en-dash or em-dash → - */
+            } else if (src[2] == 0xA6) {
+               *dst++ = '.';
+               *dst++ = '.';
+               *dst++ = '.'; /* … → ... */
+            } else {
+               *dst++ = ' '; /* Other U+20xx → space */
+            }
+         } else {
+            *dst++ = ' '; /* Other 3-byte → space */
+         }
+         src += 3;
+      } else if ((src[0] & 0xF8) == 0xF0 && (src[1] & 0xC0) == 0x80 && (src[2] & 0xC0) == 0x80 &&
+                 (src[3] & 0xC0) == 0x80) {
+         /* 4-byte UTF-8: emoji and rare chars → skip */
+         src += 4;
+      } else if (*src >= 32 && *src <= 126) {
+         /* Printable ASCII: keep as-is */
+         *dst++ = *src++;
+      } else if (*src == '\t' || *src == '\n' || *src == '\r') {
+         /* Whitespace → single space */
+         *dst++ = ' ';
+         src++;
       } else {
-         /* Replace any other character (including multi-byte UTF-8) with space */
-         *p++ = ' ';
+         /* Other non-printable → skip */
+         src++;
       }
    }
+   *dst = '\0';
 }
 
 /**
@@ -662,10 +698,9 @@ int metrics_export_json(const char *filepath) {
            (long)snapshot.state_time[DAWN_STATE_COMMAND_RECORDING]);
    fprintf(fp, "    \"PROCESS_COMMAND\": %ld,\n",
            (long)snapshot.state_time[DAWN_STATE_PROCESS_COMMAND]);
-   fprintf(fp, "    \"VISION_AI_READY\": %ld,\n",
+   fprintf(fp, "    \"VISION_AI_READY\": %ld\n",
            (long)snapshot.state_time[DAWN_STATE_VISION_AI_READY]);
-   fprintf(fp, "    \"NETWORK_PROCESSING\": %ld\n",
-           (long)snapshot.state_time[DAWN_STATE_NETWORK_PROCESSING]);
+   // NOTE: NETWORK_PROCESSING removed - handled by worker threads
    fprintf(fp, "  },\n");
 
    const char *llm_type_str = (snapshot.current_llm_type == LLM_LOCAL)

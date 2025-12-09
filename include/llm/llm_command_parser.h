@@ -24,8 +24,13 @@
 #ifndef LLM_COMMAND_PARSER_H
 #define LLM_COMMAND_PARSER_H
 
-// Function to build command prompt from commands_config_nuevo.json
-const char *get_command_prompt(void);
+// Function to build local command prompt from commands_config_nuevo.json
+// For local microphone interface - includes all commands (HUD, helmet, general)
+const char *get_local_command_prompt(void);
+
+// Function to build remote command prompt (excludes local-only topics: hud, helmet)
+// For network satellite clients (DAP/DAP2) - includes general commands like date, time
+const char *get_remote_command_prompt(void);
 
 // Function to parse LLM responses for commands
 int parse_llm_response_for_commands(const char *llm_response, struct mosquitto *mosq);

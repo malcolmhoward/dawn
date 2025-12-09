@@ -752,7 +752,7 @@ bool performHandshake(WiFiClient &client) {
     return false;
   }
   
-  client.clear(); // Make sure data is sent immediately
+  client.flush(); // Flush send buffer to ensure data is sent immediately
   
   // Wait for acknowledgment with timeout
   unsigned long startTime = millis();
@@ -1028,6 +1028,29 @@ bool receiveDataWithVerification(WiFiClient &client, uint8_t* buffer, size_t buf
     // Verify sequence number
     if (packetSequence != receiveSequence) {
       Serial.printf("Sequence mismatch: expected %u, got %u\n", receiveSequence, packetSequence);
+
+      // CRITICAL: Must consume the data payload to stay in sync with the stream
+      // Without this, the next header read gets audio data bytes instead of a header
+      uint8_t* discardBuffer = (uint8_t*)ps_malloc(dataLength);
+      if (discardBuffer) {
+        size_t discarded = 0;
+        unsigned long discardTimeout = millis() + 5000;
+        while (discarded < dataLength && millis() < discardTimeout) {
+          int available = client.available();
+          if (available > 0) {
+            size_t toRead = min((size_t)available, (size_t)(dataLength - discarded));
+            int got = client.read(discardBuffer + discarded, toRead);
+            if (got > 0) discarded += got;
+          } else {
+            delay(10);
+          }
+        }
+        free(discardBuffer);
+        Serial.printf("Discarded %lu bytes after sequence mismatch\n", (unsigned long)discarded);
+      } else {
+        Serial.println("Failed to allocate discard buffer - stream may be corrupted");
+      }
+
       sendNack(client);
       continue;
     }
@@ -1133,8 +1156,8 @@ bool sendAck(WiFiClient &client) {
   
   // Send with verification
   size_t sent = client.write(header, PACKET_HEADER_SIZE);
-  client.clear(); // Ensure data is sent immediately
-  
+  client.flush(); // Flush send buffer to ensure data is sent immediately
+
   return (sent == PACKET_HEADER_SIZE);
 }
 
@@ -1142,6 +1165,7 @@ void sendNack(WiFiClient &client) {
   uint8_t header[PACKET_HEADER_SIZE];
   buildPacketHeader(header, 0, PACKET_TYPE_NACK, 0);
   client.write(header, PACKET_HEADER_SIZE);
+  client.flush();
 }
 
 // Add this helper function to print WAV header contents
