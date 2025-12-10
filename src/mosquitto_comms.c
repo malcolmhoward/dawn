@@ -42,9 +42,13 @@
 #include "conversation_manager.h"
 #include "core/command_router.h"
 #include "dawn.h"
+#include "llm/llm_command_parser.h"
 #include "llm/llm_interface.h"
 #include "logging.h"
 #include "mosquitto_comms.h"
+#include "tools/calculator.h"
+#include "tools/weather_service.h"
+#include "tools/web_search.h"
 #include "tts/text_to_speech.h"
 #include "ui/metrics.h"
 #include "word_to_number.h"
@@ -74,7 +78,10 @@ static deviceCallback deviceCallbackArray[] = { { AUDIO_PLAYBACK_DEVICE, setPcmP
                                                 { VOLUME, volumeCallback },
                                                 { LOCAL_LLM_SWITCH, localLLMCallback },
                                                 { CLOUD_LLM_SWITCH, cloudLLMCallback },
-                                                { RESET_CONVERSATION, resetConversationCallback } };
+                                                { RESET_CONVERSATION, resetConversationCallback },
+                                                { SEARCH, searchCallback },
+                                                { WEATHER, weatherCallback },
+                                                { CALCULATOR, calculatorCallback } };
 
 static pthread_t music_thread = -1;
 static pthread_t voice_thread = -1;
@@ -208,7 +215,7 @@ void searchDirectory(const char *rootDir, const char *pattern, Playlist *playlis
 
 #define GPT_RESPONSE_BUFFER_SIZE 512
 
-void parseJsonCommandandExecute(const char *input) {
+void parseJsonCommandandExecute(const char *input, struct mosquitto *mosq) {
    struct json_object *parsedJson = NULL;
    struct json_object *deviceObject = NULL;
    struct json_object *actionObject = NULL;
@@ -372,11 +379,38 @@ void parseJsonCommandandExecute(const char *input) {
          *match = '\0';
          LOG_INFO("AI: %s\n", response_text);
       }
+
+      // Process any commands in the LLM follow-up response (chained commands)
+      if (command_processing_mode == CMD_MODE_LLM_ONLY ||
+          command_processing_mode == CMD_MODE_DIRECT_FIRST) {
+         int cmds_processed = parse_llm_response_for_commands(response_text, mosq);
+         if (cmds_processed > 0) {
+            LOG_INFO("Processed %d chained commands from LLM follow-up", cmds_processed);
+         }
+      }
+
       /* FIXME: This is a quick workaround for null responses. */
       if (response_text[0] != '{') {
-         text_to_speech(response_text);
+         // Create cleaned version for TTS (remove command tags)
+         char *tts_response = strdup(response_text);
+         if (tts_response) {
+            char *cmd_start, *cmd_end;
+            while ((cmd_start = strstr(tts_response, "<command>")) != NULL) {
+               cmd_end = strstr(cmd_start, "</command>");
+               if (cmd_end) {
+                  cmd_end += strlen("</command>");
+                  memmove(cmd_start, cmd_end, strlen(cmd_end) + 1);
+               } else {
+                  break;
+               }
+            }
+            text_to_speech(tts_response);
+            free(tts_response);
+         } else {
+            text_to_speech(response_text);
+         }
 
-         // Update TUI with the AI response
+         // Update TUI with the AI response (full response including commands)
          metrics_set_last_ai_response(response_text);
 
          // Add the successful AI response to the conversation.
@@ -450,13 +484,16 @@ void on_subscribe(struct mosquitto *mosq,
  * This is called when a command has a request_id, indicating it came from
  * a worker thread that is waiting for the result.
  *
- * IMPORTANT: Callbacks return static buffers which is safe here because:
- * 1. All MQTT message processing happens in main thread's on_message callback
- * 2. Only one callback executes at a time
- * 3. command_router_deliver() copies the result via strdup() before returning
+ * CALLBACK RETURN VALUE CONTRACT:
+ * - Callbacks MUST return heap-allocated strings (via malloc/strdup) or NULL
+ * - Caller (this function) is responsible for freeing the returned value
+ * - Legacy callbacks (date, time, etc.) use static buffers - these should be
+ *   migrated to heap allocation for consistency (Phase 4 cleanup)
+ * - New callbacks (weather, search) already follow heap allocation pattern
  *
- * If callbacks are refactored to heap-allocate returns, this code will need
- * to free callback_result after delivery. (Technical debt: Phase 4)
+ * Thread safety:
+ * - All MQTT message processing happens in main thread's on_message callback
+ * - command_router_deliver() copies the result before returning
  *
  * @param parsed_json Parsed JSON command object
  * @param request_id Request ID to deliver result to
@@ -539,7 +576,7 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
       execute_command_for_worker(parsed_json, request_id);
    } else {
       // LOCAL PATH: Existing flow (executes callback + calls LLM)
-      parseJsonCommandandExecute((char *)msg->payload);
+      parseJsonCommandandExecute((char *)msg->payload, mosq);
    }
 
    json_object_put(parsed_json);
@@ -1235,5 +1272,162 @@ char *resetConversationCallback(const char *actionName, char *value, int *should
    strcpy(return_buffer, "Conversation context has been reset. Starting fresh.");
    *should_respond = 1;
    return return_buffer;
+}
+
+#define SEARCH_RESULT_BUFFER_SIZE 4096
+
+char *searchCallback(const char *actionName, char *value, int *should_respond) {
+   *should_respond = 1;  // Always return results to LLM
+
+   // Initialize web search module if needed
+   if (!web_search_is_initialized()) {
+      if (web_search_init(NULL) != 0) {
+         LOG_ERROR("searchCallback: Failed to initialize web search module");
+         return strdup("Web search service is not available.");
+      }
+   }
+
+   if (strcmp(actionName, "web") == 0) {
+      LOG_INFO("searchCallback: Performing web search for '%s'", value);
+
+      search_response_t *response = web_search_query(value, SEARXNG_MAX_RESULTS);
+      if (response) {
+         if (response->error) {
+            LOG_ERROR("searchCallback: Search error: %s", response->error);
+            char *result = malloc(256);
+            if (result) {
+               snprintf(result, 256, "Search failed: %s", response->error);
+            }
+            web_search_free_response(response);
+            return result ? result : strdup("Search failed.");
+         }
+
+         if (response->count > 0) {
+            char *result = malloc(SEARCH_RESULT_BUFFER_SIZE);
+            if (result) {
+               web_search_format_for_llm(response, result, SEARCH_RESULT_BUFFER_SIZE);
+               LOG_INFO("searchCallback: Returning %d results", response->count);
+            }
+            web_search_free_response(response);
+            return result ? result : strdup("Failed to format search results.");
+         }
+
+         web_search_free_response(response);
+         char *msg = malloc(128);
+         if (msg) {
+            snprintf(msg, 128, "No results found for '%s'.", value);
+         }
+         return msg ? msg : strdup("No results found.");
+      }
+
+      return strdup("Search request failed.");
+   }
+
+   return strdup("Unknown search action.");
+}
+
+#define WEATHER_RESULT_BUFFER_SIZE 2048  // Increased for week forecast
+
+char *weatherCallback(const char *actionName, char *value, int *should_respond) {
+   *should_respond = 1;  // Always return results to LLM
+
+   // Determine forecast type from action name
+   forecast_type_t forecast = FORECAST_TODAY;  // Default
+   int valid_action = 0;
+
+   if (strcmp(actionName, "get") == 0 || strcmp(actionName, "today") == 0) {
+      forecast = FORECAST_TODAY;
+      valid_action = 1;
+   } else if (strcmp(actionName, "tomorrow") == 0) {
+      forecast = FORECAST_TOMORROW;
+      valid_action = 1;
+   } else if (strcmp(actionName, "week") == 0) {
+      forecast = FORECAST_WEEK;
+      valid_action = 1;
+   }
+
+   if (!valid_action) {
+      return strdup("Unknown weather action. Use: 'today', 'tomorrow', or 'week' with a location.");
+   }
+
+   if (value == NULL || strlen(value) == 0) {
+      LOG_WARNING("weatherCallback: No location provided");
+      return strdup("Please specify a location for the weather request.");
+   }
+
+   LOG_INFO("weatherCallback: Fetching %s weather for '%s'",
+            forecast == FORECAST_WEEK ? "week"
+                                      : (forecast == FORECAST_TOMORROW ? "tomorrow" : "today"),
+            value);
+
+   weather_response_t *response = weather_get(value, forecast);
+   if (response) {
+      if (response->error) {
+         LOG_ERROR("weatherCallback: Weather error: %s", response->error);
+         char *result = malloc(256);
+         if (result) {
+            snprintf(result, 256, "Weather lookup failed: %s", response->error);
+         }
+         weather_free_response(response);
+         return result ? result : strdup("Weather lookup failed.");
+      }
+
+      char *result = malloc(WEATHER_RESULT_BUFFER_SIZE);
+      if (result) {
+         int formatted_len = weather_format_for_llm(response, result, WEATHER_RESULT_BUFFER_SIZE);
+         if (formatted_len < 0 || (size_t)formatted_len >= WEATHER_RESULT_BUFFER_SIZE) {
+            LOG_ERROR("weatherCallback: Weather data truncated (needed %d bytes, have %d)",
+                      formatted_len, WEATHER_RESULT_BUFFER_SIZE);
+            free(result);
+            weather_free_response(response);
+            return strdup("Weather data too large to format.");
+         }
+         LOG_INFO("weatherCallback: Weather data retrieved successfully (%d bytes)", formatted_len);
+      }
+      weather_free_response(response);
+      return result ? result : strdup("Failed to format weather data.");
+   }
+
+   return strdup("Weather request failed.");
+}
+
+char *calculatorCallback(const char *actionName, char *value, int *should_respond) {
+   *should_respond = 1;  // Always return results to LLM
+
+   if (value == NULL || strlen(value) == 0) {
+      LOG_WARNING("calculatorCallback: No value provided");
+      return strdup("Please provide a value for the calculator.");
+   }
+
+   if (strcmp(actionName, "evaluate") == 0) {
+      LOG_INFO("calculatorCallback: Evaluating '%s'", value);
+      calc_result_t result = calculator_evaluate(value);
+      char *formatted = calculator_format_result(&result);
+      if (formatted) {
+         LOG_INFO("calculatorCallback: Result = %s", formatted);
+         return formatted;
+      }
+      return strdup("Failed to evaluate expression.");
+   }
+
+   if (strcmp(actionName, "convert") == 0) {
+      LOG_INFO("calculatorCallback: Converting '%s'", value);
+      char *result = calculator_convert(value);
+      return result ? result : strdup("Failed to convert units.");
+   }
+
+   if (strcmp(actionName, "base") == 0) {
+      LOG_INFO("calculatorCallback: Base converting '%s'", value);
+      char *result = calculator_base_convert(value);
+      return result ? result : strdup("Failed to convert base.");
+   }
+
+   if (strcmp(actionName, "random") == 0) {
+      LOG_INFO("calculatorCallback: Random number '%s'", value);
+      char *result = calculator_random(value);
+      return result ? result : strdup("Failed to generate random number.");
+   }
+
+   return strdup("Unknown calculator action. Use: evaluate, convert, base, or random.");
 }
 /* End Mosquitto Stuff */

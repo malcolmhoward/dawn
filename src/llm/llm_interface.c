@@ -289,8 +289,8 @@ void llm_init(const char *cloud_provider_override) {
       }
    }
 
-   // Start with cloud LLM
-   llm_set_type(LLM_CLOUD);
+   // Note: LLM type (local/cloud) is set by dawn.c after this function returns,
+   // allowing proper TTS announcement after TTS is initialized.
 }
 
 void llm_set_type(llm_type_t type) {
@@ -442,7 +442,6 @@ char *llm_chat_completion(struct json_object *conversation_history,
          LOG_WARNING("Falling back to local LLM due to connection failure.");
          text_to_speech("Unable to contact cloud LLM.");
          llm_set_type(LLM_LOCAL);
-         text_to_speech("Setting AI to local LLM.");
 
          // Retry with local LLM
 #ifdef OPENAI_API_KEY
@@ -514,7 +513,6 @@ char *llm_chat_completion_streaming(struct json_object *conversation_history,
          LOG_WARNING("Falling back to local LLM due to connection failure.");
          text_to_speech("Unable to contact cloud LLM.");
          llm_set_type(LLM_LOCAL);
-         text_to_speech("Setting AI to local LLM.");
 
          // Retry with local LLM
 #ifdef OPENAI_API_KEY

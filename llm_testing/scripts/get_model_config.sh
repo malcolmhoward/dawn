@@ -32,7 +32,7 @@ get_model_config() {
         export TOP_P=0.9
         export TOP_K=40
         export REPEAT_PENALTY=1.1
-        export EXTRA_FLAGS="--flash-attn"
+        export EXTRA_FLAGS="--flash-attn on"
         return 0
     fi
 

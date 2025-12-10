@@ -1037,6 +1037,198 @@ void initialize_text_to_speech(char *pcm_device) {
  *
  * @param text The text to be converted to speech.
  */
+// US state abbreviation to full name mapping with precomputed lengths
+// All abbreviations are exactly 2 characters
+struct state_entry_t {
+   char abbrev[3];    // 2 chars + null terminator
+   uint8_t full_len;  // Precomputed length of full name
+   const char *full_name;
+};
+
+static const state_entry_t state_abbreviations[] = {
+   { "AL", 7, "Alabama" },
+   { "AK", 6, "Alaska" },
+   { "AZ", 7, "Arizona" },
+   { "AR", 8, "Arkansas" },
+   { "CA", 10, "California" },
+   { "CO", 8, "Colorado" },
+   { "CT", 11, "Connecticut" },
+   { "DE", 8, "Delaware" },
+   { "FL", 7, "Florida" },
+   { "GA", 7, "Georgia" },
+   { "HI", 6, "Hawaii" },
+   { "ID", 5, "Idaho" },
+   { "IL", 8, "Illinois" },
+   { "IN", 7, "Indiana" },
+   { "IA", 4, "Iowa" },
+   { "KS", 6, "Kansas" },
+   { "KY", 8, "Kentucky" },
+   { "LA", 9, "Louisiana" },
+   { "ME", 5, "Maine" },
+   { "MD", 8, "Maryland" },
+   { "MA", 13, "Massachusetts" },
+   { "MI", 8, "Michigan" },
+   { "MN", 9, "Minnesota" },
+   { "MS", 11, "Mississippi" },
+   { "MO", 8, "Missouri" },
+   { "MT", 7, "Montana" },
+   { "NE", 8, "Nebraska" },
+   { "NV", 6, "Nevada" },
+   { "NH", 13, "New Hampshire" },
+   { "NJ", 10, "New Jersey" },
+   { "NM", 10, "New Mexico" },
+   { "NY", 8, "New York" },
+   { "NC", 14, "North Carolina" },
+   { "ND", 12, "North Dakota" },
+   { "OH", 4, "Ohio" },
+   { "OK", 8, "Oklahoma" },
+   { "OR", 6, "Oregon" },
+   { "PA", 12, "Pennsylvania" },
+   { "RI", 12, "Rhode Island" },
+   { "SC", 14, "South Carolina" },
+   { "SD", 12, "South Dakota" },
+   { "TN", 9, "Tennessee" },
+   { "TX", 5, "Texas" },
+   { "UT", 4, "Utah" },
+   { "VT", 7, "Vermont" },
+   { "VA", 8, "Virginia" },
+   { "WA", 10, "Washington" },
+   { "WV", 13, "West Virginia" },
+   { "WI", 9, "Wisconsin" },
+   { "WY", 7, "Wyoming" },
+   { "DC", 4, "D.C." },
+   { "", 0, nullptr }  // Sentinel
+};
+
+static constexpr size_t STATE_COUNT = 51;
+
+/**
+ * @brief Check if character is a word boundary for state abbreviation matching
+ */
+static inline bool is_state_boundary(char c) {
+   return c == '\0' || c == ' ' || c == ',' || c == '.' || c == '\n' || c == '\t' || c == ')' ||
+          c == '"' || c == '\'' || c == ':' || c == ';' || c == '!' || c == '?';
+}
+
+/**
+ * @brief Check if character is a valid boundary before state abbreviation
+ */
+static inline bool is_valid_before(size_t pos, const std::string &text) {
+   return (pos == 0) || (text[pos - 1] == ' ') || (text[pos - 1] == ',') || (text[pos - 1] == '(');
+}
+
+/**
+ * @brief Look up state full name by 2-letter abbreviation
+ * @return Pointer to state entry, or nullptr if not found
+ */
+static inline const state_entry_t *lookup_state(char c1, char c2) {
+   for (size_t i = 0; i < STATE_COUNT; i++) {
+      if (state_abbreviations[i].abbrev[0] == c1 && state_abbreviations[i].abbrev[1] == c2) {
+         return &state_abbreviations[i];
+      }
+   }
+   return nullptr;
+}
+
+/**
+ * @brief Expand US state abbreviations to full names for natural TTS
+ *
+ * Uses single-pass algorithm for efficiency. Only replaces abbreviations
+ * at word boundaries to avoid false positives like "INCOME" matching "IN".
+ */
+static std::string expand_state_abbreviations(const std::string &input) {
+   const size_t len = input.length();
+   if (len < 2)
+      return input;  // No possible abbreviation
+
+   // Quick scan: any uppercase letters? If not, skip entirely
+   bool has_upper = false;
+   for (size_t i = 0; i < len && !has_upper; i++) {
+      has_upper = std::isupper(static_cast<unsigned char>(input[i]));
+   }
+   if (!has_upper)
+      return input;
+
+   std::string result;
+   result.reserve(len + 32);  // Modest headroom for expansions
+
+   size_t i = 0;
+   while (i < len) {
+      // Check for 2-letter uppercase sequence at word boundary
+      if (i + 2 <= len && std::isupper(static_cast<unsigned char>(input[i])) &&
+          std::isupper(static_cast<unsigned char>(input[i + 1]))) {
+         bool valid_before = is_valid_before(i, input);
+         bool valid_after = (i + 2 >= len) || is_state_boundary(input[i + 2]);
+
+         if (valid_before && valid_after) {
+            const auto *state = lookup_state(input[i], input[i + 1]);
+            if (state) {
+               result.append(state->full_name, state->full_len);
+               i += 2;
+               continue;
+            }
+         }
+      }
+      result.push_back(input[i]);
+      i++;
+   }
+
+   return result;
+}
+
+/**
+ * Preprocess text for TTS to improve speech quality
+ * - Replace em-dashes with commas for proper pauses
+ * - Convert temperature units (°F, °C, °K) to spoken words
+ * - Expand US state abbreviations to full names
+ */
+static std::string preprocess_text_for_tts(const std::string &input) {
+   std::string text = input;
+   size_t pos = 0;
+
+   // Replace em-dashes with commas for better TTS phrasing
+   // Em-dash (—) doesn't create proper pauses in Piper, but commas do
+   while ((pos = text.find("—", pos)) != std::string::npos) {
+      text.replace(pos, 3, ",");  // UTF-8 em-dash is 3 bytes
+      pos += 1;
+   }
+
+   // Convert temperature units to spoken words
+   // Pattern: number followed by °F, °C, or °K (° is 2 bytes in UTF-8: 0xC2 0xB0)
+   pos = 0;
+   while ((pos = text.find("°", pos)) != std::string::npos) {
+      // Check if there's a unit letter after the degree symbol
+      size_t unit_pos = pos + 2;  // Skip the 2-byte ° character
+      if (unit_pos < text.length()) {
+         char unit = text[unit_pos];
+         std::string replacement;
+
+         if (unit == 'F' || unit == 'f') {
+            replacement = " degrees Fahrenheit";
+         } else if (unit == 'C' || unit == 'c') {
+            replacement = " degrees Celsius";
+         } else if (unit == 'K' || unit == 'k') {
+            replacement = " Kelvin";
+         }
+
+         if (!replacement.empty()) {
+            // Replace °X with the spoken version
+            text.replace(pos, 3, replacement);  // 2 bytes for ° + 1 for letter
+            pos += replacement.length();
+            continue;
+         }
+      }
+      // Just a degree symbol without recognized unit - replace with "degrees"
+      text.replace(pos, 2, " degrees");
+      pos += 8;
+   }
+
+   // Expand state abbreviations to full names for natural speech
+   text = expand_state_abbreviations(text);
+
+   return text;
+}
+
 void text_to_speech(char *text) {
    if (!tts_handle.is_initialized) {
       LOG_ERROR("Text-to-Speech system not initialized. Call initialize_text_to_speech() first.");
@@ -1044,15 +1236,7 @@ void text_to_speech(char *text) {
    }
 
    assert(text != nullptr && "Received a null pointer");
-   std::string inputText(text);
-
-   // Preprocess: Replace em-dashes with commas for better TTS phrasing
-   // Em-dash (—) doesn't create proper pauses in Piper, but commas do
-   size_t pos = 0;
-   while ((pos = inputText.find("—", pos)) != std::string::npos) {
-      inputText.replace(pos, 3, ",");  // UTF-8 em-dash is 3 bytes
-      pos += 1;
-   }
+   std::string inputText = preprocess_text_for_tts(std::string(text));
 
    // Add text to the processing queue
    pthread_mutex_lock(&tts_queue_mutex);
@@ -1088,13 +1272,8 @@ int text_to_speech_to_wav(const char *text, uint8_t **wav_data_out, size_t *wav_
          LOG_INFO("Paused local TTS for network generation");
       }
 
-      // Preprocess: Replace em-dashes with commas for better TTS phrasing
-      std::string processedText(text);
-      size_t pos = 0;
-      while ((pos = processedText.find("—", pos)) != std::string::npos) {
-         processedText.replace(pos, 3, ",");  // UTF-8 em-dash is 3 bytes
-         pos += 1;
-      }
+      // Preprocess text for better TTS output
+      std::string processedText = preprocess_text_for_tts(std::string(text));
 
       std::ostringstream audioStream;
       piper::SynthesisResult result;
@@ -1326,14 +1505,20 @@ void remove_chars(char *str, const char *remove_chars) {
 }
 
 bool is_emoji(unsigned int codepoint) {
-   // Basic emoji ranges (not exhaustive)
+   // Emoji ranges and related characters that should be filtered
    return (codepoint >= 0x1F600 && codepoint <= 0x1F64F) ||  // Emoticons
           (codepoint >= 0x1F300 &&
            codepoint <= 0x1F5FF) ||  // Miscellaneous Symbols and Pictographs
           (codepoint >= 0x1F680 && codepoint <= 0x1F6FF) ||  // Transport and Map Symbols
           (codepoint >= 0x2600 && codepoint <= 0x26FF) ||    // Miscellaneous Symbols
           (codepoint >= 0x2700 && codepoint <= 0x27BF) ||    // Dingbats
-          (codepoint >= 0x1F900 && codepoint <= 0x1F9FF);    // Supplemental Symbols and Pictographs
+          (codepoint >= 0x1F900 && codepoint <= 0x1F9FF) ||  // Supplemental Symbols and Pictographs
+          (codepoint >= 0xFE00 && codepoint <= 0xFE0F) ||  // Variation Selectors (emoji modifiers)
+          (codepoint >= 0x1F1E0 && codepoint <= 0x1F1FF) ||  // Regional Indicator Symbols (flags)
+          (codepoint >= 0x1FA00 && codepoint <= 0x1FA6F) ||  // Chess, Extended-A symbols
+          (codepoint >= 0x1FA70 && codepoint <= 0x1FAFF) ||  // Symbols and Pictographs Extended-A
+          (codepoint >= 0x200D && codepoint <= 0x200D) ||    // Zero Width Joiner (emoji sequences)
+          (codepoint >= 0x20E3 && codepoint <= 0x20E3);      // Combining Enclosing Keycap
 }
 
 void remove_emojis(char *str) {

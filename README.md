@@ -34,6 +34,12 @@ DAWN integrates modern speech recognition, large language models, and text-to-sp
   - Integration with other OASIS components or external systems
   - Extensible device callback architecture
 
+- **LLM Tools**
+  - **Web Search** - Voice-activated web search via SearXNG (self-hosted, privacy-focused)
+  - **Weather** - Real-time weather and forecasts via Open-Meteo API (free, no API key)
+  - **Calculator** - Mathematical expression evaluation with tinyexpr engine
+  - LLM automatically invokes tools and summarizes results naturally
+
 ### Performance Highlights
 - **ASR Performance** (Jetson GPU acceleration):
   - Whisper tiny: RTF 0.079 (12.7x faster than realtime)
@@ -77,6 +83,11 @@ dawn/
 │   │   ├── ring_buffer.c         # Thread-safe audio buffer
 │   │   ├── flac_playback.c       # Music playback
 │   │   └── mic_passthrough.c     # Microphone passthrough
+│   ├── tools/                    # LLM tool implementations
+│   │   ├── web_search.c          # SearXNG web search integration
+│   │   ├── weather_service.c     # Open-Meteo weather API
+│   │   ├── calculator.c          # Math expression evaluation
+│   │   └── tinyexpr.c            # Expression parser library
 │   └── (core files)              # Core application files
 │       ├── dawn.c                # Main application & state machine
 │       ├── logging.c             # Centralized logging
@@ -91,6 +102,7 @@ dawn/
 │   ├── tts/
 │   ├── network/
 │   ├── audio/
+│   ├── tools/                    # LLM tool headers
 │   ├── utf8/                     # UTF-8 library for TTS
 │   └── (core headers)
 │
@@ -355,6 +367,119 @@ The repository includes `silero_vad_16k_op15.onnx` in `models/`. No additional d
 
 #### commands_config_nuevo.json (MQTT devices)
 See the example in the repository. Configure your MQTT broker and device mappings.
+
+### 7. (Optional) LLM Tools Setup
+
+DAWN includes several tools that the LLM can invoke automatically:
+
+- **Calculator** - Built-in, no setup required. Ask "What's 15% of 847?" or "Calculate the square root of 144"
+- **Weather** - Uses Open-Meteo API (free, no API key required). Ask "What's the weather in Atlanta?" or "Will it rain tomorrow?"
+- **Web Search** - Requires SearXNG setup (below). Ask "Search for the latest news about Tony Stark"
+
+#### SearXNG Setup (for Web Search)
+
+DAWN can perform web searches via voice commands using [SearXNG](https://docs.searxng.org/), a self-hosted metasearch engine.
+
+#### Prerequisites
+
+Install Docker and Docker Compose first. Follow the official instructions:
+- [Docker Engine Install](https://docs.docker.com/engine/install/)
+- [Docker Compose Install](https://docs.docker.com/compose/install/)
+
+On Jetson/Ubuntu:
+```bash
+# Add yourself to the docker group (avoids needing sudo)
+sudo usermod -aG docker $USER
+# Log out and back in for group changes to take effect
+```
+
+#### Install SearXNG
+
+```bash
+# Create directory structure
+mkdir -p ~/docker/searxng/searxng
+cd ~/docker/searxng
+
+# Generate a secret key
+SECRET_KEY=$(openssl rand -hex 32)
+echo "Generated secret key: $SECRET_KEY"
+
+# Create docker-compose.yml
+cat > docker-compose.yml << 'EOF'
+services:
+  searxng:
+    image: searxng/searxng:latest
+    container_name: searxng
+    restart: unless-stopped
+    ports:
+      - "8384:8080"
+    volumes:
+      - ./searxng:/etc/searxng:rw
+    environment:
+      - SEARXNG_BASE_URL=http://localhost:8384/
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "1m"
+        max-file: "1"
+EOF
+
+# Create settings.yml (replace SECRET_KEY_HERE with your generated key)
+cat > searxng/settings.yml << EOF
+use_default_settings: true
+
+general:
+  instance_name: "DAWN Search"
+  debug: false
+
+server:
+  secret_key: "$SECRET_KEY"
+  bind_address: "0.0.0.0"
+  port: 8080
+  method: "GET"
+  image_proxy: false
+  limiter: false
+  public_instance: false
+
+search:
+  safe_search: 1
+  default_lang: "en"
+  autocomplete: ""
+  formats:
+    - json
+  max_page: 1
+
+ui:
+  static_use_hash: true
+
+engines:
+  - name: google
+    disabled: false
+  - name: duckduckgo
+    disabled: false
+  - name: brave
+    disabled: false
+  - name: wikipedia
+    disabled: false
+  - name: bing
+    disabled: false
+EOF
+
+# Start SearXNG
+docker compose up -d
+
+# Verify it's working (wait a few seconds for startup)
+sleep 5
+curl -s "http://localhost:8384/search?q=test&format=json" | jq '.results[0].title'
+```
+
+If you see a search result title, SearXNG is ready. DAWN will automatically use it when you ask to search for something.
 
 ## Building
 

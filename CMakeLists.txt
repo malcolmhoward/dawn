@@ -299,6 +299,12 @@ set(DAWN_SOURCES
 
     # UI subsystem (TUI metrics)
     src/ui/metrics.c
+
+    # Tools subsystem (web search, weather, calculator, etc.)
+    src/tools/web_search.c
+    src/tools/weather_service.c
+    src/tools/calculator.c
+    src/tools/tinyexpr.c
 )
 
 # Conditionally add TUI source file

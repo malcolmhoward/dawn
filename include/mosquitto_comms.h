@@ -51,6 +51,9 @@ typedef enum {
    LOCAL_LLM_SWITCH,      /**< Local LLM switch. */
    CLOUD_LLM_SWITCH,      /**< Cloud LLM switch. */
    RESET_CONVERSATION,    /**< Reset conversation context. */
+   SEARCH,                /**< Web search action. */
+   WEATHER,               /**< Weather information service. */
+   CALCULATOR,            /**< Calculator for math expressions. */
    MAX_DEVICE_TYPES       /**< Used to determine the number of device types. */
 } deviceType;
 
@@ -72,7 +75,10 @@ static const char *deviceTypeStrings[] = { "audio playback device",
                                            "volume",
                                            "local llm",
                                            "cloud llm",
-                                           "reset conversation" };
+                                           "reset conversation",
+                                           "search",
+                                           "weather",
+                                           "calculator" };
 
 /**
  * @brief Associates a device type with a callback function that processes actions for that device.
@@ -80,12 +86,21 @@ static const char *deviceTypeStrings[] = { "audio playback device",
  * This structure maps a `deviceType` to its corresponding callback function,
  * allowing dynamic handling of device actions. The callback can optionally return
  * data instead of directly using text-to-speech when in AI modes.
+ *
+ * CALLBACK RETURN VALUE CONTRACT:
+ * - Return NULL if no data to report (command executed silently)
+ * - Return heap-allocated string (malloc/strdup) if returning data
+ * - Caller is responsible for freeing non-NULL return values
+ * - Set *should_respond = 1 to send return value to LLM, 0 otherwise
+ *
+ * NOTE: Some legacy callbacks still use static buffers. These should be migrated
+ * to heap allocation for consistency. See mosquitto_comms.c for details.
  */
 typedef struct {
    deviceType device; /**< The device type. */
-   char *(*callback)(const char *,
-                     char *,
-                     int *); /**< The callback function. Returns data or NULL. */
+   char *(*callback)(const char *actionName,
+                     char *value,
+                     int *should_respond); /**< Callback returns heap-allocated string or NULL. */
 } deviceCallback;
 
 /* MQTT callbacks */
@@ -249,5 +264,41 @@ char *cloudLLMCallback(const char *actionName, char *value, int *should_respond)
  * @param should_respond Should the callback return data to the AI or just handle it.
  */
 char *resetConversationCallback(const char *actionName, char *value, int *should_respond);
+
+/**
+ * @brief Callback function to perform web searches via SearXNG.
+ *
+ * Performs a web search using the local SearXNG instance and returns
+ * formatted results for the LLM to summarize.
+ *
+ * @param actionName The name of the action triggering this callback (e.g., "web").
+ * @param value      The search query string.
+ * @param should_respond Should the callback return data to the AI or just handle it.
+ */
+char *searchCallback(const char *actionName, char *value, int *should_respond);
+
+/**
+ * @brief Callback function to get weather information.
+ *
+ * Fetches weather data from Open-Meteo API for the specified location
+ * and returns formatted results for the LLM to present.
+ *
+ * @param actionName The name of the action triggering this callback (e.g., "get").
+ * @param value      The location string (e.g., "Atlanta, Georgia").
+ * @param should_respond Should the callback return data to the AI or just handle it.
+ */
+char *weatherCallback(const char *actionName, char *value, int *should_respond);
+
+/**
+ * @brief Callback function to evaluate mathematical expressions.
+ *
+ * Evaluates the given mathematical expression using TinyExpr and returns
+ * the result for the LLM to present to the user.
+ *
+ * @param actionName The name of the action triggering this callback (e.g., "evaluate").
+ * @param value      The mathematical expression to evaluate (e.g., "sqrt(144) + 2^8").
+ * @param should_respond Should the callback return data to the AI or just handle it.
+ */
+char *calculatorCallback(const char *actionName, char *value, int *should_respond);
 
 #endif  // MOSQUITTO_COMMS_H

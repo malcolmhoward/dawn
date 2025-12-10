@@ -7,3 +7,4 @@ include/secrets.h
 aec_*.wav
 mic_*.wav
 asr_*.wav
+__pycache__/

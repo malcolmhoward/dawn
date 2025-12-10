@@ -1428,6 +1428,7 @@ int main(int argc, char *argv[]) {
    };
    int option_index = 0;
    const char *cloud_provider_override = NULL;
+   llm_type_t llm_type_override = LLM_UNDEFINED;
    asr_engine_type_t asr_engine =
        ASR_ENGINE_WHISPER;              // Default: Whisper base (best performance + accuracy)
    const char *asr_model_path = NULL;   // Will be set based on engine
@@ -1492,10 +1493,10 @@ int main(int argc, char *argv[]) {
             break;
          case 'm':
             if (strcasecmp(optarg, "cloud") == 0) {
-               llm_set_type(LLM_CLOUD);
+               llm_type_override = LLM_CLOUD;
                LOG_INFO("Using cloud LLM by default");
             } else if (strcasecmp(optarg, "local") == 0) {
-               llm_set_type(LLM_LOCAL);
+               llm_type_override = LLM_LOCAL;
                LOG_INFO("Using local LLM by default");
             } else {
                LOG_ERROR("Unknown LLM type: %s. Using auto-detection.", optarg);
@@ -1891,15 +1892,13 @@ int main(int argc, char *argv[]) {
    // Initialize LLM system
    llm_init(cloud_provider_override);
 
-   // Auto-detect local vs cloud if not set via command-line
-   if (llm_get_type() == LLM_UNDEFINED) {
-      if (llm_check_connection("https://api.openai.com", 4)) {
-         llm_set_type(LLM_CLOUD);
-         text_to_speech("Setting AI to cloud LLM.");
-      } else {
-         llm_set_type(LLM_LOCAL);
-         text_to_speech("Setting AI to local LLM.");
-      }
+   // Set LLM type: use command-line override or auto-detect
+   if (llm_type_override != LLM_UNDEFINED) {
+      llm_set_type(llm_type_override);
+   } else if (llm_check_connection("https://api.openai.com", 4)) {
+      llm_set_type(LLM_CLOUD);
+   } else {
+      llm_set_type(LLM_LOCAL);
    }
 
    if (enable_network_audio) {

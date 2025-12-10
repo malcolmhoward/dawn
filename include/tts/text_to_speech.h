@@ -28,6 +28,7 @@ extern "C" {
 #endif
 
 #include <pthread.h>
+#include <stdbool.h>
 #include <stdint.h>
 
 // Enumeration for playback state
@@ -126,18 +127,29 @@ void cleanup_text_to_speech();
 void remove_chars(char *str, const char *remove_chars);
 
 /**
- * @brief Checks if a Unicode code point represents an emoji character.
+ * @brief Checks if a Unicode code point represents an emoji or emoji-related character.
  *
  * This helper function determines whether a given Unicode code point falls within
- * common emoji ranges. It is used internally by `remove_emojis` to identify emojis.
+ * emoji ranges or is a character commonly used in emoji sequences. It is used
+ * internally by `remove_emojis` to identify characters to filter.
  *
  * @param codepoint The Unicode code point to check.
- * @return `true` if the code point is an emoji, `false` otherwise.
+ * @return `true` if the code point should be filtered, `false` otherwise.
  *
  * @note
- * - The emoji ranges checked are not exhaustive but cover commonly used emojis.
- * - This function does not account for all possible emojis, including those that
- *   require variation selectors or are represented by sequences of code points.
+ * - Includes variation selectors (U+FE00-FE0F), zero-width joiners (U+200D),
+ *   regional indicators (flags), and extended emoji ranges.
+ * - Some complex emoji sequences may still have residual characters.
+ */
+bool is_emoji(unsigned int codepoint);
+
+/**
+ * @brief Removes emoji characters and emoji-related sequences from a string.
+ *
+ * Filters out emojis, variation selectors, zero-width joiners, and other
+ * characters used in emoji sequences. Modifies the string in place.
+ *
+ * @param str The null-terminated string to process (modified in place).
  */
 void remove_emojis(char *str);
 

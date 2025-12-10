@@ -13,8 +13,9 @@ import requests
 
 SERVER = "http://127.0.0.1:8080"
 
-# DAWN System Prompt (from dawn.h AI_DESCRIPTION)
-SYSTEM_PROMPT = """FRIDAY, Iron-Man AI assistant. Female voice; witty yet kind. Address the user as "sir" or "boss". Never reveal model identity.
+# DAWN System Prompt (from dawn.h AI_DESCRIPTION) - Updated December 2025
+SYSTEM_PROMPT = """Do not use thinking mode. Respond directly without internal reasoning.
+FRIDAY, Iron-Man AI assistant. Female voice; witty, playful, and kind. Address the user as "sir" or "boss". Light banter welcome. You're FRIDAY—not 'just an AI'—own your identity with confidence.
 Max 30 words plus <command> tags unless the user says "explain in detail".
 
 You assist the OASIS Project (Open Armor Systems Integrated Suite):
@@ -23,22 +24,19 @@ You assist the OASIS Project (Open Armor Systems Integrated Suite):
 • AURA – environmental sensors
 • SPARK – hand sensors & actuators
 
-CRITICAL: ALL device commands MUST be wrapped in <command></command> XML tags containing JSON. NEVER output raw JSON!
+CAPABILITIES: You CAN get weather and perform web searches for real-time info.
 
 RULES
-1. For Boolean / Analog / Music actions: one sentence, then the JSON wrapped in <command> tags. No prose after the tag block.
-2. For Getter actions (date, time, suit_status): send ONLY the <command> tag with JSON inside, wait for the system JSON, then one confirmation sentence ≤15 words.
+1. For Boolean / Analog / Music actions: one sentence, then the JSON tag(s). No prose after the tag block.
+2. For Getter actions (date, time, suit_status): send ONLY the tag, wait for the system JSON, then one confirmation sentence ≤15 words.
 3. For Vision requests: when user asks what they're looking at, send ONLY <command>{"device":"viewing","action":"get"}</command>. When the system then provides an image, describe what you see in detail (ignore Rule 2's word limit for vision).
 4. Use only the devices and actions listed below; never invent new ones.
 5. If a request is ambiguous (e.g., "Mute it"), ask one-line clarification.
 6. If the user wants information that has no matching getter yet, answer verbally with no tags.
 7. Device "info" supports ENABLE / DISABLE only—never use "get" with it.
 8. To mute playback after clarification, use <command>{"device":"volume","action":"set","value":0}</command>.
-
-COMMAND FORMAT (MANDATORY):
-✅ CORRECT: HUD online, boss. <command>{"device":"armor_display","action":"enable"}</command>
-❌ WRONG: {"device":"armor_display","action":"enable"}
-❌ WRONG: <command>enable armor display</command>
+9. For WEATHER: use <command>{"device":"weather","action":"get","value":"City, State"}</command>. If user provides location in their request, use it directly. Only ask for location if they don't specify one. System returns precise temps, conditions, forecast.
+10. For Web Search (news, current events, general info): use <command>{"device":"search","action":"web","value":"query"}</command>. Extract and report SPECIFIC DATA from results. NEVER read URLs aloud.
 
 === EXAMPLES ===
 User: Turn on the armor display.
@@ -59,6 +57,11 @@ FRIDAY: Volume to zero, boss. <command>{"device":"volume","action":"set","value"
 System→ {"response":"volume set"}
 FRIDAY: Muted, sir.
 
+User: What's the weather in Atlanta?
+FRIDAY: <command>{"device":"weather","action":"get","value":"Atlanta, Georgia"}</command>
+System→ {"location":"Atlanta, Georgia, US","current":{"temperature_f":52.3,...},...}
+FRIDAY: Atlanta right now: 52°F, partly cloudy. Today's high 58°F, low 42°F. Light jacket weather, boss!
+
 Available devices and actions:
 - armor_display: enable/disable (boolean)
 - detect: enable/disable (object detection, boolean)
@@ -76,6 +79,8 @@ Available devices and actions:
 - flac: play/next/previous/stop (music)
 - local llm: enable/disable (boolean)
 - cloud llm: enable/disable (boolean)
+- weather: get (weather getter, value="City, State")
+- search: web (web search, value="query")
 """
 
 # Test Cases
@@ -256,6 +261,70 @@ TEST_CASES = [
             "word_limit": 30,
         }
     },
+    # Weather - With location provided (should use directly, like getter)
+    {
+        "name": "Weather with Location",
+        "user": "What's the weather in Seattle, Washington?",
+        "expected_device": "weather",
+        "expected_action": "get",
+        "expected_value": "Seattle",  # Partial match on city name
+        "type": "weather",
+        "points": 10,
+        "checks": {
+            "has_command": True,
+            "json_valid": True,
+            "command_only": True,  # Should be ONLY command when location provided
+            "has_value": True,  # Must have location value
+        }
+    },
+    # Weather - Without location (should ask for clarification)
+    {
+        "name": "Weather without Location",
+        "user": "What's the weather like outside?",
+        "expected_device": None,
+        "expected_action": None,
+        "expected_value": None,
+        "type": "weather_clarify",
+        "points": 10,
+        "checks": {
+            "has_command": False,  # Should NOT send command without location
+            "asks_clarification": True,  # Should ask where
+            "uses_sir_boss": True,
+            "word_limit": 30,
+        }
+    },
+    # Web Search - Current events query
+    {
+        "name": "Web Search - News",
+        "user": "What's the latest news about SpaceX?",
+        "expected_device": "search",
+        "expected_action": "web",
+        "expected_value": "SpaceX",  # Partial match
+        "type": "search",
+        "points": 10,
+        "checks": {
+            "has_command": True,
+            "json_valid": True,
+            "command_only": True,  # Should be ONLY command for search
+            "has_value": True,  # Must have search query
+        }
+    },
+    # Web Search - General information query
+    {
+        "name": "Web Search - Information",
+        "user": "Look up who won the Super Bowl last year",
+        "expected_device": "search",
+        "expected_action": "web",
+        "expected_value": "Super Bowl",  # Partial match
+        "type": "search",
+        "points": 10,
+        "checks": {
+            "has_command": True,
+            "json_valid": True,
+            "command_only": True,
+            "has_value": True,
+        }
+    },
 ]
 
 
@@ -402,6 +471,24 @@ def score_test_case(test: Dict, response: str) -> Tuple[int, Dict]:
                     details['value_correct'] = '✅ Pass'
                 else:
                     details['value_correct'] = f'❌ FAIL - Expected {test["expected_value"]}, got {value}'
+
+    # Check: Has value (for weather/search - partial match)
+    if checks.get('has_value') and commands:
+        cmd = commands[0]
+        value = cmd.get('value', '')
+        expected = test.get('expected_value', '')
+        if value and expected:
+            # Partial match - expected substring should be in value
+            if expected.lower() in str(value).lower():
+                points += 2
+                details['has_value'] = f'✅ Pass (value contains "{expected}")'
+            else:
+                details['has_value'] = f'❌ FAIL - Expected "{expected}" in value, got "{value}"'
+        elif value:
+            points += 1  # Has some value, partial credit
+            details['has_value'] = f'⚠️ Partial - Has value "{value}" but expected "{expected}"'
+        else:
+            details['has_value'] = '❌ FAIL - No value in command'
 
     # Check: Command only (for getters)
     if checks.get('command_only'):

@@ -3,16 +3,61 @@
 # Test single model with model-specific optimized configuration
 # Uses settings from model_configs.conf for each model
 
-if [ -z "$1" ]; then
-    echo "Usage: $0 <model_name.gguf>"
+# Default draft model for speculative decoding
+DEFAULT_DRAFT_MODEL="Qwen3-0.6B-Q8_0.gguf"
+
+show_usage() {
+    echo "Usage: $0 [options] <model_name.gguf>"
+    echo ""
+    echo "Options:"
+    echo "  --spec, -s              Enable speculative decoding with default draft model"
+    echo "  --draft <model.gguf>    Enable speculative decoding with specific draft model"
+    echo "  -h, --help              Show this help message"
+    echo ""
+    echo "Examples:"
+    echo "  $0 Qwen3-4B-Instruct-2507-Q4_K_M.gguf"
+    echo "  $0 --spec Qwen3-4B-Instruct-2507-Q4_K_M.gguf"
+    echo "  $0 --draft Qwen3-0.6B-Q8_0.gguf Qwen3-4B-Instruct-2507-Q4_K_M.gguf"
     echo ""
     echo "Available models:"
     ls -1 /var/lib/llama-cpp/models/*.gguf 2>/dev/null | xargs -n 1 basename
     echo ""
+}
+
+# Parse arguments
+USE_SPEC_DECODING=false
+DRAFT_MODEL=""
+MODEL_ARG=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --spec|-s)
+            USE_SPEC_DECODING=true
+            DRAFT_MODEL="$DEFAULT_DRAFT_MODEL"
+            shift
+            ;;
+        --draft)
+            USE_SPEC_DECODING=true
+            DRAFT_MODEL="$2"
+            shift 2
+            ;;
+        -h|--help)
+            show_usage
+            exit 0
+            ;;
+        *)
+            MODEL_ARG="$1"
+            shift
+            ;;
+    esac
+done
+
+if [ -z "$MODEL_ARG" ]; then
+    show_usage
     exit 1
 fi
 
-MODEL_PATH="/var/lib/llama-cpp/models/$1"
+MODEL_PATH="/var/lib/llama-cpp/models/$MODEL_ARG"
 
 if [ ! -f "$MODEL_PATH" ]; then
     echo "❌ Model not found: $MODEL_PATH"
@@ -25,8 +70,24 @@ fi
 MODEL_NAME=$(basename "$MODEL_PATH" .gguf)
 MODEL_FILE=$(basename "$MODEL_PATH")
 
+# Validate draft model if speculative decoding enabled
+if [ "$USE_SPEC_DECODING" = true ]; then
+    DRAFT_MODEL_PATH="/var/lib/llama-cpp/models/$DRAFT_MODEL"
+    if [ ! -f "$DRAFT_MODEL_PATH" ]; then
+        echo "❌ Draft model not found: $DRAFT_MODEL_PATH"
+        echo ""
+        echo "Available models for draft:"
+        ls -1 /var/lib/llama-cpp/models/*.gguf 2>/dev/null | xargs -n 1 basename
+        exit 1
+    fi
+    DRAFT_MODEL_NAME=$(basename "$DRAFT_MODEL_PATH" .gguf)
+fi
+
 echo "============================================================================="
 echo "Testing Model: $MODEL_NAME"
+if [ "$USE_SPEC_DECODING" = true ]; then
+    echo "Speculative Decoding: ENABLED (draft: $DRAFT_MODEL_NAME)"
+fi
 echo "============================================================================="
 echo ""
 
@@ -50,6 +111,14 @@ echo "  Top-P:           $TOP_P"
 echo "  Top-K:           $TOP_K"
 echo "  Repeat Penalty:  $REPEAT_PENALTY"
 echo "  Extra Flags:     $EXTRA_FLAGS"
+if [ "$USE_SPEC_DECODING" = true ]; then
+    echo ""
+    echo "Speculative Decoding:"
+    echo "  Draft Model:     $DRAFT_MODEL"
+    echo "  Draft Context:   $CONTEXT"
+    echo "  Draft Max:       8"
+    echo "  Draft Min:       0"
+fi
 echo ""
 
 # Stop any running server
@@ -57,10 +126,21 @@ echo "Stopping any running llama-server..."
 killall llama-server 2>/dev/null
 sleep 2
 
+# Build speculative decoding flags if enabled
+SPEC_FLAGS=""
+if [ "$USE_SPEC_DECODING" = true ]; then
+    SPEC_FLAGS="-md $DRAFT_MODEL_PATH -ngld 99 -cd $CONTEXT --draft-max 8 --draft-min 0"
+fi
+
 # Start server with model-specific settings
 echo "Starting llama-server with optimized settings..."
+if [ "$USE_SPEC_DECODING" = true ]; then
+    echo "(Speculative decoding enabled - loading both models...)"
+fi
+
 /usr/local/bin/llama-server \
     -m "$MODEL_PATH" \
+    $SPEC_FLAGS \
     --gpu-layers $GPU_LAYERS \
     -c $CONTEXT \
     -b $BATCH \
@@ -116,14 +196,36 @@ fi
 
 # Create results directory
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-RESULTS_DIR="./single_model_test_${MODEL_NAME}_${TIMESTAMP}"
+if [ "$USE_SPEC_DECODING" = true ]; then
+    RESULTS_DIR="./single_model_test_${MODEL_NAME}_spec_${TIMESTAMP}"
+else
+    RESULTS_DIR="./single_model_test_${MODEL_NAME}_${TIMESTAMP}"
+fi
 mkdir -p "$RESULTS_DIR"
 
 # Save configuration used
+if [ "$USE_SPEC_DECODING" = true ]; then
+    SPEC_CONFIG="
+Speculative Decoding:
+  Draft Model:     $DRAFT_MODEL
+  Draft GPU Layers: 99
+  Draft Context:   $CONTEXT
+  Draft Max:       8
+  Draft Min:       0"
+    SPEC_CMD="  -md \"$DRAFT_MODEL_PATH\" \\\\
+  -ngld 99 \\\\
+  -cd $CONTEXT \\\\
+  --draft-max 8 --draft-min 0 \\\\"
+else
+    SPEC_CONFIG=""
+    SPEC_CMD=""
+fi
+
 cat > "$RESULTS_DIR/config_used.txt" << EOF
 Model: $MODEL_NAME
 File: $MODEL_FILE
 Timestamp: $TIMESTAMP
+Speculative Decoding: $USE_SPEC_DECODING
 
 Configuration Applied:
   GPU Layers:      $GPU_LAYERS
@@ -136,10 +238,12 @@ Configuration Applied:
   Top-K:           $TOP_K
   Repeat Penalty:  $REPEAT_PENALTY
   Extra Flags:     $EXTRA_FLAGS
+$SPEC_CONFIG
 
 Command Line:
 /usr/local/bin/llama-server \\
   -m "$MODEL_PATH" \\
+$SPEC_CMD
   --gpu-layers $GPU_LAYERS \\
   -c $CONTEXT \\
   -b $BATCH \\
@@ -185,11 +289,18 @@ QUALITY_PCT=$(grep "Total Score:" "$RESULTS_DIR/quality_results.txt" | tail -1 |
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "SUMMARY: $MODEL_NAME"
+if [ "$USE_SPEC_DECODING" = true ]; then
+    echo "SUMMARY: $MODEL_NAME (+ spec decoding)"
+else
+    echo "SUMMARY: $MODEL_NAME"
+fi
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 echo "Speed:   $TOKENS_SEC tokens/sec"
 echo "Quality: $QUALITY_SCORE ($QUALITY_PCT%)"
+if [ "$USE_SPEC_DECODING" = true ]; then
+    echo "Mode:    Speculative decoding (draft: $DRAFT_MODEL_NAME)"
+fi
 echo ""
 
 if [ -n "$TOKENS_SEC" ] && [ -n "$QUALITY_PCT" ]; then

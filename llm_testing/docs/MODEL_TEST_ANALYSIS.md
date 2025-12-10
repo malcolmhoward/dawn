@@ -438,3 +438,266 @@ After 31+ configurations tested across 5 models, we achieved **81.9% quality (B 
 **Cloud comparison:** GPT-4o achieves 100% quality but costs $0.01/query and requires network. Local option provides 82% of cloud quality at zero cost with full privacy and offline capability.
 
 **Recommendation:** Deploy Qwen3-4B Q4 for production. Consider Qwen2.5-7B for quality-critical applications or Llama-3.2-3B for speed-critical applications.
+
+---
+
+## Update: December 2024 - Qwen3 Model Retesting & Speculative Decoding Analysis
+
+### Executive Summary (Dec 2024)
+
+After extensive retesting with optimized configurations and Qwen's official recommended parameters, we achieved **84.8% quality (B grade)** - a 3% improvement over previous tests. More importantly, we conducted a thorough investigation into **speculative decoding** and found it is **NOT beneficial for DAWN's use case**.
+
+**Key Findings:**
+- Qwen3-4B-Instruct-2507-Q4_K_M achieves **84.8% quality** with Qwen's official params
+- Speculative decoding is **40% slower** for DAWN's prompt structure
+- Unsloth Dynamic (UD) quantizations offer no quality improvement
+- Prompt caching provides no benefit for varied user commands
+
+---
+
+### Updated Model Rankings (December 2024)
+
+| Model | Quality | Speed | Grade | Status |
+|-------|---------|-------|-------|--------|
+| **Qwen3-4B-Instruct-2507-Q4_K_M** | **84.8%** | 15.2 tok/s | **B** | ✅ **PRODUCTION** |
+| Qwen3-4B-Instruct-2507-UD-Q4_K_XL | 84.1% | 14.8 tok/s | B | ✅ Alternative |
+| Qwen3-4B-Instruct-2507-UD-Q5_K_XL | 83.4% | 13.9 tok/s | B | ✅ Alternative |
+| Qwen3-4B-Instruct-2507-UD-Q3_K_XL | 81.2% | 15.5 tok/s | B | ⚠️ Lower quality |
+| Qwen3-4B-Instruct-2507-Q8_0 | OOM | - | - | ❌ Too large |
+
+**Best Configuration (Qwen's Official Params):**
+```bash
+TEMP: 0.7
+TOP_P: 0.8
+TOP_K: 20
+MIN_P: 0
+BATCH: 768
+CONTEXT: 1024
+EXTRA_FLAGS: --flash-attn on --min-p 0
+```
+
+---
+
+### Speculative Decoding Deep Dive
+
+#### What is Speculative Decoding?
+
+Speculative decoding uses a small "draft" model to predict multiple tokens, which are then verified in parallel by the main model. In theory, this can provide 2-4x speedup when:
+- Draft model predicts well (high acceptance rate)
+- Response length is long relative to prompt
+- Both models share the same tokenizer
+
+#### Our Test Setup
+
+- **Main Model:** Qwen3-4B-Instruct-2507-Q4_K_M (2.3 GB)
+- **Draft Model:** Qwen3-0.6B-Q8_0 (604 MB)
+- **Draft Acceptance Rate:** 98.4% (excellent - same tokenizer family)
+- **Configuration:**
+  ```bash
+  -md /var/lib/llama-cpp/models/Qwen3-0.6B-Q8_0.gguf
+  -ngld 99        # All draft layers on GPU
+  -cd 1024        # Draft context size (CRITICAL!)
+  --draft-max 8   # Max draft tokens per iteration
+  --draft-min 0   # Min draft tokens
+  ```
+
+#### Critical Discovery: Draft Context Size (`-cd`)
+
+**OOM Issue:** Initial attempts failed with OOM even with 11GB free. The cause:
+- Draft model defaults to **4096 context** if `-cd` not specified
+- This allocates ~448 MiB for draft KV cache alone
+- Combined with main model, exceeded available memory
+
+**Fix:** Explicitly set `-cd 1024` to match main model context.
+
+#### Performance Results
+
+**Simple Prompts (no system prompt):**
+
+| Configuration | Prompt Tokens | Completion | Speed | Speedup |
+|--------------|---------------|------------|-------|---------|
+| NO spec decoding | 21 | 81 | 15.2 tok/s | baseline |
+| WITH spec decoding (cold) | 21 | 81 | 27.2 tok/s | **1.8x** |
+| WITH spec decoding (cached) | 21 | 81 | 85.0 tok/s | **5.6x** |
+
+**DAWN System Prompt (90 tokens):**
+
+| Configuration | Command | Completion | Speed |
+|--------------|---------|------------|-------|
+| **NO spec** | Turn on lights | 33 | **14.6 tok/s** |
+| **NO spec** | Set volume 50 | 25 | **15.4 tok/s** |
+| **NO spec** | What time is it | 15 | **15.0 tok/s** |
+| **NO spec** | Play jazz | 39 | **15.6 tok/s** |
+| **NO spec** | Turn off detection | 39 | **15.5 tok/s** |
+| **NO spec Average** | | | **15.2 tok/s** |
+| | | | |
+| **WITH spec** | Turn on lights | 33 | 10.7 tok/s |
+| **WITH spec** | Set volume 50 | 28 | 8.0 tok/s |
+| **WITH spec** | What time is it | 37 | 9.3 tok/s |
+| **WITH spec** | Play jazz | 39 | 9.7 tok/s |
+| **WITH spec** | Turn off detection | 32 | 9.5 tok/s |
+| **WITH spec Average** | | | **9.4 tok/s** |
+
+#### Why Speculative Decoding Hurts DAWN Performance
+
+**The Math:**
+
+1. **DAWN's Use Case:**
+   - Long system prompt: ~90 tokens
+   - Short user command: ~5-10 tokens
+   - Short response: ~30-50 tokens
+
+2. **Speculative Decoding Overhead:**
+   - Both models must process the full prompt
+   - Draft tokens generated, then verified by main model
+   - Verification overhead per batch of draft tokens
+
+3. **Break-Even Analysis:**
+   - Spec decoding wins when: `(response_tokens * speedup) > prompt_processing_overhead`
+   - For DAWN: `(35 tokens * 1.8x) < (90 token prompt * 2 models)`
+   - **Result:** Overhead exceeds benefit
+
+**Prompt Caching Does NOT Help:**
+- Caching requires **exact prefix match**
+- Different user commands = different prompts
+- Only system prompt prefix is cacheable
+- User message suffix changes, breaking cache
+
+#### Conclusion: Skip Speculative Decoding for DAWN
+
+| Factor | Finding |
+|--------|---------|
+| Simple prompts | ✅ 1.8-5.6x speedup |
+| DAWN prompts | ❌ **40% slower** |
+| Memory overhead | +600 MB for draft model |
+| Quality impact | None (84.8% maintained) |
+| **Recommendation** | **Don't use for DAWN** |
+
+**When Speculative Decoding WOULD Help:**
+- Long response generation (100+ tokens)
+- Short prompts (<30 tokens)
+- Multi-turn conversations with caching
+- Batch processing of similar queries
+
+---
+
+### Unsloth Dynamic (UD) Quantization Analysis
+
+We tested Unsloth's "Dynamic 2.0" quantizations which claim better quality preservation at smaller sizes.
+
+#### Results
+
+| Model | Size | Quality | Speed | Notes |
+|-------|------|---------|-------|-------|
+| Standard Q4_K_M | 2.32 GB | **84.8%** | 15.2 tok/s | ✅ Best |
+| UD-Q4_K_XL | 2.41 GB | 84.1% | 14.8 tok/s | Slightly larger |
+| UD-Q5_K_XL | 2.87 GB | 83.4% | 13.9 tok/s | No improvement |
+| UD-Q3_K_XL | 1.89 GB | 81.2% | 15.5 tok/s | Fastest, lower quality |
+
+#### Key Findings
+
+1. **UD quantizations offer no quality improvement** over standard Q4_K_M
+2. **Standard Q4_K_M is optimal** - best quality/size/speed balance
+3. **UD-Q3_K_XL is viable** if memory-constrained (only -3.6% quality)
+4. **262K context** on UD models requires smaller batch (512 vs 768) to avoid OOM
+
+---
+
+### Updated Quality Test Results (Qwen3-4B-Instruct-2507-Q4_K_M)
+
+**Total Score: 123/145 (84.8%) - Grade: B**
+
+| Category | Score | Percentage | Notes |
+|----------|-------|------------|-------|
+| boolean | 20/20 | 100.0% | ✅ Perfect |
+| analog | 12/10 | 120.0% | ✅ Bonus points |
+| getter | 18/20 | 90.0% | ✅ Excellent |
+| vision | 9/10 | 90.0% | ✅ Excellent |
+| music | 11/10 | 110.0% | ✅ Bonus points |
+| search | 22/20 | 110.0% | ✅ Bonus points |
+| weather | 11/10 | 110.0% | ✅ Bonus points |
+| multiple | 10/15 | 66.7% | ⚠️ Needs work |
+| clarification | 7/10 | 70.0% | ⚠️ Needs work |
+| weather_clarify | 1/10 | 10.0% | ❌ Poor |
+| conversational | 2/10 | 20.0% | ❌ Poor |
+
+**Strengths:**
+- Perfect boolean command execution
+- Excellent JSON formatting with correct device/action
+- Bonus points on multiple categories (conciseness rewarded)
+- Web search queries well-formed
+
+**Weaknesses:**
+- Weather without location should ask for clarification (doesn't)
+- Conversational questions trigger unnecessary commands
+- Multiple commands formatting inconsistent
+
+---
+
+### Test Script Enhancements
+
+The `test_single_model.sh` script was enhanced with speculative decoding support:
+
+```bash
+# Usage examples:
+./test_single_model.sh Qwen3-4B-Instruct-2507-Q4_K_M.gguf           # Standard test
+./test_single_model.sh --spec Qwen3-4B-Instruct-2507-Q4_K_M.gguf    # With spec decoding
+./test_single_model.sh --draft Qwen3-0.6B-Q8_0.gguf Qwen3-4B-Instruct-2507-Q4_K_M.gguf  # Custom draft
+
+# Options:
+#   --spec, -s              Enable speculative decoding with default draft model
+#   --draft <model.gguf>    Enable speculative decoding with specific draft model
+#   -h, --help              Show help message
+```
+
+**Default Draft Model:** Qwen3-0.6B-Q8_0.gguf (same tokenizer family as Qwen3-4B)
+
+---
+
+### Updated Recommendations (December 2024)
+
+#### Production Configuration
+
+**Model:** Qwen3-4B-Instruct-2507-Q4_K_M.gguf
+
+```bash
+GPU_LAYERS: 99
+CONTEXT: 1024
+BATCH: 768
+UBATCH: 768
+THREADS: 4
+TEMP: 0.7
+TOP_P: 0.8
+TOP_K: 20
+REPEAT_PENALTY: 1.1
+EXTRA_FLAGS: --flash-attn on --min-p 0
+```
+
+**DO NOT USE:**
+- Speculative decoding (40% slower for DAWN)
+- UD quantizations (no benefit over standard Q4)
+- Q8_0 quantization (OOM on Jetson)
+
+#### Memory Budget on Jetson Orin (16GB unified)
+
+| Component | Memory | Notes |
+|-----------|--------|-------|
+| Qwen3-4B Q4 model | ~2.4 GB | GPU layers |
+| KV Cache (ctx 1024) | ~144 MB | Scales with context |
+| Compute buffers | ~302 MB | Flash attention |
+| System/OS | ~2 GB | Linux + CUDA runtime |
+| **Total Used** | **~5 GB** | |
+| **Available for other tasks** | **~11 GB** | |
+
+---
+
+### Key Takeaways (Updated)
+
+1. ⭐ **Qwen3-4B Q4_K_M remains the best choice** - 84.8% quality, 15.2 tok/s
+2. ⭐ **Qwen's official params (temp=0.7, top_p=0.8, top_k=20)** provide best results
+3. ⭐ **Speculative decoding is counterproductive** for DAWN's prompt structure
+4. ⭐ **Unsloth Dynamic quantizations offer no advantage** over standard Q4
+5. ⭐ **Draft context size (-cd) is critical** to avoid OOM with speculative decoding
+6. ⭐ **Prompt caching only helps with exact matches** - not useful for varied commands
+7. ⭐ **Short responses + long prompts = worst case** for speculative decoding
+8. ⭐ **Quality improved 3%** (81.9% → 84.8%) with Qwen's official parameters

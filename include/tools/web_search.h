@@ -1,0 +1,97 @@
+/*
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ * By contributing to this project, you agree to license your contributions
+ * under the GPLv3 (or any later version) or any future licenses chosen by
+ * the project author(s). Contributions include any modifications,
+ * enhancements, or additions to the project. These contributions become
+ * part of the project and are adopted by the project author(s).
+ *
+ * Web Search Module - SearXNG Integration
+ *
+ * Provides web search capability via a local SearXNG instance.
+ */
+
+#ifndef WEB_SEARCH_H
+#define WEB_SEARCH_H
+
+#include <stddef.h>
+
+#define SEARXNG_DEFAULT_URL "http://localhost:8384"
+#define SEARXNG_MAX_RESULTS 5
+#define SEARXNG_TIMEOUT_SEC 10
+#define SEARXNG_SNIPPET_LEN 200
+
+/**
+ * @brief Search result structure
+ */
+typedef struct {
+   char *title;
+   char *url;
+   char *snippet;
+   char *engine;
+} search_result_t;
+
+/**
+ * @brief Search response structure
+ */
+typedef struct {
+   search_result_t *results;
+   int count;
+   float query_time_sec;
+   char *error;
+} search_response_t;
+
+/**
+ * @brief Initialize the web search module
+ * @param searxng_url Base URL for SearXNG (NULL for default localhost:8384)
+ * @return 0 on success, 1 on failure
+ */
+int web_search_init(const char *searxng_url);
+
+/**
+ * @brief Perform a web search
+ * @param query Search query string
+ * @param max_results Maximum results to return (0 for default)
+ * @return Search response (caller must free with web_search_free_response)
+ */
+search_response_t *web_search_query(const char *query, int max_results);
+
+/**
+ * @brief Format search results for LLM consumption
+ * @param response Search response
+ * @param buffer Output buffer
+ * @param buffer_size Buffer size
+ * @return Number of bytes written, or -1 on error
+ */
+int web_search_format_for_llm(const search_response_t *response, char *buffer, size_t buffer_size);
+
+/**
+ * @brief Free search response
+ * @param response Response to free
+ */
+void web_search_free_response(search_response_t *response);
+
+/**
+ * @brief Cleanup web search module
+ */
+void web_search_cleanup(void);
+
+/**
+ * @brief Check if web search module is initialized
+ * @return 1 if initialized, 0 otherwise
+ */
+int web_search_is_initialized(void);
+
+#endif /* WEB_SEARCH_H */
