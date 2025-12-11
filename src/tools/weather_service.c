@@ -32,56 +32,11 @@
 #include <string.h>
 
 #include "logging.h"
+#include "tools/curl_buffer.h"
 
 // Module state (thread-safe with mutex protection)
 static int module_initialized = 0;
 static pthread_mutex_t module_mutex = PTHREAD_MUTEX_INITIALIZER;
-
-// Initial buffer capacity for curl responses
-#define CURL_BUFFER_INITIAL_CAPACITY 4096
-// Maximum buffer capacity (64KB should be plenty for weather data)
-#define CURL_BUFFER_MAX_CAPACITY 65536
-
-// Buffer for curl responses with exponential growth
-typedef struct {
-   char *data;
-   size_t size;
-   size_t capacity;
-} curl_buffer_t;
-
-// Curl write callback with exponential buffer growth
-static size_t weather_curl_write_callback(void *contents, size_t size, size_t nmemb, void *userp) {
-   size_t realsize = size * nmemb;
-   curl_buffer_t *buf = (curl_buffer_t *)userp;
-
-   // Check if we need to grow the buffer
-   size_t required = buf->size + realsize + 1;
-   if (required > buf->capacity) {
-      // Exponential growth to reduce reallocations
-      size_t new_capacity = buf->capacity ? buf->capacity : CURL_BUFFER_INITIAL_CAPACITY;
-      while (new_capacity < required && new_capacity <= CURL_BUFFER_MAX_CAPACITY / 2) {
-         new_capacity *= 2;
-      }
-      // Cap at reasonable maximum
-      if (new_capacity < required && required <= CURL_BUFFER_MAX_CAPACITY) {
-         new_capacity = CURL_BUFFER_MAX_CAPACITY;
-      }
-
-      char *ptr = realloc(buf->data, new_capacity);
-      if (!ptr) {
-         LOG_ERROR("Failed to allocate memory for curl response");
-         return 0;
-      }
-      buf->data = ptr;
-      buf->capacity = new_capacity;
-   }
-
-   memcpy(&(buf->data[buf->size]), contents, realsize);
-   buf->size += realsize;
-   buf->data[buf->size] = '\0';
-
-   return realsize;
-}
 
 // Convert Celsius to Fahrenheit
 static double celsius_to_fahrenheit(double celsius) {
@@ -232,7 +187,8 @@ static int geocode_location(const char *location,
       return 1;
    }
 
-   curl_buffer_t buffer = { NULL, 0, 0 };
+   curl_buffer_t buffer;
+   curl_buffer_init_with_max(&buffer, CURL_BUFFER_MAX_WEB_SEARCH);
 
    // Parse location into city and optional state/region
    // Supports formats: "Atlanta, Georgia", "Atlanta Georgia", "Atlanta, GA", "Atlanta"
@@ -281,7 +237,7 @@ static int geocode_location(const char *location,
    curl_free(encoded_location);
 
    curl_easy_setopt(curl, CURLOPT_URL, url);
-   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, weather_curl_write_callback);
+   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_buffer_write_callback);
    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
 
@@ -290,13 +246,13 @@ static int geocode_location(const char *location,
 
    if (res != CURLE_OK) {
       LOG_ERROR("Geocoding request failed: %s", curl_easy_strerror(res));
-      free(buffer.data);
+      curl_buffer_free(&buffer);
       return 1;
    }
 
    // Parse JSON response
    struct json_object *root = json_tokener_parse(buffer.data);
-   free(buffer.data);
+   curl_buffer_free(&buffer);
 
    if (!root) {
       LOG_ERROR("Failed to parse geocoding response");
@@ -397,7 +353,8 @@ static weather_response_t *fetch_weather(double latitude,
       return response;
    }
 
-   curl_buffer_t buffer = { NULL, 0, 0 };
+   curl_buffer_t buffer;
+   curl_buffer_init_with_max(&buffer, CURL_BUFFER_MAX_WEB_SEARCH);
 
    // Determine number of forecast days based on type
    int forecast_days;
@@ -428,7 +385,7 @@ static weather_response_t *fetch_weather(double latitude,
             OPEN_METEO_FORECAST_URL, latitude, longitude, forecast_days);
 
    curl_easy_setopt(curl, CURLOPT_URL, url);
-   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, weather_curl_write_callback);
+   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_buffer_write_callback);
    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
 
@@ -437,13 +394,13 @@ static weather_response_t *fetch_weather(double latitude,
 
    if (res != CURLE_OK) {
       response->error = strdup(curl_easy_strerror(res));
-      free(buffer.data);
+      curl_buffer_free(&buffer);
       return response;
    }
 
    // Parse JSON response
    struct json_object *root = json_tokener_parse(buffer.data);
-   free(buffer.data);
+   curl_buffer_free(&buffer);
 
    if (!root) {
       response->error = strdup("Failed to parse weather response");

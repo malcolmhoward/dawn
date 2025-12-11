@@ -57,6 +57,7 @@
 #include "network/dawn_server.h"
 #include "network/dawn_wav_utils.h"
 #include "tts/text_to_speech.h"
+#include "tts/tts_preprocessing.h"
 
 // =============================================================================
 // Module State

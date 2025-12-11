@@ -25,33 +25,47 @@
 #define CURL_BUFFER_H
 
 #include <stddef.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
 // Buffer capacity constants
 #define CURL_BUFFER_INITIAL_CAPACITY 4096
-#define CURL_BUFFER_MAX_CAPACITY 65536
+
+// Configurable max capacity - can be overridden before including this header
+// Use smaller values for constrained use cases (e.g., web search)
+#ifndef CURL_BUFFER_MAX_CAPACITY
+#define CURL_BUFFER_MAX_CAPACITY (128 * 1024)  // 128KB default for LLM responses
+#endif
+
+// Predefined max capacities for different use cases
+#define CURL_BUFFER_MAX_WEB_SEARCH \
+   (256 * 1024)                           // 256KB for web search results (papers can be ~140KB)
+#define CURL_BUFFER_MAX_LLM (128 * 1024)  // 128KB for LLM responses
+#define CURL_BUFFER_MAX_STREAMING (256 * 1024)  // 256KB for streaming responses
 
 /**
  * Buffer structure for accumulating CURL response data
- * Initialize with: curl_buffer_t buf = {NULL, 0, 0};
+ * Initialize with: curl_buffer_t buf = {NULL, 0, 0, 0};
+ * Or use curl_buffer_init() / curl_buffer_init_with_max()
  */
 typedef struct {
-   char *data;       // Response data (null-terminated)
-   size_t size;      // Current size of data (excluding null terminator)
-   size_t capacity;  // Allocated capacity
+   char *data;           // Response data (null-terminated)
+   size_t size;          // Current size of data (excluding null terminator)
+   size_t capacity;      // Allocated capacity
+   size_t max_capacity;  // Maximum allowed capacity (0 = use default)
 } curl_buffer_t;
 
 /**
  * CURL write callback with exponential buffer growth
  *
  * Usage:
- *   curl_buffer_t buffer = {NULL, 0, 0};
+ *   curl_buffer_t buffer = {NULL, 0, 0, 0};
  *   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_buffer_write_callback);
  *   curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
  *   // ... perform request ...
  *   // buffer.data now contains null-terminated response
- *   free(buffer.data);
+ *   curl_buffer_free(&buffer);
  *
  * @param contents Data received from CURL
  * @param size Size of each element
@@ -63,21 +77,38 @@ static inline size_t curl_buffer_write_callback(void *contents,
                                                 size_t size,
                                                 size_t nmemb,
                                                 void *userp) {
-   size_t total_size = size * nmemb;
    curl_buffer_t *buf = (curl_buffer_t *)userp;
 
+   // Overflow protection: check multiplication before performing it
+   if (size > 0 && nmemb > SIZE_MAX / size) {
+      return 0;  // Signal error to CURL - would overflow
+   }
+   size_t total_size = size * nmemb;
+
+   // Use per-buffer max capacity if set, otherwise use compile-time default
+   size_t max_cap = buf->max_capacity ? buf->max_capacity : CURL_BUFFER_MAX_CAPACITY;
+
    // Check if we need to grow the buffer
+   // Overflow protection: check addition
+   if (buf->size > SIZE_MAX - total_size - 1) {
+      return 0;  // Signal error to CURL - would overflow
+   }
    size_t required = buf->size + total_size + 1;
+
    if (required > buf->capacity) {
       // Exponential growth to reduce reallocations
       size_t new_capacity = buf->capacity ? buf->capacity : CURL_BUFFER_INITIAL_CAPACITY;
       // Prevent overflow by checking before doubling
-      while (new_capacity < required && new_capacity <= CURL_BUFFER_MAX_CAPACITY / 2) {
+      while (new_capacity < required && new_capacity <= max_cap / 2) {
          new_capacity *= 2;
       }
-      // Cap at reasonable maximum
-      if (new_capacity < required && required <= CURL_BUFFER_MAX_CAPACITY) {
-         new_capacity = CURL_BUFFER_MAX_CAPACITY;
+      // Cap at per-buffer maximum
+      if (new_capacity < required && required <= max_cap) {
+         new_capacity = required;  // Exact fit instead of max
+      }
+      // Reject if exceeds max capacity
+      if (required > max_cap) {
+         return 0;  // Signal error to CURL - exceeds max capacity
       }
 
       char *new_data = (char *)realloc(buf->data, new_capacity);
@@ -96,13 +127,39 @@ static inline size_t curl_buffer_write_callback(void *contents,
 }
 
 /**
- * Initialize a curl buffer
+ * Initialize a curl buffer with default max capacity
  * @param buf Buffer to initialize
  */
 static inline void curl_buffer_init(curl_buffer_t *buf) {
    buf->data = NULL;
    buf->size = 0;
    buf->capacity = 0;
+   buf->max_capacity = 0;  // Use compile-time default
+}
+
+/**
+ * Initialize a curl buffer with custom max capacity
+ * @param buf Buffer to initialize
+ * @param max_cap Maximum capacity in bytes (use CURL_BUFFER_MAX_* constants)
+ */
+static inline void curl_buffer_init_with_max(curl_buffer_t *buf, size_t max_cap) {
+   buf->data = NULL;
+   buf->size = 0;
+   buf->capacity = 0;
+   buf->max_capacity = max_cap;
+}
+
+/**
+ * Reset a curl buffer for reuse (keeps allocated memory)
+ * Use this when making multiple requests with the same buffer to avoid
+ * repeated malloc/free cycles.
+ * @param buf Buffer to reset
+ */
+static inline void curl_buffer_reset(curl_buffer_t *buf) {
+   buf->size = 0;
+   if (buf->data) {
+      buf->data[0] = '\0';
+   }
 }
 
 /**
@@ -116,6 +173,7 @@ static inline void curl_buffer_free(curl_buffer_t *buf) {
    }
    buf->size = 0;
    buf->capacity = 0;
+   // Preserve max_capacity setting for potential reinitialization
 }
 
 #endif  // CURL_BUFFER_H

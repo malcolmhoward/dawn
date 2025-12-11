@@ -283,6 +283,7 @@ set(DAWN_SOURCES
 
     # TTS subsystem
     src/tts/text_to_speech.cpp
+    src/tts/tts_preprocessing.cpp
 
     # Network subsystem
     src/network/dawn_server.c

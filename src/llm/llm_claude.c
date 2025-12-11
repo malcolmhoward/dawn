@@ -31,18 +31,8 @@
 #include "llm/llm_streaming.h"
 #include "llm/sse_parser.h"
 #include "logging.h"
+#include "tools/curl_buffer.h"
 #include "ui/metrics.h"
-
-/**
- * @brief Structure to hold dynamically allocated response data from CURL
- */
-struct MemoryStruct {
-   char *memory; /**< Pointer to the dynamically allocated buffer */
-   size_t size;  /**< Current size of the buffer */
-};
-
-// External WriteMemoryCallback from llm_interface.c
-extern size_t WriteMemoryCallback(void *contents, size_t size, size_t nmemb, void *userp);
 
 // External CURL progress callback for interrupt support
 extern int llm_curl_progress_callback(void *clientp,
@@ -220,7 +210,7 @@ char *llm_claude_chat_completion(struct json_object *conversation_history,
    CURLcode res;
    struct curl_slist *headers = NULL;
    char full_url[2048];
-   struct MemoryStruct chunk;
+   curl_buffer_t chunk;
    char *response = NULL;
 
    // Convert OpenAI format to Claude format
@@ -231,18 +221,11 @@ char *llm_claude_chat_completion(struct json_object *conversation_history,
        request, JSON_C_TO_STRING_PLAIN | JSON_C_TO_STRING_NOSLASHESCAPE);
 
    // Initialize response buffer
-   chunk.memory = malloc(1);
-   if (!chunk.memory) {
-      LOG_ERROR("Failed to allocate memory");
-      json_object_put(request);
-      return NULL;
-   }
-   chunk.size = 0;
+   curl_buffer_init(&chunk);
 
    // Check connection
    if (!llm_check_connection(base_url, 4)) {
       LOG_ERROR("Cannot reach Claude API");
-      free(chunk.memory);
       json_object_put(request);
       return NULL;
    }
@@ -251,7 +234,6 @@ char *llm_claude_chat_completion(struct json_object *conversation_history,
    curl_handle = curl_easy_init();
    if (!curl_handle) {
       LOG_ERROR("Failed to initialize CURL");
-      free(chunk.memory);
       json_object_put(request);
       return NULL;
    }
@@ -262,7 +244,7 @@ char *llm_claude_chat_completion(struct json_object *conversation_history,
    curl_easy_setopt(curl_handle, CURLOPT_URL, full_url);
    curl_easy_setopt(curl_handle, CURLOPT_POSTFIELDS, payload);
    curl_easy_setopt(curl_handle, CURLOPT_HTTPHEADER, headers);
-   curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+   curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, curl_buffer_write_callback);
    curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
 
    // Enable progress callback for interruption support
@@ -285,7 +267,7 @@ char *llm_claude_chat_completion(struct json_object *conversation_history,
       }
       curl_easy_cleanup(curl_handle);
       curl_slist_free_all(headers);
-      free(chunk.memory);
+      curl_buffer_free(&chunk);
       json_object_put(request);
       return NULL;
    }
@@ -308,7 +290,7 @@ char *llm_claude_chat_completion(struct json_object *conversation_history,
       }
       curl_easy_cleanup(curl_handle);
       curl_slist_free_all(headers);
-      free(chunk.memory);
+      curl_buffer_free(&chunk);
       json_object_put(request);
       return NULL;
    }
@@ -318,10 +300,10 @@ char *llm_claude_chat_completion(struct json_object *conversation_history,
    json_object_put(request);
 
    // Parse Claude response
-   json_object *parsed = json_tokener_parse(chunk.memory);
+   json_object *parsed = json_tokener_parse(chunk.data);
    if (!parsed) {
       LOG_ERROR("Failed to parse Claude response");
-      free(chunk.memory);
+      curl_buffer_free(&chunk);
       return NULL;
    }
 
@@ -332,7 +314,7 @@ char *llm_claude_chat_completion(struct json_object *conversation_history,
        json_object_array_length(content_array) < 1) {
       LOG_ERROR("Invalid Claude response format: missing content array");
       json_object_put(parsed);
-      free(chunk.memory);
+      curl_buffer_free(&chunk);
       return NULL;
    }
 
@@ -340,7 +322,7 @@ char *llm_claude_chat_completion(struct json_object *conversation_history,
    if (!first_content) {
       LOG_ERROR("Empty content array in Claude response");
       json_object_put(parsed);
-      free(chunk.memory);
+      curl_buffer_free(&chunk);
       return NULL;
    }
 
@@ -350,7 +332,7 @@ char *llm_claude_chat_completion(struct json_object *conversation_history,
       if (strcmp(content_type, "text") != 0) {
          LOG_ERROR("First content block is not text: %s", content_type);
          json_object_put(parsed);
-         free(chunk.memory);
+         curl_buffer_free(&chunk);
          return NULL;
       }
    }
@@ -358,7 +340,7 @@ char *llm_claude_chat_completion(struct json_object *conversation_history,
    if (!json_object_object_get_ex(first_content, "text", &text_obj)) {
       LOG_ERROR("No text in Claude response");
       json_object_put(parsed);
-      free(chunk.memory);
+      curl_buffer_free(&chunk);
       return NULL;
    }
 
@@ -413,7 +395,7 @@ char *llm_claude_chat_completion(struct json_object *conversation_history,
    }
 
    json_object_put(parsed);
-   free(chunk.memory);
+   curl_buffer_free(&chunk);
 
    return response;
 }

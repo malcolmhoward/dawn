@@ -34,6 +34,7 @@
 #include <string.h>
 
 #include "logging.h"
+#include "tools/curl_buffer.h"
 
 // =============================================================================
 // Module State (thread-safe with mutex protection)
@@ -42,54 +43,6 @@
 static char *searxng_base_url = NULL;
 static int module_initialized = 0;
 static pthread_mutex_t module_mutex = PTHREAD_MUTEX_INITIALIZER;
-
-// =============================================================================
-// CURL Response Buffer
-// =============================================================================
-
-// Initial buffer capacity for curl responses
-#define CURL_BUFFER_INITIAL_CAPACITY 4096
-// Maximum buffer capacity (64KB should be plenty for search results)
-#define CURL_BUFFER_MAX_CAPACITY 65536
-
-typedef struct {
-   char *data;
-   size_t size;
-   size_t capacity;
-} curl_buffer_t;
-
-static size_t searxng_write_callback(void *contents, size_t size, size_t nmemb, void *userp) {
-   size_t total_size = size * nmemb;
-   curl_buffer_t *buf = (curl_buffer_t *)userp;
-
-   // Check if we need to grow the buffer
-   size_t required = buf->size + total_size + 1;
-   if (required > buf->capacity) {
-      // Exponential growth to reduce reallocations
-      size_t new_capacity = buf->capacity ? buf->capacity : CURL_BUFFER_INITIAL_CAPACITY;
-      while (new_capacity < required && new_capacity <= CURL_BUFFER_MAX_CAPACITY / 2) {
-         new_capacity *= 2;
-      }
-      // Cap at reasonable maximum
-      if (new_capacity < required && required <= CURL_BUFFER_MAX_CAPACITY) {
-         new_capacity = CURL_BUFFER_MAX_CAPACITY;
-      }
-
-      char *new_data = realloc(buf->data, new_capacity);
-      if (!new_data) {
-         LOG_ERROR("web_search: Failed to allocate response buffer");
-         return 0;
-      }
-      buf->data = new_data;
-      buf->capacity = new_capacity;
-   }
-
-   memcpy(&(buf->data[buf->size]), contents, total_size);
-   buf->size += total_size;
-   buf->data[buf->size] = '\0';
-
-   return total_size;
-}
 
 // =============================================================================
 // Lifecycle
@@ -194,10 +147,116 @@ static char *get_json_string(struct json_object *obj, const char *key) {
 }
 
 // =============================================================================
-// Search Query
+// Search Query (internal implementation)
 // =============================================================================
 
-search_response_t *web_search_query(const char *query, int max_results) {
+/**
+ * @brief Parse results from the standard "results" array
+ */
+static void parse_results_array(struct json_object *results_array,
+                                search_response_t *response,
+                                int max_results) {
+   int result_count = json_object_array_length(results_array);
+   if (result_count == 0) {
+      return;
+   }
+
+   if (result_count > max_results) {
+      result_count = max_results;
+   }
+
+   response->results = calloc(result_count, sizeof(search_result_t));
+   if (!response->results) {
+      LOG_ERROR("web_search: Failed to allocate results array");
+      response->error = strdup("Memory allocation failed");
+      return;
+   }
+
+   for (int i = 0; i < result_count; i++) {
+      struct json_object *item = json_object_array_get_idx(results_array, i);
+      if (!item) {
+         continue;
+      }
+
+      response->results[response->count].title = get_json_string(item, "title");
+      response->results[response->count].url = get_json_string(item, "url");
+      response->results[response->count].engine = get_json_string(item, "engine");
+
+      // Get snippet (called "content" in SearXNG)
+      char *full_snippet = get_json_string(item, "content");
+      if (full_snippet) {
+         response->results[response->count].snippet = truncate_string(full_snippet,
+                                                                      SEARXNG_SNIPPET_LEN);
+         free(full_snippet);
+      }
+
+      response->count++;
+   }
+}
+
+/**
+ * @brief Parse results from the "infoboxes" array (Wikipedia facts)
+ */
+static void parse_infoboxes_array(struct json_object *infoboxes_array,
+                                  search_response_t *response,
+                                  int max_results) {
+   int infobox_count = json_object_array_length(infoboxes_array);
+   if (infobox_count == 0) {
+      return;
+   }
+
+   if (infobox_count > max_results) {
+      infobox_count = max_results;
+   }
+
+   response->results = calloc(infobox_count, sizeof(search_result_t));
+   if (!response->results) {
+      LOG_ERROR("web_search: Failed to allocate infobox results array");
+      response->error = strdup("Memory allocation failed");
+      return;
+   }
+
+   for (int i = 0; i < infobox_count; i++) {
+      struct json_object *item = json_object_array_get_idx(infoboxes_array, i);
+      if (!item) {
+         continue;
+      }
+
+      // Infobox structure: {infobox: title, content: description, id: url, engine: "wikipedia"}
+      response->results[response->count].title = get_json_string(item, "infobox");
+      response->results[response->count].engine = get_json_string(item, "engine");
+
+      // Get URL from id field or from urls array
+      char *url = get_json_string(item, "id");
+      if (!url) {
+         struct json_object *urls_array = NULL;
+         if (json_object_object_get_ex(item, "urls", &urls_array) &&
+             json_object_array_length(urls_array) > 0) {
+            struct json_object *first_url = json_object_array_get_idx(urls_array, 0);
+            if (first_url) {
+               url = get_json_string(first_url, "url");
+            }
+         }
+      }
+      response->results[response->count].url = url;
+
+      // Get content as snippet (may be longer than regular snippets)
+      char *full_content = get_json_string(item, "content");
+      if (full_content) {
+         // Use larger snippet length for facts (more useful context)
+         response->results[response->count].snippet = truncate_string(full_content, 500);
+         free(full_content);
+      }
+
+      response->count++;
+   }
+}
+
+// =============================================================================
+// Search Query (public API)
+// =============================================================================
+
+search_response_t *web_search_query_typed(const char *query, int max_results, search_type_t type) {
    if (!module_initialized) {
       LOG_ERROR("web_search: Module not initialized");
       return NULL;
@@ -236,20 +295,80 @@ search_response_t *web_search_query(const char *query, int max_results) {
       return response;
    }
 
-// Build URL: {base}/search?q={query}&format=json
+// Build URL based on search type
 #define SEARCH_URL_MAX_LEN 1024
    char url[SEARCH_URL_MAX_LEN];
-   snprintf(url, sizeof(url), "%s/search?q=%s&format=json", searxng_base_url, encoded_query);
+   const char *type_str = "web";
+
+   // Map search type to SearXNG category parameter
+   const char *category = NULL;
+   switch (type) {
+      case SEARCH_TYPE_NEWS:
+         category = "news";
+         type_str = "news";
+         break;
+      case SEARCH_TYPE_FACTS:
+         // Wikipedia uses engines parameter, not categories
+         snprintf(url, sizeof(url), "%s/search?q=%s&format=json&engines=wikipedia",
+                  searxng_base_url, encoded_query);
+         type_str = "facts";
+         curl_free(encoded_query);
+         goto do_request;
+      case SEARCH_TYPE_SCIENCE:
+         category = "science";
+         type_str = "science";
+         break;
+      case SEARCH_TYPE_IT:
+         category = "it";
+         type_str = "it";
+         break;
+      case SEARCH_TYPE_SOCIAL:
+         category = "social media";
+         type_str = "social";
+         break;
+      case SEARCH_TYPE_QA:
+         category = "q&a";
+         type_str = "q&a";
+         break;
+      case SEARCH_TYPE_TRANSLATE:
+         category = "translate";
+         type_str = "translate";
+         break;
+      case SEARCH_TYPE_DICTIONARY:
+         category = "dictionaries";
+         type_str = "dictionary";
+         break;
+      case SEARCH_TYPE_PAPERS:
+         category = "scientific publications";
+         type_str = "papers";
+         break;
+      case SEARCH_TYPE_WEB:
+      default:
+         type_str = "web";
+         break;
+   }
+
+   // Build URL with optional category
+   if (category) {
+      char *encoded_category = curl_easy_escape(curl, category, 0);
+      snprintf(url, sizeof(url), "%s/search?q=%s&format=json&categories=%s", searxng_base_url,
+               encoded_query, encoded_category);
+      curl_free(encoded_category);
+   } else {
+      snprintf(url, sizeof(url), "%s/search?q=%s&format=json", searxng_base_url, encoded_query);
+   }
    curl_free(encoded_query);
 
-   LOG_INFO("web_search: Querying %s", url);
+do_request:
+   LOG_INFO("web_search: Querying [%s] %s", type_str, url);
 
-   // Set up response buffer
-   curl_buffer_t buffer = { .data = NULL, .size = 0, .capacity = 0 };
+   // Set up response buffer with web search max capacity (64KB)
+   curl_buffer_t buffer;
+   curl_buffer_init_with_max(&buffer, CURL_BUFFER_MAX_WEB_SEARCH);
 
    // Configure CURL
    curl_easy_setopt(curl, CURLOPT_URL, url);
-   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, searxng_write_callback);
+   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_buffer_write_callback);
    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
    curl_easy_setopt(curl, CURLOPT_TIMEOUT, SEARXNG_TIMEOUT_SEC);
    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5);
@@ -260,9 +379,7 @@ search_response_t *web_search_query(const char *query, int max_results) {
    if (res != CURLE_OK) {
       LOG_ERROR("web_search: Request failed: %s", curl_easy_strerror(res));
       curl_easy_cleanup(curl);
-      if (buffer.data) {
-         free(buffer.data);
-      }
+      curl_buffer_free(&buffer);
       response->error = strdup(curl_easy_strerror(res));
       return response;
    }
@@ -274,9 +391,7 @@ search_response_t *web_search_query(const char *query, int max_results) {
 
    if (http_code != 200) {
       LOG_ERROR("web_search: HTTP error %ld", http_code);
-      if (buffer.data) {
-         free(buffer.data);
-      }
+      curl_buffer_free(&buffer);
       char err_msg[64];
       snprintf(err_msg, sizeof(err_msg), "HTTP error %ld", http_code);
       response->error = strdup(err_msg);
@@ -285,8 +400,7 @@ search_response_t *web_search_query(const char *query, int max_results) {
 
    // Parse JSON response
    struct json_object *root = json_tokener_parse(buffer.data);
-   free(buffer.data);
-   buffer.data = NULL;
+   curl_buffer_free(&buffer);
 
    if (!root) {
       LOG_ERROR("web_search: Failed to parse JSON response");
@@ -294,18 +408,31 @@ search_response_t *web_search_query(const char *query, int max_results) {
       return response;
    }
 
-   // Extract query time
-   struct json_object *query_time_obj = NULL;
-   if (json_object_object_get_ex(root, "query", &query_time_obj)) {
-      response->query_time_sec = (float)json_object_get_double(query_time_obj);
+   // For FACTS type, check infoboxes first (Wikipedia returns data there)
+   if (type == SEARCH_TYPE_FACTS) {
+      struct json_object *infoboxes_array = NULL;
+      if (json_object_object_get_ex(root, "infoboxes", &infoboxes_array) &&
+          json_object_array_length(infoboxes_array) > 0) {
+         parse_infoboxes_array(infoboxes_array, response, max_results);
+         if (response->count > 0) {
+            json_object_put(root);
+            LOG_INFO("web_search: Found %d infobox results", response->count);
+            return response;
+         }
+      }
+      // Fall through to check results array if no infoboxes
    }
 
-   // Extract results array
+   // Extract results array (standard path for WEB and NEWS, fallback for FACTS)
    struct json_object *results_array = NULL;
    if (!json_object_object_get_ex(root, "results", &results_array)) {
       LOG_WARNING("web_search: No 'results' field in response");
       json_object_put(root);
-      response->error = strdup("No results in response");
+      if (type == SEARCH_TYPE_FACTS) {
+         response->error = strdup("No Wikipedia data found for this query");
+      } else {
+         response->error = strdup("No results in response");
+      }
       return response;
    }
 
@@ -316,45 +443,15 @@ search_response_t *web_search_query(const char *query, int max_results) {
       return response;  // No error, just empty results
    }
 
-   // Limit results
-   if (result_count > max_results) {
-      result_count = max_results;
-   }
-
-   // Allocate results array
-   response->results = calloc(result_count, sizeof(search_result_t));
-   if (!response->results) {
-      LOG_ERROR("web_search: Failed to allocate results array");
-      json_object_put(root);
-      response->error = strdup("Memory allocation failed");
-      return response;
-   }
-
-   // Parse each result
-   for (int i = 0; i < result_count; i++) {
-      struct json_object *item = json_object_array_get_idx(results_array, i);
-      if (!item) {
-         continue;
-      }
-
-      response->results[response->count].title = get_json_string(item, "title");
-      response->results[response->count].url = get_json_string(item, "url");
-      response->results[response->count].engine = get_json_string(item, "engine");
-
-      // Get snippet (called "content" in SearXNG)
-      char *full_snippet = get_json_string(item, "content");
-      if (full_snippet) {
-         response->results[response->count].snippet = truncate_string(full_snippet,
-                                                                      SEARXNG_SNIPPET_LEN);
-         free(full_snippet);
-      }
-
-      response->count++;
-   }
+   parse_results_array(results_array, response, max_results);
 
    json_object_put(root);
    LOG_INFO("web_search: Found %d results", response->count);
    return response;
+}
+
+search_response_t *web_search_query(const char *query, int max_results) {
+   return web_search_query_typed(query, max_results, SEARCH_TYPE_WEB);
 }
 
 // =============================================================================

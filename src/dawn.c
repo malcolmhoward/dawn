@@ -64,6 +64,7 @@
 #include "state_machine.h"
 #include "text_to_command_nuevo.h"
 #include "tts/text_to_speech.h"
+#include "tts/tts_preprocessing.h"
 #include "ui/metrics.h"
 #ifdef ENABLE_TUI
 #include "ui/tui.h"
@@ -1160,16 +1161,8 @@ static int check_and_process_input_queue(char **command_text_out,
    return 1;
 }
 
-/* Publish AI State. Only send state if it's changed.
- *
- * FIXME: Build this JSON correctly.
- *        Also pick a better topic for general purpose use.
- */
+/* Publish AI State. Only send state if it's changed. */
 int publish_ai_state(dawn_state_t newState) {
-   const char stateTemplate[] = "{\"device\": \"ai\", \"name\":\"%s\", \"state\":\"%s\"}";
-   char state[20] = "";
-   char *aiState = NULL;
-   int aiStateLength = 0;
    int rc = 0;
 
    if (newState == currentState || newState == DAWN_STATE_INVALID) {
@@ -1181,31 +1174,27 @@ int publish_ai_state(dawn_state_t newState) {
       LOG_ERROR("Unknown state: %d", newState);
       return 1;
    }
-   strcpy(state, state_name);
 
-   /* "- 4" is from substracting the two %s but adding the term char */
-   aiStateLength = strlen(stateTemplate) + strlen(AI_NAME) + strlen(state) - 4 + 1;
-   aiState = malloc(aiStateLength);
-   if (aiState == NULL) {
-      LOG_ERROR("Error allocating memory for AI state.");
+   // Build JSON using json-c
+   struct json_object *json = json_object_new_object();
+   if (!json) {
+      LOG_ERROR("Error creating JSON object for AI state.");
       return 1;
    }
 
-   rc = snprintf(aiState, aiStateLength, stateTemplate, AI_NAME, state);
-   if (rc < 0 || rc >= aiStateLength) {
-      LOG_ERROR("Error creating AI state message.");
-      free(aiState);
-      return 1;
-   }
+   json_object_object_add(json, "device", json_object_new_string("ai"));
+   json_object_object_add(json, "name", json_object_new_string(AI_NAME));
+   json_object_object_add(json, "state", json_object_new_string(state_name));
 
-   rc = mosquitto_publish(mosq, NULL, "hud", strlen(aiState), aiState, 0, false);
+   const char *json_str = json_object_to_json_string(json);
+   rc = mosquitto_publish(mosq, NULL, "hud", strlen(json_str), json_str, 0, false);
    if (rc != MOSQ_ERR_SUCCESS) {
       LOG_ERROR("Error publishing: %s\n", mosquitto_strerror(rc));
-      free(aiState);
+      json_object_put(json);
       return 1;
    }
 
-   free(aiState);
+   json_object_put(json);
 
    // Update metrics with state transition
    metrics_update_state(newState);
@@ -1444,8 +1433,9 @@ int main(int argc, char *argv[]) {
 
    LOG_INFO("%s Version %s: %s\n", APP_NAME, VERSION_NUMBER, GIT_SHA);
 
-   // TODO: I'm adding this here but it will need better error clean-ups.
+   // Initialize curl globally and register cleanup handler
    curl_global_init(CURL_GLOBAL_DEFAULT);
+   atexit(curl_global_cleanup);
 
 #if defined(ENABLE_TUI) && defined(ENABLE_AEC)
    while ((opt = getopt_long(argc, argv, "c:d:hl:LCDNm:P:A:W:w:M:r::a::R::Tt:B", long_options,
@@ -2983,10 +2973,11 @@ int main(int argc, char *argv[]) {
                /* Process Commands before AI. */
                for (i = 0; i < numCommands; i++) {
                   if (searchString(commands[i].actionWordsWildcard, command_text) == 1) {
-                     char thisValue[1024];  // FIXME: These are abnormally large.
-                                            // I'm in a hurry and don't want overflows.
-                     char thisCommand[2048];
-                     char thisSubstring[2048];
+                     // Buffer sizes based on MAX_COMMAND_LENGTH (512) and MAX_WORD_LENGTH (256)
+                     // from text_to_command_nuevo.h
+                     char thisValue[MAX_WORD_LENGTH];  // Extracted value (device/song name)
+                     char thisCommand[MAX_COMMAND_LENGTH + MAX_WORD_LENGTH];  // Template + value
+                     char thisSubstring[MAX_COMMAND_LENGTH];  // actionWordsRegex minus "%s"
                      int strLength = 0;
 
                      pthread_mutex_lock(&tts_mutex);
@@ -3352,7 +3343,7 @@ int main(int argc, char *argv[]) {
 
    free(max_buff);
 
-   curl_global_cleanup();
+   // Note: curl_global_cleanup() is called via atexit() registered at startup
 
    // Export metrics on exit with timestamped filename
    {

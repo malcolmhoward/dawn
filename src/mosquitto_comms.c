@@ -50,6 +50,7 @@
 #include "tools/weather_service.h"
 #include "tools/web_search.h"
 #include "tts/text_to_speech.h"
+#include "tts/tts_preprocessing.h"
 #include "ui/metrics.h"
 #include "word_to_number.h"
 
@@ -61,10 +62,12 @@
  * This facilitates dynamic invocation of actions based on the device type, enhancing the
  * application's modularity and scalability.
  *
- * FIXME:
- *    1. The static returns are not threadsafe or safe in general. Have the caller pass a pointer to
- * fill.
- *    2. I am not currently using should_respond correctly. This needs fixing.
+ * CALLBACK RETURN VALUE CONTRACT:
+ * - All callbacks MUST return heap-allocated strings (via malloc/strdup) or NULL
+ * - Caller is responsible for freeing the returned value
+ * - This makes callbacks thread-safe (no static buffers)
+ *
+ * TODO: should_respond is not being used consistently. This needs review.
  */
 static deviceCallback deviceCallbackArray[] = { { AUDIO_PLAYBACK_DEVICE, setPcmPlaybackDevice },
                                                 { AUDIO_CAPTURE_DEVICE, setPcmCaptureDevice },
@@ -215,8 +218,13 @@ void searchDirectory(const char *rootDir, const char *pattern, Playlist *playlis
 
 #define GPT_RESPONSE_BUFFER_SIZE 512
 
-void parseJsonCommandandExecute(const char *input, struct mosquitto *mosq) {
-   struct json_object *parsedJson = NULL;
+/**
+ * Execute a parsed JSON command (internal implementation)
+ *
+ * @param parsedJson Already-parsed JSON object (caller retains ownership)
+ * @param mosq MQTT client handle
+ */
+static void executeJsonCommand(struct json_object *parsedJson, struct mosquitto *mosq) {
    struct json_object *deviceObject = NULL;
    struct json_object *actionObject = NULL;
    struct json_object *valueObject = NULL;
@@ -234,37 +242,16 @@ void parseJsonCommandandExecute(const char *input, struct mosquitto *mosq) {
 
    int i = 0;
 
-   // Parse the JSON data
-   parsedJson = json_tokener_parse(input);
-   if (parsedJson == NULL) {
-      // Log first 200 chars of malformed payload for debugging
-      char preview[201];
-      size_t len = strlen(input);
-      if (len > 200) {
-         strncpy(preview, input, 200);
-         preview[200] = '\0';
-      } else {
-         strncpy(preview, input, len + 1);
-      }
-      LOG_ERROR("Unable to parse MQTT JSON command. Payload preview: %.200s%s", preview,
-                len > 200 ? "..." : "");
-
-      return;
-   }
-
    // Get the "device" object from the JSON
    if (json_object_object_get_ex(parsedJson, "device", &deviceObject)) {
       // Extract the text value as a C string
       deviceName = json_object_get_string(deviceObject);
       if (deviceName == NULL) {
          LOG_ERROR("Error: Unable to get device name from json command.");
-         json_object_put(parsedJson);
          return;
       }
    } else {
       LOG_ERROR("Error: 'device' field not found in JSON.");
-      json_object_put(parsedJson);
-
       return;
    }
 
@@ -274,13 +261,10 @@ void parseJsonCommandandExecute(const char *input, struct mosquitto *mosq) {
       actionName = json_object_get_string(actionObject);
       if (actionName == NULL) {
          LOG_ERROR("Error: Unable to get action name from json command.");
-         json_object_put(parsedJson);
          return;
       }
    } else {
       LOG_ERROR("Error: 'action' field not found in JSON.");
-      json_object_put(parsedJson);
-
       return;
    }
 
@@ -320,6 +304,7 @@ void parseJsonCommandandExecute(const char *input, struct mosquitto *mosq) {
                if (temp == NULL) {
                   free(pending_command_result);
                   pending_command_result = NULL;
+                  free(callback_result);
                   continue;
                }
                pending_command_result = temp;
@@ -327,6 +312,12 @@ void parseJsonCommandandExecute(const char *input, struct mosquitto *mosq) {
                // Copy the new string to the end
                strcpy(pending_command_result + dest_len, " ");
                strcpy(pending_command_result + dest_len + 1, callback_result);
+            }
+
+            // Free callback result (callbacks return heap-allocated strings)
+            if (callback_result) {
+               free(callback_result);
+               callback_result = NULL;
             }
          } else {
             LOG_WARNING("Skipping callback, value NULL.");
@@ -344,7 +335,6 @@ void parseJsonCommandandExecute(const char *input, struct mosquitto *mosq) {
 
    if (pending_command_result == NULL) {
       LOG_WARNING("pending_command_result is NULL. That probably shouldn't happen.");
-      json_object_put(parsedJson);
       return;
    }
 
@@ -354,7 +344,6 @@ void parseJsonCommandandExecute(const char *input, struct mosquitto *mosq) {
           "Viewing command completed - skipping LLM call, will process in VISION_AI_READY state");
       free(pending_command_result);
       pending_command_result = NULL;
-      json_object_put(parsedJson);
       return;
    }
 
@@ -373,7 +362,7 @@ void parseJsonCommandandExecute(const char *input, struct mosquitto *mosq) {
    response_text = llm_chat_completion(conversation_history, gpt_response, NULL, 0);
    if (response_text != NULL) {
       // AI returned successfully, vocalize response.
-      LOG_INFO("AI: %s\n", response_text);
+      LOG_WARNING("AI: %s\n", response_text);
       char *match = NULL;
       if ((match = strstr(response_text, "<end_of_turn>")) != NULL) {
          *match = '\0';
@@ -389,8 +378,21 @@ void parseJsonCommandandExecute(const char *input, struct mosquitto *mosq) {
          }
       }
 
-      /* FIXME: This is a quick workaround for null responses. */
-      if (response_text[0] != '{') {
+      // Skip TTS if response is pure JSON (no conversational text)
+      // Check by trying to parse as JSON - if valid JSON object/array, skip TTS
+      const char *p = response_text;
+      while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r'))
+         p++;  // Skip whitespace
+      int is_pure_json = 0;
+      if (*p == '{' || *p == '[') {
+         struct json_object *test_json = json_tokener_parse(response_text);
+         if (test_json) {
+            is_pure_json = 1;
+            json_object_put(test_json);
+         }
+      }
+
+      if (!is_pure_json) {
          // Create cleaned version for TTS (remove command tags)
          char *tts_response = strdup(response_text);
          if (tts_response) {
@@ -404,10 +406,20 @@ void parseJsonCommandandExecute(const char *input, struct mosquitto *mosq) {
                   break;
                }
             }
+            // Remove emojis before TTS to prevent them from being read aloud
+            remove_emojis(tts_response);
             text_to_speech(tts_response);
             free(tts_response);
          } else {
-            text_to_speech(response_text);
+            // Fallback: need to copy for emoji removal since remove_emojis modifies in-place
+            char *fallback = strdup(response_text);
+            if (fallback) {
+               remove_emojis(fallback);
+               text_to_speech(fallback);
+               free(fallback);
+            } else {
+               text_to_speech(response_text);  // Last resort: skip emoji removal
+            }
          }
 
          // Update TUI with the AI response (full response including commands)
@@ -429,8 +441,37 @@ void parseJsonCommandandExecute(const char *input, struct mosquitto *mosq) {
    }
    free(pending_command_result);
    pending_command_result = NULL;
+   // Note: parsedJson is owned by caller, do not free here
+}
 
-   // Cleanup: Release the parsed_json object
+/**
+ * Parse and execute a JSON command string (legacy API wrapper)
+ *
+ * This function parses the input string as JSON and executes the command.
+ * For callers that already have parsed JSON, use executeJsonCommand() directly
+ * to avoid double parsing.
+ *
+ * @param input JSON string to parse and execute
+ * @param mosq MQTT client handle
+ */
+void parseJsonCommandandExecute(const char *input, struct mosquitto *mosq) {
+   struct json_object *parsedJson = json_tokener_parse(input);
+   if (parsedJson == NULL) {
+      // Log first 200 chars of malformed payload for debugging
+      char preview[201];
+      size_t len = strlen(input);
+      if (len > 200) {
+         strncpy(preview, input, 200);
+         preview[200] = '\0';
+      } else {
+         strncpy(preview, input, len + 1);
+      }
+      LOG_ERROR("Unable to parse MQTT JSON command. Payload preview: %.200s%s", preview,
+                len > 200 ? "..." : "");
+      return;
+   }
+
+   executeJsonCommand(parsedJson, mosq);
    json_object_put(parsedJson);
 }
 
@@ -554,6 +595,11 @@ static void execute_command_for_worker(struct json_object *parsed_json, const ch
       command_router_deliver(request_id, "");
       LOG_INFO("Delivered empty result to worker (command executed, no data)");
    }
+
+   // Free callback result (callbacks return heap-allocated strings)
+   if (callback_result) {
+      free(callback_result);
+   }
 }
 
 /* Callback called when the client receives a message. */
@@ -575,8 +621,8 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
       // WORKER PATH: Execute callback and route result to worker
       execute_command_for_worker(parsed_json, request_id);
    } else {
-      // LOCAL PATH: Existing flow (executes callback + calls LLM)
-      parseJsonCommandandExecute((char *)msg->payload, mosq);
+      // LOCAL PATH: Pass already-parsed JSON to avoid double parsing
+      executeJsonCommand(parsed_json, mosq);
    }
 
    json_object_put(parsed_json);
@@ -586,7 +632,7 @@ char *dateCallback(const char *actionName, char *value, int *should_respond) {
    time_t current_time;
    struct tm *time_info;
    char buffer[80];
-   static char return_buffer[384];
+   char *result = NULL;
    int choice;
 
    *should_respond = 1;  // Default to responding
@@ -602,27 +648,39 @@ char *dateCallback(const char *actionName, char *value, int *should_respond) {
       srand(time(NULL));
       choice = rand() % 3;
 
+      result = malloc(256);
+      if (!result) {
+         LOG_ERROR("dateCallback: malloc failed");
+         *should_respond = 0;
+         return NULL;
+      }
+
       switch (choice) {
          case 0:
-            snprintf(return_buffer, sizeof(return_buffer),
-                     "Today's date, dear Sir, is %s. You're welcome.", buffer);
+            snprintf(result, 256, "Today's date, dear Sir, is %s. You're welcome.", buffer);
             break;
          case 1:
-            snprintf(return_buffer, sizeof(return_buffer),
-                     "In case you've forgotten, Sir, it's %s today.", buffer);
+            snprintf(result, 256, "In case you've forgotten, Sir, it's %s today.", buffer);
             break;
          case 2:
-            snprintf(return_buffer, sizeof(return_buffer), "The current date is %s.", buffer);
+            snprintf(result, 256, "The current date is %s.", buffer);
             break;
       }
 
       int local_should_respond = 0;
-      textToSpeechCallback(NULL, return_buffer, &local_should_respond);
+      textToSpeechCallback(NULL, result, &local_should_respond);
+      free(result);
       return NULL;  // Already handled
    } else {
       // AI modes: return the raw data for AI to process
-      snprintf(return_buffer, sizeof(return_buffer), "The current date is %s", buffer);
-      return return_buffer;
+      result = malloc(128);
+      if (!result) {
+         LOG_ERROR("dateCallback: malloc failed");
+         *should_respond = 0;
+         return NULL;
+      }
+      snprintf(result, 128, "The current date is %s", buffer);
+      return result;
    }
 }
 
@@ -630,7 +688,7 @@ char *timeCallback(const char *actionName, char *value, int *should_respond) {
    time_t current_time;
    struct tm *time_info;
    char buffer[80];
-   static char return_buffer[384];
+   char *result = NULL;
    int choice;
 
    *should_respond = 1;
@@ -646,32 +704,47 @@ char *timeCallback(const char *actionName, char *value, int *should_respond) {
       srand(time(NULL));
       choice = rand() % 4;
 
+      result = malloc(256);
+      if (!result) {
+         LOG_ERROR("timeCallback: malloc failed");
+         *should_respond = 0;
+         return NULL;
+      }
+
       switch (choice) {
          case 0:
-            snprintf(return_buffer, sizeof(return_buffer),
+            snprintf(result, 256,
                      "The current time, in case your wristwatch has failed you, is %s.", buffer);
             break;
          case 1:
-            snprintf(return_buffer, sizeof(return_buffer),
-                     "I trust you have something important planned, Sir? It's %s.", buffer);
+            snprintf(result, 256, "I trust you have something important planned, Sir? It's %s.",
+                     buffer);
             break;
          case 2:
-            snprintf(return_buffer, sizeof(return_buffer),
+            snprintf(result, 256,
                      "Oh, you want to know the time again? It's %s, not that I'm keeping track.",
                      buffer);
             break;
          case 3:
-            snprintf(return_buffer, sizeof(return_buffer), "The time is %s.", buffer);
+            snprintf(result, 256, "The time is %s.", buffer);
             break;
       }
 
       int local_should_respond = 0;
-      textToSpeechCallback(NULL, return_buffer, &local_should_respond);
+      textToSpeechCallback(NULL, result, &local_should_respond);
+      free(result);
       return NULL;
    } else {
       // AI modes: return the raw data
-      snprintf(return_buffer, sizeof(return_buffer), "The time is %s.", buffer);
-      return return_buffer;
+      // buffer is up to 80 chars, plus "The time is " (12) + "." (1) + null (1) = 94
+      result = malloc(96);
+      if (!result) {
+         LOG_ERROR("timeCallback: malloc failed");
+         *should_respond = 0;
+         return NULL;
+      }
+      snprintf(result, 96, "The time is %s.", buffer);
+      return result;
    }
 }
 
@@ -701,7 +774,7 @@ void set_music_directory(const char *path) {
 char *musicCallback(const char *actionName, char *value, int *should_respond) {
    PlaybackArgs args;
    char strWildcards[MAX_FILENAME_LENGTH];
-   static char return_buffer[MUSIC_CALLBACK_BUFFER_SIZE];
+   char *result = NULL;
    int i = 0;
 
    *should_respond = 1;  // Default to responding
@@ -725,8 +798,11 @@ char *musicCallback(const char *actionName, char *value, int *should_respond) {
             *should_respond = 0;
             return NULL;
          } else {
-            snprintf(return_buffer, sizeof(return_buffer), "Search term '%s' is too long", value);
-            return return_buffer;
+            result = malloc(MUSIC_CALLBACK_BUFFER_SIZE);
+            if (result) {
+               snprintf(result, MUSIC_CALLBACK_BUFFER_SIZE, "Search term '%s' is too long", value);
+            }
+            return result;
          }
       }
 
@@ -745,8 +821,7 @@ char *musicCallback(const char *actionName, char *value, int *should_respond) {
             *should_respond = 0;
             return NULL;
          } else {
-            strcpy(return_buffer, "Failed to access music directory");
-            return return_buffer;
+            return strdup("Failed to access music directory");
          }
       }
 
@@ -789,8 +864,7 @@ char *musicCallback(const char *actionName, char *value, int *should_respond) {
                *should_respond = 0;
                return NULL;
             } else {
-               strcpy(return_buffer, "Failed to start music playback");
-               return return_buffer;
+               return strdup("Failed to start music playback");
             }
          }
 
@@ -799,9 +873,12 @@ char *musicCallback(const char *actionName, char *value, int *should_respond) {
             return NULL;
          } else {
             *should_respond = 0;
-            snprintf(return_buffer, sizeof(return_buffer), "Playing %s - found %d matching tracks",
-                     value, playlist.count);
-            return return_buffer;
+            result = malloc(MUSIC_CALLBACK_BUFFER_SIZE);
+            if (result) {
+               snprintf(result, MUSIC_CALLBACK_BUFFER_SIZE, "Playing %s - found %d matching tracks",
+                        value, playlist.count);
+            }
+            return result;
          }
       } else {
          LOG_WARNING("No music matching that description was found.");
@@ -810,8 +887,11 @@ char *musicCallback(const char *actionName, char *value, int *should_respond) {
             *should_respond = 0;
             return NULL;
          } else {
-            snprintf(return_buffer, sizeof(return_buffer), "No music found matching '%s'", value);
-            return return_buffer;
+            result = malloc(MUSIC_CALLBACK_BUFFER_SIZE);
+            if (result) {
+               snprintf(result, MUSIC_CALLBACK_BUFFER_SIZE, "No music found matching '%s'", value);
+            }
+            return result;
          }
       }
    } else if (strcmp(actionName, "stop") == 0) {
@@ -833,8 +913,7 @@ char *musicCallback(const char *actionName, char *value, int *should_respond) {
          *should_respond = 0;
          return NULL;
       } else {
-         strcpy(return_buffer, "Music playback stopped");
-         return return_buffer;
+         return strdup("Music playback stopped");
       }
    } else if (strcmp(actionName, "next") == 0) {
       if (music_thread != -1) {
@@ -865,8 +944,7 @@ char *musicCallback(const char *actionName, char *value, int *should_respond) {
                *should_respond = 0;
                return NULL;
             } else {
-               strcpy(return_buffer, "Failed to play next track");
-               return return_buffer;
+               return strdup("Failed to play next track");
             }
          }
 
@@ -881,16 +959,18 @@ char *musicCallback(const char *actionName, char *value, int *should_respond) {
             } else {
                filename = playlist.filenames[current_track];
             }
-            snprintf(return_buffer, sizeof(return_buffer), "Playing next track: %s", filename);
-            return return_buffer;
+            result = malloc(MUSIC_CALLBACK_BUFFER_SIZE);
+            if (result) {
+               snprintf(result, MUSIC_CALLBACK_BUFFER_SIZE, "Playing next track: %s", filename);
+            }
+            return result;
          }
       } else {
          if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
             *should_respond = 0;
             return NULL;
          } else {
-            strcpy(return_buffer, "No playlist available");
-            return return_buffer;
+            return strdup("No playlist available");
          }
       }
    } else if (strcmp(actionName, "previous") == 0) {
@@ -922,8 +1002,7 @@ char *musicCallback(const char *actionName, char *value, int *should_respond) {
                *should_respond = 0;
                return NULL;
             } else {
-               strcpy(return_buffer, "Failed to play previous track");
-               return return_buffer;
+               return strdup("Failed to play previous track");
             }
          }
 
@@ -938,16 +1017,18 @@ char *musicCallback(const char *actionName, char *value, int *should_respond) {
             } else {
                filename = playlist.filenames[current_track];
             }
-            snprintf(return_buffer, sizeof(return_buffer), "Playing previous track: %s", filename);
-            return return_buffer;
+            result = malloc(MUSIC_CALLBACK_BUFFER_SIZE);
+            if (result) {
+               snprintf(result, MUSIC_CALLBACK_BUFFER_SIZE, "Playing previous track: %s", filename);
+            }
+            return result;
          }
       } else {
          if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
             *should_respond = 0;
             return NULL;
          } else {
-            strcpy(return_buffer, "No playlist available");
-            return return_buffer;
+            return strdup("No playlist available");
          }
       }
    }
@@ -956,8 +1037,6 @@ char *musicCallback(const char *actionName, char *value, int *should_respond) {
 }
 
 char *voiceAmplifierCallback(const char *actionName, char *value, int *should_respond) {
-   static char return_buffer[256];
-
    *should_respond = 1;
 
    if (strcmp(actionName, "enable") == 0) {
@@ -965,8 +1044,7 @@ char *voiceAmplifierCallback(const char *actionName, char *value, int *should_re
          LOG_WARNING("Voice amplification thread already running.");
 
          if (command_processing_mode != CMD_MODE_DIRECT_ONLY) {
-            strcpy(return_buffer, "Voice amplifier is already enabled");
-            return return_buffer;
+            return strdup("Voice amplifier is already enabled");
          }
          *should_respond = 0;
          return NULL;
@@ -977,16 +1055,14 @@ char *voiceAmplifierCallback(const char *actionName, char *value, int *should_re
          LOG_ERROR("Error creating voice thread");
 
          if (command_processing_mode != CMD_MODE_DIRECT_ONLY) {
-            strcpy(return_buffer, "Failed to enable voice amplifier");
-            return return_buffer;
+            return strdup("Failed to enable voice amplifier");
          }
          *should_respond = 0;
          return NULL;
       }
 
       if (command_processing_mode != CMD_MODE_DIRECT_ONLY) {
-         strcpy(return_buffer, "Voice amplifier enabled");
-         return return_buffer;
+         return strdup("Voice amplifier enabled");
       }
       *should_respond = 0;
       return NULL;
@@ -996,15 +1072,13 @@ char *voiceAmplifierCallback(const char *actionName, char *value, int *should_re
          setStopVA();
 
          if (command_processing_mode != CMD_MODE_DIRECT_ONLY) {
-            strcpy(return_buffer, "Voice amplifier disabled");
-            return return_buffer;
+            return strdup("Voice amplifier disabled");
          }
       } else {
          LOG_WARNING("Voice amplification thread not running.");
 
          if (command_processing_mode != CMD_MODE_DIRECT_ONLY) {
-            strcpy(return_buffer, "Voice amplifier was not running");
-            return return_buffer;
+            return strdup("Voice amplifier was not running");
          }
       }
       *should_respond = 0;
@@ -1016,8 +1090,6 @@ char *voiceAmplifierCallback(const char *actionName, char *value, int *should_re
 
 // Shutdown callback
 char *shutdownCallback(const char *actionName, char *value, int *should_respond) {
-   static char return_buffer[256];
-
    *should_respond = 1;
 
    if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
@@ -1030,13 +1102,12 @@ char *shutdownCallback(const char *actionName, char *value, int *should_respond)
       return NULL;
    } else {
       // In AI modes, confirm before shutting down
-      strcpy(return_buffer, "Shutdown command received. Initiating emergency shutdown.");
       // Still execute the shutdown
       int ret = system("sudo shutdown -h now");
       if (ret != 0) {
          LOG_ERROR("Shutdown command failed with return code: %d", ret);
       }
-      return return_buffer;
+      return strdup("Shutdown command received. Initiating emergency shutdown.");
    }
 }
 
@@ -1170,7 +1241,7 @@ char *base64_encode(const unsigned char *buffer, size_t length) {
 
 char *viewingCallback(const char *actionName, char *value, int *should_respond) {
    size_t image_size = 0;
-   static char return_buffer[256];
+   char *result = NULL;
 
    *should_respond = 1;  // Always respond for viewing
 
@@ -1190,15 +1261,17 @@ char *viewingCallback(const char *actionName, char *value, int *should_respond) 
       free(image_content);
 
       if (command_processing_mode != CMD_MODE_DIRECT_ONLY) {
-         strcpy(return_buffer, "Image captured and ready for vision processing");
-         return return_buffer;
+         return strdup("Image captured and ready for vision processing");
       }
    } else {
       LOG_ERROR("Error reading image file.");
 
       if (command_processing_mode != CMD_MODE_DIRECT_ONLY) {
-         snprintf(return_buffer, sizeof(return_buffer), "Failed to read image file: %s", value);
-         return return_buffer;
+         result = malloc(256);
+         if (result) {
+            snprintf(result, 256, "Failed to read image file: %s", value);
+         }
+         return result;
       }
    }
 
@@ -1207,7 +1280,7 @@ char *viewingCallback(const char *actionName, char *value, int *should_respond) 
 }
 
 char *volumeCallback(const char *actionName, char *value, int *should_respond) {
-   static char return_buffer[256];
+   char *result = NULL;
    float floatVol = wordToNumber(value);
 
    LOG_INFO("Music volume: %s/%0.2f", value, floatVol);
@@ -1220,9 +1293,12 @@ char *volumeCallback(const char *actionName, char *value, int *should_respond) {
          return NULL;
       } else {
          // AI modes: return confirmation
-         snprintf(return_buffer, sizeof(return_buffer), "Music volume set to %.1f", floatVol);
+         result = malloc(64);
+         if (result) {
+            snprintf(result, 64, "Music volume set to %.1f", floatVol);
+         }
          *should_respond = 1;
-         return return_buffer;
+         return result;
       }
    } else {
       if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
@@ -1231,50 +1307,84 @@ char *volumeCallback(const char *actionName, char *value, int *should_respond) {
          *should_respond = 0;
          return NULL;
       } else {
-         snprintf(return_buffer, sizeof(return_buffer),
-                  "Invalid volume level %.1f requested. Volume must be between 0 and 2.", floatVol);
+         result = malloc(128);
+         if (result) {
+            snprintf(result, 128,
+                     "Invalid volume level %.1f requested. Volume must be between 0 and 2.",
+                     floatVol);
+         }
          *should_respond = 1;
-         return return_buffer;
+         return result;
       }
    }
 }
 
 char *localLLMCallback(const char *actionName, char *value, int *should_respond) {
-   static char return_buffer[256];
-
    LOG_INFO("Setting AI to local LLM.");
    llm_set_type(LLM_LOCAL);
 
    // Always return string for AI modes (ignored in DIRECT_ONLY)
-   strcpy(return_buffer, "AI switched to local LLM");
    *should_respond = 1;
-   return return_buffer;
+   return strdup("AI switched to local LLM");
 }
 
 char *cloudLLMCallback(const char *actionName, char *value, int *should_respond) {
-   static char return_buffer[256];
-
    LOG_INFO("Setting AI to cloud LLM.");
    llm_set_type(LLM_CLOUD);
 
    // Always return string for AI modes (ignored in DIRECT_ONLY)
-   strcpy(return_buffer, "AI switched to cloud LLM");
    *should_respond = 1;
-   return return_buffer;
+   return strdup("AI switched to cloud LLM");
 }
 
 char *resetConversationCallback(const char *actionName, char *value, int *should_respond) {
-   static char return_buffer[256];
-
    LOG_INFO("Resetting conversation context via command.");
    reset_conversation();
 
-   strcpy(return_buffer, "Conversation context has been reset. Starting fresh.");
    *should_respond = 1;
-   return return_buffer;
+   return strdup("Conversation context has been reset. Starting fresh.");
 }
 
 #define SEARCH_RESULT_BUFFER_SIZE 4096
+
+/**
+ * @brief Helper function to perform a typed search and format the response
+ */
+static char *perform_search(const char *value, search_type_t type, const char *type_name) {
+   LOG_INFO("searchCallback: Performing %s search for '%s'", type_name, value);
+
+   search_response_t *response = web_search_query_typed(value, SEARXNG_MAX_RESULTS, type);
+   if (!response) {
+      return strdup("Search request failed.");
+   }
+
+   if (response->error) {
+      LOG_ERROR("searchCallback: Search error: %s", response->error);
+      char *result = malloc(256);
+      if (result) {
+         snprintf(result, 256, "Search failed: %s", response->error);
+      }
+      web_search_free_response(response);
+      return result ? result : strdup("Search failed.");
+   }
+
+   if (response->count > 0) {
+      char *result = malloc(SEARCH_RESULT_BUFFER_SIZE);
+      if (result) {
+         web_search_format_for_llm(response, result, SEARCH_RESULT_BUFFER_SIZE);
+         LOG_INFO("searchCallback: Returning %d %s results", response->count, type_name);
+      }
+      web_search_free_response(response);
+      return result ? result : strdup("Failed to format search results.");
+   }
+
+   web_search_free_response(response);
+   char *msg = malloc(128);
+   if (msg) {
+      snprintf(msg, 128, "No %s results found for '%s'.", type_name, value);
+   }
+   return msg ? msg : strdup("No results found.");
+}
 
 char *searchCallback(const char *actionName, char *value, int *should_respond) {
    *should_respond = 1;  // Always return results to LLM
@@ -1287,40 +1397,23 @@ char *searchCallback(const char *actionName, char *value, int *should_respond) {
       }
    }
 
+   // Determine search type from action name
    if (strcmp(actionName, "web") == 0) {
-      LOG_INFO("searchCallback: Performing web search for '%s'", value);
-
-      search_response_t *response = web_search_query(value, SEARXNG_MAX_RESULTS);
-      if (response) {
-         if (response->error) {
-            LOG_ERROR("searchCallback: Search error: %s", response->error);
-            char *result = malloc(256);
-            if (result) {
-               snprintf(result, 256, "Search failed: %s", response->error);
-            }
-            web_search_free_response(response);
-            return result ? result : strdup("Search failed.");
-         }
-
-         if (response->count > 0) {
-            char *result = malloc(SEARCH_RESULT_BUFFER_SIZE);
-            if (result) {
-               web_search_format_for_llm(response, result, SEARCH_RESULT_BUFFER_SIZE);
-               LOG_INFO("searchCallback: Returning %d results", response->count);
-            }
-            web_search_free_response(response);
-            return result ? result : strdup("Failed to format search results.");
-         }
-
-         web_search_free_response(response);
-         char *msg = malloc(128);
-         if (msg) {
-            snprintf(msg, 128, "No results found for '%s'.", value);
-         }
-         return msg ? msg : strdup("No results found.");
-      }
-
-      return strdup("Search request failed.");
+      return perform_search(value, SEARCH_TYPE_WEB, "web");
+   } else if (strcmp(actionName, "news") == 0) {
+      return perform_search(value, SEARCH_TYPE_NEWS, "news");
+   } else if (strcmp(actionName, "science") == 0) {
+      return perform_search(value, SEARCH_TYPE_SCIENCE, "science");
+   } else if (strcmp(actionName, "it") == 0 || strcmp(actionName, "tech") == 0) {
+      return perform_search(value, SEARCH_TYPE_IT, "tech");
+   } else if (strcmp(actionName, "social") == 0) {
+      return perform_search(value, SEARCH_TYPE_SOCIAL, "social");
+   } else if (strcmp(actionName, "translate") == 0) {
+      return perform_search(value, SEARCH_TYPE_TRANSLATE, "translate");
+   } else if (strcmp(actionName, "define") == 0 || strcmp(actionName, "dictionary") == 0) {
+      return perform_search(value, SEARCH_TYPE_DICTIONARY, "dictionary");
+   } else if (strcmp(actionName, "papers") == 0 || strcmp(actionName, "academic") == 0) {
+      return perform_search(value, SEARCH_TYPE_PAPERS, "papers");
    }
 
    return strdup("Unknown search action.");

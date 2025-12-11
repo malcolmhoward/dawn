@@ -34,6 +34,22 @@
 #define SEARXNG_SNIPPET_LEN 200
 
 /**
+ * @brief Search type enum for different search categories
+ */
+typedef enum {
+   SEARCH_TYPE_WEB,         // General web search (default)
+   SEARCH_TYPE_NEWS,        // News articles (categories=news)
+   SEARCH_TYPE_FACTS,       // Wikipedia infoboxes (engines=wikipedia)
+   SEARCH_TYPE_SCIENCE,     // Scientific content (categories=science)
+   SEARCH_TYPE_IT,          // Tech/programming (categories=it)
+   SEARCH_TYPE_SOCIAL,      // Social media (categories=social media)
+   SEARCH_TYPE_QA,          // Q&A sites (categories=q&a)
+   SEARCH_TYPE_TRANSLATE,   // Translation (categories=translate)
+   SEARCH_TYPE_DICTIONARY,  // Definitions (categories=dictionaries)
+   SEARCH_TYPE_PAPERS       // Academic papers (categories=scientific publications)
+} search_type_t;
+
+/**
  * @brief Search result structure
  */
 typedef struct {
@@ -67,6 +83,15 @@ int web_search_init(const char *searxng_url);
  * @return Search response (caller must free with web_search_free_response)
  */
 search_response_t *web_search_query(const char *query, int max_results);
+
+/**
+ * @brief Perform a typed search (web, news, or facts)
+ * @param query Search query string
+ * @param max_results Maximum results to return (0 for default)
+ * @param type Search type (SEARCH_TYPE_WEB, SEARCH_TYPE_NEWS, or SEARCH_TYPE_FACTS)
+ * @return Search response (caller must free with web_search_free_response)
+ */
+search_response_t *web_search_query_typed(const char *query, int max_results, search_type_t type);
 
 /**
  * @brief Format search results for LLM consumption

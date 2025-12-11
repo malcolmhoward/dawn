@@ -39,6 +39,7 @@
 #include "llm/sentence_buffer.h"
 #include "logging.h"
 #include "secrets.h"
+#include "tools/curl_buffer.h"
 #include "tts/text_to_speech.h"
 #include "ui/metrics.h"
 
@@ -64,47 +65,10 @@ static char llm_url[2048] = "";
 // Global interrupt flag - set by main thread when wake word detected during LLM processing
 static volatile sig_atomic_t llm_interrupt_requested = 0;
 
-/**
- * @brief Structure to hold dynamically allocated response data from CURL
- */
-struct MemoryStruct {
-   char *memory; /**< Pointer to the dynamically allocated buffer */
-   size_t size;  /**< Current size of the buffer */
-};
-
-/**
- * @brief Callback for writing data to a MemoryStruct buffer (used by CURL)
- *
- * This function is intended to be used with libcurl's CURLOPT_WRITEFUNCTION option.
- * Whenever libcurl receives data that is to be saved, this function is called. It
- * reallocates the MemoryStruct's memory block to fit the new piece of data, ensuring
- * that the data is concatenated properly within the buffer.
- *
- * @param contents Pointer to the data libcurl has ready for us.
- * @param size The size of the data in the block, always 1.
- * @param nmemb Number of blocks to write, each of size 'size'.
- * @param userp Pointer to a MemoryStruct structure where the data should be stored.
- *
- * @return The number of bytes actually taken care of. If that amount differs from the
- * amount passed to your function, it'll signal an error to libcurl. Returning 0
- * will signal an out-of-memory error.
- */
-size_t WriteMemoryCallback(void *contents, size_t size, size_t nmemb, void *userp) {
-   size_t realsize = size * nmemb;
-   struct MemoryStruct *mem = (struct MemoryStruct *)userp;
-
-   mem->memory = realloc(mem->memory, mem->size + realsize + 1);
-   if (mem->memory == NULL) {
-      LOG_ERROR("Not enough memory (realloc returned NULL)");
-      return 0;
-   }
-
-   memcpy(&(mem->memory[mem->size]), contents, realsize);
-   mem->size += realsize;
-   mem->memory[mem->size] = 0;
-
-   return realsize;
-}
+// Legacy compatibility: MemoryStruct is now implemented using curl_buffer_t from curl_buffer.h
+// The llm_openai.c and llm_claude.c files still use the old naming, so we provide this wrapper.
+// Note: curl_buffer_t uses 'data' field, MemoryStruct used 'memory' field.
+// Both are handled by the common curl_buffer_write_callback().
 
 /**
  * @brief Extracts the host and port from a URL, removing protocol and paths.

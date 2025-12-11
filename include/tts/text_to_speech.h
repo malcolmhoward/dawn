@@ -103,56 +103,6 @@ void tts_speak_greeting_with_calibration(const char *greeting);
  */
 void cleanup_text_to_speech();
 
-/**
- * @brief Removes all occurrences of specified characters from a string.
- *
- * This function modifies the input string `str` in place by removing any characters
- * that are present in the `remove_chars` string. The resulting string will be a subset
- * of the original, excluding the unwanted characters.
- *
- * The function operates by iterating over each character in `str` and copying it
- * to the destination position if it is not found in `remove_chars`. It does not
- * allocate additional memory and adjusts the string in place.
- *
- * @param str          The string to be modified. Must be a null-terminated mutable string.
- * @param remove_chars A null-terminated string containing characters to remove from `str`.
- *
- * @note
- * - The input string `str` must be mutable and large enough to hold the modified string.
- * - If `str` is `NULL`, the function has no effect.
- * - If `remove_chars` is `NULL` or empty, `str` remains unchanged.
- * - The function compares characters based on their exact value and does not account for
- * locale-specific variations.
- */
-void remove_chars(char *str, const char *remove_chars);
-
-/**
- * @brief Checks if a Unicode code point represents an emoji or emoji-related character.
- *
- * This helper function determines whether a given Unicode code point falls within
- * emoji ranges or is a character commonly used in emoji sequences. It is used
- * internally by `remove_emojis` to identify characters to filter.
- *
- * @param codepoint The Unicode code point to check.
- * @return `true` if the code point should be filtered, `false` otherwise.
- *
- * @note
- * - Includes variation selectors (U+FE00-FE0F), zero-width joiners (U+200D),
- *   regional indicators (flags), and extended emoji ranges.
- * - Some complex emoji sequences may still have residual characters.
- */
-bool is_emoji(unsigned int codepoint);
-
-/**
- * @brief Removes emoji characters and emoji-related sequences from a string.
- *
- * Filters out emojis, variation selectors, zero-width joiners, and other
- * characters used in emoji sequences. Modifies the string in place.
- *
- * @param str The null-terminated string to process (modified in place).
- */
-void remove_emojis(char *str);
-
 #ifdef __cplusplus
 }
 #endif

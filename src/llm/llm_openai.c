@@ -31,18 +31,8 @@
 #include "llm/llm_streaming.h"
 #include "llm/sse_parser.h"
 #include "logging.h"
+#include "tools/curl_buffer.h"
 #include "ui/metrics.h"
-
-/**
- * @brief Structure to hold dynamically allocated response data from CURL
- */
-struct MemoryStruct {
-   char *memory; /**< Pointer to the dynamically allocated buffer */
-   size_t size;  /**< Current size of the buffer */
-};
-
-// External WriteMemoryCallback from llm_interface.c
-extern size_t WriteMemoryCallback(void *contents, size_t size, size_t nmemb, void *userp);
 
 // External CURL progress callback for interrupt support
 extern int llm_curl_progress_callback(void *clientp,
@@ -84,7 +74,7 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
    struct curl_slist *headers = NULL;
    char full_url[2048 + 20] = "";
 
-   struct MemoryStruct chunk;
+   curl_buffer_t chunk;
 
    const char *payload = NULL;
    char *response = NULL;
@@ -155,18 +145,11 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
    payload = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN |
                                                       JSON_C_TO_STRING_NOSLASHESCAPE);
 
-   chunk.memory = malloc(1);
-   if (chunk.memory == NULL) {
-      LOG_ERROR("Error allocating memory!");
-      json_object_put(root);
-      return NULL;
-   }
-   chunk.size = 0;
+   curl_buffer_init(&chunk);
 
    // Check connection (handled in llm_interface.c for fallback)
    if (!llm_check_connection(base_url, 4)) {
       LOG_ERROR("URL did not return. Unavailable.");
-      free(chunk.memory);
       json_object_put(root);
       return NULL;
    }
@@ -179,7 +162,7 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
       curl_easy_setopt(curl_handle, CURLOPT_URL, full_url);
       curl_easy_setopt(curl_handle, CURLOPT_POSTFIELDS, payload);
       curl_easy_setopt(curl_handle, CURLOPT_HTTPHEADER, headers);
-      curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+      curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, curl_buffer_write_callback);
       curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
 
       // Enable progress callback for interruption support
@@ -202,7 +185,7 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
          }
          curl_easy_cleanup(curl_handle);
          curl_slist_free_all(headers);
-         free(chunk.memory);
+         curl_buffer_free(&chunk);
          json_object_put(root);
          return NULL;
       }
@@ -225,7 +208,7 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
          }
          curl_easy_cleanup(curl_handle);
          curl_slist_free_all(headers);
-         free(chunk.memory);
+         curl_buffer_free(&chunk);
          json_object_put(root);
          return NULL;
       }
@@ -234,10 +217,10 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
       curl_slist_free_all(headers);
    }
 
-   parsed_json = json_tokener_parse(chunk.memory);
+   parsed_json = json_tokener_parse(chunk.data);
    if (!parsed_json) {
       LOG_ERROR("Failed to parse JSON response.");
-      free(chunk.memory);
+      curl_buffer_free(&chunk);
       json_object_put(root);
       return NULL;
    }
@@ -246,7 +229,7 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
        json_object_get_type(choices) != json_type_array || json_object_array_length(choices) < 1) {
       LOG_ERROR("Error in parsing response: 'choices' missing or invalid.");
       json_object_put(parsed_json);
-      free(chunk.memory);
+      curl_buffer_free(&chunk);
       json_object_put(root);
       return NULL;
    }
@@ -255,7 +238,7 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
    if (!first_choice) {
       LOG_ERROR("Error: 'choices' array is empty.");
       json_object_put(parsed_json);
-      free(chunk.memory);
+      curl_buffer_free(&chunk);
       json_object_put(root);
       return NULL;
    }
@@ -264,7 +247,7 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
        !json_object_object_get_ex(message, "content", &content)) {
       LOG_ERROR("Error: 'message' or 'content' field missing.");
       json_object_put(parsed_json);
-      free(chunk.memory);
+      curl_buffer_free(&chunk);
       json_object_put(root);
       return NULL;
    }
@@ -314,7 +297,7 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
    if (!content_str) {
       LOG_ERROR("Error: 'content' field is empty or not a string.");
       json_object_put(parsed_json);
-      free(chunk.memory);
+      curl_buffer_free(&chunk);
       json_object_put(root);
       return NULL;
    }
@@ -327,7 +310,7 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
    }
 
    json_object_put(parsed_json);
-   free(chunk.memory);
+   curl_buffer_free(&chunk);
    json_object_put(root);
 
    return response;

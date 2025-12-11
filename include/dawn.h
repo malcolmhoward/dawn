@@ -68,9 +68,9 @@
    "specified. "                                                                                      \
    "Choose action based on user's question (e.g., 'this weekend' -> week, 'right now' -> "            \
    "today).\n"                                                                                        \
-   "10. For Web Search (news, current events, general info): use "                                    \
-   "<command>{\"device\":\"search\",\"action\":\"web\",\"value\":\"query\"}</command>. "              \
-   "Extract and report SPECIFIC DATA from results. NEVER read URLs aloud.\n"                          \
+   "10. SEARCH: "                                                                                     \
+   "<command>{\"device\":\"search\",\"action\":\"ACTION\",\"value\":\"query\"}</command> "            \
+   "Actions: web, news, science, tech, social, translate, define, papers. No URLs aloud.\n"           \
    "11. CALCULATOR: Actions: 'evaluate' (math), 'convert' (units), 'base' (hex/bin), 'random'.\n"     \
    "   evaluate: <command>{\"device\":\"calculator\",\"action\":\"evaluate\",\"value\":\"2+3*4\"}"    \
    "</command>\n"                                                                                     \

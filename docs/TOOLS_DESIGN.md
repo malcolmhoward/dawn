@@ -325,6 +325,22 @@ include/tools/
     web_search.h          # Public API
 ```
 
+### Search Types
+
+| Type | Action | SearXNG Parameter | Use Case |
+|------|--------|-------------------|----------|
+| `SEARCH_TYPE_WEB` | `web` | None (default) | General web search |
+| `SEARCH_TYPE_NEWS` | `news` | `categories=news` | Current events, news articles |
+| `SEARCH_TYPE_FACTS` | `facts` | `engines=wikipedia` | Factual data, Wikipedia infoboxes |
+
+### Command Format
+
+```json
+{"device": "search", "action": "<type>", "value": "query"}
+```
+
+Where `<type>` is one of: `web`, `news`, or `facts`.
+
 ### Header: web_search.h
 
 ```c
@@ -336,8 +352,14 @@ include/tools/
 #define SEARXNG_TIMEOUT_SEC 10
 
 /**
- * @brief Search result structure
+ * @brief Search type enum for different search categories
  */
+typedef enum {
+   SEARCH_TYPE_WEB,   // General web search (default)
+   SEARCH_TYPE_NEWS,  // News articles only (categories=news)
+   SEARCH_TYPE_FACTS  // Wikipedia/factual data (engines=wikipedia, uses infoboxes)
+} search_type_t;
+
 typedef struct {
    char *title;
    char *url;
@@ -345,9 +367,6 @@ typedef struct {
    char *engine;
 } search_result_t;
 
-/**
- * @brief Search response structure
- */
 typedef struct {
    search_result_t *results;
    int count;
@@ -355,41 +374,13 @@ typedef struct {
    char *error;
 } search_response_t;
 
-/**
- * @brief Initialize the web search module
- * @param searxng_url Base URL for SearXNG (NULL for default)
- * @return 0 on success, 1 on failure
- */
 int web_search_init(const char *searxng_url);
-
-/**
- * @brief Perform a web search
- * @param query Search query string
- * @param max_results Maximum results to return (0 for default)
- * @return Search response (caller must free with web_search_free_response)
- */
 search_response_t *web_search_query(const char *query, int max_results);
-
-/**
- * @brief Format search results for LLM consumption
- * @param response Search response
- * @param buffer Output buffer
- * @param buffer_size Buffer size
- * @return Number of bytes written, or -1 on error
- */
-int web_search_format_for_llm(const search_response_t *response,
-                               char *buffer, size_t buffer_size);
-
-/**
- * @brief Free search response
- * @param response Response to free
- */
+search_response_t *web_search_query_typed(const char *query, int max_results, search_type_t type);
+int web_search_format_for_llm(const search_response_t *response, char *buffer, size_t buffer_size);
 void web_search_free_response(search_response_t *response);
-
-/**
- * @brief Cleanup web search module
- */
 void web_search_cleanup(void);
+int web_search_is_initialized(void);
 
 #endif /* WEB_SEARCH_H */
 ```
