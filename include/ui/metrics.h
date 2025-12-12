@@ -109,6 +109,15 @@ typedef struct {
    int aec_delay_ms;      /**< Measured acoustic delay (0 if uncalibrated) */
    float aec_correlation; /**< Calibration correlation quality (0.0-1.0) */
 
+   /* Search summarizer stats */
+   char summarizer_backend[16];       /**< Backend name ("disabled", "local", "default") */
+   size_t summarizer_threshold;       /**< Current threshold in bytes */
+   uint32_t summarizer_call_count;    /**< Total summarizations performed */
+   size_t summarizer_total_in_bytes;  /**< Total input bytes processed */
+   size_t summarizer_total_out_bytes; /**< Total output bytes produced */
+   size_t summarizer_last_in_bytes;   /**< Last input size */
+   size_t summarizer_last_out_bytes;  /**< Last output size */
+
    /* Audio status */
    float audio_buffer_fill_pct;                /**< Ring buffer fill percentage (0-100) */
    uint32_t bargein_count;                     /**< Times user interrupted TTS */
@@ -209,6 +218,26 @@ void metrics_update_aec_enabled(bool enabled);
  * @param correlation Peak correlation value (0.0-1.0)
  */
 void metrics_record_aec_calibration(bool success, int delay_ms, float correlation);
+
+/* ============================================================================
+ * Search Summarizer Status
+ * ============================================================================ */
+
+/**
+ * @brief Set summarizer configuration for display
+ *
+ * @param backend Backend name ("disabled", "local", "default")
+ * @param threshold Threshold in bytes
+ */
+void metrics_set_summarizer_config(const char *backend, size_t threshold);
+
+/**
+ * @brief Record a summarization operation
+ *
+ * @param input_bytes Input size before summarization
+ * @param output_bytes Output size after summarization
+ */
+void metrics_record_summarization(size_t input_bytes, size_t output_bytes);
 
 /* ============================================================================
  * Audio Status

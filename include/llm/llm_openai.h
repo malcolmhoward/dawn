@@ -33,11 +33,12 @@
  */
 
 /* Default model for OpenAI */
-#define OPENAI_MODEL "gpt-4o"
+#define OPENAI_MODEL "gpt-5-mini"
 /* Alternative models:
+ * #define OPENAI_MODEL "gpt-5"
+ * #define OPENAI_MODEL "gpt-4o"
  * #define OPENAI_MODEL "gpt-4-turbo"
  * #define OPENAI_MODEL "gpt-4o-mini"
- * #define OPENAI_MODEL "gpt-3.5-turbo"
  */
 
 /* Max tokens for completion */

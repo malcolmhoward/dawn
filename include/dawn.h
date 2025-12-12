@@ -70,7 +70,7 @@
    "today).\n"                                                                                        \
    "10. SEARCH: "                                                                                     \
    "<command>{\"device\":\"search\",\"action\":\"ACTION\",\"value\":\"query\"}</command> "            \
-   "Actions: web, news, science, tech, social, translate, define, papers. No URLs aloud.\n"           \
+   "Actions: web, news, science, tech, social, define, papers. No URLs aloud.\n"                      \
    "11. CALCULATOR: Actions: 'evaluate' (math), 'convert' (units), 'base' (hex/bin), 'random'.\n"     \
    "   evaluate: <command>{\"device\":\"calculator\",\"action\":\"evaluate\",\"value\":\"2+3*4\"}"    \
    "</command>\n"                                                                                     \
@@ -81,6 +81,10 @@
    "</command>\n"                                                                                     \
    "   random: <command>{\"device\":\"calculator\",\"action\":\"random\",\"value\":\"1 to 100\"}"     \
    "</command>\n"                                                                                     \
+   "12. URL: Fetch and read content from a URL. Use when you need to read a specific webpage.\n"      \
+   "   "                                                                                              \
+   "<command>{\"device\":\"url\",\"action\":\"fetch\",\"value\":\"https://example.com\"}</"           \
+   "command>\n"                                                                                       \
    "\n"                                                                                               \
    "=== EXAMPLES ===\n"                                                                               \
    "User: Turn on the armor display.\n"                                                               \

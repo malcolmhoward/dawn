@@ -54,6 +54,7 @@ typedef enum {
    SEARCH,                /**< Web search action. */
    WEATHER,               /**< Weather information service. */
    CALCULATOR,            /**< Calculator for math expressions. */
+   URL_FETCH,             /**< Fetch and extract content from a URL. */
    MAX_DEVICE_TYPES       /**< Used to determine the number of device types. */
 } deviceType;
 
@@ -78,7 +79,8 @@ static const char *deviceTypeStrings[] = { "audio playback device",
                                            "reset conversation",
                                            "search",
                                            "weather",
-                                           "calculator" };
+                                           "calculator",
+                                           "url" };
 
 /**
  * @brief Associates a device type with a callback function that processes actions for that device.
@@ -300,5 +302,18 @@ char *weatherCallback(const char *actionName, char *value, int *should_respond);
  * @param should_respond Should the callback return data to the AI or just handle it.
  */
 char *calculatorCallback(const char *actionName, char *value, int *should_respond);
+
+/**
+ * @brief Callback function to fetch and extract content from a URL.
+ *
+ * Fetches the specified URL, extracts readable text content (stripping HTML),
+ * and optionally summarizes if content is large. Returns the content for the
+ * LLM to process.
+ *
+ * @param actionName The name of the action triggering this callback (e.g., "fetch").
+ * @param value      The URL to fetch (e.g., "https://example.com/article").
+ * @param should_respond Should the callback return data to the AI or just handle it.
+ */
+char *urlFetchCallback(const char *actionName, char *value, int *should_respond);
 
 #endif  // MOSQUITTO_COMMS_H

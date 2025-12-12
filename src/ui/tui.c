@@ -379,6 +379,38 @@ static void draw_status_panel(int y, int x, int width, dawn_metrics_t *metrics) 
       printw("%u", metrics->bargein_count);
       attroff(COLOR_PAIR(COLOR_PAIR_VALUE));
    }
+
+   /* Summarizer status */
+   attron(COLOR_PAIR(COLOR_PAIR_TEXT));
+   printw("    Sum: ");
+   attroff(COLOR_PAIR(COLOR_PAIR_TEXT));
+   if (strcmp(metrics->summarizer_backend, "disabled") == 0 ||
+       metrics->summarizer_backend[0] == '\0') {
+      attron(COLOR_PAIR(COLOR_PAIR_DIM));
+      printw("off");
+      attroff(COLOR_PAIR(COLOR_PAIR_DIM));
+   } else {
+      attron(COLOR_PAIR(COLOR_PAIR_VALUE));
+      printw("%s", metrics->summarizer_backend);
+      attroff(COLOR_PAIR(COLOR_PAIR_VALUE));
+      if (metrics->summarizer_call_count > 0) {
+         attron(COLOR_PAIR(COLOR_PAIR_TEXT));
+         printw(" (%u: ", metrics->summarizer_call_count);
+         attroff(COLOR_PAIR(COLOR_PAIR_TEXT));
+         attron(COLOR_PAIR(COLOR_PAIR_VALUE));
+         printw("%zu", metrics->summarizer_last_in_bytes);
+         attroff(COLOR_PAIR(COLOR_PAIR_VALUE));
+         attron(COLOR_PAIR(COLOR_PAIR_TEXT));
+         printw("→");
+         attroff(COLOR_PAIR(COLOR_PAIR_TEXT));
+         attron(COLOR_PAIR(COLOR_PAIR_VALUE));
+         printw("%zu", metrics->summarizer_last_out_bytes);
+         attroff(COLOR_PAIR(COLOR_PAIR_VALUE));
+         attron(COLOR_PAIR(COLOR_PAIR_TEXT));
+         printw(")");
+         attroff(COLOR_PAIR(COLOR_PAIR_TEXT));
+      }
+   }
 }
 
 static void draw_session_stats_panel(int y, int x, int width, dawn_metrics_t *metrics) {

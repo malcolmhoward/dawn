@@ -330,10 +330,6 @@ search_response_t *web_search_query_typed(const char *query, int max_results, se
          category = "q&a";
          type_str = "q&a";
          break;
-      case SEARCH_TYPE_TRANSLATE:
-         category = "translate";
-         type_str = "translate";
-         break;
       case SEARCH_TYPE_DICTIONARY:
          category = "dictionaries";
          type_str = "dictionary";
@@ -460,7 +456,7 @@ search_response_t *web_search_query(const char *query, int max_results) {
 
 int web_search_format_for_llm(const search_response_t *response, char *buffer, size_t buffer_size) {
    if (!response || !buffer || buffer_size == 0) {
-      return -1;
+      return 0;
    }
 
    if (response->error) {

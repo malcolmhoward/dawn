@@ -63,6 +63,7 @@
 #include "network/dawn_wav_utils.h"
 #include "state_machine.h"
 #include "text_to_command_nuevo.h"
+#include "tools/search_summarizer.h"
 #include "tts/text_to_speech.h"
 #include "tts/tts_preprocessing.h"
 #include "ui/metrics.h"
@@ -1236,6 +1237,10 @@ void display_help(int argc, char *argv[]) {
           "../whisper.cpp/models).\n");
    printf("  -M, --music-dir PATH             Absolute path to music directory (default: "
           "~/Music).\n");
+   printf("Search Summarization:\n");
+   printf("  --summarize-backend BACKEND      Summarize large search results (disabled, local, "
+          "default).\n");
+   printf("  --summarize-threshold BYTES      Size threshold for summarization (default: 3072).\n");
    printf("Command Processing Modes:\n");
    printf("  -D, --commands-only    Direct command processing only (default).\n");
    printf("  -C, --llm-commands     Try direct commands first, then LLM if no match.\n");
@@ -1393,19 +1398,21 @@ int main(int argc, char *argv[]) {
       { "logfile", required_argument, NULL, 'l' },
       { "playback", required_argument, NULL, 'd' },
       { "help", no_argument, NULL, 'h' },
-      { "llm-only", no_argument, NULL, 'L' },              // LLM handles everything
-      { "llm-commands", no_argument, NULL, 'C' },          // Commands first, then LLM
-      { "commands-only", no_argument, NULL, 'D' },         // Direct commands only (explicit)
-      { "network-audio", no_argument, NULL, 'N' },         // Start server for remote DAWN access
-      { "llm", required_argument, NULL, 'm' },             // Set default LLM type (local/cloud)
-      { "cloud-provider", required_argument, NULL, 'P' },  // Cloud provider (openai/claude)
-      { "asr-engine", required_argument, NULL, 'A' },      // ASR engine (vosk/whisper)
-      { "whisper-model", required_argument, NULL, 'W' },   // Whisper model (tiny/base/small)
-      { "whisper-path", required_argument, NULL, 'w' },    // Whisper models directory
-      { "music-dir", required_argument, NULL, 'M' },       // Music directory (absolute path)
-      { "mic-record", optional_argument, NULL, 'r' },      // Record mic input for debugging
-      { "asr-record", optional_argument, NULL, 'a' },      // Record ASR pre/post normalization
-      { "no-bargein", no_argument, NULL, 'B' },            // Disable barge-in during TTS
+      { "llm-only", no_argument, NULL, 'L' },                 // LLM handles everything
+      { "llm-commands", no_argument, NULL, 'C' },             // Commands first, then LLM
+      { "commands-only", no_argument, NULL, 'D' },            // Direct commands only (explicit)
+      { "network-audio", no_argument, NULL, 'N' },            // Start server for remote DAWN access
+      { "llm", required_argument, NULL, 'm' },                // Set default LLM type (local/cloud)
+      { "cloud-provider", required_argument, NULL, 'P' },     // Cloud provider (openai/claude)
+      { "asr-engine", required_argument, NULL, 'A' },         // ASR engine (vosk/whisper)
+      { "whisper-model", required_argument, NULL, 'W' },      // Whisper model (tiny/base/small)
+      { "whisper-path", required_argument, NULL, 'w' },       // Whisper models directory
+      { "music-dir", required_argument, NULL, 'M' },          // Music directory (absolute path)
+      { "mic-record", optional_argument, NULL, 'r' },         // Record mic input for debugging
+      { "asr-record", optional_argument, NULL, 'a' },         // Record ASR pre/post normalization
+      { "no-bargein", no_argument, NULL, 'B' },               // Disable barge-in during TTS
+      { "summarize-backend", required_argument, NULL, 256 },  // Search summarizer backend
+      { "summarize-threshold", required_argument, NULL, 257 },  // Search summarizer threshold
 #ifdef ENABLE_AEC
       { "aec-record", optional_argument, NULL, 'R' },  // Record AEC audio for debugging
 #endif
@@ -1425,6 +1432,14 @@ int main(int argc, char *argv[]) {
    const char *whisper_path =
        "../whisper.cpp/models";  // Default Whisper models directory (relative to build/)
    char whisper_full_path[512];  // Buffer to construct full model path
+
+   // Search summarizer config (defaults)
+   summarizer_config_t summarizer_config = {
+      .backend = SUMMARIZER_BACKEND_DISABLED,
+      .failure_policy = SUMMARIZER_ON_FAILURE_PASSTHROUGH,
+      .threshold_bytes = SUMMARIZER_DEFAULT_THRESHOLD,
+      .target_summary_words = SUMMARIZER_DEFAULT_TARGET_WORDS
+   };
 
    // Construct default Whisper base model path
    snprintf(whisper_full_path, sizeof(whisper_full_path), "%s/ggml-%s.bin", whisper_path,
@@ -1581,6 +1596,16 @@ int main(int argc, char *argv[]) {
          case 'B':
             g_bargein_user_disabled = 1;
             LOG_INFO("Barge-in disabled: speech during TTS will be ignored");
+            break;
+         case 256:  // --summarize-backend
+            summarizer_config.backend = search_summarizer_parse_backend(optarg);
+            LOG_INFO("Search summarization backend: %s",
+                     search_summarizer_backend_name(summarizer_config.backend));
+            break;
+         case 257:  // --summarize-threshold
+            summarizer_config.threshold_bytes = (size_t)atol(optarg);
+            LOG_INFO("Search summarization threshold: %zu bytes",
+                     summarizer_config.threshold_bytes);
             break;
          case '?':
             display_help(argc, argv);
@@ -1881,6 +1906,9 @@ int main(int argc, char *argv[]) {
 
    // Initialize LLM system
    llm_init(cloud_provider_override);
+
+   // Initialize search summarizer
+   search_summarizer_init(&summarizer_config);
 
    // Set LLM type: use command-line override or auto-detect
    if (llm_type_override != LLM_UNDEFINED) {

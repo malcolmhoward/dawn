@@ -44,7 +44,6 @@ typedef enum {
    SEARCH_TYPE_IT,          // Tech/programming (categories=it)
    SEARCH_TYPE_SOCIAL,      // Social media (categories=social media)
    SEARCH_TYPE_QA,          // Q&A sites (categories=q&a)
-   SEARCH_TYPE_TRANSLATE,   // Translation (categories=translate)
    SEARCH_TYPE_DICTIONARY,  // Definitions (categories=dictionaries)
    SEARCH_TYPE_PAPERS       // Academic papers (categories=scientific publications)
 } search_type_t;
@@ -98,7 +97,7 @@ search_response_t *web_search_query_typed(const char *query, int max_results, se
  * @param response Search response
  * @param buffer Output buffer
  * @param buffer_size Buffer size
- * @return Number of bytes written, or -1 on error
+ * @return Number of bytes written, or 0 on error (invalid params)
  */
 int web_search_format_for_llm(const search_response_t *response, char *buffer, size_t buffer_size);
 

@@ -306,6 +306,10 @@ set(DAWN_SOURCES
     src/tools/weather_service.c
     src/tools/calculator.c
     src/tools/tinyexpr.c
+    src/tools/search_summarizer.c
+    src/tools/url_fetcher.c
+    src/tools/html_parser.c
+    src/tools/string_utils.c
 )
 
 # Conditionally add TUI source file

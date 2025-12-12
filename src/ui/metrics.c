@@ -303,6 +303,43 @@ void metrics_record_aec_calibration(bool success, int delay_ms, float correlatio
 }
 
 /* ============================================================================
+ * Search Summarizer Status
+ * ============================================================================ */
+
+void metrics_set_summarizer_config(const char *backend, size_t threshold) {
+   if (!g_initialized) {
+      return;
+   }
+
+   pthread_mutex_lock(&g_metrics.mutex);
+   if (backend) {
+      snprintf(g_metrics.summarizer_backend, sizeof(g_metrics.summarizer_backend), "%s", backend);
+   } else {
+      snprintf(g_metrics.summarizer_backend, sizeof(g_metrics.summarizer_backend), "disabled");
+   }
+   g_metrics.summarizer_threshold = threshold;
+   pthread_mutex_unlock(&g_metrics.mutex);
+}
+
+void metrics_record_summarization(size_t input_bytes, size_t output_bytes) {
+   if (!g_initialized) {
+      return;
+   }
+
+   pthread_mutex_lock(&g_metrics.mutex);
+   g_metrics.summarizer_call_count++;
+   g_metrics.summarizer_total_in_bytes += input_bytes;
+   g_metrics.summarizer_total_out_bytes += output_bytes;
+   g_metrics.summarizer_last_in_bytes = input_bytes;
+   g_metrics.summarizer_last_out_bytes = output_bytes;
+   pthread_mutex_unlock(&g_metrics.mutex);
+
+   float reduction = (input_bytes > 0) ? (1.0f - (float)output_bytes / input_bytes) * 100.0f : 0.0f;
+   metrics_log_activity("Summarized: %zu→%zu bytes (%.0f%% reduction)", input_bytes, output_bytes,
+                        reduction);
+}
+
+/* ============================================================================
  * Audio Status
  * ============================================================================ */
 

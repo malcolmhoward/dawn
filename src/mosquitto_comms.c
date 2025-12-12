@@ -47,6 +47,9 @@
 #include "logging.h"
 #include "mosquitto_comms.h"
 #include "tools/calculator.h"
+#include "tools/search_summarizer.h"
+#include "tools/string_utils.h"
+#include "tools/url_fetcher.h"
 #include "tools/weather_service.h"
 #include "tools/web_search.h"
 #include "tts/text_to_speech.h"
@@ -84,7 +87,8 @@ static deviceCallback deviceCallbackArray[] = { { AUDIO_PLAYBACK_DEVICE, setPcmP
                                                 { RESET_CONVERSATION, resetConversationCallback },
                                                 { SEARCH, searchCallback },
                                                 { WEATHER, weatherCallback },
-                                                { CALCULATOR, calculatorCallback } };
+                                                { CALCULATOR, calculatorCallback },
+                                                { URL_FETCH, urlFetchCallback } };
 
 static pthread_t music_thread = -1;
 static pthread_t voice_thread = -1;
@@ -328,9 +332,32 @@ static void executeJsonCommand(struct json_object *parsedJson, struct mosquitto 
    LOG_INFO("Command result for AI: %s",
             pending_command_result ? pending_command_result : "(null)");
 
-   // Log device callback data to TUI for debugging
+   // Log device callback data to TUI for debugging (sanitized for display)
    if (pending_command_result) {
-      metrics_log_activity("DATA: %s", pending_command_result);
+      size_t data_len = strlen(pending_command_result);
+      char sanitized[100];
+      size_t max_display = sizeof(sanitized) - 16;  // Room for "... (XXXXb)"
+
+      // Copy up to max_display chars, replacing newlines with spaces
+      size_t i, j;
+      for (i = 0, j = 0; j < max_display && pending_command_result[i]; i++) {
+         char c = pending_command_result[i];
+         if (c == '\n' || c == '\r') {
+            if (j > 0 && sanitized[j - 1] != ' ') {
+               sanitized[j++] = ' ';
+            }
+         } else {
+            sanitized[j++] = c;
+         }
+      }
+      sanitized[j] = '\0';
+
+      // Add truncation indicator with total size
+      if (data_len > max_display) {
+         snprintf(sanitized + j, sizeof(sanitized) - j, "... (%zub)", data_len);
+      }
+
+      metrics_log_activity("DATA: %s", sanitized);
    }
 
    if (pending_command_result == NULL) {
@@ -1373,7 +1400,26 @@ static char *perform_search(const char *value, search_type_t type, const char *t
       if (result) {
          web_search_format_for_llm(response, result, SEARCH_RESULT_BUFFER_SIZE);
          LOG_INFO("searchCallback: Returning %d %s results", response->count, type_name);
+
+         // Run through summarizer if enabled and over threshold
+         char *summarized = NULL;
+         int sum_result = search_summarizer_process(result, value, &summarized);
+         if (sum_result == SUMMARIZER_SUCCESS && summarized) {
+            free(result);
+            result = summarized;
+         } else if (summarized) {
+            // Summarizer returned something even on error (passthrough policy)
+            free(result);
+            result = summarized;
+         }
+         // If summarizer failed with no output, keep original result
       }
+
+      // Sanitize result to remove invalid UTF-8/control chars before sending to LLM
+      if (result) {
+         sanitize_utf8_for_json(result);
+      }
+
       web_search_free_response(response);
       return result ? result : strdup("Failed to format search results.");
    }
@@ -1408,8 +1454,6 @@ char *searchCallback(const char *actionName, char *value, int *should_respond) {
       return perform_search(value, SEARCH_TYPE_IT, "tech");
    } else if (strcmp(actionName, "social") == 0) {
       return perform_search(value, SEARCH_TYPE_SOCIAL, "social");
-   } else if (strcmp(actionName, "translate") == 0) {
-      return perform_search(value, SEARCH_TYPE_TRANSLATE, "translate");
    } else if (strcmp(actionName, "define") == 0 || strcmp(actionName, "dictionary") == 0) {
       return perform_search(value, SEARCH_TYPE_DICTIONARY, "dictionary");
    } else if (strcmp(actionName, "papers") == 0 || strcmp(actionName, "academic") == 0) {
@@ -1522,5 +1566,72 @@ char *calculatorCallback(const char *actionName, char *value, int *should_respon
    }
 
    return strdup("Unknown calculator action. Use: evaluate, convert, base, or random.");
+}
+
+/**
+ * @brief Callback to fetch and extract content from a URL.
+ *
+ * Fetches the URL, extracts readable text (stripping HTML), and optionally
+ * summarizes large content using the search summarizer.
+ */
+char *urlFetchCallback(const char *actionName, char *value, int *should_respond) {
+   *should_respond = 1;  // Always return results to LLM
+
+   if (value == NULL || strlen(value) == 0) {
+      LOG_WARNING("urlFetchCallback: No URL provided");
+      return strdup("Please provide a URL to fetch.");
+   }
+
+   // Only support "fetch" action
+   if (strcmp(actionName, "fetch") != 0) {
+      LOG_WARNING("urlFetchCallback: Unknown action '%s'", actionName);
+      return strdup("Unknown URL action. Use: fetch");
+   }
+
+   LOG_INFO("urlFetchCallback: Fetching URL '%s'", value);
+
+   // Validate URL
+   if (!url_is_valid(value)) {
+      LOG_WARNING("urlFetchCallback: Invalid URL '%s'", value);
+      return strdup("Invalid URL. Must start with http:// or https://");
+   }
+
+   // Fetch and extract content
+   char *content = NULL;
+   size_t content_size = 0;
+   int result = url_fetch_content(value, &content, &content_size);
+
+   if (result != URL_FETCH_SUCCESS) {
+      const char *err = url_fetch_error_string(result);
+      LOG_WARNING("urlFetchCallback: Fetch failed: %s", err);
+      char *msg = malloc(256);
+      if (msg) {
+         snprintf(msg, 256, "Failed to fetch URL: %s", err);
+         return msg;
+      }
+      return strdup("Failed to fetch URL.");
+   }
+
+   LOG_INFO("urlFetchCallback: Extracted %zu bytes of content", content_size);
+
+   // Run through summarizer if enabled and over threshold
+   char *summarized = NULL;
+   int sum_result = search_summarizer_process(content, value, &summarized);
+   if (sum_result == SUMMARIZER_SUCCESS && summarized) {
+      free(content);
+      content = summarized;
+   } else if (summarized) {
+      // Summarizer returned something even on error (passthrough policy)
+      free(content);
+      content = summarized;
+   }
+   // If summarizer failed with no output, keep original content
+
+   // Sanitize content to remove invalid UTF-8/control chars before sending to LLM
+   if (content) {
+      sanitize_utf8_for_json(content);
+   }
+
+   return content;
 }
 /* End Mosquitto Stuff */
