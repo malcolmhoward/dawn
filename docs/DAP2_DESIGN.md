@@ -554,8 +554,7 @@ dawn/
 ├── common/                        # SHARED CODE (daemon + satellites)
 │   ├── include/
 │   │   ├── audio/
-│   │   │   ├── ring_buffer.h
-│   │   │   └── audio_utils.h
+│   │   │   └── ring_buffer.h
 │   │   ├── asr/
 │   │   │   ├── vad_silero.h
 │   │   │   ├── asr_whisper.h
@@ -568,8 +567,7 @@ dawn/
 │   │   └── logging.h
 │   ├── src/
 │   │   ├── audio/
-│   │   │   ├── ring_buffer.c
-│   │   │   └── audio_utils.c
+│   │   │   └── ring_buffer.c
 │   │   ├── asr/
 │   │   │   ├── vad_silero.c
 │   │   │   ├── asr_whisper.c

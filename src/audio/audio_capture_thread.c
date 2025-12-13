@@ -17,6 +17,12 @@
  * the project author(s). Contributions include any modifications,
  * enhancements, or additions to the project. These contributions become
  * part of the project and are adopted by the project author(s).
+ *
+ * Audio Capture Thread - Runtime Backend Selection
+ *
+ * Uses the audio_backend abstraction for runtime selection between
+ * ALSA and PulseAudio backends. The backend is selected via
+ * audio_backend_init() called in main() before starting capture.
  */
 
 #include "audio/audio_capture_thread.h"
@@ -106,145 +112,13 @@ static void mic_finalize_wav_header(FILE *f, size_t num_samples, uint16_t channe
 #define CAPTURE_RATE 48000
 #define ASR_RATE 16000
 #define DEFAULT_CHANNELS 1
+#define DEFAULT_FRAMES 1536 /* 32ms at 48kHz */
 
 // Compile-time validation: AEC sample rate must match capture rate
 #ifdef ENABLE_AEC
 #if CAPTURE_RATE != AEC_SAMPLE_RATE
 #error "AEC requires capture rate (CAPTURE_RATE) to match AEC_SAMPLE_RATE (48000 Hz)"
 #endif
-#endif
-
-#ifdef ALSA_DEVICE
-#define DEFAULT_ACCESS SND_PCM_ACCESS_RW_INTERLEAVED
-#define DEFAULT_FORMAT SND_PCM_FORMAT_S16_LE
-#define DEFAULT_FRAMES 64
-#else
-#include <pulse/error.h>
-
-#define DEFAULT_PULSE_FORMAT PA_SAMPLE_S16LE
-#endif
-
-/**
- * @brief Open ALSA capture device with error recovery
- */
-#ifdef ALSA_DEVICE
-static int open_alsa_capture(snd_pcm_t **handle,
-                             const char *pcm_device,
-                             snd_pcm_uframes_t *frames,
-                             unsigned int *actual_rate) {
-   snd_pcm_hw_params_t *params = NULL;
-   unsigned int rate = CAPTURE_RATE;
-   int dir = 0;
-   // Use 1536 frames (32ms at 48kHz) to match previous chunk timing
-   // This provides good balance between latency and efficiency
-   *frames = 1536;
-   int rc = 0;
-
-   LOG_INFO("Opening ALSA capture device: %s", pcm_device);
-
-   rc = snd_pcm_open(handle, pcm_device, SND_PCM_STREAM_CAPTURE, 0);
-   if (rc < 0) {
-      LOG_ERROR("Unable to open PCM device for capture (%s): %s", pcm_device, snd_strerror(rc));
-      return 1;
-   }
-
-   snd_pcm_hw_params_alloca(&params);
-
-   rc = snd_pcm_hw_params_any(*handle, params);
-   if (rc < 0) {
-      LOG_ERROR("Unable to get hardware parameter structure: %s", snd_strerror(rc));
-      snd_pcm_close(*handle);
-      *handle = NULL;
-      return 1;
-   }
-
-   rc = snd_pcm_hw_params_set_access(*handle, params, DEFAULT_ACCESS);
-   if (rc < 0) {
-      LOG_ERROR("Unable to set access type: %s", snd_strerror(rc));
-      snd_pcm_close(*handle);
-      *handle = NULL;
-      return 1;
-   }
-
-   rc = snd_pcm_hw_params_set_format(*handle, params, DEFAULT_FORMAT);
-   if (rc < 0) {
-      LOG_ERROR("Unable to set sample format: %s", snd_strerror(rc));
-      snd_pcm_close(*handle);
-      *handle = NULL;
-      return 1;
-   }
-
-   rc = snd_pcm_hw_params_set_channels(*handle, params, DEFAULT_CHANNELS);
-   if (rc < 0) {
-      LOG_ERROR("Unable to set channel count: %s", snd_strerror(rc));
-      snd_pcm_close(*handle);
-      *handle = NULL;
-      return 1;
-   }
-
-   rc = snd_pcm_hw_params_set_rate_near(*handle, params, &rate, &dir);
-   if (rc < 0) {
-      LOG_ERROR("Unable to set sample rate: %s", snd_strerror(rc));
-      snd_pcm_close(*handle);
-      *handle = NULL;
-      return 1;
-   }
-   LOG_INFO("Capture rate set to %u Hz", rate);
-
-   // Return the actual rate to caller for AEC validation
-   if (actual_rate) {
-      *actual_rate = rate;
-   }
-
-   rc = snd_pcm_hw_params_set_period_size_near(*handle, params, frames, &dir);
-   if (rc < 0) {
-      LOG_ERROR("Unable to set period size: %s", snd_strerror(rc));
-      snd_pcm_close(*handle);
-      *handle = NULL;
-      return 1;
-   }
-   LOG_INFO("Frames set to %lu", *frames);
-
-   rc = snd_pcm_hw_params(*handle, params);
-   if (rc < 0) {
-      LOG_ERROR("Unable to set hw parameters: %s", snd_strerror(rc));
-      snd_pcm_close(*handle);
-      *handle = NULL;
-      return 1;
-   }
-
-   return 0;
-}
-#endif
-
-/**
- * @brief Open PulseAudio capture device
- */
-#ifndef ALSA_DEVICE
-static pa_simple *open_pulse_capture(const char *pcm_device) {
-   static const pa_sample_spec ss = { .format = DEFAULT_PULSE_FORMAT,
-                                      .rate = CAPTURE_RATE,
-                                      .channels = DEFAULT_CHANNELS };
-
-   int error;
-   pa_simple *s = pa_simple_new(NULL,              // Server name (NULL = default)
-                                "DAWN",            // Application name
-                                PA_STREAM_RECORD,  // Stream direction
-                                pcm_device,        // Device name
-                                "Audio Capture",   // Stream description
-                                &ss,               // Sample format
-                                NULL,              // Channel map (NULL = default)
-                                NULL,              // Buffering attributes (NULL = default)
-                                &error);           // Error code
-
-   if (!s) {
-      LOG_ERROR("PulseAudio capture device open failed: %s", pa_strerror(error));
-   } else {
-      LOG_INFO("PulseAudio capture device opened: %s", pcm_device);
-   }
-
-   return s;
-}
 #endif
 
 /**
@@ -276,7 +150,7 @@ static int set_realtime_priority(void) {
  * @brief Audio capture thread function
  *
  * Continuously reads audio from device and writes to ring buffer.
- * Handles errors with recovery logic.
+ * Uses the audio_backend abstraction for runtime backend selection.
  */
 static void *capture_thread_func(void *arg) {
    audio_capture_context_t *ctx = (audio_capture_context_t *)arg;
@@ -294,8 +168,8 @@ static void *capture_thread_func(void *arg) {
       return NULL;
    }
 
-   LOG_INFO("Audio capture thread started (buffer=%zu bytes, device=%s, AEC=%s)", ctx->buffer_size,
-            ctx->pcm_device,
+   LOG_INFO("Audio capture thread started (buffer=%zu bytes, device=%s, backend=%s, AEC=%s)",
+            ctx->buffer_size, ctx->pcm_device, audio_backend_type_name(audio_backend_get_type()),
 #ifdef ENABLE_AEC
             (aec_is_enabled() && ctx->aec_buffer && !ctx->aec_rate_mismatch) ? "enabled"
                                                                              : "disabled"
@@ -311,14 +185,13 @@ static void *capture_thread_func(void *arg) {
    metrics_update_aec_enabled(false);
 #endif
 
-#ifdef ALSA_DEVICE
-   // ALSA capture loop (captures at 48kHz, outputs 16kHz to ring buffer)
+   // Unified capture loop using audio_backend abstraction
    while (atomic_load(&ctx->running)) {
-      int rc = snd_pcm_readi(ctx->handle, buffer, ctx->frames);
+      ssize_t rc = audio_stream_capture_read(ctx->capture_handle, buffer, ctx->frames);
 
       if (rc > 0) {
          // Successful read at 48kHz
-         size_t bytes_read_48k = rc * DEFAULT_CHANNELS * 2;  // 2 bytes per sample (S16_LE)
+         size_t bytes_read_48k = (size_t)rc * DEFAULT_CHANNELS * 2;  // 2 bytes per sample (S16_LE)
          size_t samples_read_48k = bytes_read_48k / sizeof(int16_t);
 
 #ifdef ENABLE_AEC
@@ -367,90 +240,26 @@ static void *capture_thread_func(void *arg) {
             }
          }
 #endif
-      } else if (rc == -EPIPE) {
-         LOG_WARNING("ALSA overrun in capture thread, recovering");
-         snd_pcm_prepare(ctx->handle);
-         continue;
-      } else if (rc == -ESTRPIPE) {
-         LOG_WARNING("ALSA stream suspended in capture thread, attempting resume");
-         while ((rc = snd_pcm_resume(ctx->handle)) == -EAGAIN) {
-            sleep(1);
+      } else if (rc < 0) {
+         // Error occurred - map to error code
+         int err = (int)(-rc);
+
+         if (err == AUDIO_ERR_OVERRUN) {
+            LOG_WARNING("Audio capture overrun, recovering");
+            audio_stream_capture_recover(ctx->capture_handle, err);
+            continue;
+         } else if (err == AUDIO_ERR_SUSPENDED) {
+            LOG_WARNING("Audio capture suspended, recovering");
+            audio_stream_capture_recover(ctx->capture_handle, err);
+            continue;
+         } else {
+            LOG_ERROR("Audio capture read error: %s", audio_error_string((audio_error_t)err));
+            // Continue trying despite error
+            usleep(10000);  // 10ms delay before retry
          }
-         if (rc < 0) {
-            LOG_ERROR("Resume failed, preparing PCM");
-            snd_pcm_prepare(ctx->handle);
-         }
-         continue;
-      } else if (rc == -EINTR) {
-         LOG_WARNING("ALSA read interrupted by signal in capture thread, retrying");
-         continue;
-      } else {
-         LOG_ERROR("ALSA read error in capture thread: %s", snd_strerror(rc));
-         // Continue trying despite error
-         usleep(10000);  // 10ms delay before retry
       }
+      // rc == 0 means no data available, continue polling
    }
-#else
-   // PulseAudio capture loop (captures at 48kHz, outputs 16kHz to ring buffer)
-   int error = 0;
-
-   while (atomic_load(&ctx->running)) {
-      if (pa_simple_read(ctx->pa_handle, buffer, ctx->buffer_size, &error) < 0) {
-         LOG_ERROR("PulseAudio read error in capture thread: %s", pa_strerror(error));
-         usleep(10000);  // 10ms delay before retry
-         continue;
-      }
-
-      size_t samples_read_48k = ctx->buffer_size / sizeof(int16_t);
-
-#ifdef ENABLE_AEC
-      // Process through AEC at 48kHz, then downsample to 16kHz for ASR
-      if (aec_is_enabled() && ctx->aec_buffer && ctx->asr_buffer && ctx->downsample_resampler &&
-          !ctx->aec_rate_mismatch && samples_read_48k <= ctx->aec_buffer_size) {
-         // AEC processing at native 48kHz
-         aec_process((int16_t *)buffer, ctx->aec_buffer, samples_read_48k);
-
-         // Downsample 48kHz → 16kHz for ASR
-         size_t samples_16k = resampler_process((resampler_t *)ctx->downsample_resampler,
-                                                ctx->aec_buffer, samples_read_48k, ctx->asr_buffer,
-                                                ctx->asr_buffer_size);
-
-         if (samples_16k > 0) {
-            ring_buffer_write(ctx->ring_buffer, (char *)ctx->asr_buffer,
-                              samples_16k * sizeof(int16_t));
-            // Record what VAD sees (16kHz after AEC)
-            mic_record_samples(ctx->asr_buffer, samples_16k);
-         }
-      } else if (ctx->asr_buffer && ctx->downsample_resampler) {
-         // AEC disabled - still need to downsample 48kHz → 16kHz
-         size_t samples_16k = resampler_process((resampler_t *)ctx->downsample_resampler,
-                                                (int16_t *)buffer, samples_read_48k,
-                                                ctx->asr_buffer, ctx->asr_buffer_size);
-
-         if (samples_16k > 0) {
-            ring_buffer_write(ctx->ring_buffer, (char *)ctx->asr_buffer,
-                              samples_16k * sizeof(int16_t));
-            // Record what VAD sees (16kHz, no AEC)
-            mic_record_samples(ctx->asr_buffer, samples_16k);
-         }
-      }
-#else
-      // Without AEC compiled, still need to downsample 48kHz → 16kHz for ASR
-      if (ctx->asr_buffer && ctx->downsample_resampler) {
-         size_t samples_16k = resampler_process((resampler_t *)ctx->downsample_resampler,
-                                                (int16_t *)buffer, samples_read_48k,
-                                                ctx->asr_buffer, ctx->asr_buffer_size);
-
-         if (samples_16k > 0) {
-            ring_buffer_write(ctx->ring_buffer, (char *)ctx->asr_buffer,
-                              samples_16k * sizeof(int16_t));
-            // Record what VAD sees (16kHz)
-            mic_record_samples(ctx->asr_buffer, samples_16k);
-         }
-      }
-#endif
-   }
-#endif
 
    free(buffer);
    LOG_INFO("Audio capture thread stopped");
@@ -463,6 +272,12 @@ audio_capture_context_t *audio_capture_start(const char *pcm_device,
                                              int use_realtime_priority) {
    if (!pcm_device) {
       LOG_ERROR("PCM device name cannot be NULL");
+      return NULL;
+   }
+
+   // Check that audio backend has been initialized
+   if (audio_backend_get_type() == AUDIO_BACKEND_NONE) {
+      LOG_ERROR("Audio backend not initialized. Call audio_backend_init() first.");
       return NULL;
    }
 
@@ -487,33 +302,30 @@ audio_capture_context_t *audio_capture_start(const char *pcm_device,
       return NULL;
    }
 
-#ifdef ALSA_DEVICE
-   // Open ALSA device
-   unsigned int alsa_actual_rate = 0;
-   if (open_alsa_capture(&ctx->handle, pcm_device, &ctx->frames, &alsa_actual_rate) != 0) {
-      LOG_ERROR("Failed to open ALSA capture device");
+   // Set up stream parameters
+   audio_stream_params_t params = { .sample_rate = CAPTURE_RATE,
+                                    .channels = DEFAULT_CHANNELS,
+                                    .format = AUDIO_FORMAT_S16_LE,
+                                    .period_frames = DEFAULT_FRAMES,
+                                    .buffer_frames = DEFAULT_FRAMES * 4 };
+
+   // Open capture device using audio_backend abstraction
+   ctx->capture_handle = audio_stream_capture_open(pcm_device, &params, &ctx->hw_params);
+   if (!ctx->capture_handle) {
+      LOG_ERROR("Failed to open capture device: %s", pcm_device);
       ring_buffer_free(ctx->ring_buffer);
       free(ctx->pcm_device);
       free(ctx);
       return NULL;
    }
-   ctx->buffer_size = ctx->frames * DEFAULT_CHANNELS * 2;  // 2 bytes per sample (S16_LE)
-#else
-   // Open PulseAudio device
-   ctx->pa_handle = open_pulse_capture(pcm_device);
-   if (!ctx->pa_handle) {
-      LOG_ERROR("Failed to open PulseAudio capture device");
-      ring_buffer_free(ctx->ring_buffer);
-      free(ctx->pcm_device);
-      free(ctx);
-      return NULL;
-   }
-   ctx->pa_framesize = pa_frame_size(&(pa_sample_spec){ .format = DEFAULT_PULSE_FORMAT,
-                                                        .rate = CAPTURE_RATE,
-                                                        .channels = DEFAULT_CHANNELS });
-   // Read chunks of 1536 frames at a time (32ms at 48kHz) to match ALSA timing
-   ctx->buffer_size = ctx->pa_framesize * 1536;
-#endif
+
+   // Use actual hardware parameters
+   ctx->frames = ctx->hw_params.period_frames;
+   ctx->buffer_size = ctx->frames * ctx->hw_params.channels * 2;  // 2 bytes per sample (S16_LE)
+
+   LOG_INFO("Audio capture opened: rate=%u ch=%u period=%zu buffer=%zu (backend=%s)",
+            ctx->hw_params.sample_rate, ctx->hw_params.channels, ctx->hw_params.period_frames,
+            ctx->hw_params.buffer_frames, audio_backend_type_name(audio_backend_get_type()));
 
    // Calculate input buffer size in samples (for resampler allocation)
    size_t input_samples = ctx->buffer_size / sizeof(int16_t);
@@ -545,20 +357,11 @@ audio_capture_context_t *audio_capture_start(const char *pcm_device,
 
    // Runtime sample rate validation for AEC
    ctx->aec_rate_mismatch = 0;
-#ifdef ALSA_DEVICE
-   if (alsa_actual_rate != AEC_SAMPLE_RATE) {
-      LOG_WARNING("AEC requires %d Hz but ALSA device is %u Hz - AEC disabled for this session",
-                  AEC_SAMPLE_RATE, alsa_actual_rate);
+   if (ctx->hw_params.sample_rate != AEC_SAMPLE_RATE) {
+      LOG_WARNING("AEC requires %d Hz but device is %u Hz - AEC disabled for this session",
+                  AEC_SAMPLE_RATE, ctx->hw_params.sample_rate);
       ctx->aec_rate_mismatch = 1;
    }
-#else
-   // PulseAudio uses CAPTURE_RATE which should match AEC_SAMPLE_RATE
-   if (CAPTURE_RATE != AEC_SAMPLE_RATE) {
-      LOG_WARNING("AEC requires %d Hz but PulseAudio is configured for %d Hz - AEC disabled",
-                  AEC_SAMPLE_RATE, CAPTURE_RATE);
-      ctx->aec_rate_mismatch = 1;
-   }
-#endif
 
    LOG_INFO("Audio capture: %dHz → AEC → %dHz for ASR (buffers: aec=%zu, asr=%zu samples)",
             CAPTURE_RATE, ASR_RATE, ctx->aec_buffer_size, ctx->asr_buffer_size);
@@ -571,11 +374,7 @@ audio_capture_context_t *audio_capture_start(const char *pcm_device,
    atomic_store(&ctx->running, true);
    if (pthread_create(&ctx->thread, NULL, capture_thread_func, ctx) != 0) {
       LOG_ERROR("Failed to create capture thread: %s", strerror(errno));
-#ifdef ALSA_DEVICE
-      snd_pcm_close(ctx->handle);
-#else
-      pa_simple_free(ctx->pa_handle);
-#endif
+      audio_stream_capture_close(ctx->capture_handle);
       ring_buffer_free(ctx->ring_buffer);
       free(ctx->pcm_device);
       free(ctx);
@@ -599,17 +398,11 @@ void audio_capture_stop(audio_capture_context_t *ctx) {
    // Wait for thread to exit
    pthread_join(ctx->thread, NULL);
 
-   // Close audio device
-#ifdef ALSA_DEVICE
-   if (ctx->handle) {
-      snd_pcm_drop(ctx->handle);
-      snd_pcm_close(ctx->handle);
+   // Close audio device using audio_backend abstraction
+   if (ctx->capture_handle) {
+      audio_stream_capture_close(ctx->capture_handle);
+      ctx->capture_handle = NULL;
    }
-#else
-   if (ctx->pa_handle) {
-      pa_simple_free(ctx->pa_handle);
-   }
-#endif
 
    // Free ring buffer
    ring_buffer_free(ctx->ring_buffer);

@@ -126,11 +126,6 @@ D.A.W.N. is a modular voice assistant system that processes voice commands throu
   - Routes commands to appropriate device callbacks
   - Supports both direct pattern matching and LLM-based commands
 
-- **audio_utils.c/h**: Audio utility functions
-  - WAV file I/O
-  - Audio format conversions
-  - Sample rate handling
-
 - **word_to_number.c/h**: Natural language number parsing
   - Converts text numbers to integers ("twenty-three" → 23)
   - Used for command parsing

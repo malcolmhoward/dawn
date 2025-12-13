@@ -323,9 +323,15 @@ int aec_cal_finish(int *delay_ms) {
       /* Mic capture lagged - use reduced reference length */
       LOG_INFO("AEC calibration: mic capture lagged (mic=%zu, ref=%zu), adjusting", mic_count,
                ref_count);
-      /* Need at least 80% of original reference for reliable correlation */
-      if (mic_count < (ref_count * 4 / 5)) {
-         LOG_WARNING("AEC calibration: insufficient mic data (%zu < 80%% of %zu)", mic_count,
+      /* Need at least 50% of original reference for reliable correlation.
+       * Reduced from 80% to handle mic capture pipeline latency - the mic
+       * thread may lag behind TTS playback by 700ms+ depending on:
+       * - Audio device startup latency
+       * - ALSA/PulseAudio buffering
+       * - Thread scheduling delays
+       * Cross-correlation can still find delay with 1+ seconds of audio. */
+      if (mic_count < (ref_count / 2)) {
+         LOG_WARNING("AEC calibration: insufficient mic data (%zu < 50%% of %zu)", mic_count,
                      ref_count);
          return AEC_CAL_ERR_INSUFFICIENT_DATA;
       }

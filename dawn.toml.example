@@ -1,0 +1,131 @@
+# DAWN Configuration File
+# ========================
+# Copy this file to one of:
+#   ./dawn.toml                    (current directory - highest priority)
+#   ~/.config/dawn/config.toml     (user config)
+#   /etc/dawn/config.toml          (system-wide)
+#
+# Or specify explicitly: dawn --config /path/to/config.toml
+#
+# Values shown are defaults. Uncomment and modify as needed.
+# Use --dump-config to see the effective configuration.
+
+[general]
+# config_version = 1
+# ai_name = "friday"              # Wake word / assistant name
+# log_file = ""                   # Log to file (empty = console only)
+
+[persona]
+# description = ""                # Custom AI personality description
+                                  # Leave empty to use built-in persona
+
+[localization]
+# location = ""                   # Your location (e.g., "New York, NY")
+# timezone = ""                   # Timezone (e.g., "America/New_York")
+# units = "imperial"              # "imperial" or "metric"
+# language = "en"                 # Language code
+
+[audio]
+# backend = "auto"                # "auto", "alsa", or "pulse"
+# capture_device = "default"      # Microphone device
+# playback_device = "default"     # Speaker device
+
+[audio.bargein]
+# enabled = true                  # Allow interrupting TTS with speech
+# cooldown_ms = 1500              # Ignore speech for this long after TTS ends
+# startup_cooldown_ms = 300       # Ignore speech for this long after TTS starts
+
+[vad]
+# Voice Activity Detection settings
+# speech_threshold = 0.50         # Sensitivity for detecting speech (0.0-1.0)
+# speech_threshold_tts = 0.92     # Higher threshold during TTS playback
+# silence_threshold = 0.30        # Below this = silence
+# end_of_speech_duration = 1.2    # Seconds of silence to end recording
+# max_recording_duration = 30.0   # Maximum recording length in seconds
+# preroll_ms = 500                # Audio to keep before speech detected
+
+[vad.chunking]
+# enabled = true                  # Enable chunked transcription
+# pause_duration = 0.30           # Pause duration to trigger chunk
+# min_duration = 1.0              # Minimum chunk duration
+# max_duration = 10.0             # Maximum chunk duration
+
+[asr]
+# Automatic Speech Recognition (Whisper)
+# model = "base"                  # "tiny", "base", "small", "medium", "large"
+# models_path = "../whisper.cpp/models"  # Path to Whisper model files
+
+[tts]
+# Text-to-Speech (Piper)
+# voice_model = "en_GB-alba-medium"  # Piper voice model name
+# length_scale = 0.85             # Speech speed (lower = faster)
+
+[commands]
+# processing_mode = "direct_first"  # "direct_only", "llm_only", "direct_first"
+                                    # direct_only: Pattern matching only
+                                    # llm_only: All commands via LLM
+                                    # direct_first: Try patterns, fall back to LLM
+
+[llm]
+# type = "cloud"                  # "cloud" or "local"
+# max_tokens = 4096               # Maximum response tokens
+
+[llm.cloud]
+# provider = "openai"             # "openai" or "claude"
+# model = "gpt-4o"                # Model name (provider-specific)
+# endpoint = ""                   # Custom endpoint (empty = default)
+
+[llm.local]
+# endpoint = "http://127.0.0.1:8080"  # llama.cpp server endpoint
+# model = ""                      # Model identifier (optional)
+
+[search]
+# Web search configuration (SearXNG)
+# engine = "searxng"
+# endpoint = "http://127.0.0.1:8888"  # SearXNG instance URL
+
+[search.summarizer]
+# backend = "disabled"            # "disabled", "local", or "default"
+# threshold_bytes = 3072          # Summarize results larger than this
+# target_words = 600              # Target summary length
+
+[url_fetcher]
+# whitelist = []                  # Domains to always allow (array of strings)
+
+[url_fetcher.flaresolverr]
+# enabled = false                 # Enable FlareSolverr for JS-heavy sites
+# endpoint = "http://127.0.0.1:8191"
+# timeout_sec = 60
+# max_response_bytes = 1048576    # 1MB
+
+[mqtt]
+# MQTT broker for home automation
+# enabled = false
+# broker = "127.0.0.1"            # MQTT broker hostname/IP
+# port = 1883
+# Note: credentials go in secrets.toml under [mqtt]
+
+[network]
+# Network audio server for remote clients (ESP32)
+# enabled = false
+# host = "0.0.0.0"                # Bind address
+# port = 5000                     # Listen port
+# workers = 4                     # Concurrent processing threads
+# socket_timeout_sec = 30         # Client socket timeout
+# session_timeout_sec = 300       # Idle session expiry (5 minutes)
+# llm_timeout_ms = 30000          # Per-request LLM timeout (30 seconds)
+
+[tui]
+# Terminal UI settings
+# enabled = false                 # Enable ncurses TUI
+
+[debug]
+# Debug recording options
+# mic_record = false              # Record raw microphone input
+# asr_record = false              # Record ASR input audio
+# aec_record = false              # Record AEC processed audio
+# record_path = "/tmp/dawn_debug" # Directory for debug recordings
+
+[paths]
+# music_dir = "~/Music"           # Music library location
+# commands_config = "commands_config_nuevo.json"  # Device/command mappings

@@ -17,6 +17,11 @@
  * the project author(s). Contributions include any modifications,
  * enhancements, or additions to the project. These contributions become
  * part of the project and are adopted by the project author(s).
+ *
+ * Audio Capture Thread - Runtime Backend Selection
+ *
+ * Uses the audio_backend abstraction for runtime selection between
+ * ALSA and PulseAudio backends.
  */
 
 #ifndef AUDIO_CAPTURE_THREAD_H
@@ -36,13 +41,8 @@ typedef volatile int atomic_bool_t;
 typedef atomic_bool atomic_bool_t;
 #endif
 
+#include "audio/audio_backend.h"
 #include "audio/ring_buffer.h"
-
-#ifdef ALSA_DEVICE
-#include <alsa/asoundlib.h>
-#else
-#include <pulse/simple.h>
-#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -54,6 +54,9 @@ extern "C" {
  * Manages a dedicated thread for continuous audio capture that runs
  * independently of the main application loop. Audio is written to a
  * ring buffer for consumption by the main thread.
+ *
+ * Uses the audio_backend abstraction for runtime selection between
+ * ALSA and PulseAudio backends.
  */
 typedef struct {
    pthread_t thread;           /**< Capture thread handle */
@@ -61,16 +64,13 @@ typedef struct {
    atomic_bool_t running;      /**< Thread running flag */
    int use_realtime_priority;  /**< Enable realtime scheduling */
 
-#ifdef ALSA_DEVICE
-   snd_pcm_t *handle;        /**< ALSA PCM handle */
-   snd_pcm_uframes_t frames; /**< ALSA period size in frames */
-#else
-   pa_simple *pa_handle; /**< PulseAudio handle */
-   size_t pa_framesize;  /**< PulseAudio frame size */
-#endif
+   /* Audio backend handle (runtime-selected ALSA or PulseAudio) */
+   audio_stream_capture_handle_t *capture_handle; /**< Backend capture handle */
+   audio_hw_params_t hw_params;                   /**< Actual hardware parameters */
 
    char *pcm_device;   /**< Device name */
-   size_t buffer_size; /**< Size of capture buffer */
+   size_t buffer_size; /**< Size of capture buffer in bytes */
+   size_t frames;      /**< Frames per read (period size) */
 
    // Resampler for 48kHz → 16kHz (always needed for ASR)
    void *downsample_resampler; /**< Resampler for 48kHz → 16kHz (opaque, resampler_t*) */
@@ -90,7 +90,8 @@ typedef struct {
  * Initializes audio device, creates ring buffer, spawns capture thread,
  * and optionally sets realtime priority for low-latency operation.
  *
- * @param pcm_device Audio device name (e.g., "plughw:CARD=S3,DEV=0" or "default")
+ * @param pcm_device Audio device name (e.g., "plughw:CARD=S3,DEV=0" for ALSA,
+ *                   or PulseAudio source name for PulseAudio backend)
  * @param ring_buffer_size Size of ring buffer in bytes (recommend 65536 = 2 seconds at 16kHz)
  * @param use_realtime_priority If non-zero, set SCHED_FIFO realtime priority
  * @return Pointer to capture context, or NULL on error

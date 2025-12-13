@@ -40,6 +40,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "config/dawn_config.h"
 #include "logging.h"
 
 // === Global Server State ===
@@ -700,7 +701,8 @@ static void *dawn_server_thread(void *arg) {
    (void)arg;
 
    LOG_INFO("Voice Assistant Server starting");
-   LOG_INFO("Protocol: v0x%02X, Host: %s:%d", PROTOCOL_VERSION, SERVER_HOST, SERVER_PORT);
+   LOG_INFO("Protocol: v0x%02X, Host: %s:%d", PROTOCOL_VERSION, g_config.network.host,
+            g_config.network.port);
 
    // Create socket
    server_socket_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -716,15 +718,16 @@ static void *dawn_server_thread(void *arg) {
       LOG_WARNING("Failed to set SO_REUSEADDR: %s", strerror(errno));
    }
 
-   // Bind socket
+   // Bind socket - use config for host/port
    struct sockaddr_in server_addr;
    memset(&server_addr, 0, sizeof(server_addr));
    server_addr.sin_family = AF_INET;
    server_addr.sin_addr.s_addr = INADDR_ANY;
-   server_addr.sin_port = htons(SERVER_PORT);
+   server_addr.sin_port = htons(g_config.network.port);
 
    if (bind(server_socket_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-      LOG_ERROR("Failed to bind to %s:%d: %s", SERVER_HOST, SERVER_PORT, strerror(errno));
+      LOG_ERROR("Failed to bind to %s:%d: %s", g_config.network.host, g_config.network.port,
+                strerror(errno));
       close(server_socket_fd);
       server_socket_fd = -1;
       server_running = 0;
@@ -740,7 +743,7 @@ static void *dawn_server_thread(void *arg) {
       return NULL;
    }
 
-   LOG_INFO("Server listening on %s:%d", SERVER_HOST, SERVER_PORT);
+   LOG_INFO("Server listening on %s:%d", g_config.network.host, g_config.network.port);
 
    // Main server loop
    while (server_running) {

@@ -17,27 +17,21 @@
  * the project author(s). Contributions include any modifications,
  * enhancements, or additions to the project. These contributions become
  * part of the project and are adopted by the project author(s).
+ *
+ * Microphone passthrough (voice amplification) using unified audio backend
  */
 
 #include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 
+#include "audio/audio_backend.h"
 #include "dawn.h"
 #include "logging.h"
 
-#ifdef ALSA_DEVICE
-#include <alsa/asoundlib.h>
-#else
-#include <pulse/error.h>
-#include <pulse/simple.h>
-#endif
-
 #define BUFSIZE 256
-
-#ifndef ALSA_DEVICE
-static const pa_sample_spec ss = { .format = PA_SAMPLE_S16LE, .rate = 44100, .channels = 2 };
-#endif
+#define VA_SAMPLE_RATE 44100
+#define VA_CHANNELS 2
 
 static int running = 1;  // Control variable
 
@@ -45,104 +39,116 @@ void setStopVA(void) {
    running = 0;
 }
 
-#ifdef ALSA_DEVICE
+/**
+ * @brief Voice amplification thread using unified audio backend
+ *
+ * Captures audio from microphone and plays it back through speakers
+ * for real-time voice amplification.
+ */
 void *voiceAmplificationThread(void *arg) {
-   const char *pcmCaptureDevice = getPcmCaptureDevice();
-   char *pcmPlaybackDevice = findAudioPlaybackDevice("speakers");
-   snd_pcm_t *inputHandle = NULL;
-   snd_pcm_t *outputHandle = NULL;
-   int error = 0;
+   (void)arg;  // Unused
 
-   if (!(pcmCaptureDevice && pcmPlaybackDevice)) {
-      LOG_ERROR("Unable to find audio devices.");
+   // Check that audio backend is initialized
+   if (audio_backend_get_type() == AUDIO_BACKEND_NONE) {
+      LOG_ERROR("Audio backend not initialized. Call audio_backend_init() first.");
       return NULL;
    }
 
-   if ((error = snd_pcm_open(&inputHandle, pcmCaptureDevice, SND_PCM_STREAM_CAPTURE, 0)) < 0) {
-      LOG_ERROR("Error opening input PCM device: %s", snd_strerror(error));
-      return NULL;
-   }
-
-   if ((error = snd_pcm_open(&outputHandle, pcmPlaybackDevice, SND_PCM_STREAM_PLAYBACK, 0)) < 0) {
-      LOG_ERROR("Error opening output PCM device: %s", snd_strerror(error));
-      return NULL;
-   }
-
-   running = 1;
-   uint8_t buffer[BUFSIZE];
-
-   while (running) {
-      if ((error = snd_pcm_readi(inputHandle, buffer, sizeof(buffer))) < 0) {
-         LOG_ERROR("Error reading: %s", snd_strerror(error));
-         break;
-      }
-
-      if ((error = snd_pcm_writei(outputHandle, buffer, sizeof(buffer))) < 0) {
-         LOG_ERROR("Error writing: %s", snd_strerror(error));
-         break;
-      }
-   }
-
-   if (outputHandle != NULL) {
-      snd_pcm_close(outputHandle);
-   }
-   if (inputHandle != NULL) {
-      snd_pcm_close(inputHandle);
-   }
-
-   return NULL;
-}
-#else
-void *voiceAmplificationThread(void *arg) {
-   // PulseAudio simple API objects for input and output.
-   pa_simple *input = NULL, *output = NULL;
-   int error = 0;  // Variable to capture PulseAudio error codes.
-
-   // Retrieve the PCM device names for capture and playback.
+   // Retrieve the device names for capture and playback
    const char *pcmCaptureDevice = getPcmCaptureDevice();
    const char *pcmPlaybackDevice = findAudioPlaybackDevice("speakers");
 
-   // Validate playback device availability.
-   if (pcmPlaybackDevice == NULL) {
-      LOG_ERROR("Unabled to find \"speakers\" device.");
+   // Validate device availability
+   if (!pcmCaptureDevice || !pcmPlaybackDevice) {
+      LOG_ERROR("Unable to find audio devices for voice amplification.");
       return NULL;
    }
 
-   // Initialize the PulseAudio input stream.
-   if (!(input = pa_simple_new(NULL, "Mic Amp (In)", PA_STREAM_RECORD, pcmCaptureDevice, "record",
-                               &ss, NULL, NULL, &error))) {
-      LOG_ERROR("Error initializing input: %s", pa_strerror(error));
+   LOG_INFO("Voice amplification: capture=%s, playback=%s (backend: %s)", pcmCaptureDevice,
+            pcmPlaybackDevice, audio_backend_type_name(audio_backend_get_type()));
+
+   // Stream parameters for voice amplification
+   audio_stream_params_t capture_params = { .sample_rate = VA_SAMPLE_RATE,
+                                            .channels = VA_CHANNELS,
+                                            .format = AUDIO_FORMAT_S16_LE,
+                                            .period_frames = BUFSIZE,
+                                            .buffer_frames = BUFSIZE * 4 };
+
+   audio_stream_params_t playback_params = { .sample_rate = VA_SAMPLE_RATE,
+                                             .channels = VA_CHANNELS,
+                                             .format = AUDIO_FORMAT_S16_LE,
+                                             .period_frames = BUFSIZE,
+                                             .buffer_frames = BUFSIZE * 4 };
+
+   audio_hw_params_t capture_hw_params;
+   audio_hw_params_t playback_hw_params;
+
+   // Open capture stream
+   audio_stream_capture_handle_t *capture_handle = audio_stream_capture_open(pcmCaptureDevice,
+                                                                             &capture_params,
+                                                                             &capture_hw_params);
+   if (!capture_handle) {
+      LOG_ERROR("Error opening capture device for voice amplification: %s", pcmCaptureDevice);
       return NULL;
    }
 
-   // Initialize the PulseAudio output stream.
-   if (!(output = pa_simple_new(NULL, "Mic Amp (Out)", PA_STREAM_PLAYBACK, pcmPlaybackDevice,
-                                "playback", &ss, NULL, NULL, &error))) {
-      LOG_ERROR("Error initializing output: %s", pa_strerror(error));
-      pa_simple_free(input);  // Ensure input is freed if output initialization fails.
+   // Open playback stream
+   audio_stream_playback_handle_t *playback_handle = audio_stream_playback_open(
+       pcmPlaybackDevice, &playback_params, &playback_hw_params);
+   if (!playback_handle) {
+      LOG_ERROR("Error opening playback device for voice amplification: %s", pcmPlaybackDevice);
+      audio_stream_capture_close(capture_handle);
       return NULL;
    }
+
+   LOG_INFO("Voice amplification started: rate=%u ch=%u", capture_hw_params.sample_rate,
+            capture_hw_params.channels);
 
    running = 1;
-   // Main loop for capturing and playing back audio in real-time.
-   uint8_t buffer[BUFSIZE];  // Buffer for audio data.
+
+   // Audio buffer sized for frames (S16_LE stereo = 4 bytes per frame)
+   size_t bytes_per_frame = audio_bytes_per_frame(AUDIO_FORMAT_S16_LE, VA_CHANNELS);
+   uint8_t buffer[BUFSIZE * bytes_per_frame];
+
+   // Main loop for capturing and playing back audio in real-time
    while (running) {
-      // Read audio data from input.
-      if (pa_simple_read(input, buffer, sizeof(buffer), &error) < 0) {
-         LOG_ERROR("Error reading: %s", pa_strerror(error));
+      // Read audio data from input
+      ssize_t frames_read = audio_stream_capture_read(capture_handle, buffer, BUFSIZE);
+      if (frames_read < 0) {
+         int err = (int)(-frames_read);
+         if (err == AUDIO_ERR_OVERRUN) {
+            LOG_WARNING("Voice amp capture overrun, recovering...");
+            audio_stream_capture_recover(capture_handle, err);
+            continue;
+         }
+         LOG_ERROR("Voice amp read error: %s", audio_error_string((audio_error_t)err));
          break;
       }
 
-      // Write audio data to output.
-      if (pa_simple_write(output, buffer, sizeof(buffer), &error) < 0) {
-         LOG_ERROR("Error writing: %s", pa_strerror(error));
+      if (frames_read == 0) {
+         continue;  // No data yet
+      }
+
+      // Write audio data to output
+      ssize_t frames_written = audio_stream_playback_write(playback_handle, buffer,
+                                                           (size_t)frames_read);
+      if (frames_written < 0) {
+         int err = (int)(-frames_written);
+         if (err == AUDIO_ERR_UNDERRUN) {
+            LOG_WARNING("Voice amp playback underrun, recovering...");
+            audio_stream_playback_recover(playback_handle, err);
+            continue;
+         }
+         LOG_ERROR("Voice amp write error: %s", audio_error_string((audio_error_t)err));
          break;
       }
    }
 
-   pa_simple_free(output);
-   pa_simple_free(input);
+   LOG_INFO("Voice amplification stopped.");
+
+   // Cleanup
+   audio_stream_playback_close(playback_handle);
+   audio_stream_capture_close(capture_handle);
 
    return NULL;
 }
-#endif

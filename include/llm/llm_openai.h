@@ -28,21 +28,11 @@
 /*
  * OpenAI Configuration
  *
- * Model and API version settings for OpenAI provider.
- * Modify these to change behavior without touching secrets.h
+ * Model and max_tokens are now configured via g_config.llm.cloud.model
+ * and g_config.llm.max_tokens (see config/dawn_config.h).
+ *
+ * Legacy OPENAI_MODEL and OPENAI_MAX_TOKENS defines have been removed.
  */
-
-/* Default model for OpenAI */
-#define OPENAI_MODEL "gpt-5-mini"
-/* Alternative models:
- * #define OPENAI_MODEL "gpt-5"
- * #define OPENAI_MODEL "gpt-4o"
- * #define OPENAI_MODEL "gpt-4-turbo"
- * #define OPENAI_MODEL "gpt-4o-mini"
- */
-
-/* Max tokens for completion */
-#define OPENAI_MAX_TOKENS 4096
 
 /* API endpoint path */
 #define OPENAI_CHAT_ENDPOINT "/v1/chat/completions"

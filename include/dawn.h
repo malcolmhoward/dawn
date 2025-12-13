@@ -144,30 +144,15 @@
    "reply with the information I requested or information on whether the command was "           \
    "successful.\n"
 
+// Vision support flag
 #define OPENAI_VISION
-#define OPENAI_MODEL "gpt-4o"
-#define GPT_MAX_TOKENS 4096
 
-// ALSA_DEVICE is now defined via CMakeLists.txt option USE_ALSA
-#ifdef ALSA_DEVICE
-#define DEFAULT_PCM_PLAYBACK_DEVICE "default"
-#define DEFAULT_PCM_CAPTURE_DEVICE "default"
-#else
-//#define DEFAULT_PCM_PLAYBACK_DEVICE NULL
-//#define DEFAULT_PCM_RECORD_DEVICE NULL
-#define DEFAULT_PCM_PLAYBACK_DEVICE "combined"
-//#define DEFAULT_PCM_PLAYBACK_DEVICE
-//"alsa_output.usb-KTMicro_TX_96Khz_USB_Audio_2022-08-08-0000-0000-0000--00.analog-stereo"
-#define DEFAULT_PCM_CAPTURE_DEVICE \
-   "alsa_input.usb-Creative_Technology_Ltd_Sound_Blaster_Play__3_00128226-00.analog-stereo"
-#endif
-
-//#define MQTT_IP   "192.168.10.1"
-#define MQTT_IP "127.0.0.1"
-#define MQTT_PORT 1883
-
-#define MUSIC_DIR \
-   "/Music"  // This is the path to search for music, relative to the user's home directory.
+// LLM, Audio, and MQTT settings are now in config system (see config/dawn_config.h):
+// - Model/max_tokens: g_config.llm.cloud.model, g_config.llm.max_tokens
+// - Audio devices: g_config.audio.capture_device, g_config.audio.playback_device
+// - MQTT: g_config.mqtt.broker, g_config.mqtt.port
+// - Music dir: g_config.paths.music_dir
+// - AI name: g_config.general.ai_name
 
 #ifdef __cplusplus
 extern "C" {

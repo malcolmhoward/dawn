@@ -26,6 +26,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "config/dawn_config.h"
 #include "dawn.h"
 #include "llm/llm_interface.h"
 #include "llm/llm_streaming.h"
@@ -95,8 +96,8 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
    // Root JSON Container
    root = json_object_new_object();
 
-   // Model
-   json_object_object_add(root, "model", json_object_new_string(OPENAI_MODEL));
+   // Model from config
+   json_object_object_add(root, "model", json_object_new_string(g_config.llm.cloud.model));
 
    // User message is now added by dawn.c before calling this function
    // If vision is provided, modify the last user message to include image
@@ -140,7 +141,7 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
    json_object_object_add(root, "messages", conversation_history);
 
    // Max Tokens
-   json_object_object_add(root, "max_tokens", json_object_new_int(OPENAI_MAX_TOKENS));
+   json_object_object_add(root, "max_tokens", json_object_new_int(g_config.llm.max_tokens));
 
    payload = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN |
                                                       JSON_C_TO_STRING_NOSLASHESCAPE);
@@ -378,8 +379,8 @@ char *llm_openai_chat_completion_streaming(struct json_object *conversation_hist
    // Root JSON Container
    root = json_object_new_object();
 
-   // Model
-   json_object_object_add(root, "model", json_object_new_string(OPENAI_MODEL));
+   // Model from config
+   json_object_object_add(root, "model", json_object_new_string(g_config.llm.cloud.model));
 
    // Enable streaming with usage reporting
    json_object_object_add(root, "stream", json_object_new_boolean(1));
@@ -428,7 +429,7 @@ char *llm_openai_chat_completion_streaming(struct json_object *conversation_hist
    json_object_object_add(root, "messages", conversation_history);
 
    // Max Tokens
-   json_object_object_add(root, "max_tokens", json_object_new_int(OPENAI_MAX_TOKENS));
+   json_object_object_add(root, "max_tokens", json_object_new_int(g_config.llm.max_tokens));
 
    payload = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN |
                                                       JSON_C_TO_STRING_NOSLASHESCAPE);

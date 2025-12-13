@@ -514,6 +514,81 @@ static config_t global_config;
 static pthread_mutex_t config_mutex = PTHREAD_MUTEX_INITIALIZER;
 ```
 
+### Thread Argument Allocation Pattern
+
+When passing arguments to `pthread_create()`, follow these rules:
+
+1. **Arguments MUST be heap-allocated (malloc) or NULL** - NEVER pass pointers to stack-allocated structures
+2. **Thread function takes ownership** - The callee (thread function) is responsible for freeing the arguments when done
+3. **Free on error** - If `pthread_create()` fails after allocation, the caller must free the arguments
+
+**Valid patterns:**
+
+```c
+/* Pattern 1: Heap-allocated with ownership transfer */
+typedef struct {
+   const char *sink_name;
+   const char *file_name;
+} PlaybackArgs;
+
+void *playback_thread(void *arg) {
+   PlaybackArgs *args = (PlaybackArgs *)arg;
+
+   /* Use the arguments */
+   play_audio(args->sink_name, args->file_name);
+
+   /* Thread owns args, must free when done */
+   free(args);
+   return NULL;
+}
+
+int start_playback(const char *sink, const char *file) {
+   PlaybackArgs *args = malloc(sizeof(PlaybackArgs));
+   if (!args) {
+      return FAILURE;
+   }
+
+   args->sink_name = sink;
+   args->file_name = file;
+
+   pthread_t thread;
+   if (pthread_create(&thread, NULL, playback_thread, args) != 0) {
+      free(args);  /* Free on error - thread never started */
+      return FAILURE;
+   }
+
+   return SUCCESS;
+}
+
+/* Pattern 2: NULL argument with shared state */
+void *worker_thread(void *arg) {
+   (void)arg;  /* Unused - data accessed via globals/shared state */
+
+   pthread_mutex_lock(&work_mutex);
+   /* Access shared data */
+   pthread_mutex_unlock(&work_mutex);
+
+   return NULL;
+}
+```
+
+**Anti-pattern (FORBIDDEN):**
+
+```c
+/* BAD: Stack-allocated argument - use-after-free bug! */
+int start_playback_WRONG(void) {
+   PlaybackArgs args;  /* Stack allocated - WRONG! */
+   args.sink_name = "default";
+   args.file_name = "music.flac";
+
+   pthread_t thread;
+   /* args goes out of scope before thread reads it! */
+   pthread_create(&thread, NULL, playback_thread, &args);
+
+   return SUCCESS;  /* args is now invalid! */
+}
+```
+
 ---
 
 ## 10. Code Organization

@@ -91,7 +91,6 @@ dawn/
 │   └── (core files)              # Core application files
 │       ├── dawn.c                # Main application & state machine
 │       ├── logging.c             # Centralized logging
-│       ├── audio_utils.c         # Audio utilities
 │       ├── mosquitto_comms.c     # MQTT integration
 │       ├── text_to_command_nuevo.c # Command parsing
 │       └── word_to_number.c      # Natural language number parsing
@@ -351,19 +350,83 @@ The repository includes `silero_vad_16k_op15.onnx` in `models/`. No additional d
 
 ### 6. Create Configuration Files
 
-#### secrets.h (API keys)
+DAWN uses TOML-based configuration files for runtime settings. Configuration is optional - sensible defaults are built-in.
+
+#### Configuration File Locations (searched in order)
+1. Path specified via `--config` CLI option
+2. `./dawn.toml` (current directory)
+3. `~/.config/dawn/dawn.toml`
+4. `/etc/dawn/dawn.toml`
+
+#### dawn.toml (main configuration)
+
+Create `dawn.toml` to customize settings. Only include settings you want to change:
+
+```toml
+[general]
+ai_name = "friday"           # Wake word (lowercase)
+
+[audio]
+capture_device = "default"   # ALSA/Pulse device name
+playback_device = "default"  # ALSA/Pulse device name
+backend = "auto"             # "auto", "alsa", or "pulse"
+
+[llm]
+type = "local"               # "local" or "cloud"
+max_tokens = 4096
+streaming = true
+
+[llm.local]
+endpoint = "http://127.0.0.1:8080"
+model = "qwen3"
+
+[llm.cloud]
+provider = "openai"          # "openai" or "claude"
+model = "gpt-4o"
+
+[mqtt]
+enabled = true
+broker = "127.0.0.1"
+port = 1883
+
+[paths]
+music_dir = "/Music"
+```
+
+See `docs/CONFIG_FILE_DESIGN.md` for the complete configuration reference.
+
+#### secrets.toml (API keys - recommended)
+
+Create `~/.config/dawn/secrets.toml` for API keys (more secure than compile-time):
+
+```toml
+openai_api_key = "sk-your-openai-key-here"
+claude_api_key = "sk-ant-your-claude-key-here"
+```
+
+#### secrets.h (API keys - legacy/fallback)
+
+Alternatively, create `include/secrets.h` for compile-time API keys:
 ```c
-// Create include/secrets.h
 #ifndef SECRETS_H
 #define SECRETS_H
 
 #define OPENAI_API_KEY "your-openai-key-here"
-#define ANTHROPIC_API_KEY "your-claude-key-here"  // For Claude 4.5 Sonnet
+#define CLAUDE_API_KEY "your-claude-key-here"
 
 #endif
 ```
 
-**Important**: Add `secrets.h` to `.gitignore` to avoid committing API keys!
+**Important**: Add `secrets.h` and `secrets.toml` to `.gitignore`!
+
+#### Environment Variables
+
+All config options can be overridden via environment variables:
+```bash
+export DAWN_AUDIO_CAPTURE_DEVICE="hw:1,0"
+export DAWN_LLM_TYPE="cloud"
+export DAWN_OPENAI_API_KEY="sk-..."
+```
 
 #### commands_config_nuevo.json (MQTT devices)
 See the example in the repository. Configure your MQTT broker and device mappings.

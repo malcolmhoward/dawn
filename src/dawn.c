@@ -46,8 +46,9 @@
 
 /* Local */
 #include "asr/vad_silero.h"
+#include "audio/audio_backend.h"
 #include "audio/audio_capture_thread.h"
-#include "audio_utils.h"
+#include "audio/flac_playback.h"
 #include "core/command_router.h"
 #include "core/session_manager.h"
 #include "core/worker_pool.h"
@@ -75,6 +76,12 @@
 #endif
 #include "version.h"
 
+/* Configuration */
+#include "config/config_env.h"
+#include "config/config_parser.h"
+#include "config/config_validate.h"
+#include "config/dawn_config.h"
+
 // Whisper chunking manager
 #include "asr/chunking_manager.h"
 
@@ -90,54 +97,19 @@
 // Define the default command timeout in terms of iterations of DEFAULT_CAPTURE_SECONDS.
 #define DEFAULT_COMMAND_TIMEOUT 24  // 24 * 0.05s = 1.2 seconds of silence before timeout
 
-// VAD configuration
-#define VAD_SAMPLE_SIZE 512        // Silero VAD requires 512 samples (32ms at 16kHz)
-#define VAD_SPEECH_THRESHOLD 0.5f  // Probability threshold for speech detection
-#define VAD_SPEECH_THRESHOLD_TTS \
-   0.92f                            // Higher threshold when TTS is playing (reduce false triggers)
-#define VAD_SILENCE_THRESHOLD 0.3f  // Probability threshold for silence detection
-#define VAD_TTS_DEBOUNCE_COUNT 3    // Consecutive detections required during TTS playback
-#define VAD_TTS_COOLDOWN_MS \
-   1500  // Keep using TTS threshold for 1.5s after TTS stops (covers streaming gaps)
-#define VAD_TTS_STARTUP_COOLDOWN_MS \
-   300  // Block barge-in for 300ms after TTS starts (AEC needs time to converge)
-#define VAD_END_OF_SPEECH_DURATION 1.2f   // Seconds of silence to consider speech ended (optimized)
-#define VAD_MAX_RECORDING_DURATION 30.0f  // Maximum recording duration (semantic timeout)
+// VAD configuration - compile-time constants that don't need runtime config
+#define VAD_SAMPLE_SIZE 512       // Silero VAD requires 512 samples (32ms at 16kHz)
+#define VAD_TTS_DEBOUNCE_COUNT 3  // Consecutive detections required during TTS playback
 
-// Chunking configuration for Whisper
-#define VAD_CHUNK_PAUSE_DURATION \
-   0.3f  // Seconds of silence to detect natural pause for chunking (optimized)
-#define VAD_MIN_CHUNK_DURATION 1.0f   // Minimum speech duration before allowing chunk
-#define VAD_MAX_CHUNK_DURATION 10.0f  // Maximum chunk duration before forcing finalization
+// VAD thresholds and timing now come from g_config.vad.* and g_config.audio.bargein.*
+// See config/dawn_config.h for the config struct definitions
 
-// Define the duration for each background audio capture sample in seconds.
-#define BACKGROUND_CAPTURE_SECONDS 2
-// Number of samples to take (will use minimum RMS to get true silence baseline)
-#define BACKGROUND_CAPTURE_SAMPLES 3
+// Music ducking configuration (reduces music volume during speech detection)
+#define MUSIC_DUCK_FACTOR 0.3f         // Reduce volume to 30% when speech detected
+#define MUSIC_DUCK_RESTORE_DELAY 2.0f  // Seconds of silence before restoring volume
 
-// Check if ALSA_DEVICE is defined to include ALSA-specific headers and define ALSA-specific macros.
-#ifdef ALSA_DEVICE
-#include <alsa/asoundlib.h>
-
-// Define the default ALSA PCM access type (read/write interleaved).
-#define DEFAULT_ACCESS SND_PCM_ACCESS_RW_INTERLEAVED
-
-// Define the default ALSA PCM format (16-bit signed little-endian).
-#define DEFAULT_FORMAT SND_PCM_FORMAT_S16_LE
-
-// Define the default number of frames per ALSA PCM period.
+// Default number of frames per audio period (used for buffer size calculations)
 #define DEFAULT_FRAMES 64
-#else
-// Include PulseAudio simple API and error handling headers for non-ALSA configurations.
-#include <pulse/error.h>
-#include <pulse/simple.h>
-
-// Define the default PulseAudio sample format (16-bit signed little-endian).
-#define DEFAULT_PULSE_FORMAT PA_SAMPLE_S16LE
-#endif
-
-// Define the threshold offset for detecting talking in the audio stream.
-// RMS detection removed - using VAD only
 
 static char pcm_capture_device[MAX_WORD_LENGTH + 1] = "";
 static char pcm_playback_device[MAX_WORD_LENGTH + 1] = "";
@@ -151,44 +123,17 @@ static int numAudioPlaybackDevices = 0;                 /**< How many playback d
 
 /**
  * @struct audioControl
- * @brief Manages audio capture settings and state for either ALSA or PulseAudio systems.
+ * @brief Legacy structure for audio buffer size calculations.
  *
- * This structure abstracts the specific audio system being used, allowing the rest of the
- * code to interact with audio hardware in a more uniform way. It must be initialized with
- * the appropriate settings for the target audio system before use.
- *
- * @var audioControl::handle
- * Pointer to the ALSA PCM device handle.
- *
- * @var audioControl::frames
- * Number of frames for ALSA to capture in each read operation.
- *
- * @var audioControl::pa_handle
- * Pointer to the PulseAudio simple API handle.
- *
- * @var audioControl::pa_framesize
- * Size of the buffer (in bytes) for PulseAudio to use for each read operation.
+ * Previously held ALSA/PulseAudio handles, now only used for buffer size tracking
+ * since actual audio capture is done by audio_capture_thread using the audio_backend API.
  *
  * @var audioControl::full_buff_size
- * Size of the buffer to be filled in each read operation, common to both ALSA and PulseAudio.
+ * Size of the buffer to be filled in each read operation.
  */
 typedef struct {
-#ifdef ALSA_DEVICE
-   snd_pcm_t *handle;
-   snd_pcm_uframes_t frames;
-#else
-   pa_simple *pa_handle;
-   size_t pa_framesize;
-#endif
-
    uint32_t full_buff_size;
 } audioControl;
-
-#ifndef ALSA_DEVICE
-static const pa_sample_spec sample_spec = { .format = DEFAULT_PULSE_FORMAT,
-                                            .rate = DEFAULT_RATE,
-                                            .channels = DEFAULT_CHANNELS };
-#endif
 
 // Audio capture thread context (dedicated thread for continuous audio capture)
 static audio_capture_context_t *audio_capture_ctx = NULL;
@@ -196,11 +141,26 @@ static audio_capture_context_t *audio_capture_ctx = NULL;
 // Silero VAD context for voice activity detection
 static silero_vad_context_t *vad_ctx = NULL;
 
-// backgroundRMS removed - using VAD only
-static char *wakeWords[] = { "hello " AI_NAME,    "okay " AI_NAME,         "alright " AI_NAME,
-                             "hey " AI_NAME,      "hi " AI_NAME,           "good evening " AI_NAME,
-                             "good day " AI_NAME, "good morning " AI_NAME, "yeah " AI_NAME,
-                             "k " AI_NAME };
+// Wake word prefixes that get combined with ai_name at runtime
+static const char *wakeWordPrefixes[] = { "hello ",    "okay ",         "alright ",
+                                          "hey ",      "hi ",           "good evening ",
+                                          "good day ", "good morning ", "yeah ",
+                                          "k " };
+#define NUM_WAKE_WORDS (sizeof(wakeWordPrefixes) / sizeof(wakeWordPrefixes[0]))
+#define WAKE_WORD_BUF_SIZE 64
+
+// Static buffers for wake words (built at runtime from config)
+static char wakeWordBuffers[NUM_WAKE_WORDS][WAKE_WORD_BUF_SIZE];
+static char *wakeWords[NUM_WAKE_WORDS];
+
+// Initialize wake words from config ai_name
+static void init_wake_words(void) {
+   for (size_t i = 0; i < NUM_WAKE_WORDS; i++) {
+      snprintf(wakeWordBuffers[i], WAKE_WORD_BUF_SIZE, "%s%s", wakeWordPrefixes[i],
+               g_config.general.ai_name);
+      wakeWords[i] = wakeWordBuffers[i];
+   }
+}
 
 // Array of words/phrases used to signal the end of an interaction with the AI.
 static char *goodbyeWords[] = { "good bye", "goodbye", "good night", "bye", "quit", "exit" };
@@ -578,45 +538,6 @@ char *setPcmCaptureDevice(const char *actionName, char *value, int *should_respo
 }
 
 /**
- * Measures the RMS value of background audio for a predefined duration.
- * This function supports both ALSA and PulseAudio backends, determined at compile time.
- * It captures audio into a buffer, computes the RMS value, and stores it in a global variable.
- *
- * Note: This function is designed to be run in a separate thread, not required, taking a pointer
- * to an audioControl structure as its argument. This structure must be properly initialized
- * before calling this function.
- *
- * @param audHandle A void pointer to an audioControl structure containing audio capture settings.
- * @return NULL always, indicating the thread's work is complete.
- */
-void *measureBackgroundAudio(void *audHandle) {
-   (void)audHandle;  // Unused - kept for API compatibility
-
-   // Use the dedicated capture thread instead of direct device access
-   if (!audio_capture_ctx) {
-      LOG_ERROR("Audio capture thread not initialized for background measurement\n");
-      return NULL;
-   }
-
-   // Calculate buffer size for background audio measurement
-   uint32_t max_buff_size = DEFAULT_RATE * DEFAULT_CHANNELS * sizeof(int16_t) *
-                            BACKGROUND_CAPTURE_SECONDS;
-
-   char *max_buff = (char *)malloc(max_buff_size);
-   if (max_buff == NULL) {
-      LOG_ERROR("malloc() failed on max_buff.\n");
-      return NULL;
-   }
-
-   // Background RMS measurement removed - VAD handles all voice detection now
-   // This eliminates the 6-second startup delay
-   LOG_INFO("Using Silero VAD for voice activity detection (no RMS calibration needed)");
-
-   free(max_buff);
-   return NULL;
-}
-
-/**
  * Normalize text for wake word/command matching
  * Converts to lowercase and removes punctuation/special characters
  *
@@ -703,131 +624,8 @@ char *getTextResponse(const char *input) {
    return return_text;
 }
 
-#ifdef ALSA_DEVICE
-/**
- * Opens an ALSA PCM capture device and configures it with default hardware parameters.
- *
- * This function initializes an ALSA PCM capture device using specified settings for audio capture.
- * It sets parameters such as the audio format, rate, channels, and period size to defaults defined
- * elsewhere.
- *
- * @param handle Pointer to a snd_pcm_t pointer where the opened PCM device handle will be stored.
- * @param pcm_device String name of the PCM device to open (e.g., "default" or a specific hardware
- * device).
- * @param frames Pointer to a snd_pcm_uframes_t variable where the period size in frames will be
- * stored.
- *
- * @return 0 on success, 1 on error, with an error message printed to stderr.
- */
-int openAlsaPcmCaptureDevice(snd_pcm_t **handle, char *pcm_device, snd_pcm_uframes_t *frames) {
-   snd_pcm_hw_params_t *params = NULL;
-   unsigned int rate = DEFAULT_RATE;
-   int dir = 0;
-   *frames = DEFAULT_FRAMES;
-   int rc = 0;
-
-   LOG_INFO("ALSA CAPTURE DRIVER\n");
-
-   /* Open PCM device for playback. */
-   rc = snd_pcm_open(handle, pcm_device, SND_PCM_STREAM_CAPTURE, 0);
-   if (rc < 0) {
-      LOG_ERROR("Unable to open pcm device for capture (%s): %s\n", pcm_device, snd_strerror(rc));
-      return 1;
-   }
-
-   snd_pcm_hw_params_alloca(&params);
-
-   rc = snd_pcm_hw_params_any(*handle, params);
-   if (rc < 0) {
-      LOG_ERROR("Unable to get hardware parameter structure: %s\n", snd_strerror(rc));
-      snd_pcm_close(*handle);
-      *handle = NULL;
-      return 1;
-   }
-
-   rc = snd_pcm_hw_params_set_access(*handle, params, DEFAULT_ACCESS);
-   if (rc < 0) {
-      LOG_ERROR("Unable to set access type: %s\n", snd_strerror(rc));
-      snd_pcm_close(*handle);
-      *handle = NULL;
-      return 1;
-   }
-
-   rc = snd_pcm_hw_params_set_format(*handle, params, DEFAULT_FORMAT);
-   if (rc < 0) {
-      LOG_ERROR("Unable to set sample format: %s\n", snd_strerror(rc));
-      snd_pcm_close(*handle);
-      *handle = NULL;
-      return 1;
-   }
-
-   rc = snd_pcm_hw_params_set_channels(*handle, params, DEFAULT_CHANNELS);
-   if (rc < 0) {
-      LOG_ERROR("Unable to set channel count: %s\n", snd_strerror(rc));
-      snd_pcm_close(*handle);
-      *handle = NULL;
-      return 1;
-   }
-
-   rc = snd_pcm_hw_params_set_rate_near(*handle, params, &rate, &dir);
-   if (rc < 0) {
-      LOG_ERROR("Unable to set sample rate: %s\n", snd_strerror(rc));
-      snd_pcm_close(*handle);
-      *handle = NULL;
-      return 1;
-   }
-   LOG_INFO("Capture rate set to %u\n", rate);
-
-   rc = snd_pcm_hw_params_set_period_size_near(*handle, params, frames, &dir);
-   if (rc < 0) {
-      LOG_ERROR("Unable to set period size: %s\n", snd_strerror(rc));
-      snd_pcm_close(*handle);
-      *handle = NULL;
-      return 1;
-   }
-   LOG_INFO("Frames set to %lu\n", *frames);
-
-   rc = snd_pcm_hw_params(*handle, params);
-   if (rc < 0) {
-      LOG_ERROR("Unable to set hw parameters: %s\n", snd_strerror(rc));
-      snd_pcm_close(*handle);
-      *handle = NULL;
-      return 1;
-   }
-
-   return 0;
-}
-#else
-/**
- * Opens a PulseAudio capture stream for a given PCM device.
- *
- * This function initializes a PulseAudio capture stream, using the PulseAudio Simple API,
- * for audio recording. It requires specifying the PCM device and uses predefined sample
- * specifications and application name defined elsewhere in the code.
- *
- * @param pcm_capture_device String name of the PCM capture device or NULL for the default device.
- *
- * @return A pointer to the initialized pa_simple structure representing the capture stream, or NULL
- * on error, with an error message printed to stderr.
- */
-pa_simple *openPulseaudioCaptureDevice(char *pcm_capture_device) {
-   pa_simple *pa_handle = NULL;
-   int rc = 0;
-
-   LOG_INFO("PULSEAUDIO CAPTURE DRIVER: %s\n", pcm_capture_device);
-
-   /* Create a new capture stream */
-   if (!(pa_handle = pa_simple_new(NULL, APPLICATION_NAME, PA_STREAM_RECORD, pcm_capture_device,
-                                   "record", &sample_spec, NULL, NULL, &rc))) {
-      LOG_ERROR("Error opening PulseAudio record: %s\n", pa_strerror(rc));
-      return NULL;
-   }
-
-   LOG_INFO("Capture opened successfully.\n");
-
-   return pa_handle;
-}
-#endif
+// Legacy openAlsaPcmCaptureDevice() and openPulseaudioCaptureDevice() removed.
+// Audio capture is now handled by audio_capture_thread using the audio_backend API.
 
 /**
  * Generates a greeting message based on the current time of day.
@@ -1184,7 +982,7 @@ int publish_ai_state(dawn_state_t newState) {
    }
 
    json_object_object_add(json, "device", json_object_new_string("ai"));
-   json_object_object_add(json, "name", json_object_new_string(AI_NAME));
+   json_object_object_add(json, "name", json_object_new_string(g_config.general.ai_name));
    json_object_object_add(json, "state", json_object_new_string(state_name));
 
    const char *json_str = json_object_to_json_string(json);
@@ -1227,6 +1025,10 @@ void display_help(int argc, char *argv[]) {
    printf("  -l, --logfile LOGFILE  Specify the log filename instead of stdout/stderr.\n");
    printf("  -N, --network-audio    Enable network audio processing server\n");
    printf("  -h, --help             Display this help message and exit.\n");
+   printf("\nConfiguration:\n");
+   printf("  --config PATH          Load configuration from PATH (default: search order).\n");
+   printf("  --dump-config          Print effective configuration and exit.\n");
+   printf("  --audio-backend TYPE   Audio backend: auto (default), alsa, or pulse.\n");
    printf("  -m, --llm TYPE         Set default LLM type (cloud or local).\n");
    printf("  -P, --cloud-provider PROVIDER    Set cloud provider (openai or claude).\n");
    printf(
@@ -1336,11 +1138,6 @@ int main(int argc, char *argv[]) {
    int opt = 0;
    const char *log_filename = NULL;
 
-#ifndef ALSA_DEVICE
-   // Define the Pulse parameters
-   int error = 0;
-#endif
-
    // Audio Buffer
    uint32_t buff_size = 0;
    float temp_buff_size = DEFAULT_RATE * DEFAULT_CHANNELS * sizeof(int16_t) *
@@ -1363,13 +1160,12 @@ int main(int argc, char *argv[]) {
    char *next_char_ptr = NULL;
 
    audioControl myAudioControls;
-   pthread_t backgroundAudioDetect;
 
    int commandTimeout = 0;
 
    /* Array Counts */
    int numGoodbyeWords = sizeof(goodbyeWords) / sizeof(goodbyeWords[0]);
-   int numWakeWords = sizeof(wakeWords) / sizeof(wakeWords[0]);
+   int numWakeWords = NUM_WAKE_WORDS;
    int numIgnoreWords = sizeof(ignoreWords) / sizeof(ignoreWords[0]);
    int numCancelWords = sizeof(cancelWords) / sizeof(cancelWords[0]);
 
@@ -1413,6 +1209,9 @@ int main(int argc, char *argv[]) {
       { "no-bargein", no_argument, NULL, 'B' },               // Disable barge-in during TTS
       { "summarize-backend", required_argument, NULL, 256 },  // Search summarizer backend
       { "summarize-threshold", required_argument, NULL, 257 },  // Search summarizer threshold
+      { "config", required_argument, NULL, 258 },               // Config file path
+      { "dump-config", no_argument, NULL, 259 },                // Dump effective config and exit
+      { "audio-backend", required_argument, NULL, 260 },        // Audio backend (auto/alsa/pulse)
 #ifdef ENABLE_AEC
       { "aec-record", optional_argument, NULL, 'R' },  // Record AEC audio for debugging
 #endif
@@ -1440,6 +1239,13 @@ int main(int argc, char *argv[]) {
       .threshold_bytes = SUMMARIZER_DEFAULT_THRESHOLD,
       .target_summary_words = SUMMARIZER_DEFAULT_TARGET_WORDS
    };
+
+   // Config system variables
+   const char *config_path = NULL;  // Explicit config file path from --config
+   int dump_config = 0;             // --dump-config flag
+
+   // Audio backend selection (default: auto-detect)
+   audio_backend_type_t audio_backend_type = AUDIO_BACKEND_AUTO;
 
    // Construct default Whisper base model path
    snprintf(whisper_full_path, sizeof(whisper_full_path), "%s/ggml-%s.bin", whisper_path,
@@ -1607,6 +1413,16 @@ int main(int argc, char *argv[]) {
             LOG_INFO("Search summarization threshold: %zu bytes",
                      summarizer_config.threshold_bytes);
             break;
+         case 258:  // --config
+            config_path = optarg;
+            break;
+         case 259:  // --dump-config
+            dump_config = 1;
+            break;
+         case 260:  // --audio-backend
+            audio_backend_type = audio_backend_parse_type(optarg);
+            LOG_INFO("Audio backend set to: %s", audio_backend_type_name(audio_backend_type));
+            break;
          case '?':
             display_help(argc, argv);
             exit(EXIT_FAILURE);
@@ -1615,6 +1431,49 @@ int main(int argc, char *argv[]) {
             exit(EXIT_FAILURE);
       }
    }
+
+   // =========================================================================
+   // Configuration System Initialization
+   // Priority: Defaults -> Config file -> Environment -> CLI args (later)
+   // =========================================================================
+
+   // Step 1: Initialize with compile-time defaults
+   config_set_defaults(&g_config);
+   config_set_secrets_defaults(&g_secrets);
+
+   // Step 2: Load configuration from file (if available)
+   // config_load_from_search handles both explicit path and search logic
+   int config_result = config_load_from_search(config_path, &g_config);
+   if (config_path && config_result != 0) {
+      // Explicit path was given but failed to load - this is an error
+      fprintf(stderr, "Error: Failed to load config file: %s\n", config_path);
+      return 1;
+   }
+   // If config_result != 0 without explicit path, no config file found - using defaults (OK)
+   (void)config_result;  // Suppress unused warning when no explicit path given
+
+   // Step 3: Load secrets file (search default locations)
+   config_load_secrets_from_search(&g_secrets);
+
+   // Step 4: Apply environment variable overrides (highest priority before CLI)
+   config_apply_env(&g_config, &g_secrets);
+
+   // Step 5: Handle --dump-config (print effective config and exit)
+   if (dump_config) {
+      config_dump(&g_config);
+      return 0;
+   }
+
+   // Step 6: Validate configuration
+   config_error_t config_errors[32];
+   int error_count = config_validate(&g_config, &g_secrets, config_errors, 32);
+   if (error_count > 0) {
+      config_print_errors(config_errors, error_count);
+      return 1;
+   }
+
+   // Step 7: Initialize wake words from config (must be after config is finalized)
+   init_wake_words();
 
    // Initialize logging
    if (log_filename) {
@@ -1647,12 +1506,12 @@ int main(int argc, char *argv[]) {
 #endif
 
    if (strcmp(pcm_capture_device, "") == 0) {
-      strncpy(pcm_capture_device, DEFAULT_PCM_CAPTURE_DEVICE, sizeof(pcm_capture_device));
+      strncpy(pcm_capture_device, g_config.audio.capture_device, sizeof(pcm_capture_device));
       pcm_capture_device[sizeof(pcm_capture_device) - 1] = '\0';
    }
 
    if (strcmp(pcm_playback_device, "") == 0) {
-      strncpy(pcm_playback_device, DEFAULT_PCM_PLAYBACK_DEVICE, sizeof(pcm_playback_device));
+      strncpy(pcm_playback_device, g_config.audio.playback_device, sizeof(pcm_playback_device));
       pcm_playback_device[sizeof(pcm_playback_device) - 1] = '\0';
    }
 
@@ -1727,6 +1586,14 @@ int main(int argc, char *argv[]) {
    // NOTE: This allows existing code to continue using the global pointer
    conversation_history = local_session->conversation_history;
 
+   // Initialize audio backend (runtime selection between ALSA and PulseAudio)
+   int audio_init_result = audio_backend_init(audio_backend_type);
+   if (audio_init_result != AUDIO_SUCCESS) {
+      LOG_ERROR("Failed to initialize audio backend: %s", audio_error_string(audio_init_result));
+      return 1;
+   }
+   LOG_INFO("Audio backend initialized: %s", audio_backend_type_name(audio_backend_get_type()));
+
    // Start dedicated audio capture thread with ring buffer
    // Ring buffer size: 262144 bytes = ~8 seconds of audio at 16kHz mono 16-bit
    // Increased to prevent audio loss during Vosk processing which can take 100-500ms per iteration
@@ -1738,15 +1605,7 @@ int main(int argc, char *argv[]) {
       return 1;
    }
 
-   // Legacy audioControl structure kept for compatibility
-   // (no longer used for actual capture, but needed by measureBackgroundAudio)
-#ifdef ALSA_DEVICE
-   myAudioControls.frames = DEFAULT_FRAMES;
-   myAudioControls.full_buff_size = myAudioControls.frames * DEFAULT_CHANNELS * 2;
-#else
-   myAudioControls.pa_framesize = pa_frame_size(&sample_spec);
-   myAudioControls.full_buff_size = myAudioControls.pa_framesize;
-#endif
+   myAudioControls.full_buff_size = DEFAULT_FRAMES * DEFAULT_CHANNELS * sizeof(int16_t);
 
    LOG_INFO("max_buff_size: %u, full_buff_size: %u\n", max_buff_size,
             myAudioControls.full_buff_size);
@@ -1762,15 +1621,6 @@ int main(int argc, char *argv[]) {
 
       return 1;
    }
-
-   // Test background audio level
-#if 0
-   if (pthread_create(&backgroundAudioDetect, NULL, measureBackgroundAudio, (void *) &myAudioControls) != 0) {
-      LOG_ERROR("Error creating background audio detection thread.\n");
-   }
-#else
-   measureBackgroundAudio((void *)&myAudioControls);
-#endif
 
    LOG_INFO("Init ASR: %s", asr_engine_name(asr_engine));
    // Initialize ASR engine (Vosk or Whisper)
@@ -1822,8 +1672,8 @@ int main(int argc, char *argv[]) {
    /* Set reconnect parameters (min delay, max delay, exponential backoff) */
    mosquitto_reconnect_delay_set(mosq, 2, 30, true);
 
-   /* Connect to local MQTT server. */
-   rc = mosquitto_connect(mosq, MQTT_IP, MQTT_PORT, 60);
+   /* Connect to MQTT server (broker from config). */
+   rc = mosquitto_connect(mosq, g_config.mqtt.broker, g_config.mqtt.port, 60);
    if (rc != MOSQ_ERR_SUCCESS) {
       mosquitto_destroy(mosq);
       LOG_ERROR("Error on mosquitto_connect(): %s\n", mosquitto_strerror(rc));
@@ -2139,12 +1989,25 @@ int main(int argc, char *argv[]) {
             static int tts_timer_initialized = 0;
             static dawn_state_t prev_vad_state = DAWN_STATE_INVALID;  // Track state transitions
 
+            // Music ducking state (reduces volume during speech detection)
+            static int music_ducked = 0;                // Currently ducked?
+            static float music_pre_duck_volume = 0.5f;  // Volume before ducking
+            static struct timespec music_last_speech;   // Last speech detection time
+            static int music_duck_initialized = 0;
+
             // Initialize timer on first run (ideally would be in main(), but keeping locality)
             if (!tts_timer_initialized) {
                clock_gettime(CLOCK_MONOTONIC, &tts_last_active);
                tts_last_active.tv_sec -= 10;      // Start 10s in the past (no cooldown at startup)
                tts_started_at = tts_last_active;  // Also initialize startup timer
                tts_timer_initialized = 1;
+            }
+
+            // Initialize music ducking timer
+            if (!music_duck_initialized) {
+               clock_gettime(CLOCK_MONOTONIC, &music_last_speech);
+               music_last_speech.tv_sec -= 10;  // Start in the past (no ducking at startup)
+               music_duck_initialized = 1;
             }
 
             // Reset debounce counter on state entry (prevents stale state from previous TTS)
@@ -2214,8 +2077,10 @@ int main(int argc, char *argv[]) {
                                             (now.tv_nsec - tts_started_at.tv_nsec) / 1000000;
 
                   // TTS-aware VAD: use higher threshold if TTS playing OR within cooldown
-                  int tts_is_active = tts_playing_now || (elapsed_ms < VAD_TTS_COOLDOWN_MS);
-                  float threshold = tts_is_active ? VAD_SPEECH_THRESHOLD_TTS : VAD_SPEECH_THRESHOLD;
+                  int tts_is_active = tts_playing_now ||
+                                      (elapsed_ms < g_config.audio.bargein.cooldown_ms);
+                  float threshold = tts_is_active ? g_config.vad.speech_threshold_tts
+                                                  : g_config.vad.speech_threshold;
 
                   // ERLE-based VAD gating: when AEC is struggling, be more conservative
                   float erle_db = 0.0f;
@@ -2243,7 +2108,7 @@ int main(int argc, char *argv[]) {
                      if (g_bargein_disabled) {
                         tts_vad_debounce = 0;
                      } else if (tts_playing_now &&
-                                startup_elapsed_ms < VAD_TTS_STARTUP_COOLDOWN_MS) {
+                                startup_elapsed_ms < g_config.audio.bargein.startup_cooldown_ms) {
                         // During TTS startup cooldown: AEC needs time to converge, block barge-in
                         tts_vad_debounce = 0;  // Reset debounce during startup
                      } else if (tts_is_active) {
@@ -2291,6 +2156,36 @@ int main(int argc, char *argv[]) {
                             vad_ctx, buff_size, VAD_SAMPLE_SIZE * sizeof(int16_t));
                }
                speech_detected = 0;  // Assume silence if VAD unavailable
+            }
+
+            // Music ducking: reduce volume when speech detected, restore after cooldown
+            if (speech_detected && getMusicPlay()) {
+               clock_gettime(CLOCK_MONOTONIC, &music_last_speech);
+               if (!music_ducked) {
+                  // Duck the music - save current volume and reduce
+                  music_pre_duck_volume = getMusicVolume();
+                  float ducked_volume = music_pre_duck_volume * MUSIC_DUCK_FACTOR;
+                  setMusicVolume(ducked_volume);
+                  music_ducked = 1;
+                  LOG_INFO("Music ducked: %.2f -> %.2f (speech detected)", music_pre_duck_volume,
+                           ducked_volume);
+               }
+            } else if (music_ducked && getMusicPlay()) {
+               // Check if cooldown has elapsed since last speech
+               struct timespec now;
+               clock_gettime(CLOCK_MONOTONIC, &now);
+               double elapsed = (now.tv_sec - music_last_speech.tv_sec) +
+                                (now.tv_nsec - music_last_speech.tv_nsec) / 1e9;
+               if (elapsed >= MUSIC_DUCK_RESTORE_DELAY) {
+                  // Restore original volume
+                  setMusicVolume(music_pre_duck_volume);
+                  LOG_INFO("Music restored: %.2f (%.1fs since speech)", music_pre_duck_volume,
+                           elapsed);
+                  music_ducked = 0;
+               }
+            } else if (music_ducked && !getMusicPlay()) {
+               // Music stopped - reset ducking state
+               music_ducked = 0;
             }
 
             if (speech_detected) {
@@ -2384,7 +2279,7 @@ int main(int argc, char *argv[]) {
                   LOG_ERROR("WAKEWORD_LISTEN: VAD processing failed - assuming silence");
                   is_silence = 1;  // Assume silence on error
                } else {
-                  is_silence = (vad_speech_prob < VAD_SILENCE_THRESHOLD);
+                  is_silence = (vad_speech_prob < g_config.vad.silence_threshold);
 
                   // ENGINE-AWARE AUDIO ROUTING (chunk for Whisper, stream for Vosk)
                   if (!is_silence) {
@@ -2435,8 +2330,8 @@ int main(int argc, char *argv[]) {
                int should_finalize_chunk = 0;
 
                // Detect natural pauses (silence after sufficient speech)
-               if (is_silence && speech_duration >= VAD_MIN_CHUNK_DURATION &&
-                   silence_duration >= VAD_CHUNK_PAUSE_DURATION) {
+               if (is_silence && speech_duration >= g_config.vad.chunking.min_duration &&
+                   silence_duration >= g_config.vad.chunking.pause_duration) {
                   LOG_INFO("WAKEWORD_LISTEN: Pause detected (%.1fs) after %.1fs speech - "
                            "finalizing chunk",
                            silence_duration, speech_duration);
@@ -2444,7 +2339,7 @@ int main(int argc, char *argv[]) {
                }
 
                // Force chunk on max duration
-               if (speech_duration >= VAD_MAX_CHUNK_DURATION) {
+               if (speech_duration >= g_config.vad.chunking.max_duration) {
                   LOG_INFO("WAKEWORD_LISTEN: Max chunk duration reached (%.1fs) - forcing chunk",
                            speech_duration);
                   should_finalize_chunk = 1;
@@ -2478,8 +2373,8 @@ int main(int argc, char *argv[]) {
             // Flag to trigger wake word processing after finalization
             int should_check_wake_word = 0;
 
-            // Check for maximum recording duration (50s safety limit for 60s buffer)
-            if (recording_duration >= VAD_MAX_RECORDING_DURATION) {
+            // Check for maximum recording duration (safety limit for buffer)
+            if (recording_duration >= g_config.vad.max_recording_duration) {
                LOG_WARNING("WAKEWORD_LISTEN: Max recording duration reached (%.1fs), forcing "
                            "finalization to prevent buffer overflow.\n",
                            recording_duration);
@@ -2529,8 +2424,8 @@ int main(int argc, char *argv[]) {
                       1;  // Set flag even with NULL input to trigger state transition
                }
             }
-            // Check if speech has ended (1.5s of silence)
-            else if (silence_duration >= VAD_END_OF_SPEECH_DURATION) {
+            // Check if speech has ended (silence threshold)
+            else if (silence_duration >= g_config.vad.end_of_speech_duration) {
                silence_duration = 0.0f;
                speech_duration = 0.0f;
                recording_duration = 0.0f;
@@ -2539,7 +2434,7 @@ int main(int argc, char *argv[]) {
                preroll_valid_bytes = 0;
                LOG_WARNING(
                    "WAKEWORD_LISTEN: Speech ended (%.1fs silence), checking for wake word.\n",
-                   VAD_END_OF_SPEECH_DURATION);
+                   g_config.vad.end_of_speech_duration);
 
                // ENGINE-AWARE FINALIZATION
                if (asr_engine == ASR_ENGINE_WHISPER && chunk_mgr) {
@@ -2799,7 +2694,7 @@ int main(int argc, char *argv[]) {
                   LOG_ERROR("COMMAND_RECORDING: VAD processing failed - assuming silence");
                   cmd_speech_detected = 0;
                } else {
-                  cmd_speech_detected = (vad_speech_prob >= VAD_SPEECH_THRESHOLD);
+                  cmd_speech_detected = (vad_speech_prob >= g_config.vad.speech_threshold);
                }
             } else {
                if (cmd_vad_debug_counter++ % 50 == 0) {
@@ -2857,8 +2752,8 @@ int main(int argc, char *argv[]) {
                int should_finalize_chunk = 0;
 
                // Detect natural pauses for chunking (silence after sufficient speech)
-               if (!cmd_speech_detected && speech_duration >= VAD_MIN_CHUNK_DURATION &&
-                   silence_duration >= VAD_CHUNK_PAUSE_DURATION) {
+               if (!cmd_speech_detected && speech_duration >= g_config.vad.chunking.min_duration &&
+                   silence_duration >= g_config.vad.chunking.pause_duration) {
                   LOG_INFO("COMMAND_RECORDING: Pause detected (%.1fs) after %.1fs speech - "
                            "finalizing chunk",
                            silence_duration, speech_duration);
@@ -2866,7 +2761,7 @@ int main(int argc, char *argv[]) {
                }
 
                // Force chunk on max duration (even if speech continues)
-               if (speech_duration >= VAD_MAX_CHUNK_DURATION) {
+               if (speech_duration >= g_config.vad.chunking.max_duration) {
                   LOG_INFO("COMMAND_RECORDING: Max chunk duration reached (%.1fs) - forcing chunk",
                            speech_duration);
                   should_finalize_chunk = 1;
@@ -3029,6 +2924,17 @@ int main(int argc, char *argv[]) {
                      } else {
                         int retSs = sscanf(command_text, commands[i].actionWordsRegex, thisValue);
                      }
+
+                     /* Trim trailing punctuation from extracted value (e.g., "Iron Man." -> "Iron
+                      * Man") */
+                     size_t valueLen = strlen(thisValue);
+                     while (valueLen > 0 &&
+                            (thisValue[valueLen - 1] == '.' || thisValue[valueLen - 1] == ',' ||
+                             thisValue[valueLen - 1] == '!' || thisValue[valueLen - 1] == '?' ||
+                             thisValue[valueLen - 1] == ';' || thisValue[valueLen - 1] == ':')) {
+                        thisValue[--valueLen] = '\0';
+                     }
+
                      snprintf(thisCommand, sizeof(thisCommand), commands[i].actionCommand,
                               thisValue);
                      LOG_WARNING("Sending: \"%s\"\n", thisCommand);
@@ -3368,6 +3274,9 @@ int main(int argc, char *argv[]) {
       audio_capture_stop(audio_capture_ctx);
       audio_capture_ctx = NULL;
    }
+
+   // Clean up audio backend (after all audio handles are closed)
+   audio_backend_cleanup();
 
    free(max_buff);
 

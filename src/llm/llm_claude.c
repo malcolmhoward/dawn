@@ -26,6 +26,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "config/dawn_config.h"
 #include "dawn.h"
 #include "llm/llm_interface.h"
 #include "llm/llm_streaming.h"
@@ -85,11 +86,13 @@ static json_object *convert_to_claude_format(struct json_object *openai_conversa
                                              size_t vision_image_size) {
    json_object *claude_request = json_object_new_object();
 
-   // Model
-   json_object_object_add(claude_request, "model", json_object_new_string(CLAUDE_MODEL));
+   // Model from config
+   json_object_object_add(claude_request, "model",
+                          json_object_new_string(g_config.llm.cloud.model));
 
-   // Max tokens
-   json_object_object_add(claude_request, "max_tokens", json_object_new_int(CLAUDE_MAX_TOKENS));
+   // Max tokens from config
+   json_object_object_add(claude_request, "max_tokens",
+                          json_object_new_int(g_config.llm.max_tokens));
 
    // Extract system message and user/assistant messages
    json_object *system_array = json_object_new_array();

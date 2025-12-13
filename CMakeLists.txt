@@ -126,19 +126,22 @@ endif()
 add_library(piper STATIC src/tts/piper.cpp)
 target_link_libraries(piper onnxruntime)
 
-# Audio Backend Options - choose one
-option(USE_ALSA "Use ALSA for all audio (capture and playback)" ON)
+# Audio Backend - Runtime Selectable (both ALSA and PulseAudio supported)
+# The backend can be selected at runtime via config file: [audio] backend = "auto|alsa|pulse"
+# At compile time, we need both libraries for runtime selection
 
-# Audio dependencies based on backend selection
-if(USE_ALSA)
-    # ALSA-only mode (no PulseAudio dependency)
-    message(STATUS "Audio backend: ALSA (fully embedded mode)")
-else()
-    # PulseAudio mode (desktop/server systems)
-    find_package(PulseAudio REQUIRED)
+# Find PulseAudio (optional, but recommended for desktop systems)
+find_package(PulseAudio QUIET)
+if(PULSEAUDIO_FOUND)
     include_directories(${PULSEAUDIO_INCLUDE_DIRS})
-    message(STATUS "Audio backend: PulseAudio (desktop mode)")
+    message(STATUS "Audio backend: Runtime selectable (ALSA + PulseAudio)")
+else()
+    message(STATUS "Audio backend: ALSA only (PulseAudio not found)")
 endif()
+
+# Legacy option - kept for backward compatibility. No longer affects compilation.
+# Audio backend selection is now done at runtime via --audio-backend CLI option (default: auto).
+option(USE_ALSA "Deprecated: Audio backend is now selected at runtime" ON)
 
 # =============================================================================
 # Resampler library (required for 48kHz→16kHz capture conversion)
@@ -257,7 +260,6 @@ set(DAWN_SOURCES
     src/dawn.c
     src/input_queue.c
     src/logging.c
-    src/audio_utils.c
     src/mosquitto_comms.c
     src/text_to_command_nuevo.c
     src/word_to_number.c
@@ -297,6 +299,10 @@ set(DAWN_SOURCES
     src/audio/flac_playback.c
     src/audio/mic_passthrough.c
     src/audio/resampler.c
+    src/audio/audio_backend.c
+    src/audio/audio_alsa.c
+    src/audio/audio_pulse.c
+    src/audio/audio_converter.c
 
     # UI subsystem (TUI metrics)
     src/ui/metrics.c
@@ -310,6 +316,13 @@ set(DAWN_SOURCES
     src/tools/url_fetcher.c
     src/tools/html_parser.c
     src/tools/string_utils.c
+    src/tools/toml.c
+
+    # Config subsystem
+    src/config/config_defaults.c
+    src/config/config_parser.c
+    src/config/config_validate.c
+    src/config/config_env.c
 )
 
 # Conditionally add TUI source file
@@ -317,10 +330,9 @@ if(ENABLE_TUI)
     list(APPEND DAWN_SOURCES src/ui/tui.c)
 endif()
 
-# Define ALSA_DEVICE for conditional compilation
-if(USE_ALSA)
-    add_definitions(-DALSA_DEVICE)
-endif()
+# Note: ALSA_DEVICE define removed - audio backend is now selected at runtime via --audio-backend
+# The USE_ALSA option is kept for backwards compatibility but has no effect on compilation.
+# Both ALSA and PulseAudio backends are always compiled in and selected at runtime.
 
 # Conditionally add ASR engine source files
 if(ENABLE_VOSK)
@@ -361,12 +373,9 @@ target_link_libraries(dawn
                       OpenSSL::SSL
                       OpenSSL::Crypto)
 
-# Link appropriate audio library based on backend selection
-if(USE_ALSA)
-    target_link_libraries(dawn asound)
-else()
-    target_link_libraries(dawn pulse-simple pulse)
-endif()
+# Link both audio libraries for runtime backend selection
+# Both backends are statically linked; runtime selection via vtable
+target_link_libraries(dawn asound pulse-simple pulse)
 
 # Conditionally link ncurses for TUI
 if(ENABLE_TUI)

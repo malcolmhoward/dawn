@@ -115,4 +115,11 @@ void *playFlacAudio(void *arg);
  */
 void setMusicVolume(float val);
 
+/**
+ * @brief Gets the current global music playback volume.
+ *
+ * @return The current volume level as a float (0.0 to 2.0).
+ */
+float getMusicVolume(void);
+
 #endif  // FLAC_PLAYBACK_H

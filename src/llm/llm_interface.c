@@ -35,6 +35,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 
+#include "config/dawn_config.h"
 #include "dawn.h"
 #include "llm/sentence_buffer.h"
 #include "logging.h"
@@ -43,19 +44,49 @@
 #include "tts/text_to_speech.h"
 #include "ui/metrics.h"
 
-// Provider implementations
-#ifdef OPENAI_API_KEY
-#include "llm/llm_openai.h"
-#endif
-
-#ifdef CLAUDE_API_KEY
+// Provider implementations - include if compile-time keys exist OR if we might have runtime keys
+// Note: The actual provider files (llm_openai.c, llm_claude.c) are always compiled
 #include "llm/llm_claude.h"
-#endif
+#include "llm/llm_openai.h"
 
-// LLM URLs
+// LLM URLs - cloud endpoints (local endpoint comes from g_config.llm.local.endpoint)
 #define CLOUDAI_URL "https://api.openai.com"
 #define CLAUDE_URL "https://api.anthropic.com"
-#define LOCALAI_URL "http://127.0.0.1:8080"
+
+// Helper functions to get API keys - prefer g_secrets over compile-time defines
+static const char *get_openai_api_key(void) {
+   // Prefer runtime config
+   if (g_secrets.openai_api_key[0] != '\0') {
+      return g_secrets.openai_api_key;
+   }
+   // Fall back to compile-time define
+#ifdef OPENAI_API_KEY
+   return OPENAI_API_KEY;
+#else
+   return NULL;
+#endif
+}
+
+static const char *get_claude_api_key(void) {
+   // Prefer runtime config
+   if (g_secrets.claude_api_key[0] != '\0') {
+      return g_secrets.claude_api_key;
+   }
+   // Fall back to compile-time define
+#ifdef CLAUDE_API_KEY
+   return CLAUDE_API_KEY;
+#else
+   return NULL;
+#endif
+}
+
+static bool is_openai_available(void) {
+   return get_openai_api_key() != NULL;
+}
+
+static bool is_claude_available(void) {
+   return get_claude_api_key() != NULL;
+}
 
 // Global state
 static llm_type_t current_type = LLM_UNDEFINED;
@@ -203,20 +234,12 @@ int llm_check_connection(const char *url, int timeout_seconds) {
 }
 
 void llm_init(const char *cloud_provider_override) {
-   // Detect available providers
-   bool openai_available = false;
-   bool claude_available = false;
-
-#ifdef OPENAI_API_KEY
-   openai_available = true;
-#endif
-
-#ifdef CLAUDE_API_KEY
-   claude_available = true;
-#endif
+   // Detect available providers (from runtime config or compile-time defines)
+   bool openai_available = is_openai_available();
+   bool claude_available = is_claude_available();
 
    if (!openai_available && !claude_available) {
-      LOG_WARNING("No cloud LLM providers configured in secrets.h");
+      LOG_WARNING("No cloud LLM providers configured (check secrets.toml or secrets.h)");
       current_cloud_provider = CLOUD_PROVIDER_NONE;
       llm_set_type(LLM_LOCAL);
       return;
@@ -226,14 +249,14 @@ void llm_init(const char *cloud_provider_override) {
    if (cloud_provider_override != NULL) {
       if (strcmp(cloud_provider_override, "openai") == 0) {
          if (!openai_available) {
-            LOG_ERROR("OpenAI requested but OPENAI_API_KEY not defined in secrets.h");
+            LOG_ERROR("OpenAI requested but no API key available");
             exit(1);
          }
          current_cloud_provider = CLOUD_PROVIDER_OPENAI;
          LOG_INFO("Cloud provider set to OpenAI (command-line override)");
       } else if (strcmp(cloud_provider_override, "claude") == 0) {
          if (!claude_available) {
-            LOG_ERROR("Claude requested but CLAUDE_API_KEY not defined in secrets.h");
+            LOG_ERROR("Claude requested but no API key available");
             exit(1);
          }
          current_cloud_provider = CLOUD_PROVIDER_CLAUDE;
@@ -270,9 +293,9 @@ void llm_set_type(llm_type_t type) {
       }
       LOG_INFO("LLM set to CLOUD (%s)", llm_get_cloud_provider_name());
    } else if (type == LLM_LOCAL) {
-      snprintf(llm_url, sizeof(llm_url), "%s", LOCALAI_URL);
+      snprintf(llm_url, sizeof(llm_url), "%s", g_config.llm.local.endpoint);
       text_to_speech("Setting AI to local LLM.");
-      LOG_INFO("LLM set to LOCAL");
+      LOG_INFO("LLM set to LOCAL (%s)", g_config.llm.local.endpoint);
    }
 
    // Update metrics with current LLM configuration
@@ -297,24 +320,19 @@ const char *llm_get_cloud_provider_name(void) {
 }
 
 const char *llm_get_model_name(void) {
-   switch (current_cloud_provider) {
-      case CLOUD_PROVIDER_OPENAI:
-#ifdef OPENAI_API_KEY
-         return OPENAI_MODEL;
-#else
-         return "N/A";
-#endif
-      case CLOUD_PROVIDER_CLAUDE:
-#ifdef CLAUDE_API_KEY
-         return CLAUDE_MODEL;
-#else
-         return "N/A";
-#endif
-      case CLOUD_PROVIDER_NONE:
-         return "None";
-      default:
-         return "Unknown";
+   if (current_type == LLM_LOCAL) {
+      // Local LLM - return local model name if configured, or "local"
+      if (g_config.llm.local.model[0] != '\0') {
+         return g_config.llm.local.model;
+      }
+      return "local";
    }
+
+   // Cloud LLM - return model from config
+   if (current_cloud_provider != CLOUD_PROVIDER_NONE) {
+      return g_config.llm.cloud.model;
+   }
+   return "None";
 }
 
 void llm_request_interrupt(void) {
@@ -367,32 +385,21 @@ char *llm_chat_completion(struct json_object *conversation_history,
    char *response = NULL;
 
    if (current_type == LLM_LOCAL) {
-      // Local LLM uses OpenAI-compatible API
-#ifdef OPENAI_API_KEY
+      // Local LLM uses OpenAI-compatible API (no API key needed)
       response = llm_openai_chat_completion(conversation_history, input_text, vision_image,
-                                            vision_image_size, llm_url,
-                                            NULL  // No API key for local
-      );
-#else
-      LOG_ERROR("Local LLM requires OpenAI-compatible implementation");
-      return NULL;
-#endif
+                                            vision_image_size, llm_url, NULL);
    } else {
       // Route to cloud provider
       switch (current_cloud_provider) {
-#ifdef OPENAI_API_KEY
          case CLOUD_PROVIDER_OPENAI:
             response = llm_openai_chat_completion(conversation_history, input_text, vision_image,
-                                                  vision_image_size, llm_url, OPENAI_API_KEY);
+                                                  vision_image_size, llm_url, get_openai_api_key());
             break;
-#endif
 
-#ifdef CLAUDE_API_KEY
          case CLOUD_PROVIDER_CLAUDE:
             response = llm_claude_chat_completion(conversation_history, input_text, vision_image,
-                                                  vision_image_size, llm_url, CLAUDE_API_KEY);
+                                                  vision_image_size, llm_url, get_claude_api_key());
             break;
-#endif
 
          default:
             LOG_ERROR("No cloud provider configured");
@@ -407,11 +414,9 @@ char *llm_chat_completion(struct json_object *conversation_history,
          text_to_speech("Unable to contact cloud LLM.");
          llm_set_type(LLM_LOCAL);
 
-         // Retry with local LLM
-#ifdef OPENAI_API_KEY
+         // Retry with local LLM (uses OpenAI-compatible API without auth)
          response = llm_openai_chat_completion(conversation_history, input_text, vision_image,
                                                vision_image_size, llm_url, NULL);
-#endif
       }
    }
 
@@ -434,36 +439,27 @@ char *llm_chat_completion_streaming(struct json_object *conversation_history,
    metrics_record_llm_query(current_type);
 
    if (current_type == LLM_LOCAL) {
-      // Local LLM uses OpenAI-compatible API
-#ifdef OPENAI_API_KEY
+      // Local LLM uses OpenAI-compatible API (no API key needed)
       response = llm_openai_chat_completion_streaming(conversation_history, input_text,
                                                       vision_image, vision_image_size, llm_url,
                                                       NULL,  // No API key for local
                                                       chunk_callback, callback_userdata);
-#else
-      LOG_ERROR("Local LLM requires OpenAI-compatible implementation");
-      return NULL;
-#endif
    } else {
       // Route to cloud provider
       switch (current_cloud_provider) {
-#ifdef OPENAI_API_KEY
          case CLOUD_PROVIDER_OPENAI:
             response = llm_openai_chat_completion_streaming(conversation_history, input_text,
                                                             vision_image, vision_image_size,
-                                                            llm_url, OPENAI_API_KEY, chunk_callback,
-                                                            callback_userdata);
+                                                            llm_url, get_openai_api_key(),
+                                                            chunk_callback, callback_userdata);
             break;
-#endif
 
-#ifdef CLAUDE_API_KEY
          case CLOUD_PROVIDER_CLAUDE:
             response = llm_claude_chat_completion_streaming(conversation_history, input_text,
                                                             vision_image, vision_image_size,
-                                                            llm_url, CLAUDE_API_KEY, chunk_callback,
-                                                            callback_userdata);
+                                                            llm_url, get_claude_api_key(),
+                                                            chunk_callback, callback_userdata);
             break;
-#endif
 
          default:
             LOG_ERROR("No cloud provider configured");
@@ -478,12 +474,10 @@ char *llm_chat_completion_streaming(struct json_object *conversation_history,
          text_to_speech("Unable to contact cloud LLM.");
          llm_set_type(LLM_LOCAL);
 
-         // Retry with local LLM
-#ifdef OPENAI_API_KEY
+         // Retry with local LLM (uses OpenAI-compatible API without auth)
          response = llm_openai_chat_completion_streaming(conversation_history, input_text,
                                                          vision_image, vision_image_size, llm_url,
                                                          NULL, chunk_callback, callback_userdata);
-#endif
          // Record fallback event
          metrics_record_fallback();
       }

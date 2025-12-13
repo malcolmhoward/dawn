@@ -17,6 +17,22 @@
  * the project author(s). Contributions include any modifications,
  * enhancements, or additions to the project. These contributions become
  * part of the project and are adopted by the project author(s).
+ *
+ * DAWN FLAC Playback Module
+ *
+ * Decodes and plays FLAC audio files with automatic sample rate conversion.
+ *
+ * ALSA/dmix Note:
+ *   For FLAC playback to work with ALSA, a dmix-compatible output device
+ *   should be used (e.g., "default" or a dmix plugin). The dmix plugin
+ *   allows multiple applications to share the sound card by mixing audio
+ *   in software. Hardware devices (hw:X,Y) do not support mixing.
+ *
+ *   The configured output rate (audio.output_rate in dawn.toml) is requested
+ *   from ALSA, but the actual rate may differ if the hardware doesn't support
+ *   it. For example, configuring 44100 Hz may result in 48000 Hz if dmix is
+ *   configured for 48000 Hz. The converter automatically adapts to the actual
+ *   hardware rate returned by ALSA.
  */
 
 #include "audio/flac_playback.h"
@@ -28,15 +44,28 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef ALSA_DEVICE
-#include <alsa/asoundlib.h>
-#else
-#include <pulse/error.h>
-#include <pulse/simple.h>
-#endif
-
+#include "audio/audio_backend.h"
+#include "audio/audio_converter.h"
 #include "logging.h"
 #include "mosquitto_comms.h"
+
+/* Maximum channels supported for FLAC playback (stereo) */
+#define FLAC_MAX_CHANNELS 2
+
+/**
+ * @brief Context passed to FLAC callbacks for audio playback
+ *
+ * Contains all state needed by write_callback to output audio at configured rate.
+ * All buffers are pre-allocated to avoid malloc in the hot path.
+ */
+typedef struct {
+   audio_stream_playback_handle_t *playback_handle;
+   audio_converter_t *converter;
+   int16_t *interleaved_buffer;      /* Pre-allocated interleave buffer (input) */
+   size_t interleaved_buffer_frames; /* Size of interleave buffer in frames */
+   int16_t *output_buffer;           /* Pre-allocated conversion output buffer */
+   size_t output_buffer_frames;      /* Size of output buffer in frames */
+} flac_playback_context_t;
 
 /**
  * @var float global_volume
@@ -114,13 +143,12 @@ void error_callback(const FLAC__StreamDecoder *decoder,
 /**
  * Callback function for handling decoded audio frames from the FLAC stream.
  * This function is called by the FLAC decoder each time an audio frame is successfully decoded.
- * It interleaves the decoded audio samples and writes them to the audio playback stream.
+ * It interleaves the decoded audio samples, converts to 48kHz stereo, and writes to playback.
  *
  * @param decoder The FLAC stream decoder instance calling this callback.
  * @param frame The decoded audio frame containing audio samples to be processed.
  * @param buffer An array of pointers to the decoded audio samples for each channel.
- * @param client_data A pointer to user-defined data, used to pass the audio playback handle
- *                    (ALSA snd_pcm_t* or PulseAudio pa_simple*).
+ * @param client_data A pointer to flac_playback_context_t with playback handle and converter.
  *
  * @return A FLAC__StreamDecoderWriteStatus value indicating whether the write operation was
  * successful. Returns FLAC__STREAM_DECODER_WRITE_STATUS_CONTINUE to continue decoding, or
@@ -136,21 +164,25 @@ FLAC__StreamDecoderWriteStatus write_callback(const FLAC__StreamDecoder *decoder
       return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
    }
 
-#ifdef ALSA_DEVICE
-   // Cast client_data back to ALSA PCM handle for audio playback.
-   snd_pcm_t *pcm_handle = (snd_pcm_t *)client_data;
-#else
-   // Cast client_data back to pa_simple pointer for audio playback.
-   pa_simple *s = (pa_simple *)client_data;
-#endif
+   // Cast client_data to playback context
+   flac_playback_context_t *ctx = (flac_playback_context_t *)client_data;
 
-   // Allocate memory for interleaved audio samples.
-   int16_t *interleaved = malloc(frame->header.blocksize * frame->header.channels *
-                                 sizeof(int16_t));
-   if (!interleaved) {
-      LOG_ERROR("Memory allocation failed for interleaved audio buffer.");
+   // Validate block size fits in pre-allocated buffer
+   if (frame->header.blocksize > ctx->interleaved_buffer_frames) {
+      LOG_ERROR("FLAC block size %u exceeds buffer %zu", frame->header.blocksize,
+                ctx->interleaved_buffer_frames);
       return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
    }
+
+   // Validate channel count (buffer only supports up to FLAC_MAX_CHANNELS)
+   if (frame->header.channels > FLAC_MAX_CHANNELS) {
+      LOG_ERROR("FLAC has %u channels, max supported is %d", frame->header.channels,
+                FLAC_MAX_CHANNELS);
+      return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
+   }
+
+   // Use pre-allocated interleaved buffer (no malloc in hot path)
+   int16_t *interleaved = ctx->interleaved_buffer;
 
    // Interleave audio samples from all channels into a single buffer.
    for (unsigned i = 0, j = 0; i < frame->header.blocksize; ++i) {
@@ -158,7 +190,7 @@ FLAC__StreamDecoderWriteStatus write_callback(const FLAC__StreamDecoder *decoder
          // Adjust the sample volume before interleaving.
          int32_t adjusted_sample = (int32_t)(buffer[ch][i] * global_volume);
 
-         // Clipping protection (optional but recommended).
+         // Clipping protection
          if (adjusted_sample < INT16_MIN) {
             adjusted_sample = INT16_MIN;
          } else if (adjusted_sample > INT16_MAX) {
@@ -169,32 +201,39 @@ FLAC__StreamDecoderWriteStatus write_callback(const FLAC__StreamDecoder *decoder
       }
    }
 
-   // Write the interleaved audio samples to the audio stream.
-#ifdef ALSA_DEVICE
-   snd_pcm_sframes_t frames_written = snd_pcm_writei(pcm_handle, interleaved,
-                                                     frame->header.blocksize);
+   // Convert to configured output rate/channels if converter is available
+   ssize_t frames_written;
+   if (ctx->converter) {
+      ssize_t converted_frames = audio_converter_process(ctx->converter, interleaved,
+                                                         frame->header.blocksize,
+                                                         ctx->output_buffer,
+                                                         ctx->output_buffer_frames);
+      if (converted_frames < 0) {
+         LOG_ERROR("Audio conversion failed");
+         return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
+      }
+
+      // Write converted audio
+      frames_written = audio_stream_playback_write(ctx->playback_handle, ctx->output_buffer,
+                                                   (size_t)converted_frames);
+   } else {
+      // No conversion needed - write directly
+      frames_written = audio_stream_playback_write(ctx->playback_handle, interleaved,
+                                                   frame->header.blocksize);
+   }
+
    if (frames_written < 0) {
-      // Handle buffer underrun
-      frames_written = snd_pcm_recover(pcm_handle, frames_written, 0);
-      if (frames_written < 0) {
-         LOG_ERROR("ALSA write error: %s", snd_strerror(frames_written));
-         free(interleaved);
+      int err = (int)(-frames_written);
+      // Attempt recovery from underrun
+      if (err == AUDIO_ERR_UNDERRUN) {
+         LOG_WARNING("Audio underrun during FLAC playback, recovering...");
+         audio_stream_playback_recover(ctx->playback_handle, err);
+      } else {
+         LOG_ERROR("Audio write error: %s", audio_error_string((audio_error_t)err));
          return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
       }
    }
-#else
-   if (pa_simple_write(s, interleaved,
-                       frame->header.blocksize * frame->header.channels * sizeof(int16_t),
-                       NULL) < 0) {
-      free(interleaved);
-      return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
-   }
-#endif
 
-   // Free the allocated memory for the interleaved buffer after writing to the audio stream.
-   free(interleaved);
-
-   // Signal the FLAC decoder to continue decoding the next frame.
    return FLAC__STREAM_DECODER_WRITE_STATUS_CONTINUE;
 }
 
@@ -204,64 +243,102 @@ void *playFlacAudio(void *arg) {
    FLAC__StreamDecoderInitStatus init_status;
    int error = 0;
 
-#ifdef ALSA_DEVICE
-   // Initialize ALSA for playback.
-   snd_pcm_t *alsa_handle = NULL;
-   snd_pcm_hw_params_t *hw_params = NULL;
-   unsigned int sample_rate = 44100;
-   int dir = 0;
-
-   // Open ALSA playback device
-   if ((error = snd_pcm_open(&alsa_handle, args->sink_name, SND_PCM_STREAM_PLAYBACK, 0)) < 0) {
-      LOG_ERROR("Error opening ALSA device %s for playback: %s", args->sink_name,
-                snd_strerror(error));
+   // Check that audio backend is initialized
+   if (audio_backend_get_type() == AUDIO_BACKEND_NONE) {
+      LOG_ERROR("Audio backend not initialized. Call audio_backend_init() first.");
+      free(args);
       return NULL;
    }
 
-   // Allocate hardware parameters object
-   snd_pcm_hw_params_alloca(&hw_params);
-   snd_pcm_hw_params_any(alsa_handle, hw_params);
+   // Get configured output rate/channels for dmix compatibility
+   unsigned int output_rate = audio_conv_get_output_rate();
+   unsigned int output_channels = audio_conv_get_output_channels();
 
-   // Set hardware parameters
-   snd_pcm_hw_params_set_access(alsa_handle, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED);
-   snd_pcm_hw_params_set_format(alsa_handle, hw_params, SND_PCM_FORMAT_S16_LE);
-   snd_pcm_hw_params_set_channels(alsa_handle, hw_params, 2);
-   snd_pcm_hw_params_set_rate_near(alsa_handle, hw_params, &sample_rate, &dir);
+   // Open playback device at configured rate for dmix compatibility
+   // FLAC music files (typically 44100Hz) will be resampled if needed
+   audio_stream_params_t params = { .sample_rate = output_rate,
+                                    .channels = output_channels,
+                                    .format = AUDIO_FORMAT_S16_LE,
+                                    .period_frames = 1024,
+                                    .buffer_frames = 4096 };
+   audio_hw_params_t hw_params;
 
-   if ((error = snd_pcm_hw_params(alsa_handle, hw_params)) < 0) {
-      LOG_ERROR("Error setting ALSA hardware parameters: %s", snd_strerror(error));
-      snd_pcm_close(alsa_handle);
+   LOG_INFO("Opening FLAC playback device: %s (backend: %s)", args->sink_name,
+            audio_backend_type_name(audio_backend_get_type()));
+
+   audio_stream_playback_handle_t *playback_handle = audio_stream_playback_open(args->sink_name,
+                                                                                &params,
+                                                                                &hw_params);
+   if (!playback_handle) {
+      LOG_ERROR("Error opening audio device %s for FLAC playback", args->sink_name);
+      free(args);
       return NULL;
    }
 
-   // Prepare the PCM device
-   if ((error = snd_pcm_prepare(alsa_handle)) < 0) {
-      LOG_ERROR("Error preparing ALSA device: %s", snd_strerror(error));
-      snd_pcm_close(alsa_handle);
-      return NULL;
-   }
-#else
-   // Initialize PulseAudio for playback.
-   pa_simple *pa_handle = NULL;
-   pa_sample_spec ss = { .format = PA_SAMPLE_S16LE, .channels = 2, .rate = 44100 };
+   // Use actual hardware rate/channels (may differ from requested if ALSA fell back)
+   unsigned int actual_rate = hw_params.sample_rate;
+   unsigned int actual_channels = hw_params.channels;
 
-   // Open PulseAudio for playback.
-   if (!(pa_handle = pa_simple_new(NULL, "FLAC Player", PA_STREAM_PLAYBACK, args->sink_name,
-                                   "playback", &ss, NULL, NULL, &error))) {
-      LOG_ERROR("Error opening PulseAudio for playback: %s", pa_strerror(error));
+   LOG_INFO("FLAC playback: requested=%uHz/%uch actual=%uHz/%uch", output_rate, output_channels,
+            actual_rate, actual_channels);
+
+   // Create playback context with pre-allocated buffers (no malloc in hot path)
+   flac_playback_context_t ctx = { .playback_handle = playback_handle,
+                                   .converter = NULL,
+                                   .interleaved_buffer = NULL,
+                                   .interleaved_buffer_frames = 0,
+                                   .output_buffer = NULL,
+                                   .output_buffer_frames = 0 };
+
+   // Pre-allocate interleaved buffer for write_callback (avoids malloc in hot path)
+   // Uses AUDIO_CONV_MAX_INPUT_FRAMES to stay consistent with audio_converter limits
+   ctx.interleaved_buffer_frames = AUDIO_CONV_MAX_INPUT_FRAMES;
+   ctx.interleaved_buffer = malloc(AUDIO_CONV_MAX_INPUT_FRAMES * FLAC_MAX_CHANNELS *
+                                   sizeof(int16_t));
+   if (!ctx.interleaved_buffer) {
+      LOG_ERROR("Failed to allocate interleaved buffer for FLAC playback");
+      audio_stream_playback_close(playback_handle);
+      free(args);
       return NULL;
    }
-#endif
+
+   // Create converter for 44100Hz stereo -> actual ALSA output (common case for FLAC files)
+   // Use actual_rate/actual_channels from hw_params, not config, since ALSA may have fallen back
+   // If FLAC file has different parameters, write_callback handles it
+   audio_converter_params_t conv_params = { .sample_rate = 44100, .channels = 2 };
+   if (audio_converter_needed_ex(&conv_params, actual_rate, actual_channels)) {
+      ctx.converter = audio_converter_create_ex(&conv_params, actual_rate, actual_channels);
+      if (!ctx.converter) {
+         LOG_ERROR("Failed to create audio converter for FLAC playback");
+         free(ctx.interleaved_buffer);
+         audio_stream_playback_close(playback_handle);
+         free(args);
+         return NULL;
+      }
+
+      // Allocate output buffer for converted audio (use actual channels from ALSA)
+      ctx.output_buffer_frames = audio_converter_max_output_frames(ctx.converter,
+                                                                   AUDIO_CONV_MAX_INPUT_FRAMES);
+      ctx.output_buffer = malloc(ctx.output_buffer_frames * actual_channels * sizeof(int16_t));
+      if (!ctx.output_buffer) {
+         LOG_ERROR("Failed to allocate output buffer for FLAC playback");
+         audio_converter_destroy(ctx.converter);
+         free(ctx.interleaved_buffer);
+         audio_stream_playback_close(playback_handle);
+         free(args);
+         return NULL;
+      }
+   }
 
    // Initialize FLAC decoder.
    FLAC__StreamDecoder *decoder = FLAC__stream_decoder_new();
    if (decoder == NULL) {
       LOG_ERROR("Error creating FLAC decoder.");
-#ifdef ALSA_DEVICE
-      snd_pcm_close(alsa_handle);
-#else
-      pa_simple_free(pa_handle);
-#endif
+      free(ctx.output_buffer);
+      audio_converter_destroy(ctx.converter);
+      free(ctx.interleaved_buffer);
+      audio_stream_playback_close(playback_handle);
+      free(args);
       return NULL;
    }
 
@@ -269,35 +346,28 @@ void *playFlacAudio(void *arg) {
    if (!FLAC__stream_decoder_set_md5_checking(decoder, true)) {
       LOG_ERROR("Error setting FLAC md5 checking.");
       FLAC__stream_decoder_delete(decoder);
-#ifdef ALSA_DEVICE
-      snd_pcm_close(alsa_handle);
-#else
-      pa_simple_free(pa_handle);
-#endif
+      free(ctx.output_buffer);
+      audio_converter_destroy(ctx.converter);
+      free(ctx.interleaved_buffer);
+      audio_stream_playback_close(playback_handle);
+      free(args);
       return NULL;
    }
 
    music_play = 1;  // Ensure playback is enabled.
 
-   // Pass the appropriate audio handle to the FLAC decoder
-#ifdef ALSA_DEVICE
-   void *audio_handle = alsa_handle;
-#else
-   void *audio_handle = pa_handle;
-#endif
-
+   // Pass the playback context to the FLAC decoder (contains playback handle + converter)
    if ((init_status = FLAC__stream_decoder_init_file(decoder, args->file_name, write_callback,
-                                                     metadata_callback, error_callback,
-                                                     audio_handle)) !=
+                                                     metadata_callback, error_callback, &ctx)) !=
        FLAC__STREAM_DECODER_INIT_STATUS_OK) {
       LOG_ERROR("ERROR: initializing decoder: %s",
                 FLAC__StreamDecoderInitStatusString[init_status]);
       FLAC__stream_decoder_delete(decoder);
-#ifdef ALSA_DEVICE
-      snd_pcm_close(alsa_handle);
-#else
-      pa_simple_free(pa_handle);
-#endif
+      free(ctx.output_buffer);
+      audio_converter_destroy(ctx.converter);
+      free(ctx.interleaved_buffer);
+      audio_stream_playback_close(playback_handle);
+      free(args);
       return NULL;
    }
 
@@ -327,27 +397,38 @@ void *playFlacAudio(void *arg) {
    FLAC__stream_decoder_finish(decoder);
    FLAC__stream_decoder_delete(decoder);
 
-#ifdef ALSA_DEVICE
+   // Clean up audio converter and pre-allocated buffers
+   free(ctx.output_buffer);
+   ctx.output_buffer = NULL;
+   audio_converter_destroy(ctx.converter);
+   ctx.converter = NULL;
+   free(ctx.interleaved_buffer);
+   ctx.interleaved_buffer = NULL;
+
+   // Handle audio device cleanup based on stop reason
    if (stopped_by_user) {
       // Drop buffered audio immediately for responsive stop
-      snd_pcm_drop(alsa_handle);
+      audio_stream_playback_drop(ctx.playback_handle);
    } else {
       // Drain buffered audio for smooth playback finish
-      snd_pcm_drain(alsa_handle);
+      audio_stream_playback_drain(ctx.playback_handle);
    }
-   snd_pcm_close(alsa_handle);
-#else
-   pa_simple_free(pa_handle);
-#endif
+   audio_stream_playback_close(ctx.playback_handle);
 
    // Auto-play next track only if song finished naturally (not manually stopped or error)
    if (error && song_finished_naturally) {
       musicCallback("next", NULL, &should_respond);
    }
 
+   // Free the heap-allocated args (caller allocated, thread frees)
+   free(args);
    return NULL;
 }
 
 void setMusicVolume(float val) {
    global_volume = val;
+}
+
+float getMusicVolume(void) {
+   return global_volume;
 }

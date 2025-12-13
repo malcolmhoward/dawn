@@ -39,6 +39,7 @@
 /* Local */
 #include "audio/flac_playback.h"
 #include "audio/mic_passthrough.h"
+#include "config/dawn_config.h"
 #include "conversation_manager.h"
 #include "core/command_router.h"
 #include "dawn.h"
@@ -799,7 +800,7 @@ void set_music_directory(const char *path) {
 }
 
 char *musicCallback(const char *actionName, char *value, int *should_respond) {
-   PlaybackArgs args;
+   PlaybackArgs *args = NULL;
    char strWildcards[MAX_FILENAME_LENGTH];
    char *result = NULL;
    int i = 0;
@@ -833,12 +834,12 @@ char *musicCallback(const char *actionName, char *value, int *should_respond) {
          }
       }
 
-      // Use custom music directory if set, otherwise use default from dawn.h
+      // Use custom music directory if set, otherwise use config default
       char *musicDir = NULL;
       if (custom_music_dir) {
          musicDir = strdup(custom_music_dir);
       } else {
-         musicDir = constructPathWithSubdirectory(MUSIC_DIR);
+         musicDir = constructPathWithSubdirectory(g_config.paths.music_dir);
       }
 
       if (!musicDir) {
@@ -877,15 +878,26 @@ char *musicCallback(const char *actionName, char *value, int *should_respond) {
       }
 
       if (playlist.count > 0) {
-         args.sink_name = getPcmPlaybackDevice();
-         args.file_name = playlist.filenames[current_track];
-         args.start_time = 0; /* For now set to zero. We may support other modes later. */
+         args = malloc(sizeof(PlaybackArgs));
+         if (!args) {
+            LOG_ERROR("Failed to allocate PlaybackArgs");
+            if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
+               *should_respond = 0;
+               return NULL;
+            } else {
+               return strdup("Failed to start music playback");
+            }
+         }
+         args->sink_name = getPcmPlaybackDevice();
+         args->file_name = playlist.filenames[current_track];
+         args->start_time = 0; /* For now set to zero. We may support other modes later. */
 
-         LOG_INFO("Playing: %s %s %d", args.sink_name, args.file_name, args.start_time);
+         LOG_INFO("Playing: %s %s %d", args->sink_name, args->file_name, args->start_time);
 
-         // Create the playback thread
-         if (pthread_create(&music_thread, NULL, playFlacAudio, &args)) {
+         // Create the playback thread (thread takes ownership of args and will free it)
+         if (pthread_create(&music_thread, NULL, playFlacAudio, args)) {
             LOG_ERROR("Error creating thread");
+            free(args);
 
             if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
                *should_respond = 0;
@@ -899,11 +911,19 @@ char *musicCallback(const char *actionName, char *value, int *should_respond) {
             *should_respond = 0;  // Music starts playing, no verbal response needed
             return NULL;
          } else {
-            *should_respond = 0;
+            // Extract just the filename from the full path for display
+            const char *filename = strrchr(playlist.filenames[current_track], '/');
+            if (filename) {
+               filename++;  // Skip the '/'
+            } else {
+               filename = playlist.filenames[current_track];
+            }
+            *should_respond = 1;
             result = malloc(MUSIC_CALLBACK_BUFFER_SIZE);
             if (result) {
-               snprintf(result, MUSIC_CALLBACK_BUFFER_SIZE, "Playing %s - found %d matching tracks",
-                        value, playlist.count);
+               snprintf(result, MUSIC_CALLBACK_BUFFER_SIZE,
+                        "Now playing: %s (track 1 of %d matching '%s')", filename, playlist.count,
+                        value);
             }
             return result;
          }
@@ -957,15 +977,26 @@ char *musicCallback(const char *actionName, char *value, int *should_respond) {
             current_track = 0;
          }
 
-         args.sink_name = getPcmPlaybackDevice();
-         args.file_name = playlist.filenames[current_track];
-         args.start_time = 0; /* For now set to zero. We may support other modes later. */
+         args = malloc(sizeof(PlaybackArgs));
+         if (!args) {
+            LOG_ERROR("Failed to allocate PlaybackArgs");
+            if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
+               *should_respond = 0;
+               return NULL;
+            } else {
+               return strdup("Failed to play next track");
+            }
+         }
+         args->sink_name = getPcmPlaybackDevice();
+         args->file_name = playlist.filenames[current_track];
+         args->start_time = 0; /* For now set to zero. We may support other modes later. */
 
-         LOG_INFO("Playing: %s %s %d", args.sink_name, args.file_name, args.start_time);
+         LOG_INFO("Playing: %s %s %d", args->sink_name, args->file_name, args->start_time);
 
-         // Create the playback thread
-         if (pthread_create(&music_thread, NULL, playFlacAudio, &args)) {
+         // Create the playback thread (thread takes ownership of args and will free it)
+         if (pthread_create(&music_thread, NULL, playFlacAudio, args)) {
             LOG_ERROR("Error creating music thread");
+            free(args);
 
             if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
                *should_respond = 0;
@@ -986,6 +1017,7 @@ char *musicCallback(const char *actionName, char *value, int *should_respond) {
             } else {
                filename = playlist.filenames[current_track];
             }
+            *should_respond = 1;
             result = malloc(MUSIC_CALLBACK_BUFFER_SIZE);
             if (result) {
                snprintf(result, MUSIC_CALLBACK_BUFFER_SIZE, "Playing next track: %s", filename);
@@ -997,6 +1029,7 @@ char *musicCallback(const char *actionName, char *value, int *should_respond) {
             *should_respond = 0;
             return NULL;
          } else {
+            *should_respond = 1;
             return strdup("No playlist available");
          }
       }
@@ -1015,15 +1048,26 @@ char *musicCallback(const char *actionName, char *value, int *should_respond) {
             current_track = playlist.count - 1;
          }
 
-         args.sink_name = getPcmPlaybackDevice();
-         args.file_name = playlist.filenames[current_track];
-         args.start_time = 0; /* For now set to zero. We may support other modes later. */
+         args = malloc(sizeof(PlaybackArgs));
+         if (!args) {
+            LOG_ERROR("Failed to allocate PlaybackArgs");
+            if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
+               *should_respond = 0;
+               return NULL;
+            } else {
+               return strdup("Failed to play previous track");
+            }
+         }
+         args->sink_name = getPcmPlaybackDevice();
+         args->file_name = playlist.filenames[current_track];
+         args->start_time = 0; /* For now set to zero. We may support other modes later. */
 
-         LOG_INFO("Playing: %s %s %d", args.sink_name, args.file_name, args.start_time);
+         LOG_INFO("Playing: %s %s %d", args->sink_name, args->file_name, args->start_time);
 
-         // Create the playback thread
-         if (pthread_create(&music_thread, NULL, playFlacAudio, &args)) {
+         // Create the playback thread (thread takes ownership of args and will free it)
+         if (pthread_create(&music_thread, NULL, playFlacAudio, args)) {
             LOG_ERROR("Error creating music thread");
+            free(args);
 
             if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
                *should_respond = 0;
@@ -1044,6 +1088,7 @@ char *musicCallback(const char *actionName, char *value, int *should_respond) {
             } else {
                filename = playlist.filenames[current_track];
             }
+            *should_respond = 1;
             result = malloc(MUSIC_CALLBACK_BUFFER_SIZE);
             if (result) {
                snprintf(result, MUSIC_CALLBACK_BUFFER_SIZE, "Playing previous track: %s", filename);
@@ -1055,6 +1100,7 @@ char *musicCallback(const char *actionName, char *value, int *should_respond) {
             *should_respond = 0;
             return NULL;
          } else {
+            *should_respond = 1;
             return strdup("No playlist available");
          }
       }
@@ -1308,9 +1354,28 @@ char *viewingCallback(const char *actionName, char *value, int *should_respond) 
 
 char *volumeCallback(const char *actionName, char *value, int *should_respond) {
    char *result = NULL;
-   float floatVol = wordToNumber(value);
+   float floatVol = -1.0f;
 
-   LOG_INFO("Music volume: %s/%0.2f", value, floatVol);
+   /* Try to parse as numeric string first (handles "100", "50", "0.5", etc) */
+   char *endptr;
+   double parsed = strtod(value, &endptr);
+   if (endptr != value && *endptr == '\0') {
+      /* Successfully parsed as number */
+      floatVol = (float)parsed;
+      /* If value > 2.0, assume it's a percentage (0-100) and convert to 0.0-1.0 */
+      if (floatVol > 2.0f) {
+         floatVol = floatVol / 100.0f;
+      }
+   } else {
+      /* Fall back to word parsing ("fifty", "one hundred", etc) */
+      floatVol = (float)wordToNumber(value);
+      /* wordToNumber returns 0-100 for percentages, convert to 0.0-1.0 */
+      if (floatVol > 2.0f) {
+         floatVol = floatVol / 100.0f;
+      }
+   }
+
+   LOG_INFO("Music volume: %s -> %.2f", value, floatVol);
 
    if (floatVol >= 0 && floatVol <= 2.0) {
       setMusicVolume(floatVol);

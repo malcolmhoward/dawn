@@ -26,6 +26,7 @@
 #include <string.h>
 
 /* Local */
+#include "config/dawn_config.h"
 #include "dawn.h"
 #include "logging.h"
 #include "mosquitto_comms.h"
@@ -43,6 +44,59 @@ static int remote_prompt_initialized = 0;
 
 // Topics excluded from remote clients (local-only commands)
 static const char *excluded_remote_topics[] = { "hud", "helmet", NULL };
+
+// Static buffer for localization context
+#define LOCALIZATION_BUFFER_SIZE 512
+static char localization_context[LOCALIZATION_BUFFER_SIZE];
+static int localization_initialized = 0;
+
+/**
+ * @brief Builds the localization context string from config
+ *
+ * Creates a context string like:
+ * "USER CONTEXT: Location: Atlanta, Georgia. Units: imperial. Timezone: America/New_York."
+ *
+ * Only includes fields that are configured (non-empty).
+ */
+static const char *get_localization_context(void) {
+   if (localization_initialized) {
+      return localization_context;
+   }
+
+   localization_context[0] = '\0';
+   int offset = 0;
+   int has_context = 0;
+
+   // Check if any localization fields are set
+   if (g_config.localization.location[0] != '\0' || g_config.localization.units[0] != '\0' ||
+       g_config.localization.timezone[0] != '\0') {
+      offset = snprintf(localization_context, LOCALIZATION_BUFFER_SIZE, "USER CONTEXT:");
+      has_context = 1;
+   }
+
+   if (g_config.localization.location[0] != '\0') {
+      offset += snprintf(localization_context + offset, LOCALIZATION_BUFFER_SIZE - offset,
+                         " Location: %s (use as default for weather).",
+                         g_config.localization.location);
+   }
+
+   if (g_config.localization.units[0] != '\0') {
+      offset += snprintf(localization_context + offset, LOCALIZATION_BUFFER_SIZE - offset,
+                         " Units: %s.", g_config.localization.units);
+   }
+
+   if (g_config.localization.timezone[0] != '\0') {
+      offset += snprintf(localization_context + offset, LOCALIZATION_BUFFER_SIZE - offset,
+                         " Timezone: %s.", g_config.localization.timezone);
+   }
+
+   if (has_context) {
+      snprintf(localization_context + offset, LOCALIZATION_BUFFER_SIZE - offset, "\n\n");
+   }
+
+   localization_initialized = 1;
+   return localization_context;
+}
 
 /**
  * @brief Builds a simple command prompt string from the commands_config_nuevo.json file
@@ -62,12 +116,13 @@ static void initialize_command_prompt(void) {
    struct json_object *typesObject = NULL;
    struct json_object *devicesObject = NULL;
 
-   // Start with a simple instruction
+   // Start with AI description, localization context, then command intro
    int prompt_len = snprintf(
        command_prompt, PROMPT_BUFFER_SIZE,
        "%s\n\n"  // Include the original AI_DESCRIPTION first
+       "%s"      // Localization context (empty string if not configured)
        "You can also execute commands for me. These are the commands available:\n\n",
-       AI_DESCRIPTION);
+       AI_DESCRIPTION, get_localization_context());
 
    LOG_INFO("Static prompt processed. Length: %d", prompt_len);
 
@@ -239,12 +294,13 @@ static void initialize_remote_command_prompt(void) {
    struct json_object *typesObject = NULL;
    struct json_object *devicesObject = NULL;
 
-   // Start with a simple instruction
+   // Start with AI description, localization context, then command intro
    int prompt_len = snprintf(
        remote_command_prompt, PROMPT_BUFFER_SIZE,
-       "%s\n\n"
+       "%s\n\n"  // Include the original AI_DESCRIPTION first
+       "%s"      // Localization context (empty string if not configured)
        "You can also execute commands for me. These are the commands available:\n\n",
-       AI_DESCRIPTION);
+       AI_DESCRIPTION, get_localization_context());
 
    // Read the config file
    configFile = fopen(CONFIG_FILE, "r");
