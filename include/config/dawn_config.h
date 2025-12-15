@@ -52,7 +52,6 @@ extern "C" {
  * General Configuration
  * ============================================================================= */
 typedef struct {
-   int config_version;             /* Schema version for migration */
    char ai_name[CONFIG_NAME_MAX];  /* Wake word (lowercase) */
    char log_file[CONFIG_PATH_MAX]; /* Empty = stdout, or path */
 } general_config_t;
@@ -71,7 +70,6 @@ typedef struct {
    char location[128];             /* Default location for weather/context */
    char timezone[CONFIG_NAME_MAX]; /* Empty = system default */
    char units[16];                 /* "imperial" or "metric" */
-   char language[8];               /* Language code (e.g., "en") */
 } localization_config_t;
 
 /* =============================================================================
@@ -142,11 +140,13 @@ typedef struct {
    char provider[16];              /* "openai" or "claude" */
    char model[CONFIG_NAME_MAX];    /* Model name */
    char endpoint[CONFIG_PATH_MAX]; /* Empty = default, or custom endpoint */
+   bool vision_enabled;            /* Model supports vision/image analysis */
 } llm_cloud_config_t;
 
 typedef struct {
    char endpoint[CONFIG_PATH_MAX]; /* Local llama-server endpoint */
    char model[CONFIG_NAME_MAX];    /* Optional model name */
+   bool vision_enabled;            /* Model supports vision (e.g., LLaVA, Qwen-VL) */
 } llm_local_config_t;
 
 typedef struct {

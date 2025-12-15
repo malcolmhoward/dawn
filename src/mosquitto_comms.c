@@ -1318,6 +1318,13 @@ char *viewingCallback(const char *actionName, char *value, int *should_respond) 
 
    *should_respond = 1;  // Always respond for viewing
 
+   /* Check if vision is available for the current LLM */
+   if (!is_vision_enabled_for_current_llm()) {
+      LOG_WARNING("Vision command received but vision is not enabled for current LLM type");
+      return strdup("Vision isn't available with the current AI model. "
+                    "Switch to cloud or enable vision for your local model in the config.");
+   }
+
    LOG_INFO("Viewing image received: %s", value);
 
    // Read the image file into memory.
@@ -1502,7 +1509,9 @@ char *searchCallback(const char *actionName, char *value, int *should_respond) {
 
    // Initialize web search module if needed
    if (!web_search_is_initialized()) {
-      if (web_search_init(NULL) != 0) {
+      // Use config endpoint if set, otherwise web_search_init uses SEARXNG_DEFAULT_URL
+      const char *endpoint = g_config.search.endpoint[0] != '\0' ? g_config.search.endpoint : NULL;
+      if (web_search_init(endpoint) != 0) {
          LOG_ERROR("searchCallback: Failed to initialize web search module");
          return strdup("Web search service is not available.");
       }
@@ -1552,17 +1561,24 @@ char *weatherCallback(const char *actionName, char *value, int *should_respond) 
       return strdup("Unknown weather action. Use: 'today', 'tomorrow', or 'week' with a location.");
    }
 
+   // Use provided location or fall back to config default
+   const char *location = value;
    if (value == NULL || strlen(value) == 0) {
-      LOG_WARNING("weatherCallback: No location provided");
-      return strdup("Please specify a location for the weather request.");
+      if (g_config.localization.location[0] != '\0') {
+         location = g_config.localization.location;
+         LOG_INFO("weatherCallback: Using default location from config: %s", location);
+      } else {
+         LOG_WARNING("weatherCallback: No location provided and no default configured");
+         return strdup("Please specify a location for the weather request.");
+      }
    }
 
    LOG_INFO("weatherCallback: Fetching %s weather for '%s'",
             forecast == FORECAST_WEEK ? "week"
                                       : (forecast == FORECAST_TOMORROW ? "tomorrow" : "today"),
-            value);
+            location);
 
-   weather_response_t *response = weather_get(value, forecast);
+   weather_response_t *response = weather_get(location, forecast);
    if (response) {
       if (response->error) {
          LOG_ERROR("weatherCallback: Weather error: %s", response->error);

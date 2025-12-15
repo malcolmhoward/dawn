@@ -109,7 +109,7 @@
 #define SERVER_HOST "0.0.0.0"
 #define SERVER_PORT 5000
 #define MAX_CLIENTS 5
-#define SOCKET_TIMEOUT_SEC 30
+// Note: socket timeout is now configured via [network] socket_timeout_sec in config file
 #define MAX_DATA_SIZE (10 * 1024 * 1024)  // 10MB max
 #define MAX_RETRIES 5
 

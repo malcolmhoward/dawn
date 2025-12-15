@@ -672,12 +672,19 @@ void initialize_text_to_speech(char *pcm_device) {
    tts_handle.pcm_playback_device[MAX_WORD_LENGTH] = '\0';
 
    // Load the voice model from models/ directory
+   // Construct paths from config voice_model name: ../models/{voice_model}.onnx and .json
+   char model_path[512], model_json_path[512];
+   snprintf(model_path, sizeof(model_path), "../models/%s.onnx", g_config.tts.voice_model);
+   snprintf(model_json_path, sizeof(model_json_path), "../models/%s.onnx.json",
+            g_config.tts.voice_model);
+
    std::optional<SpeakerId> speakerIdOpt = 0;
    try {
-      loadVoice(tts_handle.config, "../models/en_GB-alba-medium.onnx",
-                "../models/en_GB-alba-medium.onnx.json", tts_handle.voice, speakerIdOpt, false);
+      loadVoice(tts_handle.config, model_path, model_json_path, tts_handle.voice, speakerIdOpt,
+                false);
+      LOG_INFO("Loaded TTS voice model: %s", g_config.tts.voice_model);
    } catch (const std::exception &e) {
-      LOG_ERROR("Failed to load voice model: %s", e.what());
+      LOG_ERROR("Failed to load voice model '%s': %s", g_config.tts.voice_model, e.what());
       return;
    }
 

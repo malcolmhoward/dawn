@@ -59,6 +59,16 @@ static int dawn_handle_client_connection(int client_fd, struct sockaddr_in *clie
 
 // Note: These functions are non-static for worker thread access (see dawn_server.h)
 
+// === Config Accessors ===
+
+/**
+ * @brief Get socket timeout from config.
+ * @return Socket timeout in seconds (default 30, set by config_set_defaults).
+ */
+static inline int get_socket_timeout_sec(void) {
+   return g_config.network.socket_timeout_sec;
+}
+
 // === Utility Functions ===
 
 uint16_t dawn_calculate_checksum(const uint8_t *data, size_t length) {
@@ -468,7 +478,7 @@ static void drain_stale_data(int socket_fd) {
    }
 
    // Restore normal timeout
-   timeout.tv_sec = SOCKET_TIMEOUT_SEC;
+   timeout.tv_sec = get_socket_timeout_sec();
    timeout.tv_usec = 0;
    setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
 }
@@ -538,7 +548,7 @@ int dawn_send_data_chunks(dawn_client_session_t *session, const uint8_t *data, s
          result = dawn_read_exact(session->socket_fd, ack_header, PACKET_HEADER_SIZE);
 
          // Reset timeout
-         timeout.tv_sec = SOCKET_TIMEOUT_SEC;
+         timeout.tv_sec = get_socket_timeout_sec();
          timeout.tv_usec = 0;
          if (setsockopt(session->socket_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) <
              0) {
@@ -605,9 +615,9 @@ static int dawn_handle_client_connection(int client_fd, struct sockaddr_in *clie
    }
    LOG_INFO("%s: Client connected", session.client_ip);
 
-   // Set socket timeout
+   // Set socket timeout from config (or default)
    struct timeval timeout;
-   timeout.tv_sec = SOCKET_TIMEOUT_SEC;
+   timeout.tv_sec = get_socket_timeout_sec();
    timeout.tv_usec = 0;
    if (setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) {
       LOG_WARNING("%s: Failed to set receive timeout: %s", session.client_ip, strerror(errno));

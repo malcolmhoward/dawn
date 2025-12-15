@@ -35,10 +35,11 @@ DAWN integrates modern speech recognition, large language models, and text-to-sp
   - Extensible device callback architecture
 
 - **LLM Tools**
-  - **Web Search** - Voice-activated web search via SearXNG (self-hosted, privacy-focused)
+  - **Web Search** - Voice-activated search via SearXNG (self-hosted, privacy-focused)
+  - **URL Fetcher** - Fetch and read web pages; large pages auto-summarized via local LLM
   - **Weather** - Real-time weather and forecasts via Open-Meteo API (free, no API key)
   - **Calculator** - Mathematical expression evaluation with tinyexpr engine
-  - LLM automatically invokes tools and summarizes results naturally
+  - LLM automatically invokes tools and incorporates results into responses
 
 ### Performance Highlights
 - **ASR Performance** (Jetson GPU acceleration):
@@ -436,8 +437,13 @@ See the example in the repository. Configure your MQTT broker and device mapping
 DAWN includes several tools that the LLM can invoke automatically:
 
 - **Calculator** - Built-in, no setup required. Ask "What's 15% of 847?" or "Calculate the square root of 144"
-- **Weather** - Uses Open-Meteo API (free, no API key required). Ask "What's the weather in Atlanta?" or "Will it rain tomorrow?"
-- **Web Search** - Requires SearXNG setup (below). Ask "Search for the latest news about Tony Stark"
+- **Weather** - Uses Open-Meteo API (free, no API key). Ask "What's the weather in Atlanta?" or "Will it rain tomorrow?"
+- **Web Search** - Requires SearXNG (below). Ask "Search for the latest news about Tony Stark"
+- **URL Fetcher** - Built-in. Ask "Read the article at example.com/page" or "What does this URL say?"
+
+**How summarization works:** When search results or fetched pages exceed ~3KB, DAWN can summarize the content before passing it to the main LLM. This keeps context windows manageable and responses fast. Summarization can use `local` (dedicated llama-server) or `default` (same LLM as conversation). Configure via `[search.summarizer]` in `dawn.toml`.
+
+**FlareSolverr (optional):** For JavaScript-heavy sites that block simple fetches, DAWN supports [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr) as a headless browser proxy. Enable via `[url_fetcher.flaresolverr]` in `dawn.toml`.
 
 #### SearXNG Setup (for Web Search)
 

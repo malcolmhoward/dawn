@@ -50,6 +50,130 @@ static const char *excluded_remote_topics[] = { "hud", "helmet", NULL };
 static char localization_context[LOCALIZATION_BUFFER_SIZE];
 static int localization_initialized = 0;
 
+// Static buffer for dynamic system instructions
+#define SYSTEM_INSTRUCTIONS_BUFFER_SIZE 8192
+static char system_instructions_buffer[SYSTEM_INSTRUCTIONS_BUFFER_SIZE];
+static int system_instructions_initialized = 0;
+
+/**
+ * @brief Checks if search functionality is available
+ *
+ * Search requires a configured SearXNG endpoint.
+ */
+static int is_search_enabled(void) {
+   return g_config.search.endpoint[0] != '\0';
+}
+
+/**
+ * @brief Checks if vision is enabled for the current LLM type
+ *
+ * Vision availability is controlled by the vision_enabled setting for the
+ * current LLM type (cloud or local). Cloud models typically support vision,
+ * while local models may or may not (e.g., LLaVA, Qwen-VL support vision).
+ *
+ * @return 1 if vision is available, 0 otherwise
+ */
+int is_vision_enabled_for_current_llm(void) {
+   if (strcmp(g_config.llm.type, "cloud") == 0) {
+      return g_config.llm.cloud.vision_enabled;
+   } else if (strcmp(g_config.llm.type, "local") == 0) {
+      return g_config.llm.local.vision_enabled;
+   }
+   return 0;
+}
+
+
+/**
+ * @brief Builds dynamic system instructions based on enabled features
+ *
+ * Assembles AI_RULES_CORE plus feature-specific rules based on config.
+ * This ensures the LLM only sees instructions for features that are available.
+ *
+ * Features checked:
+ * - Vision: Requires vision_enabled for current LLM type (cloud or local)
+ * - Weather: Always available (Open-Meteo free API)
+ * - Search: Requires SearXNG endpoint configured
+ * - Calculator: Always available (local computation)
+ * - URL: Always available (basic HTTP fetch)
+ *
+ * @return Pointer to static buffer containing assembled instructions
+ */
+const char *get_system_instructions(void) {
+   if (system_instructions_initialized) {
+      return system_instructions_buffer;
+   }
+
+   int len = 0;
+   int remaining = SYSTEM_INSTRUCTIONS_BUFFER_SIZE;
+
+   // Always include core rules
+   len += snprintf(system_instructions_buffer + len, remaining - len, "%s\n", AI_RULES_CORE);
+
+   // Build capabilities list based on what's enabled
+   len += snprintf(system_instructions_buffer + len, remaining - len, "\nCAPABILITIES: You CAN ");
+   int first_cap = 1;
+
+   // Weather is always available
+   if (!first_cap)
+      len += snprintf(system_instructions_buffer + len, remaining - len, ", ");
+   len += snprintf(system_instructions_buffer + len, remaining - len, "get weather");
+   first_cap = 0;
+
+   // Search if configured
+   if (is_search_enabled()) {
+      len += snprintf(system_instructions_buffer + len, remaining - len, ", perform web searches");
+   }
+
+   // Calculator always available
+   len += snprintf(system_instructions_buffer + len, remaining - len, ", do calculations");
+
+   // URL fetcher always available
+   len += snprintf(system_instructions_buffer + len, remaining - len, ", fetch URLs");
+
+   // Vision if enabled
+   if (is_vision_enabled_for_current_llm()) {
+      len += snprintf(system_instructions_buffer + len, remaining - len,
+                      ", analyze images when asked what you see");
+   }
+
+   len += snprintf(system_instructions_buffer + len, remaining - len, ".\n\n");
+
+   // Add feature-specific rules based on config
+   if (is_vision_enabled_for_current_llm()) {
+      len += snprintf(system_instructions_buffer + len, remaining - len, "%s\n", AI_RULES_VISION);
+      LOG_INFO("System instructions: Vision rules included (cloud LLM with vision support)");
+   }
+
+   // Weather always available
+   len += snprintf(system_instructions_buffer + len, remaining - len, "%s\n", AI_RULES_WEATHER);
+
+   // Search only if endpoint configured
+   if (is_search_enabled()) {
+      len += snprintf(system_instructions_buffer + len, remaining - len, "%s\n", AI_RULES_SEARCH);
+      LOG_INFO("System instructions: Search rules included (SearXNG endpoint: %s)",
+               g_config.search.endpoint);
+   } else {
+      LOG_INFO("System instructions: Search rules EXCLUDED (no SearXNG endpoint configured)");
+   }
+
+   // Calculator always available
+   len += snprintf(system_instructions_buffer + len, remaining - len, "%s\n", AI_RULES_CALCULATOR);
+
+   // URL fetcher always available
+   len += snprintf(system_instructions_buffer + len, remaining - len, "%s\n", AI_RULES_URL);
+
+   // Add examples
+   len += snprintf(system_instructions_buffer + len, remaining - len, "%s", AI_EXAMPLES_CORE);
+
+   // Weather example always included
+   len += snprintf(system_instructions_buffer + len, remaining - len, "%s\n", AI_EXAMPLES_WEATHER);
+
+   system_instructions_initialized = 1;
+   LOG_INFO("Built dynamic system instructions (%d bytes)", len);
+
+   return system_instructions_buffer;
+}
+
 /**
  * @brief Builds the localization context string from config
  *
@@ -99,6 +223,20 @@ static const char *get_localization_context(void) {
 }
 
 /**
+ * @brief Gets the persona description from config or falls back to compile-time default
+ *
+ * Returns g_config.persona.description if set, otherwise AI_PERSONA from dawn.h.
+ * This allows runtime customization of the AI personality via config file while
+ * keeping the system instructions (AI_SYSTEM_INSTRUCTIONS) always active.
+ */
+static const char *get_persona_description(void) {
+   if (g_config.persona.description[0] != '\0') {
+      return g_config.persona.description;
+   }
+   return AI_PERSONA;
+}
+
+/**
  * @brief Builds a simple command prompt string from the commands_config_nuevo.json file
  *
  * This function reads the config file, extracts command patterns,
@@ -116,20 +254,23 @@ static void initialize_command_prompt(void) {
    struct json_object *typesObject = NULL;
    struct json_object *devicesObject = NULL;
 
-   // Start with AI description, localization context, then command intro
+   // Start with persona, system instructions, localization context, then command intro
+   // Persona is replaceable via config. System instructions are built dynamically based on
+   // which features are enabled (search, vision, etc.)
    int prompt_len = snprintf(
        command_prompt, PROMPT_BUFFER_SIZE,
-       "%s\n\n"  // Include the original AI_DESCRIPTION first
+       "%s\n\n"  // Persona (from config or AI_PERSONA)
+       "%s\n\n"  // System instructions (dynamically built based on enabled features)
        "%s"      // Localization context (empty string if not configured)
        "You can also execute commands for me. These are the commands available:\n\n",
-       AI_DESCRIPTION, get_localization_context());
+       get_persona_description(), get_system_instructions(), get_localization_context());
 
    LOG_INFO("Static prompt processed. Length: %d", prompt_len);
 
-   // Read the config file
-   configFile = fopen(CONFIG_FILE, "r");
+   // Read the commands config file (path from g_config)
+   configFile = fopen(g_config.paths.commands_config, "r");
    if (configFile == NULL) {
-      LOG_ERROR("Unable to open config file: %s", CONFIG_FILE);
+      LOG_ERROR("Unable to open commands config file: %s", g_config.paths.commands_config);
       return;
    }
 
@@ -294,18 +435,21 @@ static void initialize_remote_command_prompt(void) {
    struct json_object *typesObject = NULL;
    struct json_object *devicesObject = NULL;
 
-   // Start with AI description, localization context, then command intro
+   // Start with persona, system instructions, localization context, then command intro
+   // Persona is replaceable via config. System instructions are built dynamically based on
+   // which features are enabled (search, vision, etc.)
    int prompt_len = snprintf(
        remote_command_prompt, PROMPT_BUFFER_SIZE,
-       "%s\n\n"  // Include the original AI_DESCRIPTION first
+       "%s\n\n"  // Persona (from config or AI_PERSONA)
+       "%s\n\n"  // System instructions (dynamically built based on enabled features)
        "%s"      // Localization context (empty string if not configured)
        "You can also execute commands for me. These are the commands available:\n\n",
-       AI_DESCRIPTION, get_localization_context());
+       get_persona_description(), get_system_instructions(), get_localization_context());
 
-   // Read the config file
-   configFile = fopen(CONFIG_FILE, "r");
+   // Read the commands config file (path from g_config)
+   configFile = fopen(g_config.paths.commands_config, "r");
    if (configFile == NULL) {
-      LOG_ERROR("Unable to open config file: %s", CONFIG_FILE);
+      LOG_ERROR("Unable to open commands config file: %s", g_config.paths.commands_config);
       remote_prompt_initialized = 1;
       return;
    }
@@ -535,7 +679,7 @@ int parse_llm_response_for_commands(const char *llm_response, struct mosquitto *
                   const char *device = json_object_get_string(device_obj);
 
                   // Read config to get topic for device
-                  FILE *configFile = fopen(CONFIG_FILE, "r");
+                  FILE *configFile = fopen(g_config.paths.commands_config, "r");
                   if (configFile) {
                      char buffer[10 * 1024];
                      int bytes_read = fread(buffer, 1, sizeof(buffer), configFile);

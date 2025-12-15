@@ -245,24 +245,33 @@ void llm_init(const char *cloud_provider_override) {
       return;
    }
 
-   // Handle command-line override
+   // Priority: CLI override > config file > auto-detect
+   const char *provider_source = NULL;
    if (cloud_provider_override != NULL) {
-      if (strcmp(cloud_provider_override, "openai") == 0) {
+      provider_source = cloud_provider_override;
+   } else if (g_config.llm.cloud.provider[0] != '\0') {
+      provider_source = g_config.llm.cloud.provider;
+   }
+
+   if (provider_source != NULL) {
+      if (strcmp(provider_source, "openai") == 0) {
          if (!openai_available) {
             LOG_ERROR("OpenAI requested but no API key available");
             exit(1);
          }
          current_cloud_provider = CLOUD_PROVIDER_OPENAI;
-         LOG_INFO("Cloud provider set to OpenAI (command-line override)");
-      } else if (strcmp(cloud_provider_override, "claude") == 0) {
+         LOG_INFO("Cloud provider set to OpenAI (%s)",
+                  cloud_provider_override ? "CLI override" : "config file");
+      } else if (strcmp(provider_source, "claude") == 0) {
          if (!claude_available) {
             LOG_ERROR("Claude requested but no API key available");
             exit(1);
          }
          current_cloud_provider = CLOUD_PROVIDER_CLAUDE;
-         LOG_INFO("Cloud provider set to Claude (command-line override)");
+         LOG_INFO("Cloud provider set to Claude (%s)",
+                  cloud_provider_override ? "CLI override" : "config file");
       } else {
-         LOG_ERROR("Unknown cloud provider: %s (valid: openai, claude)", cloud_provider_override);
+         LOG_ERROR("Unknown cloud provider: %s (valid: openai, claude)", provider_source);
          exit(1);
       }
    } else {
@@ -281,25 +290,57 @@ void llm_init(const char *cloud_provider_override) {
 }
 
 void llm_set_type(llm_type_t type) {
-   current_type = type;
-
    if (type == LLM_CLOUD) {
+      // Check if API key is available for the current cloud provider
+      int has_api_key = 0;
+      const char *provider_name = "unknown";
+
       if (current_cloud_provider == CLOUD_PROVIDER_CLAUDE) {
-         snprintf(llm_url, sizeof(llm_url), "%s", CLAUDE_URL);
+         has_api_key = g_secrets.claude_api_key[0] != '\0';
+         provider_name = "Claude";
+      } else {
+         has_api_key = g_secrets.openai_api_key[0] != '\0';
+         provider_name = "OpenAI";
+      }
+
+      if (!has_api_key) {
+         LOG_WARNING("Cannot switch to cloud LLM: %s API key not configured in secrets.toml - "
+                     "staying on local LLM",
+                     provider_name);
+         text_to_speech("Cannot switch to cloud. API key not configured. Staying on local.");
+         // Don't change current_type, stay on whatever we were using
+         return;
+      }
+
+      // API key available, proceed with switch
+      current_type = type;
+
+      // Use config endpoint if set, otherwise use default provider URLs
+      const char *cloud_endpoint = g_config.llm.cloud.endpoint[0] != '\0'
+                                       ? g_config.llm.cloud.endpoint
+                                       : NULL;
+      if (current_cloud_provider == CLOUD_PROVIDER_CLAUDE) {
+         snprintf(llm_url, sizeof(llm_url), "%s", cloud_endpoint ? cloud_endpoint : CLAUDE_URL);
          text_to_speech("Setting AI to cloud LLM using Claude.");
       } else {
-         snprintf(llm_url, sizeof(llm_url), "%s", CLOUDAI_URL);
+         snprintf(llm_url, sizeof(llm_url), "%s", cloud_endpoint ? cloud_endpoint : CLOUDAI_URL);
          text_to_speech("Setting AI to cloud LLM using OpenAI.");
       }
-      LOG_INFO("LLM set to CLOUD (%s)", llm_get_cloud_provider_name());
+      if (cloud_endpoint) {
+         LOG_INFO("LLM set to CLOUD (%s) via custom endpoint: %s", llm_get_cloud_provider_name(),
+                  cloud_endpoint);
+      } else {
+         LOG_INFO("LLM set to CLOUD (%s)", llm_get_cloud_provider_name());
+      }
    } else if (type == LLM_LOCAL) {
+      current_type = type;
       snprintf(llm_url, sizeof(llm_url), "%s", g_config.llm.local.endpoint);
       text_to_speech("Setting AI to local LLM.");
       LOG_INFO("LLM set to LOCAL (%s)", g_config.llm.local.endpoint);
    }
 
    // Update metrics with current LLM configuration
-   metrics_update_llm_config(type, current_cloud_provider);
+   metrics_update_llm_config(current_type, current_cloud_provider);
 }
 
 llm_type_t llm_get_type(void) {

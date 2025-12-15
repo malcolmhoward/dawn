@@ -35,6 +35,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "config/dawn_config.h"
 #include "logging.h"
 #include "tools/curl_buffer.h"
 #include "tools/html_parser.h"
@@ -77,6 +78,47 @@ static const content_type_entry_t ALLOWED_CONTENT_TYPES[] = {
    { "text/html", 9 },        { "text/plain", 10 }, { "application/xhtml+xml", 21 },
    { "application/xml", 15 }, { "text/xml", 8 },    { NULL, 0 }
 };
+
+// =============================================================================
+// Config Accessor Functions for FlareSolverr
+// =============================================================================
+
+/**
+ * @brief Check if FlareSolverr is enabled in config
+ */
+static inline int flaresolverr_is_enabled(void) {
+   return g_config.url_fetcher.flaresolverr.enabled;
+}
+
+/**
+ * @brief Get FlareSolverr endpoint from config, with fallback to default
+ */
+static inline const char *flaresolverr_get_endpoint(void) {
+   if (g_config.url_fetcher.flaresolverr.endpoint[0] != '\0') {
+      return g_config.url_fetcher.flaresolverr.endpoint;
+   }
+   return FLARESOLVERR_ENDPOINT;
+}
+
+/**
+ * @brief Get FlareSolverr timeout from config, with fallback to default
+ */
+static inline int flaresolverr_get_timeout(void) {
+   if (g_config.url_fetcher.flaresolverr.timeout_sec > 0) {
+      return g_config.url_fetcher.flaresolverr.timeout_sec;
+   }
+   return FLARESOLVERR_TIMEOUT_SEC;
+}
+
+/**
+ * @brief Get FlareSolverr max response size from config, with fallback to default
+ */
+static inline size_t flaresolverr_get_max_response(void) {
+   if (g_config.url_fetcher.flaresolverr.max_response_bytes > 0) {
+      return g_config.url_fetcher.flaresolverr.max_response_bytes;
+   }
+   return FLARESOLVERR_MAX_RESPONSE;
+}
 
 /**
  * @brief Check if a CURL error is retryable (transient failure)
@@ -153,6 +195,17 @@ int url_fetcher_init(void) {
 
    module_initialized = 1;
    pthread_mutex_unlock(&module_mutex);
+
+   // Load whitelist entries from config
+   for (int i = 0; i < g_config.url_fetcher.whitelist_count; i++) {
+      if (g_config.url_fetcher.whitelist[i] && g_config.url_fetcher.whitelist[i][0] != '\0') {
+         if (url_whitelist_add(g_config.url_fetcher.whitelist[i]) == 0) {
+            LOG_INFO("url_fetcher: Loaded whitelist entry from config: %s",
+                     g_config.url_fetcher.whitelist[i]);
+         }
+      }
+   }
+
    return URL_FETCH_SUCCESS;
 }
 
@@ -444,7 +497,7 @@ static int flaresolverr_is_available(void) {
       return 0;
    }
 
-   curl_easy_setopt(curl, CURLOPT_URL, FLARESOLVERR_ENDPOINT);
+   curl_easy_setopt(curl, CURLOPT_URL, flaresolverr_get_endpoint());
    curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 2);
    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 2);
@@ -457,7 +510,7 @@ static int flaresolverr_is_available(void) {
 
    if (!flaresolverr_available_cached) {
       LOG_INFO("url_fetcher: FlareSolverr not available at %s (cached for %ds)",
-               FLARESOLVERR_ENDPOINT, FLARESOLVERR_AVAILABILITY_CACHE_TTL_SEC);
+               flaresolverr_get_endpoint(), FLARESOLVERR_AVAILABILITY_CACHE_TTL_SEC);
    }
 
    return flaresolverr_available_cached;
@@ -717,7 +770,7 @@ static int flaresolverr_fetch(const char *url, char **out_html, size_t *out_size
    }
 
    snprintf(request_body, body_size, "{\"cmd\":\"request.get\",\"url\":\"%s\",\"maxTimeout\":%d}",
-            escaped_url, FLARESOLVERR_TIMEOUT_SEC * 1000);
+            escaped_url, flaresolverr_get_timeout() * 1000);
    free(escaped_url);
 
    LOG_INFO("url_fetcher: Trying FlareSolverr fallback for %s", url);
@@ -730,19 +783,19 @@ static int flaresolverr_fetch(const char *url, char **out_html, size_t *out_size
    }
 
    curl_buffer_t buffer;
-   curl_buffer_init_with_max(&buffer, FLARESOLVERR_MAX_RESPONSE);
+   curl_buffer_init_with_max(&buffer, flaresolverr_get_max_response());
 
    struct curl_slist *headers = NULL;
    headers = curl_slist_append(headers, "Content-Type: application/json");
 
-   curl_easy_setopt(curl, CURLOPT_URL, FLARESOLVERR_ENDPOINT);
+   curl_easy_setopt(curl, CURLOPT_URL, flaresolverr_get_endpoint());
    curl_easy_setopt(curl, CURLOPT_POST, 1L);
    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request_body);
    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_buffer_write_callback);
    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
    curl_easy_setopt(curl, CURLOPT_TIMEOUT,
-                    FLARESOLVERR_TIMEOUT_SEC + 10);  // Extra buffer for processing
+                    flaresolverr_get_timeout() + 10);  // Extra buffer for processing
    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5);
 
    CURLcode res = curl_easy_perform(curl);
@@ -1263,7 +1316,8 @@ int url_fetch_content_with_base(const char *url,
       curl_easy_cleanup(curl);
 
       // If we got 403 Forbidden, try FlareSolverr as fallback (Cloudflare/bot protection)
-      if (http_code == 403 && flaresolverr_is_available()) {
+      // Only attempt if FlareSolverr is enabled in config AND available
+      if (http_code == 403 && flaresolverr_is_enabled() && flaresolverr_is_available()) {
          char *flare_html = NULL;
          size_t flare_size = 0;
          int flare_result = flaresolverr_fetch(url, &flare_html, &flare_size);

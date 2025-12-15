@@ -37,7 +37,12 @@
 extern "C" {
 #endif
 
-#define WORKER_POOL_SIZE 4
+// Maximum worker pool size (compile-time limit for static allocation)
+#define WORKER_POOL_MAX_SIZE 8
+
+// Default worker count if not specified in config
+#define WORKER_POOL_DEFAULT_SIZE 4
+
 #define WORKER_LLM_TIMEOUT_MS 30000  // 30 second LLM timeout
 
 /**
@@ -82,7 +87,8 @@ typedef struct {
  * @brief Initialize worker pool (EAGER initialization)
  *
  * All worker resources are allocated at startup:
- * - WORKER_POOL_SIZE ASR contexts created immediately
+ * - Worker count from config (clamped to WORKER_POOL_MAX_SIZE)
+ * - ASR contexts created immediately for each worker
  * - Worker threads spawned and waiting for clients
  * - Fail fast if model load fails (don't wait for first client)
  *
@@ -130,16 +136,23 @@ int worker_pool_assign_client(int client_fd, session_t *session);
 // =============================================================================
 
 /**
+ * @brief Get total worker count (from config)
+ *
+ * @return Total number of workers in the pool
+ */
+int worker_pool_size(void);
+
+/**
  * @brief Get worker utilization for metrics
  *
- * @return Number of active workers (0 to WORKER_POOL_SIZE)
+ * @return Number of active (busy) workers
  */
 int worker_pool_active_count(void);
 
 /**
  * @brief Get worker state for metrics display
  *
- * @param worker_id Worker ID (0 to WORKER_POOL_SIZE-1)
+ * @param worker_id Worker ID (0 to worker_pool_size()-1)
  * @return Worker state, or WORKER_STATE_SHUTDOWN if invalid ID
  */
 worker_state_t worker_pool_get_state(int worker_id);

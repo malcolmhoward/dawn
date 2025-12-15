@@ -26,6 +26,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "config/dawn_config.h"
 #include "llm/llm_command_parser.h"
 #include "llm/llm_interface.h"
 #include "logging.h"
@@ -546,7 +547,7 @@ void session_cleanup_expired(void) {
    for (int i = 1; i < MAX_SESSIONS; i++) {  // Skip local session (i=0)
       if (sessions[i] != NULL) {
          time_t idle_time = now - sessions[i]->last_activity;
-         if (idle_time > SESSION_TIMEOUT_SEC) {
+         if (idle_time > g_config.network.session_timeout_sec) {
             expired_ids[expired_count++] = sessions[i]->session_id;
          }
       }
@@ -556,7 +557,8 @@ void session_cleanup_expired(void) {
 
    // Destroy expired sessions
    for (int i = 0; i < expired_count; i++) {
-      LOG_INFO("Session %u expired (idle > %d seconds)", expired_ids[i], SESSION_TIMEOUT_SEC);
+      LOG_INFO("Session %u expired (idle > %d seconds)", expired_ids[i],
+               g_config.network.session_timeout_sec);
       session_destroy(expired_ids[i]);
    }
 }

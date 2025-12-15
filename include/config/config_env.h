@@ -71,6 +71,25 @@ void config_dump(const dawn_config_t *config);
  */
 void config_dump_toml(const dawn_config_t *config);
 
+/**
+ * @brief Dump all settings with sources and environment variable names
+ *
+ * Prints each configuration setting with:
+ * - Setting name (TOML path)
+ * - Current value
+ * - Environment variable name
+ * - Inferred source (default, file, env)
+ *
+ * Used by --dump-settings CLI option.
+ *
+ * @param config Configuration to dump
+ * @param secrets Secrets to check (for API key env vars)
+ * @param config_file_loaded Path to loaded config file (NULL if none)
+ */
+void config_dump_settings(const dawn_config_t *config,
+                          const secrets_config_t *secrets,
+                          const char *config_file_loaded);
+
 #ifdef __cplusplus
 }
 #endif

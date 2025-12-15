@@ -3,6 +3,10 @@ libvosk.so
 vosk-model*/
 include/secrets.h
 
+# Runtime config files (user-specific, may contain secrets)
+dawn.toml
+secrets.toml
+
 # Debug recordings
 aec_*.wav
 mic_*.wav

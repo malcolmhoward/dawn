@@ -129,10 +129,9 @@ static void parse_general(toml_table_t *table, general_config_t *config) {
    if (!table)
       return;
 
-   static const char *const known_keys[] = { "config_version", "ai_name", "log_file", NULL };
+   static const char *const known_keys[] = { "ai_name", "log_file", NULL };
    warn_unknown_keys(table, "general", known_keys);
 
-   PARSE_INT(table, "config_version", config->config_version);
    PARSE_STRING(table, "ai_name", config->ai_name);
    PARSE_STRING(table, "log_file", config->log_file);
 }
@@ -151,13 +150,12 @@ static void parse_localization(toml_table_t *table, localization_config_t *confi
    if (!table)
       return;
 
-   static const char *const known_keys[] = { "location", "timezone", "units", "language", NULL };
+   static const char *const known_keys[] = { "location", "timezone", "units", NULL };
    warn_unknown_keys(table, "localization", known_keys);
 
    PARSE_STRING(table, "location", config->location);
    PARSE_STRING(table, "timezone", config->timezone);
    PARSE_STRING(table, "units", config->units);
-   PARSE_STRING(table, "language", config->language);
 }
 
 static void parse_audio_bargein(toml_table_t *table, bargein_config_t *config) {
@@ -269,23 +267,26 @@ static void parse_llm_cloud(toml_table_t *table, llm_cloud_config_t *config) {
    if (!table)
       return;
 
-   static const char *const known_keys[] = { "provider", "model", "endpoint", NULL };
+   static const char *const known_keys[] = { "provider", "model", "endpoint", "vision_enabled",
+                                             NULL };
    warn_unknown_keys(table, "llm.cloud", known_keys);
 
    PARSE_STRING(table, "provider", config->provider);
    PARSE_STRING(table, "model", config->model);
    PARSE_STRING(table, "endpoint", config->endpoint);
+   PARSE_BOOL(table, "vision_enabled", config->vision_enabled);
 }
 
 static void parse_llm_local(toml_table_t *table, llm_local_config_t *config) {
    if (!table)
       return;
 
-   static const char *const known_keys[] = { "endpoint", "model", NULL };
+   static const char *const known_keys[] = { "endpoint", "model", "vision_enabled", NULL };
    warn_unknown_keys(table, "llm.local", known_keys);
 
    PARSE_STRING(table, "endpoint", config->endpoint);
    PARSE_STRING(table, "model", config->model);
+   PARSE_BOOL(table, "vision_enabled", config->vision_enabled);
 }
 
 static void parse_llm(toml_table_t *table, llm_config_t *config) {

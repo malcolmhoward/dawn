@@ -35,4 +35,28 @@ const char *get_remote_command_prompt(void);
 // Function to parse LLM responses for commands
 int parse_llm_response_for_commands(const char *llm_response, struct mosquitto *mosq);
 
+/**
+ * @brief Builds dynamic system instructions based on enabled features
+ *
+ * Assembles core rules plus feature-specific rules based on config settings.
+ * Only includes instructions for features that are actually enabled:
+ * - Vision: Requires vision_enabled for current LLM type (cloud or local)
+ * - Search: Requires SearXNG endpoint configured
+ * - Weather/Calculator/URL: Always available
+ *
+ * @return Pointer to static buffer containing assembled instructions
+ */
+const char *get_system_instructions(void);
+
+/**
+ * @brief Checks if vision is enabled for the current LLM type
+ *
+ * Vision availability is controlled by the vision_enabled setting for the
+ * current LLM type (cloud or local). Use this at command execution time
+ * to check if vision can be processed.
+ *
+ * @return 1 if vision is available for current LLM, 0 otherwise
+ */
+int is_vision_enabled_for_current_llm(void);
+
 #endif  // LLM_COMMAND_PARSER_H

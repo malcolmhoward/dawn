@@ -49,6 +49,7 @@
 #include <unistd.h>
 
 #include "asr/asr_interface.h"
+#include "config/dawn_config.h"
 #include "core/command_router.h"
 #include "core/session_manager.h"
 #include "dawn.h"
@@ -63,7 +64,9 @@
 // Module State
 // =============================================================================
 
-static worker_context_t workers[WORKER_POOL_SIZE];
+// Static array sized to maximum; actual_worker_count determines how many are used
+static worker_context_t workers[WORKER_POOL_MAX_SIZE];
+static int actual_worker_count = 0;  // Set from config at init
 static bool pool_initialized = false;
 
 // Pool-level mutex for finding/assigning workers
@@ -100,11 +103,23 @@ int worker_pool_init(asr_engine_type_t engine_type, const char *model_path) {
       return 1;
    }
 
-   LOG_INFO("Initializing worker pool with %d workers (%s engine)", WORKER_POOL_SIZE,
+   // Determine worker count from config (clamped to valid range)
+   int config_workers = g_config.network.workers;
+   if (config_workers <= 0) {
+      actual_worker_count = WORKER_POOL_DEFAULT_SIZE;
+   } else if (config_workers > WORKER_POOL_MAX_SIZE) {
+      LOG_WARNING("Config network.workers=%d exceeds max %d, clamping", config_workers,
+                  WORKER_POOL_MAX_SIZE);
+      actual_worker_count = WORKER_POOL_MAX_SIZE;
+   } else {
+      actual_worker_count = config_workers;
+   }
+
+   LOG_INFO("Initializing worker pool with %d workers (%s engine)", actual_worker_count,
             asr_engine_name(engine_type));
 
    // Initialize all worker contexts
-   for (int i = 0; i < WORKER_POOL_SIZE; i++) {
+   for (int i = 0; i < actual_worker_count; i++) {
       worker_context_t *w = &workers[i];
 
       w->worker_id = i;
@@ -147,12 +162,12 @@ int worker_pool_init(asr_engine_type_t engine_type, const char *model_path) {
    }
 
    pool_initialized = true;
-   LOG_INFO("Worker pool initialized: %d workers ready", WORKER_POOL_SIZE);
+   LOG_INFO("Worker pool initialized: %d workers ready", actual_worker_count);
    return 0;
 
 cleanup_workers:
-   // Clean up already-initialized workers
-   for (int j = 0; j < WORKER_POOL_SIZE; j++) {
+   // Clean up already-initialized workers (up to how many we tried to init)
+   for (int j = 0; j < actual_worker_count; j++) {
       worker_context_t *w = &workers[j];
 
       if (w->asr_ctx) {
@@ -183,7 +198,7 @@ void worker_pool_shutdown(void) {
    LOG_INFO("Shutting down worker pool...");
 
    // Phase 1: Signal all workers to shutdown
-   for (int i = 0; i < WORKER_POOL_SIZE; i++) {
+   for (int i = 0; i < actual_worker_count; i++) {
       worker_context_t *w = &workers[i];
 
       pthread_mutex_lock(&w->mutex);
@@ -203,7 +218,7 @@ void worker_pool_shutdown(void) {
    clock_gettime(CLOCK_REALTIME, &deadline);
    deadline.tv_sec += SHUTDOWN_TIMEOUT_SEC;
 
-   for (int i = 0; i < WORKER_POOL_SIZE; i++) {
+   for (int i = 0; i < actual_worker_count; i++) {
       worker_context_t *w = &workers[i];
 
       // Try timed join
@@ -260,7 +275,7 @@ int worker_pool_assign_client(int client_fd, session_t *session) {
 
    // Find an idle worker
    worker_context_t *available = NULL;
-   for (int i = 0; i < WORKER_POOL_SIZE; i++) {
+   for (int i = 0; i < actual_worker_count; i++) {
       if (workers[i].state == WORKER_STATE_IDLE) {
          available = &workers[i];
          break;
@@ -302,7 +317,7 @@ int worker_pool_active_count(void) {
    int count = 0;
    pthread_mutex_lock(&pool_mutex);
 
-   for (int i = 0; i < WORKER_POOL_SIZE; i++) {
+   for (int i = 0; i < actual_worker_count; i++) {
       if (workers[i].state == WORKER_STATE_BUSY) {
          count++;
       }
@@ -312,8 +327,12 @@ int worker_pool_active_count(void) {
    return count;
 }
 
+int worker_pool_size(void) {
+   return actual_worker_count;
+}
+
 worker_state_t worker_pool_get_state(int worker_id) {
-   if (!pool_initialized || worker_id < 0 || worker_id >= WORKER_POOL_SIZE) {
+   if (!pool_initialized || worker_id < 0 || worker_id >= actual_worker_count) {
       return WORKER_STATE_SHUTDOWN;
    }
 

@@ -53,7 +53,6 @@ void config_set_defaults(dawn_config_t *config) {
    memset(config, 0, sizeof(*config));
 
    /* General */
-   config->general.config_version = 1;
    SAFE_COPY(config->general.ai_name, "friday");
    config->general.log_file[0] = '\0'; /* Empty = stdout */
 
@@ -64,7 +63,6 @@ void config_set_defaults(dawn_config_t *config) {
    config->localization.location[0] = '\0'; /* No default location */
    config->localization.timezone[0] = '\0'; /* System default */
    SAFE_COPY(config->localization.units, "imperial");
-   SAFE_COPY(config->localization.language, "en");
 
    /* Audio */
    SAFE_COPY(config->audio.backend, "auto");
@@ -111,10 +109,12 @@ void config_set_defaults(dawn_config_t *config) {
    SAFE_COPY(config->llm.cloud.provider, "openai");
    SAFE_COPY(config->llm.cloud.model, "gpt-4o"); /* OPENAI_MODEL from dawn.h */
    config->llm.cloud.endpoint[0] = '\0';         /* Empty = use default */
+   config->llm.cloud.vision_enabled = true;      /* Cloud models typically support vision */
 
    /* LLM Local */
    SAFE_COPY(config->llm.local.endpoint, "http://127.0.0.1:8080");
-   config->llm.local.model[0] = '\0'; /* Server decides */
+   config->llm.local.model[0] = '\0';        /* Server decides */
+   config->llm.local.vision_enabled = false; /* Most local models don't support vision */
 
    /* Search */
    SAFE_COPY(config->search.engine, "searxng");

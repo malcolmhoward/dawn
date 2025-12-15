@@ -145,21 +145,7 @@ int config_validate(const dawn_config_t *config,
          ADD_ERROR("llm.cloud.provider", "must be 'openai' or 'claude' (got '%s')",
                    config->llm.cloud.provider);
       }
-
-      /* Check API key is set for cloud LLM */
-      if (secrets) {
-         int has_key = 0;
-         if (strcmp(config->llm.cloud.provider, "openai") == 0) {
-            has_key = secrets->openai_api_key[0] != '\0';
-         } else if (strcmp(config->llm.cloud.provider, "claude") == 0) {
-            has_key = secrets->claude_api_key[0] != '\0';
-         }
-
-         if (!has_key) {
-            ADD_ERROR("api_keys", "cloud LLM provider '%s' requires API key in secrets.toml",
-                      config->llm.cloud.provider);
-         }
-      }
+      /* Note: API key check removed - handled in dawn.c with graceful fallback to local */
    }
 
    /* ===== Max Tokens (positive) ===== */

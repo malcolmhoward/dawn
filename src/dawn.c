@@ -261,6 +261,37 @@ command_processing_mode_t command_processing_mode = CMD_MODE_DIRECT_ONLY;
 // For multi-client support, each session has its own history (see session_manager.c)
 struct json_object *conversation_history = NULL;
 
+// =============================================================================
+// Direct-only mode system prompt (persona + system instructions)
+// =============================================================================
+// Used when command_processing_mode is CMD_MODE_DIRECT_ONLY.
+// Combines custom persona (or default AI_PERSONA) with dynamic system instructions.
+#define DIRECT_PROMPT_BUFFER_SIZE 16384
+static char direct_mode_prompt[DIRECT_PROMPT_BUFFER_SIZE];
+static int direct_mode_prompt_initialized = 0;
+
+/**
+ * @brief Gets the system prompt for direct-only command processing mode
+ *
+ * Returns a combined prompt with:
+ * - Persona (from config or AI_PERSONA default)
+ * - System instructions (dynamically built based on enabled features)
+ *
+ * This ensures consistent LLM behavior (response length, formatting rules)
+ * even when using a custom persona. Only includes instructions for
+ * features that are actually enabled (search, vision, etc.).
+ */
+static const char *get_direct_mode_prompt(void) {
+   if (!direct_mode_prompt_initialized) {
+      const char *persona = (g_config.persona.description[0] != '\0') ? g_config.persona.description
+                                                                      : AI_PERSONA;
+      snprintf(direct_mode_prompt, DIRECT_PROMPT_BUFFER_SIZE, "%s\n\n%s", persona,
+               get_system_instructions());
+      direct_mode_prompt_initialized = 1;
+   }
+   return direct_mode_prompt;
+}
+
 // Barge-in control: when true, speech detection is disabled during TTS playback
 static int g_bargein_disabled = 1;       // Start disabled until after boot calibration
 static int g_bargein_user_disabled = 0;  // Set by --no-bargein CLI option
@@ -860,7 +891,8 @@ void reset_conversation(void) {
        command_processing_mode == CMD_MODE_DIRECT_FIRST) {
       system_prompt = get_local_command_prompt();
    } else {
-      system_prompt = AI_DESCRIPTION;
+      /* Direct-only mode: use persona + system instructions for consistent behavior */
+      system_prompt = get_direct_mode_prompt();
    }
    session_init_system_prompt(local_session, system_prompt);
 
@@ -1028,6 +1060,7 @@ void display_help(int argc, char *argv[]) {
    printf("\nConfiguration:\n");
    printf("  --config PATH          Load configuration from PATH (default: search order).\n");
    printf("  --dump-config          Print effective configuration and exit.\n");
+   printf("  --dump-settings        Print all settings with env vars and sources, then exit.\n");
    printf("  --audio-backend TYPE   Audio backend: auto (default), alsa, or pulse.\n");
    printf("  -m, --llm TYPE         Set default LLM type (cloud or local).\n");
    printf("  -P, --cloud-provider PROVIDER    Set cloud provider (openai or claude).\n");
@@ -1182,10 +1215,14 @@ int main(int argc, char *argv[]) {
    float recording_duration = 0.0f;  // Total recording time (prevents buffer overflow)
 
 // Pre-roll buffer: captures audio before VAD trigger to avoid missing first words
-// 500ms at 16kHz mono, 16-bit = 8000 samples * 2 bytes = 16000 bytes
-#define VAD_PREROLL_MS 500
-#define VAD_PREROLL_BYTES 16000  // (16000 Hz * 1 channel * 2 bytes/sample * 500ms / 1000)
-   static unsigned char preroll_buffer[VAD_PREROLL_BYTES];
+// Size calculated from config: (sample_rate * channels * bytes_per_sample * ms / 1000)
+// Maximum 2 seconds (64000 bytes at 16kHz mono 16-bit) for safety
+// Using static array for predictable embedded memory footprint (avoids heap fragmentation)
+#define VAD_PREROLL_MAX_MS 2000
+#define VAD_PREROLL_MAX_BYTES 64000
+#define VAD_PREROLL_DEFAULT_MS 500
+   static unsigned char preroll_buffer[VAD_PREROLL_MAX_BYTES];
+   static size_t preroll_buffer_size = 0;  // Actual usable size from config
    size_t preroll_write_pos = 0;
    size_t preroll_valid_bytes = 0;
 
@@ -1211,6 +1248,7 @@ int main(int argc, char *argv[]) {
       { "summarize-threshold", required_argument, NULL, 257 },  // Search summarizer threshold
       { "config", required_argument, NULL, 258 },               // Config file path
       { "dump-config", no_argument, NULL, 259 },                // Dump effective config and exit
+      { "dump-settings", no_argument, NULL, 261 },              // Dump all settings with sources
       { "audio-backend", required_argument, NULL, 260 },        // Audio backend (auto/alsa/pulse)
 #ifdef ENABLE_AEC
       { "aec-record", optional_argument, NULL, 'R' },  // Record AEC audio for debugging
@@ -1243,6 +1281,25 @@ int main(int argc, char *argv[]) {
    // Config system variables
    const char *config_path = NULL;  // Explicit config file path from --config
    int dump_config = 0;             // --dump-config flag
+   int dump_settings = 0;           // --dump-settings flag
+
+   // CLI override flags - track which settings were set via CLI (takes priority over config file)
+   // Using bitfield for efficiency: 4 bytes instead of 48+ bytes for individual ints
+   enum {
+      CLI_OVERRIDE_COMMAND_MODE = (1 << 0),
+      CLI_OVERRIDE_WHISPER_MODEL = (1 << 1),
+      CLI_OVERRIDE_WHISPER_PATH = (1 << 2),
+      CLI_OVERRIDE_NETWORK_AUDIO = (1 << 3),
+      CLI_OVERRIDE_LOG_FILE = (1 << 4),
+      CLI_OVERRIDE_MIC_RECORD = (1 << 5),
+      CLI_OVERRIDE_ASR_RECORD = (1 << 6),
+      CLI_OVERRIDE_AEC_RECORD = (1 << 7),
+      CLI_OVERRIDE_TUI = (1 << 8),
+      CLI_OVERRIDE_AUDIO_BACKEND = (1 << 9),
+      CLI_OVERRIDE_SUMMARIZER_BACKEND = (1 << 10),
+      CLI_OVERRIDE_SUMMARIZER_THRESHOLD = (1 << 11),
+   };
+   uint32_t cli_overrides = 0;
 
    // Audio backend selection (default: auto-detect)
    audio_backend_type_t audio_backend_type = AUDIO_BACKEND_AUTO;
@@ -1285,22 +1342,27 @@ int main(int argc, char *argv[]) {
             exit(EXIT_SUCCESS);
          case 'l':
             log_filename = optarg;
+            cli_overrides |= CLI_OVERRIDE_LOG_FILE;
             break;
          case 'L':
             command_processing_mode = CMD_MODE_LLM_ONLY;
-            LOG_INFO("LLM-only command processing enabled");
+            cli_overrides |= CLI_OVERRIDE_COMMAND_MODE;
+            LOG_INFO("LLM-only command processing enabled (CLI override)");
             break;
          case 'C':
             command_processing_mode = CMD_MODE_DIRECT_FIRST;
-            LOG_INFO("Commands-first with LLM fallback enabled");
+            cli_overrides |= CLI_OVERRIDE_COMMAND_MODE;
+            LOG_INFO("Commands-first with LLM fallback enabled (CLI override)");
             break;
          case 'D':
             command_processing_mode = CMD_MODE_DIRECT_ONLY;
-            LOG_INFO("Direct commands only mode enabled");
+            cli_overrides |= CLI_OVERRIDE_COMMAND_MODE;
+            LOG_INFO("Direct commands only mode enabled (CLI override)");
             break;
          case 'N':
             enable_network_audio = 1;
-            LOG_INFO("Network audio enabled");
+            cli_overrides |= CLI_OVERRIDE_NETWORK_AUDIO;
+            LOG_INFO("Network audio enabled (CLI override)");
             break;
          case 'm':
             if (strcasecmp(optarg, "cloud") == 0) {
@@ -1319,11 +1381,13 @@ int main(int argc, char *argv[]) {
             break;
          case 'W':
             whisper_model = optarg;
-            LOG_INFO("Whisper model set to: %s", whisper_model);
+            cli_overrides |= CLI_OVERRIDE_WHISPER_MODEL;
+            LOG_INFO("Whisper model set to: %s (CLI override)", whisper_model);
             break;
          case 'w':
             whisper_path = optarg;
-            LOG_INFO("Whisper models path set to: %s", whisper_path);
+            cli_overrides |= CLI_OVERRIDE_WHISPER_PATH;
+            LOG_INFO("Whisper models path set to: %s (CLI override)", whisper_path);
             break;
          case 'A':
 #ifdef ENABLE_VOSK
@@ -1356,7 +1420,8 @@ int main(int argc, char *argv[]) {
 #ifdef ENABLE_TUI
          case 'T':
             enable_tui = 1;
-            LOG_INFO("TUI mode enabled");
+            cli_overrides |= CLI_OVERRIDE_TUI;
+            LOG_INFO("TUI mode enabled via CLI");
             break;
          case 't':
             if (strcasecmp(optarg, "green") == 0) {
@@ -1375,28 +1440,31 @@ int main(int argc, char *argv[]) {
          case 'r':
             // Enable mic recording, optionally with a directory
             mic_enable_recording(true);
+            cli_overrides |= CLI_OVERRIDE_MIC_RECORD;
             if (optarg) {
                mic_set_recording_dir(optarg);
             }
-            LOG_INFO("Mic recording enabled (dir: %s)", optarg ? optarg : "/tmp");
+            LOG_INFO("Mic recording enabled via CLI (dir: %s)", optarg ? optarg : "/tmp");
             break;
          case 'a':
             // Enable ASR recording, optionally with a directory
             // Recording starts/stops per-utterance in asr_reset()/asr_finalize()
             asr_enable_recording(true);
+            cli_overrides |= CLI_OVERRIDE_ASR_RECORD;
             if (optarg) {
                asr_set_recording_dir(optarg);
             }
-            LOG_INFO("ASR recording enabled (dir: %s)", optarg ? optarg : "/tmp");
+            LOG_INFO("ASR recording enabled via CLI (dir: %s)", optarg ? optarg : "/tmp");
             break;
 #ifdef ENABLE_AEC
          case 'R':
             // Enable AEC recording, optionally with a directory
             aec_enable_recording(true);
+            cli_overrides |= CLI_OVERRIDE_AEC_RECORD;
             if (optarg) {
                aec_set_recording_dir(optarg);
             }
-            LOG_INFO("AEC recording enabled (dir: %s)", optarg ? optarg : "/tmp");
+            LOG_INFO("AEC recording enabled via CLI (dir: %s)", optarg ? optarg : "/tmp");
             break;
 #endif
          case 'B':
@@ -1405,12 +1473,14 @@ int main(int argc, char *argv[]) {
             break;
          case 256:  // --summarize-backend
             summarizer_config.backend = search_summarizer_parse_backend(optarg);
-            LOG_INFO("Search summarization backend: %s",
+            cli_overrides |= CLI_OVERRIDE_SUMMARIZER_BACKEND;
+            LOG_INFO("Search summarization backend: %s (CLI override)",
                      search_summarizer_backend_name(summarizer_config.backend));
             break;
          case 257:  // --summarize-threshold
             summarizer_config.threshold_bytes = (size_t)atol(optarg);
-            LOG_INFO("Search summarization threshold: %zu bytes",
+            cli_overrides |= CLI_OVERRIDE_SUMMARIZER_THRESHOLD;
+            LOG_INFO("Search summarization threshold: %zu bytes (CLI override)",
                      summarizer_config.threshold_bytes);
             break;
          case 258:  // --config
@@ -1419,9 +1489,14 @@ int main(int argc, char *argv[]) {
          case 259:  // --dump-config
             dump_config = 1;
             break;
+         case 261:  // --dump-settings
+            dump_settings = 1;
+            break;
          case 260:  // --audio-backend
             audio_backend_type = audio_backend_parse_type(optarg);
-            LOG_INFO("Audio backend set to: %s", audio_backend_type_name(audio_backend_type));
+            cli_overrides |= CLI_OVERRIDE_AUDIO_BACKEND;
+            LOG_INFO("Audio backend set to: %s (CLI override)",
+                     audio_backend_type_name(audio_backend_type));
             break;
          case '?':
             display_help(argc, argv);
@@ -1458,9 +1533,126 @@ int main(int argc, char *argv[]) {
    // Step 4: Apply environment variable overrides (highest priority before CLI)
    config_apply_env(&g_config, &g_secrets);
 
+   // Step 4b: Apply config-based settings (CLI overrides take precedence)
+   if (!(cli_overrides & CLI_OVERRIDE_COMMAND_MODE) &&
+       g_config.commands.processing_mode[0] != '\0') {
+      if (strcmp(g_config.commands.processing_mode, "llm_only") == 0) {
+         command_processing_mode = CMD_MODE_LLM_ONLY;
+      } else if (strcmp(g_config.commands.processing_mode, "direct_first") == 0) {
+         command_processing_mode = CMD_MODE_DIRECT_FIRST;
+      } else if (strcmp(g_config.commands.processing_mode, "direct_only") == 0) {
+         command_processing_mode = CMD_MODE_DIRECT_ONLY;
+      }
+      /* Note: Invalid values would be caught by config_validate() above */
+   }
+
+   // Apply ASR config (CLI overrides take precedence)
+   if (!(cli_overrides & CLI_OVERRIDE_WHISPER_MODEL) && g_config.asr.model[0] != '\0') {
+      whisper_model = g_config.asr.model;
+      LOG_INFO("Whisper model from config: %s", whisper_model);
+   }
+   if (!(cli_overrides & CLI_OVERRIDE_WHISPER_PATH) && g_config.asr.models_path[0] != '\0') {
+      whisper_path = g_config.asr.models_path;
+      LOG_INFO("Whisper models path from config: %s", whisper_path);
+   }
+
+   // Reconstruct Whisper path if either model or path came from config
+   if (asr_engine == ASR_ENGINE_WHISPER) {
+      snprintf(whisper_full_path, sizeof(whisper_full_path), "%s/ggml-%s.bin", whisper_path,
+               whisper_model);
+      asr_model_path = whisper_full_path;
+   }
+
+   // Apply network config (CLI overrides take precedence)
+   if (!(cli_overrides & CLI_OVERRIDE_NETWORK_AUDIO) && g_config.network.enabled) {
+      enable_network_audio = 1;
+      LOG_INFO("Network audio enabled from config");
+   }
+
+#ifdef ENABLE_TUI
+   // Apply TUI config (CLI overrides take precedence)
+   if (!(cli_overrides & CLI_OVERRIDE_TUI) && g_config.tui.enabled) {
+      enable_tui = 1;
+      LOG_INFO("TUI mode enabled from config");
+   }
+#endif
+
+   // Apply log file config (CLI overrides take precedence)
+   if (!(cli_overrides & CLI_OVERRIDE_LOG_FILE) && g_config.general.log_file[0] != '\0') {
+      log_filename = g_config.general.log_file;
+      LOG_INFO("Log file from config: %s", log_filename);
+   }
+
+   // Apply debug recording config (CLI overrides take precedence)
+   // Set recording directory first if configured
+   if (g_config.debug.record_path[0] != '\0') {
+      mic_set_recording_dir(g_config.debug.record_path);
+      asr_set_recording_dir(g_config.debug.record_path);
+#ifdef ENABLE_AEC
+      aec_set_recording_dir(g_config.debug.record_path);
+#endif
+      LOG_INFO("Debug recording path from config: %s", g_config.debug.record_path);
+   }
+   // Enable recordings from config if CLI didn't set them
+   if (!(cli_overrides & CLI_OVERRIDE_MIC_RECORD) && g_config.debug.mic_record) {
+      mic_enable_recording(true);
+      LOG_INFO("Mic recording enabled from config");
+   }
+   if (!(cli_overrides & CLI_OVERRIDE_ASR_RECORD) && g_config.debug.asr_record) {
+      asr_enable_recording(true);
+      LOG_INFO("ASR recording enabled from config");
+   }
+#ifdef ENABLE_AEC
+   if (!(cli_overrides & CLI_OVERRIDE_AEC_RECORD) && g_config.debug.aec_record) {
+      aec_enable_recording(true);
+      LOG_INFO("AEC recording enabled from config");
+   }
+#endif
+   // Apply audio backend from config if CLI didn't set it
+   if (!(cli_overrides & CLI_OVERRIDE_AUDIO_BACKEND) && g_config.audio.backend[0] != '\0') {
+      audio_backend_type = audio_backend_parse_type(g_config.audio.backend);
+      LOG_INFO("Audio backend from config: %s", audio_backend_type_name(audio_backend_type));
+   }
+   // Apply search summarizer settings from config if CLI didn't set them
+   if (!(cli_overrides & CLI_OVERRIDE_SUMMARIZER_BACKEND) &&
+       g_config.search.summarizer.backend[0] != '\0') {
+      summarizer_config.backend = search_summarizer_parse_backend(
+          g_config.search.summarizer.backend);
+      LOG_INFO("Search summarizer backend from config: %s",
+               search_summarizer_backend_name(summarizer_config.backend));
+   }
+   if (!(cli_overrides & CLI_OVERRIDE_SUMMARIZER_THRESHOLD) &&
+       g_config.search.summarizer.threshold_bytes > 0) {
+      summarizer_config.threshold_bytes = g_config.search.summarizer.threshold_bytes;
+      LOG_INFO("Search summarizer threshold from config: %zu bytes",
+               summarizer_config.threshold_bytes);
+   }
+   if (g_config.search.summarizer.target_words > 0) {
+      summarizer_config.target_summary_words = g_config.search.summarizer.target_words;
+      LOG_INFO("Search summarizer target words from config: %zu",
+               summarizer_config.target_summary_words);
+   }
+
+   // Apply CLI LLM type override to g_config (needed for validation)
+   if (llm_type_override == LLM_LOCAL) {
+      strncpy(g_config.llm.type, "local", sizeof(g_config.llm.type) - 1);
+      g_config.llm.type[sizeof(g_config.llm.type) - 1] = '\0';
+      LOG_INFO("LLM type set to 'local' (CLI override)");
+   } else if (llm_type_override == LLM_CLOUD) {
+      strncpy(g_config.llm.type, "cloud", sizeof(g_config.llm.type) - 1);
+      g_config.llm.type[sizeof(g_config.llm.type) - 1] = '\0';
+      LOG_INFO("LLM type set to 'cloud' (CLI override)");
+   }
+
    // Step 5: Handle --dump-config (print effective config and exit)
    if (dump_config) {
       config_dump(&g_config);
+      return 0;
+   }
+
+   // Step 5b: Handle --dump-settings (print all settings with sources and exit)
+   if (dump_settings) {
+      config_dump_settings(&g_config, &g_secrets, config_get_loaded_path());
       return 0;
    }
 
@@ -1472,8 +1664,46 @@ int main(int argc, char *argv[]) {
       return 1;
    }
 
+   // Step 6b: Check cloud LLM API key availability (graceful fallback to local)
+   if (strcmp(g_config.llm.type, "cloud") == 0) {
+      int has_api_key = 0;
+      const char *provider = g_config.llm.cloud.provider;
+
+      if (strcmp(provider, "openai") == 0) {
+         has_api_key = g_secrets.openai_api_key[0] != '\0';
+      } else if (strcmp(provider, "claude") == 0) {
+         has_api_key = g_secrets.claude_api_key[0] != '\0';
+      }
+
+      if (!has_api_key) {
+         LOG_WARNING("Cloud LLM provider '%s' requires API key in secrets.toml - falling back to "
+                     "local LLM",
+                     provider);
+         strncpy(g_config.llm.type, "local", sizeof(g_config.llm.type) - 1);
+         g_config.llm.type[sizeof(g_config.llm.type) - 1] = '\0';
+         // Also update the runtime override so llm_init uses local
+         llm_type_override = LLM_LOCAL;
+      }
+   }
+
    // Step 7: Initialize wake words from config (must be after config is finalized)
    init_wake_words();
+
+   // Step 8: Initialize preroll buffer size from config
+   // Buffer is statically allocated (VAD_PREROLL_MAX_BYTES), we just set the usable portion
+   {
+      int preroll_ms = g_config.vad.preroll_ms;
+      if (preroll_ms <= 0) {
+         preroll_ms = VAD_PREROLL_DEFAULT_MS;
+      } else if (preroll_ms > VAD_PREROLL_MAX_MS) {
+         fprintf(stderr, "Warning: vad.preroll_ms=%d exceeds max %d, clamping\n", preroll_ms,
+                 VAD_PREROLL_MAX_MS);
+         preroll_ms = VAD_PREROLL_MAX_MS;
+      }
+      // Calculate usable buffer size: 16kHz * 1 channel * 2 bytes * ms / 1000
+      preroll_buffer_size = (size_t)(16000 * 1 * 2 * preroll_ms / 1000);
+      // Static array is zero-initialized, no malloc needed
+   }
 
    // Initialize logging
    if (log_filename) {
@@ -1518,17 +1748,18 @@ int main(int argc, char *argv[]) {
    // Command Processing
    initActions(actions);
 
-   LOG_INFO("Reading json file...");
-   configFile = fopen(CONFIG_FILE, "r");
+   LOG_INFO("Reading commands config file: %s", g_config.paths.commands_config);
+   configFile = fopen(g_config.paths.commands_config, "r");
    if (configFile == NULL) {
-      LOG_ERROR("Unable to open config file: %s\n", CONFIG_FILE);
+      LOG_ERROR("Unable to open commands config file: %s\n", g_config.paths.commands_config);
       return 1;
    }
 
    if ((bytes_read = fread(buffer, 1, sizeof(buffer), configFile)) > 0) {
       buffer[bytes_read] = '\0';
    } else {
-      LOG_ERROR("Failed to read config file (%s): %s\n", CONFIG_FILE, strerror(bytes_read));
+      LOG_ERROR("Failed to read commands config file (%s): %s\n", g_config.paths.commands_config,
+                strerror(bytes_read));
       fclose(configFile);
       return 1;
    }
@@ -1547,6 +1778,10 @@ int main(int argc, char *argv[]) {
    convertActionsToCommands(actions, &numActions, commands, &numCommands);
    LOG_INFO("Processed %d commands.", numCommands);
    //printCommands(commands, numCommands);
+
+   // Force early initialization of system instructions before any threads start.
+   // This ensures thread-safe access since the buffer is built once and cached.
+   (void)get_system_instructions();
 
    // Initialize session manager first (creates local session)
    // NOTE: accept_thread_start() will skip re-initialization since it's already done
@@ -1575,8 +1810,8 @@ int main(int argc, char *argv[]) {
       system_prompt = get_local_command_prompt();
       LOG_INFO("Using enhanced system prompt for LLM command processing");
    } else {
-      // Direct-only mode gets the original AI description
-      system_prompt = AI_DESCRIPTION;
+      // Direct-only mode: use persona + system instructions for consistent behavior
+      system_prompt = get_direct_mode_prompt();
       LOG_INFO("Using standard system prompt for direct command processing");
    }
 
@@ -1639,8 +1874,9 @@ int main(int argc, char *argv[]) {
    }
 
    // Initialize chunking manager (Whisper only, persistent lifecycle)
+   // Only if chunking is enabled in config
    chunking_manager_t *chunk_mgr = NULL;
-   if (asr_engine == ASR_ENGINE_WHISPER) {
+   if (asr_engine == ASR_ENGINE_WHISPER && g_config.vad.chunking.enabled) {
       chunk_mgr = chunking_manager_init(asr_ctx);
       if (!chunk_mgr) {
          LOG_ERROR("Failed to initialize chunking manager");
@@ -1652,38 +1888,57 @@ int main(int argc, char *argv[]) {
          }
          return 1;
       }
+      LOG_INFO("Chunking enabled via config");
+   } else if (asr_engine == ASR_ENGINE_WHISPER) {
+      LOG_INFO("Chunking disabled via config");
    }
 
-   LOG_INFO("Init mosquitto.");
-   /* MQTT Setup */
-   mosquitto_lib_init();
+   /* MQTT Setup - conditionally enabled via config */
+   if (g_config.mqtt.enabled) {
+      LOG_INFO("Init mosquitto.");
+      mosquitto_lib_init();
 
-   mosq = mosquitto_new(NULL, true, NULL);
-   if (mosq == NULL) {
-      LOG_ERROR("Error: Out of memory.\n");
-      return 1;
-   }
+      mosq = mosquitto_new(NULL, true, NULL);
+      if (mosq == NULL) {
+         LOG_ERROR("Error: Out of memory.\n");
+         return 1;
+      }
 
-   /* Configure callbacks. This should be done before connecting ideally. */
-   mosquitto_connect_callback_set(mosq, on_connect);
-   mosquitto_subscribe_callback_set(mosq, on_subscribe);
-   mosquitto_message_callback_set(mosq, on_message);
+      /* Configure callbacks. This should be done before connecting ideally. */
+      mosquitto_connect_callback_set(mosq, on_connect);
+      mosquitto_subscribe_callback_set(mosq, on_subscribe);
+      mosquitto_message_callback_set(mosq, on_message);
 
-   /* Set reconnect parameters (min delay, max delay, exponential backoff) */
-   mosquitto_reconnect_delay_set(mosq, 2, 30, true);
+      /* Set reconnect parameters (min delay, max delay, exponential backoff) */
+      mosquitto_reconnect_delay_set(mosq, 2, 30, true);
 
-   /* Connect to MQTT server (broker from config). */
-   rc = mosquitto_connect(mosq, g_config.mqtt.broker, g_config.mqtt.port, 60);
-   if (rc != MOSQ_ERR_SUCCESS) {
-      mosquitto_destroy(mosq);
-      LOG_ERROR("Error on mosquitto_connect(): %s\n", mosquitto_strerror(rc));
-      return 1;
+      /* Set MQTT authentication if credentials are configured */
+      if (g_secrets.mqtt_username[0] != '\0') {
+         rc = mosquitto_username_pw_set(mosq, g_secrets.mqtt_username,
+                                        g_secrets.mqtt_password[0] != '\0' ? g_secrets.mqtt_password
+                                                                           : NULL);
+         if (rc != MOSQ_ERR_SUCCESS) {
+            LOG_ERROR("Failed to set MQTT credentials: %s", mosquitto_strerror(rc));
+         } else {
+            LOG_INFO("MQTT authentication configured for user: %s", g_secrets.mqtt_username);
+         }
+      }
+
+      /* Connect to MQTT server (broker from config). */
+      rc = mosquitto_connect(mosq, g_config.mqtt.broker, g_config.mqtt.port, 60);
+      if (rc != MOSQ_ERR_SUCCESS) {
+         mosquitto_destroy(mosq);
+         LOG_ERROR("Error on mosquitto_connect(): %s\n", mosquitto_strerror(rc));
+         return 1;
+      } else {
+         LOG_INFO("Connected to local MQTT server.\n");
+      }
+
+      /* Start processing MQTT events. */
+      mosquitto_loop_start(mosq);
    } else {
-      LOG_INFO("Connected to local MQTT server.\n");
+      LOG_INFO("MQTT disabled by config");
    }
-
-   /* Start processing MQTT events. */
-   mosquitto_loop_start(mosq);
 
    LOG_INFO("Init text to speech.");
    /* Initialize text to speech processing. */
@@ -1737,9 +1992,16 @@ int main(int argc, char *argv[]) {
       LOG_INFO("VAD state reset after boot calibration");
    }
 
-   // Enable barge-in now that calibration is complete (unless user disabled it)
-   g_bargein_disabled = g_bargein_user_disabled;
-   if (!g_bargein_disabled) {
+   // Enable barge-in now that calibration is complete
+   // Priority: CLI (--no-bargein) > config (audio.bargein.enabled)
+   if (g_bargein_user_disabled) {
+      g_bargein_disabled = 1;
+      LOG_INFO("Barge-in disabled by CLI option");
+   } else if (!g_config.audio.bargein.enabled) {
+      g_bargein_disabled = 1;
+      LOG_INFO("Barge-in disabled by config file");
+   } else {
+      g_bargein_disabled = 0;
       LOG_INFO("Barge-in enabled after boot calibration");
    }
 
@@ -1760,9 +2022,13 @@ int main(int argc, char *argv[]) {
    // Initialize search summarizer
    search_summarizer_init(&summarizer_config);
 
-   // Set LLM type: use command-line override or auto-detect
+   // Set LLM type: CLI override > config file > auto-detect
    if (llm_type_override != LLM_UNDEFINED) {
       llm_set_type(llm_type_override);
+   } else if (strcmp(g_config.llm.type, "cloud") == 0) {
+      llm_set_type(LLM_CLOUD);
+   } else if (strcmp(g_config.llm.type, "local") == 0) {
+      llm_set_type(LLM_LOCAL);
    } else if (llm_check_connection("https://api.openai.com", 4)) {
       llm_set_type(LLM_CLOUD);
    } else {
@@ -1961,8 +2227,8 @@ int main(int argc, char *argv[]) {
             if (buff_size > 0) {
                size_t bytes_to_copy = buff_size;
                // Wrap around if necessary
-               if (preroll_write_pos + bytes_to_copy > VAD_PREROLL_BYTES) {
-                  size_t first_chunk = VAD_PREROLL_BYTES - preroll_write_pos;
+               if (preroll_write_pos + bytes_to_copy > preroll_buffer_size) {
+                  size_t first_chunk = preroll_buffer_size - preroll_write_pos;
                   size_t second_chunk = bytes_to_copy - first_chunk;
                   memcpy(preroll_buffer + preroll_write_pos, max_buff, first_chunk);
                   memcpy(preroll_buffer, max_buff + first_chunk, second_chunk);
@@ -1972,8 +2238,8 @@ int main(int argc, char *argv[]) {
                   preroll_write_pos += bytes_to_copy;
                }
                // Track valid bytes (up to buffer capacity)
-               preroll_valid_bytes = (preroll_valid_bytes + bytes_to_copy > VAD_PREROLL_BYTES)
-                                         ? VAD_PREROLL_BYTES
+               preroll_valid_bytes = (preroll_valid_bytes + bytes_to_copy > preroll_buffer_size)
+                                         ? preroll_buffer_size
                                          : preroll_valid_bytes + bytes_to_copy;
             }
 
@@ -2208,16 +2474,16 @@ int main(int argc, char *argv[]) {
                // Pre-roll buffer is circular, so read from correct position
                if (preroll_valid_bytes > 0) {
                   // Defensive assertions for buffer invariants
-                  assert(preroll_write_pos < VAD_PREROLL_BYTES);
-                  assert(preroll_valid_bytes <= VAD_PREROLL_BYTES);
+                  assert(preroll_write_pos < preroll_buffer_size);
+                  assert(preroll_valid_bytes <= preroll_buffer_size);
 
-                  if (preroll_valid_bytes < VAD_PREROLL_BYTES) {
+                  if (preroll_valid_bytes < preroll_buffer_size) {
                      // Buffer not yet full, read from beginning
                      asr_result = asr_process_partial(asr_ctx, (const int16_t *)preroll_buffer,
                                                       preroll_valid_bytes / sizeof(int16_t));
                   } else {
                      // Buffer full, read from write_pos to end, then beginning to write_pos
-                     size_t first_chunk_bytes = VAD_PREROLL_BYTES - preroll_write_pos;
+                     size_t first_chunk_bytes = preroll_buffer_size - preroll_write_pos;
                      asr_result = asr_process_partial(
                          asr_ctx, (const int16_t *)(preroll_buffer + preroll_write_pos),
                          first_chunk_bytes / sizeof(int16_t));
@@ -3279,6 +3545,8 @@ int main(int argc, char *argv[]) {
    audio_backend_cleanup();
 
    free(max_buff);
+
+   // Note: preroll_buffer is statically allocated, no free needed
 
    // Note: curl_global_cleanup() is called via atexit() registered at startup
 

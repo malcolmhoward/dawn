@@ -101,7 +101,6 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
 
    // User message is now added by dawn.c before calling this function
    // If vision is provided, modify the last user message to include image
-#if defined(OPENAI_VISION)
    if (vision_image != NULL && vision_image_size > 0) {
       int msg_count = json_object_array_length(conversation_history);
       if (msg_count > 0) {
@@ -135,7 +134,6 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
          }
       }
    }
-#endif
 
    json_object_get(conversation_history);  // Increment refcount to prevent freeing caller's array
    json_object_object_add(root, "messages", conversation_history);
@@ -175,12 +173,17 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
       curl_easy_setopt(curl_handle, CURLOPT_LOW_SPEED_LIMIT, 1L);
       curl_easy_setopt(curl_handle, CURLOPT_LOW_SPEED_TIME, 30L);
 
+      // Set overall timeout from config (default 30000ms)
+      if (g_config.network.llm_timeout_ms > 0) {
+         curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT_MS, (long)g_config.network.llm_timeout_ms);
+      }
+
       res = curl_easy_perform(curl_handle);
       if (res != CURLE_OK) {
          if (res == CURLE_ABORTED_BY_CALLBACK) {
             LOG_INFO("LLM transfer interrupted by user");
          } else if (res == CURLE_OPERATION_TIMEDOUT) {
-            LOG_ERROR("LLM request stalled - no data for 30 seconds");
+            LOG_ERROR("LLM request timed out (limit: %dms)", g_config.network.llm_timeout_ms);
          } else {
             LOG_ERROR("curl_easy_perform() failed: %s", curl_easy_strerror(res));
          }
@@ -389,7 +392,6 @@ char *llm_openai_chat_completion_streaming(struct json_object *conversation_hist
    json_object_object_add(root, "stream_options", stream_opts);
 
    // Handle vision if provided
-#if defined(OPENAI_VISION)
    if (vision_image != NULL && vision_image_size > 0) {
       int msg_count = json_object_array_length(conversation_history);
       if (msg_count > 0) {
@@ -423,7 +425,6 @@ char *llm_openai_chat_completion_streaming(struct json_object *conversation_hist
          }
       }
    }
-#endif
 
    json_object_get(conversation_history);  // Increment refcount to prevent freeing caller's array
    json_object_object_add(root, "messages", conversation_history);
@@ -485,12 +486,17 @@ char *llm_openai_chat_completion_streaming(struct json_object *conversation_hist
       curl_easy_setopt(curl_handle, CURLOPT_LOW_SPEED_LIMIT, 1L);
       curl_easy_setopt(curl_handle, CURLOPT_LOW_SPEED_TIME, 30L);
 
+      // Set overall timeout from config (default 30000ms)
+      if (g_config.network.llm_timeout_ms > 0) {
+         curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT_MS, (long)g_config.network.llm_timeout_ms);
+      }
+
       res = curl_easy_perform(curl_handle);
       if (res != CURLE_OK) {
          if (res == CURLE_ABORTED_BY_CALLBACK) {
             LOG_INFO("LLM transfer interrupted by user");
          } else if (res == CURLE_OPERATION_TIMEDOUT) {
-            LOG_ERROR("LLM stream stalled - no data for 30 seconds");
+            LOG_ERROR("LLM stream timed out (limit: %dms)", g_config.network.llm_timeout_ms);
          } else {
             LOG_ERROR("curl_easy_perform() failed: %s", curl_easy_strerror(res));
          }
