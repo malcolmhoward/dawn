@@ -777,15 +777,18 @@ void text_to_speech(char *text) {
    pthread_mutex_unlock(&tts_queue_mutex);
 }
 
-// Network WAV generation using existing TTS system
-int text_to_speech_to_wav(const char *text, uint8_t **wav_data_out, size_t *wav_size_out) {
-   if (!text || !wav_data_out || !wav_size_out) {
-      LOG_ERROR("Invalid parameters for WAV generation");
+// Raw PCM generation using existing TTS system (base function)
+int text_to_speech_to_pcm(const char *text,
+                          int16_t **pcm_data_out,
+                          size_t *pcm_samples_out,
+                          uint32_t *sample_rate_out) {
+   if (!text || !pcm_data_out || !pcm_samples_out) {
+      LOG_ERROR("Invalid parameters for PCM generation");
       return -1;
    }
 
    if (!tts_handle.is_initialized) {
-      LOG_ERROR("TTS not initialized for WAV generation");
+      LOG_ERROR("TTS not initialized for PCM generation");
       return -1;
    }
 
@@ -796,59 +799,74 @@ int text_to_speech_to_wav(const char *text, uint8_t **wav_data_out, size_t *wav_
    int original_state = tts_playback_state;
 
    try {
-      LOG_INFO("Generating network WAV: \"%s\"", text);
+      LOG_INFO("Generating PCM audio: \"%s\"", text);
 
       // Pause local TTS to prevent conflicts (mutex already held)
       if (tts_playback_state == TTS_PLAYBACK_PLAY) {
          tts_playback_state = TTS_PLAYBACK_PAUSE;
-         LOG_INFO("Paused local TTS for network generation");
+         LOG_INFO("Paused local TTS for PCM generation");
       }
 
       // Preprocess text for better TTS output
       std::string processedText = preprocess_text_for_tts(std::string(text));
 
-      std::ostringstream audioStream;
+      // Use textToAudio to get raw PCM samples (no WAV header)
+      std::vector<int16_t> audioBuffer;
       piper::SynthesisResult result;
+      std::atomic<bool> stop_flag(false);
 
-      // Generate WAV using shared TTS handle (now thread-safe)
-      piper::textToWavFile(tts_handle.config, tts_handle.voice, processedText, audioStream, result);
+      // Generate PCM using shared TTS handle
+      // The callback is called when synthesis starts - we don't need to do anything special here
+      // since we're just collecting the samples, not playing them
+      piper::textToAudio(tts_handle.config, tts_handle.voice, processedText, audioBuffer, result,
+                         stop_flag, []() {
+                            // Empty callback - we're not playing audio, just collecting samples
+                         });
 
       // Record TTS timing metrics (inferSeconds is in seconds, convert to ms)
       double tts_time_ms = result.inferSeconds * 1000.0;
       metrics_record_tts_timing(tts_time_ms);
-      LOG_INFO("TTS synthesis completed: %.1f ms (RTF: %.3f)", tts_time_ms, result.realTimeFactor);
+      LOG_INFO("TTS PCM synthesis completed: %.1f ms (RTF: %.3f)", tts_time_ms,
+               result.realTimeFactor);
 
       // Restore local TTS state (mutex already held)
       tts_playback_state = original_state;
       if (original_state == TTS_PLAYBACK_PLAY) {
          pthread_cond_signal(&tts_cond);
-         LOG_INFO("Resumed local TTS after network generation");
+         LOG_INFO("Resumed local TTS after PCM generation");
       }
 
-      std::string wavData = audioStream.str();
-      if (wavData.empty()) {
-         LOG_ERROR("Generated WAV data is empty");
+      if (audioBuffer.empty()) {
+         LOG_ERROR("Generated PCM data is empty");
          pthread_mutex_unlock(&tts_mutex);
          return -1;
       }
 
-      *wav_size_out = wavData.size();
-      *wav_data_out = (uint8_t *)malloc(*wav_size_out);
+      // Allocate output buffer and copy samples
+      *pcm_samples_out = audioBuffer.size();
+      *pcm_data_out = (int16_t *)malloc(*pcm_samples_out * sizeof(int16_t));
 
-      if (!*wav_data_out) {
-         LOG_ERROR("Failed to allocate WAV buffer (%zu bytes)", *wav_size_out);
+      if (!*pcm_data_out) {
+         LOG_ERROR("Failed to allocate PCM buffer (%zu samples)", *pcm_samples_out);
          pthread_mutex_unlock(&tts_mutex);
          return -1;
       }
 
-      memcpy(*wav_data_out, wavData.data(), *wav_size_out);
-      LOG_INFO("Network WAV generated safely: %zu bytes", *wav_size_out);
+      memcpy(*pcm_data_out, audioBuffer.data(), *pcm_samples_out * sizeof(int16_t));
+
+      // Return sample rate if requested
+      if (sample_rate_out) {
+         *sample_rate_out = tts_handle.voice.synthesisConfig.sampleRate;
+      }
+
+      LOG_INFO("PCM generated: %zu samples at %d Hz", *pcm_samples_out,
+               tts_handle.voice.synthesisConfig.sampleRate);
 
       pthread_mutex_unlock(&tts_mutex);
       return 0;
 
    } catch (const std::exception &e) {
-      LOG_ERROR("TTS WAV generation failed: %s", e.what());
+      LOG_ERROR("TTS PCM generation failed: %s", e.what());
 
       // Restore TTS state on error (mutex already held)
       tts_playback_state = original_state;
@@ -859,6 +877,77 @@ int text_to_speech_to_wav(const char *text, uint8_t **wav_data_out, size_t *wav_
       pthread_mutex_unlock(&tts_mutex);
       return -1;
    }
+}
+
+// Helper function to create WAV header
+static void create_wav_header(WAVHeader *header,
+                              uint32_t sample_rate,
+                              uint16_t channels,
+                              uint16_t bits_per_sample,
+                              uint32_t data_size) {
+   memcpy(header->riff_header, "RIFF", 4);
+   header->wav_size = data_size + sizeof(WAVHeader) - 8;
+   memcpy(header->wave_header, "WAVE", 4);
+   memcpy(header->fmt_header, "fmt ", 4);
+   header->fmt_chunk_size = 16;
+   header->audio_format = 1;  // PCM
+   header->num_channels = channels;
+   header->sample_rate = sample_rate;
+   header->byte_rate = sample_rate * channels * (bits_per_sample / 8);
+   header->block_align = channels * (bits_per_sample / 8);
+   header->bits_per_sample = bits_per_sample;
+   memcpy(header->data_header, "data", 4);
+   header->data_bytes = data_size;
+}
+
+// Network WAV generation - wraps text_to_speech_to_pcm with WAV header
+int text_to_speech_to_wav(const char *text, uint8_t **wav_data_out, size_t *wav_size_out) {
+   if (!text || !wav_data_out || !wav_size_out) {
+      LOG_ERROR("Invalid parameters for WAV generation");
+      return -1;
+   }
+
+   // Generate raw PCM samples
+   int16_t *pcm_data = NULL;
+   size_t pcm_samples = 0;
+   uint32_t sample_rate = 0;
+
+   int result = text_to_speech_to_pcm(text, &pcm_data, &pcm_samples, &sample_rate);
+   if (result != 0 || !pcm_data || pcm_samples == 0) {
+      LOG_ERROR("PCM generation failed for WAV wrapper");
+      return -1;
+   }
+
+   // Calculate sizes
+   size_t pcm_bytes = pcm_samples * sizeof(int16_t);
+   size_t wav_size = sizeof(WAVHeader) + pcm_bytes;
+
+   // Allocate WAV buffer
+   uint8_t *wav_data = (uint8_t *)malloc(wav_size);
+   if (!wav_data) {
+      LOG_ERROR("Failed to allocate WAV buffer (%zu bytes)", wav_size);
+      free(pcm_data);
+      return -1;
+   }
+
+   // Create WAV header (16-bit mono at synthesized sample rate)
+   WAVHeader header;
+   create_wav_header(&header, sample_rate, 1, 16, (uint32_t)pcm_bytes);
+
+   // Copy header and PCM data
+   memcpy(wav_data, &header, sizeof(WAVHeader));
+   memcpy(wav_data + sizeof(WAVHeader), pcm_data, pcm_bytes);
+
+   // Free PCM buffer (now copied into WAV)
+   free(pcm_data);
+
+   *wav_data_out = wav_data;
+   *wav_size_out = wav_size;
+
+   LOG_INFO("WAV generated: %zu bytes (header: %zu, PCM: %zu)", wav_size, sizeof(WAVHeader),
+            pcm_bytes);
+
+   return 0;
 }
 
 uint8_t *error_to_wav(const char *error_message, size_t *tts_size_out) {
@@ -905,6 +994,50 @@ uint8_t *error_to_wav(const char *error_message, size_t *tts_size_out) {
    LOG_ERROR("Failed to generate error TTS WAV");
    *tts_size_out = 0;
    return NULL;
+}
+
+/**
+ * @brief Wait for TTS queue to empty and playback to complete
+ *
+ * Blocks until all queued TTS has finished playing.
+ */
+int tts_wait_for_completion(int timeout_ms) {
+   if (!tts_handle.is_initialized) {
+      return -1;
+   }
+
+   struct timespec start_time;
+   clock_gettime(CLOCK_MONOTONIC, &start_time);
+
+   while (1) {
+      // Check if queue is empty and playback is idle
+      pthread_mutex_lock(&tts_queue_mutex);
+      bool queue_empty = tts_queue.empty();
+      pthread_mutex_unlock(&tts_queue_mutex);
+
+      pthread_mutex_lock(&tts_mutex);
+      bool playback_idle = (tts_playback_state == TTS_PLAYBACK_IDLE);
+      pthread_mutex_unlock(&tts_mutex);
+
+      if (queue_empty && playback_idle) {
+         return 0;  // TTS complete
+      }
+
+      // Check timeout
+      if (timeout_ms > 0) {
+         struct timespec now;
+         clock_gettime(CLOCK_MONOTONIC, &now);
+         int elapsed_ms = (int)((now.tv_sec - start_time.tv_sec) * 1000 +
+                                (now.tv_nsec - start_time.tv_nsec) / 1000000);
+         if (elapsed_ms >= timeout_ms) {
+            LOG_WARNING("TTS wait timeout after %d ms", elapsed_ms);
+            return -1;
+         }
+      }
+
+      // Sleep briefly before checking again
+      usleep(50000);  // 50ms
+   }
 }
 
 /**

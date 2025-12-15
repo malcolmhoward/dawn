@@ -4,7 +4,11 @@
 
 This document describes the architectural changes needed to transform DAWN from a single-threaded, blocking architecture to a multi-threaded design supporting concurrent clients.
 
-**Document Status**: Ready for implementation (architecture review complete, 2025-12-05)
+**Document Status**: Phases 1-4 implemented. Phase 5 (DAP2) or Phase 6 (WebUI) is NEXT.
+
+**Related Documents:**
+- [WEBUI_DESIGN.md](WEBUI_DESIGN.md) - WebUI implementation (requires Phase 4 first)
+- [DAP2_DESIGN.md](DAP2_DESIGN.md) - DAP2 protocol specification
 
 ---
 
@@ -1406,22 +1410,28 @@ if (needed > tts_capacity) {
 
 ---
 
-### Phase 4: Robustness + Metrics
+### Phase 4: Robustness + Metrics ✅ COMPLETE
 
 **Goal**: Production-ready error handling.
 
-1. Add per-session LLM cancellation (session->disconnected as cancel flag)
-2. Add LLM timeout (30 seconds) via CURL progress callback
-3. Client disconnect detection → set disconnected flag → cleanup resources
-4. Worker crash recovery (log, close client, continue)
-5. Add metrics: active workers, session count, LLM latency
-6. Fix MQTT callback static returns (per-worker allocation)
-7. **Extend TTS interface**: Add `text_to_speech_to_pcm()` for Phase 5 Tier 2 support:
+**Status**: All items implemented and verified.
+
+1. ✅ **Per-session LLM cancellation**: `session->disconnected` flag checked at 5+ points in pipeline
+2. ✅ **LLM timeout (30s)**: CURL progress callback + configurable `llm_timeout_ms` + low-speed fallback
+3. ✅ **Client disconnect detection**: Sets disconnected flag, triggers cleanup
+4. ✅ **Worker crash recovery**: `worker_cleanup_handler()` + error TTS fallbacks at each pipeline step
+5. ✅ **Metrics system**: Comprehensive `dawn_metrics_t` with 40+ recording functions
+6. ✅ **MQTT callbacks**: Heap-allocated returns (documented contract in mosquitto_comms.c)
+7. ✅ **TTS PCM interface**: `text_to_speech_to_pcm()` implemented
    ```c
-   // include/tts/text_to_speech.h (addition for Phase 5)
-   int text_to_speech_to_pcm(const char *text, int16_t **pcm_out, size_t *samples_out);
+   // include/tts/text_to_speech.h
+   int text_to_speech_to_pcm(const char *text,
+                             int16_t **pcm_data_out,
+                             size_t *pcm_samples_out,
+                             uint32_t *sample_rate_out);
    ```
-   - Reuses existing Piper synthesis, returns raw PCM without WAV header
+   - Uses `piper::textToAudio()` directly for raw PCM (no WAV header overhead)
+   - `text_to_speech_to_wav()` refactored to wrap `text_to_speech_to_pcm()`
    - Thread-safe via existing `tts_mutex`
 
 **Test**: Disconnect mid-processing doesn't leak resources, LLM call aborts cleanly
@@ -1793,4 +1803,11 @@ python3 tests/dap2_test_client.py --tier 2 --audio test_adpcm.bin
   - I3: Added `execute_command_for_worker()` integration with existing code
   - I4: Added registry full error handling (skip command, log warning)
   - I5: Added dynamic buffer with realloc for variable-length substitutions
+- 2025-12-15: Updated document status - Phases 1-3.5 implemented, Phase 4 next
+  - Added cross-reference to WEBUI_DESIGN.md (Phase 6 prerequisite)
+- 2025-12-15: Phase 4 marked complete
+  - All robustness features were already implemented (LLM cancellation, timeout, metrics, etc.)
+  - Added `text_to_speech_to_pcm()` using `piper::textToAudio()` for raw PCM output
+  - Refactored `text_to_speech_to_wav()` to wrap `text_to_speech_to_pcm()` (no code duplication)
+  - Ready for Phase 5 (DAP2) or Phase 6 (WebUI)
 

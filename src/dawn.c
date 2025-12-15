@@ -1980,19 +1980,29 @@ int main(int argc, char *argv[]) {
    // Speak greeting with AEC delay calibration (uses boot greeting to measure acoustic delay)
    tts_speak_greeting_with_calibration(timeOfDayGreeting());
 
-   // Flush audio buffer to discard any stale audio captured during boot
+   // Wait for greeting to complete before enabling barge-in
+   // This prevents VAD from interrupting the greeting during calibration
+   LOG_INFO("Waiting for boot greeting to complete...");
+   int tts_result = tts_wait_for_completion(10000);  // 10 second timeout
+   if (tts_result == 0) {
+      LOG_INFO("Boot greeting completed successfully");
+   } else {
+      LOG_WARNING("Boot greeting wait timed out - continuing anyway");
+   }
+
+   // Flush audio buffer to discard any speech captured during greeting
    if (audio_capture_ctx) {
       audio_capture_clear(audio_capture_ctx);
-      LOG_INFO("Audio buffer cleared after boot calibration");
+      LOG_INFO("Audio buffer cleared after boot greeting");
    }
 
-   // Reset VAD state to clear any detections from boot audio
+   // Reset VAD state to clear any detections from greeting playback
    if (vad_ctx) {
       vad_silero_reset(vad_ctx);
-      LOG_INFO("VAD state reset after boot calibration");
+      LOG_INFO("VAD state reset after boot greeting");
    }
 
-   // Enable barge-in now that calibration is complete
+   // Enable barge-in now that greeting is complete
    // Priority: CLI (--no-bargein) > config (audio.bargein.enabled)
    if (g_bargein_user_disabled) {
       g_bargein_disabled = 1;
@@ -2002,7 +2012,7 @@ int main(int argc, char *argv[]) {
       LOG_INFO("Barge-in disabled by config file");
    } else {
       g_bargein_disabled = 0;
-      LOG_INFO("Barge-in enabled after boot calibration");
+      LOG_INFO("Barge-in enabled after boot greeting");
    }
 
    // Register the signal handler for SIGINT.

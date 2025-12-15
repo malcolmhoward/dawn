@@ -366,10 +366,23 @@ int aec_cal_finish(int *delay_ms) {
    float second_best_corr = -1.0f;
    int second_best_lag = 0;
 
+   /* Calculate minimum search lag from physical constraints.
+    * Delays below AEC_CAL_MIN_DELAY_MS are physically impossible and
+    * searching there finds false peaks from DC offset or crosstalk. */
+   int min_lag = (g_cal.sample_rate * AEC_CAL_MIN_DELAY_MS) / 1000;
+   if (min_lag >= max_lag) {
+      LOG_WARNING("AEC calibration: search range too small (min=%d, max=%d samples)", min_lag,
+                  max_lag);
+      return AEC_CAL_ERR_INSUFFICIENT_DATA;
+   }
+
+   LOG_INFO("AEC calibration: searching delay range %d-%d ms (%d-%d samples)", AEC_CAL_MIN_DELAY_MS,
+            (max_lag * 1000) / g_cal.sample_rate, min_lag, max_lag);
+
    /* Step through lags - use coarse search first, then refine */
    int step = (max_lag > 1000) ? 10 : 1;
 
-   for (int lag = 0; lag <= max_lag; lag += step) {
+   for (int lag = min_lag; lag <= max_lag; lag += step) {
       float corr = compute_correlation_at_lag(g_cal.ref_buffer, usable_ref_count, mic_ptr,
                                               effective_mic_count, lag);
       if (corr > best_corr) {
@@ -385,7 +398,7 @@ int aec_cal_finish(int *delay_ms) {
 
    /* Fine search around best lag if we used coarse search */
    if (step > 1 && best_lag > 0) {
-      int fine_start = (best_lag - step > 0) ? (best_lag - step) : 0;
+      int fine_start = (best_lag - step > min_lag) ? (best_lag - step) : min_lag;
       int fine_end = (best_lag + step < max_lag) ? (best_lag + step) : max_lag;
 
       for (int lag = fine_start; lag <= fine_end; lag++) {

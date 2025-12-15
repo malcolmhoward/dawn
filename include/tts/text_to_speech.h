@@ -67,15 +67,39 @@ void initialize_text_to_speech(char *pcm_device);
 void text_to_speech(char *text);
 
 /**
+ * @brief Generate raw PCM audio data from text
+ *
+ * This function generates raw PCM audio samples (16-bit signed, mono, 22050Hz)
+ * using Piper TTS. Unlike text_to_speech_to_wav(), this returns raw samples
+ * without a WAV header, making it efficient for encoding to Opus/ADPCM.
+ *
+ * @param text The text to be converted to audio
+ * @param pcm_data_out Pointer to receive allocated PCM data (caller must free)
+ * @param pcm_samples_out Pointer to receive number of samples (not bytes)
+ * @param sample_rate_out Pointer to receive sample rate (always 22050)
+ * @return 0 on success, -1 on error
+ *
+ * @note Output is 16-bit signed little-endian mono PCM at 22050Hz
+ * @note Thread-safe via tts_mutex
+ */
+int text_to_speech_to_pcm(const char *text,
+                          int16_t **pcm_data_out,
+                          size_t *pcm_samples_out,
+                          uint32_t *sample_rate_out);
+
+/**
  * @brief Generate WAV audio data from text for network transmission
  *
- * This function generates WAV audio using the same Piper instance as local TTS,
- * but returns the audio data in memory instead of playing it locally.
+ * This function generates WAV audio by calling text_to_speech_to_pcm() and
+ * wrapping the result with a standard WAV header. Use this for clients that
+ * expect WAV format (e.g., DAP1 ESP32 satellites).
  *
  * @param text The text to be converted to WAV audio
  * @param wav_data_out Pointer to receive allocated WAV data (caller must free)
  * @param wav_size_out Pointer to receive WAV data size in bytes
  * @return 0 on success, -1 on error
+ *
+ * @note Thread-safe via tts_mutex
  */
 int text_to_speech_to_wav(const char *text, uint8_t **wav_data_out, size_t *wav_size_out);
 
@@ -94,6 +118,17 @@ uint8_t *error_to_wav(const char *error_message, size_t *tts_size_out);
  * @param greeting The greeting text to speak
  */
 void tts_speak_greeting_with_calibration(const char *greeting);
+
+/**
+ * @brief Wait for TTS queue to empty and playback to complete
+ *
+ * Blocks until all queued TTS has finished playing. Used during boot
+ * to ensure the greeting completes before enabling barge-in.
+ *
+ * @param timeout_ms Maximum time to wait in milliseconds (0 = no timeout)
+ * @return 0 if TTS completed, -1 if timeout or not initialized
+ */
+int tts_wait_for_completion(int timeout_ms);
 
 /**
  * @brief Cleans up the text-to-speech system.

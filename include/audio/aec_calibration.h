@@ -75,6 +75,24 @@ extern "C" {
 #define AEC_CAL_AMBIGUITY_RATIO 0.7f
 
 /**
+ * @brief Minimum expected acoustic delay (milliseconds)
+ *
+ * Physical constraints make delays below this threshold impossible:
+ * - Sound travels ~34cm per millisecond (343 m/s at 20°C)
+ * - Hardware latency adds 5-20ms (ADC/DAC + buffers)
+ * - Minimum speaker-to-mic distance is typically 10+ cm
+ *
+ * Searching below this threshold finds false peaks caused by:
+ * - DC offset correlation
+ * - Low-frequency noise present in both signals
+ * - Electrical crosstalk
+ *
+ * 10ms minimum corresponds to ~3.4 meters or ~15ms hardware latency,
+ * which is conservative for typical setups.
+ */
+#define AEC_CAL_MIN_DELAY_MS 10
+
+/**
  * @brief Minimum greeting duration for reliable calibration (milliseconds)
  *
  * Greetings shorter than this may not provide enough audio content for
