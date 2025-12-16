@@ -89,7 +89,8 @@ static deviceCallback deviceCallbackArray[] = { { AUDIO_PLAYBACK_DEVICE, setPcmP
                                                 { SEARCH, searchCallback },
                                                 { WEATHER, weatherCallback },
                                                 { CALCULATOR, calculatorCallback },
-                                                { URL_FETCH, urlFetchCallback } };
+                                                { URL_FETCH, urlFetchCallback },
+                                                { LLM_STATUS, llmStatusCallback } };
 
 static pthread_t music_thread = -1;
 static pthread_t voice_thread = -1;
@@ -1434,6 +1435,47 @@ char *cloudLLMCallback(const char *actionName, char *value, int *should_respond)
    // Always return string for AI modes (ignored in DIRECT_ONLY)
    *should_respond = 1;
    return strdup("AI switched to cloud LLM");
+}
+
+char *llmStatusCallback(const char *actionName, char *value, int *should_respond) {
+   llm_type_t current = llm_get_type();
+   const char *type_str = (current == LLM_LOCAL) ? "local" : "cloud";
+   const char *model = llm_get_model_name();
+   const char *provider = llm_get_cloud_provider_name();
+   char *result = NULL;
+
+   *should_respond = 1;
+
+   if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
+      // Direct mode: use text-to-speech
+      result = malloc(256);
+      if (result) {
+         if (current == LLM_CLOUD) {
+            snprintf(result, 256, "Currently using %s LLM with %s, model %s.", type_str, provider,
+                     model ? model : "unknown");
+         } else {
+            snprintf(result, 256, "Currently using %s LLM, model %s.", type_str,
+                     model ? model : "unknown");
+         }
+         int local_should_respond = 0;
+         textToSpeechCallback(NULL, result, &local_should_respond);
+         free(result);
+      }
+      return NULL;
+   } else {
+      // AI modes: return the raw data for AI to process
+      result = malloc(256);
+      if (result) {
+         if (current == LLM_CLOUD) {
+            snprintf(result, 256, "Currently using %s LLM (%s, model: %s)", type_str, provider,
+                     model ? model : "unknown");
+         } else {
+            snprintf(result, 256, "Currently using %s LLM (model: %s)", type_str,
+                     model ? model : "unknown");
+         }
+      }
+      return result;
+   }
 }
 
 char *resetConversationCallback(const char *actionName, char *value, int *should_respond) {

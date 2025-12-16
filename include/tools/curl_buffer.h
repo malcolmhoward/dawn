@@ -46,14 +46,14 @@
 
 /**
  * Buffer structure for accumulating CURL response data
- * Initialize with: curl_buffer_t buf = {NULL, 0, 0, 0};
- * Or use curl_buffer_init() / curl_buffer_init_with_max()
+ * Initialize with curl_buffer_init() or curl_buffer_init_with_max()
  */
 typedef struct {
    char *data;           // Response data (null-terminated)
    size_t size;          // Current size of data (excluding null terminator)
    size_t capacity;      // Allocated capacity
    size_t max_capacity;  // Maximum allowed capacity (0 = use default)
+   int truncated;        // Set to 1 if response exceeded max_capacity
 } curl_buffer_t;
 
 /**
@@ -108,7 +108,8 @@ static inline size_t curl_buffer_write_callback(void *contents,
       }
       // Reject if exceeds max capacity
       if (required > max_cap) {
-         return 0;  // Signal error to CURL - exceeds max capacity
+         buf->truncated = 1;  // Mark as truncated for caller to check
+         return 0;            // Signal error to CURL - exceeds max capacity
       }
 
       char *new_data = (char *)realloc(buf->data, new_capacity);
@@ -135,6 +136,7 @@ static inline void curl_buffer_init(curl_buffer_t *buf) {
    buf->size = 0;
    buf->capacity = 0;
    buf->max_capacity = 0;  // Use compile-time default
+   buf->truncated = 0;
 }
 
 /**
@@ -147,6 +149,7 @@ static inline void curl_buffer_init_with_max(curl_buffer_t *buf, size_t max_cap)
    buf->size = 0;
    buf->capacity = 0;
    buf->max_capacity = max_cap;
+   buf->truncated = 0;
 }
 
 /**
@@ -157,6 +160,7 @@ static inline void curl_buffer_init_with_max(curl_buffer_t *buf, size_t max_cap)
  */
 static inline void curl_buffer_reset(curl_buffer_t *buf) {
    buf->size = 0;
+   buf->truncated = 0;
    if (buf->data) {
       buf->data[0] = '\0';
    }

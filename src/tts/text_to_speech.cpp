@@ -434,7 +434,7 @@ void *tts_thread_function(void *arg) {
                 bool was_paused = false;
                 while (tts_playback_state == TTS_PLAYBACK_PAUSE) {
                    if (!was_paused) {
-                      LOG_WARNING("TTS playback is PAUSED.");
+                      LOG_INFO("TTS playback is PAUSED.");
 #ifdef ENABLE_AEC
                       // Signal AEC that playback is paused - stop underflow counting
                       aec_signal_playback_stop();
@@ -478,7 +478,9 @@ void *tts_thread_function(void *arg) {
                       tts_stop_processing.store(true);
                       return;
                    } else if (tts_playback_state == TTS_PLAYBACK_PLAY) {
-                      LOG_WARNING("TTS unpaused to PLAY.");
+                      LOG_INFO("TTS unpaused to PLAY.");
+                      // Prepare stream after unpause to avoid underrun on first write
+                      audio_stream_playback_recover(tts_handle.playback_handle, AUDIO_ERR_UNDERRUN);
                    } else if (tts_playback_state == TTS_PLAYBACK_IDLE) {
                       LOG_WARNING("TTS unpaused to IDLE.");
                    } else {
@@ -543,7 +545,10 @@ void *tts_thread_function(void *arg) {
                    const uint64_t acoustic_delay_us = 50000;  // 50ms
                    uint64_t playback_delay_us = acoustic_delay_us;
 
-                   size_t in_samples = (size_t)frames_written;  // Actual samples written
+                   // Use original 22050Hz sample count, NOT converted frame count
+                   // When needs_conversion is true, frames_written is at hw_rate (e.g., 48kHz)
+                   // but audioBuffer is at DEFAULT_RATE (22050Hz)
+                   size_t in_samples = samples_this_chunk;
 
                    // Enforce maximum chunk size
                    if (in_samples <= RESAMPLER_MAX_SAMPLES) {

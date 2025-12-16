@@ -1298,6 +1298,7 @@ int main(int argc, char *argv[]) {
       CLI_OVERRIDE_AUDIO_BACKEND = (1 << 9),
       CLI_OVERRIDE_SUMMARIZER_BACKEND = (1 << 10),
       CLI_OVERRIDE_SUMMARIZER_THRESHOLD = (1 << 11),
+      CLI_OVERRIDE_RECORD_PATH = (1 << 12),
    };
    uint32_t cli_overrides = 0;
 
@@ -1443,6 +1444,7 @@ int main(int argc, char *argv[]) {
             cli_overrides |= CLI_OVERRIDE_MIC_RECORD;
             if (optarg) {
                mic_set_recording_dir(optarg);
+               cli_overrides |= CLI_OVERRIDE_RECORD_PATH;
             }
             LOG_INFO("Mic recording enabled via CLI (dir: %s)", optarg ? optarg : "/tmp");
             break;
@@ -1453,6 +1455,7 @@ int main(int argc, char *argv[]) {
             cli_overrides |= CLI_OVERRIDE_ASR_RECORD;
             if (optarg) {
                asr_set_recording_dir(optarg);
+               cli_overrides |= CLI_OVERRIDE_RECORD_PATH;
             }
             LOG_INFO("ASR recording enabled via CLI (dir: %s)", optarg ? optarg : "/tmp");
             break;
@@ -1463,6 +1466,7 @@ int main(int argc, char *argv[]) {
             cli_overrides |= CLI_OVERRIDE_AEC_RECORD;
             if (optarg) {
                aec_set_recording_dir(optarg);
+               cli_overrides |= CLI_OVERRIDE_RECORD_PATH;
             }
             LOG_INFO("AEC recording enabled via CLI (dir: %s)", optarg ? optarg : "/tmp");
             break;
@@ -1584,8 +1588,8 @@ int main(int argc, char *argv[]) {
    }
 
    // Apply debug recording config (CLI overrides take precedence)
-   // Set recording directory first if configured
-   if (g_config.debug.record_path[0] != '\0') {
+   // Set recording directory first if configured (but not if CLI provided a path)
+   if (!(cli_overrides & CLI_OVERRIDE_RECORD_PATH) && g_config.debug.record_path[0] != '\0') {
       mic_set_recording_dir(g_config.debug.record_path);
       asr_set_recording_dir(g_config.debug.record_path);
 #ifdef ENABLE_AEC
@@ -1670,9 +1674,9 @@ int main(int argc, char *argv[]) {
       const char *provider = g_config.llm.cloud.provider;
 
       if (strcmp(provider, "openai") == 0) {
-         has_api_key = g_secrets.openai_api_key[0] != '\0';
+         has_api_key = llm_has_openai_key();
       } else if (strcmp(provider, "claude") == 0) {
-         has_api_key = g_secrets.claude_api_key[0] != '\0';
+         has_api_key = llm_has_claude_key();
       }
 
       if (!has_api_key) {

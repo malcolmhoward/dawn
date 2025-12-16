@@ -88,6 +88,15 @@ static bool is_claude_available(void) {
    return get_claude_api_key() != NULL;
 }
 
+// Public API key availability functions (wrappers for static helpers)
+bool llm_has_openai_key(void) {
+   return is_openai_available();
+}
+
+bool llm_has_claude_key(void) {
+   return is_claude_available();
+}
+
 // Global state
 static llm_type_t current_type = LLM_UNDEFINED;
 static cloud_provider_t current_cloud_provider = CLOUD_PROVIDER_NONE;
@@ -296,10 +305,10 @@ void llm_set_type(llm_type_t type) {
       const char *provider_name = "unknown";
 
       if (current_cloud_provider == CLOUD_PROVIDER_CLAUDE) {
-         has_api_key = g_secrets.claude_api_key[0] != '\0';
+         has_api_key = is_claude_available();
          provider_name = "Claude";
       } else {
-         has_api_key = g_secrets.openai_api_key[0] != '\0';
+         has_api_key = is_openai_available();
          provider_name = "OpenAI";
       }
 

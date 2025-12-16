@@ -23,6 +23,7 @@
 #define LLM_INTERFACE_H
 
 #include <json-c/json.h>
+#include <stdbool.h>
 #include <stddef.h>
 
 /**
@@ -203,5 +204,23 @@ void llm_clear_interrupt(void);
  * @return 1 if interrupt requested, 0 otherwise
  */
 int llm_is_interrupt_requested(void);
+
+/**
+ * @brief Check if OpenAI API key is available
+ *
+ * Checks both runtime config (secrets.toml) and compile-time define (secrets.h)
+ *
+ * @return true if API key is available, false otherwise
+ */
+bool llm_has_openai_key(void);
+
+/**
+ * @brief Check if Claude API key is available
+ *
+ * Checks both runtime config (secrets.toml) and compile-time define (secrets.h)
+ *
+ * @return true if API key is available, false otherwise
+ */
+bool llm_has_claude_key(void);
 
 #endif  // LLM_INTERFACE_H

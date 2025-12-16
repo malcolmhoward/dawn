@@ -1266,6 +1266,15 @@ int url_fetch_content_with_base(const char *url,
 
       // Check for retryable curl errors
       if (res != CURLE_OK) {
+         // Check if this was a buffer truncation (response too large)
+         // We can still use the partial content we received
+         if (res == CURLE_WRITE_ERROR && buffer.truncated && buffer.data && buffer.size > 0) {
+            LOG_WARNING("url_fetcher: Response truncated at %zuKB (max %zuKB) for %s",
+                        buffer.size / 1024, URL_FETCH_MAX_SIZE / 1024, url);
+            // Continue processing with truncated content - don't treat as error
+            // The truncated flag will be checked later to add a notice
+            break;
+         }
          LOG_WARNING("url_fetcher: Network error on attempt %d: %s", retry_count + 1,
                      curl_easy_strerror(res));
          curl_buffer_free(&buffer);
@@ -1398,6 +1407,7 @@ int url_fetch_content_with_base(const char *url,
 
    char *extracted = NULL;
    int result;
+   int was_truncated = buffer.truncated;
 
    // Use provided base_url or fall back to the fetched URL
    const char *effective_base = base_url ? base_url : url;
@@ -1436,12 +1446,26 @@ int url_fetch_content_with_base(const char *url,
    }
 
    size_t extracted_len = strlen(extracted);
-   LOG_INFO("url_fetcher: Extracted %zu bytes of markdown content", extracted_len);
+   LOG_INFO("url_fetcher: Extracted %zu bytes of markdown content%s", extracted_len,
+            was_truncated ? " (truncated)" : "");
 
    // Log a preview of the content for debugging (truncate at 2000 chars)
    if (extracted_len > 0) {
       LOG_INFO("url_fetcher: Content preview:\n%.2000s%s", extracted,
                extracted_len > 2000 ? "\n... (truncated)" : "");
+   }
+
+   // Add truncation notice if content was cut off
+   if (was_truncated) {
+      const char *notice = "\n\n---\n**Note: This page was truncated due to size limits. "
+                           "The content above may be incomplete.**\n";
+      size_t notice_len = strlen(notice);
+      char *with_notice = realloc(extracted, extracted_len + notice_len + 1);
+      if (with_notice) {
+         memcpy(with_notice + extracted_len, notice, notice_len + 1);
+         extracted = with_notice;
+         extracted_len += notice_len;
+      }
    }
 
    *out_content = extracted;

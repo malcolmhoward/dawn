@@ -55,6 +55,7 @@ typedef enum {
    WEATHER,               /**< Weather information service. */
    CALCULATOR,            /**< Calculator for math expressions. */
    URL_FETCH,             /**< Fetch and extract content from a URL. */
+   LLM_STATUS,            /**< Query current LLM status (local/cloud, model). */
    MAX_DEVICE_TYPES       /**< Used to determine the number of device types. */
 } deviceType;
 
@@ -80,7 +81,8 @@ static const char *deviceTypeStrings[] = { "audio playback device",
                                            "search",
                                            "weather",
                                            "calculator",
-                                           "url" };
+                                           "url",
+                                           "llm status" };
 
 /**
  * @brief Associates a device type with a callback function that processes actions for that device.
@@ -315,5 +317,17 @@ char *calculatorCallback(const char *actionName, char *value, int *should_respon
  * @param should_respond Should the callback return data to the AI or just handle it.
  */
 char *urlFetchCallback(const char *actionName, char *value, int *should_respond);
+
+/**
+ * @brief Callback function to query current LLM status.
+ *
+ * Returns information about the currently active LLM (local or cloud),
+ * including the model name and provider (for cloud).
+ *
+ * @param actionName The name of the action triggering this callback (e.g., "get").
+ * @param value      Unused for this callback.
+ * @param should_respond Should the callback return data to the AI or just handle it.
+ */
+char *llmStatusCallback(const char *actionName, char *value, int *should_respond);
 
 #endif  // MOSQUITTO_COMMS_H
