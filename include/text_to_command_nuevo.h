@@ -22,6 +22,8 @@
 #ifndef TEXT_TO_COMMAND_H
 #define TEXT_TO_COMMAND_H
 
+#include <stddef.h> /* For size_t */
+
 #define MAX_WORD_LENGTH 256
 #define MAX_COMMAND_LENGTH 512
 #define MAX_SUBACTIONS 10
@@ -114,6 +116,23 @@ typedef struct {
    char device[MAX_WORD_LENGTH]; /**< Audio device name. May be an ALSA device or Pulseaudio device.
                                   */
 } audioDevices;
+
+/**
+ * @brief Normalizes text for command matching.
+ *
+ * Converts input to lowercase and strips leading/trailing punctuation and whitespace.
+ * This handles Whisper ASR output which includes capitalization and punctuation
+ * that would otherwise prevent matching against lowercase command patterns.
+ *
+ * Example: "Turn on the lights." -> "turn on the lights"
+ *
+ * @param input  The input string to normalize (e.g., Whisper transcription).
+ * @param output Buffer to store the normalized string.
+ * @param size   Size of the output buffer.
+ *
+ * @note Output buffer must be at least as large as input to avoid truncation.
+ */
+void normalize_for_matching(const char *input, char *output, size_t size);
 
 /**
  * @brief Extracts and returns the remaining part of a string after a given substring.

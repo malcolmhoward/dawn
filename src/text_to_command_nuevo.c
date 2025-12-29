@@ -19,6 +19,9 @@
  * part of the project and are adopted by the project author(s).
  */
 
+/* Define _GNU_SOURCE for FNM_CASEFOLD (case-insensitive fnmatch) */
+#define _GNU_SOURCE
+
 /**
  * @file text_to_command_nuevo.c
  * @brief This will process the text to command json file.
@@ -45,6 +48,7 @@
 
 #include "text_to_command_nuevo.h"
 
+#include <ctype.h>
 #include <fnmatch.h>
 #include <json-c/json.h>
 #include <stdio.h>
@@ -52,6 +56,36 @@
 #include <time.h>
 
 #include "logging.h"
+
+void normalize_for_matching(const char *input, char *output, size_t size) {
+   if (input == NULL || output == NULL || size == 0) {
+      if (output && size > 0) {
+         output[0] = '\0';
+      }
+      return;
+   }
+
+   const char *src = input;
+   size_t dst_idx = 0;
+
+   /* Skip leading punctuation and whitespace */
+   while (*src && (ispunct((unsigned char)*src) || isspace((unsigned char)*src))) {
+      src++;
+   }
+
+   /* Copy and lowercase */
+   while (*src && dst_idx < size - 1) {
+      output[dst_idx++] = tolower((unsigned char)*src);
+      src++;
+   }
+   output[dst_idx] = '\0';
+
+   /* Strip trailing punctuation and whitespace */
+   while (dst_idx > 0 && (ispunct((unsigned char)output[dst_idx - 1]) ||
+                          isspace((unsigned char)output[dst_idx - 1]))) {
+      output[--dst_idx] = '\0';
+   }
+}
 
 char *extract_remaining_after_substring(const char *input, const char *substring) {
    char *pos = strstr(input, substring);
@@ -68,18 +102,19 @@ int searchString(const char *templateStr, const char *secondStr) {
       return -1;
    }
 
-   char *newTemplate = malloc((strlen(templateStr) + 3) * sizeof(char));
-   if (newTemplate == NULL) {
+   size_t len = strlen(templateStr);
+   if (len >= MAX_COMMAND_LENGTH - 2) {
+      LOG_ERROR("Template string too long for searchString buffer");
       return -1;
    }
 
-   strcpy(newTemplate, templateStr);
-   newTemplate[strlen(templateStr)] = '*';
-   newTemplate[strlen(templateStr) + 1] = '\0';
+   /* Stack allocation - avoids heap churn in hot loop (up to 1000 iterations) */
+   char newTemplate[MAX_COMMAND_LENGTH];
+   memcpy(newTemplate, templateStr, len);
+   newTemplate[len] = '*';
+   newTemplate[len + 1] = '\0';
 
-   int found = fnmatch(newTemplate, secondStr, 0);
-
-   free(newTemplate);
+   int found = fnmatch(newTemplate, secondStr, FNM_CASEFOLD);
 
    if (found == 0) {
       return 1;

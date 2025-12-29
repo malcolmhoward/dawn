@@ -151,33 +151,59 @@ const char *getUserHomeDirectory() {
 }
 
 /**
- * Appends a specified subdirectory to the user's home directory to construct a path.
+ * Resolves a path that may be absolute, tilde-prefixed, or relative to home.
  *
- * @param subdirectory The subdirectory to append to the home directory.
- * @return A dynamically allocated string containing the full path. The caller is responsible
- *         for freeing this memory using free().
+ * @param path The path to resolve:
+ *             - Absolute paths (starting with '/') are returned as-is
+ *             - Tilde paths (starting with '~/') have ~ replaced with home directory
+ *             - Relative paths are prefixed with home directory
+ * @return A dynamically allocated string containing the resolved path. The caller is responsible
+ *         for freeing this memory using free(). Returns NULL on error.
  */
-char *constructPathWithSubdirectory(const char *subdirectory) {
+char *constructPathWithSubdirectory(const char *path) {
+   if (!path || !*path) {
+      LOG_ERROR("Error: path is NULL or empty.");
+      return NULL;
+   }
+
+   /* Absolute path - return as-is */
+   if (path[0] == '/') {
+      return strdup(path);
+   }
+
+   /* Need home directory for tilde expansion or relative paths */
    const char *homeDir = getUserHomeDirectory();
    if (!homeDir) {
-      // getUserHomeDirectory already prints an error message if needed.
-
+      /* getUserHomeDirectory already prints an error message if needed. */
       return NULL;
    }
 
-   // Calculate the size needed for the full path, including null terminator
-   size_t fullPathSize = strlen(homeDir) + strlen(subdirectory) + 1;
+   char *fullPath = NULL;
 
-   // Allocate memory for the full path
-   char *fullPath = (char *)malloc(fullPathSize);
-   if (!fullPath) {
-      LOG_ERROR("Error: Memory allocation failed for full path.");
-
-      return NULL;
+   /* Tilde expansion: ~/path -> /home/user/path */
+   if (path[0] == '~' && (path[1] == '/' || path[1] == '\0')) {
+      const char *suffix = (path[1] == '/') ? path + 2 : "";
+      size_t fullPathSize = strlen(homeDir) + 1 + strlen(suffix) + 1;
+      fullPath = (char *)malloc(fullPathSize);
+      if (!fullPath) {
+         LOG_ERROR("Error: Memory allocation failed for full path.");
+         return NULL;
+      }
+      if (*suffix) {
+         snprintf(fullPath, fullPathSize, "%s/%s", homeDir, suffix);
+      } else {
+         snprintf(fullPath, fullPathSize, "%s", homeDir);
+      }
+   } else {
+      /* Relative path - prepend home directory */
+      size_t fullPathSize = strlen(homeDir) + 1 + strlen(path) + 1;
+      fullPath = (char *)malloc(fullPathSize);
+      if (!fullPath) {
+         LOG_ERROR("Error: Memory allocation failed for full path.");
+         return NULL;
+      }
+      snprintf(fullPath, fullPathSize, "%s/%s", homeDir, path);
    }
-
-   // Construct the full path
-   snprintf(fullPath, fullPathSize, "%s%s", homeDir, subdirectory);
 
    return fullPath;
 }

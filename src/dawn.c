@@ -631,13 +631,18 @@ char *setPcmCaptureDevice(const char *actionName, char *value, int *should_respo
 }
 
 /**
- * Normalize text for wake word/command matching
- * Converts to lowercase and removes punctuation/special characters
+ * Normalize text for wake word and cancel word matching.
+ * Converts to lowercase and removes all punctuation/special characters.
+ * Returns allocated string that caller must free.
+ *
+ * Note: For command pattern matching (e.g., "turn on lights"), use
+ * normalize_for_matching() from text_to_command_nuevo.h instead, which
+ * preserves spaces and uses an output buffer.
  *
  * @param input Original text
  * @return Normalized text (caller must free), or NULL on error
  */
-static char *normalize_for_matching(const char *input) {
+static char *normalize_wake_word_text(const char *input) {
    if (!input) {
       return NULL;
    }
@@ -2905,8 +2910,8 @@ int main(int argc, char *argv[]) {
             // WAKE WORD PROCESSING (shared by max duration and speech end paths)
             if (should_check_wake_word) {
                if (input_text) {
-                  // Normalize for wake word/command matching
-                  char *normalized_text = normalize_for_matching(input_text);
+                  // Normalize for wake word matching (removes all punctuation)
+                  char *normalized_text = normalize_wake_word_text(input_text);
 
                   for (i = 0; i < numGoodbyeWords; i++) {
                      if (normalized_text && strcmp(normalized_text, goodbyeWords[i]) == 0) {
@@ -3317,9 +3322,15 @@ int main(int argc, char *argv[]) {
                /* Set command context so callbacks use local session (auto-cleared on scope exit) */
                SESSION_SCOPED_COMMAND_CONTEXT(local_session);
 
+               /* Normalize command_text for matching (lowercase, strip punctuation)
+                * This handles Whisper ASR output: "Turn on the lights." -> "turn on the lights"
+                * We keep original command_text for value extraction (e.g., song names) */
+               char normalized_text[MAX_COMMAND_LENGTH];
+               normalize_for_matching(command_text, normalized_text, sizeof(normalized_text));
+
                /* Process Commands before AI. */
                for (i = 0; i < numCommands; i++) {
-                  if (searchString(commands[i].actionWordsWildcard, command_text) == 1) {
+                  if (searchString(commands[i].actionWordsWildcard, normalized_text) == 1) {
                      // Buffer sizes based on MAX_COMMAND_LENGTH (512) and MAX_WORD_LENGTH (256)
                      // from text_to_command_nuevo.h
                      char thisValue[MAX_WORD_LENGTH];  // Extracted value (device/song name)
@@ -3335,6 +3346,8 @@ int main(int argc, char *argv[]) {
                      pthread_mutex_unlock(&tts_mutex);
 
                      memset(thisValue, '\0', sizeof(thisValue));
+                     LOG_INFO("DIRECT MATCH: \"%s\" (normalized: \"%s\") → pattern: \"%s\"",
+                              command_text, normalized_text, commands[i].actionWordsWildcard);
                      LOG_WARNING("Found command \"%s\".\n\tLooking for value in \"%s\".\n",
                                  commands[i].actionWordsWildcard, commands[i].actionWordsRegex);
 
@@ -3343,10 +3356,13 @@ int main(int argc, char *argv[]) {
                          (commands[i].actionWordsRegex[strLength - 1] == 's')) {
                         strncpy(thisSubstring, commands[i].actionWordsRegex, strLength - 2);
                         thisSubstring[strLength - 2] = '\0';
+                        /* Use normalized_text for extraction since patterns are lowercase */
                         strcpy(thisValue,
-                               extract_remaining_after_substring(command_text, thisSubstring));
+                               extract_remaining_after_substring(normalized_text, thisSubstring));
                      } else {
-                        int retSs = sscanf(command_text, commands[i].actionWordsRegex, thisValue);
+                        int retSs = sscanf(normalized_text, commands[i].actionWordsRegex,
+                                           thisValue);
+                        (void)retSs; /* Suppress unused variable warning */
                      }
 
                      /* Trim trailing punctuation from extracted value (e.g., "Iron Man." -> "Iron
