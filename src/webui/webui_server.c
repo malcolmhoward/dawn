@@ -36,6 +36,7 @@
 #include <net/if.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdatomic.h>
 #include <string.h>
 #include <sys/random.h>
 #include <unistd.h>
@@ -60,6 +61,7 @@
 #include "state_machine.h"
 #include "tools/smartthings_service.h"
 #include "tools/string_utils.h"
+#include "tts/tts_preprocessing.h"
 #include "ui/metrics.h"
 #include "version.h"
 
@@ -115,7 +117,7 @@ typedef struct {
       } context;
       struct {
          uint32_t stream_id;
-         char *text; /* For delta: text chunk. For end: reason. */
+         char text[128]; /* Fixed buffer for delta/end text (no malloc/free churn) */
       } stream;
    };
 } ws_response_t;
@@ -435,9 +437,6 @@ static void queue_response(ws_response_t *resp) {
    s_response_queue[s_queue_tail] = *resp;
    s_queue_tail = next_tail;
 
-   LOG_INFO("WebUI: Queued response type=%d for session %u", resp->type,
-            resp->session ? resp->session->session_id : 0);
-
    pthread_mutex_unlock(&s_queue_mutex);
 
    /* Wake up lws_service() to process queue */
@@ -472,11 +471,9 @@ static void free_response(ws_response_t *resp) {
          /* No data to free - all inline values */
          break;
       case WS_RESP_STREAM_START:
-         /* No text to free - only stream_id */
-         break;
       case WS_RESP_STREAM_DELTA:
       case WS_RESP_STREAM_END:
-         free(resp->stream.text);
+         /* No data to free - text[] is inline fixed buffer */
          break;
    }
 }
@@ -526,8 +523,6 @@ static int send_binary_message(struct lws *wsi, uint8_t msg_type, const uint8_t 
       memcpy(&buf[LWS_PRE + 1], data, len);
    }
 
-   LOG_INFO("WebUI: Sending binary frame type=0x%02x len=%zu", msg_type, total_len);
-
    int written = lws_write(wsi, &buf[LWS_PRE], total_len, LWS_WRITE_BINARY);
    free(buf);
 
@@ -541,7 +536,6 @@ static int send_binary_message(struct lws *wsi, uint8_t msg_type, const uint8_t 
       return -1;
    }
 
-   LOG_INFO("WebUI: Binary frame sent successfully (%d bytes)", written);
    return 0;
 }
 
@@ -553,7 +547,7 @@ static void send_audio_impl(struct lws *wsi, const uint8_t *data, size_t len) {
 }
 
 static void send_audio_end_impl(struct lws *wsi) {
-   send_binary_message(wsi, WS_BIN_AUDIO_OUT_END, NULL, 0);
+   send_binary_message(wsi, WS_BIN_AUDIO_SEGMENT_END, NULL, 0);
 }
 
 static void send_state_impl(struct lws *wsi, const char *state) {
@@ -649,7 +643,7 @@ static void send_stream_delta_impl(struct lws *wsi, uint32_t stream_id, const ch
 }
 
 static void send_stream_end_impl(struct lws *wsi, uint32_t stream_id, const char *reason) {
-   char json[128];
+   char json[256];
    snprintf(json, sizeof(json),
             "{\"type\":\"stream_end\",\"payload\":{\"stream_id\":%u,\"reason\":\"%s\"}}", stream_id,
             reason ? reason : "complete");
@@ -753,8 +747,6 @@ static void process_one_response(void) {
    }
 
    /* Send via lws_write (one write per callback!) */
-   LOG_INFO("WebUI: Sending response type=%d to session %u", resp.type, resp.session->session_id);
-
    switch (resp.type) {
       case WS_RESP_STATE:
          send_state_impl(conn->wsi, resp.state.state);
@@ -790,11 +782,11 @@ static void process_one_response(void) {
          break;
       case WS_RESP_STREAM_DELTA:
          send_stream_delta_impl(conn->wsi, resp.stream.stream_id, resp.stream.text);
-         free(resp.stream.text);
+         /* text[] is inline buffer - no free needed */
          break;
       case WS_RESP_STREAM_END:
          send_stream_end_impl(conn->wsi, resp.stream.stream_id, resp.stream.text);
-         free(resp.stream.text);
+         /* text[] is inline buffer - no free needed */
          break;
    }
 
@@ -3644,8 +3636,6 @@ static void webui_send_audio(session_t *session, const uint8_t *data, size_t len
       offset += chunk_len;
       chunk_num++;
    }
-
-   LOG_INFO("WebUI: Queued %zu bytes audio in %d chunks", len, chunk_num);
 }
 
 /**
@@ -3683,14 +3673,14 @@ void webui_send_stream_start(session_t *session) {
    /* Increment stream ID and mark streaming active.
     * Note: Filter state is reset in session_llm_call() before LLM call.
     * Don't reset stream_had_content here - it may already be set by filter. */
-   session->current_stream_id++;
+   atomic_fetch_add(&session->current_stream_id, 1);
    session->llm_streaming_active = true;
 
    ws_response_t resp = { .session = session,
                           .type = WS_RESP_STREAM_START,
                           .stream = {
                               .stream_id = session->current_stream_id,
-                              .text = NULL,
+                              .text = "",
                           } };
 
    queue_response(&resp);
@@ -3716,15 +3706,13 @@ void webui_send_stream_delta(session_t *session, const char *text) {
                           .type = WS_RESP_STREAM_DELTA,
                           .stream = {
                               .stream_id = session->current_stream_id,
-                              .text = strdup(text),
                           } };
 
-   if (!resp.stream.text) {
-      LOG_ERROR("WebUI: Failed to allocate stream delta text");
-      return;
-   }
+   /* Copy text into fixed buffer (no malloc/free churn) */
+   strncpy(resp.stream.text, text, sizeof(resp.stream.text) - 1);
+   resp.stream.text[sizeof(resp.stream.text) - 1] = '\0';
 
-   session->stream_had_content = true;  /* Mark that content was delivered */
+   session->stream_had_content = true; /* Mark that content was delivered */
    queue_response(&resp);
 }
 
@@ -3740,17 +3728,16 @@ void webui_send_stream_end(session_t *session, const char *reason) {
                           .type = WS_RESP_STREAM_END,
                           .stream = {
                               .stream_id = session->current_stream_id,
-                              .text = strdup(reason ? reason : "complete"),
                           } };
 
-   if (!resp.stream.text) {
-      LOG_ERROR("WebUI: Failed to allocate stream end reason");
-      return;
-   }
+   /* Copy reason into fixed buffer (no malloc/free churn) */
+   const char *r = reason ? reason : "complete";
+   strncpy(resp.stream.text, r, sizeof(resp.stream.text) - 1);
+   resp.stream.text[sizeof(resp.stream.text) - 1] = '\0';
 
    queue_response(&resp);
-   LOG_INFO("WebUI: Stream end id=%u reason=%s for session %u", session->current_stream_id,
-            reason ? reason : "complete", session->session_id);
+   LOG_INFO("WebUI: Stream end id=%u reason=%s for session %u", session->current_stream_id, r,
+            session->session_id);
 }
 
 /* =============================================================================
@@ -4193,8 +4180,8 @@ static void handle_text_message(ws_connection_t *conn, const char *text, size_t 
  *   - WS_BIN_AUDIO_IN_END (0x02): End of utterance (triggers ASR + LLM + TTS)
  *
  * - Server responds with binary frames:
- *   - WS_BIN_AUDIO_OUT (0x11): Opus audio chunk for playback
- *   - WS_BIN_AUDIO_OUT_END (0x12): End of response audio
+ *   - WS_BIN_AUDIO_OUT (0x11): PCM audio chunk for playback
+ *   - WS_BIN_AUDIO_SEGMENT_END (0x12): Play accumulated audio segment now
  * ============================================================================= */
 
 typedef struct {
@@ -4204,7 +4191,76 @@ typedef struct {
 } audio_work_t;
 
 /**
+ * @brief Sentence callback for real-time TTS audio streaming
+ *
+ * Called for each complete sentence during LLM response streaming.
+ * Generates TTS and sends audio immediately, enabling sentence-by-sentence
+ * playback instead of waiting for the full response.
+ */
+static void webui_sentence_audio_callback(const char *sentence, void *userdata) {
+   session_t *session = (session_t *)userdata;
+
+   if (!sentence || strlen(sentence) == 0 || !session || session->disconnected) {
+      return;
+   }
+
+   /* Make a copy for cleaning (same pattern as dawn_tts_sentence_callback) */
+   char *cleaned = strdup(sentence);
+   if (!cleaned) {
+      return;
+   }
+
+   /* Remove command tags (they'll be processed from the full response later) */
+   char *cmd_start, *cmd_end;
+   while ((cmd_start = strstr(cleaned, "<command>")) != NULL) {
+      cmd_end = strstr(cmd_start, "</command>");
+      if (cmd_end) {
+         cmd_end += strlen("</command>");
+         memmove(cmd_start, cmd_end, strlen(cmd_end) + 1);
+      } else {
+         /* Incomplete command tag - strip from <command> to end */
+         *cmd_start = '\0';
+         break;
+      }
+   }
+
+   /* Remove special characters that cause TTS issues */
+   remove_chars(cleaned, "*");
+   remove_emojis(cleaned);
+
+   /* Trim whitespace */
+   size_t len = strlen(cleaned);
+   while (len > 0 && (cleaned[len - 1] == ' ' || cleaned[len - 1] == '\t' ||
+                      cleaned[len - 1] == '\n' || cleaned[len - 1] == '\r')) {
+      cleaned[--len] = '\0';
+   }
+
+   /* Only generate TTS if there's actual content */
+   if (len > 0) {
+      LOG_INFO("WebUI: TTS streaming sentence: %.60s%s", cleaned, len > 60 ? "..." : "");
+
+      int16_t *pcm = NULL;
+      size_t samples = 0;
+      int ret = webui_audio_text_to_pcm16k(cleaned, &pcm, &samples);
+
+      if (ret == WEBUI_AUDIO_SUCCESS && pcm && samples > 0) {
+         size_t bytes = samples * sizeof(int16_t);
+         webui_send_audio(session, (const uint8_t *)pcm, bytes);
+         /* Send end marker so client plays this sentence immediately */
+         webui_send_audio_end(session);
+         free(pcm);
+      }
+   }
+
+   free(cleaned);
+}
+
+/**
  * @brief Audio worker thread - process voice input and generate response
+ *
+ * Uses sentence-by-sentence TTS streaming: audio is generated and sent as each
+ * sentence completes during the LLM response, rather than waiting for the full
+ * response. This significantly reduces perceived latency.
  */
 static void *audio_worker_thread(void *arg) {
    audio_work_t *work = (audio_work_t *)arg;
@@ -4257,11 +4313,12 @@ static void *audio_worker_thread(void *arg) {
    /* Echo transcription as user message */
    webui_send_transcript(session, "user", transcript);
 
-   /* Send "thinking" state (LLM processing) */
-   webui_send_state(session, "thinking");
+   /* Send "speaking" state - audio streams during LLM call via sentence callback */
+   webui_send_state(session, "speaking");
 
-   /* Call LLM with conversation history */
-   char *response = session_llm_call(session, transcript);
+   /* Call LLM with TTS streaming - audio is generated and sent per-sentence */
+   char *response = session_llm_call_with_tts(session, transcript, webui_sentence_audio_callback,
+                                              session);
    free(transcript);
 
    if (!response || session->disconnected) {
@@ -4276,92 +4333,23 @@ static void *audio_worker_thread(void *arg) {
       return NULL;
    }
 
-   /* Process commands if present (like text processing) */
-   char *final_response = response;
+   /* Process commands if present (audio already sent via streaming callback) */
    if (strstr(response, "<command>")) {
-      LOG_INFO("WebUI: Audio response contains commands");
-      /* Note: Don't send transcript - streaming already delivered it */
-
-      /* Extract and speak preamble text before first <command> tag */
-      char *cmd_start = strstr(response, "<command>");
-      if (cmd_start > response) {
-         size_t preamble_len = cmd_start - response;
-         char *preamble = malloc(preamble_len + 1);
-         if (preamble) {
-            memcpy(preamble, response, preamble_len);
-            preamble[preamble_len] = '\0';
-
-            /* Trim trailing whitespace */
-            while (preamble_len > 0 &&
-                   (preamble[preamble_len - 1] == ' ' || preamble[preamble_len - 1] == '\n' ||
-                    preamble[preamble_len - 1] == '\r' || preamble[preamble_len - 1] == '\t')) {
-               preamble[--preamble_len] = '\0';
-            }
-
-            /* Speak preamble if it has meaningful content (more than just whitespace) */
-            if (preamble_len > 0) {
-               LOG_INFO("WebUI: Speaking preamble before command: %s", preamble);
-               webui_send_state(session, "speaking");
-
-               int16_t *preamble_pcm = NULL;
-               size_t preamble_samples = 0;
-               int pret = webui_audio_text_to_pcm16k(preamble, &preamble_pcm, &preamble_samples);
-               if (pret == WEBUI_AUDIO_SUCCESS && preamble_pcm && preamble_samples > 0) {
-                  size_t preamble_bytes = preamble_samples * sizeof(int16_t);
-                  webui_send_audio(session, (const uint8_t *)preamble_pcm, preamble_bytes);
-                  webui_send_audio_end(session);
-                  free(preamble_pcm);
-               }
-
-               webui_send_state(session, "processing");
-            }
-            free(preamble);
-         }
-      }
+      LOG_INFO("WebUI: Audio response contains commands, processing...");
+      webui_send_state(session, "processing");
 
       char *processed = webui_process_commands(response, session);
       if (processed && !session->disconnected) {
          free(response);
-         final_response = processed;
+         response = processed;
       }
    }
 
-   /* Strip command tags */
-   strip_command_tags(final_response);
-
-   if (!final_response || strlen(final_response) == 0 || session->disconnected) {
-      webui_send_state(session, "idle");
-      session_release(session);
-      free(final_response);
-      free(work);
-      return NULL;
-   }
-
-   /* Note: Don't send transcript - streaming already delivered the text content */
-
-   /* Generate TTS audio as raw PCM (browser can play directly without decoder) */
-   webui_send_state(session, "speaking");
-
-   int16_t *tts_pcm = NULL;
-   size_t tts_samples = 0;
-   ret = webui_audio_text_to_pcm16k(final_response, &tts_pcm, &tts_samples);
-   free(final_response);
-
-   if (ret != WEBUI_AUDIO_SUCCESS || !tts_pcm || tts_samples == 0) {
-      LOG_WARNING("WebUI: TTS synthesis failed");
-      webui_send_state(session, "idle");
-      session_release(session);
-      free(tts_pcm);
-      free(work);
-      return NULL;
-   }
-
-   /* Send audio response via queue (worker thread can't call lws_write directly) */
-   size_t tts_bytes = tts_samples * sizeof(int16_t);
-   LOG_INFO("WebUI: Sending %zu bytes PCM audio (%zu samples) to client", tts_bytes, tts_samples);
-   webui_send_audio(session, (const uint8_t *)tts_pcm, tts_bytes);
+   /* Send audio end marker (all audio chunks have been sent) */
    webui_send_audio_end(session);
-   free(tts_pcm);
+
+   /* Free response - we don't need final TTS since audio was streamed */
+   free(response);
 
    /* Send context usage update to WebUI */
    {

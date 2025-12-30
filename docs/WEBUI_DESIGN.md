@@ -250,8 +250,8 @@ Text Frame (control):
 |------|-------|-----------|-------------|
 | `AUDIO_IN` | 0x01 | Client→Server | Opus audio chunk |
 | `AUDIO_IN_END` | 0x02 | Client→Server | End of utterance marker |
-| `AUDIO_OUT` | 0x11 | Server→Client | TTS Opus audio chunk |
-| `AUDIO_OUT_END` | 0x12 | Server→Client | End of response audio |
+| `AUDIO_OUT` | 0x11 | Server→Client | TTS PCM audio chunk |
+| `AUDIO_SEGMENT_END` | 0x12 | Server→Client | Play accumulated audio segment now |
 
 ### Text Message Types (JSON)
 
@@ -431,9 +431,9 @@ int webui_client_count(void);
 ```c
 // Binary message type constants (match protocol spec)
 #define WS_BIN_AUDIO_IN      0x01
-#define WS_BIN_AUDIO_IN_END  0x02
-#define WS_BIN_AUDIO_OUT     0x11
-#define WS_BIN_AUDIO_OUT_END 0x12
+#define WS_BIN_AUDIO_IN_END      0x02
+#define WS_BIN_AUDIO_OUT         0x11
+#define WS_BIN_AUDIO_SEGMENT_END 0x12
 
 /**
  * @brief Per-WebSocket connection state (stored in lws user data)

@@ -28,6 +28,7 @@
 #include <arpa/inet.h>
 #include <json-c/json.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <time.h>
@@ -122,16 +123,16 @@ typedef struct session {
    dap2_identity_t identity;          // UUID, name, location
    dap2_capabilities_t capabilities;  // Local ASR/TTS/wake word
 
-   // Cancellation
-   volatile bool disconnected;  // Set on client disconnect
+   // Cancellation (atomic for cross-thread visibility on ARM64)
+   atomic_bool disconnected;  // Set on client disconnect
 
-   // LLM streaming state (for real-time text delivery to WebUI)
-   volatile bool llm_streaming_active;  // True while streaming LLM response
-   volatile bool stream_had_content;    // True if any deltas were sent (for fallback)
-   uint32_t current_stream_id;          // Monotonic ID to detect stale deltas
+   // LLM streaming state (atomic for cross-thread visibility on ARM64)
+   atomic_bool llm_streaming_active;  // True while streaming LLM response
+   atomic_bool stream_had_content;    // True if any deltas were sent (for fallback)
+   atomic_uint current_stream_id;     // Monotonic ID to detect stale deltas
 
    // Command tag filter state (strips <command>...</command> from stream)
-   bool in_command_tag;         // True when inside <command>...</command>
+   bool in_command_tag;  // True when inside <command>...</command>
 
    // Reference counting for safe access (two-phase destruction pattern)
    int ref_count;
@@ -380,6 +381,39 @@ char *session_get_system_prompt(session_t *session);
  * @note Uses session's own LLM config (copied from defaults at session creation)
  */
 char *session_llm_call(session_t *session, const char *user_text);
+
+/**
+ * @brief Sentence callback for TTS streaming
+ *
+ * Called for each complete sentence detected in the LLM response.
+ * Use this to generate and send audio sentence-by-sentence.
+ *
+ * @param sentence Complete sentence text
+ * @param userdata User-provided context pointer
+ */
+typedef void (*session_sentence_callback)(const char *sentence, void *userdata);
+
+/**
+ * @brief Call LLM with sentence-by-sentence TTS streaming
+ *
+ * Like session_llm_call(), but uses sentence buffering to call the provided
+ * callback for each complete sentence. This enables real-time audio streaming
+ * where TTS is generated and sent per-sentence rather than waiting for the
+ * full response.
+ *
+ * @param session Session with conversation context
+ * @param user_text User's query text
+ * @param sentence_cb Callback for each complete sentence (for TTS)
+ * @param userdata Context passed to sentence callback
+ * @return LLM response (caller must free), or NULL on error/cancel
+ *
+ * @note Does NOT do WebSocket text streaming (use for audio-input sessions)
+ * @note Adds user message before call, assistant response after call
+ */
+char *session_llm_call_with_tts(session_t *session,
+                                const char *user_text,
+                                session_sentence_callback sentence_cb,
+                                void *userdata);
 
 // =============================================================================
 // Per-Session LLM Configuration

@@ -62,10 +62,10 @@ extern "C" {
  * WebSocket Binary Message Types (match WEBUI_DESIGN.md protocol spec)
  * ============================================================================= */
 
-#define WS_BIN_AUDIO_IN 0x01      /* Client -> Server: Opus audio chunk */
-#define WS_BIN_AUDIO_IN_END 0x02  /* Client -> Server: End of utterance */
-#define WS_BIN_AUDIO_OUT 0x11     /* Server -> Client: TTS Opus audio chunk */
-#define WS_BIN_AUDIO_OUT_END 0x12 /* Server -> Client: End of response audio */
+#define WS_BIN_AUDIO_IN 0x01          /* Client -> Server: Opus audio chunk */
+#define WS_BIN_AUDIO_IN_END 0x02      /* Client -> Server: End of utterance */
+#define WS_BIN_AUDIO_OUT 0x11         /* Server -> Client: TTS audio chunk */
+#define WS_BIN_AUDIO_SEGMENT_END 0x12 /* Server -> Client: Play this audio segment now */
 
 /* =============================================================================
  * Buffer Size Constants
@@ -74,7 +74,7 @@ extern "C" {
 #define WEBUI_SESSION_TOKEN_LEN 33      /* 32 hex chars + null terminator */
 #define WEBUI_AUDIO_BUFFER_SIZE 32768   /* 32KB initial buffer for audio input */
 #define WEBUI_AUDIO_MAX_CAPACITY 960000 /* ~30s @ 16kHz mono 16-bit PCM */
-#define WEBUI_RESPONSE_QUEUE_SIZE 256   /* Pending responses (handles ~30s audio @ 8KB chunks) */
+#define WEBUI_RESPONSE_QUEUE_SIZE 512   /* Pending responses for sentence streaming */
 
 /* Forward declarations */
 struct lws;

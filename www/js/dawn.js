@@ -22,7 +22,7 @@
   const WS_BIN_AUDIO_IN = 0x01;
   const WS_BIN_AUDIO_IN_END = 0x02;
   const WS_BIN_AUDIO_OUT = 0x11;
-  const WS_BIN_AUDIO_OUT_END = 0x12;
+  const WS_BIN_AUDIO_SEGMENT_END = 0x12; // Play accumulated audio segment now
 
   // =============================================================================
   // State
@@ -320,7 +320,7 @@
           }
           break;
 
-        case WS_BIN_AUDIO_OUT_END:
+        case WS_BIN_AUDIO_SEGMENT_END:
           // End of TTS audio - play accumulated chunks
           console.log('Audio stream ended, playing', audioChunks.length, 'chunks');
           if (audioChunks.length > 0) {

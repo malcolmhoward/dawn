@@ -505,6 +505,28 @@ template<PassMode mode> static size_t process_text_impl(const char *src, size_t 
             }
          }
 
+         // Spaced dash " - " -> comma (creates pause like em-dash)
+         // Check: previous char was space, current is dash, next is space
+         if (byte == '-' && out_pos > 0 && i + 1 < len && src[i + 1] == ' ') {
+            // Check if we just output a space (look at what we wrote, not src)
+            bool prev_was_space = false;
+            if constexpr (mode == PassMode::GenerateOutput) {
+               prev_was_space = (out[out_pos - 1] == ' ');
+            } else {
+               // In size calculation, check source position
+               prev_was_space = (i > 0 && src[i - 1] == ' ');
+            }
+            if (prev_was_space) {
+               // Replace dash with comma, trailing space processed normally
+               if constexpr (mode == PassMode::GenerateOutput) {
+                  out[out_pos] = ',';
+               }
+               out_pos++;
+               i++;
+               continue;
+            }
+         }
+
          // Regular ASCII character - copy
          if constexpr (mode == PassMode::GenerateOutput) {
             out[out_pos] = byte;

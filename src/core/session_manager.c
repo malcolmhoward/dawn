@@ -29,6 +29,7 @@
 #include "config/dawn_config.h"
 #include "llm/llm_command_parser.h"
 #include "llm/llm_interface.h"
+#include "llm/sentence_buffer.h"
 #include "logging.h"
 #include "webui/webui_server.h"
 
@@ -48,7 +49,10 @@
  * @param out_size Size of output buffer
  * @return Length of filtered text (0 if all filtered out)
  */
-static int filter_command_tags(session_t *session, const char *chunk, char *out_buf, size_t out_size) {
+static int filter_command_tags(session_t *session,
+                               const char *chunk,
+                               char *out_buf,
+                               size_t out_size) {
    if (!chunk || !out_buf || out_size == 0) {
       return 0;
    }
@@ -99,11 +103,16 @@ static int filter_command_tags(session_t *session, const char *chunk, char *out_
 static void session_text_chunk_callback(const char *chunk, void *userdata) {
    session_t *session = (session_t *)userdata;
 
+   /* Early exit if client disconnected */
+   if (!session || session->disconnected) {
+      return;
+   }
+
    /* Chunks are accumulated by the streaming layer (llm_streaming.c)
     * and also sent to WebSocket for real-time display */
-   if (session && session->type == SESSION_TYPE_WEBSOCKET) {
+   if (session->type == SESSION_TYPE_WEBSOCKET) {
       /* Filter out <command>...</command> tags */
-      char filtered[1024];
+      char filtered[256];
       int len = filter_command_tags(session, chunk, filtered, sizeof(filtered));
       if (len > 0) {
          /* Send stream_start on first actual content (lazy initialization).
@@ -860,16 +869,23 @@ char *session_get_system_prompt(session_t *session) {
 // LLM Integration
 // =============================================================================
 
-char *session_llm_call(session_t *session, const char *user_text) {
-   if (!session || !user_text) {
-      return NULL;
-   }
+/**
+ * @brief Context for LLM call preparation (reduces duplication)
+ */
+typedef struct {
+   struct json_object *history;
+   char *input_with_context;
+   const char *llm_input;
+   llm_resolved_config_t resolved_config;
+} llm_call_ctx_t;
 
-   // Check for cancellation
-   if (session->disconnected) {
-      LOG_INFO("Session %u disconnected, aborting LLM call", session->session_id);
-      return NULL;
-   }
+/**
+ * @brief Prepare for LLM call - common setup for all LLM call variants
+ *
+ * @return 0 on success, non-zero on failure (session disconnected, config error, etc.)
+ */
+static int llm_call_prepare(session_t *session, const char *user_text, llm_call_ctx_t *ctx) {
+   memset(ctx, 0, sizeof(*ctx));
 
    // Add user message to history
    session_add_message(session, "user", user_text);
@@ -877,101 +893,91 @@ char *session_llm_call(session_t *session, const char *user_text) {
    // Update activity timestamp
    session_touch(session);
 
-   // Get conversation history for LLM call
-   struct json_object *history = session_get_history(session);
-   if (!history) {
+   // Get conversation history
+   ctx->history = session_get_history(session);
+   if (!ctx->history) {
       LOG_ERROR("Session %u: Failed to get conversation history", session->session_id);
-      return NULL;
+      return 1;
    }
 
    // Prepare location context for DAP2 sessions
-   char *input_with_context = NULL;
    if (session->type == SESSION_TYPE_DAP2 && strlen(session->identity.location) > 0) {
-      // Prepend location context to help LLM understand where the user is
       size_t context_len = strlen(user_text) + strlen(session->identity.location) + 64;
-      input_with_context = malloc(context_len);
-      if (input_with_context) {
-         snprintf(input_with_context, context_len, "[Location: %s] %s", session->identity.location,
-                  user_text);
+      ctx->input_with_context = malloc(context_len);
+      if (ctx->input_with_context) {
+         snprintf(ctx->input_with_context, context_len, "[Location: %s] %s",
+                  session->identity.location, user_text);
       }
    }
+   ctx->llm_input = ctx->input_with_context ? ctx->input_with_context : user_text;
 
-   const char *llm_input = input_with_context ? input_with_context : user_text;
-
-   LOG_INFO("Session %u: Calling LLM with %d messages in history", session->session_id,
-            json_object_array_length(history));
-
-   // Check for cancellation before long LLM call
+   // Check for cancellation before LLM call
    if (session->disconnected) {
       LOG_INFO("Session %u disconnected before LLM call", session->session_id);
-      json_object_put(history);
-      if (input_with_context) {
-         free(input_with_context);
-      }
-      return NULL;
+      return 2;
    }
 
-   // Get session's LLM config (copy under mutex, then release)
+   // Get and resolve LLM config
    session_llm_config_t session_config;
    session_get_llm_config(session, &session_config);
 
-   // Resolve to final config (merges session override with global)
-   llm_resolved_config_t resolved_config;
-   int resolve_rc = llm_resolve_config(&session_config, &resolved_config);
+   int resolve_rc = llm_resolve_config(&session_config, &ctx->resolved_config);
    if (resolve_rc != 0) {
       LOG_ERROR("Session %u: Failed to resolve LLM config (type=%d, provider=%d)",
                 session->session_id, session_config.type, session_config.cloud_provider);
-      json_object_put(history);
-      if (input_with_context) {
-         free(input_with_context);
-      }
-      return NULL;
+      return 3;
    }
 
-   // Set command context so tool callbacks (e.g., switch_llm) use this session's config
+   // Set command context for tool callbacks
    session_set_command_context(session);
 
    // Reset streaming filter state for WebSocket sessions
    if (session->type == SESSION_TYPE_WEBSOCKET) {
       session->in_command_tag = false;
       session->stream_had_content = false;
-      // Note: stream_start is sent lazily on first actual content (in callback)
    }
 
-   // Call LLM with resolved config (streaming for tool calling support)
-   char *response = llm_chat_completion_streaming_with_config(history, llm_input, NULL, 0,
-                                                              session_text_chunk_callback, session,
-                                                              &resolved_config);
+   return 0;
+}
 
-   // End streaming for WebSocket sessions (only if streaming actually started)
+/**
+ * @brief Clean up LLM call context resources
+ */
+static void llm_call_cleanup(llm_call_ctx_t *ctx) {
+   session_set_command_context(NULL);
+   if (ctx->history) {
+      json_object_put(ctx->history);
+   }
+   if (ctx->input_with_context) {
+      free(ctx->input_with_context);
+   }
+}
+
+/**
+ * @brief Finalize LLM call - handle WebSocket streaming end and add to history
+ *
+ * @return Response string on success, NULL on failure (takes ownership of response)
+ */
+static char *llm_call_finalize(session_t *session, char *response, llm_call_ctx_t *ctx) {
+   // End WebSocket streaming
    if (session->type == SESSION_TYPE_WEBSOCKET) {
       if (session->llm_streaming_active) {
          webui_send_stream_end(session, response ? "complete" : "error");
       }
-
-      // Fallback: If LLM doesn't support streaming AND no command was seen,
-      // send the full response as a transcript.
+      // Fallback for non-streaming LLMs
       if (response && !session->stream_had_content && !session->in_command_tag) {
          LOG_INFO("Session %u: LLM didn't stream, sending full transcript", session->session_id);
          webui_send_transcript(session, "assistant", response);
       }
    }
 
-   // Clear command context
-   session_set_command_context(NULL);
-
-   // Clean up
-   json_object_put(history);
-   if (input_with_context) {
-      free(input_with_context);
-   }
+   // Clean up context
+   llm_call_cleanup(ctx);
 
    // Check for cancellation after LLM call
    if (session->disconnected) {
       LOG_INFO("Session %u disconnected during LLM call", session->session_id);
-      if (response) {
-         free(response);
-      }
+      free(response);
       return NULL;
    }
 
@@ -987,6 +993,143 @@ char *session_llm_call(session_t *session, const char *user_text) {
             strlen(response) > 50 ? "..." : "");
 
    return response;
+}
+
+char *session_llm_call(session_t *session, const char *user_text) {
+   if (!session || !user_text) {
+      return NULL;
+   }
+
+   if (session->disconnected) {
+      LOG_INFO("Session %u disconnected, aborting LLM call", session->session_id);
+      return NULL;
+   }
+
+   llm_call_ctx_t ctx;
+   if (llm_call_prepare(session, user_text, &ctx) != 0) {
+      llm_call_cleanup(&ctx);
+      return NULL;
+   }
+
+   LOG_INFO("Session %u: Calling LLM with %d messages in history", session->session_id,
+            json_object_array_length(ctx.history));
+
+   char *response = llm_chat_completion_streaming_with_config(ctx.history, ctx.llm_input, NULL, 0,
+                                                              session_text_chunk_callback, session,
+                                                              &ctx.resolved_config);
+
+   return llm_call_finalize(session, response, &ctx);
+}
+
+/**
+ * @brief Combined streaming context for text display + sentence audio
+ *
+ * Used by session_llm_call_with_tts() to simultaneously:
+ * 1. Stream text chunks to WebUI for real-time display
+ * 2. Buffer chunks into sentences for TTS audio generation
+ */
+typedef struct {
+   session_t *session;                     // Session for text streaming
+   sentence_buffer_t *sentence_buffer;     // Sentence detection for TTS
+   session_sentence_callback sentence_cb;  // User's sentence callback
+   void *sentence_userdata;                // User's callback context
+} combined_stream_ctx_t;
+
+/**
+ * @brief Internal sentence callback - forwards to user's callback
+ */
+static void combined_sentence_callback(const char *sentence, void *userdata) {
+   combined_stream_ctx_t *ctx = (combined_stream_ctx_t *)userdata;
+   if (ctx->sentence_cb) {
+      ctx->sentence_cb(sentence, ctx->sentence_userdata);
+   }
+}
+
+/**
+ * @brief Combined chunk callback - does text streaming AND feeds sentence buffer
+ *
+ * Each chunk is:
+ * 1. Filtered to remove <command>...</command> tags
+ * 2. Sent to WebUI for real-time text display
+ * 3. Fed to sentence buffer for TTS audio generation
+ *
+ * By filtering once and passing to both consumers, we avoid duplicate
+ * command tag tracking in the sentence buffer.
+ */
+static void combined_chunk_callback(const char *chunk, void *userdata) {
+   combined_stream_ctx_t *ctx = (combined_stream_ctx_t *)userdata;
+   session_t *session = ctx->session;
+
+   // Early exit if client disconnected (avoid unnecessary TTS/WebSocket work)
+   if (!session || session->disconnected) {
+      return;
+   }
+
+   // Filter command tags once for both consumers
+   char filtered[256];
+   int len = filter_command_tags(session, chunk, filtered, sizeof(filtered));
+   if (len > 0) {
+      // 1. Send to WebUI for real-time text display
+      if (session->type == SESSION_TYPE_WEBSOCKET) {
+         if (!session->llm_streaming_active) {
+            webui_send_stream_start(session);
+         }
+         webui_send_stream_delta(session, filtered);
+      }
+
+      // 2. Feed filtered text to sentence buffer for TTS
+      if (ctx->sentence_buffer) {
+         sentence_buffer_feed(ctx->sentence_buffer, filtered);
+      }
+   }
+}
+
+char *session_llm_call_with_tts(session_t *session,
+                                const char *user_text,
+                                session_sentence_callback sentence_cb,
+                                void *userdata) {
+   if (!session || !user_text) {
+      return NULL;
+   }
+
+   if (session->disconnected) {
+      LOG_INFO("Session %u disconnected, aborting LLM call", session->session_id);
+      return NULL;
+   }
+
+   llm_call_ctx_t ctx;
+   if (llm_call_prepare(session, user_text, &ctx) != 0) {
+      llm_call_cleanup(&ctx);
+      return NULL;
+   }
+
+   LOG_INFO("Session %u: Calling LLM (TTS streaming) with %d messages in history",
+            session->session_id, json_object_array_length(ctx.history));
+
+   // Create combined streaming context for text + sentence audio
+   combined_stream_ctx_t stream_ctx = { .session = session,
+                                        .sentence_cb = sentence_cb,
+                                        .sentence_userdata = userdata,
+                                        .sentence_buffer = NULL };
+
+   // Create sentence buffer for TTS
+   stream_ctx.sentence_buffer = sentence_buffer_create(combined_sentence_callback, &stream_ctx);
+   if (!stream_ctx.sentence_buffer) {
+      LOG_ERROR("Session %u: Failed to create sentence buffer", session->session_id);
+      llm_call_cleanup(&ctx);
+      return NULL;
+   }
+
+   // Call LLM with combined callback (text streaming + sentence buffering)
+   char *response = llm_chat_completion_streaming_with_config(ctx.history, ctx.llm_input, NULL, 0,
+                                                              combined_chunk_callback, &stream_ctx,
+                                                              &ctx.resolved_config);
+
+   // Flush remaining sentence and free buffer
+   sentence_buffer_flush(stream_ctx.sentence_buffer);
+   sentence_buffer_free(stream_ctx.sentence_buffer);
+
+   return llm_call_finalize(session, response, &ctx);
 }
 
 // =============================================================================
