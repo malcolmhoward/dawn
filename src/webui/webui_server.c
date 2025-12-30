@@ -113,6 +113,10 @@ typedef struct {
          int max_tokens;
          float threshold;
       } context;
+      struct {
+         uint32_t stream_id;
+         char *text; /* For delta: text chunk. For end: reason. */
+      } stream;
    };
 } ws_response_t;
 
@@ -467,6 +471,13 @@ static void free_response(ws_response_t *resp) {
       case WS_RESP_CONTEXT:
          /* No data to free - all inline values */
          break;
+      case WS_RESP_STREAM_START:
+         /* No text to free - only stream_id */
+         break;
+      case WS_RESP_STREAM_DELTA:
+      case WS_RESP_STREAM_END:
+         free(resp->stream.text);
+         break;
    }
 }
 
@@ -607,6 +618,44 @@ static void send_context_impl(struct lws *wsi,
    send_json_message(wsi, json);
 }
 
+/* =============================================================================
+ * LLM Streaming Impl Functions (ChatGPT-style real-time text)
+ *
+ * Protocol:
+ *   stream_start - Create new assistant entry, enter streaming state
+ *   stream_delta - Append text to current entry
+ *   stream_end   - Finalize entry, exit streaming state
+ * ============================================================================= */
+
+static void send_stream_start_impl(struct lws *wsi, uint32_t stream_id) {
+   char json[128];
+   snprintf(json, sizeof(json), "{\"type\":\"stream_start\",\"payload\":{\"stream_id\":%u}}",
+            stream_id);
+   send_json_message(wsi, json);
+}
+
+static void send_stream_delta_impl(struct lws *wsi, uint32_t stream_id, const char *text) {
+   struct json_object *obj = json_object_new_object();
+   struct json_object *payload = json_object_new_object();
+
+   json_object_object_add(payload, "stream_id", json_object_new_int((int32_t)stream_id));
+   json_object_object_add(payload, "delta", json_object_new_string(text));
+   json_object_object_add(obj, "type", json_object_new_string("stream_delta"));
+   json_object_object_add(obj, "payload", payload);
+
+   const char *json_str = json_object_to_json_string(obj);
+   send_json_message(wsi, json_str);
+   json_object_put(obj);
+}
+
+static void send_stream_end_impl(struct lws *wsi, uint32_t stream_id, const char *reason) {
+   char json[128];
+   snprintf(json, sizeof(json),
+            "{\"type\":\"stream_end\",\"payload\":{\"stream_id\":%u,\"reason\":\"%s\"}}", stream_id,
+            reason ? reason : "complete");
+   send_json_message(wsi, json);
+}
+
 /**
  * @brief Send conversation history to client on reconnect
  *
@@ -735,6 +784,17 @@ static void process_one_response(void) {
       case WS_RESP_CONTEXT:
          send_context_impl(conn->wsi, resp.context.current_tokens, resp.context.max_tokens,
                            resp.context.threshold);
+         break;
+      case WS_RESP_STREAM_START:
+         send_stream_start_impl(conn->wsi, resp.stream.stream_id);
+         break;
+      case WS_RESP_STREAM_DELTA:
+         send_stream_delta_impl(conn->wsi, resp.stream.stream_id, resp.stream.text);
+         free(resp.stream.text);
+         break;
+      case WS_RESP_STREAM_END:
+         send_stream_end_impl(conn->wsi, resp.stream.stream_id, resp.stream.text);
+         free(resp.stream.text);
          break;
    }
 
@@ -3604,6 +3664,96 @@ static void webui_send_audio_end(session_t *session) {
 }
 
 /* =============================================================================
+ * LLM Streaming Functions (ChatGPT-style real-time text)
+ *
+ * These functions provide real-time token streaming to WebUI clients.
+ * Protocol:
+ *   1. stream_start - Create new assistant entry, enter streaming state
+ *   2. stream_delta - Append text to current entry (multiple calls)
+ *   3. stream_end   - Finalize entry, exit streaming state
+ *
+ * Stream IDs prevent stale deltas from cancelled streams from being displayed.
+ * ============================================================================= */
+
+void webui_send_stream_start(session_t *session) {
+   if (!session || session->type != SESSION_TYPE_WEBSOCKET) {
+      return;
+   }
+
+   /* Increment stream ID and mark streaming active.
+    * Note: Filter state is reset in session_llm_call() before LLM call.
+    * Don't reset stream_had_content here - it may already be set by filter. */
+   session->current_stream_id++;
+   session->llm_streaming_active = true;
+
+   ws_response_t resp = { .session = session,
+                          .type = WS_RESP_STREAM_START,
+                          .stream = {
+                              .stream_id = session->current_stream_id,
+                              .text = NULL,
+                          } };
+
+   queue_response(&resp);
+   LOG_INFO("WebUI: Stream start id=%u for session %u", session->current_stream_id,
+            session->session_id);
+}
+
+void webui_send_stream_delta(session_t *session, const char *text) {
+   if (!session || session->type != SESSION_TYPE_WEBSOCKET) {
+      return;
+   }
+
+   /* Ignore deltas if not in streaming state */
+   if (!session->llm_streaming_active) {
+      return;
+   }
+
+   if (!text || text[0] == '\0') {
+      return;
+   }
+
+   ws_response_t resp = { .session = session,
+                          .type = WS_RESP_STREAM_DELTA,
+                          .stream = {
+                              .stream_id = session->current_stream_id,
+                              .text = strdup(text),
+                          } };
+
+   if (!resp.stream.text) {
+      LOG_ERROR("WebUI: Failed to allocate stream delta text");
+      return;
+   }
+
+   session->stream_had_content = true;  /* Mark that content was delivered */
+   queue_response(&resp);
+}
+
+void webui_send_stream_end(session_t *session, const char *reason) {
+   if (!session || session->type != SESSION_TYPE_WEBSOCKET) {
+      return;
+   }
+
+   /* Mark streaming inactive */
+   session->llm_streaming_active = false;
+
+   ws_response_t resp = { .session = session,
+                          .type = WS_RESP_STREAM_END,
+                          .stream = {
+                              .stream_id = session->current_stream_id,
+                              .text = strdup(reason ? reason : "complete"),
+                          } };
+
+   if (!resp.stream.text) {
+      LOG_ERROR("WebUI: Failed to allocate stream end reason");
+      return;
+   }
+
+   queue_response(&resp);
+   LOG_INFO("WebUI: Stream end id=%u reason=%s for session %u", session->current_stream_id,
+            reason ? reason : "complete", session->session_id);
+}
+
+/* =============================================================================
  * Text Processing (Async Worker Thread)
  *
  * For Phase 2, we use a simple detached thread for text processing.
@@ -3899,8 +4049,7 @@ static void *text_worker_thread(void *arg) {
    if (strstr(response, "<command>")) {
       LOG_INFO("WebUI: Response contains commands, processing...");
 
-      /* Send intermediate response (with commands) to show tool calls */
-      webui_send_transcript(session, "assistant", response);
+      /* Note: Don't send intermediate response here - streaming already delivered it */
 
       /* Process commands and get follow-up response */
       char *processed = webui_process_commands(response, session);
@@ -3920,7 +4069,7 @@ static void *text_worker_thread(void *arg) {
          /* Recursively process if the follow-up also contains commands */
          while (strstr(processed, "<command>") && !session->disconnected) {
             LOG_INFO("WebUI: Follow-up response contains more commands, processing...");
-            webui_send_transcript(session, "assistant", processed);
+            /* Note: Don't send transcript - streaming already delivered it */
 
             char *next_processed = webui_process_commands(processed, session);
             free(processed);
@@ -3941,13 +4090,11 @@ static void *text_worker_thread(void *arg) {
       }
    }
 
-   /* Strip any remaining command tags before sending final response */
+   /* Strip any remaining command tags from final response */
    strip_command_tags(final_response);
 
-   /* Send final response if not empty */
-   if (final_response && strlen(final_response) > 0) {
-      webui_send_transcript(session, "assistant", final_response);
-   }
+   /* Note: Don't send transcript here - streaming already delivered the content.
+    * The session_llm_call() uses webui_send_stream_start/delta/end for real-time delivery. */
 
    /* Free the final response (either original response or processed copy) */
    free(final_response);
@@ -4133,7 +4280,7 @@ static void *audio_worker_thread(void *arg) {
    char *final_response = response;
    if (strstr(response, "<command>")) {
       LOG_INFO("WebUI: Audio response contains commands");
-      webui_send_transcript(session, "assistant", response);
+      /* Note: Don't send transcript - streaming already delivered it */
 
       /* Extract and speak preamble text before first <command> tag */
       char *cmd_start = strstr(response, "<command>");
@@ -4190,8 +4337,7 @@ static void *audio_worker_thread(void *arg) {
       return NULL;
    }
 
-   /* Send text response */
-   webui_send_transcript(session, "assistant", final_response);
+   /* Note: Don't send transcript - streaming already delivered the text content */
 
    /* Generate TTS audio as raw PCM (browser can play directly without decoder) */
    webui_send_state(session, "speaking");

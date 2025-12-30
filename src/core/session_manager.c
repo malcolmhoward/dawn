@@ -30,22 +30,90 @@
 #include "llm/llm_command_parser.h"
 #include "llm/llm_interface.h"
 #include "logging.h"
+#include "webui/webui_server.h"
 
 // =============================================================================
 // Streaming Callbacks
 // =============================================================================
 
 /**
- * @brief No-op streaming callback for text-only sessions
+ * @brief Filter command tags from streaming text
  *
- * Accumulates chunks internally (handled by llm_streaming.c).
- * TODO: Replace with WebSocket streaming callback for real-time text delivery.
+ * Strips <command>...</command> tags from the stream so users only see
+ * natural language text. Tool calls appear as debug entries after streaming.
+ *
+ * @param session Session with filter state
+ * @param chunk Incoming text chunk
+ * @param out_buf Buffer for filtered output
+ * @param out_size Size of output buffer
+ * @return Length of filtered text (0 if all filtered out)
+ */
+static int filter_command_tags(session_t *session, const char *chunk, char *out_buf, size_t out_size) {
+   if (!chunk || !out_buf || out_size == 0) {
+      return 0;
+   }
+
+   /* Once we've seen a command tag, stop streaming entirely.
+    * The follow-up LLM call will provide the real response after tool execution. */
+   if (session->in_command_tag) {
+      out_buf[0] = '\0';
+      return 0;
+   }
+
+   int out_len = 0;
+   const char *p = chunk;
+
+   /* Look for <command> tag */
+   const char *start = strstr(p, "<command>");
+   if (start) {
+      /* Copy text before the tag, then stop streaming */
+      size_t safe_len = start - p;
+      if (safe_len > 0 && safe_len < out_size - 1) {
+         memcpy(out_buf, p, safe_len);
+         out_len = safe_len;
+      }
+      /* Enter command state - all future chunks will be discarded.
+       * Also mark stream_had_content to prevent fallback from sending
+       * the full response (which would include the command output). */
+      session->in_command_tag = true;
+      session->stream_had_content = true;
+   } else {
+      /* No command tag - copy everything */
+      size_t remaining = strlen(p);
+      if (remaining < out_size - 1) {
+         memcpy(out_buf, p, remaining);
+         out_len = remaining;
+      }
+   }
+
+   out_buf[out_len] = '\0';
+   return out_len;
+}
+
+/**
+ * @brief Streaming callback for LLM responses
+ *
+ * Filters out <command>...</command> tags and sends clean text to WebUI.
+ * Tool calls appear as debug entries after streaming completes.
  */
 static void session_text_chunk_callback(const char *chunk, void *userdata) {
-   (void)chunk;
-   (void)userdata;
-   // Chunks are accumulated by the streaming layer
-   // Future: send chunk to WebSocket for real-time display
+   session_t *session = (session_t *)userdata;
+
+   /* Chunks are accumulated by the streaming layer (llm_streaming.c)
+    * and also sent to WebSocket for real-time display */
+   if (session && session->type == SESSION_TYPE_WEBSOCKET) {
+      /* Filter out <command>...</command> tags */
+      char filtered[1024];
+      int len = filter_command_tags(session, chunk, filtered, sizeof(filtered));
+      if (len > 0) {
+         /* Send stream_start on first actual content (lazy initialization).
+          * This prevents creating UI box for responses that are only commands. */
+         if (!session->llm_streaming_active) {
+            webui_send_stream_start(session);
+         }
+         webui_send_stream_delta(session, filtered);
+      }
+   }
 }
 
 // =============================================================================
@@ -863,10 +931,31 @@ char *session_llm_call(session_t *session, const char *user_text) {
    // Set command context so tool callbacks (e.g., switch_llm) use this session's config
    session_set_command_context(session);
 
+   // Reset streaming filter state for WebSocket sessions
+   if (session->type == SESSION_TYPE_WEBSOCKET) {
+      session->in_command_tag = false;
+      session->stream_had_content = false;
+      // Note: stream_start is sent lazily on first actual content (in callback)
+   }
+
    // Call LLM with resolved config (streaming for tool calling support)
    char *response = llm_chat_completion_streaming_with_config(history, llm_input, NULL, 0,
                                                               session_text_chunk_callback, session,
                                                               &resolved_config);
+
+   // End streaming for WebSocket sessions (only if streaming actually started)
+   if (session->type == SESSION_TYPE_WEBSOCKET) {
+      if (session->llm_streaming_active) {
+         webui_send_stream_end(session, response ? "complete" : "error");
+      }
+
+      // Fallback: If LLM doesn't support streaming AND no command was seen,
+      // send the full response as a transcript.
+      if (response && !session->stream_had_content && !session->in_command_tag) {
+         LOG_INFO("Session %u: LLM didn't stream, sending full transcript", session->session_id);
+         webui_send_transcript(session, "assistant", response);
+      }
+   }
 
    // Clear command context
    session_set_command_context(NULL);

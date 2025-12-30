@@ -125,6 +125,14 @@ typedef struct session {
    // Cancellation
    volatile bool disconnected;  // Set on client disconnect
 
+   // LLM streaming state (for real-time text delivery to WebUI)
+   volatile bool llm_streaming_active;  // True while streaming LLM response
+   volatile bool stream_had_content;    // True if any deltas were sent (for fallback)
+   uint32_t current_stream_id;          // Monotonic ID to detect stale deltas
+
+   // Command tag filter state (strips <command>...</command> from stream)
+   bool in_command_tag;         // True when inside <command>...</command>
+
    // Reference counting for safe access (two-phase destruction pattern)
    int ref_count;
    pthread_mutex_t ref_mutex;

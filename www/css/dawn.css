@@ -521,6 +521,17 @@ html, body {
   margin-right: 2rem;
 }
 
+.transcript-entry.assistant.streaming .text::after {
+  content: '▋';
+  animation: blink 1s step-end infinite;
+  color: var(--accent);
+}
+
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
 .transcript-entry.system {
   background-color: rgba(239, 68, 68, 0.2);
   border-left: 3px solid var(--error);

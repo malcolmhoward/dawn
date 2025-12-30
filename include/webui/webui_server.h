@@ -92,6 +92,11 @@ typedef enum {
    WS_RESP_AUDIO,      /* Binary audio data (Opus encoded) */
    WS_RESP_AUDIO_END,  /* End of audio stream marker */
    WS_RESP_CONTEXT,    /* Context/token usage update */
+
+   /* LLM streaming types (ChatGPT-style real-time text) */
+   WS_RESP_STREAM_START, /* Start of LLM token stream */
+   WS_RESP_STREAM_DELTA, /* Incremental token chunk */
+   WS_RESP_STREAM_END,   /* End of LLM token stream */
 } ws_response_type_t;
 
 /* =============================================================================
@@ -208,6 +213,58 @@ void webui_send_context(struct session *session,
  * @note Thread-safe - can be called from any thread
  */
 void webui_send_error(struct session *session, const char *code, const char *message);
+
+/* =============================================================================
+ * LLM Streaming Functions (ChatGPT-style real-time text)
+ *
+ * These functions provide real-time token streaming to WebUI clients.
+ * Protocol:
+ *   1. stream_start - Create new assistant entry, enter streaming state
+ *   2. stream_delta - Append text to current entry (multiple calls)
+ *   3. stream_end   - Finalize entry, exit streaming state
+ *
+ * Stream IDs prevent stale deltas from cancelled streams from being displayed.
+ * ============================================================================= */
+
+/**
+ * @brief Start a new LLM token stream
+ *
+ * Signals the client to create a new assistant transcript entry and prepare
+ * for incremental text updates. Increments session's stream_id.
+ *
+ * @param session Session to send to (must be SESSION_TYPE_WEBSOCKET)
+ *
+ * @note Thread-safe - can be called from any thread
+ * @note Sets session->llm_streaming_active = true
+ */
+void webui_send_stream_start(struct session *session);
+
+/**
+ * @brief Send incremental text chunk during LLM streaming
+ *
+ * Appends text to the current streaming entry on the client. Should only
+ * be called between stream_start and stream_end.
+ *
+ * @param session Session to send to (must be SESSION_TYPE_WEBSOCKET)
+ * @param text Text chunk to append
+ *
+ * @note Thread-safe - can be called from any thread
+ * @note No-op if session->llm_streaming_active is false
+ */
+void webui_send_stream_delta(struct session *session, const char *text);
+
+/**
+ * @brief End the current LLM token stream
+ *
+ * Signals the client to finalize the current assistant entry.
+ *
+ * @param session Session to send to (must be SESSION_TYPE_WEBSOCKET)
+ * @param reason End reason: "complete", "cancelled", or "error"
+ *
+ * @note Thread-safe - can be called from any thread
+ * @note Sets session->llm_streaming_active = false
+ */
+void webui_send_stream_end(struct session *session, const char *reason);
 
 /**
  * @brief Process a text message from WebSocket client

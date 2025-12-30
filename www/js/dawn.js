@@ -53,6 +53,15 @@
   const TRAIL_LENGTH = 5;    // Number of trailing echoes
   const TRAIL_SAMPLE_RATE = 10;  // Store trail every N frames for visible separation
 
+  // LLM streaming state (ChatGPT-style real-time text)
+  let streamingState = {
+    active: false,
+    streamId: null,
+    entryElement: null,  // DOM element for current streaming entry
+    textElement: null,   // Text container within entry
+    content: ''          // Accumulated text content
+  };
+
   // =============================================================================
   // DOM Elements
   // =============================================================================
@@ -272,6 +281,15 @@
           break;
         case 'get_metrics_response':
           handleMetricsResponse(msg.payload);
+          break;
+        case 'stream_start':
+          handleStreamStart(msg.payload);
+          break;
+        case 'stream_delta':
+          handleStreamDelta(msg.payload);
+          break;
+        case 'stream_end':
+          handleStreamEnd(msg.payload);
           break;
         default:
           console.log('Unknown message type:', msg.type);
@@ -1144,6 +1162,103 @@
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+  }
+
+  // =============================================================================
+  // LLM Streaming Handlers (ChatGPT-style real-time text)
+  // =============================================================================
+
+  /**
+   * Handle stream_start: Create new assistant entry for streaming
+   */
+  function handleStreamStart(payload) {
+    console.log('Stream start:', payload);
+
+    // Cancel any existing stream
+    if (streamingState.active) {
+      console.warn('Stream start received while already streaming');
+      finalizeStream();
+    }
+
+    // Remove placeholder if present
+    const placeholder = elements.transcript.querySelector('.transcript-placeholder');
+    if (placeholder) {
+      placeholder.remove();
+    }
+
+    // Create new streaming entry
+    const entry = document.createElement('div');
+    entry.className = 'transcript-entry assistant streaming';
+    entry.innerHTML = `
+      <div class="role">assistant</div>
+      <div class="text"></div>
+    `;
+    elements.transcript.appendChild(entry);
+
+    // Update streaming state
+    streamingState.active = true;
+    streamingState.streamId = payload.stream_id;
+    streamingState.entryElement = entry;
+    streamingState.textElement = entry.querySelector('.text');
+    streamingState.content = '';
+
+    elements.transcript.scrollTop = elements.transcript.scrollHeight;
+  }
+
+  /**
+   * Handle stream_delta: Append text to current streaming entry
+   */
+  function handleStreamDelta(payload) {
+    // Ignore deltas for different stream IDs
+    if (!streamingState.active || payload.stream_id !== streamingState.streamId) {
+      console.warn('Ignoring stale stream delta:', payload.stream_id, 'expected:', streamingState.streamId);
+      return;
+    }
+
+    // Append delta to content
+    streamingState.content += payload.delta;
+
+    // Update display (escape HTML but preserve newlines)
+    streamingState.textElement.innerHTML = escapeHtml(streamingState.content)
+      .replace(/\n/g, '<br>');
+
+    elements.transcript.scrollTop = elements.transcript.scrollHeight;
+  }
+
+  /**
+   * Handle stream_end: Finalize streaming entry
+   */
+  function handleStreamEnd(payload) {
+    console.log('Stream end:', payload);
+
+    // Ignore end for different stream IDs
+    if (payload.stream_id !== streamingState.streamId) {
+      console.warn('Ignoring stale stream end:', payload.stream_id, 'expected:', streamingState.streamId);
+      return;
+    }
+
+    finalizeStream();
+  }
+
+  /**
+   * Finalize the current streaming entry
+   */
+  function finalizeStream() {
+    if (!streamingState.active) {
+      return;
+    }
+
+    // Remove streaming class
+    if (streamingState.entryElement) {
+      streamingState.entryElement.classList.remove('streaming');
+    }
+
+    // Reset state
+    streamingState.active = false;
+    streamingState.streamId = null;
+    streamingState.entryElement = null;
+    streamingState.textElement = null;
+    streamingState.content = '';
   }
 
   // =============================================================================
