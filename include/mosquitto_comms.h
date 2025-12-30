@@ -90,6 +90,10 @@ static const char *deviceTypeStrings[] = { "audio playback device",
                                            "smartthings",
                                            "switch_llm" };
 
+/* Compile-time check: deviceTypeStrings must have one entry per deviceType enum value */
+_Static_assert(sizeof(deviceTypeStrings) / sizeof(deviceTypeStrings[0]) == MAX_DEVICE_TYPES,
+               "deviceTypeStrings array size must match deviceType enum count (MAX_DEVICE_TYPES)");
+
 /**
  * @brief Associates a device type with a callback function that processes actions for that device.
  *

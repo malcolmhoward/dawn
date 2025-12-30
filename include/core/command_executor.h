@@ -49,11 +49,18 @@ extern "C" {
 
 /**
  * @brief Result of command execution
+ *
+ * TTS Feedback Pattern:
+ * When should_respond is true and result is non-NULL, the CALLER is responsible
+ * for providing TTS feedback (e.g., via text_to_speech(result)). Callbacks should
+ * NOT call TTS directly - they return data via result and set should_respond=1.
+ * This allows consistent handling across all command execution paths (direct
+ * commands, LLM tool calls, MQTT commands).
  */
 typedef struct {
    char *result;        /**< Execution result text (caller must free) */
    bool success;        /**< true if execution succeeded */
-   bool should_respond; /**< true if result should be sent to LLM */
+   bool should_respond; /**< true if caller should provide TTS feedback for result */
    bool skip_followup;  /**< true if LLM follow-up should be skipped */
 } cmd_exec_result_t;
 

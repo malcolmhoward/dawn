@@ -106,8 +106,13 @@ static deviceCallback deviceCallbackArray[] = { { AUDIO_PLAYBACK_DEVICE, setPcmP
 /**
  * @brief Look up a callback function by device name string
  *
- * Searches deviceCallbackArray for a matching device name and returns
- * the associated callback function pointer.
+ * Searches deviceCallbackArray for a matching device type and returns
+ * the associated callback function pointer. Uses two-step lookup:
+ * 1. Find deviceType enum from device_name via deviceTypeStrings
+ * 2. Search deviceCallbackArray for entry with that device type
+ *
+ * This allows deviceCallbackArray to be sparse (not all device types
+ * need callbacks - e.g., VIEWING uses sync MQTT instead).
  *
  * @param device_name The device name string (e.g., "weather", "date", "search")
  * @return Callback function pointer, or NULL if not found
@@ -117,13 +122,28 @@ device_callback_fn get_device_callback(const char *device_name) {
       return NULL;
    }
 
+   /* Step 1: Find the deviceType enum value from the name string */
+   deviceType type = MAX_DEVICE_TYPES; /* Invalid sentinel */
    for (int i = 0; i < MAX_DEVICE_TYPES; i++) {
       if (strcmp(device_name, deviceTypeStrings[i]) == 0) {
+         type = (deviceType)i;
+         break;
+      }
+   }
+
+   if (type == MAX_DEVICE_TYPES) {
+      return NULL; /* Device name not found */
+   }
+
+   /* Step 2: Search callback array for this device type */
+   size_t array_size = sizeof(deviceCallbackArray) / sizeof(deviceCallbackArray[0]);
+   for (size_t i = 0; i < array_size; i++) {
+      if (deviceCallbackArray[i].device == type) {
          return deviceCallbackArray[i].callback;
       }
    }
 
-   return NULL;
+   return NULL; /* No callback registered for this device type */
 }
 
 static pthread_t music_thread = -1;
@@ -349,45 +369,38 @@ static void executeJsonCommand(struct json_object *parsedJson, struct mosquitto 
       pending_command_result = NULL;
    }
 
-   /* Loop through device names for device types. */
-   for (i = 0; i < MAX_DEVICE_TYPES; i++) {
-      if (strcmp(deviceName, deviceTypeStrings[i]) == 0) {
-         if (deviceCallbackArray[i].callback != NULL) {
-            callback_result = deviceCallbackArray[i].callback(actionName, (char *)value,
-                                                              &should_respond);
+   /* Look up callback for this device type */
+   device_callback_fn callback = get_device_callback(deviceName);
+   if (callback) {
+      callback_result = callback(actionName, (char *)value, &should_respond);
 
-            // If in AI mode and callback returned data, store it for AI response
-            if (callback_result != NULL && should_respond &&
-                (command_processing_mode == CMD_MODE_LLM_ONLY ||
-                 command_processing_mode == CMD_MODE_DIRECT_FIRST)) {
-               size_t dest_len = (pending_command_result == NULL) ? 0
-                                                                  : strlen(pending_command_result);
-               size_t src_len = strlen(callback_result);
+      // If in AI mode and callback returned data, store it for AI response
+      if (callback_result != NULL && should_respond &&
+          (command_processing_mode == CMD_MODE_LLM_ONLY ||
+           command_processing_mode == CMD_MODE_DIRECT_FIRST)) {
+         size_t dest_len = (pending_command_result == NULL) ? 0 : strlen(pending_command_result);
+         size_t src_len = strlen(callback_result);
 
-               // Resize memory to fit both strings plus space and null terminator
-               char *temp = pending_command_result = realloc(pending_command_result,
-                                                             dest_len + src_len + 2);
-               if (temp == NULL) {
-                  free(pending_command_result);
-                  pending_command_result = NULL;
-                  free(callback_result);
-                  continue;
-               }
-               pending_command_result = temp;
-
-               // Copy the new string to the end
-               strcpy(pending_command_result + dest_len, " ");
-               strcpy(pending_command_result + dest_len + 1, callback_result);
-            }
-
-            // Free callback result (callbacks return heap-allocated strings)
-            if (callback_result) {
-               free(callback_result);
-               callback_result = NULL;
-            }
+         // Resize memory to fit both strings plus space and null terminator
+         char *temp = pending_command_result = realloc(pending_command_result,
+                                                       dest_len + src_len + 2);
+         if (temp == NULL) {
+            free(pending_command_result);
+            pending_command_result = NULL;
+            free(callback_result);
          } else {
-            LOG_WARNING("Skipping callback, value NULL.");
+            pending_command_result = temp;
+
+            // Copy the new string to the end
+            strcpy(pending_command_result + dest_len, " ");
+            strcpy(pending_command_result + dest_len + 1, callback_result);
          }
+      }
+
+      // Free callback result (callbacks return heap-allocated strings)
+      if (callback_result) {
+         free(callback_result);
+         callback_result = NULL;
       }
    }
 
@@ -756,15 +769,10 @@ static void execute_command_for_worker(struct json_object *parsed_json, const ch
       }
    }
 
-   // Loop through device names for device types and execute callback
-   for (int i = 0; i < MAX_DEVICE_TYPES; i++) {
-      if (strcmp(deviceName, deviceTypeStrings[i]) == 0) {
-         if (deviceCallbackArray[i].callback != NULL) {
-            callback_result = deviceCallbackArray[i].callback(actionName, (char *)value,
-                                                              &should_respond);
-         }
-         break;
-      }
+   // Look up and execute callback for this device type
+   device_callback_fn dev_callback = get_device_callback(deviceName);
+   if (dev_callback) {
+      callback_result = dev_callback(actionName, (char *)value, &should_respond);
    }
 
    // Clear command context and release session reference

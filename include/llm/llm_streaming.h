@@ -39,6 +39,49 @@
  */
 typedef void (*text_chunk_callback)(const char *text, void *userdata);
 
+/* =============================================================================
+ * Provider-Specific Stream State
+ * =============================================================================
+ * Each LLM provider has different streaming formats requiring different state:
+ *
+ * - Claude: Event-based state machine with explicit transitions
+ *   (message_start → content_block_start → content_block_delta → ... → message_stop)
+ *
+ * - OpenAI: Self-contained chunks with incremental tool argument deltas
+ *
+ * - Local (llama.cpp): Uses OpenAI-compatible format
+ * ============================================================================= */
+
+/**
+ * @brief Claude-specific streaming state
+ *
+ * Claude's SSE format is a state machine with explicit event types.
+ * This struct tracks the current position in that state machine.
+ */
+typedef struct {
+   int message_started;      /**< message_start event received */
+   int content_block_active; /**< Currently inside a content block */
+   int input_tokens;         /**< Input tokens from message_start usage */
+
+   /* Tool use block tracking */
+   int tool_block_active;              /**< Currently in a tool_use block */
+   int tool_index;                     /**< Current tool block index */
+   char tool_id[LLM_TOOLS_ID_LEN];     /**< Tool call ID from content_block_start */
+   char tool_name[LLM_TOOLS_NAME_LEN]; /**< Tool name from content_block_start */
+   char tool_args[LLM_TOOLS_ARGS_LEN]; /**< Accumulated partial_json */
+   size_t tool_args_len;               /**< Length of accumulated args */
+} claude_stream_state_t;
+
+/**
+ * @brief OpenAI-specific streaming state
+ *
+ * OpenAI streams tool call arguments as deltas that must be accumulated.
+ * Each tool call (up to LLM_TOOLS_MAX_PARALLEL_CALLS) has its own buffer.
+ */
+typedef struct {
+   char tool_args_buffer[LLM_TOOLS_MAX_PARALLEL_CALLS][LLM_TOOLS_ARGS_LEN];
+} openai_stream_state_t;
+
 /**
  * @brief LLM stream context structure
  *
@@ -46,42 +89,34 @@ typedef void (*text_chunk_callback)(const char *text, void *userdata);
  * Extracts text deltas based on provider-specific format.
  */
 typedef struct {
+   /* Provider identification */
    llm_type_t llm_type;             /**< LLM type (LOCAL or CLOUD) */
    cloud_provider_t cloud_provider; /**< Cloud provider (if CLOUD) */
-   text_chunk_callback callback;    /**< User callback for text chunks */
-   void *callback_userdata;         /**< User context passed to callback */
 
-   // State tracking for Claude
-   int message_started;      /**< Claude: message_start received */
-   int content_block_active; /**< Claude: content block in progress */
-   int claude_input_tokens;  /**< Claude: input tokens from message_start */
+   /* Callback for streaming text to caller */
+   text_chunk_callback callback; /**< User callback for text chunks */
+   void *callback_userdata;      /**< User context passed to callback */
 
-   // Claude tool_use block tracking
-   int claude_tool_block_active;              /**< Currently in a tool_use block */
-   int claude_tool_index;                     /**< Current tool block index */
-   char claude_tool_id[LLM_TOOLS_ID_LEN];     /**< Tool call ID from content_block_start */
-   char claude_tool_name[LLM_TOOLS_NAME_LEN]; /**< Tool name from content_block_start */
-   char claude_tool_args[LLM_TOOLS_ARGS_LEN]; /**< Accumulated partial_json */
-   size_t claude_tool_args_len;               /**< Length of accumulated args */
+   /* Provider-specific state (only one is active based on cloud_provider) */
+   claude_stream_state_t claude; /**< Claude state machine tracking */
+   openai_stream_state_t openai; /**< OpenAI tool args accumulation */
 
-   // Accumulated complete response for conversation history
+   /* Accumulated complete response for conversation history */
    char *accumulated_response;
    size_t accumulated_size;
    size_t accumulated_capacity;
 
-   // Stream completion flag
-   int stream_complete;
+   /* Stream completion tracking */
+   int stream_complete;    /**< 1 when stream has ended */
+   char finish_reason[32]; /**< Final finish/stop reason from stream */
 
-   // TTFT (Time To First Token) tracking for metrics
+   /* TTFT (Time To First Token) tracking for metrics */
    struct timeval stream_start_time; /**< When stream request was initiated */
    int first_token_received;         /**< Flag: 1 if first token has been received */
 
-   // Tool calls tracking (for native tool calling)
+   /* Tool calls output (populated by either provider) */
    tool_call_list_t tool_calls; /**< Accumulated tool calls */
-   char tool_args_buffer[LLM_TOOLS_MAX_PARALLEL_CALLS]
-                        [LLM_TOOLS_ARGS_LEN]; /**< Args accumulation */
-   int has_tool_calls;                        /**< Flag: 1 if tool_calls detected in response */
-   char finish_reason[32];                    /**< Final finish_reason from stream */
+   int has_tool_calls;          /**< Flag: 1 if tool_calls detected in response */
 } llm_stream_context_t;
 
 /**

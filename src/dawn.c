@@ -3396,6 +3396,12 @@ int main(int argc, char *argv[]) {
                         } else {
                            metrics_log_activity("Executed: %s",
                                                 exec_result.result ? exec_result.result : "OK");
+
+                           /* Provide TTS feedback for commands that request it
+                            * (e.g., LLM switch confirmation) */
+                           if (exec_result.should_respond && exec_result.result) {
+                              text_to_speech(exec_result.result);
+                           }
                         }
                         cmd_exec_result_free(&exec_result);
                      } else {
