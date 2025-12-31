@@ -1,26 +1,105 @@
 /*
  * DAWN WebUI Stylesheet
- * Dark theme with cyan accents
+ * Dark theme with neutral base, cyan for active elements only
  */
 
 /* =============================================================================
  * CSS Variables
+ *
+ * Color Philosophy:
+ * - Neutral grays for inactive/structural elements
+ * - Cyan (#2dd4bf) ONLY for active system behavior
+ * - Amber (#f0b429) for warnings, hesitation, strain
  * ============================================================================= */
 :root {
-  --bg-primary: #0a0a0f;
-  --bg-secondary: #12121a;
-  --bg-tertiary: #1a1a24;
-  --text-primary: #e0e0e0;
-  --text-secondary: #888;
-  --accent: #22d3ee;
-  --accent-dim: rgba(34, 211, 238, 0.3);
-  --accent-glow: rgba(34, 211, 238, 0.6);
+  /* Neutral UI Baseline */
+  --bg-primary: #121417;
+  --bg-secondary: #1b1f24;
+  --bg-tertiary: #242a31;
+  --bg-panel: #1b1f24;
+
+  /* Text Hierarchy */
+  --text-primary: #e6e6e6;
+  --text-secondary: #7b8794;    /* Units (ms, tok/s) */
+  --text-tertiary: #6b7280;     /* Labels, dividers */
+
+  /* Ring Colors */
+  --ring-inactive: #2a323a;     /* Inactive segments, outlines */
+  --ring-active: #2dd4bf;       /* Active segments only */
+
+  /* Accent Colors (Active = doing work) */
+  --accent: #2dd4bf;
+  --accent-dim: rgba(45, 212, 191, 0.3);
+  --accent-glow: rgba(45, 212, 191, 0.5);
+
+  /* State Colors */
   --error: #ef4444;
   --success: #22c55e;
-  --warning: #f59e0b;
+  --warning: #f0b429;           /* Amber - hesitation, strain, >50% context */
+
+  /* Layout */
   --border-radius: 8px;
   --transition-fast: 150ms;
   --transition-medium: 300ms;
+}
+
+/* =============================================================================
+ * Typography System
+ *
+ * Two font roles (self-hosted, no CDN dependency):
+ * - System: IBM Plex Mono - telemetry, metrics, labels (uppercase, spaced)
+ * - Human: Source Sans 3 - conversation, user input (sentence case)
+ *
+ * Rule: Never mix system + human fonts in the same line
+ * ============================================================================= */
+
+/* Self-hosted font declarations */
+@font-face {
+  font-family: 'IBM Plex Mono';
+  src: url('/fonts/IBMPlexMono-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'IBM Plex Mono';
+  src: url('/fonts/IBMPlexMono-Medium.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Source Sans 3';
+  src: url('/fonts/SourceSans3-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Source Sans 3';
+  src: url('/fonts/SourceSans3-Medium.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* System font: Technical/telemetry text (IBM Plex Mono) */
+.font-system {
+  font-family: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
+  font-size: 0.75rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+/* Human font: Conversation/user-facing text (Source Sans 3) */
+.font-human {
+  font-family: 'Source Sans 3', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 1rem;
+  letter-spacing: normal;
+  text-transform: none;
 }
 
 /* =============================================================================
@@ -34,7 +113,7 @@
 
 html, body {
   height: 100%;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+  font-family: 'Source Sans 3', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 16px;
   line-height: 1.5;
   background-color: var(--bg-primary);
@@ -66,14 +145,20 @@ html, body {
 }
 
 #header h1 {
-  font-size: 1.5rem;
+  /* System font: branding */
+  font-family: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
+  font-size: 1.25rem;
   font-weight: 600;
   color: var(--accent);
-  letter-spacing: 0.1em;
+  letter-spacing: 0.15em;
 }
 
 #connection-status {
-  font-size: 0.875rem;
+  /* System font: status indicators */
+  font-family: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
+  font-size: 0.65rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
   padding: 0.25rem 0.75rem;
   border-radius: 1rem;
   transition: all var(--transition-fast);
@@ -123,21 +208,129 @@ html, body {
 /* =============================================================================
  * Visualizer
  * ============================================================================= */
+/* =============================================================================
+ * Visualizer Layout: [RINGS] [TELEMETRY]
+ * Canonical layout per design spec - rings left, telemetry right
+ * ============================================================================= */
 #visualizer {
   display: flex;
   justify-content: center;
-  align-items: center;
-  padding: 2rem 0;
+  align-items: stretch;
+  gap: 1rem;
+  padding: 1rem 0;
   flex-shrink: 0;
 }
 
 #ring-container {
   position: relative;
-  width: 200px;
-  height: 200px;
+  flex: 1 1 50%;
   display: flex;
+  flex-direction: column;
   justify-content: center;
   align-items: center;
+  gap: 0.5rem;
+  /* Rings are a FIXED instrument assembly - no offset */
+}
+
+/* =============================================================================
+ * Telemetry Panel (right side of rings)
+ * Discrete numeric readouts - visually quieter than rings
+ * ============================================================================= */
+.telemetry-panel {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 1rem;
+  flex: 1 1 50%;
+  max-height: 240px;
+  /* System font for telemetry */
+  font-family: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
+  font-size: 0.75rem;
+  /* Visually quieter than rings */
+  opacity: 0.8;
+  transition: opacity var(--transition-medium);
+}
+
+/* Dim when idle */
+.telemetry-panel.idle {
+  opacity: 0.4;
+}
+
+.telemetry-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  position: relative;
+}
+
+/* Token rate activity tick - heartbeat indicator for data flow */
+.activity-tick {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background-color: var(--accent);
+  opacity: 0;
+  transition: opacity 80ms ease-out;
+  box-shadow: 0 0 6px var(--accent-glow);
+}
+
+.activity-tick.active {
+  opacity: 1;
+}
+
+.telemetry-label {
+  color: var(--text-tertiary);
+  font-size: 0.55rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.telemetry-value {
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.telemetry-value small {
+  font-size: 0.6rem;
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+
+/* Activity tick - brief cyan flash when value updates */
+.telemetry-value.active-tick {
+  color: var(--accent);
+  transition: color 100ms ease-out;
+}
+
+/* Warning state for values */
+.telemetry-value.warning {
+  color: var(--warning);
+}
+
+.telemetry-value.danger {
+  color: var(--error);
+}
+
+/* Transient system messages */
+.telemetry-message {
+  font-size: 0.55rem;
+  color: var(--warning);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  min-height: 1rem;
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.telemetry-message.visible {
+  opacity: 1;
 }
 
 .ring {
@@ -148,22 +341,93 @@ html, body {
   transition: all var(--transition-medium);
 }
 
-#ring-outer {
-  width: 200px;
-  height: 200px;
+/* Main SVG container for multi-ring visualization */
+#ring-svg {
+  width: 100%;
+  height: 100%;
+  max-width: 240px;
+  max-height: 240px;
   opacity: 0.8;
-  animation: ring-rotate 20s linear infinite;
+  /* NO rotation - rings are a fixed instrument assembly */
   border: none;  /* Override .ring border - path handles visualization */
 }
 
-#ring-outer path {
+/* Ring groups - concentric circles from center outward */
+.ring-group {
+  /* Each ring group can have independent animations */
+}
+
+.ring-base {
+  stroke: var(--ring-inactive);
+  opacity: 0.4;
+}
+
+/* Inner ring: FFT audio visualization */
+#ring-fft path {
+  stroke: var(--ring-inactive);
+  filter: none;
+  transition: d 50ms ease-out, stroke 150ms ease-out;
+}
+
+/* FFT active state (when audio detected) */
+#ring-fft.active path,
+#ring-container.fft-active #ring-fft path {
   stroke: var(--accent);
   filter: drop-shadow(0 0 8px var(--accent-glow));
-  transition: d 50ms ease-out;
+}
+
+/* Middle ring: Token throughput (segmented arc) */
+#ring-throughput .ring-segment {
+  stroke: var(--ring-inactive);
+  stroke-width: 4;
+  stroke-linecap: round;
+  opacity: 0.5;
+  filter: none;
+  transition: stroke 150ms ease-out, opacity 150ms ease-out;
+}
+
+/* Middle ring active segments */
+#ring-throughput .ring-segment.active {
+  stroke: var(--accent);
+  opacity: 0.8;
+  filter: drop-shadow(0 0 4px var(--accent-glow));
+}
+
+/* Middle ring strained state (sustained high load) */
+#ring-throughput.strained .ring-segment {
+  stroke: var(--warning);
+  opacity: 0.6;
+}
+
+#ring-throughput.strained .ring-segment.active {
+  stroke: var(--warning);
+  opacity: 0.85;
+  filter: drop-shadow(0 0 5px rgba(240, 180, 41, 0.4));
+}
+
+/* Outer ring: Token hesitation (timing variance) */
+#ring-hesitation .ring-segment {
+  stroke: var(--ring-inactive);
+  stroke-width: 3;
+  stroke-linecap: round;
+  opacity: 0.4;
+  filter: none;
+  transition: stroke 150ms ease-out;
+}
+
+/* Outer ring active/stressed segments */
+#ring-hesitation .ring-segment.active {
+  stroke: var(--warning);
+  opacity: 0.7;
+  filter: drop-shadow(0 0 3px rgba(240, 180, 41, 0.4));
 }
 
 /* Waveform trail effect - fading echoes */
 .waveform-trail {
+  stroke: var(--ring-inactive);
+}
+
+#ring-container.fft-active .waveform-trail {
   stroke: var(--accent);
 }
 
@@ -190,29 +454,45 @@ html, body {
   opacity: 0.06;
 }
 
-/* State-based waveform colors (main path and trails) */
-#ring-container.listening #ring-outer path {
+/* State-based waveform colors (all rings respond to state) */
+#ring-container.listening #ring-svg path,
+#ring-container.listening #ring-svg .ring-segment {
+  stroke: var(--success);
+}
+#ring-container.listening .ring-base {
   stroke: var(--success);
 }
 #ring-container.listening #waveform-path {
   filter: drop-shadow(0 0 12px rgba(34, 197, 94, 0.6));
 }
 
-#ring-container.thinking #ring-outer path {
+#ring-container.thinking #ring-svg path,
+#ring-container.thinking #ring-svg .ring-segment {
+  stroke: var(--warning);
+}
+#ring-container.thinking .ring-base {
   stroke: var(--warning);
 }
 #ring-container.thinking #waveform-path {
   filter: drop-shadow(0 0 12px rgba(245, 158, 11, 0.6));
 }
 
-#ring-container.speaking #ring-outer path {
+#ring-container.speaking #ring-svg path,
+#ring-container.speaking #ring-svg .ring-segment {
+  stroke: var(--accent);
+}
+#ring-container.speaking .ring-base {
   stroke: var(--accent);
 }
 #ring-container.speaking #waveform-path {
   filter: drop-shadow(0 0 15px var(--accent-glow));
 }
 
-#ring-container.error #ring-outer path {
+#ring-container.error #ring-svg path,
+#ring-container.error #ring-svg .ring-segment {
+  stroke: var(--error);
+}
+#ring-container.error .ring-base {
   stroke: var(--error);
 }
 #ring-container.error #waveform-path {
@@ -220,19 +500,34 @@ html, body {
 }
 
 #ring-inner {
-  width: 120px;
-  height: 120px;
+  width: 35%;
+  height: 35%;
+  max-width: 85px;
+  max-height: 85px;
   border: none;  /* Override .ring dashed border */
+  /* Neutral/muted when idle - presence without distraction */
   background: radial-gradient(circle,
-    rgba(34, 211, 238, 0.25) 0%,
-    rgba(34, 211, 238, 0.08) 50%,
+    rgba(42, 50, 58, 0.6) 0%,
+    rgba(42, 50, 58, 0.2) 50%,
     transparent 70%);
   box-shadow:
-    0 0 25px rgba(34, 211, 238, 0.3),
-    0 0 50px rgba(34, 211, 238, 0.15),
-    inset 0 0 25px rgba(34, 211, 238, 0.08);
-  animation: core-pulse 3s ease-in-out infinite;
-  transition: all 100ms ease-out;
+    0 0 20px rgba(42, 50, 58, 0.4),
+    0 0 40px rgba(42, 50, 58, 0.2),
+    inset 0 0 20px rgba(42, 50, 58, 0.15);
+  animation: core-idle-pulse 5s ease-in-out infinite;
+  transition: all 200ms ease-out;
+}
+
+/* Slow idle pulse - presence, not activity */
+@keyframes core-idle-pulse {
+  0%, 100% {
+    opacity: 0.7;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.8;
+    transform: scale(1.015);
+  }
 }
 
 @keyframes core-pulse {
@@ -246,21 +541,93 @@ html, body {
   }
 }
 
-@keyframes ring-rotate {
+/* Phase 5: Idle breathing animation (±2% scale, opacity pulse) */
+@keyframes idle-breathe {
+  0%, 100% {
+    transform: scale(0.98);
+    opacity: 0.65;
+  }
+  50% {
+    transform: scale(1.02);
+    opacity: 0.9;
+  }
+}
+
+/* Apply subtle breathing to entire ring assembly when idle ONLY */
+#ring-container:not(.listening):not(.thinking):not(.speaking):not(.error):not(.fft-active) #ring-svg {
+  animation: idle-breathe 4s ease-in-out infinite;
+}
+
+/* Ring Motion Hierarchy (per design delta doc):
+ * - Inner ring (FFT): smooth, stable - subtle breathing only
+ * - Middle ring (throughput): mechanical, consistent - slow rotation
+ * - Outer ring (hesitation): least stable, most expressive - rare micro-twitch
+ *
+ * Under load: outer reacts first, inner reacts last
+ */
+#ring-hesitation,
+#ring-throughput,
+#ring-fft {
+  transform-origin: center;
+}
+
+/* Inner ring: subtle breathing only, no rotation */
+#ring-fft {
+  /* Inherits idle-breathe from parent #ring-svg */
+}
+
+/* Middle ring: constant slow rotation (0.5°/sec = 720s per revolution) */
+@keyframes middle-ring-rotate {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
 }
 
+#ring-container:not(.listening):not(.thinking):not(.speaking):not(.error) #ring-throughput {
+  animation: middle-ring-rotate 720s linear infinite;
+}
+
+/* Outer ring: rare micro-twitch every ~10 seconds */
+@keyframes outer-ring-twitch {
+  0%, 95%, 100% {
+    transform: rotate(0deg) scale(1);
+  }
+  96% {
+    transform: rotate(0.3deg) scale(1.003);
+  }
+  97% {
+    transform: rotate(-0.2deg) scale(0.998);
+  }
+  98% {
+    transform: rotate(0.1deg) scale(1.001);
+  }
+}
+
+#ring-container:not(.listening):not(.thinking):not(.speaking):not(.error) #ring-hesitation {
+  animation: outer-ring-twitch 10s ease-in-out infinite;
+}
+
 #logo {
-  font-size: 1.25rem;
+  /* System font: branding */
+  font-family: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
+  font-size: 0.9rem;
   font-weight: 700;
+  color: var(--text-secondary);
+  letter-spacing: 0.25em;
+  text-shadow: none;
+  transition: color 300ms ease-out, text-shadow 300ms ease-out;
+  /* NO decorative animation - per design spec */
+}
+
+/* Logo activates with system */
+#ring-container.listening #logo,
+#ring-container.thinking #logo,
+#ring-container.speaking #logo {
   color: var(--accent);
-  letter-spacing: 0.2em;
-  text-shadow: 0 0 20px var(--accent-glow);
+  text-shadow: 0 0 12px var(--accent-glow);
 }
 
 /* FFT visualization - during recording, JS controls the rings */
-#ring-container.fft-active #ring-outer,
+#ring-container.fft-active #ring-svg,
 #ring-container.fft-active #ring-inner {
   animation: none !important;
   transition: transform 50ms ease-out;
@@ -280,25 +647,25 @@ html, body {
 
 #ring-container.thinking #ring-inner {
   background: radial-gradient(circle,
-    rgba(245, 158, 11, 0.3) 0%,
-    rgba(245, 158, 11, 0.1) 50%,
+    rgba(240, 180, 41, 0.3) 0%,
+    rgba(240, 180, 41, 0.1) 50%,
     transparent 70%);
   box-shadow:
-    0 0 30px rgba(245, 158, 11, 0.35),
-    0 0 60px rgba(245, 158, 11, 0.2),
-    inset 0 0 25px rgba(245, 158, 11, 0.1);
+    0 0 30px rgba(240, 180, 41, 0.35),
+    0 0 60px rgba(240, 180, 41, 0.2),
+    inset 0 0 25px rgba(240, 180, 41, 0.1);
   animation: core-pulse 1.5s ease-in-out infinite;
 }
 
 #ring-container.speaking #ring-inner {
   background: radial-gradient(circle,
-    rgba(34, 211, 238, 0.35) 0%,
-    rgba(34, 211, 238, 0.12) 50%,
+    rgba(45, 212, 191, 0.35) 0%,
+    rgba(45, 212, 191, 0.12) 50%,
     transparent 70%);
   box-shadow:
-    0 0 35px rgba(34, 211, 238, 0.4),
-    0 0 70px rgba(34, 211, 238, 0.2),
-    inset 0 0 30px rgba(34, 211, 238, 0.12);
+    0 0 35px rgba(45, 212, 191, 0.4),
+    0 0 70px rgba(45, 212, 191, 0.2),
+    inset 0 0 30px rgba(45, 212, 191, 0.12);
 }
 
 #ring-container.error #ring-inner {
@@ -320,8 +687,8 @@ html, body {
   justify-content: center;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.5rem;
-  margin-bottom: 1rem;
+  padding: 0.25rem 0.5rem;
+  /* Positioned under the circles in ring-container */
 }
 
 #status-dot {
@@ -332,78 +699,114 @@ html, body {
   transition: background-color var(--transition-fast);
 }
 
-#status-dot.idle { background-color: var(--text-secondary); }
+/* Idle dot presence pulse - phase-offset from core pulse for organic feel */
+@keyframes idle-dot-pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
+#status-dot.idle {
+  background-color: var(--text-secondary);
+  animation: idle-dot-pulse 6s ease-in-out infinite;
+  /* 6s period (vs 5s core pulse) creates subtle polyrhythm */
+}
 #status-dot.listening { background-color: var(--success); }
 #status-dot.thinking { background-color: var(--warning); }
 #status-dot.speaking { background-color: var(--accent); }
 #status-dot.error { background-color: var(--error); }
 
 #status-text {
-  font-size: 0.875rem;
+  /* System font: telemetry/status */
+  font-family: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
+  font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.1em;
   color: var(--text-secondary);
 }
 
 /* =============================================================================
- * Context Usage Display
+ * Context Pressure Gauge (Phase 3)
  * ============================================================================= */
 .context-display {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 0.75rem;
-  padding: 0.5rem 1rem;
-  margin-bottom: 0.5rem;
+  padding: 0.5rem 0;
+  margin-top: auto;  /* Push to bottom of telemetry panel */
   font-size: 0.75rem;
+  border-top: 1px solid var(--bg-secondary);
 }
 
-.context-display.hidden {
-  display: none;
+.context-gauge-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
 }
 
-.context-label {
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+.context-gauge {
+  width: 80px;
+  height: 48px;
 }
 
-.context-bar-container {
-  position: relative;
-  width: 120px;
-  height: 8px;
-  background-color: var(--bg-secondary);
-  border-radius: 4px;
-  overflow: hidden;
+/* Gauge segment styling */
+.gauge-segment {
+  stroke-width: 6;
+  stroke-linecap: round;
+  fill: none;
+  transition: stroke 0.3s ease, opacity 0.3s ease;
 }
 
-.context-bar {
-  height: 100%;
-  background-color: var(--success);
-  border-radius: 4px;
-  transition: width 0.3s ease, background-color 0.3s ease;
+.gauge-segment.inactive {
+  stroke: var(--bg-secondary);
+  opacity: 0.3;
 }
 
-.context-bar.warning {
-  background-color: var(--warning);
+.gauge-segment.active-normal {
+  stroke: var(--accent);
+  filter: drop-shadow(0 0 3px var(--accent-glow));
 }
 
-.context-bar.danger {
-  background-color: var(--error);
+.gauge-segment.active-warning {
+  stroke: var(--warning);
+  filter: drop-shadow(0 0 3px rgba(245, 158, 11, 0.4));
 }
 
-.context-threshold {
-  position: absolute;
-  top: 0;
-  height: 100%;
-  width: 2px;
-  background-color: var(--text-secondary);
-  opacity: 0.5;
+.gauge-segment.active-danger {
+  stroke: var(--error);
+  filter: drop-shadow(0 0 4px rgba(239, 68, 68, 0.5));
+}
+
+/* Flash animation for >90% critical state */
+@keyframes gauge-flash {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.gauge-segment.flashing {
+  animation: gauge-flash 0.5s ease-in-out 3;
+}
+
+.gauge-percent {
+  fill: var(--text-primary);
+  font-size: 10px;
+  font-weight: 600;
+  font-family: inherit;
+}
+
+.gauge-percent.warning {
+  fill: var(--warning);
+}
+
+.gauge-percent.danger {
+  fill: var(--error);
 }
 
 .context-text {
   color: var(--text-secondary);
-  min-width: 100px;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
 /* =============================================================================
@@ -537,11 +940,17 @@ html, body {
   border-left: 3px solid var(--error);
 }
 
+/* Debug entries hidden by default, shown only when body.debug-mode */
 .transcript-entry.debug {
+  display: none;
   background-color: rgba(139, 92, 246, 0.15);
   border-left: 3px solid #8b5cf6;
-  font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+  font-family: 'IBM Plex Mono', 'Monaco', 'Menlo', 'Consolas', monospace;
   font-size: 0.8125rem;
+}
+
+body.debug-mode .transcript-entry.debug {
+  display: block;
 }
 
 .transcript-entry.debug .role {
@@ -653,15 +1062,125 @@ html, body {
 }
 
 .transcript-entry .role {
-  font-size: 0.75rem;
+  /* System font: labels */
+  font-family: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
+  font-size: 0.65rem;
   color: var(--text-secondary);
   margin-bottom: 0.25rem;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.08em;
 }
 
 .transcript-entry .text {
+  /* Human font: conversation */
+  font-family: 'Source Sans 3', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 0.9375rem;
+  line-height: 1.6;
+}
+
+/* Markdown elements within transcript */
+.transcript-entry .text p {
+  margin: 0 0 0.5em 0;
+}
+
+.transcript-entry .text p:last-child {
+  margin-bottom: 0;
+}
+
+.transcript-entry .text strong {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.transcript-entry .text em {
+  font-style: italic;
+}
+
+.transcript-entry .text code {
+  font-family: 'IBM Plex Mono', 'Monaco', 'Menlo', 'Consolas', monospace;
+  font-size: 0.85em;
+  background-color: rgba(255, 255, 255, 0.08);
+  padding: 0.15em 0.4em;
+  border-radius: 3px;
+}
+
+.transcript-entry .text pre {
+  font-family: 'IBM Plex Mono', 'Monaco', 'Menlo', 'Consolas', monospace;
+  font-size: 0.85em;
+  background-color: rgba(0, 0, 0, 0.3);
+  padding: 0.75em 1em;
+  border-radius: 4px;
+  overflow-x: auto;
+  margin: 0.5em 0;
+}
+
+.transcript-entry .text pre code {
+  background: none;
+  padding: 0;
+}
+
+.transcript-entry .text ul,
+.transcript-entry .text ol {
+  margin: 0.5em 0;
+  padding-left: 1.5em;
+}
+
+.transcript-entry .text li {
+  margin: 0.25em 0;
+}
+
+.transcript-entry .text blockquote {
+  border-left: 3px solid var(--accent);
+  margin: 0.5em 0;
+  padding-left: 1em;
+  opacity: 0.85;
+}
+
+.transcript-entry .text table {
+  border-collapse: collapse;
+  margin: 0.5em 0;
+  font-size: 0.9em;
+}
+
+.transcript-entry .text th,
+.transcript-entry .text td {
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  padding: 0.4em 0.8em;
+  text-align: left;
+}
+
+.transcript-entry .text th {
+  background-color: rgba(255, 255, 255, 0.05);
+  font-weight: 600;
+}
+
+.transcript-entry .text a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.transcript-entry .text a:hover {
+  text-decoration: underline;
+}
+
+.transcript-entry .text h1,
+.transcript-entry .text h2,
+.transcript-entry .text h3,
+.transcript-entry .text h4 {
+  margin: 0.5em 0 0.25em 0;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.transcript-entry .text h1 { font-size: 1.3em; }
+.transcript-entry .text h2 { font-size: 1.2em; }
+.transcript-entry .text h3 { font-size: 1.1em; }
+.transcript-entry .text h4 { font-size: 1em; }
+
+.transcript-entry .text hr {
+  border: none;
+  border-top: 1px solid rgba(255, 255, 255, 0.15);
+  margin: 0.75em 0;
 }
 
 /* =============================================================================
@@ -771,19 +1290,35 @@ button:disabled {
     padding: 0.5rem;
   }
 
-  #ring-container {
-    width: 150px;
-    height: 150px;
+  #visualizer {
+    flex-direction: column;
+    align-items: center;
   }
 
-  #ring-outer {
+  #ring-container {
+    flex: none;
+    width: 150px;
+    height: auto;
+    min-height: 180px;  /* Room for rings + status */
+  }
+
+  .telemetry-panel {
+    flex: none;
+    width: 100%;
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: center;
+    max-height: none;
+  }
+
+  #ring-svg {
     width: 150px;
     height: 150px;
   }
 
   #ring-inner {
-    width: 90px;
-    height: 90px;
+    width: 65px;
+    height: 65px;
   }
 
   #logo {
@@ -1668,7 +2203,7 @@ button:disabled {
 }
 
 /* =============================================================================
- * Metrics Panel
+ * Metrics Panel (Phase 4: System font styling)
  * ============================================================================= */
 .metrics-panel {
   position: fixed;
@@ -1681,11 +2216,20 @@ button:disabled {
   z-index: 100;
   max-height: 50vh;
   overflow-y: auto;
-  transition: transform var(--transition-medium) ease;
+  transition: transform var(--transition-medium) ease, opacity var(--transition-medium) ease;
+  /* System font: telemetry panel */
+  font-family: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
+  font-size: 0.75rem;
+  letter-spacing: 0.03em;
 }
 
 .metrics-panel.hidden {
   transform: translateY(100%);
+}
+
+/* Dim when idle (40% opacity) - add .idle class via JS when state is idle */
+.metrics-panel.idle-dim {
+  opacity: 0.4;
 }
 
 .metrics-header {
@@ -1763,7 +2307,7 @@ button:disabled {
   font-size: 0.9rem;
   font-weight: 600;
   color: var(--text-primary);
-  font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+  font-family: 'IBM Plex Mono', Monaco, 'Courier New', monospace;
 }
 
 .metrics-pipeline {

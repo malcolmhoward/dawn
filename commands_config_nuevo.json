@@ -191,7 +191,7 @@
        }
     },
     "llm": {
-       "type": "analog",
+       "type": "getter",
        "aliases": ["ai", "ai status", "current llm", "which llm", "what llm", "llm mode", "ai mode", "llm status"],
        "topic": "dawn",
        "tool": {

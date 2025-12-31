@@ -99,9 +99,10 @@ typedef enum {
    WS_RESP_CONTEXT,    /* Context/token usage update */
 
    /* LLM streaming types (ChatGPT-style real-time text) */
-   WS_RESP_STREAM_START, /* Start of LLM token stream */
-   WS_RESP_STREAM_DELTA, /* Incremental token chunk */
-   WS_RESP_STREAM_END,   /* End of LLM token stream */
+   WS_RESP_STREAM_START,  /* Start of LLM token stream */
+   WS_RESP_STREAM_DELTA,  /* Incremental token chunk */
+   WS_RESP_STREAM_END,    /* End of LLM token stream */
+   WS_RESP_METRICS_UPDATE /* Real-time metrics for UI visualization */
 } ws_response_type_t;
 
 /* =============================================================================
@@ -284,6 +285,38 @@ void webui_send_stream_end(struct session *session, const char *reason);
  * @note Called from WebUI thread when text message received
  */
 int webui_process_text_input(struct session *session, const char *text);
+
+/* =============================================================================
+ * Real-Time Metrics for UI Visualization
+ *
+ * Provides metrics for multi-ring visualization:
+ * - state: Current state machine state
+ * - ttft_ms: Time to first token (ms)
+ * - token_rate: Tokens per second (smoothed)
+ * - context_percent: Context window utilization (0-100)
+ * ============================================================================= */
+
+/**
+ * @brief Send real-time metrics update to WebSocket client
+ *
+ * Used for UI visualization (rings, gauges). Sent on:
+ * - State changes (immediate)
+ * - Token chunk events (during streaming)
+ * - Periodic heartbeat (1Hz when idle)
+ *
+ * @param session Session to send to (must be SESSION_TYPE_WEBSOCKET)
+ * @param state Current state ("idle", "listening", "thinking", "speaking", "error")
+ * @param ttft_ms Time to first token in milliseconds (0 if N/A)
+ * @param token_rate Tokens per second (0 if not streaming)
+ * @param context_percent Context utilization 0-100
+ *
+ * @note Thread-safe - can be called from any thread
+ */
+void webui_send_metrics_update(struct session *session,
+                               const char *state,
+                               int ttft_ms,
+                               float token_rate,
+                               int context_percent);
 
 #ifdef __cplusplus
 }

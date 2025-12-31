@@ -33,6 +33,8 @@
  *   - Session creation through session_manager API (thread-safe)
  */
 
+#define _GNU_SOURCE  // For pthread_timedjoin_np - must be before any includes
+
 #include "network/accept_thread.h"
 
 #include <arpa/inet.h>
@@ -45,6 +47,7 @@
 #include <string.h>
 #include <sys/select.h>
 #include <sys/socket.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "core/session_manager.h"
@@ -148,10 +151,11 @@ void accept_thread_stop(void) {
 
    LOG_INFO("Stopping accept thread...");
 
-   // Signal shutdown
+   // Signal shutdown FIRST (before any fd operations)
    shutdown_requested = true;
 
    // Write to shutdown pipe to wake up select() immediately
+   // This is the ONLY reliable way to wake up select() from another thread
    if (shutdown_pipe[1] >= 0) {
       LOG_INFO("Writing to shutdown pipe (fd=%d)...", shutdown_pipe[1]);
       char byte = 1;
@@ -165,18 +169,44 @@ void accept_thread_stop(void) {
       LOG_ERROR("Shutdown pipe write end is closed!");
    }
 
-   // Close listening socket as backup
+   // NOTE: Do NOT close listen_fd here - closing an fd from another thread
+   // while select() is waiting on it can cause undefined behavior on Linux.
+   // The shutdown pipe will wake up select(), and the thread will exit cleanly.
+
+   // Wait for accept thread to exit with timeout
+   // Use pthread_timedjoin_np if available, otherwise use cancel as fallback
+   LOG_INFO("Waiting for accept thread to join (max 2 seconds)...");
+
+#ifdef __GLIBC__
+   // Use timed join on glibc systems
+   struct timespec timeout;
+   clock_gettime(CLOCK_REALTIME, &timeout);
+   timeout.tv_sec += 2;  // 2 second timeout
+
+   int join_result = pthread_timedjoin_np(accept_thread, NULL, &timeout);
+   if (join_result == ETIMEDOUT) {
+      LOG_WARNING("Accept thread did not exit in time, cancelling...");
+      pthread_cancel(accept_thread);
+      pthread_join(accept_thread, NULL);
+      LOG_INFO("Accept thread cancelled and joined");
+   } else if (join_result != 0) {
+      LOG_ERROR("pthread_timedjoin_np failed: %d", join_result);
+   } else {
+      LOG_INFO("Accept thread joined successfully");
+   }
+#else
+   // Fallback for non-glibc systems
+   pthread_join(accept_thread, NULL);
+   LOG_INFO("Accept thread joined successfully");
+#endif
+   thread_running = false;
+
+   // NOW close the listening socket (thread has exited)
    if (listen_fd >= 0) {
       LOG_INFO("Closing listen socket (fd=%d)...", listen_fd);
       close(listen_fd);
       listen_fd = -1;
    }
-
-   // Wait for accept thread to exit
-   LOG_INFO("Waiting for accept thread to join...");
-   pthread_join(accept_thread, NULL);
-   LOG_INFO("Accept thread joined successfully");
-   thread_running = false;
 
    // Close shutdown pipe
    if (shutdown_pipe[0] >= 0) {
@@ -247,7 +277,14 @@ static void *accept_thread_func(void *arg) {
 
    LOG_INFO("Accept thread running (pipe_fd=%d, listen_fd=%d)", shutdown_pipe[0], listen_fd);
 
+   // Enable thread cancellation for clean shutdown
+   pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
+   pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, NULL);
+
    while (!shutdown_requested) {
+      // Cancellation point - allows pthread_cancel to interrupt
+      pthread_testcancel();
+
       // Capture fds locally to avoid race with shutdown
       int fd = listen_fd;
       int pipe_fd = shutdown_pipe[0];

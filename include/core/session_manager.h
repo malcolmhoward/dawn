@@ -131,6 +131,12 @@ typedef struct session {
    atomic_bool stream_had_content;    // True if any deltas were sent (for fallback)
    atomic_uint current_stream_id;     // Monotonic ID to detect stale deltas
 
+   // Streaming metrics for UI visualization
+   uint64_t stream_start_ms;     // Timestamp when LLM call started
+   uint64_t first_token_ms;      // Timestamp of first token (0 if none yet)
+   uint64_t last_token_ms;       // Timestamp of most recent token
+   uint32_t stream_token_count;  // Token count for current stream
+
    // Command tag filter state (strips <command>...</command> from stream)
    bool in_command_tag;  // True when inside <command>...</command>
 

@@ -25,6 +25,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "config/dawn_config.h"
 #include "llm/llm_command_parser.h"
@@ -32,6 +33,19 @@
 #include "llm/sentence_buffer.h"
 #include "logging.h"
 #include "webui/webui_server.h"
+
+// =============================================================================
+// Streaming Helpers
+// =============================================================================
+
+/**
+ * @brief Get current time in milliseconds (monotonic clock)
+ */
+static uint64_t get_time_ms(void) {
+   struct timespec ts;
+   clock_gettime(CLOCK_MONOTONIC, &ts);
+   return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
+}
 
 // =============================================================================
 // Streaming Callbacks
@@ -98,6 +112,7 @@ static int filter_command_tags(session_t *session,
  * @brief Streaming callback for LLM responses
  *
  * Filters out <command>...</command> tags and sends clean text to WebUI.
+ * Also tracks timing metrics for TTFT and token rate visualization.
  * Tool calls appear as debug entries after streaming completes.
  */
 static void session_text_chunk_callback(const char *chunk, void *userdata) {
@@ -115,11 +130,43 @@ static void session_text_chunk_callback(const char *chunk, void *userdata) {
       char filtered[256];
       int len = filter_command_tags(session, chunk, filtered, sizeof(filtered));
       if (len > 0) {
+         uint64_t now_ms = get_time_ms();
+
          /* Send stream_start on first actual content (lazy initialization).
           * This prevents creating UI box for responses that are only commands. */
          if (!session->llm_streaming_active) {
             webui_send_stream_start(session);
          }
+
+         /* Track timing for first token (TTFT) */
+         if (session->first_token_ms == 0) {
+            session->first_token_ms = now_ms;
+         }
+
+         /* Track token count and timing for rate calculation */
+         session->stream_token_count++;
+         session->last_token_ms = now_ms;
+
+         /* Calculate metrics */
+         int ttft_ms = 0;
+         float token_rate = 0.0f;
+
+         if (session->stream_start_ms > 0) {
+            ttft_ms = (int)(session->first_token_ms - session->stream_start_ms);
+
+            /* Calculate tokens per second based on elapsed time since first token */
+            uint64_t streaming_duration_ms = now_ms - session->first_token_ms;
+            if (streaming_duration_ms > 0 && session->stream_token_count > 1) {
+               token_rate = (float)(session->stream_token_count - 1) * 1000.0f /
+                            (float)streaming_duration_ms;
+            }
+         }
+
+         /* Send metrics update periodically (every 5 tokens to avoid flooding) */
+         if (session->stream_token_count % 5 == 0 || session->stream_token_count == 1) {
+            webui_send_metrics_update(session, "thinking", ttft_ms, token_rate, -1);
+         }
+
          webui_send_stream_delta(session, filtered);
       }
    }
@@ -1014,6 +1061,12 @@ char *session_llm_call(session_t *session, const char *user_text) {
    LOG_INFO("Session %u: Calling LLM with %d messages in history", session->session_id,
             json_object_array_length(ctx.history));
 
+   /* Initialize streaming metrics before LLM call */
+   session->stream_start_ms = get_time_ms();
+   session->first_token_ms = 0;
+   session->last_token_ms = 0;
+   session->stream_token_count = 0;
+
    char *response = llm_chat_completion_streaming_with_config(ctx.history, ctx.llm_input, NULL, 0,
                                                               session_text_chunk_callback, session,
                                                               &ctx.resolved_config);
@@ -1069,11 +1122,42 @@ static void combined_chunk_callback(const char *chunk, void *userdata) {
    char filtered[256];
    int len = filter_command_tags(session, chunk, filtered, sizeof(filtered));
    if (len > 0) {
+      uint64_t now_ms = get_time_ms();
+
       // 1. Send to WebUI for real-time text display
       if (session->type == SESSION_TYPE_WEBSOCKET) {
          if (!session->llm_streaming_active) {
             webui_send_stream_start(session);
          }
+
+         /* Track timing for first token (TTFT) */
+         if (session->first_token_ms == 0) {
+            session->first_token_ms = now_ms;
+         }
+
+         /* Track token count and timing for rate calculation */
+         session->stream_token_count++;
+         session->last_token_ms = now_ms;
+
+         /* Calculate metrics */
+         int ttft_ms = 0;
+         float token_rate = 0.0f;
+
+         if (session->stream_start_ms > 0) {
+            ttft_ms = (int)(session->first_token_ms - session->stream_start_ms);
+
+            uint64_t streaming_duration_ms = now_ms - session->first_token_ms;
+            if (streaming_duration_ms > 0 && session->stream_token_count > 1) {
+               token_rate = (float)(session->stream_token_count - 1) * 1000.0f /
+                            (float)streaming_duration_ms;
+            }
+         }
+
+         /* Send metrics update periodically */
+         if (session->stream_token_count % 5 == 0 || session->stream_token_count == 1) {
+            webui_send_metrics_update(session, "thinking", ttft_ms, token_rate, -1);
+         }
+
          webui_send_stream_delta(session, filtered);
       }
 
@@ -1105,6 +1189,12 @@ char *session_llm_call_with_tts(session_t *session,
 
    LOG_INFO("Session %u: Calling LLM (TTS streaming) with %d messages in history",
             session->session_id, json_object_array_length(ctx.history));
+
+   /* Initialize streaming metrics before LLM call */
+   session->stream_start_ms = get_time_ms();
+   session->first_token_ms = 0;
+   session->last_token_ms = 0;
+   session->stream_token_count = 0;
 
    // Create combined streaming context for text + sentence audio
    combined_stream_ctx_t stream_ctx = { .session = session,

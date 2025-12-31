@@ -68,7 +68,53 @@
     streamId: null,
     entryElement: null,  // DOM element for current streaming entry
     textElement: null,   // Text container within entry
-    content: ''          // Accumulated text content
+    content: '',         // Accumulated text content
+    // Debounce markdown rendering (max 10Hz to avoid heavyweight parsing per token)
+    lastRenderMs: 0,
+    renderDebounceMs: 100,
+    pendingRender: false
+  };
+
+  // Real-time metrics state (for multi-ring visualization)
+  let metricsState = {
+    state: 'idle',
+    ttft_ms: 0,
+    token_rate: 0,
+    context_percent: 0,
+    lastUpdate: 0,
+    // Last non-zero values (persist after streaming ends)
+    last_ttft_ms: 0,
+    last_token_rate: 0
+  };
+
+  // Hesitation ring state (token timing variance visualization)
+  // Uses Welford's online algorithm for O(1) variance calculation
+  let hesitationState = {
+    dtWindow: [],           // Rolling window of inter-token intervals (ms)
+    windowSize: 16,         // Window size
+    tPrevMs: 0,             // Previous token timestamp
+    loadSmooth: 0,          // Smoothed load value (0-1)
+    lastTokenMs: 0,         // Time of last token for idle decay
+    animationId: null,      // Animation frame ID for hesitation updates
+    // Welford's running statistics (avoids array allocations)
+    runningSum: 0,          // Sum of values in window
+    runningSumSq: 0         // Sum of squared values in window
+  };
+
+  // Activity tick state (debounced token rate indicator)
+  let activityTickState = {
+    lastTickMs: 0,          // Timestamp of last tick
+    minInterval: 333,       // Minimum interval between ticks (max 3Hz)
+    tickDuration: 100,      // How long tick stays visible (ms)
+    timeoutId: null         // Timeout ID for hiding tick
+  };
+
+  // Load-based ring transition state
+  let loadTransitionState = {
+    highLoadStartMs: 0,     // When load first exceeded threshold
+    sustainedThreshold: 0.4, // Load level considered "high"
+    sustainedDelay: 500,    // How long load must stay high before middle ring reacts (ms)
+    isMiddleStrained: false // Whether middle ring is showing strain
   };
 
   // =============================================================================
@@ -77,8 +123,11 @@
   const elements = {
     connectionStatus: document.getElementById('connection-status'),
     ringContainer: document.getElementById('ring-container'),
-    ringOuter: document.getElementById('ring-outer'),
-    ringInner: document.getElementById('ring-inner'),
+    ringSvg: document.getElementById('ring-svg'),  // Main SVG container
+    ringFft: document.getElementById('ring-fft'),  // Inner ring: FFT audio visualization
+    ringThroughput: document.getElementById('ring-throughput'),  // Middle ring: token rate
+    ringHesitation: document.getElementById('ring-hesitation'),  // Outer ring: timing variance
+    ringInner: document.getElementById('ring-inner'),  // Glowing core
     waveformPath: document.getElementById('waveform-path'),
     waveformTrails: [
       document.getElementById('waveform-trail-1'),
@@ -96,11 +145,24 @@
     debugBtn: document.getElementById('debug-btn'),
   };
 
-  // Waveform configuration (viewBox is 240x240)
+  // Multi-ring configuration (viewBox is 240x240, center at 120,120)
   const WAVEFORM_CENTER = 120;  // Center of SVG viewBox
-  const WAVEFORM_BASE_RADIUS = 85;  // Base circle radius
-  const WAVEFORM_SPIKE_HEIGHT = 30;  // Max spike height (max radius = 115, within 120 center)
-  const WAVEFORM_POINTS = 64;  // Number of points around the circle (should be even for symmetry)
+
+  // Inner ring (FFT audio) - scaled down to make room for outer rings
+  const WAVEFORM_BASE_RADIUS = 60;  // Base circle radius (was 85)
+  const WAVEFORM_SPIKE_HEIGHT = 15;  // Max spike height (max radius ~75)
+  const WAVEFORM_POINTS = 64;  // Number of points around the circle
+
+  // Middle ring (throughput) - shows token rate as segmented arc
+  const THROUGHPUT_RADIUS = 87;  // Match SVG base circle
+  const THROUGHPUT_SEGMENTS = 64;
+
+  // Outer ring (hesitation) - shows token timing variance
+  const HESITATION_RADIUS = 107;  // Match SVG base circle
+  const HESITATION_SEGMENTS = 64;
+
+  // Segment cache to avoid DOM thrashing (WeakMap: container -> segment paths array)
+  const segmentCache = new WeakMap();
 
   // =============================================================================
   // WebSocket Connection
@@ -308,6 +370,9 @@
           break;
         case 'stream_end':
           handleStreamEnd(msg.payload);
+          break;
+        case 'metrics_update':
+          handleMetricsUpdate(msg.payload);
           break;
         default:
           console.log('Unknown message type:', msg.type);
@@ -840,6 +905,275 @@
   }
 
   /**
+   * Generate a segmented arc as SVG path elements
+   * @param {Element} container - SVG group element to add segments to
+   * @param {number} radius - Arc radius
+   * @param {number} segments - Number of segments
+   * @param {number} fillLevel - 0-1 how much of the arc is "active"
+   * @param {number[]} jitter - Optional per-segment radius jitter array
+   */
+  function renderSegmentedArc(container, radius, segments, fillLevel = 0, jitter = null) {
+    if (!container) return;
+
+    const gapAngle = 0.02;  // Gap between segments in radians
+    const segmentAngle = (Math.PI * 2 / segments) - gapAngle;
+    const activeSegments = Math.floor(segments * fillLevel);
+
+    // Get or create cached segment paths - avoids DOM thrashing
+    let paths = segmentCache.get(container);
+    if (!paths || paths.length !== segments) {
+      // First call or segment count changed - create elements once
+      while (container.firstChild) {
+        container.removeChild(container.firstChild);
+      }
+      paths = [];
+      for (let i = 0; i < segments; i++) {
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('class', 'ring-segment');
+        path.setAttribute('fill', 'none');
+        container.appendChild(path);
+        paths.push(path);
+      }
+      segmentCache.set(container, paths);
+    }
+
+    // Update existing segments - O(n) attribute updates, no DOM creation
+    for (let i = 0; i < segments; i++) {
+      const startAngle = (i / segments) * Math.PI * 2 - Math.PI / 2;
+      const endAngle = startAngle + segmentAngle;
+
+      // Apply jitter if provided
+      const r = jitter && jitter[i] ? radius + jitter[i] : radius;
+
+      // Calculate arc points
+      const x1 = WAVEFORM_CENTER + Math.cos(startAngle) * r;
+      const y1 = WAVEFORM_CENTER + Math.sin(startAngle) * r;
+      const x2 = WAVEFORM_CENTER + Math.cos(endAngle) * r;
+      const y2 = WAVEFORM_CENTER + Math.sin(endAngle) * r;
+
+      // Update path attributes only - no element creation
+      paths[i].setAttribute('d', `M ${x1.toFixed(1)} ${y1.toFixed(1)} A ${r} ${r} 0 0 1 ${x2.toFixed(1)} ${y2.toFixed(1)}`);
+      paths[i].style.opacity = i < activeSegments ? '0.8' : '0.22';
+    }
+  }
+
+  /**
+   * Initialize the multi-ring structure with default states
+   */
+  function initializeRings() {
+    // Draw throughput ring (middle) - starts empty
+    renderSegmentedArc(elements.ringThroughput, THROUGHPUT_RADIUS, THROUGHPUT_SEGMENTS, 0);
+
+    // Draw hesitation ring (outer) - starts at baseline
+    renderSegmentedArc(elements.ringHesitation, HESITATION_RADIUS, HESITATION_SEGMENTS, 0);
+  }
+
+  // =============================================================================
+  // Hesitation Ring Algorithm (Phase 2A)
+  // =============================================================================
+
+  /**
+   * Calculate standard deviation using running statistics (Welford's algorithm)
+   * O(1) computation instead of O(n) - no array allocations
+   */
+  function getRunningStddev() {
+    const n = hesitationState.dtWindow.length;
+    if (n === 0) return 0;
+    const mean = hesitationState.runningSum / n;
+    const variance = (hesitationState.runningSumSq / n) - (mean * mean);
+    return Math.sqrt(Math.max(0, variance));  // max(0,...) for numerical stability
+  }
+
+  /**
+   * Smooth noise function for hesitation jitter
+   * Uses sine waves at different frequencies for organic movement
+   * @param {number} segmentId - Segment index (0-63)
+   * @param {number} time - Current time in seconds
+   * @returns {number} Noise value (-1 to 1)
+   */
+  function smoothNoise(segmentId, time) {
+    // Use multiple sine waves at different phases for each segment
+    const phase1 = segmentId * 0.37;  // Prime-ish multiplier for variation
+    const phase2 = segmentId * 0.73;
+    const phase3 = segmentId * 1.17;
+
+    // Different frequencies for organic feel
+    const n1 = Math.sin(time * 2.0 + phase1);
+    const n2 = Math.sin(time * 3.7 + phase2) * 0.5;
+    const n3 = Math.sin(time * 5.3 + phase3) * 0.25;
+
+    return (n1 + n2 + n3) / 1.75;  // Normalize to roughly -1 to 1
+  }
+
+  /**
+   * Handle token event for hesitation tracking
+   * Call this when a stream_delta is received
+   * Uses Welford's online algorithm for O(1) stddev updates
+   */
+  function onTokenEvent() {
+    const nowMs = performance.now();
+
+    if (hesitationState.tPrevMs > 0) {
+      const dtMs = nowMs - hesitationState.tPrevMs;
+
+      // Remove oldest value from running stats if window is full
+      if (hesitationState.dtWindow.length >= hesitationState.windowSize) {
+        const oldValue = hesitationState.dtWindow.shift();
+        hesitationState.runningSum -= oldValue;
+        hesitationState.runningSumSq -= oldValue * oldValue;
+      }
+
+      // Add new value to window and running stats
+      hesitationState.dtWindow.push(dtMs);
+      hesitationState.runningSum += dtMs;
+      hesitationState.runningSumSq += dtMs * dtMs;
+
+      // Calculate standard deviation using O(1) running stats
+      const std = getRunningStddev();
+      // 3ms = calm (fast, steady tokens), 20ms+ = stressed (slow, variable)
+      // Lower thresholds for more sensitivity to chunk timing variance
+      const loadRaw = (std - 3) / (20 - 3);
+      const load = Math.max(0, Math.min(1, loadRaw));
+
+      // EMA smoothing
+      hesitationState.loadSmooth += 0.2 * (load - hesitationState.loadSmooth);
+    }
+
+    hesitationState.tPrevMs = nowMs;
+    hesitationState.lastTokenMs = nowMs;
+  }
+
+  /**
+   * Update hesitation ring with jitter based on load
+   * Called from animation loop
+   */
+  function updateHesitationRing() {
+    const nowMs = performance.now();
+    const timeSec = nowMs / 1000;
+
+    // Idle decay: if no token for 300ms, decay loadSmooth
+    if (nowMs - hesitationState.lastTokenMs > 300) {
+      hesitationState.loadSmooth *= 0.95;
+      if (hesitationState.loadSmooth < 0.01) {
+        hesitationState.loadSmooth = 0;
+      }
+    }
+
+    // Generate jitter array for each segment
+    const jitter = new Array(HESITATION_SEGMENTS);
+    const maxJitter = 3;  // Max jitter in pixels
+
+    for (let i = 0; i < HESITATION_SEGMENTS; i++) {
+      const noise = smoothNoise(i, timeSec);
+      jitter[i] = noise * maxJitter * hesitationState.loadSmooth;
+    }
+
+    // Render with jitter
+    renderSegmentedArc(elements.ringHesitation, HESITATION_RADIUS, HESITATION_SEGMENTS, 1.0, jitter);
+
+    // Load-based middle ring transition (outer reacts first, middle follows)
+    updateMiddleRingStrain(nowMs);
+
+    // Update telemetry panel latency display during streaming
+    updateTelemetryPanel();
+  }
+
+  /**
+   * Update middle ring strain state based on sustained high load
+   * Per design: outer ring reacts first, middle ring follows after delay
+   */
+  function updateMiddleRingStrain(nowMs) {
+    const load = hesitationState.loadSmooth;
+    const threshold = loadTransitionState.sustainedThreshold;
+    const delay = loadTransitionState.sustainedDelay;
+
+    if (load > threshold) {
+      // Load is high - track when it started
+      if (loadTransitionState.highLoadStartMs === 0) {
+        loadTransitionState.highLoadStartMs = nowMs;
+      }
+
+      // Check if sustained long enough
+      if (nowMs - loadTransitionState.highLoadStartMs > delay) {
+        if (!loadTransitionState.isMiddleStrained) {
+          elements.ringThroughput.classList.add('strained');
+          loadTransitionState.isMiddleStrained = true;
+        }
+      }
+    } else {
+      // Load dropped - reset tracking
+      loadTransitionState.highLoadStartMs = 0;
+      if (loadTransitionState.isMiddleStrained) {
+        elements.ringThroughput.classList.remove('strained');
+        loadTransitionState.isMiddleStrained = false;
+      }
+    }
+  }
+
+  /**
+   * Start hesitation ring animation loop
+   */
+  function startHesitationAnimation() {
+    if (hesitationState.animationId) return;  // Already running
+
+    function animate() {
+      updateHesitationRing();
+      hesitationState.animationId = requestAnimationFrame(animate);
+    }
+
+    hesitationState.animationId = requestAnimationFrame(animate);
+  }
+
+  /**
+   * Stop hesitation ring animation and reset
+   */
+  function stopHesitationAnimation() {
+    if (hesitationState.animationId) {
+      cancelAnimationFrame(hesitationState.animationId);
+      hesitationState.animationId = null;
+    }
+
+    // Reset state
+    hesitationState.dtWindow = [];
+    hesitationState.tPrevMs = 0;
+    hesitationState.loadSmooth = 0;
+
+    // Render baseline ring
+    renderSegmentedArc(elements.ringHesitation, HESITATION_RADIUS, HESITATION_SEGMENTS, 0);
+  }
+
+  /**
+   * Flash the token rate activity tick (debounced to max 3Hz)
+   * Provides a heartbeat indicator that data is flowing
+   */
+  function flashActivityTick() {
+    const nowMs = performance.now();
+    const tick = document.getElementById('token-rate-tick');
+
+    if (!tick) return;
+
+    // Debounce: skip if too soon since last tick
+    if (nowMs - activityTickState.lastTickMs < activityTickState.minInterval) {
+      return;
+    }
+
+    activityTickState.lastTickMs = nowMs;
+
+    // Clear any pending hide timeout
+    if (activityTickState.timeoutId) {
+      clearTimeout(activityTickState.timeoutId);
+    }
+
+    // Show the tick
+    tick.classList.add('active');
+
+    // Hide after tickDuration
+    activityTickState.timeoutId = setTimeout(() => {
+      tick.classList.remove('active');
+    }, activityTickState.tickDuration);
+  }
+
+  /**
    * Start FFT visualization animation loop
    */
   function startFFTVisualization() {
@@ -907,11 +1241,8 @@
         elements.ringInner.style.opacity = coreOpacity.toFixed(2);
       }
 
-      // Rotate outer ring for circular motion effect
-      const outerRotation = (time * 45) % 360;  // 45 deg/sec rotation
-      if (elements.ringOuter) {
-        elements.ringOuter.style.transform = `rotate(${outerRotation.toFixed(1)}deg)`;
-      }
+      // Per design spec: rings do NOT rotate or translate
+      // Motion is only allowed for radial jitter, glow, or subtle idle breathing
 
       fftAnimationId = requestAnimationFrame(animate);
     }
@@ -932,9 +1263,6 @@
     drawDefaultWaveform();
 
     // Reset ring transforms and remove fft-active class
-    if (elements.ringOuter) {
-      elements.ringOuter.style.transform = '';
-    }
     if (elements.ringInner) {
       elements.ringInner.style.transform = '';
       elements.ringInner.style.opacity = '';  // Reset to CSS default
@@ -1006,6 +1334,106 @@
     if (hasFftActive) {
       elements.ringContainer.classList.add('fft-active');
     }
+
+    // Emit state event for decoupled modules
+    if (typeof DawnEvents !== 'undefined') {
+      DawnEvents.emit('state', { state, previousState });
+    }
+  }
+
+  // =============================================================================
+  // Context Pressure Gauge (Phase 3)
+  // =============================================================================
+
+  const GAUGE_SEGMENTS = 16;
+  const GAUGE_RADIUS = 35;
+  const GAUGE_START_ANGLE = -225;  // Start at 225° (bottom left)
+  const GAUGE_END_ANGLE = 45;      // End at 45° (bottom right) = 270° arc
+
+  /**
+   * Initialize context gauge segments
+   */
+  function initializeContextGauge() {
+    const container = document.getElementById('context-gauge-segments');
+    if (!container) return;
+
+    // Clear existing
+    container.innerHTML = '';
+
+    const arcAngle = GAUGE_END_ANGLE - GAUGE_START_ANGLE;  // 270°
+    const gapAngle = 3;  // Gap between segments in degrees
+    const segmentAngle = (arcAngle - (gapAngle * (GAUGE_SEGMENTS - 1))) / GAUGE_SEGMENTS;
+
+    for (let i = 0; i < GAUGE_SEGMENTS; i++) {
+      const startAngle = GAUGE_START_ANGLE + i * (segmentAngle + gapAngle);
+      const endAngle = startAngle + segmentAngle;
+
+      // Convert to radians
+      const startRad = startAngle * Math.PI / 180;
+      const endRad = endAngle * Math.PI / 180;
+
+      // Calculate arc points
+      const x1 = Math.cos(startRad) * GAUGE_RADIUS;
+      const y1 = Math.sin(startRad) * GAUGE_RADIUS;
+      const x2 = Math.cos(endRad) * GAUGE_RADIUS;
+      const y2 = Math.sin(endRad) * GAUGE_RADIUS;
+
+      // Create segment path
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('class', 'gauge-segment inactive');
+      path.setAttribute('d', `M ${x1.toFixed(1)} ${y1.toFixed(1)} A ${GAUGE_RADIUS} ${GAUGE_RADIUS} 0 0 1 ${x2.toFixed(1)} ${y2.toFixed(1)}`);
+      path.dataset.index = i;
+      container.appendChild(path);
+    }
+  }
+
+  /**
+   * Update context gauge with current usage
+   * @param {number} usage - Usage percentage (0-100)
+   */
+  function renderContextGauge(usage) {
+    const container = document.getElementById('context-gauge-segments');
+    const percentText = document.getElementById('context-gauge-percent');
+    if (!container) return;
+
+    const segments = container.querySelectorAll('.gauge-segment');
+    const activeCount = Math.floor((usage / 100) * GAUGE_SEGMENTS);
+
+    segments.forEach((seg, i) => {
+      seg.classList.remove('inactive', 'active-normal', 'active-warning', 'active-danger', 'flashing');
+
+      if (i < activeCount) {
+        // Determine color based on position in the gauge
+        const segmentPercent = (i + 1) / GAUGE_SEGMENTS * 100;
+        if (segmentPercent > 90) {
+          seg.classList.add('active-danger');
+          // Flash if we're at critical level
+          if (usage > 90) {
+            seg.classList.add('flashing');
+          }
+        } else if (segmentPercent > 75) {
+          seg.classList.add('active-warning');
+        } else if (segmentPercent > 50) {
+          // Transition zone: cyan with slight amber tint
+          seg.classList.add('active-normal');
+        } else {
+          seg.classList.add('active-normal');
+        }
+      } else {
+        seg.classList.add('inactive');
+      }
+    });
+
+    // Update percent text
+    if (percentText) {
+      percentText.textContent = `${Math.round(usage)}%`;
+      percentText.classList.remove('warning', 'danger');
+      if (usage > 90) {
+        percentText.classList.add('danger');
+      } else if (usage > 75) {
+        percentText.classList.add('warning');
+      }
+    }
   }
 
   /**
@@ -1014,43 +1442,30 @@
    */
   function updateContextDisplay(payload) {
     const contextDisplay = document.getElementById('context-display');
-    const contextBar = document.getElementById('context-bar');
-    const contextThreshold = document.getElementById('context-threshold');
     const contextText = document.getElementById('context-text');
 
-    if (!contextDisplay || !contextBar || !contextText) {
+    if (!contextDisplay || !contextText) {
       console.warn('Context display elements not found');
       return;
     }
 
-    const { current, max, usage, threshold } = payload;
+    const { current, max, usage } = payload;
 
-    // Show the display
-    contextDisplay.classList.remove('hidden');
-
-    // Update the progress bar
-    const usagePercent = Math.min(usage, 100);
-    contextBar.style.width = `${usagePercent}%`;
-
-    // Set color based on usage level
-    contextBar.classList.remove('warning', 'danger');
-    if (usage >= threshold) {
-      contextBar.classList.add('danger');
-    } else if (usage >= threshold * 0.75) {
-      contextBar.classList.add('warning');
-    }
-
-    // Position the threshold marker
-    if (contextThreshold) {
-      contextThreshold.style.left = `${threshold}%`;
-    }
+    // Update the gauge
+    renderContextGauge(usage);
 
     // Update text
     const currentK = (current / 1000).toFixed(1);
     const maxK = (max / 1000).toFixed(0);
-    contextText.textContent = `${currentK}k/${maxK}k (${usage.toFixed(0)}%)`;
+    contextText.textContent = `${currentK}k/${maxK}k`;
 
-    console.log(`Context update: ${current}/${max} tokens (${usage.toFixed(1)}%), threshold: ${threshold}%`);
+    // Also update metricsState and telemetry panel
+    metricsState.context_percent = usage;
+    updateTelemetryPanel();
+
+    if (debugMode) {
+      console.log(`Context update: ${current}/${max} tokens (${usage.toFixed(1)}%)`);
+    }
   }
 
   /**
@@ -1137,9 +1552,7 @@
       <div class="role">${escapeHtml(label)}</div>
       <div class="text">${formatCommandText(escapeHtml(content))}</div>
     `;
-    if (!debugMode) {
-      entry.style.display = 'none';
-    }
+    // Visibility controlled by CSS via body.debug-mode class
     elements.transcript.appendChild(entry);
   }
 
@@ -1151,7 +1564,7 @@
     entry.className = `transcript-entry ${role}`;
     entry.innerHTML = `
       <div class="role">${escapeHtml(role)}</div>
-      <div class="text">${escapeHtml(text)}</div>
+      <div class="text">${formatMarkdown(text)}</div>
     `;
     elements.transcript.appendChild(entry);
   }
@@ -1161,6 +1574,46 @@
     const placeholder = elements.transcript.querySelector('.transcript-placeholder');
     if (placeholder) {
       placeholder.remove();
+    }
+
+    // Route tool role messages to debug entries (server sends role:"tool" for tool results)
+    if (role === 'tool') {
+      addDebugEntry('tool result', text);
+      elements.transcript.scrollTop = elements.transcript.scrollHeight;
+      return;
+    }
+
+    // Detect Claude native tool format: JSON arrays with tool_use or tool_result objects
+    // These come from conversation history and look like:
+    // [ { "type": "tool_use", "id": "...", "name": "...", "input": {...} } ]
+    // [ { "type": "tool_result", "tool_use_id": "...", "content": "..." } ]
+    if (text.trimStart().startsWith('[')) {
+      try {
+        const parsed = JSON.parse(text);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const firstItem = parsed[0];
+          if (firstItem.type === 'tool_use') {
+            // Format tool calls nicely
+            parsed.forEach(item => {
+              const formatted = `[Tool Call: ${item.name}]\n${JSON.stringify(item.input, null, 2)}`;
+              addDebugEntry('tool call', formatted);
+            });
+            elements.transcript.scrollTop = elements.transcript.scrollHeight;
+            return;
+          }
+          if (firstItem.type === 'tool_result') {
+            // Format tool results nicely
+            parsed.forEach(item => {
+              const formatted = `[Tool Result: ${item.tool_use_id}]\n${item.content}`;
+              addDebugEntry('tool result', formatted);
+            });
+            elements.transcript.scrollTop = elements.transcript.scrollHeight;
+            return;
+          }
+        }
+      } catch (e) {
+        // Not valid JSON, continue with normal processing
+      }
     }
 
     // Special case: Tool calls/results are sent as complete messages
@@ -1214,6 +1667,16 @@
     return div.innerHTML;
   }
 
+  /**
+   * Format text with full markdown support using marked.js
+   * Sanitized with DOMPurify for XSS protection
+   */
+  function formatMarkdown(text) {
+    // Parse markdown to HTML, then sanitize
+    const html = marked.parse(text, { breaks: true, gfm: true });
+    return DOMPurify.sanitize(html);
+  }
+
   // =============================================================================
   // LLM Streaming Handlers (ChatGPT-style real-time text)
   // =============================================================================
@@ -1252,11 +1715,15 @@
     streamingState.textElement = entry.querySelector('.text');
     streamingState.content = '';
 
+    // Start hesitation ring animation for token timing visualization
+    startHesitationAnimation();
+
     elements.transcript.scrollTop = elements.transcript.scrollHeight;
   }
 
   /**
    * Handle stream_delta: Append text to current streaming entry
+   * Uses debounced markdown rendering (max 10Hz) to avoid heavyweight parsing per token
    */
   function handleStreamDelta(payload) {
     // Ignore deltas for different stream IDs
@@ -1265,12 +1732,39 @@
       return;
     }
 
+    // Track token timing for hesitation ring
+    onTokenEvent();
+
+    // Emit token event for decoupled visualization modules
+    if (typeof DawnEvents !== 'undefined') {
+      DawnEvents.emit('token', { timestamp: performance.now() });
+    }
+
     // Append delta to content
     streamingState.content += payload.delta;
 
-    // Update display (escape HTML but preserve newlines)
-    streamingState.textElement.innerHTML = escapeHtml(streamingState.content)
-      .replace(/\n/g, '<br>');
+    // Debounced markdown rendering - max 10Hz to avoid parsing entire content per token
+    const nowMs = performance.now();
+    if (nowMs - streamingState.lastRenderMs >= streamingState.renderDebounceMs) {
+      // Enough time has passed - render immediately
+      streamingState.textElement.innerHTML = formatMarkdown(streamingState.content)
+        .replace(/\n/g, '<br>');
+      streamingState.lastRenderMs = nowMs;
+      streamingState.pendingRender = false;
+    } else if (!streamingState.pendingRender) {
+      // Schedule a render for when debounce period ends
+      streamingState.pendingRender = true;
+      const delay = streamingState.renderDebounceMs - (nowMs - streamingState.lastRenderMs);
+      setTimeout(() => {
+        if (streamingState.active && streamingState.pendingRender) {
+          streamingState.textElement.innerHTML = formatMarkdown(streamingState.content)
+            .replace(/\n/g, '<br>');
+          streamingState.lastRenderMs = performance.now();
+          streamingState.pendingRender = false;
+          elements.transcript.scrollTop = elements.transcript.scrollHeight;
+        }
+      }, delay);
+    }
 
     elements.transcript.scrollTop = elements.transcript.scrollHeight;
   }
@@ -1298,6 +1792,15 @@
       return;
     }
 
+    // Stop hesitation ring animation
+    stopHesitationAnimation();
+
+    // Final render to ensure all content is displayed (in case debounce was pending)
+    if (streamingState.textElement && streamingState.content) {
+      streamingState.textElement.innerHTML = formatMarkdown(streamingState.content)
+        .replace(/\n/g, '<br>');
+    }
+
     // Remove streaming class
     if (streamingState.entryElement) {
       streamingState.entryElement.classList.remove('streaming');
@@ -1309,6 +1812,99 @@
     streamingState.entryElement = null;
     streamingState.textElement = null;
     streamingState.content = '';
+    streamingState.pendingRender = false;
+  }
+
+  // =============================================================================
+  // Metrics Handling (for multi-ring visualization)
+  // =============================================================================
+
+  /**
+   * Handle metrics_update message from server
+   * Updates global metricsState and drives multi-ring visualization + telemetry panel
+   */
+  function handleMetricsUpdate(payload) {
+    metricsState.state = payload.state || 'idle';
+    metricsState.ttft_ms = payload.ttft_ms || 0;
+    metricsState.token_rate = payload.token_rate || 0;
+    // Only update context_percent if value is valid (>= 0), otherwise keep previous
+    if (payload.context_percent >= 0) {
+      metricsState.context_percent = payload.context_percent;
+    }
+    metricsState.lastUpdate = performance.now();
+
+    // Preserve last non-zero values for display after streaming ends
+    if (metricsState.ttft_ms > 0) {
+      metricsState.last_ttft_ms = metricsState.ttft_ms;
+    }
+    if (metricsState.token_rate > 0) {
+      metricsState.last_token_rate = metricsState.token_rate;
+      // Flash activity tick when token rate is flowing (debounced to max 3Hz)
+      flashActivityTick();
+    }
+
+    // Update throughput ring based on token rate
+    // Normalize: 0 tokens/sec = 0%, 100 tokens/sec = 100%
+    const throughputFill = Math.min(metricsState.token_rate / 100, 1.0);
+    renderSegmentedArc(elements.ringThroughput, THROUGHPUT_RADIUS, THROUGHPUT_SEGMENTS, throughputFill);
+
+    // Update telemetry panel (right side discrete readouts)
+    updateTelemetryPanel();
+
+    // Debug log (only when debug mode is enabled)
+    if (debugMode) {
+      console.log('Metrics update:', metricsState);
+    }
+  }
+
+  /**
+   * Update the telemetry panel with current metrics
+   * Per design: discrete numeric readouts, visually quieter than rings
+   */
+  function updateTelemetryPanel() {
+    const panel = document.getElementById('telemetry-panel');
+    const tokenRate = document.getElementById('telem-token-rate');
+    const ttft = document.getElementById('telem-ttft');
+    const latency = document.getElementById('telem-latency');
+
+    if (!panel) return;
+
+    // Update values (use last non-zero if current is 0)
+    if (tokenRate) {
+      const rate = metricsState.token_rate || metricsState.last_token_rate;
+      tokenRate.innerHTML = rate > 0 ? `${rate.toFixed(1)} <small>tok/s</small>` : '-- <small>tok/s</small>';
+    }
+
+    if (ttft) {
+      const ms = metricsState.ttft_ms || metricsState.last_ttft_ms;
+      ttft.innerHTML = ms > 0 ? `${ms} <small>ms</small>` : '-- <small>ms</small>';
+    }
+
+    if (latency) {
+      // Show hesitation load as sigma (standard deviation indicator)
+      // load 0-1 maps to 3-20ms stddev, display as 0-17 σ
+      const load = hesitationState.loadSmooth;
+      if (load > 0.005) {
+        const sigmaVal = (load * 17).toFixed(0);
+        latency.innerHTML = `${sigmaVal} <small>σ</small>`;
+        latency.classList.remove('warning', 'danger');
+        if (load > 0.7) {
+          latency.classList.add('danger');
+        } else if (load > 0.4) {
+          latency.classList.add('warning');
+        }
+      } else {
+        latency.innerHTML = '-- <small>σ</small>';
+        latency.classList.remove('warning', 'danger');
+      }
+    }
+
+    // Dim panel when idle (state == 'idle')
+    if (metricsState.state === 'idle') {
+      panel.classList.add('idle');
+    } else {
+      panel.classList.remove('idle');
+    }
   }
 
   // =============================================================================
@@ -1491,13 +2087,9 @@
     elements.debugBtn.addEventListener('click', function() {
       debugMode = !debugMode;
       this.classList.toggle('active', debugMode);
+      // Toggle body class for CSS-based visibility control
+      document.body.classList.toggle('debug-mode', debugMode);
       console.log('Debug mode:', debugMode ? 'enabled' : 'disabled');
-
-      // Toggle visibility of existing debug entries
-      const debugEntries = elements.transcript.querySelectorAll('.transcript-entry.debug');
-      debugEntries.forEach(entry => {
-        entry.style.display = debugMode ? 'block' : 'none';
-      });
 
       // Request system prompt when debug is enabled
       if (debugMode && ws && ws.readyState === WebSocket.OPEN) {
@@ -1521,6 +2113,12 @@
 
     // Draw default waveform shape (circle) on page load
     drawDefaultWaveform();
+
+    // Initialize multi-ring structure (throughput + hesitation rings)
+    initializeRings();
+
+    // Initialize context pressure gauge
+    initializeContextGauge();
 
     // Initialize settings panel
     initSettingsElements();

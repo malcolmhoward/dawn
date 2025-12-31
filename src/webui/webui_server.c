@@ -119,6 +119,12 @@ typedef struct {
          uint32_t stream_id;
          char text[128]; /* Fixed buffer for delta/end text (no malloc/free churn) */
       } stream;
+      struct {
+         char state[16];   /* idle, listening, thinking, speaking, error */
+         int ttft_ms;      /* Time to first token (ms) */
+         float token_rate; /* Tokens per second */
+         int context_pct;  /* Context utilization 0-100 */
+      } metrics;
    };
 } ws_response_t;
 
@@ -485,6 +491,9 @@ static void free_response(ws_response_t *resp) {
       case WS_RESP_STREAM_END:
          /* No data to free - text[] is inline fixed buffer */
          break;
+      case WS_RESP_METRICS_UPDATE:
+         /* No data to free - all inline values */
+         break;
    }
 }
 
@@ -670,6 +679,19 @@ static void send_context_impl(struct lws *wsi,
    send_json_message(wsi, json);
 }
 
+static void send_metrics_impl(struct lws *wsi,
+                              const char *state,
+                              int ttft_ms,
+                              float token_rate,
+                              int context_pct) {
+   char json[256];
+   snprintf(json, sizeof(json),
+            "{\"type\":\"metrics_update\",\"payload\":{\"state\":\"%s\",\"ttft_ms\":%d,"
+            "\"token_rate\":%.1f,\"context_percent\":%d}}",
+            state, ttft_ms, token_rate, context_pct);
+   send_json_message(wsi, json);
+}
+
 /* =============================================================================
  * LLM Streaming Impl Functions (ChatGPT-style real-time text)
  *
@@ -845,6 +867,10 @@ static void process_one_response(void) {
       case WS_RESP_STREAM_END:
          send_stream_end_impl(conn->wsi, resp.stream.stream_id, resp.stream.text);
          /* text[] is inline buffer - no free needed */
+         break;
+      case WS_RESP_METRICS_UPDATE:
+         send_metrics_impl(conn->wsi, resp.metrics.state, resp.metrics.ttft_ms,
+                           resp.metrics.token_rate, resp.metrics.context_pct);
          break;
    }
 
@@ -3625,6 +3651,18 @@ void webui_send_state(session_t *session, const char *state) {
    }
 
    queue_response(&resp);
+
+   /* Also send metrics update with state change */
+   int context_pct = -1; /* -1 = no data, JS will keep previous value */
+   llm_context_usage_t usage;
+   session_llm_config_t llm_cfg;
+   session_get_llm_config(session, &llm_cfg);
+   if (llm_context_get_usage(session->session_id, llm_cfg.type, llm_cfg.cloud_provider, NULL,
+                             &usage) == 0 &&
+       usage.max_tokens > 0) {
+      context_pct = (int)((float)usage.current_tokens / (float)usage.max_tokens * 100.0f);
+   }
+   webui_send_metrics_update(session, state, 0, 0.0f, context_pct);
 }
 
 void webui_send_context(session_t *session, int current_tokens, int max_tokens, float threshold) {
@@ -3820,6 +3858,38 @@ void webui_send_stream_end(session_t *session, const char *reason) {
    queue_response(&resp);
    LOG_INFO("WebUI: Stream end id=%u reason=%s for session %u", session->current_stream_id, r,
             session->session_id);
+}
+
+/* =============================================================================
+ * Real-Time Metrics for UI Visualization
+ *
+ * Provides metrics for multi-ring visualization. Sent on:
+ * - State changes (immediate)
+ * - Token chunk events (during streaming)
+ * - Periodic heartbeat (1Hz when idle)
+ * ============================================================================= */
+
+void webui_send_metrics_update(session_t *session,
+                               const char *state,
+                               int ttft_ms,
+                               float token_rate,
+                               int context_percent) {
+   if (!session || session->type != SESSION_TYPE_WEBSOCKET) {
+      return;
+   }
+
+   ws_response_t resp = { .session = session, .type = WS_RESP_METRICS_UPDATE };
+
+   /* Copy state into fixed buffer */
+   const char *s = state ? state : "idle";
+   strncpy(resp.metrics.state, s, sizeof(resp.metrics.state) - 1);
+   resp.metrics.state[sizeof(resp.metrics.state) - 1] = '\0';
+
+   resp.metrics.ttft_ms = ttft_ms;
+   resp.metrics.token_rate = token_rate;
+   resp.metrics.context_pct = context_percent;
+
+   queue_response(&resp);
 }
 
 /* =============================================================================

@@ -61,9 +61,11 @@ static const char *NATIVE_TOOLS_RULES =
    "RULES\n"
    "1. Keep responses concise - max 30 words unless asked to explain.\n"
    "2. Use available tools when the user requests actions or information.\n"
-   "3. Do not include URLs unless explicitly asked.\n"
+   "3. NEVER include URLs, links, or markdown links. This is a VOICE interface.\n"
    "4. If a request is ambiguous, ask for clarification.\n"
-   "5. After tool execution, provide a brief confirmation.\n";
+   "5. After tool execution, provide a brief confirmation.\n"
+   "6. Do NOT lead responses with comments about location, weather, or time of day.\n"
+   "   Vary your greetings and openers. The user's context below is for tool use only.\n";
 
 /* Core behavior rules for <command> tag mode (legacy) */
 static const char *LEGACY_RULES_CORE =
@@ -83,7 +85,9 @@ static const char *LEGACY_RULES_CORE =
    "7. To mute playback after clarification, use "
    "<command>{\"device\":\"volume\",\"action\":\"set\",\"value\":0}</command>.\n"
    "8. Multiple commands can be sent in one response using multiple <command> tags.\n"
-   "9. Do not include URLs in responses unless the user explicitly asks for links.\n";
+   "9. NEVER include URLs, links, or markdown links. This is a VOICE interface.\n"
+   "10. Do NOT lead responses with comments about location, weather, or time of day.\n"
+   "    Vary your greetings. The user's context below is for tool use only.\n";
 
 /* Vision rules (only if vision is enabled) */
 static const char *LEGACY_RULES_VISION =
@@ -465,24 +469,24 @@ static const char *get_localization_context(void) {
    // Check if any localization fields are set
    if (g_config.localization.location[0] != '\0' || g_config.localization.units[0] != '\0' ||
        g_config.localization.timezone[0] != '\0') {
-      offset = snprintf(localization_context, LOCALIZATION_BUFFER_SIZE, "USER CONTEXT:");
+      offset = snprintf(localization_context, LOCALIZATION_BUFFER_SIZE,
+                        "TOOL DEFAULTS (for tool calls only, do not mention in conversation):");
       has_context = 1;
    }
 
    if (g_config.localization.location[0] != '\0') {
       offset += snprintf(localization_context + offset, LOCALIZATION_BUFFER_SIZE - offset,
-                         " Location: %s (use as default for weather).",
-                         g_config.localization.location);
+                         " Location=%s.", g_config.localization.location);
    }
 
    if (g_config.localization.units[0] != '\0') {
       offset += snprintf(localization_context + offset, LOCALIZATION_BUFFER_SIZE - offset,
-                         " Units: %s.", g_config.localization.units);
+                         " Units=%s.", g_config.localization.units);
    }
 
    if (g_config.localization.timezone[0] != '\0') {
       offset += snprintf(localization_context + offset, LOCALIZATION_BUFFER_SIZE - offset,
-                         " Timezone: %s.", g_config.localization.timezone);
+                         " TZ=%s.", g_config.localization.timezone);
    }
 
    if (has_context) {
