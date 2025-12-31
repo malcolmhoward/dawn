@@ -337,8 +337,13 @@ audio_capture_context_t *audio_capture_start(const char *pcm_device,
    }
 
    // Pre-allocate ASR buffer for 16kHz output
-   // Output size = input size / 3 + margin for resampler filter
-   ctx->asr_buffer_size = (input_samples / 3) + 64;
+   // Use resampler's calculation to include proper margin for filter delay
+   if (ctx->downsample_resampler) {
+      ctx->asr_buffer_size = resampler_get_output_size(ctx->downsample_resampler, input_samples);
+   } else {
+      // Fallback if resampler failed to create
+      ctx->asr_buffer_size = (input_samples / 3) + 128;
+   }
    ctx->asr_buffer = (int16_t *)malloc(ctx->asr_buffer_size * sizeof(int16_t));
    if (!ctx->asr_buffer) {
       LOG_WARNING("Failed to allocate ASR buffer");

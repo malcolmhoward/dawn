@@ -40,7 +40,8 @@
 
 static OpusDecoder *s_decoder = NULL;
 static OpusEncoder *s_encoder = NULL;
-static resampler_t *s_tts_resampler = NULL; /* 22050Hz → 16000Hz for TTS output */
+static resampler_t *s_input_resampler = NULL; /* 48000Hz → 16000Hz for ASR */
+static resampler_t *s_tts_resampler = NULL;   /* 22050Hz → 48000Hz for TTS output */
 static pthread_mutex_t s_mutex = PTHREAD_MUTEX_INITIALIZER;
 static bool s_initialized = false;
 
@@ -83,15 +84,29 @@ int webui_audio_init(void) {
 
    /* Configure encoder for voice */
    opus_encoder_ctl(s_encoder, OPUS_SET_BITRATE(WEBUI_OPUS_BITRATE));
-   opus_encoder_ctl(s_encoder, OPUS_SET_COMPLEXITY(5)); /* Balance quality/CPU */
-   opus_encoder_ctl(s_encoder, OPUS_SET_SIGNAL(OPUS_SIGNAL_VOICE));
+   opus_encoder_ctl(s_encoder, OPUS_SET_COMPLEXITY(5)); /* Balanced quality/CPU (0-10 scale) */
+   opus_encoder_ctl(s_encoder, OPUS_SET_SIGNAL(OPUS_AUTO));
 
-   /* Create resampler for TTS output (22050Hz → 16000Hz) */
+   /* Create resampler for input audio (48kHz → 16kHz for ASR) */
+   s_input_resampler = resampler_create(WEBUI_OPUS_SAMPLE_RATE, WEBUI_ASR_SAMPLE_RATE, 1);
+   if (!s_input_resampler) {
+      LOG_ERROR("WebUI audio: Failed to create input resampler");
+      opus_encoder_destroy(s_encoder);
+      opus_decoder_destroy(s_decoder);
+      s_encoder = NULL;
+      s_decoder = NULL;
+      pthread_mutex_unlock(&s_mutex);
+      return WEBUI_AUDIO_ERROR;
+   }
+
+   /* Create resampler for TTS output (22050Hz → 48kHz for Opus output) */
    s_tts_resampler = resampler_create(22050, WEBUI_OPUS_SAMPLE_RATE, 1);
    if (!s_tts_resampler) {
       LOG_ERROR("WebUI audio: Failed to create TTS resampler");
+      resampler_destroy(s_input_resampler);
       opus_encoder_destroy(s_encoder);
       opus_decoder_destroy(s_decoder);
+      s_input_resampler = NULL;
       s_encoder = NULL;
       s_decoder = NULL;
       pthread_mutex_unlock(&s_mutex);
@@ -104,7 +119,8 @@ int webui_audio_init(void) {
    }
 
    s_initialized = true;
-   LOG_INFO("WebUI audio initialized (Opus %dHz, ASR via worker pool)", WEBUI_OPUS_SAMPLE_RATE);
+   LOG_INFO("WebUI audio initialized (Opus %dHz, ASR %dHz, via worker pool)",
+            WEBUI_OPUS_SAMPLE_RATE, WEBUI_ASR_SAMPLE_RATE);
 
    pthread_mutex_unlock(&s_mutex);
    return WEBUI_AUDIO_SUCCESS;
@@ -119,6 +135,11 @@ void webui_audio_cleanup(void) {
    }
 
    /* Note: ASR contexts are owned by worker pool, not cleaned up here */
+
+   if (s_input_resampler) {
+      resampler_destroy(s_input_resampler);
+      s_input_resampler = NULL;
+   }
 
    if (s_tts_resampler) {
       resampler_destroy(s_tts_resampler);
@@ -206,10 +227,16 @@ int webui_opus_decode_stream(const uint8_t *opus_data,
          }
       }
 
+      /* Verify decoded count doesn't exceed remaining buffer space */
+      if (decoded > 0 && (size_t)decoded > max_output_samples - total_samples) {
+         LOG_ERROR("WebUI audio: Opus decode returned more samples than buffer space");
+         break;
+      }
+
       total_samples += decoded;
       offset += frame_len;
 
-      /* Safety check */
+      /* Safety check - stop before buffer is completely full */
       if (total_samples >= max_output_samples - WEBUI_OPUS_FRAME_SAMPLES * 2) {
          LOG_WARNING("WebUI audio: PCM buffer nearly full, stopping decode");
          break;
@@ -398,15 +425,124 @@ int webui_audio_opus_to_text(const uint8_t *opus_data, size_t opus_len, char **t
    int16_t *pcm = NULL;
    size_t pcm_samples = 0;
 
-   /* Decode Opus to PCM */
+   /* Decode Opus to PCM (48kHz) */
    int ret = webui_opus_decode_stream(opus_data, opus_len, &pcm, &pcm_samples);
    if (ret != WEBUI_AUDIO_SUCCESS) {
       return ret;
    }
 
-   /* Transcribe PCM */
-   ret = webui_audio_transcribe(pcm, pcm_samples, text_out);
+   /* Resample 48kHz → 16kHz for ASR */
+   pthread_mutex_lock(&s_mutex);
+   if (!s_input_resampler) {
+      pthread_mutex_unlock(&s_mutex);
+      free(pcm);
+      return WEBUI_AUDIO_ERROR_NOT_INITIALIZED;
+   }
+
+   /* Pre-allocate with 10% margin to avoid reallocs during chunked processing */
+   size_t output_size = resampler_get_output_size(s_input_resampler, pcm_samples);
+   output_size = (output_size * 11) / 10;
+   int16_t *resampled = malloc(output_size * sizeof(int16_t));
+   if (!resampled) {
+      pthread_mutex_unlock(&s_mutex);
+      free(pcm);
+      return WEBUI_AUDIO_ERROR_ALLOC;
+   }
+
+   /* Process resampling in chunks */
+   size_t total_resampled = 0;
+   size_t chunk_size = RESAMPLER_MAX_SAMPLES;
+   size_t offset = 0;
+
+   while (offset < pcm_samples) {
+      size_t remaining = pcm_samples - offset;
+      size_t to_process = (remaining < chunk_size) ? remaining : chunk_size;
+      size_t available_output = output_size - total_resampled;
+
+      size_t resampled_chunk = resampler_process(s_input_resampler, pcm + offset, to_process,
+                                                 resampled + total_resampled, available_output);
+
+      if (resampled_chunk == 0) {
+         LOG_ERROR("WebUI audio: Input resampling failed at offset %zu", offset);
+         break;
+      }
+
+      total_resampled += resampled_chunk;
+      offset += to_process;
+   }
+   pthread_mutex_unlock(&s_mutex);
    free(pcm);
+
+   if (total_resampled == 0) {
+      free(resampled);
+      return WEBUI_AUDIO_ERROR;
+   }
+
+   LOG_INFO("WebUI audio: Resampled %zu → %zu samples (48kHz → 16kHz)", pcm_samples,
+            total_resampled);
+
+   /* Transcribe resampled PCM (16kHz) */
+   ret = webui_audio_transcribe(resampled, total_resampled, text_out);
+   free(resampled);
+
+   return ret;
+}
+
+int webui_audio_pcm48k_to_text(const int16_t *pcm_data, size_t pcm_samples, char **text_out) {
+   if (!pcm_data || pcm_samples == 0 || !text_out) {
+      return WEBUI_AUDIO_ERROR;
+   }
+
+   /* Resample 48kHz → 16kHz for ASR */
+   pthread_mutex_lock(&s_mutex);
+   if (!s_initialized || !s_input_resampler) {
+      pthread_mutex_unlock(&s_mutex);
+      return WEBUI_AUDIO_ERROR_NOT_INITIALIZED;
+   }
+
+   /* Pre-allocate with 10% margin to avoid reallocs during chunked processing */
+   size_t output_size = resampler_get_output_size(s_input_resampler, pcm_samples);
+   output_size = (output_size * 11) / 10;
+   int16_t *resampled = malloc(output_size * sizeof(int16_t));
+   if (!resampled) {
+      pthread_mutex_unlock(&s_mutex);
+      return WEBUI_AUDIO_ERROR_ALLOC;
+   }
+
+   /* Process resampling in chunks */
+   size_t total_resampled = 0;
+   size_t chunk_size = RESAMPLER_MAX_SAMPLES;
+   size_t offset = 0;
+
+   while (offset < pcm_samples) {
+      size_t remaining = pcm_samples - offset;
+      size_t to_process = (remaining < chunk_size) ? remaining : chunk_size;
+      size_t available_output = output_size - total_resampled;
+
+      size_t resampled_chunk = resampler_process(s_input_resampler, pcm_data + offset, to_process,
+                                                 resampled + total_resampled, available_output);
+
+      if (resampled_chunk == 0) {
+         LOG_ERROR("WebUI audio: PCM48k resampling failed at offset %zu", offset);
+         break;
+      }
+
+      total_resampled += resampled_chunk;
+      offset += to_process;
+   }
+   pthread_mutex_unlock(&s_mutex);
+
+   if (total_resampled == 0) {
+      free(resampled);
+      return WEBUI_AUDIO_ERROR;
+   }
+
+   LOG_INFO("WebUI audio: PCM48k resampled %zu → %zu samples (48kHz → 16kHz)", pcm_samples,
+            total_resampled);
+
+   /* Transcribe resampled PCM (16kHz) */
+   int ret = webui_audio_transcribe(resampled, total_resampled, text_out);
+   free(resampled);
 
    return ret;
 }
@@ -441,8 +577,10 @@ int webui_audio_text_to_opus(const char *text, uint8_t **opus_out, size_t *opus_
       return WEBUI_AUDIO_ERROR_NOT_INITIALIZED;
    }
 
-   /* Resample 22050Hz → 16000Hz */
+   /* Resample 22050Hz → 48000Hz (Opus native rate)
+    * Pre-allocate with 10% margin to avoid reallocs during chunked processing */
    size_t output_size = resampler_get_output_size(s_tts_resampler, tts_samples);
+   output_size = (output_size * 11) / 10;
    int16_t *resampled = malloc(output_size * sizeof(int16_t));
    if (!resampled) {
       pthread_mutex_unlock(&s_mutex);
@@ -458,10 +596,10 @@ int webui_audio_text_to_opus(const char *text, uint8_t **opus_out, size_t *opus_
    while (offset < tts_samples) {
       size_t remaining = tts_samples - offset;
       size_t to_process = (remaining < chunk_size) ? remaining : chunk_size;
+      size_t available_output = output_size - total_resampled;
 
       size_t resampled_chunk = resampler_process(s_tts_resampler, tts_pcm + offset, to_process,
-                                                 resampled + total_resampled,
-                                                 output_size - total_resampled);
+                                                 resampled + total_resampled, available_output);
 
       if (resampled_chunk == 0) {
          LOG_ERROR("WebUI audio: Resampling failed at offset %zu", offset);
@@ -480,8 +618,8 @@ int webui_audio_text_to_opus(const char *text, uint8_t **opus_out, size_t *opus_
       return WEBUI_AUDIO_ERROR;
    }
 
-   LOG_INFO("WebUI audio: Resampled %zu → %zu samples (22050 → 16000Hz)", tts_samples,
-            total_resampled);
+   LOG_INFO("WebUI audio: Resampled %zu → %zu samples (22050 → %dHz)", tts_samples, total_resampled,
+            WEBUI_OPUS_SAMPLE_RATE);
 
    /* Encode to Opus */
    ret = webui_opus_encode_stream(resampled, total_resampled, opus_out, opus_len);
@@ -490,7 +628,7 @@ int webui_audio_text_to_opus(const char *text, uint8_t **opus_out, size_t *opus_
    return ret;
 }
 
-int webui_audio_text_to_pcm16k(const char *text, int16_t **pcm_out, size_t *pcm_samples) {
+int webui_audio_text_to_pcm(const char *text, int16_t **pcm_out, size_t *pcm_samples) {
    if (!text || strlen(text) == 0 || !pcm_out || !pcm_samples) {
       return WEBUI_AUDIO_ERROR;
    }
@@ -516,8 +654,10 @@ int webui_audio_text_to_pcm16k(const char *text, int16_t **pcm_out, size_t *pcm_
       return WEBUI_AUDIO_ERROR_NOT_INITIALIZED;
    }
 
-   /* Resample 22050Hz → 16000Hz */
+   /* Resample 22050Hz → 48000Hz (Opus native rate)
+    * Pre-allocate with 10% margin to avoid reallocs during chunked processing */
    size_t output_size = resampler_get_output_size(s_tts_resampler, tts_samples);
+   output_size = (output_size * 11) / 10;
    int16_t *resampled = malloc(output_size * sizeof(int16_t));
    if (!resampled) {
       pthread_mutex_unlock(&s_mutex);
@@ -533,31 +673,10 @@ int webui_audio_text_to_pcm16k(const char *text, int16_t **pcm_out, size_t *pcm_
    while (offset < tts_samples) {
       size_t remaining = tts_samples - offset;
       size_t to_process = (remaining < chunk_size) ? remaining : chunk_size;
-
-      /* Calculate required output size for this specific chunk */
-      size_t chunk_output_needed = resampler_get_output_size(s_tts_resampler, to_process);
       size_t available_output = output_size - total_resampled;
 
-      /* Use the larger of chunk requirement or remaining space */
-      size_t chunk_output_max = (chunk_output_needed > available_output) ? chunk_output_needed
-                                                                         : available_output;
-
-      /* Safety check: don't overflow the output buffer */
-      if (total_resampled + chunk_output_max > output_size) {
-         /* Need to reallocate - add extra margin */
-         size_t new_size = total_resampled + chunk_output_needed + 256;
-         int16_t *new_buf = realloc(resampled, new_size * sizeof(int16_t));
-         if (!new_buf) {
-            LOG_ERROR("WebUI audio: Failed to expand resample buffer");
-            break;
-         }
-         resampled = new_buf;
-         output_size = new_size;
-         chunk_output_max = chunk_output_needed;
-      }
-
       size_t resampled_chunk = resampler_process(s_tts_resampler, tts_pcm + offset, to_process,
-                                                 resampled + total_resampled, chunk_output_max);
+                                                 resampled + total_resampled, available_output);
 
       if (resampled_chunk == 0) {
          LOG_ERROR("WebUI audio: Resampling failed at offset %zu", offset);
@@ -576,7 +695,8 @@ int webui_audio_text_to_pcm16k(const char *text, int16_t **pcm_out, size_t *pcm_
       return WEBUI_AUDIO_ERROR;
    }
 
-   LOG_INFO("WebUI audio: Resampled to %zu samples at 16000Hz", total_resampled);
+   LOG_INFO("WebUI audio: Resampled to %zu samples at %dHz", total_resampled,
+            WEBUI_OPUS_SAMPLE_RATE);
 
    *pcm_out = resampled;
    *pcm_samples = total_resampled;

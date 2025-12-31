@@ -255,6 +255,7 @@ typedef struct {
    size_t audio_buffer_capacity;
    bool in_binary_fragment; /* True if receiving fragmented binary frame */
    uint8_t binary_msg_type; /* Message type from first fragment */
+   bool use_opus;           /* True if client supports Opus codec */
 } ws_connection_t;
 
 /* =============================================================================
@@ -265,14 +266,23 @@ static const struct {
    const char *extension;
    const char *mime_type;
 } s_mime_types[] = {
-   { ".html", "text/html" },        { ".htm", "text/html" },
-   { ".css", "text/css" },          { ".js", "application/javascript" },
-   { ".json", "application/json" }, { ".png", "image/png" },
-   { ".jpg", "image/jpeg" },        { ".jpeg", "image/jpeg" },
-   { ".gif", "image/gif" },         { ".svg", "image/svg+xml" },
-   { ".ico", "image/x-icon" },      { ".woff", "font/woff" },
-   { ".woff2", "font/woff2" },      { ".ttf", "font/ttf" },
-   { ".txt", "text/plain" },        { NULL, NULL },
+   { ".html", "text/html" },
+   { ".htm", "text/html" },
+   { ".css", "text/css" },
+   { ".js", "application/javascript" },
+   { ".json", "application/json" },
+   { ".wasm", "application/wasm" },
+   { ".png", "image/png" },
+   { ".jpg", "image/jpeg" },
+   { ".jpeg", "image/jpeg" },
+   { ".gif", "image/gif" },
+   { ".svg", "image/svg+xml" },
+   { ".ico", "image/x-icon" },
+   { ".woff", "font/woff" },
+   { ".woff2", "font/woff2" },
+   { ".ttf", "font/ttf" },
+   { ".txt", "text/plain" },
+   { NULL, NULL },
 };
 
 static const char *get_mime_type(const char *path) {
@@ -548,6 +558,54 @@ static void send_audio_impl(struct lws *wsi, const uint8_t *data, size_t len) {
 
 static void send_audio_end_impl(struct lws *wsi) {
    send_binary_message(wsi, WS_BIN_AUDIO_SEGMENT_END, NULL, 0);
+}
+
+/**
+ * @brief Check if client capabilities include Opus audio codec support
+ *
+ * Parses the payload for capabilities.audio_codecs array and checks
+ * if "opus" is in the list. Falls back to PCM if not specified.
+ *
+ * @param payload JSON object from init/reconnect message
+ * @return true if client supports Opus, false otherwise
+ */
+static bool check_opus_capability(struct json_object *payload) {
+   if (!payload) {
+      return false;
+   }
+
+   struct json_object *capabilities;
+   if (!json_object_object_get_ex(payload, "capabilities", &capabilities)) {
+      return false;
+   }
+
+   struct json_object *audio_codecs;
+   if (!json_object_object_get_ex(capabilities, "audio_codecs", &audio_codecs)) {
+      return false;
+   }
+
+   if (!json_object_is_type(audio_codecs, json_type_array)) {
+      return false;
+   }
+
+   int len = json_object_array_length(audio_codecs);
+   /* Defensive bound: no client should send more than 16 codecs */
+   if (len > 16) {
+      LOG_WARNING("WebUI: Too many audio codecs in capability list (%d), ignoring", len);
+      return false;
+   }
+
+   for (int i = 0; i < len; i++) {
+      struct json_object *codec = json_object_array_get_idx(audio_codecs, i);
+      if (codec && json_object_is_type(codec, json_type_string)) {
+         const char *codec_str = json_object_get_string(codec);
+         if (codec_str && strcmp(codec_str, "opus") == 0) {
+            return true;
+         }
+      }
+   }
+
+   return false;
 }
 
 static void send_state_impl(struct lws *wsi, const char *state) {
@@ -952,7 +1010,7 @@ static int callback_http(struct lws *wsi,
          /* Get MIME type */
          mime_type = get_mime_type(filepath);
 
-         /* Serve the file */
+         /* Serve the file (no extra headers - CSP set via meta tag) */
          n = lws_serve_http_file(wsi, filepath, mime_type, NULL, 0);
          if (n < 0) {
             /* File not found or error */
@@ -2715,6 +2773,18 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
             }
          }
       }
+   } else if (strcmp(type, "capabilities_update") == 0) {
+      /* Client capability update (e.g., Opus codec became available after connect) */
+      if (payload && conn->session) {
+         conn->use_opus = check_opus_capability(payload);
+         LOG_INFO("WebUI: Session %u capabilities updated (opus: %s)", conn->session->session_id,
+                  conn->use_opus ? "yes" : "no");
+      } else if (payload) {
+         /* Session not yet created - just store capability, session will read it later */
+         conn->use_opus = check_opus_capability(payload);
+         LOG_INFO("WebUI: Connection capabilities updated before session (opus: %s)",
+                  conn->use_opus ? "yes" : "no");
+      }
    } else if (strcmp(type, "smartthings_status") == 0) {
       /* Get SmartThings connection status */
       struct json_object *response = json_object_new_object();
@@ -3072,13 +3142,18 @@ static int callback_websocket(struct lws *wsi,
                         strncpy(conn->session_token, token, WEBUI_SESSION_TOKEN_LEN - 1);
                         conn->session_token[WEBUI_SESSION_TOKEN_LEN - 1] = '\0';
 
+                        /* Check for Opus codec support */
+                        conn->use_opus = check_opus_capability(payload);
+
                         /* Reconnections still count against client limit */
                         pthread_mutex_lock(&s_mutex);
                         s_client_count++;
                         pthread_mutex_unlock(&s_mutex);
 
-                        LOG_INFO("WebUI: Reconnected to session %u with token %.8s... (total: %d)",
-                                 existing_session->session_id, token, s_client_count);
+                        LOG_INFO("WebUI: Reconnected to session %u with token %.8s... (total: %d, "
+                                 "opus: %s)",
+                                 existing_session->session_id, token, s_client_count,
+                                 conn->use_opus ? "yes" : "no");
 
                         /* Send confirmation */
                         send_session_token_impl(conn->wsi, token);
@@ -3119,6 +3194,9 @@ static int callback_websocket(struct lws *wsi,
                session_init_system_prompt(conn->session, get_remote_command_prompt());
                conn->session->client_data = conn;
 
+               /* Check for Opus codec support */
+               conn->use_opus = check_opus_capability(payload);
+
                if (generate_session_token(conn->session_token) != 0) {
                   LOG_ERROR("WebUI: Failed to generate session token");
                   session_destroy(conn->session->session_id);
@@ -3131,8 +3209,9 @@ static int callback_websocket(struct lws *wsi,
                }
                register_token(conn->session_token, conn->session->session_id);
 
-               LOG_INFO("WebUI: New session %u created (token %.8s..., total: %d)",
-                        conn->session->session_id, conn->session_token, s_client_count);
+               LOG_INFO("WebUI: New session %u created (token %.8s..., total: %d, opus: %s)",
+                        conn->session->session_id, conn->session_token, s_client_count,
+                        conn->use_opus ? "yes" : "no");
 
                send_session_token_impl(conn->wsi, conn->session_token);
                send_config_impl(conn->wsi);
@@ -3377,7 +3456,10 @@ int webui_server_init(int port, const char *www_path) {
    info.protocols = s_protocols;
    info.gid = -1;
    info.uid = -1;
-   info.options = LWS_SERVER_OPTION_HTTP_HEADERS_SECURITY_BEST_PRACTICES_ENFORCE;
+   /* Note: Not using LWS_SERVER_OPTION_HTTP_HEADERS_SECURITY_BEST_PRACTICES_ENFORCE
+    * because it sets CSP: default-src 'none' which blocks WebAssembly for Opus codec.
+    * Security headers are added via index.html meta tags instead. */
+   info.options = 0;
 
    /* Configure HTTPS if enabled */
    bool use_https = g_config.webui.https;
@@ -4188,6 +4270,7 @@ typedef struct {
    session_t *session;
    uint8_t *audio_data;
    size_t audio_len;
+   bool use_opus; /* True if audio_data is Opus-encoded, false if raw PCM */
 } audio_work_t;
 
 /**
@@ -4237,18 +4320,36 @@ static void webui_sentence_audio_callback(const char *sentence, void *userdata) 
 
    /* Only generate TTS if there's actual content */
    if (len > 0) {
-      LOG_INFO("WebUI: TTS streaming sentence: %.60s%s", cleaned, len > 60 ? "..." : "");
+      /* Check if client supports Opus codec */
+      ws_connection_t *conn = (ws_connection_t *)session->client_data;
+      bool use_opus = conn && conn->use_opus;
 
-      int16_t *pcm = NULL;
-      size_t samples = 0;
-      int ret = webui_audio_text_to_pcm16k(cleaned, &pcm, &samples);
+      LOG_INFO("WebUI: TTS streaming sentence (%s): %.60s%s", use_opus ? "opus" : "pcm", cleaned,
+               len > 60 ? "..." : "");
 
-      if (ret == WEBUI_AUDIO_SUCCESS && pcm && samples > 0) {
-         size_t bytes = samples * sizeof(int16_t);
-         webui_send_audio(session, (const uint8_t *)pcm, bytes);
-         /* Send end marker so client plays this sentence immediately */
-         webui_send_audio_end(session);
-         free(pcm);
+      if (use_opus) {
+         /* Encode TTS output as Opus for bandwidth savings */
+         uint8_t *opus = NULL;
+         size_t opus_len = 0;
+         int ret = webui_audio_text_to_opus(cleaned, &opus, &opus_len);
+
+         if (ret == WEBUI_AUDIO_SUCCESS && opus && opus_len > 0) {
+            webui_send_audio(session, opus, opus_len);
+            webui_send_audio_end(session);
+            free(opus);
+         }
+      } else {
+         /* Send raw PCM for legacy clients */
+         int16_t *pcm = NULL;
+         size_t samples = 0;
+         int ret = webui_audio_text_to_pcm(cleaned, &pcm, &samples);
+
+         if (ret == WEBUI_AUDIO_SUCCESS && pcm && samples > 0) {
+            size_t bytes = samples * sizeof(int16_t);
+            webui_send_audio(session, (const uint8_t *)pcm, bytes);
+            webui_send_audio_end(session);
+            free(pcm);
+         }
       }
    }
 
@@ -4278,17 +4379,28 @@ static void *audio_worker_thread(void *arg) {
       return NULL;
    }
 
-   LOG_INFO("WebUI: Processing audio for session %u (%zu bytes)", session->session_id, audio_len);
+   LOG_INFO("WebUI: Processing audio for session %u (%zu bytes, %s)", session->session_id,
+            audio_len, work->use_opus ? "opus" : "pcm");
 
    /* Send "listening" state (ASR in progress) */
    webui_send_state(session, "listening");
 
-   /* Transcribe audio (input is raw PCM: 16-bit signed, 16kHz, mono) */
+   /* Transcribe audio */
    char *transcript = NULL;
-   size_t pcm_samples = audio_len / sizeof(int16_t);
-   int ret = webui_audio_transcribe((const int16_t *)audio_data, pcm_samples, &transcript);
-   free(audio_data);
-   work->audio_data = NULL;
+   int ret;
+
+   if (work->use_opus) {
+      /* Decode Opus (48kHz) and resample to 16kHz for ASR */
+      ret = webui_audio_opus_to_text(audio_data, audio_len, &transcript);
+      free(audio_data);
+      work->audio_data = NULL;
+   } else {
+      /* Raw PCM: 16-bit signed, 48kHz, mono - resample to 16kHz for ASR */
+      size_t pcm_samples = audio_len / sizeof(int16_t);
+      ret = webui_audio_pcm48k_to_text((const int16_t *)audio_data, pcm_samples, &transcript);
+      free(audio_data);
+      work->audio_data = NULL;
+   }
 
    if (ret != WEBUI_AUDIO_SUCCESS || !transcript || strlen(transcript) == 0) {
       LOG_WARNING("WebUI: Audio transcription failed or empty");
@@ -4466,6 +4578,7 @@ static void handle_binary_message(ws_connection_t *conn, const uint8_t *data, si
          work->session = conn->session;
          work->audio_data = conn->audio_buffer;
          work->audio_len = conn->audio_buffer_len;
+         work->use_opus = conn->use_opus;
 
          /* Transfer ownership to worker */
          conn->audio_buffer = NULL;

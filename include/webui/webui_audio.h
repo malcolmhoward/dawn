@@ -47,16 +47,23 @@ extern "C" {
  * Constants
  * ============================================================================= */
 
-/* Opus configuration for voice (matching browser settings) */
-#define WEBUI_OPUS_SAMPLE_RATE 16000 /* 16kHz for ASR compatibility */
+/* Opus configuration for voice */
+/* 48kHz is Opus native rate - browser uses this, server resamples for ASR */
+#define WEBUI_OPUS_SAMPLE_RATE 48000 /* 48kHz - Opus native rate */
+#define WEBUI_ASR_SAMPLE_RATE 16000  /* 16kHz for ASR/Whisper */
 #define WEBUI_OPUS_CHANNELS 1        /* Mono */
-#define WEBUI_OPUS_BITRATE 24000     /* 24kbps - good quality for voice */
+#define WEBUI_OPUS_BITRATE 48000     /* 48kbps - full quality for TTS */
 #define WEBUI_OPUS_FRAME_MS 20       /* 20ms frames (standard) */
-#define WEBUI_OPUS_FRAME_SAMPLES (WEBUI_OPUS_SAMPLE_RATE * WEBUI_OPUS_FRAME_MS / 1000)
+#define WEBUI_OPUS_FRAME_SAMPLES (WEBUI_OPUS_SAMPLE_RATE * WEBUI_OPUS_FRAME_MS / 1000) /* 960 */
+
+/* Max recording duration (shared with webui_server.h) */
+#define WEBUI_MAX_RECORDING_SECONDS 30
 
 /* Buffer sizes */
-#define WEBUI_OPUS_MAX_FRAME_SIZE 1276                     /* Max Opus frame size */
-#define WEBUI_PCM_MAX_SAMPLES (WEBUI_OPUS_SAMPLE_RATE * 3) /* 3 seconds */
+#define WEBUI_OPUS_MAX_FRAME_SIZE 1276 /* Max Opus frame size */
+#define WEBUI_PCM_MAX_SAMPLES                                         \
+   (WEBUI_OPUS_SAMPLE_RATE * WEBUI_MAX_RECORDING_SECONDS) /* at 48kHz \
+                                                           */
 
 /* Error codes */
 #define WEBUI_AUDIO_SUCCESS 0
@@ -201,6 +208,21 @@ int webui_audio_transcribe(const int16_t *pcm_data, size_t pcm_samples, char **t
  */
 int webui_audio_opus_to_text(const uint8_t *opus_data, size_t opus_len, char **text_out);
 
+/**
+ * @brief Complete audio processing pipeline: 48kHz PCM → resample → ASR → text
+ *
+ * For non-Opus clients sending raw 48kHz PCM. Resamples to 16kHz and runs ASR.
+ *
+ * @param pcm_data PCM samples at 48kHz (16-bit signed, mono)
+ * @param pcm_samples Number of input samples
+ * @param text_out Output: transcribed text (caller must free)
+ * @return WEBUI_AUDIO_SUCCESS on success, error code on failure
+ *
+ * @note Thread-safe
+ * @note Caller is responsible for freeing *text_out
+ */
+int webui_audio_pcm48k_to_text(const int16_t *pcm_data, size_t pcm_samples, char **text_out);
+
 /* =============================================================================
  * TTS Integration Functions
  * ============================================================================= */
@@ -223,8 +245,8 @@ int webui_audio_text_to_opus(const char *text, uint8_t **opus_out, size_t *opus_
 /**
  * @brief Generate TTS audio as raw PCM (for browser playback)
  *
- * Uses Piper TTS to synthesize text, resamples to 16kHz, returns raw PCM.
- * This is simpler for browser playback since no Opus decoder is needed.
+ * Uses Piper TTS to synthesize text, resamples to match Opus rate, returns raw PCM.
+ * For non-Opus clients that need raw PCM at the same rate as Opus output.
  *
  * @param text Input text to synthesize
  * @param pcm_out Output: allocated buffer with 16-bit PCM samples
@@ -233,9 +255,9 @@ int webui_audio_text_to_opus(const char *text, uint8_t **opus_out, size_t *opus_
  *
  * @note Thread-safe
  * @note Caller is responsible for freeing *pcm_out
- * @note Output is 16kHz, mono, 16-bit signed PCM
+ * @note Output is 48kHz (WEBUI_OPUS_SAMPLE_RATE), mono, 16-bit signed PCM
  */
-int webui_audio_text_to_pcm16k(const char *text, int16_t **pcm_out, size_t *pcm_samples);
+int webui_audio_text_to_pcm(const char *text, int16_t **pcm_out, size_t *pcm_samples);
 
 #ifdef __cplusplus
 }

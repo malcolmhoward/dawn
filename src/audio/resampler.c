@@ -152,8 +152,17 @@ size_t resampler_process(resampler_t *rs,
 size_t resampler_get_output_size(resampler_t *rs, size_t in_samples) {
    if (!rs)
       return 0;
-   // Add margin for rounding and filter delay
-   return (size_t)(in_samples * rs->ratio) + 32;
+
+   // Guard against integer overflow (max ratio ~2.18x, so /4 is conservative)
+   if (in_samples > SIZE_MAX / 4) {
+      LOG_ERROR("Resampler: Input size %zu too large, overflow risk", in_samples);
+      return 0;
+   }
+
+   // Add generous margin for rounding, filter delay, and chunked processing
+   // Each chunk can add rounding error, so margin scales with expected chunks
+   size_t chunk_margin = (in_samples / RESAMPLER_MAX_SAMPLES + 1) * 16;
+   return (size_t)(in_samples * rs->ratio) + 64 + chunk_margin;
 }
 
 void resampler_reset(resampler_t *rs) {

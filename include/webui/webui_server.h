@@ -35,6 +35,8 @@
 
 #include <stdbool.h>
 
+#include "webui/webui_audio.h" /* For WEBUI_MAX_RECORDING_SECONDS */
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -71,10 +73,13 @@ extern "C" {
  * Buffer Size Constants
  * ============================================================================= */
 
-#define WEBUI_SESSION_TOKEN_LEN 33      /* 32 hex chars + null terminator */
-#define WEBUI_AUDIO_BUFFER_SIZE 32768   /* 32KB initial buffer for audio input */
-#define WEBUI_AUDIO_MAX_CAPACITY 960000 /* ~30s @ 16kHz mono 16-bit PCM */
-#define WEBUI_RESPONSE_QUEUE_SIZE 512   /* Pending responses for sentence streaming */
+#define WEBUI_SESSION_TOKEN_LEN 33    /* 32 hex chars + null terminator */
+#define WEBUI_AUDIO_BUFFER_SIZE 32768 /* 32KB initial buffer for audio input */
+/* Use WEBUI_MAX_RECORDING_SECONDS from webui_audio.h */
+#define WEBUI_AUDIO_MAX_CAPACITY                                    \
+   (WEBUI_MAX_RECORDING_SECONDS * 16000 * 2) /* @ 16kHz mono 16-bit \
+                                              */
+#define WEBUI_RESPONSE_QUEUE_SIZE 512        /* Pending responses for sentence streaming */
 
 /* Forward declarations */
 struct lws;

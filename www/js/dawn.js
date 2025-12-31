@@ -14,7 +14,8 @@
   const RECONNECT_MAX_DELAY = 30000;
 
   // Audio configuration
-  const AUDIO_SAMPLE_RATE = 16000;  // 16kHz for ASR
+  // 48kHz is Opus native rate - server resamples to 16kHz for ASR
+  const AUDIO_SAMPLE_RATE = 48000;
   const AUDIO_CHANNELS = 1;         // Mono
   let audioChunkMs = 200;           // Send audio every N ms (updated from server config)
 
@@ -43,6 +44,14 @@
   let playbackContext = null;
   let audioChunks = [];
   let isPlayingAudio = false;
+
+  // Opus codec state
+  let opusWorker = null;
+  let opusReady = false;
+  let capabilitiesSynced = false;  // True after server acknowledges our capabilities
+  let pendingDecodes = [];      // Queue decoded audio until worker returns
+  let pendingOpusData = [];     // Buffer for accumulating fragmented Opus data
+  let pendingDecodePlayback = false;  // True when waiting for decode before playback
 
   // FFT visualization state (for playback - gives DAWN "life" when speaking)
   let playbackAnalyser = null;
@@ -123,26 +132,33 @@
       reconnectAttempts = 0;
       updateConnectionStatus('connected');
 
+      // Build capabilities for audio codec negotiation
+      const capabilities = {
+        audio_codecs: opusReady ? ['opus', 'pcm'] : ['pcm']
+      };
+
       // Try to reconnect with existing session token, or request new session
       const savedToken = localStorage.getItem('dawn_session_token');
       if (savedToken) {
         console.log('Attempting session reconnect with token:', savedToken.substring(0, 8) + '...');
         ws.send(JSON.stringify({
           type: 'reconnect',
-          payload: { token: savedToken }
+          payload: { token: savedToken, capabilities: capabilities }
         }));
       } else {
         // No saved token - request a new session
         console.log('No saved token, requesting new session');
         ws.send(JSON.stringify({
           type: 'init',
-          payload: {}
+          payload: { capabilities: capabilities }
         }));
       }
+      console.log('Audio codecs:', capabilities.audio_codecs);
     };
 
     ws.onclose = function(event) {
       console.log('WebSocket closed:', event.code, event.reason);
+      capabilitiesSynced = false;  // Reset on disconnect
       // Show close reason if available (e.g., "max clients reached")
       if (event.reason) {
         updateConnectionStatus('disconnected', event.reason);
@@ -220,6 +236,8 @@
         case 'session':
           console.log('Session token received');
           localStorage.setItem('dawn_session_token', msg.payload.token);
+          // Server has processed our init/reconnect with capabilities
+          capabilitiesSynced = true;
           break;
         case 'config':
           console.log('Config received:', msg.payload);
@@ -308,23 +326,44 @@
 
       const bytes = new Uint8Array(data);
       const msgType = bytes[0];
+      console.log('Binary message: type=0x' + msgType.toString(16) + ', len=' + bytes.length);
 
       switch (msgType) {
         case WS_BIN_AUDIO_OUT:
-          // TTS audio chunk (raw PCM: 16-bit signed, 16kHz, mono)
+          // TTS audio chunk - accumulate until segment end
           if (bytes.length > 1) {
-            // Copy payload bytes (skip type byte)
             const payload = bytes.slice(1);
-            audioChunks.push(payload);
-            console.log('Received audio chunk:', payload.length, 'bytes (total chunks:', audioChunks.length, ')');
+            // Store raw data (Opus or PCM) until segment end
+            pendingOpusData.push(payload);
           }
           break;
 
         case WS_BIN_AUDIO_SEGMENT_END:
-          // End of TTS audio - play accumulated chunks
-          console.log('Audio stream ended, playing', audioChunks.length, 'chunks');
-          if (audioChunks.length > 0) {
-            playAccumulatedAudio();
+          // End of TTS audio segment - decode and play accumulated data
+          if (pendingOpusData.length > 0) {
+            // Concatenate all pending data
+            const totalLen = pendingOpusData.reduce((sum, chunk) => sum + chunk.length, 0);
+            const combined = new Uint8Array(totalLen);
+            let offset = 0;
+            for (const chunk of pendingOpusData) {
+              combined.set(chunk, offset);
+              offset += chunk.length;
+            }
+            pendingOpusData = [];
+
+            if (opusReady && opusWorker) {
+              // Decode complete Opus stream via worker
+              // Set flag so playback triggers when decode completes
+              pendingDecodePlayback = true;
+              opusWorker.postMessage({ type: 'decode', data: combined }, [combined.buffer]);
+            } else {
+              // Raw PCM: 16-bit signed, 16kHz, mono
+              audioChunks.push(combined);
+              // Play immediately for PCM
+              if (audioChunks.length > 0) {
+                playAccumulatedAudio();
+              }
+            }
           }
           break;
 
@@ -407,8 +446,10 @@
 
         // Create analyser for FFT visualization (gives DAWN "life" when speaking)
         playbackAnalyser = playbackContext.createAnalyser();
-        playbackAnalyser.fftSize = 256;  // More frequency bins for detail
+        playbackAnalyser.fftSize = 256;  // Frequency bins for detail
         playbackAnalyser.smoothingTimeConstant = 0.4;  // Lower = more responsive, higher = smoother
+        playbackAnalyser.minDecibels = -55;  // Match TTS quiet parts (~-50dB)
+        playbackAnalyser.maxDecibels = -10;  // Match TTS peaks (~-10dB)
         fftDataArray = new Uint8Array(playbackAnalyser.frequencyBinCount);
       }
 
@@ -536,6 +577,7 @@
       // Create audio context at target sample rate
       const AudioContext = window.AudioContext || window.webkitAudioContext;
       audioContext = new AudioContext({ sampleRate: AUDIO_SAMPLE_RATE });
+      console.log('AudioContext created: requested', AUDIO_SAMPLE_RATE, 'Hz, actual', audioContext.sampleRate, 'Hz');
 
       // Create source from microphone stream
       const source = audioContext.createMediaStreamSource(mediaStream);
@@ -630,12 +672,19 @@
       return;
     }
 
-    // Create message: [type byte][PCM data]
-    const payload = new Uint8Array(1 + pcmBuffer.byteLength);
-    payload[0] = WS_BIN_AUDIO_IN;
-    payload.set(new Uint8Array(pcmBuffer), 1);
-
-    ws.send(payload.buffer);
+    // Only use Opus if both worker is ready AND server has acknowledged our capabilities
+    // This prevents race condition where we send Opus before server knows we support it
+    if (opusReady && opusWorker && capabilitiesSynced) {
+      // Encode via Opus worker - it will call sendOpusData when ready
+      const pcmData = new Int16Array(pcmBuffer);
+      opusWorker.postMessage({ type: 'encode', data: pcmData }, [pcmData.buffer]);
+    } else {
+      // Send raw PCM: [type byte][PCM data]
+      const payload = new Uint8Array(1 + pcmBuffer.byteLength);
+      payload[0] = WS_BIN_AUDIO_IN;
+      payload.set(new Uint8Array(pcmBuffer), 1);
+      ws.send(payload.buffer);
+    }
   }
 
   /**
@@ -672,7 +721,8 @@
     }
 
     // Use only the useful frequency range (skip DC, focus on speech frequencies)
-    const usableBins = Math.floor(fftData.length * 0.8);  // Use 80% of bins
+    // At 48kHz sample rate, voice content is 0-10kHz = ~20% of Nyquist (24kHz)
+    const usableBins = Math.floor(fftData.length * 0.4);  // 0-10kHz range
     const startBin = 1;  // Skip DC component
 
     // Sample FFT bins with logarithmic distribution for half the points
@@ -700,7 +750,7 @@
     }
 
     // Normalize to 0-1 range with some minimum threshold
-    const threshold = 10;  // Minimum value to consider as signal
+    const threshold = 3;  // Minimum value to consider as signal (lowered for Opus)
     if (maxVal > threshold) {
       for (let i = 0; i < halfPoints; i++) {
         halfValues[i] = Math.max(0, (halfValues[i] - threshold)) / (maxVal - threshold);
@@ -1281,9 +1331,119 @@
   }
 
   // =============================================================================
+  // Opus Worker Initialization
+  // =============================================================================
+
+  /**
+   * Initialize the Opus Web Worker for audio encoding/decoding
+   */
+  function initOpusWorker() {
+    try {
+      opusWorker = new Worker('js/opus-worker.js');
+
+      opusWorker.onmessage = function(e) {
+        const msg = e.data;
+
+        switch (msg.type) {
+          case 'ready':
+            console.log('Opus worker: WASM loaded');
+            // Initialize encoder/decoder
+            opusWorker.postMessage({ type: 'init' });
+            break;
+
+          case 'init_done':
+            if (msg.webcodecs) {
+              console.log('Opus worker: WebCodecs initialized successfully');
+              opusReady = true;
+              // If already connected, send capability update to enable Opus
+              if (ws && ws.readyState === WebSocket.OPEN) {
+                console.log('Sending Opus capability update');
+                ws.send(JSON.stringify({
+                  type: 'capabilities_update',
+                  payload: {
+                    capabilities: { audio_codecs: ['opus', 'pcm'] }
+                  }
+                }));
+              }
+            } else {
+              console.log('Opus worker: WebCodecs not available, using PCM only');
+              opusReady = false;
+            }
+            break;
+
+          case 'encoded':
+            // Send encoded Opus data to server
+            if (msg.data && msg.data.length > 0) {
+              sendOpusData(msg.data);
+            }
+            break;
+
+          case 'decoded':
+            // Queue decoded PCM for playback
+            if (msg.data && msg.data.length > 0) {
+              queueDecodedAudio(msg.data);
+            }
+            break;
+
+          case 'error':
+            console.error('Opus worker error:', msg.error);
+            break;
+        }
+      };
+
+      opusWorker.onerror = function(e) {
+        console.error('Opus worker failed:', e.message);
+        opusWorker = null;
+        opusReady = false;
+      };
+
+    } catch (e) {
+      console.warn('Failed to create Opus worker:', e);
+      opusWorker = null;
+      opusReady = false;
+    }
+  }
+
+  /**
+   * Send encoded Opus data to server
+   */
+  function sendOpusData(opusData) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    // Create message: [type byte][Opus data]
+    const payload = new Uint8Array(1 + opusData.length);
+    payload[0] = WS_BIN_AUDIO_IN;
+    payload.set(opusData, 1);
+
+    ws.send(payload.buffer);
+  }
+
+  /**
+   * Queue decoded audio samples for playback
+   */
+  function queueDecodedAudio(pcmData) {
+    // Convert Int16 to Uint8 for existing playback pipeline
+    const bytes = new Uint8Array(pcmData.buffer, pcmData.byteOffset, pcmData.byteLength);
+    audioChunks.push(bytes);
+
+    // If we were waiting for decode to complete, trigger playback now
+    if (pendingDecodePlayback) {
+      pendingDecodePlayback = false;
+      if (audioChunks.length > 0) {
+        playAccumulatedAudio();
+      }
+    }
+  }
+
+  // =============================================================================
   // Initialization
   // =============================================================================
   async function init() {
+    // Initialize Opus worker first (before connect)
+    initOpusWorker();
+
     // Event listeners
     elements.sendBtn.addEventListener('click', handleSend);
     elements.textInput.addEventListener('keydown', handleKeydown);

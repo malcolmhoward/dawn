@@ -30,6 +30,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "logging.h"
 #include "tools/curl_buffer.h"
@@ -46,6 +47,42 @@ static double celsius_to_fahrenheit(double celsius) {
 // Convert km/h to mph
 static double kmh_to_mph(double kmh) {
    return kmh * 0.621371;
+}
+
+// Get relative day label for forecast (index 0=today, 1=tomorrow, etc.)
+// date_str is in "YYYY-MM-DD" format
+// Thread-safe: uses thread-local storage for the label buffer
+static const char *get_relative_day_label(int day_index, const char *date_str) {
+   static __thread char label_buf[32];
+   static const char *day_names[] = { "Sunday",   "Monday", "Tuesday", "Wednesday",
+                                      "Thursday", "Friday", "Saturday" };
+
+   if (day_index == 0) {
+      return "today";
+   } else if (day_index == 1) {
+      return "tomorrow";
+   }
+
+   // For day 2+, get the day name from the date string
+   if (date_str && strlen(date_str) >= 10) {
+      struct tm tm = { 0 };
+      int year, month, day;
+      if (sscanf(date_str, "%d-%d-%d", &year, &month, &day) == 3) {
+         tm.tm_year = year - 1900;
+         tm.tm_mon = month - 1;
+         tm.tm_mday = day;
+         mktime(&tm);  // Normalizes and fills in tm_wday
+         // Bounds check tm_wday (should be 0-6, but validate for safety)
+         if (tm.tm_wday >= 0 && tm.tm_wday <= 6) {
+            snprintf(label_buf, sizeof(label_buf), "%s", day_names[tm.tm_wday]);
+            return label_buf;
+         }
+      }
+   }
+
+   // Fallback
+   snprintf(label_buf, sizeof(label_buf), "day %d", day_index);
+   return label_buf;
 }
 
 // Convert mm to inches
@@ -641,17 +678,19 @@ int weather_format_for_llm(const weather_response_t *response, char *buffer, siz
       return written;
    }
 
-   // Add daily forecasts
+   // Add daily forecasts with relative day labels
    for (int i = 0; i < response->num_days && (size_t)written < buffer_size; i++) {
+      const char *day_label = get_relative_day_label(i, response->daily[i].date);
       int day_written = snprintf(buffer + written, buffer_size - written,
                                  "%s{"
+                                 "\"day\": \"%s\", "
                                  "\"date\": \"%s\", "
                                  "\"high_f\": %.1f, "
                                  "\"low_f\": %.1f, "
                                  "\"condition\": \"%s\", "
                                  "\"precipitation_chance\": %.0f"
                                  "}",
-                                 (i > 0) ? ", " : "",
+                                 (i > 0) ? ", " : "", day_label,
                                  response->daily[i].date ? response->daily[i].date : "Unknown",
                                  response->daily[i].high_f, response->daily[i].low_f,
                                  response->daily[i].condition ? response->daily[i].condition
