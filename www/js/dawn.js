@@ -62,6 +62,20 @@
   const TRAIL_LENGTH = 5;    // Number of trailing echoes
   const TRAIL_SAMPLE_RATE = 10;  // Store trail every N frames for visible separation
 
+  // Visualization mode: 'waveform' (smooth curve) or 'bars' (radial bar graph)
+  let visualizationMode = 'bars';  // Switch to toggle between modes
+
+  // Bar visualization state (radial EQ style)
+  let barElements = null;      // Array of 128 line elements for current frame
+  let barTrailElements = [];   // Array of 5 arrays (trails), each with 128 lines
+  let barDataHistory = [];     // Store recent processed data for trails
+
+  // FFT debug state
+  let fftDebugState = {
+    enabled: false,
+    peakMax: 0
+  };
+
   // LLM streaming state (ChatGPT-style real-time text)
   let streamingState = {
     active: false,
@@ -87,6 +101,13 @@
     last_token_rate: 0
   };
 
+  // Session averages tracking (exponential moving average)
+  let avgState = {
+    tokenRate: { sum: 0, count: 0 },
+    ttft: { sum: 0, count: 0 },
+    latency: { sum: 0, count: 0 }
+  };
+
   // Hesitation ring state (token timing variance visualization)
   // Uses Welford's online algorithm for O(1) variance calculation
   let hesitationState = {
@@ -101,13 +122,6 @@
     runningSumSq: 0         // Sum of squared values in window
   };
 
-  // Activity tick state (debounced token rate indicator)
-  let activityTickState = {
-    lastTickMs: 0,          // Timestamp of last tick
-    minInterval: 333,       // Minimum interval between ticks (max 3Hz)
-    tickDuration: 100,      // How long tick stays visible (ms)
-    timeoutId: null         // Timeout ID for hiding tick
-  };
 
   // Load-based ring transition state
   let loadTransitionState = {
@@ -152,6 +166,15 @@
   const WAVEFORM_BASE_RADIUS = 60;  // Base circle radius (was 85)
   const WAVEFORM_SPIKE_HEIGHT = 15;  // Max spike height (max radius ~75)
   const WAVEFORM_POINTS = 64;  // Number of points around the circle
+
+  // Bar visualization configuration (radial EQ style)
+  const BAR_COUNT = 128;              // Number of bars around the circle
+  const BAR_INNER_RADIUS = 58;        // Inner edge of bars
+  const BAR_MAX_OUTER_RADIUS = 83;    // Max outer edge (few pixels from throughput ring at 87)
+  const BAR_GAP_DEGREES = 0.5;        // Gap between bars in degrees
+  // Colors: cyan (low intensity) to amber (high intensity)
+  const BAR_COLOR_LOW = { r: 34, g: 211, b: 238 };   // #22d3ee (cyan)
+  const BAR_COLOR_HIGH = { r: 245, g: 158, b: 11 };  // #f59e0b (amber)
 
   // Middle ring (throughput) - shows token rate as segmented arc
   const THROUGHPUT_RADIUS = 87;  // Match SVG base circle
@@ -273,7 +296,7 @@
 
       switch (msg.type) {
         case 'state':
-          updateState(msg.payload.state);
+          updateState(msg.payload.state, msg.payload.detail);
           break;
         case 'transcript':
           // Check for special LLM state update (sent with role '__llm_state__')
@@ -890,18 +913,59 @@
    * Draw default circular waveform (idle state)
    */
   function drawDefaultWaveform() {
-    const path = generateWaveformPath(null, 1.0);
-    if (elements.waveformPath) {
-      elements.waveformPath.setAttribute('d', path);
-    }
-    // Clear trails
-    for (const trail of elements.waveformTrails) {
-      if (trail) {
-        trail.setAttribute('d', path);  // Set to same circle for clean look
+    if (visualizationMode === 'bars') {
+      // Reset bars to minimum height
+      drawDefaultBars();
+    } else {
+      // Draw circular waveform
+      const path = generateWaveformPath(null, 1.0);
+      if (elements.waveformPath) {
+        elements.waveformPath.setAttribute('d', path);
+      }
+      // Clear trails
+      for (const trail of elements.waveformTrails) {
+        if (trail) {
+          trail.setAttribute('d', path);  // Set to same circle for clean look
+        }
       }
     }
     waveformHistory = [];
+    barDataHistory = [];
     frameCount = 0;
+  }
+
+  /**
+   * Draw default bar state (idle - minimum height bars)
+   */
+  function drawDefaultBars() {
+    if (!barElements || barElements.length === 0) return;
+
+    const anglePerBar = 360 / BAR_COUNT;
+    const minBarLength = BAR_INNER_RADIUS + 2;  // Just a tiny bit visible
+
+    for (let i = 0; i < BAR_COUNT; i++) {
+      const angleDeg = i * anglePerBar - 90;
+      const angleRad = angleDeg * Math.PI / 180;
+
+      const x2 = WAVEFORM_CENTER + Math.cos(angleRad) * minBarLength;
+      const y2 = WAVEFORM_CENTER + Math.sin(angleRad) * minBarLength;
+
+      barElements[i].setAttribute('x2', x2.toFixed(1));
+      barElements[i].setAttribute('y2', y2.toFixed(1));
+      barElements[i].setAttribute('stroke', interpolateBarColor(0));
+    }
+
+    // Reset trail bars too
+    for (let t = 0; t < barTrailElements.length; t++) {
+      for (let i = 0; i < BAR_COUNT; i++) {
+        const angleDeg = i * anglePerBar - 90;
+        const angleRad = angleDeg * Math.PI / 180;
+        const x2 = WAVEFORM_CENTER + Math.cos(angleRad) * minBarLength;
+        const y2 = WAVEFORM_CENTER + Math.sin(angleRad) * minBarLength;
+        barTrailElements[t][i].setAttribute('x2', x2.toFixed(1));
+        barTrailElements[t][i].setAttribute('y2', y2.toFixed(1));
+      }
+    }
   }
 
   /**
@@ -966,6 +1030,293 @@
 
     // Draw hesitation ring (outer) - starts at baseline
     renderSegmentedArc(elements.ringHesitation, HESITATION_RADIUS, HESITATION_SEGMENTS, 0);
+
+    // Initialize bar visualization elements if in bar mode
+    if (visualizationMode === 'bars') {
+      initializeBarElements();
+    }
+  }
+
+  // =============================================================================
+  // Bar Visualization (Radial EQ Style)
+  // =============================================================================
+
+  /**
+   * Interpolate between two colors based on intensity (0-1)
+   */
+  function interpolateBarColor(intensity) {
+    const t = Math.max(0, Math.min(1, intensity));
+    const r = Math.round(BAR_COLOR_LOW.r + (BAR_COLOR_HIGH.r - BAR_COLOR_LOW.r) * t);
+    const g = Math.round(BAR_COLOR_LOW.g + (BAR_COLOR_HIGH.g - BAR_COLOR_LOW.g) * t);
+    const b = Math.round(BAR_COLOR_LOW.b + (BAR_COLOR_HIGH.b - BAR_COLOR_LOW.b) * t);
+    return `rgb(${r},${g},${b})`;
+  }
+
+  /**
+   * Create a single bar line element
+   */
+  function createBarElement(container, index, isTrail = false, trailIndex = 0) {
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('stroke-linecap', 'butt');
+
+    // Calculate angle for this bar (distribute evenly around circle)
+    const anglePerBar = 360 / BAR_COUNT;
+    const gapAngle = BAR_GAP_DEGREES;
+    const barAngle = anglePerBar - gapAngle;
+
+    // Bar width is determined by the arc length at the outer radius
+    // stroke-width approximates the visual thickness
+    const circumference = 2 * Math.PI * BAR_MAX_OUTER_RADIUS;
+    const barWidth = (circumference / BAR_COUNT) - 1;  // -1 for gap
+    line.setAttribute('stroke-width', Math.max(1, barWidth * 0.85).toFixed(1));
+
+    // Set initial position (will be updated during animation)
+    const angleDeg = index * anglePerBar - 90;  // Start from top
+    const angleRad = angleDeg * Math.PI / 180;
+
+    const x1 = WAVEFORM_CENTER + Math.cos(angleRad) * BAR_INNER_RADIUS;
+    const y1 = WAVEFORM_CENTER + Math.sin(angleRad) * BAR_INNER_RADIUS;
+    const x2 = WAVEFORM_CENTER + Math.cos(angleRad) * BAR_INNER_RADIUS;  // Start collapsed
+    const y2 = WAVEFORM_CENTER + Math.sin(angleRad) * BAR_INNER_RADIUS;
+
+    line.setAttribute('x1', x1.toFixed(1));
+    line.setAttribute('y1', y1.toFixed(1));
+    line.setAttribute('x2', x2.toFixed(1));
+    line.setAttribute('y2', y2.toFixed(1));
+    line.setAttribute('stroke', `rgb(${BAR_COLOR_LOW.r},${BAR_COLOR_LOW.g},${BAR_COLOR_LOW.b})`);
+
+    // Trail elements have decreasing opacity
+    if (isTrail) {
+      line.style.opacity = (0.6 - trailIndex * 0.1).toFixed(2);
+      line.classList.add('bar-trail');
+    } else {
+      line.style.opacity = '0.9';
+      line.classList.add('bar-current');
+    }
+
+    container.appendChild(line);
+    return line;
+  }
+
+  /**
+   * Initialize all bar elements (current + trails)
+   */
+  function initializeBarElements() {
+    const container = elements.ringFft;
+    if (!container) return;
+
+    // Clear existing waveform paths (hide them, don't remove)
+    if (elements.waveformPath) {
+      elements.waveformPath.style.display = 'none';
+    }
+    elements.waveformTrails.forEach(trail => {
+      if (trail) trail.style.display = 'none';
+    });
+
+    // Create group for bar elements
+    let barGroup = container.querySelector('.bar-group');
+    if (!barGroup) {
+      barGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      barGroup.classList.add('bar-group');
+      container.appendChild(barGroup);
+    } else {
+      barGroup.innerHTML = '';  // Clear existing bars
+    }
+
+    // Create trail elements first (so they render behind current)
+    barTrailElements = [];
+    for (let t = TRAIL_LENGTH - 1; t >= 0; t--) {
+      const trailBars = [];
+      for (let i = 0; i < BAR_COUNT; i++) {
+        trailBars.push(createBarElement(barGroup, i, true, t));
+      }
+      barTrailElements.unshift(trailBars);  // Oldest trails first
+    }
+
+    // Create current frame bar elements (on top)
+    barElements = [];
+    for (let i = 0; i < BAR_COUNT; i++) {
+      barElements.push(createBarElement(barGroup, i, false));
+    }
+
+    // Initialize data history
+    barDataHistory = [];
+
+    console.log(`Initialized ${BAR_COUNT} bar elements with ${TRAIL_LENGTH} trail layers`);
+  }
+
+  /**
+   * Process FFT data for bar visualization (128 bars from frequency bins)
+   * Uses same tuning as waveform but spreads across all bars (no mirror)
+   */
+  function processFFTDataForBars(fftData) {
+    const processed = new Float32Array(BAR_COUNT);
+
+    if (!fftData || fftData.length === 0) {
+      return processed;
+    }
+
+    // Use only the useful frequency range (skip DC, focus on speech frequencies)
+    // Same tuning as processFFTData - 0-10kHz range for voice content
+    const usableBins = Math.floor(fftData.length * 0.4);
+    const startBin = 1;  // Skip DC component
+
+    let maxVal = 0;
+
+    // Map all 128 bars across the usable frequency range
+    for (let i = 0; i < BAR_COUNT; i++) {
+      // Logarithmic mapping: more bars for low frequencies (same 0.6 power as waveform)
+      const t = i / BAR_COUNT;
+      const logT = Math.pow(t, 0.6);
+      const binIndex = startBin + Math.floor(logT * (usableBins - startBin));
+
+      // Average neighboring bins for smoother result
+      let sum = 0;
+      let count = 0;
+      for (let j = -1; j <= 1; j++) {
+        const idx = binIndex + j;
+        if (idx >= 0 && idx < fftData.length) {
+          sum += fftData[idx];
+          count++;
+        }
+      }
+      processed[i] = count > 0 ? sum / count : 0;
+      if (processed[i] > maxVal) maxVal = processed[i];
+    }
+
+    // Normalize to 0-1 range with threshold (same as waveform)
+    const threshold = 3;
+    if (maxVal > threshold) {
+      for (let i = 0; i < BAR_COUNT; i++) {
+        processed[i] = Math.max(0, (processed[i] - threshold)) / (maxVal - threshold);
+        // Apply curve for more dramatic spikes (same 0.7 power as waveform)
+        processed[i] = Math.pow(processed[i], 0.7);
+      }
+    }
+
+    return processed;
+  }
+
+  /**
+   * Update bar elements with current FFT data
+   */
+  function renderBars(processedData, scale = 1.0) {
+    if (!barElements || barElements.length === 0) return;
+
+    const anglePerBar = 360 / BAR_COUNT;
+
+    for (let i = 0; i < BAR_COUNT; i++) {
+      const value = processedData[i] || 0;
+      const angleDeg = i * anglePerBar - 90;  // Start from top
+      const angleRad = angleDeg * Math.PI / 180;
+
+      // Calculate bar length based on value
+      const barLength = BAR_INNER_RADIUS + value * (BAR_MAX_OUTER_RADIUS - BAR_INNER_RADIUS) * scale;
+
+      // Inner point (fixed)
+      const x1 = WAVEFORM_CENTER + Math.cos(angleRad) * BAR_INNER_RADIUS;
+      const y1 = WAVEFORM_CENTER + Math.sin(angleRad) * BAR_INNER_RADIUS;
+
+      // Outer point (varies with amplitude)
+      const x2 = WAVEFORM_CENTER + Math.cos(angleRad) * barLength;
+      const y2 = WAVEFORM_CENTER + Math.sin(angleRad) * barLength;
+
+      // Update element
+      barElements[i].setAttribute('x2', x2.toFixed(1));
+      barElements[i].setAttribute('y2', y2.toFixed(1));
+
+      // Color based on intensity
+      barElements[i].setAttribute('stroke', interpolateBarColor(value));
+    }
+  }
+
+  /**
+   * Update bar trail elements with historical data
+   */
+  function renderBarTrails() {
+    for (let t = 0; t < barTrailElements.length && t < barDataHistory.length; t++) {
+      const trailData = barDataHistory[t];
+      const trailBars = barTrailElements[t];
+      const anglePerBar = 360 / BAR_COUNT;
+
+      // Trail opacity decreases with age
+      const baseOpacity = 0.5 - t * 0.08;
+
+      for (let i = 0; i < BAR_COUNT; i++) {
+        const value = trailData[i] || 0;
+        const angleDeg = i * anglePerBar - 90;
+        const angleRad = angleDeg * Math.PI / 180;
+
+        const barLength = BAR_INNER_RADIUS + value * (BAR_MAX_OUTER_RADIUS - BAR_INNER_RADIUS);
+
+        const x2 = WAVEFORM_CENTER + Math.cos(angleRad) * barLength;
+        const y2 = WAVEFORM_CENTER + Math.sin(angleRad) * barLength;
+
+        trailBars[i].setAttribute('x2', x2.toFixed(1));
+        trailBars[i].setAttribute('y2', y2.toFixed(1));
+        trailBars[i].setAttribute('stroke', interpolateBarColor(value * 0.7));  // Slightly dimmer color
+        trailBars[i].style.opacity = (baseOpacity * (1 - value * 0.3)).toFixed(2);
+      }
+    }
+  }
+
+  /**
+   * Show waveform elements, hide bar elements
+   */
+  function showWaveformMode() {
+    // Show waveform paths
+    if (elements.waveformPath) {
+      elements.waveformPath.style.display = '';
+    }
+    elements.waveformTrails.forEach(trail => {
+      if (trail) trail.style.display = '';
+    });
+
+    // Hide bar group
+    const barGroup = elements.ringFft?.querySelector('.bar-group');
+    if (barGroup) {
+      barGroup.style.display = 'none';
+    }
+  }
+
+  /**
+   * Show bar elements, hide waveform elements
+   */
+  function showBarMode() {
+    // Hide waveform paths
+    if (elements.waveformPath) {
+      elements.waveformPath.style.display = 'none';
+    }
+    elements.waveformTrails.forEach(trail => {
+      if (trail) trail.style.display = 'none';
+    });
+
+    // Show bar group
+    const barGroup = elements.ringFft?.querySelector('.bar-group');
+    if (barGroup) {
+      barGroup.style.display = '';
+    }
+
+    // Initialize bars if not already done
+    if (!barElements || barElements.length === 0) {
+      initializeBarElements();
+    }
+  }
+
+  /**
+   * Toggle between waveform and bar visualization modes
+   */
+  function toggleVisualizationMode() {
+    visualizationMode = visualizationMode === 'waveform' ? 'bars' : 'waveform';
+
+    if (visualizationMode === 'bars') {
+      showBarMode();
+    } else {
+      showWaveformMode();
+    }
+
+    console.log('Visualization mode:', visualizationMode);
+    return visualizationMode;
   }
 
   // =============================================================================
@@ -1142,36 +1493,6 @@
     renderSegmentedArc(elements.ringHesitation, HESITATION_RADIUS, HESITATION_SEGMENTS, 0);
   }
 
-  /**
-   * Flash the token rate activity tick (debounced to max 3Hz)
-   * Provides a heartbeat indicator that data is flowing
-   */
-  function flashActivityTick() {
-    const nowMs = performance.now();
-    const tick = document.getElementById('token-rate-tick');
-
-    if (!tick) return;
-
-    // Debounce: skip if too soon since last tick
-    if (nowMs - activityTickState.lastTickMs < activityTickState.minInterval) {
-      return;
-    }
-
-    activityTickState.lastTickMs = nowMs;
-
-    // Clear any pending hide timeout
-    if (activityTickState.timeoutId) {
-      clearTimeout(activityTickState.timeoutId);
-    }
-
-    // Show the tick
-    tick.classList.add('active');
-
-    // Hide after tickDuration
-    activityTickState.timeoutId = setTimeout(() => {
-      tick.classList.remove('active');
-    }, activityTickState.tickDuration);
-  }
 
   /**
    * Start FFT visualization animation loop
@@ -1196,36 +1517,71 @@
       // Get frequency data
       playbackAnalyser.getByteFrequencyData(fftDataArray);
 
-      // Process FFT data for visualization
-      const processedData = processFFTData(fftDataArray);
-
-      // Calculate average volume for inner ring scaling
+      // Calculate volume stats for inner ring scaling and debug
       let sum = 0;
+      let maxRaw = 0;
       for (let i = 0; i < fftDataArray.length; i++) {
         sum += fftDataArray[i];
+        if (fftDataArray[i] > maxRaw) maxRaw = fftDataArray[i];
       }
       const average = sum / fftDataArray.length;
       const normalizedLevel = average / 255;
 
-      // Generate waveform path from processed FFT data
-      if (elements.waveformPath) {
-        const path = generateWaveformPath(processedData, 1.0);
-        elements.waveformPath.setAttribute('d', path);
+      // Update debug display if visible
+      if (fftDebugState.enabled) {
+        if (maxRaw > fftDebugState.peakMax) fftDebugState.peakMax = maxRaw;
+        const dbgMax = document.getElementById('dbg-max');
+        const dbgAvg = document.getElementById('dbg-avg');
+        const dbgNorm = document.getElementById('dbg-norm');
+        const dbgPeak = document.getElementById('dbg-peak');
+        if (dbgMax) dbgMax.textContent = maxRaw;
+        if (dbgAvg) dbgAvg.textContent = average.toFixed(0);
+        if (dbgNorm) dbgNorm.textContent = normalizedLevel.toFixed(2);
+        if (dbgPeak) dbgPeak.textContent = fftDebugState.peakMax;
+      }
+
+      // Render based on visualization mode
+      if (visualizationMode === 'bars') {
+        // Bar visualization (radial EQ style)
+        const barData = processFFTDataForBars(fftDataArray);
+        renderBars(barData, 1.0);
 
         // Update trail history every N frames for visible separation
         frameCount++;
         if (frameCount >= TRAIL_SAMPLE_RATE) {
           frameCount = 0;
-          waveformHistory.unshift(path);
-          if (waveformHistory.length > TRAIL_LENGTH) {
-            waveformHistory.pop();
+          barDataHistory.unshift(Array.from(barData));
+          if (barDataHistory.length > TRAIL_LENGTH) {
+            barDataHistory.pop();
           }
         }
 
-        // Update trail paths with historical data
-        for (let i = 0; i < elements.waveformTrails.length; i++) {
-          if (elements.waveformTrails[i] && waveformHistory[i]) {
-            elements.waveformTrails[i].setAttribute('d', waveformHistory[i]);
+        // Render bar trails
+        renderBarTrails();
+
+      } else {
+        // Waveform visualization (smooth curve)
+        const processedData = processFFTData(fftDataArray);
+
+        if (elements.waveformPath) {
+          const path = generateWaveformPath(processedData, 1.0);
+          elements.waveformPath.setAttribute('d', path);
+
+          // Update trail history every N frames for visible separation
+          frameCount++;
+          if (frameCount >= TRAIL_SAMPLE_RATE) {
+            frameCount = 0;
+            waveformHistory.unshift(path);
+            if (waveformHistory.length > TRAIL_LENGTH) {
+              waveformHistory.pop();
+            }
+          }
+
+          // Update trail paths with historical data
+          for (let i = 0; i < elements.waveformTrails.length; i++) {
+            if (elements.waveformTrails[i] && waveformHistory[i]) {
+              elements.waveformTrails[i].setAttribute('d', waveformHistory[i]);
+            }
           }
         }
       }
@@ -1318,13 +1674,19 @@
     }
   }
 
-  function updateState(state) {
+  function updateState(state, detail) {
     const previousState = currentState;
     currentState = state;
 
     // Update status indicator
     elements.statusDot.className = state;
-    elements.statusText.textContent = state.toUpperCase();
+
+    // Show state with optional detail (e.g., "THINKING · Fetching URL...")
+    if (detail) {
+      elements.statusText.textContent = state.toUpperCase() + ' · ' + detail;
+    } else {
+      elements.statusText.textContent = state.toUpperCase();
+    }
 
     // Update ring container - preserve fft-active class if present
     const hasFftActive = elements.ringContainer.classList.contains('fft-active');
@@ -1337,21 +1699,38 @@
 
     // Emit state event for decoupled modules
     if (typeof DawnEvents !== 'undefined') {
-      DawnEvents.emit('state', { state, previousState });
+      DawnEvents.emit('state', { state, previousState, detail });
     }
   }
 
   // =============================================================================
-  // Context Pressure Gauge (Phase 3)
+  // Context Pressure Gauge (Phase 3) - Rainbow Arc Style
   // =============================================================================
 
-  const GAUGE_SEGMENTS = 16;
-  const GAUGE_RADIUS = 35;
-  const GAUGE_START_ANGLE = -225;  // Start at 225° (bottom left)
-  const GAUGE_END_ANGLE = 45;      // End at 45° (bottom right) = 270° arc
+  const GAUGE_SEGMENTS = 32;        // Number of arc segments
+  const GAUGE_RADIUS = 75;          // Base radius of the arc
+  const GAUGE_START_ANGLE = -165;   // Start angle (degrees, 0 = right, -90 = top)
+  const GAUGE_END_ANGLE = -15;      // End angle (degrees)
+  const GAUGE_GAP_DEG = 1.5;        // Gap between segments in degrees
+  const GAUGE_MIN_THICKNESS = 3;    // Thickness at start (thin end)
+  const GAUGE_MAX_THICKNESS = 22;   // Thickness at end (fat end)
+
+  // Color interpolation for gauge (cyan to amber, matching audio bars)
+  const GAUGE_COLOR_LOW = { r: 34, g: 211, b: 238 };   // Cyan #22d3ee
+  const GAUGE_COLOR_HIGH = { r: 245, g: 158, b: 11 };  // Amber #f59e0b
 
   /**
-   * Initialize context gauge segments
+   * Interpolate gauge color based on position (0-1)
+   */
+  function interpolateGaugeColor(t) {
+    const r = Math.round(GAUGE_COLOR_LOW.r + (GAUGE_COLOR_HIGH.r - GAUGE_COLOR_LOW.r) * t);
+    const g = Math.round(GAUGE_COLOR_LOW.g + (GAUGE_COLOR_HIGH.g - GAUGE_COLOR_LOW.g) * t);
+    const b = Math.round(GAUGE_COLOR_LOW.b + (GAUGE_COLOR_HIGH.b - GAUGE_COLOR_LOW.b) * t);
+    return `rgb(${r},${g},${b})`;
+  }
+
+  /**
+   * Initialize context gauge segments - rainbow arc, thin to thick
    */
   function initializeContextGauge() {
     const container = document.getElementById('context-gauge-segments');
@@ -1360,80 +1739,101 @@
     // Clear existing
     container.innerHTML = '';
 
-    const arcAngle = GAUGE_END_ANGLE - GAUGE_START_ANGLE;  // 270°
-    const gapAngle = 3;  // Gap between segments in degrees
-    const segmentAngle = (arcAngle - (gapAngle * (GAUGE_SEGMENTS - 1))) / GAUGE_SEGMENTS;
+    const totalArc = GAUGE_END_ANGLE - GAUGE_START_ANGLE;  // Total arc span
+    const totalGaps = GAUGE_GAP_DEG * (GAUGE_SEGMENTS - 1);
+    const segmentArc = (totalArc - totalGaps) / GAUGE_SEGMENTS;
 
     for (let i = 0; i < GAUGE_SEGMENTS; i++) {
-      const startAngle = GAUGE_START_ANGLE + i * (segmentAngle + gapAngle);
-      const endAngle = startAngle + segmentAngle;
+      const t = i / (GAUGE_SEGMENTS - 1);  // 0 to 1 across gauge
+
+      // Angle for this segment
+      const startAngle = GAUGE_START_ANGLE + i * (segmentArc + GAUGE_GAP_DEG);
+      const endAngle = startAngle + segmentArc;
+
+      // Thickness increases from start to end (thin to fat)
+      const thickness = GAUGE_MIN_THICKNESS + (GAUGE_MAX_THICKNESS - GAUGE_MIN_THICKNESS) * t;
+
+      // Inner and outer radius for this segment
+      const innerRadius = GAUGE_RADIUS - thickness / 2;
+      const outerRadius = GAUGE_RADIUS + thickness / 2;
 
       // Convert to radians
       const startRad = startAngle * Math.PI / 180;
       const endRad = endAngle * Math.PI / 180;
 
       // Calculate arc points
-      const x1 = Math.cos(startRad) * GAUGE_RADIUS;
-      const y1 = Math.sin(startRad) * GAUGE_RADIUS;
-      const x2 = Math.cos(endRad) * GAUGE_RADIUS;
-      const y2 = Math.sin(endRad) * GAUGE_RADIUS;
+      const x1Inner = Math.cos(startRad) * innerRadius;
+      const y1Inner = Math.sin(startRad) * innerRadius;
+      const x2Inner = Math.cos(endRad) * innerRadius;
+      const y2Inner = Math.sin(endRad) * innerRadius;
+      const x1Outer = Math.cos(startRad) * outerRadius;
+      const y1Outer = Math.sin(startRad) * outerRadius;
+      const x2Outer = Math.cos(endRad) * outerRadius;
+      const y2Outer = Math.sin(endRad) * outerRadius;
 
-      // Create segment path
+      // Create path: outer arc, line to inner, inner arc back, close
+      const largeArc = (endAngle - startAngle) > 180 ? 1 : 0;
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      path.setAttribute('class', 'gauge-segment inactive');
-      path.setAttribute('d', `M ${x1.toFixed(1)} ${y1.toFixed(1)} A ${GAUGE_RADIUS} ${GAUGE_RADIUS} 0 0 1 ${x2.toFixed(1)} ${y2.toFixed(1)}`);
+      path.setAttribute('class', 'gauge-segment');
+      path.setAttribute('d', `
+        M ${x1Outer.toFixed(2)} ${y1Outer.toFixed(2)}
+        A ${outerRadius.toFixed(2)} ${outerRadius.toFixed(2)} 0 ${largeArc} 1 ${x2Outer.toFixed(2)} ${y2Outer.toFixed(2)}
+        L ${x2Inner.toFixed(2)} ${y2Inner.toFixed(2)}
+        A ${innerRadius.toFixed(2)} ${innerRadius.toFixed(2)} 0 ${largeArc} 0 ${x1Inner.toFixed(2)} ${y1Inner.toFixed(2)}
+        Z
+      `);
+
+      // Store position info for color interpolation
       path.dataset.index = i;
+      path.dataset.position = t.toFixed(3);
+
+      // Set base color (dimmed) based on position
+      const color = interpolateGaugeColor(t);
+      path.setAttribute('fill', color);
+      path.style.opacity = '0.2';  // Dimmed when inactive
+
       container.appendChild(path);
     }
   }
 
   /**
-   * Update context gauge with current usage
+   * Update context gauge arc with current usage
    * @param {number} usage - Usage percentage (0-100)
    */
   function renderContextGauge(usage) {
     const container = document.getElementById('context-gauge-segments');
-    const percentText = document.getElementById('context-gauge-percent');
     if (!container) return;
 
     const segments = container.querySelectorAll('.gauge-segment');
-    const activeCount = Math.floor((usage / 100) * GAUGE_SEGMENTS);
+    const activeCount = Math.ceil((usage / 100) * GAUGE_SEGMENTS);
 
     segments.forEach((seg, i) => {
-      seg.classList.remove('inactive', 'active-normal', 'active-warning', 'active-danger', 'flashing');
+      const t = parseFloat(seg.dataset.position) || (i / (GAUGE_SEGMENTS - 1));
+      const color = interpolateGaugeColor(t);
+
+      seg.classList.remove('flashing');
 
       if (i < activeCount) {
-        // Determine color based on position in the gauge
-        const segmentPercent = (i + 1) / GAUGE_SEGMENTS * 100;
-        if (segmentPercent > 90) {
-          seg.classList.add('active-danger');
-          // Flash if we're at critical level
+        // Active segment - full brightness, no glow (was bleeding onto text)
+        seg.style.opacity = '0.9';
+        seg.setAttribute('fill', color);
+        seg.style.filter = 'none';
+
+        if (t > 0.9) {
+          // Critical level - red tint and flash
+          seg.setAttribute('fill', '#ef4444');
           if (usage > 90) {
             seg.classList.add('flashing');
           }
-        } else if (segmentPercent > 75) {
-          seg.classList.add('active-warning');
-        } else if (segmentPercent > 50) {
-          // Transition zone: cyan with slight amber tint
-          seg.classList.add('active-normal');
-        } else {
-          seg.classList.add('active-normal');
         }
       } else {
-        seg.classList.add('inactive');
+        // Inactive segment - dimmed, show underlying color
+        seg.style.opacity = '0.15';
+        seg.setAttribute('fill', color);
+        seg.style.filter = 'none';
       }
     });
-
-    // Update percent text
-    if (percentText) {
-      percentText.textContent = `${Math.round(usage)}%`;
-      percentText.classList.remove('warning', 'danger');
-      if (usage > 90) {
-        percentText.classList.add('danger');
-      } else if (usage > 75) {
-        percentText.classList.add('warning');
-      }
-    }
+    // Note: Percentage text is now updated in updateContextDisplay()
   }
 
   /**
@@ -1443,21 +1843,36 @@
   function updateContextDisplay(payload) {
     const contextDisplay = document.getElementById('context-display');
     const contextText = document.getElementById('context-text');
+    const contextPercent = document.getElementById('context-gauge-percent');
 
-    if (!contextDisplay || !contextText) {
+    if (!contextDisplay) {
       console.warn('Context display elements not found');
       return;
     }
 
     const { current, max, usage } = payload;
 
-    // Update the gauge
+    // Update the gauge arc
     renderContextGauge(usage);
 
-    // Update text
-    const currentK = (current / 1000).toFixed(1);
-    const maxK = (max / 1000).toFixed(0);
-    contextText.textContent = `${currentK}k/${maxK}k`;
+    // Update token counts (SVG text element)
+    if (contextText) {
+      const currentK = (current / 1000).toFixed(1);
+      const maxK = (max / 1000).toFixed(0);
+      contextText.textContent = `${currentK}k / ${maxK}k`;
+    }
+
+    // Update percentage with color coding (SVG text element)
+    if (contextPercent) {
+      contextPercent.textContent = `${Math.round(usage)}%`;
+      // SVG uses class for styling, same as before
+      contextPercent.classList.remove('warning', 'danger');
+      if (usage > 90) {
+        contextPercent.classList.add('danger');
+      } else if (usage > 75) {
+        contextPercent.classList.add('warning');
+      }
+    }
 
     // Also update metricsState and telemetry panel
     metricsState.context_percent = usage;
@@ -1687,6 +2102,9 @@
   function handleStreamStart(payload) {
     console.log('Stream start:', payload);
 
+    // Update status to show responding
+    updateState('speaking', 'Responding');
+
     // Cancel any existing stream
     if (streamingState.active) {
       console.warn('Stream start received while already streaming');
@@ -1747,8 +2165,7 @@
     const nowMs = performance.now();
     if (nowMs - streamingState.lastRenderMs >= streamingState.renderDebounceMs) {
       // Enough time has passed - render immediately
-      streamingState.textElement.innerHTML = formatMarkdown(streamingState.content)
-        .replace(/\n/g, '<br>');
+      streamingState.textElement.innerHTML = formatMarkdown(streamingState.content);
       streamingState.lastRenderMs = nowMs;
       streamingState.pendingRender = false;
     } else if (!streamingState.pendingRender) {
@@ -1792,13 +2209,15 @@
       return;
     }
 
+    // Update status back to idle
+    updateState('idle', null);
+
     // Stop hesitation ring animation
     stopHesitationAnimation();
 
     // Final render to ensure all content is displayed (in case debounce was pending)
     if (streamingState.textElement && streamingState.content) {
-      streamingState.textElement.innerHTML = formatMarkdown(streamingState.content)
-        .replace(/\n/g, '<br>');
+      streamingState.textElement.innerHTML = formatMarkdown(streamingState.content);
     }
 
     // Remove streaming class
@@ -1834,18 +2253,21 @@
     metricsState.lastUpdate = performance.now();
 
     // Preserve last non-zero values for display after streaming ends
+    // Also track session averages
     if (metricsState.ttft_ms > 0) {
       metricsState.last_ttft_ms = metricsState.ttft_ms;
+      avgState.ttft.sum += metricsState.ttft_ms;
+      avgState.ttft.count++;
     }
     if (metricsState.token_rate > 0) {
       metricsState.last_token_rate = metricsState.token_rate;
-      // Flash activity tick when token rate is flowing (debounced to max 3Hz)
-      flashActivityTick();
+      avgState.tokenRate.sum += metricsState.token_rate;
+      avgState.tokenRate.count++;
     }
 
     // Update throughput ring based on token rate
-    // Normalize: 0 tokens/sec = 0%, 100 tokens/sec = 100%
-    const throughputFill = Math.min(metricsState.token_rate / 100, 1.0);
+    // Normalize: 0 tokens/sec = 0%, 80 tokens/sec = 100%
+    const throughputFill = Math.min(metricsState.token_rate / 80, 1.0);
     renderSegmentedArc(elements.ringThroughput, THROUGHPUT_RADIUS, THROUGHPUT_SEGMENTS, throughputFill);
 
     // Update telemetry panel (right side discrete readouts)
@@ -1858,52 +2280,108 @@
   }
 
   /**
+   * Apply color class to metric value based on thresholds
+   * @param {Element} el - DOM element
+   * @param {number} value - Current value
+   * @param {number} normalMax - Max value for normal (cyan)
+   * @param {number} elevatedMax - Max value for elevated (amber), above = extreme (red)
+   */
+  function applyMetricColor(el, value, normalMax, elevatedMax) {
+    el.classList.remove('metric-normal', 'metric-elevated', 'metric-extreme');
+    if (value <= 0) return;  // No color for placeholder values
+
+    if (value <= normalMax) {
+      el.classList.add('metric-normal');
+    } else if (value <= elevatedMax) {
+      el.classList.add('metric-elevated');
+    } else {
+      el.classList.add('metric-extreme');
+    }
+  }
+
+  /**
    * Update the telemetry panel with current metrics
    * Per design: discrete numeric readouts, visually quieter than rings
+   * Color coding: cyan (normal) -> amber (elevated) -> red (extreme)
    */
   function updateTelemetryPanel() {
     const panel = document.getElementById('telemetry-panel');
     const tokenRate = document.getElementById('telem-token-rate');
+    const tokenRateAvg = document.getElementById('telem-token-rate-avg');
     const ttft = document.getElementById('telem-ttft');
+    const ttftAvg = document.getElementById('telem-ttft-avg');
     const latency = document.getElementById('telem-latency');
+    const latencyAvg = document.getElementById('telem-latency-avg');
 
     if (!panel) return;
 
-    // Update values (use last non-zero if current is 0)
+    // Update token rate with color coding
+    // Normal: >30 tok/s, Elevated: 15-30, Extreme: <15
     if (tokenRate) {
       const rate = metricsState.token_rate || metricsState.last_token_rate;
       tokenRate.innerHTML = rate > 0 ? `${rate.toFixed(1)} <small>tok/s</small>` : '-- <small>tok/s</small>';
+      // Invert thresholds - higher is better for token rate
+      tokenRate.classList.remove('metric-normal', 'metric-elevated', 'metric-extreme');
+      if (rate > 0) {
+        if (rate >= 30) {
+          tokenRate.classList.add('metric-normal');
+        } else if (rate >= 15) {
+          tokenRate.classList.add('metric-elevated');
+        } else {
+          tokenRate.classList.add('metric-extreme');
+        }
+      }
+    }
+    // Update token rate average
+    if (tokenRateAvg && avgState.tokenRate.count > 0) {
+      const avg = avgState.tokenRate.sum / avgState.tokenRate.count;
+      tokenRateAvg.textContent = `avg ${avg.toFixed(1)}`;
     }
 
+    // Update TTFT with color coding
+    // Normal: <500ms, Elevated: 500-1500ms, Extreme: >1500ms
     if (ttft) {
       const ms = metricsState.ttft_ms || metricsState.last_ttft_ms;
       ttft.innerHTML = ms > 0 ? `${ms} <small>ms</small>` : '-- <small>ms</small>';
+      applyMetricColor(ttft, ms, 500, 1500);
+    }
+    // Update TTFT average
+    if (ttftAvg && avgState.ttft.count > 0) {
+      const avg = avgState.ttft.sum / avgState.ttft.count;
+      ttftAvg.textContent = `avg ${Math.round(avg)}`;
     }
 
+    // Update latency variance with color coding
+    // Show as milliseconds variance (stddev of inter-token intervals)
+    // Normal: <10ms, Elevated: 10-25ms, Extreme: >25ms
     if (latency) {
-      // Show hesitation load as sigma (standard deviation indicator)
-      // load 0-1 maps to 3-20ms stddev, display as 0-17 σ
       const load = hesitationState.loadSmooth;
       if (load > 0.005) {
-        const sigmaVal = (load * 17).toFixed(0);
-        latency.innerHTML = `${sigmaVal} <small>σ</small>`;
-        latency.classList.remove('warning', 'danger');
-        if (load > 0.7) {
-          latency.classList.add('danger');
-        } else if (load > 0.4) {
-          latency.classList.add('warning');
-        }
+        // load 0-1 maps to ~3-40ms stddev range
+        const msVar = Math.round(3 + load * 37);
+        latency.innerHTML = `${msVar} <small>ms var</small>`;
+        applyMetricColor(latency, msVar, 10, 25);
+        // Track latency average
+        avgState.latency.sum += msVar;
+        avgState.latency.count++;
       } else {
-        latency.innerHTML = '-- <small>σ</small>';
-        latency.classList.remove('warning', 'danger');
+        latency.innerHTML = '-- <small>ms var</small>';
+        latency.classList.remove('metric-normal', 'metric-elevated', 'metric-extreme');
       }
     }
+    // Update latency average
+    if (latencyAvg && avgState.latency.count > 0) {
+      const avg = avgState.latency.sum / avgState.latency.count;
+      latencyAvg.textContent = `avg ${Math.round(avg)}`;
+    }
 
-    // Dim panel when idle (state == 'idle')
-    if (metricsState.state === 'idle') {
-      panel.classList.add('idle');
-    } else {
-      panel.classList.remove('idle');
+    // Dim ring container when idle (state == 'idle') - not the telemetry panel
+    if (elements.ringContainer) {
+      if (metricsState.state === 'idle') {
+        elements.ringContainer.classList.add('idle');
+      } else {
+        elements.ringContainer.classList.remove('idle');
+      }
     }
   }
 
@@ -2135,7 +2613,28 @@
       }
     });
 
+    // Fetch and display version info in footer
+    fetchVersionInfo();
+
     console.log('DAWN WebUI initialized (audio:', audioResult.supported ? 'enabled' : 'disabled', ')');
+  }
+
+  /**
+   * Fetch version info from /health endpoint and update footer
+   */
+  async function fetchVersionInfo() {
+    try {
+      const response = await fetch('/health');
+      if (response.ok) {
+        const data = await response.json();
+        const footerVersion = document.getElementById('footer-version');
+        if (footerVersion && data.version && data.git_sha) {
+          footerVersion.textContent = `Dawn WebUI v${data.version}: ${data.git_sha}`;
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to fetch version info:', e);
+    }
   }
 
   // =============================================================================
@@ -4090,5 +4589,32 @@
   } else {
     init();
   }
+
+  // Expose visualization toggle for testing/debugging
+  // Usage: DAWN.toggleVisualization() or DAWN.setVisualization('bars'|'waveform')
+  window.DAWN = window.DAWN || {};
+  window.DAWN.toggleVisualization = toggleVisualizationMode;
+  window.DAWN.setVisualization = function(mode) {
+    if (mode === 'bars' || mode === 'waveform') {
+      visualizationMode = mode;
+      if (mode === 'bars') {
+        showBarMode();
+      } else {
+        showWaveformMode();
+      }
+      console.log('Visualization mode set to:', mode);
+    }
+  };
+  window.DAWN.getVisualizationMode = function() { return visualizationMode; };
+
+  // FFT debug toggle
+  window.DAWN.toggleFFTDebug = function() {
+    fftDebugState.enabled = !fftDebugState.enabled;
+    fftDebugState.peakMax = 0;  // Reset peak on toggle
+    const el = document.getElementById('fft-debug');
+    if (el) el.style.display = fftDebugState.enabled ? 'block' : 'none';
+    console.log('FFT debug:', fftDebugState.enabled ? 'ON' : 'OFF');
+    return fftDebugState.enabled;
+  };
 
 })();

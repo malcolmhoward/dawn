@@ -26,6 +26,7 @@
 #include <string.h>
 #include <sys/time.h>
 
+#include "core/session_manager.h"
 #include "llm/llm_context.h"
 #include "llm/llm_tools.h"
 #include "logging.h"
@@ -260,8 +261,10 @@ static void parse_openai_chunk(llm_stream_context_t *ctx, const char *event_data
          metrics_record_llm_tokens(type, ctx->cloud_provider, input_tokens, output_tokens,
                                    cached_tokens);
 
-         // Update context usage tracking (session 0 = local session)
-         llm_context_update_usage(0, input_tokens, output_tokens, cached_tokens);
+         // Update context usage tracking with actual session ID
+         session_t *session = session_get_command_context();
+         uint32_t session_id = session ? session->session_id : 0;
+         llm_context_update_usage(session_id, input_tokens, output_tokens, cached_tokens);
 
          LOG_INFO("Stream usage: %d input, %d output, %d cached tokens", input_tokens,
                   output_tokens, cached_tokens);
@@ -436,8 +439,10 @@ static void parse_claude_event(llm_stream_context_t *ctx, const char *event_data
             metrics_record_llm_tokens(LLM_CLOUD, CLOUD_PROVIDER_CLAUDE, ctx->claude.input_tokens,
                                       output_tokens, 0);
 
-            // Update context usage tracking (session 0 = local session)
-            llm_context_update_usage(0, ctx->claude.input_tokens, output_tokens, 0);
+            // Update context usage tracking with actual session ID
+            session_t *session = session_get_command_context();
+            uint32_t session_id = session ? session->session_id : 0;
+            llm_context_update_usage(session_id, ctx->claude.input_tokens, output_tokens, 0);
 
             LOG_INFO("Claude usage: %d input, %d output tokens", ctx->claude.input_tokens,
                      output_tokens);

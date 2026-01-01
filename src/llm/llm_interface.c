@@ -997,9 +997,11 @@ char *llm_chat_completion_streaming_with_config(struct json_object *conversation
    char *response = NULL;
 
    // Auto-compact conversation if approaching context limit
+   // Use session-specific config, not global, for correct context size
    session_t *session = session_get_command_context();
    uint32_t session_id = session ? session->session_id : 0;
-   llm_context_auto_compact(conversation_history, session_id);
+   llm_context_auto_compact_with_config(conversation_history, session_id, config->type,
+                                        config->cloud_provider, config->model);
 
    // Track LLM total time
    struct timeval start_time, end_time;

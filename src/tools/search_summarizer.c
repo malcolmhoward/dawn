@@ -30,10 +30,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "core/session_manager.h"
 #include "llm/llm_interface.h"
+#include "llm/llm_tools.h"
 #include "logging.h"
 #include "tools/curl_buffer.h"
+#include "tts/text_to_speech.h"
 #include "ui/metrics.h"
+#include "webui/webui_server.h"
 
 // =============================================================================
 // Module State
@@ -368,8 +372,16 @@ static int summarize_with_default_llm(const char *prompt, char **out_summary) {
    json_object_object_add(user_msg, "content", json_object_new_string(prompt));
    json_object_array_add(conversation, user_msg);
 
+   // Suppress tools for this call - we just want a text summary, not tool calls.
+   // Without this, the LLM might respond with tool_calls instead of content,
+   // causing a "content field is empty" error.
+   llm_tools_suppress_push();
+
    // Call cloud LLM (non-streaming for summarization)
    char *response = llm_chat_completion(conversation, prompt, NULL, 0);
+
+   // Restore tools
+   llm_tools_suppress_pop();
 
    json_object_put(conversation);
 
@@ -381,6 +393,28 @@ static int summarize_with_default_llm(const char *prompt, char **out_summary) {
    *out_summary = response;
    LOG_INFO("search_summarizer: Default LLM produced %zu byte summary", strlen(*out_summary));
    return SUMMARIZER_SUCCESS;
+}
+
+// =============================================================================
+// User Feedback Helper
+// =============================================================================
+
+/**
+ * @brief Notify user that summarization is starting
+ *
+ * For local audio sessions: Plays TTS message
+ * For WebUI sessions: Sends status update to display in UI
+ */
+static void notify_summarization_starting(void) {
+   session_t *session = session_get_command_context();
+
+   if (!session || session->session_id == 0) {
+      /* Local audio session - use TTS */
+      text_to_speech((char *)"Summarizing the results, please standby.");
+   } else if (session->type == SESSION_TYPE_WEBSOCKET) {
+      /* WebUI session - send status update */
+      webui_send_state_with_detail(session, "summarizing", "Processing search results...");
+   }
 }
 
 // =============================================================================
@@ -427,6 +461,9 @@ int search_summarizer_process(const char *search_results,
 
    LOG_INFO("search_summarizer: Input %zu bytes exceeds threshold %zu, summarizing with %s backend",
             input_size, g_config.threshold_bytes, search_summarizer_backend_name(g_config.backend));
+
+   // Notify user that summarization is starting (may take a while for local LLM)
+   notify_summarization_starting();
 
    // Build the summarization prompt
    size_t prompt_size = strlen(SUMMARIZER_PROMPT_TEMPLATE) + strlen(original_query) + input_size +

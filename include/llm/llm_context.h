@@ -294,11 +294,34 @@ int llm_context_compact_for_switch(uint32_t session_id,
  * Should be called before making LLM requests. Checks if the conversation
  * history exceeds the summarize_threshold and compacts if needed.
  *
+ * Uses global LLM configuration. For session-specific config, use
+ * llm_context_auto_compact_with_config() instead.
+ *
  * @param history Conversation history (modified in place if compacted)
  * @param session_id Session ID for logging
  * @return 1 if compaction was performed, 0 if not needed or failed
  */
 int llm_context_auto_compact(struct json_object *history, uint32_t session_id);
+
+/**
+ * @brief Check and perform auto-compaction with explicit config
+ *
+ * Same as llm_context_auto_compact() but uses provided config instead of
+ * global LLM settings. Use this for WebUI sessions that have their own
+ * LLM configuration.
+ *
+ * @param history Conversation history (modified in place if compacted)
+ * @param session_id Session ID for logging
+ * @param type LLM type from session config
+ * @param provider Cloud provider from session config
+ * @param model Model name from session config
+ * @return 1 if compaction was performed, 0 if not needed or failed
+ */
+int llm_context_auto_compact_with_config(struct json_object *history,
+                                         uint32_t session_id,
+                                         llm_type_t type,
+                                         cloud_provider_t provider,
+                                         const char *model);
 
 /* =============================================================================
  * Utility Functions

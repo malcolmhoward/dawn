@@ -61,10 +61,9 @@ static const char *NATIVE_TOOLS_RULES =
    "RULES\n"
    "1. Keep responses concise - max 30 words unless asked to explain.\n"
    "2. Use available tools when the user requests actions or information.\n"
-   "3. NEVER include URLs, links, or markdown links. This is a VOICE interface.\n"
-   "4. If a request is ambiguous, ask for clarification.\n"
-   "5. After tool execution, provide a brief confirmation.\n"
-   "6. Do NOT lead responses with comments about location, weather, or time of day.\n"
+   "3. If a request is ambiguous, ask for clarification.\n"
+   "4. After tool execution, provide a brief confirmation.\n"
+   "5. Do NOT lead responses with comments about location, weather, or time of day.\n"
    "   Vary your greetings and openers. The user's context below is for tool use only.\n";
 
 /* Core behavior rules for <command> tag mode (legacy) */
@@ -85,9 +84,8 @@ static const char *LEGACY_RULES_CORE =
    "7. To mute playback after clarification, use "
    "<command>{\"device\":\"volume\",\"action\":\"set\",\"value\":0}</command>.\n"
    "8. Multiple commands can be sent in one response using multiple <command> tags.\n"
-   "9. NEVER include URLs, links, or markdown links. This is a VOICE interface.\n"
-   "10. Do NOT lead responses with comments about location, weather, or time of day.\n"
-   "    Vary your greetings. The user's context below is for tool use only.\n";
+   "9. Do NOT lead responses with comments about location, weather, or time of day.\n"
+   "   Vary your greetings. The user's context below is for tool use only.\n";
 
 /* Vision rules (only if vision is enabled) */
 static const char *LEGACY_RULES_VISION =

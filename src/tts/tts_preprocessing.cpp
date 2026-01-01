@@ -423,6 +423,123 @@ static const char *TEMP_DEGREES = " degrees";
 static const uint8_t TEMP_DEGREES_LEN = 8;
 
 // ============================================================================
+// URL Processing Helpers
+// ============================================================================
+
+/**
+ * @brief Check if position starts a URL (http://, https://, or www.)
+ * @return Length of URL prefix (7 for http://, 8 for https://, 4 for www.), or 0 if not a URL
+ */
+static inline size_t url_prefix_length(const char *src, size_t pos, size_t len) {
+   size_t remaining = len - pos;
+
+   // Check for https:// (8 chars)
+   if (remaining >= 8 && std::strncmp(src + pos, "https://", 8) == 0) {
+      return 8;
+   }
+   // Check for http:// (7 chars)
+   if (remaining >= 7 && std::strncmp(src + pos, "http://", 7) == 0) {
+      return 7;
+   }
+   // Check for www. at word boundary (4 chars)
+   if (remaining >= 4 && std::strncmp(src + pos, "www.", 4) == 0) {
+      // Verify it's at a word boundary
+      if (pos == 0 || src[pos - 1] == ' ' || src[pos - 1] == '\n' || src[pos - 1] == '\t' ||
+          src[pos - 1] == '(' || src[pos - 1] == '"' || src[pos - 1] == '\'') {
+         return 4;
+      }
+   }
+   return 0;
+}
+
+/**
+ * @brief Find the end of a URL (first whitespace, newline, or certain punctuation)
+ * @return Position of URL end (exclusive)
+ */
+static inline size_t find_url_end(const char *src, size_t start, size_t len) {
+   size_t pos = start;
+   while (pos < len) {
+      char c = src[pos];
+      // URL terminators
+      if (c == ' ' || c == '\n' || c == '\t' || c == '\r' || c == '"' || c == '\'' || c == '<' ||
+          c == '>' || c == ')' || c == ']') {
+         break;
+      }
+      // Handle trailing punctuation that's likely not part of URL
+      if ((c == '.' || c == ',' || c == '!' || c == '?' || c == ';' || c == ':') &&
+          (pos + 1 >= len || src[pos + 1] == ' ' || src[pos + 1] == '\n')) {
+         break;
+      }
+      pos++;
+   }
+   return pos;
+}
+
+/**
+ * @brief Extract domain from URL and calculate spoken form size
+ *
+ * For "https://www.example.com/path" -> "example dot com"
+ * For "http://github.com/user/repo" -> "github dot com"
+ *
+ * @param src Source string
+ * @param url_start Start of URL (after any prefix already consumed)
+ * @param url_end End of URL
+ * @param domain_start Output: start of domain within URL
+ * @param domain_end Output: end of domain (before path)
+ * @return Spoken form size (with dots expanded to " dot ")
+ */
+static inline size_t extract_domain_info(const char *src,
+                                         size_t url_start,
+                                         size_t url_end,
+                                         size_t *domain_start,
+                                         size_t *domain_end) {
+   // Skip www. prefix if present
+   size_t start = url_start;
+   if (url_end - start >= 4 && std::strncmp(src + start, "www.", 4) == 0) {
+      start += 4;
+   }
+
+   // Find end of domain (first / or end of URL)
+   size_t end = start;
+   while (end < url_end && src[end] != '/') {
+      end++;
+   }
+
+   *domain_start = start;
+   *domain_end = end;
+
+   // Calculate spoken size: each '.' becomes " dot " (5 chars instead of 1)
+   size_t spoken_size = 0;
+   for (size_t i = start; i < end; i++) {
+      if (src[i] == '.') {
+         spoken_size += 5;  // " dot "
+      } else {
+         spoken_size += 1;
+      }
+   }
+   return spoken_size;
+}
+
+/**
+ * @brief Write domain in spoken form (dots -> " dot ")
+ */
+static inline size_t write_spoken_domain(const char *src,
+                                         size_t domain_start,
+                                         size_t domain_end,
+                                         char *out) {
+   size_t out_pos = 0;
+   for (size_t i = domain_start; i < domain_end; i++) {
+      if (src[i] == '.') {
+         std::memcpy(out + out_pos, " dot ", 5);
+         out_pos += 5;
+      } else {
+         out[out_pos++] = src[i];
+      }
+   }
+   return out_pos;
+}
+
+// ============================================================================
 // Two-Pass Optimized Implementation (Unified Template)
 // ============================================================================
 
@@ -524,6 +641,30 @@ template<PassMode mode> static size_t process_text_impl(const char *src, size_t 
                out_pos++;
                i++;
                continue;
+            }
+         }
+
+         // URL detection: convert full URLs to spoken domain only
+         // e.g., "https://www.example.com/path" -> "example dot com"
+         if (byte == 'h' || byte == 'w') {
+            size_t prefix_len = url_prefix_length(src, i, len);
+            if (prefix_len > 0) {
+               // Found a URL - extract domain and convert to spoken form
+               size_t url_content_start = i + prefix_len;
+               size_t url_end = find_url_end(src, url_content_start, len);
+
+               size_t domain_start, domain_end;
+               size_t spoken_size = extract_domain_info(src, url_content_start, url_end,
+                                                        &domain_start, &domain_end);
+
+               if (spoken_size > 0) {
+                  if constexpr (mode == PassMode::GenerateOutput) {
+                     write_spoken_domain(src, domain_start, domain_end, out + out_pos);
+                  }
+                  out_pos += spoken_size;
+                  i = url_end;
+                  continue;
+               }
             }
          }
 

@@ -41,7 +41,8 @@
 #define SUMMARIZER_DEFAULT_THRESHOLD 3072
 #define SUMMARIZER_DEFAULT_TARGET_WORDS 600
 #define SUMMARIZER_LOCAL_ENDPOINT "http://127.0.0.1:8080/v1/chat/completions"
-#define SUMMARIZER_LOCAL_TIMEOUT_SEC 30
+/* Timeout for local LLM summarization (2 minutes - local models are slow on large content) */
+#define SUMMARIZER_LOCAL_TIMEOUT_SEC 120
 
 // Maximum content size when passing through raw results on summarization failure.
 // When content exceeds this limit, it's truncated at natural boundaries

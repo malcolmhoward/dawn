@@ -35,6 +35,7 @@
 #include "config/dawn_config.h"
 #include "core/session_manager.h"
 #include "llm/llm_interface.h"
+#include "llm/llm_tools.h"
 #include "logging.h"
 #include "tools/string_utils.h"
 #include "tts/text_to_speech.h"
@@ -545,6 +546,8 @@ bool llm_context_needs_compaction(uint32_t session_id,
       return false;
    }
 
+   int tracked_tokens = usage.current_tokens;
+
    /*
     * Always estimate from current history if available. The tracked token count
     * (last_prompt_tokens) is from the PREVIOUS call and doesn't account for new
@@ -564,6 +567,11 @@ bool llm_context_needs_compaction(uint32_t session_id,
          usage.needs_compaction = (usage.usage_percent >= threshold);
       }
    }
+
+   LOG_INFO("llm_context: Compaction check for session %u: tracked=%d, current=%d, max=%d, "
+            "usage=%.1f%%, needs_compaction=%s",
+            session_id, tracked_tokens, usage.current_tokens, usage.max_tokens,
+            usage.usage_percent * 100.0f, usage.needs_compaction ? "YES" : "NO");
 
    return usage.needs_compaction;
 }
@@ -684,8 +692,8 @@ int llm_context_compact(uint32_t session_id,
    const char *summary_content = json_object_to_json_string(to_summarize);
    char summary_prompt[8192];
    snprintf(summary_prompt, sizeof(summary_prompt),
-            "Summarize this conversation concisely, preserving key facts, decisions, user "
-            "preferences, and context needed to continue naturally. Be brief but complete:\n\n%s",
+            "Summarize this conversation in 100 words or less, preserving key facts, decisions, "
+            "and user preferences needed to continue naturally. Be extremely brief:\n\n%s",
             summary_content);
    json_object_put(to_summarize);
 
@@ -700,12 +708,33 @@ int llm_context_compact(uint32_t session_id,
    json_object_object_add(user_msg, "content", json_object_new_string(summary_prompt));
    json_object_array_add(summary_request, user_msg);
 
+   /* Suppress tools for summarization - we just want text, not tool calls.
+    * Without this, the LLM might respond with tool_calls instead of content,
+    * causing a "content field is empty" error. */
+   llm_tools_suppress_push();
+
+   /* Temporarily increase timeout for summarization - summarizing many messages
+    * can take longer than normal requests (especially with local LLMs) */
+   int saved_timeout = g_config.network.llm_timeout_ms;
+   g_config.network.llm_timeout_ms = 180000; /* 3 minutes for summarization */
+
    /* Make LLM call for summary */
    char *summary = llm_chat_completion(summary_request, NULL, NULL, 0);
+
+   /* Restore timeout and tools */
+   g_config.network.llm_timeout_ms = saved_timeout;
+   llm_tools_suppress_pop();
+
    json_object_put(summary_request);
 
    if (!summary) {
       LOG_ERROR("llm_context: Failed to generate summary");
+      /* Notify WebUI session about compaction failure */
+      session_t *session = session_get(session_id);
+      if (session && session->type == SESSION_TYPE_WEBSOCKET) {
+         webui_send_error(session, "COMPACTION_FAILED",
+                          "Context compaction failed. Response may be truncated.");
+      }
       if (system_msg) {
          json_object_put(system_msg);
       }
@@ -812,6 +841,47 @@ int llm_context_auto_compact(struct json_object *history, uint32_t session_id) {
    /* Notify local user via TTS before compaction (can take a few seconds) */
    if (session_id == 0) {
       text_to_speech((char *)"Compacting my memory. Just a moment.");
+   }
+
+   /* Perform compaction */
+   llm_compaction_result_t result;
+   int rc = llm_context_compact(session_id, history, type, provider, model, &result);
+
+   if (rc == 0 && result.performed) {
+      LOG_INFO("llm_context: Auto-compaction complete - %d tokens -> %d tokens",
+               result.tokens_before, result.tokens_after);
+      return 1; /* Compaction was performed */
+   }
+
+   return 0;
+}
+
+int llm_context_auto_compact_with_config(struct json_object *history,
+                                         uint32_t session_id,
+                                         llm_type_t type,
+                                         cloud_provider_t provider,
+                                         const char *model) {
+   if (!history || !s_state.initialized) {
+      return 0;
+   }
+
+   /* Check if compaction is needed using provided config */
+   if (!llm_context_needs_compaction(session_id, history, type, provider, model)) {
+      return 0;
+   }
+
+   LOG_WARNING("llm_context: Auto-compacting conversation before LLM call (session %u)",
+               session_id);
+
+   /* Notify user before compaction (can take a few seconds) */
+   if (session_id == 0) {
+      text_to_speech((char *)"Compacting my memory. Just a moment.");
+   } else {
+      /* Notify WebUI session */
+      session_t *session = session_get(session_id);
+      if (session && session->type == SESSION_TYPE_WEBSOCKET) {
+         webui_send_state_with_detail(session, "thinking", "Compacting context...");
+      }
    }
 
    /* Perform compaction */

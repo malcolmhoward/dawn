@@ -62,6 +62,7 @@
 #include "tts/text_to_speech.h"
 #include "tts/tts_preprocessing.h"
 #include "ui/metrics.h"
+#include "webui/webui_server.h"
 #include "word_to_number.h"
 
 #define MAX_FILENAME_LENGTH 1024
@@ -102,6 +103,22 @@ static deviceCallback deviceCallbackArray[] = { { AUDIO_PLAYBACK_DEVICE, setPcmP
                                                 { CLOUD_PROVIDER, cloudProviderCallback },
                                                 { SMARTTHINGS, smartThingsCallback },
                                                 { SWITCH_LLM, switchLlmCallback } };
+
+/**
+ * @brief Send a status detail update to the WebUI (if connected)
+ *
+ * This is a helper for showing progress during long-running operations.
+ * Only sends to WebUI sessions; no-op for local audio or other session types.
+ *
+ * @param state The state name ("thinking", "summarizing", etc.)
+ * @param detail The detail message (e.g., "Fetching URL...")
+ */
+static void send_status_detail(const char *state, const char *detail) {
+   session_t *session = session_get_command_context();
+   if (session && session->type == SESSION_TYPE_WEBSOCKET) {
+      webui_send_state_with_detail(session, state, detail);
+   }
+}
 
 /**
  * @brief Look up a callback function by device name string
@@ -1976,6 +1993,9 @@ char *searchCallback(const char *actionName, char *value, int *should_respond) {
       }
    }
 
+   // Notify WebUI of search in progress
+   send_status_detail("thinking", "Searching the web...");
+
    // Determine search type from action name (default to "web" if not specified)
    if (actionName == NULL || actionName[0] == '\0' || strcmp(actionName, "web") == 0) {
       return perform_search(value, SEARCH_TYPE_WEB, "web");
@@ -2038,6 +2058,7 @@ char *weatherCallback(const char *actionName, char *value, int *should_respond) 
             forecast == FORECAST_WEEK ? "week"
                                       : (forecast == FORECAST_TOMORROW ? "tomorrow" : "today"),
             location);
+   send_status_detail("thinking", "Checking weather...");
 
    weather_response_t *response = weather_get(location, forecast);
    if (response) {
@@ -2131,6 +2152,7 @@ char *urlFetchCallback(const char *actionName, char *value, int *should_respond)
    }
 
    LOG_INFO("urlFetchCallback: Fetching URL '%s'", value);
+   send_status_detail("thinking", "Fetching URL...");
 
    // Validate URL
    if (!url_is_valid(value)) {

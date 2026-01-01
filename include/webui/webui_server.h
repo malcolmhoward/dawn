@@ -195,6 +195,21 @@ void webui_send_transcript(struct session *session, const char *role, const char
 void webui_send_state(struct session *session, const char *state);
 
 /**
+ * @brief Send state update with detail message to WebSocket client
+ *
+ * Allows showing additional context during long operations, e.g.,
+ * "thinking" state with detail "Fetching URL..." or "Summarizing content...".
+ * The detail is shown alongside the state in the UI.
+ *
+ * @param session Session to send to (must be SESSION_TYPE_WEBSOCKET)
+ * @param state State name ("idle", "thinking", "speaking", "error", "summarizing")
+ * @param detail Optional detail message (NULL for no detail)
+ *
+ * @note Thread-safe - can be called from any thread
+ */
+void webui_send_state_with_detail(struct session *session, const char *state, const char *detail);
+
+/**
  * @brief Send context/token usage update to WebSocket client
  *
  * @param session Session to send to (must be SESSION_TYPE_WEBSOCKET), or NULL for all

@@ -239,11 +239,10 @@ html, body {
 .telemetry-panel {
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  gap: 0.75rem;
-  padding: 1rem;
+  justify-content: flex-start;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
   flex: 1 1 50%;
-  max-height: 240px;
   /* System font for telemetry */
   font-family: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
   font-size: 0.75rem;
@@ -252,9 +251,9 @@ html, body {
   transition: opacity var(--transition-medium);
 }
 
-/* Dim when idle */
-.telemetry-panel.idle {
-  opacity: 0.4;
+/* Dim ring container when idle - telemetry panel stays bright */
+#ring-container.idle {
+  opacity: 0.6;
 }
 
 .telemetry-row {
@@ -264,27 +263,29 @@ html, body {
   position: relative;
 }
 
-/* Token rate activity tick - heartbeat indicator for data flow */
-.activity-tick {
-  position: absolute;
-  right: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background-color: var(--accent);
-  opacity: 0;
-  transition: opacity 80ms ease-out;
-  box-shadow: 0 0 6px var(--accent-glow);
+/* Container for value + average side by side */
+.telemetry-values {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
 }
 
-.activity-tick.active {
-  opacity: 1;
+/* Current value - fixed width for average column alignment */
+.telemetry-values .telemetry-value {
+  min-width: 5.5rem;
 }
+
+/* Average display - smaller, dimmer */
+.telemetry-avg {
+  font-size: 0.65rem;
+  color: var(--text-tertiary);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
 
 .telemetry-label {
-  color: var(--text-tertiary);
+  color: var(--text-primary);
   font-size: 0.55rem;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -295,6 +296,20 @@ html, body {
   font-size: 0.9rem;
   font-weight: 500;
   letter-spacing: 0.02em;
+  transition: color 0.3s ease;
+}
+
+/* Metric value color coding: cyan (normal) -> amber (high) -> red (extreme) */
+.telemetry-value.metric-normal {
+  color: var(--accent);
+}
+
+.telemetry-value.metric-elevated {
+  color: var(--warning);
+}
+
+.telemetry-value.metric-extreme {
+  color: var(--error);
 }
 
 .telemetry-value small {
@@ -477,6 +492,18 @@ html, body {
   filter: drop-shadow(0 0 12px rgba(245, 158, 11, 0.6));
 }
 
+/* Summarizing - same as thinking (processing state) */
+#ring-container.summarizing #ring-svg path,
+#ring-container.summarizing #ring-svg .ring-segment {
+  stroke: var(--warning);
+}
+#ring-container.summarizing .ring-base {
+  stroke: var(--warning);
+}
+#ring-container.summarizing #waveform-path {
+  filter: drop-shadow(0 0 12px rgba(245, 158, 11, 0.6));
+}
+
 #ring-container.speaking #ring-svg path,
 #ring-container.speaking #ring-svg .ring-segment {
   stroke: var(--accent);
@@ -554,7 +581,7 @@ html, body {
 }
 
 /* Apply subtle breathing to entire ring assembly when idle ONLY */
-#ring-container:not(.listening):not(.thinking):not(.speaking):not(.error):not(.fft-active) #ring-svg {
+#ring-container:not(.listening):not(.thinking):not(.summarizing):not(.speaking):not(.error):not(.fft-active) #ring-svg {
   animation: idle-breathe 4s ease-in-out infinite;
 }
 
@@ -582,7 +609,7 @@ html, body {
   to { transform: rotate(360deg); }
 }
 
-#ring-container:not(.listening):not(.thinking):not(.speaking):not(.error) #ring-throughput {
+#ring-container:not(.listening):not(.thinking):not(.summarizing):not(.speaking):not(.error) #ring-throughput {
   animation: middle-ring-rotate 720s linear infinite;
 }
 
@@ -602,7 +629,7 @@ html, body {
   }
 }
 
-#ring-container:not(.listening):not(.thinking):not(.speaking):not(.error) #ring-hesitation {
+#ring-container:not(.listening):not(.thinking):not(.summarizing):not(.speaking):not(.error) #ring-hesitation {
   animation: outer-ring-twitch 10s ease-in-out infinite;
 }
 
@@ -621,6 +648,7 @@ html, body {
 /* Logo activates with system */
 #ring-container.listening #logo,
 #ring-container.thinking #logo,
+#ring-container.summarizing #logo,
 #ring-container.speaking #logo {
   color: var(--accent);
   text-shadow: 0 0 12px var(--accent-glow);
@@ -645,7 +673,8 @@ html, body {
     inset 0 0 25px rgba(34, 197, 94, 0.1);
 }
 
-#ring-container.thinking #ring-inner {
+#ring-container.thinking #ring-inner,
+#ring-container.summarizing #ring-inner {
   background: radial-gradient(circle,
     rgba(240, 180, 41, 0.3) 0%,
     rgba(240, 180, 41, 0.1) 50%,
@@ -712,6 +741,7 @@ html, body {
 }
 #status-dot.listening { background-color: var(--success); }
 #status-dot.thinking { background-color: var(--warning); }
+#status-dot.summarizing { background-color: var(--warning); } /* Same as thinking - processing state */
 #status-dot.speaking { background-color: var(--accent); }
 #status-dot.error { background-color: var(--error); }
 
@@ -731,67 +761,74 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 0.5rem 0;
-  margin-top: auto;  /* Push to bottom of telemetry panel */
-  font-size: 0.75rem;
+  padding: 0;
+  margin-top: 0.25rem;
+  margin-bottom: 0.25rem;  /* Tightened space before LLM controls */
   border-top: 1px solid var(--bg-secondary);
+  padding-top: 0.25rem;
 }
 
 .context-gauge-container {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.25rem;
+  width: 100%;
 }
 
 .context-gauge {
-  width: 80px;
-  height: 48px;
+  width: 100%;
+  max-width: 280px;
+  height: auto;
 }
 
-/* Gauge segment styling */
+/* Gauge segment styling - rainbow arc segments */
 .gauge-segment {
-  stroke-width: 6;
-  stroke-linecap: round;
-  fill: none;
-  transition: stroke 0.3s ease, opacity 0.3s ease;
-}
-
-.gauge-segment.inactive {
-  stroke: var(--bg-secondary);
-  opacity: 0.3;
-}
-
-.gauge-segment.active-normal {
-  stroke: var(--accent);
-  filter: drop-shadow(0 0 3px var(--accent-glow));
-}
-
-.gauge-segment.active-warning {
-  stroke: var(--warning);
-  filter: drop-shadow(0 0 3px rgba(245, 158, 11, 0.4));
-}
-
-.gauge-segment.active-danger {
-  stroke: var(--error);
-  filter: drop-shadow(0 0 4px rgba(239, 68, 68, 0.5));
+  transition: opacity 0.2s ease, filter 0.2s ease;
 }
 
 /* Flash animation for >90% critical state */
 @keyframes gauge-flash {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
+  0%, 100% { opacity: 0.9; }
+  50% { opacity: 0.4; }
 }
 
 .gauge-segment.flashing {
-  animation: gauge-flash 0.5s ease-in-out 3;
+  animation: gauge-flash 0.5s ease-in-out infinite;
+}
+
+/* SVG text labels inside the gauge - isolated from segment filters */
+.gauge-labels {
+  isolation: isolate;
+}
+
+.gauge-title,
+.gauge-tokens,
+.gauge-percent {
+  font-family: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
+  /* Explicitly disable all glow/shadow effects */
+  filter: none;
+  -webkit-filter: none;
+  text-shadow: none;
+  stroke: none;
+  paint-order: normal;
+}
+
+.gauge-title {
+  font-size: 8px;
+  fill: var(--text-primary);
+  letter-spacing: 0.1em;
+}
+
+.gauge-tokens {
+  font-size: 10px;
+  fill: var(--text-secondary);
 }
 
 .gauge-percent {
-  fill: var(--text-primary);
   font-size: 10px;
   font-weight: 600;
-  font-family: inherit;
+  fill: var(--text-secondary);
+  transition: fill 0.3s ease;
 }
 
 .gauge-percent.warning {
@@ -800,13 +837,6 @@ html, body {
 
 .gauge-percent.danger {
   fill: var(--error);
-}
-
-.context-text {
-  color: var(--text-secondary);
-  font-size: 0.65rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
 }
 
 /* =============================================================================
@@ -2227,9 +2257,9 @@ button:disabled {
   transform: translateY(100%);
 }
 
-/* Dim when idle (40% opacity) - add .idle class via JS when state is idle */
+/* Dim when idle (70% opacity) - add .idle class via JS when state is idle */
 .metrics-panel.idle-dim {
-  opacity: 0.4;
+  opacity: 0.7;
 }
 
 .metrics-header {

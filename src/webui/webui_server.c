@@ -94,6 +94,7 @@ typedef struct {
    union {
       struct {
          char *state;
+         char *detail; /* Optional detail message (e.g., "Fetching URL...") */
       } state;
       struct {
          char *role;
@@ -465,6 +466,7 @@ static void free_response(ws_response_t *resp) {
    switch (resp->type) {
       case WS_RESP_STATE:
          free(resp->state.state);
+         free(resp->state.detail);
          break;
       case WS_RESP_TRANSCRIPT:
          free(resp->transcript.role);
@@ -502,7 +504,9 @@ static void free_response(ws_response_t *resp) {
  * ============================================================================= */
 
 /* LWS requires LWS_PRE bytes before the buffer for protocol framing */
-#define WS_SEND_BUFFER_SIZE 4096
+/* Buffer size for WebSocket messages. Must be large enough to hold tool results
+ * (LLM_TOOLS_RESULT_LEN = 8192) plus JSON overhead for transcript messages. */
+#define WS_SEND_BUFFER_SIZE 16384
 
 static int send_json_message(struct lws *wsi, const char *json) {
    size_t len = strlen(json);
@@ -617,9 +621,15 @@ static bool check_opus_capability(struct json_object *payload) {
    return false;
 }
 
-static void send_state_impl(struct lws *wsi, const char *state) {
-   char json[256];
-   snprintf(json, sizeof(json), "{\"type\":\"state\",\"payload\":{\"state\":\"%s\"}}", state);
+static void send_state_impl(struct lws *wsi, const char *state, const char *detail) {
+   char json[512];
+   if (detail && detail[0] != '\0') {
+      snprintf(json, sizeof(json),
+               "{\"type\":\"state\",\"payload\":{\"state\":\"%s\",\"detail\":\"%s\"}}", state,
+               detail);
+   } else {
+      snprintf(json, sizeof(json), "{\"type\":\"state\",\"payload\":{\"state\":\"%s\"}}", state);
+   }
    send_json_message(wsi, json);
 }
 
@@ -829,8 +839,9 @@ static void process_one_response(void) {
    /* Send via lws_write (one write per callback!) */
    switch (resp.type) {
       case WS_RESP_STATE:
-         send_state_impl(conn->wsi, resp.state.state);
+         send_state_impl(conn->wsi, resp.state.state, resp.state.detail);
          free(resp.state.state);
+         free(resp.state.detail);
          break;
       case WS_RESP_TRANSCRIPT:
          send_transcript_impl(conn->wsi, resp.transcript.role, resp.transcript.text);
@@ -2774,7 +2785,7 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                   send_session_token_impl(conn->wsi, token);
                   send_config_impl(conn->wsi);
                   send_history_impl(conn->wsi, existing);
-                  send_state_impl(conn->wsi, "idle");
+                  send_state_impl(conn->wsi, "idle", NULL);
                } else {
                   /* Token not found or session expired - create new session */
                   LOG_INFO("WebUI: Token %.8s... not found, creating new session", token);
@@ -2792,7 +2803,7 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                         register_token(conn->session_token, conn->session->session_id);
                         send_session_token_impl(conn->wsi, conn->session_token);
                         send_config_impl(conn->wsi);
-                        send_state_impl(conn->wsi, "idle");
+                        send_state_impl(conn->wsi, "idle", NULL);
                      }
                   }
                }
@@ -3047,7 +3058,7 @@ static void handle_cancel_message(ws_connection_t *conn) {
    if (conn->session) {
       LOG_INFO("WebUI: Cancel requested for session %u", conn->session->session_id);
       conn->session->disconnected = true; /* Signal worker to abort */
-      send_state_impl(conn->wsi, "idle");
+      send_state_impl(conn->wsi, "idle", NULL);
    }
 }
 
@@ -3092,7 +3103,9 @@ static int callback_websocket(struct lws *wsi,
 
             /* Release our reference to the session.
              * Session manager will clean it up when ref_count reaches 0. */
+            LOG_INFO("WebUI: Releasing session reference...");
             session_release(conn->session);
+            LOG_INFO("WebUI: Session reference released");
             conn->session = NULL;
          }
 
@@ -3108,11 +3121,13 @@ static int callback_websocket(struct lws *wsi,
          /* Only decrement client count if this connection had a session
           * (i.e., completed the init handshake) */
          if (had_session) {
+            LOG_INFO("WebUI: Acquiring s_mutex for client count...");
             pthread_mutex_lock(&s_mutex);
             if (s_client_count > 0) {
                s_client_count--;
             }
             pthread_mutex_unlock(&s_mutex);
+            LOG_INFO("WebUI: s_mutex released");
          }
 
          LOG_INFO("WebUI: WebSocket client disconnected (total: %d)", s_client_count);
@@ -3185,7 +3200,7 @@ static int callback_websocket(struct lws *wsi,
                         send_session_token_impl(conn->wsi, token);
                         send_config_impl(conn->wsi);
                         send_history_impl(conn->wsi, existing_session);
-                        send_state_impl(conn->wsi, "idle");
+                        send_state_impl(conn->wsi, "idle", NULL);
                      }
                   }
                }
@@ -3241,7 +3256,7 @@ static int callback_websocket(struct lws *wsi,
 
                send_session_token_impl(conn->wsi, conn->session_token);
                send_config_impl(conn->wsi);
-               send_state_impl(conn->wsi, "idle");
+               send_state_impl(conn->wsi, "idle", NULL);
             }
 
             json_object_put(root);
@@ -3430,10 +3445,20 @@ static void webui_tool_execution_callback(void *session_ptr,
       return;
    }
 
-   /* Format as debug entry matching <command> tag format for consistent display */
+   /* result==NULL indicates tool execution is starting, not ending */
+   if (result == NULL) {
+      /* Tool is starting - switch to "thinking" state so UI doesn't show "speaking"
+       * while no audio is playing. This is especially important for slow tools. */
+      char detail[64];
+      snprintf(detail, sizeof(detail), "Calling %s...", tool_name);
+      webui_send_state_with_detail(session, "thinking", detail);
+      return;
+   }
+
+   /* Tool execution completed - format as debug entry */
    char debug_msg[LLM_TOOLS_RESULT_LEN + 256];
    snprintf(debug_msg, sizeof(debug_msg), "[Tool Call: %s(%s) -> %s%s]", tool_name,
-            tool_args ? tool_args : "", success ? "" : "FAILED: ", result ? result : "no result");
+            tool_args ? tool_args : "", success ? "" : "FAILED: ", result);
 
    webui_send_transcript(session, "assistant", debug_msg);
 
@@ -3568,8 +3593,23 @@ void webui_server_shutdown(void) {
       lws_cancel_service(s_lws_context);
    }
 
-   /* Wait for thread to exit */
-   pthread_join(s_webui_thread, NULL);
+   /* Wait for thread to exit with timeout */
+   LOG_INFO("WebUI: Waiting for server thread to exit (max 2 seconds)...");
+   struct timespec ts;
+   clock_gettime(CLOCK_REALTIME, &ts);
+   ts.tv_sec += 2;
+
+   int join_result = pthread_timedjoin_np(s_webui_thread, NULL, &ts);
+   if (join_result == ETIMEDOUT) {
+      LOG_WARNING("WebUI: Server thread did not exit in time, cancelling...");
+      pthread_cancel(s_webui_thread);
+      pthread_join(s_webui_thread, NULL);
+      LOG_INFO("WebUI: Server thread cancelled and joined");
+   } else if (join_result != 0) {
+      LOG_ERROR("WebUI: pthread_timedjoin_np failed: %d", join_result);
+   } else {
+      LOG_INFO("WebUI: Server thread exited cleanly");
+   }
 
    /* Destroy context */
    if (s_lws_context) {
@@ -3634,7 +3674,7 @@ void webui_send_transcript(session_t *session, const char *role, const char *tex
    queue_response(&resp);
 }
 
-void webui_send_state(session_t *session, const char *state) {
+void webui_send_state_with_detail(session_t *session, const char *state, const char *detail) {
    if (!session || session->type != SESSION_TYPE_WEBSOCKET) {
       return;
    }
@@ -3643,6 +3683,7 @@ void webui_send_state(session_t *session, const char *state) {
                           .type = WS_RESP_STATE,
                           .state = {
                               .state = strdup(state),
+                              .detail = detail ? strdup(detail) : NULL,
                           } };
 
    if (!resp.state.state) {
@@ -3651,6 +3692,10 @@ void webui_send_state(session_t *session, const char *state) {
    }
 
    queue_response(&resp);
+}
+
+void webui_send_state(session_t *session, const char *state) {
+   webui_send_state_with_detail(session, state, NULL);
 
    /* Also send metrics update with state change */
    int context_pct = -1; /* -1 = no data, JS will keep previous value */
@@ -4154,7 +4199,7 @@ static void *text_worker_thread(void *arg) {
    LOG_INFO("WebUI: Processing text input for session %u: %s", session->session_id, text);
 
    /* Send "thinking" state */
-   webui_send_state(session, "thinking");
+   webui_send_state_with_detail(session, "thinking", "Processing request...");
 
    /* Echo user input as transcript */
    webui_send_transcript(session, "user", text);
@@ -4390,6 +4435,9 @@ static void webui_sentence_audio_callback(const char *sentence, void *userdata) 
 
    /* Only generate TTS if there's actual content */
    if (len > 0) {
+      /* Switch to "speaking" state when first audio is ready */
+      webui_send_state(session, "speaking");
+
       /* Check if client supports Opus codec */
       ws_connection_t *conn = (ws_connection_t *)session->client_data;
       bool use_opus = conn && conn->use_opus;
@@ -4495,8 +4543,8 @@ static void *audio_worker_thread(void *arg) {
    /* Echo transcription as user message */
    webui_send_transcript(session, "user", transcript);
 
-   /* Send "speaking" state - audio streams during LLM call via sentence callback */
-   webui_send_state(session, "speaking");
+   /* Send "thinking" state while LLM processes - streaming callback will switch to "speaking" */
+   webui_send_state_with_detail(session, "thinking", "Processing request...");
 
    /* Call LLM with TTS streaming - audio is generated and sent per-sentence */
    char *response = session_llm_call_with_tts(session, transcript, webui_sentence_audio_callback,

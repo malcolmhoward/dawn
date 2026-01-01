@@ -452,6 +452,25 @@ int llm_tools_parse_claude_response(struct json_object *response, tool_call_list
 bool llm_tools_enabled(const llm_resolved_config_t *config);
 
 /**
+ * @brief Temporarily suppress tools for the current request
+ *
+ * Used by subsystems (like the search summarizer) that need to make
+ * LLM calls without tools being included in the request. Call
+ * llm_tools_suppress_pop() when done.
+ *
+ * Thread-safe: Uses thread-local storage.
+ */
+void llm_tools_suppress_push(void);
+
+/**
+ * @brief Restore tools after suppression
+ *
+ * Must be called after llm_tools_suppress_push() to restore normal
+ * tool behavior. Calls can be nested.
+ */
+void llm_tools_suppress_pop(void);
+
+/**
  * @brief Get count of currently enabled tools
  *
  * @return Number of enabled tools

@@ -773,20 +773,35 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
       metrics_record_llm_tokens(token_type, CLOUD_PROVIDER_OPENAI, input_tokens, output_tokens,
                                 cached_tokens);
 
-      // Update context usage tracking (session 0 = local session)
-      llm_context_update_usage(0, input_tokens, output_tokens, cached_tokens);
+      // Update context usage tracking with actual session ID
+      session_t *session = session_get_command_context();
+      uint32_t session_id = session ? session->session_id : 0;
+      llm_context_update_usage(session_id, input_tokens, output_tokens, cached_tokens);
    }
 
    // Duplicate the response content string safely
    const char *content_str = json_object_get_string(content);
    if (!content_str) {
-      LOG_ERROR("Error: 'content' field is empty or not a string.");
-      json_object_put(parsed_json);
-      curl_buffer_free(&chunk);
-      json_object_put(root);
-      return NULL;
+      // Content is null - check if this is a tool call response
+      json_object *tool_calls = NULL;
+      if (json_object_object_get_ex(message, "tool_calls", &tool_calls) &&
+          json_object_get_type(tool_calls) == json_type_array &&
+          json_object_array_length(tool_calls) > 0) {
+         LOG_WARNING("OpenAI: LLM returned tool call instead of content (non-streaming API "
+                     "doesn't support tool execution)");
+         // Return a fallback message instead of failing
+         response = strdup("I apologize, but I was unable to complete that request directly. "
+                           "Please try rephrasing your question.");
+      } else {
+         LOG_ERROR("Error: 'content' field is empty or null with no tool calls.");
+         json_object_put(parsed_json);
+         curl_buffer_free(&chunk);
+         json_object_put(root);
+         return NULL;
+      }
+   } else {
+      response = strdup(content_str);
    }
-   response = strdup(content_str);
 
    if ((finish_reason != NULL) && (strcmp(json_object_get_string(finish_reason), "stop") != 0)) {
       LOG_WARNING("OpenAI returned with finish_reason: %s", json_object_get_string(finish_reason));
@@ -1089,22 +1104,21 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
       curl_easy_setopt(curl_handle, CURLOPT_XFERINFOFUNCTION, llm_curl_progress_callback);
       curl_easy_setopt(curl_handle, CURLOPT_XFERINFODATA, NULL);
 
-      // Set low-speed timeout: abort if transfer drops below 1 byte/sec for 30 seconds
-      // This catches hung/stalled streams from local LLM servers
+      // For streaming: use inactivity timeout instead of hard wall timeout.
+      // Abort if transfer drops below 1 byte/sec for 60 seconds (no data flowing).
+      // This allows long responses to complete while still catching hung connections.
       curl_easy_setopt(curl_handle, CURLOPT_LOW_SPEED_LIMIT, 1L);
-      curl_easy_setopt(curl_handle, CURLOPT_LOW_SPEED_TIME, 30L);
+      curl_easy_setopt(curl_handle, CURLOPT_LOW_SPEED_TIME, 60L);
 
-      // Set overall timeout from config (default 30000ms)
-      if (g_config.network.llm_timeout_ms > 0) {
-         curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT_MS, (long)g_config.network.llm_timeout_ms);
-      }
+      // No hard timeout for streaming - rely on low-speed detection instead.
+      // The llm_timeout_ms config is only used for non-streaming requests.
 
       res = curl_easy_perform(curl_handle);
       if (res != CURLE_OK) {
          if (res == CURLE_ABORTED_BY_CALLBACK) {
             LOG_INFO("LLM transfer interrupted by user");
          } else if (res == CURLE_OPERATION_TIMEDOUT) {
-            LOG_ERROR("LLM stream timed out (limit: %dms)", g_config.network.llm_timeout_ms);
+            LOG_ERROR("LLM stream timed out (no data for 60 seconds)");
          } else {
             LOG_ERROR("curl_easy_perform() failed: %s", curl_easy_strerror(res));
          }

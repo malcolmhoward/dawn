@@ -71,6 +71,11 @@ static pthread_mutex_t s_tools_mutex = PTHREAD_MUTEX_INITIALIZER;
 static int s_token_estimate_local = -1;
 static int s_token_estimate_remote = -1;
 
+/* Thread-local suppression counter for temporarily disabling tools.
+ * Used by subsystems like the search summarizer that need to make
+ * LLM calls without tools being added to the request. */
+static __thread int tl_suppress_count = 0;
+
 /* =============================================================================
  * Tool Execution Notification Callback
  * ============================================================================= */
@@ -1014,10 +1019,13 @@ int llm_tools_execute(const tool_call_t *call, tool_result_t *result) {
    LOG_INFO("Executing tool '%s' -> device='%s', action='%s', value='%s'", call->name,
             effective_device, action_name, value_buf);
 
+   /* Notify callback that tool execution is starting (result=NULL indicates start) */
+   notify_tool_execution(call->name, call->arguments, NULL, false);
+
    /* Special handling for viewing (synchronous MQTT wait for image) */
    if (cmd->sync_wait && strcmp(call->name, "viewing") == 0) {
       result->success = execute_viewing_sync(action_name, value_buf, result);
-      /* Notify callback of viewing tool execution */
+      /* Notify callback of viewing tool execution completion */
       notify_tool_execution(call->name, call->arguments, result->result, result->success);
       return result->success ? 0 : 1;
    }
@@ -1328,10 +1336,29 @@ int llm_tools_parse_claude_response(struct json_object *response, tool_call_list
 }
 
 /* =============================================================================
+ * Tool Suppression (Thread-Local)
+ * ============================================================================= */
+
+void llm_tools_suppress_push(void) {
+   tl_suppress_count++;
+}
+
+void llm_tools_suppress_pop(void) {
+   if (tl_suppress_count > 0) {
+      tl_suppress_count--;
+   }
+}
+
+/* =============================================================================
  * Capability Checking
  * ============================================================================= */
 
 bool llm_tools_enabled(const llm_resolved_config_t *config) {
+   /* Check thread-local suppression first */
+   if (tl_suppress_count > 0) {
+      return false;
+   }
+
    /* Check config option - default is false for backward compatibility */
    if (!g_config.llm.tools.native_enabled) {
       return false;
