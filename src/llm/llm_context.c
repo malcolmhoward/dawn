@@ -39,7 +39,9 @@
 #include "logging.h"
 #include "tools/string_utils.h"
 #include "tts/text_to_speech.h"
+#ifdef ENABLE_WEBUI
 #include "webui/webui_server.h"
+#endif
 
 /* =============================================================================
  * Configuration Access
@@ -729,12 +731,14 @@ int llm_context_compact(uint32_t session_id,
 
    if (!summary) {
       LOG_ERROR("llm_context: Failed to generate summary");
+#ifdef ENABLE_WEBUI
       /* Notify WebUI session about compaction failure */
       session_t *session = session_get(session_id);
       if (session && session->type == SESSION_TYPE_WEBSOCKET) {
          webui_send_error(session, "COMPACTION_FAILED",
                           "Context compaction failed. Response may be truncated.");
       }
+#endif
       if (system_msg) {
          json_object_put(system_msg);
       }
@@ -876,13 +880,16 @@ int llm_context_auto_compact_with_config(struct json_object *history,
    /* Notify user before compaction (can take a few seconds) */
    if (session_id == 0) {
       text_to_speech((char *)"Compacting my memory. Just a moment.");
-   } else {
+   }
+#ifdef ENABLE_WEBUI
+   else {
       /* Notify WebUI session */
       session_t *session = session_get(session_id);
       if (session && session->type == SESSION_TYPE_WEBSOCKET) {
          webui_send_state_with_detail(session, "thinking", "Compacting context...");
       }
    }
+#endif
 
    /* Perform compaction */
    llm_compaction_result_t result;

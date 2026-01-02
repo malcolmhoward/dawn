@@ -44,7 +44,26 @@ static time_t g_last_resample_warning = 0;
 // releasing mutex and completing audio write.
 static std::atomic<uint32_t> g_tts_discard_sequence{ 0 };
 #endif
+#ifdef ENABLE_DAP
 #include "network/dawn_wav_utils.h"
+#else
+// WAV header for local TTS use (when network support is disabled)
+typedef struct __attribute__((packed)) {
+   char riff_header[4];
+   uint32_t wav_size;
+   char wave_header[4];
+   char fmt_header[4];
+   uint32_t fmt_chunk_size;
+   uint16_t audio_format;
+   uint16_t num_channels;
+   uint32_t sample_rate;
+   uint32_t byte_rate;
+   uint16_t block_align;
+   uint16_t bits_per_sample;
+   char data_header[4];
+   uint32_t data_bytes;
+} WAVHeader;
+#endif
 #include "text_to_command_nuevo.h"
 #include "tts/piper.hpp"
 #include "tts/tts_preprocessing.h"
@@ -676,11 +695,12 @@ void initialize_text_to_speech(char *pcm_device) {
    strncpy(tts_handle.pcm_playback_device, pcm_device, MAX_WORD_LENGTH);
    tts_handle.pcm_playback_device[MAX_WORD_LENGTH] = '\0';
 
-   // Load the voice model from models/ directory
-   // Construct paths from config voice_model name: ../models/{voice_model}.onnx and .json
+   // Load the voice model from configured models directory
+   // Construct paths from config: {models_path}/{voice_model}.onnx and .json
    char model_path[512], model_json_path[512];
-   snprintf(model_path, sizeof(model_path), "../models/%s.onnx", g_config.tts.voice_model);
-   snprintf(model_json_path, sizeof(model_json_path), "../models/%s.onnx.json",
+   snprintf(model_path, sizeof(model_path), "%s/%s.onnx", g_config.tts.models_path,
+            g_config.tts.voice_model);
+   snprintf(model_json_path, sizeof(model_json_path), "%s/%s.onnx.json", g_config.tts.models_path,
             g_config.tts.voice_model);
 
    std::optional<SpeakerId> speakerIdOpt = 0;
@@ -953,6 +973,7 @@ int text_to_speech_to_wav(const char *text, uint8_t **wav_data_out, size_t *wav_
    return 0;
 }
 
+#ifdef ENABLE_DAP
 uint8_t *error_to_wav(const char *error_message, size_t *tts_size_out) {
    uint8_t *tts_wav_data = NULL;
    size_t tts_wav_size = 0;
@@ -998,6 +1019,7 @@ uint8_t *error_to_wav(const char *error_message, size_t *tts_size_out) {
    *tts_size_out = 0;
    return NULL;
 }
+#endif /* ENABLE_DAP */
 
 /**
  * @brief Wait for TTS queue to empty and playback to complete

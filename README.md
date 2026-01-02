@@ -658,6 +658,56 @@ cmake -DPLATFORM=JETSON ..  # or PLATFORM=RPI
 make -j8
 ```
 
+### Deployment Modes
+
+DAWN supports 4 deployment modes with different feature sets:
+
+| Mode | Local Mic | DAP Clients | WebUI | Use Case |
+|------|-----------|-------------|-------|----------|
+| **1** | ✓ | ✗ | ✗ | Embedded / armor suit - no network |
+| **2** | ✓ | ✓ | ✗ | Headless IoT server with ESP32 clients |
+| **3** | ✓ | ✗ | ✓ | Desktop / development with web interface |
+| **4** | ✓ | ✓ | ✓ | Full deployment - all features |
+
+#### Using CMake Presets (Recommended)
+
+```bash
+# List available presets
+cmake --list-presets
+
+# Configure with a preset
+cmake --preset mode1-local    # Mode 1: Local only (smallest binary)
+cmake --preset mode2-dap      # Mode 2: DAP only (headless IoT)
+cmake --preset mode3-webui    # Mode 3: WebUI only (desktop/dev)
+cmake --preset mode4-full     # Mode 4: Full (all features)
+cmake --preset default        # Same as mode4-full
+
+# Build
+cmake --build --preset mode1-local
+```
+
+#### Manual CMake Options
+
+```bash
+# Mode 1: Local only (no network features)
+cmake -DENABLE_DAP=OFF -DENABLE_WEBUI=OFF ..
+
+# Mode 2: DAP only (ESP32 clients, no WebUI)
+cmake -DENABLE_DAP=ON -DENABLE_WEBUI=OFF ..
+
+# Mode 3: WebUI only (no DAP clients)
+cmake -DENABLE_DAP=OFF -DENABLE_WEBUI=ON ..
+
+# Mode 4: Full (default)
+cmake -DENABLE_DAP=ON -DENABLE_WEBUI=ON ..
+# or just: cmake ..
+```
+
+**Notes:**
+- `ENABLE_DAP`: Controls DAP (Dawn Audio Protocol) server for ESP32 satellite clients
+- `ENABLE_WEBUI`: Controls the web interface on port 3000
+- `ENABLE_AUTH`: Automatically enabled when either DAP or WebUI is active
+
 #### Build tests
 ```bash
 cmake -DBUILD_TESTS=ON ..

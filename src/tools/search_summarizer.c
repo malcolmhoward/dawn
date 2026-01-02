@@ -37,7 +37,9 @@
 #include "tools/curl_buffer.h"
 #include "tts/text_to_speech.h"
 #include "ui/metrics.h"
+#ifdef ENABLE_WEBUI
 #include "webui/webui_server.h"
+#endif
 
 // =============================================================================
 // Module State
@@ -406,15 +408,23 @@ static int summarize_with_default_llm(const char *prompt, char **out_summary) {
  * For WebUI sessions: Sends status update to display in UI
  */
 static void notify_summarization_starting(void) {
+#ifdef ENABLE_MULTI_CLIENT
    session_t *session = session_get_command_context();
 
    if (!session || session->session_id == 0) {
       /* Local audio session - use TTS */
       text_to_speech((char *)"Summarizing the results, please standby.");
-   } else if (session->type == SESSION_TYPE_WEBSOCKET) {
+   }
+#ifdef ENABLE_WEBUI
+   else if (session->type == SESSION_TYPE_WEBSOCKET) {
       /* WebUI session - send status update */
       webui_send_state_with_detail(session, "summarizing", "Processing search results...");
    }
+#endif
+#else
+   /* Local-only mode - use TTS */
+   text_to_speech((char *)"Summarizing the results, please standby.");
+#endif
 }
 
 // =============================================================================

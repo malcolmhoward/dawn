@@ -33,7 +33,7 @@
 
 #define MAX_AUDIO_DEVICES 5
 
-#define MAX_COMMANDS 1000
+#define MAX_COMMANDS 2000  // ~3.6MB for command search table
 
 #define CONFIG_FILE "commands_config_nuevo.json"
 

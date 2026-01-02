@@ -66,10 +66,12 @@
 #include "llm/llm_tools.h"
 #include "logging.h"
 #include "mosquitto_comms.h"
+#ifdef ENABLE_DAP
 #include "network/accept_thread.h"
 #include "network/dawn_network_audio.h"
 #include "network/dawn_server.h"
 #include "network/dawn_wav_utils.h"
+#endif
 #include "state_machine.h"
 #include "text_to_command_nuevo.h"
 #include "tools/search_summarizer.h"
@@ -298,8 +300,10 @@ void dawn_request_restart(void) {
 /* MQTT */
 static struct mosquitto *mosq;
 
+#ifdef ENABLE_DAP
 // Is remote DAWN enabled
 static int enable_network_audio = 0;
+#endif
 
 #ifdef ENABLE_TUI
 // TUI configuration
@@ -1431,11 +1435,13 @@ int main(int argc, char *argv[]) {
             cli_overrides |= CLI_OVERRIDE_COMMAND_MODE;
             LOG_INFO("Direct commands only mode enabled (CLI override)");
             break;
+#ifdef ENABLE_DAP
          case 'N':
             enable_network_audio = 1;
             cli_overrides |= CLI_OVERRIDE_NETWORK_AUDIO;
             LOG_INFO("Network audio enabled (CLI override)");
             break;
+#endif
          case 'm':
             if (strcasecmp(optarg, "cloud") == 0) {
                llm_type_override = LLM_CLOUD;
@@ -1638,11 +1644,13 @@ int main(int argc, char *argv[]) {
       asr_model_path = whisper_full_path;
    }
 
+#ifdef ENABLE_DAP
    // Apply network config (CLI overrides take precedence)
    if (!(cli_overrides & CLI_OVERRIDE_NETWORK_AUDIO) && g_config.network.enabled) {
       enable_network_audio = 1;
       LOG_INFO("Network audio enabled from config");
    }
+#endif
 
 #ifdef ENABLE_TUI
    // Apply TUI config (CLI overrides take precedence)
@@ -2157,16 +2165,22 @@ int main(int argc, char *argv[]) {
    bool webui_needs_workers = false;
 #endif
 
-   if (enable_network_audio || webui_needs_workers) {
+#ifdef ENABLE_DAP
+   bool network_enabled = enable_network_audio;
+#else
+   bool network_enabled = false;
+#endif
+
+   if (network_enabled || webui_needs_workers) {
       int effective_workers = 0;
-      if (enable_network_audio && webui_needs_workers) {
+      if (network_enabled && webui_needs_workers) {
          /* Both enabled: use max of the two */
          effective_workers = (g_config.network.workers > g_config.webui.workers)
                                  ? g_config.network.workers
                                  : g_config.webui.workers;
          LOG_INFO("Both network and WebUI enabled, using %d workers (max of network=%d, webui=%d)",
                   effective_workers, g_config.network.workers, g_config.webui.workers);
-      } else if (enable_network_audio) {
+      } else if (network_enabled) {
          effective_workers = g_config.network.workers;
       } else {
          effective_workers = g_config.webui.workers;
@@ -2176,11 +2190,13 @@ int main(int argc, char *argv[]) {
       int saved_workers = g_config.network.workers;
       g_config.network.workers = effective_workers;
 
+#ifdef ENABLE_DAP
       if (enable_network_audio) {
          LOG_INFO("Initializing network audio system...");
          if (dawn_network_audio_init() != 0) {
             LOG_ERROR("Failed to initialize network audio system");
             enable_network_audio = 0;
+            network_enabled = false;
          } else {
             LOG_INFO("Starting DAWN network server (multi-client worker pool with %d workers)...",
                      effective_workers);
@@ -2188,15 +2204,17 @@ int main(int argc, char *argv[]) {
                LOG_ERROR("Failed to start accept thread - network audio disabled");
                dawn_network_audio_cleanup();
                enable_network_audio = 0;
+               network_enabled = false;
             } else {
                LOG_INFO("DAWN network server started successfully on port 5000");
                LOG_INFO("Network TTS will use existing Piper instance");
             }
          }
       }
+#endif
 
       /* If network didn't start but WebUI needs workers, init pool now */
-      if (!enable_network_audio && webui_needs_workers && !worker_pool_is_initialized()) {
+      if (!network_enabled && webui_needs_workers && !worker_pool_is_initialized()) {
          LOG_INFO("Initializing worker pool for WebUI audio (%d workers)...", effective_workers);
          if (worker_pool_init(asr_engine, asr_model_path) != 0) {
             LOG_WARNING("Failed to init worker pool - WebUI voice input disabled");
@@ -3598,6 +3616,7 @@ int main(int argc, char *argv[]) {
       llm_processing = 0;
    }
 
+#ifdef ENABLE_DAP
    if (enable_network_audio) {
       LOG_INFO("Stopping network audio system...");
       accept_thread_stop();
@@ -3613,6 +3632,7 @@ int main(int argc, char *argv[]) {
       pthread_mutex_unlock(&processing_mutex);
       // NOTE: Network audio resources are now cleaned up by worker threads
    }
+#endif
 
    cleanup_text_to_speech();
 
@@ -3694,7 +3714,12 @@ int main(int argc, char *argv[]) {
       webui_server_shutdown();
    }
    /* Shutdown worker pool if we initialized it for WebUI (not network server) */
-   if (!enable_network_audio && worker_pool_is_initialized()) {
+#ifdef ENABLE_DAP
+   bool network_audio_active = enable_network_audio;
+#else
+   bool network_audio_active = false;
+#endif
+   if (!network_audio_active && worker_pool_is_initialized()) {
       worker_pool_shutdown();
    }
 #endif

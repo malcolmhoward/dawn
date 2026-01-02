@@ -96,6 +96,15 @@ if(ENABLE_TUI)
     endif()
 endif()
 
+# DAP subsystem (Dawn Audio Protocol server for ESP32 satellite clients)
+option(ENABLE_DAP "Enable DAP server for ESP32 satellite clients" ON)
+if(ENABLE_DAP)
+    add_definitions(-DENABLE_DAP)
+    message(STATUS "DAP server: ENABLED")
+else()
+    message(STATUS "DAP server: DISABLED")
+endif()
+
 # WebUI (libwebsockets + libopus)
 option(ENABLE_WEBUI "Enable WebUI server" ON)
 if(ENABLE_WEBUI)
@@ -118,6 +127,24 @@ if(ENABLE_WEBUI)
         message(WARNING "Install with: sudo apt install libwebsockets-dev")
         set(ENABLE_WEBUI OFF)
     endif()
+endif()
+
+# Authentication subsystem (required if DAP or WebUI is enabled)
+# This is a derived option - not directly configurable
+if(ENABLE_DAP OR ENABLE_WEBUI)
+    set(ENABLE_AUTH ON)
+    add_definitions(-DENABLE_AUTH)
+    message(STATUS "Authentication: ENABLED (network features active)")
+else()
+    set(ENABLE_AUTH OFF)
+    message(STATUS "Authentication: DISABLED (no network features)")
+endif()
+
+# Multi-client session support (required if DAP or WebUI is enabled)
+# Provides session manager and worker pool for concurrent client handling
+if(ENABLE_DAP OR ENABLE_WEBUI)
+    add_definitions(-DENABLE_MULTI_CLIENT)
+    message(STATUS "Multi-client: ENABLED (session manager + worker pool)")
 endif()
 
 # Platform-specific CUDA configuration (Jetson only)
@@ -288,9 +315,7 @@ set(DAWN_SOURCES
     src/text_to_command_nuevo.c
     src/word_to_number.c
 
-    # Multi-threaded core (session management, worker pool, command routing)
-    src/core/session_manager.c
-    src/core/worker_pool.c
+    # Multi-threaded core (command routing always needed)
     src/core/command_router.c
     src/core/command_registry.c
     src/core/command_executor.c
@@ -315,12 +340,6 @@ set(DAWN_SOURCES
     # TTS subsystem
     src/tts/text_to_speech.cpp
     src/tts/tts_preprocessing.cpp
-
-    # Network subsystem
-    src/network/dawn_server.c
-    src/network/dawn_network_audio.c
-    src/network/dawn_wav_utils.c
-    src/network/accept_thread.c
 
     # Audio subsystem
     src/audio/audio_capture_thread.c
@@ -366,6 +385,24 @@ if(ENABLE_WEBUI)
     if(OPUS_FOUND)
         list(APPEND DAWN_SOURCES src/webui/webui_audio.c)
     endif()
+endif()
+
+# Conditionally add session/worker pool (needed for multi-client support)
+if(ENABLE_DAP OR ENABLE_WEBUI)
+    list(APPEND DAWN_SOURCES
+        src/core/session_manager.c
+        src/core/worker_pool.c
+    )
+endif()
+
+# Conditionally add DAP server source files
+if(ENABLE_DAP)
+    list(APPEND DAWN_SOURCES
+        src/network/dawn_server.c
+        src/network/dawn_network_audio.c
+        src/network/dawn_wav_utils.c
+        src/network/accept_thread.c
+    )
 endif()
 
 # Note: ALSA_DEVICE define removed - audio backend is now selected at runtime via --audio-backend

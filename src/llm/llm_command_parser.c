@@ -521,7 +521,7 @@ static void initialize_command_prompt(void) {
    }
 
    FILE *configFile = NULL;
-   char buffer[10 * 1024];
+   char buffer[32 * 1024];  // 32KB for commands_config_nuevo.json (~17KB)
    int bytes_read = 0;
    struct json_object *parsedJson = NULL;
    struct json_object *typesObject = NULL;
@@ -718,7 +718,7 @@ static void initialize_remote_command_prompt(void) {
    }
 
    FILE *configFile = NULL;
-   char buffer[10 * 1024];
+   char buffer[32 * 1024];  // 32KB for commands_config_nuevo.json (~17KB)
    int bytes_read = 0;
    struct json_object *parsedJson = NULL;
    struct json_object *typesObject = NULL;

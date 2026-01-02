@@ -154,6 +154,7 @@ typedef struct session {
 // Lifecycle Functions
 // =============================================================================
 
+#ifdef ENABLE_MULTI_CLIENT
 /**
  * @brief Initialize the session manager
  *
@@ -171,11 +172,13 @@ int session_manager_init(void);
  * Should be called during application shutdown.
  */
 void session_manager_cleanup(void);
+#endif /* ENABLE_MULTI_CLIENT */
 
 // =============================================================================
 // Session Creation and Retrieval
 // =============================================================================
 
+#ifdef ENABLE_MULTI_CLIENT
 /**
  * @brief Create new session
  *
@@ -284,10 +287,13 @@ void session_release(session_t *session);
  * @note Does NOT increment ref_count (local session is never destroyed)
  */
 session_t *session_get_local(void);
+#endif /* ENABLE_MULTI_CLIENT */
 
 // =============================================================================
 // Session Destruction
 // =============================================================================
+
+#ifdef ENABLE_MULTI_CLIENT
 
 /**
  * @brief Mark session as disconnected and destroy when ref_count=0
@@ -307,10 +313,13 @@ void session_destroy(uint32_t session_id);
  * SESSION_TIMEOUT_SEC without activity.
  */
 void session_cleanup_expired(void);
+#endif /* ENABLE_MULTI_CLIENT */
 
 // =============================================================================
 // Conversation History
 // =============================================================================
+
+#ifdef ENABLE_MULTI_CLIENT
 
 /**
  * @brief Add message to session's conversation history
@@ -369,10 +378,13 @@ void session_init_system_prompt(session_t *session, const char *system_prompt);
  * @locks session->history_mutex
  */
 char *session_get_system_prompt(session_t *session);
+#endif /* ENABLE_MULTI_CLIENT */
 
 // =============================================================================
 // LLM Integration
 // =============================================================================
+
+#ifdef ENABLE_MULTI_CLIENT
 
 /**
  * @brief Call LLM with session's conversation history
@@ -420,10 +432,13 @@ char *session_llm_call_with_tts(session_t *session,
                                 const char *user_text,
                                 session_sentence_callback sentence_cb,
                                 void *userdata);
+#endif /* ENABLE_MULTI_CLIENT */
 
 // =============================================================================
 // Per-Session LLM Configuration
 // =============================================================================
+
+#ifdef ENABLE_MULTI_CLIENT
 
 /**
  * @brief Set per-session LLM configuration
@@ -459,10 +474,13 @@ void session_get_llm_config(session_t *session, session_llm_config_t *config);
  * @locks session->llm_config_mutex
  */
 void session_clear_llm_config(session_t *session);
+#endif /* ENABLE_MULTI_CLIENT */
 
 // =============================================================================
 // Utility Functions
 // =============================================================================
+
+#ifdef ENABLE_MULTI_CLIENT
 
 /**
  * @brief Update session's last activity timestamp
@@ -496,10 +514,13 @@ const char *session_type_name(session_type_t type);
  * @note Thread-safe: acquires session_manager_rwlock (read)
  */
 void session_manager_save_all_histories(void);
+#endif /* ENABLE_MULTI_CLIENT */
 
 // =============================================================================
 // Command Context (Thread-Local)
 // =============================================================================
+
+#ifdef ENABLE_MULTI_CLIENT
 
 /**
  * @brief Set the current command context session for this thread
@@ -521,6 +542,7 @@ void session_set_command_context(session_t *session);
  * @return Current command context session, or NULL if not set
  */
 session_t *session_get_command_context(void);
+#endif /* ENABLE_MULTI_CLIENT */
 
 /* =============================================================================
  * Command Context Scope Guard (GCC/Clang cleanup attribute)
@@ -536,6 +558,7 @@ session_t *session_get_command_context(void);
  *   }
  * ============================================================================= */
 
+#ifdef ENABLE_MULTI_CLIENT
 /**
  * @brief Cleanup function for scope guard - clears command context
  * @param ctx Pointer to session pointer (unused, just for cleanup signature)
@@ -557,6 +580,90 @@ static inline void session_command_context_cleanup(session_t **ctx) {
    session_t *_scoped_ctx_##__LINE__                                                  \
        __attribute__((cleanup(session_command_context_cleanup), unused)) = (session); \
    session_set_command_context(session)
+#else
+/* Local-only mode: scope guard is a no-op */
+static inline void session_command_context_cleanup(session_t **ctx) {
+   (void)ctx;
+}
+#define SESSION_SCOPED_COMMAND_CONTEXT(session)                                       \
+   session_t *_scoped_ctx_##__LINE__                                                  \
+       __attribute__((cleanup(session_command_context_cleanup), unused)) = (session); \
+   (void)_scoped_ctx_##__LINE__
+#endif /* ENABLE_MULTI_CLIENT */
+
+/* =============================================================================
+ * Stub Implementations for Local-Only Mode (no network features)
+ *
+ * When both ENABLE_DAP and ENABLE_WEBUI are disabled, session_manager.c
+ * is not compiled. These inline stubs provide the minimal API needed by
+ * code that calls session functions unconditionally.
+ * ============================================================================= */
+
+#ifndef ENABLE_MULTI_CLIENT
+
+/* Stub: No sessions in local-only mode */
+static inline session_t *session_get_command_context(void) {
+   return NULL;
+}
+
+static inline void session_set_command_context(session_t *session) {
+   (void)session;
+}
+
+static inline session_t *session_get(uint32_t session_id) {
+   (void)session_id;
+   return NULL;
+}
+
+static inline session_t *session_get_local(void) {
+   return NULL;
+}
+
+static inline int session_manager_init(void) {
+   return 0;
+}
+
+static inline void session_manager_cleanup(void) {
+}
+
+static inline void session_cleanup_expired(void) {
+}
+
+static inline int session_count(void) {
+   return 0;
+}
+
+static inline void session_manager_save_all_histories(void) {
+}
+
+static inline int session_set_llm_config(session_t *session, const session_llm_config_t *config) {
+   (void)session;
+   (void)config;
+   return 1; /* Not supported in local-only mode */
+}
+
+static inline void session_get_llm_config(session_t *session, session_llm_config_t *config) {
+   (void)session;
+   /* In local-only mode, use global defaults */
+   if (config) {
+      llm_get_default_config(config);
+   }
+}
+
+static inline void session_init_system_prompt(session_t *session, const char *system_prompt) {
+   (void)session;
+   (void)system_prompt;
+}
+
+static inline void session_release(session_t *session) {
+   (void)session;
+}
+
+static inline void session_retain(session_t *session) {
+   (void)session;
+}
+
+#endif /* !ENABLE_MULTI_CLIENT */
 
 #ifdef __cplusplus
 }

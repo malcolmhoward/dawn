@@ -32,7 +32,9 @@
 #include "llm/llm_interface.h"
 #include "llm/sentence_buffer.h"
 #include "logging.h"
+#ifdef ENABLE_WEBUI
 #include "webui/webui_server.h"
+#endif
 
 // =============================================================================
 // Streaming Helpers
@@ -125,6 +127,7 @@ static void session_text_chunk_callback(const char *chunk, void *userdata) {
 
    /* Chunks are accumulated by the streaming layer (llm_streaming.c)
     * and also sent to WebSocket for real-time display */
+#ifdef ENABLE_WEBUI
    if (session->type == SESSION_TYPE_WEBSOCKET) {
       /* Filter out <command>...</command> tags */
       char filtered[256];
@@ -170,6 +173,7 @@ static void session_text_chunk_callback(const char *chunk, void *userdata) {
          webui_send_stream_delta(session, filtered);
       }
    }
+#endif
 }
 
 // =============================================================================
@@ -1006,6 +1010,7 @@ static void llm_call_cleanup(llm_call_ctx_t *ctx) {
  * @return Response string on success, NULL on failure (takes ownership of response)
  */
 static char *llm_call_finalize(session_t *session, char *response, llm_call_ctx_t *ctx) {
+#ifdef ENABLE_WEBUI
    // End WebSocket streaming
    if (session->type == SESSION_TYPE_WEBSOCKET) {
       if (session->llm_streaming_active) {
@@ -1017,6 +1022,7 @@ static char *llm_call_finalize(session_t *session, char *response, llm_call_ctx_
          webui_send_transcript(session, "assistant", response);
       }
    }
+#endif
 
    // Clean up context
    llm_call_cleanup(ctx);
@@ -1124,6 +1130,7 @@ static void combined_chunk_callback(const char *chunk, void *userdata) {
    if (len > 0) {
       uint64_t now_ms = get_time_ms();
 
+#ifdef ENABLE_WEBUI
       // 1. Send to WebUI for real-time text display
       if (session->type == SESSION_TYPE_WEBSOCKET) {
          if (!session->llm_streaming_active) {
@@ -1160,6 +1167,9 @@ static void combined_chunk_callback(const char *chunk, void *userdata) {
 
          webui_send_stream_delta(session, filtered);
       }
+#else
+      (void)now_ms;  // Silence unused variable warning
+#endif
 
       // 2. Feed filtered text to sentence buffer for TTS
       if (ctx->sentence_buffer) {

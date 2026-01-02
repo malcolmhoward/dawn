@@ -56,8 +56,10 @@
 #include "dawn.h"
 #include "llm/llm_command_parser.h"
 #include "logging.h"
+#ifdef ENABLE_DAP
 #include "network/dawn_server.h"
 #include "network/dawn_wav_utils.h"
+#endif
 #include "tts/text_to_speech.h"
 #include "tts/tts_preprocessing.h"
 
@@ -94,7 +96,9 @@ static pthread_cond_t pool_available_cond = PTHREAD_COND_INITIALIZER;
 // =============================================================================
 
 static void *worker_thread(void *arg);
+#ifdef ENABLE_DAP
 static int worker_handle_client(worker_context_t *ctx);
+#endif
 static char *process_commands_with_routing(const char *llm_response,
                                            int worker_id,
                                            session_t *session);
@@ -753,11 +757,15 @@ static void *worker_thread(void *arg) {
       // Process the client (state is BUSY)
       LOG_INFO("Worker %d: Processing client (fd=%d)", ctx->worker_id, ctx->client_fd);
 
+#ifdef ENABLE_DAP
       int result = worker_handle_client(ctx);
 
       if (result != 0) {
          LOG_WARNING("Worker %d: Client processing failed", ctx->worker_id);
       }
+#else
+      LOG_WARNING("Worker %d: DAP client handling disabled (Mode 3)", ctx->worker_id);
+#endif
 
       // Clean up and return to idle
       pthread_mutex_lock(&ctx->mutex);
@@ -793,6 +801,7 @@ static void *worker_thread(void *arg) {
    return NULL;
 }
 
+#ifdef ENABLE_DAP
 /**
  * @brief Handle client request - full ASR → LLM → TTS pipeline
  *
@@ -1064,3 +1073,4 @@ cleanup:
 
    return result;
 }
+#endif /* ENABLE_DAP */

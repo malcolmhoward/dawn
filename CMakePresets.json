@@ -1,0 +1,102 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 21,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "default",
+      "displayName": "Default (Full)",
+      "description": "Full build with all features enabled (Mode 4)",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "ENABLE_DAP": "ON",
+        "ENABLE_WEBUI": "ON"
+      }
+    },
+    {
+      "name": "mode1-local",
+      "displayName": "Mode 1: Local Only",
+      "description": "Local microphone only, no network features (armor suit / embedded)",
+      "binaryDir": "${sourceDir}/build-mode1",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "ENABLE_DAP": "OFF",
+        "ENABLE_WEBUI": "OFF"
+      }
+    },
+    {
+      "name": "mode2-dap",
+      "displayName": "Mode 2: DAP Only",
+      "description": "Local + DAP network clients, no WebUI (headless IoT server)",
+      "binaryDir": "${sourceDir}/build-mode2",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "ENABLE_DAP": "ON",
+        "ENABLE_WEBUI": "OFF"
+      }
+    },
+    {
+      "name": "mode3-webui",
+      "displayName": "Mode 3: WebUI Only",
+      "description": "Local + WebUI, no DAP network clients (desktop / development)",
+      "binaryDir": "${sourceDir}/build-mode3",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "ENABLE_DAP": "OFF",
+        "ENABLE_WEBUI": "ON"
+      }
+    },
+    {
+      "name": "mode4-full",
+      "displayName": "Mode 4: Full",
+      "description": "All features enabled (local + DAP + WebUI)",
+      "binaryDir": "${sourceDir}/build-mode4",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "ENABLE_DAP": "ON",
+        "ENABLE_WEBUI": "ON"
+      }
+    },
+    {
+      "name": "debug",
+      "displayName": "Debug (Full)",
+      "description": "Full build with debug symbols",
+      "binaryDir": "${sourceDir}/build-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "ENABLE_DAP": "ON",
+        "ENABLE_WEBUI": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "default",
+      "configurePreset": "default"
+    },
+    {
+      "name": "mode1-local",
+      "configurePreset": "mode1-local"
+    },
+    {
+      "name": "mode2-dap",
+      "configurePreset": "mode2-dap"
+    },
+    {
+      "name": "mode3-webui",
+      "configurePreset": "mode3-webui"
+    },
+    {
+      "name": "mode4-full",
+      "configurePreset": "mode4-full"
+    },
+    {
+      "name": "debug",
+      "configurePreset": "debug"
+    }
+  ]
+}

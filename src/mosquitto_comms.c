@@ -62,7 +62,9 @@
 #include "tts/text_to_speech.h"
 #include "tts/tts_preprocessing.h"
 #include "ui/metrics.h"
+#ifdef ENABLE_WEBUI
 #include "webui/webui_server.h"
+#endif
 #include "word_to_number.h"
 
 #define MAX_FILENAME_LENGTH 1024
@@ -114,10 +116,15 @@ static deviceCallback deviceCallbackArray[] = { { AUDIO_PLAYBACK_DEVICE, setPcmP
  * @param detail The detail message (e.g., "Fetching URL...")
  */
 static void send_status_detail(const char *state, const char *detail) {
+#ifdef ENABLE_WEBUI
    session_t *session = session_get_command_context();
    if (session && session->type == SESSION_TYPE_WEBSOCKET) {
       webui_send_state_with_detail(session, state, detail);
    }
+#else
+   (void)state;
+   (void)detail;
+#endif
 }
 
 /**
