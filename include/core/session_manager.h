@@ -615,8 +615,29 @@ static inline session_t *session_get(uint32_t session_id) {
    return NULL;
 }
 
+/**
+ * @brief Get local session for local-only mode (lazy initialization)
+ *
+ * Creates a static session with conversation history on first call.
+ * This allows local-only builds to maintain conversation context.
+ *
+ * @return Pointer to static local session (never NULL after first call)
+ */
 static inline session_t *session_get_local(void) {
-   return NULL;
+   static session_t local_stub = { 0 };
+   static bool initialized = false;
+
+   if (!initialized) {
+      local_stub.session_id = LOCAL_SESSION_ID;
+      local_stub.type = SESSION_TYPE_LOCAL;
+      local_stub.client_fd = -1;
+      local_stub.conversation_history = json_object_new_array();
+      pthread_mutex_init(&local_stub.history_mutex, NULL);
+      pthread_mutex_init(&local_stub.llm_config_mutex, NULL);
+      llm_get_default_config(&local_stub.llm_config);
+      initialized = true;
+   }
+   return &local_stub;
 }
 
 static inline int session_manager_init(void) {
@@ -650,9 +671,27 @@ static inline void session_get_llm_config(session_t *session, session_llm_config
    }
 }
 
+/**
+ * @brief Initialize session with system prompt (local-only mode)
+ *
+ * Clears existing history and adds the system message.
+ * Provides conversation context for LLM in local-only builds.
+ */
 static inline void session_init_system_prompt(session_t *session, const char *system_prompt) {
-   (void)session;
-   (void)system_prompt;
+   if (!session || !session->conversation_history || !system_prompt)
+      return;
+
+   /* Clear existing messages */
+   size_t len = json_object_array_length(session->conversation_history);
+   for (size_t i = len; i > 0; i--) {
+      json_object_array_del_idx(session->conversation_history, i - 1, 1);
+   }
+
+   /* Add system message */
+   struct json_object *msg = json_object_new_object();
+   json_object_object_add(msg, "role", json_object_new_string("system"));
+   json_object_object_add(msg, "content", json_object_new_string(system_prompt));
+   json_object_array_add(session->conversation_history, msg);
 }
 
 static inline void session_release(session_t *session) {
