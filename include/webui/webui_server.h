@@ -275,6 +275,27 @@ void webui_send_stream_start(struct session *session);
 void webui_send_stream_delta(struct session *session, const char *text);
 
 /**
+ * @brief Filter command tags from text and return filtered result
+ *
+ * Strips <command>...</command> tags from text using the session's filter state.
+ * Used by callers that need the filtered text (e.g., TTS sentence buffer).
+ * Uses the same state machine as webui_send_stream_delta for consistency.
+ *
+ * @param session Session with filter state
+ * @param text Input text to filter
+ * @param out_buf Output buffer for filtered text
+ * @param out_size Size of output buffer
+ * @return Length of filtered text written to out_buf
+ *
+ * @note Filter state persists across calls for partial tag handling
+ * @note If native tools are enabled, returns input unchanged
+ */
+int webui_filter_command_tags(struct session *session,
+                              const char *text,
+                              char *out_buf,
+                              size_t out_size);
+
+/**
  * @brief End the current LLM token stream
  *
  * Signals the client to finalize the current assistant entry.

@@ -234,6 +234,9 @@ sudo apt install -y libssl-dev
 
 # libwebsockets (for Web UI)
 sudo apt install -y libwebsockets-dev
+
+# Authentication (required for WebUI or DAP network features)
+sudo apt install -y libsodium-dev libsqlite3-dev
 ```
 
 ### 2. Install Core Dependencies

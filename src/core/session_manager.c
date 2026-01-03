@@ -53,69 +53,16 @@ static uint64_t get_time_ms(void) {
 // Streaming Callbacks
 // =============================================================================
 
-/**
- * @brief Filter command tags from streaming text
- *
- * Strips <command>...</command> tags from the stream so users only see
- * natural language text. Tool calls appear as debug entries after streaming.
- *
- * @param session Session with filter state
- * @param chunk Incoming text chunk
- * @param out_buf Buffer for filtered output
- * @param out_size Size of output buffer
- * @return Length of filtered text (0 if all filtered out)
- */
-static int filter_command_tags(session_t *session,
-                               const char *chunk,
-                               char *out_buf,
-                               size_t out_size) {
-   if (!chunk || !out_buf || out_size == 0) {
-      return 0;
-   }
-
-   /* Once we've seen a command tag, stop streaming entirely.
-    * The follow-up LLM call will provide the real response after tool execution. */
-   if (session->in_command_tag) {
-      out_buf[0] = '\0';
-      return 0;
-   }
-
-   int out_len = 0;
-   const char *p = chunk;
-
-   /* Look for <command> tag */
-   const char *start = strstr(p, "<command>");
-   if (start) {
-      /* Copy text before the tag, then stop streaming */
-      size_t safe_len = start - p;
-      if (safe_len > 0 && safe_len < out_size - 1) {
-         memcpy(out_buf, p, safe_len);
-         out_len = safe_len;
-      }
-      /* Enter command state - all future chunks will be discarded.
-       * Also mark stream_had_content to prevent fallback from sending
-       * the full response (which would include the command output). */
-      session->in_command_tag = true;
-      session->stream_had_content = true;
-   } else {
-      /* No command tag - copy everything */
-      size_t remaining = strlen(p);
-      if (remaining < out_size - 1) {
-         memcpy(out_buf, p, remaining);
-         out_len = remaining;
-      }
-   }
-
-   out_buf[out_len] = '\0';
-   return out_len;
-}
+/* Command tag filtering is now handled entirely in webui_server.c:webui_send_stream_delta().
+ * This consolidates all filtering logic in one place with proper state machine handling
+ * of partial tags that span chunk boundaries. */
 
 /**
  * @brief Streaming callback for LLM responses
  *
- * Filters out <command>...</command> tags and sends clean text to WebUI.
- * Also tracks timing metrics for TTFT and token rate visualization.
- * Tool calls appear as debug entries after streaming completes.
+ * Sends text to WebUI for real-time display. Command tag filtering is handled
+ * by webui_send_stream_delta() internally. Tracks timing metrics for TTFT
+ * and token rate visualization.
  */
 static void session_text_chunk_callback(const char *chunk, void *userdata) {
    session_t *session = (session_t *)userdata;
@@ -128,50 +75,40 @@ static void session_text_chunk_callback(const char *chunk, void *userdata) {
    /* Chunks are accumulated by the streaming layer (llm_streaming.c)
     * and also sent to WebSocket for real-time display */
 #ifdef ENABLE_WEBUI
-   if (session->type == SESSION_TYPE_WEBSOCKET) {
-      /* Filter out <command>...</command> tags */
-      char filtered[256];
-      int len = filter_command_tags(session, chunk, filtered, sizeof(filtered));
-      if (len > 0) {
-         uint64_t now_ms = get_time_ms();
+   if (session->type == SESSION_TYPE_WEBSOCKET && chunk && chunk[0] != '\0') {
+      uint64_t now_ms = get_time_ms();
 
-         /* Send stream_start on first actual content (lazy initialization).
-          * This prevents creating UI box for responses that are only commands. */
-         if (!session->llm_streaming_active) {
-            webui_send_stream_start(session);
-         }
-
-         /* Track timing for first token (TTFT) */
-         if (session->first_token_ms == 0) {
-            session->first_token_ms = now_ms;
-         }
-
-         /* Track token count and timing for rate calculation */
-         session->stream_token_count++;
-         session->last_token_ms = now_ms;
-
-         /* Calculate metrics */
-         int ttft_ms = 0;
-         float token_rate = 0.0f;
-
-         if (session->stream_start_ms > 0) {
-            ttft_ms = (int)(session->first_token_ms - session->stream_start_ms);
-
-            /* Calculate tokens per second based on elapsed time since first token */
-            uint64_t streaming_duration_ms = now_ms - session->first_token_ms;
-            if (streaming_duration_ms > 0 && session->stream_token_count > 1) {
-               token_rate = (float)(session->stream_token_count - 1) * 1000.0f /
-                            (float)streaming_duration_ms;
-            }
-         }
-
-         /* Send metrics update periodically (every 5 tokens to avoid flooding) */
-         if (session->stream_token_count % 5 == 0 || session->stream_token_count == 1) {
-            webui_send_metrics_update(session, "thinking", ttft_ms, token_rate, -1);
-         }
-
-         webui_send_stream_delta(session, filtered);
+      /* Track timing for first token (TTFT) - based on LLM output, not filtering */
+      if (session->first_token_ms == 0) {
+         session->first_token_ms = now_ms;
       }
+
+      /* Track token count and timing for rate calculation */
+      session->stream_token_count++;
+      session->last_token_ms = now_ms;
+
+      /* Calculate metrics */
+      int ttft_ms = 0;
+      float token_rate = 0.0f;
+
+      if (session->stream_start_ms > 0) {
+         ttft_ms = (int)(session->first_token_ms - session->stream_start_ms);
+
+         /* Calculate tokens per second based on elapsed time since first token */
+         uint64_t streaming_duration_ms = now_ms - session->first_token_ms;
+         if (streaming_duration_ms > 0 && session->stream_token_count > 1) {
+            token_rate = (float)(session->stream_token_count - 1) * 1000.0f /
+                         (float)streaming_duration_ms;
+         }
+      }
+
+      /* Send metrics update periodically (every 5 tokens to avoid flooding) */
+      if (session->stream_token_count % 5 == 0 || session->stream_token_count == 1) {
+         webui_send_metrics_update(session, "thinking", ttft_ms, token_rate, -1);
+      }
+
+      /* Send to WebUI - filtering and stream_start handled internally */
+      webui_send_stream_delta(session, chunk);
    }
 #endif
 }
@@ -984,7 +921,7 @@ static int llm_call_prepare(session_t *session, const char *user_text, llm_call_
 
    // Reset streaming filter state for WebSocket sessions
    if (session->type == SESSION_TYPE_WEBSOCKET) {
-      session->in_command_tag = false;
+      session->cmd_tag_filter.nesting_depth = 0;
       session->stream_had_content = false;
    }
 
@@ -1017,7 +954,7 @@ static char *llm_call_finalize(session_t *session, char *response, llm_call_ctx_
          webui_send_stream_end(session, response ? "complete" : "error");
       }
       // Fallback for non-streaming LLMs
-      if (response && !session->stream_had_content && !session->in_command_tag) {
+      if (response && !session->stream_had_content && session->cmd_tag_filter.nesting_depth == 0) {
          LOG_INFO("Session %u: LLM didn't stream, sending full transcript", session->session_id);
          webui_send_transcript(session, "assistant", response);
       }
@@ -1120,32 +1057,43 @@ static void combined_chunk_callback(const char *chunk, void *userdata) {
    session_t *session = ctx->session;
 
    // Early exit if client disconnected (avoid unnecessary TTS/WebSocket work)
-   if (!session || session->disconnected) {
+   if (!session || session->disconnected || !chunk || !chunk[0]) {
       return;
    }
 
-   // Filter command tags once for both consumers
+   uint64_t now_ms = get_time_ms();
+
+   /* Track timing for first token (TTFT) - based on LLM output, not filtering */
+   if (session->first_token_ms == 0) {
+      session->first_token_ms = now_ms;
+   }
+
+   /* Track token count and timing for rate calculation */
+   session->stream_token_count++;
+   session->last_token_ms = now_ms;
+
+   /* Filter command tags ONCE for both consumers (WebUI and TTS).
+    * This updates session state and returns filtered text.
+    * Both consumers use the same filtered output for consistency. */
    char filtered[256];
-   int len = filter_command_tags(session, chunk, filtered, sizeof(filtered));
+   int len;
+
+   if (session->cmd_tag_filter_bypass) {
+      /* Native tools mode: no command tags to filter, pass through */
+      size_t chunk_len = strlen(chunk);
+      len = chunk_len < sizeof(filtered) - 1 ? (int)chunk_len : (int)(sizeof(filtered) - 1);
+      memcpy(filtered, chunk, (size_t)len);
+      filtered[len] = '\0';
+   } else {
+      /* Legacy mode: filter <command>...</command> tags */
+      len = text_filter_command_tags_to_buffer(&session->cmd_tag_filter, chunk, filtered,
+                                               sizeof(filtered));
+   }
+
    if (len > 0) {
-      uint64_t now_ms = get_time_ms();
-
 #ifdef ENABLE_WEBUI
-      // 1. Send to WebUI for real-time text display
+      // 1. Send filtered text to WebUI for real-time display
       if (session->type == SESSION_TYPE_WEBSOCKET) {
-         if (!session->llm_streaming_active) {
-            webui_send_stream_start(session);
-         }
-
-         /* Track timing for first token (TTFT) */
-         if (session->first_token_ms == 0) {
-            session->first_token_ms = now_ms;
-         }
-
-         /* Track token count and timing for rate calculation */
-         session->stream_token_count++;
-         session->last_token_ms = now_ms;
-
          /* Calculate metrics */
          int ttft_ms = 0;
          float token_rate = 0.0f;
@@ -1165,10 +1113,9 @@ static void combined_chunk_callback(const char *chunk, void *userdata) {
             webui_send_metrics_update(session, "thinking", ttft_ms, token_rate, -1);
          }
 
+         /* Send pre-filtered text (no command tags to filter) */
          webui_send_stream_delta(session, filtered);
       }
-#else
-      (void)now_ms;  // Silence unused variable warning
 #endif
 
       // 2. Feed filtered text to sentence buffer for TTS

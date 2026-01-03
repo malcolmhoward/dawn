@@ -2383,6 +2383,22 @@ button:disabled {
   color: var(--accent);
 }
 
+#logout-btn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 0.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color var(--transition-fast);
+}
+
+#logout-btn:hover {
+  color: var(--accent);
+}
+
 /* Mobile adjustments for metrics */
 @media (max-width: 600px) {
   .metrics-content {

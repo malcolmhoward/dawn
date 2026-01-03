@@ -50,7 +50,9 @@
 #include "config/dawn_config.h"
 #include "core/command_router.h"
 #include "core/ocp_helpers.h"
+#include "core/rate_limiter.h"
 #include "core/session_manager.h"
+#include "core/text_filter.h"
 #include "core/worker_pool.h"
 #include "dawn.h"
 #include "llm/llm_command_parser.h"
@@ -64,6 +66,50 @@
 #include "tts/tts_preprocessing.h"
 #include "ui/metrics.h"
 #include "version.h"
+
+#ifdef ENABLE_AUTH
+#include "auth/auth_crypto.h"
+#include "auth/auth_db.h"
+
+/* HTTP 429 Too Many Requests - not defined in older libwebsockets */
+#ifndef HTTP_STATUS_TOO_MANY_REQUESTS
+#define HTTP_STATUS_TOO_MANY_REQUESTS 429
+#endif
+
+/* Rate limiting constants */
+#define RATE_LIMIT_WINDOW_SEC (15 * 60) /* 15 minutes */
+#define RATE_LIMIT_MAX_ATTEMPTS 20      /* Max attempts per IP in window */
+
+/* CSRF endpoint rate limiting (more permissive - token generation is lighter) */
+#define CSRF_RATE_LIMIT_WINDOW_SEC 60 /* 1 minute */
+#define CSRF_RATE_LIMIT_MAX 30        /* Max 30 tokens per minute per IP */
+
+/* CSRF single-use nonce tracking (circular buffer)
+ * 1024 entries @ 16 bytes = 16KB, covers ~102 req/min with 10-min validity.
+ * Must be power of 2 for bitwise AND optimization in circular buffer. */
+#define CSRF_USED_NONCE_SIZE 16    /* Nonce size in bytes */
+#define CSRF_USED_NONCE_COUNT 1024 /* Track last 1024 used nonces */
+_Static_assert((CSRF_USED_NONCE_COUNT & (CSRF_USED_NONCE_COUNT - 1)) == 0,
+               "CSRF_USED_NONCE_COUNT must be power of 2");
+
+/* Multi-IP rate limiting for CSRF endpoint */
+#define CSRF_RATE_LIMIT_SLOTS 32 /* Track up to 32 concurrent IPs */
+
+/* Multi-IP rate limiting for login endpoint (in-memory fast-path)
+ * This supplements the database-backed rate limiting with fast rejection */
+#define LOGIN_RATE_LIMIT_SLOTS 32 /* Track up to 32 concurrent IPs */
+
+/**
+ * @brief Dummy password hash for timing equalization
+ *
+ * Used when user is not found to prevent username enumeration via timing.
+ * This is a valid Argon2id hash structure that will always fail verification.
+ */
+static const char DUMMY_PASSWORD_HASH[] = "$argon2id$v=19$m=16384,t=3,p=1$"
+                                          "AAAAAAAAAAAAAAAAAAAAAA$"
+                                          "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+
+#endif /* ENABLE_AUTH */
 
 /* =============================================================================
  * Module State
@@ -79,6 +125,30 @@ static pthread_mutex_t s_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /* Config modification mutex - protects against concurrent config reads during writes */
 static pthread_rwlock_t s_config_rwlock = PTHREAD_RWLOCK_INITIALIZER;
+
+#ifdef ENABLE_AUTH
+/* CSRF single-use nonce tracking (circular buffer)
+ * Tracks recently used nonces to prevent token replay within validity window */
+static struct {
+   unsigned char nonces[CSRF_USED_NONCE_COUNT][CSRF_USED_NONCE_SIZE];
+   int head;
+   pthread_mutex_t mutex;
+} s_csrf_used = { .head = 0, .mutex = PTHREAD_MUTEX_INITIALIZER };
+
+/* CSRF endpoint rate limiting (uses generic rate limiter) */
+static rate_limit_entry_t s_csrf_rate_entries[CSRF_RATE_LIMIT_SLOTS];
+static rate_limiter_t s_csrf_rate = RATE_LIMITER_STATIC_INIT(s_csrf_rate_entries,
+                                                             CSRF_RATE_LIMIT_SLOTS,
+                                                             CSRF_RATE_LIMIT_MAX,
+                                                             CSRF_RATE_LIMIT_WINDOW_SEC);
+
+/* Login rate limiting (uses generic rate limiter) */
+static rate_limit_entry_t s_login_rate_entries[LOGIN_RATE_LIMIT_SLOTS];
+static rate_limiter_t s_login_rate = RATE_LIMITER_STATIC_INIT(s_login_rate_entries,
+                                                              LOGIN_RATE_LIMIT_SLOTS,
+                                                              RATE_LIMIT_MAX_ATTEMPTS,
+                                                              RATE_LIMIT_WINDOW_SEC);
+#endif /* ENABLE_AUTH */
 
 /* =============================================================================
  * Response Queue (worker -> WebUI thread)
@@ -404,11 +474,18 @@ static bool is_path_within_www(const char *filepath, const char *www_path) {
 }
 
 /* =============================================================================
- * HTTP Session Data (minimal - just for lws requirements)
+ * HTTP Session Data
  * ============================================================================= */
 
+#define HTTP_MAX_POST_BODY 4096
+#define AUTH_COOKIE_NAME "dawn_session"
+#define AUTH_COOKIE_MAX_AGE (24 * 60 * 60) /* 24 hours */
+
 struct http_session_data {
-   int placeholder;
+   char path[256]; /* Request path */
+   char post_body[HTTP_MAX_POST_BODY];
+   size_t post_body_len;
+   bool is_post;
 };
 
 /* =============================================================================
@@ -897,6 +974,479 @@ static void process_response_queue(void) {
 }
 
 /* =============================================================================
+ * Authentication Helpers
+ * ============================================================================= */
+
+#ifdef ENABLE_AUTH
+
+/**
+ * @brief Extract session token from Cookie header
+ * @param wsi WebSocket/HTTP connection
+ * @param token_out Buffer to store token (must be AUTH_TOKEN_LEN bytes)
+ * @return true if token found, false otherwise
+ */
+static bool extract_session_cookie(struct lws *wsi, char *token_out) {
+   char cookie_buf[512];
+   int len = lws_hdr_copy(wsi, cookie_buf, sizeof(cookie_buf), WSI_TOKEN_HTTP_COOKIE);
+   if (len <= 0) {
+      return false;
+   }
+
+   /* Parse cookie header for dawn_session=<token> */
+   const char *prefix = AUTH_COOKIE_NAME "=";
+   char *start = strstr(cookie_buf, prefix);
+   if (!start) {
+      return false;
+   }
+
+   start += strlen(prefix);
+   char *end = strchr(start, ';');
+   size_t token_len = end ? (size_t)(end - start) : strlen(start);
+
+   if (token_len >= AUTH_TOKEN_LEN || token_len == 0) {
+      return false;
+   }
+
+   memcpy(token_out, start, token_len);
+   token_out[token_len] = '\0';
+   return true;
+}
+
+/**
+ * @brief Check if request is authenticated via session cookie
+ * @param wsi WebSocket/HTTP connection
+ * @param session_out If not NULL, filled with session info on success
+ * @return true if authenticated, false otherwise
+ */
+static bool is_request_authenticated(struct lws *wsi, auth_session_t *session_out) {
+   char token[AUTH_TOKEN_LEN];
+   if (!extract_session_cookie(wsi, token)) {
+      return false;
+   }
+
+   auth_session_t session;
+   if (auth_db_get_session(token, &session) != AUTH_DB_SUCCESS) {
+      return false;
+   }
+
+   /* Update session activity */
+   auth_db_update_session_activity(token);
+
+   if (session_out) {
+      *session_out = session;
+   }
+   return true;
+}
+
+/**
+ * @brief Send JSON response with optional Set-Cookie header
+ * @param wsi HTTP connection
+ * @param status HTTP status code
+ * @param json_body JSON string to send
+ * @param cookie Cookie value to set (NULL for no cookie, empty string to clear)
+ * @return 0 on success, -1 on failure
+ */
+static int send_auth_response(struct lws *wsi,
+                              int status,
+                              const char *json_body,
+                              const char *cookie) {
+   size_t body_len = strlen(json_body);
+   unsigned char buffer[LWS_PRE + 4096];
+   unsigned char *start = &buffer[LWS_PRE];
+   unsigned char *p = start;
+   unsigned char *end = &buffer[sizeof(buffer) - 1];
+
+   if (lws_add_http_header_status(wsi, (unsigned int)status, &p, end))
+      return -1;
+   if (lws_add_http_header_by_token(wsi, WSI_TOKEN_HTTP_CONTENT_TYPE,
+                                    (unsigned char *)"application/json", 16, &p, end))
+      return -1;
+   if (lws_add_http_header_content_length(wsi, body_len, &p, end))
+      return -1;
+
+   /* Add Set-Cookie header if provided */
+   if (cookie) {
+      char cookie_header[256];
+      if (cookie[0] == '\0') {
+         /* Clear cookie */
+         snprintf(cookie_header, sizeof(cookie_header),
+                  "%s=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0", AUTH_COOKIE_NAME);
+      } else {
+         /* Set cookie */
+         snprintf(cookie_header, sizeof(cookie_header),
+                  "%s=%s; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=%d", AUTH_COOKIE_NAME,
+                  cookie, AUTH_COOKIE_MAX_AGE);
+      }
+      if (lws_add_http_header_by_name(wsi, (unsigned char *)"Set-Cookie:",
+                                      (unsigned char *)cookie_header, (int)strlen(cookie_header),
+                                      &p, end))
+         return -1;
+   }
+
+   if (lws_finalize_http_header(wsi, &p, end))
+      return -1;
+
+   /* Write headers first */
+   int n = lws_write(wsi, start, (size_t)(p - start), LWS_WRITE_HTTP_HEADERS);
+   if (n < 0)
+      return -1;
+
+   /* Write body - use LWS_WRITE_HTTP_FINAL to indicate completion */
+   n = lws_write(wsi, (unsigned char *)json_body, body_len, LWS_WRITE_HTTP_FINAL);
+   if (n < 0)
+      return -1;
+
+   return 0;
+}
+
+/**
+ * @brief Send JSON response with no-cache headers
+ *
+ * Used for sensitive endpoints like CSRF token generation where caching
+ * would be a security risk.
+ *
+ * @param wsi HTTP connection
+ * @param status HTTP status code
+ * @param json_body JSON string to send
+ * @return 0 on success, -1 on failure
+ */
+static int send_nocache_json_response(struct lws *wsi, int status, const char *json_body) {
+   size_t body_len = strlen(json_body);
+   unsigned char buffer[LWS_PRE + 4096];
+   unsigned char *start = &buffer[LWS_PRE];
+   unsigned char *p = start;
+   unsigned char *end = &buffer[sizeof(buffer) - 1];
+
+   if (lws_add_http_header_status(wsi, (unsigned int)status, &p, end))
+      return -1;
+   if (lws_add_http_header_by_token(wsi, WSI_TOKEN_HTTP_CONTENT_TYPE,
+                                    (unsigned char *)"application/json", 16, &p, end))
+      return -1;
+   if (lws_add_http_header_content_length(wsi, body_len, &p, end))
+      return -1;
+
+   /* Add no-cache headers to prevent token caching */
+   if (lws_add_http_header_by_name(wsi, (unsigned char *)"Cache-Control:",
+                                   (unsigned char *)"no-store, no-cache, must-revalidate, private",
+                                   44, &p, end))
+      return -1;
+   if (lws_add_http_header_by_name(wsi, (unsigned char *)"Pragma:", (unsigned char *)"no-cache", 8,
+                                   &p, end))
+      return -1;
+
+   if (lws_finalize_http_header(wsi, &p, end))
+      return -1;
+
+   /* Write headers first */
+   int n = lws_write(wsi, start, (size_t)(p - start), LWS_WRITE_HTTP_HEADERS);
+   if (n < 0)
+      return -1;
+
+   /* Write body - use LWS_WRITE_HTTP_FINAL to indicate completion */
+   n = lws_write(wsi, (unsigned char *)json_body, body_len, LWS_WRITE_HTTP_FINAL);
+   if (n < 0)
+      return -1;
+
+   return 0;
+}
+
+/* Rate limiting uses generic rate_limiter API from core/rate_limiter.h */
+
+/**
+ * @brief Record a CSRF nonce as used (single-use enforcement)
+ *
+ * @param nonce 16-byte nonce from CSRF token
+ */
+static void csrf_record_used_nonce(const unsigned char *nonce) {
+   pthread_mutex_lock(&s_csrf_used.mutex);
+   memcpy(s_csrf_used.nonces[s_csrf_used.head], nonce, CSRF_USED_NONCE_SIZE);
+   s_csrf_used.head = (s_csrf_used.head + 1) &
+                      (CSRF_USED_NONCE_COUNT - 1); /* Bitwise AND for power-of-2 */
+   pthread_mutex_unlock(&s_csrf_used.mutex);
+}
+
+/**
+ * @brief Check if a CSRF nonce has already been used
+ *
+ * @param nonce 16-byte nonce from CSRF token
+ * @return true if already used (replay attack), false if fresh
+ */
+static bool csrf_is_nonce_used(const unsigned char *nonce) {
+   pthread_mutex_lock(&s_csrf_used.mutex);
+   for (int i = 0; i < CSRF_USED_NONCE_COUNT; i++) {
+      if (sodium_memcmp(s_csrf_used.nonces[i], nonce, CSRF_USED_NONCE_SIZE) == 0) {
+         pthread_mutex_unlock(&s_csrf_used.mutex);
+         return true;
+      }
+   }
+   pthread_mutex_unlock(&s_csrf_used.mutex);
+   return false;
+}
+
+/**
+ * @brief Handle POST /api/auth/login
+ * @param wsi HTTP connection
+ * @param pss Session data containing POST body
+ * @return -1 to close connection after response
+ */
+static int handle_auth_login(struct lws *wsi, struct http_session_data *pss) {
+   char response[256];
+
+   /* Get client IP early for rate limiting and logging */
+   char client_ip[64] = "unknown";
+   lws_get_peer_simple(wsi, client_ip, sizeof(client_ip));
+
+   /* Normalize IP for rate limiting (IPv6 /64 prefix) */
+   char normalized_ip[RATE_LIMIT_IP_SIZE];
+   rate_limiter_normalize_ip(client_ip, normalized_ip, sizeof(normalized_ip));
+
+   /* Check IP-based rate limiting - in-memory fast-path first, then database */
+   if (rate_limiter_check(&s_login_rate, normalized_ip)) {
+      LOG_WARNING("WebUI: Rate limited IP (in-memory): %s (normalized: %s)", client_ip,
+                  normalized_ip);
+      auth_db_log_event("RATE_LIMITED", NULL, client_ip, "Too many failed attempts");
+      snprintf(response, sizeof(response),
+               "{\"success\":false,\"error\":\"Too many attempts. Try again later.\"}");
+      send_auth_response(wsi, HTTP_STATUS_TOO_MANY_REQUESTS, response, NULL);
+      return -1;
+   }
+
+   /* Also check database for persistence across restarts */
+   time_t window_start = time(NULL) - RATE_LIMIT_WINDOW_SEC;
+   int recent_failures = auth_db_count_recent_failures(normalized_ip, window_start);
+   if (recent_failures >= RATE_LIMIT_MAX_ATTEMPTS) {
+      LOG_WARNING("WebUI: Rate limited IP (database): %s (normalized: %s)", client_ip,
+                  normalized_ip);
+      auth_db_log_event("RATE_LIMITED", NULL, client_ip, "Too many failed attempts");
+      snprintf(response, sizeof(response),
+               "{\"success\":false,\"error\":\"Too many attempts. Try again later.\"}");
+      send_auth_response(wsi, HTTP_STATUS_TOO_MANY_REQUESTS, response, NULL);
+      return -1;
+   }
+
+   /* Parse JSON body */
+   struct json_object *req = json_tokener_parse(pss->post_body);
+   if (!req) {
+      snprintf(response, sizeof(response), "{\"success\":false,\"error\":\"Invalid JSON\"}");
+      send_auth_response(wsi, HTTP_STATUS_BAD_REQUEST, response, NULL);
+      return -1;
+   }
+
+   /* Extract and validate CSRF token */
+   struct json_object *csrf_obj;
+   if (!json_object_object_get_ex(req, "csrf_token", &csrf_obj)) {
+      json_object_put(req);
+      LOG_WARNING("WebUI: Login attempt without CSRF token from %s", client_ip);
+      snprintf(response, sizeof(response), "{\"success\":false,\"error\":\"Missing CSRF token\"}");
+      send_auth_response(wsi, HTTP_STATUS_BAD_REQUEST, response, NULL);
+      return -1;
+   }
+
+   const char *csrf_token = json_object_get_string(csrf_obj);
+   unsigned char csrf_nonce[AUTH_CSRF_NONCE_SIZE];
+   if (!auth_verify_csrf_token_extract_nonce(csrf_token, csrf_nonce)) {
+      json_object_put(req);
+      LOG_WARNING("WebUI: Invalid CSRF token from %s", client_ip);
+      auth_db_log_event("CSRF_FAILED", NULL, client_ip, "Invalid or expired CSRF token");
+      snprintf(response, sizeof(response),
+               "{\"success\":false,\"error\":\"Invalid or expired token. Please refresh.\"}");
+      send_auth_response(wsi, HTTP_STATUS_FORBIDDEN, response, NULL);
+      return -1;
+   }
+
+   /* Check for CSRF token replay (single-use enforcement) */
+   if (csrf_is_nonce_used(csrf_nonce)) {
+      json_object_put(req);
+      LOG_WARNING("WebUI: CSRF token replay attempt from %s", client_ip);
+      auth_db_log_event("CSRF_REPLAY", NULL, client_ip, "CSRF token reuse detected");
+      snprintf(response, sizeof(response),
+               "{\"success\":false,\"error\":\"Token already used. Please refresh.\"}");
+      send_auth_response(wsi, HTTP_STATUS_FORBIDDEN, response, NULL);
+      return -1;
+   }
+
+   /* Mark CSRF token as used (do this early, even before checking credentials) */
+   csrf_record_used_nonce(csrf_nonce);
+
+   struct json_object *username_obj, *password_obj;
+   if (!json_object_object_get_ex(req, "username", &username_obj) ||
+       !json_object_object_get_ex(req, "password", &password_obj)) {
+      json_object_put(req);
+      snprintf(response, sizeof(response),
+               "{\"success\":false,\"error\":\"Missing username or password\"}");
+      send_auth_response(wsi, HTTP_STATUS_BAD_REQUEST, response, NULL);
+      return -1;
+   }
+
+   const char *username = json_object_get_string(username_obj);
+   const char *password = json_object_get_string(password_obj);
+
+   /* Get user from database */
+   auth_user_t user;
+   if (auth_db_get_user(username, &user) != AUTH_DB_SUCCESS) {
+      /* Timing equalization: perform dummy password hash verification
+       * to prevent timing attacks that could enumerate valid usernames */
+      (void)auth_verify_password(DUMMY_PASSWORD_HASH, password);
+      json_object_put(req);
+      LOG_WARNING("WebUI: Login failed - user not found: %s", username);
+      auth_db_log_attempt(normalized_ip, username, false);
+      snprintf(response, sizeof(response), "{\"success\":false,\"error\":\"Invalid credentials\"}");
+      send_auth_response(wsi, HTTP_STATUS_UNAUTHORIZED, response, NULL);
+      return -1;
+   }
+
+   /* Check if account is locked */
+   if (user.lockout_until > time(NULL)) {
+      json_object_put(req);
+      LOG_WARNING("WebUI: Login failed - account locked: %s", username);
+      auth_db_log_attempt(normalized_ip, username, false);
+      snprintf(response, sizeof(response),
+               "{\"success\":false,\"error\":\"Account temporarily locked\"}");
+      send_auth_response(wsi, HTTP_STATUS_FORBIDDEN, response, NULL);
+      return -1;
+   }
+
+   /* Verify password - auth_verify_password returns bool (true=success) */
+   if (!auth_verify_password(user.password_hash, password)) {
+      json_object_put(req);
+      auth_db_increment_failed_attempts(username);
+      auth_db_log_attempt(normalized_ip, username, false);
+      LOG_WARNING("WebUI: Login failed - wrong password: %s", username);
+      snprintf(response, sizeof(response), "{\"success\":false,\"error\":\"Invalid credentials\"}");
+      send_auth_response(wsi, HTTP_STATUS_UNAUTHORIZED, response, NULL);
+      return -1;
+   }
+
+   json_object_put(req);
+
+   /* Generate session token */
+   char session_token[AUTH_TOKEN_LEN];
+   if (auth_generate_token(session_token) != AUTH_CRYPTO_SUCCESS) {
+      LOG_ERROR("WebUI: Failed to generate session token");
+      snprintf(response, sizeof(response), "{\"success\":false,\"error\":\"Server error\"}");
+      send_auth_response(wsi, HTTP_STATUS_INTERNAL_SERVER_ERROR, response, NULL);
+      return -1;
+   }
+
+   /* Create session in database */
+   if (auth_db_create_session(user.id, session_token, client_ip, "WebUI") != AUTH_DB_SUCCESS) {
+      LOG_ERROR("WebUI: Failed to create session for user: %s", username);
+      snprintf(response, sizeof(response), "{\"success\":false,\"error\":\"Server error\"}");
+      send_auth_response(wsi, HTTP_STATUS_INTERNAL_SERVER_ERROR, response, NULL);
+      auth_secure_zero(session_token, sizeof(session_token));
+      return -1;
+   }
+
+   /* Reset failed attempts and update last login */
+   auth_db_reset_failed_attempts(username);
+   rate_limiter_reset(&s_login_rate, normalized_ip); /* Clear in-memory rate limit on success */
+   auth_db_update_last_login(username);
+   auth_db_log_attempt(normalized_ip, username, true);
+   auth_db_log_event("LOGIN_SUCCESS", username, client_ip, "WebUI login successful");
+
+   LOG_INFO("WebUI: User logged in: %s from %s", username, client_ip);
+
+   /* Send success response with session cookie */
+   snprintf(response, sizeof(response), "{\"success\":true,\"username\":\"%s\",\"is_admin\":%s}",
+            username, user.is_admin ? "true" : "false");
+   send_auth_response(wsi, HTTP_STATUS_OK, response, session_token);
+
+   /* Clear session token from stack after use */
+   auth_secure_zero(session_token, sizeof(session_token));
+   return -1;
+}
+
+/**
+ * @brief Handle POST /api/auth/logout
+ * @param wsi HTTP connection
+ * @return -1 to close connection after response
+ */
+static int handle_auth_logout(struct lws *wsi) {
+   char token[AUTH_TOKEN_LEN];
+   if (extract_session_cookie(wsi, token)) {
+      auth_session_t session;
+      if (auth_db_get_session(token, &session) == AUTH_DB_SUCCESS) {
+         char client_ip[64] = "unknown";
+         lws_get_peer_simple(wsi, client_ip, sizeof(client_ip));
+         auth_db_log_event("logout", session.username, client_ip, "WebUI logout");
+         auth_db_delete_session(token);
+         LOG_INFO("WebUI: User logged out: %s", session.username);
+      }
+   }
+
+   /* Use simple HTTP status - no body needed, avoids lws_write issues.
+    * JavaScript redirects regardless of response content. */
+   lws_return_http_status(wsi, HTTP_STATUS_OK, NULL);
+   return -1;
+}
+
+/**
+ * @brief Handle GET /api/auth/status
+ * @param wsi HTTP connection
+ * @return -1 to close connection after response
+ */
+static int handle_auth_status(struct lws *wsi) {
+   auth_session_t session;
+   char response[256];
+
+   if (is_request_authenticated(wsi, &session)) {
+      snprintf(response, sizeof(response),
+               "{\"authenticated\":true,\"username\":\"%s\",\"is_admin\":%s}", session.username,
+               session.is_admin ? "true" : "false");
+   } else {
+      snprintf(response, sizeof(response), "{\"authenticated\":false}");
+   }
+
+   send_auth_response(wsi, HTTP_STATUS_OK, response, NULL);
+   return -1;
+}
+
+/**
+ * @brief Handle GET /api/auth/csrf
+ * @param wsi HTTP connection
+ * @return -1 to close connection after response
+ *
+ * Returns a CSRF token for use in login and other state-changing requests.
+ * Token is HMAC-signed and valid for AUTH_CSRF_TIMEOUT_SEC seconds.
+ */
+static int handle_auth_csrf(struct lws *wsi) {
+   /* Get client IP and normalize for rate limiting (IPv6 /64 prefix) */
+   char client_ip[64] = "unknown";
+   char normalized_ip[RATE_LIMIT_IP_SIZE];
+   lws_get_peer_simple(wsi, client_ip, sizeof(client_ip));
+   rate_limiter_normalize_ip(client_ip, normalized_ip, sizeof(normalized_ip));
+
+   /* Check CSRF endpoint rate limiting (prevent DoS via token generation) */
+   if (rate_limiter_check(&s_csrf_rate, normalized_ip)) {
+      LOG_WARNING("WebUI: CSRF rate limited: %s", normalized_ip);
+      send_nocache_json_response(wsi, HTTP_STATUS_TOO_MANY_REQUESTS,
+                                 "{\"error\":\"Too many requests\"}");
+      return -1;
+   }
+
+   char csrf_token[AUTH_CSRF_TOKEN_LEN];
+
+   if (auth_generate_csrf_token(csrf_token) != AUTH_CRYPTO_SUCCESS) {
+      LOG_ERROR("WebUI: Failed to generate CSRF token");
+      send_nocache_json_response(wsi, HTTP_STATUS_INTERNAL_SERVER_ERROR,
+                                 "{\"error\":\"Failed to generate token\"}");
+      return -1;
+   }
+
+   char response[256];
+   snprintf(response, sizeof(response), "{\"csrf_token\":\"%s\"}", csrf_token);
+
+   /* Clear token from stack */
+   auth_secure_zero(csrf_token, sizeof(csrf_token));
+
+   /* Use no-cache response to prevent browser/proxy caching */
+   send_nocache_json_response(wsi, HTTP_STATUS_OK, response);
+   return -1;
+}
+
+#endif /* ENABLE_AUTH */
+
+/* =============================================================================
  * HTTP Protocol Callbacks
  * ============================================================================= */
 
@@ -905,7 +1455,7 @@ static int callback_http(struct lws *wsi,
                          void *user,
                          void *in,
                          size_t len) {
-   (void)user; /* Unused in Phase 1 */
+   struct http_session_data *pss = (struct http_session_data *)user;
 
    switch (reason) {
       case LWS_CALLBACK_FILTER_NETWORK_CONNECTION:
@@ -928,6 +1478,67 @@ static int callback_http(struct lws *wsi,
          /* Get requested path */
          strncpy(path, (const char *)in, sizeof(path) - 1);
          path[sizeof(path) - 1] = '\0';
+
+         /* Initialize session data */
+         if (pss) {
+            strncpy(pss->path, path, sizeof(pss->path) - 1);
+            pss->path[sizeof(pss->path) - 1] = '\0';
+            pss->post_body_len = 0;
+            pss->post_body[0] = '\0';
+            pss->is_post = (lws_hdr_total_length(wsi, WSI_TOKEN_POST_URI) > 0);
+         }
+
+#ifdef ENABLE_AUTH
+         /* Auth API endpoints - no auth required for these */
+         if (strcmp(path, "/api/auth/status") == 0) {
+            return handle_auth_status(wsi);
+         }
+
+         if (strcmp(path, "/api/auth/csrf") == 0) {
+            return handle_auth_csrf(wsi);
+         }
+
+         if (strcmp(path, "/api/auth/logout") == 0) {
+            return handle_auth_logout(wsi);
+         }
+
+         /* POST /api/auth/login - defer to body completion */
+         if (strcmp(path, "/api/auth/login") == 0 && pss && pss->is_post) {
+            /* Return 0 to allow body callbacks */
+            return 0;
+         }
+
+         /* Public paths that don't require auth */
+         bool is_public_path = (strcmp(path, "/login.html") == 0 || strcmp(path, "/health") == 0 ||
+                                strncmp(path, "/css/", 5) == 0 ||
+                                strncmp(path, "/fonts/", 7) == 0 ||
+                                strcmp(path, "/favicon.svg") == 0);
+
+         /* Check authentication for protected paths */
+         if (!is_public_path && !is_request_authenticated(wsi, NULL)) {
+            /* Redirect to login page */
+            unsigned char buffer[LWS_PRE + 256];
+            unsigned char *start = &buffer[LWS_PRE];
+            unsigned char *p = start;
+            unsigned char *end = &buffer[sizeof(buffer) - 1];
+
+            if (lws_add_http_header_status(wsi, HTTP_STATUS_FOUND, &p, end))
+               return -1;
+            if (lws_add_http_header_by_name(wsi, (unsigned char *)"Location:",
+                                            (unsigned char *)"/login.html", 11, &p, end))
+               return -1;
+            if (lws_add_http_header_content_length(wsi, 0, &p, end))
+               return -1;
+            if (lws_finalize_http_header(wsi, &p, end))
+               return -1;
+
+            n = lws_write(wsi, start, (size_t)(p - start), LWS_WRITE_HTTP_HEADERS);
+            if (n < 0)
+               return -1;
+
+            return -1; /* Close connection */
+         }
+#endif /* ENABLE_AUTH */
 
          /* SmartThings OAuth callback - extract code and state from URL */
          if (strncmp(path, "/smartthings/callback", 21) == 0) {
@@ -1065,6 +1676,39 @@ static int callback_http(struct lws *wsi,
       case LWS_CALLBACK_HTTP_FILE_COMPLETION:
          /* File transfer complete */
          return -1; /* Close connection */
+
+#ifdef ENABLE_AUTH
+      case LWS_CALLBACK_HTTP_BODY: {
+         /* Accumulate POST body */
+         if (!pss)
+            return -1;
+
+         size_t remaining = HTTP_MAX_POST_BODY - pss->post_body_len - 1;
+         size_t to_copy = (len < remaining) ? len : remaining;
+
+         if (to_copy > 0) {
+            memcpy(pss->post_body + pss->post_body_len, in, to_copy);
+            pss->post_body_len += to_copy;
+            pss->post_body[pss->post_body_len] = '\0';
+         }
+         return 0;
+      }
+
+      case LWS_CALLBACK_HTTP_BODY_COMPLETION: {
+         /* POST body complete - process it */
+         if (!pss)
+            return -1;
+
+         /* Handle login endpoint */
+         if (strcmp(pss->path, "/api/auth/login") == 0) {
+            return handle_auth_login(wsi, pss);
+         }
+
+         /* Unknown POST endpoint */
+         lws_return_http_status(wsi, HTTP_STATUS_NOT_FOUND, NULL);
+         return -1;
+      }
+#endif /* ENABLE_AUTH */
 
       default:
          break;
@@ -3835,11 +4479,16 @@ void webui_send_stream_start(session_t *session) {
       return;
    }
 
-   /* Increment stream ID and mark streaming active.
-    * Note: Filter state is reset in session_llm_call() before LLM call.
-    * Don't reset stream_had_content here - it may already be set by filter. */
+   /* Increment stream ID and mark streaming active */
    atomic_fetch_add(&session->current_stream_id, 1);
    session->llm_streaming_active = true;
+
+   /* Reset command tag filter state for new stream */
+   session->cmd_tag_filter.nesting_depth = 0;
+   session->cmd_tag_filter.len = 0;
+
+   /* Cache whether to bypass filtering (native tools enabled) */
+   session->cmd_tag_filter_bypass = llm_tools_enabled(NULL);
 
    ws_response_t resp = { .session = session,
                           .type = WS_RESP_STREAM_START,
@@ -3853,18 +4502,23 @@ void webui_send_stream_start(session_t *session) {
             session->session_id);
 }
 
-void webui_send_stream_delta(session_t *session, const char *text) {
-   if (!session || session->type != SESSION_TYPE_WEBSOCKET) {
+/* Command tag filter uses shared constants from core/text_filter.h */
+
+/**
+ * @brief Output callback for WebUI streaming (adapter for text_filter API)
+ *
+ * This callback adapts the shared text_filter's signature to WebUI needs.
+ * Session is passed via ctx parameter.
+ */
+static void webui_filter_output(const char *text, size_t len, void *ctx) {
+   session_t *session = (session_t *)ctx;
+   if (!session || !text || len == 0) {
       return;
    }
 
-   /* Ignore deltas if not in streaming state */
+   /* Start stream on first content (lazy initialization) */
    if (!session->llm_streaming_active) {
-      return;
-   }
-
-   if (!text || text[0] == '\0') {
-      return;
+      webui_send_stream_start(session);
    }
 
    ws_response_t resp = { .session = session,
@@ -3873,12 +4527,82 @@ void webui_send_stream_delta(session_t *session, const char *text) {
                               .stream_id = session->current_stream_id,
                           } };
 
-   /* Copy text into fixed buffer (no malloc/free churn) */
-   strncpy(resp.stream.text, text, sizeof(resp.stream.text) - 1);
-   resp.stream.text[sizeof(resp.stream.text) - 1] = '\0';
+   size_t copy_len = len < sizeof(resp.stream.text) - 1 ? len : sizeof(resp.stream.text) - 1;
+   memcpy(resp.stream.text, text, copy_len);
+   resp.stream.text[copy_len] = '\0';
 
-   session->stream_had_content = true; /* Mark that content was delivered */
+   session->stream_had_content = true;
    queue_response(&resp);
+}
+
+/**
+ * @brief Filter command tags and return filtered text
+ *
+ * Public function for callers that need the filtered text (e.g., TTS).
+ * Uses the same state machine as WebUI streaming.
+ *
+ * @param session Session with filter state
+ * @param text Input text to filter
+ * @param out_buf Output buffer for filtered text
+ * @param out_size Size of output buffer
+ * @return Length of filtered text written to out_buf
+ */
+int webui_filter_command_tags(session_t *session,
+                              const char *text,
+                              char *out_buf,
+                              size_t out_size) {
+   if (!session || !text || !out_buf || out_size == 0) {
+      return 0;
+   }
+
+   /* Native tools mode: no command tags to filter */
+   if (session->cmd_tag_filter_bypass) {
+      size_t len = strlen(text);
+      size_t copy = len < out_size - 1 ? len : out_size - 1;
+      memcpy(out_buf, text, copy);
+      out_buf[copy] = '\0';
+      return (int)copy;
+   }
+
+   /* Use shared text filter implementation */
+   return text_filter_command_tags_to_buffer(&session->cmd_tag_filter, text, out_buf, out_size);
+}
+
+/**
+ * @brief Send streaming text to WebUI with command tag filtering
+ *
+ * Filters <command>...</command> tags when in legacy mode (native tools disabled).
+ * Automatically starts the stream on first content. Thread-safe per session.
+ */
+void webui_send_stream_delta(session_t *session, const char *text) {
+   if (!session || session->type != SESSION_TYPE_WEBSOCKET) {
+      return;
+   }
+
+   if (!text || text[0] == '\0') {
+      return;
+   }
+
+   /* If native tools are enabled, pass through without filtering */
+   if (session->cmd_tag_filter_bypass) {
+      if (!session->llm_streaming_active) {
+         webui_send_stream_start(session);
+      }
+
+      ws_response_t resp = { .session = session,
+                             .type = WS_RESP_STREAM_DELTA,
+                             .stream = {
+                                 .stream_id = session->current_stream_id,
+                             } };
+      strncpy(resp.stream.text, text, sizeof(resp.stream.text) - 1);
+      resp.stream.text[sizeof(resp.stream.text) - 1] = '\0';
+      session->stream_had_content = true;
+      queue_response(&resp);
+      return;
+   }
+
+   /* Legacy command tag mode: filter using shared state machine */
+   text_filter_command_tags(&session->cmd_tag_filter, text, webui_filter_output, session);
 }
 
 void webui_send_stream_end(session_t *session, const char *reason) {

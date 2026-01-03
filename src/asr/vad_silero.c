@@ -242,13 +242,6 @@ float vad_silero_process(silero_vad_context_t *ctx,
          max_float = audio_with_context[VAD_CONTEXT_SIZE + i];
    }
 
-   // Debug: Log normalized audio range every 50 calls
-   // Note: debug_counter is not thread-safe - this function must be called from single thread only
-   static int debug_counter = 0;
-   if (debug_counter++ % 50 == 0) {
-      LOG_INFO("VAD: normalized audio range=[%.4f,%.4f]", min_float, max_float);
-   }
-
    // Create input tensor: [1, 576] (context + audio)
    int64_t input_shape[] = { 1, VAD_CONTEXT_SIZE + VAD_SAMPLE_SIZE };
    OrtValue *input_tensor = NULL;
@@ -312,12 +305,6 @@ float vad_silero_process(silero_vad_context_t *ctx,
 
          // Update VAD probability metric for TUI display
          metrics_update_vad_probability(speech_prob);
-
-         // Debug: Log inference result every 50 calls (aligned with normalization logging)
-         // Note: debug_counter incremented above - not thread-safe
-         if (debug_counter % 50 == 1) {
-            LOG_INFO("VAD: inference succeeded, speech_prob=%.4f", speech_prob);
-         }
 
          // Update internal state for next inference
          float *new_state;

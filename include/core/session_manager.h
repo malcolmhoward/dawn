@@ -33,6 +33,7 @@
 #include <stdint.h>
 #include <time.h>
 
+#include "core/text_filter.h"   // For cmd_tag_filter_state_t
 #include "llm/llm_interface.h"  // For session_llm_config_t
 
 #ifdef __cplusplus
@@ -138,7 +139,9 @@ typedef struct session {
    uint32_t stream_token_count;  // Token count for current stream
 
    // Command tag filter state (strips <command>...</command> from stream)
-   bool in_command_tag;  // True when inside <command>...</command>
+   // Used when native tool calling is disabled (legacy command tag mode)
+   cmd_tag_filter_state_t cmd_tag_filter;  // State for text_filter_command_tags()
+   bool cmd_tag_filter_bypass;             // Cached: true if native tools enabled (skip filtering)
 
    // Reference counting for safe access (two-phase destruction pattern)
    int ref_count;

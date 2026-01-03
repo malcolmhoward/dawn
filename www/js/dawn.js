@@ -4480,6 +4480,36 @@
     if (metricsClose) {
       metricsClose.addEventListener('click', hideMetricsPanel);
     }
+
+    // Initialize logout button
+    initLogout();
+  }
+
+  // =============================================================================
+  // Logout Handler
+  // =============================================================================
+
+  function initLogout() {
+    const logoutBtn = document.getElementById('logout-btn');
+    if (logoutBtn) {
+      logoutBtn.addEventListener('click', handleLogout);
+    }
+  }
+
+  async function handleLogout() {
+    try {
+      // Use GET - logout has no request body
+      const response = await fetch('/api/auth/logout', {
+        credentials: 'same-origin'
+      });
+
+      // Always redirect to login page regardless of response
+      window.location.href = '/login.html';
+    } catch (err) {
+      console.error('Logout error:', err);
+      // Redirect anyway on network error
+      window.location.href = '/login.html';
+    }
   }
 
   function toggleMetricsPanel() {

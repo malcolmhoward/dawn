@@ -1359,7 +1359,7 @@ bool llm_tools_enabled(const llm_resolved_config_t *config) {
       return false;
    }
 
-   /* Check config option - default is false for backward compatibility */
+   /* Check config option - native tool calling is enabled by default */
    if (!g_config.llm.tools.native_enabled) {
       return false;
    }

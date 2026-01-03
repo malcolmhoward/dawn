@@ -253,6 +253,26 @@ int llm_check_connection(const char *url, int timeout_seconds) {
 }
 
 void llm_init(const char *cloud_provider_override) {
+   // Initialize tool calling system first - needed for both local and cloud LLMs
+   // Must happen before any early returns so tools are available for local mode
+   llm_tools_init();
+
+   // Apply per-tool enable config from TOML (do this early too)
+   if (g_config.llm.tools.local_enabled_count > 0 || g_config.llm.tools.remote_enabled_count > 0) {
+      const char *local_list[LLM_TOOLS_MAX_CONFIGURED];
+      const char *remote_list[LLM_TOOLS_MAX_CONFIGURED];
+
+      for (int i = 0; i < g_config.llm.tools.local_enabled_count; i++) {
+         local_list[i] = g_config.llm.tools.local_enabled[i];
+      }
+      for (int i = 0; i < g_config.llm.tools.remote_enabled_count; i++) {
+         remote_list[i] = g_config.llm.tools.remote_enabled[i];
+      }
+
+      llm_tools_apply_config(local_list, g_config.llm.tools.local_enabled_count, remote_list,
+                             g_config.llm.tools.remote_enabled_count);
+   }
+
    // Detect available providers from runtime config (secrets.toml)
    bool openai_available = is_openai_available();
    bool claude_available = is_claude_available();
@@ -306,25 +326,6 @@ void llm_init(const char *cloud_provider_override) {
 
    // Note: LLM type (local/cloud) is set by dawn.c after this function returns,
    // allowing proper TTS announcement after TTS is initialized.
-
-   // Initialize tool calling system (registers tools, checks capabilities)
-   llm_tools_init();
-
-   // Apply per-tool enable config from TOML
-   if (g_config.llm.tools.local_enabled_count > 0 || g_config.llm.tools.remote_enabled_count > 0) {
-      const char *local_list[LLM_TOOLS_MAX_CONFIGURED];
-      const char *remote_list[LLM_TOOLS_MAX_CONFIGURED];
-
-      for (int i = 0; i < g_config.llm.tools.local_enabled_count; i++) {
-         local_list[i] = g_config.llm.tools.local_enabled[i];
-      }
-      for (int i = 0; i < g_config.llm.tools.remote_enabled_count; i++) {
-         remote_list[i] = g_config.llm.tools.remote_enabled[i];
-      }
-
-      llm_tools_apply_config(local_list, g_config.llm.tools.local_enabled_count, remote_list,
-                             g_config.llm.tools.remote_enabled_count);
-   }
 }
 
 int llm_refresh_providers(void) {

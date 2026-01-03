@@ -85,6 +85,11 @@
 #ifdef ENABLE_WEBUI
 #include "webui/webui_server.h"
 #endif
+#ifdef ENABLE_AUTH
+#include "auth/admin_socket.h"
+#include "auth/auth_crypto.h"
+#include "auth/auth_db.h"
+#endif
 #ifdef ENABLE_AEC
 #include "audio/aec_processor.h"
 #endif
@@ -2236,6 +2241,24 @@ int main(int argc, char *argv[]) {
    }
 #endif
 
+#ifdef ENABLE_AUTH
+   /* Initialize auth subsystem BEFORE admin socket starts its listener thread.
+    * This prevents race conditions where CREATE_USER arrives before auth_db is ready.
+    * Order: crypto -> database -> admin socket (per architecture review) */
+   if (auth_crypto_init() != AUTH_CRYPTO_SUCCESS) {
+      LOG_ERROR("Failed to initialize auth crypto - authentication disabled");
+   } else if (auth_db_init(NULL) != AUTH_DB_SUCCESS) {
+      LOG_ERROR("Failed to initialize auth database - authentication disabled");
+      auth_crypto_shutdown();
+   } else {
+      /* Initialize admin socket for dawn-admin CLI communication */
+      if (admin_socket_init() != 0) {
+         LOG_WARNING("Failed to initialize admin socket - CLI management disabled");
+         /* Graceful degradation - don't prevent daemon startup */
+      }
+   }
+#endif
+
    // Main loop
    LOG_INFO("Listening...\n");
    while (!quit) {
@@ -2465,10 +2488,8 @@ int main(int argc, char *argv[]) {
                const int16_t *samples = (const int16_t *)max_buff;
                vad_speech_prob = vad_silero_process(vad_ctx, samples, VAD_SAMPLE_SIZE);
 
-               // Debug logging every 50 iterations (~5 seconds)
-               if (vad_debug_counter++ % 50 == 0) {
-                  LOG_INFO("SILENCE: VAD=%.3f", vad_speech_prob);
-               }
+               // Increment counter (used for periodic stats logging)
+               vad_debug_counter++;
 
 #ifdef ENABLE_AEC
                // AEC statistics logging every 600 iterations (~60 seconds)
@@ -3615,6 +3636,14 @@ int main(int argc, char *argv[]) {
       }
       llm_processing = 0;
    }
+
+#ifdef ENABLE_AUTH
+   /* Shutdown auth subsystem in reverse initialization order:
+    * admin_socket -> auth_db -> auth_crypto */
+   admin_socket_shutdown();
+   auth_db_shutdown();
+   auth_crypto_shutdown();
+#endif
 
 #ifdef ENABLE_DAP
    if (enable_network_audio) {

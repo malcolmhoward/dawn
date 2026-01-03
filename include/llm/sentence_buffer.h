@@ -41,7 +41,7 @@ typedef void (*sentence_callback)(const char *sentence, void *userdata);
  * punctuation boundaries (., !, ?, :) followed by space or end of input.
  *
  * Note: Callers should pre-filter any content (e.g., <command> tags)
- * before feeding to this buffer. See filter_command_tags() in session_manager.c.
+ * before feeding to this buffer. See webui_filter_command_tags() in webui_server.h.
  */
 typedef struct {
    char *buffer;               /**< Accumulated text buffer */

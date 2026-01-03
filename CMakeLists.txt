@@ -135,6 +135,25 @@ if(ENABLE_DAP OR ENABLE_WEBUI)
     set(ENABLE_AUTH ON)
     add_definitions(-DENABLE_AUTH)
     message(STATUS "Authentication: ENABLED (network features active)")
+
+    # Auth dependencies: libsodium (Argon2id) and SQLite3 (auth database)
+    pkg_check_modules(SODIUM REQUIRED libsodium)
+    if(NOT SODIUM_FOUND)
+        message(FATAL_ERROR
+            "libsodium not found.\n"
+            "Install with: sudo apt-get install libsodium-dev")
+    endif()
+    include_directories(${SODIUM_INCLUDE_DIRS})
+    message(STATUS "  libsodium: Found (${SODIUM_VERSION})")
+
+    pkg_check_modules(SQLITE3 REQUIRED sqlite3)
+    if(NOT SQLITE3_FOUND)
+        message(FATAL_ERROR
+            "SQLite3 not found.\n"
+            "Install with: sudo apt-get install libsqlite3-dev")
+    endif()
+    include_directories(${SQLITE3_INCLUDE_DIRS})
+    message(STATUS "  SQLite3: Found (${SQLITE3_VERSION})")
 else()
     set(ENABLE_AUTH OFF)
     message(STATUS "Authentication: DISABLED (no network features)")
@@ -392,6 +411,17 @@ if(ENABLE_DAP OR ENABLE_WEBUI)
     list(APPEND DAWN_SOURCES
         src/core/session_manager.c
         src/core/worker_pool.c
+        src/core/text_filter.c
+        src/core/rate_limiter.c
+    )
+endif()
+
+# Conditionally add auth subsystem (admin socket, database, crypto)
+if(ENABLE_AUTH)
+    list(APPEND DAWN_SOURCES
+        src/auth/admin_socket.c
+        src/auth/auth_db.c
+        src/auth/auth_crypto.c
     )
 endif()
 
@@ -465,6 +495,12 @@ if(ENABLE_WEBUI)
     endif()
 endif()
 
+# Conditionally link libsodium and SQLite3 for authentication
+if(ENABLE_AUTH)
+    target_link_libraries(dawn ${SODIUM_LIBRARIES} ${SQLITE3_LIBRARIES})
+    message(STATUS "Linking auth libraries (libsodium, SQLite3)")
+endif()
+
 # Conditionally link ASR library (Vosk OR Whisper, not both)
 if(ENABLE_VOSK)
     target_link_libraries(dawn vosk)
@@ -519,4 +555,12 @@ execute_process(COMMAND ${CMAKE_COMMAND} -E create_symlink ${CMAKE_SOURCE_DIR}/c
 # Tests are not built by default. Run "make tests" to build all test executables.
 # Individual tests can be built with "make test_<name>" after running cmake.
 add_subdirectory(tests EXCLUDE_FROM_ALL)
+
+# =============================================================================
+# Admin CLI Tool (dawn-admin)
+# =============================================================================
+# Only built when authentication is enabled (DAP or WebUI)
+if(ENABLE_AUTH)
+    add_subdirectory(dawn-admin)
+endif()
 
