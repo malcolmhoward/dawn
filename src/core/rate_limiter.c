@@ -134,6 +134,20 @@ void rate_limiter_reset(rate_limiter_t *limiter, const char *ip) {
    pthread_mutex_unlock(&limiter->mutex);
 }
 
+void rate_limiter_clear_all(rate_limiter_t *limiter) {
+   if (!limiter || !limiter->entries) {
+      return;
+   }
+
+   pthread_mutex_lock(&limiter->mutex);
+
+   for (int i = 0; i < limiter->config.slot_count; i++) {
+      limiter->entries[i].ip[0] = '\0';
+   }
+
+   pthread_mutex_unlock(&limiter->mutex);
+}
+
 void rate_limiter_normalize_ip(const char *ip, char *out, size_t out_len) {
    if (!ip || !out || out_len == 0) {
       if (out && out_len > 0) {

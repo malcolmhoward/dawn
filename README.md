@@ -857,6 +857,24 @@ Click the gear icon in the header to access the settings panel. This provides a 
 
 See `docs/WEBUI_DESIGN.md` for technical architecture details.
 
+### User Management (dawn-admin)
+
+When authentication is enabled (DAP or WebUI modes), you'll need to create user accounts before logging in. The `dawn-admin` CLI tool handles user management:
+
+```bash
+# First-time setup: create initial admin account (requires setup token shown in DAWN console)
+./dawn-admin user create admin --admin
+
+# Common commands
+./dawn-admin user list              # List all users
+./dawn-admin user passwd <user>     # Change password
+./dawn-admin session list           # View active sessions
+./dawn-admin db status              # Database statistics
+./dawn-admin --help                 # Full command reference
+```
+
+See `docs/USER_AUTH_DESIGN.md` for complete authentication system documentation.
+
 ## Testing
 
 ### ASR Benchmarks

@@ -223,12 +223,655 @@ admin_resp_code_t admin_client_create_user(int fd,
    return (admin_resp_code_t)resp.response_code;
 }
 
+/**
+ * @brief Receive extended list response.
+ */
+static int recv_list_response(int fd,
+                              admin_list_response_t *resp,
+                              char *buffer,
+                              size_t buffer_size) {
+   ssize_t n = read(fd, resp, sizeof(*resp));
+   if (n != sizeof(*resp)) {
+      if (n == 0) {
+         fprintf(stderr, "Error: Daemon closed connection\n");
+      } else if (n < 0) {
+         fprintf(stderr, "Error: Failed to read response: %s\n", strerror(errno));
+      } else {
+         fprintf(stderr, "Error: Incomplete response (got %zd bytes)\n", n);
+      }
+      return -1;
+   }
+
+   if (resp->version != ADMIN_PROTOCOL_VERSION) {
+      fprintf(stderr, "Error: Protocol version mismatch\n");
+      return -1;
+   }
+
+   if (resp->payload_len > 0) {
+      if (resp->payload_len > buffer_size) {
+         fprintf(stderr, "Error: Response payload too large\n");
+         return -1;
+      }
+      n = read(fd, buffer, resp->payload_len);
+      if (n != resp->payload_len) {
+         fprintf(stderr, "Error: Failed to read response data\n");
+         return -1;
+      }
+   }
+
+   return 0;
+}
+
+/**
+ * @brief Build admin auth prefix.
+ */
+static size_t build_auth_prefix(char *buffer, const char *admin_user, const char *admin_password) {
+   size_t ulen = strlen(admin_user);
+   size_t plen = strlen(admin_password);
+
+   admin_auth_prefix_t *prefix = (admin_auth_prefix_t *)buffer;
+   prefix->admin_username_len = (uint8_t)ulen;
+   prefix->admin_password_len = (uint8_t)plen;
+
+   char *ptr = buffer + sizeof(admin_auth_prefix_t);
+   memcpy(ptr, admin_user, ulen);
+   memcpy(ptr + ulen, admin_password, plen);
+
+   return sizeof(admin_auth_prefix_t) + ulen + plen;
+}
+
+admin_resp_code_t admin_client_list_users(int fd, admin_user_callback_t callback, void *ctx) {
+   if (!callback) {
+      return ADMIN_RESP_FAILURE;
+   }
+
+   if (send_message(fd, ADMIN_MSG_LIST_USERS, NULL, 0) != 0) {
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+
+   admin_list_response_t resp;
+   char buffer[4096];
+   if (recv_list_response(fd, &resp, buffer, sizeof(buffer)) != 0) {
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+
+   if (resp.response_code != ADMIN_RESP_SUCCESS) {
+      return (admin_resp_code_t)resp.response_code;
+   }
+
+   /* Parse packed user entries */
+   const char *p = buffer;
+   const char *end = buffer + resp.payload_len;
+
+   for (uint16_t i = 0; i < resp.item_count && p < end; i++) {
+      /* Each entry: 4 bytes id, 1 byte uname_len, 1 byte is_admin,
+       * 1 byte is_locked, 4 bytes failed_attempts, N bytes username */
+      if (p + 11 > end)
+         break;
+
+      admin_user_entry_t entry = { 0 };
+
+      uint32_t id;
+      memcpy(&id, p, 4);
+      entry.id = (int)id;
+      p += 4;
+
+      uint8_t uname_len = (uint8_t)*p++;
+      entry.is_admin = (*p++) != 0;
+      entry.is_locked = (*p++) != 0;
+
+      uint32_t failed;
+      memcpy(&failed, p, 4);
+      entry.failed_attempts = (int)failed;
+      p += 4;
+
+      if (p + uname_len > end)
+         break;
+      size_t copy_len = (uname_len < 63) ? uname_len : 63;
+      memcpy(entry.username, p, copy_len);
+      p += uname_len;
+
+      if (callback(&entry, ctx) != 0)
+         break;
+   }
+
+   return ADMIN_RESP_SUCCESS;
+}
+
+admin_resp_code_t admin_client_delete_user(int fd,
+                                           const char *admin_user,
+                                           const char *admin_password,
+                                           const char *target_user) {
+   if (!admin_user || !admin_password || !target_user) {
+      return ADMIN_RESP_FAILURE;
+   }
+
+   char payload[ADMIN_MSG_MAX_PAYLOAD];
+   size_t auth_len = build_auth_prefix(payload, admin_user, admin_password);
+   size_t target_len = strlen(target_user);
+
+   if (auth_len + target_len > ADMIN_MSG_MAX_PAYLOAD) {
+      return ADMIN_RESP_FAILURE;
+   }
+
+   memcpy(payload + auth_len, target_user, target_len);
+
+   if (send_message(fd, ADMIN_MSG_DELETE_USER, payload, (uint16_t)(auth_len + target_len)) != 0) {
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+
+   admin_msg_response_t resp;
+   if (recv_response(fd, &resp) != 0) {
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+
+   return (admin_resp_code_t)resp.response_code;
+}
+
+admin_resp_code_t admin_client_change_password(int fd,
+                                               const char *admin_user,
+                                               const char *admin_password,
+                                               const char *target_user,
+                                               const char *new_password) {
+   if (!admin_user || !admin_password || !target_user || !new_password) {
+      return ADMIN_RESP_FAILURE;
+   }
+
+   size_t target_len = strlen(target_user);
+   size_t newpass_len = strlen(new_password);
+
+   if (target_len == 0 || target_len > ADMIN_USERNAME_MAX_LEN) {
+      return ADMIN_RESP_FAILURE;
+   }
+   if (newpass_len < ADMIN_PASSWORD_MIN_LEN || newpass_len > ADMIN_PASSWORD_MAX_LEN) {
+      return ADMIN_RESP_FAILURE;
+   }
+
+   char payload[ADMIN_MSG_MAX_PAYLOAD];
+   size_t auth_len = build_auth_prefix(payload, admin_user, admin_password);
+
+   /* After auth: 1 byte target_uname_len, 1 byte new_pass_len, username, password */
+   size_t remaining = 2 + target_len + newpass_len;
+   if (auth_len + remaining > ADMIN_MSG_MAX_PAYLOAD) {
+      return ADMIN_RESP_FAILURE;
+   }
+
+   char *ptr = payload + auth_len;
+   *ptr++ = (uint8_t)target_len;
+   *ptr++ = (uint8_t)newpass_len;
+   memcpy(ptr, target_user, target_len);
+   memcpy(ptr + target_len, new_password, newpass_len);
+
+   if (send_message(fd, ADMIN_MSG_CHANGE_PASSWORD, payload, (uint16_t)(auth_len + remaining)) !=
+       0) {
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+
+   admin_msg_response_t resp;
+   if (recv_response(fd, &resp) != 0) {
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+
+   return (admin_resp_code_t)resp.response_code;
+}
+
+admin_resp_code_t admin_client_unlock_user(int fd,
+                                           const char *admin_user,
+                                           const char *admin_password,
+                                           const char *target_user) {
+   if (!admin_user || !admin_password || !target_user) {
+      return ADMIN_RESP_FAILURE;
+   }
+
+   char payload[ADMIN_MSG_MAX_PAYLOAD];
+   size_t auth_len = build_auth_prefix(payload, admin_user, admin_password);
+   size_t target_len = strlen(target_user);
+
+   if (auth_len + target_len > ADMIN_MSG_MAX_PAYLOAD) {
+      return ADMIN_RESP_FAILURE;
+   }
+
+   memcpy(payload + auth_len, target_user, target_len);
+
+   if (send_message(fd, ADMIN_MSG_UNLOCK_USER, payload, (uint16_t)(auth_len + target_len)) != 0) {
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+
+   admin_msg_response_t resp;
+   if (recv_response(fd, &resp) != 0) {
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+
+   return (admin_resp_code_t)resp.response_code;
+}
+
+admin_resp_code_t admin_client_list_sessions(int fd, admin_session_callback_t callback, void *ctx) {
+   if (!callback) {
+      return ADMIN_RESP_FAILURE;
+   }
+
+   if (send_message(fd, ADMIN_MSG_LIST_SESSIONS, NULL, 0) != 0) {
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+
+   admin_list_response_t resp;
+   char buffer[8192];
+   if (recv_list_response(fd, &resp, buffer, sizeof(buffer)) != 0) {
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+
+   if (resp.response_code != ADMIN_RESP_SUCCESS) {
+      return (admin_resp_code_t)resp.response_code;
+   }
+
+   /* Parse packed session entries */
+   const char *p = buffer;
+   const char *end = buffer + resp.payload_len;
+
+   for (uint16_t i = 0; i < resp.item_count && p < end; i++) {
+      /* Each entry: 8 bytes token_prefix, 1 byte uname_len, 8 bytes created,
+       * 8 bytes last_activity, 1 byte ip_len, N bytes username, M bytes ip */
+      if (p + 26 > end)
+         break;
+
+      admin_session_entry_t entry = { 0 };
+
+      memcpy(entry.token_prefix, p, 8);
+      entry.token_prefix[8] = '\0';
+      p += 8;
+
+      uint8_t uname_len = (uint8_t)*p++;
+
+      memcpy(&entry.created_at, p, 8);
+      p += 8;
+
+      memcpy(&entry.last_activity, p, 8);
+      p += 8;
+
+      uint8_t ip_len = (uint8_t)*p++;
+
+      if (p + uname_len + ip_len > end)
+         break;
+
+      size_t copy_len = (uname_len < 63) ? uname_len : 63;
+      memcpy(entry.username, p, copy_len);
+      p += uname_len;
+
+      copy_len = (ip_len < 63) ? ip_len : 63;
+      memcpy(entry.ip_address, p, copy_len);
+      p += ip_len;
+
+      if (callback(&entry, ctx) != 0)
+         break;
+   }
+
+   return ADMIN_RESP_SUCCESS;
+}
+
+admin_resp_code_t admin_client_revoke_session(int fd,
+                                              const char *admin_user,
+                                              const char *admin_password,
+                                              const char *token_prefix) {
+   if (!admin_user || !admin_password || !token_prefix) {
+      return ADMIN_RESP_FAILURE;
+   }
+
+   size_t prefix_len = strlen(token_prefix);
+   if (prefix_len < 8) {
+      return ADMIN_RESP_FAILURE;
+   }
+
+   /* Build payload: auth_prefix + token_prefix_len + token_prefix */
+   char payload[ADMIN_MSG_MAX_PAYLOAD];
+   size_t auth_len = build_auth_prefix(payload, admin_user, admin_password);
+
+   /* Add token prefix length and token prefix */
+   if (auth_len + 1 + 8 > sizeof(payload)) {
+      return ADMIN_RESP_FAILURE;
+   }
+
+   char *ptr = payload + auth_len;
+   *ptr++ = 8;
+   memcpy(ptr, token_prefix, 8);
+
+   if (send_message(fd, ADMIN_MSG_REVOKE_SESSION, payload, (uint16_t)(auth_len + 1 + 8)) != 0) {
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+
+   admin_msg_response_t resp;
+   if (recv_response(fd, &resp) != 0) {
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+
+   return (admin_resp_code_t)resp.response_code;
+}
+
+admin_resp_code_t admin_client_revoke_user_sessions(int fd,
+                                                    const char *admin_user,
+                                                    const char *admin_password,
+                                                    const char *target_user) {
+   if (!admin_user || !admin_password || !target_user) {
+      return ADMIN_RESP_FAILURE;
+   }
+
+   size_t target_len = strlen(target_user);
+   if (target_len < 1 || target_len > 63) {
+      return ADMIN_RESP_FAILURE;
+   }
+
+   /* Build payload: auth_prefix + username_len + username */
+   char payload[ADMIN_MSG_MAX_PAYLOAD];
+   size_t auth_len = build_auth_prefix(payload, admin_user, admin_password);
+
+   /* Add target username */
+   if (auth_len + 1 + target_len > sizeof(payload)) {
+      return ADMIN_RESP_FAILURE;
+   }
+
+   char *ptr = payload + auth_len;
+   *ptr++ = (uint8_t)target_len;
+   memcpy(ptr, target_user, target_len);
+
+   if (send_message(fd, ADMIN_MSG_REVOKE_USER_SESSIONS, payload,
+                    (uint16_t)(auth_len + 1 + target_len)) != 0) {
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+
+   admin_msg_response_t resp;
+   if (recv_response(fd, &resp) != 0) {
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+
+   return (admin_resp_code_t)resp.response_code;
+}
+
+admin_resp_code_t admin_client_get_stats(int fd, admin_db_stats_t *stats) {
+   if (!stats) {
+      return ADMIN_RESP_FAILURE;
+   }
+
+   if (send_message(fd, ADMIN_MSG_GET_STATS, NULL, 0) != 0) {
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+
+   /* Receive extended response with stats data */
+   admin_list_response_t resp;
+   char buffer[256];
+   if (recv_list_response(fd, &resp, buffer, sizeof(buffer)) != 0) {
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+
+   if (resp.response_code != ADMIN_RESP_SUCCESS) {
+      return (admin_resp_code_t)resp.response_code;
+   }
+
+   /* Copy stats from buffer */
+   if (resp.payload_len >= sizeof(admin_db_stats_t)) {
+      memcpy(stats, buffer, sizeof(admin_db_stats_t));
+   }
+
+   return ADMIN_RESP_SUCCESS;
+}
+
+admin_resp_code_t admin_client_db_compact(int fd,
+                                          const char *admin_user,
+                                          const char *admin_password) {
+   if (!admin_user || !admin_password) {
+      return ADMIN_RESP_FAILURE;
+   }
+
+   char payload[ADMIN_MSG_MAX_PAYLOAD];
+   size_t auth_len = build_auth_prefix(payload, admin_user, admin_password);
+
+   if (send_message(fd, ADMIN_MSG_DB_COMPACT, payload, (uint16_t)auth_len) != 0) {
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+
+   admin_msg_response_t resp;
+   if (recv_response(fd, &resp) != 0) {
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+
+   return (admin_resp_code_t)resp.response_code;
+}
+
+admin_resp_code_t admin_client_db_backup(int fd,
+                                         const char *admin_user,
+                                         const char *admin_password,
+                                         const char *dest_path) {
+   if (!admin_user || !admin_password || !dest_path) {
+      return ADMIN_RESP_FAILURE;
+   }
+
+   size_t path_len = strlen(dest_path);
+   if (path_len < 1 || path_len > 255) {
+      return ADMIN_RESP_FAILURE;
+   }
+
+   char payload[ADMIN_MSG_MAX_PAYLOAD];
+   size_t auth_len = build_auth_prefix(payload, admin_user, admin_password);
+
+   /* Add path: 1 byte length + path */
+   if (auth_len + 1 + path_len > sizeof(payload)) {
+      return ADMIN_RESP_FAILURE;
+   }
+
+   char *ptr = payload + auth_len;
+   *ptr++ = (uint8_t)path_len;
+   memcpy(ptr, dest_path, path_len);
+
+   if (send_message(fd, ADMIN_MSG_DB_BACKUP, payload, (uint16_t)(auth_len + 1 + path_len)) != 0) {
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+
+   admin_msg_response_t resp;
+   if (recv_response(fd, &resp) != 0) {
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+
+   return (admin_resp_code_t)resp.response_code;
+}
+
+admin_resp_code_t admin_client_query_log(int fd,
+                                         const admin_log_filter_t *filter,
+                                         admin_log_callback_t callback,
+                                         void *ctx) {
+   if (!callback) {
+      return ADMIN_RESP_FAILURE;
+   }
+
+   /* Build filter payload */
+   char payload[ADMIN_MSG_MAX_PAYLOAD];
+   char *p = payload;
+
+   /* Since and until (int64_t each) */
+   int64_t since = filter ? filter->since : 0;
+   int64_t until = filter ? filter->until : 0;
+   memcpy(p, &since, 8);
+   p += 8;
+   memcpy(p, &until, 8);
+   p += 8;
+
+   /* Event and username lengths */
+   size_t event_len = (filter && filter->event) ? strlen(filter->event) : 0;
+   size_t user_len = (filter && filter->username) ? strlen(filter->username) : 0;
+   if (event_len > 31)
+      event_len = 31;
+   if (user_len > 63)
+      user_len = 63;
+
+   *p++ = (uint8_t)event_len;
+   *p++ = (uint8_t)user_len;
+
+   /* Limit and offset */
+   uint16_t limit_val = filter ? (uint16_t)filter->limit : 0;
+   uint16_t offset_val = filter ? (uint16_t)filter->offset : 0;
+   memcpy(p, &limit_val, 2);
+   p += 2;
+   memcpy(p, &offset_val, 2);
+   p += 2;
+
+   /* Event and username strings */
+   if (event_len > 0) {
+      memcpy(p, filter->event, event_len);
+      p += event_len;
+   }
+   if (user_len > 0) {
+      memcpy(p, filter->username, user_len);
+      p += user_len;
+   }
+
+   size_t payload_len = p - payload;
+
+   if (send_message(fd, ADMIN_MSG_QUERY_LOG, payload, (uint16_t)payload_len) != 0) {
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+
+   /* Receive extended response */
+   admin_list_response_t resp;
+   char buffer[16384];
+   if (recv_list_response(fd, &resp, buffer, sizeof(buffer)) != 0) {
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+
+   if (resp.response_code != ADMIN_RESP_SUCCESS) {
+      return (admin_resp_code_t)resp.response_code;
+   }
+
+   /* Parse log entries */
+   const char *rp = buffer;
+   const char *end = buffer + resp.payload_len;
+
+   for (uint16_t i = 0; i < resp.item_count && rp < end; i++) {
+      /* Each entry: 8 bytes timestamp, 4 length bytes, variable strings */
+      if (rp + 12 > end)
+         break;
+
+      admin_log_entry_t entry = { 0 };
+
+      memcpy(&entry.timestamp, rp, 8);
+      rp += 8;
+
+      uint8_t event_l = (uint8_t)*rp++;
+      uint8_t user_l = (uint8_t)*rp++;
+      uint8_t ip_l = (uint8_t)*rp++;
+      uint8_t details_l = (uint8_t)*rp++;
+
+      if (rp + event_l + user_l + ip_l + details_l > end)
+         break;
+
+      size_t copy_len = (event_l < 31) ? event_l : 31;
+      memcpy(entry.event, rp, copy_len);
+      rp += event_l;
+
+      copy_len = (user_l < 63) ? user_l : 63;
+      memcpy(entry.username, rp, copy_len);
+      rp += user_l;
+
+      copy_len = (ip_l < 63) ? ip_l : 63;
+      memcpy(entry.ip_address, rp, copy_len);
+      rp += ip_l;
+
+      copy_len = (details_l < 255) ? details_l : 255;
+      memcpy(entry.details, rp, copy_len);
+      rp += details_l;
+
+      if (callback(&entry, ctx) != 0)
+         break;
+   }
+
+   return ADMIN_RESP_SUCCESS;
+}
+
+admin_resp_code_t admin_client_list_blocked_ips(int fd, admin_ip_callback_t callback, void *ctx) {
+   if (!callback) {
+      return ADMIN_RESP_FAILURE;
+   }
+
+   if (send_message(fd, ADMIN_MSG_LIST_BLOCKED_IPS, NULL, 0) != 0) {
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+
+   admin_list_response_t resp;
+   char buffer[4096];
+   if (recv_list_response(fd, &resp, buffer, sizeof(buffer)) != 0) {
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+
+   if (resp.response_code != ADMIN_RESP_SUCCESS) {
+      return (admin_resp_code_t)resp.response_code;
+   }
+
+   /* Parse packed IP entries */
+   const char *rp = buffer;
+   const char *end = buffer + resp.payload_len;
+
+   for (uint16_t i = 0; i < resp.item_count && rp < end; i++) {
+      admin_ip_entry_t entry = { 0 };
+
+      /* Unpack ip_len */
+      uint8_t ip_len = (uint8_t)*rp++;
+
+      /* Unpack failed_attempts (little-endian) */
+      int32_t attempts;
+      memcpy(&attempts, rp, 4);
+      rp += 4;
+      entry.failed_attempts = attempts;
+
+      /* Unpack last_attempt (little-endian) */
+      int64_t ts;
+      memcpy(&ts, rp, 8);
+      rp += 8;
+      entry.last_attempt = ts;
+
+      /* Unpack ip_address */
+      size_t copy_len = (ip_len < 63) ? ip_len : 63;
+      memcpy(entry.ip_address, rp, copy_len);
+      rp += ip_len;
+
+      if (callback(&entry, ctx) != 0)
+         break;
+   }
+
+   return ADMIN_RESP_SUCCESS;
+}
+
+admin_resp_code_t admin_client_unblock_ip(int fd,
+                                          const char *admin_user,
+                                          const char *admin_password,
+                                          const char *ip_address) {
+   if (!admin_user || !admin_password || !ip_address) {
+      return ADMIN_RESP_FAILURE;
+   }
+
+   char payload[ADMIN_MSG_MAX_PAYLOAD];
+   size_t auth_len = build_auth_prefix(payload, admin_user, admin_password);
+   size_t ip_len = strlen(ip_address);
+
+   if (auth_len + ip_len > ADMIN_MSG_MAX_PAYLOAD) {
+      return ADMIN_RESP_FAILURE;
+   }
+
+   memcpy(payload + auth_len, ip_address, ip_len);
+
+   if (send_message(fd, ADMIN_MSG_UNBLOCK_IP, payload, (uint16_t)(auth_len + ip_len)) != 0) {
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+
+   admin_msg_response_t resp;
+   if (recv_response(fd, &resp) != 0) {
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+
+   return (admin_resp_code_t)resp.response_code;
+}
+
 const char *admin_resp_strerror(admin_resp_code_t code) {
    switch (code) {
       case ADMIN_RESP_SUCCESS:
          return "Success";
       case ADMIN_RESP_FAILURE:
-         return "Invalid or expired token";
+         return "Operation failed";
       case ADMIN_RESP_RATE_LIMITED:
          return "Too many failed attempts - please wait and try again";
       case ADMIN_RESP_SERVICE_ERROR:
@@ -236,7 +879,11 @@ const char *admin_resp_strerror(admin_resp_code_t code) {
       case ADMIN_RESP_VERSION_MISMATCH:
          return "Protocol version mismatch - update dawn-admin";
       case ADMIN_RESP_UNAUTHORIZED:
-         return "Unauthorized - must run as root or dawn user";
+         return "Unauthorized - invalid admin credentials";
+      case ADMIN_RESP_LAST_ADMIN:
+         return "Cannot delete the last admin user";
+      case ADMIN_RESP_NOT_FOUND:
+         return "User or session not found";
       default:
          return "Unknown error";
    }

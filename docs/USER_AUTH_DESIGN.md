@@ -1,8 +1,10 @@
 # DAWN User Authentication System Design
 
-**Status**: Phase 1 Implemented
+**Status**: Phase 2 Complete
 **Date**: 2025-12-18
-**Last Updated**: 2026-01-03
+**Last Updated**: 2026-01-04
+
+**Note**: DAP device authentication moved to Phase 5, deferred until DAP2 protocol redesign.
 
 ## Overview
 
@@ -244,6 +246,27 @@ $ dawn-admin user unlock admin
 Account 'admin' unlocked.
 ```
 
+#### Session Management
+
+```bash
+# List active sessions
+$ dawn-admin session list
+Token       User   IP             Last Activity  Created
+--------    -----  -------------  -------------  -------------------
+a1b2c3d4..  admin  192.168.1.10   5m ago         2024-12-18 10:00:00
+e5f6g7h8..  kris   192.168.1.20   1h ago         2024-12-18 09:30:00
+
+# Revoke specific session by token prefix
+$ dawn-admin session revoke a1b2c3d4
+Admin password: ********
+Session revoked.
+
+# Revoke all sessions for a user
+$ dawn-admin session revoke --user kris
+Admin password: ********
+2 sessions revoked for user 'kris'.
+```
+
 #### Device Token Management (Mode 2 Critical)
 
 ```bash
@@ -319,6 +342,27 @@ Database backed up to /path/to/backup.db
 # Compact database (run incremental vacuum)
 $ dawn-admin db compact
 Database compacted. Freed 2.3 MB.
+```
+
+#### IP Management
+
+```bash
+# List IPs with failed login attempts in the rate limit window
+$ dawn-admin ip list
+IP Address       Failed Attempts  Last Attempt
+---------------  ---------------  -------------------
+192.168.1.99     5                2024-12-18 14:30:00
+10.0.0.15        3                2024-12-18 14:25:00
+
+# Unblock a specific IP (clears failed attempt count)
+$ dawn-admin ip unblock 192.168.1.99
+Admin password: ********
+IP 192.168.1.99 unblocked.
+
+# Unblock all IPs
+$ dawn-admin ip unblock --all
+Admin password: ********
+Cleared login attempts for 2 IPs.
 ```
 
 ### Security Requirements
@@ -3422,31 +3466,24 @@ Based on the reviews, the following must be addressed during implementation:
 
 ---
 
-### Phase 2: DAP Integration + Full CLI (3-4 days)
+### Phase 2: Complete CLI Administration (2-3 days)
 
-**Purpose**: Device authentication for ESP32 clients (Mode 2, 4).
-
-#### DAP Authentication
-- Device token table and CRUD operations
-- DAP authenticated handshake (`PACKET_TYPE_AUTH_HANDSHAKE`)
-- Device token validation (constant-time)
-- DAP connection rejection before tokens configured
-- Token rotation with configurable grace period
+**Purpose**: Full CLI tool and background maintenance tasks.
 
 #### Complete dawn-admin CLI
 - `dawn-admin user list|delete|passwd|unlock`
-- `dawn-admin device create|list|revoke|rotate`
 - `dawn-admin log show|export`
 - `dawn-admin db status|backup|compact`
+- `dawn-admin session list|revoke` (admin session management)
 
-#### WebUI Device Management (if ENABLE_WEBUI)
-- Device token creation/revocation UI
-- Device list with last-seen timestamps
+#### Background Maintenance
+- Session cleanup thread (expire old sessions)
+- Database maintenance (log rotation, vacuum scheduling)
 
 **Deliverables:**
-- Mode 2 (DAP-only, headless) fully functional
-- Mode 4 (full) fully functional
-- Complete CLI tool for headless administration
+- Complete CLI tool for headless user administration
+- Automated session cleanup
+- Mode 3 (WebUI) production-ready
 
 ---
 
@@ -3465,17 +3502,46 @@ Based on the reviews, the following must be addressed during implementation:
 
 ---
 
+### Phase 5: DAP2 Device Authentication (Deferred)
+
+**Purpose**: Device authentication for ESP32 clients (Mode 2, 4).
+
+**Note**: This phase is deferred until the DAP2 protocol redesign (see `docs/DAP2_DESIGN.md`). The current DAP1 protocol will be deprecated, so authentication work should target the new protocol.
+
+#### DAP2 Authentication
+- Device token table and CRUD operations
+- DAP2 authenticated handshake (protocol TBD in DAP2 design)
+- Device token validation (constant-time)
+- DAP2 connection rejection before tokens configured
+- Token rotation with configurable grace period
+
+#### dawn-admin Device Commands
+- `dawn-admin device create|list|revoke|rotate`
+
+#### WebUI Device Management (if ENABLE_WEBUI)
+- Device token creation/revocation UI
+- Device list with last-seen timestamps
+
+**Deliverables:**
+- Mode 2 (DAP-only, headless) fully functional
+- Mode 4 (full) fully functional
+- DAP2 protocol with built-in authentication
+
+---
+
 ## Implementation Estimate
 
 | Phase | Scope | Effort | Modes Enabled |
 |-------|-------|--------|---------------|
 | Phase 0 | Build system prep | 1-2 days | All modes build |
 | Phase 1 | Foundation auth | 5-6 days | Mode 3 functional |
-| Phase 2 | DAP + full CLI | 3-4 days | Mode 2, 4 functional |
+| Phase 2 | Complete CLI + maintenance | 2-3 days | Mode 3 production-ready |
 | Phase 3 | Multi-user | 3-4 days | Enhanced UX |
 | Phase 4 | Enhancements | 2-3 days | Polish |
+| Phase 5 | DAP2 device auth | TBD | Mode 2, 4 functional |
 
-**Total: ~14-19 days**
+**Total (Phases 0-4): ~13-18 days**
+**Phase 5**: Deferred until DAP2 protocol redesign
 
 ### Phase Dependencies
 
@@ -3488,23 +3554,36 @@ Phase 0 (Build Prep)
              │
              ├─── Mode 3 ready (WebUI auth)
              │
-             └─── Phase 2 (DAP + CLI)
+             └─── Phase 2 (CLI + Maintenance)
                       │
-                      ├─── Mode 2, 4 ready
+                      ├─── Mode 3 production-ready
                       │
                       └─── Phase 3 (Multi-User)
                                │
                                └─── Phase 4 (Enhancements)
+
+Phase 5 (DAP2 Device Auth) ─── Deferred, depends on DAP2 protocol redesign
+    │
+    └─── Mode 2, 4 ready
 ```
 
-### Critical Path for Mode 2
+### Critical Path for Mode 3 (WebUI)
 
-Mode 2 (DAP-only, headless) requires:
+Mode 3 (WebUI-only) requires:
+1. ✅ Phase 0: Build system + minimal bootstrap CLI
+2. ✅ Phase 1: Core auth database + WebUI login
+3. Phase 2: Complete CLI + session cleanup
+
+**Minimum viable Mode 3: Phase 0 + Phase 1** (completed)
+
+### Critical Path for Mode 2/4 (DAP)
+
+Mode 2 (DAP-only) and Mode 4 (Full) require DAP2 device authentication:
 1. ✅ Phase 0: Build system + minimal bootstrap CLI
 2. ✅ Phase 1: Core auth database + setup token
-3. ✅ Phase 2: DAP device tokens + full CLI
+3. Phase 5: DAP2 device tokens (deferred)
 
-**Minimum viable Mode 2: Phase 0 + Phase 1 + Phase 2**
+**Note**: Mode 2/4 authentication is deferred until DAP2 protocol redesign. See `docs/DAP2_DESIGN.md` for protocol work.
 
 ---
 
@@ -3514,12 +3593,12 @@ The following items were identified during security, architecture, efficiency, a
 
 ### Must Fix Before Implementation
 
-| # | Issue | Source | Description |
-|---|-------|--------|-------------|
-| 1 | Setup token for dawn-admin | Security | First admin creation via `dawn-admin` requires setup token (proves daemon access) |
-| 2 | DAP bootstrap rejection | Security | DAP server must explicitly reject connections before device tokens exist |
-| 3 | Lock ordering clarification | Architecture | Document that `s_db_mutex` is leaf-level; never hold `session->ref_mutex` while acquiring it |
-| 4 | Phase 0 restructure | Architecture | Split Phase 0.2: minimal bootstrap `dawn-admin user create --admin` first, full CLI later |
+| # | Issue | Source | Status | Description |
+|---|-------|--------|--------|-------------|
+| 1 | Setup token for dawn-admin | Security | ✅ Done | First admin creation via `dawn-admin` requires setup token (proves daemon access) |
+| 2 | DAP bootstrap rejection | Security | Deferred (Phase 5) | DAP server must explicitly reject connections before device tokens exist |
+| 3 | Lock ordering clarification | Architecture | ✅ Done | Document that `s_db_mutex` is leaf-level; never hold `session->ref_mutex` while acquiring it |
+| 4 | Phase 0 restructure | Architecture | ✅ Done | Split Phase 0.2: minimal bootstrap `dawn-admin user create --admin` first, full CLI later |
 
 ### Should Fix Before Production
 
@@ -3534,10 +3613,11 @@ The following items were identified during security, architecture, efficiency, a
 
 ### Implementation Notes
 
-**Item 1, 2, 4** - ✅ **ADDRESSED** in this document:
+**Item 1, 4** - ✅ **ADDRESSED** in this document:
 - Item 1: See "Mode 2 First-Run Bootstrap" and "Setup Token Communication" sections
-- Item 2: See "DAP Connection Rejection During Bootstrap" section
 - Item 4: See restructured "Migration Path" - Phase 0 now contains only prep work
+
+**Item 2** - Deferred to Phase 5 (DAP2 device authentication)
 
 **Item 3** - The lock ordering hierarchy should be:
 ```
@@ -4051,16 +4131,18 @@ session_t *session_lookup(const char *token) {
 
 ---
 
-## Implementation Estimate
+## Implementation Estimate (Summary)
 
 | Phase | Scope | Effort |
 |-------|-------|--------|
 | Phase 1 | Foundation: SQLite + auth + sessions + audit logging + IP rate limiting | 6-7 days |
-| Phase 2 | Multi-user: user management UI, personal settings, permission enforcement | 4-5 days |
-| Phase 3 | DAP integration: device tokens, authenticated handshake | 3-4 days |
+| Phase 2 | Complete CLI + session cleanup | 2-3 days |
+| Phase 3 | Multi-user: user management UI, personal settings, permission enforcement | 3-4 days |
 | Phase 4 | Enhancements: per-user history, optional 2FA (TOTP) | 2-3 days |
+| Phase 5 | DAP2 integration: device tokens, authenticated handshake (deferred) | TBD |
 
-**Total: ~15-19 days**
+**Total (Phases 1-4): ~13-17 days**
+**Phase 5**: Deferred until DAP2 protocol redesign
 
 ### Phase 1 Deliverables (Critical - all must be implemented)
 - `auth_db.c/h`: SQLite wrapper with prepared statement pool
@@ -4251,9 +4333,9 @@ void auth_db_cleanup_expired_sessions(void) {
 ## Related Security Issues
 
 This design addresses:
-- **#2 Unauthenticated WebUI Access** (Critical)
-- **#3 Unauthenticated DAP Protocol** (Critical)
-- **#5 WebUI Secrets API Unauthenticated** (High)
+- **#2 Unauthenticated WebUI Access** (Critical) - ✅ Implemented Phase 1
+- **#3 Unauthenticated DAP Protocol** (Critical) - Deferred to Phase 5 (DAP2 redesign)
+- **#5 WebUI Secrets API Unauthenticated** (High) - ✅ Implemented Phase 1
 
 ---
 

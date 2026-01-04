@@ -102,17 +102,38 @@ extern "C" {
 /**
  * @brief Message types for admin socket protocol.
  *
- * Phase 0 implements only PING and VALIDATE_SETUP_TOKEN.
- * Additional message types will be added in Phase 1+.
+ * Phase 0 implements PING and VALIDATE_SETUP_TOKEN.
+ * Phase 1 adds CREATE_USER.
+ * Phase 2 adds full CLI administration support.
  */
 typedef enum {
+   /* Phase 0: Bootstrap */
    ADMIN_MSG_PING = 0x01,                 /**< Health check / keepalive */
    ADMIN_MSG_VALIDATE_SETUP_TOKEN = 0x02, /**< Validate first-run setup token */
 
-   /* Phase 1+ message types (reserved) */
-   ADMIN_MSG_CREATE_USER = 0x10, /**< Create user account (Phase 1) */
-   ADMIN_MSG_LIST_USERS = 0x11,  /**< List user accounts (Phase 2) */
-   ADMIN_MSG_DELETE_USER = 0x12, /**< Delete user account (Phase 2) */
+   /* Phase 1: User creation */
+   ADMIN_MSG_CREATE_USER = 0x10, /**< Create user account */
+
+   /* Phase 2: User management */
+   ADMIN_MSG_LIST_USERS = 0x11,      /**< List user accounts */
+   ADMIN_MSG_DELETE_USER = 0x12,     /**< Delete user account */
+   ADMIN_MSG_CHANGE_PASSWORD = 0x13, /**< Change user password */
+   ADMIN_MSG_UNLOCK_USER = 0x14,     /**< Unlock locked user account */
+
+   /* Phase 2: Session management */
+   ADMIN_MSG_LIST_SESSIONS = 0x20,        /**< List active sessions */
+   ADMIN_MSG_REVOKE_SESSION = 0x21,       /**< Revoke specific session */
+   ADMIN_MSG_REVOKE_USER_SESSIONS = 0x22, /**< Revoke all sessions for user */
+
+   /* Phase 2: Database/Audit */
+   ADMIN_MSG_GET_STATS = 0x30,  /**< Get database statistics */
+   ADMIN_MSG_QUERY_LOG = 0x31,  /**< Query audit log */
+   ADMIN_MSG_DB_BACKUP = 0x32,  /**< Backup database */
+   ADMIN_MSG_DB_COMPACT = 0x33, /**< Compact database (VACUUM) */
+
+   /* Phase 2: IP management */
+   ADMIN_MSG_LIST_BLOCKED_IPS = 0x40, /**< List rate-limited IPs */
+   ADMIN_MSG_UNBLOCK_IP = 0x41,       /**< Clear login attempts for IP */
 } admin_msg_type_t;
 
 /**
@@ -128,6 +149,8 @@ typedef enum {
    ADMIN_RESP_SERVICE_ERROR = 0x03,    /**< Internal error */
    ADMIN_RESP_VERSION_MISMATCH = 0x04, /**< Protocol version incompatible */
    ADMIN_RESP_UNAUTHORIZED = 0x05,     /**< Peer credentials rejected */
+   ADMIN_RESP_LAST_ADMIN = 0x06,       /**< Cannot delete/demote last admin */
+   ADMIN_RESP_NOT_FOUND = 0x07,        /**< User/session not found */
 } admin_resp_code_t;
 
 /**
@@ -157,13 +180,52 @@ typedef struct __attribute__((packed)) {
 /**
  * @brief Response structure (wire format).
  *
- * Fixed 4-byte response for all message types.
+ * Fixed 4-byte response for simple operations (ping, create, delete, etc.).
  */
 typedef struct __attribute__((packed)) {
    uint8_t version;       /**< Protocol version echo */
    uint8_t response_code; /**< Response code (admin_resp_code_t) */
    uint16_t reserved;     /**< Reserved for future use (set to 0) */
 } admin_msg_response_t;
+
+/**
+ * @brief Extended response header for list operations (wire format).
+ *
+ * Used by LIST_USERS, LIST_SESSIONS, QUERY_LOG, GET_STATS.
+ * Followed by payload_len bytes of serialized data.
+ */
+typedef struct __attribute__((packed)) {
+   uint8_t version;       /**< Protocol version echo */
+   uint8_t response_code; /**< Response code (admin_resp_code_t) */
+   uint16_t payload_len;  /**< Total bytes following this header */
+   uint16_t item_count;   /**< Number of items in list */
+   uint16_t flags;        /**< Flags: bit 0 = truncated, bit 1 = has_more */
+} admin_list_response_t;
+
+/**
+ * @brief List response flags.
+ */
+#define ADMIN_LIST_FLAG_TRUNCATED 0x0001 /**< Results were truncated */
+#define ADMIN_LIST_FLAG_HAS_MORE 0x0002  /**< More results available */
+
+/**
+ * @brief Admin authentication prefix for destructive operations (wire format).
+ *
+ * Required for: DELETE_USER, CHANGE_PASSWORD, UNLOCK_USER,
+ * REVOKE_SESSION, REVOKE_USER_SESSIONS, DB_BACKUP, DB_COMPACT.
+ *
+ * Wire format:
+ *   Byte 0:     admin_username_len (1-63)
+ *   Byte 1:     admin_password_len (8-128)
+ *   Bytes 2+:   admin_username (admin_username_len bytes, no null)
+ *   Following:  admin_password (admin_password_len bytes, no null)
+ *   Following:  operation-specific payload
+ */
+typedef struct __attribute__((packed)) {
+   uint8_t admin_username_len; /**< Admin username length */
+   uint8_t admin_password_len; /**< Admin password length */
+   /* Followed by: admin_username + admin_password + operation payload */
+} admin_auth_prefix_t;
 
 /*
  * =============================================================================

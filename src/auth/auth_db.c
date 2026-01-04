@@ -28,10 +28,13 @@
 #include "auth/auth_db.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <libgen.h>
+#include <limits.h>
 #include <pthread.h>
 #include <sqlite3.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -507,7 +510,7 @@ int auth_db_init(const char *db_path) {
    }
 
    /* Set conservative cache size for embedded systems (64KB) */
-   sqlite3_exec(s_db.db, "PRAGMA cache_size=16", NULL, NULL, NULL);
+   sqlite3_exec(s_db.db, "PRAGMA cache_size=64", NULL, NULL, NULL); /* 256KB cache */
 
    /* Enable foreign keys */
    sqlite3_exec(s_db.db, "PRAGMA foreign_keys=ON", NULL, NULL, NULL);
@@ -693,6 +696,34 @@ int auth_db_user_count(void) {
    return count;
 }
 
+int auth_db_validate_username(const char *username) {
+   if (!username) {
+      return AUTH_DB_INVALID;
+   }
+
+   size_t len = strlen(username);
+   if (len == 0 || len >= AUTH_USERNAME_MAX) {
+      return AUTH_DB_INVALID;
+   }
+
+   /* First character must be letter or underscore */
+   char c = username[0];
+   if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_')) {
+      return AUTH_DB_INVALID;
+   }
+
+   /* Remaining characters: alphanumeric, underscore, hyphen, period */
+   for (size_t i = 1; i < len; i++) {
+      c = username[i];
+      if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+            c == '_' || c == '-' || c == '.')) {
+         return AUTH_DB_INVALID;
+      }
+   }
+
+   return AUTH_DB_SUCCESS;
+}
+
 int auth_db_increment_failed_attempts(const char *username) {
    if (!username) {
       return AUTH_DB_INVALID;
@@ -787,6 +818,277 @@ int auth_db_set_lockout(const char *username, time_t lockout_until) {
    return (rc == SQLITE_DONE) ? AUTH_DB_SUCCESS : AUTH_DB_FAILURE;
 }
 
+int auth_db_list_users(auth_user_summary_callback_t callback, void *ctx) {
+   if (!callback) {
+      return AUTH_DB_INVALID;
+   }
+
+   pthread_mutex_lock(&s_db.mutex);
+
+   if (!s_db.initialized) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   const char *sql = "SELECT id, username, is_admin, created_at, last_login, "
+                     "failed_attempts, lockout_until FROM users ORDER BY id";
+   sqlite3_stmt *stmt = NULL;
+   int rc = sqlite3_prepare_v2(s_db.db, sql, -1, &stmt, NULL);
+   if (rc != SQLITE_OK) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+      auth_user_summary_t user = { 0 };
+      user.id = sqlite3_column_int(stmt, 0);
+
+      const char *uname = (const char *)sqlite3_column_text(stmt, 1);
+      if (uname) {
+         strncpy(user.username, uname, AUTH_USERNAME_MAX - 1);
+         user.username[AUTH_USERNAME_MAX - 1] = '\0';
+      }
+
+      user.is_admin = sqlite3_column_int(stmt, 2) != 0;
+      user.created_at = (time_t)sqlite3_column_int64(stmt, 3);
+      user.last_login = (time_t)sqlite3_column_int64(stmt, 4);
+      user.failed_attempts = sqlite3_column_int(stmt, 5);
+      user.lockout_until = (time_t)sqlite3_column_int64(stmt, 6);
+
+      if (callback(&user, ctx) != 0) {
+         break; /* Callback requested stop */
+      }
+   }
+
+   sqlite3_finalize(stmt);
+   pthread_mutex_unlock(&s_db.mutex);
+
+   return AUTH_DB_SUCCESS;
+}
+
+int auth_db_count_admins(void) {
+   pthread_mutex_lock(&s_db.mutex);
+
+   if (!s_db.initialized) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return -1;
+   }
+
+   const char *sql = "SELECT COUNT(*) FROM users WHERE is_admin = 1";
+   sqlite3_stmt *stmt = NULL;
+   int rc = sqlite3_prepare_v2(s_db.db, sql, -1, &stmt, NULL);
+   if (rc != SQLITE_OK) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return -1;
+   }
+
+   int count = -1;
+   if (sqlite3_step(stmt) == SQLITE_ROW) {
+      count = sqlite3_column_int(stmt, 0);
+   }
+
+   sqlite3_finalize(stmt);
+   pthread_mutex_unlock(&s_db.mutex);
+
+   return count;
+}
+
+int auth_db_delete_user(const char *username) {
+   if (!username) {
+      return AUTH_DB_INVALID;
+   }
+
+   pthread_mutex_lock(&s_db.mutex);
+
+   if (!s_db.initialized) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   /* Start transaction for atomicity */
+   sqlite3_exec(s_db.db, "BEGIN IMMEDIATE", NULL, NULL, NULL);
+
+   /* Get user info (is_admin, id) */
+   const char *sql_get = "SELECT id, is_admin FROM users WHERE username = ?";
+   sqlite3_stmt *stmt_get = NULL;
+   int rc = sqlite3_prepare_v2(s_db.db, sql_get, -1, &stmt_get, NULL);
+   if (rc != SQLITE_OK) {
+      sqlite3_exec(s_db.db, "ROLLBACK", NULL, NULL, NULL);
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   sqlite3_bind_text(stmt_get, 1, username, -1, SQLITE_STATIC);
+   rc = sqlite3_step(stmt_get);
+
+   if (rc != SQLITE_ROW) {
+      sqlite3_finalize(stmt_get);
+      sqlite3_exec(s_db.db, "ROLLBACK", NULL, NULL, NULL);
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_NOT_FOUND;
+   }
+
+   int user_id = sqlite3_column_int(stmt_get, 0);
+   bool is_admin = sqlite3_column_int(stmt_get, 1) != 0;
+   sqlite3_finalize(stmt_get);
+
+   /* If admin, check if this is the last admin */
+   if (is_admin) {
+      const char *sql_count = "SELECT COUNT(*) FROM users WHERE is_admin = 1";
+      sqlite3_stmt *stmt_count = NULL;
+      sqlite3_prepare_v2(s_db.db, sql_count, -1, &stmt_count, NULL);
+      int admin_count = 0;
+      if (sqlite3_step(stmt_count) == SQLITE_ROW) {
+         admin_count = sqlite3_column_int(stmt_count, 0);
+      }
+      sqlite3_finalize(stmt_count);
+
+      if (admin_count <= 1) {
+         sqlite3_exec(s_db.db, "ROLLBACK", NULL, NULL, NULL);
+         pthread_mutex_unlock(&s_db.mutex);
+         return AUTH_DB_LAST_ADMIN;
+      }
+   }
+
+   /* Delete user's sessions first */
+   const char *sql_del_sessions = "DELETE FROM sessions WHERE user_id = ?";
+   sqlite3_stmt *stmt_del_sessions = NULL;
+   sqlite3_prepare_v2(s_db.db, sql_del_sessions, -1, &stmt_del_sessions, NULL);
+   sqlite3_bind_int(stmt_del_sessions, 1, user_id);
+   sqlite3_step(stmt_del_sessions);
+   sqlite3_finalize(stmt_del_sessions);
+
+   /* Delete the user */
+   const char *sql_del = "DELETE FROM users WHERE username = ?";
+   sqlite3_stmt *stmt_del = NULL;
+   sqlite3_prepare_v2(s_db.db, sql_del, -1, &stmt_del, NULL);
+   sqlite3_bind_text(stmt_del, 1, username, -1, SQLITE_STATIC);
+   rc = sqlite3_step(stmt_del);
+   sqlite3_finalize(stmt_del);
+
+   if (rc != SQLITE_DONE) {
+      sqlite3_exec(s_db.db, "ROLLBACK", NULL, NULL, NULL);
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   sqlite3_exec(s_db.db, "COMMIT", NULL, NULL, NULL);
+   pthread_mutex_unlock(&s_db.mutex);
+
+   return AUTH_DB_SUCCESS;
+}
+
+int auth_db_update_password(const char *username, const char *new_hash) {
+   if (!username || !new_hash) {
+      return AUTH_DB_INVALID;
+   }
+
+   pthread_mutex_lock(&s_db.mutex);
+
+   if (!s_db.initialized) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   /* Start transaction for atomicity (password + session invalidation) */
+   sqlite3_exec(s_db.db, "BEGIN IMMEDIATE", NULL, NULL, NULL);
+
+   /* Get user ID */
+   const char *sql_get = "SELECT id FROM users WHERE username = ?";
+   sqlite3_stmt *stmt_get = NULL;
+   int rc = sqlite3_prepare_v2(s_db.db, sql_get, -1, &stmt_get, NULL);
+   if (rc != SQLITE_OK) {
+      sqlite3_exec(s_db.db, "ROLLBACK", NULL, NULL, NULL);
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   sqlite3_bind_text(stmt_get, 1, username, -1, SQLITE_STATIC);
+   rc = sqlite3_step(stmt_get);
+
+   if (rc != SQLITE_ROW) {
+      sqlite3_finalize(stmt_get);
+      sqlite3_exec(s_db.db, "ROLLBACK", NULL, NULL, NULL);
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_NOT_FOUND;
+   }
+
+   int user_id = sqlite3_column_int(stmt_get, 0);
+   sqlite3_finalize(stmt_get);
+
+   /* Update password */
+   const char *sql_update = "UPDATE users SET password_hash = ? WHERE username = ?";
+   sqlite3_stmt *stmt_update = NULL;
+   sqlite3_prepare_v2(s_db.db, sql_update, -1, &stmt_update, NULL);
+   sqlite3_bind_text(stmt_update, 1, new_hash, -1, SQLITE_STATIC);
+   sqlite3_bind_text(stmt_update, 2, username, -1, SQLITE_STATIC);
+   rc = sqlite3_step(stmt_update);
+   sqlite3_finalize(stmt_update);
+
+   if (rc != SQLITE_DONE) {
+      sqlite3_exec(s_db.db, "ROLLBACK", NULL, NULL, NULL);
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   /* Invalidate all sessions for this user */
+   const char *sql_del = "DELETE FROM sessions WHERE user_id = ?";
+   sqlite3_stmt *stmt_del = NULL;
+   sqlite3_prepare_v2(s_db.db, sql_del, -1, &stmt_del, NULL);
+   sqlite3_bind_int(stmt_del, 1, user_id);
+   sqlite3_step(stmt_del);
+   sqlite3_finalize(stmt_del);
+
+   sqlite3_exec(s_db.db, "COMMIT", NULL, NULL, NULL);
+   pthread_mutex_unlock(&s_db.mutex);
+
+   return AUTH_DB_SUCCESS;
+}
+
+int auth_db_unlock_user(const char *username) {
+   if (!username) {
+      return AUTH_DB_INVALID;
+   }
+
+   pthread_mutex_lock(&s_db.mutex);
+
+   if (!s_db.initialized) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   /* Check if user exists first */
+   const char *sql_check = "SELECT 1 FROM users WHERE username = ?";
+   sqlite3_stmt *stmt_check = NULL;
+   int rc = sqlite3_prepare_v2(s_db.db, sql_check, -1, &stmt_check, NULL);
+   if (rc != SQLITE_OK) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   sqlite3_bind_text(stmt_check, 1, username, -1, SQLITE_STATIC);
+   rc = sqlite3_step(stmt_check);
+   sqlite3_finalize(stmt_check);
+
+   if (rc != SQLITE_ROW) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_NOT_FOUND;
+   }
+
+   /* Unlock: set lockout_until to 0 and reset failed_attempts */
+   const char *sql_unlock =
+       "UPDATE users SET lockout_until = 0, failed_attempts = 0 WHERE username = ?";
+   sqlite3_stmt *stmt_unlock = NULL;
+   sqlite3_prepare_v2(s_db.db, sql_unlock, -1, &stmt_unlock, NULL);
+   sqlite3_bind_text(stmt_unlock, 1, username, -1, SQLITE_STATIC);
+   rc = sqlite3_step(stmt_unlock);
+   sqlite3_finalize(stmt_unlock);
+
+   pthread_mutex_unlock(&s_db.mutex);
+
+   return (rc == SQLITE_DONE) ? AUTH_DB_SUCCESS : AUTH_DB_FAILURE;
+}
+
 /* ============================================================================
  * Session Operations
  * ============================================================================ */
@@ -851,31 +1153,9 @@ int auth_db_get_session(const char *token, auth_session_t *session_out) {
       return AUTH_DB_FAILURE;
    }
 
-   /* Lazy cleanup: run if cleanup interval has passed */
-   time_t now = time(NULL);
-   if (now - s_db.last_cleanup > AUTH_CLEANUP_INTERVAL_SEC) {
-      /* Run cleanup while we have the lock */
-      time_t session_cutoff = now - AUTH_SESSION_TIMEOUT_SEC;
-      time_t attempt_cutoff = now - LOGIN_ATTEMPT_RETENTION_SEC;
-      time_t log_cutoff = now - AUTH_LOG_RETENTION_SEC;
-
-      sqlite3_reset(s_db.stmt_delete_expired_sessions);
-      sqlite3_bind_int64(s_db.stmt_delete_expired_sessions, 1, (int64_t)session_cutoff);
-      sqlite3_step(s_db.stmt_delete_expired_sessions);
-      sqlite3_reset(s_db.stmt_delete_expired_sessions);
-
-      sqlite3_reset(s_db.stmt_delete_old_attempts);
-      sqlite3_bind_int64(s_db.stmt_delete_old_attempts, 1, (int64_t)attempt_cutoff);
-      sqlite3_step(s_db.stmt_delete_old_attempts);
-      sqlite3_reset(s_db.stmt_delete_old_attempts);
-
-      sqlite3_reset(s_db.stmt_delete_old_logs);
-      sqlite3_bind_int64(s_db.stmt_delete_old_logs, 1, (int64_t)log_cutoff);
-      sqlite3_step(s_db.stmt_delete_old_logs);
-      sqlite3_reset(s_db.stmt_delete_old_logs);
-
-      s_db.last_cleanup = now;
-   }
+   /* Note: Cleanup is now handled by the background maintenance thread
+    * (auth_maintenance.c) rather than lazily during session lookups.
+    * This avoids conflicts between concurrent cleanup attempts. */
 
    sqlite3_reset(s_db.stmt_get_session);
    sqlite3_bind_text(s_db.stmt_get_session, 1, token, -1, SQLITE_STATIC);
@@ -980,6 +1260,74 @@ int auth_db_delete_session(const char *token) {
    return (rc == SQLITE_DONE) ? AUTH_DB_SUCCESS : AUTH_DB_FAILURE;
 }
 
+int auth_db_delete_session_by_prefix(const char *prefix) {
+   if (!prefix || strlen(prefix) < 8) {
+      return AUTH_DB_INVALID;
+   }
+
+   pthread_mutex_lock(&s_db.mutex);
+
+   if (!s_db.initialized) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   /* Find full token matching prefix (use SUBSTR for exact matching, not LIKE) */
+   const char *find_sql = "SELECT token FROM sessions WHERE substr(token, 1, 8) = ? LIMIT 1";
+   sqlite3_stmt *stmt = NULL;
+   int rc = sqlite3_prepare_v2(s_db.db, find_sql, -1, &stmt, NULL);
+   if (rc != SQLITE_OK) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   /* Bind only the first 8 characters */
+   char prefix_buf[9] = { 0 };
+   strncpy(prefix_buf, prefix, 8);
+   sqlite3_bind_text(stmt, 1, prefix_buf, 8, SQLITE_STATIC);
+
+   rc = sqlite3_step(stmt);
+   if (rc != SQLITE_ROW) {
+      sqlite3_finalize(stmt);
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_NOT_FOUND;
+   }
+
+   /* Get full token and delete it */
+   const char *full_token = (const char *)sqlite3_column_text(stmt, 0);
+   if (!full_token) {
+      sqlite3_finalize(stmt);
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   /* Delete the session */
+   sqlite3_reset(s_db.stmt_delete_session);
+   sqlite3_bind_text(s_db.stmt_delete_session, 1, full_token, -1, SQLITE_TRANSIENT);
+   rc = sqlite3_step(s_db.stmt_delete_session);
+   sqlite3_reset(s_db.stmt_delete_session);
+   sqlite3_finalize(stmt);
+
+   pthread_mutex_unlock(&s_db.mutex);
+
+   return (rc == SQLITE_DONE) ? AUTH_DB_SUCCESS : AUTH_DB_FAILURE;
+}
+
+int auth_db_delete_sessions_by_username(const char *username) {
+   if (!username) {
+      return -1;
+   }
+
+   /* Look up user to get their ID */
+   auth_user_t user;
+   int rc = auth_db_get_user(username, &user);
+   if (rc != AUTH_DB_SUCCESS) {
+      return (rc == AUTH_DB_NOT_FOUND) ? 0 : -1;
+   }
+
+   return auth_db_delete_user_sessions(user.id);
+}
+
 int auth_db_delete_user_sessions(int user_id) {
    pthread_mutex_lock(&s_db.mutex);
 
@@ -998,6 +1346,95 @@ int auth_db_delete_user_sessions(int user_id) {
    pthread_mutex_unlock(&s_db.mutex);
 
    return (rc == SQLITE_DONE) ? changes : -1;
+}
+
+int auth_db_list_sessions(auth_session_summary_callback_t callback, void *ctx) {
+   if (!callback) {
+      return AUTH_DB_INVALID;
+   }
+
+   pthread_mutex_lock(&s_db.mutex);
+
+   if (!s_db.initialized) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   const char *sql = "SELECT s.token, s.user_id, u.username, s.created_at, "
+                     "s.last_activity, s.ip_address "
+                     "FROM sessions s "
+                     "JOIN users u ON s.user_id = u.id "
+                     "ORDER BY s.last_activity DESC";
+   sqlite3_stmt *stmt = NULL;
+   int rc = sqlite3_prepare_v2(s_db.db, sql, -1, &stmt, NULL);
+   if (rc != SQLITE_OK) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+      auth_session_summary_t session = { 0 };
+
+      /* Only copy token prefix (8 chars) for security */
+      const char *tok = (const char *)sqlite3_column_text(stmt, 0);
+      if (tok) {
+         strncpy(session.token_prefix, tok, 8);
+         session.token_prefix[8] = '\0';
+      }
+
+      session.user_id = sqlite3_column_int(stmt, 1);
+
+      const char *uname = (const char *)sqlite3_column_text(stmt, 2);
+      if (uname) {
+         strncpy(session.username, uname, AUTH_USERNAME_MAX - 1);
+         session.username[AUTH_USERNAME_MAX - 1] = '\0';
+      }
+
+      session.created_at = (time_t)sqlite3_column_int64(stmt, 3);
+      session.last_activity = (time_t)sqlite3_column_int64(stmt, 4);
+
+      const char *ip = (const char *)sqlite3_column_text(stmt, 5);
+      if (ip) {
+         strncpy(session.ip_address, ip, AUTH_IP_MAX - 1);
+         session.ip_address[AUTH_IP_MAX - 1] = '\0';
+      }
+
+      if (callback(&session, ctx) != 0) {
+         break; /* Callback requested stop */
+      }
+   }
+
+   sqlite3_finalize(stmt);
+   pthread_mutex_unlock(&s_db.mutex);
+
+   return AUTH_DB_SUCCESS;
+}
+
+int auth_db_count_sessions(void) {
+   pthread_mutex_lock(&s_db.mutex);
+
+   if (!s_db.initialized) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return -1;
+   }
+
+   const char *sql = "SELECT COUNT(*) FROM sessions";
+   sqlite3_stmt *stmt = NULL;
+   int rc = sqlite3_prepare_v2(s_db.db, sql, -1, &stmt, NULL);
+   if (rc != SQLITE_OK) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return -1;
+   }
+
+   int count = -1;
+   if (sqlite3_step(stmt) == SQLITE_ROW) {
+      count = sqlite3_column_int(stmt, 0);
+   }
+
+   sqlite3_finalize(stmt);
+   pthread_mutex_unlock(&s_db.mutex);
+
+   return count;
 }
 
 /* ============================================================================
@@ -1064,6 +1501,102 @@ int auth_db_log_attempt(const char *ip_address, const char *username, bool succe
    return (rc == SQLITE_DONE) ? AUTH_DB_SUCCESS : AUTH_DB_FAILURE;
 }
 
+int auth_db_clear_login_attempts(const char *ip_address) {
+   pthread_mutex_lock(&s_db.mutex);
+
+   if (!s_db.initialized) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return -1;
+   }
+
+   int deleted = 0;
+   sqlite3_stmt *stmt = NULL;
+   int rc;
+
+   if (ip_address) {
+      /* Delete attempts for specific IP */
+      rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM login_attempts WHERE ip_address = ?", -1, &stmt,
+                              NULL);
+      if (rc != SQLITE_OK) {
+         LOG_ERROR("auth_db: prepare clear_login_attempts failed: %s", sqlite3_errmsg(s_db.db));
+         pthread_mutex_unlock(&s_db.mutex);
+         return -1;
+      }
+      sqlite3_bind_text(stmt, 1, ip_address, -1, SQLITE_STATIC);
+   } else {
+      /* Delete all attempts */
+      rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM login_attempts", -1, &stmt, NULL);
+      if (rc != SQLITE_OK) {
+         LOG_ERROR("auth_db: prepare clear_all_login_attempts failed: %s", sqlite3_errmsg(s_db.db));
+         pthread_mutex_unlock(&s_db.mutex);
+         return -1;
+      }
+   }
+
+   rc = sqlite3_step(stmt);
+   if (rc == SQLITE_DONE) {
+      deleted = sqlite3_changes(s_db.db);
+   }
+   sqlite3_finalize(stmt);
+
+   pthread_mutex_unlock(&s_db.mutex);
+
+   LOG_INFO("auth_db: Cleared %d login attempts for IP: %s", deleted, ip_address ? ip_address : "all");
+   return deleted;
+}
+
+int auth_db_list_blocked_ips(time_t since, auth_ip_status_callback_t callback, void *ctx) {
+   if (!callback) {
+      return AUTH_DB_INVALID;
+   }
+
+   pthread_mutex_lock(&s_db.mutex);
+
+   if (!s_db.initialized) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   /* Query IPs with failed attempts, grouped by IP, ordered by attempt count descending */
+   const char *sql = "SELECT ip_address, COUNT(*) as attempt_count, MAX(timestamp) as last_attempt "
+                     "FROM login_attempts "
+                     "WHERE success = 0 AND timestamp > ? "
+                     "GROUP BY ip_address "
+                     "ORDER BY attempt_count DESC "
+                     "LIMIT 100";
+
+   sqlite3_stmt *stmt = NULL;
+   int rc = sqlite3_prepare_v2(s_db.db, sql, -1, &stmt, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare list_blocked_ips failed: %s", sqlite3_errmsg(s_db.db));
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   sqlite3_bind_int64(stmt, 1, (int64_t)since);
+
+   while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+      auth_ip_status_t status = { 0 };
+
+      const char *ip = (const char *)sqlite3_column_text(stmt, 0);
+      if (ip) {
+         strncpy(status.ip_address, ip, sizeof(status.ip_address) - 1);
+      }
+      status.failed_attempts = sqlite3_column_int(stmt, 1);
+      status.last_attempt = (time_t)sqlite3_column_int64(stmt, 2);
+
+      /* Call callback with mutex still held - callback should be quick */
+      if (callback(&status, ctx) != 0) {
+         break;
+      }
+   }
+
+   sqlite3_finalize(stmt);
+   pthread_mutex_unlock(&s_db.mutex);
+
+   return AUTH_DB_SUCCESS;
+}
+
 /* ============================================================================
  * Audit Logging
  * ============================================================================ */
@@ -1109,6 +1642,121 @@ void auth_db_log_event(const char *event,
    sqlite3_reset(s_db.stmt_log_event);
 
    pthread_mutex_unlock(&s_db.mutex);
+}
+
+int auth_db_query_audit_log(const auth_log_filter_t *filter,
+                            auth_log_callback_t callback,
+                            void *ctx) {
+   if (!callback) {
+      return AUTH_DB_INVALID;
+   }
+
+   pthread_mutex_lock(&s_db.mutex);
+
+   if (!s_db.initialized || !s_db.db) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   /* Build dynamic SQL query based on filters */
+   char sql[512];
+   int sql_len = snprintf(sql, sizeof(sql),
+                          "SELECT timestamp, event, username, ip_address, details "
+                          "FROM auth_log WHERE 1=1");
+
+   /* Apply filters */
+   time_t since = 0, until = 0;
+   const char *event_filter = NULL;
+   const char *user_filter = NULL;
+   int limit = AUTH_LOG_DEFAULT_LIMIT;
+   int offset = 0;
+
+   if (filter) {
+      since = filter->since;
+      until = filter->until;
+      event_filter = filter->event;
+      user_filter = filter->username;
+      limit = (filter->limit > 0) ? filter->limit : AUTH_LOG_DEFAULT_LIMIT;
+      if (limit > AUTH_LOG_MAX_LIMIT)
+         limit = AUTH_LOG_MAX_LIMIT;
+      offset = (filter->offset > 0) ? filter->offset : 0;
+   }
+
+   if (since > 0) {
+      sql_len += snprintf(sql + sql_len, sizeof(sql) - sql_len, " AND timestamp >= ?");
+   }
+   if (until > 0) {
+      sql_len += snprintf(sql + sql_len, sizeof(sql) - sql_len, " AND timestamp <= ?");
+   }
+   if (event_filter) {
+      sql_len += snprintf(sql + sql_len, sizeof(sql) - sql_len, " AND event = ?");
+   }
+   if (user_filter) {
+      sql_len += snprintf(sql + sql_len, sizeof(sql) - sql_len, " AND username = ?");
+   }
+
+   sql_len += snprintf(sql + sql_len, sizeof(sql) - sql_len,
+                       " ORDER BY timestamp DESC LIMIT ? OFFSET ?");
+
+   sqlite3_stmt *stmt = NULL;
+   int rc = sqlite3_prepare_v2(s_db.db, sql, -1, &stmt, NULL);
+   if (rc != SQLITE_OK) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   /* Bind parameters */
+   int param = 1;
+   if (since > 0) {
+      sqlite3_bind_int64(stmt, param++, (int64_t)since);
+   }
+   if (until > 0) {
+      sqlite3_bind_int64(stmt, param++, (int64_t)until);
+   }
+   if (event_filter) {
+      sqlite3_bind_text(stmt, param++, event_filter, -1, SQLITE_STATIC);
+   }
+   if (user_filter) {
+      sqlite3_bind_text(stmt, param++, user_filter, -1, SQLITE_STATIC);
+   }
+   sqlite3_bind_int(stmt, param++, limit);
+   sqlite3_bind_int(stmt, param++, offset);
+
+   /* Execute and call callback for each row */
+   while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+      auth_log_entry_t entry = { 0 };
+
+      entry.timestamp = (time_t)sqlite3_column_int64(stmt, 0);
+
+      const char *ev = (const char *)sqlite3_column_text(stmt, 1);
+      if (ev) {
+         strncpy(entry.event, ev, sizeof(entry.event) - 1);
+      }
+
+      const char *user = (const char *)sqlite3_column_text(stmt, 2);
+      if (user) {
+         strncpy(entry.username, user, sizeof(entry.username) - 1);
+      }
+
+      const char *ip = (const char *)sqlite3_column_text(stmt, 3);
+      if (ip) {
+         strncpy(entry.ip_address, ip, sizeof(entry.ip_address) - 1);
+      }
+
+      const char *details = (const char *)sqlite3_column_text(stmt, 4);
+      if (details) {
+         strncpy(entry.details, details, sizeof(entry.details) - 1);
+      }
+
+      if (callback(&entry, ctx) != 0) {
+         break;
+      }
+   }
+
+   sqlite3_finalize(stmt);
+   pthread_mutex_unlock(&s_db.mutex);
+
+   return AUTH_DB_SUCCESS;
 }
 
 /* ============================================================================
@@ -1163,4 +1811,259 @@ int auth_db_checkpoint(void) {
    pthread_mutex_unlock(&s_db.mutex);
 
    return (rc == SQLITE_OK) ? AUTH_DB_SUCCESS : AUTH_DB_FAILURE;
+}
+
+int auth_db_checkpoint_passive(void) {
+   pthread_mutex_lock(&s_db.mutex);
+
+   if (!s_db.initialized || !s_db.db) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   /* PASSIVE: Checkpoint as much as possible without waiting */
+   int rc = sqlite3_wal_checkpoint_v2(s_db.db, NULL, SQLITE_CHECKPOINT_PASSIVE, NULL, NULL);
+
+   pthread_mutex_unlock(&s_db.mutex);
+
+   return (rc == SQLITE_OK) ? AUTH_DB_SUCCESS : AUTH_DB_FAILURE;
+}
+
+/* ============================================================================
+ * Statistics and Database Management
+ * ============================================================================ */
+
+/* Vacuum rate limit: once per 24 hours */
+#define VACUUM_COOLDOWN_SEC (24 * 60 * 60)
+static time_t s_last_vacuum = 0;
+
+int auth_db_get_stats(auth_db_stats_t *stats) {
+   if (!stats) {
+      return AUTH_DB_INVALID;
+   }
+
+   memset(stats, 0, sizeof(*stats));
+
+   pthread_mutex_lock(&s_db.mutex);
+
+   if (!s_db.initialized || !s_db.db) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   /* Combined query for all stats - reduces database round trips */
+   const char *sql =
+       "SELECT "
+       "(SELECT COUNT(*) FROM users), "
+       "(SELECT COUNT(*) FROM users WHERE is_admin = 1), "
+       "(SELECT COUNT(*) FROM users WHERE lockout_until > strftime('%s','now')), "
+       "(SELECT COUNT(*) FROM sessions), "
+       "(SELECT COUNT(*) FROM login_attempts "
+       " WHERE success = 0 AND timestamp > strftime('%s','now') - 86400), "
+       "(SELECT COUNT(*) FROM auth_log), "
+       "(SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size())";
+
+   sqlite3_stmt *stmt = NULL;
+   int rc = sqlite3_prepare_v2(s_db.db, sql, -1, &stmt, NULL);
+   if (rc != SQLITE_OK) {
+      pthread_mutex_unlock(&s_db.mutex);
+      LOG_ERROR("Failed to prepare stats query: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   if (sqlite3_step(stmt) == SQLITE_ROW) {
+      stats->user_count = sqlite3_column_int(stmt, 0);
+      stats->admin_count = sqlite3_column_int(stmt, 1);
+      stats->locked_user_count = sqlite3_column_int(stmt, 2);
+      stats->session_count = sqlite3_column_int(stmt, 3);
+      stats->failed_attempts_24h = sqlite3_column_int(stmt, 4);
+      stats->audit_log_count = sqlite3_column_int(stmt, 5);
+      stats->db_size_bytes = sqlite3_column_int64(stmt, 6);
+   }
+   sqlite3_finalize(stmt);
+
+   pthread_mutex_unlock(&s_db.mutex);
+
+   return AUTH_DB_SUCCESS;
+}
+
+int auth_db_vacuum(void) {
+   pthread_mutex_lock(&s_db.mutex);
+
+   if (!s_db.initialized || !s_db.db) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   /* Rate limit: once per 24 hours */
+   time_t now = time(NULL);
+   if (s_last_vacuum > 0 && (now - s_last_vacuum) < VACUUM_COOLDOWN_SEC) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_RATE_LIMITED;
+   }
+
+   int rc = sqlite3_exec(s_db.db, "VACUUM", NULL, NULL, NULL);
+   if (rc == SQLITE_OK) {
+      s_last_vacuum = now;
+   }
+
+   pthread_mutex_unlock(&s_db.mutex);
+
+   return (rc == SQLITE_OK) ? AUTH_DB_SUCCESS : AUTH_DB_FAILURE;
+}
+
+/**
+ * @brief Check if a path is within one of the allowed backup directories.
+ *
+ * Resolves the parent directory of the path to its canonical form and checks
+ * against a list of allowed directory prefixes.
+ *
+ * @param path Path to validate
+ * @return 0 if path is allowed, non-zero otherwise
+ */
+static int validate_backup_path(const char *path) {
+   /* Allowed backup directory prefixes */
+   static const char *allowed_prefixes[] = {
+      "/var/lib/dawn/",   /* Main Dawn data directory */
+      "/tmp/",            /* Temporary files */
+      "/home/",           /* User home directories */
+      NULL
+   };
+
+   if (!path || path[0] != '/') {
+      /* Only absolute paths allowed */
+      return -1;
+   }
+
+   /* Check for ".." path traversal */
+   if (strstr(path, "..") != NULL) {
+      return -1;
+   }
+
+   /* Get parent directory of the target path */
+   char parent[PATH_MAX];
+   strncpy(parent, path, sizeof(parent) - 1);
+   parent[sizeof(parent) - 1] = '\0';
+
+   char *last_slash = strrchr(parent, '/');
+   if (!last_slash || last_slash == parent) {
+      /* Root directory or invalid path */
+      return -1;
+   }
+   *last_slash = '\0';
+
+   /* Resolve to canonical path (follow symlinks) */
+   char resolved[PATH_MAX];
+   if (!realpath(parent, resolved)) {
+      /* Parent directory doesn't exist or error resolving */
+      return -1;
+   }
+
+   /* Add trailing slash for prefix matching */
+   size_t len = strlen(resolved);
+   if (len < sizeof(resolved) - 1 && resolved[len - 1] != '/') {
+      resolved[len] = '/';
+      resolved[len + 1] = '\0';
+   }
+
+   /* Check against allowlist */
+   for (const char **prefix = allowed_prefixes; *prefix != NULL; prefix++) {
+      if (strncmp(resolved, *prefix, strlen(*prefix)) == 0) {
+         return 0; /* Path is allowed */
+      }
+      /* Also check if resolved path equals the prefix without trailing slash */
+      size_t prefix_len = strlen(*prefix);
+      if (prefix_len > 0 && (*prefix)[prefix_len - 1] == '/') {
+         if (strncmp(resolved, *prefix, prefix_len - 1) == 0 &&
+             (resolved[prefix_len - 1] == '/' || resolved[prefix_len - 1] == '\0')) {
+            return 0;
+         }
+      }
+   }
+
+   return -1; /* Path not in allowlist */
+}
+
+int auth_db_backup(const char *dest_path) {
+   if (!dest_path) {
+      return AUTH_DB_INVALID;
+   }
+
+   /* Validate path against allowlist */
+   if (validate_backup_path(dest_path) != 0) {
+      LOG_WARNING("Backup path not in allowed directories: %s", dest_path);
+      return AUTH_DB_FAILURE;
+   }
+
+   pthread_mutex_lock(&s_db.mutex);
+
+   if (!s_db.initialized || !s_db.db) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   /* Create destination file with secure permissions.
+    * O_NOFOLLOW prevents symlink attacks (TOCTOU race condition). */
+   mode_t old_umask = umask(0077);
+   int fd = open(dest_path, O_CREAT | O_EXCL | O_WRONLY | O_NOFOLLOW, 0600);
+   umask(old_umask);
+
+   if (fd < 0) {
+      LOG_WARNING("Failed to create backup file: %s (%s)", dest_path, strerror(errno));
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+   close(fd);
+
+   /* Open destination database */
+   sqlite3 *dest_db = NULL;
+   int rc = sqlite3_open(dest_path, &dest_db);
+   if (rc != SQLITE_OK) {
+      LOG_WARNING("Failed to open backup database: %s", sqlite3_errmsg(dest_db));
+      unlink(dest_path);
+      sqlite3_close(dest_db);
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   /* Start backup */
+   sqlite3_backup *backup = sqlite3_backup_init(dest_db, "main", s_db.db, "main");
+   if (!backup) {
+      LOG_WARNING("Failed to initialize backup: %s", sqlite3_errmsg(dest_db));
+      sqlite3_close(dest_db);
+      unlink(dest_path);
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   /* Step backup: 100 pages at a time, 10ms yield between steps */
+   do {
+      rc = sqlite3_backup_step(backup, 100);
+      if (rc == SQLITE_BUSY || rc == SQLITE_LOCKED) {
+         sqlite3_sleep(10);
+      }
+   } while (rc == SQLITE_OK || rc == SQLITE_BUSY || rc == SQLITE_LOCKED);
+
+   sqlite3_backup_finish(backup);
+
+   int result = AUTH_DB_SUCCESS;
+   if (rc != SQLITE_DONE) {
+      LOG_WARNING("Backup failed: %s", sqlite3_errmsg(dest_db));
+      unlink(dest_path);
+      result = AUTH_DB_FAILURE;
+   }
+
+   sqlite3_close(dest_db);
+
+   /* Verify final permissions */
+   struct stat st;
+   if (result == AUTH_DB_SUCCESS && stat(dest_path, &st) == 0) {
+      if ((st.st_mode & 0777) != 0600) {
+         chmod(dest_path, 0600);
+      }
+   }
+
+   pthread_mutex_unlock(&s_db.mutex);
+
+   return result;
 }

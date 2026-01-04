@@ -20,35 +20,69 @@
  *
  * dawn-admin: Administrative CLI for Dawn daemon management.
  *
- * Phase 1 implements:
- *   dawn-admin user create <username> --admin
- *
- * This validates the setup token, prompts for password, and creates
- * the user in the database atomically.
+ * Implements user and session management commands for the Dawn daemon.
  */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "password_prompt.h"
 #include "socket_client.h"
 
-#define VERSION "1.0.0"
+#define VERSION "2.0.0"
 
 static void print_usage(const char *prog) {
    fprintf(stderr, "Dawn Admin CLI v%s\n\n", VERSION);
    fprintf(stderr, "Usage: %s <command> [options]\n\n", prog);
    fprintf(stderr, "Commands:\n");
-   fprintf(stderr, "  user create <username> --admin    Create an admin user (first-run setup)\n");
    fprintf(stderr, "  ping                              Test connection to daemon\n");
-   fprintf(stderr, "  help                              Show this help message\n");
-   fprintf(stderr, "\nEnvironment:\n");
-   fprintf(stderr, "  DAWN_SETUP_TOKEN    Setup token (skips interactive prompt)\n");
+   fprintf(stderr, "\n");
+   fprintf(stderr, "User Management:\n");
+   fprintf(stderr, "  user list                         List all users\n");
+   fprintf(stderr, "  user create <username> --admin    Create admin user (uses DAWN_SETUP_TOKEN)\n");
+   fprintf(stderr, "  user delete <username> [--yes]    Delete a user account\n");
+   fprintf(stderr, "  user passwd <username>            Change user password\n");
+   fprintf(stderr, "  user unlock <username>            Unlock a locked account\n");
+   fprintf(stderr, "\n");
+   fprintf(stderr, "Session Management:\n");
+   fprintf(stderr, "  session list                      List active sessions\n");
+   fprintf(stderr, "  session revoke <token_prefix>     Revoke a specific session\n");
+   fprintf(stderr, "  session revoke --user <username>  Revoke all sessions for a user\n");
+   fprintf(stderr, "\n");
+   fprintf(stderr, "Database Management:\n");
+   fprintf(stderr, "  db status                         Show database statistics\n");
+   fprintf(stderr, "  db compact                        Compact database (rate-limited)\n");
+   fprintf(stderr, "  db backup <path>                  Backup database to file\n");
+   fprintf(stderr, "\n");
+   fprintf(stderr, "Audit Log:\n");
+   fprintf(stderr, "  log show [options]                Show recent audit log entries\n");
+   fprintf(stderr, "    --last N                        Show last N entries (default 50)\n");
+   fprintf(stderr, "    --type <event>                  Filter by event type\n");
+   fprintf(stderr, "    --user <username>               Filter by username\n");
+   fprintf(stderr, "\n");
+   fprintf(stderr, "IP Management:\n");
+   fprintf(stderr, "  ip list                           List IPs with failed login attempts\n");
+   fprintf(stderr, "  ip unblock <ip-address>           Unblock a rate-limited IP address\n");
+   fprintf(stderr, "  ip unblock --all                  Unblock all IP addresses\n");
+   fprintf(stderr, "\n");
+   fprintf(stderr, "Options:\n");
+   fprintf(stderr, "  --yes, -y    Skip confirmation prompts\n");
+   fprintf(stderr, "  help         Show this help message\n");
    fprintf(stderr, "\nExamples:\n");
-   fprintf(stderr, "  %s user create admin --admin\n", prog);
-   fprintf(stderr, "  DAWN_SETUP_TOKEN=DAWN-XXXX-XXXX-XXXX-XXXX %s user create admin --admin\n",
-           prog);
+   fprintf(stderr, "  %s user list\n", prog);
+   fprintf(stderr, "  %s user delete guest\n", prog);
+   fprintf(stderr, "  %s user passwd admin\n", prog);
+   fprintf(stderr, "  %s session list\n", prog);
+   fprintf(stderr, "  %s session revoke a1b2c3d4\n", prog);
+   fprintf(stderr, "  %s session revoke --user guest\n", prog);
+   fprintf(stderr, "  %s db status\n", prog);
+   fprintf(stderr, "  %s db backup /var/lib/dawn/backup.db\n", prog);
+   fprintf(stderr, "  %s log show\n", prog);
+   fprintf(stderr, "  %s log show --last 100 --type LOGIN_FAILED\n", prog);
+   fprintf(stderr, "  %s ip list\n", prog);
+   fprintf(stderr, "  %s ip unblock 192.168.1.100\n", prog);
 }
 
 static int cmd_ping(void) {
@@ -83,7 +117,7 @@ static int cmd_user_create(const char *username, int is_admin) {
 
    printf("Creating admin user: %s\n\n", username);
 
-   /* Prompt for setup token first (before connecting to minimize socket hold time) */
+   /* Get token from env var or prompt */
    char token[64] = { 0 };
    if (prompt_input("Enter setup token: ", token, sizeof(token)) != 0) {
       fprintf(stderr, "Error: Failed to read setup token\n");
@@ -143,6 +177,600 @@ static int cmd_user_create(const char *username, int is_admin) {
    return 0;
 }
 
+/* Format relative time (e.g., "5m ago", "2h ago", "3d ago") */
+static void format_relative_time(int64_t timestamp, char *buf, size_t buflen) {
+   if (timestamp == 0) {
+      snprintf(buf, buflen, "Never");
+      return;
+   }
+
+   time_t now = time(NULL);
+   int64_t diff = now - timestamp;
+
+   if (diff < 0) {
+      snprintf(buf, buflen, "Future");
+   } else if (diff < 60) {
+      snprintf(buf, buflen, "%lds ago", (long)diff);
+   } else if (diff < 3600) {
+      snprintf(buf, buflen, "%ldm ago", (long)(diff / 60));
+   } else if (diff < 86400) {
+      snprintf(buf, buflen, "%ldh ago", (long)(diff / 3600));
+   } else {
+      snprintf(buf, buflen, "%ldd ago", (long)(diff / 86400));
+   }
+}
+
+/* User list callback context */
+typedef struct {
+   int count;
+} user_list_print_ctx_t;
+
+static int print_user_callback(const admin_user_entry_t *user, void *ctx) {
+   user_list_print_ctx_t *pctx = (user_list_print_ctx_t *)ctx;
+
+   const char *role = user->is_admin ? "Admin" : "User";
+   const char *status = user->is_locked ? "Locked" : "Active";
+
+   printf("  %-3d %-20s %-6s %-8s", user->id, user->username, role, status);
+   if (user->failed_attempts > 0) {
+      printf(" (%d failed)", user->failed_attempts);
+   }
+   printf("\n");
+
+   pctx->count++;
+   return 0;
+}
+
+static int cmd_user_list(void) {
+   int fd = admin_client_connect();
+   if (fd < 0) {
+      return 1;
+   }
+
+   printf("\nUsers:\n");
+   printf("  %-3s %-20s %-6s %-8s\n", "ID", "Username", "Role", "Status");
+   printf("  --- -------------------- ------ --------\n");
+
+   user_list_print_ctx_t ctx = { .count = 0 };
+   admin_resp_code_t resp = admin_client_list_users(fd, print_user_callback, &ctx);
+   admin_client_disconnect(fd);
+
+   if (resp != ADMIN_RESP_SUCCESS) {
+      fprintf(stderr, "Error: %s\n", admin_resp_strerror(resp));
+      return 1;
+   }
+
+   printf("\n%d user(s) total.\n\n", ctx.count);
+   return 0;
+}
+
+static int cmd_user_delete(const char *username, int skip_confirm) {
+   if (!username || strlen(username) == 0) {
+      fprintf(stderr, "Error: Username is required\n");
+      return 1;
+   }
+
+   /* Prompt for admin credentials */
+   char admin_user[64] = { 0 };
+   char admin_pass[PASSWORD_MAX_LENGTH] = { 0 };
+
+   printf("Admin authentication required to delete user '%s'\n\n", username);
+
+   if (prompt_input("Admin username: ", admin_user, sizeof(admin_user)) != 0) {
+      fprintf(stderr, "Error: Failed to read admin username\n");
+      return 1;
+   }
+
+   if (prompt_password("Admin password: ", admin_pass, sizeof(admin_pass)) != 0) {
+      fprintf(stderr, "Error: Failed to read admin password\n");
+      return 1;
+   }
+
+   /* Confirmation unless --yes */
+   if (!skip_confirm) {
+      char confirm[64] = { 0 };
+      printf("\nDelete user '%s'? Type username to confirm: ", username);
+      if (prompt_input("", confirm, sizeof(confirm)) != 0 || strcmp(confirm, username) != 0) {
+         printf("Cancelled.\n");
+         secure_clear(admin_pass, sizeof(admin_pass));
+         return 1;
+      }
+   }
+
+   int fd = admin_client_connect();
+   if (fd < 0) {
+      secure_clear(admin_pass, sizeof(admin_pass));
+      return 1;
+   }
+
+   admin_resp_code_t resp = admin_client_delete_user(fd, admin_user, admin_pass, username);
+   secure_clear(admin_pass, sizeof(admin_pass));
+   admin_client_disconnect(fd);
+
+   if (resp != ADMIN_RESP_SUCCESS) {
+      fprintf(stderr, "Error: %s\n", admin_resp_strerror(resp));
+      return 1;
+   }
+
+   printf("\nUser '%s' deleted successfully.\n\n", username);
+   return 0;
+}
+
+static int cmd_user_passwd(const char *username) {
+   if (!username || strlen(username) == 0) {
+      fprintf(stderr, "Error: Username is required\n");
+      return 1;
+   }
+
+   /* Prompt for admin credentials */
+   char admin_user[64] = { 0 };
+   char admin_pass[PASSWORD_MAX_LENGTH] = { 0 };
+
+   printf("Admin authentication required to change password for '%s'\n\n", username);
+
+   if (prompt_input("Admin username: ", admin_user, sizeof(admin_user)) != 0) {
+      fprintf(stderr, "Error: Failed to read admin username\n");
+      return 1;
+   }
+
+   if (prompt_password("Admin password: ", admin_pass, sizeof(admin_pass)) != 0) {
+      fprintf(stderr, "Error: Failed to read admin password\n");
+      return 1;
+   }
+
+   printf("\n");
+
+   /* Prompt for new password with confirmation */
+   char new_pass[PASSWORD_MAX_LENGTH] = { 0 };
+   printf("New password for '%s':\n", username);
+   if (prompt_password_confirm(new_pass, sizeof(new_pass)) != 0) {
+      secure_clear(admin_pass, sizeof(admin_pass));
+      return 1;
+   }
+
+   int fd = admin_client_connect();
+   if (fd < 0) {
+      secure_clear(admin_pass, sizeof(admin_pass));
+      secure_clear(new_pass, sizeof(new_pass));
+      return 1;
+   }
+
+   admin_resp_code_t resp = admin_client_change_password(fd, admin_user, admin_pass, username,
+                                                         new_pass);
+   secure_clear(admin_pass, sizeof(admin_pass));
+   secure_clear(new_pass, sizeof(new_pass));
+   admin_client_disconnect(fd);
+
+   if (resp != ADMIN_RESP_SUCCESS) {
+      fprintf(stderr, "Error: %s\n", admin_resp_strerror(resp));
+      return 1;
+   }
+
+   printf("\nPassword changed for '%s'. All sessions invalidated.\n\n", username);
+   return 0;
+}
+
+static int cmd_user_unlock(const char *username) {
+   if (!username || strlen(username) == 0) {
+      fprintf(stderr, "Error: Username is required\n");
+      return 1;
+   }
+
+   /* Prompt for admin credentials */
+   char admin_user[64] = { 0 };
+   char admin_pass[PASSWORD_MAX_LENGTH] = { 0 };
+
+   printf("Admin authentication required to unlock user '%s'\n\n", username);
+
+   if (prompt_input("Admin username: ", admin_user, sizeof(admin_user)) != 0) {
+      fprintf(stderr, "Error: Failed to read admin username\n");
+      return 1;
+   }
+
+   if (prompt_password("Admin password: ", admin_pass, sizeof(admin_pass)) != 0) {
+      fprintf(stderr, "Error: Failed to read admin password\n");
+      return 1;
+   }
+
+   int fd = admin_client_connect();
+   if (fd < 0) {
+      secure_clear(admin_pass, sizeof(admin_pass));
+      return 1;
+   }
+
+   admin_resp_code_t resp = admin_client_unlock_user(fd, admin_user, admin_pass, username);
+   secure_clear(admin_pass, sizeof(admin_pass));
+   admin_client_disconnect(fd);
+
+   if (resp != ADMIN_RESP_SUCCESS) {
+      fprintf(stderr, "Error: %s\n", admin_resp_strerror(resp));
+      return 1;
+   }
+
+   printf("\nUser '%s' unlocked successfully.\n\n", username);
+   return 0;
+}
+
+/* Session list callback context */
+typedef struct {
+   int count;
+} session_list_print_ctx_t;
+
+static int print_session_callback(const admin_session_entry_t *session, void *ctx) {
+   session_list_print_ctx_t *pctx = (session_list_print_ctx_t *)ctx;
+
+   char last_active[32];
+   format_relative_time(session->last_activity, last_active, sizeof(last_active));
+
+   printf("  %-10s %-16s %-18s %s\n", session->token_prefix, session->username,
+          session->ip_address[0] ? session->ip_address : "(local)", last_active);
+
+   pctx->count++;
+   return 0;
+}
+
+static int cmd_session_list(void) {
+   int fd = admin_client_connect();
+   if (fd < 0) {
+      return 1;
+   }
+
+   printf("\nActive Sessions:\n");
+   printf("  %-10s %-16s %-18s %s\n", "Token", "User", "IP Address", "Last Active");
+   printf("  ---------- ---------------- ------------------ -----------\n");
+
+   session_list_print_ctx_t ctx = { .count = 0 };
+   admin_resp_code_t resp = admin_client_list_sessions(fd, print_session_callback, &ctx);
+   admin_client_disconnect(fd);
+
+   if (resp != ADMIN_RESP_SUCCESS) {
+      fprintf(stderr, "Error: %s\n", admin_resp_strerror(resp));
+      return 1;
+   }
+
+   printf("\n%d active session(s).\n\n", ctx.count);
+   return 0;
+}
+
+static int cmd_session_revoke(const char *token_or_user, int is_user_mode) {
+   if (!token_or_user || strlen(token_or_user) == 0) {
+      fprintf(stderr, "Error: Token prefix or username is required\n");
+      return 1;
+   }
+
+   /* Prompt for admin credentials */
+   char admin_user[64] = { 0 };
+   char admin_pass[PASSWORD_MAX_LENGTH] = { 0 };
+
+   if (is_user_mode) {
+      printf("Admin authentication required to revoke sessions for user '%s'\n\n", token_or_user);
+   } else {
+      printf("Admin authentication required to revoke session '%s...'\n\n", token_or_user);
+   }
+
+   if (prompt_input("Admin username: ", admin_user, sizeof(admin_user)) != 0) {
+      fprintf(stderr, "Error: Failed to read admin username\n");
+      return 1;
+   }
+
+   if (prompt_password("Admin password: ", admin_pass, sizeof(admin_pass)) != 0) {
+      fprintf(stderr, "Error: Failed to read admin password\n");
+      return 1;
+   }
+
+   int fd = admin_client_connect();
+   if (fd < 0) {
+      secure_clear(admin_pass, sizeof(admin_pass));
+      return 1;
+   }
+
+   admin_resp_code_t resp;
+   if (is_user_mode) {
+      resp = admin_client_revoke_user_sessions(fd, admin_user, admin_pass, token_or_user);
+   } else {
+      resp = admin_client_revoke_session(fd, admin_user, admin_pass, token_or_user);
+   }
+
+   secure_clear(admin_pass, sizeof(admin_pass));
+   admin_client_disconnect(fd);
+
+   if (resp != ADMIN_RESP_SUCCESS) {
+      fprintf(stderr, "Error: %s\n", admin_resp_strerror(resp));
+      return 1;
+   }
+
+   if (is_user_mode) {
+      printf("\nAll sessions revoked for user '%s'.\n\n", token_or_user);
+   } else {
+      printf("\nSession '%s...' revoked.\n\n", token_or_user);
+   }
+   return 0;
+}
+
+/* Format file size with human-readable units */
+static void format_size(int64_t bytes, char *buf, size_t buflen) {
+   if (bytes < 1024) {
+      snprintf(buf, buflen, "%ld B", (long)bytes);
+   } else if (bytes < 1024 * 1024) {
+      snprintf(buf, buflen, "%.1f KB", (double)bytes / 1024);
+   } else if (bytes < 1024 * 1024 * 1024) {
+      snprintf(buf, buflen, "%.1f MB", (double)bytes / (1024 * 1024));
+   } else {
+      snprintf(buf, buflen, "%.1f GB", (double)bytes / (1024 * 1024 * 1024));
+   }
+}
+
+static int cmd_db_status(void) {
+   int fd = admin_client_connect();
+   if (fd < 0) {
+      return 1;
+   }
+
+   admin_db_stats_t stats;
+   admin_resp_code_t resp = admin_client_get_stats(fd, &stats);
+   admin_client_disconnect(fd);
+
+   if (resp != ADMIN_RESP_SUCCESS) {
+      fprintf(stderr, "Error: %s\n", admin_resp_strerror(resp));
+      return 1;
+   }
+
+   char size_str[32];
+   format_size(stats.db_size_bytes, size_str, sizeof(size_str));
+
+   printf("\nDatabase Statistics:\n\n");
+   printf("  Users\n");
+   printf("    Total:    %d\n", stats.user_count);
+   printf("    Admins:   %d\n", stats.admin_count);
+   printf("    Locked:   %d\n", stats.locked_user_count);
+   printf("\n");
+   printf("  Sessions\n");
+   printf("    Active:   %d\n", stats.session_count);
+   printf("\n");
+   printf("  Security (last 24h)\n");
+   printf("    Failed logins:  %d\n", stats.failed_attempts_24h);
+   printf("\n");
+   printf("  Database\n");
+   printf("    Size:          %s\n", size_str);
+   printf("    Audit entries: %d\n", stats.audit_log_count);
+   printf("\n");
+
+   return 0;
+}
+
+static int cmd_db_compact(void) {
+   /* Prompt for admin credentials */
+   char admin_user[64] = { 0 };
+   char admin_pass[PASSWORD_MAX_LENGTH] = { 0 };
+
+   printf("Admin authentication required for database compaction\n\n");
+
+   if (prompt_input("Admin username: ", admin_user, sizeof(admin_user)) != 0) {
+      fprintf(stderr, "Error: Failed to read admin username\n");
+      return 1;
+   }
+
+   if (prompt_password("Admin password: ", admin_pass, sizeof(admin_pass)) != 0) {
+      fprintf(stderr, "Error: Failed to read admin password\n");
+      return 1;
+   }
+
+   int fd = admin_client_connect();
+   if (fd < 0) {
+      secure_clear(admin_pass, sizeof(admin_pass));
+      return 1;
+   }
+
+   admin_resp_code_t resp = admin_client_db_compact(fd, admin_user, admin_pass);
+   secure_clear(admin_pass, sizeof(admin_pass));
+   admin_client_disconnect(fd);
+
+   if (resp == ADMIN_RESP_RATE_LIMITED) {
+      fprintf(stderr, "Error: Database was compacted recently. Try again in 24 hours.\n");
+      return 1;
+   } else if (resp != ADMIN_RESP_SUCCESS) {
+      fprintf(stderr, "Error: %s\n", admin_resp_strerror(resp));
+      return 1;
+   }
+
+   printf("\nDatabase compacted successfully.\n\n");
+   return 0;
+}
+
+static int cmd_db_backup(const char *dest_path) {
+   if (!dest_path || strlen(dest_path) == 0) {
+      fprintf(stderr, "Error: Destination path is required\n");
+      return 1;
+   }
+
+   /* Prompt for admin credentials */
+   char admin_user[64] = { 0 };
+   char admin_pass[PASSWORD_MAX_LENGTH] = { 0 };
+
+   printf("Admin authentication required for database backup\n\n");
+
+   if (prompt_input("Admin username: ", admin_user, sizeof(admin_user)) != 0) {
+      fprintf(stderr, "Error: Failed to read admin username\n");
+      return 1;
+   }
+
+   if (prompt_password("Admin password: ", admin_pass, sizeof(admin_pass)) != 0) {
+      fprintf(stderr, "Error: Failed to read admin password\n");
+      return 1;
+   }
+
+   int fd = admin_client_connect();
+   if (fd < 0) {
+      secure_clear(admin_pass, sizeof(admin_pass));
+      return 1;
+   }
+
+   admin_resp_code_t resp = admin_client_db_backup(fd, admin_user, admin_pass, dest_path);
+   secure_clear(admin_pass, sizeof(admin_pass));
+   admin_client_disconnect(fd);
+
+   if (resp != ADMIN_RESP_SUCCESS) {
+      fprintf(stderr, "Error: %s\n", admin_resp_strerror(resp));
+      return 1;
+   }
+
+   printf("\nDatabase backed up to: %s\n\n", dest_path);
+   return 0;
+}
+
+/* Log show callback context */
+typedef struct {
+   int count;
+} log_show_ctx_t;
+
+static int print_log_callback(const admin_log_entry_t *entry, void *ctx) {
+   log_show_ctx_t *lctx = (log_show_ctx_t *)ctx;
+
+   char time_str[32];
+   format_relative_time(entry->timestamp, time_str, sizeof(time_str));
+
+   /* Print with color hints based on event type */
+   printf("  %-12s %-20s %-16s %-18s", time_str, entry->event,
+          entry->username[0] ? entry->username : "-",
+          entry->ip_address[0] ? entry->ip_address : "-");
+
+   if (entry->details[0]) {
+      printf(" %s", entry->details);
+   }
+   printf("\n");
+
+   lctx->count++;
+   return 0;
+}
+
+static int cmd_log_show(int limit, const char *event_filter, const char *user_filter) {
+   int fd = admin_client_connect();
+   if (fd < 0) {
+      return 1;
+   }
+
+   admin_log_filter_t filter = { 0 };
+   filter.limit = (limit > 0) ? limit : 50;
+   filter.event = event_filter;
+   filter.username = user_filter;
+
+   printf("\nAudit Log:\n");
+   printf("  %-12s %-20s %-16s %-18s %s\n", "Time", "Event", "User", "IP", "Details");
+   printf("  ------------ -------------------- ---------------- ------------------ -------\n");
+
+   log_show_ctx_t ctx = { .count = 0 };
+   admin_resp_code_t resp = admin_client_query_log(fd, &filter, print_log_callback, &ctx);
+   admin_client_disconnect(fd);
+
+   if (resp != ADMIN_RESP_SUCCESS) {
+      fprintf(stderr, "Error: %s\n", admin_resp_strerror(resp));
+      return 1;
+   }
+
+   printf("\n%d log entries.\n\n", ctx.count);
+   return 0;
+}
+
+/* IP list callback context */
+typedef struct {
+   int count;
+   int blocked_count;
+} ip_list_print_ctx_t;
+
+static int print_ip_callback(const admin_ip_entry_t *entry, void *ctx) {
+   ip_list_print_ctx_t *pctx = (ip_list_print_ctx_t *)ctx;
+
+   char last_attempt[32];
+   format_relative_time(entry->last_attempt, last_attempt, sizeof(last_attempt));
+
+   /* Mark as "Blocked" if attempts >= 20 (rate limit threshold) */
+   const char *status = (entry->failed_attempts >= 20) ? "Blocked" : "Warning";
+   if (entry->failed_attempts >= 20) {
+      pctx->blocked_count++;
+   }
+
+   printf("  %-40s %8d  %-12s  %s\n", entry->ip_address, entry->failed_attempts, last_attempt,
+          status);
+
+   pctx->count++;
+   return 0;
+}
+
+static int cmd_ip_list(void) {
+   int fd = admin_client_connect();
+   if (fd < 0) {
+      return 1;
+   }
+
+   printf("\nRate-Limited IPs (last 15 minutes):\n");
+   printf("  %-40s %8s  %-12s  %s\n", "IP Address", "Attempts", "Last Seen", "Status");
+   printf("  ---------------------------------------- --------  ------------  -------\n");
+
+   ip_list_print_ctx_t ctx = { .count = 0, .blocked_count = 0 };
+   admin_resp_code_t resp = admin_client_list_blocked_ips(fd, print_ip_callback, &ctx);
+   admin_client_disconnect(fd);
+
+   if (resp != ADMIN_RESP_SUCCESS) {
+      fprintf(stderr, "Error: %s\n", admin_resp_strerror(resp));
+      return 1;
+   }
+
+   if (ctx.count == 0) {
+      printf("  (no IPs with failed attempts)\n");
+   }
+   printf("\n%d IPs total, %d currently blocked (>= 20 attempts).\n\n", ctx.count, ctx.blocked_count);
+   return 0;
+}
+
+static int cmd_ip_unblock(const char *ip_address) {
+   if (!ip_address || strlen(ip_address) == 0) {
+      fprintf(stderr, "Error: IP address is required (or use --all)\n");
+      return 1;
+   }
+
+   /* Prompt for admin credentials */
+   char admin_user[64] = { 0 };
+   char admin_pass[PASSWORD_MAX_LENGTH] = { 0 };
+
+   if (strcmp(ip_address, "--all") == 0) {
+      printf("Admin authentication required to unblock all IPs\n\n");
+   } else {
+      printf("Admin authentication required to unblock IP '%s'\n\n", ip_address);
+   }
+
+   if (prompt_input("Admin username: ", admin_user, sizeof(admin_user)) != 0) {
+      fprintf(stderr, "Error: Failed to read admin username\n");
+      return 1;
+   }
+
+   if (prompt_password("Admin password: ", admin_pass, sizeof(admin_pass)) != 0) {
+      fprintf(stderr, "Error: Failed to read admin password\n");
+      return 1;
+   }
+
+   int fd = admin_client_connect();
+   if (fd < 0) {
+      secure_clear(admin_pass, sizeof(admin_pass));
+      return 1;
+   }
+
+   admin_resp_code_t resp = admin_client_unblock_ip(fd, admin_user, admin_pass, ip_address);
+   secure_clear(admin_pass, sizeof(admin_pass));
+   admin_client_disconnect(fd);
+
+   if (resp != ADMIN_RESP_SUCCESS) {
+      fprintf(stderr, "Error: %s\n", admin_resp_strerror(resp));
+      return 1;
+   }
+
+   if (strcmp(ip_address, "--all") == 0) {
+      printf("\nAll IPs unblocked successfully.\n\n");
+   } else {
+      printf("\nIP '%s' unblocked successfully.\n\n", ip_address);
+   }
+   return 0;
+}
+
 int main(int argc, char *argv[]) {
    if (argc < 2) {
       print_usage(argv[0]);
@@ -166,13 +794,16 @@ int main(int argc, char *argv[]) {
    if (strcmp(cmd, "user") == 0) {
       if (argc < 3) {
          fprintf(stderr, "Error: Missing user subcommand\n");
-         fprintf(stderr, "Usage: %s user create <username> --admin\n", argv[0]);
+         fprintf(stderr, "Usage: %s user <list|create|delete|passwd|unlock>\n", argv[0]);
          return 1;
       }
 
       const char *subcmd = argv[2];
 
-      if (strcmp(subcmd, "create") == 0) {
+      if (strcmp(subcmd, "list") == 0) {
+         return cmd_user_list();
+
+      } else if (strcmp(subcmd, "create") == 0) {
          if (argc < 4) {
             fprintf(stderr, "Error: Missing username\n");
             fprintf(stderr, "Usage: %s user create <username> --admin\n", argv[0]);
@@ -191,9 +822,189 @@ int main(int argc, char *argv[]) {
          }
 
          return cmd_user_create(username, is_admin);
+
+      } else if (strcmp(subcmd, "delete") == 0) {
+         if (argc < 4) {
+            fprintf(stderr, "Error: Missing username\n");
+            fprintf(stderr, "Usage: %s user delete <username> [--yes]\n", argv[0]);
+            return 1;
+         }
+
+         const char *username = argv[3];
+         int skip_confirm = 0;
+
+         /* Check for --yes flag */
+         for (int i = 4; i < argc; i++) {
+            if (strcmp(argv[i], "--yes") == 0 || strcmp(argv[i], "-y") == 0) {
+               skip_confirm = 1;
+               break;
+            }
+         }
+
+         return cmd_user_delete(username, skip_confirm);
+
+      } else if (strcmp(subcmd, "passwd") == 0) {
+         if (argc < 4) {
+            fprintf(stderr, "Error: Missing username\n");
+            fprintf(stderr, "Usage: %s user passwd <username>\n", argv[0]);
+            return 1;
+         }
+
+         return cmd_user_passwd(argv[3]);
+
+      } else if (strcmp(subcmd, "unlock") == 0) {
+         if (argc < 4) {
+            fprintf(stderr, "Error: Missing username\n");
+            fprintf(stderr, "Usage: %s user unlock <username>\n", argv[0]);
+            return 1;
+         }
+
+         return cmd_user_unlock(argv[3]);
+
       } else {
          fprintf(stderr, "Error: Unknown user subcommand: %s\n", subcmd);
-         fprintf(stderr, "Available: create\n");
+         fprintf(stderr, "Available: list, create, delete, passwd, unlock\n");
+         return 1;
+      }
+   }
+
+   /* Session commands */
+   if (strcmp(cmd, "session") == 0) {
+      if (argc < 3) {
+         fprintf(stderr, "Error: Missing session subcommand\n");
+         fprintf(stderr, "Usage: %s session <list|revoke>\n", argv[0]);
+         return 1;
+      }
+
+      const char *subcmd = argv[2];
+
+      if (strcmp(subcmd, "list") == 0) {
+         return cmd_session_list();
+
+      } else if (strcmp(subcmd, "revoke") == 0) {
+         if (argc < 4) {
+            fprintf(stderr, "Error: Missing token prefix or --user flag\n");
+            fprintf(stderr, "Usage: %s session revoke <token_prefix>\n", argv[0]);
+            fprintf(stderr, "       %s session revoke --user <username>\n", argv[0]);
+            return 1;
+         }
+
+         /* Check for --user mode */
+         if (strcmp(argv[3], "--user") == 0) {
+            if (argc < 5) {
+               fprintf(stderr, "Error: Missing username\n");
+               fprintf(stderr, "Usage: %s session revoke --user <username>\n", argv[0]);
+               return 1;
+            }
+            return cmd_session_revoke(argv[4], 1);
+         }
+
+         /* Token prefix mode - must be 8 characters */
+         if (strlen(argv[3]) < 8) {
+            fprintf(stderr, "Error: Token prefix must be at least 8 characters\n");
+            return 1;
+         }
+         return cmd_session_revoke(argv[3], 0);
+
+      } else {
+         fprintf(stderr, "Error: Unknown session subcommand: %s\n", subcmd);
+         fprintf(stderr, "Available: list, revoke\n");
+         return 1;
+      }
+   }
+
+   /* Database commands */
+   if (strcmp(cmd, "db") == 0) {
+      if (argc < 3) {
+         fprintf(stderr, "Error: Missing db subcommand\n");
+         fprintf(stderr, "Usage: %s db <status|compact|backup>\n", argv[0]);
+         return 1;
+      }
+
+      const char *subcmd = argv[2];
+
+      if (strcmp(subcmd, "status") == 0) {
+         return cmd_db_status();
+
+      } else if (strcmp(subcmd, "compact") == 0) {
+         return cmd_db_compact();
+
+      } else if (strcmp(subcmd, "backup") == 0) {
+         if (argc < 4) {
+            fprintf(stderr, "Error: Missing destination path\n");
+            fprintf(stderr, "Usage: %s db backup <path>\n", argv[0]);
+            return 1;
+         }
+         return cmd_db_backup(argv[3]);
+
+      } else {
+         fprintf(stderr, "Error: Unknown db subcommand: %s\n", subcmd);
+         fprintf(stderr, "Available: status, compact, backup\n");
+         return 1;
+      }
+   }
+
+   /* Log commands */
+   if (strcmp(cmd, "log") == 0) {
+      if (argc < 3) {
+         fprintf(stderr, "Error: Missing log subcommand\n");
+         fprintf(stderr, "Usage: %s log show [options]\n", argv[0]);
+         return 1;
+      }
+
+      const char *subcmd = argv[2];
+
+      if (strcmp(subcmd, "show") == 0) {
+         int limit = 50;
+         const char *event_filter = NULL;
+         const char *user_filter = NULL;
+
+         /* Parse options */
+         for (int i = 3; i < argc; i++) {
+            if (strcmp(argv[i], "--last") == 0 && i + 1 < argc) {
+               limit = atoi(argv[++i]);
+               if (limit <= 0)
+                  limit = 50;
+            } else if (strcmp(argv[i], "--type") == 0 && i + 1 < argc) {
+               event_filter = argv[++i];
+            } else if (strcmp(argv[i], "--user") == 0 && i + 1 < argc) {
+               user_filter = argv[++i];
+            }
+         }
+
+         return cmd_log_show(limit, event_filter, user_filter);
+
+      } else {
+         fprintf(stderr, "Error: Unknown log subcommand: %s\n", subcmd);
+         fprintf(stderr, "Available: show\n");
+         return 1;
+      }
+   }
+
+   /* IP commands */
+   if (strcmp(cmd, "ip") == 0) {
+      if (argc < 3) {
+         fprintf(stderr, "Error: Missing ip subcommand\n");
+         fprintf(stderr, "Usage: %s ip list|unblock\n", argv[0]);
+         return 1;
+      }
+
+      const char *subcmd = argv[2];
+
+      if (strcmp(subcmd, "list") == 0) {
+         return cmd_ip_list();
+
+      } else if (strcmp(subcmd, "unblock") == 0) {
+         if (argc < 4) {
+            fprintf(stderr, "Error: Missing IP address\n");
+            fprintf(stderr, "Usage: %s ip unblock <ip-address|--all>\n", argv[0]);
+            return 1;
+         }
+         return cmd_ip_unblock(argv[3]);
+
+      } else {
+         fprintf(stderr, "Error: Unknown ip subcommand: %s\n", subcmd);
+         fprintf(stderr, "Available: list, unblock\n");
          return 1;
       }
    }

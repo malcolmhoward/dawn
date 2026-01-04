@@ -89,6 +89,7 @@
 #include "auth/admin_socket.h"
 #include "auth/auth_crypto.h"
 #include "auth/auth_db.h"
+#include "auth/auth_maintenance.h"
 #endif
 #ifdef ENABLE_AEC
 #include "audio/aec_processor.h"
@@ -2256,6 +2257,12 @@ int main(int argc, char *argv[]) {
          LOG_WARNING("Failed to initialize admin socket - CLI management disabled");
          /* Graceful degradation - don't prevent daemon startup */
       }
+
+      /* Start background maintenance thread for auth database cleanup */
+      if (auth_maintenance_start() != 0) {
+         LOG_WARNING("Failed to start auth maintenance thread");
+         /* Non-fatal - cleanup will happen on next startup */
+      }
    }
 #endif
 
@@ -3639,7 +3646,8 @@ int main(int argc, char *argv[]) {
 
 #ifdef ENABLE_AUTH
    /* Shutdown auth subsystem in reverse initialization order:
-    * admin_socket -> auth_db -> auth_crypto */
+    * maintenance_thread -> admin_socket -> auth_db -> auth_crypto */
+   auth_maintenance_stop();
    admin_socket_shutdown();
    auth_db_shutdown();
    auth_crypto_shutdown();

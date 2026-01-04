@@ -1296,7 +1296,8 @@ static int handle_auth_login(struct lws *wsi, struct http_session_data *pss) {
    }
 
    /* Check if account is locked */
-   if (user.lockout_until > time(NULL)) {
+   time_t now = time(NULL);
+   if (user.lockout_until > now) {
       json_object_put(req);
       LOG_WARNING("WebUI: Login failed - account locked: %s", username);
       auth_db_log_attempt(normalized_ip, username, false);
@@ -1304,6 +1305,11 @@ static int handle_auth_login(struct lws *wsi, struct http_session_data *pss) {
                "{\"success\":false,\"error\":\"Account temporarily locked\"}");
       send_auth_response(wsi, HTTP_STATUS_FORBIDDEN, response, NULL);
       return -1;
+   } else if (user.lockout_until > 0 && user.lockout_until <= now) {
+      /* Lockout expired - reset failed attempts counter */
+      auth_db_reset_failed_attempts(username);
+      auth_db_set_lockout(username, 0);
+      LOG_INFO("WebUI: Lockout expired, reset failed attempts: %s", username);
    }
 
    /* Verify password - auth_verify_password returns bool (true=success) */
@@ -1311,6 +1317,19 @@ static int handle_auth_login(struct lws *wsi, struct http_session_data *pss) {
       json_object_put(req);
       auth_db_increment_failed_attempts(username);
       auth_db_log_attempt(normalized_ip, username, false);
+
+      /* Check if account should be locked after this failed attempt */
+      auth_user_t updated_user;
+      if (auth_db_get_user(username, &updated_user) == AUTH_DB_SUCCESS) {
+         if (updated_user.failed_attempts >= AUTH_MAX_LOGIN_ATTEMPTS) {
+            time_t lockout_until = time(NULL) + AUTH_LOCKOUT_DURATION_SEC;
+            auth_db_set_lockout(username, lockout_until);
+            auth_db_log_event("ACCOUNT_LOCKED", username, client_ip, "Too many failed login attempts");
+            LOG_WARNING("WebUI: Account locked due to %d failed attempts: %s",
+                        updated_user.failed_attempts, username);
+         }
+      }
+
       LOG_WARNING("WebUI: Login failed - wrong password: %s", username);
       snprintf(response, sizeof(response), "{\"success\":false,\"error\":\"Invalid credentials\"}");
       send_auth_response(wsi, HTTP_STATUS_UNAUTHORIZED, response, NULL);
@@ -4290,6 +4309,20 @@ int webui_server_client_count(void) {
 
 int webui_server_get_port(void) {
    return s_port;
+}
+
+void webui_clear_login_rate_limit(const char *ip_address) {
+   if (ip_address) {
+      /* Normalize IP before resetting (same normalization used during check) */
+      char normalized_ip[RATE_LIMIT_IP_SIZE];
+      rate_limiter_normalize_ip(ip_address, normalized_ip, sizeof(normalized_ip));
+      rate_limiter_reset(&s_login_rate, normalized_ip);
+      LOG_INFO("WebUI: Cleared in-memory rate limit for IP: %s (normalized: %s)", ip_address,
+               normalized_ip);
+   } else {
+      rate_limiter_clear_all(&s_login_rate);
+      LOG_INFO("WebUI: Cleared all in-memory rate limits");
+   }
 }
 
 /* =============================================================================

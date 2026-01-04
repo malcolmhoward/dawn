@@ -162,6 +162,18 @@ int webui_server_client_count(void);
  */
 int webui_server_get_port(void);
 
+/**
+ * @brief Clear login rate limit for an IP address
+ *
+ * Clears the in-memory rate limit entries for the specified IP.
+ * Used by admin tools to unblock rate-limited IPs.
+ *
+ * @param ip_address IP address to unblock (NULL to clear all)
+ *
+ * @note Thread-safe
+ */
+void webui_clear_login_rate_limit(const char *ip_address);
+
 /* =============================================================================
  * Worker-Callable Response Functions (Thread-Safe)
  *

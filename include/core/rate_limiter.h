@@ -118,6 +118,13 @@ bool rate_limiter_check(rate_limiter_t *limiter, const char *ip);
 void rate_limiter_reset(rate_limiter_t *limiter, const char *ip);
 
 /**
+ * @brief Clear all rate limit entries
+ *
+ * @param limiter Rate limiter instance
+ */
+void rate_limiter_clear_all(rate_limiter_t *limiter);
+
+/**
  * @brief Normalize IP address for rate limiting
  *
  * For IPv6 addresses, normalizes to /64 prefix to prevent bypass via

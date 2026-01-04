@@ -86,6 +86,273 @@ admin_resp_code_t admin_client_create_user(int fd,
                                            bool is_admin);
 
 /**
+ * @brief User entry from list response.
+ */
+typedef struct {
+   int id;
+   char username[64];
+   bool is_admin;
+   bool is_locked;
+   int failed_attempts;
+} admin_user_entry_t;
+
+/**
+ * @brief Session entry from list response.
+ */
+typedef struct {
+   char token_prefix[9];
+   char username[64];
+   int64_t created_at;
+   int64_t last_activity;
+   char ip_address[64];
+} admin_session_entry_t;
+
+/**
+ * @brief Callback for user list enumeration.
+ */
+typedef int (*admin_user_callback_t)(const admin_user_entry_t *user, void *ctx);
+
+/**
+ * @brief Callback for session list enumeration.
+ */
+typedef int (*admin_session_callback_t)(const admin_session_entry_t *session, void *ctx);
+
+/**
+ * @brief List all users.
+ *
+ * @param fd       Socket file descriptor.
+ * @param callback Function called for each user.
+ * @param ctx      User context passed to callback.
+ *
+ * @return Response code from daemon.
+ */
+admin_resp_code_t admin_client_list_users(int fd, admin_user_callback_t callback, void *ctx);
+
+/**
+ * @brief Delete a user (requires admin auth).
+ *
+ * @param fd             Socket file descriptor.
+ * @param admin_user     Admin username for authorization.
+ * @param admin_password Admin password for authorization.
+ * @param target_user    Username to delete.
+ *
+ * @return Response code from daemon.
+ */
+admin_resp_code_t admin_client_delete_user(int fd,
+                                           const char *admin_user,
+                                           const char *admin_password,
+                                           const char *target_user);
+
+/**
+ * @brief Change a user's password (requires admin auth).
+ *
+ * @param fd             Socket file descriptor.
+ * @param admin_user     Admin username for authorization.
+ * @param admin_password Admin password for authorization.
+ * @param target_user    Username whose password to change.
+ * @param new_password   New password.
+ *
+ * @return Response code from daemon.
+ */
+admin_resp_code_t admin_client_change_password(int fd,
+                                               const char *admin_user,
+                                               const char *admin_password,
+                                               const char *target_user,
+                                               const char *new_password);
+
+/**
+ * @brief Unlock a locked user account (requires admin auth).
+ *
+ * @param fd             Socket file descriptor.
+ * @param admin_user     Admin username for authorization.
+ * @param admin_password Admin password for authorization.
+ * @param target_user    Username to unlock.
+ *
+ * @return Response code from daemon.
+ */
+admin_resp_code_t admin_client_unlock_user(int fd,
+                                           const char *admin_user,
+                                           const char *admin_password,
+                                           const char *target_user);
+
+/**
+ * @brief List all active sessions.
+ *
+ * @param fd       Socket file descriptor.
+ * @param callback Function called for each session.
+ * @param ctx      User context passed to callback.
+ *
+ * @return Response code from daemon.
+ */
+admin_resp_code_t admin_client_list_sessions(int fd, admin_session_callback_t callback, void *ctx);
+
+/**
+ * @brief Revoke a session by token prefix (requires admin auth).
+ *
+ * @param fd             Socket file descriptor.
+ * @param admin_user     Admin username for authorization.
+ * @param admin_password Admin password for authorization.
+ * @param token_prefix   8-character token prefix to revoke.
+ *
+ * @return Response code from daemon.
+ */
+admin_resp_code_t admin_client_revoke_session(int fd,
+                                              const char *admin_user,
+                                              const char *admin_password,
+                                              const char *token_prefix);
+
+/**
+ * @brief Revoke all sessions for a user (requires admin auth).
+ *
+ * @param fd             Socket file descriptor.
+ * @param admin_user     Admin username for authorization.
+ * @param admin_password Admin password for authorization.
+ * @param target_user    Username whose sessions to revoke.
+ *
+ * @return Response code from daemon.
+ */
+admin_resp_code_t admin_client_revoke_user_sessions(int fd,
+                                                    const char *admin_user,
+                                                    const char *admin_password,
+                                                    const char *target_user);
+
+/**
+ * @brief Database statistics (matches auth_db_stats_t).
+ */
+typedef struct {
+   int user_count;
+   int admin_count;
+   int session_count;
+   int locked_user_count;
+   int failed_attempts_24h;
+   int audit_log_count;
+   int64_t db_size_bytes;
+} admin_db_stats_t;
+
+/**
+ * @brief Get database statistics.
+ *
+ * @param fd    Socket file descriptor.
+ * @param stats Pointer to stats structure to populate.
+ *
+ * @return Response code from daemon.
+ */
+admin_resp_code_t admin_client_get_stats(int fd, admin_db_stats_t *stats);
+
+/**
+ * @brief Compact the database (requires admin auth).
+ *
+ * Rate-limited to once per 24 hours.
+ *
+ * @param fd             Socket file descriptor.
+ * @param admin_user     Admin username for authorization.
+ * @param admin_password Admin password for authorization.
+ *
+ * @return Response code from daemon (ADMIN_RESP_RATE_LIMITED if too soon).
+ */
+admin_resp_code_t admin_client_db_compact(int fd,
+                                          const char *admin_user,
+                                          const char *admin_password);
+
+/**
+ * @brief Backup the database (requires admin auth).
+ *
+ * @param fd             Socket file descriptor.
+ * @param admin_user     Admin username for authorization.
+ * @param admin_password Admin password for authorization.
+ * @param dest_path      Destination file path.
+ *
+ * @return Response code from daemon.
+ */
+admin_resp_code_t admin_client_db_backup(int fd,
+                                         const char *admin_user,
+                                         const char *admin_password,
+                                         const char *dest_path);
+
+/**
+ * @brief Audit log entry from query response.
+ */
+typedef struct {
+   int64_t timestamp;
+   char event[32];
+   char username[64];
+   char ip_address[64];
+   char details[256];
+} admin_log_entry_t;
+
+/**
+ * @brief Callback for audit log enumeration.
+ */
+typedef int (*admin_log_callback_t)(const admin_log_entry_t *entry, void *ctx);
+
+/**
+ * @brief Audit log query filter.
+ */
+typedef struct {
+   int64_t since;        /**< Only entries after this time (0 = no limit) */
+   int64_t until;        /**< Only entries before this time (0 = no limit) */
+   const char *event;    /**< Filter by event type (NULL = all) */
+   const char *username; /**< Filter by username (NULL = all) */
+   int limit;            /**< Max entries to return (0 = default 100) */
+   int offset;           /**< Skip first N entries (for pagination) */
+} admin_log_filter_t;
+
+/**
+ * @brief Query audit log with optional filters.
+ *
+ * @param fd       Socket file descriptor.
+ * @param filter   Query filters (can be NULL for defaults).
+ * @param callback Function called for each matching entry.
+ * @param ctx      User context passed to callback.
+ *
+ * @return Response code from daemon.
+ */
+admin_resp_code_t admin_client_query_log(int fd,
+                                         const admin_log_filter_t *filter,
+                                         admin_log_callback_t callback,
+                                         void *ctx);
+
+/**
+ * @brief IP status entry from list response.
+ */
+typedef struct {
+   char ip_address[64];
+   int failed_attempts;
+   int64_t last_attempt;
+} admin_ip_entry_t;
+
+/**
+ * @brief Callback for blocked IP list enumeration.
+ */
+typedef int (*admin_ip_callback_t)(const admin_ip_entry_t *entry, void *ctx);
+
+/**
+ * @brief List IPs with failed login attempts in the rate limit window.
+ *
+ * @param fd       Socket file descriptor.
+ * @param callback Function called for each IP.
+ * @param ctx      User context passed to callback.
+ *
+ * @return Response code from daemon.
+ */
+admin_resp_code_t admin_client_list_blocked_ips(int fd, admin_ip_callback_t callback, void *ctx);
+
+/**
+ * @brief Unblock an IP address by clearing its login attempts (requires admin auth).
+ *
+ * @param fd             Socket file descriptor.
+ * @param admin_user     Admin username for authorization.
+ * @param admin_password Admin password for authorization.
+ * @param ip_address     IP address to unblock, or "--all" to clear all.
+ *
+ * @return Response code from daemon.
+ */
+admin_resp_code_t admin_client_unblock_ip(int fd,
+                                          const char *admin_user,
+                                          const char *admin_password,
+                                          const char *ip_address);
+
+/**
  * @brief Get a human-readable error message for a response code.
  *
  * @param code Response code from daemon.

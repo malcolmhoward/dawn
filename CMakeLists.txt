@@ -422,6 +422,7 @@ if(ENABLE_AUTH)
         src/auth/admin_socket.c
         src/auth/auth_db.c
         src/auth/auth_crypto.c
+        src/auth/auth_maintenance.c
     )
 endif()
 

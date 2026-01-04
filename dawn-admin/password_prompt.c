@@ -61,14 +61,69 @@ void secure_clear(void *buf, size_t buflen) {
 #endif
 }
 
+/**
+ * @brief Check for password from environment variable.
+ *
+ * @param env_var  Name of environment variable to check.
+ * @param buf      Buffer to store password.
+ * @param buflen   Size of buffer.
+ *
+ * @return 0 if password read from env, 1 if not present, -1 on error.
+ */
+static int check_password_env(const char *env_var, char *buf, size_t buflen) {
+   const char *env_password = getenv(env_var);
+   if (env_password == NULL) {
+      return 1; /* Not present, caller should prompt interactively */
+   }
+
+   size_t len = strlen(env_password);
+
+   /* Validate length */
+   if (len < PASSWORD_MIN_LENGTH) {
+      fprintf(stderr, "Error: Password from %s too short (minimum %d characters)\n", env_var,
+              PASSWORD_MIN_LENGTH);
+      return -1;
+   }
+
+   if (len >= buflen) {
+      fprintf(stderr, "Error: Password from %s too long\n", env_var);
+      return -1;
+   }
+
+   /* Copy password */
+   memcpy(buf, env_password, len + 1);
+
+   /* Security notice for audit trail */
+   fprintf(stderr, "Note: Using password from %s environment variable\n", env_var);
+
+   return 0;
+}
+
 int prompt_password(const char *prompt, char *buf, size_t buflen) {
    if (!buf || buflen < PASSWORD_MIN_LENGTH) {
       return -1;
    }
 
-   /* Check if stdin is a terminal */
+   /* Check for environment variable override (for automation) */
+   /* Determine which env var to check based on prompt content */
+   const char *env_var = NULL;
+   if (strstr(prompt, "Admin") != NULL || strstr(prompt, "admin") != NULL) {
+      env_var = "DAWN_ADMIN_PASSWORD";
+   } else {
+      env_var = "DAWN_PASSWORD";
+   }
+
+   int env_result = check_password_env(env_var, buf, buflen);
+   if (env_result == 0) {
+      return 0; /* Got password from environment */
+   } else if (env_result < 0) {
+      return -1; /* Environment password invalid */
+   }
+
+   /* Fall through to interactive prompt */
    if (!isatty(STDIN_FILENO)) {
       fprintf(stderr, "Error: Password input requires a terminal\n");
+      fprintf(stderr, "Hint: Set %s environment variable for automation\n", env_var);
       return -1;
    }
 
@@ -143,6 +198,14 @@ int prompt_password(const char *prompt, char *buf, size_t buflen) {
 int prompt_password_confirm(char *buf, size_t buflen) {
    char confirm[PASSWORD_MAX_LENGTH];
 
+   /* Check for environment variable - skip confirmation if present */
+   int env_result = check_password_env("DAWN_PASSWORD", buf, buflen);
+   if (env_result == 0) {
+      return 0; /* Got password from environment, no confirmation needed */
+   } else if (env_result < 0) {
+      return -1; /* Environment password invalid */
+   }
+
    /* Show requirements before prompting */
    fprintf(stderr, "Password requirements: minimum %d characters\n\n", PASSWORD_MIN_LENGTH);
 
@@ -176,11 +239,31 @@ int prompt_input(const char *prompt, char *buf, size_t buflen) {
    }
 
    /* Check for environment variable override (for automation) */
-   const char *env_token = getenv("DAWN_SETUP_TOKEN");
-   if (env_token != NULL) {
-      strncpy(buf, env_token, buflen - 1);
-      buf[buflen - 1] = '\0';
-      return 0;
+   /* Determine which env var to check based on prompt content */
+   const char *env_var = NULL;
+   if (strstr(prompt, "Admin username") != NULL || strstr(prompt, "admin username") != NULL) {
+      env_var = "DAWN_ADMIN_USER";
+   } else if (strstr(prompt, "token") != NULL || strstr(prompt, "Token") != NULL) {
+      env_var = "DAWN_SETUP_TOKEN";
+   }
+
+   if (env_var != NULL) {
+      const char *env_value = getenv(env_var);
+      if (env_value != NULL) {
+         strncpy(buf, env_value, buflen - 1);
+         buf[buflen - 1] = '\0';
+         fprintf(stderr, "Note: Using value from %s environment variable\n", env_var);
+         return 0;
+      }
+   }
+
+   /* Fall through to interactive prompt */
+   if (!isatty(STDIN_FILENO)) {
+      fprintf(stderr, "Error: Input requires a terminal\n");
+      if (env_var != NULL) {
+         fprintf(stderr, "Hint: Set %s environment variable for automation\n", env_var);
+      }
+      return -1;
    }
 
    fprintf(stderr, "%s", prompt);

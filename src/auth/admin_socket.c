@@ -43,6 +43,9 @@
 #include "auth/auth_crypto.h"
 #include "auth/auth_db.h"
 #include "logging.h"
+#ifdef ENABLE_WEBUI
+#include "webui/webui_server.h"
+#endif
 
 /* =============================================================================
  * Module State
@@ -83,7 +86,27 @@ static int handle_client(int client_fd);
 static int handle_ping(int client_fd);
 static int handle_validate_token(int client_fd, const char *payload, uint16_t payload_len);
 static int handle_create_user(int client_fd, const char *payload, uint16_t payload_len);
+static int handle_list_users(int client_fd);
+static int handle_delete_user(int client_fd, const char *payload, uint16_t payload_len);
+static int handle_change_password(int client_fd, const char *payload, uint16_t payload_len);
+static int handle_unlock_user(int client_fd, const char *payload, uint16_t payload_len);
+static int handle_list_sessions(int client_fd);
+static int handle_revoke_session(int client_fd, const char *payload, uint16_t payload_len);
+static int handle_revoke_user_sessions(int client_fd, const char *payload, uint16_t payload_len);
+static int handle_get_stats(int client_fd);
+static int handle_db_compact(int client_fd, const char *payload, uint16_t payload_len);
+static int handle_db_backup(int client_fd, const char *payload, uint16_t payload_len);
+static int handle_query_log(int client_fd, const char *payload, uint16_t payload_len);
+static int handle_list_blocked_ips(int client_fd);
+static int handle_unblock_ip(int client_fd, const char *payload, uint16_t payload_len);
 static int send_response(int client_fd, admin_resp_code_t code);
+static int send_list_response(int client_fd,
+                              admin_resp_code_t code,
+                              const void *data,
+                              uint16_t data_len,
+                              uint16_t item_count,
+                              uint16_t flags);
+static int verify_admin_auth(const char *payload, uint16_t payload_len, size_t *auth_size);
 static int secure_compare(const char *a, const char *b, size_t len);
 
 /* =============================================================================
@@ -684,6 +707,907 @@ static int handle_create_user(int client_fd, const char *payload, uint16_t paylo
    return send_response(client_fd, ADMIN_RESP_SUCCESS);
 }
 
+/**
+ * @brief Send extended list response for enumeration operations.
+ */
+static int send_list_response(int client_fd,
+                              admin_resp_code_t code,
+                              const void *data,
+                              uint16_t data_len,
+                              uint16_t item_count,
+                              uint16_t flags) {
+   admin_list_response_t resp = { 0 };
+   resp.version = ADMIN_PROTOCOL_VERSION;
+   resp.response_code = (uint8_t)code;
+   resp.payload_len = data_len;
+   resp.item_count = item_count;
+   resp.flags = flags;
+
+   /* Send header */
+   ssize_t sent = write(client_fd, &resp, sizeof(resp));
+   if (sent != sizeof(resp)) {
+      return 1;
+   }
+
+   /* Send data if present */
+   if (data && data_len > 0) {
+      sent = write(client_fd, data, data_len);
+      if (sent != data_len) {
+         return 1;
+      }
+   }
+
+   return 0;
+}
+
+/**
+ * @brief Dummy hash for timing attack prevention.
+ *
+ * When a user is not found or is not an admin, we still perform password
+ * verification against this dummy hash to maintain constant timing and
+ * prevent user enumeration attacks.
+ *
+ * Parameters must match AUTH_MEMLIMIT/AUTH_OPSLIMIT from auth_crypto.h:
+ * - Jetson: m=16384 (16MB), t=3, p=1
+ * - Pi:     m=8192  (8MB),  t=4, p=1
+ */
+#ifdef PLATFORM_RPI
+static const char DUMMY_PASSWORD_HASH[] =
+    "$argon2id$v=19$m=8192,t=4,p=1$AAAAAAAAAAAAAAAAAAAAAA$"
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+#else
+static const char DUMMY_PASSWORD_HASH[] =
+    "$argon2id$v=19$m=16384,t=3,p=1$AAAAAAAAAAAAAAAAAAAAAA$"
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+#endif
+
+/**
+ * @brief Verify admin authentication from payload prefix.
+ *
+ * @param payload Raw payload containing admin_auth_prefix_t
+ * @param payload_len Total payload length
+ * @param auth_size Output: size consumed by auth prefix (header + credentials)
+ * @return 0 on success, non-zero on failure
+ */
+static int verify_admin_auth(const char *payload, uint16_t payload_len, size_t *auth_size) {
+   if (payload_len < sizeof(admin_auth_prefix_t)) {
+      return -1;
+   }
+
+   const admin_auth_prefix_t *auth = (const admin_auth_prefix_t *)payload;
+
+   /* Validate lengths */
+   if (auth->admin_username_len == 0 || auth->admin_username_len > ADMIN_USERNAME_MAX_LEN) {
+      return -1;
+   }
+   if (auth->admin_password_len < ADMIN_PASSWORD_MIN_LEN ||
+       auth->admin_password_len > ADMIN_PASSWORD_MAX_LEN) {
+      return -1;
+   }
+
+   size_t total_auth_size = sizeof(admin_auth_prefix_t) + auth->admin_username_len +
+                            auth->admin_password_len;
+   if (payload_len < total_auth_size) {
+      return -1;
+   }
+
+   /* Extract credentials */
+   char username[ADMIN_USERNAME_MAX_LEN + 1] = { 0 };
+   char password[ADMIN_PASSWORD_MAX_LEN + 1] = { 0 };
+
+   const char *username_ptr = payload + sizeof(admin_auth_prefix_t);
+   const char *password_ptr = username_ptr + auth->admin_username_len;
+
+   memcpy(username, username_ptr, auth->admin_username_len);
+   memcpy(password, password_ptr, auth->admin_password_len);
+
+   /* Look up user - track failures to ensure consistent timing */
+   auth_user_t user;
+   int rc = auth_db_get_user(username, &user);
+   bool user_found = (rc == AUTH_DB_SUCCESS);
+   bool is_admin = user_found && user.is_admin;
+
+   /* Always verify password to prevent timing attacks.
+    * Use dummy hash if user not found or not admin. */
+   const char *hash_to_verify = (user_found && is_admin) ? user.password_hash : DUMMY_PASSWORD_HASH;
+   int verify_result = auth_verify_password(password, hash_to_verify);
+
+   auth_secure_zero(password, sizeof(password));
+
+   /* Now check all conditions and log appropriately */
+   if (!user_found) {
+      auth_db_log_event("ADMIN_AUTH_FAILED", username, NULL, "user not found");
+      return -1;
+   }
+
+   if (!is_admin) {
+      auth_db_log_event("ADMIN_AUTH_FAILED", username, NULL, "not an admin");
+      return -1;
+   }
+
+   if (verify_result != 0) {
+      auth_db_log_event("ADMIN_AUTH_FAILED", username, NULL, "wrong password");
+      return -1;
+   }
+
+   if (auth_size) {
+      *auth_size = total_auth_size;
+   }
+
+   return 0;
+}
+
+/* Context for user list callback */
+typedef struct {
+   char *buffer;
+   size_t buffer_size;
+   size_t offset;
+   uint16_t count;
+   bool truncated;
+   time_t now;
+} user_list_ctx_t;
+
+static int user_list_callback(const auth_user_summary_t *user, void *ctx) {
+   user_list_ctx_t *lctx = (user_list_ctx_t *)ctx;
+
+   /* Each user entry is packed as:
+    * 4 bytes: id
+    * 1 byte: username_len
+    * 1 byte: is_admin
+    * 1 byte: is_locked (lockout_until > now)
+    * 4 bytes: failed_attempts
+    * N bytes: username
+    */
+   size_t uname_len = strlen(user->username);
+   size_t entry_size = 4 + 1 + 1 + 1 + 4 + uname_len;
+
+   if (lctx->offset + entry_size > lctx->buffer_size) {
+      lctx->truncated = true;
+      return 1; /* Stop - buffer full */
+   }
+
+   char *p = lctx->buffer + lctx->offset;
+
+   /* Pack id (little-endian) */
+   uint32_t id = (uint32_t)user->id;
+   memcpy(p, &id, 4);
+   p += 4;
+
+   /* Pack username_len */
+   *p++ = (uint8_t)uname_len;
+
+   /* Pack is_admin */
+   *p++ = user->is_admin ? 1 : 0;
+
+   /* Pack is_locked */
+   *p++ = (user->lockout_until > lctx->now) ? 1 : 0;
+
+   /* Pack failed_attempts (little-endian) */
+   uint32_t failed = (uint32_t)user->failed_attempts;
+   memcpy(p, &failed, 4);
+   p += 4;
+
+   /* Pack username */
+   memcpy(p, user->username, uname_len);
+
+   lctx->offset += entry_size;
+   lctx->count++;
+
+   return 0;
+}
+
+static int handle_list_users(int client_fd) {
+   /* Allocate buffer for response (max 4KB should be plenty) */
+   char buffer[4096];
+   user_list_ctx_t ctx = { .buffer = buffer,
+                           .buffer_size = sizeof(buffer),
+                           .offset = 0,
+                           .count = 0,
+                           .truncated = false,
+                           .now = time(NULL) };
+
+   int rc = auth_db_list_users(user_list_callback, &ctx);
+   if (rc != AUTH_DB_SUCCESS) {
+      /* Use list response format even for errors - client expects 8-byte header */
+      return send_list_response(client_fd, ADMIN_RESP_SERVICE_ERROR, NULL, 0, 0, 0);
+   }
+
+   uint16_t flags = ctx.truncated ? ADMIN_LIST_FLAG_TRUNCATED : 0;
+   return send_list_response(client_fd, ADMIN_RESP_SUCCESS, buffer, (uint16_t)ctx.offset,
+                             ctx.count, flags);
+}
+
+static int handle_delete_user(int client_fd, const char *payload, uint16_t payload_len) {
+   /* Verify admin auth */
+   size_t auth_size = 0;
+   if (verify_admin_auth(payload, payload_len, &auth_size) != 0) {
+      LOG_WARNING("DELETE_USER: admin auth failed");
+      return send_response(client_fd, ADMIN_RESP_UNAUTHORIZED);
+   }
+
+   /* Extract target username (rest of payload after auth) */
+   const char *target_ptr = payload + auth_size;
+   uint16_t target_len = payload_len - (uint16_t)auth_size;
+
+   if (target_len == 0 || target_len > ADMIN_USERNAME_MAX_LEN) {
+      LOG_WARNING("DELETE_USER: invalid target username length");
+      return send_response(client_fd, ADMIN_RESP_FAILURE);
+   }
+
+   char target[ADMIN_USERNAME_MAX_LEN + 1] = { 0 };
+   memcpy(target, target_ptr, target_len);
+
+   /* Delete the user */
+   int rc = auth_db_delete_user(target);
+
+   if (rc == AUTH_DB_LAST_ADMIN) {
+      LOG_WARNING("DELETE_USER: cannot delete last admin: %s", target);
+      return send_response(client_fd, ADMIN_RESP_LAST_ADMIN);
+   } else if (rc == AUTH_DB_NOT_FOUND) {
+      LOG_WARNING("DELETE_USER: user not found: %s", target);
+      return send_response(client_fd, ADMIN_RESP_NOT_FOUND);
+   } else if (rc != AUTH_DB_SUCCESS) {
+      LOG_ERROR("DELETE_USER: database error: %d", rc);
+      return send_response(client_fd, ADMIN_RESP_SERVICE_ERROR);
+   }
+
+   auth_db_log_event("USER_DELETED", target, NULL, NULL);
+   LOG_INFO("DELETE_USER: user '%s' deleted", target);
+   return send_response(client_fd, ADMIN_RESP_SUCCESS);
+}
+
+static int handle_change_password(int client_fd, const char *payload, uint16_t payload_len) {
+   /* Verify admin auth */
+   size_t auth_size = 0;
+   if (verify_admin_auth(payload, payload_len, &auth_size) != 0) {
+      LOG_WARNING("CHANGE_PASSWORD: admin auth failed");
+      return send_response(client_fd, ADMIN_RESP_UNAUTHORIZED);
+   }
+
+   /* Payload after auth: 1 byte username_len, 1 byte password_len, username, password */
+   const char *rest = payload + auth_size;
+   uint16_t rest_len = payload_len - (uint16_t)auth_size;
+
+   if (rest_len < 2) {
+      LOG_WARNING("CHANGE_PASSWORD: payload too short");
+      return send_response(client_fd, ADMIN_RESP_FAILURE);
+   }
+
+   uint8_t target_uname_len = (uint8_t)rest[0];
+   uint8_t new_pass_len = (uint8_t)rest[1];
+
+   if (target_uname_len == 0 || target_uname_len > ADMIN_USERNAME_MAX_LEN) {
+      LOG_WARNING("CHANGE_PASSWORD: invalid username length");
+      return send_response(client_fd, ADMIN_RESP_FAILURE);
+   }
+
+   if (new_pass_len < ADMIN_PASSWORD_MIN_LEN || new_pass_len > ADMIN_PASSWORD_MAX_LEN) {
+      LOG_WARNING("CHANGE_PASSWORD: invalid password length");
+      return send_response(client_fd, ADMIN_RESP_FAILURE);
+   }
+
+   if (rest_len != 2 + target_uname_len + new_pass_len) {
+      LOG_WARNING("CHANGE_PASSWORD: payload size mismatch");
+      return send_response(client_fd, ADMIN_RESP_FAILURE);
+   }
+
+   char target[ADMIN_USERNAME_MAX_LEN + 1] = { 0 };
+   char new_password[ADMIN_PASSWORD_MAX_LEN + 1] = { 0 };
+
+   memcpy(target, rest + 2, target_uname_len);
+   memcpy(new_password, rest + 2 + target_uname_len, new_pass_len);
+
+   /* Hash new password */
+   char new_hash[AUTH_HASH_LEN];
+   if (auth_hash_password(new_password, new_hash) != 0) {
+      auth_secure_zero(new_password, sizeof(new_password));
+      LOG_ERROR("CHANGE_PASSWORD: failed to hash password");
+      return send_response(client_fd, ADMIN_RESP_SERVICE_ERROR);
+   }
+   auth_secure_zero(new_password, sizeof(new_password));
+
+   /* Update password (also invalidates all sessions) */
+   int rc = auth_db_update_password(target, new_hash);
+
+   if (rc == AUTH_DB_NOT_FOUND) {
+      LOG_WARNING("CHANGE_PASSWORD: user not found: %s", target);
+      return send_response(client_fd, ADMIN_RESP_NOT_FOUND);
+   } else if (rc != AUTH_DB_SUCCESS) {
+      LOG_ERROR("CHANGE_PASSWORD: database error: %d", rc);
+      return send_response(client_fd, ADMIN_RESP_SERVICE_ERROR);
+   }
+
+   auth_db_log_event("PASSWORD_CHANGED", target, NULL, NULL);
+   LOG_INFO("CHANGE_PASSWORD: password changed for '%s'", target);
+   return send_response(client_fd, ADMIN_RESP_SUCCESS);
+}
+
+static int handle_unlock_user(int client_fd, const char *payload, uint16_t payload_len) {
+   /* Verify admin auth */
+   size_t auth_size = 0;
+   if (verify_admin_auth(payload, payload_len, &auth_size) != 0) {
+      LOG_WARNING("UNLOCK_USER: admin auth failed");
+      return send_response(client_fd, ADMIN_RESP_UNAUTHORIZED);
+   }
+
+   /* Extract target username */
+   const char *target_ptr = payload + auth_size;
+   uint16_t target_len = payload_len - (uint16_t)auth_size;
+
+   if (target_len == 0 || target_len > ADMIN_USERNAME_MAX_LEN) {
+      LOG_WARNING("UNLOCK_USER: invalid target username length");
+      return send_response(client_fd, ADMIN_RESP_FAILURE);
+   }
+
+   char target[ADMIN_USERNAME_MAX_LEN + 1] = { 0 };
+   memcpy(target, target_ptr, target_len);
+
+   /* Unlock the user */
+   int rc = auth_db_unlock_user(target);
+
+   if (rc == AUTH_DB_NOT_FOUND) {
+      LOG_WARNING("UNLOCK_USER: user not found: %s", target);
+      return send_response(client_fd, ADMIN_RESP_NOT_FOUND);
+   } else if (rc != AUTH_DB_SUCCESS) {
+      LOG_ERROR("UNLOCK_USER: database error: %d", rc);
+      return send_response(client_fd, ADMIN_RESP_SERVICE_ERROR);
+   }
+
+   auth_db_log_event("USER_UNLOCKED", target, NULL, NULL);
+   LOG_INFO("UNLOCK_USER: user '%s' unlocked", target);
+   return send_response(client_fd, ADMIN_RESP_SUCCESS);
+}
+
+/* Context for session list callback */
+typedef struct {
+   char *buffer;
+   size_t buffer_size;
+   size_t offset;
+   uint16_t count;
+   bool truncated;
+} session_list_ctx_t;
+
+static int session_list_callback(const auth_session_summary_t *session, void *ctx) {
+   session_list_ctx_t *lctx = (session_list_ctx_t *)ctx;
+
+   /* Each session entry is packed as:
+    * 8 bytes: token_prefix (null padded)
+    * 1 byte: username_len
+    * 8 bytes: created_at
+    * 8 bytes: last_activity
+    * 1 byte: ip_len
+    * N bytes: username
+    * M bytes: ip_address
+    */
+   size_t uname_len = strlen(session->username);
+   size_t ip_len = strlen(session->ip_address);
+   size_t entry_size = 8 + 1 + 8 + 8 + 1 + uname_len + ip_len;
+
+   if (lctx->offset + entry_size > lctx->buffer_size) {
+      lctx->truncated = true;
+      return 1; /* Stop - buffer full */
+   }
+
+   char *p = lctx->buffer + lctx->offset;
+
+   /* Pack token_prefix (8 bytes, null padded) */
+   memset(p, 0, 8);
+   memcpy(p, session->token_prefix, 8);
+   p += 8;
+
+   /* Pack username_len */
+   *p++ = (uint8_t)uname_len;
+
+   /* Pack created_at (little-endian) */
+   int64_t ts = (int64_t)session->created_at;
+   memcpy(p, &ts, 8);
+   p += 8;
+
+   /* Pack last_activity (little-endian) */
+   ts = (int64_t)session->last_activity;
+   memcpy(p, &ts, 8);
+   p += 8;
+
+   /* Pack ip_len */
+   *p++ = (uint8_t)ip_len;
+
+   /* Pack username */
+   memcpy(p, session->username, uname_len);
+   p += uname_len;
+
+   /* Pack ip_address */
+   memcpy(p, session->ip_address, ip_len);
+
+   lctx->offset += entry_size;
+   lctx->count++;
+
+   return 0;
+}
+
+static int handle_list_sessions(int client_fd) {
+   /* Allocate buffer for response */
+   char buffer[8192];
+   session_list_ctx_t ctx = { .buffer = buffer,
+                              .buffer_size = sizeof(buffer),
+                              .offset = 0,
+                              .count = 0,
+                              .truncated = false };
+
+   int rc = auth_db_list_sessions(session_list_callback, &ctx);
+   if (rc != AUTH_DB_SUCCESS) {
+      /* Use list response format even for errors - client expects 8-byte header */
+      return send_list_response(client_fd, ADMIN_RESP_SERVICE_ERROR, NULL, 0, 0, 0);
+   }
+
+   uint16_t flags = ctx.truncated ? ADMIN_LIST_FLAG_TRUNCATED : 0;
+   return send_list_response(client_fd, ADMIN_RESP_SUCCESS, buffer, (uint16_t)ctx.offset,
+                             ctx.count, flags);
+}
+
+/**
+ * @brief Handle REVOKE_SESSION message.
+ *
+ * Wire format:
+ *   admin_auth_prefix_t (admin credentials)
+ *   uint8_t token_prefix_len (should be 8)
+ *   char token_prefix[token_prefix_len]
+ */
+static int handle_revoke_session(int client_fd, const char *payload, uint16_t payload_len) {
+   /* Verify admin credentials */
+   size_t auth_size = 0;
+   int auth_result = verify_admin_auth(payload, payload_len, &auth_size);
+   if (auth_result != 0) {
+      return send_response(client_fd,
+                           (auth_result == -2) ? ADMIN_RESP_UNAUTHORIZED : ADMIN_RESP_FAILURE);
+   }
+
+   /* Parse token prefix after auth */
+   const char *remaining = payload + auth_size;
+   size_t remaining_len = payload_len - auth_size;
+
+   if (remaining_len < 1) {
+      return send_response(client_fd, ADMIN_RESP_FAILURE);
+   }
+
+   uint8_t prefix_len = (uint8_t)remaining[0];
+   if (prefix_len < 8 || remaining_len < 1 + prefix_len) {
+      return send_response(client_fd, ADMIN_RESP_FAILURE);
+   }
+
+   char prefix[9] = { 0 };
+   memcpy(prefix, remaining + 1, 8);
+
+   /* Delete session by prefix */
+   int rc = auth_db_delete_session_by_prefix(prefix);
+   if (rc == AUTH_DB_NOT_FOUND) {
+      return send_response(client_fd, ADMIN_RESP_NOT_FOUND);
+   } else if (rc != AUTH_DB_SUCCESS) {
+      return send_response(client_fd, ADMIN_RESP_SERVICE_ERROR);
+   }
+
+   /* Log the revocation */
+   auth_db_log_event("SESSION_REVOKED", NULL, NULL, prefix);
+
+   return send_response(client_fd, ADMIN_RESP_SUCCESS);
+}
+
+/**
+ * @brief Handle REVOKE_USER_SESSIONS message.
+ *
+ * Wire format:
+ *   admin_auth_prefix_t (admin credentials)
+ *   uint8_t username_len
+ *   char username[username_len]
+ */
+static int handle_revoke_user_sessions(int client_fd, const char *payload, uint16_t payload_len) {
+   /* Verify admin credentials */
+   size_t auth_size = 0;
+   int auth_result = verify_admin_auth(payload, payload_len, &auth_size);
+   if (auth_result != 0) {
+      return send_response(client_fd,
+                           (auth_result == -2) ? ADMIN_RESP_UNAUTHORIZED : ADMIN_RESP_FAILURE);
+   }
+
+   /* Parse username after auth */
+   const char *remaining = payload + auth_size;
+   size_t remaining_len = payload_len - auth_size;
+
+   if (remaining_len < 1) {
+      return send_response(client_fd, ADMIN_RESP_FAILURE);
+   }
+
+   uint8_t username_len = (uint8_t)remaining[0];
+   if (username_len < 1 || username_len > ADMIN_USERNAME_MAX_LEN ||
+       remaining_len < 1 + username_len) {
+      return send_response(client_fd, ADMIN_RESP_FAILURE);
+   }
+
+   char username[ADMIN_USERNAME_MAX_LEN + 1] = { 0 };
+   memcpy(username, remaining + 1, username_len);
+
+   /* Delete all sessions for user */
+   int count = auth_db_delete_sessions_by_username(username);
+   if (count < 0) {
+      return send_response(client_fd, ADMIN_RESP_SERVICE_ERROR);
+   }
+
+   /* Log the revocation */
+   char details[64];
+   snprintf(details, sizeof(details), "%d sessions revoked", count);
+   auth_db_log_event("USER_SESSIONS_REVOKED", username, NULL, details);
+
+   return send_response(client_fd, ADMIN_RESP_SUCCESS);
+}
+
+/**
+ * @brief Handle GET_STATS message.
+ *
+ * No authentication required for read-only stats.
+ */
+static int handle_get_stats(int client_fd) {
+   auth_db_stats_t stats;
+   int rc = auth_db_get_stats(&stats);
+   if (rc != AUTH_DB_SUCCESS) {
+      /* Use list response format even for errors - client expects 8-byte header */
+      return send_list_response(client_fd, ADMIN_RESP_SERVICE_ERROR, NULL, 0, 0, 0);
+   }
+
+   /* Send stats as extended response (no truncation possible) */
+   return send_list_response(client_fd, ADMIN_RESP_SUCCESS, &stats, sizeof(stats), 1, 0);
+}
+
+/**
+ * @brief Handle DB_COMPACT (vacuum) message.
+ *
+ * Requires admin auth. Rate-limited to once per 24 hours.
+ */
+static int handle_db_compact(int client_fd, const char *payload, uint16_t payload_len) {
+   /* Verify admin credentials */
+   size_t auth_size = 0;
+   int auth_result = verify_admin_auth(payload, payload_len, &auth_size);
+   if (auth_result != 0) {
+      return send_response(client_fd,
+                           (auth_result == -2) ? ADMIN_RESP_UNAUTHORIZED : ADMIN_RESP_FAILURE);
+   }
+
+   int rc = auth_db_vacuum();
+   if (rc == AUTH_DB_RATE_LIMITED) {
+      return send_response(client_fd, ADMIN_RESP_RATE_LIMITED);
+   } else if (rc != AUTH_DB_SUCCESS) {
+      return send_response(client_fd, ADMIN_RESP_SERVICE_ERROR);
+   }
+
+   auth_db_log_event("DB_COMPACT", NULL, NULL, "VACUUM completed");
+   return send_response(client_fd, ADMIN_RESP_SUCCESS);
+}
+
+/**
+ * @brief Handle DB_BACKUP message.
+ *
+ * Requires admin auth.
+ * Wire format: admin_auth_prefix + path_len (1 byte) + path
+ */
+static int handle_db_backup(int client_fd, const char *payload, uint16_t payload_len) {
+   /* Verify admin credentials */
+   size_t auth_size = 0;
+   int auth_result = verify_admin_auth(payload, payload_len, &auth_size);
+   if (auth_result != 0) {
+      return send_response(client_fd,
+                           (auth_result == -2) ? ADMIN_RESP_UNAUTHORIZED : ADMIN_RESP_FAILURE);
+   }
+
+   /* Parse path after auth */
+   const char *remaining = payload + auth_size;
+   size_t remaining_len = payload_len - auth_size;
+
+   if (remaining_len < 2) {
+      return send_response(client_fd, ADMIN_RESP_FAILURE);
+   }
+
+   uint8_t path_len = (uint8_t)remaining[0];
+   if (path_len < 1 || remaining_len < 1 + path_len) {
+      return send_response(client_fd, ADMIN_RESP_FAILURE);
+   }
+
+   char dest_path[256] = { 0 };
+   if (path_len >= sizeof(dest_path)) {
+      return send_response(client_fd, ADMIN_RESP_FAILURE);
+   }
+   memcpy(dest_path, remaining + 1, path_len);
+
+   int rc = auth_db_backup(dest_path);
+   if (rc != AUTH_DB_SUCCESS) {
+      return send_response(client_fd, ADMIN_RESP_SERVICE_ERROR);
+   }
+
+   auth_db_log_event("DB_BACKUP", NULL, NULL, dest_path);
+   return send_response(client_fd, ADMIN_RESP_SUCCESS);
+}
+
+/**
+ * @brief Context for log query callback to serialize entries.
+ */
+typedef struct {
+   char *buffer;
+   size_t buffer_size;
+   size_t offset;
+   uint16_t count;
+   bool truncated;
+} log_query_ctx_t;
+
+/**
+ * @brief Callback to serialize log entries.
+ *
+ * Wire format per entry:
+ *   int64_t timestamp (8 bytes)
+ *   uint8_t event_len
+ *   uint8_t username_len
+ *   uint8_t ip_len
+ *   uint8_t details_len
+ *   char event[event_len]
+ *   char username[username_len]
+ *   char ip[ip_len]
+ *   char details[details_len]
+ */
+static int log_query_callback(const auth_log_entry_t *entry, void *ctx) {
+   log_query_ctx_t *qctx = (log_query_ctx_t *)ctx;
+
+   size_t event_len = strlen(entry->event);
+   size_t user_len = strlen(entry->username);
+   size_t ip_len = strlen(entry->ip_address);
+   size_t details_len = strlen(entry->details);
+
+   /* Truncate if too long */
+   if (event_len > 31)
+      event_len = 31;
+   if (user_len > 63)
+      user_len = 63;
+   if (ip_len > 45)
+      ip_len = 45;
+   if (details_len > 255)
+      details_len = 255;
+
+   size_t entry_size = 8 + 4 + event_len + user_len + ip_len + details_len;
+
+   if (qctx->offset + entry_size > qctx->buffer_size) {
+      qctx->truncated = true;
+      return 1; /* Stop - buffer full */
+   }
+
+   char *p = qctx->buffer + qctx->offset;
+
+   /* Timestamp */
+   int64_t ts = (int64_t)entry->timestamp;
+   memcpy(p, &ts, 8);
+   p += 8;
+
+   /* Lengths */
+   *p++ = (uint8_t)event_len;
+   *p++ = (uint8_t)user_len;
+   *p++ = (uint8_t)ip_len;
+   *p++ = (uint8_t)details_len;
+
+   /* Strings */
+   memcpy(p, entry->event, event_len);
+   p += event_len;
+   memcpy(p, entry->username, user_len);
+   p += user_len;
+   memcpy(p, entry->ip_address, ip_len);
+   p += ip_len;
+   memcpy(p, entry->details, details_len);
+   p += details_len;
+
+   qctx->offset = p - qctx->buffer;
+   qctx->count++;
+
+   return 0;
+}
+
+/**
+ * @brief Handle QUERY_LOG message.
+ *
+ * Wire format (filter):
+ *   int64_t since (0 = no limit)
+ *   int64_t until (0 = no limit)
+ *   uint8_t event_len (0 = all events)
+ *   uint8_t username_len (0 = all users)
+ *   uint16_t limit (0 = default)
+ *   uint16_t offset
+ *   char event[event_len]
+ *   char username[username_len]
+ */
+static int handle_query_log(int client_fd, const char *payload, uint16_t payload_len) {
+   auth_log_filter_t filter = { 0 };
+   char event_buf[32] = { 0 };
+   char user_buf[64] = { 0 };
+
+   /* Parse filter from payload (if provided) */
+   if (payload_len >= 20) {
+      const char *p = payload;
+
+      int64_t since, until;
+      memcpy(&since, p, 8);
+      p += 8;
+      memcpy(&until, p, 8);
+      p += 8;
+
+      uint8_t event_len = (uint8_t)*p++;
+      uint8_t user_len = (uint8_t)*p++;
+
+      uint16_t limit_val, offset_val;
+      memcpy(&limit_val, p, 2);
+      p += 2;
+      memcpy(&offset_val, p, 2);
+      p += 2;
+
+      filter.since = (time_t)since;
+      filter.until = (time_t)until;
+      filter.limit = limit_val;
+      filter.offset = offset_val;
+
+      /* Read strings if present */
+      if (event_len > 0 && event_len < sizeof(event_buf) &&
+          p + event_len <= payload + payload_len) {
+         memcpy(event_buf, p, event_len);
+         filter.event = event_buf;
+         p += event_len;
+      }
+
+      if (user_len > 0 && user_len < sizeof(user_buf) && p + user_len <= payload + payload_len) {
+         memcpy(user_buf, p, user_len);
+         filter.username = user_buf;
+      }
+   }
+
+   /* Allocate buffer for response */
+   char buffer[16384];
+   log_query_ctx_t ctx = { .buffer = buffer,
+                           .buffer_size = sizeof(buffer),
+                           .offset = 0,
+                           .count = 0,
+                           .truncated = false };
+
+   int rc = auth_db_query_audit_log(&filter, log_query_callback, &ctx);
+   if (rc != AUTH_DB_SUCCESS) {
+      /* Use list response format even for errors - client expects 8-byte header */
+      return send_list_response(client_fd, ADMIN_RESP_SERVICE_ERROR, NULL, 0, 0, 0);
+   }
+
+   uint16_t flags = ctx.truncated ? ADMIN_LIST_FLAG_TRUNCATED : 0;
+   return send_list_response(client_fd, ADMIN_RESP_SUCCESS, buffer, (uint16_t)ctx.offset,
+                             ctx.count, flags);
+}
+
+/* Context for blocked IP list callback */
+typedef struct {
+   char *buffer;
+   size_t buffer_size;
+   size_t offset;
+   uint16_t count;
+   bool truncated;
+} blocked_ip_list_ctx_t;
+
+static int blocked_ip_list_callback(const auth_ip_status_t *status, void *ctx) {
+   blocked_ip_list_ctx_t *lctx = (blocked_ip_list_ctx_t *)ctx;
+
+   /* Each entry is packed as:
+    * 1 byte: ip_len
+    * 4 bytes: failed_attempts (little-endian)
+    * 8 bytes: last_attempt (little-endian)
+    * N bytes: ip_address
+    */
+   size_t ip_len = strlen(status->ip_address);
+   size_t entry_size = 1 + 4 + 8 + ip_len;
+
+   if (lctx->offset + entry_size > lctx->buffer_size) {
+      lctx->truncated = true;
+      return 1; /* Stop - buffer full */
+   }
+
+   char *p = lctx->buffer + lctx->offset;
+
+   /* Pack ip_len */
+   *p++ = (uint8_t)ip_len;
+
+   /* Pack failed_attempts (little-endian) */
+   int32_t attempts = (int32_t)status->failed_attempts;
+   memcpy(p, &attempts, 4);
+   p += 4;
+
+   /* Pack last_attempt (little-endian) */
+   int64_t ts = (int64_t)status->last_attempt;
+   memcpy(p, &ts, 8);
+   p += 8;
+
+   /* Pack ip_address */
+   memcpy(p, status->ip_address, ip_len);
+
+   lctx->offset += entry_size;
+   lctx->count++;
+
+   return 0;
+}
+
+static int handle_list_blocked_ips(int client_fd) {
+   /* Use rate limit window from webui_server.c (15 minutes) */
+   time_t window_start = time(NULL) - (15 * 60);
+
+   char buffer[4096];
+   blocked_ip_list_ctx_t ctx = {
+      .buffer = buffer,
+      .buffer_size = sizeof(buffer),
+      .offset = 0,
+      .count = 0,
+      .truncated = false
+   };
+
+   int rc = auth_db_list_blocked_ips(window_start, blocked_ip_list_callback, &ctx);
+
+   if (rc != AUTH_DB_SUCCESS) {
+      return send_list_response(client_fd, ADMIN_RESP_SERVICE_ERROR, NULL, 0, 0, 0);
+   }
+
+   uint16_t flags = ctx.truncated ? ADMIN_LIST_FLAG_TRUNCATED : 0;
+   return send_list_response(client_fd, ADMIN_RESP_SUCCESS, buffer, (uint16_t)ctx.offset,
+                             ctx.count, flags);
+}
+
+static int handle_unblock_ip(int client_fd, const char *payload, uint16_t payload_len) {
+   /* Verify admin auth */
+   size_t auth_size = 0;
+   if (verify_admin_auth(payload, payload_len, &auth_size) != 0) {
+      LOG_WARNING("UNBLOCK_IP: admin auth failed");
+      return send_response(client_fd, ADMIN_RESP_UNAUTHORIZED);
+   }
+
+   /* Extract IP address (or "--all" to clear all) */
+   const char *ip_ptr = payload + auth_size;
+   uint16_t ip_len = payload_len - (uint16_t)auth_size;
+
+   char ip_address[AUTH_IP_MAX] = { 0 };
+   bool clear_all = false;
+
+   if (ip_len == 0) {
+      LOG_WARNING("UNBLOCK_IP: no IP address provided");
+      return send_response(client_fd, ADMIN_RESP_FAILURE);
+   }
+
+   if (ip_len >= AUTH_IP_MAX) {
+      LOG_WARNING("UNBLOCK_IP: IP address too long");
+      return send_response(client_fd, ADMIN_RESP_FAILURE);
+   }
+
+   memcpy(ip_address, ip_ptr, ip_len);
+
+   /* Check for --all flag */
+   if (strcmp(ip_address, "--all") == 0) {
+      clear_all = true;
+   }
+
+   /* Clear login attempts from database */
+   int deleted = auth_db_clear_login_attempts(clear_all ? NULL : ip_address);
+
+   if (deleted < 0) {
+      LOG_ERROR("UNBLOCK_IP: database error");
+      return send_response(client_fd, ADMIN_RESP_SERVICE_ERROR);
+   }
+
+   /* Also clear in-memory rate limiter (only when WebUI is enabled) */
+#ifdef ENABLE_WEBUI
+   webui_clear_login_rate_limit(clear_all ? NULL : ip_address);
+#endif
+
+   if (clear_all) {
+      auth_db_log_event("IP_UNBLOCKED", NULL, NULL, "All IPs unblocked");
+      LOG_INFO("UNBLOCK_IP: cleared %d login attempts (all IPs)", deleted);
+   } else {
+      auth_db_log_event("IP_UNBLOCKED", NULL, ip_address, NULL);
+      LOG_INFO("UNBLOCK_IP: cleared %d login attempts for IP '%s'", deleted, ip_address);
+   }
+
+   return send_response(client_fd, ADMIN_RESP_SUCCESS);
+}
+
 /* =============================================================================
  * Client Handler
  * =============================================================================
@@ -745,6 +1669,49 @@ static int handle_client(int client_fd) {
 
       case ADMIN_MSG_CREATE_USER:
          return handle_create_user(client_fd, payload, header.payload_len);
+
+      /* Phase 2: User management */
+      case ADMIN_MSG_LIST_USERS:
+         return handle_list_users(client_fd);
+
+      case ADMIN_MSG_DELETE_USER:
+         return handle_delete_user(client_fd, payload, header.payload_len);
+
+      case ADMIN_MSG_CHANGE_PASSWORD:
+         return handle_change_password(client_fd, payload, header.payload_len);
+
+      case ADMIN_MSG_UNLOCK_USER:
+         return handle_unlock_user(client_fd, payload, header.payload_len);
+
+      /* Phase 2: Session management */
+      case ADMIN_MSG_LIST_SESSIONS:
+         return handle_list_sessions(client_fd);
+
+      case ADMIN_MSG_REVOKE_SESSION:
+         return handle_revoke_session(client_fd, payload, header.payload_len);
+
+      case ADMIN_MSG_REVOKE_USER_SESSIONS:
+         return handle_revoke_user_sessions(client_fd, payload, header.payload_len);
+
+      /* Phase 2: Database management */
+      case ADMIN_MSG_GET_STATS:
+         return handle_get_stats(client_fd);
+
+      case ADMIN_MSG_DB_COMPACT:
+         return handle_db_compact(client_fd, payload, header.payload_len);
+
+      case ADMIN_MSG_DB_BACKUP:
+         return handle_db_backup(client_fd, payload, header.payload_len);
+
+      case ADMIN_MSG_QUERY_LOG:
+         return handle_query_log(client_fd, payload, header.payload_len);
+
+      /* Phase 2: IP management */
+      case ADMIN_MSG_LIST_BLOCKED_IPS:
+         return handle_list_blocked_ips(client_fd);
+
+      case ADMIN_MSG_UNBLOCK_IP:
+         return handle_unblock_ip(client_fd, payload, header.payload_len);
 
       default:
          LOG_WARNING("Unknown message type: 0x%02x", header.msg_type);
