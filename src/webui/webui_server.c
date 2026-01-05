@@ -2047,11 +2047,14 @@ static void handle_get_config(ws_connection_t *conn) {
    /* Add session LLM status (resolved config for this session) */
    json_object *llm_runtime = json_object_new_object();
 
-   /* Get session's resolved LLM config */
-   session_llm_config_t session_config = { 0 };
+   /* Get session's resolved LLM config (or global default if no session yet) */
+   session_llm_config_t session_config;
    llm_resolved_config_t resolved = { 0 };
    if (conn->session) {
       session_get_llm_config(conn->session, &session_config);
+   } else {
+      /* No session yet - use global defaults */
+      llm_get_default_config(&session_config);
    }
    llm_resolve_config(&session_config, &resolved);
 
@@ -3793,8 +3796,8 @@ static void handle_get_my_settings(ws_connection_t *conn) {
          base_persona = g_config.persona.description;
       } else {
          /* Build dynamic persona with configured AI name */
-         const char *ai_name =
-             g_config.general.ai_name[0] != '\0' ? g_config.general.ai_name : AI_NAME;
+         const char *ai_name = g_config.general.ai_name[0] != '\0' ? g_config.general.ai_name
+                                                                   : AI_NAME;
 
          /* Capitalize first letter for proper noun */
          char capitalized_name[64];

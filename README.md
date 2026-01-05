@@ -44,6 +44,10 @@ DAWN integrates modern speech recognition, large language models, and text-to-sp
   - Debug mode for viewing commands and tool results
   - **Settings panel** for live configuration editing
   - **Application restart** from browser when settings require it
+  - **User authentication** with cookie-based sessions
+  - **Multi-user support** with separate conversation contexts
+  - **User Management** (admin-only) - create/delete users, reset passwords
+  - **My Settings** - per-user persona, location, timezone, units, TTS speed
   - Mobile-friendly responsive design
 
 - **LLM Tools**
@@ -843,11 +847,14 @@ The Web UI provides a browser-based interface for interacting with DAWN:
 
 Click the gear icon in the header to access the settings panel. This provides a browser-based interface for editing DAWN's configuration without manually editing TOML files:
 
+- **User Management** (admin-only) - create users, delete users, reset passwords, unlock accounts
+- **My Settings** - personal preferences (persona, location, timezone, units, TTS speed) that override global defaults
 - **All settings** from `dawn.toml` organized by section (General, Audio, LLM, ASR, etc.)
 - **API keys** with secure handling - password fields with show/hide toggle; only shows whether a key is set, never displays the actual value
 - **Restart indicators** - settings that require a restart show a badge; when changes require restart, a "Restart DAWN" button appears
 - **Live updates** - changes that don't require restart apply immediately
 - **Backup protection** - creates `.bak` files before modifying config files
+- **Role-based visibility** - admin-only sections hidden from regular users
 
 **How it works**:
 - HTTP serves static files from `www/` directory

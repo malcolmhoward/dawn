@@ -342,6 +342,8 @@
             authState.username = msg.payload.username || '';
             updateAuthVisibility();
           }
+          // Request full config to populate LLM controls
+          requestConfig();
           break;
         case 'config':
           console.log('Config received:', msg.payload);
@@ -4737,9 +4739,9 @@
   // LLM Runtime Controls
   // =============================================================================
 
-  // Current LLM runtime state
+  // Current LLM runtime state (updated from server on connect)
   let llmRuntimeState = {
-    type: 'cloud',
+    type: 'local',
     provider: 'openai',
     model: '',
     openai_available: false,
