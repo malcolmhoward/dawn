@@ -131,6 +131,13 @@
     isMiddleStrained: false // Whether middle ring is showing strain
   };
 
+  // Auth state (populated from get_config_response)
+  let authState = {
+    authenticated: false,
+    isAdmin: false,
+    username: ''
+  };
+
   // =============================================================================
   // DOM Elements
   // =============================================================================
@@ -316,13 +323,25 @@
           break;
         case 'error':
           console.error('Server error:', msg.payload);
-          addTranscriptEntry('system', `Error: ${msg.payload.message}`);
+          // Use toast for permission errors, transcript for others
+          if (msg.payload.code === 'FORBIDDEN' || msg.payload.code === 'UNAUTHORIZED') {
+            showToast(msg.payload.message, 'error');
+          } else {
+            addTranscriptEntry('system', `Error: ${msg.payload.message}`);
+          }
           break;
         case 'session':
           console.log('Session token received');
           localStorage.setItem('dawn_session_token', msg.payload.token);
           // Server has processed our init/reconnect with capabilities
           capabilitiesSynced = true;
+          // Auth state is now included in session response (avoids extra config fetch)
+          if (msg.payload.authenticated !== undefined) {
+            authState.authenticated = msg.payload.authenticated;
+            authState.isAdmin = msg.payload.is_admin || false;
+            authState.username = msg.payload.username || '';
+            updateAuthVisibility();
+          }
           break;
         case 'config':
           console.log('Config received:', msg.payload);
@@ -396,6 +415,28 @@
           break;
         case 'metrics_update':
           handleMetricsUpdate(msg.payload);
+          break;
+        // User management responses
+        case 'list_users_response':
+          handleListUsersResponse(msg.payload);
+          break;
+        case 'create_user_response':
+          handleCreateUserResponse(msg.payload);
+          break;
+        case 'delete_user_response':
+          handleDeleteUserResponse(msg.payload);
+          break;
+        case 'change_password_response':
+          handleChangePasswordResponse(msg.payload);
+          break;
+        case 'unlock_user_response':
+          handleUnlockUserResponse(msg.payload);
+          break;
+        case 'get_my_settings_response':
+          handleGetMySettingsResponse(msg.payload);
+          break;
+        case 'set_my_settings_response':
+          handleSetMySettingsResponse(msg.payload);
           break;
         default:
           console.log('Unknown message type:', msg.type);
@@ -2602,6 +2643,9 @@
     initSettingsElements();
     initSettingsListeners();
     initToolsSection();
+    initUserManagement();
+    initMySettingsForm();
+    initConfirmModal();
 
     // Connect to WebSocket
     connect();
@@ -3115,6 +3159,44 @@
     if (payload.llm_runtime) {
       updateLlmControls(payload.llm_runtime);
     }
+
+    // Update auth state and UI visibility
+    authState.authenticated = payload.authenticated || false;
+    authState.isAdmin = payload.is_admin || false;
+    authState.username = payload.username || '';
+    updateAuthVisibility();
+  }
+
+  /**
+   * Update UI visibility based on auth state
+   */
+  function updateAuthVisibility() {
+    // Toggle auth classes on body - CSS handles visibility of .admin-only elements
+    document.body.classList.toggle('user-is-admin', authState.isAdmin);
+    document.body.classList.toggle('user-authenticated', authState.authenticated);
+
+    // Update user badge in header
+    updateUserBadge();
+  }
+
+  /**
+   * Update user identity badge in header
+   */
+  function updateUserBadge() {
+    const badge = document.getElementById('user-badge');
+    const nameEl = document.getElementById('user-badge-name');
+    const roleEl = document.getElementById('user-badge-role');
+
+    if (!badge || !nameEl || !roleEl) return;
+
+    if (authState.authenticated && authState.username) {
+      nameEl.textContent = authState.username;
+      roleEl.textContent = authState.isAdmin ? 'Admin' : 'User';
+      roleEl.className = 'user-badge-role ' + (authState.isAdmin ? 'admin' : 'user');
+      badge.classList.remove('hidden');
+    } else {
+      badge.classList.add('hidden');
+    }
   }
 
   /**
@@ -3460,9 +3542,11 @@
       fieldList + '\n\n' +
       'Do you want to restart DAWN now?';
 
-    if (confirm(message)) {
-      requestRestart();
-    }
+    showConfirmModal(message, requestRestart, {
+      title: 'Restart Required',
+      okText: 'Restart Now',
+      cancelText: 'Later'
+    });
   }
 
   /**
@@ -3490,6 +3574,841 @@
       console.error('Restart failed:', payload.error);
       alert('Failed to restart: ' + (payload.error || 'Unknown error'));
     }
+  }
+
+  // =============================================================================
+  // User Management Handlers
+  // =============================================================================
+
+  /**
+   * Request user list from server
+   */
+  function requestListUsers() {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      // Show loading state
+      const userList = document.getElementById('user-list');
+      if (userList) {
+        userList.innerHTML = '<div class="loading-indicator">Loading users...</div>';
+      }
+      ws.send(JSON.stringify({ type: 'list_users' }));
+    }
+  }
+
+  /**
+   * Request to create a new user
+   */
+  function requestCreateUser(username, password, isAdmin) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'create_user',
+        payload: { username, password, is_admin: isAdmin }
+      }));
+    }
+  }
+
+  /**
+   * Request to delete a user
+   */
+  function requestDeleteUser(username) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'delete_user',
+        payload: { username }
+      }));
+    }
+  }
+
+  /**
+   * Request to change a user's password
+   */
+  function requestChangePassword(username, newPassword, currentPassword = null) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      const payload = { username, new_password: newPassword };
+      if (currentPassword) {
+        payload.current_password = currentPassword;
+      }
+      ws.send(JSON.stringify({ type: 'change_password', payload }));
+    }
+  }
+
+  /**
+   * Request to unlock a user
+   */
+  function requestUnlockUser(username) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'unlock_user',
+        payload: { username }
+      }));
+    }
+  }
+
+  /**
+   * Handle list users response
+   */
+  function handleListUsersResponse(payload) {
+    if (!payload.success) {
+      console.error('Failed to list users:', payload.error);
+      showToast('Failed to load users: ' + (payload.error || 'Unknown error'), 'error');
+      return;
+    }
+
+    const userList = document.getElementById('user-list');
+    if (!userList) return;
+
+    userList.innerHTML = '';
+
+    for (const user of payload.users || []) {
+      const userItem = document.createElement('div');
+      userItem.className = 'user-list-item';
+
+      const userInfo = document.createElement('div');
+      userInfo.className = 'user-info';
+
+      const username = document.createElement('span');
+      username.className = 'username';
+      username.textContent = user.username;  // Use textContent to prevent XSS
+
+      const details = document.createElement('span');
+      details.className = 'user-details';
+      details.textContent = user.last_login
+        ? 'Last login: ' + new Date(user.last_login * 1000).toLocaleString()
+        : 'Never logged in';
+
+      userInfo.appendChild(username);
+      userInfo.appendChild(details);
+
+      const badges = document.createElement('div');
+      badges.className = 'user-badges';
+
+      if (user.is_admin) {
+        const badge = document.createElement('span');
+        badge.className = 'role-badge admin';
+        badge.textContent = 'Admin';
+        badges.appendChild(badge);
+      }
+
+      if (user.is_locked) {
+        const badge = document.createElement('span');
+        badge.className = 'role-badge locked';
+        badge.textContent = 'Locked';
+        badges.appendChild(badge);
+      }
+
+      const actions = document.createElement('div');
+      actions.className = 'user-actions';
+
+      // Password reset button (key icon)
+      const resetBtn = document.createElement('button');
+      resetBtn.className = 'btn-icon';
+      resetBtn.title = 'Reset password';
+      resetBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>';
+      resetBtn.addEventListener('click', () => showResetPasswordModal(user.username));
+      actions.appendChild(resetBtn);
+
+      // Unlock button (only for locked users)
+      if (user.is_locked) {
+        const unlockBtn = document.createElement('button');
+        unlockBtn.className = 'btn-icon';
+        unlockBtn.title = 'Unlock user';
+        unlockBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>';
+        unlockBtn.addEventListener('click', () => {
+          showConfirmModal('Unlock user "' + user.username + '"?', () => {
+            requestUnlockUser(user.username);
+          }, { title: 'Unlock User', okText: 'Unlock' });
+        });
+        actions.appendChild(unlockBtn);
+      }
+
+      // Delete button (not for self)
+      if (user.username !== authState.username) {
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'btn-icon btn-danger';
+        deleteBtn.title = 'Delete user';
+        deleteBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
+        deleteBtn.addEventListener('click', () => {
+          showConfirmModal('Delete user "' + user.username + '"?\n\nThis action cannot be undone.', () => {
+            requestDeleteUser(user.username);
+          }, { title: 'Delete User', okText: 'Delete', danger: true });
+        });
+        actions.appendChild(deleteBtn);
+      }
+
+      userItem.appendChild(userInfo);
+      userItem.appendChild(badges);
+      userItem.appendChild(actions);
+      userList.appendChild(userItem);
+    }
+  }
+
+  /**
+   * Handle create user response
+   */
+  function handleCreateUserResponse(payload) {
+    // Re-enable submit button
+    const addUserForm = document.getElementById('add-user-form');
+    if (addUserForm) {
+      const submitBtn = addUserForm.querySelector('button[type="submit"]');
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Create User';
+      }
+    }
+
+    if (payload.success) {
+      showToast('User created successfully', 'success');
+      hideAddUserModal();
+      requestListUsers();  // Refresh list
+    } else {
+      showToast('Failed to create user: ' + (payload.error || 'Unknown error'), 'error');
+    }
+  }
+
+  /**
+   * Handle delete user response
+   */
+  function handleDeleteUserResponse(payload) {
+    if (payload.success) {
+      showToast('User deleted successfully', 'success');
+      requestListUsers();  // Refresh list
+    } else {
+      showToast('Failed to delete user: ' + (payload.error || 'Unknown error'), 'error');
+    }
+  }
+
+  /**
+   * Handle change password response
+   */
+  function handleChangePasswordResponse(payload) {
+    // Re-enable submit button
+    const resetPasswordForm = document.getElementById('reset-password-form');
+    if (resetPasswordForm) {
+      const submitBtn = resetPasswordForm.querySelector('button[type="submit"]');
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Change Password';
+      }
+    }
+
+    if (payload.success) {
+      showToast('Password changed successfully', 'success');
+      hideResetPasswordModal();
+    } else {
+      showToast('Failed to change password: ' + (payload.error || 'Unknown error'), 'error');
+    }
+  }
+
+  /**
+   * Handle unlock user response
+   */
+  function handleUnlockUserResponse(payload) {
+    if (payload.success) {
+      showToast('User unlocked successfully', 'success');
+      requestListUsers();  // Refresh list
+    } else {
+      showToast('Failed to unlock user: ' + (payload.error || 'Unknown error'), 'error');
+    }
+  }
+
+  // =============================================================================
+  // My Settings (Personal Settings)
+  // =============================================================================
+
+  /**
+   * Request current user's personal settings
+   */
+  function requestGetMySettings() {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'get_my_settings' }));
+    }
+  }
+
+  /**
+   * Save current user's personal settings
+   */
+  function requestSetMySettings(settings) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'set_my_settings',
+        payload: settings
+      }));
+    }
+  }
+
+  /**
+   * Handle get my settings response
+   */
+  function handleGetMySettingsResponse(payload) {
+    if (!payload.success) {
+      showToast('Failed to load settings: ' + (payload.error || 'Unknown error'), 'error');
+      return;
+    }
+
+    // Store base persona for preview
+    window.basePersona = payload.base_persona || '';
+
+    // Populate base persona display
+    const basePersonaText = document.getElementById('base-persona-text');
+    if (basePersonaText) {
+      basePersonaText.textContent = payload.base_persona || '(No base persona configured)';
+    }
+
+    // Populate form fields
+    const persona = document.getElementById('my-persona');
+    const location = document.getElementById('my-location');
+    const timezone = document.getElementById('my-timezone');
+    const ttsSpeed = document.getElementById('my-tts-speed');
+    const ttsSpeedValue = document.getElementById('my-tts-speed-value');
+
+    if (persona) {
+      persona.value = payload.persona_description || '';
+      updatePersonaCharCount();
+      updateClearButtonVisibility();
+      updatePersonaPreview();
+    }
+    if (location) location.value = payload.location || '';
+    if (timezone) timezone.value = payload.timezone || 'UTC';
+
+    // Set persona mode radio
+    const personaMode = payload.persona_mode || 'append';
+    const modeRadio = document.querySelector(`input[name="persona_mode"][value="${personaMode}"]`);
+    if (modeRadio) {
+      modeRadio.checked = true;
+      updatePersonaModeSelection(personaMode);
+    }
+
+    // Set units radio
+    const unitsRadio = document.querySelector(`input[name="units"][value="${payload.units || 'metric'}"]`);
+    if (unitsRadio) unitsRadio.checked = true;
+
+    // Set TTS speed
+    if (ttsSpeed) {
+      ttsSpeed.value = payload.tts_length_scale || 1.0;
+      if (ttsSpeedValue) ttsSpeedValue.textContent = ttsSpeed.value + 'x';
+    }
+  }
+
+  /**
+   * Update persona mode selection UI
+   */
+  function updatePersonaModeSelection(mode) {
+    document.querySelectorAll('.persona-mode-option').forEach(opt => {
+      opt.classList.toggle('selected', opt.dataset.mode === mode);
+    });
+    // Show/hide replace warning
+    const warning = document.querySelector('.replace-warning');
+    if (warning) {
+      warning.classList.toggle('hidden', mode !== 'replace');
+    }
+    updatePersonaPreview();
+  }
+
+  /**
+   * Update persona character count
+   */
+  function updatePersonaCharCount() {
+    const persona = document.getElementById('my-persona');
+    const charCount = document.getElementById('persona-char-count');
+    if (!persona || !charCount) return;
+
+    const len = persona.value.length;
+    const max = 500;
+    charCount.textContent = `${len} / ${max}`;
+    charCount.classList.toggle('warning', len > max * 0.8 && len < max);
+    charCount.classList.toggle('limit', len >= max);
+  }
+
+  /**
+   * Update clear button visibility
+   */
+  function updateClearButtonVisibility() {
+    const persona = document.getElementById('my-persona');
+    const clearBtn = document.getElementById('clear-persona-btn');
+    if (!persona || !clearBtn) return;
+
+    clearBtn.classList.toggle('hidden', persona.value.length === 0);
+  }
+
+  /**
+   * Update persona preview
+   */
+  function updatePersonaPreview() {
+    const persona = document.getElementById('my-persona');
+    const previewBase = document.getElementById('preview-base');
+    const previewSeparator = document.getElementById('preview-separator');
+    const previewCustom = document.getElementById('preview-custom');
+    const previewLabel = document.getElementById('preview-label-suffix');
+    const modeRadio = document.querySelector('input[name="persona_mode"]:checked');
+
+    if (!previewBase) return;
+
+    const customText = persona?.value.trim() || '';
+    const mode = modeRadio?.value || 'append';
+    const base = window.basePersona || '';
+
+    // Always show base persona (truncated for readability)
+    previewBase.textContent = base.length > 300 ? base.substring(0, 300) + '...' : base;
+
+    // Show custom section only in append mode with content
+    const hasCustom = mode === 'append' && customText.length > 0;
+
+    if (previewSeparator) {
+      previewSeparator.classList.toggle('hidden', !hasCustom);
+    }
+    if (previewCustom) {
+      previewCustom.classList.toggle('hidden', !hasCustom);
+      previewCustom.textContent = hasCustom ? customText : '';
+    }
+    if (previewLabel) {
+      previewLabel.textContent = hasCustom ? '(with your additions)' : '(what the AI sees)';
+    }
+
+    // In replace mode, show what will actually be used
+    if (mode === 'replace' && customText.length > 0) {
+      previewBase.textContent = customText;
+      if (previewLabel) {
+        previewLabel.textContent = '(your replacement)';
+      }
+    }
+  }
+
+  /**
+   * Handle set my settings response
+   */
+  function handleSetMySettingsResponse(payload) {
+    if (payload.success) {
+      showToast('Settings saved successfully', 'success');
+    } else {
+      showToast('Failed to save settings: ' + (payload.error || 'Unknown error'), 'error');
+    }
+  }
+
+  /**
+   * Initialize My Settings form handlers
+   */
+  function initMySettingsForm() {
+    const form = document.getElementById('my-settings-form');
+    const ttsSpeed = document.getElementById('my-tts-speed');
+    const ttsSpeedValue = document.getElementById('my-tts-speed-value');
+    const resetBtn = document.getElementById('reset-my-settings-btn');
+    const section = document.getElementById('my-settings-section');
+    const persona = document.getElementById('my-persona');
+    const toggleBasePersona = document.getElementById('toggle-base-persona');
+    const basePersonaDisplay = document.getElementById('base-persona-display');
+    const clearPersonaBtn = document.getElementById('clear-persona-btn');
+
+    // Base persona expand/collapse toggle
+    if (toggleBasePersona && basePersonaDisplay) {
+      toggleBasePersona.addEventListener('click', () => {
+        const isCollapsed = basePersonaDisplay.classList.contains('collapsed');
+        basePersonaDisplay.classList.toggle('collapsed', !isCollapsed);
+        basePersonaDisplay.classList.toggle('expanded', isCollapsed);
+        toggleBasePersona.textContent = isCollapsed ? 'Collapse' : 'Show full';
+      });
+    }
+
+    // Persona mode radio buttons
+    document.querySelectorAll('input[name="persona_mode"]').forEach(radio => {
+      radio.addEventListener('change', (e) => {
+        updatePersonaModeSelection(e.target.value);
+      });
+    });
+
+    // Persona textarea input handlers
+    if (persona) {
+      persona.addEventListener('input', () => {
+        updatePersonaCharCount();
+        updateClearButtonVisibility();
+        updatePersonaPreview();
+      });
+    }
+
+    // Clear persona button
+    if (clearPersonaBtn && persona) {
+      clearPersonaBtn.addEventListener('click', () => {
+        persona.value = '';
+        updatePersonaCharCount();
+        updateClearButtonVisibility();
+        updatePersonaPreview();
+      });
+    }
+
+    // Update speed display on range change
+    if (ttsSpeed && ttsSpeedValue) {
+      ttsSpeed.addEventListener('input', () => {
+        ttsSpeedValue.textContent = parseFloat(ttsSpeed.value).toFixed(1) + 'x';
+      });
+    }
+
+    // Form submission
+    if (form) {
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const settings = {
+          persona_description: document.getElementById('my-persona')?.value || '',
+          persona_mode: document.querySelector('input[name="persona_mode"]:checked')?.value || 'append',
+          location: document.getElementById('my-location')?.value || '',
+          timezone: document.getElementById('my-timezone')?.value || 'UTC',
+          units: document.querySelector('input[name="units"]:checked')?.value || 'metric',
+          tts_length_scale: parseFloat(document.getElementById('my-tts-speed')?.value || 1.0)
+        };
+        requestSetMySettings(settings);
+      });
+    }
+
+    // Reset to defaults
+    if (resetBtn) {
+      resetBtn.addEventListener('click', () => {
+        showConfirmModal('Reset all personal settings to defaults?', () => {
+          requestSetMySettings({
+            persona_description: '',
+            persona_mode: 'append',
+            location: '',
+            timezone: 'UTC',
+            units: 'metric',
+            tts_length_scale: 1.0
+          });
+          // Refresh form after a moment
+          setTimeout(requestGetMySettings, 500);
+        }, { title: 'Reset Settings', okText: 'Reset' });
+      });
+    }
+
+    // Load settings when section is expanded
+    if (section) {
+      const header = section.querySelector('.section-header');
+      if (header) {
+        header.addEventListener('click', () => {
+          // Check after toggle (general handler toggles first)
+          // Section is now EXPANDED if collapsed class is removed
+          setTimeout(() => {
+            if (!section.classList.contains('collapsed') && authState.authenticated) {
+              requestGetMySettings();
+            }
+          }, 50);
+        });
+      }
+    }
+  }
+
+  /**
+   * Show a toast notification
+   */
+  function showToast(message, type = 'info') {
+    // Create toast container if it doesn't exist
+    let container = document.getElementById('toast-container');
+    if (!container) {
+      container = document.createElement('div');
+      container.id = 'toast-container';
+      document.body.appendChild(container);
+    }
+
+    const toast = document.createElement('div');
+    toast.className = 'toast toast-' + type;
+    toast.textContent = message;
+    container.appendChild(toast);
+
+    // Auto-remove after 4 seconds
+    setTimeout(() => {
+      toast.classList.add('toast-fade-out');
+      setTimeout(() => toast.remove(), 300);
+    }, 4000);
+  }
+
+  /**
+   * Focus trap for modals - keeps Tab key cycling within modal
+   * @param {HTMLElement} modal - Modal element to trap focus in
+   * @returns {Function} Cleanup function to remove event listener
+   */
+  function trapFocus(modal) {
+    const focusableSelectors = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+    const focusableElements = modal.querySelectorAll(focusableSelectors);
+    const firstFocusable = focusableElements[0];
+    const lastFocusable = focusableElements[focusableElements.length - 1];
+
+    function handleKeydown(e) {
+      if (e.key !== 'Tab') return;
+
+      if (e.shiftKey) {
+        if (document.activeElement === firstFocusable) {
+          e.preventDefault();
+          lastFocusable.focus();
+        }
+      } else {
+        if (document.activeElement === lastFocusable) {
+          e.preventDefault();
+          firstFocusable.focus();
+        }
+      }
+    }
+
+    modal.addEventListener('keydown', handleKeydown);
+
+    // Focus first element
+    if (firstFocusable) firstFocusable.focus();
+
+    // Return cleanup function
+    return () => modal.removeEventListener('keydown', handleKeydown);
+  }
+
+  // Store cleanup functions for active focus traps
+  let activeModalCleanup = null;
+
+  // Pending confirm callback
+  let pendingConfirmCallback = null;
+
+  /**
+   * Show styled confirmation modal (replaces native confirm())
+   * @param {string} message - Message to display
+   * @param {Function} onConfirm - Callback if user confirms
+   * @param {Object} options - Optional settings
+   * @param {string} options.title - Modal title (default: "Confirm")
+   * @param {string} options.okText - OK button text (default: "OK")
+   * @param {string} options.cancelText - Cancel button text (default: "Cancel")
+   * @param {boolean} options.danger - If true, styles OK button as danger/red
+   */
+  function showConfirmModal(message, onConfirm, options = {}) {
+    const modal = document.getElementById('confirm-modal');
+    if (!modal) {
+      // Fallback to native confirm if modal not found
+      if (confirm(message) && onConfirm) onConfirm();
+      return;
+    }
+
+    const content = modal.querySelector('.modal-content');
+    const titleEl = document.getElementById('confirm-modal-title');
+    const messageEl = document.getElementById('confirm-modal-message');
+    const okBtn = document.getElementById('confirm-modal-ok');
+    const cancelBtn = document.getElementById('confirm-modal-cancel');
+
+    // Set content
+    if (titleEl) titleEl.textContent = options.title || 'Confirm';
+    if (messageEl) messageEl.textContent = message;
+    if (okBtn) okBtn.textContent = options.okText || 'OK';
+    if (cancelBtn) cancelBtn.textContent = options.cancelText || 'Cancel';
+
+    // Apply danger styling if requested
+    if (content) {
+      content.classList.toggle('confirm-danger', !!options.danger);
+    }
+
+    // Store callback
+    pendingConfirmCallback = onConfirm;
+
+    // Show modal
+    modal.classList.remove('hidden');
+    activeModalCleanup = trapFocus(modal);
+  }
+
+  /**
+   * Hide confirmation modal
+   * @param {boolean} confirmed - Whether user confirmed the action
+   */
+  function hideConfirmModal(confirmed) {
+    const modal = document.getElementById('confirm-modal');
+    if (modal) {
+      modal.classList.add('hidden');
+      if (activeModalCleanup) {
+        activeModalCleanup();
+        activeModalCleanup = null;
+      }
+    }
+
+    if (confirmed && pendingConfirmCallback) {
+      pendingConfirmCallback();
+    }
+    pendingConfirmCallback = null;
+  }
+
+  /**
+   * Initialize confirmation modal event handlers
+   */
+  function initConfirmModal() {
+    const okBtn = document.getElementById('confirm-modal-ok');
+    const cancelBtn = document.getElementById('confirm-modal-cancel');
+    const modal = document.getElementById('confirm-modal');
+
+    if (okBtn) {
+      okBtn.addEventListener('click', () => hideConfirmModal(true));
+    }
+    if (cancelBtn) {
+      cancelBtn.addEventListener('click', () => hideConfirmModal(false));
+    }
+
+    // Close on backdrop click
+    if (modal) {
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) hideConfirmModal(false);
+      });
+    }
+
+    // Close on Escape key
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && modal && !modal.classList.contains('hidden')) {
+        hideConfirmModal(false);
+      }
+    });
+  }
+
+  /**
+   * Show add user modal
+   */
+  function showAddUserModal() {
+    const modal = document.getElementById('add-user-modal');
+    if (modal) {
+      modal.classList.remove('hidden');
+      const form = document.getElementById('add-user-form');
+      if (form) form.reset();
+      activeModalCleanup = trapFocus(modal);
+    }
+  }
+
+  /**
+   * Hide add user modal
+   */
+  function hideAddUserModal() {
+    const modal = document.getElementById('add-user-modal');
+    if (modal) {
+      modal.classList.add('hidden');
+      if (activeModalCleanup) {
+        activeModalCleanup();
+        activeModalCleanup = null;
+      }
+    }
+  }
+
+  /**
+   * Show reset password modal
+   */
+  function showResetPasswordModal(username) {
+    const modal = document.getElementById('reset-password-modal');
+    if (modal) {
+      modal.classList.remove('hidden');
+      const usernameField = document.getElementById('reset-password-username');
+      if (usernameField) usernameField.value = username;
+      const passwordField = document.getElementById('reset-password-new');
+      if (passwordField) {
+        passwordField.value = '';
+      }
+      activeModalCleanup = trapFocus(modal);
+    }
+  }
+
+  /**
+   * Hide reset password modal
+   */
+  function hideResetPasswordModal() {
+    const modal = document.getElementById('reset-password-modal');
+    if (modal) {
+      modal.classList.add('hidden');
+      if (activeModalCleanup) {
+        activeModalCleanup();
+        activeModalCleanup = null;
+      }
+    }
+  }
+
+  /**
+   * Initialize user management UI
+   */
+  function initUserManagement() {
+    // Add user button
+    const addUserBtn = document.getElementById('add-user-btn');
+    if (addUserBtn) {
+      addUserBtn.addEventListener('click', showAddUserModal);
+    }
+
+    // Refresh users button
+    const refreshUsersBtn = document.getElementById('refresh-users-btn');
+    if (refreshUsersBtn) {
+      refreshUsersBtn.addEventListener('click', requestListUsers);
+    }
+
+    // Add user form
+    const addUserForm = document.getElementById('add-user-form');
+    if (addUserForm) {
+      addUserForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const username = document.getElementById('new-username').value.trim();
+        const password = document.getElementById('new-password').value;
+        const isAdmin = document.getElementById('new-is-admin').checked;
+        if (username && password) {
+          // Disable submit button during request
+          const submitBtn = addUserForm.querySelector('button[type="submit"]');
+          if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Creating...';
+          }
+          requestCreateUser(username, password, isAdmin);
+        }
+      });
+    }
+
+    // Add user modal cancel
+    const addUserCancel = document.getElementById('add-user-cancel');
+    if (addUserCancel) {
+      addUserCancel.addEventListener('click', hideAddUserModal);
+    }
+
+    // Reset password form
+    const resetPasswordForm = document.getElementById('reset-password-form');
+    if (resetPasswordForm) {
+      resetPasswordForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const username = document.getElementById('reset-password-username').value;
+        const newPassword = document.getElementById('reset-password-new').value;
+        if (username && newPassword) {
+          // Disable submit button during request
+          const submitBtn = resetPasswordForm.querySelector('button[type="submit"]');
+          if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Changing...';
+          }
+          requestChangePassword(username, newPassword);
+        }
+      });
+    }
+
+    // Reset password modal cancel
+    const resetPasswordCancel = document.getElementById('reset-password-cancel');
+    if (resetPasswordCancel) {
+      resetPasswordCancel.addEventListener('click', hideResetPasswordModal);
+    }
+
+    // User management section header click to expand/refresh
+    const userMgmtHeader = document.querySelector('#user-management-section .section-header');
+    if (userMgmtHeader) {
+      userMgmtHeader.addEventListener('click', (e) => {
+        // Toggle section
+        const section = e.target.closest('.settings-section');
+        if (section) {
+          section.classList.toggle('collapsed');
+          // Request user list when expanded
+          if (!section.classList.contains('collapsed')) {
+            requestListUsers();
+          }
+        }
+      });
+    }
+
+    // Modal backdrop click to close
+    document.querySelectorAll('.modal').forEach(modal => {
+      modal.addEventListener('click', (e) => {
+        // Only close if clicking the backdrop (not the modal content)
+        if (e.target === modal) {
+          modal.classList.add('hidden');
+        }
+      });
+    });
+
+    // Escape key to close modals
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        document.querySelectorAll('.modal:not(.hidden)').forEach(modal => {
+          modal.classList.add('hidden');
+        });
+      }
+    });
   }
 
   /**
@@ -3555,15 +4474,18 @@
   function handleSetSecretsResponse(payload) {
     if (payload.success) {
       console.log('Secrets saved successfully');
-      alert('Secrets saved successfully!');
+      showToast('Secrets saved successfully!', 'success');
 
       // Update status indicators
       if (payload.secrets) {
         updateSecretsStatus(payload.secrets);
       }
+
+      // Refresh config to get updated secrets_path
+      requestConfig();
     } else {
       console.error('Failed to save secrets:', payload.error);
-      alert('Failed to save secrets: ' + (payload.error || 'Unknown error'));
+      showToast('Failed to save secrets: ' + (payload.error || 'Unknown error'), 'error');
     }
   }
 
@@ -3748,9 +4670,10 @@
     // Reset button
     if (settingsElements.resetBtn) {
       settingsElements.resetBtn.addEventListener('click', () => {
-        if (confirm('Reset all settings to defaults? This will reload the current configuration.')) {
-          requestConfig();
-        }
+        showConfirmModal('Reset all settings to defaults?\n\nThis will reload the current configuration.', requestConfig, {
+          title: 'Reset Configuration',
+          okText: 'Reset'
+        });
       });
     }
 
@@ -3764,13 +4687,26 @@
       });
     });
 
-    // Section header toggle
+    // Password toggle buttons (modals)
+    document.querySelectorAll('.password-toggle').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const targetId = btn.dataset.target;
+        if (targetId) {
+          toggleSecretVisibility(targetId);
+        }
+      });
+    });
+
+    // Section header toggle (toggle on parent .settings-section)
     document.querySelectorAll('.section-header').forEach(header => {
+      // Skip user-management-section - has its own handler
+      if (header.closest('#user-management-section')) {
+        return;
+      }
       header.addEventListener('click', () => {
-        header.classList.toggle('collapsed');
-        const content = header.nextElementSibling;
-        if (content) {
-          content.classList.toggle('collapsed');
+        const section = header.closest('.settings-section');
+        if (section) {
+          section.classList.toggle('collapsed');
         }
       });
     });
@@ -4253,16 +5189,13 @@
    * Disconnect SmartThings
    */
   function disconnectSmartThings() {
-    if (!confirm('Disconnect SmartThings? This will remove your saved tokens.')) {
-      return;
-    }
-
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      return;
-    }
-
-    ws.send(JSON.stringify({ type: 'smartthings_disconnect' }));
-    console.log('Disconnecting SmartThings');
+    showConfirmModal('Disconnect SmartThings?\n\nThis will remove your saved tokens.', () => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        return;
+      }
+      ws.send(JSON.stringify({ type: 'smartthings_disconnect' }));
+      console.log('Disconnecting SmartThings');
+    }, { title: 'Disconnect', okText: 'Disconnect', danger: true });
   }
 
   /**
@@ -4645,6 +5578,17 @@
     if (el) el.style.display = fftDebugState.enabled ? 'block' : 'none';
     console.log('FFT debug:', fftDebugState.enabled ? 'ON' : 'OFF');
     return fftDebugState.enabled;
+  };
+
+  // Test helper for console access
+  // Usage: DAWN.send({type: 'get_my_settings'})
+  window.DAWN.send = function(msg) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(msg));
+      console.log('Sent:', msg);
+    } else {
+      console.error('WebSocket not connected');
+    }
   };
 
 })();

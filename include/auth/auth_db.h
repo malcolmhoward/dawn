@@ -322,6 +322,90 @@ int auth_db_update_password(const char *username, const char *new_hash);
 int auth_db_unlock_user(const char *username);
 
 /* ============================================================================
+ * User Settings (Per-User Personalization)
+ * ============================================================================ */
+
+/**
+ * @brief Maximum persona description length
+ */
+#define AUTH_PERSONA_DESC_MAX 512
+
+/**
+ * @brief Maximum location length
+ */
+#define AUTH_LOCATION_MAX 128
+
+/**
+ * @brief Maximum timezone length
+ */
+#define AUTH_TIMEZONE_MAX 64
+
+/**
+ * @brief Maximum units preference length
+ */
+#define AUTH_UNITS_MAX 16
+
+/**
+ * @brief Maximum TTS voice model path length
+ */
+#define AUTH_TTS_VOICE_MAX 128
+
+/**
+ * @brief Maximum persona mode length
+ */
+#define AUTH_PERSONA_MODE_MAX 16
+
+/**
+ * @brief Per-user settings structure
+ *
+ * Stores user-specific preferences that override global defaults.
+ * Empty strings indicate "use global default".
+ */
+typedef struct {
+   char persona_description[AUTH_PERSONA_DESC_MAX]; /**< Custom AI persona */
+   char persona_mode[AUTH_PERSONA_MODE_MAX];        /**< "append" (default) or "replace" */
+   char location[AUTH_LOCATION_MAX];                /**< User's location */
+   char timezone[AUTH_TIMEZONE_MAX];                /**< Timezone (e.g., "America/New_York") */
+   char units[AUTH_UNITS_MAX];                      /**< "metric" or "imperial" */
+   char tts_voice_model[AUTH_TTS_VOICE_MAX];        /**< TTS voice model path */
+   float tts_length_scale;                          /**< TTS speech rate (1.0 = normal) */
+} auth_user_settings_t;
+
+/**
+ * @brief Get user settings
+ *
+ * Returns user-specific settings. If the user has no settings record,
+ * returns default values (empty strings, 1.0 scale).
+ *
+ * @param user_id User ID
+ * @param settings_out Buffer to receive settings data
+ * @return AUTH_DB_SUCCESS or AUTH_DB_FAILURE
+ */
+int auth_db_get_user_settings(int user_id, auth_user_settings_t *settings_out);
+
+/**
+ * @brief Set user settings
+ *
+ * Creates or updates user settings using UPSERT pattern.
+ * Empty strings are stored as-is (UI interprets as "use default").
+ *
+ * @param user_id User ID
+ * @param settings Settings to save
+ * @return AUTH_DB_SUCCESS or AUTH_DB_FAILURE
+ */
+int auth_db_set_user_settings(int user_id, const auth_user_settings_t *settings);
+
+/**
+ * @brief Initialize default settings for a new user
+ *
+ * Called automatically when a user is created.
+ *
+ * @param user_id User ID
+ * @return AUTH_DB_SUCCESS or AUTH_DB_FAILURE
+ */
+int auth_db_init_user_settings(int user_id);
+
+/* ============================================================================
  * Session Operations
  * ============================================================================ */
 

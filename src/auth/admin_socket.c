@@ -752,13 +752,11 @@ static int send_list_response(int client_fd,
  * - Pi:     m=8192  (8MB),  t=4, p=1
  */
 #ifdef PLATFORM_RPI
-static const char DUMMY_PASSWORD_HASH[] =
-    "$argon2id$v=19$m=8192,t=4,p=1$AAAAAAAAAAAAAAAAAAAAAA$"
-    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+static const char DUMMY_PASSWORD_HASH[] = "$argon2id$v=19$m=8192,t=4,p=1$AAAAAAAAAAAAAAAAAAAAAA$"
+                                          "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 #else
-static const char DUMMY_PASSWORD_HASH[] =
-    "$argon2id$v=19$m=16384,t=3,p=1$AAAAAAAAAAAAAAAAAAAAAA$"
-    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+static const char DUMMY_PASSWORD_HASH[] = "$argon2id$v=19$m=16384,t=3,p=1$AAAAAAAAAAAAAAAAAAAAAA$"
+                                          "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 #endif
 
 /**
@@ -913,8 +911,8 @@ static int handle_list_users(int client_fd) {
    }
 
    uint16_t flags = ctx.truncated ? ADMIN_LIST_FLAG_TRUNCATED : 0;
-   return send_list_response(client_fd, ADMIN_RESP_SUCCESS, buffer, (uint16_t)ctx.offset,
-                             ctx.count, flags);
+   return send_list_response(client_fd, ADMIN_RESP_SUCCESS, buffer, (uint16_t)ctx.offset, ctx.count,
+                             flags);
 }
 
 static int handle_delete_user(int client_fd, const char *payload, uint16_t payload_len) {
@@ -1140,8 +1138,8 @@ static int handle_list_sessions(int client_fd) {
    }
 
    uint16_t flags = ctx.truncated ? ADMIN_LIST_FLAG_TRUNCATED : 0;
-   return send_list_response(client_fd, ADMIN_RESP_SUCCESS, buffer, (uint16_t)ctx.offset,
-                             ctx.count, flags);
+   return send_list_response(client_fd, ADMIN_RESP_SUCCESS, buffer, (uint16_t)ctx.offset, ctx.count,
+                             flags);
 }
 
 /**
@@ -1474,8 +1472,8 @@ static int handle_query_log(int client_fd, const char *payload, uint16_t payload
    }
 
    uint16_t flags = ctx.truncated ? ADMIN_LIST_FLAG_TRUNCATED : 0;
-   return send_list_response(client_fd, ADMIN_RESP_SUCCESS, buffer, (uint16_t)ctx.offset,
-                             ctx.count, flags);
+   return send_list_response(client_fd, ADMIN_RESP_SUCCESS, buffer, (uint16_t)ctx.offset, ctx.count,
+                             flags);
 }
 
 /* Context for blocked IP list callback */
@@ -1533,13 +1531,11 @@ static int handle_list_blocked_ips(int client_fd) {
    time_t window_start = time(NULL) - (15 * 60);
 
    char buffer[4096];
-   blocked_ip_list_ctx_t ctx = {
-      .buffer = buffer,
-      .buffer_size = sizeof(buffer),
-      .offset = 0,
-      .count = 0,
-      .truncated = false
-   };
+   blocked_ip_list_ctx_t ctx = { .buffer = buffer,
+                                 .buffer_size = sizeof(buffer),
+                                 .offset = 0,
+                                 .count = 0,
+                                 .truncated = false };
 
    int rc = auth_db_list_blocked_ips(window_start, blocked_ip_list_callback, &ctx);
 
@@ -1548,8 +1544,8 @@ static int handle_list_blocked_ips(int client_fd) {
    }
 
    uint16_t flags = ctx.truncated ? ADMIN_LIST_FLAG_TRUNCATED : 0;
-   return send_list_response(client_fd, ADMIN_RESP_SUCCESS, buffer, (uint16_t)ctx.offset,
-                             ctx.count, flags);
+   return send_list_response(client_fd, ADMIN_RESP_SUCCESS, buffer, (uint16_t)ctx.offset, ctx.count,
+                             flags);
 }
 
 static int handle_unblock_ip(int client_fd, const char *payload, uint16_t payload_len) {

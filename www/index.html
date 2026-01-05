@@ -15,7 +15,14 @@
   <div id="app">
     <!-- Header -->
     <header id="header">
-      <h1>D.A.W.N.</h1>
+      <div id="header-left">
+        <h1>D.A.W.N.</h1>
+        <!-- User Identity Badge -->
+        <div id="user-badge" class="user-badge hidden">
+          <span id="user-badge-name" class="user-badge-name"></span>
+          <span id="user-badge-role" class="user-badge-role"></span>
+        </div>
+      </div>
       <div id="header-controls">
         <button id="debug-btn" title="Show command/tool call details" aria-label="Toggle debug mode">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -176,7 +183,8 @@
       </div>
 
       <div class="settings-content">
-        <div class="settings-paths">
+        <!-- Config/Secrets paths (admin only) -->
+        <div class="settings-paths admin-only">
           <div class="config-path">
             <span class="path-label">Config:</span>
             <span id="config-path-display">Loading...</span>
@@ -187,13 +195,160 @@
           </div>
         </div>
 
-        <div class="settings-sections" id="settings-sections">
+        <!-- User Management Section (admin only) -->
+        <div class="settings-section admin-only collapsed" id="user-management-section">
+          <h3 class="section-header">
+            <span class="section-icon">&#x1F465;</span>
+            User Management
+            <span class="section-toggle">&#9660;</span>
+          </h3>
+          <div class="section-content">
+            <div id="user-list" class="user-list">
+              <!-- Users will be populated dynamically -->
+              <div class="user-list-empty">Click to load users...</div>
+            </div>
+            <div class="user-management-actions">
+              <button id="add-user-btn" class="btn btn-primary">Add User</button>
+              <button id="refresh-users-btn" class="btn btn-secondary">Refresh</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- My Settings Section (all authenticated users) -->
+        <div class="settings-section collapsed" id="my-settings-section">
+          <h3 class="section-header">
+            <span class="section-icon">&#x1F464;</span>
+            My Settings
+            <span class="section-toggle">&#9660;</span>
+          </h3>
+          <div class="section-content">
+            <form id="my-settings-form">
+              <!-- AI Persona Configuration -->
+              <div class="persona-config">
+                <h4 class="persona-heading">AI Persona</h4>
+
+                <!-- Base Persona (read-only, collapsible) -->
+                <div class="settings-group">
+                  <div class="base-persona-header">
+                    <label>Base Persona</label>
+                    <button type="button" id="toggle-base-persona" class="btn-link">Show full</button>
+                  </div>
+                  <div id="base-persona-display" class="base-persona collapsed">
+                    <span id="base-persona-text">Loading...</span>
+                  </div>
+                </div>
+
+                <!-- Mode Selection -->
+                <div class="settings-group persona-mode-group">
+                  <label>How should your customization be applied?</label>
+                  <div class="persona-mode-options">
+                    <label class="persona-mode-option selected" data-mode="append">
+                      <input type="radio" name="persona_mode" value="append" checked>
+                      <span class="mode-label">Add to base persona</span>
+                      <span class="mode-desc">Your text will be appended as additional context.</span>
+                    </label>
+                    <label class="persona-mode-option" data-mode="replace">
+                      <input type="radio" name="persona_mode" value="replace">
+                      <span class="mode-label">Replace base persona</span>
+                      <span class="mode-desc">Your text will be used instead of the base.</span>
+                    </label>
+                  </div>
+                  <p class="setting-hint replace-warning hidden">
+                    ⚠ The base persona contains important behavior guidelines. Only replace if you want to start from scratch.
+                  </p>
+                </div>
+
+                <!-- Custom Persona Input -->
+                <div class="settings-group">
+                  <div class="persona-input-header">
+                    <label for="my-persona">Your Customization</label>
+                    <div class="persona-input-controls">
+                      <button type="button" id="clear-persona-btn" class="btn-link hidden">Clear</button>
+                      <span id="persona-char-count" class="char-count">0 / 500</span>
+                    </div>
+                  </div>
+                  <textarea id="my-persona" name="persona_description" rows="5" maxlength="500"
+                    placeholder="Examples:&#10;• Speak with a slight British accent&#10;• Be more formal and address me as Dr. Smith&#10;• You're an expert in woodworking"></textarea>
+                </div>
+
+                <!-- Effective Persona Preview -->
+                <div id="persona-preview" class="persona-preview">
+                  <label>Effective Persona <span id="preview-label-suffix">(what the AI sees)</span></label>
+                  <div class="preview-content">
+                    <div id="preview-base"></div>
+                    <div id="preview-separator" class="preview-separator hidden"></div>
+                    <div id="preview-custom" class="hidden"></div>
+                  </div>
+                </div>
+              </div>
+
+              <hr class="section-divider">
+
+              <div class="settings-group">
+                <label for="my-location">Location</label>
+                <input type="text" id="my-location" name="location"
+                  placeholder="e.g., New York, NY">
+                <p class="setting-hint">Used for weather and local information.</p>
+              </div>
+
+              <div class="settings-row">
+                <div class="settings-group half">
+                  <label for="my-timezone">Timezone</label>
+                  <select id="my-timezone" name="timezone">
+                    <option value="UTC">UTC</option>
+                    <option value="America/New_York">Eastern (US)</option>
+                    <option value="America/Chicago">Central (US)</option>
+                    <option value="America/Denver">Mountain (US)</option>
+                    <option value="America/Los_Angeles">Pacific (US)</option>
+                    <option value="Europe/London">London (UK)</option>
+                    <option value="Europe/Paris">Paris (EU)</option>
+                    <option value="Asia/Tokyo">Tokyo (JP)</option>
+                    <option value="Asia/Shanghai">Shanghai (CN)</option>
+                    <option value="Australia/Sydney">Sydney (AU)</option>
+                  </select>
+                </div>
+
+                <div class="settings-group half">
+                  <label>Units</label>
+                  <div class="radio-group">
+                    <label class="radio-label">
+                      <input type="radio" name="units" value="metric" checked>
+                      <span>Metric</span>
+                    </label>
+                    <label class="radio-label">
+                      <input type="radio" name="units" value="imperial">
+                      <span>Imperial</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <div class="settings-group">
+                <label for="my-tts-speed">Speech Speed</label>
+                <div class="range-with-value">
+                  <input type="range" id="my-tts-speed" name="tts_length_scale"
+                    min="0.5" max="2.0" step="0.1" value="1.0">
+                  <span id="my-tts-speed-value">1.0x</span>
+                </div>
+                <p class="setting-hint">Adjust text-to-speech speed (1.0 = normal).</p>
+              </div>
+
+              <div class="settings-actions">
+                <button type="submit" class="btn btn-primary">Save My Settings</button>
+                <button type="button" id="reset-my-settings-btn" class="btn btn-secondary">Reset to Defaults</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <!-- System Config Sections (admin only) -->
+        <div class="settings-sections admin-only" id="settings-sections">
           <!-- Settings sections will be dynamically generated -->
           <div class="settings-loading">Loading configuration...</div>
         </div>
 
-        <!-- Secrets Section (separate from config) -->
-        <div class="settings-section" id="secrets-section">
+        <!-- Secrets Section (admin only) -->
+        <div class="settings-section admin-only" id="secrets-section">
           <h3 class="section-header" data-section="secrets">
             <span class="section-icon">&#x1F511;</span>
             API Keys & Secrets
@@ -256,8 +411,8 @@
           </div>
         </div>
 
-        <!-- SmartThings Integration Section -->
-        <div class="settings-section" id="smartthings-section">
+        <!-- SmartThings Integration Section (admin only) -->
+        <div class="settings-section admin-only" id="smartthings-section">
           <h3 class="section-header" data-section="smartthings">
             <span class="section-icon">&#x1F3E0;</span>
             SmartThings
@@ -305,8 +460,8 @@ client_secret = "..."</pre>
           </div>
         </div>
 
-        <!-- LLM Tools Configuration Section -->
-        <div class="settings-section" id="tools-section">
+        <!-- LLM Tools Configuration Section (admin only) -->
+        <div class="settings-section admin-only" id="tools-section">
           <h3 class="section-header" data-section="tools">
             <span class="section-icon">&#x1F527;</span>
             LLM Tools
@@ -402,6 +557,79 @@ client_secret = "..."</pre>
             <div class="metric"><span class="metric-label">AEC</span><span id="m-aec" class="metric-value">--</span></div>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add User Modal -->
+  <div id="add-user-modal" class="modal hidden">
+    <div class="modal-content">
+      <h3>Add User</h3>
+      <form id="add-user-form">
+        <div class="form-group">
+          <label for="new-username">Username</label>
+          <input type="text" id="new-username" required placeholder="Enter username" pattern="[a-zA-Z_][a-zA-Z0-9_\-\.]*" minlength="1" maxlength="63">
+        </div>
+        <div class="form-group">
+          <label for="new-password">Password</label>
+          <div class="password-input-wrapper">
+            <input type="password" id="new-password" required placeholder="Enter password" minlength="8">
+            <button type="button" class="password-toggle" data-target="new-password" title="Show/hide">
+              <svg class="eye-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                <circle cx="12" cy="12" r="3"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div class="form-group checkbox">
+          <label><input type="checkbox" id="new-is-admin"> Admin privileges</label>
+        </div>
+        <div class="modal-actions">
+          <button type="submit" class="btn btn-primary">Create User</button>
+          <button type="button" id="add-user-cancel" class="btn btn-secondary">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Reset Password Modal -->
+  <div id="reset-password-modal" class="modal hidden">
+    <div class="modal-content">
+      <h3>Reset Password</h3>
+      <form id="reset-password-form">
+        <div class="form-group">
+          <label for="reset-password-username">Username</label>
+          <input type="text" id="reset-password-username" readonly>
+        </div>
+        <div class="form-group">
+          <label for="reset-password-new">New Password</label>
+          <div class="password-input-wrapper">
+            <input type="password" id="reset-password-new" required placeholder="Enter new password" minlength="8">
+            <button type="button" class="password-toggle" data-target="reset-password-new" title="Show/hide">
+              <svg class="eye-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                <circle cx="12" cy="12" r="3"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button type="submit" class="btn btn-primary">Reset Password</button>
+          <button type="button" id="reset-password-cancel" class="btn btn-secondary">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Confirm Modal (styled replacement for native confirm dialogs) -->
+  <div id="confirm-modal" class="modal hidden">
+    <div class="modal-content confirm-modal-content">
+      <h3 id="confirm-modal-title">Confirm Action</h3>
+      <p id="confirm-modal-message" class="confirm-message"></p>
+      <div class="modal-actions">
+        <button type="button" id="confirm-modal-ok" class="btn btn-primary">OK</button>
+        <button type="button" id="confirm-modal-cancel" class="btn btn-secondary">Cancel</button>
       </div>
     </div>
   </div>

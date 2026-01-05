@@ -1,10 +1,11 @@
 # DAWN User Authentication System Design
 
-**Status**: Phase 2 Complete
+**Status**: Phase 2 Complete, Phase 3 Planning Complete
 **Date**: 2025-12-18
 **Last Updated**: 2026-01-04
 
 **Note**: DAP device authentication moved to Phase 5, deferred until DAP2 protocol redesign.
+**Note**: Phase 3 reviewed by architecture, efficiency, security, and UI agents (2026-01-04).
 
 ## Overview
 
@@ -3488,14 +3489,129 @@ Based on the reviews, the following must be addressed during implementation:
 ---
 
 ### Phase 3: Multi-User (3-4 days)
-- User management UI (admin only)
-- Per-user settings storage
-- Non-admin user role with restricted permissions
-- Per-user device access control (optional)
+
+**Status**: Planning Complete (reviewed by architecture, efficiency, security, UI agents 2026-01-04)
+
+**Scope Decisions:**
+- Per-user device access control: **Deferred to Phase 4**
+- Personal settings: **Full UI + Backend**
+
+#### Phase 3 Deliverables
+
+1. **User Management UI** (admin-only) - List users, create/delete users, reset passwords, unlock accounts
+2. **Permission Enforcement** - Add admin checks to set_config, set_secrets, restart, etc.
+3. **Per-User Settings** - Database storage + WebUI for persona, locale, TTS preferences
+4. **Admin Visibility Control** - Hide admin-only UI from regular users
+
+#### Phase 3 Database Changes
+
+**Schema v1 → v2 Migration:**
+```sql
+CREATE TABLE IF NOT EXISTS user_settings (
+    user_id INTEGER PRIMARY KEY,
+    persona_description TEXT,
+    location TEXT,
+    timezone TEXT DEFAULT 'UTC',
+    units TEXT DEFAULT 'metric',
+    tts_voice_model TEXT,
+    tts_length_scale REAL DEFAULT 1.0,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+```
+
+**New struct (reduced per efficiency review):**
+```c
+typedef struct {
+   char persona_description[512];
+   char location[128];
+   char timezone[64];
+   char units[16];
+   char tts_voice_model[128];
+   float tts_length_scale;
+} auth_user_settings_t;  // ~850 bytes
+```
+
+#### Phase 3 WebSocket Messages
+
+**User Management (Admin Only):**
+- `list_users` / `list_users_response`
+- `create_user` / `create_user_response`
+- `delete_user` / `delete_user_response`
+- `change_password` / `change_password_response`
+- `unlock_user` / `unlock_user_response`
+
+**Personal Settings (Authenticated Users):**
+- `get_my_settings` / `get_my_settings_response`
+- `set_my_settings` / `set_my_settings_response`
+
+#### Phase 3 Security Requirements
+
+| Requirement | Implementation |
+|-------------|----------------|
+| Admin check on set_config/set_secrets/restart | `conn_require_admin()` with DB re-validation |
+| Cannot delete self | Check in `handle_delete_user()` |
+| Password change IDOR prevention | Verify requester is target OR admin |
+| Self-password change requires current | Non-admin must provide current password |
+| Session invalidation on role change | Delete all sessions when promoted/demoted |
+| XSS prevention in user list | Use `textContent`, not `innerHTML` |
+| Confirmation for destructive actions | `confirm()` or modal before delete |
+
+**Critical**: The `is_admin` flag is NOT cached in `ws_connection_t`. Each admin operation re-validates against the database using `auth_db_get_session()` to prevent privilege escalation if a user is demoted mid-session.
+
+#### Phase 3 Files to Modify
+
+| File | Changes |
+|------|---------|
+| `include/auth/auth_db.h` | Add `auth_user_settings_t`, new function declarations |
+| `src/auth/auth_db.c` | Schema v2 migration, user_settings table, prepared statements |
+| `src/webui/webui_server.c` | Auth helpers, permission checks, 7 new message handlers |
+| `www/js/dawn.js` | Auth state, 7 message handlers, request functions, toast notifications |
+| `www/index.html` | User Management section, My Settings section, Add User modal |
+| `www/css/dawn.css` | Admin visibility, user list styling, modal styling (glassmorphism) |
+
+#### Phase 3 Architecture Review Summary
+
+| Priority | Issue | Resolution |
+|----------|-------|------------|
+| CRITICAL | Auth state cache can become stale if user demoted mid-session | Re-validate `is_admin` against DB for admin checks using `auth_db_get_session()` |
+| IMPORTANT | Schema migration needs atomicity | Wrap in transaction with `table_exists()` check for idempotency |
+| SUGGESTED | Self-deletion prevention | Add check: users cannot delete themselves |
+| SUGGESTED | Message dispatch complexity | Consider table-driven dispatch pattern (optional refactor) |
+
+#### Phase 3 Efficiency Review Summary
+
+| Priority | Issue | Resolution |
+|----------|-------|------------|
+| MEDIUM | `auth_user_settings_t` is 1.6KB | Reduce to ~850 bytes: `persona_description[512]`, `location[128]`, `tts_voice_model[128]` |
+| LOW | `auth_db_list_users` not prepared | Add `stmt_list_users` to prepared statements |
+| SUGGESTED | Settings caching | Lazy-load with 60s TTL, shared cache by `user_id` |
+| SUGGESTED | UPSERT pattern | Use `INSERT ... ON CONFLICT DO UPDATE` for `set_user_settings` |
+
+#### Phase 3 Security Review Summary
+
+| Severity | Issue | Resolution |
+|----------|-------|------------|
+| CRITICAL | No backend auth on WebSocket handlers | Add `conn_require_admin()` to ALL admin handlers - CSS hiding is cosmetic only |
+| HIGH | IDOR in password change | Verify requester is target user OR is admin before allowing |
+| MEDIUM | No current password for self-change | Require current password for non-admin self-service password changes |
+| MEDIUM | XSS in user list | Use `textContent` not `innerHTML` when rendering usernames |
+| MEDIUM | Stale sessions on role change | Invalidate all sessions when user promoted/demoted |
+
+#### Phase 3 UI Design Review Summary
+
+| Priority | Issue | Resolution |
+|----------|-------|------------|
+| HIGH | Modal styling mismatch | Use `rgba(18, 18, 26, 0.95)` + cyan border tint to match existing glassmorphism |
+| HIGH | Confirmation dialogs | Required for delete; use `confirm()` or custom modal |
+| MEDIUM | Action buttons | Icons with tooltips (32px), expand to 44px touch targets on mobile |
+| MEDIUM | Feedback mechanism | Implement toast notifications for action results |
+| SUGGESTED | Section position | Move User Management to top of settings panel |
 
 ---
 
 ### Phase 4: Enhancements (2-3 days)
+- Per-user device access control (deferred from Phase 3)
 - Per-user conversation history
 - Optional 2FA (TOTP)
 - Session management UI (view/revoke active sessions)

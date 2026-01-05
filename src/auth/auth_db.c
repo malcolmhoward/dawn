@@ -42,7 +42,7 @@
 #include "logging.h"
 
 /* Current schema version */
-#define SCHEMA_VERSION 1
+#define SCHEMA_VERSION 3
 
 /* Retention periods */
 #define LOGIN_ATTEMPT_RETENTION_SEC (7 * 24 * 60 * 60) /* 7 days */
@@ -81,6 +81,9 @@ typedef struct {
 
    sqlite3_stmt *stmt_log_event;
    sqlite3_stmt *stmt_delete_old_logs;
+
+   sqlite3_stmt *stmt_get_user_settings;
+   sqlite3_stmt *stmt_set_user_settings;
 } auth_db_state_t;
 
 static auth_db_state_t s_db = {
@@ -151,17 +154,72 @@ static const char *SCHEMA_SQL =
     "   ip_address TEXT,"
     "   details TEXT"
     ");"
-    "CREATE INDEX IF NOT EXISTS idx_log_timestamp ON auth_log(timestamp);";
+    "CREATE INDEX IF NOT EXISTS idx_log_timestamp ON auth_log(timestamp);"
+
+    /* Per-user settings (added in schema v2, persona_mode added in v3) */
+    "CREATE TABLE IF NOT EXISTS user_settings ("
+    "   user_id INTEGER PRIMARY KEY,"
+    "   persona_description TEXT,"
+    "   persona_mode TEXT DEFAULT 'append',"
+    "   location TEXT,"
+    "   timezone TEXT DEFAULT 'UTC',"
+    "   units TEXT DEFAULT 'metric',"
+    "   tts_voice_model TEXT,"
+    "   tts_length_scale REAL DEFAULT 1.0,"
+    "   updated_at INTEGER NOT NULL,"
+    "   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE"
+    ");";
+
+static int get_current_schema_version(void) {
+   sqlite3_stmt *stmt = NULL;
+   int version = 0;
+
+   int rc = sqlite3_prepare_v2(s_db.db, "SELECT version FROM schema_version LIMIT 1", -1, &stmt,
+                               NULL);
+   if (rc == SQLITE_OK) {
+      if (sqlite3_step(stmt) == SQLITE_ROW) {
+         version = sqlite3_column_int(stmt, 0);
+      }
+      sqlite3_finalize(stmt);
+   }
+   return version;
+}
 
 static int create_schema(void) {
    char *errmsg = NULL;
 
-   /* Execute schema SQL (safe - no user input) */
+   /* Check current schema version (0 if fresh install) */
+   int current_version = get_current_schema_version();
+
+   /* Execute schema SQL - all tables use IF NOT EXISTS for idempotency */
    int rc = sqlite3_exec(s_db.db, SCHEMA_SQL, NULL, NULL, &errmsg);
    if (rc != SQLITE_OK) {
       LOG_ERROR("auth_db: schema creation failed: %s", errmsg ? errmsg : "unknown");
       sqlite3_free(errmsg);
       return AUTH_DB_FAILURE;
+   }
+
+   /* v3 migration: add persona_mode column to user_settings if missing
+    * This handles upgrades from v1 or v2 where the table may exist without this column */
+   if (current_version >= 1 && current_version < 3) {
+      rc = sqlite3_exec(s_db.db,
+                        "ALTER TABLE user_settings ADD COLUMN persona_mode TEXT DEFAULT 'append'",
+                        NULL, NULL, &errmsg);
+      if (rc != SQLITE_OK) {
+         /* Column might already exist or table might not exist yet - not fatal */
+         LOG_INFO("auth_db: v3 migration note: %s (may be normal)", errmsg ? errmsg : "ok");
+         sqlite3_free(errmsg);
+         errmsg = NULL;
+      } else {
+         LOG_INFO("auth_db: added persona_mode column to user_settings");
+      }
+   }
+
+   /* Log migration if upgrading from an older version */
+   if (current_version > 0 && current_version < SCHEMA_VERSION) {
+      LOG_INFO("auth_db: migrated schema from v%d to v%d", current_version, SCHEMA_VERSION);
+   } else if (current_version == 0) {
+      LOG_INFO("auth_db: created schema v%d", SCHEMA_VERSION);
    }
 
    /* Insert or update schema version */
@@ -340,6 +398,32 @@ static int prepare_statements(void) {
       return AUTH_DB_FAILURE;
    }
 
+   /* User settings statements */
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "SELECT persona_description, persona_mode, location, timezone, units, tts_voice_model, "
+       "tts_length_scale FROM user_settings WHERE user_id = ?",
+       -1, &s_db.stmt_get_user_settings, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare get_user_settings failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "INSERT INTO user_settings (user_id, persona_description, persona_mode, location, timezone, "
+       "units, tts_voice_model, tts_length_scale, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+       "ON CONFLICT(user_id) DO UPDATE SET "
+       "persona_description=excluded.persona_description, persona_mode=excluded.persona_mode, "
+       "location=excluded.location, timezone=excluded.timezone, units=excluded.units, "
+       "tts_voice_model=excluded.tts_voice_model, "
+       "tts_length_scale=excluded.tts_length_scale, updated_at=excluded.updated_at",
+       -1, &s_db.stmt_set_user_settings, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare set_user_settings failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
 #undef PREPARE
 
    return AUTH_DB_SUCCESS;
@@ -386,10 +470,15 @@ static void finalize_statements(void) {
    if (s_db.stmt_delete_old_logs)
       sqlite3_finalize(s_db.stmt_delete_old_logs);
 
+   if (s_db.stmt_get_user_settings)
+      sqlite3_finalize(s_db.stmt_get_user_settings);
+   if (s_db.stmt_set_user_settings)
+      sqlite3_finalize(s_db.stmt_set_user_settings);
+
    /* Clear all pointers */
    memset(&s_db.stmt_create_user, 0,
-          (char *)&s_db.stmt_delete_old_logs - (char *)&s_db.stmt_create_user +
-              sizeof(s_db.stmt_delete_old_logs));
+          (char *)&s_db.stmt_set_user_settings - (char *)&s_db.stmt_create_user +
+              sizeof(s_db.stmt_set_user_settings));
 }
 
 /* ============================================================================
@@ -1090,6 +1179,122 @@ int auth_db_unlock_user(const char *username) {
 }
 
 /* ============================================================================
+ * User Settings Operations
+ * ============================================================================ */
+
+int auth_db_get_user_settings(int user_id, auth_user_settings_t *settings_out) {
+   if (!settings_out) {
+      return AUTH_DB_INVALID;
+   }
+
+   /* Initialize with defaults */
+   memset(settings_out, 0, sizeof(*settings_out));
+   settings_out->tts_length_scale = 1.0f;
+   strncpy(settings_out->persona_mode, "append", AUTH_PERSONA_MODE_MAX - 1);
+   strncpy(settings_out->timezone, "UTC", AUTH_TIMEZONE_MAX - 1);
+   strncpy(settings_out->units, "metric", AUTH_UNITS_MAX - 1);
+
+   pthread_mutex_lock(&s_db.mutex);
+
+   if (!s_db.initialized) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   sqlite3_reset(s_db.stmt_get_user_settings);
+   sqlite3_bind_int(s_db.stmt_get_user_settings, 1, user_id);
+
+   int rc = sqlite3_step(s_db.stmt_get_user_settings);
+
+   if (rc == SQLITE_ROW) {
+      /* Copy non-null values from database */
+      const char *persona = (const char *)sqlite3_column_text(s_db.stmt_get_user_settings, 0);
+      const char *persona_mode = (const char *)sqlite3_column_text(s_db.stmt_get_user_settings, 1);
+      const char *location = (const char *)sqlite3_column_text(s_db.stmt_get_user_settings, 2);
+      const char *timezone = (const char *)sqlite3_column_text(s_db.stmt_get_user_settings, 3);
+      const char *units = (const char *)sqlite3_column_text(s_db.stmt_get_user_settings, 4);
+      const char *voice = (const char *)sqlite3_column_text(s_db.stmt_get_user_settings, 5);
+
+      if (persona) {
+         strncpy(settings_out->persona_description, persona, AUTH_PERSONA_DESC_MAX - 1);
+      }
+      if (persona_mode) {
+         strncpy(settings_out->persona_mode, persona_mode, AUTH_PERSONA_MODE_MAX - 1);
+      }
+      if (location) {
+         strncpy(settings_out->location, location, AUTH_LOCATION_MAX - 1);
+      }
+      if (timezone) {
+         strncpy(settings_out->timezone, timezone, AUTH_TIMEZONE_MAX - 1);
+      }
+      if (units) {
+         strncpy(settings_out->units, units, AUTH_UNITS_MAX - 1);
+      }
+      if (voice) {
+         strncpy(settings_out->tts_voice_model, voice, AUTH_TTS_VOICE_MAX - 1);
+      }
+      settings_out->tts_length_scale = (float)sqlite3_column_double(s_db.stmt_get_user_settings, 6);
+   } else if (rc != SQLITE_DONE) {
+      /* Unexpected error */
+      LOG_ERROR("auth_db: get_user_settings failed: %s", sqlite3_errmsg(s_db.db));
+      sqlite3_reset(s_db.stmt_get_user_settings);
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+   /* SQLITE_DONE means no row found - return defaults */
+
+   sqlite3_reset(s_db.stmt_get_user_settings);
+   pthread_mutex_unlock(&s_db.mutex);
+   return AUTH_DB_SUCCESS;
+}
+
+int auth_db_set_user_settings(int user_id, const auth_user_settings_t *settings) {
+   if (!settings) {
+      return AUTH_DB_INVALID;
+   }
+
+   pthread_mutex_lock(&s_db.mutex);
+
+   if (!s_db.initialized) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   sqlite3_reset(s_db.stmt_set_user_settings);
+   sqlite3_bind_int(s_db.stmt_set_user_settings, 1, user_id);
+   sqlite3_bind_text(s_db.stmt_set_user_settings, 2, settings->persona_description, -1,
+                     SQLITE_STATIC);
+   sqlite3_bind_text(s_db.stmt_set_user_settings, 3, settings->persona_mode, -1, SQLITE_STATIC);
+   sqlite3_bind_text(s_db.stmt_set_user_settings, 4, settings->location, -1, SQLITE_STATIC);
+   sqlite3_bind_text(s_db.stmt_set_user_settings, 5, settings->timezone, -1, SQLITE_STATIC);
+   sqlite3_bind_text(s_db.stmt_set_user_settings, 6, settings->units, -1, SQLITE_STATIC);
+   sqlite3_bind_text(s_db.stmt_set_user_settings, 7, settings->tts_voice_model, -1, SQLITE_STATIC);
+   sqlite3_bind_double(s_db.stmt_set_user_settings, 8, (double)settings->tts_length_scale);
+   sqlite3_bind_int64(s_db.stmt_set_user_settings, 9, (int64_t)time(NULL));
+
+   int rc = sqlite3_step(s_db.stmt_set_user_settings);
+   sqlite3_reset(s_db.stmt_set_user_settings);
+
+   pthread_mutex_unlock(&s_db.mutex);
+
+   if (rc != SQLITE_DONE) {
+      LOG_ERROR("auth_db: set_user_settings failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   return AUTH_DB_SUCCESS;
+}
+
+int auth_db_init_user_settings(int user_id) {
+   auth_user_settings_t defaults;
+   memset(&defaults, 0, sizeof(defaults));
+   defaults.tts_length_scale = 1.0f;
+   strncpy(defaults.timezone, "UTC", AUTH_TIMEZONE_MAX - 1);
+   strncpy(defaults.units, "metric", AUTH_UNITS_MAX - 1);
+   return auth_db_set_user_settings(user_id, &defaults);
+}
+
+/* ============================================================================
  * Session Operations
  * ============================================================================ */
 
@@ -1541,7 +1746,8 @@ int auth_db_clear_login_attempts(const char *ip_address) {
 
    pthread_mutex_unlock(&s_db.mutex);
 
-   LOG_INFO("auth_db: Cleared %d login attempts for IP: %s", deleted, ip_address ? ip_address : "all");
+   LOG_INFO("auth_db: Cleared %d login attempts for IP: %s", deleted,
+            ip_address ? ip_address : "all");
    return deleted;
 }
 
@@ -1852,16 +2058,15 @@ int auth_db_get_stats(auth_db_stats_t *stats) {
    }
 
    /* Combined query for all stats - reduces database round trips */
-   const char *sql =
-       "SELECT "
-       "(SELECT COUNT(*) FROM users), "
-       "(SELECT COUNT(*) FROM users WHERE is_admin = 1), "
-       "(SELECT COUNT(*) FROM users WHERE lockout_until > strftime('%s','now')), "
-       "(SELECT COUNT(*) FROM sessions), "
-       "(SELECT COUNT(*) FROM login_attempts "
-       " WHERE success = 0 AND timestamp > strftime('%s','now') - 86400), "
-       "(SELECT COUNT(*) FROM auth_log), "
-       "(SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size())";
+   const char *sql = "SELECT "
+                     "(SELECT COUNT(*) FROM users), "
+                     "(SELECT COUNT(*) FROM users WHERE is_admin = 1), "
+                     "(SELECT COUNT(*) FROM users WHERE lockout_until > strftime('%s','now')), "
+                     "(SELECT COUNT(*) FROM sessions), "
+                     "(SELECT COUNT(*) FROM login_attempts "
+                     " WHERE success = 0 AND timestamp > strftime('%s','now') - 86400), "
+                     "(SELECT COUNT(*) FROM auth_log), "
+                     "(SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size())";
 
    sqlite3_stmt *stmt = NULL;
    int rc = sqlite3_prepare_v2(s_db.db, sql, -1, &stmt, NULL);
@@ -1923,12 +2128,10 @@ int auth_db_vacuum(void) {
  */
 static int validate_backup_path(const char *path) {
    /* Allowed backup directory prefixes */
-   static const char *allowed_prefixes[] = {
-      "/var/lib/dawn/",   /* Main Dawn data directory */
-      "/tmp/",            /* Temporary files */
-      "/home/",           /* User home directories */
-      NULL
-   };
+   static const char *allowed_prefixes[] = { "/var/lib/dawn/", /* Main Dawn data directory */
+                                             "/tmp/",          /* Temporary files */
+                                             "/home/",         /* User home directories */
+                                             NULL };
 
    if (!path || path[0] != '/') {
       /* Only absolute paths allowed */

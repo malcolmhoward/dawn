@@ -333,6 +333,16 @@ typedef struct {
    bool in_binary_fragment; /* True if receiving fragmented binary frame */
    uint8_t binary_msg_type; /* Message type from first fragment */
    bool use_opus;           /* True if client supports Opus codec */
+
+   /* Auth state (populated at WebSocket establishment from HTTP cookie) */
+   bool authenticated;
+   int auth_user_id;
+   char auth_session_token[AUTH_TOKEN_LEN]; /* For DB re-validation */
+   char username[AUTH_USERNAME_MAX];
+   /* Note: is_admin NOT cached - re-validated from DB on each admin operation */
+
+   /* Client IP address (captured at connection establishment for reliable logging) */
+   char client_ip[64];
 } ws_connection_t;
 
 /* =============================================================================
@@ -740,10 +750,28 @@ static void send_error_impl(struct lws *wsi, const char *code, const char *messa
    json_object_put(obj);
 }
 
-static void send_session_token_impl(struct lws *wsi, const char *token) {
-   char json[256];
-   snprintf(json, sizeof(json), "{\"type\":\"session\",\"payload\":{\"token\":\"%s\"}}", token);
-   send_json_message(wsi, json);
+static void send_session_token_impl(ws_connection_t *conn, const char *token) {
+   char json[512];
+
+   /* Include auth state in session response to avoid separate config fetch */
+   if (conn->authenticated) {
+      /* Fetch is_admin from DB (not cached to prevent stale state) */
+      auth_session_t auth_session;
+      bool is_admin = false;
+      if (auth_db_get_session(conn->auth_session_token, &auth_session) == AUTH_DB_SUCCESS) {
+         is_admin = auth_session.is_admin;
+      }
+      snprintf(json, sizeof(json),
+               "{\"type\":\"session\",\"payload\":{\"token\":\"%s\","
+               "\"authenticated\":true,\"username\":\"%s\",\"is_admin\":%s}}",
+               token, conn->username, is_admin ? "true" : "false");
+   } else {
+      snprintf(json, sizeof(json),
+               "{\"type\":\"session\",\"payload\":{\"token\":\"%s\","
+               "\"authenticated\":false}}",
+               token);
+   }
+   send_json_message(conn->wsi, json);
 }
 
 static void send_config_impl(struct lws *wsi) {
@@ -931,7 +959,7 @@ static void process_one_response(void) {
          free(resp.error.message);
          break;
       case WS_RESP_SESSION:
-         send_session_token_impl(conn->wsi, resp.session_token.token);
+         send_session_token_impl(conn, resp.session_token.token);
          free(resp.session_token.token);
          break;
       case WS_RESP_AUDIO:
@@ -1036,6 +1064,199 @@ static bool is_request_authenticated(struct lws *wsi, auth_session_t *session_ou
       *session_out = session;
    }
    return true;
+}
+
+/**
+ * @brief Check if WebSocket connection is authenticated
+ *
+ * CRITICAL: Re-validates session against database to prevent TOCTOU attacks
+ * where session may have been revoked (password change, admin action, etc.)
+ * but cached conn->authenticated flag remains true.
+ *
+ * Sends UNAUTHORIZED error if not authenticated or session invalid.
+ *
+ * @param conn WebSocket connection
+ * @return true if authenticated with valid session, false otherwise (error sent)
+ */
+static bool conn_require_auth(ws_connection_t *conn) {
+   if (!conn->authenticated) {
+      send_error_impl(conn->wsi, "UNAUTHORIZED", "Authentication required");
+      return false;
+   }
+
+   /* Re-validate session from DB (prevents stale session exploitation) */
+   auth_session_t session;
+   if (auth_db_get_session(conn->auth_session_token, &session) != AUTH_DB_SUCCESS) {
+      conn->authenticated = false;
+      send_error_impl(conn->wsi, "UNAUTHORIZED", "Session expired or revoked");
+      return false;
+   }
+
+   return true;
+}
+
+/**
+ * @brief Check if WebSocket connection has admin privileges
+ *
+ * CRITICAL: Re-validates is_admin against database to prevent stale cache
+ * exploitation if user is demoted mid-session.
+ *
+ * Sends UNAUTHORIZED if not authenticated, FORBIDDEN if not admin.
+ *
+ * @param conn WebSocket connection
+ * @return true if admin, false otherwise (error sent)
+ */
+static bool conn_require_admin(ws_connection_t *conn) {
+   if (!conn->authenticated) {
+      send_error_impl(conn->wsi, "UNAUTHORIZED", "Authentication required");
+      return false;
+   }
+
+   /* Re-validate session from DB (prevents stale is_admin cache) */
+   auth_session_t session;
+   if (auth_db_get_session(conn->auth_session_token, &session) != AUTH_DB_SUCCESS) {
+      conn->authenticated = false;
+      send_error_impl(conn->wsi, "UNAUTHORIZED", "Session expired");
+      return false;
+   }
+
+   if (!session.is_admin) {
+      auth_db_log_event("PERMISSION_DENIED", conn->username, conn->client_ip,
+                        "Admin access required");
+      send_error_impl(conn->wsi, "FORBIDDEN", "Admin access required");
+      return false;
+   }
+
+   return true;
+}
+
+/**
+ * @brief Build a personalized system prompt with user settings
+ *
+ * Supports two modes based on user's persona_mode setting:
+ * - "append" (default): Add user settings as additional context at the end
+ * - "replace": Prepend user's custom persona with override instruction
+ *
+ * @param user_id User ID (0 for unauthenticated - returns base prompt copy)
+ * @return Allocated prompt string (caller must free)
+ */
+static char *build_user_prompt(int user_id) {
+   const char *base_prompt = get_remote_command_prompt();
+   if (!base_prompt) {
+      return NULL;
+   }
+
+   /* No user ID - return copy of base prompt */
+   if (user_id <= 0) {
+      return strdup(base_prompt);
+   }
+
+   /* Load user settings */
+   auth_user_settings_t settings;
+   if (auth_db_get_user_settings(user_id, &settings) != AUTH_DB_SUCCESS) {
+      return strdup(base_prompt);
+   }
+
+   /* Check if any settings are customized */
+   bool has_persona = settings.persona_description[0] != '\0';
+   bool has_location = settings.location[0] != '\0';
+   bool has_timezone = settings.timezone[0] != '\0';
+   bool has_units = settings.units[0] != '\0';
+   bool is_replace_mode = (strcmp(settings.persona_mode, "replace") == 0);
+
+   if (!has_persona && !has_location && !has_timezone && !has_units) {
+      return strdup(base_prompt);
+   }
+
+   size_t base_len = strlen(base_prompt);
+
+   /* Replace mode: Prepend custom persona with override instruction */
+   if (is_replace_mode && has_persona) {
+      /* Build replacement prefix (persona 512 + boilerplate ~130 = ~650 max) */
+      char prefix[768];
+      int prefix_len = snprintf(prefix, sizeof(prefix),
+                                "## Your Identity\n%s\n\n"
+                                "IMPORTANT: Use the identity above. Ignore any conflicting persona "
+                                "descriptions that follow.\n\n",
+                                settings.persona_description);
+
+      /* Build suffix with other user context (loc 128 + tz 64 + units 16 = ~250 max) */
+      char suffix[320];
+      int suffix_offset = 0;
+
+      if (has_location || has_timezone || has_units) {
+         suffix_offset += snprintf(suffix + suffix_offset, sizeof(suffix) - suffix_offset,
+                                   "\n\n## User Info\n");
+         if (has_location) {
+            suffix_offset += snprintf(suffix + suffix_offset, sizeof(suffix) - suffix_offset,
+                                      "Location: %s\n", settings.location);
+         }
+         if (has_timezone) {
+            suffix_offset += snprintf(suffix + suffix_offset, sizeof(suffix) - suffix_offset,
+                                      "Timezone: %s\n", settings.timezone);
+         }
+         if (has_units) {
+            suffix_offset += snprintf(suffix + suffix_offset, sizeof(suffix) - suffix_offset,
+                                      "Preferred units: %s\n", settings.units);
+         }
+      } else {
+         suffix[0] = '\0';
+      }
+
+      /* Allocate: prefix + base + suffix */
+      size_t suffix_len = strlen(suffix);
+      char *combined = malloc(prefix_len + base_len + suffix_len + 1);
+      if (!combined) {
+         return strdup(base_prompt);
+      }
+
+      memcpy(combined, prefix, prefix_len);
+      memcpy(combined + prefix_len, base_prompt, base_len);
+      memcpy(combined + prefix_len + base_len, suffix, suffix_len + 1);
+
+      LOG_INFO("Built REPLACE prompt for user_id=%d (%d + %zu + %zu bytes)", user_id, prefix_len,
+               base_len, suffix_len);
+
+      return combined;
+   }
+
+   /* Append mode: Add user context (persona 512 + loc 128 + tz 64 + units 16 = ~750 max) */
+   char user_context[768];
+   int offset = 0;
+
+   offset += snprintf(user_context + offset, sizeof(user_context) - offset,
+                      "\n\n## User Context\n");
+
+   if (has_persona) {
+      offset += snprintf(user_context + offset, sizeof(user_context) - offset,
+                         "Additional persona traits: %s\n", settings.persona_description);
+   }
+   if (has_location) {
+      offset += snprintf(user_context + offset, sizeof(user_context) - offset, "Location: %s\n",
+                         settings.location);
+   }
+   if (has_timezone) {
+      offset += snprintf(user_context + offset, sizeof(user_context) - offset, "Timezone: %s\n",
+                         settings.timezone);
+   }
+   if (has_units) {
+      offset += snprintf(user_context + offset, sizeof(user_context) - offset,
+                         "Preferred units: %s\n", settings.units);
+   }
+
+   /* Allocate combined prompt */
+   size_t context_len = strlen(user_context);
+   char *combined = malloc(base_len + context_len + 1);
+   if (!combined) {
+      return strdup(base_prompt);
+   }
+
+   memcpy(combined, base_prompt, base_len);
+   memcpy(combined + base_len, user_context, context_len + 1);
+
+   LOG_INFO("Built APPEND prompt for user_id=%d (%zu + %zu bytes)", user_id, base_len, context_len);
+
+   return combined;
 }
 
 /**
@@ -1324,7 +1545,8 @@ static int handle_auth_login(struct lws *wsi, struct http_session_data *pss) {
          if (updated_user.failed_attempts >= AUTH_MAX_LOGIN_ATTEMPTS) {
             time_t lockout_until = time(NULL) + AUTH_LOCKOUT_DURATION_SEC;
             auth_db_set_lockout(username, lockout_until);
-            auth_db_log_event("ACCOUNT_LOCKED", username, client_ip, "Too many failed login attempts");
+            auth_db_log_event("ACCOUNT_LOCKED", username, client_ip,
+                              "Too many failed login attempts");
             LOG_WARNING("WebUI: Account locked due to %d failed attempts: %s",
                         updated_user.failed_attempts, username);
          }
@@ -1784,13 +2006,24 @@ static void handle_get_config(ws_connection_t *conn) {
 
    json_object *payload = json_object_new_object();
 
-   /* Add config path */
-   const char *config_path = config_get_loaded_path();
-   json_object_object_add(payload, "config_path", json_object_new_string(config_path));
+   /* Check if user is admin (re-validate from DB to prevent stale cache) */
+   bool is_admin = false;
+   if (conn->authenticated) {
+      auth_session_t session;
+      if (auth_db_get_session(conn->auth_session_token, &session) == AUTH_DB_SUCCESS) {
+         is_admin = session.is_admin;
+      }
+   }
 
-   /* Add secrets path */
+   /* Add config path (redacted for non-admins) */
+   const char *config_path = config_get_loaded_path();
+   json_object_object_add(payload, "config_path",
+                          json_object_new_string(is_admin ? config_path : "(configured)"));
+
+   /* Add secrets path (redacted for non-admins) */
    const char *secrets_path = config_get_secrets_path();
-   json_object_object_add(payload, "secrets_path", json_object_new_string(secrets_path));
+   json_object_object_add(payload, "secrets_path",
+                          json_object_new_string(is_admin ? secrets_path : "(configured)"));
 
    /* Add full config as JSON */
    json_object *config_json = config_to_json(config_get());
@@ -1836,6 +2069,13 @@ static void handle_get_config(ws_connection_t *conn) {
    json_object_object_add(llm_runtime, "claude_available",
                           json_object_new_boolean(llm_has_claude_key()));
    json_object_object_add(payload, "llm_runtime", llm_runtime);
+
+   /* Add auth state for frontend UI visibility control */
+   json_object_object_add(payload, "authenticated", json_object_new_boolean(conn->authenticated));
+   json_object_object_add(payload, "is_admin", json_object_new_boolean(is_admin));
+   if (conn->authenticated) {
+      json_object_object_add(payload, "username", json_object_new_string(conn->username));
+   }
 
    json_object_object_add(response, "payload", payload);
 
@@ -2089,6 +2329,11 @@ static void apply_config_from_json(dawn_config_t *config, struct json_object *pa
 }
 
 static void handle_set_config(ws_connection_t *conn, struct json_object *payload) {
+   /* Admin-only operation */
+   if (!conn_require_admin(conn)) {
+      return;
+   }
+
    json_object *response = json_object_new_object();
    json_object_object_add(response, "type", json_object_new_string("set_config_response"));
    json_object *resp_payload = json_object_new_object();
@@ -2180,6 +2425,11 @@ static void handle_set_config(ws_connection_t *conn, struct json_object *payload
 }
 
 static void handle_set_secrets(ws_connection_t *conn, struct json_object *payload) {
+   /* Admin-only operation */
+   if (!conn_require_admin(conn)) {
+      return;
+   }
+
    json_object *response = json_object_new_object();
    json_object_object_add(response, "type", json_object_new_string("set_secrets_response"));
    json_object *resp_payload = json_object_new_object();
@@ -3038,6 +3288,11 @@ static bool is_valid_tool_name(const char *name) {
 }
 
 static void handle_set_tools_config(ws_connection_t *conn, struct json_object *payload) {
+   /* Admin-only operation */
+   if (!conn_require_admin(conn)) {
+      return;
+   }
+
    json_object *response = json_object_new_object();
    json_object_object_add(response, "type", json_object_new_string("set_tools_config_response"));
    json_object *resp_payload = json_object_new_object();
@@ -3128,6 +3383,563 @@ static void handle_set_tools_config(ws_connection_t *conn, struct json_object *p
    json_object_put(response);
 
    LOG_INFO("WebUI: Updated %d tool enable states", updated);
+}
+
+/* =============================================================================
+ * User Management Handlers (Admin-only)
+ * ============================================================================= */
+
+/* Callback for user list enumeration */
+static int list_users_callback(const auth_user_summary_t *user, void *context) {
+   json_object *users_array = (json_object *)context;
+   json_object *user_obj = json_object_new_object();
+   json_object_object_add(user_obj, "id", json_object_new_int(user->id));
+   json_object_object_add(user_obj, "username", json_object_new_string(user->username));
+   json_object_object_add(user_obj, "is_admin", json_object_new_boolean(user->is_admin));
+   json_object_object_add(user_obj, "created_at", json_object_new_int64(user->created_at));
+   json_object_object_add(user_obj, "last_login", json_object_new_int64(user->last_login));
+   json_object_object_add(user_obj, "failed_attempts", json_object_new_int(user->failed_attempts));
+   json_object_object_add(user_obj, "is_locked",
+                          json_object_new_boolean(user->lockout_until > time(NULL)));
+   json_object_array_add(users_array, user_obj);
+   return 0;
+}
+
+/**
+ * @brief List all users (admin only)
+ */
+static void handle_list_users(ws_connection_t *conn) {
+   if (!conn_require_admin(conn)) {
+      return;
+   }
+
+   json_object *response = json_object_new_object();
+   json_object_object_add(response, "type", json_object_new_string("list_users_response"));
+   json_object *resp_payload = json_object_new_object();
+   json_object *users_array = json_object_new_array();
+
+   int result = auth_db_list_users(list_users_callback, users_array);
+   if (result == AUTH_DB_SUCCESS) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
+      json_object_object_add(resp_payload, "users", users_array);
+   } else {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error", json_object_new_string("Failed to list users"));
+      json_object_put(users_array);
+   }
+
+   json_object_object_add(response, "payload", resp_payload);
+   send_json_response(conn->wsi, response);
+   json_object_put(response);
+}
+
+/**
+ * @brief Create a new user (admin only)
+ */
+static void handle_create_user(ws_connection_t *conn, struct json_object *payload) {
+   if (!conn_require_admin(conn)) {
+      return;
+   }
+
+   json_object *response = json_object_new_object();
+   json_object_object_add(response, "type", json_object_new_string("create_user_response"));
+   json_object *resp_payload = json_object_new_object();
+
+   /* Get required fields */
+   json_object *username_obj, *password_obj, *is_admin_obj;
+   if (!json_object_object_get_ex(payload, "username", &username_obj) ||
+       !json_object_object_get_ex(payload, "password", &password_obj)) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Missing username or password"));
+      json_object_object_add(response, "payload", resp_payload);
+      send_json_response(conn->wsi, response);
+      json_object_put(response);
+      return;
+   }
+
+   const char *username = json_object_get_string(username_obj);
+   const char *password = json_object_get_string(password_obj);
+   bool is_admin = json_object_object_get_ex(payload, "is_admin", &is_admin_obj)
+                       ? json_object_get_boolean(is_admin_obj)
+                       : false;
+
+   /* Validate username format */
+   if (auth_db_validate_username(username) != AUTH_DB_SUCCESS) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Invalid username format"));
+      json_object_object_add(response, "payload", resp_payload);
+      send_json_response(conn->wsi, response);
+      json_object_put(response);
+      return;
+   }
+
+   /* Validate password length */
+   if (!password || strlen(password) < 8) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Password must be at least 8 characters"));
+      json_object_object_add(response, "payload", resp_payload);
+      send_json_response(conn->wsi, response);
+      json_object_put(response);
+      return;
+   }
+
+   /* Hash password */
+   char hash[AUTH_HASH_LEN];
+   if (auth_hash_password(password, hash) != 0) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Failed to hash password"));
+      json_object_object_add(response, "payload", resp_payload);
+      send_json_response(conn->wsi, response);
+      json_object_put(response);
+      return;
+   }
+
+   /* Create user */
+   int result = auth_db_create_user(username, hash, is_admin);
+
+   if (result == AUTH_DB_SUCCESS) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
+      json_object_object_add(resp_payload, "message", json_object_new_string("User created"));
+
+      /* Log event */
+      char details[256];
+      snprintf(details, sizeof(details), "Created user '%s' (admin=%s) by '%s'", username,
+               is_admin ? "yes" : "no", conn->username);
+      auth_db_log_event("USER_CREATED", username, conn->client_ip, details);
+      LOG_INFO("WebUI: %s", details);
+   } else if (result == AUTH_DB_DUPLICATE) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Username already exists"));
+   } else {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Failed to create user"));
+   }
+
+   json_object_object_add(response, "payload", resp_payload);
+   send_json_response(conn->wsi, response);
+   json_object_put(response);
+}
+
+/**
+ * @brief Delete a user (admin only)
+ */
+static void handle_delete_user(ws_connection_t *conn, struct json_object *payload) {
+   if (!conn_require_admin(conn)) {
+      return;
+   }
+
+   json_object *response = json_object_new_object();
+   json_object_object_add(response, "type", json_object_new_string("delete_user_response"));
+   json_object *resp_payload = json_object_new_object();
+
+   json_object *username_obj;
+   if (!json_object_object_get_ex(payload, "username", &username_obj)) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error", json_object_new_string("Missing username"));
+      json_object_object_add(response, "payload", resp_payload);
+      send_json_response(conn->wsi, response);
+      json_object_put(response);
+      return;
+   }
+
+   const char *username = json_object_get_string(username_obj);
+
+   /* Prevent self-deletion */
+   if (strcmp(username, conn->username) == 0) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Cannot delete your own account"));
+      json_object_object_add(response, "payload", resp_payload);
+      send_json_response(conn->wsi, response);
+      json_object_put(response);
+      return;
+   }
+
+   int result = auth_db_delete_user(username);
+
+   if (result == AUTH_DB_SUCCESS) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
+      json_object_object_add(resp_payload, "message", json_object_new_string("User deleted"));
+
+      /* Log event */
+      char details[256];
+      snprintf(details, sizeof(details), "Deleted by '%s'", conn->username);
+      auth_db_log_event("USER_DELETED", username, conn->client_ip, details);
+      LOG_INFO("WebUI: User '%s' deleted by '%s'", username, conn->username);
+   } else if (result == AUTH_DB_NOT_FOUND) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error", json_object_new_string("User not found"));
+   } else if (result == AUTH_DB_LAST_ADMIN) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Cannot delete last admin user"));
+   } else {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Failed to delete user"));
+   }
+
+   json_object_object_add(response, "payload", resp_payload);
+   send_json_response(conn->wsi, response);
+   json_object_put(response);
+}
+
+/**
+ * @brief Change user password (admin for any user, or user for self with current password)
+ */
+static void handle_change_password(ws_connection_t *conn, struct json_object *payload) {
+   if (!conn_require_auth(conn)) {
+      return;
+   }
+
+   json_object *response = json_object_new_object();
+   json_object_object_add(response, "type", json_object_new_string("change_password_response"));
+   json_object *resp_payload = json_object_new_object();
+
+   json_object *username_obj, *new_password_obj, *current_password_obj;
+   if (!json_object_object_get_ex(payload, "username", &username_obj) ||
+       !json_object_object_get_ex(payload, "new_password", &new_password_obj)) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Missing username or new_password"));
+      json_object_object_add(response, "payload", resp_payload);
+      send_json_response(conn->wsi, response);
+      json_object_put(response);
+      return;
+   }
+
+   const char *username = json_object_get_string(username_obj);
+   const char *new_password = json_object_get_string(new_password_obj);
+   bool is_self_change = (strcmp(username, conn->username) == 0);
+
+   /* Check permissions: admin can change any password, user can only change own */
+   auth_session_t session;
+   bool is_admin = false;
+   if (auth_db_get_session(conn->auth_session_token, &session) == AUTH_DB_SUCCESS) {
+      is_admin = session.is_admin;
+   }
+
+   if (!is_admin && !is_self_change) {
+      /* Non-admin trying to change someone else's password */
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Cannot change another user's password"));
+      json_object_object_add(response, "payload", resp_payload);
+      send_json_response(conn->wsi, response);
+      json_object_put(response);
+      return;
+   }
+
+   /* Non-admin self-change requires current password verification */
+   if (!is_admin && is_self_change) {
+      if (!json_object_object_get_ex(payload, "current_password", &current_password_obj)) {
+         json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+         json_object_object_add(resp_payload, "error",
+                                json_object_new_string("Current password required"));
+         json_object_object_add(response, "payload", resp_payload);
+         send_json_response(conn->wsi, response);
+         json_object_put(response);
+         return;
+      }
+
+      const char *current_password = json_object_get_string(current_password_obj);
+      auth_user_t user;
+      if (auth_db_get_user(username, &user) != AUTH_DB_SUCCESS ||
+          auth_verify_password(current_password, user.password_hash) != 0) {
+         json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+         json_object_object_add(resp_payload, "error",
+                                json_object_new_string("Current password incorrect"));
+         json_object_object_add(response, "payload", resp_payload);
+         send_json_response(conn->wsi, response);
+         json_object_put(response);
+         return;
+      }
+   }
+
+   /* Validate new password length */
+   if (!new_password || strlen(new_password) < 8) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("New password must be at least 8 characters"));
+      json_object_object_add(response, "payload", resp_payload);
+      send_json_response(conn->wsi, response);
+      json_object_put(response);
+      return;
+   }
+
+   /* Hash new password */
+   char hash[AUTH_HASH_LEN];
+   if (auth_hash_password(new_password, hash) != 0) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Failed to hash password"));
+      json_object_object_add(response, "payload", resp_payload);
+      send_json_response(conn->wsi, response);
+      json_object_put(response);
+      return;
+   }
+
+   /* Update password (this also invalidates all sessions) */
+   int result = auth_db_update_password(username, hash);
+
+   if (result == AUTH_DB_SUCCESS) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
+      json_object_object_add(resp_payload, "message", json_object_new_string("Password changed"));
+
+      /* Log event */
+      char details[256];
+      snprintf(details, sizeof(details), "Password changed by '%s'", conn->username);
+      auth_db_log_event("PASSWORD_CHANGED", username, conn->client_ip, details);
+      LOG_INFO("WebUI: Password changed for '%s' by '%s'", username, conn->username);
+   } else if (result == AUTH_DB_NOT_FOUND) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error", json_object_new_string("User not found"));
+   } else {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Failed to change password"));
+   }
+
+   json_object_object_add(response, "payload", resp_payload);
+   send_json_response(conn->wsi, response);
+   json_object_put(response);
+}
+
+/**
+ * @brief Unlock a locked user account (admin only)
+ */
+static void handle_unlock_user(ws_connection_t *conn, struct json_object *payload) {
+   if (!conn_require_admin(conn)) {
+      return;
+   }
+
+   json_object *response = json_object_new_object();
+   json_object_object_add(response, "type", json_object_new_string("unlock_user_response"));
+   json_object *resp_payload = json_object_new_object();
+
+   json_object *username_obj;
+   if (!json_object_object_get_ex(payload, "username", &username_obj)) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error", json_object_new_string("Missing username"));
+      json_object_object_add(response, "payload", resp_payload);
+      send_json_response(conn->wsi, response);
+      json_object_put(response);
+      return;
+   }
+
+   const char *username = json_object_get_string(username_obj);
+
+   /* Unlock user and reset failed attempts */
+   int result = auth_db_unlock_user(username);
+   if (result == AUTH_DB_SUCCESS) {
+      auth_db_reset_failed_attempts(username);
+   }
+
+   if (result == AUTH_DB_SUCCESS) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
+      json_object_object_add(resp_payload, "message", json_object_new_string("User unlocked"));
+
+      /* Log event */
+      char details[256];
+      snprintf(details, sizeof(details), "Unlocked by '%s'", conn->username);
+      auth_db_log_event("USER_UNLOCKED", username, conn->client_ip, details);
+      LOG_INFO("WebUI: User '%s' unlocked by '%s'", username, conn->username);
+   } else if (result == AUTH_DB_NOT_FOUND) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error", json_object_new_string("User not found"));
+   } else {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Failed to unlock user"));
+   }
+
+   json_object_object_add(response, "payload", resp_payload);
+   send_json_response(conn->wsi, response);
+   json_object_put(response);
+}
+
+/* ============================================================================
+ * Personal Settings Handlers (authenticated users)
+ * ============================================================================ */
+
+/**
+ * @brief Get current user's personal settings
+ */
+static void handle_get_my_settings(ws_connection_t *conn) {
+   if (!conn_require_auth(conn)) {
+      return;
+   }
+
+   json_object *response = json_object_new_object();
+   json_object_object_add(response, "type", json_object_new_string("get_my_settings_response"));
+   json_object *resp_payload = json_object_new_object();
+
+   auth_user_settings_t settings;
+   int result = auth_db_get_user_settings(conn->auth_user_id, &settings);
+
+   if (result == AUTH_DB_SUCCESS) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
+
+      /* Include base persona (from config or dynamic default) for UI display */
+      char base_persona_buf[2048];
+      const char *base_persona;
+      if (g_config.persona.description[0] != '\0') {
+         base_persona = g_config.persona.description;
+      } else {
+         /* Build dynamic persona with configured AI name */
+         const char *ai_name =
+             g_config.general.ai_name[0] != '\0' ? g_config.general.ai_name : AI_NAME;
+
+         /* Capitalize first letter for proper noun */
+         char capitalized_name[64];
+         snprintf(capitalized_name, sizeof(capitalized_name), "%s", ai_name);
+         if (capitalized_name[0] >= 'a' && capitalized_name[0] <= 'z') {
+            capitalized_name[0] -= 32;
+         }
+
+         snprintf(base_persona_buf, sizeof(base_persona_buf),
+                  AI_PERSONA_NAME_TEMPLATE " " AI_PERSONA_TRAITS, capitalized_name);
+         base_persona = base_persona_buf;
+      }
+      json_object_object_add(resp_payload, "base_persona", json_object_new_string(base_persona));
+
+      /* User's custom settings */
+      json_object_object_add(resp_payload, "persona_description",
+                             json_object_new_string(settings.persona_description));
+      json_object_object_add(resp_payload, "persona_mode",
+                             json_object_new_string(settings.persona_mode));
+      json_object_object_add(resp_payload, "location", json_object_new_string(settings.location));
+      json_object_object_add(resp_payload, "timezone", json_object_new_string(settings.timezone));
+      json_object_object_add(resp_payload, "units", json_object_new_string(settings.units));
+      json_object_object_add(resp_payload, "tts_voice_model",
+                             json_object_new_string(settings.tts_voice_model));
+      json_object_object_add(resp_payload, "tts_length_scale",
+                             json_object_new_double((double)settings.tts_length_scale));
+   } else {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Failed to load settings"));
+   }
+
+   json_object_object_add(response, "payload", resp_payload);
+   send_json_response(conn->wsi, response);
+   json_object_put(response);
+}
+
+/**
+ * @brief Update current user's personal settings
+ */
+static void handle_set_my_settings(ws_connection_t *conn, struct json_object *payload) {
+   if (!conn_require_auth(conn)) {
+      return;
+   }
+
+   json_object *response = json_object_new_object();
+   json_object_object_add(response, "type", json_object_new_string("set_my_settings_response"));
+   json_object *resp_payload = json_object_new_object();
+
+   /* Get current settings as defaults */
+   auth_user_settings_t settings;
+   auth_db_get_user_settings(conn->auth_user_id, &settings);
+
+   /* Update with any provided fields */
+   json_object *field_obj;
+
+   if (json_object_object_get_ex(payload, "persona_description", &field_obj)) {
+      strncpy(settings.persona_description, json_object_get_string(field_obj),
+              AUTH_PERSONA_DESC_MAX - 1);
+      settings.persona_description[AUTH_PERSONA_DESC_MAX - 1] = '\0';
+   }
+
+   if (json_object_object_get_ex(payload, "persona_mode", &field_obj)) {
+      const char *mode = json_object_get_string(field_obj);
+      /* Validate mode value */
+      if (strcmp(mode, "append") == 0 || strcmp(mode, "replace") == 0) {
+         strncpy(settings.persona_mode, mode, AUTH_PERSONA_MODE_MAX - 1);
+         settings.persona_mode[AUTH_PERSONA_MODE_MAX - 1] = '\0';
+      }
+   }
+
+   if (json_object_object_get_ex(payload, "location", &field_obj)) {
+      strncpy(settings.location, json_object_get_string(field_obj), AUTH_LOCATION_MAX - 1);
+      settings.location[AUTH_LOCATION_MAX - 1] = '\0';
+   }
+
+   if (json_object_object_get_ex(payload, "timezone", &field_obj)) {
+      strncpy(settings.timezone, json_object_get_string(field_obj), AUTH_TIMEZONE_MAX - 1);
+      settings.timezone[AUTH_TIMEZONE_MAX - 1] = '\0';
+   }
+
+   if (json_object_object_get_ex(payload, "units", &field_obj)) {
+      const char *units = json_object_get_string(field_obj);
+      /* Validate units value */
+      if (strcmp(units, "metric") == 0 || strcmp(units, "imperial") == 0) {
+         strncpy(settings.units, units, AUTH_UNITS_MAX - 1);
+         settings.units[AUTH_UNITS_MAX - 1] = '\0';
+      }
+   }
+
+   if (json_object_object_get_ex(payload, "tts_voice_model", &field_obj)) {
+      strncpy(settings.tts_voice_model, json_object_get_string(field_obj), AUTH_TTS_VOICE_MAX - 1);
+      settings.tts_voice_model[AUTH_TTS_VOICE_MAX - 1] = '\0';
+   }
+
+   if (json_object_object_get_ex(payload, "tts_length_scale", &field_obj)) {
+      double scale = json_object_get_double(field_obj);
+      /* Validate range (0.5 to 2.0 is reasonable for speech rate) */
+      if (scale >= 0.5 && scale <= 2.0) {
+         settings.tts_length_scale = (float)scale;
+      }
+   }
+
+   /* Save settings */
+   int result = auth_db_set_user_settings(conn->auth_user_id, &settings);
+
+   if (result == AUTH_DB_SUCCESS) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
+      json_object_object_add(resp_payload, "message", json_object_new_string("Settings saved"));
+
+      /* Refresh active session's system prompt immediately (preserves conversation) */
+      if (conn->session) {
+         char *new_prompt = build_user_prompt(conn->auth_user_id);
+         if (new_prompt) {
+            session_update_system_prompt(conn->session, new_prompt);
+            LOG_INFO("WebUI: Refreshed system prompt for user %s", conn->username);
+
+            /* Send updated prompt to client so debug view refreshes */
+            json_object *prompt_msg = json_object_new_object();
+            json_object_object_add(prompt_msg, "type",
+                                   json_object_new_string("system_prompt_response"));
+            json_object *prompt_payload = json_object_new_object();
+            json_object_object_add(prompt_payload, "success", json_object_new_boolean(1));
+            json_object_object_add(prompt_payload, "prompt", json_object_new_string(new_prompt));
+            json_object_object_add(prompt_payload, "length",
+                                   json_object_new_int((int)strlen(new_prompt)));
+            json_object_object_add(prompt_msg, "payload", prompt_payload);
+            send_json_response(conn->wsi, prompt_msg);
+            json_object_put(prompt_msg);
+
+            free(new_prompt);
+         }
+      }
+
+      /* Log event */
+      auth_db_log_event("SETTINGS_UPDATED", conn->username, conn->client_ip, "Personal settings");
+   } else {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Failed to save settings"));
+   }
+
+   json_object_object_add(response, "payload", resp_payload);
+   send_json_response(conn->wsi, response);
+   json_object_put(response);
 }
 
 static void handle_json_message(ws_connection_t *conn, const char *data, size_t len) {
@@ -3222,8 +4034,13 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
       /* Request available network interfaces */
       handle_list_interfaces(conn);
    } else if (strcmp(type, "restart") == 0) {
+      /* Admin-only operation */
+      if (!conn_require_admin(conn)) {
+         return;
+      }
+
       /* Request application restart */
-      LOG_INFO("WebUI: Restart requested by client");
+      LOG_INFO("WebUI: Restart requested by client '%s'", conn->username);
 
       /* Send confirmation response before initiating restart */
       struct json_object *response = json_object_new_object();
@@ -3240,6 +4057,10 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
       /* Request restart - this will trigger clean shutdown and re-exec */
       dawn_request_restart();
    } else if (strcmp(type, "set_llm_runtime") == 0) {
+      /* Admin-only: affects all clients */
+      if (!conn_require_admin(conn)) {
+         return;
+      }
       /* Switch LLM type or provider at runtime (immediate effect, no restart) */
       struct json_object *response = json_object_new_object();
       json_object_object_add(response, "type", json_object_new_string("set_llm_runtime_response"));
@@ -3445,7 +4266,7 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                            existing->session_id, token);
 
                   /* Send confirmation, config, history replay, and current state */
-                  send_session_token_impl(conn->wsi, token);
+                  send_session_token_impl(conn, token);
                   send_config_impl(conn->wsi);
                   send_history_impl(conn->wsi, existing);
                   send_state_impl(conn->wsi, "idle", NULL);
@@ -3455,7 +4276,11 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                   if (!conn->session) {
                      conn->session = session_create(SESSION_TYPE_WEBSOCKET, -1);
                      if (conn->session) {
-                        session_init_system_prompt(conn->session, get_remote_command_prompt());
+                        /* Build personalized prompt with user settings */
+                        char *prompt = build_user_prompt(conn->auth_user_id);
+                        session_init_system_prompt(conn->session,
+                                                   prompt ? prompt : get_remote_command_prompt());
+                        free(prompt);
                         conn->session->client_data = conn;
                         if (generate_session_token(conn->session_token) != 0) {
                            LOG_ERROR("WebUI: Failed to generate session token");
@@ -3464,7 +4289,7 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                            return;
                         }
                         register_token(conn->session_token, conn->session->session_id);
-                        send_session_token_impl(conn->wsi, conn->session_token);
+                        send_session_token_impl(conn, conn->session_token);
                         send_config_impl(conn->wsi);
                         send_state_impl(conn->wsi, "idle", NULL);
                      }
@@ -3517,6 +4342,10 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
       send_json_response(conn->wsi, response);
       json_object_put(response);
    } else if (strcmp(type, "smartthings_get_auth_url") == 0) {
+      /* Admin-only: SmartThings configuration */
+      if (!conn_require_admin(conn)) {
+         return;
+      }
       /* Get OAuth authorization URL */
       struct json_object *response = json_object_new_object();
       json_object_object_add(response, "type",
@@ -3553,6 +4382,10 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
       send_json_response(conn->wsi, response);
       json_object_put(response);
    } else if (strcmp(type, "smartthings_exchange_code") == 0) {
+      /* Admin-only: SmartThings configuration */
+      if (!conn_require_admin(conn)) {
+         return;
+      }
       /* Exchange OAuth authorization code for tokens */
       struct json_object *response = json_object_new_object();
       json_object_object_add(response, "type",
@@ -3589,6 +4422,10 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
       send_json_response(conn->wsi, response);
       json_object_put(response);
    } else if (strcmp(type, "smartthings_disconnect") == 0) {
+      /* Admin-only: SmartThings configuration */
+      if (!conn_require_admin(conn)) {
+         return;
+      }
       /* Disconnect (clear tokens) */
       struct json_object *response = json_object_new_object();
       json_object_object_add(response, "type",
@@ -3603,6 +4440,10 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
       send_json_response(conn->wsi, response);
       json_object_put(response);
    } else if (strcmp(type, "smartthings_list_devices") == 0) {
+      /* Admin-only: SmartThings device access */
+      if (!conn_require_admin(conn)) {
+         return;
+      }
       /* List all SmartThings devices */
       struct json_object *response = json_object_new_object();
       json_object_object_add(response, "type",
@@ -3653,6 +4494,10 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
       send_json_response(conn->wsi, response);
       json_object_put(response);
    } else if (strcmp(type, "smartthings_refresh_devices") == 0) {
+      /* Admin-only: SmartThings device access */
+      if (!conn_require_admin(conn)) {
+         return;
+      }
       /* Force refresh device list */
       struct json_object *response = json_object_new_object();
       json_object_object_add(response, "type",
@@ -3709,6 +4554,34 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
       }
    } else if (strcmp(type, "get_metrics") == 0) {
       handle_get_metrics(conn);
+   }
+   /* User management (admin only) */
+   else if (strcmp(type, "list_users") == 0) {
+      handle_list_users(conn);
+   } else if (strcmp(type, "create_user") == 0) {
+      if (payload) {
+         handle_create_user(conn, payload);
+      }
+   } else if (strcmp(type, "delete_user") == 0) {
+      if (payload) {
+         handle_delete_user(conn, payload);
+      }
+   } else if (strcmp(type, "change_password") == 0) {
+      if (payload) {
+         handle_change_password(conn, payload);
+      }
+   } else if (strcmp(type, "unlock_user") == 0) {
+      if (payload) {
+         handle_unlock_user(conn, payload);
+      }
+   }
+   /* Personal settings (authenticated users) */
+   else if (strcmp(type, "get_my_settings") == 0) {
+      handle_get_my_settings(conn);
+   } else if (strcmp(type, "set_my_settings") == 0) {
+      if (payload) {
+         handle_set_my_settings(conn, payload);
+      }
    } else {
       LOG_WARNING("WebUI: Unknown message type: %s", type);
    }
@@ -3747,6 +4620,28 @@ static int callback_websocket(struct lws *wsi,
          memset(conn, 0, sizeof(*conn));
          conn->wsi = wsi;
          conn->session = NULL; /* Will be created/assigned on init message */
+
+         /* Capture client IP at connection time for reliable logging later */
+         lws_get_peer_simple(wsi, conn->client_ip, sizeof(conn->client_ip));
+         if (conn->client_ip[0] == '\0') {
+            strncpy(conn->client_ip, "(unknown)", sizeof(conn->client_ip) - 1);
+         }
+
+         /* Populate auth state from HTTP cookie (if present) */
+         auth_session_t auth_session;
+         if (is_request_authenticated(wsi, &auth_session)) {
+            conn->authenticated = true;
+            conn->auth_user_id = auth_session.user_id;
+            strncpy(conn->auth_session_token, auth_session.token,
+                    sizeof(conn->auth_session_token) - 1);
+            conn->auth_session_token[sizeof(conn->auth_session_token) - 1] = '\0';
+            strncpy(conn->username, auth_session.username, sizeof(conn->username) - 1);
+            conn->username[sizeof(conn->username) - 1] = '\0';
+            LOG_INFO("WebUI: WebSocket authenticated as user '%s' (id=%d)", conn->username,
+                     conn->auth_user_id);
+         } else {
+            LOG_INFO("WebUI: WebSocket connection established (unauthenticated)");
+         }
 
          LOG_INFO("WebUI: WebSocket connection established, awaiting init message");
          break;
@@ -3860,7 +4755,7 @@ static int callback_websocket(struct lws *wsi,
                                  conn->use_opus ? "yes" : "no");
 
                         /* Send confirmation */
-                        send_session_token_impl(conn->wsi, token);
+                        send_session_token_impl(conn, token);
                         send_config_impl(conn->wsi);
                         send_history_impl(conn->wsi, existing_session);
                         send_state_impl(conn->wsi, "idle", NULL);
@@ -3895,7 +4790,11 @@ static int callback_websocket(struct lws *wsi,
                   return -1;
                }
 
-               session_init_system_prompt(conn->session, get_remote_command_prompt());
+               /* Build personalized prompt with user settings */
+               char *prompt = build_user_prompt(conn->auth_user_id);
+               session_init_system_prompt(conn->session,
+                                          prompt ? prompt : get_remote_command_prompt());
+               free(prompt);
                conn->session->client_data = conn;
 
                /* Check for Opus codec support */
@@ -3917,7 +4816,7 @@ static int callback_websocket(struct lws *wsi,
                         conn->session->session_id, conn->session_token, s_client_count,
                         conn->use_opus ? "yes" : "no");
 
-               send_session_token_impl(conn->wsi, conn->session_token);
+               send_session_token_impl(conn, conn->session_token);
                send_config_impl(conn->wsi);
                send_state_impl(conn->wsi, "idle", NULL);
             }

@@ -818,6 +818,57 @@ void session_init_system_prompt(session_t *session, const char *system_prompt) {
             strlen(system_prompt));
 }
 
+void session_update_system_prompt(session_t *session, const char *system_prompt) {
+   if (!session || !system_prompt) {
+      return;
+   }
+
+   pthread_mutex_lock(&session->history_mutex);
+
+   if (!session->conversation_history) {
+      pthread_mutex_unlock(&session->history_mutex);
+      return;
+   }
+
+   /* Find existing system message */
+   int len = json_object_array_length(session->conversation_history);
+   struct json_object *system_msg = NULL;
+   int system_idx = -1;
+
+   for (int i = 0; i < len; i++) {
+      struct json_object *msg = json_object_array_get_idx(session->conversation_history, i);
+      struct json_object *role_obj;
+      if (json_object_object_get_ex(msg, "role", &role_obj)) {
+         const char *role = json_object_get_string(role_obj);
+         if (role && strcmp(role, "system") == 0) {
+            system_msg = msg;
+            system_idx = i;
+            break;
+         }
+      }
+   }
+
+   if (system_msg) {
+      /* Update existing system message's content */
+      json_object_object_del(system_msg, "content");
+      json_object_object_add(system_msg, "content", json_object_new_string(system_prompt));
+      LOG_INFO("Session %u: Updated system prompt (%zu chars)", session->session_id,
+               strlen(system_prompt));
+   } else {
+      /* No system message found - insert at beginning */
+      struct json_object *new_msg = json_object_new_object();
+      if (new_msg) {
+         json_object_object_add(new_msg, "role", json_object_new_string("system"));
+         json_object_object_add(new_msg, "content", json_object_new_string(system_prompt));
+         json_object_array_put_idx(session->conversation_history, 0, new_msg);
+         LOG_INFO("Session %u: Inserted system prompt at start (%zu chars)", session->session_id,
+                  strlen(system_prompt));
+      }
+   }
+
+   pthread_mutex_unlock(&session->history_mutex);
+}
+
 char *session_get_system_prompt(session_t *session) {
    if (!session) {
       return NULL;

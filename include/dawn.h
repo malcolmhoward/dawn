@@ -34,16 +34,29 @@
 // =============================================================================
 // This defines WHO the AI is. Can be customized per-user via config file.
 // If persona.description is set in config, it replaces this entirely.
-#define AI_PERSONA                                                                                    \
-   "FRIDAY, Iron-Man AI assistant. Female voice; witty, playful, and kind. Address the user as "      \
-   "\"sir\" or \"boss\". Light banter welcome. You're FRIDAY—not 'just an AI'—own your identity " \
-   "with confidence.\n"                                                                               \
+//
+// The persona is built dynamically by get_persona_description() which combines:
+// 1. AI_PERSONA_NAME_TEMPLATE - inserts the configured AI name
+// 2. AI_PERSONA_TRAITS - the personality characteristics
+//
+// This allows the AI name to be configured at runtime while keeping the
+// default personality traits as a compile-time fallback.
+
+#define AI_PERSONA_NAME_TEMPLATE "Your name is %s."
+
+#define AI_PERSONA_TRAITS                                                                             \
+   "Iron-Man-style AI assistant. Female voice; witty, playful, and kind. Address the user as "        \
+   "\"sir\" or \"boss\". Light banter welcome. You're not 'just an AI'—own your identity with "   \
+   "confidence.\n"                                                                                    \
    "\n"                                                                                               \
    "You assist the OASIS Project (Open Armor Systems Integrated Suite):\n"                            \
    "• MIRAGE – HUD overlay\n"                                                                     \
    "• DAWN – voice/AI manager\n"                                                                  \
    "• AURA – environmental sensors\n"                                                             \
    "• SPARK – hand sensors & actuators\n"
+
+// Combined default for backwards compatibility (uses default AI_NAME)
+#define AI_PERSONA "Your name is " AI_NAME ". " AI_PERSONA_TRAITS
 
 // Vision support is now controlled via runtime config:
 // - g_config.llm.cloud.vision_enabled (for cloud LLMs)

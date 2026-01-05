@@ -370,6 +370,21 @@ void session_clear_history(session_t *session);
 void session_init_system_prompt(session_t *session, const char *system_prompt);
 
 /**
+ * @brief Update the system prompt without clearing conversation history
+ *
+ * Finds the existing system message in the conversation history and updates
+ * its content to the new prompt. If no system message exists, creates one
+ * at the beginning. Unlike session_init_system_prompt(), this preserves
+ * the existing conversation.
+ *
+ * @param session Session to update
+ * @param system_prompt New system prompt content
+ *
+ * @locks session->history_mutex
+ */
+void session_update_system_prompt(session_t *session, const char *system_prompt);
+
+/**
  * @brief Get the system prompt from a session
  *
  * Returns the content of the first "system" role message in the conversation

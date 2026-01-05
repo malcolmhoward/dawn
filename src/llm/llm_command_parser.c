@@ -496,17 +496,43 @@ static const char *get_localization_context(void) {
 }
 
 /**
- * @brief Gets the persona description from config or falls back to compile-time default
+ * @brief Gets the persona description from config or builds default with dynamic AI name
  *
- * Returns g_config.persona.description if set, otherwise AI_PERSONA from dawn.h.
+ * Returns g_config.persona.description if set, otherwise builds the default persona
+ * using AI_PERSONA_NAME_TEMPLATE + AI_PERSONA_TRAITS with the configured AI name
+ * from g_config.general.ai_name (or falling back to AI_NAME compile-time default).
+ *
  * This allows runtime customization of the AI personality via config file while
  * keeping the system instructions (AI_SYSTEM_INSTRUCTIONS) always active.
  */
 static const char *get_persona_description(void) {
+   static char dynamic_persona[1024];  /* Template ~30 + traits ~500 = ~550 max */
+   static int persona_built = 0;
+
+   // If global config has a custom persona, use it directly
    if (g_config.persona.description[0] != '\0') {
       return g_config.persona.description;
    }
-   return AI_PERSONA;
+
+   // Build dynamic persona with configured AI name (only once)
+   if (!persona_built) {
+      const char *ai_name = g_config.general.ai_name[0] != '\0' ? g_config.general.ai_name : AI_NAME;
+
+      // Capitalize first letter for proper noun (more respectful!)
+      char capitalized_name[64];
+      snprintf(capitalized_name, sizeof(capitalized_name), "%s", ai_name);
+      if (capitalized_name[0] >= 'a' && capitalized_name[0] <= 'z') {
+         capitalized_name[0] -= 32;
+      }
+
+      // Build the persona: "Your name is <Name>. <traits>"
+      snprintf(dynamic_persona, sizeof(dynamic_persona), AI_PERSONA_NAME_TEMPLATE " " AI_PERSONA_TRAITS,
+               capitalized_name);
+      persona_built = 1;
+      LOG_INFO("Built dynamic persona with AI name: %s", capitalized_name);
+   }
+
+   return dynamic_persona;
 }
 
 /**

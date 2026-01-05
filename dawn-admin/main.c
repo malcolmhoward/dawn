@@ -41,7 +41,8 @@ static void print_usage(const char *prog) {
    fprintf(stderr, "\n");
    fprintf(stderr, "User Management:\n");
    fprintf(stderr, "  user list                         List all users\n");
-   fprintf(stderr, "  user create <username> --admin    Create admin user (uses DAWN_SETUP_TOKEN)\n");
+   fprintf(stderr,
+           "  user create <username> --admin    Create admin user (uses DAWN_SETUP_TOKEN)\n");
    fprintf(stderr, "  user delete <username> [--yes]    Delete a user account\n");
    fprintf(stderr, "  user passwd <username>            Change user password\n");
    fprintf(stderr, "  user unlock <username>            Unlock a locked account\n");
@@ -718,7 +719,8 @@ static int cmd_ip_list(void) {
    if (ctx.count == 0) {
       printf("  (no IPs with failed attempts)\n");
    }
-   printf("\n%d IPs total, %d currently blocked (>= 20 attempts).\n\n", ctx.count, ctx.blocked_count);
+   printf("\n%d IPs total, %d currently blocked (>= 20 attempts).\n\n", ctx.count,
+          ctx.blocked_count);
    return 0;
 }
 
