@@ -1569,8 +1569,15 @@ static int handle_auth_login(struct lws *wsi, struct http_session_data *pss) {
       return -1;
    }
 
+   /* Get User-Agent header for session tracking */
+   char user_agent[AUTH_USER_AGENT_MAX] = "Unknown";
+   int ua_len = lws_hdr_copy(wsi, user_agent, sizeof(user_agent), WSI_TOKEN_HTTP_USER_AGENT);
+   if (ua_len <= 0) {
+      strncpy(user_agent, "Unknown", sizeof(user_agent));
+   }
+
    /* Create session in database */
-   if (auth_db_create_session(user.id, session_token, client_ip, "WebUI") != AUTH_DB_SUCCESS) {
+   if (auth_db_create_session(user.id, session_token, client_ip, user_agent) != AUTH_DB_SUCCESS) {
       LOG_ERROR("WebUI: Failed to create session for user: %s", username);
       snprintf(response, sizeof(response), "{\"success\":false,\"error\":\"Server error\"}");
       send_auth_response(wsi, HTTP_STATUS_INTERNAL_SERVER_ERROR, response, NULL);
@@ -3945,6 +3952,604 @@ static void handle_set_my_settings(ws_connection_t *conn, struct json_object *pa
    json_object_put(response);
 }
 
+/* =============================================================================
+ * Session Management Handlers (Authenticated Users)
+ * ============================================================================ */
+
+/* Callback for session enumeration */
+static int list_sessions_callback(const auth_session_summary_t *session, void *context) {
+   json_object *sessions_array = (json_object *)context;
+   json_object *session_obj = json_object_new_object();
+
+   json_object_object_add(session_obj, "token_prefix",
+                          json_object_new_string(session->token_prefix));
+   json_object_object_add(session_obj, "created_at", json_object_new_int64(session->created_at));
+   json_object_object_add(session_obj, "last_activity",
+                          json_object_new_int64(session->last_activity));
+   json_object_object_add(session_obj, "ip_address", json_object_new_string(session->ip_address));
+   json_object_object_add(session_obj, "user_agent", json_object_new_string(session->user_agent));
+
+   json_object_array_add(sessions_array, session_obj);
+   return 0;
+}
+
+/**
+ * @brief List current user's active sessions
+ *
+ * Returns all sessions for the authenticated user, allowing them to see
+ * where they're logged in and identify sessions to revoke.
+ */
+static void handle_list_my_sessions(ws_connection_t *conn) {
+   if (!conn_require_auth(conn)) {
+      return;
+   }
+
+   json_object *response = json_object_new_object();
+   json_object_object_add(response, "type", json_object_new_string("list_my_sessions_response"));
+   json_object *resp_payload = json_object_new_object();
+   json_object *sessions_array = json_object_new_array();
+
+   int result = auth_db_list_user_sessions(conn->auth_user_id, list_sessions_callback,
+                                           sessions_array);
+   if (result == AUTH_DB_SUCCESS) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
+      json_object_object_add(resp_payload, "sessions", sessions_array);
+
+      /* Include current session's token prefix so UI can highlight it */
+      char current_prefix[17] = { 0 };
+      strncpy(current_prefix, conn->auth_session_token, 16);
+      json_object_object_add(resp_payload, "current_session",
+                             json_object_new_string(current_prefix));
+   } else {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Failed to list sessions"));
+      json_object_put(sessions_array);
+   }
+
+   json_object_object_add(response, "payload", resp_payload);
+   send_json_response(conn->wsi, response);
+   json_object_put(response);
+}
+
+/**
+ * @brief Revoke a session by token prefix
+ *
+ * Users can revoke their own sessions. Admins can revoke any session.
+ * Cannot revoke your own current session (use logout instead).
+ */
+static void handle_revoke_session(ws_connection_t *conn, struct json_object *payload) {
+   if (!conn_require_auth(conn)) {
+      return;
+   }
+
+   json_object *response = json_object_new_object();
+   json_object_object_add(response, "type", json_object_new_string("revoke_session_response"));
+   json_object *resp_payload = json_object_new_object();
+
+   /* Get token prefix */
+   json_object *prefix_obj;
+   if (!json_object_object_get_ex(payload, "token_prefix", &prefix_obj)) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error", json_object_new_string("Missing token_prefix"));
+      json_object_object_add(response, "payload", resp_payload);
+      send_json_response(conn->wsi, response);
+      json_object_put(response);
+      return;
+   }
+
+   const char *prefix = json_object_get_string(prefix_obj);
+
+   /* Validate prefix length (16 chars for reduced collision risk) */
+   if (!prefix || strlen(prefix) < 16) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error", json_object_new_string("Invalid token prefix"));
+      json_object_object_add(response, "payload", resp_payload);
+      send_json_response(conn->wsi, response);
+      json_object_put(response);
+      return;
+   }
+
+   /* Check if trying to revoke current session */
+   if (strncmp(conn->auth_session_token, prefix, 16) == 0) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Cannot revoke current session - use logout"));
+      json_object_object_add(response, "payload", resp_payload);
+      send_json_response(conn->wsi, response);
+      json_object_put(response);
+      return;
+   }
+
+   /* For non-admins, verify the session belongs to them by checking if it appears
+    * in their session list. Admins can revoke any session.
+    */
+   bool is_admin = false;
+   auth_session_t auth_session;
+   if (auth_db_get_session(conn->auth_session_token, &auth_session) == AUTH_DB_SUCCESS) {
+      is_admin = auth_session.is_admin;
+   }
+
+   if (!is_admin) {
+      /* Verify ownership with efficient single-query check */
+      if (!auth_db_session_belongs_to_user(prefix, conn->auth_user_id)) {
+         json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+         json_object_object_add(resp_payload, "error",
+                                json_object_new_string("Session not found or access denied"));
+         json_object_object_add(response, "payload", resp_payload);
+         send_json_response(conn->wsi, response);
+         json_object_put(response);
+         return;
+      }
+   }
+
+   /* Delete the session */
+   int result = auth_db_delete_session_by_prefix(prefix);
+
+   if (result == AUTH_DB_SUCCESS) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
+      json_object_object_add(resp_payload, "message", json_object_new_string("Session revoked"));
+
+      /* Log event */
+      char details[128];
+      snprintf(details, sizeof(details), "Revoked session: %.8s...", prefix);
+      auth_db_log_event("SESSION_REVOKED", conn->username, conn->client_ip, details);
+   } else if (result == AUTH_DB_NOT_FOUND) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error", json_object_new_string("Session not found"));
+   } else {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Failed to revoke session"));
+   }
+
+   json_object_object_add(response, "payload", resp_payload);
+   send_json_response(conn->wsi, response);
+   json_object_put(response);
+}
+
+/* =============================================================================
+ * Conversation History Handlers (Authenticated Users)
+ * ============================================================================ */
+
+/* Callback for conversation enumeration */
+static int list_conv_callback(const conversation_t *conv, void *context) {
+   json_object *conv_array = (json_object *)context;
+   json_object *conv_obj = json_object_new_object();
+
+   json_object_object_add(conv_obj, "id", json_object_new_int64(conv->id));
+   json_object_object_add(conv_obj, "title", json_object_new_string(conv->title));
+   json_object_object_add(conv_obj, "created_at", json_object_new_int64(conv->created_at));
+   json_object_object_add(conv_obj, "updated_at", json_object_new_int64(conv->updated_at));
+   json_object_object_add(conv_obj, "message_count", json_object_new_int(conv->message_count));
+   json_object_object_add(conv_obj, "is_archived", json_object_new_boolean(conv->is_archived));
+
+   json_object_array_add(conv_array, conv_obj);
+   return 0;
+}
+
+/**
+ * @brief List conversations for the current user
+ */
+static void handle_list_conversations(ws_connection_t *conn, struct json_object *payload) {
+   if (!conn_require_auth(conn)) {
+      return;
+   }
+
+   json_object *response = json_object_new_object();
+   json_object_object_add(response, "type", json_object_new_string("list_conversations_response"));
+   json_object *resp_payload = json_object_new_object();
+   json_object *conv_array = json_object_new_array();
+
+   /* Parse pagination params if present */
+   conv_pagination_t pagination = { 0, 0 };
+   if (payload) {
+      json_object *limit_obj, *offset_obj;
+      if (json_object_object_get_ex(payload, "limit", &limit_obj)) {
+         pagination.limit = json_object_get_int(limit_obj);
+      }
+      if (json_object_object_get_ex(payload, "offset", &offset_obj)) {
+         pagination.offset = json_object_get_int(offset_obj);
+      }
+   }
+
+   int result = conv_db_list(conn->auth_user_id, false, &pagination, list_conv_callback,
+                             conv_array);
+
+   if (result == AUTH_DB_SUCCESS) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
+      json_object_object_add(resp_payload, "conversations", conv_array);
+
+      /* Include total count for pagination */
+      int total = conv_db_count(conn->auth_user_id);
+      json_object_object_add(resp_payload, "total", json_object_new_int(total >= 0 ? total : 0));
+   } else {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Failed to list conversations"));
+      json_object_put(conv_array);
+   }
+
+   json_object_object_add(response, "payload", resp_payload);
+   send_json_response(conn->wsi, response);
+   json_object_put(response);
+}
+
+/**
+ * @brief Create a new conversation
+ */
+static void handle_new_conversation(ws_connection_t *conn, struct json_object *payload) {
+   if (!conn_require_auth(conn)) {
+      return;
+   }
+
+   json_object *response = json_object_new_object();
+   json_object_object_add(response, "type", json_object_new_string("new_conversation_response"));
+   json_object *resp_payload = json_object_new_object();
+
+   /* Optional title from payload */
+   const char *title = NULL;
+   if (payload) {
+      json_object *title_obj;
+      if (json_object_object_get_ex(payload, "title", &title_obj)) {
+         title = json_object_get_string(title_obj);
+      }
+   }
+
+   int64_t conv_id;
+   int result = conv_db_create(conn->auth_user_id, title, &conv_id);
+
+   if (result == AUTH_DB_SUCCESS) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
+      json_object_object_add(resp_payload, "conversation_id", json_object_new_int64(conv_id));
+
+      auth_db_log_event("CONVERSATION_CREATED", conn->username, conn->client_ip,
+                        "New conversation");
+   } else if (result == AUTH_DB_LIMIT_EXCEEDED) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Maximum conversation limit reached"));
+   } else {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Failed to create conversation"));
+   }
+
+   json_object_object_add(response, "payload", resp_payload);
+   send_json_response(conn->wsi, response);
+   json_object_put(response);
+}
+
+/* Callback for message enumeration */
+static int load_msg_callback(const conversation_message_t *msg, void *context) {
+   json_object *msg_array = (json_object *)context;
+   json_object *msg_obj = json_object_new_object();
+
+   json_object_object_add(msg_obj, "role", json_object_new_string(msg->role));
+   json_object_object_add(msg_obj, "content",
+                          json_object_new_string(msg->content ? msg->content : ""));
+   json_object_object_add(msg_obj, "created_at", json_object_new_int64(msg->created_at));
+
+   json_object_array_add(msg_array, msg_obj);
+   return 0;
+}
+
+/**
+ * @brief Load a conversation and its messages
+ */
+static void handle_load_conversation(ws_connection_t *conn, struct json_object *payload) {
+   if (!conn_require_auth(conn)) {
+      return;
+   }
+
+   json_object *response = json_object_new_object();
+   json_object_object_add(response, "type", json_object_new_string("load_conversation_response"));
+   json_object *resp_payload = json_object_new_object();
+
+   /* Get conversation ID */
+   json_object *id_obj;
+   if (!json_object_object_get_ex(payload, "conversation_id", &id_obj)) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Missing conversation_id"));
+      json_object_object_add(response, "payload", resp_payload);
+      send_json_response(conn->wsi, response);
+      json_object_put(response);
+      return;
+   }
+
+   int64_t conv_id = json_object_get_int64(id_obj);
+
+   /* Get conversation metadata */
+   conversation_t conv;
+   int result = conv_db_get(conv_id, conn->auth_user_id, &conv);
+
+   if (result == AUTH_DB_SUCCESS) {
+      json_object *msg_array = json_object_new_array();
+      result = conv_db_get_messages(conv_id, conn->auth_user_id, load_msg_callback, msg_array);
+
+      if (result == AUTH_DB_SUCCESS) {
+         json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
+         json_object_object_add(resp_payload, "conversation_id", json_object_new_int64(conv.id));
+         json_object_object_add(resp_payload, "title", json_object_new_string(conv.title));
+         json_object_object_add(resp_payload, "message_count",
+                                json_object_new_int(conv.message_count));
+         json_object_object_add(resp_payload, "context_tokens",
+                                json_object_new_int(conv.context_tokens));
+         json_object_object_add(resp_payload, "context_max", json_object_new_int(conv.context_max));
+         json_object_object_add(resp_payload, "messages", msg_array);
+      } else {
+         json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+         json_object_object_add(resp_payload, "error",
+                                json_object_new_string("Failed to load messages"));
+         json_object_put(msg_array);
+      }
+   } else if (result == AUTH_DB_NOT_FOUND) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Conversation not found"));
+   } else if (result == AUTH_DB_FORBIDDEN) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error", json_object_new_string("Access denied"));
+   } else {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Failed to load conversation"));
+   }
+
+   json_object_object_add(response, "payload", resp_payload);
+   send_json_response(conn->wsi, response);
+   json_object_put(response);
+}
+
+/**
+ * @brief Delete a conversation
+ */
+static void handle_delete_conversation(ws_connection_t *conn, struct json_object *payload) {
+   if (!conn_require_auth(conn)) {
+      return;
+   }
+
+   json_object *response = json_object_new_object();
+   json_object_object_add(response, "type", json_object_new_string("delete_conversation_response"));
+   json_object *resp_payload = json_object_new_object();
+
+   /* Get conversation ID */
+   json_object *id_obj;
+   if (!json_object_object_get_ex(payload, "conversation_id", &id_obj)) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Missing conversation_id"));
+      json_object_object_add(response, "payload", resp_payload);
+      send_json_response(conn->wsi, response);
+      json_object_put(response);
+      return;
+   }
+
+   int64_t conv_id = json_object_get_int64(id_obj);
+   int result = conv_db_delete(conv_id, conn->auth_user_id);
+
+   if (result == AUTH_DB_SUCCESS) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
+      json_object_object_add(resp_payload, "message",
+                             json_object_new_string("Conversation deleted"));
+
+      char details[64];
+      snprintf(details, sizeof(details), "Deleted conversation %lld", (long long)conv_id);
+      auth_db_log_event("CONVERSATION_DELETED", conn->username, conn->client_ip, details);
+   } else if (result == AUTH_DB_NOT_FOUND) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Conversation not found"));
+   } else {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Failed to delete conversation"));
+   }
+
+   json_object_object_add(response, "payload", resp_payload);
+   send_json_response(conn->wsi, response);
+   json_object_put(response);
+}
+
+/**
+ * @brief Rename a conversation
+ */
+static void handle_rename_conversation(ws_connection_t *conn, struct json_object *payload) {
+   if (!conn_require_auth(conn)) {
+      return;
+   }
+
+   json_object *response = json_object_new_object();
+   json_object_object_add(response, "type", json_object_new_string("rename_conversation_response"));
+   json_object *resp_payload = json_object_new_object();
+
+   /* Get conversation ID and new title */
+   json_object *id_obj, *title_obj;
+   if (!json_object_object_get_ex(payload, "conversation_id", &id_obj) ||
+       !json_object_object_get_ex(payload, "title", &title_obj)) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Missing conversation_id or title"));
+      json_object_object_add(response, "payload", resp_payload);
+      send_json_response(conn->wsi, response);
+      json_object_put(response);
+      return;
+   }
+
+   int64_t conv_id = json_object_get_int64(id_obj);
+   const char *title = json_object_get_string(title_obj);
+
+   if (!title || strlen(title) == 0) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Title cannot be empty"));
+      json_object_object_add(response, "payload", resp_payload);
+      send_json_response(conn->wsi, response);
+      json_object_put(response);
+      return;
+   }
+
+   int result = conv_db_rename(conv_id, conn->auth_user_id, title);
+
+   if (result == AUTH_DB_SUCCESS) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
+      json_object_object_add(resp_payload, "message",
+                             json_object_new_string("Conversation renamed"));
+   } else if (result == AUTH_DB_NOT_FOUND) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Conversation not found"));
+   } else {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Failed to rename conversation"));
+   }
+
+   json_object_object_add(response, "payload", resp_payload);
+   send_json_response(conn->wsi, response);
+   json_object_put(response);
+}
+
+/**
+ * @brief Search conversations by title or content
+ */
+static void handle_search_conversations(ws_connection_t *conn, struct json_object *payload) {
+   if (!conn_require_auth(conn)) {
+      return;
+   }
+
+   json_object *response = json_object_new_object();
+   json_object_object_add(response, "type",
+                          json_object_new_string("search_conversations_response"));
+   json_object *resp_payload = json_object_new_object();
+
+   /* Get search query */
+   json_object *query_obj;
+   if (!json_object_object_get_ex(payload, "query", &query_obj)) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error", json_object_new_string("Missing query"));
+      json_object_object_add(response, "payload", resp_payload);
+      send_json_response(conn->wsi, response);
+      json_object_put(response);
+      return;
+   }
+
+   const char *query = json_object_get_string(query_obj);
+   json_object *conv_array = json_object_new_array();
+
+   /* Check if we should search message content */
+   bool search_content = false;
+   json_object *search_content_obj;
+   if (json_object_object_get_ex(payload, "search_content", &search_content_obj)) {
+      search_content = json_object_get_boolean(search_content_obj);
+   }
+
+   /* Parse pagination params */
+   conv_pagination_t pagination = { 0, 0 };
+   json_object *limit_obj, *offset_obj;
+   if (json_object_object_get_ex(payload, "limit", &limit_obj)) {
+      pagination.limit = json_object_get_int(limit_obj);
+   }
+   if (json_object_object_get_ex(payload, "offset", &offset_obj)) {
+      pagination.offset = json_object_get_int(offset_obj);
+   }
+
+   int result;
+   if (search_content) {
+      result = conv_db_search_content(conn->auth_user_id, query, &pagination, list_conv_callback,
+                                      conv_array);
+   } else {
+      result = conv_db_search(conn->auth_user_id, query, &pagination, list_conv_callback,
+                              conv_array);
+   }
+
+   if (result == AUTH_DB_SUCCESS) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
+      json_object_object_add(resp_payload, "conversations", conv_array);
+   } else {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Failed to search conversations"));
+      json_object_put(conv_array);
+   }
+
+   json_object_object_add(response, "payload", resp_payload);
+   send_json_response(conn->wsi, response);
+   json_object_put(response);
+}
+
+static void handle_save_message(ws_connection_t *conn, struct json_object *payload) {
+   if (!conn_require_auth(conn)) {
+      return;
+   }
+
+   json_object *response = json_object_new_object();
+   json_object_object_add(response, "type", json_object_new_string("save_message_response"));
+   json_object *resp_payload = json_object_new_object();
+
+   /* Get required fields */
+   json_object *conv_id_obj, *role_obj, *content_obj;
+   if (!json_object_object_get_ex(payload, "conversation_id", &conv_id_obj) ||
+       !json_object_object_get_ex(payload, "role", &role_obj) ||
+       !json_object_object_get_ex(payload, "content", &content_obj)) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Missing conversation_id, role, or content"));
+      json_object_object_add(response, "payload", resp_payload);
+      send_json_response(conn->wsi, response);
+      json_object_put(response);
+      return;
+   }
+
+   int64_t conv_id = json_object_get_int64(conv_id_obj);
+   const char *role = json_object_get_string(role_obj);
+   const char *content = json_object_get_string(content_obj);
+
+   int result = conv_db_add_message(conv_id, conn->auth_user_id, role, content);
+
+   if (result == AUTH_DB_SUCCESS) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
+   } else if (result == AUTH_DB_FORBIDDEN) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Access denied to conversation"));
+   } else {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Failed to save message"));
+   }
+
+   json_object_object_add(response, "payload", resp_payload);
+   send_json_response(conn->wsi, response);
+   json_object_put(response);
+}
+
+/**
+ * @brief Update context usage for a conversation
+ */
+static void handle_update_context(ws_connection_t *conn, struct json_object *payload) {
+   if (!conn_require_auth(conn)) {
+      return;
+   }
+
+   /* Get required fields */
+   json_object *conv_id_obj, *tokens_obj, *max_obj;
+   if (!json_object_object_get_ex(payload, "conversation_id", &conv_id_obj) ||
+       !json_object_object_get_ex(payload, "context_tokens", &tokens_obj) ||
+       !json_object_object_get_ex(payload, "context_max", &max_obj)) {
+      /* Silently ignore incomplete updates - context is optional */
+      return;
+   }
+
+   int64_t conv_id = json_object_get_int64(conv_id_obj);
+   int context_tokens = json_object_get_int(tokens_obj);
+   int context_max = json_object_get_int(max_obj);
+
+   /* Update in database - no response needed */
+   conv_db_update_context(conv_id, conn->auth_user_id, context_tokens, context_max);
+}
+
 static void handle_json_message(ws_connection_t *conn, const char *data, size_t len) {
    /* Null-terminate for JSON parsing */
    char *json_str = strndup(data, len);
@@ -4584,6 +5189,44 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
    } else if (strcmp(type, "set_my_settings") == 0) {
       if (payload) {
          handle_set_my_settings(conn, payload);
+      }
+   }
+   /* Session management (authenticated users) */
+   else if (strcmp(type, "list_my_sessions") == 0) {
+      handle_list_my_sessions(conn);
+   } else if (strcmp(type, "revoke_session") == 0) {
+      if (payload) {
+         handle_revoke_session(conn, payload);
+      }
+   }
+   /* Conversation history (authenticated users) */
+   else if (strcmp(type, "list_conversations") == 0) {
+      handle_list_conversations(conn, payload);
+   } else if (strcmp(type, "new_conversation") == 0) {
+      handle_new_conversation(conn, payload);
+   } else if (strcmp(type, "load_conversation") == 0) {
+      if (payload) {
+         handle_load_conversation(conn, payload);
+      }
+   } else if (strcmp(type, "delete_conversation") == 0) {
+      if (payload) {
+         handle_delete_conversation(conn, payload);
+      }
+   } else if (strcmp(type, "rename_conversation") == 0) {
+      if (payload) {
+         handle_rename_conversation(conn, payload);
+      }
+   } else if (strcmp(type, "search_conversations") == 0) {
+      if (payload) {
+         handle_search_conversations(conn, payload);
+      }
+   } else if (strcmp(type, "save_message") == 0) {
+      if (payload) {
+         handle_save_message(conn, payload);
+      }
+   } else if (strcmp(type, "update_context") == 0) {
+      if (payload) {
+         handle_update_context(conn, payload);
       }
    } else {
       LOG_WARNING("WebUI: Unknown message type: %s", type);
@@ -6231,13 +6874,18 @@ static void *audio_worker_thread(void *arg) {
       if (processed && !session->disconnected) {
          free(response);
          response = processed;
+
+         /* Generate TTS for the follow-up response (command results) */
+         LOG_INFO("WebUI: Generating TTS for command result: %.60s%s", processed,
+                  strlen(processed) > 60 ? "..." : "");
+         webui_sentence_audio_callback(processed, session);
       }
    }
 
    /* Send audio end marker (all audio chunks have been sent) */
    webui_send_audio_end(session);
 
-   /* Free response - we don't need final TTS since audio was streamed */
+   /* Free response */
    free(response);
 
    /* Send context usage update to WebUI */

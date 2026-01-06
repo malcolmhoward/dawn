@@ -42,7 +42,7 @@
 #include "logging.h"
 
 /* Current schema version */
-#define SCHEMA_VERSION 3
+#define SCHEMA_VERSION 6
 
 /* Retention periods */
 #define LOGIN_ATTEMPT_RETENTION_SEC (7 * 24 * 60 * 60) /* 7 days */
@@ -84,6 +84,20 @@ typedef struct {
 
    sqlite3_stmt *stmt_get_user_settings;
    sqlite3_stmt *stmt_set_user_settings;
+
+   /* Conversation statements */
+   sqlite3_stmt *stmt_conv_create;
+   sqlite3_stmt *stmt_conv_get;
+   sqlite3_stmt *stmt_conv_list;
+   sqlite3_stmt *stmt_conv_search;
+   sqlite3_stmt *stmt_conv_search_content;
+   sqlite3_stmt *stmt_conv_rename;
+   sqlite3_stmt *stmt_conv_delete;
+   sqlite3_stmt *stmt_conv_count;
+   sqlite3_stmt *stmt_msg_add;
+   sqlite3_stmt *stmt_msg_get;
+   sqlite3_stmt *stmt_conv_update_meta;
+   sqlite3_stmt *stmt_conv_update_context;
 } auth_db_state_t;
 
 static auth_db_state_t s_db = {
@@ -168,7 +182,34 @@ static const char *SCHEMA_SQL =
     "   tts_length_scale REAL DEFAULT 1.0,"
     "   updated_at INTEGER NOT NULL,"
     "   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE"
-    ");";
+    ");"
+
+    /* Conversations table (added in schema v4, context columns in v5) */
+    "CREATE TABLE IF NOT EXISTS conversations ("
+    "   id INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "   user_id INTEGER NOT NULL,"
+    "   title TEXT NOT NULL DEFAULT 'New Conversation',"
+    "   created_at INTEGER NOT NULL,"
+    "   updated_at INTEGER NOT NULL,"
+    "   message_count INTEGER DEFAULT 0,"
+    "   is_archived INTEGER DEFAULT 0,"
+    "   context_tokens INTEGER DEFAULT 0,"
+    "   context_max INTEGER DEFAULT 0,"
+    "   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE"
+    ");"
+    "CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations(user_id, updated_at DESC);"
+    "CREATE INDEX IF NOT EXISTS idx_conversations_search ON conversations(user_id, title);"
+
+    /* Messages table (added in schema v4) */
+    "CREATE TABLE IF NOT EXISTS messages ("
+    "   id INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "   conversation_id INTEGER NOT NULL,"
+    "   role TEXT NOT NULL CHECK(role IN ('system', 'user', 'assistant', 'tool')),"
+    "   content TEXT NOT NULL,"
+    "   created_at INTEGER NOT NULL,"
+    "   FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE"
+    ");"
+    "CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, id ASC);";
 
 static int get_current_schema_version(void) {
    sqlite3_stmt *stmt = NULL;
@@ -215,6 +256,62 @@ static int create_schema(void) {
       }
    }
 
+   /* v5 migration: add context_tokens and context_max columns to conversations
+    * Only runs if conversations table already exists (v4+) without these columns */
+   if (current_version >= 1 && current_version < 5) {
+      rc = sqlite3_exec(s_db.db,
+                        "ALTER TABLE conversations ADD COLUMN context_tokens INTEGER DEFAULT 0",
+                        NULL, NULL, &errmsg);
+      if (rc != SQLITE_OK) {
+         LOG_INFO("auth_db: v5 migration note (context_tokens): %s", errmsg ? errmsg : "ok");
+         sqlite3_free(errmsg);
+         errmsg = NULL;
+      }
+      rc = sqlite3_exec(s_db.db,
+                        "ALTER TABLE conversations ADD COLUMN context_max INTEGER DEFAULT 0", NULL,
+                        NULL, &errmsg);
+      if (rc != SQLITE_OK) {
+         LOG_INFO("auth_db: v5 migration note (context_max): %s", errmsg ? errmsg : "ok");
+         sqlite3_free(errmsg);
+         errmsg = NULL;
+      } else {
+         LOG_INFO("auth_db: added context columns to conversations");
+      }
+   }
+
+   /* v6 migration: update messages table CHECK constraint to include 'tool' role
+    * SQLite doesn't support ALTER TABLE to modify constraints, so we recreate the table */
+   if (current_version >= 4 && current_version < 6) {
+      LOG_INFO("auth_db: migrating messages table to support 'tool' role");
+      const char *migration_sql =
+          "BEGIN TRANSACTION;"
+          "CREATE TABLE messages_new ("
+          "   id INTEGER PRIMARY KEY AUTOINCREMENT,"
+          "   conversation_id INTEGER NOT NULL,"
+          "   role TEXT NOT NULL CHECK(role IN ('system', 'user', 'assistant', 'tool')),"
+          "   content TEXT NOT NULL,"
+          "   created_at INTEGER NOT NULL,"
+          "   FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE"
+          ");"
+          "INSERT INTO messages_new SELECT * FROM messages;"
+          "DROP TABLE messages;"
+          "ALTER TABLE messages_new RENAME TO messages;"
+          "CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, id "
+          "ASC);"
+          "COMMIT;";
+
+      rc = sqlite3_exec(s_db.db, migration_sql, NULL, NULL, &errmsg);
+      if (rc != SQLITE_OK) {
+         LOG_ERROR("auth_db: v6 migration failed: %s", errmsg ? errmsg : "unknown");
+         sqlite3_free(errmsg);
+         errmsg = NULL;
+         /* Rollback on failure */
+         sqlite3_exec(s_db.db, "ROLLBACK;", NULL, NULL, NULL);
+      } else {
+         LOG_INFO("auth_db: migrated messages table to v6 (added 'tool' role)");
+      }
+   }
+
    /* Log migration if upgrading from an older version */
    if (current_version > 0 && current_version < SCHEMA_VERSION) {
       LOG_INFO("auth_db: migrated schema from v%d to v%d", current_version, SCHEMA_VERSION);
@@ -222,10 +319,15 @@ static int create_schema(void) {
       LOG_INFO("auth_db: created schema v%d", SCHEMA_VERSION);
    }
 
-   /* Insert or update schema version */
+   /* Update schema version (delete old rows first to handle PRIMARY KEY on version) */
+   rc = sqlite3_exec(s_db.db, "DELETE FROM schema_version", NULL, NULL, &errmsg);
+   if (rc != SQLITE_OK) {
+      LOG_WARNING("auth_db: failed to clear schema_version: %s", errmsg ? errmsg : "unknown");
+      sqlite3_free(errmsg);
+      errmsg = NULL;
+   }
    rc = sqlite3_exec(s_db.db,
-                     "INSERT OR REPLACE INTO schema_version (version) VALUES (" STRINGIFY(
-                         SCHEMA_VERSION) ")",
+                     "INSERT INTO schema_version (version) VALUES (" STRINGIFY(SCHEMA_VERSION) ")",
                      NULL, NULL, &errmsg);
    if (rc != SQLITE_OK) {
       LOG_ERROR("auth_db: failed to set schema version: %s", errmsg ? errmsg : "unknown");
@@ -424,6 +526,124 @@ static int prepare_statements(void) {
       return AUTH_DB_FAILURE;
    }
 
+   /* Conversation statements */
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "INSERT INTO conversations (user_id, title, created_at, updated_at) VALUES (?, ?, ?, ?)", -1,
+       &s_db.stmt_conv_create, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare conv_create failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "SELECT id, user_id, title, created_at, updated_at, message_count, is_archived, "
+       "context_tokens, context_max FROM conversations WHERE id = ?",
+       -1, &s_db.stmt_conv_get, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare conv_get failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "SELECT id, user_id, title, created_at, updated_at, message_count, is_archived, "
+       "context_tokens, context_max FROM conversations WHERE user_id = ? AND (is_archived = 0 OR ? "
+       "= 1) "
+       "ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+       -1, &s_db.stmt_conv_list, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare conv_list failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "SELECT id, user_id, title, created_at, updated_at, message_count, is_archived, "
+       "context_tokens, context_max FROM conversations WHERE user_id = ? AND title LIKE ? ESCAPE "
+       "'\\' "
+       "ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+       -1, &s_db.stmt_conv_search, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare conv_search failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT DISTINCT c.id, c.user_id, c.title, c.created_at, c.updated_at, "
+                           "c.message_count, c.is_archived, c.context_tokens, c.context_max "
+                           "FROM conversations c "
+                           "INNER JOIN messages m ON m.conversation_id = c.id "
+                           "WHERE c.user_id = ? AND m.content LIKE ? ESCAPE '\\' "
+                           "ORDER BY c.updated_at DESC LIMIT ? OFFSET ?",
+                           -1, &s_db.stmt_conv_search_content, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare conv_search_content failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "UPDATE conversations SET title = ? WHERE id = ? AND user_id = ?", -1,
+                           &s_db.stmt_conv_rename, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare conv_rename failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM conversations WHERE id = ? AND user_id = ?", -1,
+                           &s_db.stmt_conv_delete, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare conv_delete failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db, "SELECT COUNT(*) FROM conversations WHERE user_id = ?", -1,
+                           &s_db.stmt_conv_count, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare conv_count failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "INSERT INTO messages (conversation_id, role, content, created_at) "
+       "SELECT ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM conversations WHERE id = ? AND user_id = ?)",
+       -1, &s_db.stmt_msg_add, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare msg_add failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT m.id, m.conversation_id, m.role, m.content, m.created_at "
+                           "FROM messages m "
+                           "INNER JOIN conversations c ON m.conversation_id = c.id "
+                           "WHERE m.conversation_id = ? AND c.user_id = ? ORDER BY m.id ASC",
+                           -1, &s_db.stmt_msg_get, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare msg_get failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "UPDATE conversations SET updated_at = ?, message_count = message_count + 1 WHERE id = ?",
+       -1, &s_db.stmt_conv_update_meta, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare conv_update_meta failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "UPDATE conversations SET context_tokens = ?, context_max = ? "
+                           "WHERE id = ? AND user_id = ?",
+                           -1, &s_db.stmt_conv_update_context, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare conv_update_context failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
 #undef PREPARE
 
    return AUTH_DB_SUCCESS;
@@ -475,10 +695,36 @@ static void finalize_statements(void) {
    if (s_db.stmt_set_user_settings)
       sqlite3_finalize(s_db.stmt_set_user_settings);
 
+   /* Conversation statements */
+   if (s_db.stmt_conv_create)
+      sqlite3_finalize(s_db.stmt_conv_create);
+   if (s_db.stmt_conv_get)
+      sqlite3_finalize(s_db.stmt_conv_get);
+   if (s_db.stmt_conv_list)
+      sqlite3_finalize(s_db.stmt_conv_list);
+   if (s_db.stmt_conv_search)
+      sqlite3_finalize(s_db.stmt_conv_search);
+   if (s_db.stmt_conv_search_content)
+      sqlite3_finalize(s_db.stmt_conv_search_content);
+   if (s_db.stmt_conv_rename)
+      sqlite3_finalize(s_db.stmt_conv_rename);
+   if (s_db.stmt_conv_delete)
+      sqlite3_finalize(s_db.stmt_conv_delete);
+   if (s_db.stmt_conv_count)
+      sqlite3_finalize(s_db.stmt_conv_count);
+   if (s_db.stmt_msg_add)
+      sqlite3_finalize(s_db.stmt_msg_add);
+   if (s_db.stmt_msg_get)
+      sqlite3_finalize(s_db.stmt_msg_get);
+   if (s_db.stmt_conv_update_meta)
+      sqlite3_finalize(s_db.stmt_conv_update_meta);
+   if (s_db.stmt_conv_update_context)
+      sqlite3_finalize(s_db.stmt_conv_update_context);
+
    /* Clear all pointers */
    memset(&s_db.stmt_create_user, 0,
-          (char *)&s_db.stmt_set_user_settings - (char *)&s_db.stmt_create_user +
-              sizeof(s_db.stmt_set_user_settings));
+          (char *)&s_db.stmt_conv_update_context - (char *)&s_db.stmt_create_user +
+              sizeof(s_db.stmt_conv_update_context));
 }
 
 /* ============================================================================
@@ -1466,7 +1712,7 @@ int auth_db_delete_session(const char *token) {
 }
 
 int auth_db_delete_session_by_prefix(const char *prefix) {
-   if (!prefix || strlen(prefix) < 8) {
+   if (!prefix || strlen(prefix) < 16) {
       return AUTH_DB_INVALID;
    }
 
@@ -1478,7 +1724,7 @@ int auth_db_delete_session_by_prefix(const char *prefix) {
    }
 
    /* Find full token matching prefix (use SUBSTR for exact matching, not LIKE) */
-   const char *find_sql = "SELECT token FROM sessions WHERE substr(token, 1, 8) = ? LIMIT 1";
+   const char *find_sql = "SELECT token FROM sessions WHERE substr(token, 1, 16) = ? LIMIT 1";
    sqlite3_stmt *stmt = NULL;
    int rc = sqlite3_prepare_v2(s_db.db, find_sql, -1, &stmt, NULL);
    if (rc != SQLITE_OK) {
@@ -1486,10 +1732,10 @@ int auth_db_delete_session_by_prefix(const char *prefix) {
       return AUTH_DB_FAILURE;
    }
 
-   /* Bind only the first 8 characters */
-   char prefix_buf[9] = { 0 };
-   strncpy(prefix_buf, prefix, 8);
-   sqlite3_bind_text(stmt, 1, prefix_buf, 8, SQLITE_STATIC);
+   /* Bind only the first 16 characters */
+   char prefix_buf[17] = { 0 };
+   strncpy(prefix_buf, prefix, 16);
+   sqlite3_bind_text(stmt, 1, prefix_buf, 16, SQLITE_STATIC);
 
    rc = sqlite3_step(stmt);
    if (rc != SQLITE_ROW) {
@@ -1516,6 +1762,42 @@ int auth_db_delete_session_by_prefix(const char *prefix) {
    pthread_mutex_unlock(&s_db.mutex);
 
    return (rc == SQLITE_DONE) ? AUTH_DB_SUCCESS : AUTH_DB_FAILURE;
+}
+
+bool auth_db_session_belongs_to_user(const char *prefix, int user_id) {
+   if (!prefix || strlen(prefix) < 16 || user_id <= 0) {
+      return false;
+   }
+
+   pthread_mutex_lock(&s_db.mutex);
+
+   if (!s_db.initialized) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return false;
+   }
+
+   /* Single query to check if session with prefix belongs to user */
+   const char *sql =
+       "SELECT 1 FROM sessions WHERE substr(token, 1, 16) = ? AND user_id = ? LIMIT 1";
+   sqlite3_stmt *stmt = NULL;
+   int rc = sqlite3_prepare_v2(s_db.db, sql, -1, &stmt, NULL);
+   if (rc != SQLITE_OK) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return false;
+   }
+
+   char prefix_buf[17] = { 0 };
+   strncpy(prefix_buf, prefix, 16);
+   sqlite3_bind_text(stmt, 1, prefix_buf, 16, SQLITE_STATIC);
+   sqlite3_bind_int(stmt, 2, user_id);
+
+   rc = sqlite3_step(stmt);
+   bool belongs = (rc == SQLITE_ROW);
+
+   sqlite3_finalize(stmt);
+   pthread_mutex_unlock(&s_db.mutex);
+
+   return belongs;
 }
 
 int auth_db_delete_sessions_by_username(const char *username) {
@@ -1566,7 +1848,7 @@ int auth_db_list_sessions(auth_session_summary_callback_t callback, void *ctx) {
    }
 
    const char *sql = "SELECT s.token, s.user_id, u.username, s.created_at, "
-                     "s.last_activity, s.ip_address "
+                     "s.last_activity, s.ip_address, s.user_agent "
                      "FROM sessions s "
                      "JOIN users u ON s.user_id = u.id "
                      "ORDER BY s.last_activity DESC";
@@ -1583,8 +1865,8 @@ int auth_db_list_sessions(auth_session_summary_callback_t callback, void *ctx) {
       /* Only copy token prefix (8 chars) for security */
       const char *tok = (const char *)sqlite3_column_text(stmt, 0);
       if (tok) {
-         strncpy(session.token_prefix, tok, 8);
-         session.token_prefix[8] = '\0';
+         strncpy(session.token_prefix, tok, 16);
+         session.token_prefix[16] = '\0';
       }
 
       session.user_id = sqlite3_column_int(stmt, 1);
@@ -1602,6 +1884,83 @@ int auth_db_list_sessions(auth_session_summary_callback_t callback, void *ctx) {
       if (ip) {
          strncpy(session.ip_address, ip, AUTH_IP_MAX - 1);
          session.ip_address[AUTH_IP_MAX - 1] = '\0';
+      }
+
+      const char *ua = (const char *)sqlite3_column_text(stmt, 6);
+      if (ua) {
+         strncpy(session.user_agent, ua, AUTH_USER_AGENT_MAX - 1);
+         session.user_agent[AUTH_USER_AGENT_MAX - 1] = '\0';
+      }
+
+      if (callback(&session, ctx) != 0) {
+         break; /* Callback requested stop */
+      }
+   }
+
+   sqlite3_finalize(stmt);
+   pthread_mutex_unlock(&s_db.mutex);
+
+   return AUTH_DB_SUCCESS;
+}
+
+int auth_db_list_user_sessions(int user_id, auth_session_summary_callback_t callback, void *ctx) {
+   if (!callback) {
+      return AUTH_DB_INVALID;
+   }
+
+   pthread_mutex_lock(&s_db.mutex);
+
+   if (!s_db.initialized) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   const char *sql = "SELECT s.token, s.user_id, u.username, s.created_at, "
+                     "s.last_activity, s.ip_address, s.user_agent "
+                     "FROM sessions s "
+                     "JOIN users u ON s.user_id = u.id "
+                     "WHERE s.user_id = ? "
+                     "ORDER BY s.last_activity DESC";
+   sqlite3_stmt *stmt = NULL;
+   int rc = sqlite3_prepare_v2(s_db.db, sql, -1, &stmt, NULL);
+   if (rc != SQLITE_OK) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   sqlite3_bind_int(stmt, 1, user_id);
+
+   while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+      auth_session_summary_t session = { 0 };
+
+      /* Only copy token prefix (8 chars) for security */
+      const char *tok = (const char *)sqlite3_column_text(stmt, 0);
+      if (tok) {
+         strncpy(session.token_prefix, tok, 16);
+         session.token_prefix[16] = '\0';
+      }
+
+      session.user_id = sqlite3_column_int(stmt, 1);
+
+      const char *uname = (const char *)sqlite3_column_text(stmt, 2);
+      if (uname) {
+         strncpy(session.username, uname, AUTH_USERNAME_MAX - 1);
+         session.username[AUTH_USERNAME_MAX - 1] = '\0';
+      }
+
+      session.created_at = (time_t)sqlite3_column_int64(stmt, 3);
+      session.last_activity = (time_t)sqlite3_column_int64(stmt, 4);
+
+      const char *ip = (const char *)sqlite3_column_text(stmt, 5);
+      if (ip) {
+         strncpy(session.ip_address, ip, AUTH_IP_MAX - 1);
+         session.ip_address[AUTH_IP_MAX - 1] = '\0';
+      }
+
+      const char *ua = (const char *)sqlite3_column_text(stmt, 6);
+      if (ua) {
+         strncpy(session.user_agent, ua, AUTH_USER_AGENT_MAX - 1);
+         session.user_agent[AUTH_USER_AGENT_MAX - 1] = '\0';
       }
 
       if (callback(&session, ctx) != 0) {
@@ -2269,4 +2628,661 @@ int auth_db_backup(const char *dest_path) {
    pthread_mutex_unlock(&s_db.mutex);
 
    return result;
+}
+
+/* ============================================================================
+ * Conversation History Functions
+ * ============================================================================ */
+
+int conv_db_create(int user_id, const char *title, int64_t *conv_id_out) {
+   if (user_id <= 0 || !conv_id_out) {
+      return AUTH_DB_INVALID;
+   }
+
+   pthread_mutex_lock(&s_db.mutex);
+
+   if (!s_db.initialized) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   /* Check conversation limit per user */
+   if (CONV_MAX_PER_USER > 0) {
+      sqlite3_reset(s_db.stmt_conv_count);
+      sqlite3_bind_int(s_db.stmt_conv_count, 1, user_id);
+      if (sqlite3_step(s_db.stmt_conv_count) == SQLITE_ROW) {
+         int count = sqlite3_column_int(s_db.stmt_conv_count, 0);
+         if (count >= CONV_MAX_PER_USER) {
+            sqlite3_reset(s_db.stmt_conv_count);
+            pthread_mutex_unlock(&s_db.mutex);
+            return AUTH_DB_LIMIT_EXCEEDED;
+         }
+      }
+      sqlite3_reset(s_db.stmt_conv_count);
+   }
+
+   time_t now = time(NULL);
+
+   /* Use default title if none provided, truncate if too long */
+   char safe_title[CONV_TITLE_MAX];
+   if (title && title[0] != '\0') {
+      strncpy(safe_title, title, CONV_TITLE_MAX - 1);
+      safe_title[CONV_TITLE_MAX - 1] = '\0';
+   } else {
+      strcpy(safe_title, "New Conversation");
+   }
+
+   sqlite3_reset(s_db.stmt_conv_create);
+   sqlite3_bind_int(s_db.stmt_conv_create, 1, user_id);
+   sqlite3_bind_text(s_db.stmt_conv_create, 2, safe_title, -1, SQLITE_TRANSIENT);
+   sqlite3_bind_int64(s_db.stmt_conv_create, 3, (int64_t)now);
+   sqlite3_bind_int64(s_db.stmt_conv_create, 4, (int64_t)now);
+
+   int rc = sqlite3_step(s_db.stmt_conv_create);
+   sqlite3_reset(s_db.stmt_conv_create);
+
+   if (rc != SQLITE_DONE) {
+      LOG_ERROR("conv_db_create: insert failed: %s", sqlite3_errmsg(s_db.db));
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   *conv_id_out = sqlite3_last_insert_rowid(s_db.db);
+
+   pthread_mutex_unlock(&s_db.mutex);
+
+   LOG_INFO("Created conversation %lld for user %d", (long long)*conv_id_out, user_id);
+   return AUTH_DB_SUCCESS;
+}
+
+int conv_db_get(int64_t conv_id, int user_id, conversation_t *conv_out) {
+   if (conv_id <= 0 || !conv_out) {
+      return AUTH_DB_INVALID;
+   }
+
+   pthread_mutex_lock(&s_db.mutex);
+
+   if (!s_db.initialized) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   sqlite3_reset(s_db.stmt_conv_get);
+   sqlite3_bind_int64(s_db.stmt_conv_get, 1, conv_id);
+
+   int rc = sqlite3_step(s_db.stmt_conv_get);
+   if (rc != SQLITE_ROW) {
+      sqlite3_reset(s_db.stmt_conv_get);
+      pthread_mutex_unlock(&s_db.mutex);
+      return (rc == SQLITE_DONE) ? AUTH_DB_NOT_FOUND : AUTH_DB_FAILURE;
+   }
+
+   /* Check ownership */
+   int owner_id = sqlite3_column_int(s_db.stmt_conv_get, 1);
+   if (owner_id != user_id) {
+      sqlite3_reset(s_db.stmt_conv_get);
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FORBIDDEN;
+   }
+
+   memset(conv_out, 0, sizeof(*conv_out));
+   conv_out->id = sqlite3_column_int64(s_db.stmt_conv_get, 0);
+   conv_out->user_id = owner_id;
+
+   const char *title = (const char *)sqlite3_column_text(s_db.stmt_conv_get, 2);
+   if (title) {
+      strncpy(conv_out->title, title, CONV_TITLE_MAX - 1);
+      conv_out->title[CONV_TITLE_MAX - 1] = '\0';
+   }
+
+   conv_out->created_at = (time_t)sqlite3_column_int64(s_db.stmt_conv_get, 3);
+   conv_out->updated_at = (time_t)sqlite3_column_int64(s_db.stmt_conv_get, 4);
+   conv_out->message_count = sqlite3_column_int(s_db.stmt_conv_get, 5);
+   conv_out->is_archived = sqlite3_column_int(s_db.stmt_conv_get, 6) != 0;
+   conv_out->context_tokens = sqlite3_column_int(s_db.stmt_conv_get, 7);
+   conv_out->context_max = sqlite3_column_int(s_db.stmt_conv_get, 8);
+
+   sqlite3_reset(s_db.stmt_conv_get);
+   pthread_mutex_unlock(&s_db.mutex);
+
+   return AUTH_DB_SUCCESS;
+}
+
+int conv_db_list(int user_id,
+                 bool include_archived,
+                 const conv_pagination_t *pagination,
+                 conversation_callback_t callback,
+                 void *ctx) {
+   if (user_id <= 0 || !callback) {
+      return AUTH_DB_INVALID;
+   }
+
+   int limit = CONV_LIST_DEFAULT_LIMIT;
+   int offset = 0;
+   if (pagination) {
+      limit = (pagination->limit > 0 && pagination->limit <= CONV_LIST_MAX_LIMIT)
+                  ? pagination->limit
+                  : CONV_LIST_DEFAULT_LIMIT;
+      offset = (pagination->offset >= 0) ? pagination->offset : 0;
+   }
+
+   pthread_mutex_lock(&s_db.mutex);
+
+   if (!s_db.initialized) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   sqlite3_reset(s_db.stmt_conv_list);
+   sqlite3_bind_int(s_db.stmt_conv_list, 1, user_id);
+   sqlite3_bind_int(s_db.stmt_conv_list, 2, include_archived ? 1 : 0);
+   sqlite3_bind_int(s_db.stmt_conv_list, 3, limit);
+   sqlite3_bind_int(s_db.stmt_conv_list, 4, offset);
+
+   int rc;
+   while ((rc = sqlite3_step(s_db.stmt_conv_list)) == SQLITE_ROW) {
+      conversation_t conv = { 0 };
+
+      conv.id = sqlite3_column_int64(s_db.stmt_conv_list, 0);
+      conv.user_id = sqlite3_column_int(s_db.stmt_conv_list, 1);
+
+      const char *title = (const char *)sqlite3_column_text(s_db.stmt_conv_list, 2);
+      if (title) {
+         strncpy(conv.title, title, CONV_TITLE_MAX - 1);
+         conv.title[CONV_TITLE_MAX - 1] = '\0';
+      }
+
+      conv.created_at = (time_t)sqlite3_column_int64(s_db.stmt_conv_list, 3);
+      conv.updated_at = (time_t)sqlite3_column_int64(s_db.stmt_conv_list, 4);
+      conv.message_count = sqlite3_column_int(s_db.stmt_conv_list, 5);
+      conv.is_archived = sqlite3_column_int(s_db.stmt_conv_list, 6) != 0;
+      conv.context_tokens = sqlite3_column_int(s_db.stmt_conv_list, 7);
+      conv.context_max = sqlite3_column_int(s_db.stmt_conv_list, 8);
+
+      if (callback(&conv, ctx) != 0) {
+         break; /* Callback requested stop */
+      }
+   }
+
+   sqlite3_reset(s_db.stmt_conv_list);
+   pthread_mutex_unlock(&s_db.mutex);
+
+   return AUTH_DB_SUCCESS;
+}
+
+int conv_db_rename(int64_t conv_id, int user_id, const char *new_title) {
+   if (conv_id <= 0 || !new_title || strlen(new_title) == 0) {
+      return AUTH_DB_INVALID;
+   }
+
+   pthread_mutex_lock(&s_db.mutex);
+
+   if (!s_db.initialized) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   sqlite3_reset(s_db.stmt_conv_rename);
+   sqlite3_bind_text(s_db.stmt_conv_rename, 1, new_title, -1, SQLITE_STATIC);
+   sqlite3_bind_int64(s_db.stmt_conv_rename, 2, conv_id);
+   sqlite3_bind_int(s_db.stmt_conv_rename, 3, user_id);
+
+   int rc = sqlite3_step(s_db.stmt_conv_rename);
+   int changes = sqlite3_changes(s_db.db);
+   sqlite3_reset(s_db.stmt_conv_rename);
+
+   pthread_mutex_unlock(&s_db.mutex);
+
+   if (rc != SQLITE_DONE) {
+      return AUTH_DB_FAILURE;
+   }
+
+   /* No rows updated means either not found or forbidden */
+   return (changes > 0) ? AUTH_DB_SUCCESS : AUTH_DB_NOT_FOUND;
+}
+
+int conv_db_delete(int64_t conv_id, int user_id) {
+   if (conv_id <= 0) {
+      return AUTH_DB_INVALID;
+   }
+
+   pthread_mutex_lock(&s_db.mutex);
+
+   if (!s_db.initialized) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   /* Messages are deleted automatically via CASCADE */
+   sqlite3_reset(s_db.stmt_conv_delete);
+   sqlite3_bind_int64(s_db.stmt_conv_delete, 1, conv_id);
+   sqlite3_bind_int(s_db.stmt_conv_delete, 2, user_id);
+
+   int rc = sqlite3_step(s_db.stmt_conv_delete);
+   int changes = sqlite3_changes(s_db.db);
+   sqlite3_reset(s_db.stmt_conv_delete);
+
+   pthread_mutex_unlock(&s_db.mutex);
+
+   if (rc != SQLITE_DONE) {
+      return AUTH_DB_FAILURE;
+   }
+
+   if (changes > 0) {
+      LOG_INFO("Deleted conversation %lld for user %d", (long long)conv_id, user_id);
+      return AUTH_DB_SUCCESS;
+   }
+
+   return AUTH_DB_NOT_FOUND;
+}
+
+/**
+ * @brief Build a LIKE pattern with escaped wildcards
+ *
+ * Escapes SQL LIKE wildcards (%, _, \) in the input and wraps with %...%
+ * Uses backslash as the escape character.
+ *
+ * @param query Input search query
+ * @param pattern Output buffer for escaped pattern
+ * @param pattern_size Size of output buffer
+ */
+static void build_like_pattern(const char *query, char *pattern, size_t pattern_size) {
+   if (!query || !pattern || pattern_size < 4) {
+      if (pattern && pattern_size > 0) {
+         pattern[0] = '\0';
+      }
+      return;
+   }
+
+   size_t j = 0;
+   pattern[j++] = '%'; /* Leading wildcard */
+
+   for (size_t i = 0; query[i] && j < pattern_size - 2; i++) {
+      char c = query[i];
+      /* Escape LIKE special characters: % _ \ */
+      if (c == '%' || c == '_' || c == '\\') {
+         if (j < pattern_size - 3) {
+            pattern[j++] = '\\';
+            pattern[j++] = c;
+         }
+      } else {
+         pattern[j++] = c;
+      }
+   }
+
+   if (j < pattern_size - 1) {
+      pattern[j++] = '%'; /* Trailing wildcard */
+   }
+   pattern[j] = '\0';
+}
+
+int conv_db_search(int user_id,
+                   const char *query,
+                   const conv_pagination_t *pagination,
+                   conversation_callback_t callback,
+                   void *ctx) {
+   if (user_id <= 0 || !query || !callback) {
+      return AUTH_DB_INVALID;
+   }
+
+   int limit = CONV_LIST_DEFAULT_LIMIT;
+   int offset = 0;
+   if (pagination) {
+      limit = (pagination->limit > 0 && pagination->limit <= CONV_LIST_MAX_LIMIT)
+                  ? pagination->limit
+                  : CONV_LIST_DEFAULT_LIMIT;
+      offset = (pagination->offset >= 0) ? pagination->offset : 0;
+   }
+
+   /* Build escaped LIKE pattern: %query% with wildcards escaped */
+   char pattern[CONV_TITLE_MAX * 2 + 3]; /* Worst case: every char escaped + %...% */
+   build_like_pattern(query, pattern, sizeof(pattern));
+
+   pthread_mutex_lock(&s_db.mutex);
+
+   if (!s_db.initialized) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   sqlite3_reset(s_db.stmt_conv_search);
+   sqlite3_bind_int(s_db.stmt_conv_search, 1, user_id);
+   sqlite3_bind_text(s_db.stmt_conv_search, 2, pattern, -1, SQLITE_TRANSIENT);
+   sqlite3_bind_int(s_db.stmt_conv_search, 3, limit);
+   sqlite3_bind_int(s_db.stmt_conv_search, 4, offset);
+
+   int rc;
+   while ((rc = sqlite3_step(s_db.stmt_conv_search)) == SQLITE_ROW) {
+      conversation_t conv = { 0 };
+
+      conv.id = sqlite3_column_int64(s_db.stmt_conv_search, 0);
+      conv.user_id = sqlite3_column_int(s_db.stmt_conv_search, 1);
+
+      const char *title = (const char *)sqlite3_column_text(s_db.stmt_conv_search, 2);
+      if (title) {
+         strncpy(conv.title, title, CONV_TITLE_MAX - 1);
+         conv.title[CONV_TITLE_MAX - 1] = '\0';
+      }
+
+      conv.created_at = (time_t)sqlite3_column_int64(s_db.stmt_conv_search, 3);
+      conv.updated_at = (time_t)sqlite3_column_int64(s_db.stmt_conv_search, 4);
+      conv.message_count = sqlite3_column_int(s_db.stmt_conv_search, 5);
+      conv.is_archived = sqlite3_column_int(s_db.stmt_conv_search, 6) != 0;
+      conv.context_tokens = sqlite3_column_int(s_db.stmt_conv_search, 7);
+      conv.context_max = sqlite3_column_int(s_db.stmt_conv_search, 8);
+
+      if (callback(&conv, ctx) != 0) {
+         break;
+      }
+   }
+
+   sqlite3_reset(s_db.stmt_conv_search);
+   pthread_mutex_unlock(&s_db.mutex);
+
+   return AUTH_DB_SUCCESS;
+}
+
+int conv_db_search_content(int user_id,
+                           const char *query,
+                           const conv_pagination_t *pagination,
+                           conversation_callback_t callback,
+                           void *ctx) {
+   if (user_id <= 0 || !query || !callback) {
+      return AUTH_DB_INVALID;
+   }
+
+   int limit = CONV_LIST_DEFAULT_LIMIT;
+   int offset = 0;
+   if (pagination) {
+      limit = (pagination->limit > 0 && pagination->limit <= CONV_LIST_MAX_LIMIT)
+                  ? pagination->limit
+                  : CONV_LIST_DEFAULT_LIMIT;
+      offset = (pagination->offset >= 0) ? pagination->offset : 0;
+   }
+
+   /* Build escaped LIKE pattern: %query% with wildcards escaped */
+   char pattern[CONV_TITLE_MAX * 2 + 3]; /* Worst case: every char escaped + %...% */
+   build_like_pattern(query, pattern, sizeof(pattern));
+
+   pthread_mutex_lock(&s_db.mutex);
+
+   if (!s_db.initialized) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   /* Use pre-prepared statement for content search */
+   sqlite3_reset(s_db.stmt_conv_search_content);
+   sqlite3_bind_int(s_db.stmt_conv_search_content, 1, user_id);
+   sqlite3_bind_text(s_db.stmt_conv_search_content, 2, pattern, -1, SQLITE_TRANSIENT);
+   sqlite3_bind_int(s_db.stmt_conv_search_content, 3, limit);
+   sqlite3_bind_int(s_db.stmt_conv_search_content, 4, offset);
+
+   int rc;
+   while ((rc = sqlite3_step(s_db.stmt_conv_search_content)) == SQLITE_ROW) {
+      conversation_t conv = { 0 };
+
+      conv.id = sqlite3_column_int64(s_db.stmt_conv_search_content, 0);
+      conv.user_id = sqlite3_column_int(s_db.stmt_conv_search_content, 1);
+
+      const char *title = (const char *)sqlite3_column_text(s_db.stmt_conv_search_content, 2);
+      if (title) {
+         strncpy(conv.title, title, CONV_TITLE_MAX - 1);
+         conv.title[CONV_TITLE_MAX - 1] = '\0';
+      }
+
+      conv.created_at = (time_t)sqlite3_column_int64(s_db.stmt_conv_search_content, 3);
+      conv.updated_at = (time_t)sqlite3_column_int64(s_db.stmt_conv_search_content, 4);
+      conv.message_count = sqlite3_column_int(s_db.stmt_conv_search_content, 5);
+      conv.is_archived = sqlite3_column_int(s_db.stmt_conv_search_content, 6) != 0;
+      conv.context_tokens = sqlite3_column_int(s_db.stmt_conv_search_content, 7);
+      conv.context_max = sqlite3_column_int(s_db.stmt_conv_search_content, 8);
+
+      if (callback(&conv, ctx) != 0) {
+         break;
+      }
+   }
+
+   sqlite3_reset(s_db.stmt_conv_search_content);
+   pthread_mutex_unlock(&s_db.mutex);
+
+   return AUTH_DB_SUCCESS;
+}
+
+int conv_db_update_context(int64_t conv_id, int user_id, int context_tokens, int context_max) {
+   if (conv_id <= 0) {
+      return AUTH_DB_INVALID;
+   }
+
+   pthread_mutex_lock(&s_db.mutex);
+
+   if (!s_db.initialized) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   /* Use prepared statement with ownership check in WHERE clause */
+   sqlite3_reset(s_db.stmt_conv_update_context);
+   sqlite3_bind_int(s_db.stmt_conv_update_context, 1, context_tokens);
+   sqlite3_bind_int(s_db.stmt_conv_update_context, 2, context_max);
+   sqlite3_bind_int64(s_db.stmt_conv_update_context, 3, conv_id);
+   sqlite3_bind_int(s_db.stmt_conv_update_context, 4, user_id);
+
+   int rc = sqlite3_step(s_db.stmt_conv_update_context);
+   sqlite3_reset(s_db.stmt_conv_update_context);
+
+   if (rc != SQLITE_DONE) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   int changes = sqlite3_changes(s_db.db);
+   pthread_mutex_unlock(&s_db.mutex);
+
+   /* No rows updated = conversation not found or wrong owner */
+   return (changes > 0) ? AUTH_DB_SUCCESS : AUTH_DB_NOT_FOUND;
+}
+
+int conv_db_add_message(int64_t conv_id, int user_id, const char *role, const char *content) {
+   if (conv_id <= 0 || !role || !content) {
+      return AUTH_DB_INVALID;
+   }
+
+   /* Validate role */
+   if (strcmp(role, "system") != 0 && strcmp(role, "user") != 0 && strcmp(role, "assistant") != 0 &&
+       strcmp(role, "tool") != 0) {
+      return AUTH_DB_INVALID;
+   }
+
+   pthread_mutex_lock(&s_db.mutex);
+
+   if (!s_db.initialized) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   time_t now = time(NULL);
+
+   /* Insert message with ownership check in single query */
+   sqlite3_reset(s_db.stmt_msg_add);
+   sqlite3_bind_int64(s_db.stmt_msg_add, 1, conv_id);
+   sqlite3_bind_text(s_db.stmt_msg_add, 2, role, -1, SQLITE_STATIC);
+   sqlite3_bind_text(s_db.stmt_msg_add, 3, content, -1, SQLITE_STATIC);
+   sqlite3_bind_int64(s_db.stmt_msg_add, 4, (int64_t)now);
+   sqlite3_bind_int64(s_db.stmt_msg_add, 5, conv_id); /* For ownership check */
+   sqlite3_bind_int(s_db.stmt_msg_add, 6, user_id);   /* For ownership check */
+
+   int rc = sqlite3_step(s_db.stmt_msg_add);
+   sqlite3_reset(s_db.stmt_msg_add);
+
+   if (rc != SQLITE_DONE) {
+      LOG_ERROR("conv_db_add_message: insert failed: %s", sqlite3_errmsg(s_db.db));
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   /* Check if message was actually inserted (ownership verification) */
+   int changes = sqlite3_changes(s_db.db);
+   if (changes == 0) {
+      /* Distinguish between not found and forbidden:
+       * Check if conversation exists but belongs to different user */
+      const char *check_sql = "SELECT user_id FROM conversations WHERE id = ?";
+      sqlite3_stmt *check_stmt;
+      int check_rc = sqlite3_prepare_v2(s_db.db, check_sql, -1, &check_stmt, NULL);
+      int result = AUTH_DB_NOT_FOUND;
+
+      if (check_rc == SQLITE_OK) {
+         sqlite3_bind_int64(check_stmt, 1, conv_id);
+         if (sqlite3_step(check_stmt) == SQLITE_ROW) {
+            /* Conversation exists but user doesn't own it */
+            result = AUTH_DB_FORBIDDEN;
+         }
+         sqlite3_finalize(check_stmt);
+      }
+
+      pthread_mutex_unlock(&s_db.mutex);
+      return result;
+   }
+
+   /* Update conversation metadata */
+   sqlite3_reset(s_db.stmt_conv_update_meta);
+   sqlite3_bind_int64(s_db.stmt_conv_update_meta, 1, (int64_t)now);
+   sqlite3_bind_int64(s_db.stmt_conv_update_meta, 2, conv_id);
+
+   rc = sqlite3_step(s_db.stmt_conv_update_meta);
+   sqlite3_reset(s_db.stmt_conv_update_meta);
+
+   pthread_mutex_unlock(&s_db.mutex);
+
+   return (rc == SQLITE_DONE) ? AUTH_DB_SUCCESS : AUTH_DB_FAILURE;
+}
+
+int conv_db_get_messages(int64_t conv_id, int user_id, message_callback_t callback, void *ctx) {
+   if (conv_id <= 0 || !callback) {
+      return AUTH_DB_INVALID;
+   }
+
+   pthread_mutex_lock(&s_db.mutex);
+
+   if (!s_db.initialized) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return AUTH_DB_FAILURE;
+   }
+
+   /* Single query with ownership check via JOIN */
+   sqlite3_reset(s_db.stmt_msg_get);
+   sqlite3_bind_int64(s_db.stmt_msg_get, 1, conv_id);
+   sqlite3_bind_int(s_db.stmt_msg_get, 2, user_id);
+
+   int rc;
+   while ((rc = sqlite3_step(s_db.stmt_msg_get)) == SQLITE_ROW) {
+      conversation_message_t msg = { 0 };
+
+      msg.id = sqlite3_column_int64(s_db.stmt_msg_get, 0);
+      msg.conversation_id = sqlite3_column_int64(s_db.stmt_msg_get, 1);
+
+      const char *role = (const char *)sqlite3_column_text(s_db.stmt_msg_get, 2);
+      if (role) {
+         strncpy(msg.role, role, CONV_ROLE_MAX - 1);
+         msg.role[CONV_ROLE_MAX - 1] = '\0';
+      }
+
+      /* Content pointer is only valid during callback */
+      msg.content = (char *)sqlite3_column_text(s_db.stmt_msg_get, 3);
+      msg.created_at = (time_t)sqlite3_column_int64(s_db.stmt_msg_get, 4);
+
+      if (callback(&msg, ctx) != 0) {
+         break;
+      }
+   }
+
+   sqlite3_reset(s_db.stmt_msg_get);
+   pthread_mutex_unlock(&s_db.mutex);
+
+   return AUTH_DB_SUCCESS;
+}
+
+int conv_db_count(int user_id) {
+   if (user_id <= 0) {
+      return -1;
+   }
+
+   pthread_mutex_lock(&s_db.mutex);
+
+   if (!s_db.initialized) {
+      pthread_mutex_unlock(&s_db.mutex);
+      return -1;
+   }
+
+   sqlite3_reset(s_db.stmt_conv_count);
+   sqlite3_bind_int(s_db.stmt_conv_count, 1, user_id);
+
+   int count = -1;
+   if (sqlite3_step(s_db.stmt_conv_count) == SQLITE_ROW) {
+      count = sqlite3_column_int(s_db.stmt_conv_count, 0);
+   }
+
+   sqlite3_reset(s_db.stmt_conv_count);
+   pthread_mutex_unlock(&s_db.mutex);
+
+   return count;
+}
+
+void conv_generate_title(const char *content, char *title_out, size_t max_len) {
+   if (!content || !title_out || max_len == 0) {
+      if (title_out && max_len > 0) {
+         title_out[0] = '\0';
+      }
+      return;
+   }
+
+   /* Skip leading whitespace */
+   while (*content && (*content == ' ' || *content == '\t' || *content == '\n')) {
+      content++;
+   }
+
+   /* Target ~50 chars, but truncate at word boundary */
+   size_t target_len = 50;
+   if (target_len >= max_len) {
+      target_len = max_len - 4; /* Leave room for "..." */
+   }
+
+   size_t content_len = strlen(content);
+   if (content_len <= target_len) {
+      /* Content fits entirely */
+      strncpy(title_out, content, max_len - 1);
+      title_out[max_len - 1] = '\0';
+
+      /* Remove trailing newlines */
+      size_t len = strlen(title_out);
+      while (len > 0 && (title_out[len - 1] == '\n' || title_out[len - 1] == '\r')) {
+         title_out[--len] = '\0';
+      }
+      return;
+   }
+
+   /* Find last word boundary before target_len */
+   size_t cut_pos = target_len;
+   while (cut_pos > 0 && content[cut_pos] != ' ' && content[cut_pos] != '\t') {
+      cut_pos--;
+   }
+
+   /* If no word boundary found, just cut at target_len */
+   if (cut_pos == 0) {
+      cut_pos = target_len;
+   }
+
+   /* Copy and add ellipsis */
+   strncpy(title_out, content, cut_pos);
+   title_out[cut_pos] = '\0';
+
+   /* Trim trailing whitespace before ellipsis */
+   while (cut_pos > 0 && (title_out[cut_pos - 1] == ' ' || title_out[cut_pos - 1] == '\t')) {
+      title_out[--cut_pos] = '\0';
+   }
+
+   /* Add ellipsis if there's room */
+   if (cut_pos + 3 < max_len) {
+      strcat(title_out, "...");
+   }
 }

@@ -12,6 +12,7 @@
   const WS_SUBPROTOCOL = 'dawn-1.0';
   const RECONNECT_BASE_DELAY = 1000;
   const RECONNECT_MAX_DELAY = 30000;
+  const RECONNECT_MAX_ATTEMPTS = 5;
 
   // Audio configuration
   // 48kHz is Opus native rate - server resamples to 16kHz for ASR
@@ -30,6 +31,7 @@
   // =============================================================================
   let ws = null;
   let reconnectAttempts = 0;
+  let maxClientsReached = false;  // Skip auto-reconnect when server at capacity
   let currentState = 'idle';
   let debugMode = false;
 
@@ -222,6 +224,7 @@
     ws.onopen = function() {
       console.log('WebSocket connected');
       reconnectAttempts = 0;
+      maxClientsReached = false;  // Clear any previous capacity state
       updateConnectionStatus('connected');
 
       // Build capabilities for audio codec negotiation
@@ -251,7 +254,14 @@
     ws.onclose = function(event) {
       console.log('WebSocket closed:', event.code, event.reason);
       capabilitiesSynced = false;  // Reset on disconnect
-      // Show close reason if available (e.g., "max clients reached")
+
+      // Don't auto-reconnect if server at capacity - user can click to retry
+      if (maxClientsReached) {
+        console.log('Server at capacity, not auto-reconnecting');
+        return;
+      }
+
+      // Show close reason if available
       if (event.reason) {
         updateConnectionStatus('disconnected', event.reason);
       } else {
@@ -274,13 +284,19 @@
   }
 
   function scheduleReconnect() {
+    if (reconnectAttempts >= RECONNECT_MAX_ATTEMPTS) {
+      console.log('Max reconnection attempts reached, stopping');
+      updateConnectionStatus('disconnected', 'Connection failed - click to retry');
+      return;
+    }
+
     const delay = Math.min(
       RECONNECT_BASE_DELAY * Math.pow(2, reconnectAttempts),
       RECONNECT_MAX_DELAY
     );
     const jitter = Math.random() * 500;
 
-    console.log(`Reconnecting in ${Math.round(delay + jitter)}ms...`);
+    console.log(`Reconnecting in ${Math.round(delay + jitter)}ms... (attempt ${reconnectAttempts + 1}/${RECONNECT_MAX_ATTEMPTS})`);
     reconnectAttempts++;
 
     setTimeout(connect, delay + jitter);
@@ -319,12 +335,23 @@
             }
           } else {
             addTranscriptEntry(msg.payload.role, msg.payload.text);
+            // Save to conversation history (auto-creates conversation on first message)
+            saveMessageToHistory(msg.payload.role, msg.payload.text);
           }
           break;
         case 'error':
           console.error('Server error:', msg.payload);
-          // Use toast for permission errors, transcript for others
-          if (msg.payload.code === 'FORBIDDEN' || msg.payload.code === 'UNAUTHORIZED') {
+          // Handle max clients error - don't auto-reconnect
+          if (msg.payload.code === 'MAX_CLIENTS') {
+            maxClientsReached = true;
+            elements.connectionStatus.className = 'disconnected';
+            // Responsive message based on screen width
+            elements.connectionStatus.textContent = window.innerWidth > 500
+              ? 'Server Full - Click to Retry'
+              : 'Full';
+            elements.connectionStatus.title = 'Server at capacity - click to retry';
+          } else if (msg.payload.code === 'FORBIDDEN' || msg.payload.code === 'UNAUTHORIZED') {
+            // Use toast for permission errors
             showToast(msg.payload.message, 'error');
           } else {
             addTranscriptEntry('system', `Error: ${msg.payload.message}`);
@@ -402,6 +429,10 @@
           break;
         case 'context':
           updateContextDisplay(msg.payload);
+          // Save context to active conversation for restore on reload
+          if (historyState.activeConversationId && msg.payload.current && msg.payload.max) {
+            requestUpdateContext(historyState.activeConversationId, msg.payload.current, msg.payload.max);
+          }
           break;
         case 'get_metrics_response':
           handleMetricsResponse(msg.payload);
@@ -439,6 +470,33 @@
           break;
         case 'set_my_settings_response':
           handleSetMySettingsResponse(msg.payload);
+          break;
+        case 'list_my_sessions_response':
+          handleListMySessionsResponse(msg.payload);
+          break;
+        case 'revoke_session_response':
+          handleRevokeSessionResponse(msg.payload);
+          break;
+        case 'list_conversations_response':
+          handleListConversationsResponse(msg.payload);
+          break;
+        case 'new_conversation_response':
+          handleNewConversationResponse(msg.payload);
+          break;
+        case 'load_conversation_response':
+          handleLoadConversationResponse(msg.payload);
+          break;
+        case 'delete_conversation_response':
+          handleDeleteConversationResponse(msg.payload);
+          break;
+        case 'rename_conversation_response':
+          handleRenameConversationResponse(msg.payload);
+          break;
+        case 'search_conversations_response':
+          handleSearchConversationsResponse(msg.payload);
+          break;
+        case 'save_message_response':
+          handleSaveMessageResponse(msg.payload);
           break;
         default:
           console.log('Unknown message type:', msg.type);
@@ -1705,6 +1763,7 @@
   // =============================================================================
   function updateConnectionStatus(status, reason) {
     elements.connectionStatus.className = status;
+    elements.connectionStatus.title = '';  // Clear any previous tooltip
     if (status === 'connected') {
       elements.connectionStatus.textContent = 'Connected';
     } else if (status === 'connecting') {
@@ -2119,19 +2178,15 @@
     elements.transcript.scrollTop = elements.transcript.scrollHeight;
   }
 
-  function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-  }
-
   /**
    * Format text with full markdown support using marked.js
    * Sanitized with DOMPurify for XSS protection
    */
   function formatMarkdown(text) {
+    // Strip command tags before rendering (they should go to debug panel only)
+    const cleanText = text.replace(/<command>[\s\S]*?<\/command>/g, '');
     // Parse markdown to HTML, then sanitize
-    const html = marked.parse(text, { breaks: true, gfm: true });
+    const html = marked.parse(cleanText, { breaks: true, gfm: true });
     return DOMPurify.sanitize(html);
   }
 
@@ -2204,11 +2259,14 @@
     // Append delta to content
     streamingState.content += payload.delta;
 
-    // Debounced markdown rendering - max 10Hz to avoid parsing entire content per token
+    // During streaming, use plain text with line breaks (no markdown)
+    // This prevents layout shifts from <p> tag margins during typing
+    // Full markdown formatting is applied in finalizeStream()
     const nowMs = performance.now();
     if (nowMs - streamingState.lastRenderMs >= streamingState.renderDebounceMs) {
-      // Enough time has passed - render immediately
-      streamingState.textElement.innerHTML = formatMarkdown(streamingState.content);
+      // Strip command tags and render as plain text with line breaks
+      const cleanText = streamingState.content.replace(/<command>[\s\S]*?<\/command>/g, '');
+      streamingState.textElement.innerHTML = escapeHtml(cleanText).replace(/\n/g, '<br>');
       streamingState.lastRenderMs = nowMs;
       streamingState.pendingRender = false;
     } else if (!streamingState.pendingRender) {
@@ -2217,8 +2275,8 @@
       const delay = streamingState.renderDebounceMs - (nowMs - streamingState.lastRenderMs);
       setTimeout(() => {
         if (streamingState.active && streamingState.pendingRender) {
-          streamingState.textElement.innerHTML = formatMarkdown(streamingState.content)
-            .replace(/\n/g, '<br>');
+          const cleanText = streamingState.content.replace(/<command>[\s\S]*?<\/command>/g, '');
+          streamingState.textElement.innerHTML = escapeHtml(cleanText).replace(/\n/g, '<br>');
           streamingState.lastRenderMs = performance.now();
           streamingState.pendingRender = false;
           elements.transcript.scrollTop = elements.transcript.scrollHeight;
@@ -2266,6 +2324,11 @@
     // Remove streaming class
     if (streamingState.entryElement) {
       streamingState.entryElement.classList.remove('streaming');
+    }
+
+    // Save the complete assistant message to conversation history
+    if (streamingState.content) {
+      saveMessageToHistory('assistant', streamingState.content);
     }
 
     // Reset state
@@ -2647,14 +2710,30 @@
     initToolsSection();
     initUserManagement();
     initMySettingsForm();
+    initMySessionsSection();
     initConfirmModal();
+    initInputModal();
+    initHistoryElements();
+    initHistoryListeners();
+    restoreActiveConversationId();
 
     // Connect to WebSocket
     connect();
 
-    // Reconnect on visibility change
+    // Allow manual reconnect by clicking connection status
+    elements.connectionStatus.addEventListener('click', () => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        reconnectAttempts = 0; // Reset counter for manual retry
+        maxClientsReached = false; // Clear server-at-capacity state
+        connect();
+      }
+    });
+    elements.connectionStatus.style.cursor = 'pointer';
+
+    // Reconnect on visibility change (but not if server at capacity)
     document.addEventListener('visibilitychange', function() {
-      if (!document.hidden && (!ws || ws.readyState !== WebSocket.OPEN)) {
+      if (!document.hidden && (!ws || ws.readyState !== WebSocket.OPEN) && !maxClientsReached) {
+        reconnectAttempts = 0; // Reset counter when user returns
         connect();
       }
     });
@@ -3179,6 +3258,12 @@
 
     // Update user badge in header
     updateUserBadge();
+
+    // Update history button visibility
+    updateHistoryButtonVisibility();
+
+    // Restore history sidebar state on desktop (only when authenticated)
+    restoreHistorySidebarState();
   }
 
   /**
@@ -3704,7 +3789,7 @@
       const resetBtn = document.createElement('button');
       resetBtn.className = 'btn-icon';
       resetBtn.title = 'Reset password';
-      resetBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>';
+      resetBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="12" r="3.2"/><path d="M11 12h9"/><path d="M17 12v2"/><path d="M20 12v2.6"/></svg>';
       resetBtn.addEventListener('click', () => showResetPasswordModal(user.username));
       actions.appendChild(resetBtn);
 
@@ -3713,7 +3798,7 @@
         const unlockBtn = document.createElement('button');
         unlockBtn.className = 'btn-icon';
         unlockBtn.title = 'Unlock user';
-        unlockBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>';
+        unlockBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.83-1.17"/><circle cx="12" cy="15" r="1.5"/><path d="M12 16.5V18"/></svg>';
         unlockBtn.addEventListener('click', () => {
           showConfirmModal('Unlock user "' + user.username + '"?', () => {
             requestUnlockUser(user.username);
@@ -3727,7 +3812,7 @@
         const deleteBtn = document.createElement('button');
         deleteBtn.className = 'btn-icon btn-danger';
         deleteBtn.title = 'Delete user';
-        deleteBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
+        deleteBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M10 3h4"/><path d="M6 7l1.5 13a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1L18 7"/><path d="M10 11v6" opacity="0.6"/><path d="M14 11v6" opacity="0.6"/></svg>';
         deleteBtn.addEventListener('click', () => {
           showConfirmModal('Delete user "' + user.username + '"?\n\nThis action cannot be undone.', () => {
             requestDeleteUser(user.username);
@@ -4093,6 +4178,936 @@
     }
   }
 
+  // =============================================================================
+  // SESSION MANAGEMENT (My Sessions)
+  // =============================================================================
+
+  /**
+   * Request list of current user's sessions
+   */
+  function requestListMySessions() {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'list_my_sessions' }));
+    }
+  }
+
+  /**
+   * Request to revoke a session by token prefix
+   */
+  function requestRevokeSession(tokenPrefix) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'revoke_session',
+        payload: { token_prefix: tokenPrefix }
+      }));
+    }
+  }
+
+  /**
+   * Handle list my sessions response
+   */
+  function handleListMySessionsResponse(payload) {
+    if (!payload.success) {
+      showToast('Failed to load sessions: ' + (payload.error || 'Unknown error'), 'error');
+      return;
+    }
+
+    const list = document.getElementById('my-sessions-list');
+    if (!list) return;
+
+    const sessions = payload.sessions || [];
+    const currentPrefix = payload.current_session || '';
+
+    if (sessions.length === 0) {
+      list.innerHTML = '<div class="no-sessions">No active sessions</div>';
+      return;
+    }
+
+    list.innerHTML = sessions.map(session => {
+      const isCurrent = session.token_prefix === currentPrefix;
+      const createdDate = new Date(session.created_at * 1000);
+      const lastActivity = new Date(session.last_activity * 1000);
+      const userAgent = parseUserAgent(session.user_agent);
+
+      return `
+        <div class="session-item${isCurrent ? ' current-session' : ''}">
+          <div class="session-info">
+            <div class="session-device">
+              <span class="device-icon">${userAgent.icon}</span>
+              <span class="device-name">${escapeHtml(userAgent.browser)} on ${escapeHtml(userAgent.os)}</span>
+              ${isCurrent ? '<span class="current-badge">Current</span>' : ''}
+            </div>
+            <div class="session-details">
+              <span class="session-ip">${escapeHtml(session.ip_address || 'Unknown IP')}</span>
+              <span class="session-time">Last active: ${formatRelativeTime(lastActivity)}</span>
+            </div>
+          </div>
+          ${!isCurrent ? `
+            <button class="btn-icon btn-revoke" data-prefix="${escapeHtml(session.token_prefix)}"
+                    title="Revoke this session">
+              <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor"
+                   stroke-width="2" fill="none" stroke-linecap="round">
+                <circle cx="12" cy="12" r="9" opacity="0.15" stroke-width="1.5"/>
+                <path d="M15 9L9 15M9 9l6 6"/>
+              </svg>
+            </button>
+          ` : ''}
+        </div>
+      `;
+    }).join('');
+
+    // Attach revoke handlers
+    list.querySelectorAll('.btn-revoke').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const prefix = btn.dataset.prefix;
+        showConfirmModal('Are you sure you want to revoke this session? The device will be logged out.',
+          () => requestRevokeSession(prefix),
+          { title: 'Revoke Session', okText: 'Revoke' }
+        );
+      });
+    });
+  }
+
+  /**
+   * Handle revoke session response
+   */
+  function handleRevokeSessionResponse(payload) {
+    if (payload.success) {
+      showToast('Session revoked successfully', 'success');
+      requestListMySessions(); // Refresh list
+    } else {
+      showToast('Failed to revoke session: ' + (payload.error || 'Unknown error'), 'error');
+    }
+  }
+
+  /**
+   * Parse user agent string into device info
+   */
+  function parseUserAgent(ua) {
+    if (!ua) return { browser: 'Unknown', os: 'Unknown', icon: '💻' };
+
+    let browser = 'Unknown';
+    let os = 'Unknown';
+    let icon = '💻';
+
+    // Detect browser
+    if (ua.includes('Firefox')) {
+      browser = 'Firefox';
+    } else if (ua.includes('Edg/')) {
+      browser = 'Edge';
+    } else if (ua.includes('Chrome')) {
+      browser = 'Chrome';
+    } else if (ua.includes('Safari')) {
+      browser = 'Safari';
+    } else if (ua.includes('Opera') || ua.includes('OPR')) {
+      browser = 'Opera';
+    }
+
+    // Detect OS
+    if (ua.includes('Windows')) {
+      os = 'Windows';
+      icon = '🖥️';
+    } else if (ua.includes('Mac OS')) {
+      os = 'macOS';
+      icon = '🍎';
+    } else if (ua.includes('Linux')) {
+      os = 'Linux';
+      icon = '🐧';
+    } else if (ua.includes('Android')) {
+      os = 'Android';
+      icon = '📱';
+    } else if (ua.includes('iPhone') || ua.includes('iPad')) {
+      os = 'iOS';
+      icon = '📱';
+    }
+
+    return { browser, os, icon };
+  }
+
+  /**
+   * Format time as relative string
+   */
+  function formatRelativeTime(date) {
+    const now = new Date();
+    const diffMs = now - date;
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMins / 60);
+    const diffDays = Math.floor(diffHours / 24);
+
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins} min${diffMins !== 1 ? 's' : ''} ago`;
+    if (diffHours < 24) return `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`;
+    if (diffDays < 7) return `${diffDays} day${diffDays !== 1 ? 's' : ''} ago`;
+    return date.toLocaleDateString();
+  }
+
+  /**
+   * Escape HTML to prevent XSS
+   */
+  function escapeHtml(str) {
+    if (!str) return '';
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  /**
+   * Initialize My Sessions section
+   */
+  function initMySessionsSection() {
+    const section = document.getElementById('my-sessions-section');
+    if (!section) return;
+
+    const header = section.querySelector('.section-header');
+    if (header) {
+      header.addEventListener('click', () => {
+        setTimeout(() => {
+          if (!section.classList.contains('collapsed') && authState.authenticated) {
+            requestListMySessions();
+          }
+        }, 50);
+      });
+    }
+
+    // Refresh button
+    const refreshBtn = document.getElementById('refresh-sessions-btn');
+    if (refreshBtn) {
+      refreshBtn.addEventListener('click', requestListMySessions);
+    }
+  }
+
+  /* =============================================================================
+   * Conversation History Panel
+   * ============================================================================= */
+
+  // History panel state
+  let historyState = {
+    conversations: [],
+    activeConversationId: null,
+    searchQuery: '',
+    searchTimeout: null,
+    pendingMessages: [],      // Messages to save once conversation is created
+    creatingConversation: false  // Prevent duplicate creation
+  };
+
+  /**
+   * Set the active conversation ID (persists to sessionStorage)
+   */
+  function setActiveConversationId(id) {
+    historyState.activeConversationId = id;
+    if (id) {
+      sessionStorage.setItem('dawn_active_conversation', id.toString());
+    } else {
+      sessionStorage.removeItem('dawn_active_conversation');
+    }
+  }
+
+  /**
+   * Restore active conversation ID from sessionStorage
+   */
+  function restoreActiveConversationId() {
+    const saved = sessionStorage.getItem('dawn_active_conversation');
+    if (saved) {
+      historyState.activeConversationId = parseInt(saved, 10);
+      console.log('Restored active conversation:', historyState.activeConversationId);
+    }
+  }
+
+  // History panel elements
+  const historyElements = {
+    panel: null,
+    overlay: null,
+    openBtn: null,
+    closeBtn: null,
+    newBtn: null,
+    searchInput: null,
+    searchContentCheckbox: null,
+    list: null
+  };
+
+  /**
+   * Initialize history panel elements
+   */
+  function initHistoryElements() {
+    historyElements.panel = document.getElementById('history-panel');
+    historyElements.overlay = document.getElementById('history-overlay');
+    historyElements.openBtn = document.getElementById('history-btn');
+    historyElements.closeBtn = document.getElementById('history-close');
+    historyElements.newBtn = document.getElementById('new-conversation-btn');
+    historyElements.searchInput = document.getElementById('history-search-input');
+    historyElements.searchContentCheckbox = document.getElementById('history-search-content');
+    historyElements.list = document.getElementById('history-list');
+  }
+
+  /**
+   * Toggle history panel open/closed
+   */
+  function toggleHistory() {
+    if (!historyElements.panel) return;
+
+    if (historyElements.panel.classList.contains('hidden')) {
+      openHistory();
+    } else {
+      closeHistory();
+    }
+  }
+
+  /**
+   * Initialize history panel event listeners
+   */
+  function initHistoryListeners() {
+    // Toggle button (opens if closed, closes if open)
+    if (historyElements.openBtn) {
+      historyElements.openBtn.addEventListener('click', toggleHistory);
+    }
+
+    // Close button (X)
+    if (historyElements.closeBtn) {
+      historyElements.closeBtn.addEventListener('click', closeHistory);
+    }
+
+    // Overlay click to close
+    if (historyElements.overlay) {
+      historyElements.overlay.addEventListener('click', closeHistory);
+    }
+
+    // New conversation button
+    if (historyElements.newBtn) {
+      historyElements.newBtn.addEventListener('click', () => {
+        startNewChat();
+        closeHistory();
+      });
+    }
+
+    // Search input
+    if (historyElements.searchInput) {
+      historyElements.searchInput.addEventListener('input', (e) => {
+        const query = e.target.value.trim();
+        historyState.searchQuery = query;
+
+        // Debounce search
+        if (historyState.searchTimeout) {
+          clearTimeout(historyState.searchTimeout);
+        }
+        historyState.searchTimeout = setTimeout(() => {
+          if (query) {
+            const searchContent = historyElements.searchContentCheckbox?.checked || false;
+            requestSearchConversations(query, searchContent);
+          } else {
+            requestListConversations();
+          }
+        }, 300);
+      });
+    }
+
+    // Search content checkbox - re-trigger search when toggled
+    if (historyElements.searchContentCheckbox) {
+      historyElements.searchContentCheckbox.addEventListener('change', () => {
+        const query = historyState.searchQuery;
+        if (query) {
+          const searchContent = historyElements.searchContentCheckbox.checked;
+          requestSearchConversations(query, searchContent);
+        }
+      });
+    }
+
+    // Restore sidebar state on desktop (after auth is established)
+    // This is called later when auth state is confirmed
+  }
+
+  /**
+   * Restore history sidebar state from localStorage (desktop only)
+   * Only runs once on initial auth
+   */
+  let historyStateRestored = false;
+  function restoreHistorySidebarState() {
+    if (historyStateRestored) return;
+    if (window.innerWidth > 768 && authState.authenticated) {
+      historyStateRestored = true;
+      const savedState = localStorage.getItem('dawn_history_open');
+      if (savedState === 'true') {
+        openHistory();
+      }
+    }
+  }
+
+  /**
+   * Open history panel
+   */
+  function openHistory() {
+    if (!historyElements.panel) return;
+
+    historyElements.panel.classList.remove('hidden');
+    historyElements.overlay.classList.remove('hidden');
+    document.body.classList.add('history-open');
+
+    // Update button active state
+    if (historyElements.openBtn) {
+      historyElements.openBtn.classList.add('active');
+    }
+
+    // Save state on desktop
+    if (window.innerWidth > 768) {
+      localStorage.setItem('dawn_history_open', 'true');
+    }
+
+    // Request conversation list
+    requestListConversations();
+
+    // Focus management: move focus to search input for accessibility
+    setTimeout(() => {
+      if (historyElements.searchInput) {
+        historyElements.searchInput.focus();
+      } else if (historyElements.closeBtn) {
+        historyElements.closeBtn.focus();
+      }
+    }, 100);
+
+    // Add focus trap using the shared utility function
+    historyFocusTrapCleanup = trapFocus(historyElements.panel);
+
+    // Add Escape key handler for closing
+    historyElements.panel.addEventListener('keydown', handleHistoryEscape);
+  }
+
+  /**
+   * Handle Escape key in history panel
+   */
+  function handleHistoryEscape(e) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeHistory();
+    }
+  }
+
+  /**
+   * Close history panel
+   */
+  function closeHistory() {
+    if (!historyElements.panel) return;
+
+    // Clean up focus trap
+    if (historyFocusTrapCleanup) {
+      historyFocusTrapCleanup();
+      historyFocusTrapCleanup = null;
+    }
+
+    // Remove Escape key listener
+    historyElements.panel.removeEventListener('keydown', handleHistoryEscape);
+
+    historyElements.panel.classList.add('hidden');
+    historyElements.overlay.classList.add('hidden');
+    document.body.classList.remove('history-open');
+
+    // Update button active state
+    if (historyElements.openBtn) {
+      historyElements.openBtn.classList.remove('active');
+    }
+
+    // Save state on desktop
+    if (window.innerWidth > 768) {
+      localStorage.setItem('dawn_history_open', 'false');
+    }
+
+    // Clear search
+    if (historyElements.searchInput) {
+      historyElements.searchInput.value = '';
+    }
+    historyState.searchQuery = '';
+
+    // Return focus to the trigger button
+    if (historyElements.openBtn) {
+      historyElements.openBtn.focus();
+    }
+  }
+
+  /**
+   * Update history button visibility based on auth state
+   */
+  function updateHistoryButtonVisibility() {
+    if (historyElements.openBtn) {
+      if (authState.authenticated) {
+        historyElements.openBtn.classList.remove('hidden');
+      } else {
+        historyElements.openBtn.classList.add('hidden');
+      }
+    }
+  }
+
+  /**
+   * Request conversation list from server
+   */
+  function requestListConversations() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+    ws.send(JSON.stringify({
+      type: 'list_conversations',
+      payload: { limit: 50, offset: 0 }
+    }));
+  }
+
+  /**
+   * Request new conversation
+   * @param {string} [title] - Optional title for the conversation
+   */
+  function requestNewConversation(title) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+    const payload = {};
+    if (title) {
+      payload.title = title;
+    }
+
+    ws.send(JSON.stringify({
+      type: 'new_conversation',
+      payload: payload
+    }));
+  }
+
+  /**
+   * Request to save a message to a conversation
+   */
+  function requestSaveMessage(convId, role, content) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!convId || !role || !content) return;
+
+    ws.send(JSON.stringify({
+      type: 'save_message',
+      payload: {
+        conversation_id: convId,
+        role: role,
+        content: content
+      }
+    }));
+  }
+
+  /**
+   * Save context usage to the active conversation
+   */
+  function requestUpdateContext(convId, contextTokens, contextMax) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!convId || !contextMax) return;
+
+    ws.send(JSON.stringify({
+      type: 'update_context',
+      payload: {
+        conversation_id: convId,
+        context_tokens: contextTokens,
+        context_max: contextMax
+      }
+    }));
+  }
+
+  /**
+   * Request to load a conversation
+   */
+  function requestLoadConversation(convId) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+    ws.send(JSON.stringify({
+      type: 'load_conversation',
+      payload: { conversation_id: convId }
+    }));
+  }
+
+  /**
+   * Request to delete a conversation
+   */
+  function requestDeleteConversation(convId) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+    ws.send(JSON.stringify({
+      type: 'delete_conversation',
+      payload: { conversation_id: convId }
+    }));
+  }
+
+  /**
+   * Request to rename a conversation
+   */
+  function requestRenameConversation(convId, newTitle) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+    ws.send(JSON.stringify({
+      type: 'rename_conversation',
+      payload: { conversation_id: convId, title: newTitle }
+    }));
+  }
+
+  /**
+   * Request to search conversations
+   * @param {string} query - Search query
+   * @param {boolean} searchContent - If true, search message content; if false, search titles only
+   */
+  function requestSearchConversations(query, searchContent = false) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+    ws.send(JSON.stringify({
+      type: 'search_conversations',
+      payload: { query: query, search_content: searchContent, limit: 50, offset: 0 }
+    }));
+  }
+
+  /**
+   * Handle list_conversations_response
+   */
+  function handleListConversationsResponse(payload) {
+    if (!payload.success) {
+      console.error('Failed to list conversations:', payload.error);
+      showToast(payload.error || 'Failed to load conversations', 'error');
+      return;
+    }
+
+    historyState.conversations = payload.conversations || [];
+    renderConversationList();
+  }
+
+  /**
+   * Handle new_conversation_response
+   */
+  function handleNewConversationResponse(payload) {
+    historyState.creatingConversation = false;
+
+    if (!payload.success) {
+      showToast(payload.error || 'Failed to create conversation', 'error');
+      historyState.pendingMessages = [];
+      return;
+    }
+
+    setActiveConversationId(payload.conversation_id);
+
+    // Process any pending messages
+    if (historyState.pendingMessages.length > 0) {
+      historyState.pendingMessages.forEach(msg => {
+        requestSaveMessage(payload.conversation_id, msg.role, msg.content);
+      });
+      historyState.pendingMessages = [];
+    }
+
+    // Only show toast and clear transcript if this was a manual "New Chat" action
+    // (not auto-created from first message - in that case panel isn't open)
+    if (historyElements.panel && historyElements.panel.classList.contains('open')) {
+      showToast('New conversation created', 'success');
+      closeHistory();
+
+      // Clear transcript for new conversation
+      const transcript = document.getElementById('transcript');
+      if (transcript) {
+        transcript.innerHTML = '';
+      }
+    }
+
+    // Refresh list in background
+    requestListConversations();
+  }
+
+  /**
+   * Handle load_conversation_response
+   */
+  function handleLoadConversationResponse(payload) {
+    if (!payload.success) {
+      showToast(payload.error || 'Failed to load conversation', 'error');
+      return;
+    }
+
+    setActiveConversationId(payload.conversation_id);
+
+    // Clear transcript and replay messages
+    const transcript = document.getElementById('transcript');
+    if (transcript) {
+      transcript.innerHTML = '';
+
+      // Replay messages using addTranscriptEntry for proper formatting
+      // This handles user, assistant, and tool messages with full debug content
+      const messages = payload.messages || [];
+      messages.forEach(msg => {
+        if (msg.role === 'system') return; // Skip system messages
+        addTranscriptEntry(msg.role, msg.content);
+      });
+
+      // Scroll to bottom
+      transcript.scrollTop = transcript.scrollHeight;
+    }
+
+    // Restore context gauge if available
+    if (payload.context_tokens && payload.context_max) {
+      const usage = (payload.context_tokens / payload.context_max) * 100;
+      updateContextDisplay({
+        current: payload.context_tokens,
+        max: payload.context_max,
+        usage: usage
+      });
+    }
+
+    // Update list to show active conversation
+    renderConversationList();
+    closeHistory();
+
+    showToast(`Loaded: ${payload.title}`, 'info');
+  }
+
+  /**
+   * Handle delete_conversation_response
+   */
+  function handleDeleteConversationResponse(payload) {
+    if (!payload.success) {
+      showToast(payload.error || 'Failed to delete conversation', 'error');
+      return;
+    }
+
+    showToast('Conversation deleted', 'success');
+
+    // If deleted the active conversation, clear state
+    // Note: We'd need to know which one was deleted to check this
+
+    // Refresh list
+    requestListConversations();
+  }
+
+  /**
+   * Handle rename_conversation_response
+   */
+  function handleRenameConversationResponse(payload) {
+    if (!payload.success) {
+      showToast(payload.error || 'Failed to rename conversation', 'error');
+      return;
+    }
+
+    showToast('Conversation renamed', 'success');
+    requestListConversations();
+  }
+
+  /**
+   * Handle search_conversations_response
+   */
+  function handleSearchConversationsResponse(payload) {
+    if (!payload.success) {
+      console.error('Search failed:', payload.error);
+      return;
+    }
+
+    historyState.conversations = payload.conversations || [];
+    renderConversationList();
+  }
+
+  /**
+   * Handle save_message_response
+   */
+  function handleSaveMessageResponse(payload) {
+    if (!payload.success) {
+      console.error('Failed to save message:', payload.error);
+      // Don't show toast - this is background operation
+    }
+  }
+
+  /**
+   * Generate a title from the first message (first 50 chars, first line)
+   */
+  function generateTitleFromMessage(content) {
+    if (!content) return 'New conversation';
+    // Take first line, trim, limit to 50 chars
+    const firstLine = content.split('\n')[0].trim();
+    if (firstLine.length <= 50) return firstLine;
+    return firstLine.substring(0, 47) + '...';
+  }
+
+  /**
+   * Save a message to the current conversation (auto-creates conversation if needed)
+   * Called when transcript entries come in from the server
+   */
+  function saveMessageToHistory(role, content) {
+    // Save user, assistant, and tool messages (full context)
+    if (role !== 'user' && role !== 'assistant' && role !== 'tool') return;
+
+    // Skip empty content
+    if (!content || !content.trim()) return;
+
+    // Must be authenticated
+    if (!authState.authenticated) return;
+
+    // If we have an active conversation, save directly
+    if (historyState.activeConversationId) {
+      requestSaveMessage(historyState.activeConversationId, role, content);
+      return;
+    }
+
+    // No active conversation - need to create one on first user message
+    if (role === 'user') {
+      // Queue this message
+      historyState.pendingMessages.push({ role, content });
+
+      // Create conversation if not already creating
+      if (!historyState.creatingConversation) {
+        historyState.creatingConversation = true;
+        const title = generateTitleFromMessage(content);
+        requestNewConversation(title);
+      }
+    } else {
+      // Assistant message but no conversation yet - queue it
+      historyState.pendingMessages.push({ role, content });
+    }
+  }
+
+  /**
+   * Start a new chat (clears current conversation)
+   */
+  function startNewChat() {
+    setActiveConversationId(null);
+    historyState.pendingMessages = [];
+    historyState.creatingConversation = false;
+
+    // Clear transcript
+    const transcript = document.getElementById('transcript');
+    if (transcript) {
+      transcript.innerHTML = '';
+    }
+  }
+
+  /**
+   * Render conversation list
+   */
+  function renderConversationList() {
+    if (!historyElements.list) return;
+
+    const conversations = historyState.conversations;
+
+    if (!conversations || conversations.length === 0) {
+      historyElements.list.innerHTML = '<div class="history-list-empty">No conversations yet</div>';
+      return;
+    }
+
+    // Group by date
+    const groups = {};
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const yesterday = today - 86400000;
+    const weekAgo = today - 604800000;
+
+    conversations.forEach(conv => {
+      const timestamp = conv.updated_at * 1000;
+      let groupKey;
+
+      if (timestamp >= today) {
+        groupKey = 'Today';
+      } else if (timestamp >= yesterday) {
+        groupKey = 'Yesterday';
+      } else if (timestamp >= weekAgo) {
+        groupKey = 'This Week';
+      } else {
+        const date = new Date(timestamp);
+        groupKey = date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+      }
+
+      if (!groups[groupKey]) {
+        groups[groupKey] = [];
+      }
+      groups[groupKey].push(conv);
+    });
+
+    // Render groups
+    let html = '';
+    for (const [groupName, convs] of Object.entries(groups)) {
+      html += `<div class="history-date-group">${groupName}</div>`;
+
+      convs.forEach(conv => {
+        const isActive = conv.id === historyState.activeConversationId;
+        const time = formatRelativeTime(conv.updated_at * 1000);
+
+        html += `
+          <div class="history-item ${isActive ? 'active' : ''}" data-conv-id="${conv.id}">
+            <div class="history-item-content">
+              <div class="history-item-title">${escapeHtml(conv.title)}</div>
+              <div class="history-item-meta">
+                <span class="history-item-time">${time}</span>
+                <span class="history-item-count">${conv.message_count} messages</span>
+              </div>
+            </div>
+            <div class="history-item-actions">
+              <button class="rename" title="Rename" data-action="rename">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                </svg>
+              </button>
+              <button class="delete" title="Delete" data-action="delete">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="3 6 5 6 21 6"/>
+                  <path d="M19 6l-2 14H7L5 6"/>
+                  <path d="M10 11v6M14 11v6"/>
+                  <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        `;
+      });
+    }
+
+    historyElements.list.innerHTML = html;
+
+    // Add event listeners
+    historyElements.list.querySelectorAll('.history-item').forEach(item => {
+      const convId = parseInt(item.dataset.convId, 10);
+
+      // Click on item to load
+      item.addEventListener('click', (e) => {
+        if (e.target.closest('.history-item-actions')) return; // Ignore action button clicks
+        requestLoadConversation(convId);
+      });
+
+      // Rename button
+      const renameBtn = item.querySelector('[data-action="rename"]');
+      if (renameBtn) {
+        renameBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const title = item.querySelector('.history-item-title').textContent;
+          showInputModal('', title, (newTitle) => {
+            if (newTitle && newTitle.trim() && newTitle !== title) {
+              requestRenameConversation(convId, newTitle.trim());
+            }
+          }, { title: 'Rename Conversation', okText: 'Rename' });
+        });
+      }
+
+      // Delete button
+      const deleteBtn = item.querySelector('[data-action="delete"]');
+      if (deleteBtn) {
+        deleteBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          showConfirmModal('Delete this conversation?', () => {
+            requestDeleteConversation(convId);
+          }, { title: 'Delete Conversation', okText: 'Delete', danger: true });
+        });
+      }
+    });
+  }
+
+  /**
+   * Add user message to transcript (for replay)
+   */
+  function addUserMessage(content) {
+    const transcript = document.getElementById('transcript');
+    if (!transcript) return;
+
+    const msgDiv = document.createElement('div');
+    msgDiv.className = 'message user';
+    msgDiv.innerHTML = `<div class="message-content"><p>${escapeHtml(content)}</p></div>`;
+    transcript.appendChild(msgDiv);
+  }
+
+  /**
+   * Add assistant message to transcript (for replay)
+   */
+  function addAssistantMessage(content) {
+    const transcript = document.getElementById('transcript');
+    if (!transcript) return;
+
+    const msgDiv = document.createElement('div');
+    msgDiv.className = 'message assistant';
+    msgDiv.innerHTML = `<div class="message-content">${formatMarkdown(content)}</div>`;
+    transcript.appendChild(msgDiv);
+  }
+
   /**
    * Show a toast notification
    */
@@ -4153,11 +5168,16 @@
     return () => modal.removeEventListener('keydown', handleKeydown);
   }
 
-  // Store cleanup functions for active focus traps
-  let activeModalCleanup = null;
+  // Store cleanup functions for active focus traps (separate for each modal type)
+  let confirmModalCleanup = null;
+  let inputModalCleanup = null;
+  let historyFocusTrapCleanup = null;
 
   // Pending confirm callback
   let pendingConfirmCallback = null;
+
+  // Pending input callback (for prompt replacement)
+  let pendingInputCallback = null;
 
   /**
    * Show styled confirmation modal (replaces native confirm())
@@ -4199,7 +5219,7 @@
 
     // Show modal
     modal.classList.remove('hidden');
-    activeModalCleanup = trapFocus(modal);
+    confirmModalCleanup = trapFocus(modal);
   }
 
   /**
@@ -4210,9 +5230,9 @@
     const modal = document.getElementById('confirm-modal');
     if (modal) {
       modal.classList.add('hidden');
-      if (activeModalCleanup) {
-        activeModalCleanup();
-        activeModalCleanup = null;
+      if (confirmModalCleanup) {
+        confirmModalCleanup();
+        confirmModalCleanup = null;
       }
     }
 
@@ -4248,6 +5268,122 @@
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && modal && !modal.classList.contains('hidden')) {
         hideConfirmModal(false);
+      }
+    });
+  }
+
+  /**
+   * Show styled input modal (replaces native prompt())
+   * @param {string} message - Message to display
+   * @param {string} defaultValue - Default value for input field
+   * @param {Function} onSubmit - Callback with input value if user submits
+   * @param {Object} options - Optional settings
+   * @param {string} options.title - Modal title (default: "Enter Value")
+   * @param {string} options.okText - OK button text (default: "OK")
+   * @param {string} options.cancelText - Cancel button text (default: "Cancel")
+   * @param {string} options.placeholder - Input placeholder text
+   */
+  function showInputModal(message, defaultValue, onSubmit, options = {}) {
+    const modal = document.getElementById('input-modal');
+    if (!modal) {
+      // Fallback to native prompt if modal not found
+      const result = prompt(message, defaultValue);
+      if (result !== null && onSubmit) onSubmit(result);
+      return;
+    }
+
+    const titleEl = document.getElementById('input-modal-title');
+    const messageEl = document.getElementById('input-modal-message');
+    const inputEl = document.getElementById('input-modal-input');
+    const okBtn = document.getElementById('input-modal-ok');
+    const cancelBtn = document.getElementById('input-modal-cancel');
+
+    // Set content
+    if (titleEl) titleEl.textContent = options.title || 'Enter Value';
+    if (messageEl) {
+      messageEl.textContent = message || '';
+      messageEl.style.display = message ? 'block' : 'none';
+    }
+    if (inputEl) {
+      inputEl.value = defaultValue || '';
+      inputEl.placeholder = options.placeholder || '';
+    }
+    if (okBtn) okBtn.textContent = options.okText || 'OK';
+    if (cancelBtn) cancelBtn.textContent = options.cancelText || 'Cancel';
+
+    // Store callback
+    pendingInputCallback = onSubmit;
+
+    // Show modal and focus input
+    modal.classList.remove('hidden');
+    inputModalCleanup = trapFocus(modal);
+
+    // Focus and select input text
+    if (inputEl) {
+      inputEl.focus();
+      inputEl.select();
+    }
+  }
+
+  /**
+   * Hide input modal
+   * @param {boolean} submitted - Whether user submitted the input
+   */
+  function hideInputModal(submitted) {
+    const modal = document.getElementById('input-modal');
+    const inputEl = document.getElementById('input-modal-input');
+
+    if (modal) {
+      modal.classList.add('hidden');
+      if (inputModalCleanup) {
+        inputModalCleanup();
+        inputModalCleanup = null;
+      }
+    }
+
+    if (submitted && pendingInputCallback && inputEl) {
+      pendingInputCallback(inputEl.value);
+    }
+    pendingInputCallback = null;
+  }
+
+  /**
+   * Initialize input modal event handlers
+   */
+  function initInputModal() {
+    const okBtn = document.getElementById('input-modal-ok');
+    const cancelBtn = document.getElementById('input-modal-cancel');
+    const inputEl = document.getElementById('input-modal-input');
+    const modal = document.getElementById('input-modal');
+
+    if (okBtn) {
+      okBtn.addEventListener('click', () => hideInputModal(true));
+    }
+    if (cancelBtn) {
+      cancelBtn.addEventListener('click', () => hideInputModal(false));
+    }
+
+    // Submit on Enter key in input field
+    if (inputEl) {
+      inputEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          hideInputModal(true);
+        }
+      });
+    }
+
+    // Close on backdrop click
+    if (modal) {
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) hideInputModal(false);
+      });
+    }
+
+    // Close on Escape key
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && modal && !modal.classList.contains('hidden')) {
+        hideInputModal(false);
       }
     });
   }

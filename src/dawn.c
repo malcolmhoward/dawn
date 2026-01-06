@@ -2444,6 +2444,10 @@ int main(int argc, char *argv[]) {
                } else {
                   memcpy(preroll_buffer + preroll_write_pos, max_buff, bytes_to_copy);
                   preroll_write_pos += bytes_to_copy;
+                  // Handle exact boundary case - wrap to 0 when reaching buffer end
+                  if (preroll_write_pos >= preroll_buffer_size) {
+                     preroll_write_pos = 0;
+                  }
                }
                // Track valid bytes (up to buffer capacity)
                preroll_valid_bytes = (preroll_valid_bytes + bytes_to_copy > preroll_buffer_size)

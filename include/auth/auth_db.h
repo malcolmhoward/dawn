@@ -149,12 +149,13 @@ typedef int (*auth_user_summary_callback_t)(const auth_user_summary_t *user, voi
  * Used for session enumeration - only exposes token prefix.
  */
 typedef struct {
-   char token_prefix[9]; /**< First 8 chars of token + null */
+   char token_prefix[17]; /**< First 16 chars of token + null */
    int user_id;
    char username[AUTH_USERNAME_MAX];
    time_t created_at;
    time_t last_activity;
    char ip_address[AUTH_IP_MAX];
+   char user_agent[AUTH_USER_AGENT_MAX]; /**< Browser/client identifier */
 } auth_session_summary_t;
 
 /**
@@ -451,13 +452,25 @@ int auth_db_delete_session(const char *token);
 /**
  * @brief Delete a session by token prefix
  *
- * Finds and deletes the session matching the 8-character token prefix.
+ * Finds and deletes the session matching the 16-character token prefix.
  * Returns AUTH_DB_NOT_FOUND if no matching session exists.
  *
- * @param prefix 8-character token prefix
+ * @param prefix 16-character token prefix
  * @return AUTH_DB_SUCCESS, AUTH_DB_NOT_FOUND, or AUTH_DB_FAILURE
  */
 int auth_db_delete_session_by_prefix(const char *prefix);
+
+/**
+ * @brief Check if a session belongs to a specific user
+ *
+ * Efficiently checks if a session with the given prefix belongs to the user.
+ * More efficient than listing all sessions and searching.
+ *
+ * @param prefix 16-character token prefix
+ * @param user_id User ID to check ownership against
+ * @return true if session belongs to user, false otherwise
+ */
+bool auth_db_session_belongs_to_user(const char *prefix, int user_id);
 
 /**
  * @brief Delete all sessions for a user by username
@@ -487,6 +500,18 @@ int auth_db_delete_user_sessions(int user_id);
  * @return AUTH_DB_SUCCESS or AUTH_DB_FAILURE
  */
 int auth_db_list_sessions(auth_session_summary_callback_t callback, void *ctx);
+
+/**
+ * @brief List sessions for a specific user (callback-based)
+ *
+ * Used for session management UI - allows users to see their own sessions.
+ *
+ * @param user_id User ID to filter by
+ * @param callback Function called for each session
+ * @param ctx User-provided context passed to callback
+ * @return AUTH_DB_SUCCESS, AUTH_DB_INVALID, or AUTH_DB_FAILURE
+ */
+int auth_db_list_user_sessions(int user_id, auth_session_summary_callback_t callback, void *ctx);
 
 /**
  * @brief Count active sessions
@@ -709,5 +734,249 @@ int auth_db_backup(const char *dest_path);
  * @brief Error code for rate-limited operations.
  */
 #define AUTH_DB_RATE_LIMITED 7
+
+/* ============================================================================
+ * Conversation History
+ * ============================================================================ */
+
+/**
+ * @brief Maximum conversation title length
+ */
+#define CONV_TITLE_MAX 256
+
+/**
+ * @brief Maximum message content length (64KB)
+ */
+#define CONV_MESSAGE_MAX 65536
+
+/**
+ * @brief Maximum role string length
+ */
+#define CONV_ROLE_MAX 16
+
+/**
+ * @brief Default conversation limit per list query
+ */
+#define CONV_LIST_DEFAULT_LIMIT 50
+
+/**
+ * @brief Maximum conversation limit per list query
+ */
+#define CONV_LIST_MAX_LIMIT 100
+
+/**
+ * @brief Maximum conversations per user (0 = unlimited)
+ */
+#define CONV_MAX_PER_USER 100
+
+/**
+ * @brief Conversation metadata structure
+ */
+typedef struct {
+   int64_t id;
+   int user_id;
+   char title[CONV_TITLE_MAX];
+   time_t created_at;
+   time_t updated_at;
+   int message_count;
+   bool is_archived;
+   int context_tokens; /**< Last known context token count */
+   int context_max;    /**< Context window size */
+} conversation_t;
+
+/**
+ * @brief Conversation message structure
+ */
+typedef struct {
+   int64_t id;
+   int64_t conversation_id;
+   char role[CONV_ROLE_MAX]; /**< "system", "user", or "assistant" */
+   char *content;            /**< Dynamically allocated, caller must free */
+   time_t created_at;
+} conversation_message_t;
+
+/**
+ * @brief Pagination parameters for conversation listing
+ */
+typedef struct {
+   int limit;  /**< Max results (0 = default) */
+   int offset; /**< Skip first N results */
+} conv_pagination_t;
+
+/**
+ * @brief Callback for conversation enumeration
+ *
+ * @param conv Conversation metadata
+ * @param ctx User-provided context
+ * @return 0 to continue iteration, non-zero to stop
+ */
+typedef int (*conversation_callback_t)(const conversation_t *conv, void *ctx);
+
+/**
+ * @brief Callback for message enumeration
+ *
+ * @param msg Message data (content is valid only during callback)
+ * @param ctx User-provided context
+ * @return 0 to continue iteration, non-zero to stop
+ */
+typedef int (*message_callback_t)(const conversation_message_t *msg, void *ctx);
+
+/**
+ * @brief Create a new conversation
+ *
+ * @param user_id User ID who owns the conversation
+ * @param title Initial title (can be NULL for "New Conversation")
+ * @param conv_id_out Receives the new conversation ID
+ * @return AUTH_DB_SUCCESS, AUTH_DB_LIMIT_EXCEEDED, or AUTH_DB_FAILURE
+ */
+int conv_db_create(int user_id, const char *title, int64_t *conv_id_out);
+
+/**
+ * @brief Get conversation by ID
+ *
+ * @param conv_id Conversation ID
+ * @param user_id User ID (for authorization check)
+ * @param conv_out Buffer to receive conversation data
+ * @return AUTH_DB_SUCCESS, AUTH_DB_NOT_FOUND, AUTH_DB_FORBIDDEN, or AUTH_DB_FAILURE
+ */
+int conv_db_get(int64_t conv_id, int user_id, conversation_t *conv_out);
+
+/**
+ * @brief List conversations for a user
+ *
+ * @param user_id User ID
+ * @param include_archived Include archived conversations
+ * @param pagination Pagination parameters (can be NULL for defaults)
+ * @param callback Function called for each conversation
+ * @param ctx User-provided context passed to callback
+ * @return AUTH_DB_SUCCESS or AUTH_DB_FAILURE
+ */
+int conv_db_list(int user_id,
+                 bool include_archived,
+                 const conv_pagination_t *pagination,
+                 conversation_callback_t callback,
+                 void *ctx);
+
+/**
+ * @brief Rename a conversation
+ *
+ * @param conv_id Conversation ID
+ * @param user_id User ID (for authorization check)
+ * @param new_title New title
+ * @return AUTH_DB_SUCCESS, AUTH_DB_NOT_FOUND, AUTH_DB_FORBIDDEN, or AUTH_DB_FAILURE
+ */
+int conv_db_rename(int64_t conv_id, int user_id, const char *new_title);
+
+/**
+ * @brief Update context usage for a conversation
+ *
+ * @param conv_id Conversation ID
+ * @param user_id User ID (for authorization check)
+ * @param context_tokens Current token count
+ * @param context_max Maximum context window size
+ * @return AUTH_DB_SUCCESS, AUTH_DB_NOT_FOUND, AUTH_DB_FORBIDDEN, or AUTH_DB_FAILURE
+ */
+int conv_db_update_context(int64_t conv_id, int user_id, int context_tokens, int context_max);
+
+/**
+ * @brief Delete a conversation and all its messages
+ *
+ * @param conv_id Conversation ID
+ * @param user_id User ID (for authorization check)
+ * @return AUTH_DB_SUCCESS, AUTH_DB_NOT_FOUND, AUTH_DB_FORBIDDEN, or AUTH_DB_FAILURE
+ */
+int conv_db_delete(int64_t conv_id, int user_id);
+
+/**
+ * @brief Search conversations by title
+ *
+ * @param user_id User ID
+ * @param query Search query (substring match)
+ * @param pagination Pagination parameters (can be NULL for defaults)
+ * @param callback Function called for each matching conversation
+ * @param ctx User-provided context passed to callback
+ * @return AUTH_DB_SUCCESS or AUTH_DB_FAILURE
+ */
+int conv_db_search(int user_id,
+                   const char *query,
+                   const conv_pagination_t *pagination,
+                   conversation_callback_t callback,
+                   void *ctx);
+
+/**
+ * @brief Search conversations by message content
+ *
+ * Searches message content for the query string.
+ * Returns conversations that have at least one message matching the query.
+ * Slower than conv_db_search which only searches titles.
+ *
+ * @param user_id User ID
+ * @param query Search query (searches message content)
+ * @param pagination Pagination parameters (can be NULL for defaults)
+ * @param callback Function called for each matching conversation
+ * @param ctx User-provided context passed to callback
+ * @return AUTH_DB_SUCCESS or AUTH_DB_FAILURE
+ */
+int conv_db_search_content(int user_id,
+                           const char *query,
+                           const conv_pagination_t *pagination,
+                           conversation_callback_t callback,
+                           void *ctx);
+
+/**
+ * @brief Add a message to a conversation
+ *
+ * Also updates the conversation's updated_at and message_count.
+ *
+ * @param conv_id Conversation ID
+ * @param user_id User ID (for authorization check)
+ * @param role Message role ("system", "user", or "assistant")
+ * @param content Message content
+ * @return AUTH_DB_SUCCESS, AUTH_DB_NOT_FOUND, AUTH_DB_FORBIDDEN, or AUTH_DB_FAILURE
+ */
+int conv_db_add_message(int64_t conv_id, int user_id, const char *role, const char *content);
+
+/**
+ * @brief Get all messages in a conversation
+ *
+ * Messages are returned in chronological order.
+ * The content pointer in each message is only valid during the callback.
+ *
+ * @param conv_id Conversation ID
+ * @param user_id User ID (for authorization check)
+ * @param callback Function called for each message
+ * @param ctx User-provided context passed to callback
+ * @return AUTH_DB_SUCCESS, AUTH_DB_NOT_FOUND, AUTH_DB_FORBIDDEN, or AUTH_DB_FAILURE
+ */
+int conv_db_get_messages(int64_t conv_id, int user_id, message_callback_t callback, void *ctx);
+
+/**
+ * @brief Count conversations for a user
+ *
+ * @param user_id User ID
+ * @return Number of conversations, or -1 on error
+ */
+int conv_db_count(int user_id);
+
+/**
+ * @brief Generate title from first message content
+ *
+ * Extracts first ~50 characters, truncating at word boundary with ellipsis.
+ *
+ * @param content Message content
+ * @param title_out Buffer to receive title
+ * @param max_len Maximum title length
+ */
+void conv_generate_title(const char *content, char *title_out, size_t max_len);
+
+/**
+ * @brief Error code for forbidden access (user doesn't own resource)
+ */
+#define AUTH_DB_FORBIDDEN 8
+
+/**
+ * @brief Error code for limit exceeded
+ */
+#define AUTH_DB_LIMIT_EXCEEDED 9
 
 #endif /* AUTH_DB_H */
