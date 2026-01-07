@@ -34,6 +34,7 @@
   let maxClientsReached = false;  // Skip auto-reconnect when server at capacity
   let currentState = 'idle';
   let debugMode = false;
+  let visualizerCollapsed = false;  // Visualizer panel collapse state
 
   // Audio state
   let audioContext = null;
@@ -166,6 +167,14 @@
     sendBtn: document.getElementById('send-btn'),
     micBtn: document.getElementById('mic-btn'),
     debugBtn: document.getElementById('debug-btn'),
+    // Visualizer collapse elements
+    visualizer: document.getElementById('visualizer'),
+    visualizerMini: document.getElementById('visualizer-mini'),
+    miniStatusDot: document.getElementById('mini-status-dot'),
+    miniStatusText: document.getElementById('mini-status-text'),
+    miniContextValue: document.getElementById('mini-context-value'),
+    miniContext: document.querySelector('.mini-context'),
+    visualizerCollapseToggle: document.getElementById('visualizer-collapse'),
   };
 
   // Multi-ring configuration (viewBox is 240x240, center at 120,120)
@@ -1799,6 +1808,18 @@
       elements.statusText.textContent = state.toUpperCase();
     }
 
+    // Sync mini status bar (when visualizer collapsed) - include full detail
+    if (elements.miniStatusDot) {
+      elements.miniStatusDot.className = 'status-dot ' + state;
+    }
+    if (elements.miniStatusText) {
+      if (detail) {
+        elements.miniStatusText.textContent = state.toUpperCase() + ' · ' + detail;
+      } else {
+        elements.miniStatusText.textContent = state.toUpperCase();
+      }
+    }
+
     // Update ring container - preserve fft-active class if present
     const hasFftActive = elements.ringContainer.classList.contains('fft-active');
     elements.ringContainer.classList.remove(previousState);
@@ -1988,6 +2009,19 @@
     // Also update metricsState and telemetry panel
     metricsState.context_percent = usage;
     updateTelemetryPanel();
+
+    // Sync mini status bar context (when visualizer collapsed)
+    if (elements.miniContextValue) {
+      elements.miniContextValue.textContent = Math.round(usage) + '%';
+    }
+    if (elements.miniContext) {
+      elements.miniContext.classList.remove('warning', 'danger');
+      if (usage > 90) {
+        elements.miniContext.classList.add('danger');
+      } else if (usage > 70) {
+        elements.miniContext.classList.add('warning');
+      }
+    }
 
     if (debugMode) {
       console.log(`Context update: ${current}/${max} tokens (${usage.toFixed(1)}%)`);
@@ -2627,6 +2661,36 @@
   }
 
   // =============================================================================
+  // Visualizer Collapse Toggle
+  // =============================================================================
+  function toggleVisualizerCollapse() {
+    visualizerCollapsed = !visualizerCollapsed;
+
+    if (visualizerCollapsed) {
+      elements.visualizer.classList.add('collapsed');
+      elements.visualizerMini.classList.remove('hidden');
+      if (elements.visualizerCollapseToggle) {
+        elements.visualizerCollapseToggle.setAttribute('aria-expanded', 'false');
+      }
+      if (elements.visualizerMini) {
+        elements.visualizerMini.setAttribute('aria-expanded', 'false');
+      }
+    } else {
+      elements.visualizer.classList.remove('collapsed');
+      elements.visualizerMini.classList.add('hidden');
+      if (elements.visualizerCollapseToggle) {
+        elements.visualizerCollapseToggle.setAttribute('aria-expanded', 'true');
+      }
+      if (elements.visualizerMini) {
+        elements.visualizerMini.setAttribute('aria-expanded', 'true');
+      }
+    }
+
+    // Persist state
+    localStorage.setItem('dawn_visualizer_collapsed', visualizerCollapsed ? 'true' : 'false');
+  }
+
+  // =============================================================================
   // Initialization
   // =============================================================================
   async function init() {
@@ -2692,6 +2756,47 @@
       // Scroll to bottom to see newly visible entries
       elements.transcript.scrollTop = elements.transcript.scrollHeight;
     });
+
+    // Visualizer collapse/expand setup
+    // Restore state from localStorage (mobile defaults to collapsed on first visit)
+    const savedCollapsed = localStorage.getItem('dawn_visualizer_collapsed');
+    const isMobile = window.innerWidth <= 600;
+
+    if (savedCollapsed === 'true' || (savedCollapsed === null && isMobile)) {
+      visualizerCollapsed = true;
+      if (elements.visualizer) {
+        elements.visualizer.classList.add('collapsed');
+      }
+      if (elements.visualizerMini) {
+        elements.visualizerMini.classList.remove('hidden');
+        elements.visualizerMini.setAttribute('aria-expanded', 'false');
+      }
+      if (elements.visualizerCollapseToggle) {
+        elements.visualizerCollapseToggle.setAttribute('aria-expanded', 'false');
+      }
+    }
+
+    // Collapse toggle (in visualizer) - click and keyboard
+    if (elements.visualizerCollapseToggle) {
+      elements.visualizerCollapseToggle.addEventListener('click', toggleVisualizerCollapse);
+      elements.visualizerCollapseToggle.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          toggleVisualizerCollapse();
+        }
+      });
+    }
+
+    // Mini bar (expand) - click and keyboard (entire bar is clickable)
+    if (elements.visualizerMini) {
+      elements.visualizerMini.addEventListener('click', toggleVisualizerCollapse);
+      elements.visualizerMini.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          toggleVisualizerCollapse();
+        }
+      });
+    }
 
     // Event delegation for transcript (handles dynamically added elements)
     if (elements.transcript) {

@@ -543,11 +543,48 @@ static json_object *convert_to_claude_format(struct json_object *openai_conversa
       // Convert tool role messages (OpenAI format) to Claude tool_result format
       if (strcmp(role, "tool") == 0) {
          json_object *tool_call_id_obj;
-         const char *tool_call_id = "";
+         const char *tool_call_id = NULL;
          const char *result_content = json_object_get_string(content_obj);
 
          if (json_object_object_get_ex(msg, "tool_call_id", &tool_call_id_obj)) {
             tool_call_id = json_object_get_string(tool_call_id_obj);
+         }
+
+         // Handle orphaned tool messages (restored from DB without tool_call_id)
+         if (!tool_call_id || strlen(tool_call_id) == 0) {
+            LOG_WARNING(
+                "Claude: Orphaned tool message without tool_call_id, converting to summary");
+            // Convert to assistant summary to preserve context
+            if (result_content && strlen(result_content) > 0) {
+               char summary[2048];
+               snprintf(summary, sizeof(summary), "[Previous tool result: %.1900s%s]",
+                        result_content, strlen(result_content) > 1900 ? "..." : "");
+
+               json_object *summary_msg = json_object_new_object();
+               json_object_object_add(summary_msg, "role", json_object_new_string("assistant"));
+               json_object_object_add(summary_msg, "content", json_object_new_string(summary));
+
+               // Handle role alternation
+               if (last_role != NULL && strcmp(last_role, "assistant") == 0 &&
+                   last_message != NULL) {
+                  // Append to existing assistant content
+                  json_object *last_content;
+                  if (json_object_object_get_ex(last_message, "content", &last_content)) {
+                     const char *existing = json_object_get_string(last_content);
+                     char combined[4096];
+                     snprintf(combined, sizeof(combined), "%s\n%s", existing ? existing : "",
+                              summary);
+                     json_object_object_add(last_message, "content",
+                                            json_object_new_string(combined));
+                  }
+                  json_object_put(summary_msg);
+               } else {
+                  json_object_array_add(messages_array, summary_msg);
+                  last_message = summary_msg;
+                  last_role = "assistant";
+               }
+            }
+            continue;
          }
 
          // Create tool_result block in a user message (Claude requirement)

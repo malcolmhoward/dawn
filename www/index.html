@@ -60,8 +60,25 @@
       </div>
     </header>
 
+    <!-- Mini status bar (shown when visualizer is collapsed) - clickable to expand -->
+    <div id="visualizer-mini" class="visualizer-mini hidden" role="button" tabindex="0" aria-expanded="false" aria-controls="visualizer" title="Click to expand visualizer">
+      <div class="mini-left">
+        <span id="mini-status-dot" class="status-dot"></span>
+        <span id="mini-status-text">IDLE</span>
+      </div>
+      <div class="mini-right">
+        <span class="mini-context">
+          <span>Context:</span>
+          <span id="mini-context-value">0%</span>
+        </span>
+        <span class="mini-toggle">&#9660;</span>
+      </div>
+    </div>
+
     <!-- Visualization container: [RINGS] [TELEMETRY] layout -->
     <div id="visualizer">
+      <!-- Collapse toggle (top-right) - subtle like continuation banner -->
+      <span id="visualizer-collapse" class="visualizer-collapse-toggle" role="button" tabindex="0" aria-expanded="true" aria-controls="visualizer" title="Collapse visualizer">&#9650;</span>
       <!-- Fixed Ring Assembly (left side) -->
       <div id="ring-container" title="Outer: Hesitation (token timing variance) | Middle: Throughput (token rate) | Inner: Audio EQ">
         <svg id="ring-svg" class="ring" viewBox="0 0 240 240">

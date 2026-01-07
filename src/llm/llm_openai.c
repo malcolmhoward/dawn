@@ -282,6 +282,127 @@ static bool is_claude_image_block(struct json_object *block) {
    return (strcmp(type_str, "image") == 0);
 }
 
+/**
+ * @brief Filter orphaned tool messages from conversation history.
+ *
+ * When conversations are restored from the database, tool messages lose their
+ * tool_call_id and assistant messages lose their tool_calls array. OpenAI API
+ * requires tool messages to reference a preceding tool_calls, so orphaned
+ * messages cause HTTP 400 errors.
+ *
+ * This function:
+ * - Removes tool messages without tool_call_id
+ * - Removes assistant messages with null content and no tool_calls
+ * - Converts orphaned tool content to assistant summaries to preserve context
+ *
+ * @param history The conversation history JSON array
+ * @return Filtered history (new object with incremented refcount, caller must put)
+ */
+static struct json_object *filter_orphaned_tool_messages(struct json_object *history) {
+   int len = json_object_array_length(history);
+   bool needs_filtering = false;
+
+   // First pass: check if filtering is needed
+   for (int i = 0; i < len; i++) {
+      struct json_object *msg = json_object_array_get_idx(history, i);
+      struct json_object *role_obj;
+
+      if (!json_object_object_get_ex(msg, "role", &role_obj)) {
+         continue;
+      }
+      const char *role = json_object_get_string(role_obj);
+
+      if (strcmp(role, "tool") == 0) {
+         // Check if tool message has tool_call_id
+         struct json_object *tool_call_id_obj;
+         if (!json_object_object_get_ex(msg, "tool_call_id", &tool_call_id_obj)) {
+            needs_filtering = true;
+            break;
+         }
+      } else if (strcmp(role, "assistant") == 0) {
+         // Check for assistant message with null content and no tool_calls
+         struct json_object *content_obj, *tool_calls_obj;
+         json_object_object_get_ex(msg, "content", &content_obj);
+         bool has_tool_calls = json_object_object_get_ex(msg, "tool_calls", &tool_calls_obj);
+
+         if (!has_tool_calls &&
+             (content_obj == NULL || json_object_get_string(content_obj) == NULL ||
+              strlen(json_object_get_string(content_obj)) == 0)) {
+            needs_filtering = true;
+            break;
+         }
+      }
+   }
+
+   if (!needs_filtering) {
+      return json_object_get(history);
+   }
+
+   LOG_WARNING("OpenAI: Filtering orphaned tool messages from restored conversation");
+
+   struct json_object *filtered = json_object_new_array();
+   int orphan_count = 0;
+
+   for (int i = 0; i < len; i++) {
+      struct json_object *msg = json_object_array_get_idx(history, i);
+      struct json_object *role_obj;
+
+      if (!json_object_object_get_ex(msg, "role", &role_obj)) {
+         json_object_array_add(filtered, json_object_get(msg));
+         continue;
+      }
+      const char *role = json_object_get_string(role_obj);
+
+      if (strcmp(role, "tool") == 0) {
+         struct json_object *tool_call_id_obj;
+         if (!json_object_object_get_ex(msg, "tool_call_id", &tool_call_id_obj)) {
+            // Orphaned tool message - convert to assistant summary
+            struct json_object *content_obj;
+            if (json_object_object_get_ex(msg, "content", &content_obj)) {
+               const char *content = json_object_get_string(content_obj);
+               if (content && strlen(content) > 0) {
+                  // Create assistant message with tool result summary
+                  struct json_object *summary_msg = json_object_new_object();
+                  json_object_object_add(summary_msg, "role", json_object_new_string("assistant"));
+
+                  char summary[2048];
+                  snprintf(summary, sizeof(summary), "[Previous tool result: %.1900s%s]", content,
+                           strlen(content) > 1900 ? "..." : "");
+                  json_object_object_add(summary_msg, "content", json_object_new_string(summary));
+                  json_object_array_add(filtered, summary_msg);
+               }
+            }
+            orphan_count++;
+            continue;
+         }
+         // Valid tool message - keep it
+         json_object_array_add(filtered, json_object_get(msg));
+      } else if (strcmp(role, "assistant") == 0) {
+         struct json_object *content_obj, *tool_calls_obj;
+         json_object_object_get_ex(msg, "content", &content_obj);
+         bool has_tool_calls = json_object_object_get_ex(msg, "tool_calls", &tool_calls_obj);
+
+         // Skip assistant messages with no content and no tool_calls (empty placeholders)
+         if (!has_tool_calls &&
+             (content_obj == NULL || json_object_get_string(content_obj) == NULL ||
+              strlen(json_object_get_string(content_obj)) == 0)) {
+            orphan_count++;
+            continue;
+         }
+         json_object_array_add(filtered, json_object_get(msg));
+      } else {
+         // Keep all other messages (system, user)
+         json_object_array_add(filtered, json_object_get(msg));
+      }
+   }
+
+   if (orphan_count > 0) {
+      LOG_INFO("OpenAI: Filtered %d orphaned tool-related messages", orphan_count);
+   }
+
+   return filtered;
+}
+
 static struct json_object *convert_claude_tool_messages(struct json_object *history) {
    int len = json_object_array_length(history);
 
@@ -544,8 +665,12 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
    json_object *usage_obj = NULL;
    json_object *total_tokens_obj = NULL;
 
+   // Filter orphaned tool messages (from restored conversations)
+   json_object *filtered_history = filter_orphaned_tool_messages(conversation_history);
+
    // Convert Claude-format tool messages to text summaries
-   json_object *converted_history = convert_claude_tool_messages(conversation_history);
+   json_object *converted_history = convert_claude_tool_messages(filtered_history);
+   json_object_put(filtered_history);
 
    // Strip vision content if target LLM doesn't support vision
    if (!is_vision_enabled_for_current_llm()) {
@@ -895,8 +1020,12 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
    llm_stream_context_t *stream_ctx = NULL;
    openai_streaming_context_t streaming_ctx;
 
+   // Filter orphaned tool messages (from restored conversations)
+   json_object *filtered_history = filter_orphaned_tool_messages(conversation_history);
+
    // Convert Claude-format tool messages to text summaries
-   json_object *converted_history = convert_claude_tool_messages(conversation_history);
+   json_object *converted_history = convert_claude_tool_messages(filtered_history);
+   json_object_put(filtered_history);
 
    // Strip vision content if target LLM doesn't support vision
    if (!is_vision_enabled_for_current_llm()) {
