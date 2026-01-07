@@ -27,27 +27,16 @@
 #include <string.h>
 #include <time.h>
 
+#include "auth/auth_db.h"
 #include "config/dawn_config.h"
 #include "llm/llm_command_parser.h"
 #include "llm/llm_interface.h"
 #include "llm/sentence_buffer.h"
 #include "logging.h"
+#include "tools/time_utils.h"
 #ifdef ENABLE_WEBUI
 #include "webui/webui_server.h"
 #endif
-
-// =============================================================================
-// Streaming Helpers
-// =============================================================================
-
-/**
- * @brief Get current time in milliseconds (monotonic clock)
- */
-static uint64_t get_time_ms(void) {
-   struct timespec ts;
-   clock_gettime(CLOCK_MONOTONIC, &ts);
-   return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
-}
 
 // =============================================================================
 // Streaming Callbacks
@@ -200,10 +189,25 @@ static session_t *session_alloc(void) {
       return NULL;
    }
 
+   if (pthread_mutex_init(&session->metrics_mutex, NULL) != 0) {
+      LOG_ERROR("Failed to init metrics_mutex");
+      pthread_mutex_destroy(&session->llm_config_mutex);
+      pthread_cond_destroy(&session->ref_zero_cond);
+      pthread_mutex_destroy(&session->ref_mutex);
+      pthread_mutex_destroy(&session->fd_mutex);
+      pthread_mutex_destroy(&session->history_mutex);
+      free(session);
+      return NULL;
+   }
+
+   // Initialize metrics tracker (db_id = -1 means not yet saved to DB)
+   session->metrics.db_id = -1;
+
    // Initialize conversation history as empty JSON array
    session->conversation_history = json_object_new_array();
    if (!session->conversation_history) {
       LOG_ERROR("Failed to create conversation history array");
+      pthread_mutex_destroy(&session->metrics_mutex);
       pthread_mutex_destroy(&session->llm_config_mutex);
       pthread_cond_destroy(&session->ref_zero_cond);
       pthread_mutex_destroy(&session->ref_mutex);
@@ -237,6 +241,7 @@ static void session_free(session_t *session) {
    pthread_cond_destroy(&session->ref_zero_cond);
    pthread_mutex_destroy(&session->ref_mutex);
    pthread_mutex_destroy(&session->fd_mutex);
+   pthread_mutex_destroy(&session->metrics_mutex);
    pthread_mutex_destroy(&session->llm_config_mutex);
    pthread_mutex_destroy(&session->history_mutex);
 
@@ -684,6 +689,41 @@ void session_destroy(uint32_t session_id) {
       pthread_cond_wait(&session->ref_zero_cond, &session->ref_mutex);
    }
    pthread_mutex_unlock(&session->ref_mutex);
+
+   // Phase 3: Final metrics persist (updates ended_at timestamp)
+   // Per-query metrics are already saved; this ensures ended_at is final.
+   // Only persist if session had at least one query (db_id > 0).
+   pthread_mutex_lock(&session->metrics_mutex);
+   if (session->metrics.db_id > 0 && auth_db_is_ready()) {
+      session_metrics_t db_metrics = { 0 };
+      session_metrics_tracker_t *m = &session->metrics;
+
+      db_metrics.id = m->db_id;
+      db_metrics.session_id = session->session_id;
+      db_metrics.user_id = m->user_id;
+      strncpy(db_metrics.session_type, session_type_name(session->type),
+              sizeof(db_metrics.session_type) - 1);
+      db_metrics.started_at = session->created_at;
+      db_metrics.ended_at = time(NULL);
+      db_metrics.queries_total = m->queries_total;
+      db_metrics.queries_cloud = m->queries_cloud;
+      db_metrics.queries_local = m->queries_local;
+      db_metrics.errors_count = m->errors_count;
+      db_metrics.fallbacks_count = m->fallbacks_count;
+
+      if (m->perf_sample_count > 0) {
+         db_metrics.avg_asr_ms = m->asr_ms_sum / m->perf_sample_count;
+         db_metrics.avg_llm_ttft_ms = m->llm_ttft_ms_sum / m->perf_sample_count;
+         db_metrics.avg_llm_total_ms = m->llm_total_ms_sum / m->perf_sample_count;
+         db_metrics.avg_tts_ms = m->tts_ms_sum / m->perf_sample_count;
+         db_metrics.avg_pipeline_ms = m->pipeline_ms_sum / m->perf_sample_count;
+      }
+
+      auth_db_save_session_metrics(&db_metrics);
+      LOG_INFO("Session %u: Final metrics saved (queries=%u, cloud=%u, local=%u)", session_id,
+               m->queries_total, m->queries_cloud, m->queries_local);
+   }
+   pthread_mutex_unlock(&session->metrics_mutex);
 
    LOG_INFO("Destroying session %u (type=%s)", session_id, session_type_name(session->type));
    session_free(session);
@@ -1356,61 +1396,197 @@ session_t *session_get_command_context(void) {
 }
 
 // =============================================================================
-// History Saving
+// Per-Session Metrics
 // =============================================================================
 
-void session_manager_save_all_histories(void) {
-   if (!initialized) {
+/**
+ * @brief Find or create provider entry in session metrics
+ *
+ * @param session Session to search
+ * @param provider Provider name ("openai", "claude", "local")
+ * @return Pointer to provider entry, or NULL if full
+ *
+ * @note Caller must hold session->metrics_mutex
+ */
+static session_provider_tokens_t *find_or_create_provider(session_t *session,
+                                                          const char *provider) {
+   session_metrics_tracker_t *m = &session->metrics;
+
+   // Search for existing provider
+   for (int i = 0; i < m->provider_count; i++) {
+      if (strcmp(m->providers[i].provider, provider) == 0) {
+         return &m->providers[i];
+      }
+   }
+
+   // Create new entry if space available
+   if (m->provider_count < SESSION_MAX_PROVIDERS) {
+      session_provider_tokens_t *p = &m->providers[m->provider_count++];
+      strncpy(p->provider, provider, SESSION_PROVIDER_MAX - 1);
+      p->provider[SESSION_PROVIDER_MAX - 1] = '\0';
+      return p;
+   }
+
+   LOG_WARNING("Session %u: Max providers (%d) reached, can't add '%s'", session->session_id,
+               SESSION_MAX_PROVIDERS, provider);
+   return NULL;
+}
+
+/**
+ * @brief Persist session metrics to database
+ *
+ * Uses UPSERT pattern: INSERT on first call, UPDATE on subsequent calls.
+ *
+ * @param session Session with metrics to save
+ *
+ * @note Caller must hold session->metrics_mutex
+ */
+static void persist_session_metrics(session_t *session) {
+   if (!auth_db_is_ready()) {
       return;
    }
 
-   time_t current_time;
-   struct tm *time_info;
-   char filename[256];
+   session_metrics_tracker_t *m = &session->metrics;
 
-   time(&current_time);
-   time_info = localtime(&current_time);
+   // Build session_metrics_t for database
+   session_metrics_t db_metrics = { 0 };
+   db_metrics.id = m->db_id;  // -1 for INSERT, >0 for UPDATE
+   db_metrics.session_id = session->session_id;
+   db_metrics.user_id = m->user_id;
+   strncpy(db_metrics.session_type, session_type_name(session->type),
+           sizeof(db_metrics.session_type) - 1);
+   db_metrics.started_at = session->created_at;
+   db_metrics.ended_at = time(NULL);
 
-   pthread_rwlock_rdlock(&session_manager_rwlock);
+   db_metrics.queries_total = m->queries_total;
+   db_metrics.queries_cloud = m->queries_cloud;
+   db_metrics.queries_local = m->queries_local;
+   db_metrics.errors_count = m->errors_count;
+   db_metrics.fallbacks_count = m->fallbacks_count;
 
-   for (int i = 0; i < MAX_SESSIONS; i++) {
-      session_t *session = sessions[i];
-      if (session == NULL) {
-         continue;
-      }
-
-      pthread_mutex_lock(&session->history_mutex);
-
-      // Only save if history has more than just the system message
-      int history_len = json_object_array_length(session->conversation_history);
-      if (history_len > 1) {
-         // Create unique filename with session ID and type
-         snprintf(filename, sizeof(filename),
-                  "chat_history_session%u_%s_%04d%02d%02d_%02d%02d%02d.json", session->session_id,
-                  session_type_name(session->type), time_info->tm_year + 1900,
-                  time_info->tm_mon + 1, time_info->tm_mday, time_info->tm_hour, time_info->tm_min,
-                  time_info->tm_sec);
-
-         FILE *chat_file = fopen(filename, "w");
-         if (chat_file != NULL) {
-            const char *json_string = json_object_to_json_string_ext(
-                session->conversation_history,
-                JSON_C_TO_STRING_PRETTY | JSON_C_TO_STRING_NOSLASHESCAPE);
-            if (json_string != NULL) {
-               fprintf(chat_file, "%s\n", json_string);
-               LOG_INFO("Saved conversation history for session %u (%s, %d messages) to: %s",
-                        session->session_id, session_type_name(session->type), history_len,
-                        filename);
-            }
-            fclose(chat_file);
-         } else {
-            LOG_ERROR("Failed to open chat history file for session %u: %s", session->session_id,
-                      filename);
-         }
-      }
-
-      pthread_mutex_unlock(&session->history_mutex);
+   // Calculate averages from sums
+   if (m->perf_sample_count > 0) {
+      db_metrics.avg_asr_ms = m->asr_ms_sum / m->perf_sample_count;
+      db_metrics.avg_llm_ttft_ms = m->llm_ttft_ms_sum / m->perf_sample_count;
+      db_metrics.avg_llm_total_ms = m->llm_total_ms_sum / m->perf_sample_count;
+      db_metrics.avg_tts_ms = m->tts_ms_sum / m->perf_sample_count;
+      db_metrics.avg_pipeline_ms = m->pipeline_ms_sum / m->perf_sample_count;
    }
 
-   pthread_rwlock_unlock(&session_manager_rwlock);
+   // Save to database (INSERT or UPDATE based on db_metrics.id)
+   if (auth_db_save_session_metrics(&db_metrics) == AUTH_DB_SUCCESS) {
+      // Store returned ID for subsequent UPDATEs
+      if (m->db_id < 0) {
+         m->db_id = db_metrics.id;
+         LOG_INFO("Session %u: Created metrics row (id=%lld)", session->session_id,
+                  (long long)m->db_id);
+      }
+
+      // Save per-provider metrics (delete existing + re-insert)
+      if (m->provider_count > 0 && m->db_id > 0) {
+         session_provider_metrics_t providers[SESSION_MAX_PROVIDERS];
+         for (int i = 0; i < m->provider_count; i++) {
+            providers[i].session_metrics_id = m->db_id;
+            strncpy(providers[i].provider, m->providers[i].provider, CLOUD_PROVIDER_MAX - 1);
+            providers[i].provider[CLOUD_PROVIDER_MAX - 1] = '\0';
+            providers[i].tokens_input = m->providers[i].tokens_input;
+            providers[i].tokens_output = m->providers[i].tokens_output;
+            providers[i].tokens_cached = m->providers[i].tokens_cached;
+            providers[i].queries = m->providers[i].queries;
+         }
+         auth_db_save_provider_metrics(m->db_id, providers, m->provider_count);
+      }
+   }
 }
+
+void session_record_query(session_t *session,
+                          const char *provider,
+                          uint64_t tokens_in,
+                          uint64_t tokens_out,
+                          uint64_t tokens_cached,
+                          double llm_ttft_ms,
+                          double llm_total_ms,
+                          bool is_error) {
+   if (!session || !provider) {
+      return;
+   }
+
+   pthread_mutex_lock(&session->metrics_mutex);
+
+   session_metrics_tracker_t *m = &session->metrics;
+
+   // Update query counts
+   m->queries_total++;
+   if (strcmp(provider, "local") == 0) {
+      m->queries_local++;
+   } else {
+      m->queries_cloud++;
+   }
+   if (is_error) {
+      m->errors_count++;
+   }
+
+   // Update per-provider token tracking
+   session_provider_tokens_t *p = find_or_create_provider(session, provider);
+   if (p) {
+      p->tokens_input += tokens_in;
+      p->tokens_output += tokens_out;
+      p->tokens_cached += tokens_cached;
+      p->queries++;
+   }
+
+   // Update LLM performance sums
+   m->llm_ttft_ms_sum += llm_ttft_ms;
+   m->llm_total_ms_sum += llm_total_ms;
+   m->perf_sample_count++;
+
+   // Persist to database
+   persist_session_metrics(session);
+
+   pthread_mutex_unlock(&session->metrics_mutex);
+}
+
+void session_record_asr_timing(session_t *session, double asr_ms) {
+   if (!session) {
+      return;
+   }
+
+   pthread_mutex_lock(&session->metrics_mutex);
+   session->metrics.asr_ms_sum += asr_ms;
+   pthread_mutex_unlock(&session->metrics_mutex);
+}
+
+void session_record_tts_timing(session_t *session, double tts_ms) {
+   if (!session) {
+      return;
+   }
+
+   pthread_mutex_lock(&session->metrics_mutex);
+   session->metrics.tts_ms_sum += tts_ms;
+   pthread_mutex_unlock(&session->metrics_mutex);
+}
+
+void session_record_pipeline_timing(session_t *session, double pipeline_ms) {
+   if (!session) {
+      return;
+   }
+
+   pthread_mutex_lock(&session->metrics_mutex);
+   session->metrics.pipeline_ms_sum += pipeline_ms;
+   pthread_mutex_unlock(&session->metrics_mutex);
+}
+
+void session_set_metrics_user(session_t *session, int user_id) {
+   if (!session) {
+      return;
+   }
+
+   pthread_mutex_lock(&session->metrics_mutex);
+   session->metrics.user_id = user_id;
+   pthread_mutex_unlock(&session->metrics_mutex);
+}
+
+/* Note: File-based history saving (session_manager_save_all_histories) has been removed.
+ * WebUI sessions persist to auth.db (conversations/messages tables) during the session.
+ * LOCAL/DAP sessions do not persist conversation history.
+ * See docs/NEXT_STEPS.md Section 13 for future export functionality via dawn-admin. */

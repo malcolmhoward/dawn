@@ -888,3 +888,352 @@ const char *admin_resp_strerror(admin_resp_code_t code) {
          return "Unknown error";
    }
 }
+
+/* =============================================================================
+ * Phase 3: Session Metrics
+ * =============================================================================
+ */
+
+admin_resp_code_t admin_client_list_metrics(int fd,
+                                            const admin_metrics_filter_t *filter,
+                                            admin_metrics_callback_t callback,
+                                            void *ctx) {
+   if (!callback) {
+      return ADMIN_RESP_FAILURE;
+   }
+
+   /* Build filter payload: 4 bytes user_id, 4 bytes limit, 1 byte type_len, N bytes type */
+   char payload[64] = { 0 };
+   char *p = payload;
+
+   int32_t user_id = filter ? filter->user_id : 0;
+   memcpy(p, &user_id, 4);
+   p += 4;
+
+   int32_t limit = filter ? (filter->limit > 0 ? filter->limit : 20) : 20;
+   memcpy(p, &limit, 4);
+   p += 4;
+
+   uint8_t type_len = 0;
+   if (filter && filter->type) {
+      type_len = (uint8_t)strlen(filter->type);
+      if (type_len > 15)
+         type_len = 15;
+   }
+   *p++ = type_len;
+
+   if (type_len > 0) {
+      memcpy(p, filter->type, type_len);
+      p += type_len;
+   }
+
+   uint16_t payload_len = (uint16_t)(p - payload);
+
+   if (send_message(fd, ADMIN_MSG_LIST_METRICS, payload, payload_len) != 0) {
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+
+   admin_list_response_t resp;
+   char buffer[8192];
+   if (recv_list_response(fd, &resp, buffer, sizeof(buffer)) != 0) {
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+
+   if (resp.response_code != ADMIN_RESP_SUCCESS) {
+      return (admin_resp_code_t)resp.response_code;
+   }
+
+   /* Parse packed metrics entries
+    * Format: 8 bytes id, 4 bytes session_id, 4 bytes user_id, 1 byte type_len,
+    *         N bytes type, 8 bytes started_at, 8 bytes ended_at, 4 bytes queries_total,
+    *         4 bytes queries_cloud, 4 bytes queries_local, 4 bytes errors,
+    *         8 bytes avg_llm_ms (double)
+    */
+   const char *rp = buffer;
+   const char *end = buffer + resp.payload_len;
+
+   for (uint16_t i = 0; i < resp.item_count && rp < end; i++) {
+      if (rp + 53 > end)
+         break;
+
+      admin_metrics_entry_t entry = { 0 };
+
+      memcpy(&entry.id, rp, 8);
+      rp += 8;
+      memcpy(&entry.session_id, rp, 4);
+      rp += 4;
+      memcpy(&entry.user_id, rp, 4);
+      rp += 4;
+
+      uint8_t tlen = (uint8_t)*rp++;
+      if (rp + tlen > end)
+         break;
+      size_t copy_len = (tlen < 15) ? tlen : 15;
+      memcpy(entry.session_type, rp, copy_len);
+      rp += tlen;
+
+      memcpy(&entry.started_at, rp, 8);
+      rp += 8;
+      memcpy(&entry.ended_at, rp, 8);
+      rp += 8;
+      memcpy(&entry.queries_total, rp, 4);
+      rp += 4;
+      memcpy(&entry.queries_cloud, rp, 4);
+      rp += 4;
+      memcpy(&entry.queries_local, rp, 4);
+      rp += 4;
+      memcpy(&entry.errors_count, rp, 4);
+      rp += 4;
+      memcpy(&entry.avg_llm_total_ms, rp, 8);
+      rp += 8;
+
+      if (callback(&entry, ctx) != 0)
+         break;
+   }
+
+   return ADMIN_RESP_SUCCESS;
+}
+
+admin_resp_code_t admin_client_get_metrics_totals(int fd,
+                                                  const admin_metrics_filter_t *filter,
+                                                  admin_metrics_totals_t *totals) {
+   if (!totals) {
+      return ADMIN_RESP_FAILURE;
+   }
+
+   /* Build filter payload: 4 bytes user_id, 1 byte type_len, N bytes type */
+   char payload[32] = { 0 };
+   char *p = payload;
+
+   int32_t user_id = filter ? filter->user_id : 0;
+   memcpy(p, &user_id, 4);
+   p += 4;
+
+   uint8_t type_len = 0;
+   if (filter && filter->type) {
+      type_len = (uint8_t)strlen(filter->type);
+      if (type_len > 15)
+         type_len = 15;
+   }
+   *p++ = type_len;
+
+   if (type_len > 0) {
+      memcpy(p, filter->type, type_len);
+      p += type_len;
+   }
+
+   uint16_t payload_len = (uint16_t)(p - payload);
+
+   if (send_message(fd, ADMIN_MSG_GET_METRICS_TOTALS, payload, payload_len) != 0) {
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+
+   /* Response is a fixed structure:
+    * 4 bytes response header + 4 bytes session_count + 8 bytes queries_total +
+    * 8 bytes queries_cloud + 8 bytes queries_local + 8 bytes errors_total +
+    * 8 bytes avg_llm_ms
+    */
+   admin_msg_response_t resp;
+   if (recv_response(fd, &resp) != 0) {
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+
+   if (resp.response_code != ADMIN_RESP_SUCCESS) {
+      return (admin_resp_code_t)resp.response_code;
+   }
+
+   /* Read the totals data */
+   char data[48];
+   ssize_t n = read(fd, data, sizeof(data));
+   if (n != sizeof(data)) {
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+
+   const char *dp = data;
+   memcpy(&totals->session_count, dp, 4);
+   dp += 4;
+   memcpy(&totals->queries_total, dp, 8);
+   dp += 8;
+   memcpy(&totals->queries_cloud, dp, 8);
+   dp += 8;
+   memcpy(&totals->queries_local, dp, 8);
+   dp += 8;
+   memcpy(&totals->errors_total, dp, 8);
+   dp += 8;
+   memcpy(&totals->avg_llm_ms, dp, 8);
+
+   return ADMIN_RESP_SUCCESS;
+}
+
+/* =============================================================================
+ * Phase 4: Conversation Management
+ * =============================================================================
+ */
+
+admin_resp_code_t admin_client_list_conversations(int fd,
+                                                  const admin_conversation_filter_t *filter,
+                                                  admin_conversation_callback_t callback,
+                                                  void *ctx) {
+   if (!callback) {
+      return ADMIN_RESP_FAILURE;
+   }
+
+   /* Build filter payload: 4 bytes user_id, 4 bytes limit, 1 byte include_archived */
+   char payload[9] = { 0 };
+
+   int32_t user_id = filter ? filter->user_id : 0;
+   memcpy(payload, &user_id, 4);
+
+   int32_t limit = filter ? (filter->limit > 0 ? filter->limit : 20) : 20;
+   memcpy(payload + 4, &limit, 4);
+
+   payload[8] = filter ? (filter->include_archived ? 1 : 0) : 0;
+
+   if (send_message(fd, ADMIN_MSG_LIST_CONVERSATIONS, payload, 9) != 0) {
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+
+   admin_list_response_t resp;
+   char buffer[8192];
+   if (recv_list_response(fd, &resp, buffer, sizeof(buffer)) != 0) {
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+
+   if (resp.response_code != ADMIN_RESP_SUCCESS) {
+      return (admin_resp_code_t)resp.response_code;
+   }
+
+   /* Parse packed conversation entries
+    * Format: 8 bytes id, 1 byte title_len, N bytes title, 8 bytes created_at,
+    *         8 bytes updated_at, 4 bytes message_count, 1 byte uname_len, N bytes username
+    */
+   const char *rp = buffer;
+   const char *end = buffer + resp.payload_len;
+
+   for (uint16_t i = 0; i < resp.item_count && rp < end; i++) {
+      if (rp + 30 > end)
+         break;
+
+      admin_conversation_entry_t entry = { 0 };
+
+      memcpy(&entry.id, rp, 8);
+      rp += 8;
+
+      uint8_t title_len = (uint8_t)*rp++;
+      if (rp + title_len > end)
+         break;
+      size_t copy_len = (title_len < 127) ? title_len : 127;
+      memcpy(entry.title, rp, copy_len);
+      rp += title_len;
+
+      memcpy(&entry.created_at, rp, 8);
+      rp += 8;
+      memcpy(&entry.updated_at, rp, 8);
+      rp += 8;
+      memcpy(&entry.message_count, rp, 4);
+      rp += 4;
+
+      uint8_t uname_len = (uint8_t)*rp++;
+      if (rp + uname_len > end)
+         break;
+      copy_len = (uname_len < 63) ? uname_len : 63;
+      memcpy(entry.username, rp, copy_len);
+      rp += uname_len;
+
+      if (callback(&entry, ctx) != 0)
+         break;
+   }
+
+   return ADMIN_RESP_SUCCESS;
+}
+
+admin_resp_code_t admin_client_get_conversation(int fd,
+                                                int64_t conv_id,
+                                                admin_message_callback_t callback,
+                                                void *ctx) {
+   if (!callback) {
+      return ADMIN_RESP_FAILURE;
+   }
+
+   /* Send conv_id as payload */
+   if (send_message(fd, ADMIN_MSG_GET_CONVERSATION, &conv_id, 8) != 0) {
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+
+   admin_list_response_t resp;
+   char buffer[32768]; /* Messages can be large */
+   if (recv_list_response(fd, &resp, buffer, sizeof(buffer)) != 0) {
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+
+   if (resp.response_code != ADMIN_RESP_SUCCESS) {
+      return (admin_resp_code_t)resp.response_code;
+   }
+
+   /* Parse packed message entries
+    * Format: 1 byte role_len, N bytes role, 2 bytes content_len, N bytes content,
+    *         8 bytes created_at
+    */
+   const char *rp = buffer;
+   const char *end = buffer + resp.payload_len;
+
+   for (uint16_t i = 0; i < resp.item_count && rp < end; i++) {
+      if (rp + 11 > end)
+         break;
+
+      admin_message_entry_t entry = { 0 };
+
+      uint8_t role_len = (uint8_t)*rp++;
+      if (rp + role_len > end)
+         break;
+      size_t copy_len = (role_len < 15) ? role_len : 15;
+      memcpy(entry.role, rp, copy_len);
+      rp += role_len;
+
+      uint16_t content_len;
+      memcpy(&content_len, rp, 2);
+      rp += 2;
+      if (rp + content_len > end)
+         break;
+      copy_len = (content_len < ADMIN_MSG_CONTENT_MAX) ? content_len : ADMIN_MSG_CONTENT_MAX;
+      memcpy(entry.content, rp, copy_len);
+      rp += content_len;
+
+      memcpy(&entry.created_at, rp, 8);
+      rp += 8;
+
+      if (callback(&entry, ctx) != 0)
+         break;
+   }
+
+   return ADMIN_RESP_SUCCESS;
+}
+
+admin_resp_code_t admin_client_delete_conversation(int fd,
+                                                   const char *admin_user,
+                                                   const char *admin_password,
+                                                   int64_t conv_id) {
+   if (!admin_user || !admin_password) {
+      return ADMIN_RESP_FAILURE;
+   }
+
+   char payload[ADMIN_MSG_MAX_PAYLOAD];
+   size_t auth_len = build_auth_prefix(payload, admin_user, admin_password);
+
+   if (auth_len + 8 > ADMIN_MSG_MAX_PAYLOAD) {
+      return ADMIN_RESP_FAILURE;
+   }
+
+   memcpy(payload + auth_len, &conv_id, 8);
+
+   if (send_message(fd, ADMIN_MSG_DELETE_CONVERSATION, payload, (uint16_t)(auth_len + 8)) != 0) {
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+
+   admin_msg_response_t resp;
+   if (recv_response(fd, &resp) != 0) {
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+
+   return (admin_resp_code_t)resp.response_code;
+}

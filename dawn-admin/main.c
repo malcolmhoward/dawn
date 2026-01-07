@@ -23,6 +23,7 @@
  * Implements user and session management commands for the Dawn daemon.
  */
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -68,6 +69,20 @@ static void print_usage(const char *prog) {
    fprintf(stderr, "  ip unblock <ip-address>           Unblock a rate-limited IP address\n");
    fprintf(stderr, "  ip unblock --all                  Unblock all IP addresses\n");
    fprintf(stderr, "\n");
+   fprintf(stderr, "Session Metrics:\n");
+   fprintf(stderr, "  metrics list [options]            List session metrics history\n");
+   fprintf(stderr, "    --last N                        Show last N entries (default 20)\n");
+   fprintf(stderr,
+           "    --type <type>                   Filter by session type (LOCAL, WEBSOCKET)\n");
+   fprintf(stderr, "  metrics summary                   Show aggregate metrics totals\n");
+   fprintf(stderr, "\n");
+   fprintf(stderr, "Conversations:\n");
+   fprintf(stderr, "  conv list [options]               List conversations\n");
+   fprintf(stderr, "    --last N                        Show last N entries (default 20)\n");
+   fprintf(stderr, "    --archived, -a                  Include archived conversations\n");
+   fprintf(stderr, "  conv show <id>                    Show conversation messages\n");
+   fprintf(stderr, "  conv delete <id>                  Delete a conversation\n");
+   fprintf(stderr, "\n");
    fprintf(stderr, "Options:\n");
    fprintf(stderr, "  --yes, -y    Skip confirmation prompts\n");
    fprintf(stderr, "  help         Show this help message\n");
@@ -84,6 +99,10 @@ static void print_usage(const char *prog) {
    fprintf(stderr, "  %s log show --last 100 --type LOGIN_FAILED\n", prog);
    fprintf(stderr, "  %s ip list\n", prog);
    fprintf(stderr, "  %s ip unblock 192.168.1.100\n", prog);
+   fprintf(stderr, "  %s metrics list\n", prog);
+   fprintf(stderr, "  %s metrics summary\n", prog);
+   fprintf(stderr, "  %s conv list\n", prog);
+   fprintf(stderr, "  %s conv show 123\n", prog);
 }
 
 static int cmd_ping(void) {
@@ -773,6 +792,250 @@ static int cmd_ip_unblock(const char *ip_address) {
    return 0;
 }
 
+/* =============================================================================
+ * Phase 3: Metrics Commands
+ * =============================================================================
+ */
+
+/* Metrics list callback context */
+typedef struct {
+   int count;
+} metrics_list_ctx_t;
+
+static int print_metrics_callback(const admin_metrics_entry_t *m, void *ctx) {
+   metrics_list_ctx_t *mctx = (metrics_list_ctx_t *)ctx;
+
+   char started[32];
+   format_relative_time(m->started_at, started, sizeof(started));
+
+   printf("  %-4lld %-10s %-12s %5u %5u %5u %5u %8.0f\n", (long long)m->id, m->session_type,
+          started, m->queries_total, m->queries_cloud, m->queries_local, m->errors_count,
+          m->avg_llm_total_ms);
+
+   mctx->count++;
+   return 0;
+}
+
+static int cmd_metrics_list(int limit, const char *type_filter) {
+   int fd = admin_client_connect();
+   if (fd < 0) {
+      return 1;
+   }
+
+   admin_metrics_filter_t filter = { 0 };
+   filter.limit = limit;
+   filter.type = type_filter;
+
+   printf("\nSession Metrics:\n");
+   printf("  %-4s %-10s %-12s %5s %5s %5s %5s %8s\n", "ID", "Type", "Started", "Total", "Cloud",
+          "Local", "Errs", "Avg LLM");
+   printf("  ---- ---------- ------------ ----- ----- ----- ----- --------\n");
+
+   metrics_list_ctx_t ctx = { .count = 0 };
+   admin_resp_code_t resp = admin_client_list_metrics(fd, &filter, print_metrics_callback, &ctx);
+   admin_client_disconnect(fd);
+
+   if (resp != ADMIN_RESP_SUCCESS) {
+      fprintf(stderr, "Error: %s\n", admin_resp_strerror(resp));
+      return 1;
+   }
+
+   printf("\n%d session(s).\n\n", ctx.count);
+   return 0;
+}
+
+static int cmd_metrics_summary(void) {
+   int fd = admin_client_connect();
+   if (fd < 0) {
+      return 1;
+   }
+
+   admin_metrics_totals_t totals = { 0 };
+   admin_resp_code_t resp = admin_client_get_metrics_totals(fd, NULL, &totals);
+   admin_client_disconnect(fd);
+
+   if (resp != ADMIN_RESP_SUCCESS) {
+      fprintf(stderr, "Error: %s\n", admin_resp_strerror(resp));
+      return 1;
+   }
+
+   printf("\nMetrics Summary (All Time):\n\n");
+   printf("  Sessions:  %d\n", totals.session_count);
+   printf("  Queries:   %lu total (%lu cloud, %lu local)\n", (unsigned long)totals.queries_total,
+          (unsigned long)totals.queries_cloud, (unsigned long)totals.queries_local);
+   printf("  Errors:    %lu\n", (unsigned long)totals.errors_total);
+   printf("  Avg LLM:   %.1f ms\n", totals.avg_llm_ms);
+   printf("\n");
+
+   return 0;
+}
+
+/* =============================================================================
+ * Phase 4: Conversation Commands
+ * =============================================================================
+ */
+
+/* Conversation list callback context */
+typedef struct {
+   int count;
+} conv_list_ctx_t;
+
+static int print_conv_callback(const admin_conversation_entry_t *conv, void *ctx) {
+   conv_list_ctx_t *cctx = (conv_list_ctx_t *)ctx;
+
+   char updated[32];
+   format_relative_time(conv->updated_at, updated, sizeof(updated));
+
+   /* Truncate title for display */
+   char title[41] = { 0 };
+   strncpy(title, conv->title, 40);
+   if (strlen(conv->title) > 40) {
+      strcpy(title + 37, "...");
+   }
+
+   printf("  %-6lld %-40s %4d %-12s\n", (long long)conv->id, title, conv->message_count, updated);
+
+   cctx->count++;
+   return 0;
+}
+
+static int cmd_conv_list(int limit, bool include_archived) {
+   int fd = admin_client_connect();
+   if (fd < 0) {
+      return 1;
+   }
+
+   admin_conversation_filter_t filter = { 0 };
+   filter.limit = limit;
+   filter.include_archived = include_archived;
+
+   printf("\nConversations%s:\n", include_archived ? " (including archived)" : "");
+   printf("  %-6s %-40s %4s %-12s\n", "ID", "Title", "Msgs", "Updated");
+   printf("  ------ ---------------------------------------- ---- ------------\n");
+
+   conv_list_ctx_t ctx = { .count = 0 };
+   admin_resp_code_t resp = admin_client_list_conversations(fd, &filter, print_conv_callback, &ctx);
+   admin_client_disconnect(fd);
+
+   if (resp != ADMIN_RESP_SUCCESS) {
+      fprintf(stderr, "Error: %s\n", admin_resp_strerror(resp));
+      return 1;
+   }
+
+   printf("\n%d conversation(s).\n\n", ctx.count);
+   return 0;
+}
+
+/* Message print callback context */
+typedef struct {
+   int count;
+} msg_list_ctx_t;
+
+static int print_msg_callback(const admin_message_entry_t *msg, void *ctx) {
+   msg_list_ctx_t *mctx = (msg_list_ctx_t *)ctx;
+
+   /* Color code by role */
+   const char *role_label;
+   if (strcmp(msg->role, "user") == 0) {
+      role_label = "User";
+   } else if (strcmp(msg->role, "assistant") == 0) {
+      role_label = "Assistant";
+   } else if (strcmp(msg->role, "system") == 0) {
+      role_label = "System";
+   } else {
+      role_label = msg->role;
+   }
+
+   printf("\n[%s]\n", role_label);
+
+   /* Print content (truncate if very long) */
+   size_t len = strlen(msg->content);
+   if (len > 500) {
+      printf("%.497s...\n", msg->content);
+   } else {
+      printf("%s\n", msg->content);
+   }
+
+   mctx->count++;
+   return 0;
+}
+
+static int cmd_conv_show(int64_t conv_id) {
+   int fd = admin_client_connect();
+   if (fd < 0) {
+      return 1;
+   }
+
+   printf("\nConversation %lld:\n", (long long)conv_id);
+   printf("========================================\n");
+
+   msg_list_ctx_t ctx = { .count = 0 };
+   admin_resp_code_t resp = admin_client_get_conversation(fd, conv_id, print_msg_callback, &ctx);
+   admin_client_disconnect(fd);
+
+   if (resp == ADMIN_RESP_NOT_FOUND) {
+      fprintf(stderr, "Error: Conversation not found\n");
+      return 1;
+   } else if (resp != ADMIN_RESP_SUCCESS) {
+      fprintf(stderr, "Error: %s\n", admin_resp_strerror(resp));
+      return 1;
+   }
+
+   printf("\n========================================\n");
+   printf("%d message(s).\n\n", ctx.count);
+   return 0;
+}
+
+static int cmd_conv_delete(int64_t conv_id, int skip_confirm) {
+   /* Prompt for admin credentials */
+   char admin_user[64] = { 0 };
+   char admin_pass[PASSWORD_MAX_LENGTH] = { 0 };
+
+   printf("Admin authentication required to delete conversation %lld\n\n", (long long)conv_id);
+
+   if (prompt_input("Admin username: ", admin_user, sizeof(admin_user)) != 0) {
+      fprintf(stderr, "Error: Failed to read admin username\n");
+      return 1;
+   }
+
+   if (prompt_password("Admin password: ", admin_pass, sizeof(admin_pass)) != 0) {
+      fprintf(stderr, "Error: Failed to read admin password\n");
+      return 1;
+   }
+
+   /* Confirmation unless --yes */
+   if (!skip_confirm) {
+      char confirm[16] = { 0 };
+      printf("\nDelete conversation %lld? Type 'yes' to confirm: ", (long long)conv_id);
+      if (prompt_input("", confirm, sizeof(confirm)) != 0 || strcmp(confirm, "yes") != 0) {
+         printf("Cancelled.\n");
+         secure_clear(admin_pass, sizeof(admin_pass));
+         return 1;
+      }
+   }
+
+   int fd = admin_client_connect();
+   if (fd < 0) {
+      secure_clear(admin_pass, sizeof(admin_pass));
+      return 1;
+   }
+
+   admin_resp_code_t resp = admin_client_delete_conversation(fd, admin_user, admin_pass, conv_id);
+   secure_clear(admin_pass, sizeof(admin_pass));
+   admin_client_disconnect(fd);
+
+   if (resp == ADMIN_RESP_NOT_FOUND) {
+      fprintf(stderr, "Error: Conversation not found\n");
+      return 1;
+   } else if (resp != ADMIN_RESP_SUCCESS) {
+      fprintf(stderr, "Error: %s\n", admin_resp_strerror(resp));
+      return 1;
+   }
+
+   printf("\nConversation %lld deleted successfully.\n\n", (long long)conv_id);
+   return 0;
+}
+
 int main(int argc, char *argv[]) {
    if (argc < 2) {
       print_usage(argv[0]);
@@ -1007,6 +1270,119 @@ int main(int argc, char *argv[]) {
       } else {
          fprintf(stderr, "Error: Unknown ip subcommand: %s\n", subcmd);
          fprintf(stderr, "Available: list, unblock\n");
+         return 1;
+      }
+   }
+
+   /* Metrics commands */
+   if (strcmp(cmd, "metrics") == 0) {
+      if (argc < 3) {
+         fprintf(stderr, "Error: Missing metrics subcommand\n");
+         fprintf(stderr, "Usage: %s metrics <list|summary>\n", argv[0]);
+         return 1;
+      }
+
+      const char *subcmd = argv[2];
+
+      if (strcmp(subcmd, "list") == 0) {
+         int limit = 20;
+         const char *type_filter = NULL;
+
+         /* Parse options */
+         for (int i = 3; i < argc; i++) {
+            if (strcmp(argv[i], "--last") == 0 && i + 1 < argc) {
+               limit = atoi(argv[++i]);
+               if (limit <= 0)
+                  limit = 20;
+            } else if (strcmp(argv[i], "--type") == 0 && i + 1 < argc) {
+               type_filter = argv[++i];
+            }
+         }
+
+         return cmd_metrics_list(limit, type_filter);
+
+      } else if (strcmp(subcmd, "summary") == 0) {
+         return cmd_metrics_summary();
+
+      } else {
+         fprintf(stderr, "Error: Unknown metrics subcommand: %s\n", subcmd);
+         fprintf(stderr, "Available: list, summary\n");
+         return 1;
+      }
+   }
+
+   /* Conversation commands */
+   if (strcmp(cmd, "conv") == 0) {
+      if (argc < 3) {
+         fprintf(stderr, "Error: Missing conv subcommand\n");
+         fprintf(stderr, "Usage: %s conv <list|show|delete>\n", argv[0]);
+         return 1;
+      }
+
+      const char *subcmd = argv[2];
+
+      if (strcmp(subcmd, "list") == 0) {
+         int limit = 20;
+         bool include_archived = false;
+
+         /* Parse options */
+         for (int i = 3; i < argc; i++) {
+            if (strcmp(argv[i], "--last") == 0 && i + 1 < argc) {
+               limit = atoi(argv[++i]);
+               if (limit <= 0)
+                  limit = 20;
+            } else if (strcmp(argv[i], "--archived") == 0 || strcmp(argv[i], "-a") == 0) {
+               include_archived = true;
+            }
+         }
+
+         return cmd_conv_list(limit, include_archived);
+
+      } else if (strcmp(subcmd, "show") == 0) {
+         if (argc < 4) {
+            fprintf(stderr, "Error: Missing conversation ID\n");
+            fprintf(stderr, "Usage: %s conv show <id>\n", argv[0]);
+            return 1;
+         }
+
+         char *endptr;
+         errno = 0;
+         int64_t conv_id = strtoll(argv[3], &endptr, 10);
+         if (errno != 0 || endptr == argv[3] || *endptr != '\0' || conv_id <= 0) {
+            fprintf(stderr, "Error: Invalid conversation ID\n");
+            return 1;
+         }
+
+         return cmd_conv_show(conv_id);
+
+      } else if (strcmp(subcmd, "delete") == 0) {
+         if (argc < 4) {
+            fprintf(stderr, "Error: Missing conversation ID\n");
+            fprintf(stderr, "Usage: %s conv delete <id> [--yes]\n", argv[0]);
+            return 1;
+         }
+
+         char *endptr;
+         errno = 0;
+         int64_t conv_id = strtoll(argv[3], &endptr, 10);
+         if (errno != 0 || endptr == argv[3] || *endptr != '\0' || conv_id <= 0) {
+            fprintf(stderr, "Error: Invalid conversation ID\n");
+            return 1;
+         }
+
+         int skip_confirm = 0;
+         for (int i = 4; i < argc; i++) {
+            if (strcmp(argv[i], "--yes") == 0 || strcmp(argv[i], "-y") == 0) {
+               skip_confirm = 1;
+               break;
+            }
+         }
+
+         return cmd_conv_delete(conv_id, skip_confirm);
+
+      } else {
+         fprintf(stderr, "Error: Unknown conv subcommand: %s\n", subcmd);
+         fprintf(stderr, "Available: list, show, delete\n");
          return 1;
       }
    }

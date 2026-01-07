@@ -3469,17 +3469,22 @@ Based on the reviews, the following must be addressed during implementation:
 
 ### Phase 2: Complete CLI Administration (2-3 days)
 
+**Status**: Implemented (2026-01-07)
+
 **Purpose**: Full CLI tool and background maintenance tasks.
 
 #### Complete dawn-admin CLI
-- `dawn-admin user list|delete|passwd|unlock`
-- `dawn-admin log show|export`
-- `dawn-admin db status|backup|compact`
-- `dawn-admin session list|revoke` (admin session management)
+- [x] `dawn-admin user list|delete|passwd|unlock`
+- [x] `dawn-admin log show|export`
+- [x] `dawn-admin db status|backup|compact`
+- [x] `dawn-admin ip list|unblock` (IP rate-limit management)
+- [x] `dawn-admin metrics list|summary` (session metrics)
+- [x] `dawn-admin conv list|show|delete` (conversation management)
+- [x] `dawn-admin session list|revoke` (admin session management)
 
 #### Background Maintenance
-- Session cleanup thread (expire old sessions)
-- Database maintenance (log rotation, vacuum scheduling)
+- [x] Session cleanup thread (expire old sessions)
+- [x] Database maintenance (log rotation, vacuum scheduling)
 
 **Deliverables:**
 - Complete CLI tool for headless user administration
@@ -3611,10 +3616,20 @@ typedef struct {
 ---
 
 ### Phase 4: Enhancements (2-3 days)
-- Per-user device access control (deferred from Phase 3)
-- Per-user conversation history
-- Optional 2FA (TOTP)
-- Session management UI (view/revoke active sessions)
+
+**Status**: Mostly implemented (2026-01-07)
+
+#### Completed
+- [x] Per-user conversation history (WebUI sidebar, load/save, continuations)
+- [x] Conversation database with user ownership enforcement
+- [x] Context compaction creates continuation conversations
+- [x] `dawn-admin conv` commands for CLI management
+- [x] Session management UI (view/revoke active sessions)
+- [x] `dawn-admin session list|revoke` commands
+
+#### Remaining
+- [ ] Per-user device access control (deferred from Phase 3)
+- [ ] Optional 2FA (TOTP)
 
 ---
 

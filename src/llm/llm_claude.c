@@ -197,13 +197,25 @@ static json_object *convert_content_block_to_claude(json_object *block) {
 
    json_object *type_obj;
    if (!json_object_object_get_ex(block, "type", &type_obj)) {
-      // No type field - just copy the block
-      return json_object_get(block);
+      // No type field - Claude requires type on all content blocks
+      // Check if it has a "text" field (possible malformed text block)
+      json_object *text_obj;
+      if (json_object_object_get_ex(block, "text", &text_obj)) {
+         // Convert to proper text block
+         json_object *fixed_block = json_object_new_object();
+         json_object_object_add(fixed_block, "type", json_object_new_string("text"));
+         json_object_object_add(fixed_block, "text", json_object_get(text_obj));
+         LOG_WARNING("Claude: Fixed content block missing type (had text field)");
+         return fixed_block;
+      }
+      // Unknown format - skip it to avoid Claude API errors
+      LOG_WARNING("Claude: Skipping content block with no type field");
+      return NULL;
    }
 
    const char *block_type = json_object_get_string(type_obj);
    if (!block_type || strcmp(block_type, "image_url") != 0) {
-      // Not image_url - just copy the block
+      // Not image_url - just copy the block (already has type)
       return json_object_get(block);
    }
 

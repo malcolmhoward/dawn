@@ -74,7 +74,18 @@ typedef struct {
    int tokens_after;        /* Token count after compaction */
    int messages_summarized; /* Number of messages summarized */
    char log_filename[256];  /* Saved conversation log (if logging enabled) */
+   char *summary;           /* Generated summary (heap-allocated) */
 } llm_compaction_result_t;
+
+/**
+ * @brief Free resources in a compaction result
+ *
+ * Frees dynamically allocated fields (summary) and zeros the struct.
+ * Safe to call on already-freed or zero-initialized results.
+ *
+ * @param result Result struct to free (can be NULL)
+ */
+void llm_compaction_result_free(llm_compaction_result_t *result);
 
 /* =============================================================================
  * Lifecycle Functions

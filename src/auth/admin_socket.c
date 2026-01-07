@@ -99,6 +99,11 @@ static int handle_db_backup(int client_fd, const char *payload, uint16_t payload
 static int handle_query_log(int client_fd, const char *payload, uint16_t payload_len);
 static int handle_list_blocked_ips(int client_fd);
 static int handle_unblock_ip(int client_fd, const char *payload, uint16_t payload_len);
+static int handle_list_metrics(int client_fd, const char *payload, uint16_t payload_len);
+static int handle_get_metrics_totals(int client_fd, const char *payload, uint16_t payload_len);
+static int handle_list_conversations(int client_fd, const char *payload, uint16_t payload_len);
+static int handle_get_conversation(int client_fd, const char *payload, uint16_t payload_len);
+static int handle_delete_conversation(int client_fd, const char *payload, uint16_t payload_len);
 static int send_response(int client_fd, admin_resp_code_t code);
 static int send_list_response(int client_fd,
                               admin_resp_code_t code,
@@ -1605,6 +1610,398 @@ static int handle_unblock_ip(int client_fd, const char *payload, uint16_t payloa
 }
 
 /* =============================================================================
+ * Phase 3: Metrics Handlers
+ * =============================================================================
+ */
+
+/* Context for metrics list callback */
+typedef struct {
+   char *buffer;
+   size_t buffer_size;
+   size_t offset;
+   int count;
+   bool truncated;
+} metrics_list_ctx_t;
+
+static int metrics_list_callback(const session_metrics_t *m, void *ctx) {
+   metrics_list_ctx_t *mctx = (metrics_list_ctx_t *)ctx;
+
+   /* Pack entry: 8 id, 4 session_id, 4 user_id, 1 type_len, N type,
+    * 8 started_at, 8 ended_at, 4 queries_total, 4 queries_cloud, 4 queries_local,
+    * 4 errors, 8 avg_llm_ms */
+   size_t type_len = strlen(m->session_type);
+   size_t entry_size = 8 + 4 + 4 + 1 + type_len + 8 + 8 + 4 + 4 + 4 + 4 + 8;
+
+   if (mctx->offset + entry_size > mctx->buffer_size) {
+      mctx->truncated = true;
+      return 1; /* Stop iteration */
+   }
+
+   char *p = mctx->buffer + mctx->offset;
+
+   memcpy(p, &m->id, 8);
+   p += 8;
+   uint32_t sid = m->session_id;
+   memcpy(p, &sid, 4);
+   p += 4;
+   int32_t uid = m->user_id;
+   memcpy(p, &uid, 4);
+   p += 4;
+   *p++ = (uint8_t)type_len;
+   memcpy(p, m->session_type, type_len);
+   p += type_len;
+   int64_t ts = m->started_at;
+   memcpy(p, &ts, 8);
+   p += 8;
+   ts = m->ended_at;
+   memcpy(p, &ts, 8);
+   p += 8;
+   uint32_t val = m->queries_total;
+   memcpy(p, &val, 4);
+   p += 4;
+   val = m->queries_cloud;
+   memcpy(p, &val, 4);
+   p += 4;
+   val = m->queries_local;
+   memcpy(p, &val, 4);
+   p += 4;
+   val = m->errors_count;
+   memcpy(p, &val, 4);
+   p += 4;
+   memcpy(p, &m->avg_llm_total_ms, 8);
+   p += 8;
+
+   mctx->offset = p - mctx->buffer;
+   mctx->count++;
+   return 0;
+}
+
+static int handle_list_metrics(int client_fd, const char *payload, uint16_t payload_len) {
+   /* Parse filter: 4 bytes user_id, 4 bytes limit, 1 byte type_len, N bytes type */
+   session_metrics_filter_t filter = { 0 };
+   char type_buf[16] = { 0 };
+
+   if (payload_len >= 9) {
+      int32_t user_id;
+      memcpy(&user_id, payload, 4);
+      filter.user_id = user_id;
+
+      int32_t limit;
+      memcpy(&limit, payload + 4, 4);
+      filter.limit = (limit > 0) ? limit : 20;
+
+      uint8_t type_len = (uint8_t)payload[8];
+      if (type_len > 0 && type_len < 16 && payload_len >= 9 + type_len) {
+         memcpy(type_buf, payload + 9, type_len);
+         filter.type = type_buf;
+      }
+   } else {
+      filter.limit = 20;
+   }
+
+   /* Allocate buffer for response */
+   char buffer[8192];
+   metrics_list_ctx_t ctx = { .buffer = buffer,
+                              .buffer_size = sizeof(buffer),
+                              .offset = 0,
+                              .count = 0,
+                              .truncated = false };
+
+   int rc = auth_db_list_session_metrics(&filter, metrics_list_callback, &ctx);
+   if (rc != AUTH_DB_SUCCESS) {
+      return send_list_response(client_fd, ADMIN_RESP_SERVICE_ERROR, NULL, 0, 0, 0);
+   }
+
+   uint16_t flags = ctx.truncated ? ADMIN_LIST_FLAG_TRUNCATED : 0;
+   return send_list_response(client_fd, ADMIN_RESP_SUCCESS, buffer, (uint16_t)ctx.offset, ctx.count,
+                             flags);
+}
+
+static int handle_get_metrics_totals(int client_fd, const char *payload, uint16_t payload_len) {
+   /* Parse filter: 4 bytes user_id, 1 byte type_len, N bytes type */
+   session_metrics_filter_t filter = { 0 };
+   char type_buf[16] = { 0 };
+
+   if (payload_len >= 5) {
+      int32_t user_id;
+      memcpy(&user_id, payload, 4);
+      filter.user_id = user_id;
+
+      uint8_t type_len = (uint8_t)payload[4];
+      if (type_len > 0 && type_len < 16 && payload_len >= 5 + type_len) {
+         memcpy(type_buf, payload + 5, type_len);
+         filter.type = type_buf;
+      }
+   }
+
+   session_metrics_t totals = { 0 };
+   int rc = auth_db_get_metrics_aggregate(&filter, &totals);
+   if (rc != AUTH_DB_SUCCESS) {
+      return send_response(client_fd, ADMIN_RESP_SERVICE_ERROR);
+   }
+
+   /* Send simple response + data
+    * Data: 4 session_count, 8 queries_total, 8 queries_cloud, 8 queries_local,
+    *       8 errors_total, 8 avg_llm_ms = 48 bytes
+    */
+   send_response(client_fd, ADMIN_RESP_SUCCESS);
+
+   char data[48];
+   char *p = data;
+
+   int32_t count = (int32_t)totals.session_id; /* Repurposed for count in aggregate */
+   memcpy(p, &count, 4);
+   p += 4;
+
+   uint64_t val = totals.queries_total;
+   memcpy(p, &val, 8);
+   p += 8;
+   val = totals.queries_cloud;
+   memcpy(p, &val, 8);
+   p += 8;
+   val = totals.queries_local;
+   memcpy(p, &val, 8);
+   p += 8;
+   val = totals.errors_count;
+   memcpy(p, &val, 8);
+   p += 8;
+   memcpy(p, &totals.avg_llm_total_ms, 8);
+
+   ssize_t written = write(client_fd, data, sizeof(data));
+   if (written != sizeof(data)) {
+      LOG_ERROR("Failed to write metrics totals: %zd/%zu", written, sizeof(data));
+      return -1;
+   }
+   return 0;
+}
+
+/* =============================================================================
+ * Phase 4: Conversation Handlers
+ * =============================================================================
+ */
+
+/* Context for conversation list callback */
+typedef struct {
+   char *buffer;
+   size_t buffer_size;
+   size_t offset;
+   int count;
+   bool truncated;
+} conv_list_ctx_t;
+
+/* Helper to pack conversation entry into buffer */
+static int pack_conv_entry(conv_list_ctx_t *cctx,
+                           const conversation_t *conv,
+                           const char *username) {
+   /* Pack entry: 8 id, 1 title_len, N title, 8 created_at, 8 updated_at,
+    * 4 message_count, 1 uname_len, N username */
+   size_t title_len = strlen(conv->title);
+   if (title_len > 127)
+      title_len = 127;
+
+   size_t uname_len = username ? strlen(username) : 0;
+   if (uname_len > 63)
+      uname_len = 63;
+
+   size_t entry_size = 8 + 1 + title_len + 8 + 8 + 4 + 1 + uname_len;
+
+   if (cctx->offset + entry_size > cctx->buffer_size) {
+      cctx->truncated = true;
+      return 1; /* Stop iteration */
+   }
+
+   char *p = cctx->buffer + cctx->offset;
+
+   memcpy(p, &conv->id, 8);
+   p += 8;
+   *p++ = (uint8_t)title_len;
+   memcpy(p, conv->title, title_len);
+   p += title_len;
+   int64_t ts = conv->created_at;
+   memcpy(p, &ts, 8);
+   p += 8;
+   ts = conv->updated_at;
+   memcpy(p, &ts, 8);
+   p += 8;
+   int32_t mc = conv->message_count;
+   memcpy(p, &mc, 4);
+   p += 4;
+   *p++ = (uint8_t)uname_len;
+   if (uname_len > 0) {
+      memcpy(p, username, uname_len);
+      p += uname_len;
+   }
+
+   cctx->offset = p - cctx->buffer;
+   cctx->count++;
+   return 0;
+}
+
+static int conv_list_callback(const conversation_t *conv, void *ctx) {
+   conv_list_ctx_t *cctx = (conv_list_ctx_t *)ctx;
+   return pack_conv_entry(cctx, conv, NULL);
+}
+
+static int conv_list_all_callback(const conversation_t *conv, const char *username, void *ctx) {
+   conv_list_ctx_t *cctx = (conv_list_ctx_t *)ctx;
+   return pack_conv_entry(cctx, conv, username);
+}
+
+static int handle_list_conversations(int client_fd, const char *payload, uint16_t payload_len) {
+   /* Parse filter: 4 bytes user_id, 4 bytes limit, 1 byte include_archived */
+   int user_id = 0;
+   bool include_archived = false;
+   conv_pagination_t pagination = { .limit = 20, .offset = 0 };
+
+   if (payload_len >= 8) {
+      int32_t val;
+      memcpy(&val, payload, 4);
+      user_id = val;
+      memcpy(&val, payload + 4, 4);
+      pagination.limit = (val > 0) ? val : 20;
+   }
+   if (payload_len >= 9) {
+      include_archived = (payload[8] != 0);
+   }
+
+   /* Allocate buffer for response */
+   char buffer[8192];
+   conv_list_ctx_t ctx = { .buffer = buffer,
+                           .buffer_size = sizeof(buffer),
+                           .offset = 0,
+                           .count = 0,
+                           .truncated = false };
+
+   int rc;
+   if (user_id > 0) {
+      /* Filter by specific user */
+      rc = conv_db_list(user_id, include_archived, &pagination, conv_list_callback, &ctx);
+   } else {
+      /* Admin: list all users' conversations */
+      rc = conv_db_list_all(include_archived, &pagination, conv_list_all_callback, &ctx);
+   }
+
+   if (rc != AUTH_DB_SUCCESS) {
+      return send_list_response(client_fd, ADMIN_RESP_SERVICE_ERROR, NULL, 0, 0, 0);
+   }
+
+   uint16_t flags = ctx.truncated ? ADMIN_LIST_FLAG_TRUNCATED : 0;
+   return send_list_response(client_fd, ADMIN_RESP_SUCCESS, buffer, (uint16_t)ctx.offset, ctx.count,
+                             flags);
+}
+
+/* Context for message list callback */
+typedef struct {
+   char *buffer;
+   size_t buffer_size;
+   size_t offset;
+   int count;
+   bool truncated;
+} msg_list_ctx_t;
+
+static int msg_list_callback(const conversation_message_t *msg, void *ctx) {
+   msg_list_ctx_t *mctx = (msg_list_ctx_t *)ctx;
+
+   /* Pack entry: 1 role_len, N role, 2 content_len, N content, 8 created_at */
+   size_t role_len = strlen(msg->role);
+   if (role_len > 15)
+      role_len = 15;
+
+   size_t content_len = msg->content ? strlen(msg->content) : 0;
+   if (content_len > ADMIN_MSG_CONTENT_MAX)
+      content_len = ADMIN_MSG_CONTENT_MAX;
+
+   size_t entry_size = 1 + role_len + 2 + content_len + 8;
+
+   if (mctx->offset + entry_size > mctx->buffer_size) {
+      mctx->truncated = true;
+      return 1; /* Stop iteration */
+   }
+
+   char *p = mctx->buffer + mctx->offset;
+
+   *p++ = (uint8_t)role_len;
+   memcpy(p, msg->role, role_len);
+   p += role_len;
+   uint16_t cl = (uint16_t)content_len;
+   memcpy(p, &cl, 2);
+   p += 2;
+   if (content_len > 0 && msg->content) {
+      memcpy(p, msg->content, content_len);
+   }
+   p += content_len;
+   int64_t ts = msg->created_at;
+   memcpy(p, &ts, 8);
+   p += 8;
+
+   mctx->offset = p - mctx->buffer;
+   mctx->count++;
+   return 0;
+}
+
+static int handle_get_conversation(int client_fd, const char *payload, uint16_t payload_len) {
+   if (payload_len < 8) {
+      return send_list_response(client_fd, ADMIN_RESP_FAILURE, NULL, 0, 0, 0);
+   }
+
+   int64_t conv_id;
+   memcpy(&conv_id, payload, 8);
+
+   /* Allocate buffer for messages */
+   char buffer[32768];
+   msg_list_ctx_t ctx = { .buffer = buffer,
+                          .buffer_size = sizeof(buffer),
+                          .offset = 0,
+                          .count = 0,
+                          .truncated = false };
+
+   /* Admin access - no ownership check */
+   int rc = conv_db_get_messages_admin(conv_id, msg_list_callback, &ctx);
+   if (rc == AUTH_DB_NOT_FOUND) {
+      return send_list_response(client_fd, ADMIN_RESP_NOT_FOUND, NULL, 0, 0, 0);
+   } else if (rc != AUTH_DB_SUCCESS) {
+      return send_list_response(client_fd, ADMIN_RESP_SERVICE_ERROR, NULL, 0, 0, 0);
+   }
+
+   uint16_t flags = ctx.truncated ? ADMIN_LIST_FLAG_TRUNCATED : 0;
+   return send_list_response(client_fd, ADMIN_RESP_SUCCESS, buffer, (uint16_t)ctx.offset, ctx.count,
+                             flags);
+}
+
+static int handle_delete_conversation(int client_fd, const char *payload, uint16_t payload_len) {
+   /* Verify admin auth */
+   size_t auth_size = 0;
+   if (verify_admin_auth(payload, payload_len, &auth_size) != 0) {
+      LOG_WARNING("DELETE_CONVERSATION: admin auth failed");
+      return send_response(client_fd, ADMIN_RESP_UNAUTHORIZED);
+   }
+
+   /* Extract conv_id */
+   if (payload_len < auth_size + 8) {
+      LOG_WARNING("DELETE_CONVERSATION: payload too short");
+      return send_response(client_fd, ADMIN_RESP_FAILURE);
+   }
+
+   int64_t conv_id;
+   memcpy(&conv_id, payload + auth_size, 8);
+
+   /* Admin access - no ownership check */
+   int rc = conv_db_delete_admin(conv_id);
+
+   if (rc == AUTH_DB_NOT_FOUND) {
+      LOG_WARNING("DELETE_CONVERSATION: conversation %lld not found", (long long)conv_id);
+      return send_response(client_fd, ADMIN_RESP_NOT_FOUND);
+   } else if (rc != AUTH_DB_SUCCESS) {
+      LOG_ERROR("DELETE_CONVERSATION: database error: %d", rc);
+      return send_response(client_fd, ADMIN_RESP_SERVICE_ERROR);
+   }
+
+   auth_db_log_event("CONVERSATION_DELETED", NULL, NULL, "Deleted conversation");
+   LOG_INFO("DELETE_CONVERSATION: conversation %lld deleted", (long long)conv_id);
+   return send_response(client_fd, ADMIN_RESP_SUCCESS);
+}
+
+/* =============================================================================
  * Client Handler
  * =============================================================================
  */
@@ -1708,6 +2105,23 @@ static int handle_client(int client_fd) {
 
       case ADMIN_MSG_UNBLOCK_IP:
          return handle_unblock_ip(client_fd, payload, header.payload_len);
+
+      /* Phase 3: Metrics */
+      case ADMIN_MSG_LIST_METRICS:
+         return handle_list_metrics(client_fd, payload, header.payload_len);
+
+      case ADMIN_MSG_GET_METRICS_TOTALS:
+         return handle_get_metrics_totals(client_fd, payload, header.payload_len);
+
+      /* Phase 4: Conversations */
+      case ADMIN_MSG_LIST_CONVERSATIONS:
+         return handle_list_conversations(client_fd, payload, header.payload_len);
+
+      case ADMIN_MSG_GET_CONVERSATION:
+         return handle_get_conversation(client_fd, payload, header.payload_len);
+
+      case ADMIN_MSG_DELETE_CONVERSATION:
+         return handle_delete_conversation(client_fd, payload, header.payload_len);
 
       default:
          LOG_WARNING("Unknown message type: 0x%02x", header.msg_type);

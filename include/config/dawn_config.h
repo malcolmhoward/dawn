@@ -171,7 +171,7 @@ typedef struct {
    llm_local_config_t local;
    llm_tools_config_t tools;  /* Native tool/function calling settings */
    float summarize_threshold; /* Compact conversation at this % of context (default: 0.80) */
-   bool conversation_logging; /* Save chat history to log files (default: true) */
+   bool conversation_logging; /* Save chat history to log files (default: false) */
 } llm_config_t;
 
 /* =============================================================================

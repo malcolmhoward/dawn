@@ -1296,7 +1296,8 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
          char *result = NULL;
          bool config_valid = (llm_get_current_resolved_config(&current_config) == 0);
 
-         if (config_valid && current_config.cloud_provider == CLOUD_PROVIDER_CLAUDE) {
+         if (config_valid && current_config.type != LLM_LOCAL &&
+             current_config.cloud_provider == CLOUD_PROVIDER_CLAUDE) {
             // Provider switched to Claude - hand off to Claude code path
             LOG_INFO("OpenAI streaming: Provider switched to Claude, handing off");
 

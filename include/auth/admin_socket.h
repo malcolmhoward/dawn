@@ -85,6 +85,14 @@ extern "C" {
  */
 #define ADMIN_CONN_TIMEOUT_SEC 30
 
+/**
+ * @brief Maximum length of message content (excluding null terminator).
+ *
+ * Used for conversation message content in admin protocol.
+ * Buffer size should be ADMIN_MSG_CONTENT_MAX + 1.
+ */
+#define ADMIN_MSG_CONTENT_MAX 4095
+
 /*
  * =============================================================================
  * Protocol Definition
@@ -134,6 +142,15 @@ typedef enum {
    /* Phase 2: IP management */
    ADMIN_MSG_LIST_BLOCKED_IPS = 0x40, /**< List rate-limited IPs */
    ADMIN_MSG_UNBLOCK_IP = 0x41,       /**< Clear login attempts for IP */
+
+   /* Phase 3: Metrics */
+   ADMIN_MSG_LIST_METRICS = 0x50,       /**< List session metrics history */
+   ADMIN_MSG_GET_METRICS_TOTALS = 0x51, /**< Get aggregate metrics */
+
+   /* Phase 4: Conversations */
+   ADMIN_MSG_LIST_CONVERSATIONS = 0x60,  /**< List conversations */
+   ADMIN_MSG_GET_CONVERSATION = 0x61,    /**< Get conversation with messages */
+   ADMIN_MSG_DELETE_CONVERSATION = 0x62, /**< Delete a conversation */
 } admin_msg_type_t;
 
 /**

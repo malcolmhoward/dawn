@@ -196,6 +196,12 @@ typedef struct {
          float token_rate; /* Tokens per second */
          int context_pct;  /* Context utilization 0-100 */
       } metrics;
+      struct {
+         int tokens_before;
+         int tokens_after;
+         int messages_summarized;
+         char *summary;
+      } compaction;
    };
 } ws_response_t;
 
@@ -583,6 +589,9 @@ static void free_response(ws_response_t *resp) {
       case WS_RESP_METRICS_UPDATE:
          /* No data to free - all inline values */
          break;
+      case WS_RESP_COMPACTION_COMPLETE:
+         free(resp->compaction.summary);
+         break;
    }
 }
 
@@ -597,8 +606,27 @@ static void free_response(ws_response_t *resp) {
 
 static int send_json_message(struct lws *wsi, const char *json) {
    size_t len = strlen(json);
+
+   /* Log messages that may be too large for HTTP/2 frames (default 16KB) */
+   if (len > 12000) {
+      /* Try to extract message type for better logging */
+      const char *type_start = strstr(json, "\"type\":\"");
+      char type_buf[32] = "unknown";
+      if (type_start) {
+         type_start += 8;
+         const char *type_end = strchr(type_start, '"');
+         if (type_end && (size_t)(type_end - type_start) < sizeof(type_buf) - 1) {
+            strncpy(type_buf, type_start, (size_t)(type_end - type_start));
+            type_buf[type_end - type_start] = '\0';
+         }
+      }
+      LOG_WARNING("WebUI: Large message via send_json_message: type=%s, size=%zu bytes", type_buf,
+                  len);
+   }
+
    if (len >= WS_SEND_BUFFER_SIZE - LWS_PRE) {
-      LOG_ERROR("WebUI: JSON message too large (%zu bytes)", len);
+      LOG_ERROR("WebUI: JSON message too large (%zu bytes, max %d)", len,
+                (int)(WS_SEND_BUFFER_SIZE - LWS_PRE));
       return -1;
    }
 
@@ -807,6 +835,28 @@ static void send_metrics_impl(struct lws *wsi,
    send_json_message(wsi, json);
 }
 
+static void send_compaction_impl(struct lws *wsi,
+                                 int tokens_before,
+                                 int tokens_after,
+                                 int messages_summarized,
+                                 const char *summary) {
+   struct json_object *obj = json_object_new_object();
+   struct json_object *payload = json_object_new_object();
+
+   json_object_object_add(payload, "tokens_before", json_object_new_int(tokens_before));
+   json_object_object_add(payload, "tokens_after", json_object_new_int(tokens_after));
+   json_object_object_add(payload, "messages_summarized", json_object_new_int(messages_summarized));
+   if (summary) {
+      json_object_object_add(payload, "summary", json_object_new_string(summary));
+   }
+   json_object_object_add(obj, "type", json_object_new_string("context_compacted"));
+   json_object_object_add(obj, "payload", payload);
+
+   const char *json = json_object_to_json_string(obj);
+   send_json_message(wsi, json);
+   json_object_put(obj);
+}
+
 /* =============================================================================
  * LLM Streaming Impl Functions (ChatGPT-style real-time text)
  *
@@ -987,6 +1037,12 @@ static void process_one_response(void) {
       case WS_RESP_METRICS_UPDATE:
          send_metrics_impl(conn->wsi, resp.metrics.state, resp.metrics.ttft_ms,
                            resp.metrics.token_rate, resp.metrics.context_pct);
+         break;
+      case WS_RESP_COMPACTION_COMPLETE:
+         send_compaction_impl(conn->wsi, resp.compaction.tokens_before,
+                              resp.compaction.tokens_after, resp.compaction.messages_summarized,
+                              resp.compaction.summary);
+         free(resp.compaction.summary);
          break;
    }
 
@@ -2530,6 +2586,16 @@ static void handle_set_secrets(ws_connection_t *conn, struct json_object *payloa
 static void send_json_response(struct lws *wsi, json_object *response) {
    const char *json_str = json_object_to_json_string(response);
    size_t json_len = strlen(json_str);
+
+   /* Log large responses that may cause HTTP/2 issues */
+   if (json_len > 10000) {
+      json_object *type_obj;
+      const char *type = "unknown";
+      if (json_object_object_get_ex(response, "type", &type_obj)) {
+         type = json_object_get_string(type_obj);
+      }
+      LOG_WARNING("WebUI: Large response: type=%s, size=%zu bytes", type, json_len);
+   }
 
    if (json_len < MAX_STACK_RESPONSE - LWS_PRE) {
       /* Use stack buffer for small responses */
@@ -4124,6 +4190,12 @@ static int list_conv_callback(const conversation_t *conv, void *context) {
    json_object_object_add(conv_obj, "message_count", json_object_new_int(conv->message_count));
    json_object_object_add(conv_obj, "is_archived", json_object_new_boolean(conv->is_archived));
 
+   /* Continuation indicator for history panel chain icon */
+   if (conv->continued_from > 0) {
+      json_object_object_add(conv_obj, "continued_from",
+                             json_object_new_int64(conv->continued_from));
+   }
+
    json_object_array_add(conv_array, conv_obj);
    return 0;
 }
@@ -4153,8 +4225,8 @@ static void handle_list_conversations(ws_connection_t *conn, struct json_object 
       }
    }
 
-   int result = conv_db_list(conn->auth_user_id, false, &pagination, list_conv_callback,
-                             conv_array);
+   /* Include archived conversations so users can see the full chain */
+   int result = conv_db_list(conn->auth_user_id, true, &pagination, list_conv_callback, conv_array);
 
    if (result == AUTH_DB_SUCCESS) {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
@@ -4220,6 +4292,78 @@ static void handle_new_conversation(ws_connection_t *conn, struct json_object *p
    json_object_put(response);
 }
 
+/**
+ * @brief Continue a conversation (after context compaction)
+ *
+ * Archives the current conversation and creates a new one linked to it.
+ * Called by the client when server notifies that context was compacted.
+ */
+static void handle_continue_conversation(ws_connection_t *conn, struct json_object *payload) {
+   if (!conn_require_auth(conn)) {
+      return;
+   }
+
+   json_object *response = json_object_new_object();
+   json_object_object_add(response, "type",
+                          json_object_new_string("continue_conversation_response"));
+   json_object *resp_payload = json_object_new_object();
+
+   /* Get conversation ID */
+   json_object *id_obj;
+   if (!json_object_object_get_ex(payload, "conversation_id", &id_obj)) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Missing conversation_id"));
+      json_object_object_add(response, "payload", resp_payload);
+      send_json_response(conn->wsi, response);
+      json_object_put(response);
+      return;
+   }
+
+   int64_t old_conv_id = json_object_get_int64(id_obj);
+
+   /* Get summary */
+   const char *summary = "";
+   json_object *summary_obj;
+   if (json_object_object_get_ex(payload, "summary", &summary_obj)) {
+      summary = json_object_get_string(summary_obj);
+   }
+
+   /* Create continuation */
+   int64_t new_conv_id;
+   int result = conv_db_create_continuation(conn->auth_user_id, old_conv_id, summary, &new_conv_id);
+
+   if (result == AUTH_DB_SUCCESS) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
+      json_object_object_add(resp_payload, "old_conversation_id",
+                             json_object_new_int64(old_conv_id));
+      json_object_object_add(resp_payload, "new_conversation_id",
+                             json_object_new_int64(new_conv_id));
+      json_object_object_add(resp_payload, "summary", json_object_new_string(summary));
+
+      LOG_INFO("WebUI: Conversation %lld continued as %lld for user %s", (long long)old_conv_id,
+               (long long)new_conv_id, conn->username);
+
+      auth_db_log_event("CONVERSATION_CONTINUED", conn->username, conn->client_ip,
+                        "Context compacted");
+   } else if (result == AUTH_DB_NOT_FOUND) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Conversation not found"));
+   } else if (result == AUTH_DB_FORBIDDEN) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error", json_object_new_string("Access denied"));
+   } else {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Failed to continue conversation"));
+   }
+
+   json_object_object_add(response, "payload", resp_payload);
+   send_json_response(conn->wsi, response);
+   json_object_put(response);
+}
+
 /* Callback for message enumeration */
 static int load_msg_callback(const conversation_message_t *msg, void *context) {
    json_object *msg_array = (json_object *)context;
@@ -4234,8 +4378,52 @@ static int load_msg_callback(const conversation_message_t *msg, void *context) {
    return 0;
 }
 
+/* Size-based chunking to stay under HTTP/2 frame size (~16KB).
+ * Target 12KB to leave room for JSON envelope overhead. */
+#define CHUNK_TARGET_SIZE 12288 /* 12KB target chunk size */
+#define CHUNK_MSG_OVERHEAD \
+   80 /* JSON overhead per message: {"role":"...","content":"...","created_at":N} */
+#define CHUNK_ENVELOPE 256 /* Envelope overhead: {"type":"...","payload":{...}} */
+
+/**
+ * @brief Estimate serialized size of a message
+ */
+static size_t estimate_message_size(json_object *msg) {
+   json_object *content_obj;
+   if (json_object_object_get_ex(msg, "content", &content_obj)) {
+      const char *content = json_object_get_string(content_obj);
+      return (content ? strlen(content) : 0) + CHUNK_MSG_OVERHEAD;
+   }
+   return CHUNK_MSG_OVERHEAD;
+}
+
+/**
+ * @brief Send a chunk of conversation messages
+ */
+static void send_messages_chunk(struct lws *wsi,
+                                int64_t conv_id,
+                                json_object *chunk,
+                                int offset,
+                                bool is_last) {
+   json_object *response = json_object_new_object();
+   json_object_object_add(response, "type", json_object_new_string("conversation_messages_chunk"));
+   json_object *resp_payload = json_object_new_object();
+
+   json_object_object_add(resp_payload, "conversation_id", json_object_new_int64(conv_id));
+   json_object_object_add(resp_payload, "offset", json_object_new_int(offset));
+   json_object_object_add(resp_payload, "is_last", json_object_new_boolean(is_last));
+   json_object_object_add(resp_payload, "messages", chunk);
+
+   json_object_object_add(response, "payload", resp_payload);
+   send_json_response(wsi, response);
+   json_object_put(response);
+}
+
 /**
  * @brief Load a conversation and its messages
+ *
+ * For large conversations, messages are sent in chunks to avoid HTTP/2 frame size limits.
+ * Client receives: load_conversation_response (metadata) + conversation_messages_chunk(s)
  */
 static void handle_load_conversation(ws_connection_t *conn, struct json_object *payload) {
    if (!conn_require_auth(conn)) {
@@ -4269,21 +4457,161 @@ static void handle_load_conversation(ws_connection_t *conn, struct json_object *
       result = conv_db_get_messages(conv_id, conn->auth_user_id, load_msg_callback, msg_array);
 
       if (result == AUTH_DB_SUCCESS) {
+         int total_messages = json_object_array_length(msg_array);
+
+         /* Only restore to session context for non-archived conversations.
+          * Archived conversations are read-only (view history only). */
+         if (!conv.is_archived && conn->session && total_messages > 0) {
+            /* Check if first message is a system prompt */
+            bool has_system_prompt = false;
+            json_object *first_msg = json_object_array_get_idx(msg_array, 0);
+            if (first_msg) {
+               json_object *role_obj;
+               if (json_object_object_get_ex(first_msg, "role", &role_obj)) {
+                  const char *role = json_object_get_string(role_obj);
+                  if (role && strcmp(role, "system") == 0) {
+                     has_system_prompt = true;
+                  }
+               }
+            }
+
+            session_clear_history(conn->session);
+
+            /* If no system prompt in stored messages, add user's personalized prompt */
+            if (!has_system_prompt) {
+               char *prompt = build_user_prompt(conn->auth_user_id);
+               session_add_message(conn->session, "system",
+                                   prompt ? prompt : get_remote_command_prompt());
+               free(prompt);
+               LOG_INFO("WebUI: Added system prompt to restored conversation");
+            }
+
+            /* If this is a continuation conversation, inject the compaction summary
+             * as a system message so the LLM has context from the previous conversation */
+            if (conv.compaction_summary && strlen(conv.compaction_summary) > 0) {
+               char summary_msg[4096];
+               snprintf(summary_msg, sizeof(summary_msg),
+                        "Previous conversation context (summarized): %s", conv.compaction_summary);
+               session_add_message(conn->session, "system", summary_msg);
+               LOG_INFO("WebUI: Injected compaction summary into session context");
+            }
+
+            /* Add all stored messages */
+            for (int i = 0; i < total_messages; i++) {
+               json_object *msg = json_object_array_get_idx(msg_array, i);
+               json_object *role_obj, *content_obj;
+               if (json_object_object_get_ex(msg, "role", &role_obj) &&
+                   json_object_object_get_ex(msg, "content", &content_obj)) {
+                  session_add_message(conn->session, json_object_get_string(role_obj),
+                                      json_object_get_string(content_obj));
+               }
+            }
+            LOG_INFO("WebUI: Restored %d messages to session %u context", total_messages,
+                     conn->session->session_id);
+         } else if (conv.is_archived) {
+            LOG_INFO(
+                "WebUI: Loaded archived conversation %lld (read-only, not restored to session)",
+                (long long)conv.id);
+         }
+
          json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
+         json_object_object_add(resp_payload, "is_archived",
+                                json_object_new_boolean(conv.is_archived));
          json_object_object_add(resp_payload, "conversation_id", json_object_new_int64(conv.id));
          json_object_object_add(resp_payload, "title", json_object_new_string(conv.title));
-         json_object_object_add(resp_payload, "message_count",
-                                json_object_new_int(conv.message_count));
+         json_object_object_add(resp_payload, "message_count", json_object_new_int(total_messages));
          json_object_object_add(resp_payload, "context_tokens",
                                 json_object_new_int(conv.context_tokens));
          json_object_object_add(resp_payload, "context_max", json_object_new_int(conv.context_max));
-         json_object_object_add(resp_payload, "messages", msg_array);
+
+         /* Continuation data for context banner */
+         if (conv.continued_from > 0) {
+            json_object_object_add(resp_payload, "continued_from",
+                                   json_object_new_int64(conv.continued_from));
+            if (conv.compaction_summary) {
+               json_object_object_add(resp_payload, "compaction_summary",
+                                      json_object_new_string(conv.compaction_summary));
+            }
+         }
+
+         /* For archived conversations, find and include the continuation ID */
+         if (conv.is_archived) {
+            int64_t continuation_id = 0;
+            if (conv_db_find_continuation(conv.id, conn->auth_user_id, &continuation_id) ==
+                    AUTH_DB_SUCCESS &&
+                continuation_id > 0) {
+               json_object_object_add(resp_payload, "continued_by",
+                                      json_object_new_int64(continuation_id));
+            }
+         }
+
+         /* Calculate total size to decide if chunking is needed */
+         size_t total_size = CHUNK_ENVELOPE;
+         for (int i = 0; i < total_messages; i++) {
+            total_size += estimate_message_size(json_object_array_get_idx(msg_array, i));
+         }
+
+         /* Small conversations: include all messages in single response */
+         if (total_size <= CHUNK_TARGET_SIZE) {
+            json_object_object_add(resp_payload, "messages", msg_array);
+            json_object_object_add(resp_payload, "chunked", json_object_new_boolean(0));
+            json_object_object_add(response, "payload", resp_payload);
+            send_json_response(conn->wsi, response);
+            json_object_put(response);
+            conv_free(&conv);
+            return;
+         }
+
+         /* Large conversation - send metadata first, then size-based chunks */
+         json_object_object_add(resp_payload, "messages", json_object_new_array());
+         json_object_object_add(resp_payload, "chunked", json_object_new_boolean(1));
+         json_object_object_add(response, "payload", resp_payload);
+         send_json_response(conn->wsi, response);
+         json_object_put(response);
+
+         /* Size-based chunking */
+         json_object *current_chunk = json_object_new_array();
+         size_t current_size = CHUNK_ENVELOPE;
+         int chunk_start = 0;
+
+         for (int i = 0; i < total_messages; i++) {
+            json_object *msg = json_object_array_get_idx(msg_array, i);
+            size_t msg_size = estimate_message_size(msg);
+
+            /* If adding this message exceeds target AND chunk isn't empty, flush first */
+            if (current_size + msg_size > CHUNK_TARGET_SIZE &&
+                json_object_array_length(current_chunk) > 0) {
+               /* send_messages_chunk takes ownership of chunk via json_object_object_add */
+               send_messages_chunk(conn->wsi, conv_id, current_chunk, chunk_start, false);
+               current_chunk = json_object_new_array();
+               current_size = CHUNK_ENVELOPE;
+               chunk_start = i;
+            }
+
+            /* Add message to current chunk (even if oversized - single msg gets its own chunk) */
+            json_object_array_add(current_chunk, json_object_get(msg));
+            current_size += msg_size;
+         }
+
+         /* Send final chunk (send_messages_chunk takes ownership) */
+         if (json_object_array_length(current_chunk) > 0) {
+            send_messages_chunk(conn->wsi, conv_id, current_chunk, chunk_start, true);
+         } else {
+            /* Empty final chunk - need to free since send_messages_chunk won't */
+            json_object_put(current_chunk);
+         }
+         json_object_put(msg_array);
+
+         conv_free(&conv);
+         return; /* Already sent response */
       } else {
          json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
          json_object_object_add(resp_payload, "error",
                                 json_object_new_string("Failed to load messages"));
          json_object_put(msg_array);
       }
+
+      conv_free(&conv);
    } else if (result == AUTH_DB_NOT_FOUND) {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
       json_object_object_add(resp_payload, "error",
@@ -5228,6 +5556,10 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
       if (payload) {
          handle_update_context(conn, payload);
       }
+   } else if (strcmp(type, "continue_conversation") == 0) {
+      if (payload) {
+         handle_continue_conversation(conn, payload);
+      }
    } else {
       LOG_WARNING("WebUI: Unknown message type: %s", type);
    }
@@ -5715,6 +6047,9 @@ int webui_server_init(int port, const char *www_path) {
    info.protocols = s_protocols;
    info.gid = -1;
    info.uid = -1;
+   /* Increase service buffer for large WebSocket messages (conversation history).
+    * Default is ~4KB which causes OVERSIZED_PAYLOAD errors on HTTP/2 connections. */
+   info.pt_serv_buf_size = 128 * 1024; /* 128KB - enough for large conversation loads */
    /* Note: Not using LWS_SERVER_OPTION_HTTP_HEADERS_SECURITY_BEST_PRACTICES_ENFORCE
     * because it sets CSP: default-src 'none' which blocks WebAssembly for Opus codec.
     * Security headers are added via index.html meta tags instead. */
@@ -5742,7 +6077,12 @@ int webui_server_init(int port, const char *www_path) {
       info.ssl_cert_filepath = g_config.webui.ssl_cert_path;
       info.ssl_private_key_filepath = g_config.webui.ssl_key_path;
 
-      LOG_INFO("WebUI: HTTPS enabled with cert: %s", g_config.webui.ssl_cert_path);
+      /* Force HTTP/1.1 only via ALPN to avoid HTTP/2 frame size limits (16KB).
+       * WebSocket over HTTP/2 has stricter frame size requirements that cause
+       * OVERSIZED_PAYLOAD errors with large conversation messages. */
+      info.alpn = "http/1.1";
+
+      LOG_INFO("WebUI: HTTPS enabled with cert: %s (HTTP/1.1 only)", g_config.webui.ssl_cert_path);
    }
 
    LOG_INFO("WebUI: Initializing %s server on port %d, serving from: %s",
@@ -5972,6 +6312,27 @@ void webui_send_error(session_t *session, const char *code, const char *message)
       LOG_ERROR("WebUI: Failed to allocate error response");
       return;
    }
+
+   queue_response(&resp);
+}
+
+void webui_send_compaction_complete(session_t *session,
+                                    int tokens_before,
+                                    int tokens_after,
+                                    int messages_summarized,
+                                    const char *summary) {
+   if (!session || session->type != SESSION_TYPE_WEBSOCKET) {
+      return;
+   }
+
+   ws_response_t resp = { .session = session,
+                          .type = WS_RESP_COMPACTION_COMPLETE,
+                          .compaction = {
+                              .tokens_before = tokens_before,
+                              .tokens_after = tokens_after,
+                              .messages_summarized = messages_summarized,
+                              .summary = summary ? strdup(summary) : NULL,
+                          } };
 
    queue_response(&resp);
 }
@@ -6552,9 +6913,21 @@ static void *text_worker_thread(void *arg) {
             return NULL;
          }
 
-         /* Recursively process if the follow-up also contains commands */
+         /* Recursively process if the follow-up also contains commands.
+          * Limit iterations to prevent infinite loops from confused LLMs. */
+         int follow_up_iterations = 0;
+         const int MAX_FOLLOW_UP_ITERATIONS = 5;
+
          while (strstr(processed, "<command>") && !session->disconnected) {
-            LOG_INFO("WebUI: Follow-up response contains more commands, processing...");
+            follow_up_iterations++;
+            if (follow_up_iterations > MAX_FOLLOW_UP_ITERATIONS) {
+               LOG_WARNING("WebUI: Command loop limit reached (%d iterations), breaking",
+                           MAX_FOLLOW_UP_ITERATIONS);
+               break;
+            }
+
+            LOG_INFO("WebUI: Follow-up response contains more commands, processing... (iter %d/%d)",
+                     follow_up_iterations, MAX_FOLLOW_UP_ITERATIONS);
             /* Note: Don't send transcript - streaming already delivered it */
 
             char *next_processed = webui_process_commands(processed, session);

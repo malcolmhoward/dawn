@@ -434,6 +434,9 @@
             requestUpdateContext(historyState.activeConversationId, msg.payload.current, msg.payload.max);
           }
           break;
+        case 'context_compacted':
+          handleContextCompacted(msg.payload);
+          break;
         case 'get_metrics_response':
           handleMetricsResponse(msg.payload);
           break;
@@ -486,6 +489,9 @@
         case 'load_conversation_response':
           handleLoadConversationResponse(msg.payload);
           break;
+        case 'conversation_messages_chunk':
+          handleConversationMessagesChunk(msg.payload);
+          break;
         case 'delete_conversation_response':
           handleDeleteConversationResponse(msg.payload);
           break;
@@ -497,6 +503,9 @@
           break;
         case 'save_message_response':
           handleSaveMessageResponse(msg.payload);
+          break;
+        case 'continue_conversation_response':
+          handleContinueConversationResponse(msg.payload);
           break;
         default:
           console.log('Unknown message type:', msg.type);
@@ -2684,6 +2693,35 @@
       elements.transcript.scrollTop = elements.transcript.scrollHeight;
     });
 
+    // Event delegation for transcript (handles dynamically added elements)
+    if (elements.transcript) {
+      elements.transcript.addEventListener('click', function(e) {
+        // Handle continuation banner toggle
+        const bannerHeader = e.target.closest('.continuation-header');
+        if (bannerHeader) {
+          e.preventDefault();
+          const content = bannerHeader.parentElement.querySelector('.continuation-content');
+          const toggle = bannerHeader.querySelector('.continuation-toggle');
+          if (content && toggle) {
+            content.classList.toggle('collapsed');
+            toggle.textContent = content.classList.contains('collapsed') ? '▼' : '▲';
+          }
+          return;
+        }
+
+        // Handle continuation link (View Continuation button)
+        const continuationLink = e.target.closest('.continuation-link');
+        if (continuationLink) {
+          e.preventDefault();
+          const convId = continuationLink.dataset.convId;
+          if (convId) {
+            requestLoadConversation(parseInt(convId, 10));
+          }
+          return;
+        }
+      });
+    }
+
     // Initialize audio support
     const audioResult = await initAudio();
     if (audioResult.supported && elements.micBtn) {
@@ -2926,7 +2964,7 @@
           type: 'group',
           label: 'Tool Calling',
           fields: {
-            native_enabled: { type: 'checkbox', label: 'Enable Native Tools', restart: true, hint: 'Use native function/tool calling instead of <command> tags (requires compatible LLM)' }
+            native_enabled: { type: 'checkbox', label: 'Enable Native Tools', hint: 'Use native function/tool calling instead of <command> tags (requires compatible LLM)' }
           }
         }
       }
@@ -4699,6 +4737,23 @@
   }
 
   /**
+   * Request to continue a conversation (after compaction)
+   * Archives the current conversation and creates a new one with the summary
+   */
+  function requestContinueConversation(convId, summary) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!convId) return;
+
+    ws.send(JSON.stringify({
+      type: 'continue_conversation',
+      payload: {
+        conversation_id: convId,
+        summary: summary || ''
+      }
+    }));
+  }
+
+  /**
    * Request to load a conversation
    */
   function requestLoadConversation(convId) {
@@ -4801,6 +4856,9 @@
     requestListConversations();
   }
 
+  /* State for chunked conversation loading */
+  let pendingChunkedLoad = null;
+
   /**
    * Handle load_conversation_response
    */
@@ -4812,20 +4870,93 @@
 
     setActiveConversationId(payload.conversation_id);
 
-    // Clear transcript and replay messages
+    // Track archived state and continuation
+    const isArchived = payload.is_archived || false;
+    const continuedBy = payload.continued_by || null;
+
+    console.log(`Load conversation: id=${payload.conversation_id}, is_archived=${isArchived}, continued_by=${continuedBy}`);
+
+    // Update input area state based on archived status
+    setArchivedMode(isArchived);
+
+    // Clear transcript
     const transcript = document.getElementById('transcript');
     if (transcript) {
       transcript.innerHTML = '';
 
-      // Replay messages using addTranscriptEntry for proper formatting
-      // This handles user, assistant, and tool messages with full debug content
+      // Add archived notice at top for archived conversations
+      if (isArchived) {
+        const archivedBannerHtml = `
+          <div class="archived-notice" id="archived-notice">
+            <span class="archived-icon">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="21 8 21 21 3 21 3 8"/>
+                <rect x="1" y="3" width="22" height="5"/>
+                <line x1="10" y1="12" x2="14" y2="12"/>
+              </svg>
+            </span>
+            <span class="archived-label">Archived Conversation (Read Only)</span>
+          </div>
+        `;
+        transcript.insertAdjacentHTML('beforeend', archivedBannerHtml);
+      }
+
+      // Add continuation banner if this is a continued conversation
+      if (payload.continued_from) {
+        const summary = payload.compaction_summary || 'Context from previous conversation was summarized.';
+        const bannerHtml = `
+          <div class="continuation-banner" id="continuation-banner">
+            <div class="continuation-header">
+              <span class="continuation-icon">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                  <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+                </svg>
+              </span>
+              <span class="continuation-label">Continued from previous conversation</span>
+              <span class="continuation-toggle">▼</span>
+            </div>
+            <div class="continuation-content collapsed">
+              <div class="continuation-summary">${escapeHtml(summary)}</div>
+            </div>
+          </div>
+        `;
+        transcript.insertAdjacentHTML('beforeend', bannerHtml);
+      }
+    }
+
+    // Check if this is a chunked load (large conversation)
+    if (payload.chunked) {
+      // Store metadata for progressive chunk handling
+      pendingChunkedLoad = {
+        conversation_id: payload.conversation_id,
+        title: payload.title,
+        chunks_received: 0,
+        context_tokens: payload.context_tokens,
+        context_max: payload.context_max,
+        is_archived: isArchived,
+        continued_by: continuedBy
+      };
+      showToast(`Loading ${payload.message_count} messages...`, 'info');
+      return;
+    }
+
+    // Non-chunked: display messages immediately
+    if (transcript) {
       const messages = payload.messages || [];
       messages.forEach(msg => {
-        if (msg.role === 'system') return; // Skip system messages
+        if (msg.role === 'system') return;
         addTranscriptEntry(msg.role, msg.content);
       });
 
-      // Scroll to bottom
+      // Add continuation link at bottom for archived conversations
+      if (isArchived && continuedBy) {
+        console.log(`Adding continuation link to conversation ${continuedBy}`);
+        addContinuationLink(continuedBy);
+      } else if (isArchived) {
+        console.log(`Archived but no continuation found (continued_by=${continuedBy})`);
+      }
+
       transcript.scrollTop = transcript.scrollHeight;
     }
 
@@ -4839,12 +4970,132 @@
       });
     }
 
-    // Update list to show active conversation
     renderConversationList();
     closeHistory();
-
-    showToast(`Loaded: ${payload.title}`, 'info');
+    const statusMsg = isArchived ? `Loaded archived: ${payload.title}` : `Loaded: ${payload.title}`;
+    showToast(statusMsg, 'info');
   }
+
+  /**
+   * Set archived mode - disable or enable input controls
+   */
+  function setArchivedMode(isArchived) {
+    const textInput = document.getElementById('text-input');
+    const sendBtn = document.getElementById('send-btn');
+    const micBtn = document.getElementById('mic-btn');
+    const inputArea = document.getElementById('input-area');
+
+    if (textInput) {
+      textInput.disabled = isArchived;
+      textInput.placeholder = isArchived ? 'This conversation is archived (read only)' : 'Type a message...';
+    }
+    if (sendBtn) sendBtn.disabled = isArchived;
+    if (micBtn && isArchived) micBtn.disabled = true;
+    if (inputArea) {
+      inputArea.classList.toggle('archived', isArchived);
+    }
+  }
+
+  /**
+   * Add continuation link at bottom of archived conversation
+   */
+  function addContinuationLink(continuedByConvId) {
+    const transcript = document.getElementById('transcript');
+    if (!transcript) return;
+
+    const linkHtml = `
+      <div class="continuation-footer" id="continuation-footer">
+        <button class="continuation-link" data-conv-id="${continuedByConvId}">
+          <span class="continuation-link-icon">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="5" y1="12" x2="19" y2="12"/>
+              <polyline points="12 5 19 12 12 19"/>
+            </svg>
+          </span>
+          View Continuation
+        </button>
+      </div>
+    `;
+    transcript.insertAdjacentHTML('beforeend', linkHtml);
+  }
+
+  /**
+   * Handle conversation_messages_chunk (for large conversations)
+   * Uses progressive rendering - displays messages as each chunk arrives
+   */
+  function handleConversationMessagesChunk(payload) {
+    if (!pendingChunkedLoad || pendingChunkedLoad.conversation_id !== payload.conversation_id) {
+      console.warn('Received chunk for unknown conversation:', payload.conversation_id);
+      return;
+    }
+
+    const transcript = document.getElementById('transcript');
+    const messages = payload.messages || [];
+    pendingChunkedLoad.chunks_received++;
+
+    // Progressive rendering: display messages as they arrive
+    if (transcript) {
+      messages.forEach(msg => {
+        if (msg.role !== 'system') {
+          addTranscriptEntry(msg.role, msg.content);
+        }
+      });
+    }
+
+    // On last chunk, finalize the load
+    if (payload.is_last) {
+      // Add continuation link at bottom for archived conversations
+      if (pendingChunkedLoad.is_archived && pendingChunkedLoad.continued_by && transcript) {
+        addContinuationLink(pendingChunkedLoad.continued_by);
+      }
+
+      if (transcript) {
+        transcript.scrollTop = transcript.scrollHeight;
+      }
+
+      // Restore context gauge
+      if (pendingChunkedLoad.context_tokens && pendingChunkedLoad.context_max) {
+        const usage = (pendingChunkedLoad.context_tokens / pendingChunkedLoad.context_max) * 100;
+        updateContextDisplay({
+          current: pendingChunkedLoad.context_tokens,
+          max: pendingChunkedLoad.context_max,
+          usage: usage
+        });
+      }
+
+      renderConversationList();
+      closeHistory();
+      const statusMsg = pendingChunkedLoad.is_archived
+        ? `Loaded archived: ${pendingChunkedLoad.title}`
+        : `Loaded: ${pendingChunkedLoad.title}`;
+      showToast(statusMsg, 'info');
+      pendingChunkedLoad = null;
+    }
+  }
+
+  /**
+   * Toggle the continuation banner expand/collapse
+   */
+  window.toggleContinuationBanner = function() {
+    console.log('toggleContinuationBanner called');
+    const content = document.querySelector('.continuation-content');
+    const toggle = document.querySelector('.continuation-toggle');
+    console.log('content:', content, 'toggle:', toggle);
+    if (content && toggle) {
+      content.classList.toggle('collapsed');
+      toggle.textContent = content.classList.contains('collapsed') ? '▼' : '▲';
+      console.log('collapsed:', content.classList.contains('collapsed'));
+    } else {
+      console.log('Could not find continuation-content or continuation-toggle elements');
+    }
+  };
+
+  /**
+   * Global function to load a conversation (used by continuation links)
+   */
+  window.loadConversation = function(convId) {
+    requestLoadConversation(convId);
+  };
 
   /**
    * Handle delete_conversation_response
@@ -4898,6 +5149,88 @@
       console.error('Failed to save message:', payload.error);
       // Don't show toast - this is background operation
     }
+  }
+
+  /**
+   * Handle context_compacted notification from server
+   * Triggers conversation continuation (archive old, create new with summary)
+   */
+  function handleContextCompacted(payload) {
+    console.log('Context compacted:', payload);
+
+    // Only proceed if we have an active conversation
+    if (!historyState.activeConversationId) {
+      console.log('No active conversation to continue');
+      return;
+    }
+
+    const summary = payload.summary || '';
+    const tokensBefore = payload.tokens_before || 0;
+    const tokensAfter = payload.tokens_after || 0;
+
+    console.log(`Compaction: ${tokensBefore} -> ${tokensAfter} tokens`);
+
+    // Request server to create continuation
+    requestContinueConversation(historyState.activeConversationId, summary);
+  }
+
+  /**
+   * Handle continue_conversation_response
+   */
+  function handleContinueConversationResponse(payload) {
+    if (!payload.success) {
+      console.error('Failed to continue conversation:', payload.error);
+      showToast('Failed to archive conversation', 'error');
+      return;
+    }
+
+    // Update active conversation to the new continuation
+    const newId = payload.new_conversation_id;
+    if (newId) {
+      setActiveConversationId(newId);
+      console.log(`Conversation continued: old=${payload.old_conversation_id} -> new=${newId}`);
+
+      // New conversation is not archived - enable input
+      setArchivedMode(false);
+
+      // Add continuation banner to transcript
+      const summary = payload.summary || 'Context from previous conversation was summarized.';
+      addContinuationBanner(summary);
+
+      // Refresh conversation list to show the chain
+      requestListConversations();
+    }
+  }
+
+  /**
+   * Add continuation banner to the current transcript
+   */
+  function addContinuationBanner(summary) {
+    const transcript = document.getElementById('transcript');
+    if (!transcript) return;
+
+    // Remove any existing banner
+    const existing = document.getElementById('continuation-banner');
+    if (existing) existing.remove();
+
+    const bannerHtml = `
+      <div class="continuation-banner" id="continuation-banner">
+        <div class="continuation-header">
+          <span class="continuation-icon">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+            </svg>
+          </span>
+          <span class="continuation-label">Context compacted</span>
+          <span class="continuation-toggle">▼</span>
+        </div>
+        <div class="continuation-content collapsed">
+          <div class="continuation-summary">${escapeHtml(summary)}</div>
+        </div>
+      </div>
+    `;
+    transcript.insertAdjacentHTML('beforeend', bannerHtml);
   }
 
   /**
@@ -4956,11 +5289,73 @@
     historyState.pendingMessages = [];
     historyState.creatingConversation = false;
 
+    // Enable input (in case we were viewing an archived conversation)
+    setArchivedMode(false);
+
     // Clear transcript
     const transcript = document.getElementById('transcript');
     if (transcript) {
       transcript.innerHTML = '';
     }
+  }
+
+  /**
+   * Render a single conversation item HTML
+   */
+  function renderConversationItem(conv, isChainChild = false) {
+    const isActive = conv.id === historyState.activeConversationId;
+    const isArchived = conv.is_archived;
+    const time = formatRelativeTime(conv.updated_at * 1000);
+    const chainIcon = conv.continued_from ? `
+      <span class="history-item-chain" title="Continued from previous conversation">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+        </svg>
+      </span>
+    ` : '';
+    const archivedIcon = isArchived ? `
+      <span class="history-item-archived" title="Archived (continued in another conversation)">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="21 8 21 21 3 21 3 8"/>
+          <rect x="1" y="3" width="22" height="5"/>
+          <line x1="10" y1="12" x2="14" y2="12"/>
+        </svg>
+      </span>
+    ` : '';
+
+    const classes = ['history-item'];
+    if (isActive) classes.push('active');
+    if (isArchived) classes.push('archived');
+    if (isChainChild) classes.push('chain-child');
+
+    return `
+      <div class="${classes.join(' ')}" data-conv-id="${conv.id}">
+        <div class="history-item-content">
+          <div class="history-item-title">${archivedIcon}${chainIcon}${escapeHtml(conv.title)}</div>
+          <div class="history-item-meta">
+            <span class="history-item-time">${time}</span>
+            <span class="history-item-count">${conv.message_count} messages</span>
+          </div>
+        </div>
+        <div class="history-item-actions">
+          <button class="rename" title="Rename" data-action="rename">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+            </svg>
+          </button>
+          <button class="delete" title="Delete" data-action="delete">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="3 6 5 6 21 6"/>
+              <path d="M19 6l-2 14H7L5 6"/>
+              <path d="M10 11v6M14 11v6"/>
+              <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    `;
   }
 
   /**
@@ -4976,7 +5371,27 @@
       return;
     }
 
-    // Group by date
+    // Build chain relationships: map parent_id -> array of continuations
+    const childrenOf = {};  // parent_id -> [child conversations]
+    const isChild = {};     // conv_id -> true if it's a child (has parent in our list)
+    const convById = {};    // conv_id -> conversation object
+
+    conversations.forEach(conv => {
+      convById[conv.id] = conv;
+    });
+
+    conversations.forEach(conv => {
+      if (conv.continued_from && convById[conv.continued_from]) {
+        // Parent exists in our list - this is a chain child
+        if (!childrenOf[conv.continued_from]) {
+          childrenOf[conv.continued_from] = [];
+        }
+        childrenOf[conv.continued_from].push(conv);
+        isChild[conv.id] = true;
+      }
+    });
+
+    // Group by date (only top-level conversations, not children)
     const groups = {};
     const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
@@ -4984,6 +5399,9 @@
     const weekAgo = today - 604800000;
 
     conversations.forEach(conv => {
+      // Skip children - they'll be rendered with their parent
+      if (isChild[conv.id]) return;
+
       const timestamp = conv.updated_at * 1000;
       let groupKey;
 
@@ -5010,40 +5428,46 @@
       html += `<div class="history-date-group">${groupName}</div>`;
 
       convs.forEach(conv => {
-        const isActive = conv.id === historyState.activeConversationId;
-        const time = formatRelativeTime(conv.updated_at * 1000);
+        const children = childrenOf[conv.id] || [];
 
-        html += `
-          <div class="history-item ${isActive ? 'active' : ''}" data-conv-id="${conv.id}">
-            <div class="history-item-content">
-              <div class="history-item-title">${escapeHtml(conv.title)}</div>
-              <div class="history-item-meta">
-                <span class="history-item-time">${time}</span>
-                <span class="history-item-count">${conv.message_count} messages</span>
+        if (children.length > 0) {
+          // This conversation has continuations - render as collapsible chain group
+          const chainCount = children.length + 1; // Parent + children
+          html += `
+            <div class="history-chain-group collapsed" data-chain-parent="${conv.id}">
+              <div class="history-chain-header">
+                <button class="history-chain-toggle" title="Expand chain">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="9 18 15 12 9 6"/>
+                  </svg>
+                </button>
+                <span class="history-chain-badge" title="${chainCount} linked conversations">${chainCount}</span>
+              </div>
+              ${renderConversationItem(conv, false)}
+              <div class="history-chain-children">
+                ${children.map(child => renderConversationItem(child, true)).join('')}
               </div>
             </div>
-            <div class="history-item-actions">
-              <button class="rename" title="Rename" data-action="rename">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-                </svg>
-              </button>
-              <button class="delete" title="Delete" data-action="delete">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <polyline points="3 6 5 6 21 6"/>
-                  <path d="M19 6l-2 14H7L5 6"/>
-                  <path d="M10 11v6M14 11v6"/>
-                  <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
-                </svg>
-              </button>
-            </div>
-          </div>
-        `;
+          `;
+        } else {
+          // Standalone conversation
+          html += renderConversationItem(conv, false);
+        }
       });
     }
 
     historyElements.list.innerHTML = html;
+
+    // Add chain toggle event listeners
+    historyElements.list.querySelectorAll('.history-chain-toggle').forEach(toggle => {
+      toggle.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const group = toggle.closest('.history-chain-group');
+        if (group) {
+          group.classList.toggle('collapsed');
+        }
+      });
+    });
 
     // Add event listeners
     historyElements.list.querySelectorAll('.history-item').forEach(item => {

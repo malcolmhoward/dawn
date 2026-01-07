@@ -770,7 +770,27 @@ int auth_db_backup(const char *dest_path);
 #define CONV_MAX_PER_USER 100
 
 /**
+ * @brief Maximum compaction summary length
+ */
+#define CONV_SUMMARY_MAX 4096
+
+/**
  * @brief Conversation metadata structure
+ *
+ * Conversation Continuation Architecture:
+ * When context compaction occurs:
+ * 1. Original conversation is archived (is_archived = 1)
+ * 2. New conversation created with continued_from = original_id
+ * 3. Summary stored in compaction_summary, added as system message
+ *
+ * Design Decision: Archived conversations are READ-ONLY
+ * - Cannot add new messages to archived conversations
+ * - Continuations are independent - their context is summary + their own messages
+ * - Model changes only affect future compaction decisions
+ *
+ * KNOWN LIMITATION: Context window waste on model upgrade
+ * If user switches from 8K->128K model, continued conversations still only
+ * have the summary, not full parent history. This is intentional simplicity.
  */
 typedef struct {
    int64_t id;
@@ -780,8 +800,10 @@ typedef struct {
    time_t updated_at;
    int message_count;
    bool is_archived;
-   int context_tokens; /**< Last known context token count */
-   int context_max;    /**< Context window size */
+   int context_tokens;       /**< Last known context token count */
+   int context_max;          /**< Context window size */
+   int64_t continued_from;   /**< Parent conversation ID (0 = none) */
+   char *compaction_summary; /**< Summary from parent (NULL if not a continuation) */
 } conversation_t;
 
 /**
@@ -822,6 +844,18 @@ typedef int (*conversation_callback_t)(const conversation_t *conv, void *ctx);
 typedef int (*message_callback_t)(const conversation_message_t *msg, void *ctx);
 
 /**
+ * @brief Callback for admin list all conversations (includes username)
+ *
+ * @param conv Conversation metadata
+ * @param username Owner's username
+ * @param ctx User-provided context
+ * @return 0 to continue iteration, non-zero to stop
+ */
+typedef int (*conversation_all_callback_t)(const conversation_t *conv,
+                                           const char *username,
+                                           void *ctx);
+
+/**
  * @brief Create a new conversation
  *
  * @param user_id User ID who owns the conversation
@@ -842,6 +876,33 @@ int conv_db_create(int user_id, const char *title, int64_t *conv_id_out);
 int conv_db_get(int64_t conv_id, int user_id, conversation_t *conv_out);
 
 /**
+ * @brief Free dynamically allocated fields in a conversation_t
+ *
+ * Must be called after using conv_db_get() to free compaction_summary.
+ * Safe to call with NULL fields or multiple times.
+ *
+ * @param conv Conversation to clean up (not freed itself, only contents)
+ */
+void conv_free(conversation_t *conv);
+
+/**
+ * @brief Create a continuation of an existing conversation
+ *
+ * Used during context compaction. The parent conversation is archived and
+ * a new conversation is created with a reference to the parent.
+ *
+ * @param user_id User ID
+ * @param parent_id Parent conversation ID to continue from
+ * @param compaction_summary Summary of the parent conversation context
+ * @param conv_id_out Receives the new conversation ID
+ * @return AUTH_DB_SUCCESS, AUTH_DB_NOT_FOUND (parent), AUTH_DB_FORBIDDEN, or AUTH_DB_FAILURE
+ */
+int conv_db_create_continuation(int user_id,
+                                int64_t parent_id,
+                                const char *compaction_summary,
+                                int64_t *conv_id_out);
+
+/**
  * @brief List conversations for a user
  *
  * @param user_id User ID
@@ -856,6 +917,22 @@ int conv_db_list(int user_id,
                  const conv_pagination_t *pagination,
                  conversation_callback_t callback,
                  void *ctx);
+
+/**
+ * @brief List all conversations (admin only)
+ *
+ * Lists conversations across all users with owner username.
+ *
+ * @param include_archived Whether to include archived conversations
+ * @param pagination Pagination parameters (can be NULL for defaults)
+ * @param callback Function called for each conversation (includes username)
+ * @param ctx User-provided context passed to callback
+ * @return AUTH_DB_SUCCESS or AUTH_DB_FAILURE
+ */
+int conv_db_list_all(bool include_archived,
+                     const conv_pagination_t *pagination,
+                     conversation_all_callback_t callback,
+                     void *ctx);
 
 /**
  * @brief Rename a conversation
@@ -886,6 +963,16 @@ int conv_db_update_context(int64_t conv_id, int user_id, int context_tokens, int
  * @return AUTH_DB_SUCCESS, AUTH_DB_NOT_FOUND, AUTH_DB_FORBIDDEN, or AUTH_DB_FAILURE
  */
 int conv_db_delete(int64_t conv_id, int user_id);
+
+/**
+ * @brief Delete a conversation (admin only, no ownership check)
+ *
+ * For admin CLI tools that need to delete any conversation.
+ *
+ * @param conv_id Conversation ID
+ * @return AUTH_DB_SUCCESS, AUTH_DB_NOT_FOUND, or AUTH_DB_FAILURE
+ */
+int conv_db_delete_admin(int64_t conv_id);
 
 /**
  * @brief Search conversations by title
@@ -951,12 +1038,37 @@ int conv_db_add_message(int64_t conv_id, int user_id, const char *role, const ch
 int conv_db_get_messages(int64_t conv_id, int user_id, message_callback_t callback, void *ctx);
 
 /**
+ * @brief Get messages for a conversation (admin only, no ownership check)
+ *
+ * For admin CLI tools that need to view any conversation.
+ *
+ * @param conv_id Conversation ID
+ * @param callback Function called for each message
+ * @param ctx User-provided context passed to callback
+ * @return AUTH_DB_SUCCESS, AUTH_DB_NOT_FOUND, or AUTH_DB_FAILURE
+ */
+int conv_db_get_messages_admin(int64_t conv_id, message_callback_t callback, void *ctx);
+
+/**
  * @brief Count conversations for a user
  *
  * @param user_id User ID
  * @return Number of conversations, or -1 on error
  */
 int conv_db_count(int user_id);
+
+/**
+ * @brief Find the continuation conversation for an archived conversation
+ *
+ * Searches for a conversation where continued_from = parent_id.
+ * Used to provide "View continuation" link for archived conversations.
+ *
+ * @param parent_id Parent conversation ID (the archived one)
+ * @param user_id User ID (for ownership check)
+ * @param continuation_id_out Output: ID of continuation conversation (0 if none)
+ * @return AUTH_DB_SUCCESS, AUTH_DB_NOT_FOUND, or AUTH_DB_FAILURE
+ */
+int conv_db_find_continuation(int64_t parent_id, int user_id, int64_t *continuation_id_out);
 
 /**
  * @brief Generate title from first message content
@@ -978,5 +1090,163 @@ void conv_generate_title(const char *content, char *title_out, size_t max_len);
  * @brief Error code for limit exceeded
  */
 #define AUTH_DB_LIMIT_EXCEEDED 9
+
+/* ============================================================================
+ * Session Metrics (schema v8+)
+ * ============================================================================ */
+
+/**
+ * @brief Default retention period for session metrics (90 days)
+ */
+#define SESSION_METRICS_RETENTION_DAYS 90
+
+/**
+ * @brief Maximum session type string length
+ */
+#define SESSION_TYPE_MAX 16
+
+/**
+ * @brief Maximum LLM type string length
+ */
+#define LLM_TYPE_MAX 16
+
+/**
+ * @brief Maximum cloud provider string length
+ */
+#define CLOUD_PROVIDER_MAX 16
+
+/**
+ * @brief Session metrics structure
+ *
+ * Stores aggregated metrics for a completed session. Saved to database
+ * when a session ends for historical analysis and reporting.
+ *
+ * Token usage is tracked per-provider in session_metrics_providers table
+ * to handle sessions that use multiple providers (e.g., OpenAI + Claude).
+ */
+typedef struct {
+   int64_t id;                          /**< Database row ID (0 if not saved) */
+   uint32_t session_id;                 /**< Runtime session ID (ephemeral) */
+   int user_id;                         /**< User ID (0 for LOCAL/DAP sessions) */
+   char session_type[SESSION_TYPE_MAX]; /**< 'LOCAL', 'DAP', 'DAP2', 'WEBSOCKET' */
+   time_t started_at;                   /**< Session start time */
+   time_t ended_at;                     /**< Session end time */
+
+   /* Query counts */
+   uint32_t queries_total;
+   uint32_t queries_cloud;
+   uint32_t queries_local;
+   uint32_t errors_count;
+   uint32_t fallbacks_count;
+
+   /* Performance averages (milliseconds) */
+   double avg_asr_ms;
+   double avg_llm_ttft_ms;
+   double avg_llm_total_ms;
+   double avg_tts_ms;
+   double avg_pipeline_ms;
+} session_metrics_t;
+
+/**
+ * @brief Per-provider token usage for a session
+ *
+ * Tracks token usage broken down by LLM provider. Multiple entries
+ * can exist per session if the user switches providers mid-session.
+ */
+typedef struct {
+   int64_t session_metrics_id;        /**< Parent session_metrics.id */
+   char provider[CLOUD_PROVIDER_MAX]; /**< 'openai', 'claude', 'local' */
+   uint64_t tokens_input;
+   uint64_t tokens_output;
+   uint64_t tokens_cached;
+   uint32_t queries; /**< Queries using this provider */
+} session_provider_metrics_t;
+
+/**
+ * @brief Maximum number of providers per session
+ */
+#define MAX_PROVIDERS_PER_SESSION 4
+
+/**
+ * @brief Callback for session metrics enumeration
+ *
+ * @param metrics Session metrics entry
+ * @param ctx User-provided context
+ * @return 0 to continue iteration, non-zero to stop
+ */
+typedef int (*session_metrics_callback_t)(const session_metrics_t *metrics, void *ctx);
+
+/**
+ * @brief Session metrics query filter
+ */
+typedef struct {
+   int user_id;      /**< Filter by user (0 = all users) */
+   const char *type; /**< Filter by session type (NULL = all) */
+   time_t since;     /**< Only sessions starting after this time (0 = no limit) */
+   time_t until;     /**< Only sessions starting before this time (0 = no limit) */
+   int limit;        /**< Max entries to return (0 = default 20) */
+   int offset;       /**< Skip first N entries (for pagination) */
+} session_metrics_filter_t;
+
+/**
+ * @brief Save session metrics to database
+ *
+ * Called when a session ends to persist metrics for historical analysis.
+ * The metrics->id field will be updated with the new row ID on success.
+ *
+ * @param metrics Metrics to save
+ * @return AUTH_DB_SUCCESS or AUTH_DB_FAILURE
+ */
+int auth_db_save_session_metrics(session_metrics_t *metrics);
+
+/**
+ * @brief Save per-provider token metrics
+ *
+ * Called after auth_db_save_session_metrics() to save provider breakdown.
+ * Uses the session_metrics.id returned from the parent save call.
+ *
+ * @param session_metrics_id Parent session_metrics.id
+ * @param providers Array of provider metrics
+ * @param count Number of providers in array
+ * @return AUTH_DB_SUCCESS or AUTH_DB_FAILURE
+ */
+int auth_db_save_provider_metrics(int64_t session_metrics_id,
+                                  const session_provider_metrics_t *providers,
+                                  int count);
+
+/**
+ * @brief Query session metrics history
+ *
+ * @param filter Query filters (can be NULL for defaults)
+ * @param callback Function called for each matching entry
+ * @param ctx User-provided context passed to callback
+ * @return AUTH_DB_SUCCESS or AUTH_DB_FAILURE
+ */
+int auth_db_list_session_metrics(const session_metrics_filter_t *filter,
+                                 session_metrics_callback_t callback,
+                                 void *ctx);
+
+/**
+ * @brief Get aggregate metrics across all sessions
+ *
+ * Calculates totals and averages across multiple sessions for reporting.
+ *
+ * @param filter Query filters (can be NULL for all sessions)
+ * @param totals Output: aggregated totals (queries, tokens, etc.)
+ * @return AUTH_DB_SUCCESS or AUTH_DB_FAILURE
+ */
+int auth_db_get_metrics_aggregate(const session_metrics_filter_t *filter,
+                                  session_metrics_t *totals);
+
+/**
+ * @brief Delete old session metrics (retention cleanup)
+ *
+ * Deletes metrics older than the specified number of days.
+ * Called automatically during auth_db_run_cleanup().
+ *
+ * @param retention_days Delete metrics older than this many days
+ * @return Number of deleted entries, or -1 on error
+ */
+int auth_db_cleanup_session_metrics(int retention_days);
 
 #endif /* AUTH_DB_H */

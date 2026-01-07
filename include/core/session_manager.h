@@ -36,6 +36,50 @@
 #include "core/text_filter.h"   // For cmd_tag_filter_state_t
 #include "llm/llm_interface.h"  // For session_llm_config_t
 
+#define SESSION_PROVIDER_MAX 16
+#define SESSION_MAX_PROVIDERS 4
+
+/**
+ * @brief Per-provider token tracking for a session
+ */
+typedef struct {
+   char provider[SESSION_PROVIDER_MAX];  // "openai", "claude", "local"
+   uint64_t tokens_input;
+   uint64_t tokens_output;
+   uint64_t tokens_cached;
+   uint32_t queries;
+} session_provider_tokens_t;
+
+/**
+ * @brief Per-session metrics tracker
+ *
+ * Tracks metrics during session lifetime. Saved to database after each query
+ * using UPSERT pattern (INSERT first query, UPDATE thereafter).
+ */
+typedef struct {
+   int64_t db_id;  // Database row ID (-1 = not yet saved)
+   int user_id;    // User ID (0 = anonymous/local)
+
+   // Query counts
+   uint32_t queries_total;
+   uint32_t queries_cloud;
+   uint32_t queries_local;
+   uint32_t errors_count;
+   uint32_t fallbacks_count;
+
+   // Per-provider token tracking
+   session_provider_tokens_t providers[SESSION_MAX_PROVIDERS];
+   int provider_count;
+
+   // Performance tracking (sums + counts for computing averages)
+   double asr_ms_sum;
+   double llm_ttft_ms_sum;
+   double llm_total_ms_sum;
+   double tts_ms_sum;
+   double pipeline_ms_sum;
+   uint32_t perf_sample_count;  // Number of samples for averaging
+} session_metrics_tracker_t;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -137,6 +181,10 @@ typedef struct session {
    uint64_t first_token_ms;      // Timestamp of first token (0 if none yet)
    uint64_t last_token_ms;       // Timestamp of most recent token
    uint32_t stream_token_count;  // Token count for current stream
+
+   // Per-session metrics (saved to database after each query)
+   session_metrics_tracker_t metrics;
+   pthread_mutex_t metrics_mutex;  // Protects metrics (lock level 4)
 
    // Command tag filter state (strips <command>...</command> from stream)
    // Used when native tool calling is disabled (legacy command tag mode)
@@ -495,6 +543,83 @@ void session_clear_llm_config(session_t *session);
 #endif /* ENABLE_MULTI_CLIENT */
 
 // =============================================================================
+// Per-Session Metrics
+// =============================================================================
+
+#ifdef ENABLE_MULTI_CLIENT
+
+/**
+ * @brief Record a completed LLM query in session metrics
+ *
+ * Updates session metrics with query counts, token usage, and performance data.
+ * Automatically persists to database using UPSERT pattern (INSERT on first call,
+ * UPDATE on subsequent calls).
+ *
+ * @param session Session to update
+ * @param provider LLM provider used ("openai", "claude", "local")
+ * @param tokens_in Input tokens consumed
+ * @param tokens_out Output tokens generated
+ * @param tokens_cached Cached tokens (prompt caching)
+ * @param llm_ttft_ms Time to first token in milliseconds
+ * @param llm_total_ms Total LLM response time in milliseconds
+ * @param is_error Whether the query resulted in an error
+ *
+ * @locks session->metrics_mutex
+ */
+void session_record_query(session_t *session,
+                          const char *provider,
+                          uint64_t tokens_in,
+                          uint64_t tokens_out,
+                          uint64_t tokens_cached,
+                          double llm_ttft_ms,
+                          double llm_total_ms,
+                          bool is_error);
+
+/**
+ * @brief Record ASR timing for session metrics
+ *
+ * @param session Session to update
+ * @param asr_ms ASR processing time in milliseconds
+ *
+ * @locks session->metrics_mutex
+ */
+void session_record_asr_timing(session_t *session, double asr_ms);
+
+/**
+ * @brief Record TTS timing for session metrics
+ *
+ * @param session Session to update
+ * @param tts_ms TTS processing time in milliseconds
+ *
+ * @locks session->metrics_mutex
+ */
+void session_record_tts_timing(session_t *session, double tts_ms);
+
+/**
+ * @brief Record full pipeline timing for session metrics
+ *
+ * @param session Session to update
+ * @param pipeline_ms Total pipeline time (ASR + LLM + TTS) in milliseconds
+ *
+ * @locks session->metrics_mutex
+ */
+void session_record_pipeline_timing(session_t *session, double pipeline_ms);
+
+/**
+ * @brief Set user ID for session metrics
+ *
+ * Called when WebSocket session is authenticated to associate metrics with user.
+ *
+ * @param session Session to update
+ * @param user_id Authenticated user ID
+ *
+ * @locks session->metrics_mutex
+ */
+void session_set_metrics_user(session_t *session, int user_id);
+
+#endif /* ENABLE_MULTI_CLIENT */
+
+// =============================================================================
 // Utility Functions
 // =============================================================================
 
@@ -522,16 +647,6 @@ int session_count(void);
  */
 const char *session_type_name(session_type_t type);
 
-/**
- * @brief Save all active sessions' conversation histories
- *
- * Iterates through all sessions and saves non-empty conversation histories
- * to timestamped JSON files. Called during shutdown to preserve chat logs.
- * Files are named: chat_history_session{id}_{type}_{timestamp}.json
- *
- * @note Thread-safe: acquires session_manager_rwlock (read)
- */
-void session_manager_save_all_histories(void);
 #endif /* ENABLE_MULTI_CLIENT */
 
 // =============================================================================
@@ -670,9 +785,6 @@ static inline void session_cleanup_expired(void) {
 
 static inline int session_count(void) {
    return 0;
-}
-
-static inline void session_manager_save_all_histories(void) {
 }
 
 static inline int session_set_llm_config(session_t *session, const session_llm_config_t *config) {

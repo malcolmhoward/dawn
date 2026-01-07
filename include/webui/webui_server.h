@@ -99,10 +99,11 @@ typedef enum {
    WS_RESP_CONTEXT,    /* Context/token usage update */
 
    /* LLM streaming types (ChatGPT-style real-time text) */
-   WS_RESP_STREAM_START,  /* Start of LLM token stream */
-   WS_RESP_STREAM_DELTA,  /* Incremental token chunk */
-   WS_RESP_STREAM_END,    /* End of LLM token stream */
-   WS_RESP_METRICS_UPDATE /* Real-time metrics for UI visualization */
+   WS_RESP_STREAM_START,       /* Start of LLM token stream */
+   WS_RESP_STREAM_DELTA,       /* Incremental token chunk */
+   WS_RESP_STREAM_END,         /* End of LLM token stream */
+   WS_RESP_METRICS_UPDATE,     /* Real-time metrics for UI visualization */
+   WS_RESP_COMPACTION_COMPLETE /* Context compaction completed */
 } ws_response_type_t;
 
 /* =============================================================================
@@ -246,6 +247,26 @@ void webui_send_context(struct session *session,
  * @note Thread-safe - can be called from any thread
  */
 void webui_send_error(struct session *session, const char *code, const char *message);
+
+/**
+ * @brief Send context compaction notification to WebSocket client
+ *
+ * Sent after auto-compaction completes. The client can use this to trigger
+ * conversation continuation in the database (archive old, create new with summary).
+ *
+ * @param session Session to send to (must be SESSION_TYPE_WEBSOCKET)
+ * @param tokens_before Token count before compaction
+ * @param tokens_after Token count after compaction
+ * @param messages_summarized Number of messages that were summarized
+ * @param summary The generated summary text (for continuation)
+ *
+ * @note Thread-safe - can be called from any thread
+ */
+void webui_send_compaction_complete(struct session *session,
+                                    int tokens_before,
+                                    int tokens_after,
+                                    int messages_summarized,
+                                    const char *summary);
 
 /* =============================================================================
  * LLM Streaming Functions (ChatGPT-style real-time text)

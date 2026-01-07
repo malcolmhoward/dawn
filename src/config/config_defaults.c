@@ -122,8 +122,8 @@ void config_set_defaults(dawn_config_t *config) {
    config->llm.tools.native_enabled = true; /* Native tool calling enabled by default */
 
    /* LLM Context Management */
-   config->llm.summarize_threshold = 0.80f; /* Compact at 80% of context limit */
-   config->llm.conversation_logging = true; /* Save chat logs by default */
+   config->llm.summarize_threshold = 0.80f;  /* Compact at 80% of context limit */
+   config->llm.conversation_logging = false; /* Disabled: WebUI saves to DB, set true for debug */
 
    /* Search */
    SAFE_COPY(config->search.engine, "searxng");

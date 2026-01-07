@@ -204,6 +204,4 @@ char *findAudioPlaybackDevice(char *name);
  */
 char *textToSpeechCallback(const char *actionName, char *value, int *should_respond);
 
-static int save_conversation_history(struct json_object *conversation_history);
-
 #endif  // DAWN_H

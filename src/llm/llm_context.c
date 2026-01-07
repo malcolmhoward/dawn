@@ -49,6 +49,8 @@
 
 extern dawn_config_t g_config;
 
+#include "tools/time_utils.h"
+
 /* =============================================================================
  * Model Context Size Lookup Table
  * ============================================================================= */
@@ -205,6 +207,16 @@ void llm_context_cleanup(void) {
    pthread_mutex_destroy(&s_state.mutex);
    s_state.initialized = false;
    LOG_INFO("llm_context: Cleaned up");
+}
+
+void llm_compaction_result_free(llm_compaction_result_t *result) {
+   if (!result) {
+      return;
+   }
+   if (result->summary) {
+      free(result->summary);
+   }
+   memset(result, 0, sizeof(*result));
 }
 
 /* =============================================================================
@@ -408,6 +420,37 @@ void llm_context_update_usage(uint32_t session_id,
       LOG_WARNING("Context usage (%.1f%%) exceeds threshold (%.0f%%) - compaction recommended",
                   usage_pct, threshold_pct);
    }
+
+#ifdef ENABLE_MULTI_CLIENT
+   /* Record query metrics to session (persisted to database per-query) */
+   session_t *session = session_get_command_context();
+   if (session) {
+      /* Build provider name string */
+      const char *provider_name;
+      if (type == LLM_LOCAL) {
+         provider_name = "local";
+      } else if (provider == CLOUD_PROVIDER_CLAUDE) {
+         provider_name = "claude";
+      } else {
+         provider_name = "openai";
+      }
+
+      /* Get timing from session streaming metrics */
+      double ttft_ms = 0.0;
+      double total_ms = 0.0;
+      if (session->stream_start_ms > 0) {
+         uint64_t now_ms = get_time_ms();
+         total_ms = (double)(now_ms - session->stream_start_ms);
+         if (session->first_token_ms > 0) {
+            ttft_ms = (double)(session->first_token_ms - session->stream_start_ms);
+         }
+      }
+
+      session_record_query(session, provider_name, (uint64_t)prompt_tokens,
+                           (uint64_t)completion_tokens, (uint64_t)cached_tokens, ttft_ms, total_ms,
+                           false /* is_error */);
+   }
+#endif
 }
 
 void llm_context_get_last_usage(int *current_tokens, int *max_tokens, float *threshold) {
@@ -762,7 +805,9 @@ int llm_context_compact(uint32_t session_id,
             summary);
    json_object_object_add(summary_msg, "content", json_object_new_string(summary_with_note));
    json_object_array_add(new_history, summary_msg);
-   free(summary);
+
+   /* Transfer summary ownership to result (caller must free) */
+   result->summary = summary;
 
    /* Add last N messages */
    for (int i = end_idx; i < history_len; i++) {
@@ -848,15 +893,17 @@ int llm_context_auto_compact(struct json_object *history, uint32_t session_id) {
    }
 
    /* Perform compaction */
-   llm_compaction_result_t result;
+   llm_compaction_result_t result = { 0 };
    int rc = llm_context_compact(session_id, history, type, provider, model, &result);
 
    if (rc == 0 && result.performed) {
       LOG_INFO("llm_context: Auto-compaction complete - %d tokens -> %d tokens",
                result.tokens_before, result.tokens_after);
+      llm_compaction_result_free(&result);
       return 1; /* Compaction was performed */
    }
 
+   llm_compaction_result_free(&result);
    return 0;
 }
 
@@ -892,15 +939,29 @@ int llm_context_auto_compact_with_config(struct json_object *history,
 #endif
 
    /* Perform compaction */
-   llm_compaction_result_t result;
+   llm_compaction_result_t result = { 0 };
    int rc = llm_context_compact(session_id, history, type, provider, model, &result);
 
    if (rc == 0 && result.performed) {
       LOG_INFO("llm_context: Auto-compaction complete - %d tokens -> %d tokens",
                result.tokens_before, result.tokens_after);
+
+#ifdef ENABLE_WEBUI
+      /* Notify WebUI about compaction completion (for database continuation) */
+      if (session_id != 0) {
+         session_t *session = session_get(session_id);
+         if (session && session->type == SESSION_TYPE_WEBSOCKET) {
+            webui_send_compaction_complete(session, result.tokens_before, result.tokens_after,
+                                           result.messages_summarized, result.summary);
+         }
+      }
+#endif
+
+      llm_compaction_result_free(&result);
       return 1; /* Compaction was performed */
    }
 
+   llm_compaction_result_free(&result);
    return 0;
 }
 

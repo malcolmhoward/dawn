@@ -1086,6 +1086,144 @@ body.user-is-admin .settings-paths.admin-only {
   font-style: italic;
 }
 
+/* Continuation banner for continued conversations */
+.continuation-banner {
+  background: rgba(34, 211, 238, 0.08);
+  border: 1px solid rgba(34, 211, 238, 0.2);
+  border-radius: var(--border-radius);
+  margin-bottom: 1rem;
+  overflow: hidden;
+}
+
+.continuation-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color var(--transition-fast);
+}
+
+.continuation-header:hover {
+  background: rgba(34, 211, 238, 0.12);
+}
+
+.continuation-icon {
+  display: flex;
+  align-items: center;
+  color: var(--accent);
+}
+
+.continuation-icon svg {
+  stroke: currentColor;
+}
+
+.continuation-label {
+  flex: 1;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+
+.continuation-toggle {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  transition: transform var(--transition-fast);
+}
+
+.continuation-content {
+  padding: 0.75rem 1rem;
+  border-top: 1px solid rgba(34, 211, 238, 0.15);
+  background: rgba(0, 0, 0, 0.1);
+  transition: max-height var(--transition-fast), padding var(--transition-fast), opacity var(--transition-fast), border-top-color var(--transition-fast);
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.continuation-content.collapsed {
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  border-top-color: transparent;
+  opacity: 0;
+  overflow: hidden;
+}
+
+.continuation-summary {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+/* Archived conversation notice */
+.archived-notice {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  margin-bottom: 0.5rem;
+  background: rgba(240, 180, 41, 0.1);
+  border: 1px solid rgba(240, 180, 41, 0.3);
+  border-radius: var(--border-radius);
+  color: #f0b429;
+}
+
+.archived-icon {
+  display: flex;
+  align-items: center;
+}
+
+.archived-label {
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+/* Continuation footer link (at bottom of archived conversations) */
+.continuation-footer {
+  display: flex;
+  justify-content: center;
+  padding: 1rem;
+  margin-top: 0.5rem;
+}
+
+.continuation-link {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.5rem;
+  background: rgba(34, 211, 238, 0.1);
+  border: 1px solid rgba(34, 211, 238, 0.3);
+  border-radius: var(--border-radius);
+  color: var(--accent);
+  font-size: 0.95rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.continuation-link:hover {
+  background: rgba(34, 211, 238, 0.2);
+  border-color: rgba(34, 211, 238, 0.5);
+  transform: translateX(2px);
+}
+
+.continuation-link-icon {
+  display: flex;
+  align-items: center;
+}
+
+/* Disabled input area for archived conversations */
+#input-area.archived {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+#input-area.archived #text-input {
+  background: var(--bg-tertiary);
+  cursor: not-allowed;
+}
+
 .transcript-entry {
   padding: 0.75rem;
   margin-bottom: 0.5rem;
@@ -1850,6 +1988,135 @@ button:disabled {
   overflow: hidden;
   text-overflow: ellipsis;
   margin-bottom: 0.25rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+/* Chain link icon for continued conversations */
+.history-item-chain {
+  display: inline-flex;
+  align-items: center;
+  color: var(--accent);
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+
+.history-item-chain svg {
+  stroke: currentColor;
+}
+
+/* Archived conversation indicator */
+.history-item.archived {
+  opacity: 0.6;
+}
+
+.history-item.archived .history-item-title {
+  font-style: italic;
+}
+
+.history-item-archived {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-secondary);
+  opacity: 0.8;
+  margin-right: 0.35rem;
+  flex-shrink: 0;
+}
+
+.history-item-archived svg {
+  stroke: currentColor;
+}
+
+/* Conversation Chain Groups - collapsible accordion */
+.history-chain-group {
+  position: relative;
+}
+
+/* Chain header with toggle and badge */
+.history-chain-header {
+  position: absolute;
+  left: 0.5rem;
+  top: 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  z-index: 1;
+}
+
+/* Chevron toggle button */
+.history-chain-toggle {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition-fast);
+}
+
+.history-chain-toggle:hover {
+  background: rgba(34, 211, 238, 0.1);
+  border-color: rgba(34, 211, 238, 0.3);
+  color: var(--accent);
+}
+
+.history-chain-toggle svg {
+  transition: transform var(--transition-fast);
+}
+
+.history-chain-group:not(.collapsed) .history-chain-toggle svg {
+  transform: rotate(90deg);
+}
+
+/* Chain count badge */
+.history-chain-badge {
+  background: rgba(34, 211, 238, 0.15);
+  border: 1px solid rgba(34, 211, 238, 0.25);
+  color: var(--accent);
+  font-size: 0.7rem;
+  font-family: 'IBM Plex Mono', monospace;
+  padding: 1px 5px;
+  border-radius: 8px;
+  min-width: 16px;
+  text-align: center;
+}
+
+/* Parent item in chain - add left padding for toggle/badge */
+.history-chain-group > .history-item {
+  padding-left: 4rem;
+}
+
+/* Children container - collapsible */
+.history-chain-children {
+  overflow: hidden;
+  max-height: 500px;
+  transition: max-height var(--transition-medium), opacity var(--transition-fast);
+  opacity: 1;
+}
+
+.history-chain-group.collapsed .history-chain-children {
+  max-height: 0;
+  opacity: 0;
+}
+
+/* Chain child (continuation) - indented */
+.history-item.chain-child {
+  margin-left: 1.5rem;
+  border-left: 2px solid rgba(34, 211, 238, 0.2);
+}
+
+.history-item.chain-child:hover {
+  border-left-color: rgba(34, 211, 238, 0.4);
+}
+
+.history-item.chain-child.active {
+  border-left-color: var(--accent);
 }
 
 .history-item-meta {
@@ -1944,6 +2211,16 @@ button:disabled {
 
   #history-search-input {
     font-size: 16px; /* Prevent iOS zoom */
+  }
+
+  /* Chain groups on mobile */
+  .history-chain-toggle {
+    width: 32px;
+    height: 32px;
+  }
+
+  .history-item.chain-child {
+    margin-left: 1rem;
   }
 }
 

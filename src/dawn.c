@@ -860,63 +860,9 @@ int capture_buffer(audioControl *myAudioControls,
 
 dawn_state_t currentState = DAWN_STATE_INVALID;
 
-/**
- * @brief Saves the conversation history JSON to a timestamped file.
- *
- * This function creates a filename with the current date and time, then writes
- * the entire conversation history JSON object to that file for later analysis
- * or debugging purposes.
- *
- * @param conversation_history The JSON object containing the chat conversation
- * @return 0 on success, -1 on failure
- */
-int save_conversation_history(struct json_object *conversation_history) {
-   FILE *chat_file = NULL;
-   time_t current_time;
-   struct tm *time_info;
-   char filename[256];
-   const char *json_string = NULL;
-
-   if (conversation_history == NULL) {
-      LOG_ERROR("Cannot save NULL conversation history");
-      return -1;
-   }
-
-   // Get current time for filename
-   time(&current_time);
-   time_info = localtime(&current_time);
-
-   // Create timestamped filename: chat_history_YYYYMMDD_HHMMSS.json
-   strftime(filename, sizeof(filename), "chat_history_%Y%m%d_%H%M%S.json", time_info);
-
-   // Open file for writing
-   chat_file = fopen(filename, "w");
-   if (chat_file == NULL) {
-      LOG_ERROR("Failed to open chat history file: %s", filename);
-      return -1;
-   }
-
-   // Convert JSON object to pretty-printed string
-   json_string = json_object_to_json_string_ext(
-       conversation_history, JSON_C_TO_STRING_PRETTY | JSON_C_TO_STRING_NOSLASHESCAPE);
-   if (json_string == NULL) {
-      LOG_ERROR("Failed to convert conversation history to JSON string");
-      fclose(chat_file);
-      return -1;
-   }
-
-   // Write JSON string to file
-   if (fprintf(chat_file, "%s\n", json_string) < 0) {
-      LOG_ERROR("Failed to write conversation history to file: %s", filename);
-      fclose(chat_file);
-      return -1;
-   }
-
-   fclose(chat_file);
-   LOG_INFO("Conversation history saved to: %s", filename);
-
-   return 0;
-}
+/* Conversation history for WebUI sessions is stored in auth.db (conversations/messages tables).
+ * LOCAL and DAP sessions do not persist conversation history to database.
+ * TODO: Add dawn-admin conversations export command (see docs/NEXT_STEPS.md Section 13) */
 
 /* Mutex for thread-safe conversation management */
 static pthread_mutex_t conversation_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -942,10 +888,7 @@ void reset_conversation(void) {
       return;
    }
 
-   /* Save current conversation before clearing */
-   if (conversation_history != NULL && json_object_array_length(conversation_history) > 1) {
-      save_conversation_history(conversation_history);
-   }
+   /* Note: Conversation history is persisted to DB via WebUI, no file export needed */
 
    /* Reset local session with appropriate system prompt */
    const char *system_prompt;
@@ -3691,9 +3634,9 @@ int main(int argc, char *argv[]) {
    // Cleanup SmartThings service
    smartthings_cleanup();
 
-   // Save all session conversation histories before cleanup
-   // This saves histories from all active sessions (local, WebUI, DAP, etc.)
-   session_manager_save_all_histories();
+   // Note: WebUI conversation histories are persisted to auth.db during the session.
+   // LOCAL/DAP session histories are not persisted (in-memory only).
+   // File-based chat_history_*.json export has been removed.
 
    // Don't json_object_put here - session_manager owns the history
    // Clear the global pointer before session cleanup to prevent use-after-free
@@ -3737,17 +3680,9 @@ int main(int argc, char *argv[]) {
 
    // Note: curl_global_cleanup() is called via atexit() registered at startup
 
-   // Export metrics on exit with timestamped filename
-   {
-      time_t current_time;
-      struct tm *time_info;
-      char stats_filename[64];
-
-      time(&current_time);
-      time_info = localtime(&current_time);
-      strftime(stats_filename, sizeof(stats_filename), "dawn_stats_%Y%m%d_%H%M%S.json", time_info);
-      metrics_export_json(stats_filename);
-   }
+   /* TODO: Store metrics in auth.db session_metrics table (see docs/NEXT_STEPS.md Section 13)
+    * Currently metrics are in-memory only (dawn_metrics_t in src/ui/metrics.c).
+    * File-based dawn_stats_*.json export has been removed. */
 
 #ifdef ENABLE_WEBUI
    /* Shutdown WebUI server before session cleanup - WebSocket sessions hold references */

@@ -361,4 +361,170 @@ admin_resp_code_t admin_client_unblock_ip(int fd,
  */
 const char *admin_resp_strerror(admin_resp_code_t code);
 
+/* =============================================================================
+ * Phase 3: Session Metrics
+ * =============================================================================
+ */
+
+/**
+ * @brief Session metrics entry from list response.
+ */
+typedef struct {
+   int64_t id;
+   uint32_t session_id;
+   int user_id;
+   char session_type[16];
+   int64_t started_at;
+   int64_t ended_at;
+   uint32_t queries_total;
+   uint32_t queries_cloud;
+   uint32_t queries_local;
+   uint32_t errors_count;
+   double avg_llm_total_ms;
+} admin_metrics_entry_t;
+
+/**
+ * @brief Callback for metrics list enumeration.
+ */
+typedef int (*admin_metrics_callback_t)(const admin_metrics_entry_t *entry, void *ctx);
+
+/**
+ * @brief Metrics query filter.
+ */
+typedef struct {
+   int user_id;      /**< Filter by user (0 = all) */
+   const char *type; /**< Filter by session type (NULL = all) */
+   int limit;        /**< Max entries to return (0 = default 20) */
+} admin_metrics_filter_t;
+
+/**
+ * @brief List session metrics history.
+ *
+ * @param fd       Socket file descriptor.
+ * @param filter   Query filters (can be NULL for defaults).
+ * @param callback Function called for each metrics entry.
+ * @param ctx      User context passed to callback.
+ *
+ * @return Response code from daemon.
+ */
+admin_resp_code_t admin_client_list_metrics(int fd,
+                                            const admin_metrics_filter_t *filter,
+                                            admin_metrics_callback_t callback,
+                                            void *ctx);
+
+/**
+ * @brief Aggregate metrics totals.
+ */
+typedef struct {
+   int session_count;
+   uint64_t queries_total;
+   uint64_t queries_cloud;
+   uint64_t queries_local;
+   uint64_t errors_total;
+   double avg_llm_ms;
+} admin_metrics_totals_t;
+
+/**
+ * @brief Get aggregate metrics totals.
+ *
+ * @param fd       Socket file descriptor.
+ * @param filter   Query filters (can be NULL for all sessions).
+ * @param totals   Output: aggregated totals.
+ *
+ * @return Response code from daemon.
+ */
+admin_resp_code_t admin_client_get_metrics_totals(int fd,
+                                                  const admin_metrics_filter_t *filter,
+                                                  admin_metrics_totals_t *totals);
+
+/* =============================================================================
+ * Phase 4: Conversation Management
+ * =============================================================================
+ */
+
+/**
+ * @brief Conversation list entry.
+ */
+typedef struct {
+   int64_t id;
+   char title[128];
+   int64_t created_at;
+   int64_t updated_at;
+   int message_count;
+   char username[64];
+} admin_conversation_entry_t;
+
+/**
+ * @brief Callback for conversation list enumeration.
+ */
+typedef int (*admin_conversation_callback_t)(const admin_conversation_entry_t *conv, void *ctx);
+
+/**
+ * @brief Conversation query filter.
+ */
+typedef struct {
+   int user_id;           /**< Filter by user (0 = all, requires admin) */
+   int limit;             /**< Max entries to return (0 = default 20) */
+   bool include_archived; /**< Include archived conversations */
+} admin_conversation_filter_t;
+
+/**
+ * @brief List conversations.
+ *
+ * @param fd       Socket file descriptor.
+ * @param filter   Query filters.
+ * @param callback Function called for each conversation.
+ * @param ctx      User context passed to callback.
+ *
+ * @return Response code from daemon.
+ */
+admin_resp_code_t admin_client_list_conversations(int fd,
+                                                  const admin_conversation_filter_t *filter,
+                                                  admin_conversation_callback_t callback,
+                                                  void *ctx);
+
+/**
+ * @brief Message entry from conversation.
+ */
+typedef struct {
+   char role[16];
+   char content[ADMIN_MSG_CONTENT_MAX + 1];
+   int64_t created_at;
+} admin_message_entry_t;
+
+/**
+ * @brief Callback for message enumeration.
+ */
+typedef int (*admin_message_callback_t)(const admin_message_entry_t *msg, void *ctx);
+
+/**
+ * @brief Get a conversation with its messages.
+ *
+ * @param fd       Socket file descriptor.
+ * @param conv_id  Conversation ID.
+ * @param callback Function called for each message.
+ * @param ctx      User context passed to callback.
+ *
+ * @return Response code from daemon.
+ */
+admin_resp_code_t admin_client_get_conversation(int fd,
+                                                int64_t conv_id,
+                                                admin_message_callback_t callback,
+                                                void *ctx);
+
+/**
+ * @brief Delete a conversation (requires admin auth).
+ *
+ * @param fd             Socket file descriptor.
+ * @param admin_user     Admin username for authorization.
+ * @param admin_password Admin password for authorization.
+ * @param conv_id        Conversation ID to delete.
+ *
+ * @return Response code from daemon.
+ */
+admin_resp_code_t admin_client_delete_conversation(int fd,
+                                                   const char *admin_user,
+                                                   const char *admin_password,
+                                                   int64_t conv_id);
+
 #endif /* DAWN_ADMIN_SOCKET_CLIENT_H */
