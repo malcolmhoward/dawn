@@ -3897,6 +3897,7 @@ static void handle_get_my_settings(ws_connection_t *conn) {
                              json_object_new_string(settings.tts_voice_model));
       json_object_object_add(resp_payload, "tts_length_scale",
                              json_object_new_double((double)settings.tts_length_scale));
+      json_object_object_add(resp_payload, "theme", json_object_new_string(settings.theme));
    } else {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
       json_object_object_add(resp_payload, "error",
@@ -3971,6 +3972,18 @@ static void handle_set_my_settings(ws_connection_t *conn, struct json_object *pa
       /* Validate range (0.5 to 2.0 is reasonable for speech rate) */
       if (scale >= 0.5 && scale <= 2.0) {
          settings.tts_length_scale = (float)scale;
+      }
+   }
+
+   if (json_object_object_get_ex(payload, "theme", &field_obj)) {
+      const char *theme = json_object_get_string(field_obj);
+      /* Validate theme value - check for NULL first */
+      if (theme && (strcmp(theme, "cyan") == 0 || strcmp(theme, "purple") == 0 ||
+                    strcmp(theme, "green") == 0 || strcmp(theme, "orange") == 0 ||
+                    strcmp(theme, "red") == 0 || strcmp(theme, "blue") == 0 ||
+                    strcmp(theme, "terminal") == 0)) {
+         strncpy(settings.theme, theme, AUTH_THEME_MAX - 1);
+         settings.theme[AUTH_THEME_MAX - 1] = '\0';
       }
    }
 

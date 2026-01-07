@@ -1162,9 +1162,18 @@
 
   /**
    * Interpolate between two colors based on intensity (0-1)
+   * Terminal theme uses monochrome green, others use cyan-to-amber gradient
    */
   function interpolateBarColor(intensity) {
     const t = Math.max(0, Math.min(1, intensity));
+
+    // Terminal theme: monochrome phosphor green (vary opacity only)
+    if (currentTheme === 'terminal') {
+      const alpha = 0.4 + (t * 0.6);  // Range 0.4 to 1.0
+      return `rgba(127, 255, 127, ${alpha.toFixed(2)})`;
+    }
+
+    // Default: cyan to amber gradient
     const r = Math.round(BAR_COLOR_LOW.r + (BAR_COLOR_HIGH.r - BAR_COLOR_LOW.r) * t);
     const g = Math.round(BAR_COLOR_LOW.g + (BAR_COLOR_HIGH.g - BAR_COLOR_LOW.g) * t);
     const b = Math.round(BAR_COLOR_LOW.b + (BAR_COLOR_HIGH.b - BAR_COLOR_LOW.b) * t);
@@ -2691,11 +2700,67 @@
   }
 
   // =============================================================================
+  // Color Theme Switching
+  // =============================================================================
+  const THEMES = ['cyan', 'purple', 'green', 'orange', 'red', 'blue', 'terminal'];
+  const THEME_COLORS = {
+    cyan: '#2dd4bf',
+    purple: '#a855f7',
+    green: '#22c55e',
+    orange: '#f97316',
+    red: '#f87171',  // Coral - distinct from error red
+    blue: '#3b82f6',
+    terminal: '#7fff7f'
+  };
+  let currentTheme = 'cyan';  // Cached for performance (avoids DOM query per FFT frame)
+
+  function setTheme(theme) {
+    if (!THEMES.includes(theme)) theme = 'cyan';
+
+    // Cache for FFT performance
+    currentTheme = theme;
+
+    // Apply theme to document
+    if (theme === 'cyan') {
+      document.documentElement.removeAttribute('data-theme');
+    } else {
+      document.documentElement.setAttribute('data-theme', theme);
+    }
+
+    // Persist to localStorage
+    localStorage.setItem('dawn_theme', theme);
+
+    // Update active button
+    document.querySelectorAll('.theme-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.theme === theme);
+    });
+
+    // Update meta theme-color for mobile browsers
+    const metaTheme = document.querySelector('meta[name="theme-color"]');
+    if (metaTheme) {
+      metaTheme.setAttribute('content', THEME_COLORS[theme] || THEME_COLORS.cyan);
+    }
+  }
+
+  function initTheme() {
+    const saved = localStorage.getItem('dawn_theme');
+    setTheme(saved || 'cyan');
+
+    // Add click handlers to theme buttons
+    document.querySelectorAll('.theme-btn').forEach(btn => {
+      btn.addEventListener('click', () => setTheme(btn.dataset.theme));
+    });
+  }
+
+  // =============================================================================
   // Initialization
   // =============================================================================
   async function init() {
     // Initialize Opus worker first (before connect)
     initOpusWorker();
+
+    // Initialize color theme
+    initTheme();
 
     // Event listeners
     elements.sendBtn.addEventListener('click', handleSend);
@@ -3043,7 +3108,7 @@
       label: 'Language Model',
       icon: '&#x1F916;',
       fields: {
-        type: { type: 'select', label: 'Type', options: ['cloud', 'local'], hint: 'Use cloud APIs or local llama-server' },
+        type: { type: 'select', label: 'Default Mode', options: ['cloud', 'local'], hint: 'Server default: cloud uses APIs, local uses llama-server. Users can override per-session.' },
         max_tokens: { type: 'number', label: 'Max Tokens', min: 100, hint: 'Maximum tokens in LLM response' },
         cloud: {
           type: 'group',
@@ -4116,6 +4181,11 @@
       ttsSpeed.value = payload.tts_length_scale || 1.0;
       if (ttsSpeedValue) ttsSpeedValue.textContent = ttsSpeed.value + 'x';
     }
+
+    // Set theme
+    if (payload.theme) {
+      setTheme(payload.theme);
+    }
   }
 
   /**
@@ -4280,7 +4350,8 @@
           location: document.getElementById('my-location')?.value || '',
           timezone: document.getElementById('my-timezone')?.value || 'UTC',
           units: document.querySelector('input[name="units"]:checked')?.value || 'metric',
-          tts_length_scale: parseFloat(document.getElementById('my-tts-speed')?.value || 1.0)
+          tts_length_scale: parseFloat(document.getElementById('my-tts-speed')?.value || 1.0),
+          theme: document.querySelector('.theme-btn.active')?.dataset.theme || 'cyan'
         };
         requestSetMySettings(settings);
       });
@@ -4296,8 +4367,11 @@
             location: '',
             timezone: 'UTC',
             units: 'metric',
-            tts_length_scale: 1.0
+            tts_length_scale: 1.0,
+            theme: 'cyan'
           });
+          // Apply theme immediately
+          setTheme('cyan');
           // Refresh form after a moment
           setTimeout(requestGetMySettings, 500);
         }, { title: 'Reset Settings', okText: 'Reset' });

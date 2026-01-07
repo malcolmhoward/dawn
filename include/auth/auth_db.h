@@ -357,6 +357,11 @@ int auth_db_unlock_user(const char *username);
 #define AUTH_PERSONA_MODE_MAX 16
 
 /**
+ * @brief Maximum theme name length
+ */
+#define AUTH_THEME_MAX 16
+
+/**
  * @brief Per-user settings structure
  *
  * Stores user-specific preferences that override global defaults.
@@ -370,6 +375,7 @@ typedef struct {
    char units[AUTH_UNITS_MAX];                      /**< "metric" or "imperial" */
    char tts_voice_model[AUTH_TTS_VOICE_MAX];        /**< TTS voice model path */
    float tts_length_scale;                          /**< TTS speech rate (1.0 = normal) */
+   char theme[AUTH_THEME_MAX];                      /**< UI color theme */
 } auth_user_settings_t;
 
 /**

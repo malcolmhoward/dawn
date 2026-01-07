@@ -42,7 +42,7 @@
 #include "logging.h"
 
 /* Current schema version */
-#define SCHEMA_VERSION 8
+#define SCHEMA_VERSION 9
 
 /* Retention periods */
 #define LOGIN_ATTEMPT_RETENTION_SEC (7 * 24 * 60 * 60) /* 7 days */
@@ -190,6 +190,7 @@ static const char *SCHEMA_SQL =
     "   units TEXT DEFAULT 'metric',"
     "   tts_voice_model TEXT,"
     "   tts_length_scale REAL DEFAULT 1.0,"
+    "   theme TEXT DEFAULT 'cyan',"
     "   updated_at INTEGER NOT NULL,"
     "   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE"
     ");"
@@ -406,6 +407,19 @@ static int create_schema(void) {
       LOG_INFO("auth_db: added session_metrics table (v8)");
    }
 
+   /* v9 migration: add theme column to user_settings */
+   if (current_version >= 1 && current_version < 9) {
+      rc = sqlite3_exec(s_db.db, "ALTER TABLE user_settings ADD COLUMN theme TEXT DEFAULT 'cyan'",
+                        NULL, NULL, &errmsg);
+      if (rc != SQLITE_OK) {
+         LOG_INFO("auth_db: v9 migration note (theme): %s", errmsg ? errmsg : "ok");
+         sqlite3_free(errmsg);
+         errmsg = NULL;
+      } else {
+         LOG_INFO("auth_db: added theme column to user_settings");
+      }
+   }
+
    /* Create continuation index (runs for both new databases and migrations) */
    rc = sqlite3_exec(s_db.db,
                      "CREATE INDEX IF NOT EXISTS idx_conversations_continued "
@@ -610,7 +624,7 @@ static int prepare_statements(void) {
    rc = sqlite3_prepare_v2(
        s_db.db,
        "SELECT persona_description, persona_mode, location, timezone, units, tts_voice_model, "
-       "tts_length_scale FROM user_settings WHERE user_id = ?",
+       "tts_length_scale, theme FROM user_settings WHERE user_id = ?",
        -1, &s_db.stmt_get_user_settings, NULL);
    if (rc != SQLITE_OK) {
       LOG_ERROR("auth_db: prepare get_user_settings failed: %s", sqlite3_errmsg(s_db.db));
@@ -620,12 +634,13 @@ static int prepare_statements(void) {
    rc = sqlite3_prepare_v2(
        s_db.db,
        "INSERT INTO user_settings (user_id, persona_description, persona_mode, location, timezone, "
-       "units, tts_voice_model, tts_length_scale, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+       "units, tts_voice_model, tts_length_scale, theme, updated_at) "
+       "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
        "ON CONFLICT(user_id) DO UPDATE SET "
        "persona_description=excluded.persona_description, persona_mode=excluded.persona_mode, "
        "location=excluded.location, timezone=excluded.timezone, units=excluded.units, "
-       "tts_voice_model=excluded.tts_voice_model, "
-       "tts_length_scale=excluded.tts_length_scale, updated_at=excluded.updated_at",
+       "tts_voice_model=excluded.tts_voice_model, tts_length_scale=excluded.tts_length_scale, "
+       "theme=excluded.theme, updated_at=excluded.updated_at",
        -1, &s_db.stmt_set_user_settings, NULL);
    if (rc != SQLITE_OK) {
       LOG_ERROR("auth_db: prepare set_user_settings failed: %s", sqlite3_errmsg(s_db.db));
@@ -1654,6 +1669,7 @@ int auth_db_get_user_settings(int user_id, auth_user_settings_t *settings_out) {
    strncpy(settings_out->persona_mode, "append", AUTH_PERSONA_MODE_MAX - 1);
    strncpy(settings_out->timezone, "UTC", AUTH_TIMEZONE_MAX - 1);
    strncpy(settings_out->units, "metric", AUTH_UNITS_MAX - 1);
+   strncpy(settings_out->theme, "cyan", AUTH_THEME_MAX - 1);
 
    pthread_mutex_lock(&s_db.mutex);
 
@@ -1695,6 +1711,11 @@ int auth_db_get_user_settings(int user_id, auth_user_settings_t *settings_out) {
          strncpy(settings_out->tts_voice_model, voice, AUTH_TTS_VOICE_MAX - 1);
       }
       settings_out->tts_length_scale = (float)sqlite3_column_double(s_db.stmt_get_user_settings, 6);
+
+      const char *theme = (const char *)sqlite3_column_text(s_db.stmt_get_user_settings, 7);
+      if (theme) {
+         strncpy(settings_out->theme, theme, AUTH_THEME_MAX - 1);
+      }
    } else if (rc != SQLITE_DONE) {
       /* Unexpected error */
       LOG_ERROR("auth_db: get_user_settings failed: %s", sqlite3_errmsg(s_db.db));
@@ -1731,7 +1752,8 @@ int auth_db_set_user_settings(int user_id, const auth_user_settings_t *settings)
    sqlite3_bind_text(s_db.stmt_set_user_settings, 6, settings->units, -1, SQLITE_STATIC);
    sqlite3_bind_text(s_db.stmt_set_user_settings, 7, settings->tts_voice_model, -1, SQLITE_STATIC);
    sqlite3_bind_double(s_db.stmt_set_user_settings, 8, (double)settings->tts_length_scale);
-   sqlite3_bind_int64(s_db.stmt_set_user_settings, 9, (int64_t)time(NULL));
+   sqlite3_bind_text(s_db.stmt_set_user_settings, 9, settings->theme, -1, SQLITE_STATIC);
+   sqlite3_bind_int64(s_db.stmt_set_user_settings, 10, (int64_t)time(NULL));
 
    int rc = sqlite3_step(s_db.stmt_set_user_settings);
    sqlite3_reset(s_db.stmt_set_user_settings);
