@@ -26,6 +26,7 @@
 
 #include "tools/web_search.h"
 
+#include <ctype.h>
 #include <curl/curl.h>
 #include <json-c/json.h>
 #include <pthread.h>
@@ -35,6 +36,7 @@
 
 #include "logging.h"
 #include "tools/curl_buffer.h"
+#include "tools/string_utils.h"
 
 // =============================================================================
 // Module State (thread-safe with mutex protection)
@@ -146,52 +148,280 @@ static char *get_json_string(struct json_object *obj, const char *key) {
    return NULL;
 }
 
+/* Note: Host extraction moved to string_utils.h as extract_url_host() */
+
+/**
+ * @brief Score a search result for reranking
+ *
+ * Scoring factors:
+ * - Has title: +2
+ * - Has snippet: +2
+ * - Known quality engine (wikipedia, github): +2
+ * - Query keyword match in title: +5
+ * - Query keyword match in snippet: +3
+ *
+ * @param r Search result to score
+ * @param query Original search query (for keyword matching)
+ * @return Score (higher = better)
+ */
+static int score_result(const search_result_t *r, const char *query) {
+   int score = 0;
+
+   if (r->title && r->title[0]) {
+      score += 2;
+   }
+   if (r->snippet && r->snippet[0]) {
+      score += 2;
+   }
+
+   // Boost known quality engines
+   if (r->engine) {
+      if (strcmp(r->engine, "wikipedia") == 0) {
+         score += 3;
+      } else if (strcmp(r->engine, "github") == 0) {
+         score += 2;
+      } else if (strcmp(r->engine, "stackoverflow") == 0) {
+         score += 2;
+      }
+   }
+
+   // Check for query keyword matches (5+ char tokens only)
+   // Note: Buffer sizes reduced for embedded stack efficiency (512KB threads).
+   // Matching first 128 chars is sufficient for relevance scoring.
+   if (query && (r->title || r->snippet)) {
+      // Simple case-insensitive substring check for the query
+      char query_lower[128];
+      size_t qlen = strlen(query);
+      if (qlen >= sizeof(query_lower)) {
+         qlen = sizeof(query_lower) - 1;
+      }
+      for (size_t i = 0; i < qlen; i++) {
+         query_lower[i] = (char)tolower((unsigned char)query[i]);
+      }
+      query_lower[qlen] = '\0';
+
+      // Only match if query is 5+ characters
+      if (qlen >= 5) {
+         if (r->title) {
+            char title_lower[128];
+            size_t tlen = strlen(r->title);
+            if (tlen >= sizeof(title_lower)) {
+               tlen = sizeof(title_lower) - 1;
+            }
+            for (size_t i = 0; i < tlen; i++) {
+               title_lower[i] = (char)tolower((unsigned char)r->title[i]);
+            }
+            title_lower[tlen] = '\0';
+            if (strstr(title_lower, query_lower)) {
+               score += 5;
+            }
+         }
+         if (r->snippet) {
+            char snippet_lower[192];
+            size_t slen = strlen(r->snippet);
+            if (slen >= sizeof(snippet_lower)) {
+               slen = sizeof(snippet_lower) - 1;
+            }
+            for (size_t i = 0; i < slen; i++) {
+               snippet_lower[i] = (char)tolower((unsigned char)r->snippet[i]);
+            }
+            snippet_lower[slen] = '\0';
+            if (strstr(snippet_lower, query_lower)) {
+               score += 3;
+            }
+         }
+      }
+   }
+
+   return score;
+}
+
+/**
+ * @brief Comparison function for qsort - sort results by score descending
+ */
+typedef struct {
+   search_result_t result;
+   int score;
+} scored_result_t;
+
+static int compare_scored_results(const void *a, const void *b) {
+   const scored_result_t *ra = (const scored_result_t *)a;
+   const scored_result_t *rb = (const scored_result_t *)b;
+   return rb->score - ra->score;  // Descending order
+}
+
 // =============================================================================
 // Search Query (internal implementation)
 // =============================================================================
 
 /**
- * @brief Parse results from the standard "results" array
+ * @brief Max results per host for deduplication
+ */
+#define MAX_RESULTS_PER_HOST 2
+
+/**
+ * @brief Max results to process from SearXNG response
+ *
+ * Safety limit to prevent memory exhaustion if server returns huge arrays.
+ * We only need to process enough to find max_results good candidates after
+ * deduplication and reranking.
+ */
+#define MAX_RESULTS_TO_PROCESS 100
+
+/**
+ * @brief Parse results from the standard "results" array with deduplication and reranking
+ *
+ * Applies host-based deduplication (max 2 results per domain) and reranks
+ * results by quality score before returning.
+ *
+ * @param results_array JSON array of search results
+ * @param response Response structure to populate
+ * @param max_results Maximum results to return
+ * @param query Original search query (for relevance scoring)
  */
 static void parse_results_array(struct json_object *results_array,
                                 search_response_t *response,
-                                int max_results) {
-   int result_count = json_object_array_length(results_array);
-   if (result_count == 0) {
+                                int max_results,
+                                const char *query) {
+   int total_count = json_object_array_length(results_array);
+   if (total_count == 0) {
       return;
    }
 
-   if (result_count > max_results) {
-      result_count = max_results;
+   // Cap total_count to prevent memory exhaustion from malicious responses
+   if (total_count > MAX_RESULTS_TO_PROCESS) {
+      LOG_WARNING("web_search: Capping results from %d to %d", total_count, MAX_RESULTS_TO_PROCESS);
+      total_count = MAX_RESULTS_TO_PROCESS;
    }
 
-   response->results = calloc(result_count, sizeof(search_result_t));
-   if (!response->results) {
-      LOG_ERROR("web_search: Failed to allocate results array");
+   // Allocate temporary storage for all results (before dedup/rerank)
+   scored_result_t *temp_results = calloc(total_count, sizeof(scored_result_t));
+   if (!temp_results) {
+      LOG_ERROR("web_search: Failed to allocate temp results array");
       response->error = strdup("Memory allocation failed");
       return;
    }
 
-   for (int i = 0; i < result_count; i++) {
+   // Track host counts for deduplication (128 bytes per host sufficient)
+   typedef struct {
+      char host[128];
+      int count;
+   } host_count_t;
+   host_count_t *host_counts = calloc(total_count, sizeof(host_count_t));
+   int unique_hosts = 0;
+
+   if (!host_counts) {
+      LOG_ERROR("web_search: Failed to allocate host counts");
+      free(temp_results);
+      response->error = strdup("Memory allocation failed");
+      return;
+   }
+
+   int accepted_count = 0;
+
+   // First pass: parse all results with host deduplication
+   for (int i = 0; i < total_count && accepted_count < max_results * 2; i++) {
       struct json_object *item = json_object_array_get_idx(results_array, i);
       if (!item) {
          continue;
       }
 
-      response->results[response->count].title = get_json_string(item, "title");
-      response->results[response->count].url = get_json_string(item, "url");
-      response->results[response->count].engine = get_json_string(item, "engine");
+      // Get URL for host deduplication
+      char *url = get_json_string(item, "url");
+      if (!url) {
+         continue;
+      }
+
+      // Extract host for dedup check (128 bytes sufficient for hostnames)
+      char host[128];
+      extract_url_host(url, host, sizeof(host));
+
+      // Check/update host count
+      int host_idx = -1;
+      for (int h = 0; h < unique_hosts; h++) {
+         if (strcmp(host_counts[h].host, host) == 0) {
+            host_idx = h;
+            break;
+         }
+      }
+
+      if (host_idx == -1) {
+         // New host
+         if (unique_hosts < total_count) {
+            strncpy(host_counts[unique_hosts].host, host, sizeof(host_counts[0].host) - 1);
+            host_counts[unique_hosts].host[sizeof(host_counts[0].host) - 1] = '\0';
+            host_counts[unique_hosts].count = 1;
+            unique_hosts++;
+         }
+      } else {
+         // Existing host - check limit
+         if (host_counts[host_idx].count >= MAX_RESULTS_PER_HOST) {
+            free(url);
+            continue;  // Skip this result (host limit reached)
+         }
+         host_counts[host_idx].count++;
+      }
+
+      // Accept this result
+      temp_results[accepted_count].result.url = url;
+      temp_results[accepted_count].result.title = get_json_string(item, "title");
+      temp_results[accepted_count].result.engine = get_json_string(item, "engine");
 
       // Get snippet (called "content" in SearXNG)
       char *full_snippet = get_json_string(item, "content");
       if (full_snippet) {
-         response->results[response->count].snippet = truncate_string(full_snippet,
-                                                                      SEARXNG_SNIPPET_LEN);
+         temp_results[accepted_count].result.snippet = truncate_string(full_snippet,
+                                                                       SEARXNG_SNIPPET_LEN);
          free(full_snippet);
       }
 
+      // Score the result for reranking
+      temp_results[accepted_count].score = score_result(&temp_results[accepted_count].result,
+                                                        query);
+      accepted_count++;
+   }
+
+   free(host_counts);
+
+   if (accepted_count == 0) {
+      free(temp_results);
+      return;
+   }
+
+   // Sort by score (descending)
+   qsort(temp_results, accepted_count, sizeof(scored_result_t), compare_scored_results);
+
+   // Copy top results to response
+   int final_count = (accepted_count > max_results) ? max_results : accepted_count;
+   response->results = calloc(final_count, sizeof(search_result_t));
+   if (!response->results) {
+      // Free all allocated strings
+      for (int i = 0; i < accepted_count; i++) {
+         free(temp_results[i].result.title);
+         free(temp_results[i].result.url);
+         free(temp_results[i].result.snippet);
+         free(temp_results[i].result.engine);
+      }
+      free(temp_results);
+      LOG_ERROR("web_search: Failed to allocate final results array");
+      response->error = strdup("Memory allocation failed");
+      return;
+   }
+
+   for (int i = 0; i < final_count; i++) {
+      response->results[i] = temp_results[i].result;
       response->count++;
    }
+
+   // Free remaining results that weren't used
+   for (int i = final_count; i < accepted_count; i++) {
+      free(temp_results[i].result.title);
+      free(temp_results[i].result.url);
+      free(temp_results[i].result.snippet);
+      free(temp_results[i].result.engine);
+   }
+
+   free(temp_results);
 }
 
 /**
@@ -295,12 +525,14 @@ search_response_t *web_search_query_typed(const char *query, int max_results, se
       return response;
    }
 
-// Build URL based on search type
-#define SEARCH_URL_MAX_LEN 1024
+   // Build URL based on search type
    char url[SEARCH_URL_MAX_LEN];
    const char *type_str = "web";
 
-   // Map search type to SearXNG category parameter
+   // Map search type to SearXNG category or engines parameter
+   // Note: Some search types use engines= instead of categories= because
+   // SearXNG category names are lowercase single words (e.g., "news", "science")
+   // while multi-word categories like "social media" are not valid.
    const char *category = NULL;
    switch (type) {
       case SEARCH_TYPE_NEWS:
@@ -323,21 +555,32 @@ search_response_t *web_search_query_typed(const char *query, int max_results, se
          type_str = "it";
          break;
       case SEARCH_TYPE_SOCIAL:
-         category = "social media";
+         // "social media" is not a valid SearXNG category - use engines
+         snprintf(url, sizeof(url), "%s/search?q=%s&format=json&engines=reddit,twitter",
+                  searxng_base_url, encoded_query);
          type_str = "social";
-         break;
+         curl_free(encoded_query);
+         goto do_request;
       case SEARCH_TYPE_QA:
-         category = "q&a";
+         // "q&a" is not a valid SearXNG category - use specific engines
+         snprintf(url, sizeof(url), "%s/search?q=%s&format=json&engines=stackoverflow,superuser",
+                  searxng_base_url, encoded_query);
          type_str = "q&a";
-         break;
+         curl_free(encoded_query);
+         goto do_request;
       case SEARCH_TYPE_DICTIONARY:
-         category = "dictionaries";
+         // Note: "dictionaries" may not be a valid category on all instances
+         category = "general";
          type_str = "dictionary";
          break;
       case SEARCH_TYPE_PAPERS:
-         category = "scientific publications";
+         // "scientific publications" is not valid - use academic engines
+         snprintf(url, sizeof(url),
+                  "%s/search?q=%s&format=json&engines=arxiv,google_scholar,semantic_scholar",
+                  searxng_base_url, encoded_query);
          type_str = "papers";
-         break;
+         curl_free(encoded_query);
+         goto do_request;
       case SEARCH_TYPE_WEB:
       default:
          type_str = "web";
@@ -358,7 +601,7 @@ search_response_t *web_search_query_typed(const char *query, int max_results, se
 do_request:
    LOG_INFO("web_search: Querying [%s] %s", type_str, url);
 
-   // Set up response buffer with web search max capacity (64KB)
+   // Set up response buffer with web search max capacity (512KB)
    curl_buffer_t buffer;
    curl_buffer_init_with_max(&buffer, CURL_BUFFER_MAX_WEB_SEARCH);
 
@@ -439,10 +682,10 @@ do_request:
       return response;  // No error, just empty results
    }
 
-   parse_results_array(results_array, response, max_results);
+   parse_results_array(results_array, response, max_results, query);
 
    json_object_put(root);
-   LOG_INFO("web_search: Found %d results", response->count);
+   LOG_INFO("web_search: Found %d results (deduplicated, reranked)", response->count);
    return response;
 }
 

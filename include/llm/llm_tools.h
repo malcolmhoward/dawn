@@ -94,6 +94,7 @@ typedef struct {
    bool enabled_local;                            /**< Enabled for local sessions */
    bool enabled_remote;                           /**< Enabled for remote sessions */
    bool armor_feature;                            /**< OASIS armor-specific feature */
+   bool parallel_safe;                            /**< Safe for concurrent execution */
    const char *device_name;                       /**< Mapped device name for callback */
 } tool_definition_t;
 
@@ -350,13 +351,17 @@ int llm_tools_estimate_tokens(bool is_remote_session);
 int llm_tools_execute(const tool_call_t *call, tool_result_t *result);
 
 /**
- * @brief Execute multiple tool calls
+ * @brief Execute multiple tool calls with parallel optimization
  *
- * Executes all tool calls in the list. Currently sequential, but could
- * be parallelized in the future for independent tools.
+ * Executes tool calls with automatic parallelization for independent tools.
+ * Tools are classified as parallel-safe (HTTP calls, getters) or sequential
+ * (state-modifying tools like switch_llm, reset_conversation). Parallel-safe
+ * tools run concurrently via pthreads, while sequential tools run after.
+ *
+ * For single tool calls, executes directly without threading overhead.
  *
  * @param calls List of tool calls to execute
- * @param results Output: execution results
+ * @param results Output: execution results (indexed to match input calls)
  * @return 0 if all succeeded, non-zero if any failed
  */
 int llm_tools_execute_all(const tool_call_list_t *calls, tool_result_list_t *results);

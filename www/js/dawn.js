@@ -328,7 +328,7 @@
 
       switch (msg.type) {
         case 'state':
-          updateState(msg.payload.state, msg.payload.detail);
+          updateState(msg.payload.state, msg.payload.detail, msg.payload.tools);
           break;
         case 'transcript':
           // Check for special LLM state update (sent with role '__llm_state__')
@@ -494,6 +494,9 @@
           break;
         case 'new_conversation_response':
           handleNewConversationResponse(msg.payload);
+          break;
+        case 'clear_session_response':
+          handleClearSessionResponse(msg.payload);
           break;
         case 'load_conversation_response':
           handleLoadConversationResponse(msg.payload);
@@ -1803,7 +1806,7 @@
     }
   }
 
-  function updateState(state, detail) {
+  function updateState(state, detail, tools) {
     const previousState = currentState;
     currentState = state;
 
@@ -1817,16 +1820,17 @@
       elements.statusText.textContent = state.toUpperCase();
     }
 
-    // Sync mini status bar (when visualizer collapsed) - include full detail
+    // Update tools tray (expanded visualizer)
+    updateToolsTray(tools);
+
+    // Sync mini status bar (when visualizer collapsed)
     if (elements.miniStatusDot) {
       elements.miniStatusDot.className = 'status-dot ' + state;
     }
     if (elements.miniStatusText) {
-      if (detail) {
-        elements.miniStatusText.textContent = state.toUpperCase() + ' · ' + detail;
-      } else {
-        elements.miniStatusText.textContent = state.toUpperCase();
-      }
+      // For mini bar: show tool count or tool names depending on count
+      const miniText = formatMiniStatusText(state, detail, tools);
+      elements.miniStatusText.innerHTML = miniText;
     }
 
     // Update ring container - preserve fft-active class if present
@@ -1840,8 +1844,82 @@
 
     // Emit state event for decoupled modules
     if (typeof DawnEvents !== 'undefined') {
-      DawnEvents.emit('state', { state, previousState, detail });
+      DawnEvents.emit('state', { state, previousState, detail, tools });
     }
+  }
+
+  /**
+   * Format mini status bar text with tools indicator
+   */
+  function formatMiniStatusText(state, detail, tools) {
+    const stateUpper = state.toUpperCase();
+
+    if (!tools || tools.length === 0) {
+      // No tools - show detail if present
+      return detail ? `${stateUpper} · ${escapeHtml(detail)}` : stateUpper;
+    }
+
+    if (tools.length === 1) {
+      // Single tool - show name (escaped to prevent XSS)
+      return `${stateUpper} · ${escapeHtml(tools[0].name)}`;
+    }
+
+    if (tools.length === 2) {
+      // Two tools - show both names (escaped to prevent XSS)
+      return `${stateUpper} · ${escapeHtml(tools[0].name)}, ${escapeHtml(tools[1].name)}`;
+    }
+
+    // 3+ tools - show animated progress dots with ARIA label for accessibility
+    // Use CSS custom property for delay so prefers-reduced-motion can override
+    const dots = tools.map((_, i) =>
+      `<span class="mini-tool-dot" style="--delay-index: ${i}"></span>`
+    ).join('');
+    const toolNames = tools.map(t => t.name).join(', ');
+    return `${stateUpper} <span class="mini-tool-dots" role="status" aria-label="${tools.length} tools running: ${escapeHtml(toolNames)}">${dots}</span>`;
+  }
+
+  /**
+   * Update the tools tray in expanded visualizer
+   */
+  function updateToolsTray(tools) {
+    // Get or create tools tray container
+    let tray = document.getElementById('tools-tray');
+    if (!tray) {
+      // Create tray after status text
+      const status = document.getElementById('status');
+      if (status) {
+        tray = document.createElement('div');
+        tray.id = 'tools-tray';
+        tray.className = 'tools-tray';
+        tray.setAttribute('role', 'status');
+        tray.setAttribute('aria-live', 'polite');
+        tray.setAttribute('aria-label', 'Active tools');
+        status.appendChild(tray);
+      }
+    }
+
+    if (!tray) return;
+
+    // Clear if no tools
+    if (!tools || tools.length === 0) {
+      tray.innerHTML = '';
+      tray.classList.remove('visible');
+      return;
+    }
+
+    // Build pills for each tool (escaped to prevent XSS)
+    // Use CSS custom property for delay so prefers-reduced-motion can override
+    const pills = tools.map((tool, index) => {
+      const statusClass = tool.status === 'complete' ? 'complete' : 'running';
+      const icon = tool.status === 'complete' ? '✓' : '';
+      const safeName = escapeHtml(tool.name);
+      return `<span class="tool-pill ${statusClass}" style="--delay-index: ${index}">
+        ${safeName}${icon ? `<span class="tool-pill-icon" aria-hidden="true">${icon}</span>` : ''}
+      </span>`;
+    }).join('');
+
+    tray.innerHTML = pills;
+    tray.classList.add('visible');
   }
 
   // =============================================================================
@@ -2551,6 +2629,7 @@
     if (text) {
       if (sendTextMessage(text)) {
         elements.textInput.value = '';
+        elements.textInput.style.height = 'auto';
       }
     }
   }
@@ -2765,6 +2844,12 @@
     // Event listeners
     elements.sendBtn.addEventListener('click', handleSend);
     elements.textInput.addEventListener('keydown', handleKeydown);
+
+    // Auto-resize textarea as user types
+    elements.textInput.addEventListener('input', function() {
+      this.style.height = 'auto';
+      this.style.height = Math.min(this.scrollHeight, 150) + 'px';
+    });
 
     // Mic button - push to talk
     if (elements.micBtn) {
@@ -5035,6 +5120,16 @@
     requestListConversations();
   }
 
+  /**
+   * Handle clear_session_response from server
+   */
+  function handleClearSessionResponse(payload) {
+    if (!payload.success) {
+      console.error('Failed to clear session:', payload.error);
+      showToast('Failed to clear session: ' + (payload.error || 'Unknown error'), 'error');
+    }
+  }
+
   /* State for chunked conversation loading */
   let pendingChunkedLoad = null;
 
@@ -5475,6 +5570,11 @@
     const transcript = document.getElementById('transcript');
     if (transcript) {
       transcript.innerHTML = '';
+    }
+
+    // Clear server-side session history to prevent stale context
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'clear_session' }));
     }
   }
 

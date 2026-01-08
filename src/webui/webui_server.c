@@ -112,6 +112,26 @@ static const char DUMMY_PASSWORD_HASH[] = "$argon2id$v=19$m=16384,t=3,p=1$"
 #endif /* ENABLE_AUTH */
 
 /* =============================================================================
+ * WebSocket Buffer Constants
+ * ============================================================================= */
+
+/**
+ * @brief Initial capacity for WebSocket text accumulation buffer
+ *
+ * Used when receiving fragmented text messages (e.g., large tool results).
+ * Buffer grows exponentially (doubling) when needed.
+ */
+#define WEBUI_TEXT_BUFFER_INITIAL_CAP 8192
+
+/**
+ * @brief Maximum capacity for WebSocket text accumulation buffer (1MB)
+ *
+ * Safety limit to prevent memory exhaustion from malicious/malformed clients.
+ * Messages larger than this are dropped with an error log.
+ */
+#define WEBUI_TEXT_BUFFER_MAX_CAP (1024 * 1024)
+
+/* =============================================================================
  * Module State
  * ============================================================================= */
 
@@ -164,7 +184,8 @@ typedef struct {
    union {
       struct {
          char *state;
-         char *detail; /* Optional detail message (e.g., "Fetching URL...") */
+         char *detail;     /* Optional detail message (e.g., "Fetching URL...") */
+         char *tools_json; /* Optional JSON array of active tools */
       } state;
       struct {
          char *role;
@@ -339,6 +360,11 @@ typedef struct {
    bool in_binary_fragment; /* True if receiving fragmented binary frame */
    uint8_t binary_msg_type; /* Message type from first fragment */
    bool use_opus;           /* True if client supports Opus codec */
+
+   /* Text message fragmentation support (for large JSON payloads) */
+   char *text_buffer;      /* Accumulation buffer for fragmented text messages */
+   size_t text_buffer_len; /* Current data length in text_buffer */
+   size_t text_buffer_cap; /* Allocated capacity of text_buffer */
 
    /* Auth state (populated at WebSocket establishment from HTTP cookie) */
    bool authenticated;
@@ -560,6 +586,7 @@ static void free_response(ws_response_t *resp) {
       case WS_RESP_STATE:
          free(resp->state.state);
          free(resp->state.detail);
+         free(resp->state.tools_json);
          break;
       case WS_RESP_TRANSCRIPT:
          free(resp->transcript.role);
@@ -736,16 +763,38 @@ static bool check_opus_capability(struct json_object *payload) {
    return false;
 }
 
-static void send_state_impl(struct lws *wsi, const char *state, const char *detail) {
-   char json[512];
+static void send_state_impl_full(struct lws *wsi,
+                                 const char *state,
+                                 const char *detail,
+                                 const char *tools_json) {
+   /* Build state message with proper JSON escaping using json-c */
+   struct json_object *obj = json_object_new_object();
+   struct json_object *payload = json_object_new_object();
+
+   json_object_object_add(payload, "state", json_object_new_string(state));
+
    if (detail && detail[0] != '\0') {
-      snprintf(json, sizeof(json),
-               "{\"type\":\"state\",\"payload\":{\"state\":\"%s\",\"detail\":\"%s\"}}", state,
-               detail);
-   } else {
-      snprintf(json, sizeof(json), "{\"type\":\"state\",\"payload\":{\"state\":\"%s\"}}", state);
+      json_object_object_add(payload, "detail", json_object_new_string(detail));
    }
-   send_json_message(wsi, json);
+
+   if (tools_json && tools_json[0] != '\0') {
+      /* tools_json is already a JSON array string like "[{...},{...}]" */
+      struct json_object *tools = json_tokener_parse(tools_json);
+      if (tools) {
+         json_object_object_add(payload, "tools", tools);
+      }
+   }
+
+   json_object_object_add(obj, "type", json_object_new_string("state"));
+   json_object_object_add(obj, "payload", payload);
+
+   const char *json_str = json_object_to_json_string(obj);
+   send_json_message(wsi, json_str);
+   json_object_put(obj);
+}
+
+static void send_state_impl(struct lws *wsi, const char *state, const char *detail) {
+   send_state_impl_full(wsi, state, detail, NULL);
 }
 
 static void send_transcript_impl(struct lws *wsi, const char *role, const char *text) {
@@ -994,9 +1043,11 @@ static void process_one_response(void) {
    /* Send via lws_write (one write per callback!) */
    switch (resp.type) {
       case WS_RESP_STATE:
-         send_state_impl(conn->wsi, resp.state.state, resp.state.detail);
+         send_state_impl_full(conn->wsi, resp.state.state, resp.state.detail,
+                              resp.state.tools_json);
          free(resp.state.state);
          free(resp.state.detail);
+         free(resp.state.tools_json);
          break;
       case WS_RESP_TRANSCRIPT:
          send_transcript_impl(conn->wsi, resp.transcript.role, resp.transcript.text);
@@ -4306,6 +4357,45 @@ static void handle_new_conversation(ws_connection_t *conn, struct json_object *p
 }
 
 /**
+ * @brief Clear session history for a fresh start
+ *
+ * Called when user starts a new conversation to clear the in-memory
+ * session history. This prevents stale messages from being sent to
+ * new LLM conversations. Sends acknowledgment to client.
+ */
+static void handle_clear_session(ws_connection_t *conn) {
+   json_object *response = json_object_new_object();
+   json_object_object_add(response, "type", json_object_new_string("clear_session_response"));
+   json_object *resp_payload = json_object_new_object();
+
+   if (!conn || !conn->session) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error", json_object_new_string("No active session"));
+      json_object_object_add(response, "payload", resp_payload);
+      if (conn) {
+         send_json_response(conn->wsi, response);
+      }
+      json_object_put(response);
+      return;
+   }
+
+   session_clear_history(conn->session);
+
+   /* Re-add system prompt for the new conversation */
+   char *prompt = build_user_prompt(conn->auth_user_id);
+   session_add_message(conn->session, "system", prompt ? prompt : get_remote_command_prompt());
+   free(prompt);
+
+   json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
+   json_object_object_add(response, "payload", resp_payload);
+   send_json_response(conn->wsi, response);
+   json_object_put(response);
+
+   LOG_INFO("WebUI: Session history cleared for user '%s'",
+            conn->username ? conn->username : "unknown");
+}
+
+/**
  * @brief Continue a conversation (after context compaction)
  *
  * Archives the current conversation and creates a new one linked to it.
@@ -5573,6 +5663,8 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
       if (payload) {
          handle_continue_conversation(conn, payload);
       }
+   } else if (strcmp(type, "clear_session") == 0) {
+      handle_clear_session(conn);
    } else {
       LOG_WARNING("WebUI: Unknown message type: %s", type);
    }
@@ -5665,6 +5757,14 @@ static int callback_websocket(struct lws *wsi,
          if (conn->audio_buffer) {
             free(conn->audio_buffer);
             conn->audio_buffer = NULL;
+         }
+
+         /* Free any pending text fragment buffer */
+         if (conn->text_buffer) {
+            free(conn->text_buffer);
+            conn->text_buffer = NULL;
+            conn->text_buffer_len = 0;
+            conn->text_buffer_cap = 0;
          }
 
          /* Only decrement client count if this connection had a session
@@ -5858,8 +5958,54 @@ static int callback_websocket(struct lws *wsi,
             LOG_WARNING("WebUI: Audio not enabled, ignoring binary message (%zu bytes)", len);
 #endif
          } else {
-            /* Text message (JSON control) */
-            handle_json_message(conn, (const char *)in, len);
+            /* Text message (JSON control) - handle fragmentation */
+            if (is_final && conn->text_buffer_len == 0) {
+               /* Unfragmented message (common case) - process directly */
+               handle_json_message(conn, (const char *)in, len);
+            } else {
+               /* Check for integer overflow before calculating needed size */
+               if (len > SIZE_MAX - conn->text_buffer_len - 1) {
+                  LOG_ERROR("WebUI: Text buffer size overflow detected");
+                  conn->text_buffer_len = 0;
+                  break;
+               }
+
+               /* Fragmented message - accumulate in buffer */
+               size_t needed = conn->text_buffer_len + len + 1; /* +1 for null terminator */
+               if (needed > conn->text_buffer_cap) {
+                  /* Grow buffer (exponential growth, capped for safety) */
+                  size_t new_cap = conn->text_buffer_cap ? conn->text_buffer_cap * 2
+                                                         : WEBUI_TEXT_BUFFER_INITIAL_CAP;
+                  while (new_cap < needed) {
+                     new_cap *= 2;
+                  }
+                  if (new_cap > WEBUI_TEXT_BUFFER_MAX_CAP) {
+                     LOG_ERROR("WebUI: Text message too large (>%d bytes), dropping",
+                               WEBUI_TEXT_BUFFER_MAX_CAP);
+                     conn->text_buffer_len = 0; /* Reset for next message */
+                     break;
+                  }
+                  char *new_buf = realloc(conn->text_buffer, new_cap);
+                  if (!new_buf) {
+                     LOG_ERROR("WebUI: Failed to allocate text buffer (%zu bytes)", new_cap);
+                     conn->text_buffer_len = 0;
+                     break;
+                  }
+                  conn->text_buffer = new_buf;
+                  conn->text_buffer_cap = new_cap;
+               }
+
+               /* Append data */
+               memcpy(conn->text_buffer + conn->text_buffer_len, in, len);
+               conn->text_buffer_len += len;
+               conn->text_buffer[conn->text_buffer_len] = '\0';
+
+               if (is_final) {
+                  /* Complete message received - process it */
+                  handle_json_message(conn, conn->text_buffer, conn->text_buffer_len);
+                  conn->text_buffer_len = 0; /* Reset for next message (keep buffer) */
+               }
+            }
          }
          break;
       }
@@ -5988,6 +6134,195 @@ static void webui_send_llm_state_update(session_t *session) {
    }
 }
 
+/**
+ * @brief Build JSON array of active tools for a session
+ * @param session Session to query (tools_mutex must NOT be held by caller)
+ * @return Allocated JSON string like "[{\"name\":\"weather\",\"status\":\"running\"}]"
+ *         or NULL if no active tools. Caller must free().
+ */
+static char *build_active_tools_json(session_t *session) {
+   if (!session) {
+      return NULL;
+   }
+
+   pthread_mutex_lock(&session->tools_mutex);
+   if (session->active_tool_count == 0) {
+      pthread_mutex_unlock(&session->tools_mutex);
+      return NULL;
+   }
+
+   struct json_object *arr = json_object_new_array();
+   for (int i = 0; i < session->active_tool_count; i++) {
+      struct json_object *tool = json_object_new_object();
+      json_object_object_add(tool, "name", json_object_new_string(session->active_tools[i]));
+      json_object_object_add(tool, "status", json_object_new_string("running"));
+      json_object_array_add(arr, tool);
+   }
+   pthread_mutex_unlock(&session->tools_mutex);
+
+   const char *json_str = json_object_to_json_string(arr);
+   char *result = strdup(json_str);
+   json_object_put(arr);
+   return result;
+}
+
+/**
+ * @brief Add a tool to session's active tools list
+ * @return true if added, false if already present or list full
+ */
+static bool session_add_active_tool(session_t *session, const char *tool_name) {
+   if (!session || !tool_name) {
+      return false;
+   }
+
+   pthread_mutex_lock(&session->tools_mutex);
+
+   /* Check if already in list */
+   for (int i = 0; i < session->active_tool_count; i++) {
+      if (strcmp(session->active_tools[i], tool_name) == 0) {
+         pthread_mutex_unlock(&session->tools_mutex);
+         return false; /* Already tracking */
+      }
+   }
+
+   /* Add if space available */
+   if (session->active_tool_count < 8) {
+      strncpy(session->active_tools[session->active_tool_count], tool_name, 31);
+      session->active_tools[session->active_tool_count][31] = '\0';
+      session->active_tool_count++;
+      pthread_mutex_unlock(&session->tools_mutex);
+      return true;
+   }
+
+   pthread_mutex_unlock(&session->tools_mutex);
+   return false;
+}
+
+/**
+ * @brief Remove a tool from session's active tools list
+ * @return true if removed, false if not found
+ */
+static bool session_remove_active_tool(session_t *session, const char *tool_name) {
+   if (!session || !tool_name) {
+      return false;
+   }
+
+   pthread_mutex_lock(&session->tools_mutex);
+
+   for (int i = 0; i < session->active_tool_count; i++) {
+      if (strcmp(session->active_tools[i], tool_name) == 0) {
+         /* Shift remaining tools down */
+         for (int j = i; j < session->active_tool_count - 1; j++) {
+            strcpy(session->active_tools[j], session->active_tools[j + 1]);
+         }
+         session->active_tool_count--;
+         pthread_mutex_unlock(&session->tools_mutex);
+         return true;
+      }
+   }
+
+   pthread_mutex_unlock(&session->tools_mutex);
+   return false;
+}
+
+/**
+ * @brief Send state update with current active tools
+ */
+static void send_state_with_tools(session_t *session, const char *state) {
+   if (!session || session->type != SESSION_TYPE_WEBSOCKET) {
+      return;
+   }
+
+   char *tools_json = build_active_tools_json(session);
+
+   ws_response_t resp = { .session = session,
+                          .type = WS_RESP_STATE,
+                          .state = {
+                              .state = strdup(state),
+                              .detail = NULL,
+                              .tools_json = tools_json, /* Takes ownership */
+                          } };
+
+   if (!resp.state.state) {
+      LOG_ERROR("WebUI: Failed to allocate state response");
+      free(tools_json);
+      return;
+   }
+
+   queue_response(&resp);
+}
+
+/**
+ * @brief Build a descriptive display name for a tool based on its arguments
+ *
+ * For tools that may run in parallel with different parameters (e.g., search),
+ * this extracts a qualifier to distinguish them in the UI.
+ *
+ * @param tool_name Base tool name (e.g., "search", "weather")
+ * @param tool_args JSON arguments string
+ * @param out Output buffer for display name
+ * @param out_size Size of output buffer
+ */
+static void build_tool_display_name(const char *tool_name,
+                                    const char *tool_args,
+                                    char *out,
+                                    size_t out_size) {
+   if (!tool_name || !out || out_size == 0) {
+      return;
+   }
+
+   /* Default to just the tool name */
+   strncpy(out, tool_name, out_size - 1);
+   out[out_size - 1] = '\0';
+
+   if (!tool_args || tool_args[0] == '\0') {
+      return;
+   }
+
+   /* Parse arguments to extract qualifier */
+   struct json_object *args = json_tokener_parse(tool_args);
+   if (!args) {
+      return;
+   }
+
+   const char *qualifier = NULL;
+   struct json_object *val;
+   char domain_buf[32]; /* Buffer for URL domain extraction (function scope for safety) */
+
+   /* Tool-specific qualifier extraction */
+   if (strcmp(tool_name, "search") == 0) {
+      /* For search: use category (news, social, science, etc.) */
+      if (json_object_object_get_ex(args, "category", &val)) {
+         qualifier = json_object_get_string(val);
+      }
+   } else if (strcmp(tool_name, "weather") == 0) {
+      /* For weather: use location (truncated) */
+      if (json_object_object_get_ex(args, "location", &val)) {
+         qualifier = json_object_get_string(val);
+      }
+   } else if (strcmp(tool_name, "url") == 0) {
+      /* For url: use domain extracted from URL (uses shared extract_url_host) */
+      if (json_object_object_get_ex(args, "url", &val)) {
+         const char *url = json_object_get_string(val);
+         if (url) {
+            extract_url_host(url, domain_buf, sizeof(domain_buf));
+            qualifier = domain_buf;
+         }
+      }
+   }
+
+   /* Build display name with qualifier if found */
+   if (qualifier && qualifier[0] != '\0') {
+      /* Truncate qualifier if too long */
+      char short_qual[16];
+      strncpy(short_qual, qualifier, sizeof(short_qual) - 1);
+      short_qual[sizeof(short_qual) - 1] = '\0';
+      snprintf(out, out_size, "%s:%s", tool_name, short_qual);
+   }
+
+   json_object_put(args);
+}
+
 static void webui_tool_execution_callback(void *session_ptr,
                                           const char *tool_name,
                                           const char *tool_args,
@@ -5998,22 +6333,37 @@ static void webui_tool_execution_callback(void *session_ptr,
       return;
    }
 
+   /* Build descriptive display name (e.g., "search:news" instead of just "search") */
+   char display_name[48];
+   build_tool_display_name(tool_name, tool_args, display_name, sizeof(display_name));
+
    /* result==NULL indicates tool execution is starting, not ending */
    if (result == NULL) {
-      /* Tool is starting - switch to "thinking" state so UI doesn't show "speaking"
-       * while no audio is playing. This is especially important for slow tools. */
-      char detail[64];
-      snprintf(detail, sizeof(detail), "Calling %s...", tool_name);
-      webui_send_state_with_detail(session, "thinking", detail);
+      /* Tool is starting - add to active list and send state with tools array */
+      session_add_active_tool(session, display_name);
+      send_state_with_tools(session, "thinking");
       return;
    }
 
-   /* Tool execution completed - format as debug entry */
+   /* Tool execution completed - remove from active list */
+   session_remove_active_tool(session, display_name);
+
+   /* Format as debug entry for transcript */
    char debug_msg[LLM_TOOLS_RESULT_LEN + 256];
    snprintf(debug_msg, sizeof(debug_msg), "[Tool Call: %s(%s) -> %s%s]", tool_name,
             tool_args ? tool_args : "", success ? "" : "FAILED: ", result);
-
    webui_send_transcript(session, "assistant", debug_msg);
+
+   /* Send updated state (may still have other active tools) */
+   pthread_mutex_lock(&session->tools_mutex);
+   int remaining = session->active_tool_count;
+   pthread_mutex_unlock(&session->tools_mutex);
+
+   if (remaining > 0) {
+      /* More tools running - update state with remaining tools */
+      send_state_with_tools(session, "thinking");
+   }
+   /* Note: Don't send idle here - let the LLM flow handle that */
 
    /* If this was a switch_llm call, send LLM state update to client */
    if (success && strcmp(tool_name, "switch_llm") == 0) {

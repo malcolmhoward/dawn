@@ -424,8 +424,8 @@ static json_object *convert_to_claude_format(struct json_object *openai_conversa
             json_object *type_obj;
 
             if (!json_object_object_get_ex(block, "type", &type_obj)) {
-               // Keep blocks without type
-               json_object_array_add(filtered_content, json_object_get(block));
+               // Skip malformed blocks without type - Claude requires type field
+               LOG_WARNING("Claude: Skipping content block without type field");
                continue;
             }
 
@@ -570,12 +570,29 @@ static json_object *convert_to_claude_format(struct json_object *openai_conversa
                   // Append to existing assistant content
                   json_object *last_content;
                   if (json_object_object_get_ex(last_message, "content", &last_content)) {
-                     const char *existing = json_object_get_string(last_content);
-                     char combined[4096];
-                     snprintf(combined, sizeof(combined), "%s\n%s", existing ? existing : "",
-                              summary);
-                     json_object_object_add(last_message, "content",
-                                            json_object_new_string(combined));
+                     if (json_object_is_type(last_content, json_type_array)) {
+                        // Content is an array - append a text block
+                        json_object *text_block = json_object_new_object();
+                        json_object_object_add(text_block, "type", json_object_new_string("text"));
+                        json_object_object_add(text_block, "text", json_object_new_string(summary));
+                        json_object_array_add(last_content, text_block);
+                     } else {
+                        // Content is a string - combine strings
+                        const char *existing = json_object_get_string(last_content);
+                        size_t existing_len = existing ? strlen(existing) : 0;
+                        size_t summary_len = strlen(summary);
+                        size_t needed = existing_len + summary_len + 2; /* +2 for \n and \0 */
+
+                        char combined[4096];
+                        if (needed > sizeof(combined)) {
+                           LOG_WARNING("Claude: Combined content truncated from %zu to %zu bytes",
+                                       needed, sizeof(combined));
+                        }
+                        snprintf(combined, sizeof(combined), "%s\n%s", existing ? existing : "",
+                                 summary);
+                        json_object_object_add(last_message, "content",
+                                               json_object_new_string(combined));
+                     }
                   }
                   json_object_put(summary_msg);
                } else {
@@ -1172,6 +1189,12 @@ static char *llm_claude_streaming_internal(struct json_object *conversation_hist
 
    curl_easy_cleanup(curl_handle);
    curl_slist_free_all(headers);
+
+   // Debug: Log raw response info before cleanup
+   if (streaming_ctx.raw_response.size == 0) {
+      LOG_WARNING("Claude: No data received from API (raw_response empty)");
+   }
+
    curl_buffer_free(&streaming_ctx.raw_response);
 
    // Check for tool calls
@@ -1333,6 +1356,13 @@ static char *llm_claude_streaming_internal(struct json_object *conversation_hist
 
    // Get accumulated response
    response = llm_stream_get_response(stream_ctx);
+
+   // Debug: Log if response is empty (helps diagnose streaming issues)
+   if (!response || !*response) {
+      LOG_WARNING(
+          "Claude: Stream completed but response is empty (no text content, no tool calls)");
+      LOG_WARNING("Claude: has_tool_calls=%d", llm_stream_has_tool_calls(stream_ctx) ? 1 : 0);
+   }
 
    // Cleanup
    sse_parser_free(sse_parser);

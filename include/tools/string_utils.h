@@ -91,6 +91,49 @@ void sanitize_utf8_for_json(char *str);
  */
 const char *strcasestr_portable(const char *haystack, const char *needle);
 
+/**
+ * @brief Extract hostname from a URL
+ *
+ * Extracts the hostname portion from a URL, stripping protocol, port,
+ * and path components.
+ *
+ * Examples:
+ *   "https://www.example.com/path" -> "www.example.com"
+ *   "http://example.com:8080/foo"  -> "example.com"
+ *   "example.com/bar"              -> "example.com"
+ *
+ * Thread Safety: This function is thread-safe (writes only to output buffer).
+ *
+ * @param url Full URL or hostname string
+ * @param out Output buffer for hostname
+ * @param out_size Size of output buffer (hostname will be truncated if needed)
+ */
+static inline void extract_url_host(const char *url, char *out, size_t out_size) {
+   if (!url || !out || out_size == 0) {
+      if (out && out_size > 0) {
+         out[0] = '\0';
+      }
+      return;
+   }
+
+   /* Skip protocol (http:// or https://) */
+   const char *p = strstr(url, "://");
+   p = p ? p + 3 : url;
+
+   /* Find end of hostname (stop at /, :, ?, or end) */
+   const char *end = p;
+   while (*end && *end != '/' && *end != ':' && *end != '?') {
+      end++;
+   }
+
+   size_t len = (size_t)(end - p);
+   if (len >= out_size) {
+      len = out_size - 1;
+   }
+   memcpy(out, p, len);
+   out[len] = '\0';
+}
+
 #ifdef __cplusplus
 }
 #endif

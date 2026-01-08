@@ -31,7 +31,8 @@
 #define SEARXNG_DEFAULT_URL "http://localhost:8384"
 #define SEARXNG_MAX_RESULTS 5
 #define SEARXNG_TIMEOUT_SEC 10
-#define SEARXNG_SNIPPET_LEN 200
+#define SEARXNG_SNIPPET_LEN 450
+#define SEARCH_URL_MAX_LEN 2048
 
 /**
  * @brief Search type enum for different search categories

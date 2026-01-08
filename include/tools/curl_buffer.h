@@ -40,8 +40,8 @@
 
 // Predefined max capacities for different use cases
 #define CURL_BUFFER_MAX_WEB_SEARCH \
-   (256 * 1024)                           // 256KB for web search results (papers can be ~140KB)
-#define CURL_BUFFER_MAX_LLM (128 * 1024)  // 128KB for LLM responses
+   (512 * 1024)  // 512KB for web search (science category can exceed 256KB)
+#define CURL_BUFFER_MAX_LLM (128 * 1024)        // 128KB for LLM responses
 #define CURL_BUFFER_MAX_STREAMING (256 * 1024)  // 256KB for streaming responses
 
 /**

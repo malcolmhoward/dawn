@@ -52,9 +52,13 @@ DAWN integrates modern speech recognition, large language models, and text-to-sp
 
 - **LLM Tools**
   - **Web Search** - Voice-activated search via SearXNG (self-hosted, privacy-focused)
+    - Multiple search categories: web, news, social, science, IT, Q&A, dictionary, academic papers
+    - Host-based deduplication (max 2 results per domain)
+    - Relevance-based reranking with quality engine boosting
   - **URL Fetcher** - Fetch and read web pages; large pages auto-summarized via local LLM
   - **Weather** - Real-time weather and forecasts via Open-Meteo API (free, no API key)
   - **Calculator** - Mathematical expression evaluation with tinyexpr engine
+  - **Parallel Tool Execution** - Multiple tool calls execute concurrently (e.g., weather + search in ~1s vs ~3s sequential)
   - LLM automatically invokes tools and incorporates results into responses
 
 ### Performance Highlights
@@ -523,7 +527,17 @@ DAWN includes several tools that the LLM can invoke automatically:
 
 - **Calculator** - Built-in, no setup required. Ask "What's 15% of 847?" or "Calculate the square root of 144"
 - **Weather** - Uses Open-Meteo API (free, no API key). Ask "What's the weather in Atlanta?" or "Will it rain tomorrow?"
-- **Web Search** - Requires SearXNG (below). Ask "Search for the latest news about Tony Stark"
+- **Web Search** - Requires SearXNG (below). Supports multiple search categories:
+  - `web` - General web search (default)
+  - `news` - Recent news articles
+  - `social` - Social media (Reddit, Twitter)
+  - `science` - Scientific content
+  - `it` - Tech/programming content
+  - `qa` - Q&A sites (StackOverflow, SuperUser)
+  - `facts` - Wikipedia infoboxes
+  - `papers` - Academic papers (arXiv, Google Scholar, Semantic Scholar)
+
+  Example queries: "Search for the latest news about CES 2026", "What's Reddit saying about the new iPhone?", "Find scientific papers on quantum computing"
 - **URL Fetcher** - Built-in. Ask "Read the article at example.com/page" or "What does this URL say?"
 
 **How summarization works:** When search results or fetched pages exceed ~3KB, DAWN can summarize the content before passing it to the main LLM. This keeps context windows manageable and responses fast. Summarization can use `local` (dedicated llama-server) or `default` (same LLM as conversation). Configure via `[search.summarizer]` in `dawn.toml`.

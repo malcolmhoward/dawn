@@ -186,9 +186,10 @@
 
     <!-- Input area -->
     <div id="input-area">
-      <input type="text" id="text-input" placeholder="Type a message..." autocomplete="off">
+      <label for="text-input" class="sr-only">Type your message to the AI assistant</label>
+      <textarea id="text-input" placeholder="Type a message..." autocomplete="off" rows="1"></textarea>
       <button id="send-btn" title="Send message">Send</button>
-      <button id="mic-btn" title="Hold to speak" disabled>Mic</button>
+      <button id="mic-btn" title="Hold to speak" aria-label="Hold to speak" disabled>Mic</button>
     </div>
 
     <!-- Footer -->

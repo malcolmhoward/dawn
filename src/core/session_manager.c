@@ -200,6 +200,21 @@ static session_t *session_alloc(void) {
       return NULL;
    }
 
+   if (pthread_mutex_init(&session->tools_mutex, NULL) != 0) {
+      LOG_ERROR("Failed to init tools_mutex");
+      pthread_mutex_destroy(&session->metrics_mutex);
+      pthread_mutex_destroy(&session->llm_config_mutex);
+      pthread_cond_destroy(&session->ref_zero_cond);
+      pthread_mutex_destroy(&session->ref_mutex);
+      pthread_mutex_destroy(&session->fd_mutex);
+      pthread_mutex_destroy(&session->history_mutex);
+      free(session);
+      return NULL;
+   }
+
+   // Initialize active tool tracking
+   session->active_tool_count = 0;
+
    // Initialize metrics tracker (db_id = -1 means not yet saved to DB)
    session->metrics.db_id = -1;
 
@@ -207,6 +222,7 @@ static session_t *session_alloc(void) {
    session->conversation_history = json_object_new_array();
    if (!session->conversation_history) {
       LOG_ERROR("Failed to create conversation history array");
+      pthread_mutex_destroy(&session->tools_mutex);
       pthread_mutex_destroy(&session->metrics_mutex);
       pthread_mutex_destroy(&session->llm_config_mutex);
       pthread_cond_destroy(&session->ref_zero_cond);
@@ -241,6 +257,7 @@ static void session_free(session_t *session) {
    pthread_cond_destroy(&session->ref_zero_cond);
    pthread_mutex_destroy(&session->ref_mutex);
    pthread_mutex_destroy(&session->fd_mutex);
+   pthread_mutex_destroy(&session->tools_mutex);
    pthread_mutex_destroy(&session->metrics_mutex);
    pthread_mutex_destroy(&session->llm_config_mutex);
    pthread_mutex_destroy(&session->history_mutex);
@@ -1067,8 +1084,13 @@ static char *llm_call_finalize(session_t *session, char *response, llm_call_ctx_
       return NULL;
    }
 
-   // Add assistant response to history
-   session_add_message(session, "assistant", response);
+   // Add assistant response to history (only if non-empty to avoid Claude API errors)
+   if (*response) {
+      session_add_message(session, "assistant", response);
+   } else {
+      LOG_WARNING("Session %u: LLM returned empty response, not adding to history",
+                  session->session_id);
+   }
 
    LOG_INFO("Session %u: LLM response received (%.50s%s)", session->session_id, response,
             strlen(response) > 50 ? "..." : "");

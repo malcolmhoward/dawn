@@ -281,10 +281,10 @@
        "type": "getter",
        "topic": "dawn",
        "tool": {
-         "description": "Search the web for information. Returns relevant search results that can be used to answer questions about current events, facts, etc.",
+         "description": "Search the web for information. Returns relevant search results. Choose the most appropriate category for the query type.",
          "parameters": [
            {"name": "query", "type": "string", "description": "The search query", "required": true, "maps_to": "value"},
-           {"name": "category", "type": "enum", "enum": ["web", "news", "science", "social"], "description": "Search category: 'web' for general search, 'news' for current events, 'science' for scientific topics, 'social' for social media posts and discussions", "required": false, "maps_to": "action"}
+           {"name": "category", "type": "enum", "enum": ["web", "news", "science", "social", "it", "qa", "facts", "papers"], "description": "Search category: 'web' (general), 'news' (current events), 'science' (scientific content), 'social' (Reddit/Twitter), 'it' (tech/programming), 'qa' (StackOverflow/forums), 'facts' (Wikipedia quick facts), 'papers' (academic papers from arXiv/Google Scholar)", "required": false, "maps_to": "action"}
          ]
        }
     },

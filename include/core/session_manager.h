@@ -94,12 +94,14 @@ extern "C" {
  * Level 1: session_manager_rwlock (module-level, read or write)
  * Level 2: session->ref_mutex (per-session, protects ref_count)
  * Level 3: session->fd_mutex (per-session, protects client_fd during reconnect)
- * Level 4: session->llm_config_mutex OR session->history_mutex
- *          (per-session, never held together - copy-under-mutex pattern)
+ * Level 4: session->llm_config_mutex, session->history_mutex, session->metrics_mutex,
+ *          or session->tools_mutex
+ *          (per-session leaf locks, never held together - copy-under-mutex pattern)
  *
  * CRITICAL: NEVER acquire locks in reverse order
  * CRITICAL: NEVER hold session_manager_rwlock when acquiring per-session locks
  *           for extended operations (brief hold for slot operations is OK)
+ * CRITICAL: NEVER hold multiple Level 4 locks simultaneously
  *
  * External locks (tts_mutex, mqtt_mutex) are leaf locks and should only be
  * acquired when no session_manager locks are held.
@@ -190,6 +192,11 @@ typedef struct session {
    // Used when native tool calling is disabled (legacy command tag mode)
    cmd_tag_filter_state_t cmd_tag_filter;  // State for text_filter_command_tags()
    bool cmd_tag_filter_bypass;             // Cached: true if native tools enabled (skip filtering)
+
+   // Active tool tracking (for parallel tool status display)
+   char active_tools[8][32];     // Tool names currently executing (max 8 parallel)
+   int active_tool_count;        // Number of tools currently executing
+   pthread_mutex_t tools_mutex;  // Protects active_tools (lock level 4)
 
    // Reference counting for safe access (two-phase destruction pattern)
    int ref_count;

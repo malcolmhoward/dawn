@@ -660,6 +660,38 @@ body.user-is-admin .settings-paths.admin-only {
   text-overflow: ellipsis;
 }
 
+/* Mini tool progress dots (3+ tools in mini bar) */
+.mini-tool-dots {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: 0.5rem;
+  vertical-align: middle;
+}
+
+.mini-tool-dot {
+  --delay-index: 0;  /* Default, overridden by inline style */
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warning);
+  animation: miniPulseAmber 0.8s ease-in-out infinite;
+  animation-delay: calc(var(--delay-index) * 0.15s);
+  will-change: opacity, transform;
+}
+
+.mini-tool-dot.complete {
+  background: var(--success);
+  animation: none;
+}
+
+/* Reduced motion preference - disable dot animations */
+@media (prefers-reduced-motion: reduce) {
+  .mini-tool-dot {
+    animation: none;
+    animation-delay: 0s;
+  }
+}
+
 .mini-right {
   display: flex;
   align-items: center;
@@ -1181,6 +1213,7 @@ body.user-is-admin .settings-paths.admin-only {
  * ============================================================================= */
 #status {
   display: flex;
+  flex-wrap: wrap;
   justify-content: center;
   align-items: center;
   gap: 0.5rem;
@@ -1220,6 +1253,105 @@ body.user-is-admin .settings-paths.admin-only {
   text-transform: uppercase;
   letter-spacing: 0.1em;
   color: var(--text-secondary);
+}
+
+/* =============================================================================
+ * Tools Tray (expanded visualizer - shows active tools as pills)
+ * ============================================================================= */
+.tools-tray {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.35rem;
+  width: 100%;  /* Force to new line in parent flex container */
+  margin-top: 0.25rem;
+  min-height: 0;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 0.2s ease-out, transform 0.2s ease-out;
+  will-change: opacity, transform;
+  /* Mobile: allow horizontal scroll if too many pills */
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+/* Custom scrollbar for tools tray */
+.tools-tray::-webkit-scrollbar {
+  height: 4px;
+}
+.tools-tray::-webkit-scrollbar-thumb {
+  background: var(--text-secondary);
+  border-radius: 2px;
+}
+.tools-tray::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.tools-tray.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Tool pill - individual tool indicator */
+.tool-pill {
+  --delay-index: 0;  /* Default, overridden by inline style */
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.15rem 0.5rem;
+  font-family: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
+  font-size: 0.65rem;
+  text-transform: lowercase;
+  background: var(--bg-secondary);
+  border: 1px solid var(--accent-hover);
+  border-radius: 9999px;
+  color: var(--text-secondary);
+  animation: pillEnter 0.2s ease-out backwards;
+  animation-delay: calc(var(--delay-index) * 0.1s);
+  will-change: opacity, transform;
+  flex-shrink: 0;  /* Prevent pills from shrinking on narrow screens */
+}
+
+.tool-pill.running {
+  border-color: var(--warning);
+  animation: pillEnter 0.2s ease-out backwards, miniPulseAmber 0.8s ease-in-out infinite;
+  animation-delay: calc(var(--delay-index) * 0.1s), calc(var(--delay-index) * 0.1s + 0.2s);
+}
+
+.tool-pill.complete {
+  border-color: var(--success);
+  opacity: 0.6;
+}
+
+.tool-pill-icon {
+  font-size: 0.6rem;
+  color: var(--success);
+}
+
+@keyframes pillEnter {
+  from {
+    opacity: 0;
+    transform: scale(0.8) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* Reduced motion preference - disable pill animations */
+@media (prefers-reduced-motion: reduce) {
+  .tools-tray {
+    transition: none;
+  }
+  .tool-pill {
+    animation: none;
+    animation-delay: 0s;
+  }
+  .tool-pill.running {
+    animation: none;
+    animation-delay: 0s;
+  }
 }
 
 /* =============================================================================
@@ -1825,6 +1957,7 @@ body.debug-mode .transcript-entry.debug {
  * ============================================================================= */
 #input-area {
   display: flex;
+  align-items: flex-end;
   gap: 0.5rem;
   padding: 0.5rem;
   background-color: var(--bg-secondary);
@@ -1840,7 +1973,13 @@ body.debug-mode .transcript-entry.debug {
   border-radius: var(--border-radius);
   color: var(--text-primary);
   font-size: 1rem;
+  font-family: inherit;
   transition: border-color var(--transition-fast);
+  resize: none;
+  min-height: 44px;
+  max-height: 150px;
+  overflow-y: auto;
+  line-height: 1.4;
 }
 
 #text-input:focus {
@@ -4553,4 +4692,23 @@ button:disabled {
     opacity: 0;
     transform: translateX(100%);
   }
+}
+
+/* =============================================================================
+ * Accessibility Utilities
+ * ============================================================================= */
+
+/**
+ * Screen reader only - visually hidden but accessible to assistive technology
+ */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }

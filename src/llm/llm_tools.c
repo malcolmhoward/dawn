@@ -35,6 +35,7 @@
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "config/dawn_config.h"
 #include "core/command_executor.h"
@@ -80,10 +81,18 @@ static __thread int tl_suppress_count = 0;
  * Tool Execution Notification Callback
  * ============================================================================= */
 
+/**
+ * @brief Callback for tool execution notifications
+ *
+ * @note THREAD SAFETY: This callback pointer is accessed atomically to support
+ * safe reads during parallel tool execution. It should be set during application
+ * initialization before tools are invoked, but atomic access prevents undefined
+ * behavior if the timing assumption is violated.
+ */
 static tool_execution_callback_fn s_execution_callback = NULL;
 
 void llm_tools_set_execution_callback(tool_execution_callback_fn callback) {
-   s_execution_callback = callback;
+   __atomic_store_n(&s_execution_callback, callback, __ATOMIC_RELEASE);
 }
 
 /**
@@ -93,11 +102,105 @@ static void notify_tool_execution(const char *tool_name,
                                   const char *tool_args,
                                   const char *result,
                                   bool success) {
-   if (s_execution_callback) {
+   tool_execution_callback_fn cb = __atomic_load_n(&s_execution_callback, __ATOMIC_ACQUIRE);
+   if (cb) {
       /* Get current command context (session) for callback */
       session_t *session = session_get_command_context();
-      s_execution_callback((void *)session, tool_name, tool_args, result, success);
+      cb((void *)session, tool_name, tool_args, result, success);
    }
+}
+
+/* =============================================================================
+ * Parallel Tool Execution Support
+ * ============================================================================= */
+
+/**
+ * @brief Thread argument structure for parallel tool execution
+ */
+typedef struct {
+   const tool_call_t *call;
+   tool_result_t *result;
+   session_t *session; /* Session context to propagate to spawned thread */
+   int return_code;
+} tool_exec_task_t;
+
+/**
+ * @brief List of tools that modify global state and must run sequentially
+ *
+ * All other tools are considered parallel-safe (HTTP calls, getters, etc.)
+ */
+static const char *SEQUENTIAL_TOOLS[] = {
+   "switch_llm",         /* Modifies global LLM configuration */
+   "reset_conversation", /* Modifies session conversation state */
+   "music",              /* Controls audio playback state */
+   "volume",             /* Modifies system volume */
+   "local_llm_switch",   /* Modifies LLM routing */
+   "cloud_llm_switch",   /* Modifies LLM routing */
+   "cloud_provider",     /* Modifies LLM provider selection */
+   "viewing",            /* Uses shared MQTT state for image capture */
+   "shutdown",           /* Critical system operation */
+   NULL                  /* Sentinel */
+};
+
+/**
+ * @brief Check if a tool name is in the sequential tools list
+ *
+ * Used during tool initialization to set the parallel_safe flag.
+ * Tools that modify global state (LLM config, audio, conversation) must
+ * run sequentially. All others (HTTP calls, getters) are parallel-safe.
+ *
+ * @param tool_name Name of the tool to check
+ * @return true if parallel-safe, false if must run sequentially
+ */
+static bool is_tool_parallel_safe(const char *tool_name) {
+   for (int i = 0; SEQUENTIAL_TOOLS[i] != NULL; i++) {
+      if (strcmp(tool_name, SEQUENTIAL_TOOLS[i]) == 0) {
+         return false;
+      }
+   }
+   return true;
+}
+
+/**
+ * @brief Look up a tool's parallel_safe flag by name
+ *
+ * Uses pre-computed parallel_safe flag from tool definition, avoiding
+ * repeated string comparisons during execution.
+ *
+ * @param tool_name Name of the tool to look up
+ * @return true if parallel-safe, false if sequential (or unknown tool)
+ */
+static bool get_tool_parallel_safe(const char *tool_name) {
+   for (int i = 0; i < s_tool_count; i++) {
+      if (strcmp(s_tools[i].name, tool_name) == 0) {
+         return s_tools[i].parallel_safe;
+      }
+   }
+   /* Unknown tool - assume sequential for safety */
+   return false;
+}
+
+/**
+ * @brief Thread wrapper for parallel tool execution
+ *
+ * Propagates session context to the spawned thread so that tool callbacks
+ * can access the correct session via session_get_command_context().
+ *
+ * @param arg Pointer to tool_exec_task_t
+ * @return NULL (result stored in task structure)
+ */
+static void *tool_exec_thread(void *arg) {
+   tool_exec_task_t *task = (tool_exec_task_t *)arg;
+
+   /* Propagate session context to this thread */
+   session_set_command_context(task->session);
+
+   task->return_code = llm_tools_execute(task->call, task->result);
+
+   /* Clear context before thread exit */
+   session_set_command_context(NULL);
+
+   return NULL;
 }
 
 /* =============================================================================
@@ -502,6 +605,7 @@ static void generate_tool_from_cmd(const cmd_definition_t *cmd, void *user_data)
    t->enabled_local = cmd->default_local;
    t->enabled_remote = cmd->default_remote;
    t->armor_feature = cmd->armor_feature;
+   t->parallel_safe = is_tool_parallel_safe(cmd->name);
 
    /* Copy parameters (types are now unified - cmd_param_type_t used in both) */
    for (int i = 0; i < cmd->param_count && i < LLM_TOOLS_MAX_PARAMS; i++) {
@@ -1067,13 +1171,108 @@ int llm_tools_execute_all(const tool_call_list_t *calls, tool_result_list_t *res
 
    results->count = 0;
    int failures = 0;
+   int total_calls = (calls->count < LLM_TOOLS_MAX_PARALLEL_CALLS) ? calls->count
+                                                                   : LLM_TOOLS_MAX_PARALLEL_CALLS;
 
-   for (int i = 0; i < calls->count && i < LLM_TOOLS_MAX_PARALLEL_CALLS; i++) {
-      if (llm_tools_execute(&calls->calls[i], &results->results[results->count]) != 0) {
+   if (total_calls == 0) {
+      return 0;
+   }
+
+   /* Single tool - no threading overhead needed, skip timing */
+   if (total_calls == 1) {
+      if (llm_tools_execute(&calls->calls[0], &results->results[0]) != 0) {
          failures++;
       }
-      results->count++;
+      results->count = 1;
+      return failures > 0 ? 1 : 0;
    }
+
+   /* Multiple tools - measure parallel execution performance */
+   struct timespec start_time, end_time;
+   clock_gettime(CLOCK_MONOTONIC, &start_time);
+
+   /* Multiple tools - partition into parallel-safe and sequential groups */
+   int parallel_indices[LLM_TOOLS_MAX_PARALLEL_CALLS];
+   int sequential_indices[LLM_TOOLS_MAX_PARALLEL_CALLS];
+   int parallel_count = 0;
+   int sequential_count = 0;
+
+   for (int i = 0; i < total_calls; i++) {
+      if (get_tool_parallel_safe(calls->calls[i].name)) {
+         parallel_indices[parallel_count++] = i;
+      } else {
+         sequential_indices[sequential_count++] = i;
+      }
+   }
+
+   LOG_INFO("Tool execution: %d parallel-safe, %d sequential", parallel_count, sequential_count);
+
+   /* Execute parallel-safe tools concurrently */
+   if (parallel_count > 0) {
+      pthread_t threads[LLM_TOOLS_MAX_PARALLEL_CALLS];
+      tool_exec_task_t tasks[LLM_TOOLS_MAX_PARALLEL_CALLS];
+      bool thread_spawned[LLM_TOOLS_MAX_PARALLEL_CALLS] = { false };
+
+      /* Configure thread attributes with reduced stack size (512KB vs 8MB default).
+       * Tool execution uses libcurl and JSON parsing which need reasonable stack space. */
+      pthread_attr_t thread_attr;
+      pthread_attr_init(&thread_attr);
+      pthread_attr_setstacksize(&thread_attr, 512 * 1024);
+
+      /* Capture session context to propagate to spawned threads */
+      session_t *current_session = session_get_command_context();
+
+      /* Spawn threads for parallel tools */
+      for (int i = 0; i < parallel_count; i++) {
+         int idx = parallel_indices[i];
+         tasks[i].call = &calls->calls[idx];
+         tasks[i].result = &results->results[idx];
+         tasks[i].session = current_session;
+         tasks[i].return_code = 0;
+
+         int rc = pthread_create(&threads[i], &thread_attr, tool_exec_thread, &tasks[i]);
+         if (rc == 0) {
+            thread_spawned[i] = true;
+         } else {
+            /* Fallback to sequential if thread creation fails */
+            LOG_WARNING("pthread_create failed for tool '%s' (error=%d), executing sequentially",
+                        calls->calls[idx].name, rc);
+            tasks[i].return_code = llm_tools_execute(tasks[i].call, tasks[i].result);
+         }
+      }
+
+      /* Wait for all spawned threads */
+      for (int i = 0; i < parallel_count; i++) {
+         if (thread_spawned[i]) {
+            pthread_join(threads[i], NULL);
+         }
+      }
+
+      /* Collect results from parallel execution */
+      for (int i = 0; i < parallel_count; i++) {
+         if (tasks[i].return_code != 0) {
+            failures++;
+         }
+      }
+
+      pthread_attr_destroy(&thread_attr);
+   }
+
+   /* Execute sequential tools one at a time */
+   for (int i = 0; i < sequential_count; i++) {
+      int idx = sequential_indices[i];
+      if (llm_tools_execute(&calls->calls[idx], &results->results[idx]) != 0) {
+         failures++;
+      }
+   }
+
+   results->count = total_calls;
+
+   clock_gettime(CLOCK_MONOTONIC, &end_time);
+   long elapsed_ms = (end_time.tv_sec - start_time.tv_sec) * 1000 +
+                     (end_time.tv_nsec - start_time.tv_nsec) / 1000000;
+   LOG_INFO("Tool execution: %d tools completed in %ldms (%d parallel, %d sequential)", total_calls,
+            elapsed_ms, parallel_count, sequential_count);
 
    return failures > 0 ? 1 : 0;
 }
