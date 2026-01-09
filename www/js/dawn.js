@@ -7,41 +7,21 @@
   'use strict';
 
   // =============================================================================
-  // Configuration
+  // Configuration (core constants in js/core/constants.js)
   // =============================================================================
-  const WS_SUBPROTOCOL = 'dawn-1.0';
-  const RECONNECT_BASE_DELAY = 1000;
-  const RECONNECT_MAX_DELAY = 30000;
-  const RECONNECT_MAX_ATTEMPTS = 5;
-
-  // Audio configuration
-  // 48kHz is Opus native rate - server resamples to 16kHz for ASR
-  const AUDIO_SAMPLE_RATE = 48000;
-  const AUDIO_CHANNELS = 1;         // Mono
-  let audioChunkMs = 200;           // Send audio every N ms (updated from server config)
-
-  // Binary message types (match server)
-  const WS_BIN_AUDIO_IN = 0x01;
-  const WS_BIN_AUDIO_IN_END = 0x02;
-  const WS_BIN_AUDIO_OUT = 0x11;
-  const WS_BIN_AUDIO_SEGMENT_END = 0x12; // Play accumulated audio segment now
+  let audioChunkMs = 200;  // Send audio every N ms (updated from server config)
 
   // =============================================================================
-  // State
+  // State (core state in js/core/state.js, websocket in js/core/websocket.js)
   // =============================================================================
-  let ws = null;
-  let reconnectAttempts = 0;
-  let maxClientsReached = false;  // Skip auto-reconnect when server at capacity
-  let currentState = 'idle';
-  let debugMode = false;
-  let visualizerCollapsed = false;  // Visualizer panel collapse state
 
-  // Audio state
+  // UI state
+  let visualizerCollapsed = false;
+
+  // Audio capture state
   let audioContext = null;
   let mediaStream = null;
   let audioProcessor = null;
-  let isRecording = false;
-  let audioSupported = false;
 
   // Audio playback state
   let playbackContext = null;
@@ -51,27 +31,24 @@
   // Opus codec state
   let opusWorker = null;
   let opusReady = false;
-  let capabilitiesSynced = false;  // True after server acknowledges our capabilities
-  let pendingDecodes = [];      // Queue decoded audio until worker returns
-  let pendingOpusData = [];     // Buffer for accumulating fragmented Opus data
-  let pendingDecodePlayback = false;  // True when waiting for decode before playback
+  let pendingDecodes = [];
+  let pendingOpusData = [];
+  let pendingDecodePlayback = false;
 
-  // FFT visualization state (for playback - gives DAWN "life" when speaking)
+  // FFT visualization state
   let playbackAnalyser = null;
   let fftAnimationId = null;
   let fftDataArray = null;
-  let waveformHistory = [];  // Store recent waveform paths for trail effect
-  let frameCount = 0;        // Frame counter for trail sampling
-  const TRAIL_LENGTH = 5;    // Number of trailing echoes
-  const TRAIL_SAMPLE_RATE = 10;  // Store trail every N frames for visible separation
+  let waveformHistory = [];
+  let frameCount = 0;
+  const TRAIL_LENGTH = 5;
+  const TRAIL_SAMPLE_RATE = 10;
 
-  // Visualization mode: 'waveform' (smooth curve) or 'bars' (radial bar graph)
-  let visualizationMode = 'bars';  // Switch to toggle between modes
-
-  // Bar visualization state (radial EQ style)
-  let barElements = null;      // Array of 128 line elements for current frame
-  let barTrailElements = [];   // Array of 5 arrays (trails), each with 128 lines
-  let barDataHistory = [];     // Store recent processed data for trails
+  // Visualization mode state
+  let visualizationMode = 'bars';
+  let barElements = null;
+  let barTrailElements = [];
+  let barDataHistory = [];
 
   // FFT debug state
   let fftDebugState = {
@@ -79,103 +56,24 @@
     peakMax: 0
   };
 
-  // LLM streaming state (ChatGPT-style real-time text)
-  let streamingState = {
-    active: false,
-    streamId: null,
-    entryElement: null,  // DOM element for current streaming entry
-    textElement: null,   // Text container within entry
-    content: '',         // Accumulated text content
-    // Debounce markdown rendering (max 10Hz to avoid heavyweight parsing per token)
-    lastRenderMs: 0,
-    renderDebounceMs: 100,
-    pendingRender: false
-  };
-
-  // Real-time metrics state (for multi-ring visualization)
-  let metricsState = {
-    state: 'idle',
-    ttft_ms: 0,
-    token_rate: 0,
-    context_percent: 0,
-    lastUpdate: 0,
-    // Last non-zero values (persist after streaming ends)
-    last_ttft_ms: 0,
-    last_token_rate: 0
-  };
-
-  // Session averages tracking (exponential moving average)
+  // Session averages tracking
   let avgState = {
     tokenRate: { sum: 0, count: 0 },
     ttft: { sum: 0, count: 0 },
     latency: { sum: 0, count: 0 }
   };
 
-  // Hesitation ring state (token timing variance visualization)
-  // Uses Welford's online algorithm for O(1) variance calculation
-  let hesitationState = {
-    dtWindow: [],           // Rolling window of inter-token intervals (ms)
-    windowSize: 16,         // Window size
-    tPrevMs: 0,             // Previous token timestamp
-    loadSmooth: 0,          // Smoothed load value (0-1)
-    lastTokenMs: 0,         // Time of last token for idle decay
-    animationId: null,      // Animation frame ID for hesitation updates
-    // Welford's running statistics (avoids array allocations)
-    runningSum: 0,          // Sum of values in window
-    runningSumSq: 0         // Sum of squared values in window
-  };
-
-
   // Load-based ring transition state
   let loadTransitionState = {
-    highLoadStartMs: 0,     // When load first exceeded threshold
-    sustainedThreshold: 0.4, // Load level considered "high"
-    sustainedDelay: 500,    // How long load must stay high before middle ring reacts (ms)
-    isMiddleStrained: false // Whether middle ring is showing strain
-  };
-
-  // Auth state (populated from get_config_response)
-  let authState = {
-    authenticated: false,
-    isAdmin: false,
-    username: ''
+    highLoadStartMs: 0,
+    sustainedThreshold: 0.4,
+    sustainedDelay: 500,
+    isMiddleStrained: false
   };
 
   // =============================================================================
-  // DOM Elements
+  // Visualization Constants (DOM elements in js/core/elements.js)
   // =============================================================================
-  const elements = {
-    connectionStatus: document.getElementById('connection-status'),
-    ringContainer: document.getElementById('ring-container'),
-    ringSvg: document.getElementById('ring-svg'),  // Main SVG container
-    ringFft: document.getElementById('ring-fft'),  // Inner ring: FFT audio visualization
-    ringThroughput: document.getElementById('ring-throughput'),  // Middle ring: token rate
-    ringHesitation: document.getElementById('ring-hesitation'),  // Outer ring: timing variance
-    ringInner: document.getElementById('ring-inner'),  // Glowing core
-    waveformPath: document.getElementById('waveform-path'),
-    waveformTrails: [
-      document.getElementById('waveform-trail-1'),
-      document.getElementById('waveform-trail-2'),
-      document.getElementById('waveform-trail-3'),
-      document.getElementById('waveform-trail-4'),
-      document.getElementById('waveform-trail-5'),
-    ],
-    statusDot: document.getElementById('status-dot'),
-    statusText: document.getElementById('status-text'),
-    transcript: document.getElementById('transcript'),
-    textInput: document.getElementById('text-input'),
-    sendBtn: document.getElementById('send-btn'),
-    micBtn: document.getElementById('mic-btn'),
-    debugBtn: document.getElementById('debug-btn'),
-    // Visualizer collapse elements
-    visualizer: document.getElementById('visualizer'),
-    visualizerMini: document.getElementById('visualizer-mini'),
-    miniStatusDot: document.getElementById('mini-status-dot'),
-    miniStatusText: document.getElementById('mini-status-text'),
-    miniContextValue: document.getElementById('mini-context-value'),
-    miniContext: document.querySelector('.mini-context'),
-    visualizerCollapseToggle: document.getElementById('visualizer-collapse'),
-  };
 
   // Multi-ring configuration (viewBox is 240x240, center at 120,120)
   const WAVEFORM_CENTER = 120;  // Center of SVG viewBox
@@ -206,116 +104,15 @@
   const segmentCache = new WeakMap();
 
   // =============================================================================
-  // WebSocket Connection
+  // WebSocket Callbacks (connection managed by DawnWS module)
   // =============================================================================
-  function getWebSocketUrl() {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${protocol}//${window.location.host}/ws`;
-  }
-
-  function connect() {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      return;
-    }
-
-    updateConnectionStatus('connecting');
-
-    try {
-      ws = new WebSocket(getWebSocketUrl(), WS_SUBPROTOCOL);
-    } catch (e) {
-      console.error('Failed to create WebSocket:', e);
-      scheduleReconnect();
-      return;
-    }
-
-    ws.binaryType = 'arraybuffer';
-
-    ws.onopen = function() {
-      console.log('WebSocket connected');
-      reconnectAttempts = 0;
-      maxClientsReached = false;  // Clear any previous capacity state
-      updateConnectionStatus('connected');
-
-      // Build capabilities for audio codec negotiation
-      const capabilities = {
-        audio_codecs: opusReady ? ['opus', 'pcm'] : ['pcm']
-      };
-
-      // Try to reconnect with existing session token, or request new session
-      const savedToken = localStorage.getItem('dawn_session_token');
-      if (savedToken) {
-        console.log('Attempting session reconnect with token:', savedToken.substring(0, 8) + '...');
-        ws.send(JSON.stringify({
-          type: 'reconnect',
-          payload: { token: savedToken, capabilities: capabilities }
-        }));
-      } else {
-        // No saved token - request a new session
-        console.log('No saved token, requesting new session');
-        ws.send(JSON.stringify({
-          type: 'init',
-          payload: { capabilities: capabilities }
-        }));
-      }
-      console.log('Audio codecs:', capabilities.audio_codecs);
-    };
-
-    ws.onclose = function(event) {
-      console.log('WebSocket closed:', event.code, event.reason);
-      capabilitiesSynced = false;  // Reset on disconnect
-
-      // Don't auto-reconnect if server at capacity - user can click to retry
-      if (maxClientsReached) {
-        console.log('Server at capacity, not auto-reconnecting');
-        return;
-      }
-
-      // Show close reason if available
-      if (event.reason) {
-        updateConnectionStatus('disconnected', event.reason);
-      } else {
-        updateConnectionStatus('disconnected');
-      }
-      scheduleReconnect();
-    };
-
-    ws.onerror = function(error) {
-      console.error('WebSocket error:', error);
-    };
-
-    ws.onmessage = function(event) {
-      if (event.data instanceof ArrayBuffer) {
-        handleBinaryMessage(event.data);
-      } else {
-        handleTextMessage(event.data);
-      }
-    };
-  }
-
-  function scheduleReconnect() {
-    if (reconnectAttempts >= RECONNECT_MAX_ATTEMPTS) {
-      console.log('Max reconnection attempts reached, stopping');
-      updateConnectionStatus('disconnected', 'Connection failed - click to retry');
-      return;
-    }
-
-    const delay = Math.min(
-      RECONNECT_BASE_DELAY * Math.pow(2, reconnectAttempts),
-      RECONNECT_MAX_DELAY
-    );
-    const jitter = Math.random() * 500;
-
-    console.log(`Reconnecting in ${Math.round(delay + jitter)}ms... (attempt ${reconnectAttempts + 1}/${RECONNECT_MAX_ATTEMPTS})`);
-    reconnectAttempts++;
-
-    setTimeout(connect, delay + jitter);
-  }
-
-  function disconnect() {
-    if (ws) {
-      ws.close();
-      ws = null;
-    }
+  function initWebSocketCallbacks() {
+    DawnWS.setCallbacks({
+      onStatus: updateConnectionStatus,
+      onTextMessage: handleTextMessage,
+      onBinaryMessage: handleBinaryMessage,
+      getOpusReady: () => opusReady
+    });
   }
 
   // =============================================================================
@@ -352,16 +149,16 @@
           console.error('Server error:', msg.payload);
           // Handle max clients error - don't auto-reconnect
           if (msg.payload.code === 'MAX_CLIENTS') {
-            maxClientsReached = true;
-            elements.connectionStatus.className = 'disconnected';
+            DawnWS.setMaxClientsReached(true);
+            DawnElements.connectionStatus.className = 'disconnected';
             // Responsive message based on screen width
-            elements.connectionStatus.textContent = window.innerWidth > 500
+            DawnElements.connectionStatus.textContent = window.innerWidth > 500
               ? 'Server Full - Click to Retry'
               : 'Full';
-            elements.connectionStatus.title = 'Server at capacity - click to retry';
+            DawnElements.connectionStatus.title = 'Server at capacity - click to retry';
           } else if (msg.payload.code === 'FORBIDDEN' || msg.payload.code === 'UNAUTHORIZED') {
             // Use toast for permission errors
-            showToast(msg.payload.message, 'error');
+            DawnToast.show(msg.payload.message, 'error');
           } else {
             addTranscriptEntry('system', `Error: ${msg.payload.message}`);
           }
@@ -370,12 +167,12 @@
           console.log('Session token received');
           localStorage.setItem('dawn_session_token', msg.payload.token);
           // Server has processed our init/reconnect with capabilities
-          capabilitiesSynced = true;
+          DawnWS.setCapabilitiesSynced(true);
           // Auth state is now included in session response (avoids extra config fetch)
           if (msg.payload.authenticated !== undefined) {
-            authState.authenticated = msg.payload.authenticated;
-            authState.isAdmin = msg.payload.is_admin || false;
-            authState.username = msg.payload.username || '';
+            DawnState.authState.authenticated = msg.payload.authenticated;
+            DawnState.authState.isAdmin = msg.payload.is_admin || false;
+            DawnState.authState.username = msg.payload.username || '';
             updateAuthVisibility();
           }
           // Request full config to populate LLM controls
@@ -539,7 +336,7 @@
       console.log('Binary message: type=0x' + msgType.toString(16) + ', len=' + bytes.length);
 
       switch (msgType) {
-        case WS_BIN_AUDIO_OUT:
+        case DawnConfig.WS_BIN_AUDIO_OUT:
           // TTS audio chunk - accumulate until segment end
           if (bytes.length > 1) {
             const payload = bytes.slice(1);
@@ -548,7 +345,7 @@
           }
           break;
 
-        case WS_BIN_AUDIO_SEGMENT_END:
+        case DawnConfig.WS_BIN_AUDIO_SEGMENT_END:
           // End of TTS audio segment - decode and play accumulated data
           if (pendingOpusData.length > 0) {
             // Concatenate all pending data
@@ -647,12 +444,12 @@
         int16Data[i] = dataView.getInt16(i * 2, true);  // true = little-endian
       }
 
-      console.log('Playing', numSamples, 'samples (', (numSamples / AUDIO_SAMPLE_RATE).toFixed(2), 'seconds)');
+      console.log('Playing', numSamples, 'samples (', (numSamples / DawnConfig.AUDIO_SAMPLE_RATE).toFixed(2), 'seconds)');
 
       // Create playback AudioContext if needed
       const AudioContext = window.AudioContext || window.webkitAudioContext;
       if (!playbackContext || playbackContext.state === 'closed') {
-        playbackContext = new AudioContext({ sampleRate: AUDIO_SAMPLE_RATE });
+        playbackContext = new AudioContext({ sampleRate: DawnConfig.AUDIO_SAMPLE_RATE });
 
         // Create analyser for FFT visualization (gives DAWN "life" when speaking)
         playbackAnalyser = playbackContext.createAnalyser();
@@ -670,7 +467,7 @@
       }
 
       // Create AudioBuffer
-      const audioBuffer = playbackContext.createBuffer(1, numSamples, AUDIO_SAMPLE_RATE);
+      const audioBuffer = playbackContext.createBuffer(1, numSamples, DawnConfig.AUDIO_SAMPLE_RATE);
       const channelData = audioBuffer.getChannelData(0);
 
       // Convert Int16 (-32768 to 32767) to Float32 (-1.0 to 1.0)
@@ -749,7 +546,7 @@
         return { supported: false, reason: 'getUserMedia not supported' };
       }
 
-      audioSupported = true;
+      DawnState.setAudioSupported(true);
       console.log('Audio capture supported');
       return { supported: true, reason: null };
     } catch (e) {
@@ -762,12 +559,12 @@
    * Start recording audio from microphone
    */
   async function startRecording() {
-    if (isRecording) {
+    if (DawnState.getIsRecording()) {
       console.warn('Already recording');
       return;
     }
 
-    if (!audioSupported) {
+    if (!DawnState.getAudioSupported()) {
       console.error('Audio not supported');
       return;
     }
@@ -776,8 +573,8 @@
       // Request microphone access
       mediaStream = await navigator.mediaDevices.getUserMedia({
         audio: {
-          sampleRate: AUDIO_SAMPLE_RATE,
-          channelCount: AUDIO_CHANNELS,
+          sampleRate: DawnConfig.AUDIO_SAMPLE_RATE,
+          channelCount: DawnConfig.AUDIO_CHANNELS,
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true
@@ -786,8 +583,8 @@
 
       // Create audio context at target sample rate
       const AudioContext = window.AudioContext || window.webkitAudioContext;
-      audioContext = new AudioContext({ sampleRate: AUDIO_SAMPLE_RATE });
-      console.log('AudioContext created: requested', AUDIO_SAMPLE_RATE, 'Hz, actual', audioContext.sampleRate, 'Hz');
+      audioContext = new AudioContext({ sampleRate: DawnConfig.AUDIO_SAMPLE_RATE });
+      console.log('AudioContext created: requested', DawnConfig.AUDIO_SAMPLE_RATE, 'Hz, actual', audioContext.sampleRate, 'Hz');
 
       // Create source from microphone stream
       const source = audioContext.createMediaStreamSource(mediaStream);
@@ -795,9 +592,9 @@
       // Create ScriptProcessorNode for audio processing
       // Note: ScriptProcessorNode is deprecated but AudioWorklet requires HTTPS
       // Buffer size must be power of two, calculate from configured chunk ms
-      const desiredSamples = Math.floor(AUDIO_SAMPLE_RATE * audioChunkMs / 1000);
+      const desiredSamples = Math.floor(DawnConfig.AUDIO_SAMPLE_RATE * audioChunkMs / 1000);
       const bufferSize = Math.pow(2, Math.ceil(Math.log2(desiredSamples)));
-      console.log('Audio buffer size:', bufferSize, 'samples (', bufferSize / AUDIO_SAMPLE_RATE * 1000, 'ms)');
+      console.log('Audio buffer size:', bufferSize, 'samples (', bufferSize / DawnConfig.AUDIO_SAMPLE_RATE * 1000, 'ms)');
       audioProcessor = audioContext.createScriptProcessor(bufferSize, 1, 1);
 
       audioProcessor.onaudioprocess = function(e) {
@@ -805,7 +602,7 @@
         const outputData = e.outputBuffer.getChannelData(0);
         outputData.fill(0);
 
-        if (!isRecording) return;
+        if (!DawnState.getIsRecording()) return;
 
         // Get input audio data (Float32Array)
         const inputData = e.inputBuffer.getChannelData(0);
@@ -825,7 +622,7 @@
       source.connect(audioProcessor);
       audioProcessor.connect(audioContext.destination);
 
-      isRecording = true;
+      DawnState.setIsRecording(true);
       updateMicButton(true);
       console.log('Recording started');
 
@@ -843,11 +640,11 @@
    * Stop recording and send end marker
    */
   function stopRecording() {
-    if (!isRecording) {
+    if (!DawnState.getIsRecording()) {
       return;
     }
 
-    isRecording = false;
+    DawnState.setIsRecording(false);
 
     // Stop audio processing
     if (audioProcessor) {
@@ -878,22 +675,22 @@
    * Send audio chunk to server
    */
   function sendAudioChunk(pcmBuffer) {
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
+    if (!DawnWS.isConnected()) {
       return;
     }
 
     // Only use Opus if both worker is ready AND server has acknowledged our capabilities
     // This prevents race condition where we send Opus before server knows we support it
-    if (opusReady && opusWorker && capabilitiesSynced) {
+    if (opusReady && opusWorker && DawnWS.getCapabilitiesSynced()) {
       // Encode via Opus worker - it will call sendOpusData when ready
       const pcmData = new Int16Array(pcmBuffer);
       opusWorker.postMessage({ type: 'encode', data: pcmData }, [pcmData.buffer]);
     } else {
       // Send raw PCM: [type byte][PCM data]
       const payload = new Uint8Array(1 + pcmBuffer.byteLength);
-      payload[0] = WS_BIN_AUDIO_IN;
+      payload[0] = DawnConfig.WS_BIN_AUDIO_IN;
       payload.set(new Uint8Array(pcmBuffer), 1);
-      ws.send(payload.buffer);
+      DawnWS.sendBinary(payload.buffer);
     }
   }
 
@@ -901,12 +698,12 @@
    * Send audio end marker to server
    */
   function sendAudioEnd() {
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
+    if (!DawnWS.isConnected()) {
       return;
     }
 
-    const payload = new Uint8Array([WS_BIN_AUDIO_IN_END]);
-    ws.send(payload.buffer);
+    const payload = new Uint8Array([DawnConfig.WS_BIN_AUDIO_IN_END]);
+    DawnWS.sendBinary(payload.buffer);
     console.log('Sent audio end marker');
   }
 
@@ -1041,11 +838,11 @@
     } else {
       // Draw circular waveform
       const path = generateWaveformPath(null, 1.0);
-      if (elements.waveformPath) {
-        elements.waveformPath.setAttribute('d', path);
+      if (DawnElements.waveformPath) {
+        DawnElements.waveformPath.setAttribute('d', path);
       }
       // Clear trails
-      for (const trail of elements.waveformTrails) {
+      for (const trail of DawnElements.waveformTrails) {
         if (trail) {
           trail.setAttribute('d', path);  // Set to same circle for clean look
         }
@@ -1148,10 +945,10 @@
    */
   function initializeRings() {
     // Draw throughput ring (middle) - starts empty
-    renderSegmentedArc(elements.ringThroughput, THROUGHPUT_RADIUS, THROUGHPUT_SEGMENTS, 0);
+    renderSegmentedArc(DawnElements.ringThroughput, THROUGHPUT_RADIUS, THROUGHPUT_SEGMENTS, 0);
 
     // Draw hesitation ring (outer) - starts at baseline
-    renderSegmentedArc(elements.ringHesitation, HESITATION_RADIUS, HESITATION_SEGMENTS, 0);
+    renderSegmentedArc(DawnElements.ringHesitation, HESITATION_RADIUS, HESITATION_SEGMENTS, 0);
 
     // Initialize bar visualization elements if in bar mode
     if (visualizationMode === 'bars') {
@@ -1171,7 +968,7 @@
     const t = Math.max(0, Math.min(1, intensity));
 
     // Terminal theme: monochrome phosphor green (vary opacity only)
-    if (currentTheme === 'terminal') {
+    if (DawnTheme.current() === 'terminal') {
       const alpha = 0.4 + (t * 0.6);  // Range 0.4 to 1.0
       return `rgba(127, 255, 127, ${alpha.toFixed(2)})`;
     }
@@ -1233,14 +1030,14 @@
    * Initialize all bar elements (current + trails)
    */
   function initializeBarElements() {
-    const container = elements.ringFft;
+    const container = DawnElements.ringFft;
     if (!container) return;
 
     // Clear existing waveform paths (hide them, don't remove)
-    if (elements.waveformPath) {
-      elements.waveformPath.style.display = 'none';
+    if (DawnElements.waveformPath) {
+      DawnElements.waveformPath.style.display = 'none';
     }
-    elements.waveformTrails.forEach(trail => {
+    DawnElements.waveformTrails.forEach(trail => {
       if (trail) trail.style.display = 'none';
     });
 
@@ -1396,15 +1193,15 @@
    */
   function showWaveformMode() {
     // Show waveform paths
-    if (elements.waveformPath) {
-      elements.waveformPath.style.display = '';
+    if (DawnElements.waveformPath) {
+      DawnElements.waveformPath.style.display = '';
     }
-    elements.waveformTrails.forEach(trail => {
+    DawnElements.waveformTrails.forEach(trail => {
       if (trail) trail.style.display = '';
     });
 
     // Hide bar group
-    const barGroup = elements.ringFft?.querySelector('.bar-group');
+    const barGroup = DawnElements.ringFft?.querySelector('.bar-group');
     if (barGroup) {
       barGroup.style.display = 'none';
     }
@@ -1415,15 +1212,15 @@
    */
   function showBarMode() {
     // Hide waveform paths
-    if (elements.waveformPath) {
-      elements.waveformPath.style.display = 'none';
+    if (DawnElements.waveformPath) {
+      DawnElements.waveformPath.style.display = 'none';
     }
-    elements.waveformTrails.forEach(trail => {
+    DawnElements.waveformTrails.forEach(trail => {
       if (trail) trail.style.display = 'none';
     });
 
     // Show bar group
-    const barGroup = elements.ringFft?.querySelector('.bar-group');
+    const barGroup = DawnElements.ringFft?.querySelector('.bar-group');
     if (barGroup) {
       barGroup.style.display = '';
     }
@@ -1459,10 +1256,10 @@
    * O(1) computation instead of O(n) - no array allocations
    */
   function getRunningStddev() {
-    const n = hesitationState.dtWindow.length;
+    const n = DawnState.hesitationState.dtWindow.length;
     if (n === 0) return 0;
-    const mean = hesitationState.runningSum / n;
-    const variance = (hesitationState.runningSumSq / n) - (mean * mean);
+    const mean = DawnState.hesitationState.runningSum / n;
+    const variance = (DawnState.hesitationState.runningSumSq / n) - (mean * mean);
     return Math.sqrt(Math.max(0, variance));  // max(0,...) for numerical stability
   }
 
@@ -1495,20 +1292,20 @@
   function onTokenEvent() {
     const nowMs = performance.now();
 
-    if (hesitationState.tPrevMs > 0) {
-      const dtMs = nowMs - hesitationState.tPrevMs;
+    if (DawnState.hesitationState.tPrevMs > 0) {
+      const dtMs = nowMs - DawnState.hesitationState.tPrevMs;
 
       // Remove oldest value from running stats if window is full
-      if (hesitationState.dtWindow.length >= hesitationState.windowSize) {
-        const oldValue = hesitationState.dtWindow.shift();
-        hesitationState.runningSum -= oldValue;
-        hesitationState.runningSumSq -= oldValue * oldValue;
+      if (DawnState.hesitationState.dtWindow.length >= DawnState.hesitationState.windowSize) {
+        const oldValue = DawnState.hesitationState.dtWindow.shift();
+        DawnState.hesitationState.runningSum -= oldValue;
+        DawnState.hesitationState.runningSumSq -= oldValue * oldValue;
       }
 
       // Add new value to window and running stats
-      hesitationState.dtWindow.push(dtMs);
-      hesitationState.runningSum += dtMs;
-      hesitationState.runningSumSq += dtMs * dtMs;
+      DawnState.hesitationState.dtWindow.push(dtMs);
+      DawnState.hesitationState.runningSum += dtMs;
+      DawnState.hesitationState.runningSumSq += dtMs * dtMs;
 
       // Calculate standard deviation using O(1) running stats
       const std = getRunningStddev();
@@ -1518,11 +1315,11 @@
       const load = Math.max(0, Math.min(1, loadRaw));
 
       // EMA smoothing
-      hesitationState.loadSmooth += 0.2 * (load - hesitationState.loadSmooth);
+      DawnState.hesitationState.loadSmooth += 0.2 * (load - DawnState.hesitationState.loadSmooth);
     }
 
-    hesitationState.tPrevMs = nowMs;
-    hesitationState.lastTokenMs = nowMs;
+    DawnState.hesitationState.tPrevMs = nowMs;
+    DawnState.hesitationState.lastTokenMs = nowMs;
   }
 
   /**
@@ -1534,10 +1331,10 @@
     const timeSec = nowMs / 1000;
 
     // Idle decay: if no token for 300ms, decay loadSmooth
-    if (nowMs - hesitationState.lastTokenMs > 300) {
-      hesitationState.loadSmooth *= 0.95;
-      if (hesitationState.loadSmooth < 0.01) {
-        hesitationState.loadSmooth = 0;
+    if (nowMs - DawnState.hesitationState.lastTokenMs > 300) {
+      DawnState.hesitationState.loadSmooth *= 0.95;
+      if (DawnState.hesitationState.loadSmooth < 0.01) {
+        DawnState.hesitationState.loadSmooth = 0;
       }
     }
 
@@ -1547,11 +1344,11 @@
 
     for (let i = 0; i < HESITATION_SEGMENTS; i++) {
       const noise = smoothNoise(i, timeSec);
-      jitter[i] = noise * maxJitter * hesitationState.loadSmooth;
+      jitter[i] = noise * maxJitter * DawnState.hesitationState.loadSmooth;
     }
 
     // Render with jitter
-    renderSegmentedArc(elements.ringHesitation, HESITATION_RADIUS, HESITATION_SEGMENTS, 1.0, jitter);
+    renderSegmentedArc(DawnElements.ringHesitation, HESITATION_RADIUS, HESITATION_SEGMENTS, 1.0, jitter);
 
     // Load-based middle ring transition (outer reacts first, middle follows)
     updateMiddleRingStrain(nowMs);
@@ -1565,7 +1362,7 @@
    * Per design: outer ring reacts first, middle ring follows after delay
    */
   function updateMiddleRingStrain(nowMs) {
-    const load = hesitationState.loadSmooth;
+    const load = DawnState.hesitationState.loadSmooth;
     const threshold = loadTransitionState.sustainedThreshold;
     const delay = loadTransitionState.sustainedDelay;
 
@@ -1578,7 +1375,7 @@
       // Check if sustained long enough
       if (nowMs - loadTransitionState.highLoadStartMs > delay) {
         if (!loadTransitionState.isMiddleStrained) {
-          elements.ringThroughput.classList.add('strained');
+          DawnElements.ringThroughput.classList.add('strained');
           loadTransitionState.isMiddleStrained = true;
         }
       }
@@ -1586,7 +1383,7 @@
       // Load dropped - reset tracking
       loadTransitionState.highLoadStartMs = 0;
       if (loadTransitionState.isMiddleStrained) {
-        elements.ringThroughput.classList.remove('strained');
+        DawnElements.ringThroughput.classList.remove('strained');
         loadTransitionState.isMiddleStrained = false;
       }
     }
@@ -1596,32 +1393,32 @@
    * Start hesitation ring animation loop
    */
   function startHesitationAnimation() {
-    if (hesitationState.animationId) return;  // Already running
+    if (DawnState.hesitationState.animationId) return;  // Already running
 
     function animate() {
       updateHesitationRing();
-      hesitationState.animationId = requestAnimationFrame(animate);
+      DawnState.hesitationState.animationId = requestAnimationFrame(animate);
     }
 
-    hesitationState.animationId = requestAnimationFrame(animate);
+    DawnState.hesitationState.animationId = requestAnimationFrame(animate);
   }
 
   /**
    * Stop hesitation ring animation and reset
    */
   function stopHesitationAnimation() {
-    if (hesitationState.animationId) {
-      cancelAnimationFrame(hesitationState.animationId);
-      hesitationState.animationId = null;
+    if (DawnState.hesitationState.animationId) {
+      cancelAnimationFrame(DawnState.hesitationState.animationId);
+      DawnState.hesitationState.animationId = null;
     }
 
     // Reset state
-    hesitationState.dtWindow = [];
-    hesitationState.tPrevMs = 0;
-    hesitationState.loadSmooth = 0;
+    DawnState.hesitationState.dtWindow = [];
+    DawnState.hesitationState.tPrevMs = 0;
+    DawnState.hesitationState.loadSmooth = 0;
 
     // Render baseline ring
-    renderSegmentedArc(elements.ringHesitation, HESITATION_RADIUS, HESITATION_SEGMENTS, 0);
+    renderSegmentedArc(DawnElements.ringHesitation, HESITATION_RADIUS, HESITATION_SEGMENTS, 0);
   }
 
 
@@ -1629,7 +1426,7 @@
    * Start FFT visualization animation loop
    */
   function startFFTVisualization() {
-    if (!elements.ringContainer || !playbackAnalyser || !fftDataArray) {
+    if (!DawnElements.ringContainer || !playbackAnalyser || !fftDataArray) {
       console.warn('FFT visualization: missing requirements');
       return;
     }
@@ -1637,7 +1434,7 @@
     console.log('Starting FFT visualization for DAWN speech');
 
     // Add class to pause CSS animations and enable JS control
-    elements.ringContainer.classList.add('fft-active');
+    DawnElements.ringContainer.classList.add('fft-active');
 
     // Animation loop
     function animate() {
@@ -1694,9 +1491,9 @@
         // Waveform visualization (smooth curve)
         const processedData = processFFTData(fftDataArray);
 
-        if (elements.waveformPath) {
+        if (DawnElements.waveformPath) {
           const path = generateWaveformPath(processedData, 1.0);
-          elements.waveformPath.setAttribute('d', path);
+          DawnElements.waveformPath.setAttribute('d', path);
 
           // Update trail history every N frames for visible separation
           frameCount++;
@@ -1709,9 +1506,9 @@
           }
 
           // Update trail paths with historical data
-          for (let i = 0; i < elements.waveformTrails.length; i++) {
-            if (elements.waveformTrails[i] && waveformHistory[i]) {
-              elements.waveformTrails[i].setAttribute('d', waveformHistory[i]);
+          for (let i = 0; i < DawnElements.waveformTrails.length; i++) {
+            if (DawnElements.waveformTrails[i] && waveformHistory[i]) {
+              DawnElements.waveformTrails[i].setAttribute('d', waveformHistory[i]);
             }
           }
         }
@@ -1723,9 +1520,9 @@
       // Pulse the glowing core based on audio intensity
       const coreScale = 1.0 + normalizedLevel * 0.25;
       const coreOpacity = 0.6 + normalizedLevel * 0.4;  // 0.6 to 1.0
-      if (elements.ringInner) {
-        elements.ringInner.style.transform = `scale(${coreScale.toFixed(3)})`;
-        elements.ringInner.style.opacity = coreOpacity.toFixed(2);
+      if (DawnElements.ringInner) {
+        DawnElements.ringInner.style.transform = `scale(${coreScale.toFixed(3)})`;
+        DawnElements.ringInner.style.opacity = coreOpacity.toFixed(2);
       }
 
       // Per design spec: rings do NOT rotate or translate
@@ -1750,12 +1547,12 @@
     drawDefaultWaveform();
 
     // Reset ring transforms and remove fft-active class
-    if (elements.ringInner) {
-      elements.ringInner.style.transform = '';
-      elements.ringInner.style.opacity = '';  // Reset to CSS default
+    if (DawnElements.ringInner) {
+      DawnElements.ringInner.style.transform = '';
+      DawnElements.ringInner.style.opacity = '';  // Reset to CSS default
     }
-    if (elements.ringContainer) {
-      elements.ringContainer.classList.remove('fft-active');
+    if (DawnElements.ringContainer) {
+      DawnElements.ringContainer.classList.remove('fft-active');
     }
     console.log('Stopped FFT visualization');
   }
@@ -1764,15 +1561,15 @@
    * Update mic button visual state
    */
   function updateMicButton(recording) {
-    if (elements.micBtn) {
-      elements.micBtn.classList.toggle('recording', recording);
-      elements.micBtn.textContent = recording ? 'Stop' : 'Mic';
-      elements.micBtn.title = recording ? 'Stop recording' : 'Start recording';
+    if (DawnElements.micBtn) {
+      DawnElements.micBtn.classList.toggle('recording', recording);
+      DawnElements.micBtn.textContent = recording ? 'Stop' : 'Mic';
+      DawnElements.micBtn.title = recording ? 'Stop recording' : 'Start recording';
     }
   }
 
   function sendTextMessage(text) {
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
+    if (!DawnWS.isConnected()) {
       console.error('WebSocket not connected');
       return false;
     }
@@ -1782,7 +1579,7 @@
       payload: { text: text }
     };
 
-    ws.send(JSON.stringify(msg));
+    DawnWS.send(msg);
     // Note: Server echoes user message back as transcript, so no local entry needed
     // State update also comes from server
     return true;
@@ -1792,54 +1589,54 @@
   // UI Updates
   // =============================================================================
   function updateConnectionStatus(status, reason) {
-    elements.connectionStatus.className = status;
-    elements.connectionStatus.title = '';  // Clear any previous tooltip
+    DawnElements.connectionStatus.className = status;
+    DawnElements.connectionStatus.title = '';  // Clear any previous tooltip
     if (status === 'connected') {
-      elements.connectionStatus.textContent = 'Connected';
+      DawnElements.connectionStatus.textContent = 'Connected';
     } else if (status === 'connecting') {
-      elements.connectionStatus.textContent = 'Connecting...';
+      DawnElements.connectionStatus.textContent = 'Connecting...';
     } else {
       // Show disconnect reason if available (truncate for display)
-      elements.connectionStatus.textContent = reason
+      DawnElements.connectionStatus.textContent = reason
         ? 'Disconnected: ' + (reason.length > 30 ? reason.substring(0, 30) + '...' : reason)
         : 'Disconnected';
     }
   }
 
   function updateState(state, detail, tools) {
-    const previousState = currentState;
-    currentState = state;
+    const previousState = DawnState.getAppState();
+    DawnState.setAppState(state);
 
     // Update status indicator
-    elements.statusDot.className = state;
+    DawnElements.statusDot.className = state;
 
     // Show state with optional detail (e.g., "THINKING · Fetching URL...")
     if (detail) {
-      elements.statusText.textContent = state.toUpperCase() + ' · ' + detail;
+      DawnElements.statusText.textContent = state.toUpperCase() + ' · ' + detail;
     } else {
-      elements.statusText.textContent = state.toUpperCase();
+      DawnElements.statusText.textContent = state.toUpperCase();
     }
 
     // Update tools tray (expanded visualizer)
     updateToolsTray(tools);
 
     // Sync mini status bar (when visualizer collapsed)
-    if (elements.miniStatusDot) {
-      elements.miniStatusDot.className = 'status-dot ' + state;
+    if (DawnElements.miniStatusDot) {
+      DawnElements.miniStatusDot.className = 'status-dot ' + state;
     }
-    if (elements.miniStatusText) {
+    if (DawnElements.miniStatusText) {
       // For mini bar: show tool count or tool names depending on count
       const miniText = formatMiniStatusText(state, detail, tools);
-      elements.miniStatusText.innerHTML = miniText;
+      DawnElements.miniStatusText.innerHTML = miniText;
     }
 
     // Update ring container - preserve fft-active class if present
-    const hasFftActive = elements.ringContainer.classList.contains('fft-active');
-    elements.ringContainer.classList.remove(previousState);
-    elements.ringContainer.classList.add(state);
+    const hasFftActive = DawnElements.ringContainer.classList.contains('fft-active');
+    DawnElements.ringContainer.classList.remove(previousState);
+    DawnElements.ringContainer.classList.add(state);
     // Re-add fft-active if it was there (in case it got removed)
     if (hasFftActive) {
-      elements.ringContainer.classList.add('fft-active');
+      DawnElements.ringContainer.classList.add('fft-active');
     }
 
     // Emit state event for decoupled modules
@@ -1856,17 +1653,17 @@
 
     if (!tools || tools.length === 0) {
       // No tools - show detail if present
-      return detail ? `${stateUpper} · ${escapeHtml(detail)}` : stateUpper;
+      return detail ? `${stateUpper} · ${DawnFormat.escapeHtml(detail)}` : stateUpper;
     }
 
     if (tools.length === 1) {
       // Single tool - show name (escaped to prevent XSS)
-      return `${stateUpper} · ${escapeHtml(tools[0].name)}`;
+      return `${stateUpper} · ${DawnFormat.escapeHtml(tools[0].name)}`;
     }
 
     if (tools.length === 2) {
       // Two tools - show both names (escaped to prevent XSS)
-      return `${stateUpper} · ${escapeHtml(tools[0].name)}, ${escapeHtml(tools[1].name)}`;
+      return `${stateUpper} · ${DawnFormat.escapeHtml(tools[0].name)}, ${DawnFormat.escapeHtml(tools[1].name)}`;
     }
 
     // 3+ tools - show animated progress dots with ARIA label for accessibility
@@ -1875,7 +1672,7 @@
       `<span class="mini-tool-dot" style="--delay-index: ${i}"></span>`
     ).join('');
     const toolNames = tools.map(t => t.name).join(', ');
-    return `${stateUpper} <span class="mini-tool-dots" role="status" aria-label="${tools.length} tools running: ${escapeHtml(toolNames)}">${dots}</span>`;
+    return `${stateUpper} <span class="mini-tool-dots" role="status" aria-label="${tools.length} tools running: ${DawnFormat.escapeHtml(toolNames)}">${dots}</span>`;
   }
 
   /**
@@ -1912,7 +1709,7 @@
     const pills = tools.map((tool, index) => {
       const statusClass = tool.status === 'complete' ? 'complete' : 'running';
       const icon = tool.status === 'complete' ? '✓' : '';
-      const safeName = escapeHtml(tool.name);
+      const safeName = DawnFormat.escapeHtml(tool.name);
       return `<span class="tool-pill ${statusClass}" style="--delay-index: ${index}">
         ${safeName}${icon ? `<span class="tool-pill-icon" aria-hidden="true">${icon}</span>` : ''}
       </span>`;
@@ -2094,23 +1891,23 @@
     }
 
     // Also update metricsState and telemetry panel
-    metricsState.context_percent = usage;
+    DawnState.metricsState.context_percent = usage;
     updateTelemetryPanel();
 
     // Sync mini status bar context (when visualizer collapsed)
-    if (elements.miniContextValue) {
-      elements.miniContextValue.textContent = Math.round(usage) + '%';
+    if (DawnElements.miniContextValue) {
+      DawnElements.miniContextValue.textContent = Math.round(usage) + '%';
     }
-    if (elements.miniContext) {
-      elements.miniContext.classList.remove('warning', 'danger');
+    if (DawnElements.miniContext) {
+      DawnElements.miniContext.classList.remove('warning', 'danger');
       if (usage > 90) {
-        elements.miniContext.classList.add('danger');
+        DawnElements.miniContext.classList.add('danger');
       } else if (usage > 70) {
-        elements.miniContext.classList.add('warning');
+        DawnElements.miniContext.classList.add('warning');
       }
     }
 
-    if (debugMode) {
+    if (DawnState.getDebugMode()) {
       console.log(`Context update: ${current}/${max} tokens (${usage.toFixed(1)}%)`);
     }
   }
@@ -2196,11 +1993,11 @@
 
     entry.className = `transcript-entry ${debugClass}`;
     entry.innerHTML = `
-      <div class="role">${escapeHtml(label)}</div>
-      <div class="text">${formatCommandText(escapeHtml(content))}</div>
+      <div class="role">${DawnFormat.escapeHtml(label)}</div>
+      <div class="text">${formatCommandText(DawnFormat.escapeHtml(content))}</div>
     `;
     // Visibility controlled by CSS via body.debug-mode class
-    elements.transcript.appendChild(entry);
+    DawnElements.transcript.appendChild(entry);
   }
 
   /**
@@ -2210,15 +2007,15 @@
     const entry = document.createElement('div');
     entry.className = `transcript-entry ${role}`;
     entry.innerHTML = `
-      <div class="role">${escapeHtml(role)}</div>
-      <div class="text">${formatMarkdown(text)}</div>
+      <div class="role">${DawnFormat.escapeHtml(role)}</div>
+      <div class="text">${DawnFormat.markdown(text)}</div>
     `;
-    elements.transcript.appendChild(entry);
+    DawnElements.transcript.appendChild(entry);
   }
 
   function addTranscriptEntry(role, text) {
     // Remove placeholder if present
-    const placeholder = elements.transcript.querySelector('.transcript-placeholder');
+    const placeholder = DawnElements.transcript.querySelector('.transcript-placeholder');
     if (placeholder) {
       placeholder.remove();
     }
@@ -2226,7 +2023,7 @@
     // Route tool role messages to debug entries (server sends role:"tool" for tool results)
     if (role === 'tool') {
       addDebugEntry('tool result', text);
-      elements.transcript.scrollTop = elements.transcript.scrollHeight;
+      DawnElements.transcript.scrollTop = DawnElements.transcript.scrollHeight;
       return;
     }
 
@@ -2245,7 +2042,7 @@
               const formatted = `[Tool Call: ${item.name}]\n${JSON.stringify(item.input, null, 2)}`;
               addDebugEntry('tool call', formatted);
             });
-            elements.transcript.scrollTop = elements.transcript.scrollHeight;
+            DawnElements.transcript.scrollTop = DawnElements.transcript.scrollHeight;
             return;
           }
           if (firstItem.type === 'tool_result') {
@@ -2254,7 +2051,7 @@
               const formatted = `[Tool Result: ${item.tool_use_id}]\n${item.content}`;
               addDebugEntry('tool result', formatted);
             });
-            elements.transcript.scrollTop = elements.transcript.scrollHeight;
+            DawnElements.transcript.scrollTop = DawnElements.transcript.scrollHeight;
             return;
           }
         }
@@ -2267,12 +2064,12 @@
     // These can contain ] characters in the content, so don't try to parse with regex
     if (text.startsWith('[Tool Result:')) {
       addDebugEntry('tool result', text);
-      elements.transcript.scrollTop = elements.transcript.scrollHeight;
+      DawnElements.transcript.scrollTop = DawnElements.transcript.scrollHeight;
       return;
     }
     if (text.startsWith('[Tool Call:')) {
       addDebugEntry('tool call', text);
-      elements.transcript.scrollTop = elements.transcript.scrollHeight;
+      DawnElements.transcript.scrollTop = DawnElements.transcript.scrollHeight;
       return;
     }
 
@@ -2305,19 +2102,7 @@
       }
     }
 
-    elements.transcript.scrollTop = elements.transcript.scrollHeight;
-  }
-
-  /**
-   * Format text with full markdown support using marked.js
-   * Sanitized with DOMPurify for XSS protection
-   */
-  function formatMarkdown(text) {
-    // Strip command tags before rendering (they should go to debug panel only)
-    const cleanText = text.replace(/<command>[\s\S]*?<\/command>/g, '');
-    // Parse markdown to HTML, then sanitize
-    const html = marked.parse(cleanText, { breaks: true, gfm: true });
-    return DOMPurify.sanitize(html);
+    DawnElements.transcript.scrollTop = DawnElements.transcript.scrollHeight;
   }
 
   // =============================================================================
@@ -2334,13 +2119,13 @@
     updateState('speaking', 'Responding');
 
     // Cancel any existing stream
-    if (streamingState.active) {
+    if (DawnState.streamingState.active) {
       console.warn('Stream start received while already streaming');
       finalizeStream();
     }
 
     // Remove placeholder if present
-    const placeholder = elements.transcript.querySelector('.transcript-placeholder');
+    const placeholder = DawnElements.transcript.querySelector('.transcript-placeholder');
     if (placeholder) {
       placeholder.remove();
     }
@@ -2352,19 +2137,19 @@
       <div class="role">assistant</div>
       <div class="text"></div>
     `;
-    elements.transcript.appendChild(entry);
+    DawnElements.transcript.appendChild(entry);
 
     // Update streaming state
-    streamingState.active = true;
-    streamingState.streamId = payload.stream_id;
-    streamingState.entryElement = entry;
-    streamingState.textElement = entry.querySelector('.text');
-    streamingState.content = '';
+    DawnState.streamingState.active = true;
+    DawnState.streamingState.streamId = payload.stream_id;
+    DawnState.streamingState.entryElement = entry;
+    DawnState.streamingState.textElement = entry.querySelector('.text');
+    DawnState.streamingState.content = '';
 
     // Start hesitation ring animation for token timing visualization
     startHesitationAnimation();
 
-    elements.transcript.scrollTop = elements.transcript.scrollHeight;
+    DawnElements.transcript.scrollTop = DawnElements.transcript.scrollHeight;
   }
 
   /**
@@ -2373,8 +2158,8 @@
    */
   function handleStreamDelta(payload) {
     // Ignore deltas for different stream IDs
-    if (!streamingState.active || payload.stream_id !== streamingState.streamId) {
-      console.warn('Ignoring stale stream delta:', payload.stream_id, 'expected:', streamingState.streamId);
+    if (!DawnState.streamingState.active || payload.stream_id !== DawnState.streamingState.streamId) {
+      console.warn('Ignoring stale stream delta:', payload.stream_id, 'expected:', DawnState.streamingState.streamId);
       return;
     }
 
@@ -2387,34 +2172,34 @@
     }
 
     // Append delta to content
-    streamingState.content += payload.delta;
+    DawnState.streamingState.content += payload.delta;
 
     // During streaming, use plain text with line breaks (no markdown)
     // This prevents layout shifts from <p> tag margins during typing
     // Full markdown formatting is applied in finalizeStream()
     const nowMs = performance.now();
-    if (nowMs - streamingState.lastRenderMs >= streamingState.renderDebounceMs) {
+    if (nowMs - DawnState.streamingState.lastRenderMs >= DawnState.streamingState.renderDebounceMs) {
       // Strip command tags and render as plain text with line breaks
-      const cleanText = streamingState.content.replace(/<command>[\s\S]*?<\/command>/g, '');
-      streamingState.textElement.innerHTML = escapeHtml(cleanText).replace(/\n/g, '<br>');
-      streamingState.lastRenderMs = nowMs;
-      streamingState.pendingRender = false;
-    } else if (!streamingState.pendingRender) {
+      const cleanText = DawnState.streamingState.content.replace(/<command>[\s\S]*?<\/command>/g, '');
+      DawnState.streamingState.textElement.innerHTML = DawnFormat.escapeHtml(cleanText).replace(/\n/g, '<br>');
+      DawnState.streamingState.lastRenderMs = nowMs;
+      DawnState.streamingState.pendingRender = false;
+    } else if (!DawnState.streamingState.pendingRender) {
       // Schedule a render for when debounce period ends
-      streamingState.pendingRender = true;
-      const delay = streamingState.renderDebounceMs - (nowMs - streamingState.lastRenderMs);
+      DawnState.streamingState.pendingRender = true;
+      const delay = DawnState.streamingState.renderDebounceMs - (nowMs - DawnState.streamingState.lastRenderMs);
       setTimeout(() => {
-        if (streamingState.active && streamingState.pendingRender) {
-          const cleanText = streamingState.content.replace(/<command>[\s\S]*?<\/command>/g, '');
-          streamingState.textElement.innerHTML = escapeHtml(cleanText).replace(/\n/g, '<br>');
-          streamingState.lastRenderMs = performance.now();
-          streamingState.pendingRender = false;
-          elements.transcript.scrollTop = elements.transcript.scrollHeight;
+        if (DawnState.streamingState.active && DawnState.streamingState.pendingRender) {
+          const cleanText = DawnState.streamingState.content.replace(/<command>[\s\S]*?<\/command>/g, '');
+          DawnState.streamingState.textElement.innerHTML = DawnFormat.escapeHtml(cleanText).replace(/\n/g, '<br>');
+          DawnState.streamingState.lastRenderMs = performance.now();
+          DawnState.streamingState.pendingRender = false;
+          DawnElements.transcript.scrollTop = DawnElements.transcript.scrollHeight;
         }
       }, delay);
     }
 
-    elements.transcript.scrollTop = elements.transcript.scrollHeight;
+    DawnElements.transcript.scrollTop = DawnElements.transcript.scrollHeight;
   }
 
   /**
@@ -2424,8 +2209,8 @@
     console.log('Stream end:', payload);
 
     // Ignore end for different stream IDs
-    if (payload.stream_id !== streamingState.streamId) {
-      console.warn('Ignoring stale stream end:', payload.stream_id, 'expected:', streamingState.streamId);
+    if (payload.stream_id !== DawnState.streamingState.streamId) {
+      console.warn('Ignoring stale stream end:', payload.stream_id, 'expected:', DawnState.streamingState.streamId);
       return;
     }
 
@@ -2436,7 +2221,7 @@
    * Finalize the current streaming entry
    */
   function finalizeStream() {
-    if (!streamingState.active) {
+    if (!DawnState.streamingState.active) {
       return;
     }
 
@@ -2447,27 +2232,27 @@
     stopHesitationAnimation();
 
     // Final render to ensure all content is displayed (in case debounce was pending)
-    if (streamingState.textElement && streamingState.content) {
-      streamingState.textElement.innerHTML = formatMarkdown(streamingState.content);
+    if (DawnState.streamingState.textElement && DawnState.streamingState.content) {
+      DawnState.streamingState.textElement.innerHTML = DawnFormat.markdown(DawnState.streamingState.content);
     }
 
     // Remove streaming class
-    if (streamingState.entryElement) {
-      streamingState.entryElement.classList.remove('streaming');
+    if (DawnState.streamingState.entryElement) {
+      DawnState.streamingState.entryElement.classList.remove('streaming');
     }
 
     // Save the complete assistant message to conversation history
-    if (streamingState.content) {
-      saveMessageToHistory('assistant', streamingState.content);
+    if (DawnState.streamingState.content) {
+      saveMessageToHistory('assistant', DawnState.streamingState.content);
     }
 
     // Reset state
-    streamingState.active = false;
-    streamingState.streamId = null;
-    streamingState.entryElement = null;
-    streamingState.textElement = null;
-    streamingState.content = '';
-    streamingState.pendingRender = false;
+    DawnState.streamingState.active = false;
+    DawnState.streamingState.streamId = null;
+    DawnState.streamingState.entryElement = null;
+    DawnState.streamingState.textElement = null;
+    DawnState.streamingState.content = '';
+    DawnState.streamingState.pendingRender = false;
   }
 
   // =============================================================================
@@ -2479,38 +2264,38 @@
    * Updates global metricsState and drives multi-ring visualization + telemetry panel
    */
   function handleMetricsUpdate(payload) {
-    metricsState.state = payload.state || 'idle';
-    metricsState.ttft_ms = payload.ttft_ms || 0;
-    metricsState.token_rate = payload.token_rate || 0;
+    DawnState.metricsState.state = payload.state || 'idle';
+    DawnState.metricsState.ttft_ms = payload.ttft_ms || 0;
+    DawnState.metricsState.token_rate = payload.token_rate || 0;
     // Only update context_percent if value is valid (>= 0), otherwise keep previous
     if (payload.context_percent >= 0) {
-      metricsState.context_percent = payload.context_percent;
+      DawnState.metricsState.context_percent = payload.context_percent;
     }
-    metricsState.lastUpdate = performance.now();
+    DawnState.metricsState.lastUpdate = performance.now();
 
     // Preserve last non-zero values for display after streaming ends
     // Also track session averages
-    if (metricsState.ttft_ms > 0) {
-      metricsState.last_ttft_ms = metricsState.ttft_ms;
-      avgState.ttft.sum += metricsState.ttft_ms;
+    if (DawnState.metricsState.ttft_ms > 0) {
+      DawnState.metricsState.last_ttft_ms = DawnState.metricsState.ttft_ms;
+      avgState.ttft.sum += DawnState.metricsState.ttft_ms;
       avgState.ttft.count++;
     }
-    if (metricsState.token_rate > 0) {
-      metricsState.last_token_rate = metricsState.token_rate;
-      avgState.tokenRate.sum += metricsState.token_rate;
+    if (DawnState.metricsState.token_rate > 0) {
+      DawnState.metricsState.last_token_rate = DawnState.metricsState.token_rate;
+      avgState.tokenRate.sum += DawnState.metricsState.token_rate;
       avgState.tokenRate.count++;
     }
 
     // Update throughput ring based on token rate
     // Normalize: 0 tokens/sec = 0%, 80 tokens/sec = 100%
-    const throughputFill = Math.min(metricsState.token_rate / 80, 1.0);
-    renderSegmentedArc(elements.ringThroughput, THROUGHPUT_RADIUS, THROUGHPUT_SEGMENTS, throughputFill);
+    const throughputFill = Math.min(DawnState.metricsState.token_rate / 80, 1.0);
+    renderSegmentedArc(DawnElements.ringThroughput, THROUGHPUT_RADIUS, THROUGHPUT_SEGMENTS, throughputFill);
 
     // Update telemetry panel (right side discrete readouts)
     updateTelemetryPanel();
 
     // Debug log (only when debug mode is enabled)
-    if (debugMode) {
+    if (DawnState.getDebugMode()) {
       console.log('Metrics update:', metricsState);
     }
   }
@@ -2554,7 +2339,7 @@
     // Update token rate with color coding
     // Normal: >30 tok/s, Elevated: 15-30, Extreme: <15
     if (tokenRate) {
-      const rate = metricsState.token_rate || metricsState.last_token_rate;
+      const rate = DawnState.metricsState.token_rate || DawnState.metricsState.last_token_rate;
       tokenRate.innerHTML = rate > 0 ? `${rate.toFixed(1)} <small>tok/s</small>` : '-- <small>tok/s</small>';
       // Invert thresholds - higher is better for token rate
       tokenRate.classList.remove('metric-normal', 'metric-elevated', 'metric-extreme');
@@ -2577,7 +2362,7 @@
     // Update TTFT with color coding
     // Normal: <500ms, Elevated: 500-1500ms, Extreme: >1500ms
     if (ttft) {
-      const ms = metricsState.ttft_ms || metricsState.last_ttft_ms;
+      const ms = DawnState.metricsState.ttft_ms || DawnState.metricsState.last_ttft_ms;
       ttft.innerHTML = ms > 0 ? `${ms} <small>ms</small>` : '-- <small>ms</small>';
       applyMetricColor(ttft, ms, 500, 1500);
     }
@@ -2591,7 +2376,7 @@
     // Show as milliseconds variance (stddev of inter-token intervals)
     // Normal: <10ms, Elevated: 10-25ms, Extreme: >25ms
     if (latency) {
-      const load = hesitationState.loadSmooth;
+      const load = DawnState.hesitationState.loadSmooth;
       if (load > 0.005) {
         // load 0-1 maps to ~3-40ms stddev range
         const msVar = Math.round(3 + load * 37);
@@ -2612,11 +2397,11 @@
     }
 
     // Dim ring container when idle (state == 'idle') - not the telemetry panel
-    if (elements.ringContainer) {
-      if (metricsState.state === 'idle') {
-        elements.ringContainer.classList.add('idle');
+    if (DawnElements.ringContainer) {
+      if (DawnState.metricsState.state === 'idle') {
+        DawnElements.ringContainer.classList.add('idle');
       } else {
-        elements.ringContainer.classList.remove('idle');
+        DawnElements.ringContainer.classList.remove('idle');
       }
     }
   }
@@ -2625,11 +2410,11 @@
   // Event Handlers
   // =============================================================================
   function handleSend() {
-    const text = elements.textInput.value.trim();
+    const text = DawnElements.textInput.value.trim();
     if (text) {
       if (sendTextMessage(text)) {
-        elements.textInput.value = '';
-        elements.textInput.style.height = 'auto';
+        DawnElements.textInput.value = '';
+        DawnElements.textInput.style.height = 'auto';
       }
     }
   }
@@ -2667,14 +2452,14 @@
               console.log('Opus worker: WebCodecs initialized successfully');
               opusReady = true;
               // If already connected, send capability update to enable Opus
-              if (ws && ws.readyState === WebSocket.OPEN) {
+              if (DawnWS.isConnected()) {
                 console.log('Sending Opus capability update');
-                ws.send(JSON.stringify({
+                DawnWS.send({
                   type: 'capabilities_update',
                   payload: {
                     capabilities: { audio_codecs: ['opus', 'pcm'] }
                   }
-                }));
+                });
               }
             } else {
               console.log('Opus worker: WebCodecs not available, using PCM only');
@@ -2719,16 +2504,16 @@
    * Send encoded Opus data to server
    */
   function sendOpusData(opusData) {
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
+    if (!DawnWS.isConnected()) {
       return;
     }
 
     // Create message: [type byte][Opus data]
     const payload = new Uint8Array(1 + opusData.length);
-    payload[0] = WS_BIN_AUDIO_IN;
+    payload[0] = DawnConfig.WS_BIN_AUDIO_IN;
     payload.set(opusData, 1);
 
-    ws.send(payload.buffer);
+    DawnWS.sendBinary(payload.buffer);
   }
 
   /**
@@ -2755,22 +2540,22 @@
     visualizerCollapsed = !visualizerCollapsed;
 
     if (visualizerCollapsed) {
-      elements.visualizer.classList.add('collapsed');
-      elements.visualizerMini.classList.remove('hidden');
-      if (elements.visualizerCollapseToggle) {
-        elements.visualizerCollapseToggle.setAttribute('aria-expanded', 'false');
+      DawnElements.visualizer.classList.add('collapsed');
+      DawnElements.visualizerMini.classList.remove('hidden');
+      if (DawnElements.visualizerCollapseToggle) {
+        DawnElements.visualizerCollapseToggle.setAttribute('aria-expanded', 'false');
       }
-      if (elements.visualizerMini) {
-        elements.visualizerMini.setAttribute('aria-expanded', 'false');
+      if (DawnElements.visualizerMini) {
+        DawnElements.visualizerMini.setAttribute('aria-expanded', 'false');
       }
     } else {
-      elements.visualizer.classList.remove('collapsed');
-      elements.visualizerMini.classList.add('hidden');
-      if (elements.visualizerCollapseToggle) {
-        elements.visualizerCollapseToggle.setAttribute('aria-expanded', 'true');
+      DawnElements.visualizer.classList.remove('collapsed');
+      DawnElements.visualizerMini.classList.add('hidden');
+      if (DawnElements.visualizerCollapseToggle) {
+        DawnElements.visualizerCollapseToggle.setAttribute('aria-expanded', 'true');
       }
-      if (elements.visualizerMini) {
-        elements.visualizerMini.setAttribute('aria-expanded', 'true');
+      if (DawnElements.visualizerMini) {
+        DawnElements.visualizerMini.setAttribute('aria-expanded', 'true');
       }
     }
 
@@ -2779,74 +2564,28 @@
   }
 
   // =============================================================================
-  // Color Theme Switching
+  // Color Theme - Moved to /js/ui/theme.js (DawnTheme module)
   // =============================================================================
-  const THEMES = ['cyan', 'purple', 'green', 'orange', 'red', 'blue', 'terminal'];
-  const THEME_COLORS = {
-    cyan: '#2dd4bf',
-    purple: '#a855f7',
-    green: '#22c55e',
-    orange: '#f97316',
-    red: '#f87171',  // Coral - distinct from error red
-    blue: '#3b82f6',
-    terminal: '#7fff7f'
-  };
-  let currentTheme = 'cyan';  // Cached for performance (avoids DOM query per FFT frame)
-
-  function setTheme(theme) {
-    if (!THEMES.includes(theme)) theme = 'cyan';
-
-    // Cache for FFT performance
-    currentTheme = theme;
-
-    // Apply theme to document
-    if (theme === 'cyan') {
-      document.documentElement.removeAttribute('data-theme');
-    } else {
-      document.documentElement.setAttribute('data-theme', theme);
-    }
-
-    // Persist to localStorage
-    localStorage.setItem('dawn_theme', theme);
-
-    // Update active button
-    document.querySelectorAll('.theme-btn').forEach(btn => {
-      btn.classList.toggle('active', btn.dataset.theme === theme);
-    });
-
-    // Update meta theme-color for mobile browsers
-    const metaTheme = document.querySelector('meta[name="theme-color"]');
-    if (metaTheme) {
-      metaTheme.setAttribute('content', THEME_COLORS[theme] || THEME_COLORS.cyan);
-    }
-  }
-
-  function initTheme() {
-    const saved = localStorage.getItem('dawn_theme');
-    setTheme(saved || 'cyan');
-
-    // Add click handlers to theme buttons
-    document.querySelectorAll('.theme-btn').forEach(btn => {
-      btn.addEventListener('click', () => setTheme(btn.dataset.theme));
-    });
-  }
 
   // =============================================================================
   // Initialization
   // =============================================================================
   async function init() {
+    // Initialize DOM element cache first
+    DawnElements.init();
+
     // Initialize Opus worker first (before connect)
     initOpusWorker();
 
-    // Initialize color theme
-    initTheme();
+    // Initialize color theme (via DawnTheme module)
+    DawnTheme.init();
 
     // Event listeners
-    elements.sendBtn.addEventListener('click', handleSend);
-    elements.textInput.addEventListener('keydown', handleKeydown);
+    DawnElements.sendBtn.addEventListener('click', handleSend);
+    DawnElements.textInput.addEventListener('keydown', handleKeydown);
 
     // Auto-resize textarea as user types
-    elements.textInput.addEventListener('input', function() {
+    DawnElements.textInput.addEventListener('input', function() {
       this.style.height = 'auto';
       const newHeight = Math.min(this.scrollHeight, 150);
       this.style.height = newHeight + 'px';
@@ -2855,59 +2594,59 @@
     });
 
     // Mic button - push to talk
-    if (elements.micBtn) {
-      elements.micBtn.addEventListener('mousedown', function(e) {
+    if (DawnElements.micBtn) {
+      DawnElements.micBtn.addEventListener('mousedown', function(e) {
         e.preventDefault();
-        if (!isRecording && audioSupported) {
+        if (!DawnState.getIsRecording() && DawnState.getAudioSupported()) {
           startRecording();
         }
       });
 
-      elements.micBtn.addEventListener('mouseup', function(e) {
+      DawnElements.micBtn.addEventListener('mouseup', function(e) {
         e.preventDefault();
-        if (isRecording) {
+        if (DawnState.getIsRecording()) {
           stopRecording();
         }
       });
 
-      elements.micBtn.addEventListener('mouseleave', function(e) {
+      DawnElements.micBtn.addEventListener('mouseleave', function(e) {
         // Stop recording if mouse leaves button while pressed
-        if (isRecording) {
+        if (DawnState.getIsRecording()) {
           stopRecording();
         }
       });
 
       // Touch events for mobile
-      elements.micBtn.addEventListener('touchstart', function(e) {
+      DawnElements.micBtn.addEventListener('touchstart', function(e) {
         e.preventDefault();
-        if (!isRecording && audioSupported) {
+        if (!DawnState.getIsRecording() && DawnState.getAudioSupported()) {
           startRecording();
         }
       });
 
-      elements.micBtn.addEventListener('touchend', function(e) {
+      DawnElements.micBtn.addEventListener('touchend', function(e) {
         e.preventDefault();
-        if (isRecording) {
+        if (DawnState.getIsRecording()) {
           stopRecording();
         }
       });
     }
 
     // Debug mode toggle
-    elements.debugBtn.addEventListener('click', function() {
-      debugMode = !debugMode;
-      this.classList.toggle('active', debugMode);
+    DawnElements.debugBtn.addEventListener('click', function() {
+      DawnState.setDebugMode(!DawnState.getDebugMode());
+      this.classList.toggle('active', DawnState.getDebugMode());
       // Toggle body class for CSS-based visibility control
-      document.body.classList.toggle('debug-mode', debugMode);
-      console.log('Debug mode:', debugMode ? 'enabled' : 'disabled');
+      document.body.classList.toggle('debug-mode', DawnState.getDebugMode());
+      console.log('Debug mode:', DawnState.getDebugMode() ? 'enabled' : 'disabled');
 
       // Request system prompt when debug is enabled
-      if (debugMode && ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'get_system_prompt' }));
+      if (DawnState.getDebugMode() && DawnWS.isConnected()) {
+        DawnWS.send({ type: 'get_system_prompt' });
       }
 
       // Scroll to bottom to see newly visible entries
-      elements.transcript.scrollTop = elements.transcript.scrollHeight;
+      DawnElements.transcript.scrollTop = DawnElements.transcript.scrollHeight;
     });
 
     // Visualizer collapse/expand setup
@@ -2917,22 +2656,22 @@
 
     if (savedCollapsed === 'true' || (savedCollapsed === null && isMobile)) {
       visualizerCollapsed = true;
-      if (elements.visualizer) {
-        elements.visualizer.classList.add('collapsed');
+      if (DawnElements.visualizer) {
+        DawnElements.visualizer.classList.add('collapsed');
       }
-      if (elements.visualizerMini) {
-        elements.visualizerMini.classList.remove('hidden');
-        elements.visualizerMini.setAttribute('aria-expanded', 'false');
+      if (DawnElements.visualizerMini) {
+        DawnElements.visualizerMini.classList.remove('hidden');
+        DawnElements.visualizerMini.setAttribute('aria-expanded', 'false');
       }
-      if (elements.visualizerCollapseToggle) {
-        elements.visualizerCollapseToggle.setAttribute('aria-expanded', 'false');
+      if (DawnElements.visualizerCollapseToggle) {
+        DawnElements.visualizerCollapseToggle.setAttribute('aria-expanded', 'false');
       }
     }
 
     // Collapse toggle (in visualizer) - click and keyboard
-    if (elements.visualizerCollapseToggle) {
-      elements.visualizerCollapseToggle.addEventListener('click', toggleVisualizerCollapse);
-      elements.visualizerCollapseToggle.addEventListener('keydown', function(e) {
+    if (DawnElements.visualizerCollapseToggle) {
+      DawnElements.visualizerCollapseToggle.addEventListener('click', toggleVisualizerCollapse);
+      DawnElements.visualizerCollapseToggle.addEventListener('keydown', function(e) {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
           toggleVisualizerCollapse();
@@ -2941,9 +2680,9 @@
     }
 
     // Mini bar (expand) - click and keyboard (entire bar is clickable)
-    if (elements.visualizerMini) {
-      elements.visualizerMini.addEventListener('click', toggleVisualizerCollapse);
-      elements.visualizerMini.addEventListener('keydown', function(e) {
+    if (DawnElements.visualizerMini) {
+      DawnElements.visualizerMini.addEventListener('click', toggleVisualizerCollapse);
+      DawnElements.visualizerMini.addEventListener('keydown', function(e) {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
           toggleVisualizerCollapse();
@@ -2952,8 +2691,8 @@
     }
 
     // Event delegation for transcript (handles dynamically added elements)
-    if (elements.transcript) {
-      elements.transcript.addEventListener('click', function(e) {
+    if (DawnElements.transcript) {
+      DawnElements.transcript.addEventListener('click', function(e) {
         // Handle continuation banner toggle
         const bannerHeader = e.target.closest('.continuation-header');
         if (bannerHeader) {
@@ -2982,12 +2721,12 @@
 
     // Initialize audio support
     const audioResult = await initAudio();
-    if (audioResult.supported && elements.micBtn) {
-      elements.micBtn.disabled = false;
-      elements.micBtn.title = 'Hold to speak';
-    } else if (elements.micBtn) {
+    if (audioResult.supported && DawnElements.micBtn) {
+      DawnElements.micBtn.disabled = false;
+      DawnElements.micBtn.title = 'Hold to speak';
+    } else if (DawnElements.micBtn) {
       // Show why audio is disabled
-      elements.micBtn.title = audioResult.reason || 'Audio not available';
+      DawnElements.micBtn.title = audioResult.reason || 'Audio not available';
       console.warn('Mic disabled:', audioResult.reason);
     }
 
@@ -3013,24 +2752,22 @@
     initHistoryListeners();
     restoreActiveConversationId();
 
-    // Connect to WebSocket
-    connect();
+    // Set up WebSocket callbacks and connect
+    initWebSocketCallbacks();
+    DawnWS.connect();
 
     // Allow manual reconnect by clicking connection status
-    elements.connectionStatus.addEventListener('click', () => {
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
-        reconnectAttempts = 0; // Reset counter for manual retry
-        maxClientsReached = false; // Clear server-at-capacity state
-        connect();
+    DawnElements.connectionStatus.addEventListener('click', () => {
+      if (!DawnWS.isConnected()) {
+        DawnWS.forceReconnect();
       }
     });
-    elements.connectionStatus.style.cursor = 'pointer';
+    DawnElements.connectionStatus.style.cursor = 'pointer';
 
-    // Reconnect on visibility change (but not if server at capacity)
+    // Reconnect on visibility change
     document.addEventListener('visibilitychange', function() {
-      if (!document.hidden && (!ws || ws.readyState !== WebSocket.OPEN) && !maxClientsReached) {
-        reconnectAttempts = 0; // Reset counter when user returns
-        connect();
+      if (!document.hidden && !DawnWS.isConnected()) {
+        DawnWS.forceReconnect();
       }
     });
 
@@ -3398,12 +3135,12 @@
    * Request current configuration from server
    */
   function requestConfig() {
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
+    if (!DawnWS.isConnected()) {
       console.error('WebSocket not connected');
       return;
     }
 
-    ws.send(JSON.stringify({ type: 'get_config' }));
+    DawnWS.send({ type: 'get_config' });
     console.log('Requested configuration from server');
   }
 
@@ -3411,11 +3148,11 @@
    * Request available ASR/TTS models list from server
    */
   function requestModelsList() {
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
+    if (!DawnWS.isConnected()) {
       return;
     }
 
-    ws.send(JSON.stringify({ type: 'list_models' }));
+    DawnWS.send({ type: 'list_models' });
     console.log('Requested models list from server');
   }
 
@@ -3439,11 +3176,11 @@
    * Request available network interfaces from server
    */
   function requestInterfacesList() {
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
+    if (!DawnWS.isConnected()) {
       return;
     }
 
-    ws.send(JSON.stringify({ type: 'list_interfaces' }));
+    DawnWS.send({ type: 'list_interfaces' });
     console.log('Requested interfaces list from server');
   }
 
@@ -3538,9 +3275,9 @@
     }
 
     // Update auth state and UI visibility
-    authState.authenticated = payload.authenticated || false;
-    authState.isAdmin = payload.is_admin || false;
-    authState.username = payload.username || '';
+    DawnState.authState.authenticated = payload.authenticated || false;
+    DawnState.authState.isAdmin = payload.is_admin || false;
+    DawnState.authState.username = payload.username || '';
     updateAuthVisibility();
   }
 
@@ -3549,8 +3286,8 @@
    */
   function updateAuthVisibility() {
     // Toggle auth classes on body - CSS handles visibility of .admin-only elements
-    document.body.classList.toggle('user-is-admin', authState.isAdmin);
-    document.body.classList.toggle('user-authenticated', authState.authenticated);
+    document.body.classList.toggle('user-is-admin', DawnState.authState.isAdmin);
+    document.body.classList.toggle('user-authenticated', DawnState.authState.authenticated);
 
     // Update user badge in header
     updateUserBadge();
@@ -3572,10 +3309,10 @@
 
     if (!badge || !nameEl || !roleEl) return;
 
-    if (authState.authenticated && authState.username) {
-      nameEl.textContent = authState.username;
-      roleEl.textContent = authState.isAdmin ? 'Admin' : 'User';
-      roleEl.className = 'user-badge-role ' + (authState.isAdmin ? 'admin' : 'user');
+    if (DawnState.authState.authenticated && DawnState.authState.username) {
+      nameEl.textContent = DawnState.authState.username;
+      roleEl.textContent = DawnState.authState.isAdmin ? 'Admin' : 'User';
+      roleEl.className = 'user-badge-role ' + (DawnState.authState.isAdmin ? 'admin' : 'user');
       badge.classList.remove('hidden');
     } else {
       badge.classList.add('hidden');
@@ -3707,19 +3444,19 @@
         const currentVal = value || '';
 
         // Start with current value as first option
-        let dynOptionsHtml = `<option value="${escapeAttr(currentVal)}" selected>${escapeHtml(currentVal) || '(none)'}</option>`;
+        let dynOptionsHtml = `<option value="${escapeAttr(currentVal)}" selected>${DawnFormat.escapeHtml(currentVal) || '(none)'}</option>`;
 
         // Add options from server if available
         dynOptions.forEach(opt => {
           if (opt !== currentVal) {
-            dynOptionsHtml += `<option value="${escapeAttr(opt)}">${escapeHtml(opt)}</option>`;
+            dynOptionsHtml += `<option value="${escapeAttr(opt)}">${DawnFormat.escapeHtml(opt)}</option>`;
           }
         });
 
         inputHtml = `<select id="${inputId}" data-key="${fullKey}" data-dynamic-key="${dynKey}">${dynOptionsHtml}</select>`;
         break;
       case 'textarea':
-        inputHtml = `<textarea id="${inputId}" rows="${def.rows || 3}" placeholder="${def.placeholder || ''}" data-key="${fullKey}">${escapeHtml(value || '')}</textarea>`;
+        inputHtml = `<textarea id="${inputId}" rows="${def.rows || 3}" placeholder="${def.placeholder || ''}" data-key="${fullKey}">${DawnFormat.escapeHtml(value || '')}</textarea>`;
         break;
     }
 
@@ -3818,7 +3555,7 @@
    * Save configuration to server
    */
   function saveConfig() {
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
+    if (!DawnWS.isConnected()) {
       console.error('WebSocket not connected');
       alert('Cannot save: Not connected to server');
       return;
@@ -3827,17 +3564,17 @@
     const config = collectConfigValues();
     console.log('Saving config:', config);
 
-    ws.send(JSON.stringify({
+    DawnWS.send({
       type: 'set_config',
       payload: config
-    }));
+    });
   }
 
   /**
    * Save secrets to server
    */
   function saveSecrets() {
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
+    if (!DawnWS.isConnected()) {
       console.error('WebSocket not connected');
       alert('Cannot save: Not connected to server');
       return;
@@ -3866,10 +3603,10 @@
 
     console.log('Saving secrets (keys only):', Object.keys(secrets));
 
-    ws.send(JSON.stringify({
+    DawnWS.send({
       type: 'set_secrets',
       payload: secrets
-    }));
+    });
 
     // Clear inputs after sending
     if (settingsElements.secretOpenai) settingsElements.secretOpenai.value = '';
@@ -3936,14 +3673,14 @@
    * Request application restart
    */
   function requestRestart() {
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
+    if (!DawnWS.isConnected()) {
       console.error('WebSocket not connected');
       alert('Cannot restart: Not connected to server');
       return;
     }
 
     console.log('Requesting application restart');
-    ws.send(JSON.stringify({ type: 'restart' }));
+    DawnWS.send({ type: 'restart' });
   }
 
   /**
@@ -3967,13 +3704,13 @@
    * Request user list from server
    */
   function requestListUsers() {
-    if (ws && ws.readyState === WebSocket.OPEN) {
+    if (DawnWS.isConnected()) {
       // Show loading state
       const userList = document.getElementById('user-list');
       if (userList) {
         userList.innerHTML = '<div class="loading-indicator">Loading users...</div>';
       }
-      ws.send(JSON.stringify({ type: 'list_users' }));
+      DawnWS.send({ type: 'list_users' });
     }
   }
 
@@ -3981,11 +3718,11 @@
    * Request to create a new user
    */
   function requestCreateUser(username, password, isAdmin) {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({
+    if (DawnWS.isConnected()) {
+      DawnWS.send({
         type: 'create_user',
         payload: { username, password, is_admin: isAdmin }
-      }));
+      });
     }
   }
 
@@ -3993,11 +3730,11 @@
    * Request to delete a user
    */
   function requestDeleteUser(username) {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({
+    if (DawnWS.isConnected()) {
+      DawnWS.send({
         type: 'delete_user',
         payload: { username }
-      }));
+      });
     }
   }
 
@@ -4005,12 +3742,12 @@
    * Request to change a user's password
    */
   function requestChangePassword(username, newPassword, currentPassword = null) {
-    if (ws && ws.readyState === WebSocket.OPEN) {
+    if (DawnWS.isConnected()) {
       const payload = { username, new_password: newPassword };
       if (currentPassword) {
         payload.current_password = currentPassword;
       }
-      ws.send(JSON.stringify({ type: 'change_password', payload }));
+      DawnWS.send({ type: 'change_password', payload });
     }
   }
 
@@ -4018,11 +3755,11 @@
    * Request to unlock a user
    */
   function requestUnlockUser(username) {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({
+    if (DawnWS.isConnected()) {
+      DawnWS.send({
         type: 'unlock_user',
         payload: { username }
-      }));
+      });
     }
   }
 
@@ -4032,7 +3769,7 @@
   function handleListUsersResponse(payload) {
     if (!payload.success) {
       console.error('Failed to list users:', payload.error);
-      showToast('Failed to load users: ' + (payload.error || 'Unknown error'), 'error');
+      DawnToast.show('Failed to load users: ' + (payload.error || 'Unknown error'), 'error');
       return;
     }
 
@@ -4104,7 +3841,7 @@
       }
 
       // Delete button (not for self)
-      if (user.username !== authState.username) {
+      if (user.username !== DawnState.authState.username) {
         const deleteBtn = document.createElement('button');
         deleteBtn.className = 'btn-icon btn-danger';
         deleteBtn.title = 'Delete user';
@@ -4139,11 +3876,11 @@
     }
 
     if (payload.success) {
-      showToast('User created successfully', 'success');
+      DawnToast.show('User created successfully', 'success');
       hideAddUserModal();
       requestListUsers();  // Refresh list
     } else {
-      showToast('Failed to create user: ' + (payload.error || 'Unknown error'), 'error');
+      DawnToast.show('Failed to create user: ' + (payload.error || 'Unknown error'), 'error');
     }
   }
 
@@ -4152,10 +3889,10 @@
    */
   function handleDeleteUserResponse(payload) {
     if (payload.success) {
-      showToast('User deleted successfully', 'success');
+      DawnToast.show('User deleted successfully', 'success');
       requestListUsers();  // Refresh list
     } else {
-      showToast('Failed to delete user: ' + (payload.error || 'Unknown error'), 'error');
+      DawnToast.show('Failed to delete user: ' + (payload.error || 'Unknown error'), 'error');
     }
   }
 
@@ -4174,10 +3911,10 @@
     }
 
     if (payload.success) {
-      showToast('Password changed successfully', 'success');
+      DawnToast.show('Password changed successfully', 'success');
       hideResetPasswordModal();
     } else {
-      showToast('Failed to change password: ' + (payload.error || 'Unknown error'), 'error');
+      DawnToast.show('Failed to change password: ' + (payload.error || 'Unknown error'), 'error');
     }
   }
 
@@ -4186,10 +3923,10 @@
    */
   function handleUnlockUserResponse(payload) {
     if (payload.success) {
-      showToast('User unlocked successfully', 'success');
+      DawnToast.show('User unlocked successfully', 'success');
       requestListUsers();  // Refresh list
     } else {
-      showToast('Failed to unlock user: ' + (payload.error || 'Unknown error'), 'error');
+      DawnToast.show('Failed to unlock user: ' + (payload.error || 'Unknown error'), 'error');
     }
   }
 
@@ -4201,8 +3938,8 @@
    * Request current user's personal settings
    */
   function requestGetMySettings() {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'get_my_settings' }));
+    if (DawnWS.isConnected()) {
+      DawnWS.send({ type: 'get_my_settings' });
     }
   }
 
@@ -4210,11 +3947,11 @@
    * Save current user's personal settings
    */
   function requestSetMySettings(settings) {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({
+    if (DawnWS.isConnected()) {
+      DawnWS.send({
         type: 'set_my_settings',
         payload: settings
-      }));
+      });
     }
   }
 
@@ -4223,7 +3960,7 @@
    */
   function handleGetMySettingsResponse(payload) {
     if (!payload.success) {
-      showToast('Failed to load settings: ' + (payload.error || 'Unknown error'), 'error');
+      DawnToast.show('Failed to load settings: ' + (payload.error || 'Unknown error'), 'error');
       return;
     }
 
@@ -4365,9 +4102,9 @@
    */
   function handleSetMySettingsResponse(payload) {
     if (payload.success) {
-      showToast('Settings saved successfully', 'success');
+      DawnToast.show('Settings saved successfully', 'success');
     } else {
-      showToast('Failed to save settings: ' + (payload.error || 'Unknown error'), 'error');
+      DawnToast.show('Failed to save settings: ' + (payload.error || 'Unknown error'), 'error');
     }
   }
 
@@ -4474,7 +4211,7 @@
           // Check after toggle (general handler toggles first)
           // Section is now EXPANDED if collapsed class is removed
           setTimeout(() => {
-            if (!section.classList.contains('collapsed') && authState.authenticated) {
+            if (!section.classList.contains('collapsed') && DawnState.authState.authenticated) {
               requestGetMySettings();
             }
           }, 50);
@@ -4491,8 +4228,8 @@
    * Request list of current user's sessions
    */
   function requestListMySessions() {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'list_my_sessions' }));
+    if (DawnWS.isConnected()) {
+      DawnWS.send({ type: 'list_my_sessions' });
     }
   }
 
@@ -4500,11 +4237,11 @@
    * Request to revoke a session by token prefix
    */
   function requestRevokeSession(tokenPrefix) {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({
+    if (DawnWS.isConnected()) {
+      DawnWS.send({
         type: 'revoke_session',
         payload: { token_prefix: tokenPrefix }
-      }));
+      });
     }
   }
 
@@ -4513,7 +4250,7 @@
    */
   function handleListMySessionsResponse(payload) {
     if (!payload.success) {
-      showToast('Failed to load sessions: ' + (payload.error || 'Unknown error'), 'error');
+      DawnToast.show('Failed to load sessions: ' + (payload.error || 'Unknown error'), 'error');
       return;
     }
 
@@ -4539,16 +4276,16 @@
           <div class="session-info">
             <div class="session-device">
               <span class="device-icon">${userAgent.icon}</span>
-              <span class="device-name">${escapeHtml(userAgent.browser)} on ${escapeHtml(userAgent.os)}</span>
+              <span class="device-name">${DawnFormat.escapeHtml(userAgent.browser)} on ${DawnFormat.escapeHtml(userAgent.os)}</span>
               ${isCurrent ? '<span class="current-badge">Current</span>' : ''}
             </div>
             <div class="session-details">
-              <span class="session-ip">${escapeHtml(session.ip_address || 'Unknown IP')}</span>
+              <span class="session-ip">${DawnFormat.escapeHtml(session.ip_address || 'Unknown IP')}</span>
               <span class="session-time">Last active: ${formatRelativeTime(lastActivity)}</span>
             </div>
           </div>
           ${!isCurrent ? `
-            <button class="btn-icon btn-revoke" data-prefix="${escapeHtml(session.token_prefix)}"
+            <button class="btn-icon btn-revoke" data-prefix="${DawnFormat.escapeHtml(session.token_prefix)}"
                     title="Revoke this session">
               <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor"
                    stroke-width="2" fill="none" stroke-linecap="round">
@@ -4578,10 +4315,10 @@
    */
   function handleRevokeSessionResponse(payload) {
     if (payload.success) {
-      showToast('Session revoked successfully', 'success');
+      DawnToast.show('Session revoked successfully', 'success');
       requestListMySessions(); // Refresh list
     } else {
-      showToast('Failed to revoke session: ' + (payload.error || 'Unknown error'), 'error');
+      DawnToast.show('Failed to revoke session: ' + (payload.error || 'Unknown error'), 'error');
     }
   }
 
@@ -4647,16 +4384,6 @@
   }
 
   /**
-   * Escape HTML to prevent XSS
-   */
-  function escapeHtml(str) {
-    if (!str) return '';
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
-  }
-
-  /**
    * Initialize My Sessions section
    */
   function initMySessionsSection() {
@@ -4667,7 +4394,7 @@
     if (header) {
       header.addEventListener('click', () => {
         setTimeout(() => {
-          if (!section.classList.contains('collapsed') && authState.authenticated) {
+          if (!section.classList.contains('collapsed') && DawnState.authState.authenticated) {
             requestListMySessions();
           }
         }, 50);
@@ -4827,7 +4554,7 @@
   let historyStateRestored = false;
   function restoreHistorySidebarState() {
     if (historyStateRestored) return;
-    if (window.innerWidth > 768 && authState.authenticated) {
+    if (window.innerWidth > 768 && DawnState.authState.authenticated) {
       historyStateRestored = true;
       const savedState = localStorage.getItem('dawn_history_open');
       if (savedState === 'true') {
@@ -4931,7 +4658,7 @@
    */
   function updateHistoryButtonVisibility() {
     if (historyElements.openBtn) {
-      if (authState.authenticated) {
+      if (DawnState.authState.authenticated) {
         historyElements.openBtn.classList.remove('hidden');
       } else {
         historyElements.openBtn.classList.add('hidden');
@@ -4943,12 +4670,12 @@
    * Request conversation list from server
    */
   function requestListConversations() {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!DawnWS.isConnected()) return;
 
-    ws.send(JSON.stringify({
+    DawnWS.send({
       type: 'list_conversations',
       payload: { limit: 50, offset: 0 }
-    }));
+    });
   }
 
   /**
@@ -4956,51 +4683,51 @@
    * @param {string} [title] - Optional title for the conversation
    */
   function requestNewConversation(title) {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!DawnWS.isConnected()) return;
 
     const payload = {};
     if (title) {
       payload.title = title;
     }
 
-    ws.send(JSON.stringify({
+    DawnWS.send({
       type: 'new_conversation',
       payload: payload
-    }));
+    });
   }
 
   /**
    * Request to save a message to a conversation
    */
   function requestSaveMessage(convId, role, content) {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!DawnWS.isConnected()) return;
     if (!convId || !role || !content) return;
 
-    ws.send(JSON.stringify({
+    DawnWS.send({
       type: 'save_message',
       payload: {
         conversation_id: convId,
         role: role,
         content: content
       }
-    }));
+    });
   }
 
   /**
    * Save context usage to the active conversation
    */
   function requestUpdateContext(convId, contextTokens, contextMax) {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!DawnWS.isConnected()) return;
     if (!convId || !contextMax) return;
 
-    ws.send(JSON.stringify({
+    DawnWS.send({
       type: 'update_context',
       payload: {
         conversation_id: convId,
         context_tokens: contextTokens,
         context_max: contextMax
       }
-    }));
+    });
   }
 
   /**
@@ -5008,52 +4735,52 @@
    * Archives the current conversation and creates a new one with the summary
    */
   function requestContinueConversation(convId, summary) {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!DawnWS.isConnected()) return;
     if (!convId) return;
 
-    ws.send(JSON.stringify({
+    DawnWS.send({
       type: 'continue_conversation',
       payload: {
         conversation_id: convId,
         summary: summary || ''
       }
-    }));
+    });
   }
 
   /**
    * Request to load a conversation
    */
   function requestLoadConversation(convId) {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!DawnWS.isConnected()) return;
 
-    ws.send(JSON.stringify({
+    DawnWS.send({
       type: 'load_conversation',
       payload: { conversation_id: convId }
-    }));
+    });
   }
 
   /**
    * Request to delete a conversation
    */
   function requestDeleteConversation(convId) {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!DawnWS.isConnected()) return;
 
-    ws.send(JSON.stringify({
+    DawnWS.send({
       type: 'delete_conversation',
       payload: { conversation_id: convId }
-    }));
+    });
   }
 
   /**
    * Request to rename a conversation
    */
   function requestRenameConversation(convId, newTitle) {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!DawnWS.isConnected()) return;
 
-    ws.send(JSON.stringify({
+    DawnWS.send({
       type: 'rename_conversation',
       payload: { conversation_id: convId, title: newTitle }
-    }));
+    });
   }
 
   /**
@@ -5062,12 +4789,12 @@
    * @param {boolean} searchContent - If true, search message content; if false, search titles only
    */
   function requestSearchConversations(query, searchContent = false) {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!DawnWS.isConnected()) return;
 
-    ws.send(JSON.stringify({
+    DawnWS.send({
       type: 'search_conversations',
       payload: { query: query, search_content: searchContent, limit: 50, offset: 0 }
-    }));
+    });
   }
 
   /**
@@ -5076,7 +4803,7 @@
   function handleListConversationsResponse(payload) {
     if (!payload.success) {
       console.error('Failed to list conversations:', payload.error);
-      showToast(payload.error || 'Failed to load conversations', 'error');
+      DawnToast.show(payload.error || 'Failed to load conversations', 'error');
       return;
     }
 
@@ -5091,7 +4818,7 @@
     historyState.creatingConversation = false;
 
     if (!payload.success) {
-      showToast(payload.error || 'Failed to create conversation', 'error');
+      DawnToast.show(payload.error || 'Failed to create conversation', 'error');
       historyState.pendingMessages = [];
       return;
     }
@@ -5109,7 +4836,7 @@
     // Only show toast and clear transcript if this was a manual "New Chat" action
     // (not auto-created from first message - in that case panel isn't open)
     if (historyElements.panel && historyElements.panel.classList.contains('open')) {
-      showToast('New conversation created', 'success');
+      DawnToast.show('New conversation created', 'success');
       closeHistory();
 
       // Clear transcript for new conversation
@@ -5129,7 +4856,7 @@
   function handleClearSessionResponse(payload) {
     if (!payload.success) {
       console.error('Failed to clear session:', payload.error);
-      showToast('Failed to clear session: ' + (payload.error || 'Unknown error'), 'error');
+      DawnToast.show('Failed to clear session: ' + (payload.error || 'Unknown error'), 'error');
     }
   }
 
@@ -5141,7 +4868,7 @@
    */
   function handleLoadConversationResponse(payload) {
     if (!payload.success) {
-      showToast(payload.error || 'Failed to load conversation', 'error');
+      DawnToast.show(payload.error || 'Failed to load conversation', 'error');
       return;
     }
 
@@ -5194,7 +4921,7 @@
               <span class="continuation-toggle">▼</span>
             </div>
             <div class="continuation-content collapsed">
-              <div class="continuation-summary">${escapeHtml(summary)}</div>
+              <div class="continuation-summary">${DawnFormat.escapeHtml(summary)}</div>
             </div>
           </div>
         `;
@@ -5214,7 +4941,7 @@
         is_archived: isArchived,
         continued_by: continuedBy
       };
-      showToast(`Loading ${payload.message_count} messages...`, 'info');
+      DawnToast.show(`Loading ${payload.message_count} messages...`, 'info');
       return;
     }
 
@@ -5250,7 +4977,7 @@
     renderConversationList();
     closeHistory();
     const statusMsg = isArchived ? `Loaded archived: ${payload.title}` : `Loaded: ${payload.title}`;
-    showToast(statusMsg, 'info');
+    DawnToast.show(statusMsg, 'info');
   }
 
   /**
@@ -5345,7 +5072,7 @@
       const statusMsg = pendingChunkedLoad.is_archived
         ? `Loaded archived: ${pendingChunkedLoad.title}`
         : `Loaded: ${pendingChunkedLoad.title}`;
-      showToast(statusMsg, 'info');
+      DawnToast.show(statusMsg, 'info');
       pendingChunkedLoad = null;
     }
   }
@@ -5379,11 +5106,11 @@
    */
   function handleDeleteConversationResponse(payload) {
     if (!payload.success) {
-      showToast(payload.error || 'Failed to delete conversation', 'error');
+      DawnToast.show(payload.error || 'Failed to delete conversation', 'error');
       return;
     }
 
-    showToast('Conversation deleted', 'success');
+    DawnToast.show('Conversation deleted', 'success');
 
     // If deleted the active conversation, clear state
     // Note: We'd need to know which one was deleted to check this
@@ -5397,11 +5124,11 @@
    */
   function handleRenameConversationResponse(payload) {
     if (!payload.success) {
-      showToast(payload.error || 'Failed to rename conversation', 'error');
+      DawnToast.show(payload.error || 'Failed to rename conversation', 'error');
       return;
     }
 
-    showToast('Conversation renamed', 'success');
+    DawnToast.show('Conversation renamed', 'success');
     requestListConversations();
   }
 
@@ -5457,7 +5184,7 @@
   function handleContinueConversationResponse(payload) {
     if (!payload.success) {
       console.error('Failed to continue conversation:', payload.error);
-      showToast('Failed to archive conversation', 'error');
+      DawnToast.show('Failed to archive conversation', 'error');
       return;
     }
 
@@ -5503,7 +5230,7 @@
           <span class="continuation-toggle">▼</span>
         </div>
         <div class="continuation-content collapsed">
-          <div class="continuation-summary">${escapeHtml(summary)}</div>
+          <div class="continuation-summary">${DawnFormat.escapeHtml(summary)}</div>
         </div>
       </div>
     `;
@@ -5533,7 +5260,7 @@
     if (!content || !content.trim()) return;
 
     // Must be authenticated
-    if (!authState.authenticated) return;
+    if (!DawnState.authState.authenticated) return;
 
     // If we have an active conversation, save directly
     if (historyState.activeConversationId) {
@@ -5576,8 +5303,8 @@
     }
 
     // Clear server-side session history to prevent stale context
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'clear_session' }));
+    if (DawnWS.isConnected()) {
+      DawnWS.send({ type: 'clear_session' });
     }
   }
 
@@ -5614,7 +5341,7 @@
     return `
       <div class="${classes.join(' ')}" data-conv-id="${conv.id}">
         <div class="history-item-content">
-          <div class="history-item-title">${archivedIcon}${chainIcon}${escapeHtml(conv.title)}</div>
+          <div class="history-item-title">${archivedIcon}${chainIcon}${DawnFormat.escapeHtml(conv.title)}</div>
           <div class="history-item-meta">
             <span class="history-item-time">${time}</span>
             <span class="history-item-count">${conv.message_count} messages</span>
@@ -5797,7 +5524,7 @@
 
     const msgDiv = document.createElement('div');
     msgDiv.className = 'message user';
-    msgDiv.innerHTML = `<div class="message-content"><p>${escapeHtml(content)}</p></div>`;
+    msgDiv.innerHTML = `<div class="message-content"><p>${DawnFormat.escapeHtml(content)}</p></div>`;
     transcript.appendChild(msgDiv);
   }
 
@@ -5810,32 +5537,8 @@
 
     const msgDiv = document.createElement('div');
     msgDiv.className = 'message assistant';
-    msgDiv.innerHTML = `<div class="message-content">${formatMarkdown(content)}</div>`;
+    msgDiv.innerHTML = `<div class="message-content">${DawnFormat.markdown(content)}</div>`;
     transcript.appendChild(msgDiv);
-  }
-
-  /**
-   * Show a toast notification
-   */
-  function showToast(message, type = 'info') {
-    // Create toast container if it doesn't exist
-    let container = document.getElementById('toast-container');
-    if (!container) {
-      container = document.createElement('div');
-      container.id = 'toast-container';
-      document.body.appendChild(container);
-    }
-
-    const toast = document.createElement('div');
-    toast.className = 'toast toast-' + type;
-    toast.textContent = message;
-    container.appendChild(toast);
-
-    // Auto-remove after 4 seconds
-    setTimeout(() => {
-      toast.classList.add('toast-fade-out');
-      setTimeout(() => toast.remove(), 300);
-    }, 4000);
   }
 
   /**
@@ -6286,7 +5989,7 @@
         <span class="system-prompt-toggle">&#x25BC;</span>
       </div>
       <div class="system-prompt-content">
-        <pre>${escapeHtml(payload.prompt)}</pre>
+        <pre>${DawnFormat.escapeHtml(payload.prompt)}</pre>
       </div>
     `;
 
@@ -6297,15 +6000,15 @@
     });
 
     // Insert at the top of the transcript (after placeholder if present)
-    const placeholder = elements.transcript.querySelector('.transcript-placeholder');
+    const placeholder = DawnElements.transcript.querySelector('.transcript-placeholder');
     if (placeholder) {
       placeholder.after(entry);
     } else {
-      elements.transcript.prepend(entry);
+      DawnElements.transcript.prepend(entry);
     }
 
     // Show only if debug mode is on
-    if (!debugMode) {
+    if (!DawnState.getDebugMode()) {
       entry.style.display = 'none';
     }
 
@@ -6318,7 +6021,7 @@
   function handleSetSecretsResponse(payload) {
     if (payload.success) {
       console.log('Secrets saved successfully');
-      showToast('Secrets saved successfully!', 'success');
+      DawnToast.show('Secrets saved successfully!', 'success');
 
       // Update status indicators
       if (payload.secrets) {
@@ -6329,7 +6032,7 @@
       requestConfig();
     } else {
       console.error('Failed to save secrets:', payload.error);
-      showToast('Failed to save secrets: ' + (payload.error || 'Unknown error'), 'error');
+      DawnToast.show('Failed to save secrets: ' + (payload.error || 'Unknown error'), 'error');
     }
   }
 
@@ -6340,16 +6043,16 @@
    * Request audio devices from server
    */
   function requestAudioDevices(backend) {
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
+    if (!DawnWS.isConnected()) {
       console.error('WebSocket not connected');
       return;
     }
 
     console.log('Requesting audio devices for backend:', backend);
-    ws.send(JSON.stringify({
+    DawnWS.send({
       type: 'get_audio_devices',
       payload: { backend: backend }
-    }));
+    });
   }
 
   /**
@@ -6685,16 +6388,16 @@
    * Send per-session LLM config change to server
    */
   function setSessionLlm(changes) {
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
+    if (!DawnWS.isConnected()) {
       console.error('WebSocket not connected');
       return;
     }
 
     console.log('Setting session LLM:', changes);
-    ws.send(JSON.stringify({
+    DawnWS.send({
       type: 'set_session_llm',
       payload: changes
-    }));
+    });
   }
 
   /**
@@ -6732,10 +6435,10 @@
    * Request SmartThings status from server
    */
   function requestSmartThingsStatus() {
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
+    if (!DawnWS.isConnected()) {
       return;
     }
-    ws.send(JSON.stringify({ type: 'smartthings_status' }));
+    DawnWS.send({ type: 'smartthings_status' });
     console.log('Requested SmartThings status');
   }
 
@@ -6845,17 +6548,17 @@
    * Start SmartThings OAuth flow
    */
   function startSmartThingsOAuth() {
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
+    if (!DawnWS.isConnected()) {
       alert('Not connected to server');
       return;
     }
 
     // Get auth URL from server
     const redirectUri = window.location.origin + '/smartthings/callback';
-    ws.send(JSON.stringify({
+    DawnWS.send({
       type: 'smartthings_get_auth_url',
       payload: { redirect_uri: redirectUri }
-    }));
+    });
     console.log('Requesting SmartThings auth URL');
   }
 
@@ -6897,7 +6600,7 @@
    * @param {string} state - State parameter for CSRF protection
    */
   function exchangeSmartThingsCode(code, state) {
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
+    if (!DawnWS.isConnected()) {
       return;
     }
 
@@ -6906,10 +6609,10 @@
     if (state) {
       payload.state = state;
     }
-    ws.send(JSON.stringify({
+    DawnWS.send({
       type: 'smartthings_exchange_code',
       payload: payload
-    }));
+    });
     console.log('Exchanging SmartThings auth code with CSRF state');
   }
 
@@ -6930,10 +6633,10 @@
    * Request SmartThings devices list
    */
   function requestSmartThingsDevices() {
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
+    if (!DawnWS.isConnected()) {
       return;
     }
-    ws.send(JSON.stringify({ type: 'smartthings_list_devices' }));
+    DawnWS.send({ type: 'smartthings_list_devices' });
     console.log('Requesting SmartThings devices');
   }
 
@@ -6941,13 +6644,13 @@
    * Refresh SmartThings devices (force refresh from API)
    */
   function refreshSmartThingsDevices() {
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
+    if (!DawnWS.isConnected()) {
       return;
     }
     settingsElements.stRefreshBtn.disabled = true;
     settingsElements.stRefreshBtn.textContent = 'Refreshing...';
 
-    ws.send(JSON.stringify({ type: 'smartthings_refresh_devices' }));
+    DawnWS.send({ type: 'smartthings_refresh_devices' });
     console.log('Refreshing SmartThings devices');
   }
 
@@ -6996,9 +6699,9 @@
       const caps = getCapabilityIcons(device.capabilities);
 
       deviceEl.innerHTML = `
-        <div class="st-device-name">${escapeHtml(device.label || device.name)}</div>
+        <div class="st-device-name">${DawnFormat.escapeHtml(device.label || device.name)}</div>
         <div class="st-device-info">
-          <span class="st-device-room">${escapeHtml(device.room || 'No room')}</span>
+          <span class="st-device-room">${DawnFormat.escapeHtml(device.room || 'No room')}</span>
           <span class="st-device-caps">${caps}</span>
         </div>
       `;
@@ -7034,10 +6737,10 @@
    */
   function disconnectSmartThings() {
     showConfirmModal('Disconnect SmartThings?\n\nThis will remove your saved tokens.', () => {
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
+      if (!DawnWS.isConnected()) {
         return;
       }
-      ws.send(JSON.stringify({ type: 'smartthings_disconnect' }));
+      DawnWS.send({ type: 'smartthings_disconnect' });
       console.log('Disconnecting SmartThings');
     }, { title: 'Disconnect', okText: 'Disconnect', danger: true });
   }
@@ -7067,8 +6770,8 @@
    * Request tools configuration from server
    */
   function requestToolsConfig() {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'get_tools_config' }));
+    if (DawnWS.isConnected()) {
+      DawnWS.send({ type: 'get_tools_config' });
       console.log('Requesting tools config');
     }
   }
@@ -7188,7 +6891,7 @@
    * Save tools configuration
    */
   function saveToolsConfig() {
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
+    if (!DawnWS.isConnected()) {
       console.error('WebSocket not connected');
       return;
     }
@@ -7209,10 +6912,10 @@
       });
     });
 
-    ws.send(JSON.stringify({
+    DawnWS.send({
       type: 'set_tools_config',
       payload: { tools: tools }
-    }));
+    });
 
     console.log('Saving tools config:', tools);
   }
@@ -7323,8 +7026,8 @@
   }
 
   function requestMetrics() {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'get_metrics' }));
+    if (DawnWS.isConnected()) {
+      DawnWS.send({ type: 'get_metrics' });
     }
   }
 
@@ -7427,8 +7130,8 @@
   // Test helper for console access
   // Usage: DAWN.send({type: 'get_my_settings'})
   window.DAWN.send = function(msg) {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify(msg));
+    if (DawnWS.isConnected()) {
+      DawnWS.send(msg);
       console.log('Sent:', msg);
     } else {
       console.error('WebSocket not connected');
