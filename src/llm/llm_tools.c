@@ -192,6 +192,8 @@ static bool get_tool_parallel_safe(const char *tool_name) {
 static void *tool_exec_thread(void *arg) {
    tool_exec_task_t *task = (tool_exec_task_t *)arg;
 
+   LOG_INFO("Thread started for tool '%s'", task->call->name);
+
    /* Propagate session context to this thread */
    session_set_command_context(task->session);
 
@@ -1233,6 +1235,7 @@ int llm_tools_execute_all(const tool_call_list_t *calls, tool_result_list_t *res
          int rc = pthread_create(&threads[i], &thread_attr, tool_exec_thread, &tasks[i]);
          if (rc == 0) {
             thread_spawned[i] = true;
+            LOG_INFO("Spawned thread %d for tool '%s'", i, calls->calls[idx].name);
          } else {
             /* Fallback to sequential if thread creation fails */
             LOG_WARNING("pthread_create failed for tool '%s' (error=%d), executing sequentially",

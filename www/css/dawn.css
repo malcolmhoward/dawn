@@ -1978,7 +1978,7 @@ body.debug-mode .transcript-entry.debug {
   resize: none;
   min-height: 44px;
   max-height: 150px;
-  overflow-y: auto;
+  overflow-y: hidden;
   line-height: 1.4;
 }
 

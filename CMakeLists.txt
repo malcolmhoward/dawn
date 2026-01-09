@@ -400,7 +400,16 @@ endif()
 
 # Conditionally add WebUI source files
 if(ENABLE_WEBUI)
-    list(APPEND DAWN_SOURCES src/webui/webui_server.c)
+    list(APPEND DAWN_SOURCES
+        src/webui/webui_server.c
+        src/webui/webui_http.c
+        src/webui/webui_admin.c
+        src/webui/webui_history.c
+        src/webui/webui_config.c
+        src/webui/webui_session.c
+        src/webui/webui_settings.c
+        src/webui/webui_tools.c
+    )
     if(OPUS_FOUND)
         list(APPEND DAWN_SOURCES src/webui/webui_audio.c)
     endif()

@@ -30,9 +30,14 @@
 
 #include "asr/asr_interface.h"
 #include "audio/resampler.h"
+#include "core/session_manager.h"
 #include "core/worker_pool.h"
+#include "llm/llm_context.h"
 #include "logging.h"
 #include "tts/text_to_speech.h"
+#include "tts/tts_preprocessing.h"
+#include "webui/webui_internal.h"
+#include "webui/webui_server.h"
 
 /* =============================================================================
  * Module State
@@ -42,7 +47,7 @@ static OpusDecoder *s_decoder = NULL;
 static OpusEncoder *s_encoder = NULL;
 static resampler_t *s_input_resampler = NULL; /* 48000Hz → 16000Hz for ASR */
 static resampler_t *s_tts_resampler = NULL;   /* 22050Hz → 48000Hz for TTS output */
-static pthread_mutex_t s_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t s_audio_mutex = PTHREAD_MUTEX_INITIALIZER;
 static bool s_initialized = false;
 
 /* Note: ASR contexts are borrowed from worker pool (no local ASR context)
@@ -53,11 +58,11 @@ static bool s_initialized = false;
  * ============================================================================= */
 
 int webui_audio_init(void) {
-   pthread_mutex_lock(&s_mutex);
+   pthread_mutex_lock(&s_audio_mutex);
 
    if (s_initialized) {
       LOG_WARNING("WebUI audio already initialized");
-      pthread_mutex_unlock(&s_mutex);
+      pthread_mutex_unlock(&s_audio_mutex);
       return WEBUI_AUDIO_SUCCESS;
    }
 
@@ -67,7 +72,7 @@ int webui_audio_init(void) {
    s_decoder = opus_decoder_create(WEBUI_OPUS_SAMPLE_RATE, WEBUI_OPUS_CHANNELS, &err);
    if (err != OPUS_OK || !s_decoder) {
       LOG_ERROR("WebUI audio: Failed to create Opus decoder: %s", opus_strerror(err));
-      pthread_mutex_unlock(&s_mutex);
+      pthread_mutex_unlock(&s_audio_mutex);
       return WEBUI_AUDIO_ERROR;
    }
 
@@ -78,7 +83,7 @@ int webui_audio_init(void) {
       LOG_ERROR("WebUI audio: Failed to create Opus encoder: %s", opus_strerror(err));
       opus_decoder_destroy(s_decoder);
       s_decoder = NULL;
-      pthread_mutex_unlock(&s_mutex);
+      pthread_mutex_unlock(&s_audio_mutex);
       return WEBUI_AUDIO_ERROR;
    }
 
@@ -95,7 +100,7 @@ int webui_audio_init(void) {
       opus_decoder_destroy(s_decoder);
       s_encoder = NULL;
       s_decoder = NULL;
-      pthread_mutex_unlock(&s_mutex);
+      pthread_mutex_unlock(&s_audio_mutex);
       return WEBUI_AUDIO_ERROR;
    }
 
@@ -109,7 +114,7 @@ int webui_audio_init(void) {
       s_input_resampler = NULL;
       s_encoder = NULL;
       s_decoder = NULL;
-      pthread_mutex_unlock(&s_mutex);
+      pthread_mutex_unlock(&s_audio_mutex);
       return WEBUI_AUDIO_ERROR;
    }
 
@@ -122,15 +127,15 @@ int webui_audio_init(void) {
    LOG_INFO("WebUI audio initialized (Opus %dHz, ASR %dHz, via worker pool)",
             WEBUI_OPUS_SAMPLE_RATE, WEBUI_ASR_SAMPLE_RATE);
 
-   pthread_mutex_unlock(&s_mutex);
+   pthread_mutex_unlock(&s_audio_mutex);
    return WEBUI_AUDIO_SUCCESS;
 }
 
 void webui_audio_cleanup(void) {
-   pthread_mutex_lock(&s_mutex);
+   pthread_mutex_lock(&s_audio_mutex);
 
    if (!s_initialized) {
-      pthread_mutex_unlock(&s_mutex);
+      pthread_mutex_unlock(&s_audio_mutex);
       return;
    }
 
@@ -159,14 +164,14 @@ void webui_audio_cleanup(void) {
    s_initialized = false;
    LOG_INFO("WebUI audio cleaned up");
 
-   pthread_mutex_unlock(&s_mutex);
+   pthread_mutex_unlock(&s_audio_mutex);
 }
 
 bool webui_audio_is_initialized(void) {
    bool result;
-   pthread_mutex_lock(&s_mutex);
+   pthread_mutex_lock(&s_audio_mutex);
    result = s_initialized;
-   pthread_mutex_unlock(&s_mutex);
+   pthread_mutex_unlock(&s_audio_mutex);
    return result;
 }
 
@@ -182,10 +187,10 @@ int webui_opus_decode_stream(const uint8_t *opus_data,
       return WEBUI_AUDIO_ERROR;
    }
 
-   pthread_mutex_lock(&s_mutex);
+   pthread_mutex_lock(&s_audio_mutex);
 
    if (!s_initialized || !s_decoder) {
-      pthread_mutex_unlock(&s_mutex);
+      pthread_mutex_unlock(&s_audio_mutex);
       return WEBUI_AUDIO_ERROR_NOT_INITIALIZED;
    }
 
@@ -194,7 +199,7 @@ int webui_opus_decode_stream(const uint8_t *opus_data,
    size_t max_output_samples = WEBUI_PCM_MAX_SAMPLES;
    int16_t *pcm_buffer = malloc(max_output_samples * sizeof(int16_t));
    if (!pcm_buffer) {
-      pthread_mutex_unlock(&s_mutex);
+      pthread_mutex_unlock(&s_audio_mutex);
       return WEBUI_AUDIO_ERROR_ALLOC;
    }
 
@@ -243,7 +248,7 @@ int webui_opus_decode_stream(const uint8_t *opus_data,
       }
    }
 
-   pthread_mutex_unlock(&s_mutex);
+   pthread_mutex_unlock(&s_audio_mutex);
 
    if (total_samples == 0) {
       free(pcm_buffer);
@@ -267,16 +272,16 @@ int webui_opus_decode_frame(const uint8_t *opus_frame,
       return -1;
    }
 
-   pthread_mutex_lock(&s_mutex);
+   pthread_mutex_lock(&s_audio_mutex);
 
    if (!s_initialized || !s_decoder) {
-      pthread_mutex_unlock(&s_mutex);
+      pthread_mutex_unlock(&s_audio_mutex);
       return -1;
    }
 
    int decoded = opus_decode(s_decoder, opus_frame, (int)opus_len, pcm_out, max_samples, 0);
 
-   pthread_mutex_unlock(&s_mutex);
+   pthread_mutex_unlock(&s_audio_mutex);
 
    return decoded;
 }
@@ -293,10 +298,10 @@ int webui_opus_encode_stream(const int16_t *pcm_data,
       return WEBUI_AUDIO_ERROR;
    }
 
-   pthread_mutex_lock(&s_mutex);
+   pthread_mutex_lock(&s_audio_mutex);
 
    if (!s_initialized || !s_encoder) {
-      pthread_mutex_unlock(&s_mutex);
+      pthread_mutex_unlock(&s_audio_mutex);
       return WEBUI_AUDIO_ERROR_NOT_INITIALIZED;
    }
 
@@ -308,7 +313,7 @@ int webui_opus_encode_stream(const int16_t *pcm_data,
    size_t max_output_size = num_frames * (2 + WEBUI_OPUS_MAX_FRAME_SIZE);
    uint8_t *output = malloc(max_output_size);
    if (!output) {
-      pthread_mutex_unlock(&s_mutex);
+      pthread_mutex_unlock(&s_audio_mutex);
       return WEBUI_AUDIO_ERROR_ALLOC;
    }
 
@@ -354,7 +359,7 @@ int webui_opus_encode_stream(const int16_t *pcm_data,
       input_offset += frame_samples;
    }
 
-   pthread_mutex_unlock(&s_mutex);
+   pthread_mutex_unlock(&s_audio_mutex);
 
    if (output_offset == 0) {
       free(output);
@@ -432,9 +437,9 @@ int webui_audio_opus_to_text(const uint8_t *opus_data, size_t opus_len, char **t
    }
 
    /* Resample 48kHz → 16kHz for ASR */
-   pthread_mutex_lock(&s_mutex);
+   pthread_mutex_lock(&s_audio_mutex);
    if (!s_input_resampler) {
-      pthread_mutex_unlock(&s_mutex);
+      pthread_mutex_unlock(&s_audio_mutex);
       free(pcm);
       return WEBUI_AUDIO_ERROR_NOT_INITIALIZED;
    }
@@ -444,7 +449,7 @@ int webui_audio_opus_to_text(const uint8_t *opus_data, size_t opus_len, char **t
    output_size = (output_size * 11) / 10;
    int16_t *resampled = malloc(output_size * sizeof(int16_t));
    if (!resampled) {
-      pthread_mutex_unlock(&s_mutex);
+      pthread_mutex_unlock(&s_audio_mutex);
       free(pcm);
       return WEBUI_AUDIO_ERROR_ALLOC;
    }
@@ -470,7 +475,7 @@ int webui_audio_opus_to_text(const uint8_t *opus_data, size_t opus_len, char **t
       total_resampled += resampled_chunk;
       offset += to_process;
    }
-   pthread_mutex_unlock(&s_mutex);
+   pthread_mutex_unlock(&s_audio_mutex);
    free(pcm);
 
    if (total_resampled == 0) {
@@ -494,9 +499,9 @@ int webui_audio_pcm48k_to_text(const int16_t *pcm_data, size_t pcm_samples, char
    }
 
    /* Resample 48kHz → 16kHz for ASR */
-   pthread_mutex_lock(&s_mutex);
+   pthread_mutex_lock(&s_audio_mutex);
    if (!s_initialized || !s_input_resampler) {
-      pthread_mutex_unlock(&s_mutex);
+      pthread_mutex_unlock(&s_audio_mutex);
       return WEBUI_AUDIO_ERROR_NOT_INITIALIZED;
    }
 
@@ -505,7 +510,7 @@ int webui_audio_pcm48k_to_text(const int16_t *pcm_data, size_t pcm_samples, char
    output_size = (output_size * 11) / 10;
    int16_t *resampled = malloc(output_size * sizeof(int16_t));
    if (!resampled) {
-      pthread_mutex_unlock(&s_mutex);
+      pthread_mutex_unlock(&s_audio_mutex);
       return WEBUI_AUDIO_ERROR_ALLOC;
    }
 
@@ -530,7 +535,7 @@ int webui_audio_pcm48k_to_text(const int16_t *pcm_data, size_t pcm_samples, char
       total_resampled += resampled_chunk;
       offset += to_process;
    }
-   pthread_mutex_unlock(&s_mutex);
+   pthread_mutex_unlock(&s_audio_mutex);
 
    if (total_resampled == 0) {
       free(resampled);
@@ -569,10 +574,10 @@ int webui_audio_text_to_opus(const char *text, uint8_t **opus_out, size_t *opus_
 
    LOG_INFO("WebUI audio: TTS generated %zu samples at %uHz", tts_samples, tts_rate);
 
-   pthread_mutex_lock(&s_mutex);
+   pthread_mutex_lock(&s_audio_mutex);
 
    if (!s_initialized || !s_tts_resampler) {
-      pthread_mutex_unlock(&s_mutex);
+      pthread_mutex_unlock(&s_audio_mutex);
       free(tts_pcm);
       return WEBUI_AUDIO_ERROR_NOT_INITIALIZED;
    }
@@ -583,7 +588,7 @@ int webui_audio_text_to_opus(const char *text, uint8_t **opus_out, size_t *opus_
    output_size = (output_size * 11) / 10;
    int16_t *resampled = malloc(output_size * sizeof(int16_t));
    if (!resampled) {
-      pthread_mutex_unlock(&s_mutex);
+      pthread_mutex_unlock(&s_audio_mutex);
       free(tts_pcm);
       return WEBUI_AUDIO_ERROR_ALLOC;
    }
@@ -610,7 +615,7 @@ int webui_audio_text_to_opus(const char *text, uint8_t **opus_out, size_t *opus_
       offset += to_process;
    }
 
-   pthread_mutex_unlock(&s_mutex);
+   pthread_mutex_unlock(&s_audio_mutex);
    free(tts_pcm);
 
    if (total_resampled == 0) {
@@ -646,10 +651,10 @@ int webui_audio_text_to_pcm(const char *text, int16_t **pcm_out, size_t *pcm_sam
 
    LOG_INFO("WebUI audio: TTS generated %zu samples at %uHz", tts_samples, tts_rate);
 
-   pthread_mutex_lock(&s_mutex);
+   pthread_mutex_lock(&s_audio_mutex);
 
    if (!s_initialized || !s_tts_resampler) {
-      pthread_mutex_unlock(&s_mutex);
+      pthread_mutex_unlock(&s_audio_mutex);
       free(tts_pcm);
       return WEBUI_AUDIO_ERROR_NOT_INITIALIZED;
    }
@@ -660,7 +665,7 @@ int webui_audio_text_to_pcm(const char *text, int16_t **pcm_out, size_t *pcm_sam
    output_size = (output_size * 11) / 10;
    int16_t *resampled = malloc(output_size * sizeof(int16_t));
    if (!resampled) {
-      pthread_mutex_unlock(&s_mutex);
+      pthread_mutex_unlock(&s_audio_mutex);
       free(tts_pcm);
       return WEBUI_AUDIO_ERROR_ALLOC;
    }
@@ -687,7 +692,7 @@ int webui_audio_text_to_pcm(const char *text, int16_t **pcm_out, size_t *pcm_sam
       offset += to_process;
    }
 
-   pthread_mutex_unlock(&s_mutex);
+   pthread_mutex_unlock(&s_audio_mutex);
    free(tts_pcm);
 
    if (total_resampled == 0) {
@@ -702,4 +707,371 @@ int webui_audio_text_to_pcm(const char *text, int16_t **pcm_out, size_t *pcm_sam
    *pcm_samples = total_resampled;
 
    return WEBUI_AUDIO_SUCCESS;
+}
+
+/* =============================================================================
+ * WebSocket Audio Message Handlers
+ *
+ * Protocol:
+ * - Client sends binary frames with 1-byte type prefix:
+ *   - WS_BIN_AUDIO_IN (0x01): Opus audio chunk (length-prefixed frames)
+ *   - WS_BIN_AUDIO_IN_END (0x02): End of utterance (triggers ASR + LLM + TTS)
+ *
+ * - Server responds with binary frames:
+ *   - WS_BIN_AUDIO_OUT (0x11): PCM audio chunk for playback
+ *   - WS_BIN_AUDIO_SEGMENT_END (0x12): Play accumulated audio segment now
+ * ============================================================================= */
+
+typedef struct {
+   session_t *session;
+   uint8_t *audio_data;
+   size_t audio_len;
+   bool use_opus; /* True if audio_data is Opus-encoded, false if raw PCM */
+} audio_work_t;
+
+/**
+ * @brief Sentence callback for real-time TTS audio streaming
+ *
+ * Called for each complete sentence during LLM response streaming.
+ * Generates TTS and sends audio immediately, enabling sentence-by-sentence
+ * playback instead of waiting for the full response.
+ */
+static void webui_sentence_audio_callback(const char *sentence, void *userdata) {
+   session_t *session = (session_t *)userdata;
+
+   if (!sentence || strlen(sentence) == 0 || !session || session->disconnected) {
+      return;
+   }
+
+   /* Make a copy for cleaning (same pattern as dawn_tts_sentence_callback) */
+   char *cleaned = strdup(sentence);
+   if (!cleaned) {
+      return;
+   }
+
+   /* Remove command tags (they'll be processed from the full response later) */
+   char *cmd_start, *cmd_end;
+   while ((cmd_start = strstr(cleaned, "<command>")) != NULL) {
+      cmd_end = strstr(cmd_start, "</command>");
+      if (cmd_end) {
+         cmd_end += strlen("</command>");
+         memmove(cmd_start, cmd_end, strlen(cmd_end) + 1);
+      } else {
+         /* Incomplete command tag - strip from <command> to end */
+         *cmd_start = '\0';
+         break;
+      }
+   }
+
+   /* Remove special characters that cause TTS issues */
+   remove_chars(cleaned, "*");
+   remove_emojis(cleaned);
+
+   /* Trim whitespace */
+   size_t len = strlen(cleaned);
+   while (len > 0 && (cleaned[len - 1] == ' ' || cleaned[len - 1] == '\t' ||
+                      cleaned[len - 1] == '\n' || cleaned[len - 1] == '\r')) {
+      cleaned[--len] = '\0';
+   }
+
+   /* Only generate TTS if there's actual content */
+   if (len > 0) {
+      /* Switch to "speaking" state when first audio is ready */
+      webui_send_state(session, "speaking");
+
+      /* Check if client supports Opus codec */
+      ws_connection_t *conn = (ws_connection_t *)session->client_data;
+      bool use_opus = conn && conn->use_opus;
+
+      LOG_INFO("WebUI: TTS streaming sentence (%s): %.60s%s", use_opus ? "opus" : "pcm", cleaned,
+               len > 60 ? "..." : "");
+
+      if (use_opus) {
+         /* Encode TTS output as Opus for bandwidth savings */
+         uint8_t *opus = NULL;
+         size_t opus_len = 0;
+         int ret = webui_audio_text_to_opus(cleaned, &opus, &opus_len);
+
+         if (ret == WEBUI_AUDIO_SUCCESS && opus && opus_len > 0) {
+            webui_send_audio(session, opus, opus_len);
+            webui_send_audio_end(session);
+            free(opus);
+         }
+      } else {
+         /* Send raw PCM for legacy clients */
+         int16_t *pcm = NULL;
+         size_t samples = 0;
+         int ret = webui_audio_text_to_pcm(cleaned, &pcm, &samples);
+
+         if (ret == WEBUI_AUDIO_SUCCESS && pcm && samples > 0) {
+            size_t bytes = samples * sizeof(int16_t);
+            webui_send_audio(session, (const uint8_t *)pcm, bytes);
+            webui_send_audio_end(session);
+            free(pcm);
+         }
+      }
+   }
+
+   free(cleaned);
+}
+
+/**
+ * @brief Audio worker thread - process voice input and generate response
+ *
+ * Uses sentence-by-sentence TTS streaming: audio is generated and sent as each
+ * sentence completes during the LLM response, rather than waiting for the full
+ * response. This significantly reduces perceived latency.
+ */
+static void *audio_worker_thread(void *arg) {
+   audio_work_t *work = (audio_work_t *)arg;
+   session_t *session = work->session;
+   uint8_t *audio_data = work->audio_data;
+   size_t audio_len = work->audio_len;
+
+   if (!session || session->disconnected) {
+      LOG_INFO("WebUI: Audio session disconnected, aborting");
+      if (session) {
+         session_release(session);
+      }
+      free(audio_data);
+      free(work);
+      return NULL;
+   }
+
+   LOG_INFO("WebUI: Processing audio for session %u (%zu bytes, %s)", session->session_id,
+            audio_len, work->use_opus ? "opus" : "pcm");
+
+   /* Send "listening" state (ASR in progress) */
+   webui_send_state(session, "listening");
+
+   /* Transcribe audio */
+   char *transcript = NULL;
+   int ret;
+
+   if (work->use_opus) {
+      /* Decode Opus (48kHz) and resample to 16kHz for ASR */
+      ret = webui_audio_opus_to_text(audio_data, audio_len, &transcript);
+      free(audio_data);
+      work->audio_data = NULL;
+   } else {
+      /* Raw PCM: 16-bit signed, 48kHz, mono - resample to 16kHz for ASR */
+      size_t pcm_samples = audio_len / sizeof(int16_t);
+      ret = webui_audio_pcm48k_to_text((const int16_t *)audio_data, pcm_samples, &transcript);
+      free(audio_data);
+      work->audio_data = NULL;
+   }
+
+   if (ret != WEBUI_AUDIO_SUCCESS || !transcript || strlen(transcript) == 0) {
+      LOG_WARNING("WebUI: Audio transcription failed or empty");
+      webui_send_error(session, "ASR_FAILED", "Could not understand audio");
+      webui_send_state(session, "idle");
+      session_release(session);
+      free(transcript);
+      free(work);
+      return NULL;
+   }
+
+   LOG_INFO("WebUI: Transcribed: \"%s\"", transcript);
+
+   /* Check disconnection */
+   if (session->disconnected) {
+      session_release(session);
+      free(transcript);
+      free(work);
+      return NULL;
+   }
+
+   /* Echo transcription as user message */
+   webui_send_transcript(session, "user", transcript);
+
+   /* Send "thinking" state while LLM processes - streaming callback will switch to "speaking" */
+   webui_send_state_with_detail(session, "thinking", "Processing request...");
+
+   /* Call LLM with TTS streaming - audio is generated and sent per-sentence */
+   char *response = session_llm_call_with_tts(session, transcript, webui_sentence_audio_callback,
+                                              session);
+   free(transcript);
+
+   if (!response || session->disconnected) {
+      LOG_WARNING("WebUI: LLM call failed or session disconnected");
+      if (!session->disconnected) {
+         webui_send_error(session, "LLM_ERROR", "Failed to get response");
+      }
+      webui_send_state(session, "idle");
+      session_release(session);
+      free(response);
+      free(work);
+      return NULL;
+   }
+
+   /* Process commands if present (audio already sent via streaming callback) */
+   if (strstr(response, "<command>")) {
+      LOG_INFO("WebUI: Audio response contains commands, processing...");
+      webui_send_state(session, "processing");
+
+      char *processed = webui_process_commands(response, session);
+      if (processed && !session->disconnected) {
+         free(response);
+         response = processed;
+
+         /* Generate TTS for the follow-up response (command results) */
+         LOG_INFO("WebUI: Generating TTS for command result: %.60s%s", processed,
+                  strlen(processed) > 60 ? "..." : "");
+         webui_sentence_audio_callback(processed, session);
+      }
+   }
+
+   /* Send audio end marker (all audio chunks have been sent) */
+   webui_send_audio_end(session);
+
+   /* Free response */
+   free(response);
+
+   /* Send context usage update to WebUI */
+   {
+      int current_tokens, max_tokens;
+      float threshold;
+      llm_context_get_last_usage(&current_tokens, &max_tokens, &threshold);
+      if (max_tokens > 0) {
+         webui_send_context(session, current_tokens, max_tokens, threshold);
+      }
+   }
+
+   webui_send_state(session, "idle");
+
+   /* Release session reference (acquired before thread creation) */
+   session_release(session);
+
+   free(work);
+   return NULL;
+}
+
+/**
+ * @brief Handle binary WebSocket message (audio data)
+ *
+ * Binary message format:
+ * - Byte 0: Message type (WS_BIN_AUDIO_IN or WS_BIN_AUDIO_IN_END)
+ * - Bytes 1+: Opus audio data (for AUDIO_IN) or empty (for AUDIO_IN_END)
+ */
+void handle_binary_message(ws_connection_t *conn, const uint8_t *data, size_t len) {
+   if (len < 1) {
+      LOG_WARNING("WebUI: Empty binary message");
+      return;
+   }
+
+   if (!conn->session) {
+      LOG_WARNING("WebUI: Binary message but no session");
+      return;
+   }
+
+   uint8_t msg_type = data[0];
+   const uint8_t *payload = data + 1;
+   size_t payload_len = len - 1;
+
+   switch (msg_type) {
+      case WS_BIN_AUDIO_IN: {
+         /* Accumulate audio data in connection buffer */
+         if (payload_len == 0) {
+            break;
+         }
+
+         /* Initialize buffer if needed */
+         if (!conn->audio_buffer) {
+            conn->audio_buffer_capacity = WEBUI_AUDIO_BUFFER_SIZE;
+            conn->audio_buffer = malloc(conn->audio_buffer_capacity);
+            if (!conn->audio_buffer) {
+               LOG_ERROR("WebUI: Failed to allocate audio buffer");
+               send_error_impl(conn->wsi, "BUFFER_ERROR", "Audio buffer allocation failed");
+               return;
+            }
+            conn->audio_buffer_len = 0;
+         }
+
+         /* Check if we have room */
+         if (conn->audio_buffer_len + payload_len > conn->audio_buffer_capacity) {
+            /* Expand buffer */
+            size_t new_capacity = conn->audio_buffer_capacity * 2;
+
+            /* Enforce maximum capacity to prevent OOM from malicious/long recordings */
+            if (new_capacity > WEBUI_AUDIO_MAX_CAPACITY) {
+               LOG_WARNING("WebUI: Audio buffer would exceed max capacity (%d bytes)",
+                           WEBUI_AUDIO_MAX_CAPACITY);
+               send_error_impl(conn->wsi, "BUFFER_FULL", "Recording too long");
+               return;
+            }
+
+            uint8_t *new_buffer = realloc(conn->audio_buffer, new_capacity);
+            if (!new_buffer) {
+               LOG_ERROR("WebUI: Failed to expand audio buffer");
+               send_error_impl(conn->wsi, "BUFFER_ERROR", "Audio buffer allocation failed");
+               return;
+            }
+            conn->audio_buffer = new_buffer;
+            conn->audio_buffer_capacity = new_capacity;
+         }
+
+         /* Append audio data */
+         memcpy(conn->audio_buffer + conn->audio_buffer_len, payload, payload_len);
+         conn->audio_buffer_len += payload_len;
+
+         LOG_INFO("WebUI: Accumulated %zu bytes audio (total: %zu)", payload_len,
+                  conn->audio_buffer_len);
+         break;
+      }
+
+      case WS_BIN_AUDIO_IN_END: {
+         /* End of utterance - process accumulated audio */
+         if (!conn->audio_buffer || conn->audio_buffer_len == 0) {
+            LOG_WARNING("WebUI: AUDIO_IN_END but no audio accumulated");
+            break;
+         }
+
+         LOG_INFO("WebUI: Audio end, processing %zu bytes", conn->audio_buffer_len);
+
+         /* Create work item for worker thread */
+         audio_work_t *work = malloc(sizeof(audio_work_t));
+         if (!work) {
+            LOG_ERROR("WebUI: Failed to allocate audio work");
+            free(conn->audio_buffer);
+            conn->audio_buffer = NULL;
+            conn->audio_buffer_len = 0;
+            send_error_impl(conn->wsi, "PROCESSING_ERROR", "Audio processing failed");
+            return;
+         }
+
+         work->session = conn->session;
+         work->audio_data = conn->audio_buffer;
+         work->audio_len = conn->audio_buffer_len;
+         work->use_opus = conn->use_opus;
+
+         /* Transfer ownership to worker */
+         conn->audio_buffer = NULL;
+         conn->audio_buffer_len = 0;
+
+         /* Retain session for worker thread (worker will release when done) */
+         session_retain(conn->session);
+
+         /* Spawn worker thread */
+         pthread_t thread;
+         pthread_attr_t attr;
+         pthread_attr_init(&attr);
+         pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+
+         int ret = pthread_create(&thread, &attr, audio_worker_thread, work);
+         pthread_attr_destroy(&attr);
+
+         if (ret != 0) {
+            LOG_ERROR("WebUI: Failed to create audio worker thread");
+            session_release(conn->session);
+            free(work->audio_data);
+            free(work);
+            send_error_impl(conn->wsi, "PROCESSING_ERROR", "Audio processing failed");
+         }
+         break;
+      }
+
+      default:
+         LOG_WARNING("WebUI: Unknown binary message type: 0x%02x", msg_type);
+         break;
+   }
 }

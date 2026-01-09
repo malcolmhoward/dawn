@@ -2848,7 +2848,10 @@
     // Auto-resize textarea as user types
     elements.textInput.addEventListener('input', function() {
       this.style.height = 'auto';
-      this.style.height = Math.min(this.scrollHeight, 150) + 'px';
+      const newHeight = Math.min(this.scrollHeight, 150);
+      this.style.height = newHeight + 'px';
+      // Only show scrollbar when content exceeds max height
+      this.style.overflowY = this.scrollHeight > 150 ? 'auto' : 'hidden';
     });
 
     // Mic button - push to talk
