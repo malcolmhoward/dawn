@@ -153,8 +153,19 @@ void handle_get_config(ws_connection_t *conn) {
                                : resolved.cloud_provider == CLOUD_PROVIDER_CLAUDE ? "Claude"
                                                                                   : "None";
    json_object_object_add(llm_runtime, "provider", json_object_new_string(provider_name));
+   /* Get actual model name from config based on type/provider */
+   const char *model_name = NULL;
+   if (resolved.model && resolved.model[0] != '\0') {
+      model_name = resolved.model;
+   } else if (resolved.type == LLM_LOCAL) {
+      model_name = g_config.llm.local.model[0] ? g_config.llm.local.model : "local";
+   } else if (resolved.cloud_provider == CLOUD_PROVIDER_OPENAI) {
+      model_name = g_config.llm.cloud.openai_model;
+   } else if (resolved.cloud_provider == CLOUD_PROVIDER_CLAUDE) {
+      model_name = g_config.llm.cloud.claude_model;
+   }
    json_object_object_add(llm_runtime, "model",
-                          json_object_new_string(resolved.model ? resolved.model : ""));
+                          json_object_new_string(model_name ? model_name : ""));
    json_object_object_add(llm_runtime, "openai_available",
                           json_object_new_boolean(llm_has_openai_key()));
    json_object_object_add(llm_runtime, "claude_available",

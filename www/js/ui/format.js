@@ -35,10 +35,30 @@
     return DOMPurify.sanitize(html);
   }
 
+  /**
+   * Format a date as a relative time string
+   * @param {Date} date - Date to format
+   * @returns {string} Relative time string (e.g., "5 mins ago", "2 days ago")
+   */
+  function formatRelativeTime(date) {
+    const now = new Date();
+    const diffMs = now - date;
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMins / 60);
+    const diffDays = Math.floor(diffHours / 24);
+
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins} min${diffMins !== 1 ? 's' : ''} ago`;
+    if (diffHours < 24) return `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`;
+    if (diffDays < 7) return `${diffDays} day${diffDays !== 1 ? 's' : ''} ago`;
+    return date.toLocaleDateString();
+  }
+
   // Expose globally
   global.DawnFormat = {
     escapeHtml: escapeHtml,
-    markdown: formatMarkdown
+    markdown: formatMarkdown,
+    relativeTime: formatRelativeTime
   };
 
 })(window);

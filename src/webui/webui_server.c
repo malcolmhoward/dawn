@@ -773,9 +773,25 @@ static void send_history_impl(struct lws *wsi, session_t *session) {
    int len = json_object_array_length(history);
    int sent_count = 0;
 
-   LOG_INFO("WebUI: Sending %d history entries to reconnected client", len);
+   /*
+    * Limit history sent on reconnect to prevent overwhelming WebSocket buffer.
+    * libwebsockets can only do ONE lws_write() per writable callback, so sending
+    * hundreds of messages in a loop causes buffer overflow and connection failure.
+    *
+    * Clients with persistent conversation history can load full history via
+    * load_conversation_response instead.
+    */
+   const int MAX_RECONNECT_HISTORY = 50;
+   int start_idx = (len > MAX_RECONNECT_HISTORY) ? (len - MAX_RECONNECT_HISTORY) : 0;
 
-   for (int i = 0; i < len; i++) {
+   if (len > MAX_RECONNECT_HISTORY) {
+      LOG_INFO("WebUI: Limiting reconnect history from %d to last %d entries", len,
+               MAX_RECONNECT_HISTORY);
+   } else {
+      LOG_INFO("WebUI: Sending %d history entries to reconnected client", len);
+   }
+
+   for (int i = start_idx; i < len; i++) {
       struct json_object *msg = json_object_array_get_idx(history, i);
       if (!msg)
          continue;
@@ -1147,16 +1163,6 @@ static void handle_get_metrics(ws_connection_t *conn);
 void send_json_response(struct lws *wsi, json_object *response) {
    const char *json_str = json_object_to_json_string(response);
    size_t json_len = strlen(json_str);
-
-   /* Log large responses that may cause HTTP/2 issues */
-   if (json_len > 10000) {
-      json_object *type_obj;
-      const char *type = "unknown";
-      if (json_object_object_get_ex(response, "type", &type_obj)) {
-         type = json_object_get_string(type_obj);
-      }
-      LOG_WARNING("WebUI: Large response: type=%s, size=%zu bytes", type, json_len);
-   }
 
    if (json_len < MAX_STACK_RESPONSE - LWS_PRE) {
       /* Use stack buffer for small responses */
@@ -1575,6 +1581,19 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                                                                                       : "none";
          json_object_object_add(resp_payload, "type", json_object_new_string(type_str));
          json_object_object_add(resp_payload, "provider", json_object_new_string(provider_str));
+
+         /* Get model name from config based on resolved type/provider */
+         const dawn_config_t *cfg = config_get();
+         const char *model_name = NULL;
+         if (current.type == LLM_LOCAL) {
+            model_name = cfg->llm.local.model[0] ? cfg->llm.local.model : "local";
+         } else if (current.cloud_provider == CLOUD_PROVIDER_OPENAI) {
+            model_name = cfg->llm.cloud.openai_model;
+         } else if (current.cloud_provider == CLOUD_PROVIDER_CLAUDE) {
+            model_name = cfg->llm.cloud.claude_model;
+         }
+         json_object_object_add(resp_payload, "model",
+                                json_object_new_string(model_name ? model_name : ""));
       }
 
       /* Include API key availability */
@@ -1707,11 +1726,19 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                                 json_object_new_string(
                                     "SmartThings client credentials not configured"));
       } else {
-         /* Build redirect URI from current WebUI URL */
+         /* Get redirect URI from client (uses window.location.origin) */
          char redirect_uri[256];
-         const dawn_config_t *cfg = config_get();
-         snprintf(redirect_uri, sizeof(redirect_uri), "%s://localhost:%d/smartthings/callback",
-                  cfg->webui.https ? "https" : "http", cfg->webui.port);
+         struct json_object *redirect_obj = NULL;
+         if (json_object_object_get_ex(payload, "redirect_uri", &redirect_obj) &&
+             json_object_is_type(redirect_obj, json_type_string)) {
+            strncpy(redirect_uri, json_object_get_string(redirect_obj), sizeof(redirect_uri) - 1);
+            redirect_uri[sizeof(redirect_uri) - 1] = '\0';
+         } else {
+            /* Fallback to localhost if not provided */
+            const dawn_config_t *cfg = config_get();
+            snprintf(redirect_uri, sizeof(redirect_uri), "%s://localhost:%d/smartthings/callback",
+                     cfg->webui.https ? "https" : "http", cfg->webui.port);
+         }
 
          char auth_url[1024];
          st_error_t err = smartthings_get_auth_url(redirect_uri, auth_url, sizeof(auth_url));

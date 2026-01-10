@@ -27,13 +27,39 @@
     const toast = document.createElement('div');
     toast.className = 'toast toast-' + type;
     toast.textContent = message;
+
+    // ARIA attributes for screen reader accessibility
+    // Errors use 'alert' role (assertive - interrupts user)
+    // Other types use 'status' role (polite - waits for pause)
+    if (type === 'error') {
+      toast.setAttribute('role', 'alert');
+      toast.setAttribute('aria-live', 'assertive');
+    } else {
+      toast.setAttribute('role', 'status');
+      toast.setAttribute('aria-live', 'polite');
+    }
+
     container.appendChild(toast);
 
-    // Auto-remove after 4 seconds
-    setTimeout(() => {
-      toast.classList.add('toast-fade-out');
-      setTimeout(() => toast.remove(), 300);
-    }, 4000);
+    // Auto-dismiss timer
+    let dismissTimer;
+    const startDismissTimer = () => {
+      dismissTimer = setTimeout(() => {
+        toast.classList.add('toast-fade-out');
+        setTimeout(() => toast.remove(), 300);
+      }, 4000);
+    };
+
+    // Pause timer on hover/focus for accessibility (H10)
+    toast.addEventListener('mouseenter', () => clearTimeout(dismissTimer));
+    toast.addEventListener('mouseleave', startDismissTimer);
+    toast.addEventListener('focus', () => clearTimeout(dismissTimer));
+    toast.addEventListener('blur', startDismissTimer);
+
+    // Make focusable for keyboard users (M11)
+    toast.setAttribute('tabindex', '0');
+
+    startDismissTimer();
   }
 
   // Expose globally

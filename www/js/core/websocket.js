@@ -77,7 +77,7 @@
       // Try to reconnect with existing session token, or request new session
       const savedToken = localStorage.getItem('dawn_session_token');
       if (savedToken) {
-        console.log('Attempting session reconnect with token:', savedToken.substring(0, 8) + '...');
+        console.log('Attempting session reconnect with saved token');
         ws.send(JSON.stringify({
           type: 'reconnect',
           payload: { token: savedToken, capabilities: capabilities }

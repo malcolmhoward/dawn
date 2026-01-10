@@ -528,11 +528,67 @@ static int handle_auth_login(struct lws *wsi, struct http_session_data *pss) {
 }
 
 /**
+ * @brief Check if request Origin/Referer matches our host (CSRF protection)
+ * @param wsi HTTP connection
+ * @return true if same-origin, false if cross-origin
+ */
+static bool is_same_origin_request(struct lws *wsi) {
+   char host[256] = { 0 };
+   char origin[256] = { 0 };
+   char referer[512] = { 0 };
+
+   /* Get our Host header (what the browser thinks we are) */
+   int host_len = lws_hdr_copy(wsi, host, sizeof(host), WSI_TOKEN_HOST);
+   if (host_len <= 0) {
+      return true; /* No host header - allow (unlikely) */
+   }
+
+   /* Check Origin header (preferred for CORS/CSRF) */
+   int origin_len = lws_hdr_copy(wsi, origin, sizeof(origin), WSI_TOKEN_ORIGIN);
+   if (origin_len > 0) {
+      /* Origin should be https://host or http://host */
+      char expected_https[280], expected_http[280];
+      snprintf(expected_https, sizeof(expected_https), "https://%s", host);
+      snprintf(expected_http, sizeof(expected_http), "http://%s", host);
+      if (strcmp(origin, expected_https) == 0 || strcmp(origin, expected_http) == 0) {
+         return true;
+      }
+      LOG_WARNING("CSRF: Origin mismatch - expected %s, got %s", host, origin);
+      return false;
+   }
+
+   /* No Origin - check Referer as fallback */
+   int referer_len = lws_hdr_copy(wsi, referer, sizeof(referer), WSI_TOKEN_HTTP_REFERER);
+   if (referer_len > 0) {
+      /* Referer should start with https://host/ or http://host/ */
+      char expected_https[280], expected_http[280];
+      snprintf(expected_https, sizeof(expected_https), "https://%s/", host);
+      snprintf(expected_http, sizeof(expected_http), "http://%s/", host);
+      if (strncmp(referer, expected_https, strlen(expected_https)) == 0 ||
+          strncmp(referer, expected_http, strlen(expected_http)) == 0) {
+         return true;
+      }
+      LOG_WARNING("CSRF: Referer mismatch - expected %s, got %s", host, referer);
+      return false;
+   }
+
+   /* No Origin or Referer - allow for API/curl usage */
+   return true;
+}
+
+/**
  * @brief Handle POST /api/auth/logout
  * @param wsi HTTP connection
  * @return -1 to close connection after response
  */
 static int handle_auth_logout(struct lws *wsi) {
+   /* CSRF protection: verify request is same-origin */
+   if (!is_same_origin_request(wsi)) {
+      LOG_WARNING("WebUI: Blocked cross-origin logout attempt");
+      lws_return_http_status(wsi, HTTP_STATUS_FORBIDDEN, NULL);
+      return -1;
+   }
+
    char token[AUTH_TOKEN_LEN];
    if (extract_session_cookie(wsi, token)) {
       auth_session_t session;
