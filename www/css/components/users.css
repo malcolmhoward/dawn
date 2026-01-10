@@ -1,0 +1,333 @@
+/*
+ * DAWN WebUI - User Management Component
+ * User list, session management, role badges
+ */
+
+/* =============================================================================
+ * User Management Styles
+ * ============================================================================= */
+
+/* User list */
+.user-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.user-list-empty {
+  color: var(--text-secondary);
+  font-style: italic;
+  padding: 1rem;
+  text-align: center;
+}
+
+.loading-indicator {
+  color: var(--text-secondary);
+  padding: 1rem;
+  text-align: center;
+  font-style: italic;
+}
+
+.loading-indicator::after {
+  content: '';
+  animation: ellipsis 1.5s infinite;
+}
+
+@keyframes ellipsis {
+  0% { content: ''; }
+  25% { content: '.'; }
+  50% { content: '..'; }
+  75% { content: '...'; }
+}
+
+.user-list-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem;
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+  gap: 1rem;
+}
+
+.user-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.user-info .username {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.user-info .user-details {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.user-badges {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.role-badge {
+  display: inline-block;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  font-weight: 500;
+}
+
+.role-badge.admin {
+  background: var(--accent-hover);
+  border: 1px solid var(--accent-dim);
+  color: var(--accent);
+}
+
+.role-badge.locked {
+  background: rgba(240, 180, 41, 0.15);
+  border: 1px solid rgba(240, 180, 41, 0.4);
+  color: var(--warning);
+}
+
+.user-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.btn-icon {
+  background: transparent;
+  border: 1px solid var(--ring-inactive);
+  border-radius: 6px;
+  width: 32px;
+  height: 32px;
+  cursor: pointer;
+  font-size: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition-fast);
+  color: var(--text-secondary);
+}
+
+.btn-icon svg {
+  stroke: var(--text-secondary);
+  flex-shrink: 0;
+  transition: transform var(--transition-fast),
+              filter var(--transition-fast),
+              stroke var(--transition-fast);
+}
+
+.btn-icon:hover {
+  background: var(--bg-tertiary);
+  border-color: var(--accent);
+}
+
+.btn-icon:hover svg {
+  stroke: var(--accent);
+  filter: drop-shadow(0 0 4px var(--accent-glow));
+  transform: scale(1.1);
+}
+
+.btn-icon.btn-danger:hover {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.user-management-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+/* Session Management */
+.sessions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.sessions-header {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.5rem;
+}
+
+.sessions-loading,
+.no-sessions {
+  text-align: center;
+  color: var(--text-secondary);
+  padding: 1rem;
+  font-style: italic;
+}
+
+.session-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem;
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+  gap: 1rem;
+  border: 1px solid transparent;
+  transition: border-color var(--transition-fast);
+}
+
+.session-item:hover {
+  border-color: var(--ring-inactive);
+}
+
+.session-item.current-session {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+}
+
+.session-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.session-device {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.device-icon {
+  font-size: 1.1rem;
+}
+
+.device-name {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.current-badge {
+  display: inline-block;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  font-weight: 500;
+  background: var(--accent-hover);
+  border: 1px solid var(--accent-dim);
+  color: var(--accent);
+  margin-left: 0.5rem;
+}
+
+.session-details {
+  display: flex;
+  gap: 1rem;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.session-ip::before {
+  content: '🌐 ';
+  opacity: 0.7;
+}
+
+.session-time::before {
+  content: '🕐 ';
+  opacity: 0.7;
+}
+
+.btn-revoke:hover {
+  border-color: var(--error);
+  color: var(--error);
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.btn-revoke:hover svg {
+  stroke: var(--error);
+  filter: drop-shadow(0 0 4px rgba(239, 68, 68, 0.5));
+}
+
+.btn-icon.btn-danger:hover svg {
+  stroke: var(--error);
+  filter: drop-shadow(0 0 4px rgba(239, 68, 68, 0.5));
+}
+
+.btn-small {
+  padding: 0.35rem 0.6rem;
+  font-size: 0.8rem;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+/* Buttons */
+.btn {
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all var(--transition-fast);
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: #000;
+  font-weight: 500;
+}
+
+.btn-primary:hover {
+  background: var(--accent-hover);
+}
+
+.btn-secondary {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border-color: var(--ring-inactive);
+}
+
+.btn-secondary:hover {
+  border-color: var(--accent);
+}
+
+/* Focus states for keyboard navigation (WCAG 2.4.7) */
+.btn:focus-visible,
+.btn-icon:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.btn-icon.btn-danger:focus-visible {
+  outline-color: var(--error);
+}
+
+.persona-mode-option:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Mobile touch targets (44x44px minimum per WCAG) */
+@media (max-width: 600px) {
+  .btn-icon {
+    width: 44px;
+    height: 44px;
+    font-size: 1.25rem;
+  }
+
+  .btn {
+    padding: 0.75rem 1.25rem;
+    min-height: 44px;
+  }
+
+  .modal-actions {
+    gap: 0.75rem;
+  }
+
+  .modal-actions .btn {
+    flex: 1;
+  }
+}

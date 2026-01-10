@@ -1,0 +1,444 @@
+/*
+ * DAWN WebUI - Transcript Component
+ * Message display, continuation banners, markdown styling
+ */
+
+/* =============================================================================
+ * Transcript
+ * ============================================================================= */
+#transcript {
+  flex: 1;
+  overflow-y: auto;
+  background-color: var(--bg-secondary);
+  border-radius: var(--border-radius);
+  padding: 1rem;
+  margin-bottom: 1rem;
+  min-height: 150px;
+}
+
+.transcript-placeholder {
+  color: var(--text-secondary);
+  text-align: center;
+  padding: 2rem;
+  font-style: italic;
+}
+
+/* Continuation banner for continued conversations */
+.continuation-banner {
+  background: var(--accent-subtle);
+  border: 1px solid var(--accent-focus);
+  border-radius: var(--border-radius);
+  margin-bottom: 1rem;
+  overflow: hidden;
+}
+
+.continuation-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color var(--transition-fast);
+}
+
+.continuation-header:hover {
+  background: var(--accent-border);
+}
+
+.continuation-icon {
+  display: flex;
+  align-items: center;
+  color: var(--accent);
+}
+
+.continuation-icon svg {
+  stroke: currentColor;
+}
+
+.continuation-label {
+  flex: 1;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+
+.continuation-toggle {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  transition: transform var(--transition-fast);
+}
+
+.continuation-content {
+  padding: 0.75rem 1rem;
+  border-top: 1px solid var(--accent-hover);
+  background: rgba(0, 0, 0, 0.1);
+  transition: max-height var(--transition-fast), padding var(--transition-fast), opacity var(--transition-fast), border-top-color var(--transition-fast);
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.continuation-content.collapsed {
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  border-top-color: transparent;
+  opacity: 0;
+  overflow: hidden;
+}
+
+.continuation-summary {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+/* Archived conversation notice */
+.archived-notice {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  margin-bottom: 0.5rem;
+  background: rgba(240, 180, 41, 0.1);
+  border: 1px solid rgba(240, 180, 41, 0.3);
+  border-radius: var(--border-radius);
+  color: var(--warning);
+}
+
+.archived-icon {
+  display: flex;
+  align-items: center;
+}
+
+.archived-label {
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+/* Continuation footer link (at bottom of archived conversations) */
+.continuation-footer {
+  display: flex;
+  justify-content: center;
+  padding: 1rem;
+  margin-top: 0.5rem;
+}
+
+.continuation-link {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.5rem;
+  background: var(--accent-border);
+  border: 1px solid var(--accent-dim);
+  border-radius: var(--border-radius);
+  color: var(--accent);
+  font-size: 0.95rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.continuation-link:hover {
+  background: var(--accent-focus);
+  border-color: var(--accent-glow);
+  transform: translateX(2px);
+}
+
+.continuation-link-icon {
+  display: flex;
+  align-items: center;
+}
+
+/* Disabled input area for archived conversations */
+#input-area.archived {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+#input-area.archived #text-input {
+  background: var(--bg-tertiary);
+  cursor: not-allowed;
+}
+
+.transcript-entry {
+  padding: 0.75rem;
+  margin-bottom: 0.5rem;
+  border-radius: var(--border-radius);
+  animation: fade-in var(--transition-fast) ease-out;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.transcript-entry.user {
+  background-color: var(--bg-tertiary);
+  margin-left: 2rem;
+}
+
+.transcript-entry.assistant {
+  background-color: var(--accent-dim);
+  margin-right: 2rem;
+}
+
+/* Streaming cursor - appears inline at end of text */
+.transcript-entry.assistant.streaming .text::after {
+  content: '▋';
+  animation: blink 1s step-end infinite;
+  color: var(--accent);
+}
+
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+.transcript-entry.system {
+  background-color: rgba(239, 68, 68, 0.2);
+  border-left: 3px solid var(--error);
+}
+
+/* Debug entries hidden by default, shown only when body.debug-mode */
+.transcript-entry.debug {
+  display: none;
+  background-color: rgba(139, 92, 246, 0.15);
+  border-left: 3px solid var(--tool-color);
+  font-family: 'IBM Plex Mono', 'Monaco', 'Menlo', 'Consolas', monospace;
+  font-size: 0.8125rem;
+}
+
+body.debug-mode .transcript-entry.debug {
+  display: block;
+}
+
+.transcript-entry.debug .role {
+  color: var(--tool-color);
+}
+
+.transcript-entry.debug .text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Tool result specific styling (green theme) */
+.transcript-entry.debug.tool-result {
+  background-color: rgba(34, 197, 94, 0.1);
+  border-left: 3px solid var(--success);
+}
+
+.transcript-entry.debug.tool-result .role {
+  color: var(--success);
+}
+
+/* Command specific styling (accent theme) */
+.transcript-entry.debug.command {
+  background-color: var(--accent-border);
+  border-left: 3px solid var(--accent);
+}
+
+.transcript-entry.debug.command .role {
+  color: var(--accent);
+}
+
+/* Tool call specific styling (purple theme) */
+.transcript-entry.debug.tool-call {
+  background-color: rgba(168, 85, 247, 0.1);
+  border-left: 3px solid var(--tool-color-alt);
+}
+
+.transcript-entry.debug.tool-call .role {
+  color: var(--tool-color-alt);
+}
+
+/* System prompt styling (collapsible, yellow/gold theme) */
+.transcript-entry.debug.system-prompt {
+  background-color: rgba(234, 179, 8, 0.1);
+  border-left: 3px solid var(--system-color);
+  padding: 0;
+  margin-bottom: 1rem;
+}
+
+.system-prompt-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.system-prompt-header:hover {
+  background-color: rgba(234, 179, 8, 0.15);
+}
+
+.system-prompt-icon {
+  font-size: 1rem;
+  color: var(--system-color);
+}
+
+.system-prompt-title {
+  font-weight: 600;
+  color: var(--system-color);
+}
+
+.system-prompt-stats {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  margin-left: auto;
+}
+
+.system-prompt-toggle {
+  color: var(--text-secondary);
+  transition: transform var(--transition-fast);
+}
+
+.system-prompt.expanded .system-prompt-toggle {
+  transform: rotate(180deg);
+}
+
+.system-prompt-content {
+  display: none;
+  padding: 0 0.75rem 0.75rem;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.system-prompt.expanded .system-prompt-content {
+  display: block;
+}
+
+.system-prompt-content pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--text-primary);
+  background-color: rgba(0, 0, 0, 0.2);
+  padding: 0.75rem;
+  border-radius: var(--border-radius);
+}
+
+.transcript-entry .role {
+  /* System font: labels */
+  font-family: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
+  font-size: 0.65rem;
+  color: var(--text-secondary);
+  margin-bottom: 0.25rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.transcript-entry .text {
+  /* Human font: conversation */
+  font-family: 'Source Sans 3', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 0.9375rem;
+  line-height: 1.6;
+}
+
+/* Markdown elements within transcript */
+.transcript-entry .text p {
+  margin: 0 0 0.5em 0;
+}
+
+.transcript-entry .text p:last-child {
+  margin-bottom: 0;
+}
+
+.transcript-entry .text strong {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.transcript-entry .text em {
+  font-style: italic;
+}
+
+.transcript-entry .text code {
+  font-family: 'IBM Plex Mono', 'Monaco', 'Menlo', 'Consolas', monospace;
+  font-size: 0.85em;
+  background-color: rgba(255, 255, 255, 0.08);
+  padding: 0.15em 0.4em;
+  border-radius: 3px;
+}
+
+.transcript-entry .text pre {
+  font-family: 'IBM Plex Mono', 'Monaco', 'Menlo', 'Consolas', monospace;
+  font-size: 0.85em;
+  background-color: rgba(0, 0, 0, 0.3);
+  padding: 0.75em 1em;
+  border-radius: 4px;
+  overflow-x: auto;
+  margin: 0.5em 0;
+}
+
+.transcript-entry .text pre code {
+  background: none;
+  padding: 0;
+}
+
+.transcript-entry .text ul,
+.transcript-entry .text ol {
+  margin: 0.5em 0;
+  padding-left: 1.5em;
+}
+
+.transcript-entry .text li {
+  margin: 0.25em 0;
+}
+
+.transcript-entry .text blockquote {
+  border-left: 3px solid var(--accent);
+  margin: 0.5em 0;
+  padding-left: 1em;
+  opacity: 0.85;
+}
+
+.transcript-entry .text table {
+  border-collapse: collapse;
+  margin: 0.5em 0;
+  font-size: 0.9em;
+}
+
+.transcript-entry .text th,
+.transcript-entry .text td {
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  padding: 0.4em 0.8em;
+  text-align: left;
+}
+
+.transcript-entry .text th {
+  background-color: rgba(255, 255, 255, 0.05);
+  font-weight: 600;
+}
+
+.transcript-entry .text a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.transcript-entry .text a:hover {
+  text-decoration: underline;
+}
+
+.transcript-entry .text h1,
+.transcript-entry .text h2,
+.transcript-entry .text h3,
+.transcript-entry .text h4 {
+  margin: 0.5em 0 0.25em 0;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.transcript-entry .text h1 { font-size: 1.3em; }
+.transcript-entry .text h2 { font-size: 1.2em; }
+.transcript-entry .text h3 { font-size: 1.1em; }
+.transcript-entry .text h4 { font-size: 1em; }
+
+.transcript-entry .text hr {
+  border: none;
+  border-top: 1px solid rgba(255, 255, 255, 0.15);
+  margin: 0.75em 0;
+}

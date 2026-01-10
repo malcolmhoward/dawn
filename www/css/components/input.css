@@ -1,0 +1,76 @@
+/*
+ * DAWN WebUI - Input Area Component
+ * Text input, send button, microphone button
+ */
+
+/* =============================================================================
+ * Input Area
+ * ============================================================================= */
+#input-area {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  background-color: var(--bg-secondary);
+  border-radius: var(--border-radius);
+  flex-shrink: 0;
+}
+
+#text-input {
+  flex: 1;
+  padding: 0.75rem 1rem;
+  background-color: var(--bg-tertiary);
+  border: 1px solid transparent;
+  border-radius: var(--border-radius);
+  color: var(--text-primary);
+  font-size: 1rem;
+  font-family: inherit;
+  transition: border-color var(--transition-fast);
+  resize: none;
+  min-height: 44px;
+  max-height: 150px;
+  overflow-y: hidden;
+  line-height: 1.4;
+}
+
+#text-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+#text-input::placeholder {
+  color: var(--text-secondary);
+}
+
+/* =============================================================================
+ * Mic Button
+ * ============================================================================= */
+#mic-btn {
+  background-color: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border: 1px solid var(--text-secondary);
+  min-width: 60px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#mic-btn:not(:disabled):hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+#mic-btn.recording {
+  background-color: var(--error);
+  color: white;
+  border-color: var(--error);
+  animation: pulse-recording 1s infinite;
+}
+
+@keyframes pulse-recording {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(239, 68, 68, 0);
+  }
+}

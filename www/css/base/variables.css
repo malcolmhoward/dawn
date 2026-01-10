@@ -1,0 +1,63 @@
+/*
+ * DAWN WebUI - CSS Variables
+ * Color Philosophy:
+ * - Neutral grays for inactive/structural elements
+ * - Cyan (#2dd4bf) ONLY for active system behavior
+ * - Amber (#f0b429) for warnings, hesitation, strain
+ */
+
+:root {
+  /* Neutral UI Baseline */
+  --bg-primary: #121417;
+  --bg-secondary: #1b1f24;
+  --bg-tertiary: #242a31;
+  --bg-panel: #1b1f24;
+
+  /* Text Hierarchy */
+  --text-primary: #e6e6e6;
+  --text-secondary: #7b8794;    /* Units (ms, tok/s) */
+  --text-tertiary: #6b7280;     /* Labels, dividers */
+
+  /* Ring Colors */
+  --ring-inactive: #2a323a;     /* Inactive segments, outlines */
+  --ring-active: #2dd4bf;       /* Active segments only */
+
+  /* Accent Colors (Active = doing work) */
+  --accent: #2dd4bf;
+  --accent-dim: rgba(45, 212, 191, 0.3);
+  --accent-glow: rgba(45, 212, 191, 0.5);
+  --accent-subtle: rgba(45, 212, 191, 0.06);
+  --accent-border: rgba(45, 212, 191, 0.1);
+  --accent-hover: rgba(45, 212, 191, 0.15);
+  --accent-focus: rgba(45, 212, 191, 0.2);
+  --accent-medium: rgba(45, 212, 191, 0.4);
+
+  /* State Colors */
+  --error: #ef4444;
+  --error-hover: #dc2626;       /* Darker red for hover states */
+  --success: #22c55e;
+  --warning: #f0b429;           /* Amber - hesitation, strain, >50% context */
+
+  /* Semantic Colors */
+  --tool-color: #8b5cf6;        /* Purple - tool/function calls */
+  --tool-color-alt: #a855f7;    /* Purple variant - assistant tool entries */
+  --system-color: #eab308;      /* Yellow - system messages */
+
+  /* Semantic Surface Colors */
+  --surface-elevated: var(--bg-tertiary);
+  --border-color: var(--ring-inactive);
+
+  /* Layout */
+  --border-radius: 8px;
+  --border-radius-sm: 4px;
+  --transition-fast: 150ms;
+  --transition-medium: 300ms;
+
+  /* Responsive Breakpoints (for reference - CSS can't use vars in @media)
+   * --bp-mobile: 600px    - Major layout shifts
+   * --bp-compact: 500px   - Tighter spacing
+   * --bp-narrow: 480px    - Form adjustments
+   * --bp-minimal: 400px   - Bottom sheets, hide elements
+   * --bp-tiny: 380px      - Extra-compact controls
+   */
+}

@@ -1,0 +1,162 @@
+/*
+ * DAWN WebUI - Context Gauge Component
+ * Context pressure gauge and LLM quick controls
+ */
+
+/* =============================================================================
+ * Context Pressure Gauge (Phase 3)
+ * ============================================================================= */
+.context-display {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin-top: 0.25rem;
+  margin-bottom: 0.25rem;  /* Tightened space before LLM controls */
+  border-top: 1px solid var(--bg-secondary);
+  padding-top: 0.25rem;
+}
+
+.context-gauge-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+}
+
+.context-gauge {
+  width: 100%;
+  max-width: 280px;
+  height: auto;
+}
+
+/* Gauge segment styling - rainbow arc segments */
+.gauge-segment {
+  transition: opacity 0.2s ease, filter 0.2s ease;
+}
+
+/* Flash animation for >90% critical state */
+@keyframes gauge-flash {
+  0%, 100% { opacity: 0.9; }
+  50% { opacity: 0.4; }
+}
+
+.gauge-segment.flashing {
+  animation: gauge-flash 0.5s ease-in-out infinite;
+}
+
+/* SVG text labels inside the gauge - isolated from segment filters */
+.gauge-labels {
+  isolation: isolate;
+}
+
+.gauge-title,
+.gauge-tokens,
+.gauge-percent {
+  font-family: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
+  /* Explicitly disable all glow/shadow effects */
+  filter: none;
+  -webkit-filter: none;
+  text-shadow: none;
+  stroke: none;
+  paint-order: normal;
+}
+
+.gauge-title {
+  font-size: 8px;
+  fill: var(--text-primary);
+  letter-spacing: 0.1em;
+}
+
+.gauge-tokens {
+  font-size: 10px;
+  fill: var(--text-secondary);
+}
+
+.gauge-percent {
+  font-size: 10px;
+  font-weight: 600;
+  fill: var(--text-secondary);
+  transition: fill 0.3s ease;
+}
+
+.gauge-percent.warning {
+  fill: var(--warning);
+}
+
+.gauge-percent.danger {
+  fill: var(--error);
+}
+
+/* =============================================================================
+ * LLM Quick Controls
+ * ============================================================================= */
+#llm-controls {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.5rem 1rem;
+  margin-bottom: 1rem;
+  background-color: var(--bg-secondary);
+  border-radius: var(--border-radius);
+  font-size: 0.875rem;
+}
+
+.llm-control-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.llm-control-group label {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.llm-control-group select {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: border-color var(--transition-fast);
+}
+
+.llm-control-group select:hover {
+  border-color: var(--accent);
+}
+
+.llm-control-group select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.llm-control-group select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.llm-control-group select option {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+#provider-group {
+  transition: opacity var(--transition-fast);
+}
+
+#llm-provider-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+#llm-model-display {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  font-style: italic;
+}

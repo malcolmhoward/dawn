@@ -1,0 +1,195 @@
+/*
+ * DAWN WebUI - Responsive Layout
+ * Media queries for mobile and narrow screens
+ */
+
+/* =============================================================================
+ * General Responsive
+ * ============================================================================= */
+@media (max-width: 600px) {
+  #app {
+    padding: 0.5rem;
+  }
+
+  #visualizer {
+    flex-direction: column;
+    align-items: center;
+  }
+
+  #ring-container {
+    flex: none;
+    width: 150px;
+    height: auto;
+    min-height: 180px;  /* Room for rings + status */
+  }
+
+  .telemetry-panel {
+    flex: none;
+    width: 100%;
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: center;
+    max-height: none;
+  }
+
+  #ring-svg {
+    width: 150px;
+    height: 150px;
+  }
+
+  #ring-inner {
+    width: 65px;
+    height: 65px;
+  }
+
+  #logo {
+    font-size: 1rem;
+  }
+
+  /* Larger touch targets on mobile */
+  .visualizer-collapse-toggle {
+    padding: 0.5rem 0.75rem;
+    font-size: 0.85rem;
+  }
+  .visualizer-mini {
+    padding: 0.75rem;
+    min-height: 44px;
+  }
+
+  #input-area {
+    flex-wrap: wrap;
+  }
+
+  /* Force text input to its own row above buttons */
+  #text-input {
+    flex: 1 1 100%;
+    min-width: 0;
+    margin-bottom: 0.5rem;
+  }
+
+  /* Buttons share the second row */
+  #send-btn,
+  #mic-btn {
+    flex: 1;
+  }
+}
+
+/* Mobile: compact badge */
+@media (max-width: 600px) {
+  .user-badge {
+    padding: 0.25rem 0.5rem;
+    gap: 0.25rem;
+  }
+
+  .user-badge-name {
+    max-width: 60px;
+    font-size: 0.65rem;
+  }
+
+  .user-badge-role {
+    font-size: 0.55rem;
+    padding: 0.1rem 0.25rem;
+  }
+}
+
+/* Very narrow screens: hide name */
+@media (max-width: 400px) {
+  .user-badge-name {
+    display: none;
+  }
+
+  .user-badge-role {
+    font-size: 0.6rem;
+  }
+
+  /* Mobile: bottom sheet at narrow screens */
+  .user-badge-dropdown {
+    position: fixed;
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    min-width: 100%;
+    border-radius: 1rem 1rem 0 0;
+    transform: translateY(100%);
+    transform-origin: bottom center;
+  }
+
+  .user-badge-dropdown.open {
+    transform: translateY(0);
+  }
+
+  .dropdown-item {
+    padding: 1rem 1.25rem;
+    font-size: 1rem;
+  }
+
+  .dropdown-item:first-child {
+    border-radius: 1rem 1rem 0 0;
+  }
+
+  .dropdown-item:last-child {
+    border-radius: 0;
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  }
+
+  /* Backdrop overlay for mobile */
+  .user-badge-dropdown-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 150ms ease, visibility 150ms;
+    z-index: 999;
+  }
+
+  .user-badge-dropdown-backdrop.open {
+    opacity: 1;
+    visibility: visible;
+  }
+}
+
+/* Mobile: tighter header spacing */
+@media (max-width: 500px) {
+  #header-left {
+    gap: 0.5rem;
+  }
+
+  #header-controls {
+    gap: 0.5rem;
+  }
+
+  #connection-status {
+    max-width: 100px;
+    padding: 0.2rem 0.5rem;
+    font-size: 0.6rem;
+  }
+}
+
+/* Very narrow: even tighter */
+@media (max-width: 380px) {
+  #header-left {
+    gap: 0.35rem;
+  }
+
+  #header-controls {
+    gap: 0.35rem;
+  }
+
+  #connection-status {
+    max-width: 70px;
+  }
+
+  #settings-btn {
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    min-height: 32px;
+  }
+
+  #settings-btn svg {
+    width: 16px;
+    height: 16px;
+  }
+}
