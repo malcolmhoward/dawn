@@ -390,7 +390,33 @@
       setTimeout(function() {
         targetSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }, 100);
+
+      // Trigger section-specific data loading
+      triggerSectionLoad(sectionId);
     }
+  }
+
+  /**
+   * Trigger data loading for sections that need it when opened programmatically
+   * @param {string} sectionId - The ID of the section being opened
+   */
+  function triggerSectionLoad(sectionId) {
+    // Allow time for WebSocket to be ready
+    setTimeout(function() {
+      switch (sectionId) {
+        case 'my-sessions-section':
+          if (typeof DawnMySessions !== 'undefined' && DawnMySessions.requestList) {
+            DawnMySessions.requestList();
+          }
+          break;
+        case 'user-management-section':
+          if (typeof DawnUserManagement !== 'undefined' && DawnUserManagement.requestList) {
+            DawnUserManagement.requestList();
+          }
+          break;
+        // Add other sections that need data loading here
+      }
+    }, 150);
   }
 
   /* =============================================================================

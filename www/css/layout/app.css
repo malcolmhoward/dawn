@@ -13,6 +13,8 @@
   max-width: 800px;
   margin: 0 auto;
   padding: 1rem;
+  box-sizing: border-box;
+  overflow-x: hidden;
 }
 
 /* =============================================================================
@@ -57,6 +59,17 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   flex-shrink: 1;
+}
+
+/* Status dot indicator (visible on mobile) */
+#connection-status::before {
+  content: '';
+  display: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: currentColor;
+  box-shadow: 0 0 6px currentColor;
 }
 
 #connection-status.connected {
@@ -294,10 +307,10 @@ body.user-is-admin .settings-paths.admin-only {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
-  min-width: 36px;
-  min-height: 36px;
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
   flex-shrink: 0;
   padding: 0;
   background-color: transparent;
@@ -314,8 +327,8 @@ body.user-is-admin .settings-paths.admin-only {
 }
 
 #settings-btn svg {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
 }
 
 /* =============================================================================

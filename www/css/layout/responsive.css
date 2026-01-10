@@ -167,8 +167,8 @@
   }
 }
 
-/* Very narrow: even tighter */
-@media (max-width: 380px) {
+/* Very narrow: status dot only */
+@media (max-width: 420px) {
   #header-left {
     gap: 0.35rem;
   }
@@ -177,19 +177,15 @@
     gap: 0.35rem;
   }
 
+  /* Show dot, hide text */
   #connection-status {
-    max-width: 70px;
+    font-size: 0;
+    padding: 0.4rem;
+    max-width: none;
+    background: transparent !important;
   }
 
-  #settings-btn {
-    width: 32px;
-    height: 32px;
-    min-width: 32px;
-    min-height: 32px;
-  }
-
-  #settings-btn svg {
-    width: 16px;
-    height: 16px;
+  #connection-status::before {
+    display: block;
   }
 }
