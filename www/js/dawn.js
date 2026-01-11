@@ -12,6 +12,7 @@
 
   // UI state
   let visualizerCollapsed = false;
+  let pendingIdleState = false;  // Server sent "idle" but audio still playing
 
   // Opus codec state
   let opusWorker = null;
@@ -381,6 +382,20 @@
 
   function updateState(state, detail, tools) {
     const previousState = DawnState.getAppState();
+
+    // If server sends "idle" but audio is still playing, defer the transition
+    // This prevents the jarring "IDLE" status while TTS is still speaking
+    if (state === 'idle' && DawnAudioPlayback.isPlaying()) {
+      pendingIdleState = true;
+      console.log('Server sent idle but audio still playing, deferring state change');
+      // Keep showing "speaking" until audio finishes
+      state = 'speaking';
+      detail = null;
+    } else if (state !== 'idle') {
+      // Clear pending idle if we get a non-idle state
+      pendingIdleState = false;
+    }
+
     DawnState.setAppState(state);
 
     // Update status indicator
@@ -824,7 +839,15 @@
     // Initialize audio playback module
     DawnAudioPlayback.setCallbacks({
       onPlaybackStart: DawnVisualization.startFFT,
-      onPlaybackEnd: DawnVisualization.stopFFT
+      onPlaybackEnd: function() {
+        DawnVisualization.stopFFT();
+        // If server sent "idle" while we were playing, apply it now
+        if (pendingIdleState) {
+          pendingIdleState = false;
+          console.log('Audio playback finished, applying deferred idle state');
+          updateState('idle', null, null);
+        }
+      }
     });
 
     // Initialize streaming module

@@ -168,9 +168,12 @@
       latencyAvg.textContent = `avg ${Math.round(avg)}`;
     }
 
-    // Dim ring container when idle (state == 'idle') - not the telemetry panel
+    // Dim ring container when idle - not the telemetry panel
+    // Keep bright while speaking (audio still playing) even if server sent idle
     if (DawnElements.ringContainer) {
-      if (DawnState.metricsState.state === 'idle') {
+      const isIdle = DawnState.metricsState.state === 'idle';
+      const isPlaying = typeof DawnAudioPlayback !== 'undefined' && DawnAudioPlayback.isPlaying();
+      if (isIdle && !isPlaying) {
         DawnElements.ringContainer.classList.add('idle');
       } else {
         DawnElements.ringContainer.classList.remove('idle');
