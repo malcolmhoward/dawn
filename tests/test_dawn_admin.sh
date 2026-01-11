@@ -41,6 +41,13 @@ ADMIN_PASS=""
 # Setup token (can be set via --token arg or DAWN_SETUP_TOKEN env var)
 SETUP_TOKEN="${DAWN_SETUP_TOKEN:-}"
 
+# Existing admin credentials (alternative to setup token)
+EXISTING_ADMIN_USER="${DAWN_ADMIN_USER:-}"
+EXISTING_ADMIN_PASS="${DAWN_ADMIN_PASSWORD:-}"
+
+# Mode: "token" (fresh DB) or "admin" (existing admin credentials)
+AUTH_MODE=""
+
 # Backup path for db backup test
 BACKUP_PATH="/tmp/dawn_auth_backup_$$.db"
 
@@ -87,15 +94,35 @@ parse_args() {
                 SETUP_TOKEN="$2"
                 shift 2
                 ;;
+            --admin-user)
+                EXISTING_ADMIN_USER="$2"
+                shift 2
+                ;;
+            --admin-pass)
+                EXISTING_ADMIN_PASS="$2"
+                shift 2
+                ;;
             --help|-h)
-                echo "Usage: $0 [--token TOKEN]"
+                echo "Usage: $0 [--token TOKEN] [--admin-user USER --admin-pass PASS]"
+                echo ""
+                echo "Authentication modes (choose one):"
+                echo "  --token TOKEN              Setup token from Dawn daemon logs (fresh DB)"
+                echo "  --admin-user/--admin-pass  Use existing admin credentials"
                 echo ""
                 echo "Options:"
-                echo "  --token TOKEN  Setup token from Dawn daemon logs"
-                echo "  --help         Show this help"
+                echo "  --help                     Show this help"
                 echo ""
                 echo "Environment variables:"
-                echo "  DAWN_SETUP_TOKEN  Alternative to --token"
+                echo "  DAWN_SETUP_TOKEN           Alternative to --token"
+                echo "  DAWN_ADMIN_USER            Alternative to --admin-user"
+                echo "  DAWN_ADMIN_PASSWORD        Alternative to --admin-pass"
+                echo ""
+                echo "Examples:"
+                echo "  # Fresh database - use setup token from daemon logs"
+                echo "  $0 --token DAWN-XXXX-XXXX-XXXX-XXXX"
+                echo ""
+                echo "  # Existing database - use admin credentials"
+                echo "  $0 --admin-user admin --admin-pass mypassword"
                 exit 0
                 ;;
             *)
@@ -106,20 +133,60 @@ parse_args() {
     done
 }
 
-# Prompt for setup token if not provided
-get_setup_token() {
-    if [[ -z "$SETUP_TOKEN" ]]; then
-        echo ""
-        echo "A setup token is required to create test users."
-        echo "Find it in Dawn daemon logs: grep 'Setup token' <logfile>"
-        echo ""
-        read -p "Enter setup token (DAWN-XXXX-XXXX-XXXX-XXXX): " SETUP_TOKEN
-
-        if [[ -z "$SETUP_TOKEN" ]]; then
-            echo -e "${RED}No token provided. Exiting.${NC}"
-            exit 1
-        fi
+# Determine authentication mode and get credentials
+get_auth_credentials() {
+    # Check if admin credentials are provided
+    if [[ -n "$EXISTING_ADMIN_USER" && -n "$EXISTING_ADMIN_PASS" ]]; then
+        AUTH_MODE="admin"
+        ADMIN_USER="$EXISTING_ADMIN_USER"
+        ADMIN_PASS="$EXISTING_ADMIN_PASS"
+        info "Using existing admin credentials (user: $ADMIN_USER)"
+        return
     fi
+
+    # Check if setup token is provided
+    if [[ -n "$SETUP_TOKEN" ]]; then
+        AUTH_MODE="token"
+        info "Using setup token for authentication"
+        return
+    fi
+
+    # Neither provided - prompt user
+    echo ""
+    echo "Choose authentication method:"
+    echo "  1) Setup token (fresh database)"
+    echo "  2) Existing admin credentials"
+    echo ""
+    read -p "Enter choice (1 or 2): " choice
+
+    case $choice in
+        1)
+            AUTH_MODE="token"
+            echo ""
+            echo "Find setup token in Dawn daemon logs: grep 'Setup token' <logfile>"
+            read -p "Enter setup token (DAWN-XXXX-XXXX-XXXX-XXXX): " SETUP_TOKEN
+            if [[ -z "$SETUP_TOKEN" ]]; then
+                echo -e "${RED}No token provided. Exiting.${NC}"
+                exit 1
+            fi
+            ;;
+        2)
+            AUTH_MODE="admin"
+            read -p "Enter admin username: " EXISTING_ADMIN_USER
+            read -s -p "Enter admin password: " EXISTING_ADMIN_PASS
+            echo ""
+            if [[ -z "$EXISTING_ADMIN_USER" || -z "$EXISTING_ADMIN_PASS" ]]; then
+                echo -e "${RED}Missing credentials. Exiting.${NC}"
+                exit 1
+            fi
+            ADMIN_USER="$EXISTING_ADMIN_USER"
+            ADMIN_PASS="$EXISTING_ADMIN_PASS"
+            ;;
+        *)
+            echo -e "${RED}Invalid choice. Exiting.${NC}"
+            exit 1
+            ;;
+    esac
 }
 
 # ============================================================================
@@ -141,26 +208,32 @@ test_ping() {
 test_user_create() {
     print_header "Testing: user create"
 
-    # Create admin user (required for initial setup)
-    # Note: Setup tokens are one-time use - only one user can be created per token
-    info "Creating admin user: $TEST_ADMIN_USER"
-    if DAWN_SETUP_TOKEN="$SETUP_TOKEN" DAWN_PASSWORD="$TEST_ADMIN_PASS" \
-       $DAWN_ADMIN user create "$TEST_ADMIN_USER" --admin 2>&1; then
-        pass "Created admin user '$TEST_ADMIN_USER'"
-        ADMIN_USER="$TEST_ADMIN_USER"
-        ADMIN_PASS="$TEST_ADMIN_PASS"
-    else
-        fail "Failed to create admin user '$TEST_ADMIN_USER'"
-        return 1
-    fi
+    if [[ "$AUTH_MODE" == "token" ]]; then
+        # Token mode: Create admin user with setup token (fresh DB)
+        info "Creating admin user: $TEST_ADMIN_USER (using setup token)"
+        if DAWN_SETUP_TOKEN="$SETUP_TOKEN" DAWN_PASSWORD="$TEST_ADMIN_PASS" \
+           $DAWN_ADMIN user create "$TEST_ADMIN_USER" --admin 2>&1; then
+            pass "Created admin user '$TEST_ADMIN_USER'"
+            ADMIN_USER="$TEST_ADMIN_USER"
+            ADMIN_PASS="$TEST_ADMIN_PASS"
+        else
+            fail "Failed to create admin user '$TEST_ADMIN_USER'"
+            return 1
+        fi
 
-    # Verify token is now invalidated (should fail)
-    info "Verifying setup token is now invalidated"
-    if DAWN_SETUP_TOKEN="$SETUP_TOKEN" DAWN_PASSWORD="$TEST_PASS" \
-       $DAWN_ADMIN user create "shouldfail_$$" --admin 2>&1; then
-        fail "Token should have been invalidated after first use"
+        # Verify token is now invalidated (should fail)
+        info "Verifying setup token is now invalidated"
+        if DAWN_SETUP_TOKEN="$SETUP_TOKEN" DAWN_PASSWORD="$TEST_PASS" \
+           $DAWN_ADMIN user create "shouldfail_$$" --admin 2>&1; then
+            fail "Token should have been invalidated after first use"
+        else
+            pass "Setup token correctly invalidated after use"
+        fi
     else
-        pass "Setup token correctly invalidated after use"
+        # Admin mode: User creation requires setup token (CLI limitation)
+        # Skip this test - we'll use existing admin credentials for other tests
+        skip "User create requires setup token (not available in admin mode)"
+        info "Using existing admin account for remaining tests"
     fi
 }
 
@@ -169,10 +242,16 @@ test_user_list() {
 
     output=$($DAWN_ADMIN user list 2>&1) || true
 
-    if echo "$output" | grep -q "$TEST_ADMIN_USER"; then
-        pass "User list contains admin user"
+    # Check for the admin user (either test admin in token mode, or existing admin)
+    local check_user="$ADMIN_USER"
+    if [[ -z "$check_user" ]]; then
+        check_user="$TEST_ADMIN_USER"
+    fi
+
+    if echo "$output" | grep -q "$check_user"; then
+        pass "User list contains admin user ($check_user)"
     else
-        fail "User list missing admin user"
+        fail "User list missing admin user ($check_user)"
         echo "$output"
     fi
 
@@ -189,6 +268,12 @@ test_user_list() {
 test_user_passwd() {
     print_header "Testing: user passwd"
 
+    if [[ "$AUTH_MODE" == "admin" ]]; then
+        # Don't modify the existing admin's password - that would break things
+        skip "Password change skipped in admin mode (no test user to modify)"
+        return
+    fi
+
     if [[ -z "$ADMIN_USER" ]]; then
         skip "No admin user available for passwd test"
         return
@@ -196,20 +281,25 @@ test_user_passwd() {
 
     NEW_PASS="NewPassword789!"
 
-    # Change admin's own password (use current password for auth)
-    info "Changing password for $TEST_ADMIN_USER"
+    # Change the test admin's password
+    info "Changing password for $ADMIN_USER"
     if DAWN_ADMIN_USER="$ADMIN_USER" DAWN_ADMIN_PASSWORD="$ADMIN_PASS" DAWN_PASSWORD="$NEW_PASS" \
-       $DAWN_ADMIN user passwd "$TEST_ADMIN_USER" 2>&1; then
-        pass "Password changed for '$TEST_ADMIN_USER'"
+       $DAWN_ADMIN user passwd "$ADMIN_USER" 2>&1; then
+        pass "Password changed for '$ADMIN_USER'"
         # Update for later tests
         ADMIN_PASS="$NEW_PASS"
     else
-        fail "Failed to change password for '$TEST_ADMIN_USER'"
+        fail "Failed to change password for '$ADMIN_USER'"
     fi
 }
 
 test_user_unlock() {
     print_header "Testing: user unlock"
+
+    if [[ "$AUTH_MODE" == "admin" ]]; then
+        skip "Unlock skipped in admin mode (no test user to unlock)"
+        return
+    fi
 
     if [[ -z "$ADMIN_USER" ]]; then
         skip "No admin user available for unlock test"
@@ -218,9 +308,9 @@ test_user_unlock() {
 
     # Note: We can't easily lock an account without the WebUI login,
     # so we just test that the command runs without error on an unlocked user
-    info "Running unlock on '$TEST_ADMIN_USER' (already unlocked)"
+    info "Running unlock on '$ADMIN_USER' (already unlocked)"
     if DAWN_ADMIN_USER="$ADMIN_USER" DAWN_ADMIN_PASSWORD="$ADMIN_PASS" \
-       $DAWN_ADMIN user unlock "$TEST_ADMIN_USER" 2>&1; then
+       $DAWN_ADMIN user unlock "$ADMIN_USER" 2>&1; then
         pass "Unlock command executed successfully"
     else
         # This might fail if user isn't locked, which is fine
@@ -367,17 +457,22 @@ test_user_delete() {
         return
     fi
 
-    # Try to delete the test admin user (should be blocked - last admin protection)
-    info "Attempting to delete last admin: $TEST_ADMIN_USER (should be blocked)"
-    output=$(DAWN_ADMIN_USER="$ADMIN_USER" DAWN_ADMIN_PASSWORD="$ADMIN_PASS" \
-             $DAWN_ADMIN user delete "$TEST_ADMIN_USER" --yes 2>&1) || true
-
-    if echo "$output" | grep -qi "last admin"; then
-        pass "Last admin deletion correctly blocked"
-    elif $DAWN_ADMIN user list 2>&1 | grep -q "$TEST_ADMIN_USER"; then
-        pass "Admin user still exists (deletion was blocked)"
+    if [[ "$AUTH_MODE" == "admin" ]]; then
+        # Admin mode: No test user was created, skip deletion
+        skip "No test user to delete (user create was skipped in admin mode)"
     else
-        fail "Last admin was deleted - protection failed!"
+        # Token mode: Try to delete the admin we created (should be blocked - last admin)
+        info "Attempting to delete last admin: $TEST_ADMIN_USER (should be blocked)"
+        output=$(DAWN_ADMIN_USER="$ADMIN_USER" DAWN_ADMIN_PASSWORD="$ADMIN_PASS" \
+                 $DAWN_ADMIN user delete "$TEST_ADMIN_USER" --yes 2>&1) || true
+
+        if echo "$output" | grep -qi "last admin"; then
+            pass "Last admin deletion correctly blocked"
+        elif $DAWN_ADMIN user list 2>&1 | grep -q "$TEST_ADMIN_USER"; then
+            pass "Admin user still exists (deletion was blocked)"
+        else
+            fail "Last admin was deleted - protection failed!"
+        fi
     fi
 }
 
@@ -406,8 +501,10 @@ main() {
     # Test connectivity first
     test_ping
 
-    # Get setup token for user creation
-    get_setup_token
+    # Get authentication credentials (setup token or admin creds)
+    get_auth_credentials
+    echo ""
+    info "Auth mode: $AUTH_MODE"
 
     # Run tests in order
     test_user_create

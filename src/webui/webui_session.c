@@ -169,6 +169,9 @@ void handle_revoke_session(ws_connection_t *conn, struct json_object *payload) {
       char details[128];
       snprintf(details, sizeof(details), "Revoked session: %.8s...", prefix);
       auth_db_log_event("SESSION_REVOKED", conn->username, conn->client_ip, details);
+
+      /* Proactively notify any connected client with this auth token */
+      webui_force_logout_by_auth_token(prefix);
    } else if (result == AUTH_DB_NOT_FOUND) {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
       json_object_object_add(resp_payload, "error", json_object_new_string("Session not found"));

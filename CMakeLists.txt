@@ -429,7 +429,15 @@ endif()
 if(ENABLE_AUTH)
     list(APPEND DAWN_SOURCES
         src/auth/admin_socket.c
-        src/auth/auth_db.c
+        src/auth/auth_db_core.c
+        src/auth/auth_db_user.c
+        src/auth/auth_db_settings.c
+        src/auth/auth_db_session.c
+        src/auth/auth_db_rate_limit.c
+        src/auth/auth_db_audit.c
+        src/auth/auth_db_maint.c
+        src/auth/auth_db_conv.c
+        src/auth/auth_db_metrics.c
         src/auth/auth_crypto.c
         src/auth/auth_maintenance.c
     )

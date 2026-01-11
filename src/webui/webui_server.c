@@ -120,6 +120,43 @@ pthread_mutex_t s_queue_mutex = PTHREAD_MUTEX_INITIALIZER;
 token_mapping_t s_token_map[MAX_TOKEN_MAPPINGS];
 pthread_mutex_t s_token_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+/* =============================================================================
+ * Active Connection Registry (for proactive notifications like force logout)
+ *
+ * Tracks all active WebSocket connections so we can find and notify specific
+ * clients (e.g., when their auth session is revoked).
+ * ============================================================================= */
+
+#define MAX_ACTIVE_CONNECTIONS 64
+static ws_connection_t *s_active_connections[MAX_ACTIVE_CONNECTIONS];
+static pthread_mutex_t s_conn_registry_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static void register_connection(ws_connection_t *conn) {
+   pthread_mutex_lock(&s_conn_registry_mutex);
+   for (int i = 0; i < MAX_ACTIVE_CONNECTIONS; i++) {
+      if (s_active_connections[i] == NULL) {
+         s_active_connections[i] = conn;
+         pthread_mutex_unlock(&s_conn_registry_mutex);
+         return;
+      }
+   }
+   /* Registry full - shouldn't happen if MAX_ACTIVE_CONNECTIONS >= max_clients */
+   LOG_WARNING("WebUI: Connection registry full, cannot track connection");
+   pthread_mutex_unlock(&s_conn_registry_mutex);
+}
+
+static void unregister_connection(ws_connection_t *conn) {
+   pthread_mutex_lock(&s_conn_registry_mutex);
+   for (int i = 0; i < MAX_ACTIVE_CONNECTIONS; i++) {
+      if (s_active_connections[i] == conn) {
+         s_active_connections[i] = NULL;
+         pthread_mutex_unlock(&s_conn_registry_mutex);
+         return;
+      }
+   }
+   pthread_mutex_unlock(&s_conn_registry_mutex);
+}
+
 void register_token(const char *token, uint32_t session_id) {
    pthread_mutex_lock(&s_token_mutex);
 
@@ -603,19 +640,29 @@ void send_state_impl(struct lws *wsi, const char *state, const char *detail) {
    send_state_impl_full(wsi, state, detail, NULL);
 }
 
-static void send_transcript_impl(struct lws *wsi, const char *role, const char *text) {
+static void send_transcript_impl_ex(struct lws *wsi,
+                                    const char *role,
+                                    const char *text,
+                                    bool replay) {
    /* Escape JSON special characters in text */
    struct json_object *obj = json_object_new_object();
    struct json_object *payload = json_object_new_object();
 
    json_object_object_add(payload, "role", json_object_new_string(role));
    json_object_object_add(payload, "text", json_object_new_string(text));
+   if (replay) {
+      json_object_object_add(payload, "replay", json_object_new_boolean(true));
+   }
    json_object_object_add(obj, "type", json_object_new_string("transcript"));
    json_object_object_add(obj, "payload", payload);
 
    const char *json_str = json_object_to_json_string(obj);
    send_json_message(wsi, json_str);
    json_object_put(obj);
+}
+
+static void send_transcript_impl(struct lws *wsi, const char *role, const char *text) {
+   send_transcript_impl_ex(wsi, role, text, false);
 }
 
 void send_error_impl(struct lws *wsi, const char *code, const char *message) {
@@ -631,6 +678,13 @@ void send_error_impl(struct lws *wsi, const char *code, const char *message) {
    const char *json_str = json_object_to_json_string(obj);
    send_json_message(wsi, json_str);
    json_object_put(obj);
+}
+
+static void send_force_logout_impl(struct lws *wsi, const char *reason) {
+   char json[256];
+   snprintf(json, sizeof(json), "{\"type\":\"force_logout\",\"payload\":{\"reason\":\"%s\"}}",
+            reason ? reason : "Session revoked");
+   send_json_message(wsi, json);
 }
 
 static void send_session_token_impl(ws_connection_t *conn, const char *token) {
@@ -812,7 +866,8 @@ static void send_history_impl(struct lws *wsi, session_t *session) {
          continue;
       }
 
-      send_transcript_impl(wsi, role, content);
+      /* Mark as replay so client doesn't re-save to database */
+      send_transcript_impl_ex(wsi, role, content, true);
       sent_count++;
    }
 
@@ -2063,11 +2118,16 @@ static int callback_websocket(struct lws *wsi,
             LOG_INFO("WebUI: WebSocket connection established (unauthenticated)");
          }
 
+         /* Register in connection registry for proactive notifications */
+         register_connection(conn);
+
          LOG_INFO("WebUI: WebSocket connection established, awaiting init message");
          break;
       }
 
       case LWS_CALLBACK_CLOSED: {
+         /* Unregister from connection registry */
+         unregister_connection(conn);
          /* WebSocket disconnected */
          LOG_INFO("WebUI: WebSocket client disconnecting (session %u)",
                   conn->session ? conn->session->session_id : 0);
@@ -3708,6 +3768,45 @@ int webui_process_text_input(session_t *session, const char *text) {
    }
 
    return 0;
+}
+
+/* =============================================================================
+ * Force Logout (for session revocation)
+ *
+ * Finds all WebSocket connections with matching auth_session_token prefix
+ * and sends them a force_logout message.
+ * ============================================================================= */
+
+int webui_force_logout_by_auth_token(const char *auth_token_prefix) {
+   if (!auth_token_prefix || strlen(auth_token_prefix) < AUTH_TOKEN_PREFIX_LEN) {
+      return 0;
+   }
+
+   int count = 0;
+   pthread_mutex_lock(&s_conn_registry_mutex);
+
+   for (int i = 0; i < MAX_ACTIVE_CONNECTIONS; i++) {
+      ws_connection_t *conn = s_active_connections[i];
+      if (conn && conn->wsi && conn->authenticated) {
+         /* Check if auth token prefix matches */
+         if (strncmp(conn->auth_session_token, auth_token_prefix, AUTH_TOKEN_PREFIX_LEN) == 0) {
+            LOG_INFO("WebUI: Forcing logout for connection with auth token %.8s...",
+                     auth_token_prefix);
+            send_force_logout_impl(conn->wsi, "Session revoked");
+            /* Mark as unauthenticated to prevent further requests */
+            conn->authenticated = false;
+            count++;
+         }
+      }
+   }
+
+   pthread_mutex_unlock(&s_conn_registry_mutex);
+
+   if (count > 0) {
+      LOG_INFO("WebUI: Sent force_logout to %d connection(s)", count);
+   }
+
+   return count;
 }
 
 /* =============================================================================

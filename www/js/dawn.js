@@ -44,6 +44,17 @@
         case 'state':
           updateState(msg.payload.state, msg.payload.detail, msg.payload.tools);
           break;
+        case 'force_logout':
+          // Session was revoked - force immediate logout
+          console.warn('Force logout received:', msg.payload.reason);
+          DawnToast.show(msg.payload.reason || 'Session revoked', 'error');
+          localStorage.removeItem('dawn_session_token');
+          sessionStorage.removeItem('dawn_active_conversation');
+          DawnWS.disconnect();
+          setTimeout(() => {
+            window.location.href = '/login.html';
+          }, 1500);
+          break;
         case 'transcript':
           // Check for special LLM state update (sent with role '__llm_state__')
           if (msg.payload.role === '__llm_state__') {
@@ -59,7 +70,10 @@
           } else {
             DawnTranscript.addEntry(msg.payload.role, msg.payload.text);
             // Save to conversation history (auto-creates conversation on first message)
-            DawnHistory.saveMessage(msg.payload.role, msg.payload.text);
+            // Skip replay messages - these are history replay on reconnect, already in DB
+            if (!msg.payload.replay) {
+              DawnHistory.saveMessage(msg.payload.role, msg.payload.text);
+            }
           }
           break;
         case 'error':
@@ -73,8 +87,20 @@
               ? 'Server Full - Click to Retry'
               : 'Full';
             DawnElements.connectionStatus.title = 'Server at capacity - click to retry';
-          } else if (msg.payload.code === 'FORBIDDEN' || msg.payload.code === 'UNAUTHORIZED') {
-            // Use toast for permission errors
+          } else if (msg.payload.code === 'UNAUTHORIZED') {
+            // Session expired or revoked - stop everything and redirect to login
+            DawnToast.show(msg.payload.message, 'error');
+            // Clear session data
+            localStorage.removeItem('dawn_session_token');
+            sessionStorage.removeItem('dawn_active_conversation');
+            // Disconnect WebSocket immediately to prevent further processing
+            DawnWS.disconnect();
+            // Redirect after brief delay for toast visibility
+            setTimeout(() => {
+              window.location.href = '/login.html';
+            }, 1500);
+          } else if (msg.payload.code === 'FORBIDDEN') {
+            // Permission error (e.g., not admin) - just show toast
             DawnToast.show(msg.payload.message, 'error');
           } else {
             DawnTranscript.addEntry('system', `Error: ${msg.payload.message}`);

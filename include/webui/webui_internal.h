@@ -393,6 +393,17 @@ void send_json_response(struct lws *wsi, json_object *response);
  */
 void send_error_impl(struct lws *wsi, const char *code, const char *message);
 
+/**
+ * @brief Force logout connections by auth session token prefix
+ *
+ * Finds all WebSocket connections with matching auth_session_token prefix
+ * and sends them a force_logout message. Used when a session is revoked.
+ *
+ * @param auth_token_prefix First AUTH_TOKEN_PREFIX_LEN chars of auth token
+ * @return Number of connections notified
+ */
+int webui_force_logout_by_auth_token(const char *auth_token_prefix);
+
 /* =============================================================================
  * Prompt Construction Helpers
  * ============================================================================= */

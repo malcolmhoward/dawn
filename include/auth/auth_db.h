@@ -78,6 +78,13 @@
 #define AUTH_LOCKOUT_DURATION_SEC (15 * 60)
 
 /**
+ * @brief Session token prefix length for display/lookup by prefix
+ *
+ * Used when showing truncated tokens in UI or looking up sessions by prefix.
+ */
+#define AUTH_TOKEN_PREFIX_LEN 16
+
+/**
  * @brief Database error codes
  */
 #define AUTH_DB_SUCCESS 0
@@ -350,6 +357,15 @@ int auth_db_unlock_user(const char *username);
  * @brief Maximum TTS voice model path length
  */
 #define AUTH_TTS_VOICE_MAX 128
+
+/**
+ * @brief TTS length scale bounds (speech rate multiplier)
+ *
+ * Values outside this range are clamped to prevent unusable speech.
+ * 1.0 = normal speed, <1.0 = faster, >1.0 = slower
+ */
+#define AUTH_TTS_LENGTH_SCALE_MIN 0.25f
+#define AUTH_TTS_LENGTH_SCALE_MAX 4.0f
 
 /**
  * @brief Maximum persona mode length

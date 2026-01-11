@@ -48,6 +48,9 @@ DAWN integrates modern speech recognition, large language models, and text-to-sp
   - **Multi-user support** with separate conversation contexts
   - **User Management** (admin-only) - create/delete users, reset passwords
   - **My Settings** - per-user persona, location, timezone, units, TTS speed
+  - **Conversation history** - browse, search, continue, and delete past conversations
+  - **7 color themes** - cyan, purple, green, orange, red, blue, and terminal
+  - **Accessibility** - keyboard navigation, screen reader support (ARIA), reduced motion preferences, WCAG-compliant touch targets
   - Mobile-friendly responsive design
 
 - **LLM Tools**
@@ -131,8 +134,17 @@ dawn/
 │
 ├── www/                          # Web UI static files
 │   ├── index.html                # Main HTML page
-│   ├── css/dawn.css              # Stylesheet
-│   └── js/dawn.js                # JavaScript client
+│   ├── css/                      # Modular stylesheets (18 files)
+│   │   ├── main.css              # Entry point with @imports
+│   │   ├── base/                 # Variables, themes, typography, reset
+│   │   ├── layout/               # App structure, responsive breakpoints
+│   │   └── components/           # Feature-specific styles
+│   └── js/                       # Modular JavaScript (22 files)
+│       ├── dawn.js               # Main orchestrator
+│       ├── core/                 # Constants, state, WebSocket
+│       ├── ui/                   # UI components (toast, settings, history, etc.)
+│       ├── audio/                # Capture, playback, visualization
+│       └── admin/                # Admin features (users, sessions, tools)
 │
 ├── whisper.cpp/                  # Whisper ASR engine (submodule)
 ├── models/                       # ML models (TTS, VAD)
@@ -1010,4 +1022,4 @@ See individual dependencies for their respective licenses.
 
 ---
 
-**Note**: This README reflects the reorganized codebase structure (as of November 2025). For historical reference, see git history before commit hash in `ARCHITECTURE.md`.
+**Note**: This README reflects the reorganized codebase structure (as of January 2026, including modular CSS/JS). For historical reference, see git history before commit hash in `ARCHITECTURE.md`.
