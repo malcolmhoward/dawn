@@ -61,6 +61,11 @@
 #define AUTH_SESSION_TIMEOUT_SEC (24 * 60 * 60)
 
 /**
+ * @brief "Remember me" session timeout in seconds (30 days)
+ */
+#define AUTH_REMEMBER_ME_TIMEOUT_SEC (30 * 24 * 60 * 60)
+
+/**
  * @brief Cleanup interval in seconds (5 minutes)
  *
  * Lazy cleanup runs during auth_db_get_session() if this much time has passed.
@@ -122,6 +127,7 @@ typedef struct {
    bool is_admin;
    time_t created_at;
    time_t last_activity;
+   time_t expires_at; /**< When session expires (0 = use legacy last_activity check) */
    char ip_address[AUTH_IP_MAX];
    char user_agent[AUTH_USER_AGENT_MAX];
 } auth_session_t;
@@ -439,12 +445,14 @@ int auth_db_init_user_settings(int user_id);
  * @param token Pre-generated token from auth_generate_token()
  * @param ip_address Client IP address (can be NULL)
  * @param user_agent Client user agent (can be NULL, truncated to AUTH_USER_AGENT_MAX)
+ * @param remember_me If true, session expires in 30 days; otherwise 24 hours
  * @return AUTH_DB_SUCCESS or AUTH_DB_FAILURE
  */
 int auth_db_create_session(int user_id,
                            const char *token,
                            const char *ip_address,
-                           const char *user_agent);
+                           const char *user_agent,
+                           bool remember_me);
 
 /**
  * @brief Get session by token

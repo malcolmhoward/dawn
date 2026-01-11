@@ -1046,6 +1046,12 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
    json_object_object_add(stream_opts, "include_usage", json_object_new_boolean(1));
    json_object_object_add(root, "stream_options", stream_opts);
 
+   // For local LLM (llama.cpp), request per-chunk timing metrics
+   // This enables real-time tokens/sec display during streaming
+   if (api_key == NULL) {
+      json_object_object_add(root, "timings_per_token", json_object_new_boolean(1));
+   }
+
    // Handle vision if provided
    if (vision_image != NULL && vision_image_size > 0) {
       LOG_INFO("OpenAI streaming: Vision image provided (%zu bytes)", vision_image_size);

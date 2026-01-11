@@ -92,12 +92,14 @@ static const char *SCHEMA_SQL =
     "   user_id INTEGER NOT NULL,"
     "   created_at INTEGER NOT NULL,"
     "   last_activity INTEGER NOT NULL,"
+    "   expires_at INTEGER,"
     "   ip_address TEXT,"
     "   user_agent TEXT,"
     "   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE"
     ");"
     "CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);"
     "CREATE INDEX IF NOT EXISTS idx_sessions_activity ON sessions(last_activity);"
+    /* idx_sessions_expires created by v10 migration after expires_at column is added */
 
     /* Login attempts for rate limiting */
     "CREATE TABLE IF NOT EXISTS login_attempts ("
@@ -364,6 +366,40 @@ static int create_schema(void) {
       }
    }
 
+   /* v10 migration: add expires_at column to sessions for "Remember Me" feature
+    * Existing sessions get expires_at = last_activity + 24 hours */
+   if (current_version >= 1 && current_version < 10) {
+      rc = sqlite3_exec(s_db.db, "ALTER TABLE sessions ADD COLUMN expires_at INTEGER", NULL, NULL,
+                        &errmsg);
+      if (rc != SQLITE_OK) {
+         LOG_INFO("auth_db: v10 migration note (expires_at): %s", errmsg ? errmsg : "ok");
+         sqlite3_free(errmsg);
+         errmsg = NULL;
+      } else {
+         /* Set default expires_at for existing sessions (last_activity + 24h) */
+         char update_sql[128];
+         snprintf(update_sql, sizeof(update_sql),
+                  "UPDATE sessions SET expires_at = last_activity + %d WHERE expires_at IS NULL",
+                  AUTH_SESSION_TIMEOUT_SEC);
+         rc = sqlite3_exec(s_db.db, update_sql, NULL, NULL, &errmsg);
+         if (rc != SQLITE_OK) {
+            LOG_WARNING("auth_db: v10 migration (set defaults): %s", errmsg ? errmsg : "ok");
+            sqlite3_free(errmsg);
+            errmsg = NULL;
+         }
+         LOG_INFO("auth_db: added expires_at column to sessions (v10)");
+      }
+      /* Create index for efficient cleanup queries */
+      rc = sqlite3_exec(s_db.db,
+                        "CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at)",
+                        NULL, NULL, &errmsg);
+      if (rc != SQLITE_OK) {
+         LOG_INFO("auth_db: v10 migration (index): %s", errmsg ? errmsg : "ok");
+         sqlite3_free(errmsg);
+         errmsg = NULL;
+      }
+   }
+
    /* Create continuation index (runs for both new databases and migrations) */
    rc = sqlite3_exec(s_db.db,
                      "CREATE INDEX IF NOT EXISTS idx_conversations_continued "
@@ -468,7 +504,7 @@ static int prepare_statements(void) {
    /* Session statements */
    rc = sqlite3_prepare_v2(s_db.db,
                            "INSERT INTO sessions (token, user_id, created_at, last_activity, "
-                           "ip_address, user_agent) VALUES (?, ?, ?, ?, ?, ?)",
+                           "expires_at, ip_address, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?)",
                            -1, &s_db.stmt_create_session, NULL);
    if (rc != SQLITE_OK) {
       LOG_ERROR("auth_db: prepare create_session failed: %s", sqlite3_errmsg(s_db.db));
@@ -477,7 +513,7 @@ static int prepare_statements(void) {
 
    rc = sqlite3_prepare_v2(s_db.db,
                            "SELECT s.token, s.user_id, u.username, u.is_admin, s.created_at, "
-                           "s.last_activity, s.ip_address, s.user_agent "
+                           "s.last_activity, s.expires_at, s.ip_address, s.user_agent "
                            "FROM sessions s JOIN users u ON s.user_id = u.id WHERE s.token = ?",
                            -1, &s_db.stmt_get_session, NULL);
    if (rc != SQLITE_OK) {
@@ -506,8 +542,9 @@ static int prepare_statements(void) {
       return AUTH_DB_FAILURE;
    }
 
-   rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM sessions WHERE last_activity < ?", -1,
-                           &s_db.stmt_delete_expired_sessions, NULL);
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "DELETE FROM sessions WHERE expires_at IS NOT NULL AND expires_at < ?",
+                           -1, &s_db.stmt_delete_expired_sessions, NULL);
    if (rc != SQLITE_OK) {
       LOG_ERROR("auth_db: prepare delete_expired_sessions failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;

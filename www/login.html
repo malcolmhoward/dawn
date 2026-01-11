@@ -94,6 +94,30 @@
       color: var(--text-tertiary);
     }
 
+    .remember-me {
+      margin-top: 0.5rem;
+    }
+
+    .checkbox-label {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      cursor: pointer;
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+    }
+
+    .checkbox-label input[type="checkbox"] {
+      width: 1rem;
+      height: 1rem;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+
+    .checkbox-text {
+      user-select: none;
+    }
+
     .login-btn {
       width: 100%;
       padding: 0.875rem 1.5rem;
@@ -213,6 +237,13 @@
         >
       </div>
 
+      <div class="form-group remember-me">
+        <label class="checkbox-label">
+          <input type="checkbox" id="remember-me" name="remember_me">
+          <span class="checkbox-text">Remember me on this device</span>
+        </label>
+      </div>
+
       <button type="submit" class="login-btn" id="login-btn">
         Sign In
       </button>
@@ -292,12 +323,18 @@
         setLoading(true);
 
         try {
+          const rememberMe = document.getElementById('remember-me').checked;
           const response = await fetch('/api/auth/login', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ username, password, csrf_token: csrfToken }),
+            body: JSON.stringify({
+              username,
+              password,
+              csrf_token: csrfToken,
+              remember_me: rememberMe
+            }),
             credentials: 'same-origin'
           });
 

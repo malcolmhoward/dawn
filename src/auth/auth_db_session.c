@@ -88,7 +88,8 @@ static void extract_session_summary(sqlite3_stmt *stmt, auth_session_summary_t *
 int auth_db_create_session(int user_id,
                            const char *token,
                            const char *ip_address,
-                           const char *user_agent) {
+                           const char *user_agent,
+                           bool remember_me) {
    if (!token) {
       return AUTH_DB_INVALID;
    }
@@ -96,17 +97,20 @@ int auth_db_create_session(int user_id,
    AUTH_DB_LOCK_OR_FAIL();
 
    time_t now = time(NULL);
+   time_t expires_at = now +
+                       (remember_me ? AUTH_REMEMBER_ME_TIMEOUT_SEC : AUTH_SESSION_TIMEOUT_SEC);
 
    sqlite3_reset(s_db.stmt_create_session);
    sqlite3_bind_text(s_db.stmt_create_session, 1, token, -1, SQLITE_STATIC);
    sqlite3_bind_int(s_db.stmt_create_session, 2, user_id);
    sqlite3_bind_int64(s_db.stmt_create_session, 3, (int64_t)now);
    sqlite3_bind_int64(s_db.stmt_create_session, 4, (int64_t)now);
+   sqlite3_bind_int64(s_db.stmt_create_session, 5, (int64_t)expires_at);
 
    if (ip_address) {
-      sqlite3_bind_text(s_db.stmt_create_session, 5, ip_address, -1, SQLITE_STATIC);
+      sqlite3_bind_text(s_db.stmt_create_session, 6, ip_address, -1, SQLITE_STATIC);
    } else {
-      sqlite3_bind_null(s_db.stmt_create_session, 5);
+      sqlite3_bind_null(s_db.stmt_create_session, 6);
    }
 
    if (user_agent) {
@@ -115,9 +119,9 @@ int auth_db_create_session(int user_id,
       if (ua_len >= AUTH_USER_AGENT_MAX) {
          ua_len = AUTH_USER_AGENT_MAX - 1;
       }
-      sqlite3_bind_text(s_db.stmt_create_session, 6, user_agent, (int)ua_len, SQLITE_STATIC);
+      sqlite3_bind_text(s_db.stmt_create_session, 7, user_agent, (int)ua_len, SQLITE_STATIC);
    } else {
-      sqlite3_bind_null(s_db.stmt_create_session, 6);
+      sqlite3_bind_null(s_db.stmt_create_session, 7);
    }
 
    int rc = sqlite3_step(s_db.stmt_create_session);
@@ -162,8 +166,9 @@ int auth_db_get_session(const char *token, auth_session_t *session_out) {
       session_out->is_admin = sqlite3_column_int(s_db.stmt_get_session, 3) != 0;
       session_out->created_at = (time_t)sqlite3_column_int64(s_db.stmt_get_session, 4);
       session_out->last_activity = (time_t)sqlite3_column_int64(s_db.stmt_get_session, 5);
+      session_out->expires_at = (time_t)sqlite3_column_int64(s_db.stmt_get_session, 6);
 
-      const char *ip = (const char *)sqlite3_column_text(s_db.stmt_get_session, 6);
+      const char *ip = (const char *)sqlite3_column_text(s_db.stmt_get_session, 7);
       if (ip) {
          strncpy(session_out->ip_address, ip, AUTH_IP_MAX - 1);
          session_out->ip_address[AUTH_IP_MAX - 1] = '\0';
@@ -171,7 +176,7 @@ int auth_db_get_session(const char *token, auth_session_t *session_out) {
          session_out->ip_address[0] = '\0';
       }
 
-      const char *ua = (const char *)sqlite3_column_text(s_db.stmt_get_session, 7);
+      const char *ua = (const char *)sqlite3_column_text(s_db.stmt_get_session, 8);
       if (ua) {
          strncpy(session_out->user_agent, ua, AUTH_USER_AGENT_MAX - 1);
          session_out->user_agent[AUTH_USER_AGENT_MAX - 1] = '\0';
@@ -180,6 +185,13 @@ int auth_db_get_session(const char *token, auth_session_t *session_out) {
       }
 
       sqlite3_reset(s_db.stmt_get_session);
+
+      /* Check if session has expired */
+      if (session_out->expires_at > 0 && session_out->expires_at < time(NULL)) {
+         AUTH_DB_UNLOCK();
+         return AUTH_DB_NOT_FOUND; /* Treat expired as not found */
+      }
+
       AUTH_DB_UNLOCK();
       return AUTH_DB_SUCCESS;
    }

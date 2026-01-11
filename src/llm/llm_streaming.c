@@ -31,6 +31,7 @@
 #include "llm/llm_tools.h"
 #include "logging.h"
 #include "ui/metrics.h"
+#include "webui/webui_server.h"
 
 #define DEFAULT_ACCUMULATED_CAPACITY 8192
 #define MAX_ACCUMULATED_SIZE (10 * 1024 * 1024)  // 10MB hard limit for LLM responses
@@ -229,6 +230,42 @@ static void parse_openai_chunk(llm_stream_context_t *ctx, const char *event_data
                }
                LOG_INFO("Stream completed with %d tool call(s)", ctx->tool_calls.count);
             }
+         }
+      }
+   }
+
+   // Parse real-time timings from llama.cpp (when timings_per_token: true)
+   // This provides per-chunk metrics: predicted_n, predicted_per_second, etc.
+   json_object *timings_obj;
+   if (json_object_object_get_ex(chunk, "timings", &timings_obj)) {
+      json_object *val;
+
+      if (json_object_object_get_ex(timings_obj, "predicted_n", &val)) {
+         ctx->tokens_generated = json_object_get_int(val);
+      }
+      if (json_object_object_get_ex(timings_obj, "predicted_per_second", &val)) {
+         float rate = (float)json_object_get_double(val);
+         // Sanity check: ignore unrealistic values (> 1000 tok/s)
+         // First few chunks often have bogus values due to near-zero elapsed time
+         if (rate > 0 && rate < 1000.0f && ctx->tokens_generated >= 3) {
+            ctx->tokens_per_second = rate;
+         }
+      }
+      if (json_object_object_get_ex(timings_obj, "prompt_n", &val)) {
+         ctx->realtime_prompt_tokens = json_object_get_int(val);
+      }
+      if (json_object_object_get_ex(timings_obj, "cache_n", &val)) {
+         ctx->realtime_cached_tokens = json_object_get_int(val);
+      }
+
+      // Send real-time metrics to WebUI if we have meaningful data
+      // Only send once we have a valid, stable tokens_per_second value
+      if (ctx->tokens_per_second > 0 && ctx->tokens_generated >= 3) {
+         session_t *session = session_get_command_context();
+         if (session && session->type == SESSION_TYPE_WEBSOCKET) {
+            // Calculate context usage percentage (rough estimate from prompt tokens)
+            int context_pct = 0;  // Will be properly calculated elsewhere
+            webui_send_metrics_update(session, "thinking", 0, ctx->tokens_per_second, context_pct);
          }
       }
    }

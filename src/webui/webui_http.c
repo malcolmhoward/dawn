@@ -186,12 +186,14 @@ bool is_request_authenticated(struct lws *wsi, auth_session_t *session_out) {
  * @param status HTTP status code
  * @param json_body JSON string to send
  * @param cookie Cookie value to set (NULL for no cookie, empty string to clear)
+ * @param cookie_max_age Max-Age for cookie (0 = session cookie, >0 = persistent)
  * @return 0 on success, -1 on failure
  */
 static int send_auth_response(struct lws *wsi,
                               int status,
                               const char *json_body,
-                              const char *cookie) {
+                              const char *cookie,
+                              int cookie_max_age) {
    size_t body_len = strlen(json_body);
    unsigned char buffer[LWS_PRE + 4096];
    unsigned char *start = &buffer[LWS_PRE];
@@ -213,11 +215,15 @@ static int send_auth_response(struct lws *wsi,
          /* Clear cookie */
          snprintf(cookie_header, sizeof(cookie_header),
                   "%s=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0", AUTH_COOKIE_NAME);
-      } else {
-         /* Set cookie */
+      } else if (cookie_max_age > 0) {
+         /* Set persistent cookie with explicit expiry ("Remember me" enabled) */
          snprintf(cookie_header, sizeof(cookie_header),
                   "%s=%s; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=%d", AUTH_COOKIE_NAME,
-                  cookie, AUTH_COOKIE_MAX_AGE);
+                  cookie, cookie_max_age);
+      } else {
+         /* Set session cookie (expires when browser closes) */
+         snprintf(cookie_header, sizeof(cookie_header),
+                  "%s=%s; Path=/; HttpOnly; Secure; SameSite=Strict", AUTH_COOKIE_NAME, cookie);
       }
       if (lws_add_http_header_by_name(wsi, (unsigned char *)"Set-Cookie:",
                                       (unsigned char *)cookie_header, (int)strlen(cookie_header),
@@ -351,7 +357,7 @@ static int handle_auth_login(struct lws *wsi, struct http_session_data *pss) {
       auth_db_log_event("RATE_LIMITED", NULL, client_ip, "Too many failed attempts");
       snprintf(response, sizeof(response),
                "{\"success\":false,\"error\":\"Too many attempts. Try again later.\"}");
-      send_auth_response(wsi, HTTP_STATUS_TOO_MANY_REQUESTS, response, NULL);
+      send_auth_response(wsi, HTTP_STATUS_TOO_MANY_REQUESTS, response, NULL, 0);
       return -1;
    }
 
@@ -364,7 +370,7 @@ static int handle_auth_login(struct lws *wsi, struct http_session_data *pss) {
       auth_db_log_event("RATE_LIMITED", NULL, client_ip, "Too many failed attempts");
       snprintf(response, sizeof(response),
                "{\"success\":false,\"error\":\"Too many attempts. Try again later.\"}");
-      send_auth_response(wsi, HTTP_STATUS_TOO_MANY_REQUESTS, response, NULL);
+      send_auth_response(wsi, HTTP_STATUS_TOO_MANY_REQUESTS, response, NULL, 0);
       return -1;
    }
 
@@ -372,7 +378,7 @@ static int handle_auth_login(struct lws *wsi, struct http_session_data *pss) {
    struct json_object *req = json_tokener_parse(pss->post_body);
    if (!req) {
       snprintf(response, sizeof(response), "{\"success\":false,\"error\":\"Invalid JSON\"}");
-      send_auth_response(wsi, HTTP_STATUS_BAD_REQUEST, response, NULL);
+      send_auth_response(wsi, HTTP_STATUS_BAD_REQUEST, response, NULL, 0);
       return -1;
    }
 
@@ -382,7 +388,7 @@ static int handle_auth_login(struct lws *wsi, struct http_session_data *pss) {
       json_object_put(req);
       LOG_WARNING("WebUI: Login attempt without CSRF token from %s", client_ip);
       snprintf(response, sizeof(response), "{\"success\":false,\"error\":\"Missing CSRF token\"}");
-      send_auth_response(wsi, HTTP_STATUS_BAD_REQUEST, response, NULL);
+      send_auth_response(wsi, HTTP_STATUS_BAD_REQUEST, response, NULL, 0);
       return -1;
    }
 
@@ -394,7 +400,7 @@ static int handle_auth_login(struct lws *wsi, struct http_session_data *pss) {
       auth_db_log_event("CSRF_FAILED", NULL, client_ip, "Invalid or expired CSRF token");
       snprintf(response, sizeof(response),
                "{\"success\":false,\"error\":\"Invalid or expired token. Please refresh.\"}");
-      send_auth_response(wsi, HTTP_STATUS_FORBIDDEN, response, NULL);
+      send_auth_response(wsi, HTTP_STATUS_FORBIDDEN, response, NULL, 0);
       return -1;
    }
 
@@ -405,7 +411,7 @@ static int handle_auth_login(struct lws *wsi, struct http_session_data *pss) {
       auth_db_log_event("CSRF_REPLAY", NULL, client_ip, "CSRF token reuse detected");
       snprintf(response, sizeof(response),
                "{\"success\":false,\"error\":\"Token already used. Please refresh.\"}");
-      send_auth_response(wsi, HTTP_STATUS_FORBIDDEN, response, NULL);
+      send_auth_response(wsi, HTTP_STATUS_FORBIDDEN, response, NULL, 0);
       return -1;
    }
 
@@ -418,12 +424,19 @@ static int handle_auth_login(struct lws *wsi, struct http_session_data *pss) {
       json_object_put(req);
       snprintf(response, sizeof(response),
                "{\"success\":false,\"error\":\"Missing username or password\"}");
-      send_auth_response(wsi, HTTP_STATUS_BAD_REQUEST, response, NULL);
+      send_auth_response(wsi, HTTP_STATUS_BAD_REQUEST, response, NULL, 0);
       return -1;
    }
 
    const char *username = json_object_get_string(username_obj);
    const char *password = json_object_get_string(password_obj);
+
+   /* Check for "Remember me" option */
+   struct json_object *remember_obj;
+   bool remember_me = false;
+   if (json_object_object_get_ex(req, "remember_me", &remember_obj)) {
+      remember_me = json_object_get_boolean(remember_obj);
+   }
 
    /* Get user from database */
    auth_user_t user;
@@ -435,7 +448,7 @@ static int handle_auth_login(struct lws *wsi, struct http_session_data *pss) {
       LOG_WARNING("WebUI: Login failed - user not found: %s", username);
       auth_db_log_attempt(normalized_ip, username, false);
       snprintf(response, sizeof(response), "{\"success\":false,\"error\":\"Invalid credentials\"}");
-      send_auth_response(wsi, HTTP_STATUS_UNAUTHORIZED, response, NULL);
+      send_auth_response(wsi, HTTP_STATUS_UNAUTHORIZED, response, NULL, 0);
       return -1;
    }
 
@@ -447,7 +460,7 @@ static int handle_auth_login(struct lws *wsi, struct http_session_data *pss) {
       auth_db_log_attempt(normalized_ip, username, false);
       snprintf(response, sizeof(response),
                "{\"success\":false,\"error\":\"Account temporarily locked\"}");
-      send_auth_response(wsi, HTTP_STATUS_FORBIDDEN, response, NULL);
+      send_auth_response(wsi, HTTP_STATUS_FORBIDDEN, response, NULL, 0);
       return -1;
    } else if (user.lockout_until > 0 && user.lockout_until <= now) {
       /* Lockout expired - reset failed attempts counter */
@@ -477,7 +490,7 @@ static int handle_auth_login(struct lws *wsi, struct http_session_data *pss) {
 
       LOG_WARNING("WebUI: Login failed - wrong password: %s", username);
       snprintf(response, sizeof(response), "{\"success\":false,\"error\":\"Invalid credentials\"}");
-      send_auth_response(wsi, HTTP_STATUS_UNAUTHORIZED, response, NULL);
+      send_auth_response(wsi, HTTP_STATUS_UNAUTHORIZED, response, NULL, 0);
       return -1;
    }
 
@@ -488,7 +501,7 @@ static int handle_auth_login(struct lws *wsi, struct http_session_data *pss) {
    if (auth_generate_token(session_token) != AUTH_CRYPTO_SUCCESS) {
       LOG_ERROR("WebUI: Failed to generate session token");
       snprintf(response, sizeof(response), "{\"success\":false,\"error\":\"Server error\"}");
-      send_auth_response(wsi, HTTP_STATUS_INTERNAL_SERVER_ERROR, response, NULL);
+      send_auth_response(wsi, HTTP_STATUS_INTERNAL_SERVER_ERROR, response, NULL, 0);
       return -1;
    }
 
@@ -500,10 +513,11 @@ static int handle_auth_login(struct lws *wsi, struct http_session_data *pss) {
    }
 
    /* Create session in database */
-   if (auth_db_create_session(user.id, session_token, client_ip, user_agent) != AUTH_DB_SUCCESS) {
+   if (auth_db_create_session(user.id, session_token, client_ip, user_agent, remember_me) !=
+       AUTH_DB_SUCCESS) {
       LOG_ERROR("WebUI: Failed to create session for user: %s", username);
       snprintf(response, sizeof(response), "{\"success\":false,\"error\":\"Server error\"}");
-      send_auth_response(wsi, HTTP_STATUS_INTERNAL_SERVER_ERROR, response, NULL);
+      send_auth_response(wsi, HTTP_STATUS_INTERNAL_SERVER_ERROR, response, NULL, 0);
       auth_secure_zero(session_token, sizeof(session_token));
       return -1;
    }
@@ -515,12 +529,15 @@ static int handle_auth_login(struct lws *wsi, struct http_session_data *pss) {
    auth_db_log_attempt(normalized_ip, username, true);
    auth_db_log_event("LOGIN_SUCCESS", username, client_ip, "WebUI login successful");
 
-   LOG_INFO("WebUI: User logged in: %s from %s", username, client_ip);
+   LOG_INFO("WebUI: User logged in: %s from %s%s", username, client_ip,
+            remember_me ? " (remember me)" : "");
 
-   /* Send success response with session cookie */
+   /* Send success response with session cookie
+    * remember_me: persistent cookie for 30 days; otherwise session cookie */
+   int cookie_max_age = remember_me ? AUTH_REMEMBER_ME_TIMEOUT_SEC : 0;
    snprintf(response, sizeof(response), "{\"success\":true,\"username\":\"%s\",\"is_admin\":%s}",
             username, user.is_admin ? "true" : "false");
-   send_auth_response(wsi, HTTP_STATUS_OK, response, session_token);
+   send_auth_response(wsi, HTTP_STATUS_OK, response, session_token, cookie_max_age);
 
    /* Clear session token from stack after use */
    auth_secure_zero(session_token, sizeof(session_token));
@@ -624,7 +641,7 @@ static int handle_auth_status(struct lws *wsi) {
       snprintf(response, sizeof(response), "{\"authenticated\":false}");
    }
 
-   send_auth_response(wsi, HTTP_STATUS_OK, response, NULL);
+   send_auth_response(wsi, HTTP_STATUS_OK, response, NULL, 0);
    return -1;
 }
 

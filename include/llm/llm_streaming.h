@@ -114,6 +114,12 @@ typedef struct {
    struct timeval stream_start_time; /**< When stream request was initiated */
    int first_token_received;         /**< Flag: 1 if first token has been received */
 
+   /* Real-time token metrics (llama.cpp with timings_per_token: true) */
+   int tokens_generated;       /**< Running count of output tokens from timings */
+   float tokens_per_second;    /**< Current generation rate from timings */
+   int realtime_prompt_tokens; /**< Prompt tokens from first timing chunk */
+   int realtime_cached_tokens; /**< KV cache hit tokens from timings */
+
    /* Tool calls output (populated by either provider) */
    tool_call_list_t tool_calls; /**< Accumulated tool calls */
    int has_tool_calls;          /**< Flag: 1 if tool_calls detected in response */
