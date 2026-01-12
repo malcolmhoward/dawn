@@ -160,6 +160,9 @@ void handle_set_tools_config(ws_connection_t *conn, struct json_object *payload)
 
    pthread_rwlock_wrlock(&s_config_rwlock);
 
+   /* Mark both as explicitly configured (even if empty - empty means none enabled) */
+   g_config.llm.tools.local_enabled_configured = true;
+   g_config.llm.tools.remote_enabled_configured = true;
    g_config.llm.tools.local_enabled_count = 0;
    g_config.llm.tools.remote_enabled_count = 0;
 

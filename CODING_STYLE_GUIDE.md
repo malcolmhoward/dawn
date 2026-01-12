@@ -638,7 +638,89 @@ static void helper_function(void) { ... }
 
 ---
 
-## 11. Anti-Patterns to Avoid
+## 11. File Size and Modular Design
+
+### File Size Guidelines
+
+| Metric | Target | Warning | Action Required |
+|--------|--------|---------|-----------------|
+| File length | < 1,000 lines | > 1,500 lines | > 2,500 lines |
+| Function length | < 50 lines | > 100 lines | > 200 lines |
+| Switch statement | < 30 cases | > 50 cases | > 100 cases |
+
+**When a file exceeds 1,500 lines**, evaluate whether it should be split. When it exceeds 2,500 lines, splitting is mandatory before adding new features.
+
+### Warning Signs (Split Needed)
+
+- Multiple unrelated features in one file
+- Message/command router with 40+ case statements
+- File requires scrolling through 3+ distinct "sections" to find code
+- Multiple developers frequently have merge conflicts in the same file
+- Code review comments include "this file is getting hard to navigate"
+
+### Splitting Strategy (Incremental, Not Rewrite)
+
+**DO NOT** attempt full rewrites. Large-scale rewrites frequently break interconnected features and require reverting.
+
+**DO** use incremental extraction:
+1. Keep the original file working throughout the process
+2. Extract ONE small, isolated feature at a time
+3. Import/include the extracted module into the original
+4. Test thoroughly after each extraction
+5. Repeat until original file is manageable
+
+### C Module Split Pattern
+
+Use internal headers for shared state:
+
+```c
+// include/module/module_internal.h
+#ifndef MODULE_INTERNAL_H
+#define MODULE_INTERNAL_H
+
+#include "module.h"  // Public API
+
+// Shared state (extern declarations)
+extern sqlite3 *s_db;
+extern pthread_mutex_t s_mutex;
+
+// Internal helpers
+int internal_helper(void);
+
+#endif
+```
+
+Split by feature area:
+```
+src/module/
+├── module_core.c      # Init, shutdown, shared state definitions
+├── module_feature1.c  # Feature area 1
+├── module_feature2.c  # Feature area 2
+└── module_utils.c     # Shared utilities
+```
+
+### JavaScript Module Pattern
+
+Use ES6 modules or IIFE with namespace exports:
+
+```javascript
+// www/js/feature/feature.js
+const FeatureName = (function() {
+   'use strict';
+
+   function publicFunction() { }
+
+   return { publicFunction };
+})();
+
+if (typeof window !== 'undefined') {
+   window.FeatureName = FeatureName;
+}
+```
+
+---
+
+## 12. Anti-Patterns to Avoid
 
 ### Don't
 - ❌ Magic numbers: use constants
@@ -656,7 +738,7 @@ static void helper_function(void) { ... }
 
 ---
 
-## 12. Project-Specific Conventions
+## 13. Project-Specific Conventions
 
 ### Logging
 ```c

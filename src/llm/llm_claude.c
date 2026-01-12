@@ -37,6 +37,9 @@
 #include "logging.h"
 #include "tools/curl_buffer.h"
 #include "ui/metrics.h"
+#ifdef ENABLE_WEBUI
+#include "webui/webui_server.h"
+#endif
 
 // External CURL progress callback for interrupt support
 extern int llm_curl_progress_callback(void *clientp,
@@ -161,6 +164,72 @@ static bool has_matching_tool_result(const char *tool_id,
          return true;
       }
    }
+   return false;
+}
+
+/**
+ * @brief Check if conversation history has tool_use blocks without thinking blocks
+ *
+ * Claude requires that when thinking is enabled, assistant messages with tool_use
+ * must start with a thinking block. This checks for incompatible history that would
+ * cause Claude API to reject the request.
+ *
+ * @param conversation OpenAI-format conversation history
+ * @return true if history has tool_use without thinking (incompatible with thinking mode)
+ */
+static bool history_has_tool_use_without_thinking(struct json_object *conversation) {
+   if (!conversation) {
+      return false;
+   }
+
+   int conv_len = json_object_array_length(conversation);
+   for (int i = 0; i < conv_len; i++) {
+      json_object *msg = json_object_array_get_idx(conversation, i);
+      json_object *role_obj, *content_obj;
+
+      if (!json_object_object_get_ex(msg, "role", &role_obj)) {
+         continue;
+      }
+      const char *role = json_object_get_string(role_obj);
+
+      // Check assistant messages with array content (Claude format with tool_use)
+      if (strcmp(role, "assistant") == 0 &&
+          json_object_object_get_ex(msg, "content", &content_obj) &&
+          json_object_is_type(content_obj, json_type_array)) {
+         int content_len = json_object_array_length(content_obj);
+         bool has_tool_use = false;
+         bool has_thinking = false;
+
+         for (int j = 0; j < content_len; j++) {
+            json_object *block = json_object_array_get_idx(content_obj, j);
+            json_object *type_obj;
+            if (json_object_object_get_ex(block, "type", &type_obj)) {
+               const char *block_type = json_object_get_string(type_obj);
+               if (strcmp(block_type, "tool_use") == 0) {
+                  has_tool_use = true;
+               } else if (strcmp(block_type, "thinking") == 0) {
+                  has_thinking = true;
+               }
+            }
+         }
+
+         // If this message has tool_use but no thinking, history is incompatible
+         if (has_tool_use && !has_thinking) {
+            return true;
+         }
+      }
+
+      // Check for OpenAI-format tool_calls (also incompatible - no thinking block format)
+      json_object *tool_calls_obj;
+      if (strcmp(role, "assistant") == 0 &&
+          json_object_object_get_ex(msg, "tool_calls", &tool_calls_obj) &&
+          json_object_is_type(tool_calls_obj, json_type_array) &&
+          json_object_array_length(tool_calls_obj) > 0) {
+         // OpenAI-format tool_calls - these never have thinking blocks
+         return true;
+      }
+   }
+
    return false;
 }
 
@@ -372,9 +441,69 @@ static json_object *convert_to_claude_format(struct json_object *openai_conversa
    json_object_object_add(claude_request, "model",
                           json_object_new_string(g_config.llm.cloud.claude_model));
 
-   // Max tokens from config
-   json_object_object_add(claude_request, "max_tokens",
-                          json_object_new_int(g_config.llm.max_tokens));
+   // Determine if extended thinking will be enabled
+   bool thinking_enabled = false;
+   int thinking_budget = 0;
+   if (strcmp(g_config.llm.thinking.mode, "disabled") != 0) {
+      const char *model = g_config.llm.cloud.claude_model;
+      // Check if model supports thinking (Claude Sonnet 3.7+, Claude 4 models)
+      bool model_supports = (strstr(model, "sonnet-4") != NULL || strstr(model, "opus-4") != NULL ||
+                             strstr(model, "3-7") != NULL || strstr(model, "3.7") != NULL);
+
+      if (model_supports || strcmp(g_config.llm.thinking.mode, "enabled") == 0) {
+         thinking_enabled = true;
+         thinking_budget = g_config.llm.thinking.budget_tokens;
+         if (thinking_budget < 1024)
+            thinking_budget = 1024;  // Claude minimum
+      }
+   }
+
+   // Disable thinking for internal utility calls (search summarization, context compaction)
+   // These calls suppress tools and expect simple text responses
+   if (thinking_enabled && llm_tools_suppressed()) {
+      thinking_enabled = false;
+   }
+
+   // Check if conversation history is compatible with thinking mode
+   // Claude requires assistant messages with tool_use to start with thinking blocks
+   if (thinking_enabled && history_has_tool_use_without_thinking(openai_conversation)) {
+      thinking_enabled = false;
+
+#ifdef ENABLE_WEBUI
+      /* Send notification to WebUI about thinking being disabled (once per session) */
+      static uint32_t last_notified_session = 0;
+      session_t *session = session_get_command_context();
+      if (session && session->type == SESSION_TYPE_WEBSOCKET &&
+          session->session_id != last_notified_session) {
+         last_notified_session = session->session_id;
+         LOG_INFO("Claude: Auto-disabled thinking for session %u (incompatible history)",
+                  session->session_id);
+         webui_send_error(session, "INFO_THINKING_DISABLED",
+                          "Extended thinking auto-disabled: conversation history from "
+                          "previous provider is incompatible. Start a new conversation "
+                          "to use thinking with Claude.");
+      }
+#endif
+   }
+
+   // Max tokens: Claude requires max_tokens > budget_tokens when thinking is enabled
+   int max_tokens = g_config.llm.max_tokens;
+   if (thinking_enabled && max_tokens <= thinking_budget) {
+      // Ensure max_tokens > budget_tokens, add buffer for response
+      max_tokens = thinking_budget + 4096;
+      LOG_INFO("Claude: Adjusted max_tokens to %d (budget %d + 4096 response buffer)", max_tokens,
+               thinking_budget);
+   }
+   json_object_object_add(claude_request, "max_tokens", json_object_new_int(max_tokens));
+
+   // Add extended thinking configuration
+   if (thinking_enabled) {
+      json_object *thinking = json_object_new_object();
+      json_object_object_add(thinking, "type", json_object_new_string("enabled"));
+      json_object_object_add(thinking, "budget_tokens", json_object_new_int(thinking_budget));
+      json_object_object_add(claude_request, "thinking", thinking);
+      LOG_INFO("Claude: Extended thinking enabled (budget: %d tokens)", thinking_budget);
+   }
 
    // Add tools if native tool calling is enabled
    if (llm_tools_enabled(NULL)) {
@@ -1028,6 +1157,51 @@ static void claude_sse_event_handler(const char *event_type,
 #define MAX_TOOL_ITERATIONS 5
 
 /**
+ * @brief Extract error message from Claude API error response
+ *
+ * Parses JSON like: {"type": "error", "error": {"type": "...", "message": "..."}}
+ * Returns a formatted error message or a default message if parsing fails.
+ * The returned string is static and should not be freed.
+ */
+static const char *parse_claude_error_message(const char *response_body, long http_code) {
+   static char error_msg[512];
+
+   if (!response_body || response_body[0] == '\0') {
+      snprintf(error_msg, sizeof(error_msg), "API request failed (HTTP %ld)", http_code);
+      return error_msg;
+   }
+
+   struct json_object *root = json_tokener_parse(response_body);
+   if (!root) {
+      snprintf(error_msg, sizeof(error_msg), "API request failed (HTTP %ld)", http_code);
+      return error_msg;
+   }
+
+   /* Claude format: {"type": "error", "error": {"type": "...", "message": "..."}} */
+   struct json_object *error_obj;
+   if (!json_object_object_get_ex(root, "error", &error_obj)) {
+      json_object_put(root);
+      snprintf(error_msg, sizeof(error_msg), "API request failed (HTTP %ld)", http_code);
+      return error_msg;
+   }
+
+   struct json_object *message_obj;
+   const char *message = NULL;
+   if (json_object_object_get_ex(error_obj, "message", &message_obj)) {
+      message = json_object_get_string(message_obj);
+   }
+
+   if (message && message[0] != '\0') {
+      snprintf(error_msg, sizeof(error_msg), "%s", message);
+   } else {
+      snprintf(error_msg, sizeof(error_msg), "API request failed (HTTP %ld)", http_code);
+   }
+
+   json_object_put(root);
+   return error_msg;
+}
+
+/**
  * @brief Internal streaming implementation with iteration tracking
  */
 static char *llm_claude_streaming_internal(struct json_object *conversation_history,
@@ -1138,13 +1312,32 @@ static char *llm_claude_streaming_internal(struct json_object *conversation_hist
 
    res = curl_easy_perform(curl_handle);
    if (res != CURLE_OK) {
+      const char *error_code = "LLM_ERROR";
+      const char *error_msg = NULL;
+
       if (res == CURLE_ABORTED_BY_CALLBACK) {
          LOG_INFO("LLM transfer interrupted by user");
+         /* User cancellation - don't send as error */
       } else if (res == CURLE_OPERATION_TIMEDOUT) {
          LOG_ERROR("LLM stream timed out (limit: %dms)", g_config.network.llm_timeout_ms);
+         error_code = "LLM_TIMEOUT";
+         error_msg = "Request timed out - AI server may be overloaded";
       } else {
          LOG_ERROR("CURL failed: %s", curl_easy_strerror(res));
+         error_code = "LLM_CONNECTION_ERROR";
+         error_msg = curl_easy_strerror(res);
       }
+
+#ifdef ENABLE_WEBUI
+      /* Send error to WebUI client if connected (except for user cancellation) */
+      if (error_msg) {
+         session_t *session = session_get_command_context();
+         if (session && session->type == SESSION_TYPE_WEBSOCKET) {
+            webui_send_error(session, error_code, error_msg);
+         }
+      }
+#endif
+
       curl_easy_cleanup(curl_handle);
       curl_slist_free_all(headers);
       json_object_put(request);
@@ -1159,25 +1352,44 @@ static char *llm_claude_streaming_internal(struct json_object *conversation_hist
    curl_easy_getinfo(curl_handle, CURLINFO_RESPONSE_CODE, &http_code);
 
    if (http_code != 200) {
+      /* Determine error code based on HTTP status */
+      const char *error_code;
       if (http_code == 401) {
          LOG_ERROR("Claude API: Invalid or missing API key (HTTP 401)");
+         error_code = "LLM_AUTH_ERROR";
       } else if (http_code == 403) {
          LOG_ERROR("Claude API: Access forbidden (HTTP 403) - check API key permissions");
+         error_code = "LLM_ACCESS_ERROR";
       } else if (http_code == 429) {
          LOG_ERROR("Claude API: Rate limit exceeded (HTTP 429)");
+         error_code = "LLM_RATE_LIMIT";
       } else if (http_code >= 500) {
          LOG_ERROR("Claude API: Server error (HTTP %ld)", http_code);
+         error_code = "LLM_SERVER_ERROR";
       } else if (http_code == 400) {
          LOG_ERROR("Claude API: Bad request (HTTP 400) - check tool format and message structure");
-         // Log the raw response which contains error details
+         error_code = "LLM_BAD_REQUEST";
+         /* Log the raw response which contains error details */
          if (streaming_ctx.raw_response.data && streaming_ctx.raw_response.size > 0) {
             LOG_ERROR("Claude error response: %s", streaming_ctx.raw_response.data);
          }
-         // Log a sample of the request for debugging
+         /* Log a sample of the request for debugging */
          LOG_WARNING("Claude request payload (first 1000 chars): %.1000s", payload);
-      } else if (http_code != 0) {
+      } else {
          LOG_ERROR("Claude API: Request failed (HTTP %ld)", http_code);
+         error_code = "LLM_ERROR";
       }
+
+#ifdef ENABLE_WEBUI
+      /* Send error to WebUI client if connected */
+      session_t *session = session_get_command_context();
+      if (session && session->type == SESSION_TYPE_WEBSOCKET) {
+         const char *error_msg = parse_claude_error_message(streaming_ctx.raw_response.data,
+                                                            http_code);
+         webui_send_error(session, error_code, error_msg);
+      }
+#endif
+
       curl_easy_cleanup(curl_handle);
       curl_slist_free_all(headers);
       json_object_put(request);

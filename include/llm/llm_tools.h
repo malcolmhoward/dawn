@@ -307,14 +307,18 @@ int llm_tools_set_enabled(const char *tool_name, bool enabled_local, bool enable
  * Thread-safe. Must be called after llm_tools_init().
  *
  * @param local_list Array of tool names enabled for local
- * @param local_count Number of entries (0 = enable all)
+ * @param local_count Number of entries
+ * @param local_configured true if list was explicitly configured (even if empty)
  * @param remote_list Array of tool names enabled for remote
- * @param remote_count Number of entries (0 = enable all)
+ * @param remote_count Number of entries
+ * @param remote_configured true if list was explicitly configured (even if empty)
  */
 void llm_tools_apply_config(const char **local_list,
                             int local_count,
+                            bool local_configured,
                             const char **remote_list,
-                            int remote_count);
+                            int remote_count,
+                            bool remote_configured);
 
 /**
  * @brief Get count of enabled tools for a session type
@@ -474,6 +478,13 @@ void llm_tools_suppress_push(void);
  * tool behavior. Calls can be nested.
  */
 void llm_tools_suppress_pop(void);
+
+/**
+ * @brief Check if tools are currently suppressed
+ *
+ * @return true if tools are suppressed (internal utility call in progress)
+ */
+bool llm_tools_suppressed(void);
 
 /**
  * @brief Get count of currently enabled tools

@@ -11,6 +11,163 @@
   'use strict';
 
   // =============================================================================
+  // Thinking Block Helpers
+  // =============================================================================
+
+  /**
+   * Check if text contains thinking content
+   * @param {string} text - Text to check
+   * @returns {boolean}
+   */
+  function containsThinkingContent(text) {
+    return text.includes('<dawn:thinking');
+  }
+
+  /**
+   * Extract thinking content and remaining message from text
+   * @param {string} text - Text to parse
+   * @returns {{thinking: {content: string, provider: string, duration: string}|null, remaining: string}}
+   */
+  function extractThinkingContent(text) {
+    const thinkingRegex = /<dawn:thinking\s+provider="([^"]+)"\s+duration="([^"]+)">\n([\s\S]*?)\n<\/dawn:thinking>\n?/;
+    const match = thinkingRegex.exec(text);
+
+    if (!match) {
+      return { thinking: null, remaining: text };
+    }
+
+    return {
+      thinking: {
+        provider: match[1],
+        duration: match[2],
+        content: match[3]
+      },
+      remaining: text.replace(match[0], '').trim()
+    };
+  }
+
+  /**
+   * Create a thinking block element for display
+   * @param {Object} thinking - Thinking data {provider, duration, content}
+   * @returns {HTMLElement}
+   */
+  function createThinkingBlock(thinking) {
+    const entry = document.createElement('div');
+    entry.className = 'thinking-block collapsed completed';
+    entry.setAttribute('role', 'region');
+    entry.setAttribute('aria-label', 'AI thinking process');
+
+    const providerLabel = thinking.provider === 'claude' ? 'Claude' :
+                          thinking.provider === 'local' ? 'Local LLM' : 'AI';
+
+    entry.innerHTML = `
+      <div class="thinking-header" role="button" tabindex="0" aria-expanded="false">
+        <span class="thinking-icon" aria-hidden="true">💭</span>
+        <span class="thinking-label">${providerLabel} thought</span>
+        <span class="thinking-duration">(${thinking.duration}s)</span>
+        <span class="thinking-toggle" aria-hidden="true">▼</span>
+      </div>
+      <div class="thinking-content">${DawnFormat.escapeHtml(thinking.content).replace(/\n/g, '<br>')}</div>
+    `;
+
+    // Add click handler for toggle
+    const header = entry.querySelector('.thinking-header');
+    header.addEventListener('click', () => toggleThinkingBlock(entry));
+    header.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        toggleThinkingBlock(entry);
+      }
+    });
+
+    return entry;
+  }
+
+  /**
+   * Toggle thinking block expanded/collapsed state
+   * @param {HTMLElement} entry - The thinking block element
+   */
+  function toggleThinkingBlock(entry) {
+    const isCollapsed = entry.classList.contains('collapsed');
+    entry.classList.toggle('collapsed', !isCollapsed);
+
+    const header = entry.querySelector('.thinking-header');
+    if (header) {
+      header.setAttribute('aria-expanded', isCollapsed ? 'true' : 'false');
+    }
+  }
+
+  // =============================================================================
+  // Reasoning Block Helpers (OpenAI o-series)
+  // =============================================================================
+
+  /**
+   * Check if text contains reasoning token marker
+   * @param {string} text - Text to check
+   * @returns {boolean}
+   */
+  function containsReasoningContent(text) {
+    return text.includes('<dawn:reasoning');
+  }
+
+  /**
+   * Extract reasoning tokens and remaining message from text
+   * @param {string} text - Text to parse
+   * @returns {{reasoning: {tokens: number}|null, remaining: string}}
+   */
+  function extractReasoningContent(text) {
+    const reasoningRegex = /<dawn:reasoning\s+tokens="(\d+)"\/>\n?/;
+    const match = reasoningRegex.exec(text);
+
+    if (!match) {
+      return { reasoning: null, remaining: text };
+    }
+
+    return {
+      reasoning: {
+        tokens: parseInt(match[1], 10)
+      },
+      remaining: text.replace(match[0], '').trim()
+    };
+  }
+
+  /**
+   * Create a reasoning block element for display (OpenAI o-series)
+   * @param {Object} reasoning - Reasoning data {tokens}
+   * @returns {HTMLElement}
+   */
+  function createReasoningBlock(reasoning) {
+    const entry = document.createElement('div');
+    entry.className = 'thinking-block collapsed completed reasoning-only';
+    entry.setAttribute('role', 'region');
+    entry.setAttribute('aria-label', 'AI reasoning summary');
+
+    const tokens = reasoning.tokens || 0;
+    entry.innerHTML = `
+      <div class="thinking-header" role="button" tabindex="0" aria-expanded="false">
+        <span class="thinking-icon" aria-hidden="true">🧠</span>
+        <span class="thinking-label">OpenAI reasoned</span>
+        <span class="thinking-duration">(${tokens.toLocaleString()} tokens)</span>
+      </div>
+      <div class="thinking-content">
+        <em>Reasoning content is not accessible from OpenAI o-series models.</em>
+      </div>
+    `;
+
+    // Add click handler for toggle
+    const header = entry.querySelector('.thinking-header');
+    header.addEventListener('click', () => toggleThinkingBlock(entry));
+    header.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        toggleThinkingBlock(entry);
+      }
+    });
+
+    return entry;
+  }
+
+  // =============================================================================
   // Content Detection Helpers
   // =============================================================================
 
@@ -156,6 +313,42 @@
     const placeholder = transcript.querySelector('.transcript-placeholder');
     if (placeholder) {
       placeholder.remove();
+    }
+
+    // Check for thinking content in assistant messages (from history)
+    if (role === 'assistant' && containsThinkingContent(text)) {
+      const { thinking, remaining } = extractThinkingContent(text);
+      if (thinking) {
+        // Add thinking block first
+        const thinkingBlock = createThinkingBlock(thinking);
+        transcript.appendChild(thinkingBlock);
+
+        // Continue processing the remaining text
+        if (remaining.length > 0) {
+          text = remaining;
+        } else {
+          transcript.scrollTop = transcript.scrollHeight;
+          return;
+        }
+      }
+    }
+
+    // Check for reasoning content in assistant messages (from history - OpenAI o-series)
+    if (role === 'assistant' && containsReasoningContent(text)) {
+      const { reasoning, remaining } = extractReasoningContent(text);
+      if (reasoning) {
+        // Add reasoning block first (before the response)
+        const reasoningBlock = createReasoningBlock(reasoning);
+        transcript.appendChild(reasoningBlock);
+
+        // Continue processing the remaining text
+        if (remaining.length > 0) {
+          text = remaining;
+        } else {
+          transcript.scrollTop = transcript.scrollHeight;
+          return;
+        }
+      }
     }
 
     // Route tool role messages to debug entries (server sends role:"tool" for tool results)

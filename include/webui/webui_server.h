@@ -99,11 +99,17 @@ typedef enum {
    WS_RESP_CONTEXT,    /* Context/token usage update */
 
    /* LLM streaming types (ChatGPT-style real-time text) */
-   WS_RESP_STREAM_START,       /* Start of LLM token stream */
-   WS_RESP_STREAM_DELTA,       /* Incremental token chunk */
-   WS_RESP_STREAM_END,         /* End of LLM token stream */
-   WS_RESP_METRICS_UPDATE,     /* Real-time metrics for UI visualization */
-   WS_RESP_COMPACTION_COMPLETE /* Context compaction completed */
+   WS_RESP_STREAM_START,        /* Start of LLM token stream */
+   WS_RESP_STREAM_DELTA,        /* Incremental token chunk */
+   WS_RESP_STREAM_END,          /* End of LLM token stream */
+   WS_RESP_METRICS_UPDATE,      /* Real-time metrics for UI visualization */
+   WS_RESP_COMPACTION_COMPLETE, /* Context compaction completed */
+
+   /* Extended thinking types (reasoning/thinking content) */
+   WS_RESP_THINKING_START,   /* Start of thinking block */
+   WS_RESP_THINKING_DELTA,   /* Incremental thinking content */
+   WS_RESP_THINKING_END,     /* End of thinking block */
+   WS_RESP_REASONING_SUMMARY /* OpenAI o-series reasoning token summary (no content) */
 } ws_response_type_t;
 
 /* =============================================================================
@@ -340,6 +346,57 @@ int webui_filter_command_tags(struct session *session,
  * @note Sets session->llm_streaming_active = false
  */
 void webui_send_stream_end(struct session *session, const char *reason);
+
+/**
+ * @brief Send thinking block start notification
+ *
+ * Signals the client that extended thinking content is about to stream.
+ * Creates a collapsible thinking block in the UI.
+ *
+ * @param session Session to send to (must be SESSION_TYPE_WEBSOCKET)
+ * @param provider LLM provider name ("claude", "local", "openai")
+ *
+ * @note Thread-safe
+ */
+void webui_send_thinking_start(struct session *session, const char *provider);
+
+/**
+ * @brief Send incremental thinking content chunk
+ *
+ * Appends thinking text to the current thinking block on the client.
+ *
+ * @param session Session to send to (must be SESSION_TYPE_WEBSOCKET)
+ * @param text Thinking text chunk to append
+ *
+ * @note Thread-safe
+ */
+void webui_send_thinking_delta(struct session *session, const char *text);
+
+/**
+ * @brief Send thinking block end notification
+ *
+ * Signals the client that thinking content is complete.
+ * Causes the thinking block to auto-collapse in the UI.
+ *
+ * @param session Session to send to (must be SESSION_TYPE_WEBSOCKET)
+ * @param has_content true if thinking content was received, false otherwise
+ *
+ * @note Thread-safe
+ */
+void webui_send_thinking_end(struct session *session, bool has_content);
+
+/**
+ * @brief Send a reasoning summary to WebSocket client
+ *
+ * Used for OpenAI o-series models where we don't have access to reasoning
+ * content, but we know how many tokens were used for internal reasoning.
+ *
+ * @param session Session to send to (must be SESSION_TYPE_WEBSOCKET)
+ * @param reasoning_tokens Number of reasoning tokens used
+ *
+ * @note Thread-safe
+ */
+void webui_send_reasoning_summary(struct session *session, int reasoning_tokens);
 
 /**
  * @brief Process a text message from WebSocket client

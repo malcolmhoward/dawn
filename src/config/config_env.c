@@ -1036,6 +1036,15 @@ json_object *config_to_json(const dawn_config_t *config) {
                           json_object_new_boolean(config->llm.tools.native_enabled));
    json_object_object_add(llm, "tools", tools);
 
+   /* [llm.thinking] */
+   json_object *thinking = json_object_new_object();
+   json_object_object_add(thinking, "mode", json_object_new_string(config->llm.thinking.mode));
+   json_object_object_add(thinking, "budget_tokens",
+                          json_object_new_int(config->llm.thinking.budget_tokens));
+   json_object_object_add(thinking, "reasoning_effort",
+                          json_object_new_string(config->llm.thinking.reasoning_effort));
+   json_object_object_add(llm, "thinking", thinking);
+
    /* Context management settings */
    json_object_object_add(llm, "summarize_threshold",
                           json_object_new_double(config->llm.summarize_threshold));
@@ -1348,28 +1357,43 @@ int config_write_toml(const dawn_config_t *config, const char *path) {
 
    fprintf(fp, "\n[llm.tools]\n");
    fprintf(fp, "native_enabled = %s\n", config->llm.tools.native_enabled ? "true" : "false");
-   if (config->llm.tools.local_enabled_count > 0) {
-      fprintf(fp, "local_enabled = [\n");
-      for (int i = 0; i < config->llm.tools.local_enabled_count; i++) {
-         /* Defense-in-depth: escape even though input validation restricts characters */
-         char *escaped = toml_escape_string(config->llm.tools.local_enabled[i]);
-         fprintf(fp, "    \"%s\"%s\n", escaped ? escaped : config->llm.tools.local_enabled[i],
-                 i < config->llm.tools.local_enabled_count - 1 ? "," : "");
-         free(escaped);
+   /* Write local_enabled array if configured (even if empty - empty means none enabled) */
+   if (config->llm.tools.local_enabled_configured || config->llm.tools.local_enabled_count > 0) {
+      if (config->llm.tools.local_enabled_count > 0) {
+         fprintf(fp, "local_enabled = [\n");
+         for (int i = 0; i < config->llm.tools.local_enabled_count; i++) {
+            /* Defense-in-depth: escape even though input validation restricts characters */
+            char *escaped = toml_escape_string(config->llm.tools.local_enabled[i]);
+            fprintf(fp, "    \"%s\"%s\n", escaped ? escaped : config->llm.tools.local_enabled[i],
+                    i < config->llm.tools.local_enabled_count - 1 ? "," : "");
+            free(escaped);
+         }
+         fprintf(fp, "]\n");
+      } else {
+         fprintf(fp, "local_enabled = []\n");
       }
-      fprintf(fp, "]\n");
    }
-   if (config->llm.tools.remote_enabled_count > 0) {
-      fprintf(fp, "remote_enabled = [\n");
-      for (int i = 0; i < config->llm.tools.remote_enabled_count; i++) {
-         /* Defense-in-depth: escape even though input validation restricts characters */
-         char *escaped = toml_escape_string(config->llm.tools.remote_enabled[i]);
-         fprintf(fp, "    \"%s\"%s\n", escaped ? escaped : config->llm.tools.remote_enabled[i],
-                 i < config->llm.tools.remote_enabled_count - 1 ? "," : "");
-         free(escaped);
+   /* Write remote_enabled array if configured (even if empty - empty means none enabled) */
+   if (config->llm.tools.remote_enabled_configured || config->llm.tools.remote_enabled_count > 0) {
+      if (config->llm.tools.remote_enabled_count > 0) {
+         fprintf(fp, "remote_enabled = [\n");
+         for (int i = 0; i < config->llm.tools.remote_enabled_count; i++) {
+            /* Defense-in-depth: escape even though input validation restricts characters */
+            char *escaped = toml_escape_string(config->llm.tools.remote_enabled[i]);
+            fprintf(fp, "    \"%s\"%s\n", escaped ? escaped : config->llm.tools.remote_enabled[i],
+                    i < config->llm.tools.remote_enabled_count - 1 ? "," : "");
+            free(escaped);
+         }
+         fprintf(fp, "]\n");
+      } else {
+         fprintf(fp, "remote_enabled = []\n");
       }
-      fprintf(fp, "]\n");
    }
+
+   fprintf(fp, "\n[llm.thinking]\n");
+   fprintf(fp, "mode = \"%s\"\n", config->llm.thinking.mode);
+   fprintf(fp, "budget_tokens = %d\n", config->llm.thinking.budget_tokens);
+   fprintf(fp, "reasoning_effort = \"%s\"\n", config->llm.thinking.reasoning_effort);
 
    fprintf(fp, "\n[search]\n");
    fprintf(fp, "engine = \"%s\"\n", config->search.engine);

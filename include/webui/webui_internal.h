@@ -138,7 +138,7 @@ typedef struct {
       } context;
       struct {
          uint32_t stream_id;
-         char text[128]; /* Fixed buffer for delta/end text */
+         char text[1024]; /* Buffer for delta/end text (increased for thinking) */
       } stream;
       struct {
          char state[16];   /* idle, listening, thinking, speaking, error */

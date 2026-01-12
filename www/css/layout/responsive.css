@@ -189,3 +189,25 @@
     display: block;
   }
 }
+
+/* =============================================================================
+ * Thinking Block Responsive
+ * ============================================================================= */
+@media (max-width: 600px) {
+  .thinking-block .thinking-content {
+    max-height: 200px;
+    font-size: 0.75rem;
+  }
+
+  .thinking-header {
+    padding: 0.75rem;  /* Larger touch target */
+  }
+
+  .thinking-label {
+    font-size: 0.8rem;
+  }
+
+  .thinking-duration {
+    font-size: 0.7rem;
+  }
+}

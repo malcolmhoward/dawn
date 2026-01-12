@@ -39,6 +39,9 @@
 #include "logging.h"
 #include "tools/curl_buffer.h"
 #include "ui/metrics.h"
+#ifdef ENABLE_WEBUI
+#include "webui/webui_server.h"
+#endif
 
 // External CURL progress callback for interrupt support
 extern int llm_curl_progress_callback(void *clientp,
@@ -724,8 +727,15 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
    // Use filtered history (already our own copy, no need to increment refcount)
    json_object_object_add(root, "messages", converted_history);
 
-   // Max Tokens
-   json_object_object_add(root, "max_tokens", json_object_new_int(g_config.llm.max_tokens));
+   // Max Tokens - cloud OpenAI uses max_completion_tokens, local llama.cpp uses max_tokens
+   if (api_key == NULL) {
+      // Local llama.cpp uses the older max_tokens parameter
+      json_object_object_add(root, "max_tokens", json_object_new_int(g_config.llm.max_tokens));
+   } else {
+      // Cloud OpenAI (gpt-4o, o1, o3, etc.) uses max_completion_tokens
+      json_object_object_add(root, "max_completion_tokens",
+                             json_object_new_int(g_config.llm.max_tokens));
+   }
 
    // Add tools if native tool calling is enabled
    if (llm_tools_enabled(NULL)) {
@@ -994,6 +1004,50 @@ static void openai_sse_event_handler(const char *event_type,
 #define MAX_TOOL_ITERATIONS 5
 
 /**
+ * @brief Extract error message from OpenAI/compatible API error response
+ *
+ * Parses JSON like: {"error": {"message": "...", "code": "..."}}
+ * Returns a formatted error message or a default message if parsing fails.
+ * The returned string is static and should not be freed.
+ */
+static const char *parse_api_error_message(const char *response_body, long http_code) {
+   static char error_msg[512];
+
+   if (!response_body || response_body[0] == '\0') {
+      snprintf(error_msg, sizeof(error_msg), "API request failed (HTTP %ld)", http_code);
+      return error_msg;
+   }
+
+   struct json_object *root = json_tokener_parse(response_body);
+   if (!root) {
+      snprintf(error_msg, sizeof(error_msg), "API request failed (HTTP %ld)", http_code);
+      return error_msg;
+   }
+
+   struct json_object *error_obj;
+   if (!json_object_object_get_ex(root, "error", &error_obj)) {
+      json_object_put(root);
+      snprintf(error_msg, sizeof(error_msg), "API request failed (HTTP %ld)", http_code);
+      return error_msg;
+   }
+
+   struct json_object *message_obj;
+   const char *message = NULL;
+   if (json_object_object_get_ex(error_obj, "message", &message_obj)) {
+      message = json_object_get_string(message_obj);
+   }
+
+   if (message && message[0] != '\0') {
+      snprintf(error_msg, sizeof(error_msg), "%s", message);
+   } else {
+      snprintf(error_msg, sizeof(error_msg), "API request failed (HTTP %ld)", http_code);
+   }
+
+   json_object_put(root);
+   return error_msg;
+}
+
+/**
  * @brief Internal streaming implementation with iteration tracking
  */
 static char *llm_openai_streaming_internal(struct json_object *conversation_history,
@@ -1050,6 +1104,46 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
    // This enables real-time tokens/sec display during streaming
    if (api_key == NULL) {
       json_object_object_add(root, "timings_per_token", json_object_new_boolean(1));
+
+      // Add extended thinking for local LLM (llama.cpp with DeepSeek-R1, QwQ, etc.)
+      // Skip for internal utility calls (search summarization, context compaction)
+      if (strcmp(g_config.llm.thinking.mode, "disabled") != 0 && !llm_tools_suppressed()) {
+         json_object *thinking = json_object_new_object();
+         json_object_object_add(thinking, "type", json_object_new_string("enabled"));
+
+         int budget = g_config.llm.thinking.budget_tokens;
+         if (budget < 1024)
+            budget = 1024;
+         json_object_object_add(thinking, "budget_tokens", json_object_new_int(budget));
+
+         json_object_object_add(root, "thinking", thinking);
+
+         // Force reasoning output even when tools are present (llama.cpp specific)
+         // Without this, models may skip reasoning and go straight to tool selection
+         json_object_object_add(root, "thinking_forced_open", json_object_new_boolean(1));
+
+         // Pass enable_thinking=true to the chat template (Qwen3 requirement)
+         // This sets the template variable that controls thinking behavior
+         json_object *template_kwargs = json_object_new_object();
+         json_object_object_add(template_kwargs, "enable_thinking", json_object_new_boolean(1));
+         json_object_object_add(root, "chat_template_kwargs", template_kwargs);
+
+         LOG_INFO("Local LLM: Extended thinking enabled (budget: %d tokens, forced_open: true, "
+                  "chat_template_kwargs.enable_thinking: true)",
+                  budget);
+      }
+   } else {
+      // For cloud OpenAI with o-series models (o1, o3), add reasoning_effort
+      // Skip for internal utility calls (search summarization, context compaction)
+      const char *model = g_config.llm.cloud.openai_model;
+      if (strcmp(g_config.llm.thinking.mode, "disabled") != 0 && !llm_tools_suppressed() &&
+          (strncmp(model, "o1", 2) == 0 || strncmp(model, "o3", 2) == 0)) {
+         const char *effort = g_config.llm.thinking.reasoning_effort;
+         if (effort[0] == '\0')
+            effort = "medium";
+         json_object_object_add(root, "reasoning_effort", json_object_new_string(effort));
+         LOG_INFO("OpenAI: Reasoning effort set to '%s' for model %s", effort, model);
+      }
    }
 
    // Handle vision if provided
@@ -1132,8 +1226,15 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
    // Use filtered history (already our own copy, no need to increment refcount)
    json_object_object_add(root, "messages", converted_history);
 
-   // Max Tokens
-   json_object_object_add(root, "max_tokens", json_object_new_int(g_config.llm.max_tokens));
+   // Max Tokens - cloud OpenAI uses max_completion_tokens, local llama.cpp uses max_tokens
+   if (api_key == NULL) {
+      // Local llama.cpp uses the older max_tokens parameter
+      json_object_object_add(root, "max_tokens", json_object_new_int(g_config.llm.max_tokens));
+   } else {
+      // Cloud OpenAI (gpt-4o, o1, o3, etc.) uses max_completion_tokens
+      json_object_object_add(root, "max_completion_tokens",
+                             json_object_new_int(g_config.llm.max_tokens));
+   }
 
    // Add tools if native tool calling is enabled
    if (llm_tools_enabled(NULL)) {
@@ -1250,13 +1351,32 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
 
       res = curl_easy_perform(curl_handle);
       if (res != CURLE_OK) {
+         const char *error_code = "LLM_ERROR";
+         const char *error_msg = NULL;
+
          if (res == CURLE_ABORTED_BY_CALLBACK) {
             LOG_INFO("LLM transfer interrupted by user");
+            /* User cancellation - don't send as error */
          } else if (res == CURLE_OPERATION_TIMEDOUT) {
             LOG_ERROR("LLM stream timed out (no data for 60 seconds)");
+            error_code = "LLM_TIMEOUT";
+            error_msg = "Request timed out - AI server may be overloaded";
          } else {
             LOG_ERROR("curl_easy_perform() failed: %s", curl_easy_strerror(res));
+            error_code = "LLM_CONNECTION_ERROR";
+            error_msg = curl_easy_strerror(res);
          }
+
+#ifdef ENABLE_WEBUI
+         /* Send error to WebUI client if connected (except for user cancellation) */
+         if (error_msg) {
+            session_t *session = session_get_command_context();
+            if (session && session->type == SESSION_TYPE_WEBSOCKET) {
+               webui_send_error(session, error_code, error_msg);
+            }
+         }
+#endif
+
          curl_easy_cleanup(curl_handle);
          curl_slist_free_all(headers);
          sse_parser_free(sse_parser);
@@ -1271,21 +1391,39 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
       curl_easy_getinfo(curl_handle, CURLINFO_RESPONSE_CODE, &http_code);
 
       if (http_code != 200) {
+         /* Determine error code based on HTTP status */
+         const char *error_code;
          if (http_code == 401) {
             LOG_ERROR("OpenAI API: Invalid or missing API key (HTTP 401)");
+            error_code = "LLM_AUTH_ERROR";
          } else if (http_code == 403) {
             LOG_ERROR("OpenAI API: Access forbidden (HTTP 403) - check API key permissions");
+            error_code = "LLM_ACCESS_ERROR";
          } else if (http_code == 429) {
             LOG_ERROR("OpenAI API: Rate limit exceeded (HTTP 429)");
+            error_code = "LLM_RATE_LIMIT";
          } else if (http_code >= 500) {
             LOG_ERROR("OpenAI API: Server error (HTTP %ld)", http_code);
-         } else if (http_code != 0) {
+            error_code = "LLM_SERVER_ERROR";
+         } else {
             LOG_ERROR("OpenAI API: Request failed (HTTP %ld)", http_code);
+            error_code = "LLM_ERROR";
          }
-         // Log raw response body for debugging errors (especially 400)
+
+         /* Log raw response body for debugging */
          if (streaming_ctx.raw_buffer && streaming_ctx.raw_size > 0) {
             LOG_ERROR("OpenAI API error response: %s", streaming_ctx.raw_buffer);
          }
+
+#ifdef ENABLE_WEBUI
+         /* Send error to WebUI client if connected */
+         session_t *session = session_get_command_context();
+         if (session && session->type == SESSION_TYPE_WEBSOCKET) {
+            const char *error_msg = parse_api_error_message(streaming_ctx.raw_buffer, http_code);
+            webui_send_error(session, error_code, error_msg);
+         }
+#endif
+
          curl_easy_cleanup(curl_handle);
          curl_slist_free_all(headers);
          sse_parser_free(sse_parser);
@@ -1471,6 +1609,16 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
 
    // Get accumulated response
    response = llm_stream_get_response(stream_ctx);
+
+   // Send reasoning summary to WebUI if we had reasoning tokens (OpenAI o-series)
+#ifdef ENABLE_WEBUI
+   if (stream_ctx->reasoning_tokens > 0) {
+      session_t *ws_session = session_get_command_context();
+      if (ws_session && ws_session->type == SESSION_TYPE_WEBSOCKET) {
+         webui_send_reasoning_summary(ws_session, stream_ctx->reasoning_tokens);
+      }
+   }
+#endif
 
    // Cleanup
    sse_parser_free(sse_parser);

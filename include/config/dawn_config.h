@@ -157,21 +157,30 @@ typedef struct {
 typedef struct {
    bool native_enabled; /* Use native tool calling (default: true) */
 
-   /* Per-tool enable lists (empty = all enabled) */
+   /* Per-tool enable lists (empty + configured = none enabled) */
    char local_enabled[LLM_TOOLS_MAX_CONFIGURED][LLM_TOOL_NAME_MAX];
    int local_enabled_count;
+   bool local_enabled_configured; /* true if explicitly set in config (even if empty) */
    char remote_enabled[LLM_TOOLS_MAX_CONFIGURED][LLM_TOOL_NAME_MAX];
    int remote_enabled_count;
+   bool remote_enabled_configured; /* true if explicitly set in config (even if empty) */
 } llm_tools_config_t;
+
+typedef struct {
+   char mode[16];            /* "disabled", "enabled", "auto" */
+   int budget_tokens;        /* Token budget (min 1024 for Claude) */
+   char reasoning_effort[8]; /* OpenAI o-series: "low", "medium", "high" */
+} llm_thinking_config_t;
 
 typedef struct {
    char type[16];  /* "cloud" or "local" */
    int max_tokens; /* Max response tokens */
    llm_cloud_config_t cloud;
    llm_local_config_t local;
-   llm_tools_config_t tools;  /* Native tool/function calling settings */
-   float summarize_threshold; /* Compact conversation at this % of context (default: 0.80) */
-   bool conversation_logging; /* Save chat history to log files (default: false) */
+   llm_tools_config_t tools;       /* Native tool/function calling settings */
+   llm_thinking_config_t thinking; /* Extended thinking/reasoning settings */
+   float summarize_threshold;      /* Compact conversation at this % of context (default: 0.80) */
+   bool conversation_logging;      /* Save chat history to log files (default: false) */
 } llm_config_t;
 
 /* =============================================================================

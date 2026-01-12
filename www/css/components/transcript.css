@@ -442,3 +442,144 @@ body.debug-mode .transcript-entry.debug {
   border-top: 1px solid rgba(255, 255, 255, 0.15);
   margin: 0.75em 0;
 }
+
+/* =============================================================================
+ * Extended Thinking Block (Claude/llama.cpp reasoning)
+ * ============================================================================= */
+.thinking-block {
+  background: var(--warning-subtle);
+  border: 1px solid var(--warning-border);
+  border-radius: var(--border-radius);
+  margin-bottom: 0.75rem;
+  overflow: hidden;
+  animation: fade-in var(--transition-fast) ease-out;
+}
+
+.thinking-block.completed {
+  opacity: 0.85;
+}
+
+.thinking-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 0.75rem;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color var(--transition-fast);
+}
+
+.thinking-header:hover {
+  background: var(--warning-hover);
+}
+
+.thinking-header:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
+.thinking-icon {
+  font-size: 1rem;
+}
+
+.thinking-label {
+  flex: 1;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--warning);
+}
+
+.thinking-duration {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+.thinking-toggle {
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  transition: transform var(--transition-fast);
+}
+
+.thinking-content {
+  padding: 0.75rem;
+  border-top: 1px solid var(--warning-border-light);
+  background: rgba(0, 0, 0, 0.15);
+  max-height: 300px;
+  overflow-y: auto;
+  font-family: 'IBM Plex Mono', 'Monaco', 'Menlo', 'Consolas', monospace;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  transition: max-height var(--transition-fast), padding var(--transition-fast),
+              opacity var(--transition-fast), border-top-color var(--transition-fast);
+}
+
+/* Collapsed state */
+.thinking-block.collapsed .thinking-content {
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  border-top-color: transparent;
+  opacity: 0;
+  overflow: hidden;
+}
+
+.thinking-block.collapsed .thinking-toggle {
+  transform: rotate(0deg);
+}
+
+.thinking-block:not(.collapsed) .thinking-toggle {
+  transform: rotate(180deg);
+}
+
+/* Streaming indicator */
+.thinking-block:not(.completed) .thinking-label::after {
+  content: '';
+  display: inline-block;
+  width: 0.5em;
+  height: 0.5em;
+  margin-left: 0.5em;
+  background: var(--warning);
+  border-radius: 50%;
+  animation: thinking-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes thinking-pulse {
+  0%, 100% { opacity: 0.3; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .thinking-block:not(.completed) .thinking-label::after {
+    animation: none;
+    opacity: 1;
+  }
+}
+
+/* OpenAI reasoning-only variant (no content, just token count) */
+.thinking-block.reasoning-only {
+  background: rgba(99, 102, 241, 0.08);  /* Indigo tint */
+  border-color: rgba(99, 102, 241, 0.25);
+}
+
+.thinking-block.reasoning-only .thinking-header:hover {
+  background: rgba(99, 102, 241, 0.12);
+}
+
+.thinking-block.reasoning-only .thinking-label {
+  color: rgb(129, 140, 248);  /* Indigo-400 */
+}
+
+.thinking-block.reasoning-only .thinking-toggle {
+  display: none;  /* No toggle since content is just a message */
+}
+
+.thinking-block.reasoning-only .thinking-content {
+  border-top-color: rgba(99, 102, 241, 0.15);
+  font-style: italic;
+  color: var(--text-tertiary);
+}

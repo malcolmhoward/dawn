@@ -121,6 +121,11 @@ void config_set_defaults(dawn_config_t *config) {
    /* LLM Tools */
    config->llm.tools.native_enabled = true; /* Native tool calling enabled by default */
 
+   /* LLM Thinking/Reasoning */
+   SAFE_COPY(config->llm.thinking.mode, "disabled");           /* "disabled", "enabled", "auto" */
+   config->llm.thinking.budget_tokens = 10000;                 /* Default budget when enabled */
+   SAFE_COPY(config->llm.thinking.reasoning_effort, "medium"); /* OpenAI o-series default */
+
    /* LLM Context Management */
    config->llm.summarize_threshold = 0.80f;  /* Compact at 80% of context limit */
    config->llm.conversation_logging = false; /* Disabled: WebUI saves to DB, set true for debug */

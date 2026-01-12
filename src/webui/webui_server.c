@@ -464,6 +464,11 @@ void free_response(ws_response_t *resp) {
       case WS_RESP_COMPACTION_COMPLETE:
          free(resp->compaction.summary);
          break;
+      case WS_RESP_THINKING_START:
+      case WS_RESP_THINKING_DELTA:
+      case WS_RESP_THINKING_END:
+         /* No data to free - text[] is inline fixed buffer */
+         break;
    }
 }
 
@@ -797,11 +802,78 @@ static void send_stream_delta_impl(struct lws *wsi, uint32_t stream_id, const ch
 }
 
 static void send_stream_end_impl(struct lws *wsi, uint32_t stream_id, const char *reason) {
-   char json[256];
-   snprintf(json, sizeof(json),
-            "{\"type\":\"stream_end\",\"payload\":{\"stream_id\":%u,\"reason\":\"%s\"}}", stream_id,
-            reason ? reason : "complete");
-   send_json_message(wsi, json);
+   struct json_object *obj = json_object_new_object();
+   struct json_object *payload = json_object_new_object();
+
+   json_object_object_add(payload, "stream_id", json_object_new_int((int32_t)stream_id));
+   json_object_object_add(payload, "reason", json_object_new_string(reason ? reason : "complete"));
+   json_object_object_add(obj, "type", json_object_new_string("stream_end"));
+   json_object_object_add(obj, "payload", payload);
+
+   const char *json_str = json_object_to_json_string(obj);
+   send_json_message(wsi, json_str);
+   json_object_put(obj);
+}
+
+/* =============================================================================
+ * Extended Thinking WebSocket Helpers
+ * ============================================================================= */
+
+static void send_thinking_start_impl(struct lws *wsi, uint32_t stream_id, const char *provider) {
+   struct json_object *obj = json_object_new_object();
+   struct json_object *payload = json_object_new_object();
+
+   json_object_object_add(payload, "stream_id", json_object_new_int((int32_t)stream_id));
+   json_object_object_add(payload, "provider",
+                          json_object_new_string(provider ? provider : "unknown"));
+   json_object_object_add(obj, "type", json_object_new_string("thinking_start"));
+   json_object_object_add(obj, "payload", payload);
+
+   const char *json_str = json_object_to_json_string(obj);
+   send_json_message(wsi, json_str);
+   json_object_put(obj);
+}
+
+static void send_thinking_delta_impl(struct lws *wsi, uint32_t stream_id, const char *text) {
+   struct json_object *obj = json_object_new_object();
+   struct json_object *payload = json_object_new_object();
+
+   json_object_object_add(payload, "stream_id", json_object_new_int((int32_t)stream_id));
+   json_object_object_add(payload, "delta", json_object_new_string(text));
+   json_object_object_add(obj, "type", json_object_new_string("thinking_delta"));
+   json_object_object_add(obj, "payload", payload);
+
+   const char *json_str = json_object_to_json_string(obj);
+   send_json_message(wsi, json_str);
+   json_object_put(obj);
+}
+
+static void send_thinking_end_impl(struct lws *wsi, uint32_t stream_id, int has_content) {
+   struct json_object *obj = json_object_new_object();
+   struct json_object *payload = json_object_new_object();
+
+   json_object_object_add(payload, "stream_id", json_object_new_int((int32_t)stream_id));
+   json_object_object_add(payload, "has_content", json_object_new_boolean(has_content));
+   json_object_object_add(obj, "type", json_object_new_string("thinking_end"));
+   json_object_object_add(obj, "payload", payload);
+
+   const char *json_str = json_object_to_json_string(obj);
+   send_json_message(wsi, json_str);
+   json_object_put(obj);
+}
+
+static void send_reasoning_summary_impl(struct lws *wsi, uint32_t stream_id, int reasoning_tokens) {
+   struct json_object *obj = json_object_new_object();
+   struct json_object *payload = json_object_new_object();
+
+   json_object_object_add(payload, "stream_id", json_object_new_int((int32_t)stream_id));
+   json_object_object_add(payload, "reasoning_tokens", json_object_new_int(reasoning_tokens));
+   json_object_object_add(obj, "type", json_object_new_string("reasoning_summary"));
+   json_object_object_add(obj, "payload", payload);
+
+   const char *json_str = json_object_to_json_string(obj);
+   send_json_message(wsi, json_str);
+   json_object_put(obj);
 }
 
 /**
@@ -971,6 +1043,24 @@ static void process_one_response(void) {
                               resp.compaction.tokens_after, resp.compaction.messages_summarized,
                               resp.compaction.summary);
          free(resp.compaction.summary);
+         break;
+      case WS_RESP_THINKING_START:
+         send_thinking_start_impl(conn->wsi, resp.stream.stream_id, resp.stream.text);
+         /* text[] reused for provider name - no free needed */
+         break;
+      case WS_RESP_THINKING_DELTA:
+         send_thinking_delta_impl(conn->wsi, resp.stream.stream_id, resp.stream.text);
+         /* text[] is inline buffer - no free needed */
+         break;
+      case WS_RESP_THINKING_END:
+         send_thinking_end_impl(conn->wsi, resp.stream.stream_id,
+                                resp.stream.text[0] == '1'); /* has_content flag */
+         /* text[] reused for flag - no free needed */
+         break;
+      case WS_RESP_REASONING_SUMMARY:
+         send_reasoning_summary_impl(conn->wsi, resp.stream.stream_id,
+                                     atoi(resp.stream.text)); /* reasoning_tokens as string */
+         /* text[] reused for token count - no free needed */
          break;
    }
 
@@ -3314,6 +3404,95 @@ void webui_send_stream_end(session_t *session, const char *reason) {
    queue_response(&resp);
    LOG_INFO("WebUI: Stream end id=%u reason=%s for session %u", session->current_stream_id, r,
             session->session_id);
+}
+
+/* =============================================================================
+ * Extended Thinking Public API
+ * ============================================================================= */
+
+void webui_send_thinking_start(session_t *session, const char *provider) {
+   if (!session || session->type != SESSION_TYPE_WEBSOCKET) {
+      return;
+   }
+
+   ws_response_t resp = { .session = session,
+                          .type = WS_RESP_THINKING_START,
+                          .stream = {
+                              .stream_id = session->current_stream_id,
+                          } };
+
+   /* Store provider name in text buffer */
+   const char *p = provider ? provider : "unknown";
+   strncpy(resp.stream.text, p, sizeof(resp.stream.text) - 1);
+   resp.stream.text[sizeof(resp.stream.text) - 1] = '\0';
+
+   queue_response(&resp);
+   LOG_INFO("WebUI: Thinking start id=%u provider=%s for session %u", session->current_stream_id, p,
+            session->session_id);
+}
+
+void webui_send_thinking_delta(session_t *session, const char *text) {
+   if (!session || session->type != SESSION_TYPE_WEBSOCKET) {
+      return;
+   }
+
+   if (!text || text[0] == '\0') {
+      return;
+   }
+
+   ws_response_t resp = { .session = session,
+                          .type = WS_RESP_THINKING_DELTA,
+                          .stream = {
+                              .stream_id = session->current_stream_id,
+                          } };
+
+   strncpy(resp.stream.text, text, sizeof(resp.stream.text) - 1);
+   resp.stream.text[sizeof(resp.stream.text) - 1] = '\0';
+
+   queue_response(&resp);
+}
+
+void webui_send_thinking_end(session_t *session, bool has_content) {
+   if (!session || session->type != SESSION_TYPE_WEBSOCKET) {
+      return;
+   }
+
+   ws_response_t resp = { .session = session,
+                          .type = WS_RESP_THINKING_END,
+                          .stream = {
+                              .stream_id = session->current_stream_id,
+                          } };
+
+   /* Use text[0] to store has_content flag */
+   resp.stream.text[0] = has_content ? '1' : '0';
+   resp.stream.text[1] = '\0';
+
+   queue_response(&resp);
+   LOG_INFO("WebUI: Thinking end id=%u has_content=%s for session %u", session->current_stream_id,
+            has_content ? "true" : "false", session->session_id);
+}
+
+void webui_send_reasoning_summary(session_t *session, int reasoning_tokens) {
+   if (!session || session->type != SESSION_TYPE_WEBSOCKET) {
+      return;
+   }
+
+   if (reasoning_tokens <= 0) {
+      return;
+   }
+
+   ws_response_t resp = { .session = session,
+                          .type = WS_RESP_REASONING_SUMMARY,
+                          .stream = {
+                              .stream_id = session->current_stream_id,
+                          } };
+
+   /* Store reasoning_tokens as string in text buffer */
+   snprintf(resp.stream.text, sizeof(resp.stream.text), "%d", reasoning_tokens);
+
+   queue_response(&resp);
+   LOG_INFO("WebUI: Reasoning summary id=%u tokens=%d for session %u", session->current_stream_id,
+            reasoning_tokens, session->session_id);
 }
 
 /* =============================================================================

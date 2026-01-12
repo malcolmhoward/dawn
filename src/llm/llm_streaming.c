@@ -34,7 +34,9 @@
 #include "webui/webui_server.h"
 
 #define DEFAULT_ACCUMULATED_CAPACITY 8192
+#define DEFAULT_THINKING_CAPACITY 4096
 #define MAX_ACCUMULATED_SIZE (10 * 1024 * 1024)  // 10MB hard limit for LLM responses
+#define MAX_THINKING_SIZE (2 * 1024 * 1024)      // 2MB hard limit for thinking content
 
 /**
  * @brief Record TTFT metric if this is the first token
@@ -62,11 +64,14 @@ static void record_ttft_if_first_token(llm_stream_context_t *ctx) {
  * @brief Append text to accumulated response buffer
  */
 static int append_to_accumulated(llm_stream_context_t *ctx, const char *text) {
-   if (!text || strlen(text) == 0) {
+   if (!text) {
       return 1;
    }
 
    size_t text_len = strlen(text);
+   if (text_len == 0) {
+      return 1;
+   }
    size_t needed = ctx->accumulated_size + text_len + 1;
 
    // Prevent runaway memory allocation from excessively long LLM responses
@@ -107,6 +112,67 @@ static int append_to_accumulated(llm_stream_context_t *ctx, const char *text) {
 }
 
 /**
+ * @brief Append text to accumulated thinking buffer
+ */
+static int append_to_thinking(llm_stream_context_t *ctx, const char *text) {
+   if (!text) {
+      return 1;
+   }
+
+   size_t text_len = strlen(text);
+   if (text_len == 0) {
+      return 1;
+   }
+
+   // Lazy initialization of thinking buffer
+   if (!ctx->accumulated_thinking) {
+      ctx->accumulated_thinking = malloc(DEFAULT_THINKING_CAPACITY);
+      if (!ctx->accumulated_thinking) {
+         LOG_ERROR("Failed to allocate thinking buffer");
+         return 0;
+      }
+      ctx->accumulated_thinking[0] = '\0';
+      ctx->thinking_capacity = DEFAULT_THINKING_CAPACITY;
+      ctx->thinking_size = 0;
+   }
+
+   size_t needed = ctx->thinking_size + text_len + 1;
+
+   // Prevent runaway memory allocation
+   if (needed > MAX_THINKING_SIZE) {
+      LOG_WARNING("Thinking content size limit exceeded: %zu bytes", needed);
+      return 0;
+   }
+
+   // Reallocate if needed
+   if (needed > ctx->thinking_capacity) {
+      size_t new_capacity = ctx->thinking_capacity * 2;
+      while (new_capacity < needed) {
+         new_capacity *= 2;
+      }
+      if (new_capacity > MAX_THINKING_SIZE) {
+         new_capacity = MAX_THINKING_SIZE;
+      }
+
+      char *new_buffer = realloc(ctx->accumulated_thinking, new_capacity);
+      if (!new_buffer) {
+         LOG_ERROR("Failed to reallocate thinking buffer");
+         return 0;
+      }
+
+      ctx->accumulated_thinking = new_buffer;
+      ctx->thinking_capacity = new_capacity;
+   }
+
+   // Append text
+   memcpy(ctx->accumulated_thinking + ctx->thinking_size, text, text_len);
+   ctx->thinking_size += text_len;
+   ctx->accumulated_thinking[ctx->thinking_size] = '\0';
+
+   return 1;
+}
+
+/**
  * @brief Parse OpenAI/llama.cpp streaming chunk
  *
  * Format: {"choices":[{"delta":{"content":"text"}}]}
@@ -127,6 +193,10 @@ static void parse_openai_chunk(llm_stream_context_t *ctx, const char *event_data
       return;
    }
 
+   // Cache session lookup for WebUI notifications (avoids repeated lookups)
+   session_t *ws_session = session_get_command_context();
+   int has_ws_session = (ws_session && ws_session->type == SESSION_TYPE_WEBSOCKET);
+
    // Extract choices[0].delta.content or tool_calls
    json_object *choices, *first_choice, *delta, *content;
 
@@ -135,15 +205,64 @@ static void parse_openai_chunk(llm_stream_context_t *ctx, const char *event_data
       first_choice = json_object_array_get_idx(choices, 0);
 
       if (json_object_object_get_ex(first_choice, "delta", &delta)) {
+         // Check for reasoning_content (llama.cpp with DeepSeek-R1 or reasoning models)
+         json_object *reasoning_content;
+         if (json_object_object_get_ex(delta, "reasoning_content", &reasoning_content)) {
+            const char *thinking_text = json_object_get_string(reasoning_content);
+            if (thinking_text && thinking_text[0] != '\0') {
+               // Mark thinking as active and send thinking_start on first chunk
+               if (!ctx->thinking_active) {
+                  ctx->thinking_active = 1;
+                  ctx->has_thinking = 1;
+                  LOG_INFO("LLM: Reasoning content detected (llama.cpp)");
+
+                  // Send thinking_start to WebUI
+                  if (has_ws_session) {
+                     webui_send_thinking_start(ws_session, "local");
+                  }
+               }
+
+               // Call chunk callback with thinking type if available
+               if (ctx->chunk_callback) {
+                  ctx->chunk_callback(LLM_CHUNK_THINKING, thinking_text,
+                                      ctx->chunk_callback_userdata);
+               }
+
+               // Send to WebUI for real-time display
+               if (has_ws_session) {
+                  webui_send_thinking_delta(ws_session, thinking_text);
+               }
+
+               // Accumulate thinking content
+               append_to_thinking(ctx, thinking_text);
+            }
+         }
+
          // Check for text content
          if (json_object_object_get_ex(delta, "content", &content)) {
             const char *text = json_object_get_string(content);
-            if (text && strlen(text) > 0) {
+            if (text && text[0] != '\0') {
+               // If we were in thinking mode, we've transitioned to text
+               if (ctx->thinking_active) {
+                  ctx->thinking_active = 0;
+                  LOG_INFO("LLM: Transitioned from reasoning to response");
+
+                  // Send thinking_end to WebUI
+                  if (has_ws_session) {
+                     webui_send_thinking_end(ws_session, ctx->thinking_size > 0);
+                  }
+               }
+
                // Record TTFT on first token
                record_ttft_if_first_token(ctx);
 
                // Call user callback with chunk
                ctx->callback(text, ctx->callback_userdata);
+
+               // Call chunk callback with text type if available
+               if (ctx->chunk_callback) {
+                  ctx->chunk_callback(LLM_CHUNK_TEXT, text, ctx->chunk_callback_userdata);
+               }
 
                // Append to accumulated response
                append_to_accumulated(ctx, text);
@@ -261,11 +380,11 @@ static void parse_openai_chunk(llm_stream_context_t *ctx, const char *event_data
       // Send real-time metrics to WebUI if we have meaningful data
       // Only send once we have a valid, stable tokens_per_second value
       if (ctx->tokens_per_second > 0 && ctx->tokens_generated >= 3) {
-         session_t *session = session_get_command_context();
-         if (session && session->type == SESSION_TYPE_WEBSOCKET) {
+         if (has_ws_session) {
             // Calculate context usage percentage (rough estimate from prompt tokens)
             int context_pct = 0;  // Will be properly calculated elsewhere
-            webui_send_metrics_update(session, "thinking", 0, ctx->tokens_per_second, context_pct);
+            webui_send_metrics_update(ws_session, "thinking", 0, ctx->tokens_per_second,
+                                      context_pct);
          }
       }
    }
@@ -292,6 +411,18 @@ static void parse_openai_chunk(llm_stream_context_t *ctx, const char *event_data
          }
       }
 
+      // Check for reasoning tokens in completion_tokens_details (OpenAI o-series)
+      json_object *completion_details;
+      if (json_object_object_get_ex(usage_obj, "completion_tokens_details", &completion_details)) {
+         json_object *reasoning_obj;
+         if (json_object_object_get_ex(completion_details, "reasoning_tokens", &reasoning_obj)) {
+            ctx->reasoning_tokens = json_object_get_int(reasoning_obj);
+            if (ctx->reasoning_tokens > 0) {
+               LOG_INFO("OpenAI reasoning tokens: %d", ctx->reasoning_tokens);
+            }
+         }
+      }
+
       // Only record if we have actual token counts (final chunk has non-zero values)
       if (input_tokens > 0 || output_tokens > 0) {
          llm_type_t type = (ctx->llm_type == LLM_LOCAL) ? LLM_LOCAL : LLM_CLOUD;
@@ -299,8 +430,7 @@ static void parse_openai_chunk(llm_stream_context_t *ctx, const char *event_data
                                    cached_tokens);
 
          // Update context usage tracking with actual session ID
-         session_t *session = session_get_command_context();
-         uint32_t session_id = session ? session->session_id : 0;
+         uint32_t session_id = ws_session ? ws_session->session_id : 0;
          llm_context_update_usage(session_id, input_tokens, output_tokens, cached_tokens);
 
          LOG_INFO("Stream usage: %d input, %d output, %d cached tokens", input_tokens,
@@ -335,6 +465,10 @@ static void parse_claude_event(llm_stream_context_t *ctx, const char *event_data
 
    const char *type = json_object_get_string(type_obj);
 
+   // Cache session lookup for WebUI notifications (avoids repeated lookups)
+   session_t *ws_session = session_get_command_context();
+   int has_ws_session = (ws_session && ws_session->type == SESSION_TYPE_WEBSOCKET);
+
    if (strcmp(type, "message_start") == 0) {
       ctx->claude.message_started = 1;
 
@@ -356,7 +490,18 @@ static void parse_claude_event(llm_stream_context_t *ctx, const char *event_data
          if (json_object_object_get_ex(content_block, "type", &block_type_obj)) {
             const char *block_type = json_object_get_string(block_type_obj);
 
-            if (strcmp(block_type, "tool_use") == 0) {
+            if (strcmp(block_type, "thinking") == 0) {
+               // Extended thinking block
+               ctx->claude.thinking_block_active = 1;
+               ctx->thinking_active = 1;
+               ctx->has_thinking = 1;
+               LOG_INFO("Claude: Starting thinking block (extended thinking)");
+
+               // Send thinking_start to WebUI
+               if (has_ws_session) {
+                  webui_send_thinking_start(ws_session, "claude");
+               }
+            } else if (strcmp(block_type, "tool_use") == 0) {
                // Extract tool ID and name
                json_object *id_obj, *name_obj, *index_obj;
                ctx->claude.tool_block_active = 1;
@@ -393,16 +538,42 @@ static void parse_claude_event(llm_stream_context_t *ctx, const char *event_data
          if (json_object_object_get_ex(delta, "type", &delta_type_obj)) {
             const char *delta_type = json_object_get_string(delta_type_obj);
 
-            if (strcmp(delta_type, "text_delta") == 0) {
+            if (strcmp(delta_type, "thinking_delta") == 0 && ctx->claude.thinking_block_active) {
+               // Extended thinking content
+               json_object *thinking_obj;
+               if (json_object_object_get_ex(delta, "thinking", &thinking_obj)) {
+                  const char *thinking_text = json_object_get_string(thinking_obj);
+                  if (thinking_text && thinking_text[0] != '\0') {
+                     // Call chunk callback with thinking type if available
+                     if (ctx->chunk_callback) {
+                        ctx->chunk_callback(LLM_CHUNK_THINKING, thinking_text,
+                                            ctx->chunk_callback_userdata);
+                     }
+
+                     // Send to WebUI for real-time display
+                     if (has_ws_session) {
+                        webui_send_thinking_delta(ws_session, thinking_text);
+                     }
+
+                     // Accumulate thinking content
+                     append_to_thinking(ctx, thinking_text);
+                  }
+               }
+            } else if (strcmp(delta_type, "text_delta") == 0) {
                // Extract text
                if (json_object_object_get_ex(delta, "text", &text_obj)) {
                   const char *text = json_object_get_string(text_obj);
-                  if (text && strlen(text) > 0) {
+                  if (text && text[0] != '\0') {
                      // Record TTFT on first token
                      record_ttft_if_first_token(ctx);
 
                      // Call user callback with chunk
                      ctx->callback(text, ctx->callback_userdata);
+
+                     // Call chunk callback with text type if available
+                     if (ctx->chunk_callback) {
+                        ctx->chunk_callback(LLM_CHUNK_TEXT, text, ctx->chunk_callback_userdata);
+                     }
 
                      // Append to accumulated response
                      append_to_accumulated(ctx, text);
@@ -425,10 +596,22 @@ static void parse_claude_event(llm_stream_context_t *ctx, const char *event_data
                   }
                }
             }
-            // Note: thinking_delta is ignored
+            // Note: signature_delta is ignored (thinking verification)
          }
       }
    } else if (strcmp(type, "content_block_stop") == 0) {
+      // If we were in a thinking block, finalize it
+      if (ctx->claude.thinking_block_active) {
+         ctx->claude.thinking_block_active = 0;
+         ctx->thinking_active = 0;
+         LOG_INFO("Claude: Thinking block completed (%zu bytes)", ctx->thinking_size);
+
+         // Send thinking_end to WebUI
+         if (has_ws_session) {
+            webui_send_thinking_end(ws_session, ctx->thinking_size > 0);
+         }
+      }
+
       // If we were in a tool_use block, finalize it
       if (ctx->claude.tool_block_active) {
          // Add to tool_calls list
@@ -477,8 +660,7 @@ static void parse_claude_event(llm_stream_context_t *ctx, const char *event_data
                                       output_tokens, 0);
 
             // Update context usage tracking with actual session ID
-            session_t *session = session_get_command_context();
-            uint32_t session_id = session ? session->session_id : 0;
+            uint32_t session_id = ws_session ? ws_session->session_id : 0;
             llm_context_update_usage(session_id, ctx->claude.input_tokens, output_tokens, 0);
 
             LOG_INFO("Claude usage: %d input, %d output tokens", ctx->claude.input_tokens,
@@ -545,6 +727,7 @@ void llm_stream_free(llm_stream_context_t *ctx) {
    }
 
    free(ctx->accumulated_response);
+   free(ctx->accumulated_thinking);
    free(ctx);
 }
 
@@ -593,4 +776,38 @@ const tool_call_list_t *llm_stream_get_tool_calls(llm_stream_context_t *ctx) {
    }
 
    return &ctx->tool_calls;
+}
+
+llm_stream_context_t *llm_stream_create_extended(llm_type_t llm_type,
+                                                 cloud_provider_t cloud_provider,
+                                                 text_chunk_callback callback,
+                                                 llm_chunk_callback chunk_callback,
+                                                 void *userdata) {
+   // Create base context
+   llm_stream_context_t *ctx = llm_stream_create(llm_type, cloud_provider, callback, userdata);
+   if (!ctx) {
+      return NULL;
+   }
+
+   // Set extended callback for thinking support
+   ctx->chunk_callback = chunk_callback;
+   ctx->chunk_callback_userdata = userdata;
+
+   return ctx;
+}
+
+int llm_stream_has_thinking(llm_stream_context_t *ctx) {
+   if (!ctx) {
+      return 0;
+   }
+
+   return ctx->has_thinking && ctx->thinking_size > 0;
+}
+
+char *llm_stream_get_thinking(llm_stream_context_t *ctx) {
+   if (!ctx || !ctx->accumulated_thinking || ctx->thinking_size == 0) {
+      return NULL;
+   }
+
+   return strdup(ctx->accumulated_thinking);
 }

@@ -18,7 +18,7 @@ CONFIG_DIR="/usr/local/etc/llama-cpp"
 
 # Optimal DAWN defaults (if files not provided)
 DEFAULT_MODEL="$DATA_DIR/models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf"
-DEFAULT_TEMPLATE="$DATA_DIR/templates/qwen3_chatml.jinja"
+DEFAULT_TEMPLATE="$DATA_DIR/templates/qwen3_official.jinja"
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -72,7 +72,7 @@ parse_args() {
                 echo ""
                 echo "Default files (if not provided):"
                 echo "  Model:    $DEFAULT_MODEL"
-                echo "  Template: $DEFAULT_TEMPLATE"
+                echo "  Template: $DEFAULT_TEMPLATE (works for Instruct and Thinking models)"
                 echo ""
                 echo "Note: If model/template not provided, script assumes they are already in place."
                 echo "      Download model: wget https://huggingface.co/Qwen/Qwen3-4B-Instruct-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf"
@@ -140,12 +140,12 @@ if [ -z "$TEMPLATE_PATH" ]; then
         TEMPLATE_FILENAME=$(basename "$DEFAULT_TEMPLATE")
     else
         warn "Default template not found. Installing bundled template..."
-        if [ -f "$SCRIPT_DIR/qwen3_chatml.jinja" ]; then
-            cp "$SCRIPT_DIR/qwen3_chatml.jinja" "$DATA_DIR/templates/"
-            TEMPLATE_FILENAME="qwen3_chatml.jinja"
-            log "Installed qwen3_chatml.jinja template"
+        if [ -f "$SCRIPT_DIR/qwen3_official.jinja" ]; then
+            cp "$SCRIPT_DIR/qwen3_official.jinja" "$DATA_DIR/templates/"
+            TEMPLATE_FILENAME="qwen3_official.jinja"
+            log "Installed qwen3_official.jinja template (works for Instruct and Thinking)"
         else
-            error "Template file not found: $SCRIPT_DIR/qwen3_chatml.jinja
+            error "Template file not found: $SCRIPT_DIR/qwen3_official.jinja
 
 Please provide template path with: $0 -t /path/to/template.jinja"
         fi
@@ -159,6 +159,12 @@ else
     log "Copying template file"
     TEMPLATE_FILENAME=$(basename "$TEMPLATE_PATH")
     cp "$TEMPLATE_PATH" "$DATA_DIR/templates/$TEMPLATE_FILENAME"
+fi
+
+# Always install the official template (works for both Instruct and Thinking models)
+if [ -f "$SCRIPT_DIR/qwen3_official.jinja" ]; then
+    cp "$SCRIPT_DIR/qwen3_official.jinja" "$DATA_DIR/templates/"
+    log "Installed qwen3_official.jinja template"
 fi
 
 # Create service user if it doesn't exist

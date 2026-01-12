@@ -201,6 +201,15 @@
           fields: {
             native_enabled: { type: 'checkbox', label: 'Enable Native Tools', hint: 'Use native function/tool calling instead of <command> tags (requires compatible LLM)' }
           }
+        },
+        thinking: {
+          type: 'group',
+          label: 'Extended Thinking',
+          fields: {
+            mode: { type: 'select', label: 'Mode', options: ['disabled', 'auto', 'enabled'], hint: 'disabled: never request thinking, auto: enable for supported models, enabled: always request' },
+            budget_tokens: { type: 'number', label: 'Budget Tokens', min: 1024, max: 100000, step: 1000, hint: 'Maximum tokens for reasoning (min 1024 for Claude)' },
+            reasoning_effort: { type: 'select', label: 'Reasoning Effort', options: ['low', 'medium', 'high'], hint: 'OpenAI o-series only: controls internal reasoning depth' }
+          }
         }
       }
     },

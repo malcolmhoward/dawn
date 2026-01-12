@@ -340,6 +340,13 @@ static void apply_config_from_json(dawn_config_t *config, struct json_object *pa
          JSON_TO_CONFIG_BOOL(tools, "native_enabled", config->llm.tools.native_enabled);
       }
 
+      struct json_object *thinking;
+      if (json_object_object_get_ex(section, "thinking", &thinking)) {
+         JSON_TO_CONFIG_STR(thinking, "mode", config->llm.thinking.mode);
+         JSON_TO_CONFIG_INT(thinking, "budget_tokens", config->llm.thinking.budget_tokens);
+         JSON_TO_CONFIG_STR(thinking, "reasoning_effort", config->llm.thinking.reasoning_effort);
+      }
+
       /* Context management settings */
       JSON_TO_CONFIG_DOUBLE(section, "summarize_threshold", config->llm.summarize_threshold);
       JSON_TO_CONFIG_BOOL(section, "conversation_logging", config->llm.conversation_logging);

@@ -911,6 +911,48 @@ cmake -DPLATFORM=RPI ..     # Force RPi (disables CUDA)
 
 ---
 
+## File Organization Standards
+
+### Size Limits
+
+To prevent files from becoming unmaintainable monoliths, follow these limits:
+
+| File Type | Soft Limit | Hard Limit |
+|-----------|------------|------------|
+| C source | 1,500 lines | 2,500 lines |
+| JavaScript | 1,000 lines | 1,500 lines |
+| CSS | 1,000 lines | 2,000 lines |
+
+### Module Split Pattern (C)
+
+When a C file exceeds limits, split by feature using an internal header:
+
+```
+src/subsystem/
+├── subsystem_core.c       # Init, shutdown, shared state
+├── subsystem_feature1.c   # Feature area 1
+├── subsystem_feature2.c   # Feature area 2
+└── ...
+
+include/subsystem/
+├── subsystem.h            # Public API (unchanged)
+└── subsystem_internal.h   # Shared state, internal helpers
+```
+
+The internal header contains:
+- `extern` declarations for shared state (defined in `_core.c`)
+- Internal helper function declarations
+- Shared macros (e.g., locking patterns)
+
+### When Adding New Features
+
+1. **Check file size first** - If target file > 1,500 lines, consider creating a new file
+2. **Group by feature** - Related functionality goes together in one module
+3. **Use internal headers** - Share state via `*_internal.h` pattern
+4. **Update build system** - Add new source files immediately
+
+---
+
 ## Configuration Files
 
 ### secrets.toml (API Keys)

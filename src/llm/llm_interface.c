@@ -258,7 +258,10 @@ void llm_init(const char *cloud_provider_override) {
    llm_tools_init();
 
    // Apply per-tool enable config from TOML (do this early too)
-   if (g_config.llm.tools.local_enabled_count > 0 || g_config.llm.tools.remote_enabled_count > 0) {
+   // Check if either list was explicitly configured (even if empty = all disabled)
+   if (g_config.llm.tools.local_enabled_configured ||
+       g_config.llm.tools.remote_enabled_configured || g_config.llm.tools.local_enabled_count > 0 ||
+       g_config.llm.tools.remote_enabled_count > 0) {
       const char *local_list[LLM_TOOLS_MAX_CONFIGURED];
       const char *remote_list[LLM_TOOLS_MAX_CONFIGURED];
 
@@ -269,8 +272,10 @@ void llm_init(const char *cloud_provider_override) {
          remote_list[i] = g_config.llm.tools.remote_enabled[i];
       }
 
-      llm_tools_apply_config(local_list, g_config.llm.tools.local_enabled_count, remote_list,
-                             g_config.llm.tools.remote_enabled_count);
+      llm_tools_apply_config(local_list, g_config.llm.tools.local_enabled_count,
+                             g_config.llm.tools.local_enabled_configured, remote_list,
+                             g_config.llm.tools.remote_enabled_count,
+                             g_config.llm.tools.remote_enabled_configured);
    }
 
    // Detect available providers from runtime config (secrets.toml)

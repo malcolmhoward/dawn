@@ -37,6 +37,10 @@
   --error-hover: #dc2626;       /* Darker red for hover states */
   --success: #22c55e;
   --warning: #f0b429;           /* Amber - hesitation, strain, >50% context */
+  --warning-subtle: rgba(240, 180, 41, 0.08);
+  --warning-hover: rgba(240, 180, 41, 0.12);
+  --warning-border: rgba(240, 180, 41, 0.25);
+  --warning-border-light: rgba(240, 180, 41, 0.2);
 
   /* Semantic Colors */
   --tool-color: #8b5cf6;        /* Purple - tool/function calls */

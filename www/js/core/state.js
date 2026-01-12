@@ -34,7 +34,8 @@
     content: '',
     lastRenderMs: 0,
     renderDebounceMs: 100,
-    pendingRender: false
+    pendingRender: false,
+    reasoningTokens: 0  // OpenAI o-series reasoning token count
   };
 
   /**
@@ -62,6 +63,27 @@
     animationId: null,
     runningSum: 0,
     runningSumSq: 0
+  };
+
+  /**
+   * Extended thinking state (Claude/llama.cpp reasoning display)
+   */
+  const thinkingState = {
+    active: false,
+    streamId: null,
+    provider: null,
+    entryElement: null,
+    contentElement: null,
+    content: '',
+    collapsed: true,
+    startTime: 0,
+    lastRenderMs: 0,
+    renderDebounceMs: 100,
+    pendingRender: false,
+    // Finalized values for saving with the assistant message
+    finalizedContent: '',
+    finalizedDuration: '0',
+    finalizedProvider: null
   };
 
   /**
@@ -94,6 +116,7 @@
     streamingState: streamingState,
     metricsState: metricsState,
     hesitationState: hesitationState,
+    thinkingState: thinkingState,
     authState: authState
   };
 

@@ -78,6 +78,12 @@
           }
           break;
         case 'error':
+          // Handle INFO_ prefixed codes as info notifications (not errors)
+          if (msg.payload.code && msg.payload.code.startsWith('INFO_')) {
+            console.log('Server notification:', msg.payload);
+            DawnToast.show(msg.payload.message, 'info');
+            break;
+          }
           console.error('Server error:', msg.payload);
           // Handle max clients error - don't auto-reconnect
           if (msg.payload.code === 'MAX_CLIENTS') {
@@ -103,6 +109,10 @@
           } else if (msg.payload.code === 'FORBIDDEN') {
             // Permission error (e.g., not admin) - just show toast
             DawnToast.show(msg.payload.message, 'error');
+          } else if (msg.payload.code && msg.payload.code.startsWith('LLM_')) {
+            // LLM errors - show toast and add to transcript
+            DawnToast.show(msg.payload.message, 'error');
+            DawnTranscript.addEntry('system', `Error: ${msg.payload.message}`);
           } else {
             DawnTranscript.addEntry('system', `Error: ${msg.payload.message}`);
           }
@@ -121,6 +131,17 @@
           }
           // Request full config to populate LLM controls
           DawnSettings.requestConfig();
+          // Restore active conversation context (backend session may have lost it on restart)
+          // This loads the conversation history into the LLM context so subsequent
+          // messages have proper context
+          const savedConvId = DawnHistory.getActiveConversationId();
+          if (savedConvId && DawnState.authState.authenticated) {
+            console.log('Restoring active conversation:', savedConvId);
+            DawnWS.send({
+              type: 'load_conversation',
+              payload: { conversation_id: savedConvId }
+            });
+          }
           break;
         case 'config':
           // Config payload may contain sensitive data - don't log full contents
@@ -199,6 +220,18 @@
           break;
         case 'stream_end':
           DawnStreaming.handleEnd(msg.payload);
+          break;
+        case 'thinking_start':
+          DawnStreaming.handleThinkingStart(msg.payload);
+          break;
+        case 'thinking_delta':
+          DawnStreaming.handleThinkingDelta(msg.payload);
+          break;
+        case 'thinking_end':
+          DawnStreaming.handleThinkingEnd(msg.payload);
+          break;
+        case 'reasoning_summary':
+          DawnStreaming.handleReasoningSummary(msg.payload);
           break;
         case 'metrics_update':
           DawnMetrics.handleUpdate(msg.payload);

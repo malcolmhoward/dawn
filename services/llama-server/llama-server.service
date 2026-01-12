@@ -16,7 +16,7 @@ Environment="CUDA_VISIBLE_DEVICES=0"
 EnvironmentFile=/usr/local/etc/llama-cpp/llama-server.conf
 
 # Single line execution command (with optimal DAWN settings)
-ExecStart=/usr/local/bin/llama-server -m ${MODEL} --gpu-layers ${GPU_LAYERS} -c ${CONTEXT_SIZE} -b ${BATCH_SIZE} -ub ${UNBATCH_SIZE} -t ${THREADS} -ctk ${CACHE_TYPE_K} -ctv ${CACHE_TYPE_V} --flash-attn on --temp ${TEMPERATURE} --top-p ${TOP_P} --top-k ${TOP_K} --repeat-penalty ${REPEAT_PENALTY} --min-p ${MIN_P} --jinja --chat-template-file ${TEMPLATE} --host ${HOST} --port ${PORT}
+ExecStart=/usr/local/bin/llama-server -m ${MODEL} --gpu-layers ${GPU_LAYERS} -c ${CONTEXT_SIZE} -b ${BATCH_SIZE} -ub ${UNBATCH_SIZE} -t ${THREADS} -ctk ${CACHE_TYPE_K} -ctv ${CACHE_TYPE_V} --flash-attn on --temp ${TEMPERATURE} --top-p ${TOP_P} --top-k ${TOP_K} --repeat-penalty ${REPEAT_PENALTY} --min-p ${MIN_P} --reasoning-format ${REASONING_FORMAT} --jinja --chat-template-file ${TEMPLATE} --host ${HOST} --port ${PORT}
 
 # Logging
 StandardOutput=append:/var/log/llama-cpp/server.log

@@ -177,6 +177,7 @@ typedef struct session {
    atomic_bool llm_streaming_active;  // True while streaming LLM response
    atomic_bool stream_had_content;    // True if any deltas were sent (for fallback)
    atomic_uint current_stream_id;     // Monotonic ID to detect stale deltas
+   atomic_bool thinking_active;       // True while streaming thinking/reasoning content
 
    // Streaming metrics for UI visualization
    uint64_t stream_start_ms;     // Timestamp when LLM call started

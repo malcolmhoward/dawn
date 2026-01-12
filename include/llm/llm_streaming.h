@@ -39,6 +39,29 @@
  */
 typedef void (*text_chunk_callback)(const char *text, void *userdata);
 
+/**
+ * @brief Chunk types for extended thinking/reasoning support
+ *
+ * Used to distinguish between regular response text and thinking/reasoning
+ * content from models that support extended thinking (Claude, DeepSeek-R1).
+ */
+typedef enum {
+   LLM_CHUNK_TEXT,    /**< Regular response text content */
+   LLM_CHUNK_THINKING /**< Thinking/reasoning content */
+} llm_chunk_type_t;
+
+/**
+ * @brief Extended callback for chunks with type information
+ *
+ * Called for each chunk with its type, allowing callers to handle
+ * thinking content separately from regular text (e.g., different UI display).
+ *
+ * @param type Chunk type (text or thinking)
+ * @param text Chunk content
+ * @param userdata User-provided context pointer
+ */
+typedef void (*llm_chunk_callback)(llm_chunk_type_t type, const char *text, void *userdata);
+
 /* =============================================================================
  * Provider-Specific Stream State
  * =============================================================================
@@ -70,6 +93,9 @@ typedef struct {
    char tool_name[LLM_TOOLS_NAME_LEN]; /**< Tool name from content_block_start */
    char tool_args[LLM_TOOLS_ARGS_LEN]; /**< Accumulated partial_json */
    size_t tool_args_len;               /**< Length of accumulated args */
+
+   /* Thinking block tracking (extended thinking) */
+   int thinking_block_active; /**< Currently in a thinking block */
 } claude_stream_state_t;
 
 /**
@@ -97,6 +123,10 @@ typedef struct {
    text_chunk_callback callback; /**< User callback for text chunks */
    void *callback_userdata;      /**< User context passed to callback */
 
+   /* Extended callback for thinking support (optional) */
+   llm_chunk_callback chunk_callback; /**< Callback with chunk type (NULL if not used) */
+   void *chunk_callback_userdata;     /**< User context for chunk callback */
+
    /* Provider-specific state (only one is active based on cloud_provider) */
    claude_stream_state_t claude; /**< Claude state machine tracking */
    openai_stream_state_t openai; /**< OpenAI tool args accumulation */
@@ -105,6 +135,14 @@ typedef struct {
    char *accumulated_response;
    size_t accumulated_size;
    size_t accumulated_capacity;
+
+   /* Accumulated thinking content (extended thinking) */
+   char *accumulated_thinking; /**< Full thinking content */
+   size_t thinking_size;       /**< Current thinking content length */
+   size_t thinking_capacity;   /**< Allocated thinking buffer size */
+   int thinking_active;        /**< 1 if thinking content is being received */
+   int has_thinking;           /**< 1 if any thinking content was received */
+   int reasoning_tokens;       /**< OpenAI o-series reasoning tokens (from usage) */
 
    /* Stream completion tracking */
    int stream_complete;    /**< 1 when stream has ended */
@@ -191,5 +229,43 @@ int llm_stream_has_tool_calls(llm_stream_context_t *ctx);
  * @return Pointer to tool_call_list_t (do not free), or NULL if no tool calls
  */
 const tool_call_list_t *llm_stream_get_tool_calls(llm_stream_context_t *ctx);
+
+/**
+ * @brief Create stream context with extended thinking callback
+ *
+ * Like llm_stream_create() but adds a chunk callback that receives
+ * typed chunks (text vs thinking) for extended thinking support.
+ *
+ * @param llm_type LLM type (LLM_LOCAL or LLM_CLOUD)
+ * @param cloud_provider Cloud provider (if LLM_CLOUD)
+ * @param callback Function to call for each text chunk (for TTS)
+ * @param chunk_callback Function to call with typed chunks (for UI)
+ * @param userdata User context pointer passed to callbacks
+ * @return Newly allocated stream context, or NULL on error
+ */
+llm_stream_context_t *llm_stream_create_extended(llm_type_t llm_type,
+                                                 cloud_provider_t cloud_provider,
+                                                 text_chunk_callback callback,
+                                                 llm_chunk_callback chunk_callback,
+                                                 void *userdata);
+
+/**
+ * @brief Check if stream contains thinking content
+ *
+ * @param ctx Stream context
+ * @return 1 if thinking content was received, 0 otherwise
+ */
+int llm_stream_has_thinking(llm_stream_context_t *ctx);
+
+/**
+ * @brief Get the accumulated thinking content
+ *
+ * Returns the full thinking content accumulated from all thinking chunks.
+ * This should be called after the stream is complete.
+ *
+ * @param ctx Stream context
+ * @return Complete thinking string (caller must free), or NULL if no thinking
+ */
+char *llm_stream_get_thinking(llm_stream_context_t *ctx);
 
 #endif  // LLM_STREAMING_H

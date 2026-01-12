@@ -977,21 +977,23 @@ int llm_tools_set_enabled(const char *tool_name, bool enabled_local, bool enable
 
 void llm_tools_apply_config(const char **local_list,
                             int local_count,
+                            bool local_configured,
                             const char **remote_list,
-                            int remote_count) {
+                            int remote_count,
+                            bool remote_configured) {
    if (!s_initialized) {
       LOG_WARNING("llm_tools_apply_config called before initialization - config ignored");
       return;
    }
 
    /*
-    * WHITELIST SEMANTIC: If a list is empty/NULL, ALL tools are enabled for that
-    * session type. If a list is provided, ONLY the listed tools are enabled.
-    * This means JSON defaults (default_remote: false) are overridden when TOML
-    * config specifies an explicit list.
+    * WHITELIST SEMANTIC:
+    * - If not configured: enable ALL tools (default behavior)
+    * - If configured but empty: enable NONE (user explicitly disabled all)
+    * - If configured with items: enable ONLY listed tools
     */
-   bool enable_all_local = (local_list == NULL || local_count == 0);
-   bool enable_all_remote = (remote_list == NULL || remote_count == 0);
+   bool enable_all_local = !local_configured;
+   bool enable_all_remote = !remote_configured;
 
    /* Build lookup sets for O(n+m) instead of O(n*m) */
    bool local_set[LLM_TOOLS_MAX_TOOLS] = { 0 };
@@ -1549,6 +1551,10 @@ void llm_tools_suppress_pop(void) {
    if (tl_suppress_count > 0) {
       tl_suppress_count--;
    }
+}
+
+bool llm_tools_suppressed(void) {
+   return tl_suppress_count > 0;
 }
 
 /* =============================================================================
