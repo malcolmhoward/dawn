@@ -973,6 +973,8 @@ typedef struct {
    char *input_with_context;
    const char *llm_input;
    llm_resolved_config_t resolved_config;
+   char model_buf[LLM_MODEL_NAME_MAX]; /* Buffer for model name (outlives stack) */
+   char endpoint_buf[128];             /* Buffer for endpoint (outlives stack) */
 } llm_call_ctx_t;
 
 /**
@@ -1014,7 +1016,7 @@ static int llm_call_prepare(session_t *session, const char *user_text, llm_call_
    }
 
    // Get and resolve LLM config
-   session_llm_config_t session_config;
+   session_llm_config_t session_config = { 0 }; /* Zero-init for safety */
    session_get_llm_config(session, &session_config);
 
    int resolve_rc = llm_resolve_config(&session_config, &ctx->resolved_config);
@@ -1022,6 +1024,18 @@ static int llm_call_prepare(session_t *session, const char *user_text, llm_call_
       LOG_ERROR("Session %u: Failed to resolve LLM config (type=%d, provider=%d)",
                 session->session_id, session_config.type, session_config.cloud_provider);
       return 3;
+   }
+
+   /* Copy model/endpoint to ctx buffers (resolved pointers may point to stack) */
+   if (ctx->resolved_config.model && ctx->resolved_config.model[0] != '\0') {
+      strncpy(ctx->model_buf, ctx->resolved_config.model, sizeof(ctx->model_buf) - 1);
+      ctx->model_buf[sizeof(ctx->model_buf) - 1] = '\0';
+      ctx->resolved_config.model = ctx->model_buf;
+   }
+   if (ctx->resolved_config.endpoint && ctx->resolved_config.endpoint[0] != '\0') {
+      strncpy(ctx->endpoint_buf, ctx->resolved_config.endpoint, sizeof(ctx->endpoint_buf) - 1);
+      ctx->endpoint_buf[sizeof(ctx->endpoint_buf) - 1] = '\0';
+      ctx->resolved_config.endpoint = ctx->endpoint_buf;
    }
 
    // Set command context for tool callbacks

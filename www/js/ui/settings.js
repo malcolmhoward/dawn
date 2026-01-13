@@ -183,7 +183,9 @@
             openai_model: { type: 'text', label: 'OpenAI Model', hint: 'e.g., gpt-4o, gpt-4-turbo, gpt-4o-mini' },
             claude_model: { type: 'text', label: 'Claude Model', hint: 'e.g., claude-sonnet-4-20250514, claude-opus-4-20250514' },
             endpoint: { type: 'text', label: 'Custom Endpoint', placeholder: 'Leave empty for default', hint: 'Override API endpoint (for proxies or compatible APIs)' },
-            vision_enabled: { type: 'checkbox', label: 'Enable Vision', hint: 'Allow image analysis with vision-capable models' }
+            vision_enabled: { type: 'checkbox', label: 'Enable Vision', hint: 'Allow image analysis with vision-capable models' },
+            openai_models: { type: 'model_list', label: 'OpenAI Models', rows: 5, placeholder: 'gpt-4o\ngpt-4-turbo\ngpt-4o-mini', hint: 'Available models for quick controls (one per line)' },
+            claude_models: { type: 'model_list', label: 'Claude Models', rows: 5, placeholder: 'claude-sonnet-4-20250514\nclaude-opus-4-20250514', hint: 'Available models for quick controls (one per line)' }
           }
         },
         local: {
@@ -193,13 +195,6 @@
             endpoint: { type: 'text', label: 'Endpoint', hint: 'llama-server URL (e.g., http://127.0.0.1:8080)' },
             model: { type: 'text', label: 'Model', placeholder: 'Leave empty for server default', hint: 'Model name if server hosts multiple models' },
             vision_enabled: { type: 'checkbox', label: 'Enable Vision', hint: 'Enable for multimodal models like LLaVA' }
-          }
-        },
-        tools: {
-          type: 'group',
-          label: 'Tool Calling',
-          fields: {
-            native_enabled: { type: 'checkbox', label: 'Enable Native Tools', hint: 'Use native function/tool calling instead of <command> tags (requires compatible LLM)' }
           }
         },
         thinking: {
@@ -212,6 +207,24 @@
           }
         }
       }
+    },
+    tool_calling: {
+      label: 'Tool Calling',
+      icon: '&#x1F527;',
+      adminOnly: true,
+      fields: {
+        mode: {
+          type: 'select',
+          label: 'Mode',
+          options: [
+            { value: 'native', label: 'Native Tools' },
+            { value: 'command_tags', label: 'Command Tags (Legacy)' },
+            { value: 'disabled', label: 'Disabled' }
+          ],
+          hint: 'Native Tools: LLM function calling, Command Tags: XML-style <command> tags, Disabled: no tool use'
+        }
+      },
+      customContent: 'tools_list'  // Special marker for injecting tools list
     },
     search: {
       label: 'Web Search',
@@ -439,7 +452,6 @@
     }
 
     DawnWS.send({ type: 'get_config' });
-    console.log('Requested configuration from server');
   }
 
   function requestModelsList() {
@@ -448,7 +460,6 @@
     }
 
     DawnWS.send({ type: 'list_models' });
-    console.log('Requested models list from server');
   }
 
   function requestInterfacesList() {
@@ -457,7 +468,6 @@
     }
 
     DawnWS.send({ type: 'list_interfaces' });
-    console.log('Requested interfaces list from server');
   }
 
   /* =============================================================================
@@ -471,8 +481,6 @@
     if (payload.tts_voices) {
       dynamicOptions.tts_voices = payload.tts_voices;
     }
-    console.log('Received models list:', dynamicOptions);
-
     // Update any already-rendered dynamic selects
     updateDynamicSelects();
   }
@@ -481,7 +489,6 @@
     if (payload.addresses) {
       dynamicOptions.bind_addresses = payload.addresses;
     }
-    console.log('Received interfaces list:', dynamicOptions.bind_addresses);
 
     // Update any already-rendered dynamic selects
     updateDynamicSelects();
@@ -515,9 +522,6 @@
   }
 
   function handleGetConfigResponse(payload) {
-    // Config payload may contain sensitive data - don't log full contents
-    console.log('Config received from server');
-
     currentConfig = payload.config;
     currentSecrets = payload.secrets;
     restartRequiredFields = payload.requires_restart || [];
@@ -559,6 +563,9 @@
       // Initialize state based on current value
       updateAudioBackendState(backendSelect.value);
     }
+
+    // Extract cloud model lists from config for quick controls dropdown
+    updateCloudModelLists(currentConfig);
 
     // Update LLM runtime controls
     if (payload.llm_runtime) {
@@ -629,8 +636,19 @@
 
     settingsElements.sectionsContainer.innerHTML = '';
 
+    // Create virtual tool_calling config from llm.tools.mode
+    // The tool_calling section is a UI convenience - backend uses llm.tools.mode
+    const virtualConfig = { ...currentConfig };
+    if (currentConfig.llm && currentConfig.llm.tools && currentConfig.llm.tools.mode) {
+      virtualConfig.tool_calling = {
+        mode: currentConfig.llm.tools.mode
+      };
+    } else {
+      virtualConfig.tool_calling = { mode: 'native' }; // Default
+    }
+
     for (const [sectionKey, sectionDef] of Object.entries(SETTINGS_SCHEMA)) {
-      const configSection = currentConfig[sectionKey] || {};
+      const configSection = virtualConfig[sectionKey] || {};
       const sectionEl = createSettingsSection(sectionKey, sectionDef, configSection);
       settingsElements.sectionsContainer.appendChild(sectionEl);
     }
@@ -640,6 +658,11 @@
     const section = document.createElement('div');
     section.className = 'settings-section';
     section.dataset.section = key;
+
+    // Add admin-only class if applicable
+    if (def.adminOnly) {
+      section.classList.add('admin-only');
+    }
 
     // Header
     const header = document.createElement('h3');
@@ -685,10 +708,52 @@
       content.appendChild(fieldEl);
     }
 
+    // Inject custom content if specified
+    if (def.customContent === 'tools_list') {
+      content.appendChild(createToolsListContent());
+    }
+
     section.appendChild(header);
     section.appendChild(content);
 
     return section;
+  }
+
+  /**
+   * Create the tools list content (previously hardcoded in HTML)
+   */
+  function createToolsListContent() {
+    const container = document.createElement('div');
+    container.className = 'tools-container';
+    container.innerHTML = `
+      <div class="tools-info">
+        <p>Configure which tools are available for LLM function calling.</p>
+        <div class="tools-token-estimate">
+          <span>Estimated tokens:</span>
+          <span id="tools-tokens-local">Local: --</span>
+          <span id="tools-tokens-remote">Remote: --</span>
+        </div>
+      </div>
+      <div class="tools-header-row">
+        <span class="tools-header-name">Tool</span>
+        <span class="tools-header-local">Local</span>
+        <span class="tools-header-remote">Remote</span>
+      </div>
+      <div id="tools-list" class="tools-list">
+        <div class="tools-loading">Loading tools...</div>
+      </div>
+      <button id="save-tools-btn" class="save-btn">Save Tool Settings</button>
+    `;
+
+    // Re-initialize tools module with new button after DOM insertion
+    setTimeout(() => {
+      if (typeof DawnTools !== 'undefined') {
+        DawnTools.reinitButton();
+        DawnTools.requestConfig();
+      }
+    }, 0);
+
+    return container;
   }
 
   function createSettingField(sectionKey, fieldKey, def, value) {
@@ -768,6 +833,11 @@
       case 'textarea':
         inputHtml = `<textarea id="${inputId}" rows="${def.rows || 3}" placeholder="${def.placeholder || ''}" data-key="${fullKey}">${escapeHtml(value || '')}</textarea>`;
         break;
+      case 'model_list':
+        // Convert array to newline-separated string for editing
+        const listValue = Array.isArray(value) ? value.join('\n') : (value || '');
+        inputHtml = `<textarea id="${inputId}" rows="${def.rows || 5}" placeholder="${def.placeholder || ''}" data-key="${fullKey}" data-type="model_list">${escapeHtml(listValue)}</textarea>`;
+        break;
     }
 
     if (def.type === 'checkbox') {
@@ -835,6 +905,11 @@
         value = input.checked;
       } else if (input.type === 'number') {
         value = input.value !== '' ? parseFloat(input.value) : null;
+      } else if (input.dataset.type === 'model_list') {
+        // Convert newline-separated text to array, filtering empty lines
+        value = input.value.split('\n')
+          .map(line => line.trim())
+          .filter(line => line.length > 0);
       } else {
         value = input.value;
       }
@@ -853,6 +928,16 @@
       config.general.ai_name = config.general.ai_name.toLowerCase();
     }
 
+    // Map virtual tool_calling section to llm.tools.mode
+    // The UI has a separate "Tool Calling" section, but backend uses llm.tools.mode
+    if (config.tool_calling && config.tool_calling.mode !== undefined) {
+      if (!config.llm) config.llm = {};
+      if (!config.llm.tools) config.llm.tools = {};
+      config.llm.tools.mode = config.tool_calling.mode;
+      // Remove the virtual tool_calling section (not in backend config)
+      delete config.tool_calling;
+    }
+
     return config;
   }
 
@@ -864,8 +949,6 @@
     }
 
     const config = collectConfigValues();
-    // Config may contain sensitive data - don't log full contents
-    console.log('Saving config to server');
 
     // Show loading state (H8)
     const btn = settingsElements.saveConfigBtn;
@@ -909,8 +992,6 @@
       return;
     }
 
-    console.log('Saving secrets (keys only):', Object.keys(secrets));
-
     DawnWS.send({
       type: 'set_secrets',
       payload: secrets
@@ -932,12 +1013,9 @@
     }
 
     if (payload.success) {
-      console.log('Config saved successfully');
-
       // Check if any changed fields require restart
       const restartFields = getChangedRestartRequiredFields();
       if (restartFields.length > 0) {
-        console.log('Restart required for fields:', restartFields);
         showRestartConfirmation(restartFields);
       } else {
         alert('Configuration saved successfully!');
@@ -953,7 +1031,6 @@
 
   function handleSetSecretsResponse(payload) {
     if (payload.success) {
-      console.log('Secrets saved successfully');
       if (typeof DawnToast !== 'undefined') {
         DawnToast.show('Secrets saved successfully!', 'success');
       }
@@ -1004,13 +1081,11 @@
       return;
     }
 
-    console.log('Requesting application restart');
     DawnWS.send({ type: 'restart' });
   }
 
   function handleRestartResponse(payload) {
     if (payload.success) {
-      console.log('Restart initiated:', payload.message);
       alert('DAWN is restarting. The page will attempt to reconnect automatically.');
     } else {
       console.error('Restart failed:', payload.error);
@@ -1028,7 +1103,6 @@
       return;
     }
 
-    console.log('Requesting audio devices for backend:', backend);
     DawnWS.send({
       type: 'get_audio_devices',
       payload: { backend: backend }
@@ -1036,8 +1110,6 @@
   }
 
   function handleGetAudioDevicesResponse(payload) {
-    console.log('Received audio devices:', payload);
-
     audioDevicesCache.capture = payload.capture_devices || [];
     audioDevicesCache.playback = payload.playback_devices || [];
 
@@ -1050,7 +1122,6 @@
     // ID matches how createSettingField generates it (underscores preserved)
     const inputId = `setting-audio-${fieldName}`;
     const input = document.getElementById(inputId);
-    console.log('updateAudioDeviceField:', fieldName, 'inputId:', inputId, 'input:', input, 'devices:', devices);
     if (!input) return;
 
     const currentValue = input.value || '';
@@ -1093,8 +1164,6 @@
     // IDs match how createSettingField generates them (underscores preserved)
     const captureInput = document.getElementById('setting-audio-capture_device');
     const playbackInput = document.getElementById('setting-audio-playback_device');
-
-    console.log('updateAudioBackendState:', backend, 'captureInput:', captureInput, 'playbackInput:', playbackInput);
 
     if (backend === 'auto') {
       // Grey out device fields when auto
@@ -1449,28 +1518,192 @@
     if (typeof DawnState !== 'undefined' && !DawnState.getDebugMode()) {
       entry.style.display = 'none';
     }
-
-    console.log(`System prompt loaded: ${promptLength} chars (~${tokenEstimate} tokens)`);
   }
 
   /* =============================================================================
    * LLM Runtime Controls
    * ============================================================================= */
 
+  // Cached model lists from config and local LLM
+  let cloudModelLists = { openai: [], claude: [] };
+  let localModelList = [];
+  let localProviderType = 'unknown'; // 'ollama', 'llama.cpp', 'Generic', 'Unknown'
+
   function initLlmControls() {
     const typeSelect = document.getElementById('llm-type-select');
     const providerSelect = document.getElementById('llm-provider-select');
+    const modelSelect = document.getElementById('llm-model-select');
 
     if (typeSelect) {
       typeSelect.addEventListener('change', () => {
-        setSessionLlm({ type: typeSelect.value });
+        const newType = typeSelect.value;
+        setSessionLlm({ type: newType });
+
+        // Request local models when switching to local mode
+        if (newType === 'local') {
+          requestLocalModels();
+        } else {
+          // Populate cloud models from cached config
+          updateModelDropdownForCloud();
+        }
       });
     }
 
     if (providerSelect) {
       providerSelect.addEventListener('change', () => {
         setSessionLlm({ provider: providerSelect.value });
+        // Update model dropdown for new provider
+        updateModelDropdownForCloud();
       });
+    }
+
+    if (modelSelect) {
+      modelSelect.addEventListener('change', () => {
+        if (modelSelect.value) {
+          setSessionLlm({ model: modelSelect.value });
+        }
+      });
+    }
+  }
+
+  let detectLocalProviderTimeout = null;
+  const DETECT_TIMEOUT_MS = 10000; // 10 seconds
+
+  function requestLocalModels() {
+    if (typeof DawnWS !== 'undefined' && DawnWS.isConnected()) {
+      DawnWS.send({ type: 'list_llm_models' });
+
+      // Set timeout to show "Unknown" if detection takes too long
+      if (detectLocalProviderTimeout) {
+        clearTimeout(detectLocalProviderTimeout);
+      }
+      detectLocalProviderTimeout = setTimeout(() => {
+        const providerSelect = document.getElementById('llm-provider-select');
+        const typeSelect = document.getElementById('llm-type-select');
+        if (providerSelect && typeSelect && typeSelect.value === 'local' &&
+            providerSelect.value === 'detecting') {
+          providerSelect.innerHTML = '';
+          const opt = document.createElement('option');
+          opt.value = 'unknown';
+          opt.textContent = 'Unknown';
+          providerSelect.appendChild(opt);
+          providerSelect.title = 'Could not detect local provider';
+          console.warn('Local provider detection timed out');
+        }
+      }, DETECT_TIMEOUT_MS);
+    }
+  }
+
+  function handleListLlmModelsResponse(payload) {
+    // Clear detection timeout since we received a response
+    if (detectLocalProviderTimeout) {
+      clearTimeout(detectLocalProviderTimeout);
+      detectLocalProviderTimeout = null;
+    }
+
+    localModelList = payload.models || [];
+    localProviderType = payload.provider || 'Unknown';
+
+    // Update provider dropdown to show detected local provider
+    const providerSelect = document.getElementById('llm-provider-select');
+    const typeSelect = document.getElementById('llm-type-select');
+
+    if (providerSelect && typeSelect && typeSelect.value === 'local') {
+      providerSelect.innerHTML = '';
+      const opt = document.createElement('option');
+      opt.value = localProviderType.toLowerCase();
+      opt.textContent = localProviderType;
+      providerSelect.appendChild(opt);
+      providerSelect.disabled = true;
+      providerSelect.title = `Local provider: ${localProviderType}`;
+    }
+
+    const modelSelect = document.getElementById('llm-model-select');
+    if (!modelSelect) return;
+
+    // Only update model dropdown if we're in local mode
+    if (typeSelect && typeSelect.value !== 'local') return;
+
+    modelSelect.innerHTML = '';
+
+    // llama.cpp doesn't support model switching (only shows loaded model)
+    if (localProviderType === 'llama.cpp') {
+      const opt = document.createElement('option');
+      opt.value = payload.current_model || '';
+      opt.textContent = payload.current_model || '(server default)';
+      modelSelect.appendChild(opt);
+      modelSelect.disabled = true;
+      modelSelect.title = 'Model switching not supported with llama.cpp';
+      return;
+    }
+
+    // Ollama or Generic - enable selection
+    if (localModelList.length === 0) {
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = 'No models available';
+      modelSelect.appendChild(opt);
+      modelSelect.disabled = true;
+      return;
+    }
+
+    localModelList.forEach(model => {
+      const opt = document.createElement('option');
+      opt.value = model.name;
+      opt.textContent = model.name + (model.loaded ? ' (loaded)' : '');
+      modelSelect.appendChild(opt);
+    });
+
+    // Select current model
+    if (payload.current_model) {
+      modelSelect.value = payload.current_model;
+    }
+    modelSelect.disabled = false;
+    modelSelect.title = 'Select local model';
+  }
+
+  function updateModelDropdownForCloud() {
+    const modelSelect = document.getElementById('llm-model-select');
+    const providerSelect = document.getElementById('llm-provider-select');
+    if (!modelSelect || !providerSelect) return;
+
+    const provider = providerSelect.value?.toLowerCase() || 'openai';
+    const models = cloudModelLists[provider] || [];
+
+    modelSelect.innerHTML = '';
+
+    if (models.length === 0) {
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = 'Configure in settings';
+      modelSelect.appendChild(opt);
+      modelSelect.disabled = true;
+      modelSelect.title = 'Add models in Settings > LLM > Cloud Settings';
+      return;
+    }
+
+    models.forEach(model => {
+      const opt = document.createElement('option');
+      opt.value = model;
+      opt.textContent = model;
+      modelSelect.appendChild(opt);
+    });
+
+    // Select current model if in list
+    const currentModel = llmRuntimeState?.model;
+    if (currentModel && models.includes(currentModel)) {
+      modelSelect.value = currentModel;
+    }
+
+    modelSelect.disabled = false;
+    modelSelect.title = 'Select cloud model';
+  }
+
+  function updateCloudModelLists(config) {
+    // Extract model lists from config response
+    if (config?.llm?.cloud) {
+      cloudModelLists.openai = config.llm.cloud.openai_models || [];
+      cloudModelLists.claude = config.llm.cloud.claude_models || [];
     }
   }
 
@@ -1479,8 +1712,6 @@
 
     const typeSelect = document.getElementById('llm-type-select');
     const providerSelect = document.getElementById('llm-provider-select');
-    const providerGroup = document.getElementById('provider-group');
-    const modelDisplay = document.getElementById('llm-model-display');
 
     if (typeSelect) {
       typeSelect.value = runtime.type || 'cloud';
@@ -1523,23 +1754,30 @@
     }
 
     // Enable/disable provider selector based on LLM type
-    // (Always visible, but disabled when local is selected)
     if (providerSelect) {
       if (runtime.type === 'local') {
+        // Show detecting state until list_llm_models_response arrives
+        providerSelect.innerHTML = '';
+        const opt = document.createElement('option');
+        opt.value = 'detecting';
+        opt.textContent = 'Detecting...';
+        providerSelect.appendChild(opt);
         providerSelect.disabled = true;
-        providerSelect.title = 'Provider selection not available for local LLM';
+        providerSelect.title = 'Auto-detecting local provider';
       } else if (runtime.openai_available || runtime.claude_available) {
         providerSelect.disabled = false;
         providerSelect.title = 'Switch cloud provider';
       }
     }
 
-    // Update model display
-    if (modelDisplay) {
-      modelDisplay.textContent = runtime.model ? `(${runtime.model})` : '';
+    // Update model dropdown based on mode
+    if (runtime.type === 'local') {
+      // Request local models to populate dropdown
+      requestLocalModels();
+    } else {
+      // Populate cloud models dropdown
+      updateModelDropdownForCloud();
     }
-
-    console.log('LLM controls updated:', runtime);
   }
 
   function setSessionLlm(changes) {
@@ -1548,7 +1786,6 @@
       return;
     }
 
-    console.log('Setting session LLM:', changes);
     DawnWS.send({
       type: 'set_session_llm',
       payload: changes
@@ -1557,7 +1794,6 @@
 
   function handleSetSessionLlmResponse(payload) {
     if (payload.success) {
-      console.log('Session LLM updated:', payload);
       updateLlmControls(payload);
     } else {
       console.error('Failed to update session LLM:', payload.error);
@@ -1780,8 +2016,10 @@
     handleGetAudioDevicesResponse: handleGetAudioDevicesResponse,
     handleSystemPromptResponse: handleSystemPromptResponse,
     handleSetSessionLlmResponse: handleSetSessionLlmResponse,
+    handleListLlmModelsResponse: handleListLlmModelsResponse,
     // LLM controls
     updateLlmControls: updateLlmControls,
+    updateCloudModelLists: updateCloudModelLists,
     // Modals (shared with other modules)
     showConfirmModal: showConfirmModal,
     showInputModal: showInputModal,

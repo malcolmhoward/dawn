@@ -39,7 +39,9 @@
 #include "config/config_env.h"
 #include "config/config_parser.h"
 #include "config/dawn_config.h"
+#include "llm/llm_command_parser.h"
 #include "llm/llm_interface.h"
+#include "llm/llm_local_provider.h"
 #include "logging.h"
 #include "webui/webui_internal.h"
 
@@ -322,10 +324,55 @@ static void apply_config_from_json(dawn_config_t *config, struct json_object *pa
       struct json_object *cloud;
       if (json_object_object_get_ex(section, "cloud", &cloud)) {
          JSON_TO_CONFIG_STR(cloud, "provider", config->llm.cloud.provider);
+         /* Validate cloud provider - must be openai or claude */
+         if (config->llm.cloud.provider[0] != '\0' &&
+             strcmp(config->llm.cloud.provider, "openai") != 0 &&
+             strcmp(config->llm.cloud.provider, "claude") != 0) {
+            LOG_WARNING("WebUI: Invalid cloud.provider '%s', using 'openai'",
+                        config->llm.cloud.provider);
+            strncpy(config->llm.cloud.provider, "openai", sizeof(config->llm.cloud.provider) - 1);
+         }
          JSON_TO_CONFIG_STR(cloud, "openai_model", config->llm.cloud.openai_model);
          JSON_TO_CONFIG_STR(cloud, "claude_model", config->llm.cloud.claude_model);
          JSON_TO_CONFIG_STR(cloud, "endpoint", config->llm.cloud.endpoint);
          JSON_TO_CONFIG_BOOL(cloud, "vision_enabled", config->llm.cloud.vision_enabled);
+
+         /* Parse model lists from settings UI */
+         struct json_object *openai_models_arr;
+         if (json_object_object_get_ex(cloud, "openai_models", &openai_models_arr) &&
+             json_object_is_type(openai_models_arr, json_type_array)) {
+            config->llm.cloud.openai_models_count = 0;
+            int arr_len = json_object_array_length(openai_models_arr);
+            for (int i = 0; i < arr_len && i < LLM_CLOUD_MAX_MODELS; i++) {
+               struct json_object *model_obj = json_object_array_get_idx(openai_models_arr, i);
+               const char *model = json_object_get_string(model_obj);
+               if (model && model[0] != '\0') {
+                  strncpy(config->llm.cloud.openai_models[config->llm.cloud.openai_models_count],
+                          model, LLM_CLOUD_MODEL_NAME_MAX - 1);
+                  config->llm.cloud.openai_models[config->llm.cloud.openai_models_count]
+                                                 [LLM_CLOUD_MODEL_NAME_MAX - 1] = '\0';
+                  config->llm.cloud.openai_models_count++;
+               }
+            }
+         }
+
+         struct json_object *claude_models_arr;
+         if (json_object_object_get_ex(cloud, "claude_models", &claude_models_arr) &&
+             json_object_is_type(claude_models_arr, json_type_array)) {
+            config->llm.cloud.claude_models_count = 0;
+            int arr_len = json_object_array_length(claude_models_arr);
+            for (int i = 0; i < arr_len && i < LLM_CLOUD_MAX_MODELS; i++) {
+               struct json_object *model_obj = json_object_array_get_idx(claude_models_arr, i);
+               const char *model = json_object_get_string(model_obj);
+               if (model && model[0] != '\0') {
+                  strncpy(config->llm.cloud.claude_models[config->llm.cloud.claude_models_count],
+                          model, LLM_CLOUD_MODEL_NAME_MAX - 1);
+                  config->llm.cloud.claude_models[config->llm.cloud.claude_models_count]
+                                                 [LLM_CLOUD_MODEL_NAME_MAX - 1] = '\0';
+                  config->llm.cloud.claude_models_count++;
+               }
+            }
+         }
       }
 
       struct json_object *local;
@@ -337,7 +384,14 @@ static void apply_config_from_json(dawn_config_t *config, struct json_object *pa
 
       struct json_object *tools;
       if (json_object_object_get_ex(section, "tools", &tools)) {
-         JSON_TO_CONFIG_BOOL(tools, "native_enabled", config->llm.tools.native_enabled);
+         JSON_TO_CONFIG_STR(tools, "mode", config->llm.tools.mode);
+         /* Validate tool mode - must be one of: native, command_tags, disabled */
+         if (config->llm.tools.mode[0] != '\0' && strcmp(config->llm.tools.mode, "native") != 0 &&
+             strcmp(config->llm.tools.mode, "command_tags") != 0 &&
+             strcmp(config->llm.tools.mode, "disabled") != 0) {
+            LOG_WARNING("WebUI: Invalid tools.mode '%s', using 'native'", config->llm.tools.mode);
+            strncpy(config->llm.tools.mode, "native", sizeof(config->llm.tools.mode) - 1);
+         }
       }
 
       struct json_object *thinking;
@@ -460,12 +514,20 @@ void handle_set_config(ws_connection_t *conn, struct json_object *payload) {
       /* Continue anyway - backup is optional */
    }
 
+   /* Track tools mode changes for prompt rebuild */
+   char old_tools_mode[16];
+   strncpy(old_tools_mode, g_config.llm.tools.mode, sizeof(old_tools_mode) - 1);
+   old_tools_mode[sizeof(old_tools_mode) - 1] = '\0';
+
    /* Apply changes to global config with mutex protection.
     * The write lock ensures no other threads are reading config during modification. */
    pthread_rwlock_wrlock(&s_config_rwlock);
    dawn_config_t *mutable_config = (dawn_config_t *)config_get();
    apply_config_from_json(mutable_config, payload);
    pthread_rwlock_unlock(&s_config_rwlock);
+
+   /* Check if tool calling mode changed */
+   bool tools_mode_changed = (strcmp(old_tools_mode, g_config.llm.tools.mode) != 0);
 
    /* Write to file (outside lock - file I/O shouldn't block config reads) */
    int result = config_write_toml(mutable_config, config_path);
@@ -517,6 +579,23 @@ void handle_set_config(ws_connection_t *conn, struct json_object *payload) {
                                       json_object_new_string(
                                           "Config saved but failed to switch cloud provider - "
                                           "API key not configured"));
+            }
+         }
+      }
+
+      /* If tool calling mode changed, rebuild system prompt for current session */
+      if (tools_mode_changed) {
+         invalidate_system_instructions();
+         LOG_INFO("Tool calling mode changed (mode=%s), rebuilding prompt",
+                  g_config.llm.tools.mode);
+
+         /* Update current session's system prompt so change takes effect immediately */
+         if (conn->session) {
+            char *new_prompt = build_user_prompt(conn->auth_user_id);
+            if (new_prompt) {
+               session_update_system_prompt(conn->session, new_prompt);
+               LOG_INFO("WebUI: Updated session prompt for tools mode change");
+               free(new_prompt);
             }
          }
       }
@@ -1197,4 +1276,69 @@ void handle_list_interfaces(ws_connection_t *conn) {
    /* Send response */
    send_json_response(conn->wsi, response);
    json_object_put(response);
+}
+
+/* =============================================================================
+ * Local LLM Model Discovery
+ * ============================================================================= */
+
+void handle_list_llm_models(ws_connection_t *conn) {
+   /* Require authentication */
+   if (!conn_require_auth(conn)) {
+      return;
+   }
+
+   json_object *response = json_object_new_object();
+   json_object_object_add(response, "type", json_object_new_string("list_llm_models_response"));
+
+   json_object *payload = json_object_new_object();
+
+   /* Get endpoint from config */
+   const char *endpoint = g_config.llm.local.endpoint[0] != '\0' ? g_config.llm.local.endpoint
+                                                                 : "http://127.0.0.1:8080";
+
+   /* Detect provider */
+   local_provider_t provider = llm_local_detect_provider(endpoint);
+
+   /* Get models list */
+   llm_local_model_t models[LLM_LOCAL_MAX_MODELS];
+   size_t count = 0;
+   int result = llm_local_list_models(endpoint, models, LLM_LOCAL_MAX_MODELS, &count);
+
+   /* Build response */
+   json_object *models_arr = json_object_new_array();
+
+   if (result == 0 && count > 0) {
+      for (size_t i = 0; i < count; i++) {
+         json_object *model_obj = json_object_new_object();
+         json_object_object_add(model_obj, "name", json_object_new_string(models[i].name));
+         json_object_object_add(model_obj, "loaded", json_object_new_boolean(models[i].loaded));
+         json_object_array_add(models_arr, model_obj);
+      }
+   }
+
+   json_object_object_add(payload, "models", models_arr);
+   json_object_object_add(payload, "provider",
+                          json_object_new_string(llm_local_provider_name(provider)));
+   json_object_object_add(payload, "endpoint", json_object_new_string(endpoint));
+
+   /* Return session's model if set, otherwise config default */
+   const char *current_model = g_config.llm.local.model;
+   if (conn->session) {
+      session_llm_config_t session_config;
+      session_get_llm_config(conn->session, &session_config);
+      if (session_config.model[0] != '\0') {
+         current_model = session_config.model;
+      }
+   }
+   json_object_object_add(payload, "current_model", json_object_new_string(current_model));
+   json_object_object_add(payload, "count", json_object_new_int((int)count));
+
+   json_object_object_add(response, "payload", payload);
+
+   send_json_response(conn->wsi, response);
+   json_object_put(response);
+
+   LOG_INFO("WebUI: Sent local LLM models list (%zu models from %s)", count,
+            llm_local_provider_name(provider));
 }

@@ -168,6 +168,9 @@
         case 'list_interfaces_response':
           DawnSettings.handleInterfacesListResponse(msg.payload);
           break;
+        case 'list_llm_models_response':
+          DawnSettings.handleListLlmModelsResponse(msg.payload);
+          break;
         case 'restart_response':
           DawnSettings.handleRestartResponse(msg.payload);
           break;

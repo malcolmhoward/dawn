@@ -44,6 +44,7 @@
 #include "config/dawn_config.h"
 #include "llm/llm_command_parser.h"
 #include "logging.h"
+#include "tools/curl_buffer.h"
 
 /* =============================================================================
  * Constants
@@ -127,64 +128,14 @@ static bool is_valid_device_id(const char *id) {
 }
 
 /* =============================================================================
- * CURL Response Buffer
+ * CURL Response Buffer - Uses shared curl_buffer.h
  * ============================================================================= */
-typedef struct {
-   char *data;
-   size_t size;
-   size_t capacity;
-} response_buffer_t;
 
-static size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp) {
-   response_buffer_t *buf = (response_buffer_t *)userp;
-
-   /* Check for multiplication overflow */
-   if (size > 0 && nmemb > SIZE_MAX / size) {
-      return 0; /* Overflow would occur */
-   }
-   size_t realsize = size * nmemb;
-
-   /* Check for addition overflow */
-   if (buf->size > SIZE_MAX - realsize) {
-      return 0;
-   }
-
-   if (buf->size + realsize >= MAX_RESPONSE_SIZE) {
-      return 0; /* Abort on oversized response */
-   }
-
-   if (buf->size + realsize >= buf->capacity) {
-      size_t new_cap = buf->capacity * 2;
-      if (new_cap < buf->size + realsize + 1)
-         new_cap = buf->size + realsize + 1;
-      char *new_data = realloc(buf->data, new_cap);
-      if (!new_data)
-         return 0;
-      buf->data = new_data;
-      buf->capacity = new_cap;
-   }
-
-   memcpy(buf->data + buf->size, contents, realsize);
-   buf->size += realsize;
-   buf->data[buf->size] = '\0';
-
-   return realsize;
-}
-
-static void response_buffer_init(response_buffer_t *buf) {
-   buf->data = malloc(INITIAL_RESPONSE_SIZE);
-   buf->size = 0;
-   buf->capacity = buf->data ? INITIAL_RESPONSE_SIZE : 0;
-   if (buf->data)
-      buf->data[0] = '\0';
-}
-
-static void response_buffer_free(response_buffer_t *buf) {
-   free(buf->data);
-   buf->data = NULL;
-   buf->size = 0;
-   buf->capacity = 0;
-}
+/* Wrapper macros for backwards compatibility with existing code */
+#define response_buffer_t curl_buffer_t
+#define response_buffer_init(buf) curl_buffer_init_with_max(buf, MAX_RESPONSE_SIZE)
+#define response_buffer_free(buf) curl_buffer_free(buf)
+#define write_callback curl_buffer_write_callback
 
 /* =============================================================================
  * Token File Management

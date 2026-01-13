@@ -150,7 +150,7 @@
         <span class="thinking-duration">(${tokens.toLocaleString()} tokens)</span>
       </div>
       <div class="thinking-content">
-        <em>Reasoning content is not accessible from OpenAI o-series models.</em>
+        <em>Reasoning content is not accessible from OpenAI reasoning models.</em>
       </div>
     `;
 
@@ -245,7 +245,7 @@
     return text
       .replace(/(<command>)/g, '<span style="color:#22d3ee">$1</span>')
       .replace(/(<\/command>)/g, '<span style="color:#22d3ee">$1</span>')
-      .replace(/(\[Tool Result:[^\]]*\])/g, '<span style="color:#22c55e">$1</span>');
+      .replace(/(\[Tool Result:[\s\S]*?(?:\](?=\s*$)|$))/g, '<span style="color:#22c55e">$1</span>');
   }
 
   // =============================================================================

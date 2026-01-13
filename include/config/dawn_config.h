@@ -137,25 +137,36 @@ typedef struct {
 /* =============================================================================
  * LLM (Large Language Model) Configuration
  * ============================================================================= */
+/* Maximum models per provider in the configurable model list */
+#define LLM_CLOUD_MAX_MODELS 8
+#define LLM_CLOUD_MODEL_NAME_MAX 64
+
 typedef struct {
    char provider[16];                  /* "openai" or "claude" */
    char openai_model[CONFIG_NAME_MAX]; /* Model for OpenAI API */
    char claude_model[CONFIG_NAME_MAX]; /* Model for Claude API */
    char endpoint[CONFIG_PATH_MAX];     /* Empty = default, or custom endpoint */
    bool vision_enabled;                /* Model supports vision/image analysis */
+
+   /* Configurable model lists for quick controls dropdown */
+   char openai_models[LLM_CLOUD_MAX_MODELS][LLM_CLOUD_MODEL_NAME_MAX];
+   int openai_models_count;
+   char claude_models[LLM_CLOUD_MAX_MODELS][LLM_CLOUD_MODEL_NAME_MAX];
+   int claude_models_count;
 } llm_cloud_config_t;
 
 typedef struct {
    char endpoint[CONFIG_PATH_MAX]; /* Local llama-server endpoint */
    char model[CONFIG_NAME_MAX];    /* Optional model name */
    bool vision_enabled;            /* Model supports vision (e.g., LLaVA, Qwen-VL) */
+   char provider[16];              /* "auto", "ollama", "llama_cpp", "generic" */
 } llm_local_config_t;
 
 #define LLM_TOOLS_MAX_CONFIGURED 32
 #define LLM_TOOL_NAME_MAX 64
 
 typedef struct {
-   bool native_enabled; /* Use native tool calling (default: true) */
+   char mode[16]; /* "native", "command_tags", or "disabled" (default: native) */
 
    /* Per-tool enable lists (empty + configured = none enabled) */
    char local_enabled[LLM_TOOLS_MAX_CONFIGURED][LLM_TOOL_NAME_MAX];

@@ -975,6 +975,40 @@ int llm_tools_set_enabled(const char *tool_name, bool enabled_local, bool enable
    return 1; /* FAILURE - tool not found */
 }
 
+bool llm_tools_is_device_enabled(const char *device_name, bool is_remote) {
+   if (!device_name || !s_initialized) {
+      return false;
+   }
+
+   pthread_mutex_lock(&s_tools_mutex);
+
+   /* Search tools by name - tools use device_string for device name mapping */
+   for (int i = 0; i < s_tool_count; i++) {
+      /* Check both the tool name and the device_string (underlying device) */
+      if (strcmp(s_tools[i].name, device_name) == 0 ||
+          (s_tools[i].device_name && strcmp(s_tools[i].device_name, device_name) == 0)) {
+         /* Check if the tool is enabled at all */
+         if (!s_tools[i].enabled) {
+            pthread_mutex_unlock(&s_tools_mutex);
+            return false;
+         }
+
+         /* Check session-specific enable state */
+         bool enabled = is_remote ? s_tools[i].enabled_remote : s_tools[i].enabled_local;
+         pthread_mutex_unlock(&s_tools_mutex);
+         return enabled;
+      }
+   }
+
+   pthread_mutex_unlock(&s_tools_mutex);
+
+   /* Device not found in tools array. Only devices with tool blocks in
+    * commands_config_nuevo.json become tools and should appear in prompts.
+    * Plain MQTT devices (like armor_display without a tool block) are NOT
+    * controllable via LLM and should return false for prompt filtering. */
+   return false;
+}
+
 void llm_tools_apply_config(const char **local_list,
                             int local_count,
                             bool local_configured,
@@ -1567,8 +1601,8 @@ bool llm_tools_enabled(const llm_resolved_config_t *config) {
       return false;
    }
 
-   /* Check config option - native tool calling is enabled by default */
-   if (!g_config.llm.tools.native_enabled) {
+   /* Check config option - only "native" mode enables native tool calling */
+   if (strcmp(g_config.llm.tools.mode, "native") != 0) {
       return false;
    }
 
@@ -1587,7 +1621,7 @@ bool llm_tools_enabled(const llm_resolved_config_t *config) {
    }
 
    /* No config provided - this happens during prompt building.
-    * If native_enabled is true and tools are initialized, we should use
+    * If mode is "native" and tools are initialized, we should use
     * the minimal prompt. The actual LLM type check happens at call time. */
    llm_type_t type = llm_get_type();
    if (type == LLM_LOCAL || type == LLM_CLOUD) {

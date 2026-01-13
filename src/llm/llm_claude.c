@@ -1526,6 +1526,8 @@ static char *llm_claude_streaming_internal(struct json_object *conversation_hist
          // Check if provider changed (e.g., switch_llm was called)
          llm_resolved_config_t current_config;
          char *result = NULL;
+         char model_buf_followup[LLM_MODEL_NAME_MAX] =
+             "";  // Buffer for model (resolved ptr may dangle)
 
          LOG_INFO("Claude streaming: Making follow-up call after tool execution (iteration %d/%d)",
                   iteration + 1, MAX_TOOL_ITERATIONS);
@@ -1533,15 +1535,23 @@ static char *llm_claude_streaming_internal(struct json_object *conversation_hist
          // Resolve config once and reuse for both provider check and credentials
          bool config_valid = (llm_get_current_resolved_config(&current_config) == 0);
 
+         // Copy model to local buffer immediately (current_config.model may be dangling pointer)
+         if (config_valid && current_config.model && current_config.model[0] != '\0') {
+            strncpy(model_buf_followup, current_config.model, sizeof(model_buf_followup) - 1);
+            model_buf_followup[sizeof(model_buf_followup) - 1] = '\0';
+         }
+
          if (config_valid && (current_config.type == LLM_LOCAL ||
                               current_config.cloud_provider == CLOUD_PROVIDER_OPENAI)) {
             // Provider switched to OpenAI or local - hand off to OpenAI code path
             LOG_INFO("Claude streaming: Provider switched to OpenAI/local, handing off");
 
             // OpenAI will handle the vision data if present
+            // Use copied model buffer to avoid dangling pointer
             result = llm_openai_chat_completion_streaming(
                 conversation_history, "", (char *)result_vision, result_vision_size,
                 current_config.endpoint, current_config.api_key,
+                model_buf_followup[0] ? model_buf_followup : NULL,
                 (llm_openai_text_chunk_callback)chunk_callback, callback_userdata);
          } else {
             // Still Claude - use resolved config or fallback to original

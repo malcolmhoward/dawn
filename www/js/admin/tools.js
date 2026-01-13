@@ -186,13 +186,24 @@
    * ============================================================================= */
 
   /**
+   * Re-initialize the save button after dynamic content creation
+   */
+  function reinitButton() {
+    const saveBtn = document.getElementById('save-tools-btn');
+    if (saveBtn) {
+      // Remove any existing listeners by cloning
+      const newBtn = saveBtn.cloneNode(true);
+      saveBtn.parentNode.replaceChild(newBtn, saveBtn);
+      newBtn.addEventListener('click', saveToolsConfig);
+    }
+  }
+
+  /**
    * Initialize tools section
    */
   function init() {
-    const saveBtn = document.getElementById('save-tools-btn');
-    if (saveBtn) {
-      saveBtn.addEventListener('click', saveToolsConfig);
-    }
+    // Initial button setup (may be called before dynamic creation)
+    reinitButton();
 
     // Request tools config when settings panel opens
     const settingsBtn = document.getElementById('settings-btn');
@@ -217,6 +228,7 @@
 
   window.DawnTools = {
     init: init,
+    reinitButton: reinitButton,
     requestConfig: requestToolsConfig,
     handleGetConfigResponse: handleGetToolsConfigResponse,
     handleSetConfigResponse: handleSetToolsConfigResponse,

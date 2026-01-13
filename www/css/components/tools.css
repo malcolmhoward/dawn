@@ -6,6 +6,12 @@
 /* =============================================================================
  * LLM Tools Configuration Section
  * ============================================================================= */
+
+/* Container for dynamically injected tools list in settings */
+.tools-container {
+  margin-top: 0.5rem;
+}
+
 .tools-info {
   margin-bottom: 1rem;
 }

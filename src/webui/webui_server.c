@@ -60,6 +60,7 @@
 #include "llm/llm_command_parser.h"
 #include "llm/llm_context.h"
 #include "llm/llm_interface.h"
+#include "llm/llm_local_provider.h"
 #include "llm/llm_tools.h"
 #include "logging.h"
 #include "state_machine.h"
@@ -1533,6 +1534,9 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
    } else if (strcmp(type, "list_interfaces") == 0) {
       /* Request available network interfaces */
       handle_list_interfaces(conn);
+   } else if (strcmp(type, "list_llm_models") == 0) {
+      /* Request available local LLM models (Ollama/llama.cpp) */
+      handle_list_llm_models(conn);
    } else if (strcmp(type, "restart") == 0) {
       /* Admin-only operation */
       if (!conn_require_admin(conn)) {
@@ -1697,6 +1701,23 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
             }
          }
 
+         /* Parse model */
+         struct json_object *model_obj;
+         if (json_object_object_get_ex(payload, "model", &model_obj)) {
+            const char *new_model = json_object_get_string(model_obj);
+            if (new_model && new_model[0] != '\0') {
+               /* Validate model name to prevent injection attacks */
+               if (llm_local_is_valid_model_name(new_model)) {
+                  has_changes = true;
+                  strncpy(config.model, new_model, sizeof(config.model) - 1);
+                  config.model[sizeof(config.model) - 1] = '\0';
+                  LOG_INFO("WebUI: Session model set to '%s'", config.model);
+               } else {
+                  LOG_WARNING("WebUI: Rejected invalid model name from client");
+               }
+            }
+         }
+
          /* Apply config if changes were made */
          if (has_changes) {
             int rc = session_set_llm_config(conn->session, &config);
@@ -1727,15 +1748,21 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
          json_object_object_add(resp_payload, "type", json_object_new_string(type_str));
          json_object_object_add(resp_payload, "provider", json_object_new_string(provider_str));
 
-         /* Get model name from config based on resolved type/provider */
-         const dawn_config_t *cfg = config_get();
+         /* Get model name - prefer session model, fall back to config */
          const char *model_name = NULL;
-         if (current.type == LLM_LOCAL) {
-            model_name = cfg->llm.local.model[0] ? cfg->llm.local.model : "local";
-         } else if (current.cloud_provider == CLOUD_PROVIDER_OPENAI) {
-            model_name = cfg->llm.cloud.openai_model;
-         } else if (current.cloud_provider == CLOUD_PROVIDER_CLAUDE) {
-            model_name = cfg->llm.cloud.claude_model;
+         if (current.model[0] != '\0') {
+            /* Session has explicit model set */
+            model_name = current.model;
+         } else {
+            /* Fall back to config default based on type/provider */
+            const dawn_config_t *cfg = config_get();
+            if (current.type == LLM_LOCAL) {
+               model_name = cfg->llm.local.model[0] ? cfg->llm.local.model : "";
+            } else if (current.cloud_provider == CLOUD_PROVIDER_OPENAI) {
+               model_name = cfg->llm.cloud.openai_model;
+            } else if (current.cloud_provider == CLOUD_PROVIDER_CLAUDE) {
+               model_name = cfg->llm.cloud.claude_model;
+            }
          }
          json_object_object_add(resp_payload, "model",
                                 json_object_new_string(model_name ? model_name : ""));
@@ -3607,17 +3634,34 @@ char *webui_process_commands(const char *llm_response, session_t *session) {
          continue;
       }
 
-      /* Get device and action for result formatting */
+      /* Get device and action - both required for valid command */
       struct json_object *device_obj = NULL;
       struct json_object *action_obj = NULL;
-      const char *device_name = "unknown";
-      const char *action_name = "unknown";
 
-      if (json_object_object_get_ex(parsed_json, "device", &device_obj)) {
-         device_name = json_object_get_string(device_obj);
+      if (!json_object_object_get_ex(parsed_json, "device", &device_obj) || !device_obj) {
+         LOG_WARNING("WebUI: Skipping malformed command - missing 'device' field: %s", cmd_json);
+         json_object_put(parsed_json);
+         free(cmd_json);
+         search_ptr = cmd_end + strlen("</command>");
+         continue;
       }
-      if (json_object_object_get_ex(parsed_json, "action", &action_obj)) {
-         action_name = json_object_get_string(action_obj);
+
+      const char *device_name = json_object_get_string(device_obj);
+      if (!device_name || device_name[0] == '\0') {
+         LOG_WARNING("WebUI: Skipping malformed command - empty 'device' field: %s", cmd_json);
+         json_object_put(parsed_json);
+         free(cmd_json);
+         search_ptr = cmd_end + strlen("</command>");
+         continue;
+      }
+
+      /* Action is optional for some commands (e.g., triggers), default to "unknown" */
+      const char *action_name = "unknown";
+      if (json_object_object_get_ex(parsed_json, "action", &action_obj) && action_obj) {
+         const char *action_str = json_object_get_string(action_obj);
+         if (action_str && action_str[0] != '\0') {
+            action_name = action_str;
+         }
       }
 
       /* Register pending request */

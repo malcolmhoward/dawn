@@ -167,7 +167,7 @@ void config_apply_env(dawn_config_t *config, secrets_config_t *secrets) {
    ENV_BOOL("DAWN_LLM_LOCAL_VISION_ENABLED", config->llm.local.vision_enabled);
 
    /* [llm.tools] */
-   ENV_BOOL("DAWN_LLM_TOOLS_NATIVE_ENABLED", config->llm.tools.native_enabled);
+   ENV_STRING("DAWN_LLM_TOOLS_MODE", config->llm.tools.mode);
 
    /* [search] */
    ENV_STRING("DAWN_SEARCH_ENGINE", config->search.engine);
@@ -651,11 +651,9 @@ void config_dump_settings(const dawn_config_t *config,
 
    /* [llm.tools] */
    printf("[llm.tools]\n");
-   PRINT_SETTING_BOOL("native_enabled", config->llm.tools.native_enabled,
-                      "DAWN_LLM_TOOLS_NATIVE_ENABLED",
-                      detect_source_bool(config->llm.tools.native_enabled,
-                                         defaults.llm.tools.native_enabled,
-                                         "DAWN_LLM_TOOLS_NATIVE_ENABLED"));
+   PRINT_SETTING_STR("mode", config->llm.tools.mode, "DAWN_LLM_TOOLS_MODE",
+                     detect_source_str(config->llm.tools.mode, defaults.llm.tools.mode,
+                                       "DAWN_LLM_TOOLS_MODE"));
 
    /* [search] */
    printf("[search]\n");
@@ -1020,6 +1018,22 @@ json_object *config_to_json(const dawn_config_t *config) {
    json_object_object_add(cloud, "endpoint", json_object_new_string(config->llm.cloud.endpoint));
    json_object_object_add(cloud, "vision_enabled",
                           json_object_new_boolean(config->llm.cloud.vision_enabled));
+
+   /* Model lists for quick controls dropdown */
+   json_object *openai_models = json_object_new_array();
+   for (int i = 0; i < config->llm.cloud.openai_models_count; i++) {
+      json_object_array_add(openai_models,
+                            json_object_new_string(config->llm.cloud.openai_models[i]));
+   }
+   json_object_object_add(cloud, "openai_models", openai_models);
+
+   json_object *claude_models = json_object_new_array();
+   for (int i = 0; i < config->llm.cloud.claude_models_count; i++) {
+      json_object_array_add(claude_models,
+                            json_object_new_string(config->llm.cloud.claude_models[i]));
+   }
+   json_object_object_add(cloud, "claude_models", claude_models);
+
    json_object_object_add(llm, "cloud", cloud);
 
    /* [llm.local] */
@@ -1032,8 +1046,7 @@ json_object *config_to_json(const dawn_config_t *config) {
 
    /* [llm.tools] */
    json_object *tools = json_object_new_object();
-   json_object_object_add(tools, "native_enabled",
-                          json_object_new_boolean(config->llm.tools.native_enabled));
+   json_object_object_add(tools, "mode", json_object_new_string(config->llm.tools.mode));
    json_object_object_add(llm, "tools", tools);
 
    /* [llm.thinking] */
@@ -1349,6 +1362,30 @@ int config_write_toml(const dawn_config_t *config, const char *path) {
       fprintf(fp, "endpoint = \"%s\"\n", config->llm.cloud.endpoint);
    fprintf(fp, "vision_enabled = %s\n", config->llm.cloud.vision_enabled ? "true" : "false");
 
+   /* Write openai_models array */
+   if (config->llm.cloud.openai_models_count > 0) {
+      fprintf(fp, "openai_models = [\n");
+      for (int i = 0; i < config->llm.cloud.openai_models_count; i++) {
+         char *escaped = toml_escape_string(config->llm.cloud.openai_models[i]);
+         fprintf(fp, "    \"%s\"%s\n", escaped ? escaped : config->llm.cloud.openai_models[i],
+                 i < config->llm.cloud.openai_models_count - 1 ? "," : "");
+         free(escaped);
+      }
+      fprintf(fp, "]\n");
+   }
+
+   /* Write claude_models array */
+   if (config->llm.cloud.claude_models_count > 0) {
+      fprintf(fp, "claude_models = [\n");
+      for (int i = 0; i < config->llm.cloud.claude_models_count; i++) {
+         char *escaped = toml_escape_string(config->llm.cloud.claude_models[i]);
+         fprintf(fp, "    \"%s\"%s\n", escaped ? escaped : config->llm.cloud.claude_models[i],
+                 i < config->llm.cloud.claude_models_count - 1 ? "," : "");
+         free(escaped);
+      }
+      fprintf(fp, "]\n");
+   }
+
    fprintf(fp, "\n[llm.local]\n");
    fprintf(fp, "endpoint = \"%s\"\n", config->llm.local.endpoint);
    if (config->llm.local.model[0])
@@ -1356,7 +1393,7 @@ int config_write_toml(const dawn_config_t *config, const char *path) {
    fprintf(fp, "vision_enabled = %s\n", config->llm.local.vision_enabled ? "true" : "false");
 
    fprintf(fp, "\n[llm.tools]\n");
-   fprintf(fp, "native_enabled = %s\n", config->llm.tools.native_enabled ? "true" : "false");
+   fprintf(fp, "mode = \"%s\"\n", config->llm.tools.mode);
    /* Write local_enabled array if configured (even if empty - empty means none enabled) */
    if (config->llm.tools.local_enabled_configured || config->llm.tools.local_enabled_count > 0) {
       if (config->llm.tools.local_enabled_count > 0) {

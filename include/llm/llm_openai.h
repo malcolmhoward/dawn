@@ -55,6 +55,7 @@ typedef void (*llm_openai_text_chunk_callback)(const char *chunk, void *userdata
  * @param vision_image_size Image size in bytes (0 if not used)
  * @param base_url Base URL (cloud: https://api.openai.com, local: http://127.0.0.1:8080)
  * @param api_key API key (NULL for local LLM, required for cloud)
+ * @param model Model name (NULL = use config default)
  * @return Response text (caller must free), or NULL on error
  */
 char *llm_openai_chat_completion(struct json_object *conversation_history,
@@ -62,7 +63,8 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
                                  char *vision_image,
                                  size_t vision_image_size,
                                  const char *base_url,
-                                 const char *api_key);
+                                 const char *api_key,
+                                 const char *model);
 
 /**
  * @brief OpenAI chat completion with streaming
@@ -77,6 +79,7 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
  * @param vision_image_size Image size in bytes (0 if not used)
  * @param base_url Base URL (cloud: https://api.openai.com, local: http://127.0.0.1:8080)
  * @param api_key API key (NULL for local LLM, required for cloud)
+ * @param model Model name (NULL = use config default)
  * @param chunk_callback Function to call for each text chunk
  * @param callback_userdata User context passed to chunk_callback
  * @return Complete response text (caller must free), or NULL on error
@@ -87,6 +90,7 @@ char *llm_openai_chat_completion_streaming(struct json_object *conversation_hist
                                            size_t vision_image_size,
                                            const char *base_url,
                                            const char *api_key,
+                                           const char *model,
                                            llm_openai_text_chunk_callback chunk_callback,
                                            void *callback_userdata);
 

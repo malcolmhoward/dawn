@@ -298,6 +298,20 @@ int llm_tools_get_all(tool_info_t *out, int max_tools);
 int llm_tools_set_enabled(const char *tool_name, bool enabled_local, bool enabled_remote);
 
 /**
+ * @brief Check if a device/tool is enabled for a session type
+ *
+ * Used by legacy <command> tag prompt builder to filter commands
+ * based on the same enabled state as native tools.
+ *
+ * Thread-safe.
+ *
+ * @param device_name Device or tool name to check
+ * @param is_remote true for remote sessions, false for local
+ * @return true if enabled, false if disabled or not found
+ */
+bool llm_tools_is_device_enabled(const char *device_name, bool is_remote);
+
+/**
  * @brief Apply tool configuration from TOML arrays
  *
  * WHITELIST SEMANTIC: If a list is NULL or count is 0, ALL tools are enabled

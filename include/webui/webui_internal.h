@@ -544,6 +544,11 @@ void handle_list_models(ws_connection_t *conn);
  */
 void handle_list_interfaces(ws_connection_t *conn);
 
+/**
+ * @brief List available local LLM models (Ollama/llama.cpp)
+ */
+void handle_list_llm_models(ws_connection_t *conn);
+
 /* =============================================================================
  * Session Handler Functions (defined in webui_session.c)
  * ============================================================================= */

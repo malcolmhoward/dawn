@@ -108,18 +108,32 @@ void config_set_defaults(dawn_config_t *config) {
 
    /* LLM Cloud */
    SAFE_COPY(config->llm.cloud.provider, "openai");
-   SAFE_COPY(config->llm.cloud.openai_model, "gpt-4o");
-   SAFE_COPY(config->llm.cloud.claude_model, "claude-sonnet-4-20250514");
+   SAFE_COPY(config->llm.cloud.openai_model, "gpt-5-mini");
+   SAFE_COPY(config->llm.cloud.claude_model, "claude-sonnet-4-5");
    config->llm.cloud.endpoint[0] = '\0'; /* Empty = use default */
    config->llm.cloud.vision_enabled = true;
 
+   /* Default OpenAI model list for quick controls */
+   config->llm.cloud.openai_models_count = 4;
+   SAFE_COPY(config->llm.cloud.openai_models[0], "gpt-5.2");
+   SAFE_COPY(config->llm.cloud.openai_models[1], "gpt-5-mini");
+   SAFE_COPY(config->llm.cloud.openai_models[2], "gpt-5-nano");
+   SAFE_COPY(config->llm.cloud.openai_models[3], "gpt-5");
+
+   /* Default Claude model list for quick controls */
+   config->llm.cloud.claude_models_count = 3;
+   SAFE_COPY(config->llm.cloud.claude_models[0], "claude-opus-4-5");
+   SAFE_COPY(config->llm.cloud.claude_models[1], "claude-sonnet-4-5");
+   SAFE_COPY(config->llm.cloud.claude_models[2], "claude-haiku-4-5");
+
    /* LLM Local */
    SAFE_COPY(config->llm.local.endpoint, "http://127.0.0.1:8080");
-   config->llm.local.model[0] = '\0';        /* Server decides */
-   config->llm.local.vision_enabled = false; /* Most local models don't support vision */
+   config->llm.local.model[0] = '\0';             /* Server decides */
+   config->llm.local.vision_enabled = false;      /* Most local models don't support vision */
+   SAFE_COPY(config->llm.local.provider, "auto"); /* Auto-detect Ollama vs llama.cpp */
 
    /* LLM Tools */
-   config->llm.tools.native_enabled = true; /* Native tool calling enabled by default */
+   SAFE_COPY(config->llm.tools.mode, "native"); /* "native", "command_tags", or "disabled" */
 
    /* LLM Thinking/Reasoning */
    SAFE_COPY(config->llm.thinking.mode, "disabled");           /* "disabled", "enabled", "auto" */

@@ -323,9 +323,10 @@ static void parse_llm_cloud(toml_table_t *table, llm_cloud_config_t *config) {
    if (!table)
       return;
 
-   static const char *const known_keys[] = { "provider", "openai_model",   "claude_model",
-                                             "model", /* legacy */
-                                             "endpoint", "vision_enabled", NULL };
+   static const char *const known_keys[] = {
+      "provider", "openai_model",   "claude_model",  "model", /* legacy */
+      "endpoint", "vision_enabled", "openai_models", "claude_models", NULL
+   };
    warn_unknown_keys(table, "llm.cloud", known_keys);
 
    PARSE_STRING(table, "provider", config->provider);
@@ -345,29 +346,76 @@ static void parse_llm_cloud(toml_table_t *table, llm_cloud_config_t *config) {
       }
       free(legacy.u.s);
    }
+
+   /* Parse openai_models array (available models for quick controls) */
+   toml_array_t *openai_arr = toml_array_in(table, "openai_models");
+   if (openai_arr) {
+      config->openai_models_count = 0;
+      for (int i = 0; i < toml_array_nelem(openai_arr) && i < LLM_CLOUD_MAX_MODELS; i++) {
+         toml_datum_t val = toml_string_at(openai_arr, i);
+         if (val.ok) {
+            safe_strncpy(config->openai_models[config->openai_models_count++], val.u.s,
+                         LLM_CLOUD_MODEL_NAME_MAX);
+            free(val.u.s);
+         }
+      }
+   }
+
+   /* Parse claude_models array (available models for quick controls) */
+   toml_array_t *claude_arr = toml_array_in(table, "claude_models");
+   if (claude_arr) {
+      config->claude_models_count = 0;
+      for (int i = 0; i < toml_array_nelem(claude_arr) && i < LLM_CLOUD_MAX_MODELS; i++) {
+         toml_datum_t val = toml_string_at(claude_arr, i);
+         if (val.ok) {
+            safe_strncpy(config->claude_models[config->claude_models_count++], val.u.s,
+                         LLM_CLOUD_MODEL_NAME_MAX);
+            free(val.u.s);
+         }
+      }
+   }
 }
 
 static void parse_llm_local(toml_table_t *table, llm_local_config_t *config) {
    if (!table)
       return;
 
-   static const char *const known_keys[] = { "endpoint", "model", "vision_enabled", NULL };
+   static const char *const known_keys[] = { "endpoint", "model", "vision_enabled", "provider",
+                                             NULL };
    warn_unknown_keys(table, "llm.local", known_keys);
 
    PARSE_STRING(table, "endpoint", config->endpoint);
    PARSE_STRING(table, "model", config->model);
    PARSE_BOOL(table, "vision_enabled", config->vision_enabled);
+   PARSE_STRING(table, "provider", config->provider);
 }
 
 static void parse_llm_tools(toml_table_t *table, llm_tools_config_t *config) {
    if (!table)
       return;
 
-   static const char *const known_keys[] = { "native_enabled", "local_enabled", "remote_enabled",
-                                             NULL };
+   static const char *const known_keys[] = { "mode", "native_enabled", "local_enabled",
+                                             "remote_enabled", NULL };
    warn_unknown_keys(table, "llm.tools", known_keys);
 
-   PARSE_BOOL(table, "native_enabled", config->native_enabled);
+   /* Parse mode (preferred) or fall back to native_enabled for backwards compatibility */
+   PARSE_STRING(table, "mode", config->mode);
+
+   /* Validate mode if set */
+   if (config->mode[0] != '\0') {
+      if (strcmp(config->mode, "native") != 0 && strcmp(config->mode, "command_tags") != 0 &&
+          strcmp(config->mode, "disabled") != 0) {
+         LOG_WARNING("Invalid llm.tools.mode '%s', using 'native'", config->mode);
+         safe_strncpy(config->mode, "native", sizeof(config->mode));
+      }
+   } else {
+      /* Backwards compatibility: convert native_enabled bool to mode */
+      toml_datum_t native = toml_bool_in(table, "native_enabled");
+      if (native.ok) {
+         safe_strncpy(config->mode, native.u.b ? "native" : "command_tags", sizeof(config->mode));
+      }
+      /* If neither is set, default will be applied from config_defaults.c */
+   }
 
    /* Parse local_enabled array */
    toml_array_t *local_arr = toml_array_in(table, "local_enabled");

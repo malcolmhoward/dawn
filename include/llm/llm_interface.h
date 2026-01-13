@@ -48,6 +48,12 @@ typedef enum {
    LLM_UNDEFINED /**< Not yet initialized / inherit from global */
 } llm_type_t;
 
+/** Maximum length for LLM model names */
+#define LLM_MODEL_NAME_MAX 64
+
+/** Maximum length for tool mode strings */
+#define LLM_TOOL_MODE_MAX 16
+
 /**
  * @brief Per-session LLM configuration
  *
@@ -56,25 +62,54 @@ typedef enum {
  * Changes to one session's config do not affect other sessions.
  */
 typedef struct {
-   llm_type_t type;                 /**< LLM type (local or cloud) */
-   cloud_provider_t cloud_provider; /**< Cloud provider (OpenAI, Claude, etc.) */
-   char endpoint[128];              /**< Endpoint URL (empty = use provider default) */
-   char model[64];                  /**< Model name (empty = use provider default) */
+   llm_type_t type;                   /**< LLM type (local or cloud) */
+   cloud_provider_t cloud_provider;   /**< Cloud provider (OpenAI, Claude, etc.) */
+   char endpoint[128];                /**< Endpoint URL (empty = use provider default) */
+   char model[LLM_MODEL_NAME_MAX];    /**< Model name (empty = use provider default) */
+   char tool_mode[LLM_TOOL_MODE_MAX]; /**< Tool mode: native, command_tags, disabled */
 } session_llm_config_t;
 
 /**
  * @brief Resolved LLM configuration for making requests
  *
  * Created by llm_resolve_config() by merging session overrides with global config.
- * Pointers reference static/config memory and are NOT owned by this struct.
+ *
+ * WARNING: Pointers reference internal/stack memory that may become invalid
+ * after llm_resolve_config() returns. Callers MUST copy string fields to local
+ * buffers immediately using LLM_COPY_MODEL_SAFE() before any function calls.
  */
 typedef struct {
    llm_type_t type;                 /**< Resolved LLM type */
    cloud_provider_t cloud_provider; /**< Resolved cloud provider */
-   const char *endpoint;            /**< Endpoint URL (not owned) */
+   const char *endpoint;            /**< Endpoint URL (not owned, may be dangling) */
    const char *api_key;             /**< API key for cloud providers (not owned) */
-   const char *model;               /**< Model name (not owned) */
+   const char *model;               /**< Model name (not owned, may be dangling) */
 } llm_resolved_config_t;
+
+/**
+ * @brief Safely copy a model name to a local buffer
+ *
+ * Use this macro immediately after llm_resolve_config() to copy string fields
+ * that may become dangling pointers. The macro handles NULL and empty strings.
+ *
+ * @param dst    Destination buffer (char array)
+ * @param src    Source string (may be NULL)
+ *
+ * Example:
+ *   llm_resolved_config_t resolved;
+ *   char model_buf[LLM_MODEL_NAME_MAX];
+ *   llm_resolve_config(&session_config, &resolved);
+ *   LLM_COPY_MODEL_SAFE(model_buf, resolved.model);
+ */
+#define LLM_COPY_MODEL_SAFE(dst, src)            \
+   do {                                          \
+      if ((src) && (src)[0] != '\0') {           \
+         strncpy((dst), (src), sizeof(dst) - 1); \
+         (dst)[sizeof(dst) - 1] = '\0';          \
+      } else {                                   \
+         (dst)[0] = '\0';                        \
+      }                                          \
+   } while (0)
 
 /**
  * @brief Initialize the LLM system

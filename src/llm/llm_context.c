@@ -35,8 +35,10 @@
 #include "config/dawn_config.h"
 #include "core/session_manager.h"
 #include "llm/llm_interface.h"
+#include "llm/llm_local_provider.h"
 #include "llm/llm_tools.h"
 #include "logging.h"
+#include "tools/curl_buffer.h"
 #include "tools/string_utils.h"
 #include "tts/text_to_speech.h"
 #ifdef ENABLE_WEBUI
@@ -149,30 +151,10 @@ static session_token_tracking_t s_session_tokens[MAX_TRACKED_SESSIONS];
 static int s_session_token_count = 0;
 
 /* =============================================================================
- * CURL Response Buffer
+ * CURL Response Buffer - Uses shared curl_buffer.h
  * ============================================================================= */
 
-typedef struct {
-   char *data;
-   size_t size;
-} curl_response_t;
-
-static size_t context_curl_write_cb(void *contents, size_t size, size_t nmemb, void *userp) {
-   size_t realsize = size * nmemb;
-   curl_response_t *resp = (curl_response_t *)userp;
-
-   char *ptr = realloc(resp->data, resp->size + realsize + 1);
-   if (!ptr) {
-      return 0;
-   }
-
-   resp->data = ptr;
-   memcpy(&(resp->data[resp->size]), contents, realsize);
-   resp->size += realsize;
-   resp->data[resp->size] = '\0';
-
-   return realsize;
-}
+#define LLM_CONTEXT_MAX_RESPONSE_SIZE (64 * 1024) /* 64KB max response */
 
 /* =============================================================================
  * Lifecycle Functions
@@ -261,10 +243,11 @@ int llm_context_query_local(const char *endpoint) {
       return LLM_CONTEXT_DEFAULT_LOCAL;
    }
 
-   curl_response_t response = { .data = NULL, .size = 0 };
+   curl_buffer_t response;
+   curl_buffer_init_with_max(&response, LLM_CONTEXT_MAX_RESPONSE_SIZE);
 
    curl_easy_setopt(curl, CURLOPT_URL, url);
-   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, context_curl_write_cb);
+   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_buffer_write_callback);
    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 3L);
@@ -274,17 +257,18 @@ int llm_context_query_local(const char *endpoint) {
 
    if (res != CURLE_OK) {
       LOG_WARNING("llm_context: Failed to query %s: %s", url, curl_easy_strerror(res));
-      free(response.data);
+      curl_buffer_free(&response);
       return LLM_CONTEXT_DEFAULT_LOCAL;
    }
 
    if (!response.data) {
+      curl_buffer_free(&response);
       return LLM_CONTEXT_DEFAULT_LOCAL;
    }
 
    /* Parse JSON response */
    struct json_object *root = json_tokener_parse(response.data);
-   free(response.data);
+   curl_buffer_free(&response);
 
    if (!root) {
       LOG_WARNING("llm_context: Failed to parse /props response");
@@ -328,10 +312,11 @@ int llm_context_get_size(llm_type_t type, cloud_provider_t provider, const char 
       pthread_mutex_lock(&s_state.mutex);
 
       if (!s_state.local_context_queried) {
-         /* Query local LLM for context size */
+         /* Query local LLM for context size using new provider-aware module */
          const char *endpoint = g_config.llm.local.endpoint[0] != '\0' ? g_config.llm.local.endpoint
                                                                        : "http://127.0.0.1:8080";
-         s_state.local_context_size = llm_context_query_local(endpoint);
+         const char *local_model = g_config.llm.local.model;
+         s_state.local_context_size = llm_local_query_context_size(endpoint, local_model);
          s_state.local_context_queried = true;
       }
 

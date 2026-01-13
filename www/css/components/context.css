@@ -150,13 +150,13 @@
   transition: opacity var(--transition-fast);
 }
 
-#llm-provider-select:disabled {
+#llm-provider-select:disabled,
+#llm-model-select:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-#llm-model-display {
-  color: var(--text-secondary);
-  font-size: 0.75rem;
-  font-style: italic;
+#llm-model-select {
+  min-width: 120px;
+  max-width: 200px;
 }

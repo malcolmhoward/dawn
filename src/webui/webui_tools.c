@@ -30,6 +30,7 @@
 #include "config/config_env.h"
 #include "config/config_parser.h"
 #include "config/dawn_config.h"
+#include "llm/llm_command_parser.h"
 #include "llm/llm_tools.h"
 #include "logging.h"
 #include "tools/string_utils.h"
@@ -187,6 +188,23 @@ void handle_set_tools_config(ws_connection_t *conn, struct json_object *payload)
    config_write_toml(&g_config, config_path);
 
    pthread_rwlock_unlock(&s_config_rwlock);
+
+   /* Invalidate cached prompts so they rebuild with new tool enabled states.
+    * This affects both native tool schemas and legacy <command> tag prompts. */
+   if (updated > 0) {
+      invalidate_system_instructions();
+      LOG_INFO("WebUI: Tool states changed, prompt cache invalidated");
+
+      /* Update current session's system prompt */
+      if (conn->session) {
+         char *new_prompt = build_user_prompt(conn->auth_user_id);
+         if (new_prompt) {
+            session_update_system_prompt(conn->session, new_prompt);
+            LOG_INFO("WebUI: Updated session prompt for tool state changes");
+            free(new_prompt);
+         }
+      }
+   }
 
    json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
    json_object_object_add(resp_payload, "updated", json_object_new_int(updated));

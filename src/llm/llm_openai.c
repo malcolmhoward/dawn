@@ -644,7 +644,8 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
                                  char *vision_image,
                                  size_t vision_image_size,
                                  const char *base_url,
-                                 const char *api_key) {
+                                 const char *api_key,
+                                 const char *model) {
    CURL *curl_handle = NULL;
    CURLcode res = -1;
    struct curl_slist *headers = NULL;
@@ -685,8 +686,14 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
    // Root JSON Container
    root = json_object_new_object();
 
-   // Model from config
-   json_object_object_add(root, "model", json_object_new_string(g_config.llm.cloud.openai_model));
+   // Model: use passed model, or fall back to config default
+   const char *model_name = model;
+   if (!model_name || model_name[0] == '\0') {
+      model_name = (api_key == NULL) ? g_config.llm.local.model : g_config.llm.cloud.openai_model;
+   }
+   if (model_name && model_name[0] != '\0') {
+      json_object_object_add(root, "model", json_object_new_string(model_name));
+   }
 
    // User message is now added by dawn.c before calling this function
    // If vision is provided, modify the last user message to include image
@@ -1056,6 +1063,7 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
                                            size_t vision_image_size,
                                            const char *base_url,
                                            const char *api_key,
+                                           const char *model,
                                            llm_openai_text_chunk_callback chunk_callback,
                                            void *callback_userdata,
                                            int iteration) {
@@ -1091,8 +1099,14 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
    // Root JSON Container
    root = json_object_new_object();
 
-   // Model from config
-   json_object_object_add(root, "model", json_object_new_string(g_config.llm.cloud.openai_model));
+   // Model: use passed model, or fall back to config default
+   const char *model_name = model;
+   if (!model_name || model_name[0] == '\0') {
+      model_name = (api_key == NULL) ? g_config.llm.local.model : g_config.llm.cloud.openai_model;
+   }
+   if (model_name && model_name[0] != '\0') {
+      json_object_object_add(root, "model", json_object_new_string(model_name));
+   }
 
    // Enable streaming with usage reporting
    json_object_object_add(root, "stream", json_object_new_boolean(1));
@@ -1254,9 +1268,10 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
    LOG_INFO("OpenAI streaming request payload: %zu bytes (~%zu tokens est)", strlen(payload),
             strlen(payload) / 4);
 
-   // Log request details for debugging
+   // Log request details for debugging (use actual model_name that was added to JSON)
    LOG_INFO("OpenAI streaming iter %d: url=%s model=%s api_key=%s", iteration, base_url,
-            g_config.llm.cloud.openai_model, LOG_CREDENTIAL_STATUS(api_key));
+            (model_name && model_name[0]) ? model_name : "(server default)",
+            LOG_CREDENTIAL_STATUS(api_key));
 
    // Debug: Log conversation state on follow-up iterations
    if (iteration > 0) {
@@ -1567,7 +1582,15 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
          // Resolve config once and reuse for both provider check and credentials
          llm_resolved_config_t current_config;
          char *result = NULL;
+         char model_buf_followup[LLM_MODEL_NAME_MAX] =
+             "";  // Buffer for model (resolved ptr may dangle)
          bool config_valid = (llm_get_current_resolved_config(&current_config) == 0);
+
+         // Copy model to local buffer immediately (current_config.model may be dangling pointer)
+         if (config_valid && current_config.model && current_config.model[0] != '\0') {
+            strncpy(model_buf_followup, current_config.model, sizeof(model_buf_followup) - 1);
+            model_buf_followup[sizeof(model_buf_followup) - 1] = '\0';
+         }
 
          if (config_valid && current_config.type != LLM_LOCAL &&
              current_config.cloud_provider == CLOUD_PROVIDER_CLAUDE) {
@@ -1584,6 +1607,8 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
             // Still OpenAI-compatible (local or OpenAI cloud) - use resolved config or fallback
             const char *fresh_url = config_valid ? current_config.endpoint : base_url;
             const char *fresh_api_key = config_valid ? current_config.api_key : api_key;
+            // Use copied model buffer, or fall back to original model param if not set
+            const char *fresh_model = model_buf_followup[0] ? model_buf_followup : model;
 
             if (config_valid && fresh_url != base_url) {
                LOG_INFO("OpenAI streaming: Credentials refreshed to %s", fresh_url);
@@ -1591,7 +1616,7 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
 
             result = llm_openai_streaming_internal(conversation_history, "", (char *)result_vision,
                                                    result_vision_size, fresh_url, fresh_api_key,
-                                                   chunk_callback, callback_userdata,
+                                                   fresh_model, chunk_callback, callback_userdata,
                                                    iteration + 1);
          }
 
@@ -1635,9 +1660,10 @@ char *llm_openai_chat_completion_streaming(struct json_object *conversation_hist
                                            size_t vision_image_size,
                                            const char *base_url,
                                            const char *api_key,
+                                           const char *model,
                                            llm_openai_text_chunk_callback chunk_callback,
                                            void *callback_userdata) {
    return llm_openai_streaming_internal(conversation_history, input_text, vision_image,
-                                        vision_image_size, base_url, api_key, chunk_callback,
+                                        vision_image_size, base_url, api_key, model, chunk_callback,
                                         callback_userdata, 0);
 }

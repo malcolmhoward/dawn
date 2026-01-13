@@ -473,7 +473,7 @@
         <span class="thinking-duration">(${tokens.toLocaleString()} tokens)</span>
       </div>
       <div class="thinking-content">
-        <em>Reasoning content is not accessible from OpenAI o-series models.</em>
+        <em>Reasoning content is not accessible from OpenAI reasoning models.</em>
       </div>
     `;
 

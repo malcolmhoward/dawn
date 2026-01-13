@@ -14,6 +14,7 @@ This document describes the architecture of the D.A.W.N. (Digital Assistant for 
 - [Threading Model](#threading-model)
 - [State Machine](#state-machine)
 - [Network Protocol](#network-protocol)
+- [Command Processing Architecture](#command-processing-architecture)
 - [Component Interactions](#component-interactions)
 - [Memory Management](#memory-management)
 - [Error Handling](#error-handling)
@@ -663,6 +664,116 @@ Client ← ACK ← Server
 - `PROTOCOL_VERSION` (0x01)
 
 Mismatch causes connection failure or data corruption.
+
+---
+
+## Command Processing Architecture
+
+DAWN supports three parallel command processing paths that all converge on a unified executor:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           USER INPUT (Voice/Text)                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                      PROCESSING MODE (dawn.toml: commands.processing_mode)  │
+│                                                                             │
+│   direct_only ──────► Pattern match only, no LLM                            │
+│   llm_only ─────────► Send everything to LLM                                │
+│   direct_first ─────► Try patterns, fallback to LLM                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                    ┌─────────────────┴─────────────────┐
+                    ▼                                   ▼
+┌──────────────────────────────┐       ┌──────────────────────────────────────┐
+│   PATH 1: DIRECT MATCHING    │       │         PATH 2: LLM INVOCATION       │
+│   (text_to_command_nuevo.c)  │       │                                      │
+│                              │       │    ┌────────────────────────────┐    │
+│  Regex patterns from JSON:   │       │    │  native_enabled = true?    │    │
+│  "turn on %device_name%"     │       │    └────────────┬───────────────┘    │
+│  "play %value%"              │       │                 │                    │
+│                              │       │     ┌───────────┴───────────┐        │
+│  Extracts device/action/val  │       │     ▼                       ▼        │
+└──────────────┬───────────────┘       │ ┌───────────┐       ┌─────────────┐  │
+               │                       │ │PATH 2A:   │       │PATH 2B:     │  │
+               │                       │ │NATIVE     │       │LEGACY       │  │
+               │                       │ │TOOLS      │       │<command>    │  │
+               │                       │ │           │       │TAGS         │  │
+               │                       │ │LLM returns│       │             │  │
+               │                       │ │structured │       │LLM returns  │  │
+               │                       │ │tool_calls │       │<command>JSON│  │
+               │                       │ └─────┬─────┘       └──────┬──────┘  │
+               │                       │       │                    │         │
+               │                       └───────┼────────────────────┼─────────┘
+               │                               │                    │
+               │                               ▼                    ▼
+               │                       ┌─────────────┐      ┌─────────────────┐
+               │                       │llm_tools_   │      │webui_process_   │
+               │                       │execute()    │      │commands()       │
+               │                       │             │      │                 │
+               │                       │Parses tool  │      │Parses <command> │
+               │                       │call struct  │      │tags from text   │
+               │                       └─────┬───────┘      └────────┬────────┘
+               │                             │                       │
+               └─────────────────────────────┼───────────────────────┘
+                                             │
+                                             ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    UNIFIED COMMAND EXECUTOR (command_executor.c)            │
+│                                                                             │
+│   command_execute(device, action, value, mosq, &result)                     │
+│                                                                             │
+│   1. Look up device in command_registry                                     │
+│   2. If has_callback → invoke deviceCallbackArray[type].callback()          │
+│   3. If mqtt_only → publish JSON to MQTT topic                              │
+│   4. If sync_wait → use command_router for response (viewing)               │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                             │
+               ┌─────────────────────────────┼─────────────────────────────┐
+               ▼                             ▼                             ▼
+┌──────────────────────┐       ┌──────────────────────┐       ┌─────────────────┐
+│ C CALLBACKS          │       │ MQTT-ONLY            │       │ SYNC WAIT       │
+│ (mosquitto_comms.c)  │       │ (Hardware)           │       │ (viewing)       │
+│                      │       │                      │       │                 │
+│ deviceCallbackArray: │       │ Publish to topic:    │       │ Wait for MQTT   │
+│ - weather → get_wea  │       │ - "hud" → helmet     │       │ response via    │
+│ - music → play_music │       │ - "helmet" → helmet  │       │ command_router  │
+│ - search → web_sear  │       │ - "smartthings"      │       │                 │
+│ - date → get_date    │       │                      │       │                 │
+└──────────────────────┘       └──────────────────────┘       └─────────────────┘
+```
+
+### Command Definition Sources
+
+Commands are defined in two places:
+
+1. **JSON-Defined** (`commands_config_nuevo.json`)
+   - Device definitions with types, aliases, MQTT topics
+   - Optional `tool` blocks that become native LLM tools
+   - Action patterns for direct matching ("turn on %device_name%")
+
+2. **C-Defined** (`mosquitto_comms.c`)
+   - `deviceCallbackArray[]` maps device types to C functions
+   - Execution callbacks: weather, music, search, smartthings, etc.
+
+### Native Tools vs Legacy `<command>` Tags
+
+| Aspect | Native Tools | Legacy `<command>` Tags |
+|--------|--------------|------------------------|
+| **Definition** | command_registry → llm_tools | Raw JSON in prompt |
+| **Prompt** | Minimal (tools sent as API params) | Full `<command>` instructions |
+| **Response** | Structured `tool_calls` array | Text with `<command>JSON</command>` |
+| **Filtering** | `enabled_local`/`enabled_remote` per tool | Same flags |
+| **Execution** | `command_execute()` | `command_execute()` |
+
+### Tool Enable/Disable
+
+Tools can be enabled/disabled per session type (local vs remote):
+- Settings UI provides per-tool toggles
+- Legacy `<command>` prompt is filtered by the same enabled flags
+- Disabled tools are omitted from both native tool schemas and legacy prompt
 
 ---
 

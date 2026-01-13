@@ -148,6 +148,35 @@ int config_validate(const dawn_config_t *config,
       /* Note: API key check removed - handled in dawn.c with graceful fallback to local */
    }
 
+   /* ===== LLM Local Provider (enum) ===== */
+   if (config->llm.local.provider[0] != '\0') {
+      const char *valid_local_providers[] = { "auto", "ollama", "llama_cpp", "generic" };
+      if (!string_in_list(config->llm.local.provider, valid_local_providers, 4)) {
+         ADD_ERROR("llm.local.provider",
+                   "must be 'auto', 'ollama', 'llama_cpp', or 'generic' (got '%s')",
+                   config->llm.local.provider);
+      }
+   }
+
+   /* ===== LLM Local Endpoint URL Validation ===== */
+   if (config->llm.local.endpoint[0] != '\0') {
+      /* Must start with http:// or https:// */
+      if (strncmp(config->llm.local.endpoint, "http://", 7) != 0 &&
+          strncmp(config->llm.local.endpoint, "https://", 8) != 0) {
+         ADD_ERROR("llm.local.endpoint", "must start with http:// or https://");
+      }
+      /* Block cloud metadata endpoints (SSRF prevention) */
+      if (strstr(config->llm.local.endpoint, "169.254.169.254") ||
+          strstr(config->llm.local.endpoint, "metadata.google.internal") ||
+          strstr(config->llm.local.endpoint, "metadata.goog")) {
+         ADD_ERROR("llm.local.endpoint", "cloud metadata endpoint not allowed (SSRF protection)");
+      }
+      /* No injection characters */
+      if (strchr(config->llm.local.endpoint, '\n') || strchr(config->llm.local.endpoint, '\r')) {
+         ADD_ERROR("llm.local.endpoint", "newline characters not allowed");
+      }
+   }
+
    /* ===== Max Tokens (positive) ===== */
    if (config->llm.max_tokens <= 0) {
       ADD_ERROR("llm.max_tokens", "must be positive (got %d)", config->llm.max_tokens);

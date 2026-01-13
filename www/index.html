@@ -197,7 +197,12 @@
           <option value="claude">Claude</option>
         </select>
       </div>
-      <span id="llm-model-display" title="Current model"></span>
+      <div class="llm-control-group" id="model-group">
+        <label for="llm-model-select">Model:</label>
+        <select id="llm-model-select" title="Select model" disabled>
+          <option value="">Loading...</option>
+        </select>
+      </div>
     </div>
 
     <!-- Transcript display -->
@@ -600,34 +605,6 @@ client_secret = "..."</pre>
           </div>
         </div>
 
-        <!-- LLM Tools Configuration Section (admin only) -->
-        <div class="settings-section admin-only" id="tools-section">
-          <h3 class="section-header" data-section="tools">
-            <span class="section-icon">&#x1F527;</span>
-            LLM Tools
-            <span class="section-toggle">&#9660;</span>
-          </h3>
-          <div class="section-content">
-            <div class="tools-info">
-              <p>Configure which tools are available for LLM function calling.</p>
-              <div class="tools-token-estimate">
-                <span>Estimated tokens:</span>
-                <span id="tools-tokens-local">Local: --</span>
-                <span id="tools-tokens-remote">Remote: --</span>
-              </div>
-            </div>
-            <div class="tools-header-row">
-              <span class="tools-header-name">Tool</span>
-              <span class="tools-header-local">Local</span>
-              <span class="tools-header-remote">Remote</span>
-            </div>
-            <div id="tools-list" class="tools-list">
-              <!-- Tools will be populated dynamically -->
-              <div class="tools-loading">Loading tools...</div>
-            </div>
-            <button id="save-tools-btn" class="save-btn">Save Tool Settings</button>
-          </div>
-        </div>
       </div>
 
       <div class="settings-footer">
