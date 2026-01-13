@@ -8,58 +8,62 @@
  * Canonical layout per design spec - rings left, telemetry right
  * ============================================================================= */
 #visualizer {
-  display: flex;
-  justify-content: center;
-  align-items: stretch;
-  gap: 1rem;
-  padding: 1rem 0;
-  flex-shrink: 0;
-  position: relative;
-  max-height: 400px;  /* Reasonable max for smooth transition */
-  transition: max-height var(--transition-medium) ease-out,
-              opacity var(--transition-medium) ease-out,
-              padding var(--transition-medium) ease-out,
-              margin var(--transition-medium) ease-out;
-  overflow: hidden;
+   display: flex;
+   justify-content: center;
+   align-items: stretch;
+   gap: 1rem;
+   padding: 1rem 0;
+   flex-shrink: 0;
+   position: relative;
+   max-height: 400px; /* Reasonable max for smooth transition */
+   transition:
+      max-height var(--transition-medium) ease-out,
+      opacity var(--transition-medium) ease-out,
+      padding var(--transition-medium) ease-out,
+      margin var(--transition-medium) ease-out;
+   overflow: hidden;
 }
 
 /* Collapsed state */
 #visualizer.collapsed {
-  max-height: 0;
-  opacity: 0;
-  padding: 0;
-  margin-bottom: 0;
-  pointer-events: none;
+   max-height: 0;
+   opacity: 0;
+   padding: 0;
+   margin-bottom: 0;
+   pointer-events: none;
 }
 
 /* =============================================================================
  * Visualizer Collapse Toggle (subtle, like continuation banner)
  * ============================================================================= */
 .visualizer-collapse-toggle {
-  position: absolute;
-  top: 0.5rem;
-  right: 0.75rem;
-  color: var(--text-secondary);
-  font-size: 0.75rem;
-  cursor: pointer;
-  padding: 0.25rem 0.5rem;
-  border-radius: var(--border-radius-sm);
-  transition: color var(--transition-fast), background-color var(--transition-fast), transform var(--transition-fast);
-  z-index: 10;
-  user-select: none;
+   position: absolute;
+   top: 0.5rem;
+   right: 0.75rem;
+   color: var(--text-secondary);
+   font-size: 0.75rem;
+   cursor: pointer;
+   padding: 0.25rem 0.5rem;
+   border-radius: var(--border-radius-sm);
+   transition:
+      color var(--transition-fast),
+      background-color var(--transition-fast),
+      transform var(--transition-fast);
+   z-index: 10;
+   user-select: none;
 }
 .visualizer-collapse-toggle:hover {
-  color: var(--accent);
-  background: var(--accent-border);
+   color: var(--accent);
+   background: var(--accent-border);
 }
 .visualizer-collapse-toggle:active {
-  background: var(--accent-hover);
-  transform: scale(0.95);
+   background: var(--accent-hover);
+   transform: scale(0.95);
 }
 .visualizer-collapse-toggle:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-  box-shadow: 0 0 0 4px var(--accent-focus);
+   outline: 2px solid var(--accent);
+   outline-offset: 2px;
+   box-shadow: 0 0 0 4px var(--accent-focus);
 }
 
 /* =============================================================================
@@ -67,184 +71,214 @@
  * Styled like continuation-header for consistency
  * ============================================================================= */
 .visualizer-mini {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0.5rem 1rem;
-  margin-bottom: 1rem;  /* Same spacing as #llm-controls */
-  background: var(--accent-subtle);
-  border: 1px solid var(--accent-hover);
-  border-radius: var(--border-radius);  /* Same as #llm-controls (8px) */
-  font-family: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
-  font-size: 0.8rem;
-  cursor: pointer;
-  user-select: none;
-  transition: background-color var(--transition-fast), transform var(--transition-fast);
-  /* Entry animation when appearing */
-  animation: miniBarFadeIn var(--transition-medium) ease-out;
+   display: flex;
+   align-items: center;
+   justify-content: space-between;
+   padding: 0.5rem 1rem;
+   margin-bottom: 1rem; /* Same spacing as #llm-controls */
+   background: var(--accent-subtle);
+   border: 1px solid var(--accent-hover);
+   border-radius: var(--border-radius); /* Same as #llm-controls (8px) */
+   font-family: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
+   font-size: 0.8rem;
+   cursor: pointer;
+   user-select: none;
+   transition:
+      background-color var(--transition-fast),
+      transform var(--transition-fast);
+   /* Entry animation when appearing */
+   animation: miniBarFadeIn var(--transition-medium) ease-out;
 }
 .visualizer-mini:hover {
-  background: var(--accent-border);
+   background: var(--accent-border);
 }
 .visualizer-mini:active {
-  background: var(--accent-hover);
-  transform: scale(0.995);
+   background: var(--accent-hover);
+   transform: scale(0.995);
 }
 .visualizer-mini:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-  box-shadow: 0 0 0 4px var(--accent-focus);
+   outline: 2px solid var(--accent);
+   outline-offset: 2px;
+   box-shadow: 0 0 0 4px var(--accent-focus);
 }
 .visualizer-mini.hidden {
-  display: none;
+   display: none;
 }
 
 /* Entry animation for mini bar */
 @keyframes miniBarFadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(-4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+   from {
+      opacity: 0;
+      transform: translateY(-4px);
+   }
+   to {
+      opacity: 1;
+      transform: translateY(0);
+   }
 }
 
 .mini-left {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex: 1;
-  min-width: 0;
+   display: flex;
+   align-items: center;
+   gap: 0.5rem;
+   flex: 1;
+   min-width: 0;
 }
 
 .mini-left .status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--accent);
-  flex-shrink: 0;
+   width: 8px;
+   height: 8px;
+   border-radius: 50%;
+   background: var(--accent);
+   flex-shrink: 0;
 }
 /* Status dot color states with pulse animations for active states */
 .mini-left .status-dot.idle {
-  background: var(--text-secondary);
-  animation: statusPulse 2s ease-in-out infinite;
+   background: var(--text-secondary);
+   animation: statusPulse 2s ease-in-out infinite;
 }
 .mini-left .status-dot.listening {
-  background: var(--success);
-  animation: miniPulseGreen 1.2s ease-in-out infinite;
+   background: var(--success);
+   animation: miniPulseGreen 1.2s ease-in-out infinite;
 }
 .mini-left .status-dot.thinking,
 .mini-left .status-dot.summarizing {
-  background: var(--warning);
-  animation: miniPulseAmber 0.8s ease-in-out infinite;
+   background: var(--warning);
+   animation: miniPulseAmber 0.8s ease-in-out infinite;
 }
 .mini-left .status-dot.speaking {
-  background: var(--accent);
-  animation: miniPulseCyan 1s ease-in-out infinite;
+   background: var(--accent);
+   animation: miniPulseCyan 1s ease-in-out infinite;
 }
 .mini-left .status-dot.error {
-  background: var(--error);
-  animation: miniPulseRed 0.6s ease-in-out infinite;
+   background: var(--error);
+   animation: miniPulseRed 0.6s ease-in-out infinite;
 }
 
 /* Pulse animations for mini bar status dots */
 @keyframes miniPulseGreen {
-  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.4); }
-  50% { opacity: 0.8; box-shadow: 0 0 0 4px rgba(34, 197, 94, 0); }
+   0%,
+   100% {
+      opacity: 1;
+      box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.4);
+   }
+   50% {
+      opacity: 0.8;
+      box-shadow: 0 0 0 4px rgba(34, 197, 94, 0);
+   }
 }
 @keyframes miniPulseAmber {
-  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4); }
-  50% { opacity: 0.7; box-shadow: 0 0 0 4px rgba(245, 158, 11, 0); }
+   0%,
+   100% {
+      opacity: 1;
+      box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4);
+   }
+   50% {
+      opacity: 0.7;
+      box-shadow: 0 0 0 4px rgba(245, 158, 11, 0);
+   }
 }
 @keyframes miniPulseCyan {
-  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 var(--accent-medium); }
-  50% { opacity: 0.8; box-shadow: 0 0 0 4px transparent; }
+   0%,
+   100% {
+      opacity: 1;
+      box-shadow: 0 0 0 0 var(--accent-medium);
+   }
+   50% {
+      opacity: 0.8;
+      box-shadow: 0 0 0 4px transparent;
+   }
 }
 @keyframes miniPulseRed {
-  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.5); }
-  50% { opacity: 0.8; box-shadow: 0 0 0 4px rgba(239, 68, 68, 0); }
+   0%,
+   100% {
+      opacity: 1;
+      box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.5);
+   }
+   50% {
+      opacity: 0.8;
+      box-shadow: 0 0 0 4px rgba(239, 68, 68, 0);
+   }
 }
 
 #mini-status-text {
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+   color: var(--text-secondary);
+   text-transform: uppercase;
+   white-space: nowrap;
+   overflow: hidden;
+   text-overflow: ellipsis;
 }
 
 /* Mini tool progress dots (3+ tools in mini bar) */
 .mini-tool-dots {
-  display: inline-flex;
-  gap: 4px;
-  margin-left: 0.5rem;
-  vertical-align: middle;
+   display: inline-flex;
+   gap: 4px;
+   margin-left: 0.5rem;
+   vertical-align: middle;
 }
 
 .mini-tool-dot {
-  --delay-index: 0;  /* Default, overridden by inline style */
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--warning);
-  animation: miniPulseAmber 0.8s ease-in-out infinite;
-  animation-delay: calc(var(--delay-index) * 0.15s);
-  will-change: opacity, transform;
+   --delay-index: 0; /* Default, overridden by inline style */
+   width: 6px;
+   height: 6px;
+   border-radius: 50%;
+   background: var(--warning);
+   animation: miniPulseAmber 0.8s ease-in-out infinite;
+   animation-delay: calc(var(--delay-index) * 0.15s);
+   will-change: opacity, transform;
 }
 
 .mini-tool-dot.complete {
-  background: var(--success);
-  animation: none;
+   background: var(--success);
+   animation: none;
 }
 
 /* Reduced motion preference - disable dot animations */
 @media (prefers-reduced-motion: reduce) {
-  .mini-tool-dot {
-    animation: none;
-    animation-delay: 0s;
-  }
+   .mini-tool-dot {
+      animation: none;
+      animation-delay: 0s;
+   }
 }
 
 .mini-right {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  flex-shrink: 0;
+   display: flex;
+   align-items: center;
+   gap: 1rem;
+   flex-shrink: 0;
 }
 
 .mini-context {
-  display: flex;
-  gap: 0.35rem;
-  color: var(--text-secondary);
-  font-size: 0.75rem;
+   display: flex;
+   gap: 0.35rem;
+   color: var(--text-secondary);
+   font-size: 0.75rem;
 }
 .mini-context span:last-child {
-  color: var(--text-primary);
+   color: var(--text-primary);
 }
 .mini-context.warning span:last-child {
-  color: var(--warning);
+   color: var(--warning);
 }
 .mini-context.danger span:last-child {
-  color: var(--error);
+   color: var(--error);
 }
 
 .mini-toggle {
-  color: var(--text-secondary);
-  font-size: 0.75rem;
-  transition: transform var(--transition-fast);
+   color: var(--text-secondary);
+   font-size: 0.75rem;
+   transition: transform var(--transition-fast);
 }
 
 #ring-container {
-  position: relative;
-  flex: 1 1 50%;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  gap: 0.5rem;
-  /* Rings are a FIXED instrument assembly - no offset */
+   position: relative;
+   flex: 1 1 50%;
+   display: flex;
+   flex-direction: column;
+   justify-content: center;
+   align-items: center;
+   gap: 0.5rem;
+   /* Rings are a FIXED instrument assembly - no offset */
 }
 
 /* =============================================================================
@@ -252,347 +286,358 @@
  * Discrete numeric readouts - visually quieter than rings
  * ============================================================================= */
 .telemetry-panel {
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-start;
-  gap: 0.5rem;
-  padding: 0.5rem 1rem;
-  flex: 1 1 50%;
-  /* System font for telemetry */
-  font-family: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
-  font-size: 0.75rem;
-  /* Visually quieter than rings */
-  opacity: 0.8;
-  transition: opacity var(--transition-medium);
+   display: flex;
+   flex-direction: column;
+   justify-content: flex-start;
+   gap: 0.5rem;
+   padding: 0.5rem 1rem;
+   flex: 1 1 50%;
+   /* System font for telemetry */
+   font-family: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
+   font-size: 0.75rem;
+   /* Visually quieter than rings */
+   opacity: 0.8;
+   transition: opacity var(--transition-medium);
 }
 
 /* Dim ring container when idle - telemetry panel stays bright */
 #ring-container.idle {
-  opacity: 0.6;
+   opacity: 0.6;
 }
 
 .telemetry-row {
-  display: flex;
-  flex-direction: column;
-  gap: 0.125rem;
-  position: relative;
+   display: flex;
+   flex-direction: column;
+   gap: 0.125rem;
+   position: relative;
 }
 
 /* Container for value + average side by side */
 .telemetry-values {
-  display: flex;
-  align-items: baseline;
-  gap: 0.5rem;
+   display: flex;
+   align-items: baseline;
+   gap: 0.5rem;
 }
 
 /* Current value - fixed width for average column alignment */
 .telemetry-values .telemetry-value {
-  min-width: 5.5rem;
+   min-width: 5.5rem;
 }
 
 /* Average display - smaller, dimmer */
 .telemetry-avg {
-  font-size: 0.65rem;
-  color: var(--text-tertiary);
-  letter-spacing: 0.02em;
-  white-space: nowrap;
+   font-size: 0.65rem;
+   color: var(--text-tertiary);
+   letter-spacing: 0.02em;
+   white-space: nowrap;
 }
 
-
 .telemetry-label {
-  color: var(--text-primary);
-  font-size: 0.55rem;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+   color: var(--text-primary);
+   font-size: 0.55rem;
+   letter-spacing: 0.1em;
+   text-transform: uppercase;
 }
 
 .telemetry-value {
-  color: var(--text-primary);
-  font-size: 0.9rem;
-  font-weight: 500;
-  letter-spacing: 0.02em;
-  transition: color 0.3s ease;
+   color: var(--text-primary);
+   font-size: 0.9rem;
+   font-weight: 500;
+   letter-spacing: 0.02em;
+   transition: color 0.3s ease;
 }
 
 /* Metric value color coding: cyan (normal) -> amber (high) -> red (extreme) */
 .telemetry-value.metric-normal {
-  color: var(--accent);
+   color: var(--accent);
 }
 
 .telemetry-value.metric-elevated {
-  color: var(--warning);
+   color: var(--warning);
 }
 
 .telemetry-value.metric-extreme {
-  color: var(--error);
+   color: var(--error);
 }
 
 .telemetry-value small {
-  font-size: 0.6rem;
-  color: var(--text-secondary);
-  font-weight: 400;
+   font-size: 0.6rem;
+   color: var(--text-secondary);
+   font-weight: 400;
 }
 
 /* Activity tick - brief cyan flash when value updates */
 .telemetry-value.active-tick {
-  color: var(--accent);
-  transition: color 100ms ease-out;
+   color: var(--accent);
+   transition: color 100ms ease-out;
 }
 
 /* Warning state for values */
 .telemetry-value.warning {
-  color: var(--warning);
+   color: var(--warning);
 }
 
 .telemetry-value.danger {
-  color: var(--error);
+   color: var(--error);
 }
 
 /* Transient system messages */
 .telemetry-message {
-  font-size: 0.55rem;
-  color: var(--warning);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  min-height: 1rem;
-  opacity: 0;
-  transition: opacity var(--transition-fast);
+   font-size: 0.55rem;
+   color: var(--warning);
+   letter-spacing: 0.08em;
+   text-transform: uppercase;
+   min-height: 1rem;
+   opacity: 0;
+   transition: opacity var(--transition-fast);
 }
 
 .telemetry-message.visible {
-  opacity: 1;
+   opacity: 1;
 }
 
 .ring {
-  position: absolute;
-  border-radius: 50%;
-  border: 3px dashed var(--accent);
-  filter: drop-shadow(0 0 10px var(--accent-glow));
-  transition: all var(--transition-medium);
+   position: absolute;
+   border-radius: 50%;
+   border: 3px dashed var(--accent);
+   filter: drop-shadow(0 0 10px var(--accent-glow));
+   transition: all var(--transition-medium);
 }
 
 /* Main SVG container for multi-ring visualization */
 #ring-svg {
-  width: 100%;
-  height: 100%;
-  max-width: 240px;
-  max-height: 240px;
-  opacity: 0.8;
-  /* NO rotation - rings are a fixed instrument assembly */
-  border: none;  /* Override .ring border - path handles visualization */
+   width: 100%;
+   height: 100%;
+   max-width: 240px;
+   max-height: 240px;
+   opacity: 0.8;
+   /* NO rotation - rings are a fixed instrument assembly */
+   border: none; /* Override .ring border - path handles visualization */
 }
 
 .ring-base {
-  stroke: var(--ring-inactive);
-  opacity: 0.4;
+   stroke: var(--ring-inactive);
+   opacity: 0.4;
 }
 
 /* Inner ring: FFT audio visualization */
 #ring-fft path {
-  stroke: var(--ring-inactive);
-  filter: none;
-  transition: d 50ms ease-out, stroke 150ms ease-out;
+   stroke: var(--ring-inactive);
+   filter: none;
+   transition:
+      d 50ms ease-out,
+      stroke 150ms ease-out;
 }
 
 /* FFT active state (when audio detected) */
 #ring-fft.active path,
 #ring-container.fft-active #ring-fft path {
-  stroke: var(--accent);
-  filter: drop-shadow(0 0 8px var(--accent-glow));
+   stroke: var(--accent);
+   filter: drop-shadow(0 0 8px var(--accent-glow));
 }
 
 /* Middle ring: Token throughput (segmented arc) */
 #ring-throughput .ring-segment {
-  stroke: var(--ring-inactive);
-  stroke-width: 4;
-  stroke-linecap: round;
-  opacity: 0.5;
-  filter: none;
-  transition: stroke 150ms ease-out, opacity 150ms ease-out;
+   stroke: var(--ring-inactive);
+   stroke-width: 4;
+   stroke-linecap: round;
+   opacity: 0.5;
+   filter: none;
+   transition:
+      stroke 150ms ease-out,
+      opacity 150ms ease-out;
 }
 
 /* Middle ring active segments */
 #ring-throughput .ring-segment.active {
-  stroke: var(--accent);
-  opacity: 0.8;
-  filter: drop-shadow(0 0 4px var(--accent-glow));
+   stroke: var(--accent);
+   opacity: 0.8;
+   filter: drop-shadow(0 0 4px var(--accent-glow));
 }
 
 /* Middle ring strained state (sustained high load) */
 #ring-throughput.strained .ring-segment {
-  stroke: var(--warning);
-  opacity: 0.6;
+   stroke: var(--warning);
+   opacity: 0.6;
 }
 
 #ring-throughput.strained .ring-segment.active {
-  stroke: var(--warning);
-  opacity: 0.85;
-  filter: drop-shadow(0 0 5px rgba(240, 180, 41, 0.4));
+   stroke: var(--warning);
+   opacity: 0.85;
+   filter: drop-shadow(0 0 5px rgba(240, 180, 41, 0.4));
 }
 
 /* Outer ring: Token hesitation (timing variance) */
 #ring-hesitation .ring-segment {
-  stroke: var(--ring-inactive);
-  stroke-width: 3;
-  stroke-linecap: round;
-  opacity: 0.4;
-  filter: none;
-  transition: stroke 150ms ease-out;
+   stroke: var(--ring-inactive);
+   stroke-width: 3;
+   stroke-linecap: round;
+   opacity: 0.4;
+   filter: none;
+   transition: stroke 150ms ease-out;
 }
 
 /* Outer ring active/stressed segments */
 #ring-hesitation .ring-segment.active {
-  stroke: var(--warning);
-  opacity: 0.7;
-  filter: drop-shadow(0 0 3px rgba(240, 180, 41, 0.4));
+   stroke: var(--warning);
+   opacity: 0.7;
+   filter: drop-shadow(0 0 3px rgba(240, 180, 41, 0.4));
 }
 
 /* Waveform trail effect - fading echoes */
 .waveform-trail {
-  stroke: var(--ring-inactive);
+   stroke: var(--ring-inactive);
 }
 
 #ring-container.fft-active .waveform-trail {
-  stroke: var(--accent);
+   stroke: var(--accent);
 }
 
 #waveform-trail-1 {
-  opacity: 0.5;
-  filter: drop-shadow(0 0 4px var(--accent-glow));
+   opacity: 0.5;
+   filter: drop-shadow(0 0 4px var(--accent-glow));
 }
 
 #waveform-trail-2 {
-  opacity: 0.35;
-  filter: drop-shadow(0 0 3px var(--accent-glow));
+   opacity: 0.35;
+   filter: drop-shadow(0 0 3px var(--accent-glow));
 }
 
 #waveform-trail-3 {
-  opacity: 0.22;
-  filter: drop-shadow(0 0 2px var(--accent-glow));
+   opacity: 0.22;
+   filter: drop-shadow(0 0 2px var(--accent-glow));
 }
 
 #waveform-trail-4 {
-  opacity: 0.12;
+   opacity: 0.12;
 }
 
 #waveform-trail-5 {
-  opacity: 0.06;
+   opacity: 0.06;
 }
 
 /* State-based waveform colors (all rings respond to state) */
 #ring-container.listening #ring-svg path,
 #ring-container.listening #ring-svg .ring-segment {
-  stroke: var(--success);
+   stroke: var(--success);
 }
 #ring-container.listening .ring-base {
-  stroke: var(--success);
+   stroke: var(--success);
 }
 #ring-container.listening #waveform-path {
-  filter: drop-shadow(0 0 12px rgba(34, 197, 94, 0.6));
+   filter: drop-shadow(0 0 12px rgba(34, 197, 94, 0.6));
 }
 
 #ring-container.thinking #ring-svg path,
 #ring-container.thinking #ring-svg .ring-segment {
-  stroke: var(--warning);
+   stroke: var(--warning);
 }
 #ring-container.thinking .ring-base {
-  stroke: var(--warning);
+   stroke: var(--warning);
 }
 #ring-container.thinking #waveform-path {
-  filter: drop-shadow(0 0 12px rgba(245, 158, 11, 0.6));
+   filter: drop-shadow(0 0 12px rgba(245, 158, 11, 0.6));
 }
 
 /* Summarizing - same as thinking (processing state) */
 #ring-container.summarizing #ring-svg path,
 #ring-container.summarizing #ring-svg .ring-segment {
-  stroke: var(--warning);
+   stroke: var(--warning);
 }
 #ring-container.summarizing .ring-base {
-  stroke: var(--warning);
+   stroke: var(--warning);
 }
 #ring-container.summarizing #waveform-path {
-  filter: drop-shadow(0 0 12px rgba(245, 158, 11, 0.6));
+   filter: drop-shadow(0 0 12px rgba(245, 158, 11, 0.6));
 }
 
 #ring-container.speaking #ring-svg path,
 #ring-container.speaking #ring-svg .ring-segment {
-  stroke: var(--accent);
+   stroke: var(--accent);
 }
 #ring-container.speaking .ring-base {
-  stroke: var(--accent);
+   stroke: var(--accent);
 }
 #ring-container.speaking #waveform-path {
-  filter: drop-shadow(0 0 15px var(--accent-glow));
+   filter: drop-shadow(0 0 15px var(--accent-glow));
 }
 
 #ring-container.error #ring-svg path,
 #ring-container.error #ring-svg .ring-segment {
-  stroke: var(--error);
+   stroke: var(--error);
 }
 #ring-container.error .ring-base {
-  stroke: var(--error);
+   stroke: var(--error);
 }
 #ring-container.error #waveform-path {
-  filter: drop-shadow(0 0 12px rgba(239, 68, 68, 0.6));
+   filter: drop-shadow(0 0 12px rgba(239, 68, 68, 0.6));
 }
 
 #ring-inner {
-  width: 35%;
-  height: 35%;
-  max-width: 85px;
-  max-height: 85px;
-  border: none;  /* Override .ring dashed border */
-  /* Neutral/muted when idle - presence without distraction */
-  background: radial-gradient(circle,
-    rgba(42, 50, 58, 0.6) 0%,
-    rgba(42, 50, 58, 0.2) 50%,
-    transparent 70%);
-  box-shadow:
-    0 0 20px rgba(42, 50, 58, 0.4),
-    0 0 40px rgba(42, 50, 58, 0.2),
-    inset 0 0 20px rgba(42, 50, 58, 0.15);
-  animation: core-idle-pulse 5s ease-in-out infinite;
-  transition: all 200ms ease-out;
+   width: 35%;
+   height: 35%;
+   max-width: 85px;
+   max-height: 85px;
+   border: none; /* Override .ring dashed border */
+   /* Neutral/muted when idle - presence without distraction */
+   background: radial-gradient(
+      circle,
+      rgba(42, 50, 58, 0.6) 0%,
+      rgba(42, 50, 58, 0.2) 50%,
+      transparent 70%
+   );
+   box-shadow:
+      0 0 20px rgba(42, 50, 58, 0.4),
+      0 0 40px rgba(42, 50, 58, 0.2),
+      inset 0 0 20px rgba(42, 50, 58, 0.15);
+   animation: core-idle-pulse 5s ease-in-out infinite;
+   transition: all 200ms ease-out;
 }
 
 /* Slow idle pulse - presence, not activity */
 @keyframes core-idle-pulse {
-  0%, 100% {
-    opacity: 0.7;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.8;
-    transform: scale(1.015);
-  }
+   0%,
+   100% {
+      opacity: 0.7;
+      transform: scale(1);
+   }
+   50% {
+      opacity: 0.8;
+      transform: scale(1.015);
+   }
 }
 
 @keyframes core-pulse {
-  0%, 100% {
-    opacity: 0.6;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.9;
-    transform: scale(1.05);
-  }
+   0%,
+   100% {
+      opacity: 0.6;
+      transform: scale(1);
+   }
+   50% {
+      opacity: 0.9;
+      transform: scale(1.05);
+   }
 }
 
 /* Phase 5: Idle breathing animation (±2% scale, opacity pulse) */
 @keyframes idle-breathe {
-  0%, 100% {
-    transform: scale(0.98);
-    opacity: 0.65;
-  }
-  50% {
-    transform: scale(1.02);
-    opacity: 0.9;
-  }
+   0%,
+   100% {
+      transform: scale(0.98);
+      opacity: 0.65;
+   }
+   50% {
+      transform: scale(1.02);
+      opacity: 0.9;
+   }
 }
 
 /* Apply subtle breathing to entire ring assembly when idle ONLY */
-#ring-container:not(.listening):not(.thinking):not(.summarizing):not(.speaking):not(.error):not(.fft-active) #ring-svg {
-  animation: idle-breathe 4s ease-in-out infinite;
+#ring-container:not(.listening):not(.thinking):not(.summarizing):not(.speaking):not(.error):not(
+      .fft-active
+   )
+   #ring-svg {
+   animation: idle-breathe 4s ease-in-out infinite;
 }
 
 /* Ring Motion Hierarchy (per design delta doc):
@@ -605,54 +650,64 @@
 #ring-hesitation,
 #ring-throughput,
 #ring-fft {
-  transform-origin: center;
+   transform-origin: center;
 }
 
 /* Inner ring: subtle breathing only, no rotation */
 #ring-fft {
-  /* Inherits idle-breathe from parent #ring-svg */
+   /* Inherits idle-breathe from parent #ring-svg */
 }
 
 /* Middle ring: constant slow rotation (0.5°/sec = 720s per revolution) */
 @keyframes middle-ring-rotate {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+   from {
+      transform: rotate(0deg);
+   }
+   to {
+      transform: rotate(360deg);
+   }
 }
 
-#ring-container:not(.listening):not(.thinking):not(.summarizing):not(.speaking):not(.error) #ring-throughput {
-  animation: middle-ring-rotate 720s linear infinite;
+#ring-container:not(.listening):not(.thinking):not(.summarizing):not(.speaking):not(.error)
+   #ring-throughput {
+   animation: middle-ring-rotate 720s linear infinite;
 }
 
 /* Outer ring: rare micro-twitch every ~10 seconds */
 @keyframes outer-ring-twitch {
-  0%, 95%, 100% {
-    transform: rotate(0deg) scale(1);
-  }
-  96% {
-    transform: rotate(0.3deg) scale(1.003);
-  }
-  97% {
-    transform: rotate(-0.2deg) scale(0.998);
-  }
-  98% {
-    transform: rotate(0.1deg) scale(1.001);
-  }
+   0%,
+   95%,
+   100% {
+      transform: rotate(0deg) scale(1);
+   }
+   96% {
+      transform: rotate(0.3deg) scale(1.003);
+   }
+   97% {
+      transform: rotate(-0.2deg) scale(0.998);
+   }
+   98% {
+      transform: rotate(0.1deg) scale(1.001);
+   }
 }
 
-#ring-container:not(.listening):not(.thinking):not(.summarizing):not(.speaking):not(.error) #ring-hesitation {
-  animation: outer-ring-twitch 10s ease-in-out infinite;
+#ring-container:not(.listening):not(.thinking):not(.summarizing):not(.speaking):not(.error)
+   #ring-hesitation {
+   animation: outer-ring-twitch 10s ease-in-out infinite;
 }
 
 #logo {
-  /* System font: branding */
-  font-family: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
-  font-size: 0.9rem;
-  font-weight: 700;
-  color: var(--text-secondary);
-  letter-spacing: 0.25em;
-  text-shadow: none;
-  transition: color 300ms ease-out, text-shadow 300ms ease-out;
-  /* NO decorative animation - per design spec */
+   /* System font: branding */
+   font-family: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
+   font-size: 0.9rem;
+   font-weight: 700;
+   color: var(--text-secondary);
+   letter-spacing: 0.25em;
+   text-shadow: none;
+   transition:
+      color 300ms ease-out,
+      text-shadow 300ms ease-out;
+   /* NO decorative animation - per design spec */
 }
 
 /* Logo activates with system */
@@ -660,206 +715,233 @@
 #ring-container.thinking #logo,
 #ring-container.summarizing #logo,
 #ring-container.speaking #logo {
-  color: var(--accent);
-  text-shadow: 0 0 12px var(--accent-glow);
+   color: var(--accent);
+   text-shadow: 0 0 12px var(--accent-glow);
 }
 
 /* FFT visualization - during recording, JS controls the rings */
 #ring-container.fft-active #ring-svg,
 #ring-container.fft-active #ring-inner {
-  animation: none !important;
-  transition: transform 50ms ease-out;
+   animation: none !important;
+   transition: transform 50ms ease-out;
 }
 
 /* State-based core colors */
 #ring-container.listening #ring-inner {
-  background: radial-gradient(circle,
-    rgba(34, 197, 94, 0.3) 0%,
-    rgba(34, 197, 94, 0.1) 50%,
-    transparent 70%);
-  box-shadow:
-    0 0 30px rgba(34, 197, 94, 0.35),
-    0 0 60px rgba(34, 197, 94, 0.2),
-    inset 0 0 25px rgba(34, 197, 94, 0.1);
+   background: radial-gradient(
+      circle,
+      rgba(34, 197, 94, 0.3) 0%,
+      rgba(34, 197, 94, 0.1) 50%,
+      transparent 70%
+   );
+   box-shadow:
+      0 0 30px rgba(34, 197, 94, 0.35),
+      0 0 60px rgba(34, 197, 94, 0.2),
+      inset 0 0 25px rgba(34, 197, 94, 0.1);
 }
 
 #ring-container.thinking #ring-inner,
 #ring-container.summarizing #ring-inner {
-  background: radial-gradient(circle,
-    rgba(240, 180, 41, 0.3) 0%,
-    rgba(240, 180, 41, 0.1) 50%,
-    transparent 70%);
-  box-shadow:
-    0 0 30px rgba(240, 180, 41, 0.35),
-    0 0 60px rgba(240, 180, 41, 0.2),
-    inset 0 0 25px rgba(240, 180, 41, 0.1);
-  animation: core-pulse 1.5s ease-in-out infinite;
+   background: radial-gradient(
+      circle,
+      rgba(240, 180, 41, 0.3) 0%,
+      rgba(240, 180, 41, 0.1) 50%,
+      transparent 70%
+   );
+   box-shadow:
+      0 0 30px rgba(240, 180, 41, 0.35),
+      0 0 60px rgba(240, 180, 41, 0.2),
+      inset 0 0 25px rgba(240, 180, 41, 0.1);
+   animation: core-pulse 1.5s ease-in-out infinite;
 }
 
 #ring-container.speaking #ring-inner {
-  background: radial-gradient(circle,
-    var(--accent-dim) 0%,
-    var(--accent-border) 50%,
-    transparent 70%);
-  box-shadow:
-    0 0 35px var(--accent-medium),
-    0 0 70px var(--accent-focus),
-    inset 0 0 30px var(--accent-border);
+   background: radial-gradient(
+      circle,
+      var(--accent-dim) 0%,
+      var(--accent-border) 50%,
+      transparent 70%
+   );
+   box-shadow:
+      0 0 35px var(--accent-medium),
+      0 0 70px var(--accent-focus),
+      inset 0 0 30px var(--accent-border);
 }
 
 #ring-container.error #ring-inner {
-  background: radial-gradient(circle,
-    rgba(239, 68, 68, 0.3) 0%,
-    rgba(239, 68, 68, 0.1) 50%,
-    transparent 70%);
-  box-shadow:
-    0 0 30px rgba(239, 68, 68, 0.35),
-    0 0 60px rgba(239, 68, 68, 0.2),
-    inset 0 0 25px rgba(239, 68, 68, 0.1);
+   background: radial-gradient(
+      circle,
+      rgba(239, 68, 68, 0.3) 0%,
+      rgba(239, 68, 68, 0.1) 50%,
+      transparent 70%
+   );
+   box-shadow:
+      0 0 30px rgba(239, 68, 68, 0.35),
+      0 0 60px rgba(239, 68, 68, 0.2),
+      inset 0 0 25px rgba(239, 68, 68, 0.1);
 }
 
 /* =============================================================================
  * Status Indicator
  * ============================================================================= */
 #status {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.25rem 0.5rem;
-  /* Positioned under the circles in ring-container */
+   display: flex;
+   flex-wrap: wrap;
+   justify-content: center;
+   align-items: center;
+   gap: 0.5rem;
+   padding: 0.25rem 0.5rem;
+   /* Positioned under the circles in ring-container */
 }
 
 #status-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background-color: var(--text-secondary);
-  transition: background-color var(--transition-fast);
+   width: 10px;
+   height: 10px;
+   border-radius: 50%;
+   background-color: var(--text-secondary);
+   transition: background-color var(--transition-fast);
 }
 
 /* Idle dot presence pulse - phase-offset from core pulse for organic feel */
 @keyframes idle-dot-pulse {
-  0%, 100% { opacity: 0.6; }
-  50% { opacity: 1; }
+   0%,
+   100% {
+      opacity: 0.6;
+   }
+   50% {
+      opacity: 1;
+   }
 }
 
 #status-dot.idle {
-  background-color: var(--text-secondary);
-  animation: idle-dot-pulse 6s ease-in-out infinite;
-  /* 6s period (vs 5s core pulse) creates subtle polyrhythm */
+   background-color: var(--text-secondary);
+   animation: idle-dot-pulse 6s ease-in-out infinite;
+   /* 6s period (vs 5s core pulse) creates subtle polyrhythm */
 }
-#status-dot.listening { background-color: var(--success); }
-#status-dot.thinking { background-color: var(--warning); }
-#status-dot.summarizing { background-color: var(--warning); } /* Same as thinking - processing state */
-#status-dot.speaking { background-color: var(--accent); }
-#status-dot.error { background-color: var(--error); }
+#status-dot.listening {
+   background-color: var(--success);
+}
+#status-dot.thinking {
+   background-color: var(--warning);
+}
+#status-dot.summarizing {
+   background-color: var(--warning);
+} /* Same as thinking - processing state */
+#status-dot.speaking {
+   background-color: var(--accent);
+}
+#status-dot.error {
+   background-color: var(--error);
+}
 
 #status-text {
-  /* System font: telemetry/status */
-  font-family: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--text-secondary);
+   /* System font: telemetry/status */
+   font-family: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
+   font-size: 0.75rem;
+   text-transform: uppercase;
+   letter-spacing: 0.1em;
+   color: var(--text-secondary);
 }
 
 /* =============================================================================
  * Tools Tray (expanded visualizer - shows active tools as pills)
  * ============================================================================= */
 .tools-tray {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 0.35rem;
-  width: 100%;  /* Force to new line in parent flex container */
-  margin-top: 0.25rem;
-  min-height: 0;
-  opacity: 0;
-  transform: translateY(-4px);
-  transition: opacity 0.2s ease-out, transform 0.2s ease-out;
-  will-change: opacity, transform;
-  /* Mobile: allow horizontal scroll if too many pills */
-  max-width: 100%;
-  overflow-x: auto;
+   display: flex;
+   flex-wrap: wrap;
+   justify-content: center;
+   gap: 0.35rem;
+   width: 100%; /* Force to new line in parent flex container */
+   margin-top: 0.25rem;
+   min-height: 0;
+   opacity: 0;
+   transform: translateY(-4px);
+   transition:
+      opacity 0.2s ease-out,
+      transform 0.2s ease-out;
+   will-change: opacity, transform;
+   /* Mobile: allow horizontal scroll if too many pills */
+   max-width: 100%;
+   overflow-x: auto;
 }
 
 /* Custom scrollbar for tools tray */
 .tools-tray::-webkit-scrollbar {
-  height: 4px;
+   height: 4px;
 }
 .tools-tray::-webkit-scrollbar-thumb {
-  background: var(--text-secondary);
-  border-radius: 2px;
+   background: var(--text-secondary);
+   border-radius: 2px;
 }
 .tools-tray::-webkit-scrollbar-track {
-  background: transparent;
+   background: transparent;
 }
 
 .tools-tray.visible {
-  opacity: 1;
-  transform: translateY(0);
+   opacity: 1;
+   transform: translateY(0);
 }
 
 /* Tool pill - individual tool indicator */
 .tool-pill {
-  --delay-index: 0;  /* Default, overridden by inline style */
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  padding: 0.15rem 0.5rem;
-  font-family: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
-  font-size: 0.65rem;
-  text-transform: lowercase;
-  background: var(--bg-secondary);
-  border: 1px solid var(--accent-hover);
-  border-radius: 9999px;
-  color: var(--text-secondary);
-  animation: pillEnter 0.2s ease-out backwards;
-  animation-delay: calc(var(--delay-index) * 0.1s);
-  will-change: opacity, transform;
-  flex-shrink: 0;  /* Prevent pills from shrinking on narrow screens */
+   --delay-index: 0; /* Default, overridden by inline style */
+   display: inline-flex;
+   align-items: center;
+   gap: 0.25rem;
+   padding: 0.15rem 0.5rem;
+   font-family: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
+   font-size: 0.65rem;
+   text-transform: lowercase;
+   background: var(--bg-secondary);
+   border: 1px solid var(--accent-hover);
+   border-radius: 9999px;
+   color: var(--text-secondary);
+   animation: pillEnter 0.2s ease-out backwards;
+   animation-delay: calc(var(--delay-index) * 0.1s);
+   will-change: opacity, transform;
+   flex-shrink: 0; /* Prevent pills from shrinking on narrow screens */
 }
 
 .tool-pill.running {
-  border-color: var(--warning);
-  animation: pillEnter 0.2s ease-out backwards, miniPulseAmber 0.8s ease-in-out infinite;
-  animation-delay: calc(var(--delay-index) * 0.1s), calc(var(--delay-index) * 0.1s + 0.2s);
+   border-color: var(--warning);
+   animation:
+      pillEnter 0.2s ease-out backwards,
+      miniPulseAmber 0.8s ease-in-out infinite;
+   animation-delay: calc(var(--delay-index) * 0.1s), calc(var(--delay-index) * 0.1s + 0.2s);
 }
 
 .tool-pill.complete {
-  border-color: var(--success);
-  opacity: 0.6;
+   border-color: var(--success);
+   opacity: 0.6;
 }
 
 .tool-pill-icon {
-  font-size: 0.6rem;
-  color: var(--success);
+   font-size: 0.6rem;
+   color: var(--success);
 }
 
 @keyframes pillEnter {
-  from {
-    opacity: 0;
-    transform: scale(0.8) translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1) translateY(0);
-  }
+   from {
+      opacity: 0;
+      transform: scale(0.8) translateY(4px);
+   }
+   to {
+      opacity: 1;
+      transform: scale(1) translateY(0);
+   }
 }
 
 /* Reduced motion preference - disable pill animations */
 @media (prefers-reduced-motion: reduce) {
-  .tools-tray {
-    transition: none;
-  }
-  .tool-pill {
-    animation: none;
-    animation-delay: 0s;
-  }
-  .tool-pill.running {
-    animation: none;
-    animation-delay: 0s;
-  }
+   .tools-tray {
+      transition: none;
+   }
+   .tool-pill {
+      animation: none;
+      animation-delay: 0s;
+   }
+   .tool-pill.running {
+      animation: none;
+      animation-delay: 0s;
+   }
 }

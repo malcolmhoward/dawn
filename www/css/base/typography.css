@@ -10,49 +10,54 @@
 
 /* Self-hosted font declarations */
 @font-face {
-  font-family: 'IBM Plex Mono';
-  src: url('/fonts/IBMPlexMono-Regular.woff2') format('woff2');
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
+   font-family: 'IBM Plex Mono';
+   src: url('/fonts/IBMPlexMono-Regular.woff2') format('woff2');
+   font-weight: 400;
+   font-style: normal;
+   font-display: swap;
 }
 
 @font-face {
-  font-family: 'IBM Plex Mono';
-  src: url('/fonts/IBMPlexMono-Medium.woff2') format('woff2');
-  font-weight: 500;
-  font-style: normal;
-  font-display: swap;
+   font-family: 'IBM Plex Mono';
+   src: url('/fonts/IBMPlexMono-Medium.woff2') format('woff2');
+   font-weight: 500;
+   font-style: normal;
+   font-display: swap;
 }
 
 @font-face {
-  font-family: 'Source Sans 3';
-  src: url('/fonts/SourceSans3-Regular.woff2') format('woff2');
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
+   font-family: 'Source Sans 3';
+   src: url('/fonts/SourceSans3-Regular.woff2') format('woff2');
+   font-weight: 400;
+   font-style: normal;
+   font-display: swap;
 }
 
 @font-face {
-  font-family: 'Source Sans 3';
-  src: url('/fonts/SourceSans3-Medium.woff2') format('woff2');
-  font-weight: 500;
-  font-style: normal;
-  font-display: swap;
+   font-family: 'Source Sans 3';
+   src: url('/fonts/SourceSans3-Medium.woff2') format('woff2');
+   font-weight: 500;
+   font-style: normal;
+   font-display: swap;
 }
 
 /* System font: Technical/telemetry text (IBM Plex Mono) */
 .font-system {
-  font-family: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
-  font-size: 0.75rem;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+   font-family: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
+   font-size: 0.75rem;
+   letter-spacing: 0.1em;
+   text-transform: uppercase;
 }
 
 /* Human font: Conversation/user-facing text (Source Sans 3) */
 .font-human {
-  font-family: 'Source Sans 3', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-size: 1rem;
-  letter-spacing: normal;
-  text-transform: none;
+   font-family:
+      'Source Sans 3',
+      -apple-system,
+      BlinkMacSystemFont,
+      'Segoe UI',
+      sans-serif;
+   font-size: 1rem;
+   letter-spacing: normal;
+   text-transform: none;
 }

@@ -1,797 +1,1321 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' wss: ws:; img-src 'self' data:; manifest-src 'self'; worker-src 'self'">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#22d3ee">
-  <meta name="description" content="DAWN - Voice-controlled AI assistant">
-  <title>DAWN - Voice Assistant</title>
-  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="manifest" href="/manifest.json">
-  <link rel="stylesheet" href="/css/main.css">
-</head>
-<body>
-  <div id="app">
-    <!-- Header -->
-    <header id="header">
-      <div id="header-left">
-        <h1>D.A.W.N.</h1>
-        <!-- User Identity Badge with Dropdown -->
-        <div id="user-badge-container" class="user-badge-container hidden">
-          <button id="user-badge" class="user-badge" aria-haspopup="true" aria-expanded="false">
-            <span id="user-badge-name" class="user-badge-name"></span>
-            <span id="user-badge-role" class="user-badge-role"></span>
-            <svg class="user-badge-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="6 9 12 15 18 9"/>
-            </svg>
-          </button>
-          <div id="user-badge-dropdown" class="user-badge-dropdown" role="menu" aria-labelledby="user-badge">
-            <button class="dropdown-item" role="menuitem" data-action="my-settings">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="12" cy="12" r="3"/>
-                <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
-              </svg>
-              My Settings
+   <head>
+      <meta charset="UTF-8" />
+      <meta
+         http-equiv="Content-Security-Policy"
+         content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' wss: ws:; img-src 'self' data:; manifest-src 'self'; worker-src 'self'"
+      />
+      <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <meta name="theme-color" content="#22d3ee" />
+      <meta name="description" content="DAWN - Voice-controlled AI assistant" />
+      <title>DAWN - Voice Assistant</title>
+      <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+      <link rel="manifest" href="/manifest.json" />
+      <link rel="stylesheet" href="/css/main.css" />
+   </head>
+   <body>
+      <div id="app">
+         <!-- Header -->
+         <header id="header">
+            <div id="header-left">
+               <h1>D.A.W.N.</h1>
+               <!-- User Identity Badge with Dropdown -->
+               <div id="user-badge-container" class="user-badge-container hidden">
+                  <button
+                     id="user-badge"
+                     class="user-badge"
+                     aria-haspopup="true"
+                     aria-expanded="false"
+                  >
+                     <span id="user-badge-name" class="user-badge-name"></span>
+                     <span id="user-badge-role" class="user-badge-role"></span>
+                     <svg
+                        class="user-badge-chevron"
+                        width="12"
+                        height="12"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                     >
+                        <polyline points="6 9 12 15 18 9" />
+                     </svg>
+                  </button>
+                  <div
+                     id="user-badge-dropdown"
+                     class="user-badge-dropdown"
+                     role="menu"
+                     aria-labelledby="user-badge"
+                  >
+                     <button class="dropdown-item" role="menuitem" data-action="my-settings">
+                        <svg
+                           width="16"
+                           height="16"
+                           viewBox="0 0 24 24"
+                           fill="none"
+                           stroke="currentColor"
+                           stroke-width="2"
+                        >
+                           <circle cx="12" cy="12" r="3" />
+                           <path
+                              d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"
+                           />
+                        </svg>
+                        My Settings
+                     </button>
+                     <button class="dropdown-item" role="menuitem" data-action="my-sessions">
+                        <svg
+                           width="16"
+                           height="16"
+                           viewBox="0 0 24 24"
+                           fill="none"
+                           stroke="currentColor"
+                           stroke-width="2"
+                        >
+                           <rect x="3" y="4" width="18" height="16" rx="2" />
+                           <path d="M7 8h10M7 12h6" />
+                        </svg>
+                        My Sessions
+                     </button>
+                     <div class="dropdown-divider"></div>
+                     <button
+                        class="dropdown-item dropdown-item-danger"
+                        role="menuitem"
+                        data-action="logout"
+                     >
+                        <svg
+                           width="16"
+                           height="16"
+                           viewBox="0 0 24 24"
+                           fill="none"
+                           stroke="currentColor"
+                           stroke-width="2"
+                        >
+                           <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                           <path d="M16 17l5-5-5-5M21 12H9" />
+                        </svg>
+                        Logout
+                     </button>
+                  </div>
+               </div>
+               <!-- History Button -->
+               <button
+                  id="history-btn"
+                  class="hidden"
+                  title="Conversation history"
+                  aria-label="Open history"
+               >
+                  <svg
+                     width="20"
+                     height="20"
+                     viewBox="0 0 24 24"
+                     fill="none"
+                     stroke="currentColor"
+                     stroke-width="2"
+                     stroke-linecap="round"
+                     stroke-linejoin="round"
+                  >
+                     <circle cx="12" cy="12" r="10" />
+                     <polyline points="12 6 12 12 16 14" />
+                  </svg>
+               </button>
+            </div>
+            <div id="header-controls">
+               <button
+                  id="debug-btn"
+                  title="Show command/tool call details"
+                  aria-label="Toggle debug mode"
+               >
+                  <svg
+                     width="20"
+                     height="20"
+                     viewBox="0 0 24 24"
+                     fill="none"
+                     stroke="currentColor"
+                     stroke-width="2"
+                     stroke-linecap="round"
+                     stroke-linejoin="round"
+                  >
+                     <path d="M9 4l1.5 2m4.5-2l-1.5 2" />
+                     <rect x="7" y="6" width="10" height="14" rx="5" />
+                     <path d="M4 11h3m10 0h3M4 16h3m10 0h3" />
+                  </svg>
+               </button>
+               <button id="metrics-btn" title="Show metrics panel" aria-label="Toggle metrics">
+                  <svg
+                     width="20"
+                     height="20"
+                     viewBox="0 0 24 24"
+                     fill="none"
+                     stroke="currentColor"
+                     stroke-width="2"
+                  >
+                     <path d="M3 3v18h18" />
+                     <path d="M7 16l4-4 4 4 5-6" />
+                  </svg>
+               </button>
+               <button id="settings-btn" title="Settings" aria-label="Open settings">
+                  <svg
+                     width="20"
+                     height="20"
+                     viewBox="0 0 24 24"
+                     fill="none"
+                     stroke="currentColor"
+                     stroke-width="2"
+                  >
+                     <circle cx="12" cy="12" r="3" />
+                     <path
+                        d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"
+                     />
+                  </svg>
+               </button>
+               <span id="connection-status" class="disconnected">Disconnected</span>
+            </div>
+         </header>
+
+         <!-- Mini status bar (shown when visualizer is collapsed) - clickable to expand -->
+         <div
+            id="visualizer-mini"
+            class="visualizer-mini hidden"
+            role="button"
+            tabindex="0"
+            aria-expanded="false"
+            aria-controls="visualizer"
+            title="Click to expand visualizer"
+         >
+            <div class="mini-left">
+               <span id="mini-status-dot" class="status-dot"></span>
+               <span id="mini-status-text">IDLE</span>
+            </div>
+            <div class="mini-right">
+               <span class="mini-context">
+                  <span>Context:</span>
+                  <span id="mini-context-value">0%</span>
+               </span>
+               <span class="mini-toggle">&#9660;</span>
+            </div>
+         </div>
+
+         <!-- Visualization container: [RINGS] [TELEMETRY] layout -->
+         <div id="visualizer">
+            <!-- Collapse toggle (top-right) - subtle like continuation banner -->
+            <span
+               id="visualizer-collapse"
+               class="visualizer-collapse-toggle"
+               role="button"
+               tabindex="0"
+               aria-expanded="true"
+               aria-controls="visualizer"
+               title="Collapse visualizer"
+               >&#9650;</span
+            >
+            <!-- Fixed Ring Assembly (left side) -->
+            <div
+               id="ring-container"
+               title="Outer: Hesitation (token timing variance) | Middle: Throughput (token rate) | Inner: Audio EQ"
+            >
+               <svg id="ring-svg" class="ring" viewBox="0 0 240 240">
+                  <!-- Outer ring: Hesitation (token timing variance) -->
+                  <g id="ring-hesitation" class="ring-group">
+                     <circle
+                        class="ring-base"
+                        cx="120"
+                        cy="120"
+                        r="107"
+                        fill="none"
+                        stroke-width="1"
+                        opacity="0.22"
+                     />
+                  </g>
+                  <!-- Middle ring: Throughput (token rate) -->
+                  <g id="ring-throughput" class="ring-group">
+                     <circle
+                        class="ring-base"
+                        cx="120"
+                        cy="120"
+                        r="87"
+                        fill="none"
+                        stroke-width="1"
+                        opacity="0.22"
+                     />
+                  </g>
+                  <!-- Inner ring: FFT audio visualization (existing, scaled down) -->
+                  <g id="ring-fft">
+                     <path
+                        id="waveform-trail-5"
+                        class="waveform-trail"
+                        fill="none"
+                        stroke-width="2"
+                     />
+                     <path
+                        id="waveform-trail-4"
+                        class="waveform-trail"
+                        fill="none"
+                        stroke-width="2"
+                     />
+                     <path
+                        id="waveform-trail-3"
+                        class="waveform-trail"
+                        fill="none"
+                        stroke-width="2"
+                     />
+                     <path
+                        id="waveform-trail-2"
+                        class="waveform-trail"
+                        fill="none"
+                        stroke-width="2"
+                     />
+                     <path
+                        id="waveform-trail-1"
+                        class="waveform-trail"
+                        fill="none"
+                        stroke-width="2"
+                     />
+                     <path id="waveform-path" fill="none" stroke-width="2" />
+                  </g>
+               </svg>
+               <div id="ring-inner" class="ring"></div>
+               <div id="logo">FRIDAY</div>
+               <!-- State indicator (under circles) -->
+               <div id="status">
+                  <span id="status-dot"></span>
+                  <span id="status-text">IDLE</span>
+               </div>
+               <!-- Debug overlay for FFT tuning (toggle with DAWN.toggleFFTDebug()) -->
+               <div
+                  id="fft-debug"
+                  style="
+                     position: absolute;
+                     bottom: -45px;
+                     left: 50%;
+                     transform: translateX(-50%);
+                     font-size: 10px;
+                     font-family: monospace;
+                     color: #888;
+                     text-align: center;
+                     display: none;
+                  "
+               >
+                  <div>max:<span id="dbg-max">--</span> avg:<span id="dbg-avg">--</span></div>
+                  <div>norm:<span id="dbg-norm">--</span> peak:<span id="dbg-peak">--</span></div>
+               </div>
+            </div>
+
+            <!-- Telemetry Panel (right side) - discrete numeric readouts -->
+            <div id="telemetry-panel" class="telemetry-panel">
+               <div class="telemetry-row">
+                  <span class="telemetry-label">TOKEN RATE</span>
+                  <div class="telemetry-values">
+                     <span id="telem-token-rate" class="telemetry-value"
+                        >-- <small>tok/s</small></span
+                     >
+                     <span id="telem-token-rate-avg" class="telemetry-avg">avg --</span>
+                  </div>
+               </div>
+               <div class="telemetry-row">
+                  <span class="telemetry-label">TTFT</span>
+                  <div class="telemetry-values">
+                     <span id="telem-ttft" class="telemetry-value">-- <small>ms</small></span>
+                     <span id="telem-ttft-avg" class="telemetry-avg">avg --</span>
+                  </div>
+               </div>
+               <div class="telemetry-row">
+                  <span class="telemetry-label">LATENCY</span>
+                  <div class="telemetry-values">
+                     <span id="telem-latency" class="telemetry-value"
+                        >-- <small>ms var</small></span
+                     >
+                     <span id="telem-latency-avg" class="telemetry-avg">avg --</span>
+                  </div>
+               </div>
+               <div id="telem-message" class="telemetry-message"></div>
+               <!-- Context Usage Gauge (bottom of telemetry panel) -->
+               <div id="context-display" class="context-display">
+                  <div class="context-gauge-container">
+                     <svg
+                        id="context-gauge"
+                        class="context-gauge"
+                        viewBox="0 0 200 125"
+                        role="img"
+                        aria-label="Context usage gauge showing token consumption"
+                     >
+                        <!-- Rainbow arc gauge segments -->
+                        <g id="context-gauge-segments" transform="translate(100,95)">
+                           <!-- Segments will be generated by JavaScript -->
+                        </g>
+                        <!-- Labels in separate group - text INSIDE the arc curve -->
+                        <g id="context-gauge-labels" class="gauge-labels">
+                           <text
+                              id="context-label-svg"
+                              x="100"
+                              y="56"
+                              text-anchor="middle"
+                              class="gauge-title"
+                              style="filter: none !important"
+                           >
+                              CONTEXT USAGE
+                           </text>
+                           <text
+                              id="context-text"
+                              x="100"
+                              y="68"
+                              text-anchor="middle"
+                              class="gauge-tokens"
+                              style="filter: none !important"
+                           >
+                              0k / 0k
+                           </text>
+                           <text
+                              id="context-gauge-percent"
+                              x="100"
+                              y="82"
+                              text-anchor="middle"
+                              class="gauge-percent"
+                              style="filter: none !important"
+                           >
+                              0%
+                           </text>
+                        </g>
+                     </svg>
+                  </div>
+               </div>
+            </div>
+         </div>
+
+         <!-- LLM Quick Controls -->
+         <div id="llm-controls">
+            <div class="llm-control-group">
+               <label for="llm-type-select">Mode:</label>
+               <select id="llm-type-select" title="Switch between local and cloud LLM">
+                  <option value="local">Local</option>
+                  <option value="cloud">Cloud</option>
+               </select>
+            </div>
+            <div class="llm-control-group" id="provider-group">
+               <label for="llm-provider-select">Provider:</label>
+               <select id="llm-provider-select" title="Switch cloud provider" disabled>
+                  <option value="openai">OpenAI</option>
+                  <option value="claude">Claude</option>
+               </select>
+            </div>
+            <div class="llm-control-group" id="model-group">
+               <label for="llm-model-select">Model:</label>
+               <select id="llm-model-select" title="Select model" disabled>
+                  <option value="">Loading...</option>
+               </select>
+            </div>
+         </div>
+
+         <!-- Transcript display -->
+         <div id="transcript">
+            <div class="transcript-placeholder">Transcripts will appear here...</div>
+         </div>
+
+         <!-- Input area -->
+         <div id="input-area">
+            <label for="text-input" class="sr-only">Type your message to the AI assistant</label>
+            <textarea
+               id="text-input"
+               placeholder="Type a message..."
+               autocomplete="off"
+               rows="1"
+            ></textarea>
+            <button id="send-btn" title="Send message">Send</button>
+            <button id="mic-btn" title="Hold to speak" aria-label="Hold to speak" disabled>
+               Mic
             </button>
-            <button class="dropdown-item" role="menuitem" data-action="my-sessions">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="3" y="4" width="18" height="16" rx="2"/>
-                <path d="M7 8h10M7 12h6"/>
-              </svg>
-              My Sessions
-            </button>
-            <div class="dropdown-divider"></div>
-            <button class="dropdown-item dropdown-item-danger" role="menuitem" data-action="logout">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
-                <path d="M16 17l5-5-5-5M21 12H9"/>
-              </svg>
-              Logout
-            </button>
-          </div>
-        </div>
-        <!-- History Button -->
-        <button id="history-btn" class="hidden" title="Conversation history" aria-label="Open history">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="10"/>
-            <polyline points="12 6 12 12 16 14"/>
-          </svg>
-        </button>
-      </div>
-      <div id="header-controls">
-        <button id="debug-btn" title="Show command/tool call details" aria-label="Toggle debug mode">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M9 4l1.5 2m4.5-2l-1.5 2"/>
-            <rect x="7" y="6" width="10" height="14" rx="5"/>
-            <path d="M4 11h3m10 0h3M4 16h3m10 0h3"/>
-          </svg>
-        </button>
-        <button id="metrics-btn" title="Show metrics panel" aria-label="Toggle metrics">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M3 3v18h18"/>
-            <path d="M7 16l4-4 4 4 5-6"/>
-          </svg>
-        </button>
-        <button id="settings-btn" title="Settings" aria-label="Open settings">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="3"/>
-            <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
-          </svg>
-        </button>
-        <span id="connection-status" class="disconnected">Disconnected</span>
-      </div>
-    </header>
+         </div>
 
-    <!-- Mini status bar (shown when visualizer is collapsed) - clickable to expand -->
-    <div id="visualizer-mini" class="visualizer-mini hidden" role="button" tabindex="0" aria-expanded="false" aria-controls="visualizer" title="Click to expand visualizer">
-      <div class="mini-left">
-        <span id="mini-status-dot" class="status-dot"></span>
-        <span id="mini-status-text">IDLE</span>
-      </div>
-      <div class="mini-right">
-        <span class="mini-context">
-          <span>Context:</span>
-          <span id="mini-context-value">0%</span>
-        </span>
-        <span class="mini-toggle">&#9660;</span>
-      </div>
-    </div>
+         <!-- Footer -->
+         <footer id="footer">
+            <span id="footer-version">Dawn WebUI</span>
+         </footer>
 
-    <!-- Visualization container: [RINGS] [TELEMETRY] layout -->
-    <div id="visualizer">
-      <!-- Collapse toggle (top-right) - subtle like continuation banner -->
-      <span id="visualizer-collapse" class="visualizer-collapse-toggle" role="button" tabindex="0" aria-expanded="true" aria-controls="visualizer" title="Collapse visualizer">&#9650;</span>
-      <!-- Fixed Ring Assembly (left side) -->
-      <div id="ring-container" title="Outer: Hesitation (token timing variance) | Middle: Throughput (token rate) | Inner: Audio EQ">
-        <svg id="ring-svg" class="ring" viewBox="0 0 240 240">
-          <!-- Outer ring: Hesitation (token timing variance) -->
-          <g id="ring-hesitation" class="ring-group">
-            <circle class="ring-base" cx="120" cy="120" r="107" fill="none" stroke-width="1" opacity="0.22"/>
-          </g>
-          <!-- Middle ring: Throughput (token rate) -->
-          <g id="ring-throughput" class="ring-group">
-            <circle class="ring-base" cx="120" cy="120" r="87" fill="none" stroke-width="1" opacity="0.22"/>
-          </g>
-          <!-- Inner ring: FFT audio visualization (existing, scaled down) -->
-          <g id="ring-fft">
-            <path id="waveform-trail-5" class="waveform-trail" fill="none" stroke-width="2"/>
-            <path id="waveform-trail-4" class="waveform-trail" fill="none" stroke-width="2"/>
-            <path id="waveform-trail-3" class="waveform-trail" fill="none" stroke-width="2"/>
-            <path id="waveform-trail-2" class="waveform-trail" fill="none" stroke-width="2"/>
-            <path id="waveform-trail-1" class="waveform-trail" fill="none" stroke-width="2"/>
-            <path id="waveform-path" fill="none" stroke-width="2"/>
-          </g>
-        </svg>
-        <div id="ring-inner" class="ring"></div>
-        <div id="logo">FRIDAY</div>
-        <!-- State indicator (under circles) -->
-        <div id="status">
-          <span id="status-dot"></span>
-          <span id="status-text">IDLE</span>
-        </div>
-        <!-- Debug overlay for FFT tuning (toggle with DAWN.toggleFFTDebug()) -->
-        <div id="fft-debug" style="position:absolute; bottom:-45px; left:50%; transform:translateX(-50%); font-size:10px; font-family:monospace; color:#888; text-align:center; display:none;">
-          <div>max:<span id="dbg-max">--</span> avg:<span id="dbg-avg">--</span></div>
-          <div>norm:<span id="dbg-norm">--</span> peak:<span id="dbg-peak">--</span></div>
-        </div>
-      </div>
+         <!-- History Panel Overlay -->
+         <div id="history-overlay" class="hidden"></div>
 
-      <!-- Telemetry Panel (right side) - discrete numeric readouts -->
-      <div id="telemetry-panel" class="telemetry-panel">
-        <div class="telemetry-row">
-          <span class="telemetry-label">TOKEN RATE</span>
-          <div class="telemetry-values">
-            <span id="telem-token-rate" class="telemetry-value">-- <small>tok/s</small></span>
-            <span id="telem-token-rate-avg" class="telemetry-avg">avg --</span>
-          </div>
-        </div>
-        <div class="telemetry-row">
-          <span class="telemetry-label">TTFT</span>
-          <div class="telemetry-values">
-            <span id="telem-ttft" class="telemetry-value">-- <small>ms</small></span>
-            <span id="telem-ttft-avg" class="telemetry-avg">avg --</span>
-          </div>
-        </div>
-        <div class="telemetry-row">
-          <span class="telemetry-label">LATENCY</span>
-          <div class="telemetry-values">
-            <span id="telem-latency" class="telemetry-value">-- <small>ms var</small></span>
-            <span id="telem-latency-avg" class="telemetry-avg">avg --</span>
-          </div>
-        </div>
-        <div id="telem-message" class="telemetry-message"></div>
-        <!-- Context Usage Gauge (bottom of telemetry panel) -->
-        <div id="context-display" class="context-display">
-          <div class="context-gauge-container">
-            <svg id="context-gauge" class="context-gauge" viewBox="0 0 200 125" role="img" aria-label="Context usage gauge showing token consumption">
-              <!-- Rainbow arc gauge segments -->
-              <g id="context-gauge-segments" transform="translate(100,95)">
-                <!-- Segments will be generated by JavaScript -->
-              </g>
-              <!-- Labels in separate group - text INSIDE the arc curve -->
-              <g id="context-gauge-labels" class="gauge-labels">
-                <text id="context-label-svg" x="100" y="56" text-anchor="middle" class="gauge-title" style="filter:none !important;">CONTEXT USAGE</text>
-                <text id="context-text" x="100" y="68" text-anchor="middle" class="gauge-tokens" style="filter:none !important;">0k / 0k</text>
-                <text id="context-gauge-percent" x="100" y="82" text-anchor="middle" class="gauge-percent" style="filter:none !important;">0%</text>
-              </g>
-            </svg>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- LLM Quick Controls -->
-    <div id="llm-controls">
-      <div class="llm-control-group">
-        <label for="llm-type-select">Mode:</label>
-        <select id="llm-type-select" title="Switch between local and cloud LLM">
-          <option value="local">Local</option>
-          <option value="cloud">Cloud</option>
-        </select>
-      </div>
-      <div class="llm-control-group" id="provider-group">
-        <label for="llm-provider-select">Provider:</label>
-        <select id="llm-provider-select" title="Switch cloud provider" disabled>
-          <option value="openai">OpenAI</option>
-          <option value="claude">Claude</option>
-        </select>
-      </div>
-      <div class="llm-control-group" id="model-group">
-        <label for="llm-model-select">Model:</label>
-        <select id="llm-model-select" title="Select model" disabled>
-          <option value="">Loading...</option>
-        </select>
-      </div>
-    </div>
-
-    <!-- Transcript display -->
-    <div id="transcript">
-      <div class="transcript-placeholder">
-        Transcripts will appear here...
-      </div>
-    </div>
-
-    <!-- Input area -->
-    <div id="input-area">
-      <label for="text-input" class="sr-only">Type your message to the AI assistant</label>
-      <textarea id="text-input" placeholder="Type a message..." autocomplete="off" rows="1"></textarea>
-      <button id="send-btn" title="Send message">Send</button>
-      <button id="mic-btn" title="Hold to speak" aria-label="Hold to speak" disabled>Mic</button>
-    </div>
-
-    <!-- Footer -->
-    <footer id="footer">
-      <span id="footer-version">Dawn WebUI</span>
-    </footer>
-
-    <!-- History Panel Overlay -->
-    <div id="history-overlay" class="hidden"></div>
-
-    <!-- History Panel (slides from left) -->
-    <div id="history-panel" class="hidden" role="dialog" aria-modal="true" aria-labelledby="history-panel-title">
-      <div class="history-header">
-        <h2 id="history-panel-title">Conversations</h2>
-        <div class="history-header-actions">
-          <button id="new-conversation-btn" class="btn btn-accent" title="Start new conversation">+ New</button>
-          <button id="history-close" aria-label="Close history">&times;</button>
-        </div>
-      </div>
-
-      <div class="history-search">
-        <input type="text" id="history-search-input" placeholder="Search conversations..." autocomplete="off">
-        <label class="history-search-option">
-          <input type="checkbox" id="history-search-content">
-          <span>Search message content</span>
-        </label>
-      </div>
-
-      <div class="history-content">
-        <div id="history-list" class="history-list">
-          <!-- Conversations grouped by date will be populated dynamically -->
-          <div class="history-list-empty">No conversations yet</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Settings Panel Overlay -->
-    <div id="settings-overlay" class="hidden"></div>
-
-    <!-- Settings Panel -->
-    <div id="settings-panel" class="hidden">
-      <div class="settings-header">
-        <h2>Settings</h2>
-        <button id="settings-close" aria-label="Close settings">&times;</button>
-      </div>
-
-      <div class="settings-content">
-        <!-- Config/Secrets paths (admin only) -->
-        <div class="settings-paths admin-only">
-          <div class="config-path">
-            <span class="path-label">Config:</span>
-            <span id="config-path-display">Loading...</span>
-          </div>
-          <div class="secrets-path">
-            <span class="path-label">Secrets:</span>
-            <span id="secrets-path-display">Loading...</span>
-          </div>
-        </div>
-
-        <!-- User Management Section (admin only) -->
-        <div class="settings-section admin-only collapsed" id="user-management-section">
-          <h3 class="section-header">
-            <span class="section-icon">&#x1F465;</span>
-            User Management
-            <span class="section-toggle">&#9660;</span>
-          </h3>
-          <div class="section-content">
-            <div id="user-list" class="user-list">
-              <!-- Users will be populated dynamically -->
-              <div class="user-list-empty">Click to load users...</div>
+         <!-- History Panel (slides from left) -->
+         <div
+            id="history-panel"
+            class="hidden"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="history-panel-title"
+         >
+            <div class="history-header">
+               <h2 id="history-panel-title">Conversations</h2>
+               <div class="history-header-actions">
+                  <button
+                     id="new-conversation-btn"
+                     class="btn btn-accent"
+                     title="Start new conversation"
+                  >
+                     + New
+                  </button>
+                  <button id="history-close" aria-label="Close history">&times;</button>
+               </div>
             </div>
-            <div class="user-management-actions">
-              <button id="add-user-btn" class="btn btn-primary">Add User</button>
-              <button id="refresh-users-btn" class="btn btn-secondary">Refresh</button>
+
+            <div class="history-search">
+               <input
+                  type="text"
+                  id="history-search-input"
+                  placeholder="Search conversations..."
+                  autocomplete="off"
+               />
+               <label class="history-search-option">
+                  <input type="checkbox" id="history-search-content" />
+                  <span>Search message content</span>
+               </label>
             </div>
-          </div>
-        </div>
 
-        <!-- My Settings Section (all authenticated users) -->
-        <div class="settings-section collapsed" id="my-settings-section">
-          <h3 class="section-header">
-            <span class="section-icon">&#x1F464;</span>
-            My Settings
-            <span class="section-toggle">&#9660;</span>
-          </h3>
-          <div class="section-content">
-            <form id="my-settings-form">
-              <!-- AI Persona Configuration -->
-              <div class="persona-config">
-                <h4 class="persona-heading">AI Persona</h4>
+            <div class="history-content">
+               <div id="history-list" class="history-list">
+                  <!-- Conversations grouped by date will be populated dynamically -->
+                  <div class="history-list-empty">No conversations yet</div>
+               </div>
+            </div>
+         </div>
 
-                <!-- Base Persona (read-only, collapsible) -->
-                <div class="settings-group">
-                  <div class="base-persona-header">
-                    <label>Base Persona</label>
-                    <button type="button" id="toggle-base-persona" class="btn-link">Show full</button>
+         <!-- Settings Panel Overlay -->
+         <div id="settings-overlay" class="hidden"></div>
+
+         <!-- Settings Panel -->
+         <div id="settings-panel" class="hidden">
+            <div class="settings-header">
+               <h2>Settings</h2>
+               <button id="settings-close" aria-label="Close settings">&times;</button>
+            </div>
+
+            <div class="settings-content">
+               <!-- Config/Secrets paths (admin only) -->
+               <div class="settings-paths admin-only">
+                  <div class="config-path">
+                     <span class="path-label">Config:</span>
+                     <span id="config-path-display">Loading...</span>
                   </div>
-                  <div id="base-persona-display" class="base-persona collapsed">
-                    <span id="base-persona-text">Loading...</span>
+                  <div class="secrets-path">
+                     <span class="path-label">Secrets:</span>
+                     <span id="secrets-path-display">Loading...</span>
                   </div>
-                </div>
+               </div>
 
-                <!-- Mode Selection -->
-                <div class="settings-group persona-mode-group">
-                  <label>How should your customization be applied?</label>
-                  <div class="persona-mode-options">
-                    <label class="persona-mode-option selected" data-mode="append">
-                      <input type="radio" name="persona_mode" value="append" checked>
-                      <span class="mode-label">Add to base persona</span>
-                      <span class="mode-desc">Your text will be appended as additional context.</span>
-                    </label>
-                    <label class="persona-mode-option" data-mode="replace">
-                      <input type="radio" name="persona_mode" value="replace">
-                      <span class="mode-label">Replace base persona</span>
-                      <span class="mode-desc">Your text will be used instead of the base.</span>
-                    </label>
+               <!-- User Management Section (admin only) -->
+               <div class="settings-section admin-only collapsed" id="user-management-section">
+                  <h3 class="section-header">
+                     <span class="section-icon">&#x1F465;</span>
+                     User Management
+                     <span class="section-toggle">&#9660;</span>
+                  </h3>
+                  <div class="section-content">
+                     <div id="user-list" class="user-list">
+                        <!-- Users will be populated dynamically -->
+                        <div class="user-list-empty">Click to load users...</div>
+                     </div>
+                     <div class="user-management-actions">
+                        <button id="add-user-btn" class="btn btn-primary">Add User</button>
+                        <button id="refresh-users-btn" class="btn btn-secondary">Refresh</button>
+                     </div>
                   </div>
-                  <p class="setting-hint replace-warning hidden">
-                    ⚠ The base persona contains important behavior guidelines. Only replace if you want to start from scratch.
-                  </p>
-                </div>
+               </div>
 
-                <!-- Custom Persona Input -->
-                <div class="settings-group">
-                  <div class="persona-input-header">
-                    <label for="my-persona">Your Customization</label>
-                    <div class="persona-input-controls">
-                      <button type="button" id="clear-persona-btn" class="btn-link hidden">Clear</button>
-                      <span id="persona-char-count" class="char-count">0 / 500</span>
-                    </div>
+               <!-- My Settings Section (all authenticated users) -->
+               <div class="settings-section collapsed" id="my-settings-section">
+                  <h3 class="section-header">
+                     <span class="section-icon">&#x1F464;</span>
+                     My Settings
+                     <span class="section-toggle">&#9660;</span>
+                  </h3>
+                  <div class="section-content">
+                     <form id="my-settings-form">
+                        <!-- AI Persona Configuration -->
+                        <div class="persona-config">
+                           <h4 class="persona-heading">AI Persona</h4>
+
+                           <!-- Base Persona (read-only, collapsible) -->
+                           <div class="settings-group">
+                              <div class="base-persona-header">
+                                 <label>Base Persona</label>
+                                 <button type="button" id="toggle-base-persona" class="btn-link">
+                                    Show full
+                                 </button>
+                              </div>
+                              <div id="base-persona-display" class="base-persona collapsed">
+                                 <span id="base-persona-text">Loading...</span>
+                              </div>
+                           </div>
+
+                           <!-- Mode Selection -->
+                           <div class="settings-group persona-mode-group">
+                              <label>How should your customization be applied?</label>
+                              <div class="persona-mode-options">
+                                 <label class="persona-mode-option selected" data-mode="append">
+                                    <input
+                                       type="radio"
+                                       name="persona_mode"
+                                       value="append"
+                                       checked
+                                    />
+                                    <span class="mode-label">Add to base persona</span>
+                                    <span class="mode-desc"
+                                       >Your text will be appended as additional context.</span
+                                    >
+                                 </label>
+                                 <label class="persona-mode-option" data-mode="replace">
+                                    <input type="radio" name="persona_mode" value="replace" />
+                                    <span class="mode-label">Replace base persona</span>
+                                    <span class="mode-desc"
+                                       >Your text will be used instead of the base.</span
+                                    >
+                                 </label>
+                              </div>
+                              <p class="setting-hint replace-warning hidden">
+                                 ⚠ The base persona contains important behavior guidelines. Only
+                                 replace if you want to start from scratch.
+                              </p>
+                           </div>
+
+                           <!-- Custom Persona Input -->
+                           <div class="settings-group">
+                              <div class="persona-input-header">
+                                 <label for="my-persona">Your Customization</label>
+                                 <div class="persona-input-controls">
+                                    <button
+                                       type="button"
+                                       id="clear-persona-btn"
+                                       class="btn-link hidden"
+                                    >
+                                       Clear
+                                    </button>
+                                    <span id="persona-char-count" class="char-count">0 / 500</span>
+                                 </div>
+                              </div>
+                              <textarea
+                                 id="my-persona"
+                                 name="persona_description"
+                                 rows="5"
+                                 maxlength="500"
+                                 placeholder="Examples:&#10;• Speak with a slight British accent&#10;• Be more formal and address me as Dr. Smith&#10;• You're an expert in woodworking"
+                              ></textarea>
+                           </div>
+
+                           <!-- Effective Persona Preview -->
+                           <div id="persona-preview" class="persona-preview">
+                              <label
+                                 >Effective Persona
+                                 <span id="preview-label-suffix">(what the AI sees)</span></label
+                              >
+                              <div class="preview-content">
+                                 <div id="preview-base"></div>
+                                 <div id="preview-separator" class="preview-separator hidden"></div>
+                                 <div id="preview-custom" class="hidden"></div>
+                              </div>
+                           </div>
+                        </div>
+
+                        <hr class="section-divider" />
+
+                        <div class="settings-group">
+                           <label for="my-location">Location</label>
+                           <input
+                              type="text"
+                              id="my-location"
+                              name="location"
+                              placeholder="e.g., New York, NY"
+                           />
+                           <p class="setting-hint">Used for weather and local information.</p>
+                        </div>
+
+                        <div class="settings-row">
+                           <div class="settings-group half">
+                              <label for="my-timezone">Timezone</label>
+                              <select id="my-timezone" name="timezone">
+                                 <!-- Sorted by UTC offset (west to east) -->
+                                 <option value="America/Honolulu">
+                                    (UTC-10:00) America/Honolulu
+                                 </option>
+                                 <option value="America/Anchorage">
+                                    (UTC-09:00) America/Anchorage
+                                 </option>
+                                 <option value="America/Los_Angeles">
+                                    (UTC-08:00) America/Los_Angeles
+                                 </option>
+                                 <option value="America/Vancouver">
+                                    (UTC-08:00) America/Vancouver
+                                 </option>
+                                 <option value="America/Denver">(UTC-07:00) America/Denver</option>
+                                 <option value="America/Phoenix">
+                                    (UTC-07:00) America/Phoenix
+                                 </option>
+                                 <option value="America/Chicago">
+                                    (UTC-06:00) America/Chicago
+                                 </option>
+                                 <option value="America/Mexico_City">
+                                    (UTC-06:00) America/Mexico_City
+                                 </option>
+                                 <option value="America/New_York">
+                                    (UTC-05:00) America/New_York
+                                 </option>
+                                 <option value="America/Toronto">
+                                    (UTC-05:00) America/Toronto
+                                 </option>
+                                 <option value="America/Sao_Paulo">
+                                    (UTC-03:00) America/Sao_Paulo
+                                 </option>
+                                 <option value="America/Buenos_Aires">
+                                    (UTC-03:00) America/Buenos_Aires
+                                 </option>
+                                 <option value="UTC">(UTC+00:00) UTC</option>
+                                 <option value="Europe/London">(UTC+00:00) Europe/London</option>
+                                 <option value="Europe/Paris">(UTC+01:00) Europe/Paris</option>
+                                 <option value="Europe/Berlin">(UTC+01:00) Europe/Berlin</option>
+                                 <option value="Europe/Rome">(UTC+01:00) Europe/Rome</option>
+                                 <option value="Europe/Madrid">(UTC+01:00) Europe/Madrid</option>
+                                 <option value="Europe/Amsterdam">
+                                    (UTC+01:00) Europe/Amsterdam
+                                 </option>
+                                 <option value="Europe/Moscow">(UTC+03:00) Europe/Moscow</option>
+                                 <option value="Asia/Dubai">(UTC+04:00) Asia/Dubai</option>
+                                 <option value="Asia/Mumbai">(UTC+05:30) Asia/Mumbai</option>
+                                 <option value="Asia/Bangkok">(UTC+07:00) Asia/Bangkok</option>
+                                 <option value="Asia/Shanghai">(UTC+08:00) Asia/Shanghai</option>
+                                 <option value="Asia/Hong_Kong">(UTC+08:00) Asia/Hong_Kong</option>
+                                 <option value="Asia/Singapore">(UTC+08:00) Asia/Singapore</option>
+                                 <option value="Australia/Perth">
+                                    (UTC+08:00) Australia/Perth
+                                 </option>
+                                 <option value="Asia/Tokyo">(UTC+09:00) Asia/Tokyo</option>
+                                 <option value="Asia/Seoul">(UTC+09:00) Asia/Seoul</option>
+                                 <option value="Australia/Sydney">
+                                    (UTC+10:00) Australia/Sydney
+                                 </option>
+                                 <option value="Australia/Melbourne">
+                                    (UTC+10:00) Australia/Melbourne
+                                 </option>
+                                 <option value="Pacific/Auckland">
+                                    (UTC+12:00) Pacific/Auckland
+                                 </option>
+                                 <option value="Pacific/Fiji">(UTC+12:00) Pacific/Fiji</option>
+                              </select>
+                           </div>
+
+                           <div class="settings-group half">
+                              <label>Units</label>
+                              <div class="radio-group">
+                                 <label class="radio-label">
+                                    <input type="radio" name="units" value="metric" checked />
+                                    <span>Metric</span>
+                                 </label>
+                                 <label class="radio-label">
+                                    <input type="radio" name="units" value="imperial" />
+                                    <span>Imperial</span>
+                                 </label>
+                              </div>
+                           </div>
+                        </div>
+
+                        <div class="settings-group">
+                           <label for="my-tts-speed">Speech Speed</label>
+                           <div class="range-with-value">
+                              <input
+                                 type="range"
+                                 id="my-tts-speed"
+                                 name="tts_length_scale"
+                                 min="0.5"
+                                 max="2.0"
+                                 step="0.1"
+                                 value="1.0"
+                              />
+                              <span id="my-tts-speed-value">1.0x</span>
+                           </div>
+                           <p class="setting-hint">Adjust text-to-speech speed (1.0 = normal).</p>
+                        </div>
+
+                        <div class="settings-group">
+                           <label>Color Theme</label>
+                           <div class="theme-selector" id="theme-selector">
+                              <button type="button" class="theme-btn active" data-theme="cyan">
+                                 <span class="theme-dot"></span>Cyan
+                              </button>
+                              <button type="button" class="theme-btn" data-theme="purple">
+                                 <span class="theme-dot"></span>Purple
+                              </button>
+                              <button type="button" class="theme-btn" data-theme="green">
+                                 <span class="theme-dot"></span>Green
+                              </button>
+                              <button type="button" class="theme-btn" data-theme="orange">
+                                 <span class="theme-dot"></span>Orange
+                              </button>
+                              <button type="button" class="theme-btn" data-theme="red">
+                                 <span class="theme-dot"></span>Red
+                              </button>
+                              <button type="button" class="theme-btn" data-theme="blue">
+                                 <span class="theme-dot"></span>Blue
+                              </button>
+                              <button type="button" class="theme-btn" data-theme="terminal">
+                                 <span class="theme-dot"></span>Terminal
+                              </button>
+                           </div>
+                        </div>
+
+                        <div class="settings-actions">
+                           <button type="submit" class="btn btn-primary">Save My Settings</button>
+                           <button
+                              type="button"
+                              id="reset-my-settings-btn"
+                              class="btn btn-secondary"
+                           >
+                              Reset to Defaults
+                           </button>
+                        </div>
+                     </form>
                   </div>
-                  <textarea id="my-persona" name="persona_description" rows="5" maxlength="500"
-                    placeholder="Examples:&#10;• Speak with a slight British accent&#10;• Be more formal and address me as Dr. Smith&#10;• You're an expert in woodworking"></textarea>
-                </div>
+               </div>
 
-                <!-- Effective Persona Preview -->
-                <div id="persona-preview" class="persona-preview">
-                  <label>Effective Persona <span id="preview-label-suffix">(what the AI sees)</span></label>
-                  <div class="preview-content">
-                    <div id="preview-base"></div>
-                    <div id="preview-separator" class="preview-separator hidden"></div>
-                    <div id="preview-custom" class="hidden"></div>
+               <!-- My Sessions Section (all authenticated users) -->
+               <div class="settings-section collapsed" id="my-sessions-section">
+                  <h3 class="section-header">
+                     <span class="section-icon">&#x1F4BB;</span>
+                     My Sessions
+                     <span class="section-toggle">&#9660;</span>
+                  </h3>
+                  <div class="section-content">
+                     <p class="section-description">
+                        View and manage your active sessions across devices.
+                     </p>
+                     <div class="sessions-header">
+                        <button
+                           id="refresh-sessions-btn"
+                           class="btn btn-secondary btn-small"
+                           title="Refresh"
+                        >
+                           <svg
+                              viewBox="0 0 24 24"
+                              width="14"
+                              height="14"
+                              stroke="currentColor"
+                              stroke-width="2"
+                              fill="none"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                           >
+                              <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+                              <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+                              <path d="M21 3v5h-5" />
+                              <path d="M3 21v-5h5" />
+                           </svg>
+                           Refresh
+                        </button>
+                     </div>
+                     <div id="my-sessions-list" class="sessions-list">
+                        <div class="sessions-loading">Expand to load sessions...</div>
+                     </div>
                   </div>
-                </div>
-              </div>
+               </div>
 
-              <hr class="section-divider">
+               <!-- System Config Sections (admin only) -->
+               <div class="settings-sections admin-only" id="settings-sections">
+                  <!-- Settings sections will be dynamically generated -->
+                  <div class="settings-loading">Loading configuration...</div>
+               </div>
 
-              <div class="settings-group">
-                <label for="my-location">Location</label>
-                <input type="text" id="my-location" name="location"
-                  placeholder="e.g., New York, NY">
-                <p class="setting-hint">Used for weather and local information.</p>
-              </div>
-
-              <div class="settings-row">
-                <div class="settings-group half">
-                  <label for="my-timezone">Timezone</label>
-                  <select id="my-timezone" name="timezone">
-                    <!-- Sorted by UTC offset (west to east) -->
-                    <option value="America/Honolulu">(UTC-10:00) America/Honolulu</option>
-                    <option value="America/Anchorage">(UTC-09:00) America/Anchorage</option>
-                    <option value="America/Los_Angeles">(UTC-08:00) America/Los_Angeles</option>
-                    <option value="America/Vancouver">(UTC-08:00) America/Vancouver</option>
-                    <option value="America/Denver">(UTC-07:00) America/Denver</option>
-                    <option value="America/Phoenix">(UTC-07:00) America/Phoenix</option>
-                    <option value="America/Chicago">(UTC-06:00) America/Chicago</option>
-                    <option value="America/Mexico_City">(UTC-06:00) America/Mexico_City</option>
-                    <option value="America/New_York">(UTC-05:00) America/New_York</option>
-                    <option value="America/Toronto">(UTC-05:00) America/Toronto</option>
-                    <option value="America/Sao_Paulo">(UTC-03:00) America/Sao_Paulo</option>
-                    <option value="America/Buenos_Aires">(UTC-03:00) America/Buenos_Aires</option>
-                    <option value="UTC">(UTC+00:00) UTC</option>
-                    <option value="Europe/London">(UTC+00:00) Europe/London</option>
-                    <option value="Europe/Paris">(UTC+01:00) Europe/Paris</option>
-                    <option value="Europe/Berlin">(UTC+01:00) Europe/Berlin</option>
-                    <option value="Europe/Rome">(UTC+01:00) Europe/Rome</option>
-                    <option value="Europe/Madrid">(UTC+01:00) Europe/Madrid</option>
-                    <option value="Europe/Amsterdam">(UTC+01:00) Europe/Amsterdam</option>
-                    <option value="Europe/Moscow">(UTC+03:00) Europe/Moscow</option>
-                    <option value="Asia/Dubai">(UTC+04:00) Asia/Dubai</option>
-                    <option value="Asia/Mumbai">(UTC+05:30) Asia/Mumbai</option>
-                    <option value="Asia/Bangkok">(UTC+07:00) Asia/Bangkok</option>
-                    <option value="Asia/Shanghai">(UTC+08:00) Asia/Shanghai</option>
-                    <option value="Asia/Hong_Kong">(UTC+08:00) Asia/Hong_Kong</option>
-                    <option value="Asia/Singapore">(UTC+08:00) Asia/Singapore</option>
-                    <option value="Australia/Perth">(UTC+08:00) Australia/Perth</option>
-                    <option value="Asia/Tokyo">(UTC+09:00) Asia/Tokyo</option>
-                    <option value="Asia/Seoul">(UTC+09:00) Asia/Seoul</option>
-                    <option value="Australia/Sydney">(UTC+10:00) Australia/Sydney</option>
-                    <option value="Australia/Melbourne">(UTC+10:00) Australia/Melbourne</option>
-                    <option value="Pacific/Auckland">(UTC+12:00) Pacific/Auckland</option>
-                    <option value="Pacific/Fiji">(UTC+12:00) Pacific/Fiji</option>
-                  </select>
-                </div>
-
-                <div class="settings-group half">
-                  <label>Units</label>
-                  <div class="radio-group">
-                    <label class="radio-label">
-                      <input type="radio" name="units" value="metric" checked>
-                      <span>Metric</span>
-                    </label>
-                    <label class="radio-label">
-                      <input type="radio" name="units" value="imperial">
-                      <span>Imperial</span>
-                    </label>
+               <!-- Secrets Section (admin only) -->
+               <div class="settings-section admin-only" id="secrets-section">
+                  <h3 class="section-header" data-section="secrets">
+                     <span class="section-icon">&#x1F511;</span>
+                     API Keys & Secrets
+                     <span class="section-toggle">&#9660;</span>
+                  </h3>
+                  <div class="section-content">
+                     <div class="setting-item">
+                        <label for="secret-openai">OpenAI API Key</label>
+                        <div class="secret-input-wrapper">
+                           <input
+                              type="password"
+                              id="secret-openai"
+                              class="secret-input"
+                              placeholder="Enter API key..."
+                           />
+                           <button
+                              class="secret-toggle"
+                              data-target="secret-openai"
+                              title="Show/hide"
+                           >
+                              <svg
+                                 class="eye-icon"
+                                 width="16"
+                                 height="16"
+                                 viewBox="0 0 24 24"
+                                 fill="none"
+                                 stroke="currentColor"
+                                 stroke-width="2"
+                              >
+                                 <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                                 <circle cx="12" cy="12" r="3" />
+                              </svg>
+                           </button>
+                           <span class="secret-status" id="status-openai"></span>
+                        </div>
+                     </div>
+                     <div class="setting-item">
+                        <label for="secret-claude">Claude API Key</label>
+                        <div class="secret-input-wrapper">
+                           <input
+                              type="password"
+                              id="secret-claude"
+                              class="secret-input"
+                              placeholder="Enter API key..."
+                           />
+                           <button
+                              class="secret-toggle"
+                              data-target="secret-claude"
+                              title="Show/hide"
+                           >
+                              <svg
+                                 class="eye-icon"
+                                 width="16"
+                                 height="16"
+                                 viewBox="0 0 24 24"
+                                 fill="none"
+                                 stroke="currentColor"
+                                 stroke-width="2"
+                              >
+                                 <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                                 <circle cx="12" cy="12" r="3" />
+                              </svg>
+                           </button>
+                           <span class="secret-status" id="status-claude"></span>
+                        </div>
+                     </div>
+                     <div class="setting-item">
+                        <label for="secret-mqtt-user">MQTT Username</label>
+                        <div class="secret-input-wrapper">
+                           <input
+                              type="password"
+                              id="secret-mqtt-user"
+                              class="secret-input"
+                              placeholder="Enter username..."
+                           />
+                           <button
+                              class="secret-toggle"
+                              data-target="secret-mqtt-user"
+                              title="Show/hide"
+                           >
+                              <svg
+                                 class="eye-icon"
+                                 width="16"
+                                 height="16"
+                                 viewBox="0 0 24 24"
+                                 fill="none"
+                                 stroke="currentColor"
+                                 stroke-width="2"
+                              >
+                                 <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                                 <circle cx="12" cy="12" r="3" />
+                              </svg>
+                           </button>
+                           <span class="secret-status" id="status-mqtt-user"></span>
+                        </div>
+                     </div>
+                     <div class="setting-item">
+                        <label for="secret-mqtt-pass">MQTT Password</label>
+                        <div class="secret-input-wrapper">
+                           <input
+                              type="password"
+                              id="secret-mqtt-pass"
+                              class="secret-input"
+                              placeholder="Enter password..."
+                           />
+                           <button
+                              class="secret-toggle"
+                              data-target="secret-mqtt-pass"
+                              title="Show/hide"
+                           >
+                              <svg
+                                 class="eye-icon"
+                                 width="16"
+                                 height="16"
+                                 viewBox="0 0 24 24"
+                                 fill="none"
+                                 stroke="currentColor"
+                                 stroke-width="2"
+                              >
+                                 <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                                 <circle cx="12" cy="12" r="3" />
+                              </svg>
+                           </button>
+                           <span class="secret-status" id="status-mqtt-pass"></span>
+                        </div>
+                     </div>
+                     <button id="save-secrets-btn" class="save-btn">Save Secrets</button>
                   </div>
-                </div>
-              </div>
+               </div>
 
-              <div class="settings-group">
-                <label for="my-tts-speed">Speech Speed</label>
-                <div class="range-with-value">
-                  <input type="range" id="my-tts-speed" name="tts_length_scale"
-                    min="0.5" max="2.0" step="0.1" value="1.0">
-                  <span id="my-tts-speed-value">1.0x</span>
-                </div>
-                <p class="setting-hint">Adjust text-to-speech speed (1.0 = normal).</p>
-              </div>
+               <!-- SmartThings Integration Section (admin only) -->
+               <div class="settings-section admin-only" id="smartthings-section">
+                  <h3 class="section-header" data-section="smartthings">
+                     <span class="section-icon">&#x1F3E0;</span>
+                     SmartThings
+                     <span class="section-toggle">&#9660;</span>
+                  </h3>
+                  <div class="section-content">
+                     <div class="smartthings-status">
+                        <div class="st-status-row">
+                           <span class="st-status-label">Status:</span>
+                           <span
+                              id="st-status-indicator"
+                              class="st-status-indicator not-configured"
+                           >
+                              <span class="st-status-dot"></span>
+                              <span class="st-status-text">Not Configured</span>
+                           </span>
+                        </div>
+                        <div class="st-status-row st-hidden" id="st-devices-count-row">
+                           <span class="st-status-label">Devices:</span>
+                           <span id="st-devices-count">0 devices</span>
+                        </div>
+                     </div>
 
-              <div class="settings-group">
-                <label>Color Theme</label>
-                <div class="theme-selector" id="theme-selector">
-                  <button type="button" class="theme-btn active" data-theme="cyan"><span class="theme-dot"></span>Cyan</button>
-                  <button type="button" class="theme-btn" data-theme="purple"><span class="theme-dot"></span>Purple</button>
-                  <button type="button" class="theme-btn" data-theme="green"><span class="theme-dot"></span>Green</button>
-                  <button type="button" class="theme-btn" data-theme="orange"><span class="theme-dot"></span>Orange</button>
-                  <button type="button" class="theme-btn" data-theme="red"><span class="theme-dot"></span>Red</button>
-                  <button type="button" class="theme-btn" data-theme="blue"><span class="theme-dot"></span>Blue</button>
-                  <button type="button" class="theme-btn" data-theme="terminal"><span class="theme-dot"></span>Terminal</button>
-                </div>
-              </div>
+                     <div class="st-actions">
+                        <button id="st-connect-btn" class="st-btn st-btn-primary st-hidden">
+                           Connect SmartThings
+                        </button>
+                        <button id="st-refresh-btn" class="st-btn st-hidden">
+                           Refresh Devices
+                        </button>
+                        <button id="st-disconnect-btn" class="st-btn st-btn-danger st-hidden">
+                           Disconnect
+                        </button>
+                     </div>
 
-              <div class="settings-actions">
-                <button type="submit" class="btn btn-primary">Save My Settings</button>
-                <button type="button" id="reset-my-settings-btn" class="btn btn-secondary">Reset to Defaults</button>
-              </div>
-            </form>
-          </div>
-        </div>
+                     <div id="st-devices-list" class="st-devices-list st-hidden">
+                        <div class="st-devices-header">Discovered Devices</div>
+                        <div id="st-devices-container">
+                           <!-- Devices will be populated dynamically -->
+                        </div>
+                     </div>
 
-        <!-- My Sessions Section (all authenticated users) -->
-        <div class="settings-section collapsed" id="my-sessions-section">
-          <h3 class="section-header">
-            <span class="section-icon">&#x1F4BB;</span>
-            My Sessions
-            <span class="section-toggle">&#9660;</span>
-          </h3>
-          <div class="section-content">
-            <p class="section-description">View and manage your active sessions across devices.</p>
-            <div class="sessions-header">
-              <button id="refresh-sessions-btn" class="btn btn-secondary btn-small" title="Refresh">
-                <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/>
-                  <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/>
-                  <path d="M21 3v5h-5"/>
-                  <path d="M3 21v-5h5"/>
-                </svg>
-                Refresh
-              </button>
-            </div>
-            <div id="my-sessions-list" class="sessions-list">
-              <div class="sessions-loading">Expand to load sessions...</div>
-            </div>
-          </div>
-        </div>
-
-        <!-- System Config Sections (admin only) -->
-        <div class="settings-sections admin-only" id="settings-sections">
-          <!-- Settings sections will be dynamically generated -->
-          <div class="settings-loading">Loading configuration...</div>
-        </div>
-
-        <!-- Secrets Section (admin only) -->
-        <div class="settings-section admin-only" id="secrets-section">
-          <h3 class="section-header" data-section="secrets">
-            <span class="section-icon">&#x1F511;</span>
-            API Keys & Secrets
-            <span class="section-toggle">&#9660;</span>
-          </h3>
-          <div class="section-content">
-            <div class="setting-item">
-              <label for="secret-openai">OpenAI API Key</label>
-              <div class="secret-input-wrapper">
-                <input type="password" id="secret-openai" class="secret-input" placeholder="Enter API key...">
-                <button class="secret-toggle" data-target="secret-openai" title="Show/hide">
-                  <svg class="eye-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                    <circle cx="12" cy="12" r="3"/>
-                  </svg>
-                </button>
-                <span class="secret-status" id="status-openai"></span>
-              </div>
-            </div>
-            <div class="setting-item">
-              <label for="secret-claude">Claude API Key</label>
-              <div class="secret-input-wrapper">
-                <input type="password" id="secret-claude" class="secret-input" placeholder="Enter API key...">
-                <button class="secret-toggle" data-target="secret-claude" title="Show/hide">
-                  <svg class="eye-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                    <circle cx="12" cy="12" r="3"/>
-                  </svg>
-                </button>
-                <span class="secret-status" id="status-claude"></span>
-              </div>
-            </div>
-            <div class="setting-item">
-              <label for="secret-mqtt-user">MQTT Username</label>
-              <div class="secret-input-wrapper">
-                <input type="password" id="secret-mqtt-user" class="secret-input" placeholder="Enter username...">
-                <button class="secret-toggle" data-target="secret-mqtt-user" title="Show/hide">
-                  <svg class="eye-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                    <circle cx="12" cy="12" r="3"/>
-                  </svg>
-                </button>
-                <span class="secret-status" id="status-mqtt-user"></span>
-              </div>
-            </div>
-            <div class="setting-item">
-              <label for="secret-mqtt-pass">MQTT Password</label>
-              <div class="secret-input-wrapper">
-                <input type="password" id="secret-mqtt-pass" class="secret-input" placeholder="Enter password...">
-                <button class="secret-toggle" data-target="secret-mqtt-pass" title="Show/hide">
-                  <svg class="eye-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                    <circle cx="12" cy="12" r="3"/>
-                  </svg>
-                </button>
-                <span class="secret-status" id="status-mqtt-pass"></span>
-              </div>
-            </div>
-            <button id="save-secrets-btn" class="save-btn">Save Secrets</button>
-          </div>
-        </div>
-
-        <!-- SmartThings Integration Section (admin only) -->
-        <div class="settings-section admin-only" id="smartthings-section">
-          <h3 class="section-header" data-section="smartthings">
-            <span class="section-icon">&#x1F3E0;</span>
-            SmartThings
-            <span class="section-toggle">&#9660;</span>
-          </h3>
-          <div class="section-content">
-            <div class="smartthings-status">
-              <div class="st-status-row">
-                <span class="st-status-label">Status:</span>
-                <span id="st-status-indicator" class="st-status-indicator not-configured">
-                  <span class="st-status-dot"></span>
-                  <span class="st-status-text">Not Configured</span>
-                </span>
-              </div>
-              <div class="st-status-row st-hidden" id="st-devices-count-row">
-                <span class="st-status-label">Devices:</span>
-                <span id="st-devices-count">0 devices</span>
-              </div>
-            </div>
-
-            <div class="st-actions">
-              <button id="st-connect-btn" class="st-btn st-btn-primary st-hidden">Connect SmartThings</button>
-              <button id="st-refresh-btn" class="st-btn st-hidden">Refresh Devices</button>
-              <button id="st-disconnect-btn" class="st-btn st-btn-danger st-hidden">Disconnect</button>
-            </div>
-
-            <div id="st-devices-list" class="st-devices-list st-hidden">
-              <div class="st-devices-header">Discovered Devices</div>
-              <div id="st-devices-container">
-                <!-- Devices will be populated dynamically -->
-              </div>
-            </div>
-
-            <div id="st-not-configured" class="st-info-box">
-              <p>SmartThings integration requires authentication.</p>
-              <p><strong>Option 1 (Recommended):</strong> Personal Access Token</p>
-              <pre>[secrets.smartthings]
-access_token = "your-pat-here"</pre>
-              <p>Generate a PAT at <a href="https://account.smartthings.com/tokens" target="_blank" rel="noopener">account.smartthings.com/tokens</a></p>
-              <p><strong>Option 2:</strong> OAuth2 (requires client credentials)</p>
-              <pre>[secrets.smartthings]
+                     <div id="st-not-configured" class="st-info-box">
+                        <p>SmartThings integration requires authentication.</p>
+                        <p><strong>Option 1 (Recommended):</strong> Personal Access Token</p>
+                        <pre>
+[secrets.smartthings]
+access_token = "your-pat-here"</pre
+                        >
+                        <p>
+                           Generate a PAT at
+                           <a
+                              href="https://account.smartthings.com/tokens"
+                              target="_blank"
+                              rel="noopener"
+                              >account.smartthings.com/tokens</a
+                           >
+                        </p>
+                        <p><strong>Option 2:</strong> OAuth2 (requires client credentials)</p>
+                        <pre>
+[secrets.smartthings]
 client_id = "..."
-client_secret = "..."</pre>
+client_secret = "..."</pre
+                        >
+                     </div>
+                  </div>
+               </div>
             </div>
-          </div>
-        </div>
 
+            <div class="settings-footer">
+               <div class="settings-actions">
+                  <button id="save-config-btn" class="save-btn primary">Save Configuration</button>
+                  <button id="reset-config-btn" class="reset-btn">Reset to Defaults</button>
+               </div>
+               <div class="restart-notice hidden" id="restart-notice">
+                  <svg
+                     width="16"
+                     height="16"
+                     viewBox="0 0 24 24"
+                     fill="none"
+                     stroke="currentColor"
+                     stroke-width="2"
+                  >
+                     <circle cx="12" cy="12" r="10" />
+                     <line x1="12" y1="8" x2="12" y2="12" />
+                     <line x1="12" y1="16" x2="12.01" y2="16" />
+                  </svg>
+                  <span>Some changes require a restart to take effect</span>
+               </div>
+            </div>
+         </div>
+
+         <!-- Metrics Panel -->
+         <div id="metrics-panel" class="metrics-panel hidden">
+            <div class="metrics-header">
+               <span>System Metrics</span>
+               <button id="metrics-close" class="metrics-close" aria-label="Close metrics">
+                  &times;
+               </button>
+            </div>
+            <div class="metrics-content">
+               <div class="metrics-section">
+                  <h4>Session</h4>
+                  <div class="metrics-grid">
+                     <div class="metric">
+                        <span class="metric-label">Uptime</span
+                        ><span id="m-uptime" class="metric-value">--</span>
+                     </div>
+                     <div class="metric">
+                        <span class="metric-label">Queries</span
+                        ><span id="m-queries" class="metric-value">--</span>
+                     </div>
+                     <div class="metric">
+                        <span class="metric-label">Errors</span
+                        ><span id="m-errors" class="metric-value">--</span>
+                     </div>
+                     <div class="metric">
+                        <span class="metric-label">Barge-ins</span
+                        ><span id="m-bargeins" class="metric-value">--</span>
+                     </div>
+                  </div>
+               </div>
+               <div class="metrics-section">
+                  <h4>Tokens</h4>
+                  <div class="metrics-grid">
+                     <div class="metric">
+                        <span class="metric-label">Cloud In/Out</span
+                        ><span id="m-tokens-cloud" class="metric-value">--</span>
+                     </div>
+                     <div class="metric">
+                        <span class="metric-label">Local In/Out</span
+                        ><span id="m-tokens-local" class="metric-value">--</span>
+                     </div>
+                     <div class="metric">
+                        <span class="metric-label">Cached</span
+                        ><span id="m-tokens-cached" class="metric-value">--</span>
+                     </div>
+                  </div>
+               </div>
+               <div class="metrics-section">
+                  <h4>Last Pipeline</h4>
+                  <div class="metrics-pipeline">
+                     <span class="pipeline-step">ASR <b id="m-last-asr">--</b></span>
+                     <span class="pipeline-arrow">&rarr;</span>
+                     <span class="pipeline-step">LLM <b id="m-last-llm">--</b></span>
+                     <span class="pipeline-arrow">&rarr;</span>
+                     <span class="pipeline-step">TTS <b id="m-last-tts">--</b></span>
+                  </div>
+               </div>
+               <div class="metrics-section">
+                  <h4>Averages</h4>
+                  <div class="metrics-pipeline">
+                     <span class="pipeline-step">ASR <b id="m-avg-asr">--</b></span>
+                     <span class="pipeline-arrow">&rarr;</span>
+                     <span class="pipeline-step">LLM <b id="m-avg-llm">--</b></span>
+                     <span class="pipeline-arrow">&rarr;</span>
+                     <span class="pipeline-step">TTS <b id="m-avg-tts">--</b></span>
+                  </div>
+               </div>
+               <div class="metrics-section">
+                  <h4>System</h4>
+                  <div class="metrics-grid">
+                     <div class="metric">
+                        <span class="metric-label">VAD</span
+                        ><span id="m-vad" class="metric-value">--</span>
+                     </div>
+                     <div class="metric">
+                        <span class="metric-label">AEC</span
+                        ><span id="m-aec" class="metric-value">--</span>
+                     </div>
+                  </div>
+               </div>
+            </div>
+         </div>
       </div>
 
-      <div class="settings-footer">
-        <div class="settings-actions">
-          <button id="save-config-btn" class="save-btn primary">Save Configuration</button>
-          <button id="reset-config-btn" class="reset-btn">Reset to Defaults</button>
-        </div>
-        <div class="restart-notice hidden" id="restart-notice">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="10"/>
-            <line x1="12" y1="8" x2="12" y2="12"/>
-            <line x1="12" y1="16" x2="12.01" y2="16"/>
-          </svg>
-          <span>Some changes require a restart to take effect</span>
-        </div>
+      <!-- Add User Modal -->
+      <div id="add-user-modal" class="modal hidden">
+         <div class="modal-content">
+            <h3>Add User</h3>
+            <form id="add-user-form">
+               <div class="form-group">
+                  <label for="new-username">Username</label>
+                  <input
+                     type="text"
+                     id="new-username"
+                     required
+                     placeholder="Enter username"
+                     pattern="[a-zA-Z_][a-zA-Z0-9_\-\.]*"
+                     minlength="1"
+                     maxlength="63"
+                  />
+               </div>
+               <div class="form-group">
+                  <label for="new-password">Password</label>
+                  <div class="password-input-wrapper">
+                     <input
+                        type="password"
+                        id="new-password"
+                        required
+                        placeholder="Enter password"
+                        minlength="8"
+                     />
+                     <button
+                        type="button"
+                        class="password-toggle"
+                        data-target="new-password"
+                        title="Show/hide"
+                     >
+                        <svg
+                           class="eye-icon"
+                           width="16"
+                           height="16"
+                           viewBox="0 0 24 24"
+                           fill="none"
+                           stroke="currentColor"
+                           stroke-width="2"
+                        >
+                           <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                           <circle cx="12" cy="12" r="3" />
+                        </svg>
+                     </button>
+                  </div>
+               </div>
+               <div class="form-group checkbox">
+                  <label><input type="checkbox" id="new-is-admin" /> Admin privileges</label>
+               </div>
+               <div class="modal-actions">
+                  <button type="submit" class="btn btn-primary">Create User</button>
+                  <button type="button" id="add-user-cancel" class="btn btn-secondary">
+                     Cancel
+                  </button>
+               </div>
+            </form>
+         </div>
       </div>
-    </div>
 
-    <!-- Metrics Panel -->
-    <div id="metrics-panel" class="metrics-panel hidden">
-      <div class="metrics-header">
-        <span>System Metrics</span>
-        <button id="metrics-close" class="metrics-close" aria-label="Close metrics">&times;</button>
+      <!-- Reset Password Modal -->
+      <div id="reset-password-modal" class="modal hidden">
+         <div class="modal-content">
+            <h3>Reset Password</h3>
+            <form id="reset-password-form">
+               <div class="form-group">
+                  <label for="reset-password-username">Username</label>
+                  <input type="text" id="reset-password-username" readonly />
+               </div>
+               <div class="form-group">
+                  <label for="reset-password-new">New Password</label>
+                  <div class="password-input-wrapper">
+                     <input
+                        type="password"
+                        id="reset-password-new"
+                        required
+                        placeholder="Enter new password"
+                        minlength="8"
+                     />
+                     <button
+                        type="button"
+                        class="password-toggle"
+                        data-target="reset-password-new"
+                        title="Show/hide"
+                     >
+                        <svg
+                           class="eye-icon"
+                           width="16"
+                           height="16"
+                           viewBox="0 0 24 24"
+                           fill="none"
+                           stroke="currentColor"
+                           stroke-width="2"
+                        >
+                           <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                           <circle cx="12" cy="12" r="3" />
+                        </svg>
+                     </button>
+                  </div>
+               </div>
+               <div class="modal-actions">
+                  <button type="submit" class="btn btn-primary">Reset Password</button>
+                  <button type="button" id="reset-password-cancel" class="btn btn-secondary">
+                     Cancel
+                  </button>
+               </div>
+            </form>
+         </div>
       </div>
-      <div class="metrics-content">
-        <div class="metrics-section">
-          <h4>Session</h4>
-          <div class="metrics-grid">
-            <div class="metric"><span class="metric-label">Uptime</span><span id="m-uptime" class="metric-value">--</span></div>
-            <div class="metric"><span class="metric-label">Queries</span><span id="m-queries" class="metric-value">--</span></div>
-            <div class="metric"><span class="metric-label">Errors</span><span id="m-errors" class="metric-value">--</span></div>
-            <div class="metric"><span class="metric-label">Barge-ins</span><span id="m-bargeins" class="metric-value">--</span></div>
-          </div>
-        </div>
-        <div class="metrics-section">
-          <h4>Tokens</h4>
-          <div class="metrics-grid">
-            <div class="metric"><span class="metric-label">Cloud In/Out</span><span id="m-tokens-cloud" class="metric-value">--</span></div>
-            <div class="metric"><span class="metric-label">Local In/Out</span><span id="m-tokens-local" class="metric-value">--</span></div>
-            <div class="metric"><span class="metric-label">Cached</span><span id="m-tokens-cached" class="metric-value">--</span></div>
-          </div>
-        </div>
-        <div class="metrics-section">
-          <h4>Last Pipeline</h4>
-          <div class="metrics-pipeline">
-            <span class="pipeline-step">ASR <b id="m-last-asr">--</b></span>
-            <span class="pipeline-arrow">&rarr;</span>
-            <span class="pipeline-step">LLM <b id="m-last-llm">--</b></span>
-            <span class="pipeline-arrow">&rarr;</span>
-            <span class="pipeline-step">TTS <b id="m-last-tts">--</b></span>
-          </div>
-        </div>
-        <div class="metrics-section">
-          <h4>Averages</h4>
-          <div class="metrics-pipeline">
-            <span class="pipeline-step">ASR <b id="m-avg-asr">--</b></span>
-            <span class="pipeline-arrow">&rarr;</span>
-            <span class="pipeline-step">LLM <b id="m-avg-llm">--</b></span>
-            <span class="pipeline-arrow">&rarr;</span>
-            <span class="pipeline-step">TTS <b id="m-avg-tts">--</b></span>
-          </div>
-        </div>
-        <div class="metrics-section">
-          <h4>System</h4>
-          <div class="metrics-grid">
-            <div class="metric"><span class="metric-label">VAD</span><span id="m-vad" class="metric-value">--</span></div>
-            <div class="metric"><span class="metric-label">AEC</span><span id="m-aec" class="metric-value">--</span></div>
-          </div>
-        </div>
+
+      <!-- Confirm Modal (styled replacement for native confirm dialogs) -->
+      <div
+         id="confirm-modal"
+         class="modal hidden"
+         role="alertdialog"
+         aria-modal="true"
+         aria-labelledby="confirm-modal-title"
+         aria-describedby="confirm-modal-message"
+      >
+         <div class="modal-content confirm-modal-content">
+            <h3 id="confirm-modal-title">Confirm Action</h3>
+            <p id="confirm-modal-message" class="confirm-message"></p>
+            <div class="modal-actions">
+               <button type="button" id="confirm-modal-ok" class="btn btn-primary">OK</button>
+               <button type="button" id="confirm-modal-cancel" class="btn btn-secondary">
+                  Cancel
+               </button>
+            </div>
+         </div>
       </div>
-    </div>
-  </div>
 
-  <!-- Add User Modal -->
-  <div id="add-user-modal" class="modal hidden">
-    <div class="modal-content">
-      <h3>Add User</h3>
-      <form id="add-user-form">
-        <div class="form-group">
-          <label for="new-username">Username</label>
-          <input type="text" id="new-username" required placeholder="Enter username" pattern="[a-zA-Z_][a-zA-Z0-9_\-\.]*" minlength="1" maxlength="63">
-        </div>
-        <div class="form-group">
-          <label for="new-password">Password</label>
-          <div class="password-input-wrapper">
-            <input type="password" id="new-password" required placeholder="Enter password" minlength="8">
-            <button type="button" class="password-toggle" data-target="new-password" title="Show/hide">
-              <svg class="eye-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                <circle cx="12" cy="12" r="3"/>
-              </svg>
-            </button>
-          </div>
-        </div>
-        <div class="form-group checkbox">
-          <label><input type="checkbox" id="new-is-admin"> Admin privileges</label>
-        </div>
-        <div class="modal-actions">
-          <button type="submit" class="btn btn-primary">Create User</button>
-          <button type="button" id="add-user-cancel" class="btn btn-secondary">Cancel</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <!-- Reset Password Modal -->
-  <div id="reset-password-modal" class="modal hidden">
-    <div class="modal-content">
-      <h3>Reset Password</h3>
-      <form id="reset-password-form">
-        <div class="form-group">
-          <label for="reset-password-username">Username</label>
-          <input type="text" id="reset-password-username" readonly>
-        </div>
-        <div class="form-group">
-          <label for="reset-password-new">New Password</label>
-          <div class="password-input-wrapper">
-            <input type="password" id="reset-password-new" required placeholder="Enter new password" minlength="8">
-            <button type="button" class="password-toggle" data-target="reset-password-new" title="Show/hide">
-              <svg class="eye-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                <circle cx="12" cy="12" r="3"/>
-              </svg>
-            </button>
-          </div>
-        </div>
-        <div class="modal-actions">
-          <button type="submit" class="btn btn-primary">Reset Password</button>
-          <button type="button" id="reset-password-cancel" class="btn btn-secondary">Cancel</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <!-- Confirm Modal (styled replacement for native confirm dialogs) -->
-  <div id="confirm-modal" class="modal hidden" role="alertdialog" aria-modal="true" aria-labelledby="confirm-modal-title" aria-describedby="confirm-modal-message">
-    <div class="modal-content confirm-modal-content">
-      <h3 id="confirm-modal-title">Confirm Action</h3>
-      <p id="confirm-modal-message" class="confirm-message"></p>
-      <div class="modal-actions">
-        <button type="button" id="confirm-modal-ok" class="btn btn-primary">OK</button>
-        <button type="button" id="confirm-modal-cancel" class="btn btn-secondary">Cancel</button>
+      <!-- Input Modal (styled replacement for native prompt dialogs) -->
+      <div
+         id="input-modal"
+         class="modal hidden"
+         role="dialog"
+         aria-modal="true"
+         aria-labelledby="input-modal-title"
+      >
+         <div class="modal-content input-modal-content">
+            <h3 id="input-modal-title">Enter Value</h3>
+            <p id="input-modal-message" class="input-message"></p>
+            <input
+               type="text"
+               id="input-modal-input"
+               class="input-modal-field"
+               autocomplete="off"
+            />
+            <div class="modal-actions">
+               <button type="button" id="input-modal-ok" class="btn btn-primary">OK</button>
+               <button type="button" id="input-modal-cancel" class="btn btn-secondary">
+                  Cancel
+               </button>
+            </div>
+         </div>
       </div>
-    </div>
-  </div>
 
-  <!-- Input Modal (styled replacement for native prompt dialogs) -->
-  <div id="input-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="input-modal-title">
-    <div class="modal-content input-modal-content">
-      <h3 id="input-modal-title">Enter Value</h3>
-      <p id="input-modal-message" class="input-message"></p>
-      <input type="text" id="input-modal-input" class="input-modal-field" autocomplete="off">
-      <div class="modal-actions">
-        <button type="button" id="input-modal-ok" class="btn btn-primary">OK</button>
-        <button type="button" id="input-modal-cancel" class="btn btn-secondary">Cancel</button>
-      </div>
-    </div>
-  </div>
+      <!-- Third-party libraries -->
+      <script src="/js/marked.min.js"></script>
+      <script src="/js/purify.min.js"></script>
 
-  <!-- Third-party libraries -->
-  <script src="/js/marked.min.js"></script>
-  <script src="/js/purify.min.js"></script>
-
-  <!-- DAWN modules -->
-  <script src="/js/dawn-events.js"></script>
-  <script src="/js/core/constants.js"></script>
-  <script src="/js/core/elements.js"></script>
-  <script src="/js/core/state.js"></script>
-  <script src="/js/core/websocket.js"></script>
-  <script src="/js/ui/theme.js"></script>
-  <script src="/js/ui/toast.js"></script>
-  <script src="/js/ui/format.js"></script>
-  <script src="/js/audio/capture.js"></script>
-  <script src="/js/audio/playback.js"></script>
-  <script src="/js/audio/visualization.js"></script>
-  <script src="/js/ui/context.js"></script>
-  <script src="/js/ui/transcript.js"></script>
-  <script src="/js/ui/streaming.js"></script>
-  <script src="/js/ui/metrics.js"></script>
-  <script src="/js/admin/smartthings.js"></script>
-  <script src="/js/admin/tools.js"></script>
-  <script src="/js/admin/metrics-panel.js"></script>
-  <script src="/js/admin/users.js"></script>
-  <script src="/js/admin/my-settings.js"></script>
-  <script src="/js/admin/my-sessions.js"></script>
-  <script src="/js/ui/history.js"></script>
-  <script src="/js/ui/settings.js"></script>
-  <script src="/js/dawn.js"></script>
-</body>
+      <!-- DAWN modules -->
+      <script src="/js/dawn-events.js"></script>
+      <script src="/js/core/constants.js"></script>
+      <script src="/js/core/elements.js"></script>
+      <script src="/js/core/state.js"></script>
+      <script src="/js/core/websocket.js"></script>
+      <script src="/js/ui/theme.js"></script>
+      <script src="/js/ui/toast.js"></script>
+      <script src="/js/ui/format.js"></script>
+      <script src="/js/audio/capture.js"></script>
+      <script src="/js/audio/playback.js"></script>
+      <script src="/js/audio/visualization.js"></script>
+      <script src="/js/ui/context.js"></script>
+      <script src="/js/ui/transcript.js"></script>
+      <script src="/js/ui/streaming.js"></script>
+      <script src="/js/ui/metrics.js"></script>
+      <script src="/js/admin/smartthings.js"></script>
+      <script src="/js/admin/tools.js"></script>
+      <script src="/js/admin/metrics-panel.js"></script>
+      <script src="/js/admin/users.js"></script>
+      <script src="/js/admin/my-settings.js"></script>
+      <script src="/js/admin/my-sessions.js"></script>
+      <script src="/js/ui/history.js"></script>
+      <script src="/js/ui/settings.js"></script>
+      <script src="/js/dawn.js"></script>
+   </body>
 </html>

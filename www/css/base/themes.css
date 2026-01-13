@@ -4,114 +4,125 @@
  * Cyan is the default theme (defined in variables.css).
  */
 
-[data-theme="purple"] {
-  --accent: #a855f7;
-  --accent-dim: rgba(168, 85, 247, 0.3);
-  --accent-glow: rgba(168, 85, 247, 0.5);
-  --accent-subtle: rgba(168, 85, 247, 0.06);
-  --accent-border: rgba(168, 85, 247, 0.1);
-  --accent-hover: rgba(168, 85, 247, 0.15);
-  --accent-focus: rgba(168, 85, 247, 0.2);
-  --accent-medium: rgba(168, 85, 247, 0.4);
-  --ring-active: #a855f7;
+[data-theme='purple'] {
+   --accent: #a855f7;
+   --accent-dim: rgba(168, 85, 247, 0.3);
+   --accent-glow: rgba(168, 85, 247, 0.5);
+   --accent-subtle: rgba(168, 85, 247, 0.06);
+   --accent-border: rgba(168, 85, 247, 0.1);
+   --accent-hover: rgba(168, 85, 247, 0.15);
+   --accent-focus: rgba(168, 85, 247, 0.2);
+   --accent-medium: rgba(168, 85, 247, 0.4);
+   --ring-active: #a855f7;
 }
 
-[data-theme="green"] {
-  --accent: #22c55e;
-  --accent-dim: rgba(34, 197, 94, 0.3);
-  --accent-glow: rgba(34, 197, 94, 0.5);
-  --accent-subtle: rgba(34, 197, 94, 0.06);
-  --accent-border: rgba(34, 197, 94, 0.1);
-  --accent-hover: rgba(34, 197, 94, 0.15);
-  --accent-focus: rgba(34, 197, 94, 0.2);
-  --accent-medium: rgba(34, 197, 94, 0.4);
-  --ring-active: #22c55e;
+[data-theme='green'] {
+   --accent: #22c55e;
+   --accent-dim: rgba(34, 197, 94, 0.3);
+   --accent-glow: rgba(34, 197, 94, 0.5);
+   --accent-subtle: rgba(34, 197, 94, 0.06);
+   --accent-border: rgba(34, 197, 94, 0.1);
+   --accent-hover: rgba(34, 197, 94, 0.15);
+   --accent-focus: rgba(34, 197, 94, 0.2);
+   --accent-medium: rgba(34, 197, 94, 0.4);
+   --ring-active: #22c55e;
 }
 
-[data-theme="orange"] {
-  --accent: #f97316;
-  --accent-dim: rgba(249, 115, 22, 0.3);
-  --accent-glow: rgba(249, 115, 22, 0.5);
-  --accent-subtle: rgba(249, 115, 22, 0.06);
-  --accent-border: rgba(249, 115, 22, 0.1);
-  --accent-hover: rgba(249, 115, 22, 0.15);
-  --accent-focus: rgba(249, 115, 22, 0.2);
-  --accent-medium: rgba(249, 115, 22, 0.4);
-  --ring-active: #f97316;
+[data-theme='orange'] {
+   --accent: #f97316;
+   --accent-dim: rgba(249, 115, 22, 0.3);
+   --accent-glow: rgba(249, 115, 22, 0.5);
+   --accent-subtle: rgba(249, 115, 22, 0.06);
+   --accent-border: rgba(249, 115, 22, 0.1);
+   --accent-hover: rgba(249, 115, 22, 0.15);
+   --accent-focus: rgba(249, 115, 22, 0.2);
+   --accent-medium: rgba(249, 115, 22, 0.4);
+   --ring-active: #f97316;
 }
 
-[data-theme="red"] {
-  /* Coral/salmon - distinct from error red (#ef4444) */
-  --accent: #f87171;
-  --accent-dim: rgba(248, 113, 113, 0.3);
-  --accent-glow: rgba(248, 113, 113, 0.5);
-  --accent-subtle: rgba(248, 113, 113, 0.06);
-  --accent-border: rgba(248, 113, 113, 0.1);
-  --accent-hover: rgba(248, 113, 113, 0.15);
-  --accent-focus: rgba(248, 113, 113, 0.2);
-  --accent-medium: rgba(248, 113, 113, 0.4);
-  --ring-active: #f87171;
+[data-theme='red'] {
+   /* Coral/salmon - distinct from error red (#ef4444) */
+   --accent: #f87171;
+   --accent-dim: rgba(248, 113, 113, 0.3);
+   --accent-glow: rgba(248, 113, 113, 0.5);
+   --accent-subtle: rgba(248, 113, 113, 0.06);
+   --accent-border: rgba(248, 113, 113, 0.1);
+   --accent-hover: rgba(248, 113, 113, 0.15);
+   --accent-focus: rgba(248, 113, 113, 0.2);
+   --accent-medium: rgba(248, 113, 113, 0.4);
+   --ring-active: #f87171;
 }
 
-[data-theme="blue"] {
-  --accent: #3b82f6;
-  --accent-dim: rgba(59, 130, 246, 0.3);
-  --accent-glow: rgba(59, 130, 246, 0.5);
-  --accent-subtle: rgba(59, 130, 246, 0.06);
-  --accent-border: rgba(59, 130, 246, 0.1);
-  --accent-hover: rgba(59, 130, 246, 0.15);
-  --accent-focus: rgba(59, 130, 246, 0.2);
-  --accent-medium: rgba(59, 130, 246, 0.4);
-  --ring-active: #3b82f6;
+[data-theme='blue'] {
+   --accent: #3b82f6;
+   --accent-dim: rgba(59, 130, 246, 0.3);
+   --accent-glow: rgba(59, 130, 246, 0.5);
+   --accent-subtle: rgba(59, 130, 246, 0.06);
+   --accent-border: rgba(59, 130, 246, 0.1);
+   --accent-hover: rgba(59, 130, 246, 0.15);
+   --accent-focus: rgba(59, 130, 246, 0.2);
+   --accent-medium: rgba(59, 130, 246, 0.4);
+   --ring-active: #3b82f6;
 }
 
-[data-theme="terminal"] {
-  /* Phosphor green - #7fff7f matches TRS-80/CRT green */
-  --accent: #7fff7f;
-  --accent-dim: rgba(127, 255, 127, 0.25);
-  --accent-glow: rgba(127, 255, 127, 0.4);
-  --accent-subtle: rgba(127, 255, 127, 0.04);
-  --accent-border: rgba(127, 255, 127, 0.08);
-  --accent-hover: rgba(127, 255, 127, 0.12);
-  --accent-focus: rgba(127, 255, 127, 0.15);
-  --accent-medium: rgba(127, 255, 127, 0.3);
-  --ring-active: #7fff7f;
-  /* Deep CRT black background */
-  --bg-primary: #0a0a0a;
-  --bg-secondary: #0f0f0f;
-  --bg-tertiary: #141414;
-  --bg-panel: #0c0c0c;
-  /* Muted phosphor text */
-  --text-primary: #b8b8b8;
-  --text-secondary: #666666;
-  --text-tertiary: #444444;
-  --ring-inactive: #1a1a1a;
+[data-theme='terminal'] {
+   /* Phosphor green - #7fff7f matches TRS-80/CRT green */
+   --accent: #7fff7f;
+   --accent-dim: rgba(127, 255, 127, 0.25);
+   --accent-glow: rgba(127, 255, 127, 0.4);
+   --accent-subtle: rgba(127, 255, 127, 0.04);
+   --accent-border: rgba(127, 255, 127, 0.08);
+   --accent-hover: rgba(127, 255, 127, 0.12);
+   --accent-focus: rgba(127, 255, 127, 0.15);
+   --accent-medium: rgba(127, 255, 127, 0.3);
+   --ring-active: #7fff7f;
+   /* Deep CRT black background */
+   --bg-primary: #0a0a0a;
+   --bg-secondary: #0f0f0f;
+   --bg-tertiary: #141414;
+   --bg-panel: #0c0c0c;
+   /* Muted phosphor text */
+   --text-primary: #b8b8b8;
+   --text-secondary: #666666;
+   --text-tertiary: #444444;
+   --ring-inactive: #1a1a1a;
 }
 
 /* Smooth transition on theme change */
-#app, #visualizer, .settings-panel, .transcript-container, #header,
-.history-panel, .status-dot, #ring-container, .theme-btn, .btn {
-  transition: background-color 200ms ease-out, border-color 200ms ease-out,
-              color 200ms ease-out, box-shadow 200ms ease-out;
+#app,
+#visualizer,
+.settings-panel,
+.transcript-container,
+#header,
+.history-panel,
+.status-dot,
+#ring-container,
+.theme-btn,
+.btn {
+   transition:
+      background-color 200ms ease-out,
+      border-color 200ms ease-out,
+      color 200ms ease-out,
+      box-shadow 200ms ease-out;
 }
 
 /* Terminal Theme: Monochrome Visualizations */
 
 /* All rings use single accent color */
-[data-theme="terminal"] #ring-container.listening #ring-inner,
-[data-theme="terminal"] #ring-container.thinking #ring-inner,
-[data-theme="terminal"] #ring-container.speaking #ring-inner {
-  background: radial-gradient(circle, var(--accent-dim) 0%, transparent 70%);
-  box-shadow: 0 0 20px var(--accent-glow);
+[data-theme='terminal'] #ring-container.listening #ring-inner,
+[data-theme='terminal'] #ring-container.thinking #ring-inner,
+[data-theme='terminal'] #ring-container.speaking #ring-inner {
+   background: radial-gradient(circle, var(--accent-dim) 0%, transparent 70%);
+   box-shadow: 0 0 20px var(--accent-glow);
 }
 
 /* Status dot glow */
-[data-theme="terminal"] .status-dot {
-  box-shadow: 0 0 6px var(--accent-glow);
+[data-theme='terminal'] .status-dot {
+   box-shadow: 0 0 6px var(--accent-glow);
 }
 
 /* Phosphor glow on key text */
-[data-theme="terminal"] #header h1,
-[data-theme="terminal"] .telemetry-value {
-  text-shadow: 0 0 8px var(--accent-dim);
+[data-theme='terminal'] #header h1,
+[data-theme='terminal'] .telemetry-value {
+   text-shadow: 0 0 8px var(--accent-dim);
 }

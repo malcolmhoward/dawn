@@ -1,371 +1,376 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:;">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#22d3ee">
-  <title>DAWN - Login</title>
-  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/css/main.css">
-  <style>
-    /* Login-specific styles */
-    body {
-      min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: var(--bg-primary);
-    }
+   <head>
+      <meta charset="UTF-8" />
+      <meta
+         http-equiv="Content-Security-Policy"
+         content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:;"
+      />
+      <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <meta name="theme-color" content="#22d3ee" />
+      <title>DAWN - Login</title>
+      <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+      <link rel="stylesheet" href="/css/main.css" />
+      <style>
+         /* Login-specific styles */
+         body {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--bg-primary);
+         }
 
-    .login-container {
-      width: 100%;
-      max-width: 380px;
-      padding: 2rem;
-    }
+         .login-container {
+            width: 100%;
+            max-width: 380px;
+            padding: 2rem;
+         }
 
-    .login-header {
-      text-align: center;
-      margin-bottom: 2.5rem;
-    }
+         .login-header {
+            text-align: center;
+            margin-bottom: 2.5rem;
+         }
 
-    .login-logo {
-      font-family: 'IBM Plex Mono', monospace;
-      font-size: 2.5rem;
-      font-weight: 500;
-      letter-spacing: 0.15em;
-      color: var(--accent);
-      margin-bottom: 0.5rem;
-    }
+         .login-logo {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 2.5rem;
+            font-weight: 500;
+            letter-spacing: 0.15em;
+            color: var(--accent);
+            margin-bottom: 0.5rem;
+         }
 
-    .login-subtitle {
-      font-family: 'IBM Plex Mono', monospace;
-      font-size: 0.7rem;
-      letter-spacing: 0.2em;
-      text-transform: uppercase;
-      color: var(--text-tertiary);
-    }
+         .login-subtitle {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.7rem;
+            letter-spacing: 0.2em;
+            text-transform: uppercase;
+            color: var(--text-tertiary);
+         }
 
-    .login-form {
-      background: var(--bg-secondary);
-      border: 1px solid var(--ring-inactive);
-      border-radius: var(--border-radius);
-      padding: 1.5rem;
-    }
+         .login-form {
+            background: var(--bg-secondary);
+            border: 1px solid var(--ring-inactive);
+            border-radius: var(--border-radius);
+            padding: 1.5rem;
+         }
 
-    .form-group {
-      margin-bottom: 1.25rem;
-    }
+         .form-group {
+            margin-bottom: 1.25rem;
+         }
 
-    .form-group:last-of-type {
-      margin-bottom: 1.5rem;
-    }
+         .form-group:last-of-type {
+            margin-bottom: 1.5rem;
+         }
 
-    .form-label {
-      display: block;
-      font-family: 'IBM Plex Mono', monospace;
-      font-size: 0.7rem;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      color: var(--text-secondary);
-      margin-bottom: 0.5rem;
-    }
+         .form-label {
+            display: block;
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.7rem;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--text-secondary);
+            margin-bottom: 0.5rem;
+         }
 
-    .form-input {
-      width: 100%;
-      padding: 0.75rem 1rem;
-      background: var(--bg-tertiary);
-      border: 1px solid var(--ring-inactive);
-      border-radius: 4px;
-      color: var(--text-primary);
-      font-family: 'Source Sans 3', sans-serif;
-      font-size: 1rem;
-      transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
-      box-sizing: border-box;
-    }
+         .form-input {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--ring-inactive);
+            border-radius: 4px;
+            color: var(--text-primary);
+            font-family: 'Source Sans 3', sans-serif;
+            font-size: 1rem;
+            transition:
+               border-color var(--transition-fast),
+               box-shadow var(--transition-fast);
+            box-sizing: border-box;
+         }
 
-    .form-input:focus {
-      outline: none;
-      border-color: var(--accent);
-      box-shadow: 0 0 0 2px var(--accent-dim);
-    }
+         .form-input:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 2px var(--accent-dim);
+         }
 
-    .form-input::placeholder {
-      color: var(--text-tertiary);
-    }
+         .form-input::placeholder {
+            color: var(--text-tertiary);
+         }
 
-    .remember-me {
-      margin-top: 0.5rem;
-    }
+         .remember-me {
+            margin-top: 0.5rem;
+         }
 
-    .checkbox-label {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      cursor: pointer;
-      font-size: 0.85rem;
-      color: var(--text-secondary);
-    }
+         .checkbox-label {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            cursor: pointer;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+         }
 
-    .checkbox-label input[type="checkbox"] {
-      width: 1rem;
-      height: 1rem;
-      accent-color: var(--accent);
-      cursor: pointer;
-    }
+         .checkbox-label input[type='checkbox'] {
+            width: 1rem;
+            height: 1rem;
+            accent-color: var(--accent);
+            cursor: pointer;
+         }
 
-    .checkbox-text {
-      user-select: none;
-    }
+         .checkbox-text {
+            user-select: none;
+         }
 
-    .login-btn {
-      width: 100%;
-      padding: 0.875rem 1.5rem;
-      background: var(--accent);
-      border: none;
-      border-radius: 4px;
-      color: var(--bg-primary);
-      font-family: 'IBM Plex Mono', monospace;
-      font-size: 0.8rem;
-      font-weight: 500;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      cursor: pointer;
-      transition: background var(--transition-fast), transform var(--transition-fast);
-    }
+         .login-btn {
+            width: 100%;
+            padding: 0.875rem 1.5rem;
+            background: var(--accent);
+            border: none;
+            border-radius: 4px;
+            color: var(--bg-primary);
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.8rem;
+            font-weight: 500;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition:
+               background var(--transition-fast),
+               transform var(--transition-fast);
+         }
 
-    .login-btn:hover {
-      background: #3de8d3;
-    }
+         .login-btn:hover {
+            background: #3de8d3;
+         }
 
-    .login-btn:active {
-      transform: scale(0.98);
-    }
+         .login-btn:active {
+            transform: scale(0.98);
+         }
 
-    .login-btn:disabled {
-      background: var(--text-tertiary);
-      cursor: not-allowed;
-      transform: none;
-    }
+         .login-btn:disabled {
+            background: var(--text-tertiary);
+            cursor: not-allowed;
+            transform: none;
+         }
 
-    .error-message {
-      background: rgba(239, 68, 68, 0.1);
-      border: 1px solid var(--error);
-      border-radius: 4px;
-      padding: 0.75rem 1rem;
-      margin-bottom: 1rem;
-      font-family: 'Source Sans 3', sans-serif;
-      font-size: 0.9rem;
-      color: var(--error);
-      display: none;
-    }
+         .error-message {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid var(--error);
+            border-radius: 4px;
+            padding: 0.75rem 1rem;
+            margin-bottom: 1rem;
+            font-family: 'Source Sans 3', sans-serif;
+            font-size: 0.9rem;
+            color: var(--error);
+            display: none;
+         }
 
-    .error-message.visible {
-      display: block;
-    }
+         .error-message.visible {
+            display: block;
+         }
 
-    /* Loading spinner */
-    .login-btn.loading {
-      position: relative;
-      color: transparent;
-    }
+         /* Loading spinner */
+         .login-btn.loading {
+            position: relative;
+            color: transparent;
+         }
 
-    .login-btn.loading::after {
-      content: '';
-      position: absolute;
-      width: 16px;
-      height: 16px;
-      top: 50%;
-      left: 50%;
-      margin-top: -8px;
-      margin-left: -8px;
-      border: 2px solid var(--bg-primary);
-      border-top-color: transparent;
-      border-radius: 50%;
-      animation: spin 0.8s linear infinite;
-    }
+         .login-btn.loading::after {
+            content: '';
+            position: absolute;
+            width: 16px;
+            height: 16px;
+            top: 50%;
+            left: 50%;
+            margin-top: -8px;
+            margin-left: -8px;
+            border: 2px solid var(--bg-primary);
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+         }
 
-    @keyframes spin {
-      to { transform: rotate(360deg); }
-    }
+         @keyframes spin {
+            to {
+               transform: rotate(360deg);
+            }
+         }
 
-    /* Version info */
-    .version-info {
-      text-align: center;
-      margin-top: 1.5rem;
-      font-family: 'IBM Plex Mono', monospace;
-      font-size: 0.65rem;
-      letter-spacing: 0.1em;
-      color: var(--text-tertiary);
-    }
-  </style>
-</head>
-<body>
-  <div class="login-container">
-    <div class="login-header">
-      <div class="login-logo">D.A.W.N.</div>
-      <div class="login-subtitle">Digital Assistant for Workflow Neural-inference</div>
-    </div>
+         /* Version info */
+         .version-info {
+            text-align: center;
+            margin-top: 1.5rem;
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.65rem;
+            letter-spacing: 0.1em;
+            color: var(--text-tertiary);
+         }
+      </style>
+   </head>
+   <body>
+      <div class="login-container">
+         <div class="login-header">
+            <div class="login-logo">D.A.W.N.</div>
+            <div class="login-subtitle">Digital Assistant for Workflow Neural-inference</div>
+         </div>
 
-    <form class="login-form" id="login-form" autocomplete="on">
-      <div class="error-message" id="error-message"></div>
+         <form class="login-form" id="login-form" autocomplete="on">
+            <div class="error-message" id="error-message"></div>
 
-      <div class="form-group">
-        <label class="form-label" for="username">Username</label>
-        <input
-          type="text"
-          class="form-input"
-          id="username"
-          name="username"
-          autocomplete="username"
-          placeholder="Enter username"
-          required
-          autofocus
-        >
+            <div class="form-group">
+               <label class="form-label" for="username">Username</label>
+               <input
+                  type="text"
+                  class="form-input"
+                  id="username"
+                  name="username"
+                  autocomplete="username"
+                  placeholder="Enter username"
+                  required
+                  autofocus
+               />
+            </div>
+
+            <div class="form-group">
+               <label class="form-label" for="password">Password</label>
+               <input
+                  type="password"
+                  class="form-input"
+                  id="password"
+                  name="password"
+                  autocomplete="current-password"
+                  placeholder="Enter password"
+                  required
+               />
+            </div>
+
+            <div class="form-group remember-me">
+               <label class="checkbox-label">
+                  <input type="checkbox" id="remember-me" name="remember_me" />
+                  <span class="checkbox-text">Remember me on this device</span>
+               </label>
+            </div>
+
+            <button type="submit" class="login-btn" id="login-btn">Sign In</button>
+         </form>
+
+         <div class="version-info" id="version-info">Loading...</div>
       </div>
 
-      <div class="form-group">
-        <label class="form-label" for="password">Password</label>
-        <input
-          type="password"
-          class="form-input"
-          id="password"
-          name="password"
-          autocomplete="current-password"
-          placeholder="Enter password"
-          required
-        >
-      </div>
+      <script>
+         (function () {
+            'use strict';
 
-      <div class="form-group remember-me">
-        <label class="checkbox-label">
-          <input type="checkbox" id="remember-me" name="remember_me">
-          <span class="checkbox-text">Remember me on this device</span>
-        </label>
-      </div>
+            const form = document.getElementById('login-form');
+            const errorEl = document.getElementById('error-message');
+            const loginBtn = document.getElementById('login-btn');
+            const versionEl = document.getElementById('version-info');
 
-      <button type="submit" class="login-btn" id="login-btn">
-        Sign In
-      </button>
-    </form>
+            let csrfToken = null;
 
-    <div class="version-info" id="version-info">
-      Loading...
-    </div>
-  </div>
+            // Fetch version info
+            fetch('/health')
+               .then((r) => r.json())
+               .then((data) => {
+                  versionEl.textContent = `v${data.version} (${data.git_sha.slice(0, 7)})`;
+               })
+               .catch(() => {
+                  versionEl.textContent = 'DAWN';
+               });
 
-  <script>
-    (function() {
-      'use strict';
+            // Fetch CSRF token
+            async function fetchCsrfToken() {
+               try {
+                  const response = await fetch('/api/auth/csrf', { credentials: 'same-origin' });
+                  const data = await response.json();
+                  csrfToken = data.csrf_token;
+               } catch (err) {
+                  console.error('Failed to fetch CSRF token:', err);
+               }
+            }
 
-      const form = document.getElementById('login-form');
-      const errorEl = document.getElementById('error-message');
-      const loginBtn = document.getElementById('login-btn');
-      const versionEl = document.getElementById('version-info');
-
-      let csrfToken = null;
-
-      // Fetch version info
-      fetch('/health')
-        .then(r => r.json())
-        .then(data => {
-          versionEl.textContent = `v${data.version} (${data.git_sha.slice(0,7)})`;
-        })
-        .catch(() => {
-          versionEl.textContent = 'DAWN';
-        });
-
-      // Fetch CSRF token
-      async function fetchCsrfToken() {
-        try {
-          const response = await fetch('/api/auth/csrf', { credentials: 'same-origin' });
-          const data = await response.json();
-          csrfToken = data.csrf_token;
-        } catch (err) {
-          console.error('Failed to fetch CSRF token:', err);
-        }
-      }
-
-      // Fetch token on page load
-      fetchCsrfToken();
-
-      function showError(message) {
-        errorEl.textContent = message;
-        errorEl.classList.add('visible');
-      }
-
-      function hideError() {
-        errorEl.classList.remove('visible');
-      }
-
-      function setLoading(loading) {
-        loginBtn.disabled = loading;
-        loginBtn.classList.toggle('loading', loading);
-      }
-
-      form.addEventListener('submit', async function(e) {
-        e.preventDefault();
-        hideError();
-
-        const username = document.getElementById('username').value.trim();
-        const password = document.getElementById('password').value;
-
-        if (!username || !password) {
-          showError('Please enter both username and password');
-          return;
-        }
-
-        if (!csrfToken) {
-          showError('Security token not loaded. Please refresh the page.');
-          return;
-        }
-
-        setLoading(true);
-
-        try {
-          const rememberMe = document.getElementById('remember-me').checked;
-          const response = await fetch('/api/auth/login', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              username,
-              password,
-              csrf_token: csrfToken,
-              remember_me: rememberMe
-            }),
-            credentials: 'same-origin'
-          });
-
-          const data = await response.json();
-
-          if (response.ok && data.success) {
-            // Redirect to main app
-            window.location.href = '/';
-          } else {
-            showError(data.error || 'Invalid username or password');
-            // Refresh CSRF token after failed attempt (token may have expired)
+            // Fetch token on page load
             fetchCsrfToken();
-          }
-        } catch (err) {
-          console.error('Login error:', err);
-          showError('Connection error. Please try again.');
-        } finally {
-          setLoading(false);
-        }
-      });
 
-      // Check if already logged in
-      fetch('/api/auth/status', { credentials: 'same-origin' })
-        .then(r => r.json())
-        .then(data => {
-          if (data.authenticated) {
-            window.location.href = '/';
-          }
-        })
-        .catch(() => {});
-    })();
-  </script>
-</body>
+            function showError(message) {
+               errorEl.textContent = message;
+               errorEl.classList.add('visible');
+            }
+
+            function hideError() {
+               errorEl.classList.remove('visible');
+            }
+
+            function setLoading(loading) {
+               loginBtn.disabled = loading;
+               loginBtn.classList.toggle('loading', loading);
+            }
+
+            form.addEventListener('submit', async function (e) {
+               e.preventDefault();
+               hideError();
+
+               const username = document.getElementById('username').value.trim();
+               const password = document.getElementById('password').value;
+
+               if (!username || !password) {
+                  showError('Please enter both username and password');
+                  return;
+               }
+
+               if (!csrfToken) {
+                  showError('Security token not loaded. Please refresh the page.');
+                  return;
+               }
+
+               setLoading(true);
+
+               try {
+                  const rememberMe = document.getElementById('remember-me').checked;
+                  const response = await fetch('/api/auth/login', {
+                     method: 'POST',
+                     headers: {
+                        'Content-Type': 'application/json',
+                     },
+                     body: JSON.stringify({
+                        username,
+                        password,
+                        csrf_token: csrfToken,
+                        remember_me: rememberMe,
+                     }),
+                     credentials: 'same-origin',
+                  });
+
+                  const data = await response.json();
+
+                  if (response.ok && data.success) {
+                     // Redirect to main app
+                     window.location.href = '/';
+                  } else {
+                     showError(data.error || 'Invalid username or password');
+                     // Refresh CSRF token after failed attempt (token may have expired)
+                     fetchCsrfToken();
+                  }
+               } catch (err) {
+                  console.error('Login error:', err);
+                  showError('Connection error. Please try again.');
+               } finally {
+                  setLoading(false);
+               }
+            });
+
+            // Check if already logged in
+            fetch('/api/auth/status', { credentials: 'same-origin' })
+               .then((r) => r.json())
+               .then((data) => {
+                  if (data.authenticated) {
+                     window.location.href = '/';
+                  }
+               })
+               .catch(() => {});
+         })();
+      </script>
+   </body>
 </html>
