@@ -104,7 +104,7 @@
    align-items: center;
    gap: 1rem;
    padding: 0.5rem 1rem;
-   margin-bottom: 1rem;
+   margin-bottom: 0.25rem;
    background-color: var(--bg-secondary);
    border-radius: var(--border-radius);
    font-size: 0.875rem;
@@ -126,7 +126,7 @@
 .llm-control-group select {
    background-color: var(--bg-primary);
    color: var(--text-primary);
-   border: 1px solid var(--border);
+   border: 1px solid var(--border-color);
    border-radius: 4px;
    padding: 0.25rem 0.5rem;
    font-size: 0.875rem;
@@ -166,4 +166,230 @@
 #llm-model-select {
    min-width: 120px;
    max-width: 200px;
+}
+
+/* =============================================================================
+ * Per-Conversation LLM Settings (Reasoning/Tools row)
+ * ============================================================================= */
+
+#llm-conversation-controls {
+   display: flex;
+   justify-content: center;
+   align-items: center;
+   gap: 1rem;
+   padding: 0.25rem 1rem 0.75rem;
+}
+
+#llm-conversation-controls .llm-control-group {
+   display: flex;
+   align-items: center;
+   gap: 0.5rem;
+}
+
+#llm-conversation-controls select {
+   padding: 0.25rem 0.5rem;
+   border: 1px solid var(--border-color);
+   border-radius: 4px;
+   background-color: var(--bg-primary);
+   color: var(--text-primary);
+   font-size: 0.85rem;
+   transition: border-color var(--transition-fast);
+}
+
+#llm-conversation-controls select:hover:not(:disabled) {
+   border-color: var(--accent-color);
+}
+
+#llm-conversation-controls select:focus {
+   outline: none;
+   border-color: var(--accent-color);
+}
+
+/* Locked state */
+#llm-conversation-controls.locked select {
+   opacity: 0.6;
+   cursor: not-allowed;
+   pointer-events: none;
+}
+
+#llm-lock-indicator {
+   color: var(--text-secondary);
+   display: flex;
+   align-items: center;
+   margin-left: 0.25rem;
+}
+
+#llm-lock-indicator.hidden {
+   display: none;
+}
+
+/* =============================================================================
+ * Help Icon Button and Popup
+ * ============================================================================= */
+
+.help-icon-btn {
+   display: inline-flex;
+   align-items: center;
+   justify-content: center;
+   width: 18px;
+   height: 18px;
+   padding: 0;
+   margin-left: 0.25rem;
+   border: 1px solid var(--text-secondary);
+   border-radius: 50%;
+   background: transparent;
+   color: var(--text-secondary);
+   font-size: 0.7rem;
+   font-weight: 600;
+   cursor: pointer;
+   transition:
+      color var(--transition-fast),
+      border-color var(--transition-fast),
+      background-color var(--transition-fast);
+}
+
+.help-icon-btn:hover {
+   color: var(--accent);
+   border-color: var(--accent);
+   background-color: var(--bg-tertiary);
+}
+
+.help-icon-btn:focus {
+   outline: 2px solid var(--accent);
+   outline-offset: 2px;
+}
+
+.help-icon-btn:focus:not(:focus-visible) {
+   outline: none;
+}
+
+.help-icon-btn:focus-visible {
+   outline: 2px solid var(--accent);
+   outline-offset: 2px;
+}
+
+/* Popup container - positioned relative to parent */
+#tools-group {
+   position: relative;
+}
+
+.help-popup {
+   position: absolute;
+   top: calc(100% + 12px);
+   right: 0;
+   z-index: 1000;
+   min-width: 280px;
+   max-width: 320px;
+   padding: 1rem;
+   background-color: var(--bg-primary);
+   border: 1px solid var(--border-color);
+   border-radius: 8px;
+   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+   animation: popup-fade-in 0.15s ease-out;
+}
+
+/* Arrow pointing to trigger button */
+.help-popup::before {
+   content: '';
+   position: absolute;
+   top: -8px;
+   right: 12px;
+   width: 0;
+   height: 0;
+   border-left: 8px solid transparent;
+   border-right: 8px solid transparent;
+   border-bottom: 8px solid var(--border-color);
+}
+
+.help-popup::after {
+   content: '';
+   position: absolute;
+   top: -6px;
+   right: 13px;
+   width: 0;
+   height: 0;
+   border-left: 7px solid transparent;
+   border-right: 7px solid transparent;
+   border-bottom: 7px solid var(--bg-primary);
+}
+
+.help-popup.hidden {
+   display: none;
+}
+
+@keyframes popup-fade-in {
+   from {
+      opacity: 0;
+      transform: translateY(-4px);
+   }
+   to {
+      opacity: 1;
+      transform: translateY(0);
+   }
+}
+
+.help-popup-content {
+   font-size: 0.85rem;
+   line-height: 1.5;
+   color: var(--text-primary);
+}
+
+.help-popup-content strong {
+   display: block;
+   margin-top: 0.75rem;
+   margin-bottom: 0.25rem;
+   color: var(--accent);
+   font-size: 0.9rem;
+}
+
+.help-popup-content strong:first-child {
+   margin-top: 0;
+}
+
+.help-popup-content p {
+   margin: 0 0 0.5rem 0;
+   color: var(--text-secondary);
+}
+
+.help-popup-content p:last-child {
+   margin-bottom: 0;
+}
+
+/* Responsive adjustments */
+@media (max-width: 600px) {
+   #llm-conversation-controls {
+      flex-direction: column;
+      gap: 0.5rem;
+   }
+
+   .help-popup {
+      right: auto;
+      left: 50%;
+      transform: translateX(-50%);
+      min-width: 260px;
+   }
+
+   /* Center the arrow on mobile */
+   .help-popup::before {
+      right: auto;
+      left: 50%;
+      transform: translateX(-50%);
+   }
+
+   .help-popup::after {
+      right: auto;
+      left: 50%;
+      transform: translateX(-50%);
+   }
+
+   @keyframes popup-fade-in {
+      from {
+         opacity: 0;
+         transform: translateX(-50%) translateY(-4px);
+      }
+      to {
+         opacity: 1;
+         transform: translateX(-50%) translateY(0);
+      }
+   }
 }

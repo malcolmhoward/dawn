@@ -188,6 +188,33 @@ int conv_db_get(int64_t conv_id, int user_id, conversation_t *conv_out) {
    const char *summary = (const char *)sqlite3_column_text(s_db.stmt_conv_get, 10);
    conv_out->compaction_summary = summary ? strdup(summary) : NULL;
 
+   /* Per-conversation LLM settings (schema v11+) */
+   const char *llm_type = (const char *)sqlite3_column_text(s_db.stmt_conv_get, 11);
+   if (llm_type) {
+      strncpy(conv_out->llm_type, llm_type, sizeof(conv_out->llm_type) - 1);
+      conv_out->llm_type[sizeof(conv_out->llm_type) - 1] = '\0';
+   }
+   const char *cloud_provider = (const char *)sqlite3_column_text(s_db.stmt_conv_get, 12);
+   if (cloud_provider) {
+      strncpy(conv_out->cloud_provider, cloud_provider, sizeof(conv_out->cloud_provider) - 1);
+      conv_out->cloud_provider[sizeof(conv_out->cloud_provider) - 1] = '\0';
+   }
+   const char *model = (const char *)sqlite3_column_text(s_db.stmt_conv_get, 13);
+   if (model) {
+      strncpy(conv_out->model, model, sizeof(conv_out->model) - 1);
+      conv_out->model[sizeof(conv_out->model) - 1] = '\0';
+   }
+   const char *tools_mode = (const char *)sqlite3_column_text(s_db.stmt_conv_get, 14);
+   if (tools_mode) {
+      strncpy(conv_out->tools_mode, tools_mode, sizeof(conv_out->tools_mode) - 1);
+      conv_out->tools_mode[sizeof(conv_out->tools_mode) - 1] = '\0';
+   }
+   const char *thinking_mode = (const char *)sqlite3_column_text(s_db.stmt_conv_get, 15);
+   if (thinking_mode) {
+      strncpy(conv_out->thinking_mode, thinking_mode, sizeof(conv_out->thinking_mode) - 1);
+      conv_out->thinking_mode[sizeof(conv_out->thinking_mode) - 1] = '\0';
+   }
+
    sqlite3_reset(s_db.stmt_conv_get);
    AUTH_DB_UNLOCK();
 
@@ -246,9 +273,11 @@ int conv_db_create_continuation(int user_id,
       return AUTH_DB_NOT_FOUND;
    }
 
-   /* Get parent title for the continuation */
-   const char *sql_get_title = "SELECT title FROM conversations WHERE id = ?";
-   rc = sqlite3_prepare_v2(s_db.db, sql_get_title, -1, &stmt, NULL);
+   /* Get parent title and LLM settings for the continuation */
+   const char *sql_get_parent =
+       "SELECT title, llm_type, cloud_provider, model, tools_mode, thinking_mode "
+       "FROM conversations WHERE id = ?";
+   rc = sqlite3_prepare_v2(s_db.db, sql_get_parent, -1, &stmt, NULL);
    if (rc != SQLITE_OK) {
       AUTH_DB_UNLOCK();
       return AUTH_DB_FAILURE;
@@ -256,18 +285,47 @@ int conv_db_create_continuation(int user_id,
    sqlite3_bind_int64(stmt, 1, parent_id);
 
    char parent_title[CONV_TITLE_MAX] = "Continued";
+   char parent_llm_type[16] = "";
+   char parent_cloud_provider[16] = "";
+   char parent_model[64] = "";
+   char parent_tools_mode[16] = "";
+   char parent_thinking_mode[16] = "";
+
    if (sqlite3_step(stmt) == SQLITE_ROW) {
       const char *title = (const char *)sqlite3_column_text(stmt, 0);
       if (title) {
          snprintf(parent_title, sizeof(parent_title), "%s (cont.)", title);
       }
+      /* Copy parent LLM settings (explicit null termination for safety) */
+      const char *val;
+      if ((val = (const char *)sqlite3_column_text(stmt, 1)) != NULL) {
+         strncpy(parent_llm_type, val, sizeof(parent_llm_type) - 1);
+         parent_llm_type[sizeof(parent_llm_type) - 1] = '\0';
+      }
+      if ((val = (const char *)sqlite3_column_text(stmt, 2)) != NULL) {
+         strncpy(parent_cloud_provider, val, sizeof(parent_cloud_provider) - 1);
+         parent_cloud_provider[sizeof(parent_cloud_provider) - 1] = '\0';
+      }
+      if ((val = (const char *)sqlite3_column_text(stmt, 3)) != NULL) {
+         strncpy(parent_model, val, sizeof(parent_model) - 1);
+         parent_model[sizeof(parent_model) - 1] = '\0';
+      }
+      if ((val = (const char *)sqlite3_column_text(stmt, 4)) != NULL) {
+         strncpy(parent_tools_mode, val, sizeof(parent_tools_mode) - 1);
+         parent_tools_mode[sizeof(parent_tools_mode) - 1] = '\0';
+      }
+      if ((val = (const char *)sqlite3_column_text(stmt, 5)) != NULL) {
+         strncpy(parent_thinking_mode, val, sizeof(parent_thinking_mode) - 1);
+         parent_thinking_mode[sizeof(parent_thinking_mode) - 1] = '\0';
+      }
    }
    sqlite3_finalize(stmt);
 
-   /* Create continuation conversation */
+   /* Create continuation conversation with inherited LLM settings */
    const char *sql_create =
        "INSERT INTO conversations (user_id, title, created_at, updated_at, continued_from, "
-       "compaction_summary) VALUES (?, ?, ?, ?, ?, ?)";
+       "compaction_summary, llm_type, cloud_provider, model, tools_mode, thinking_mode) "
+       "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
    rc = sqlite3_prepare_v2(s_db.db, sql_create, -1, &stmt, NULL);
    if (rc != SQLITE_OK) {
       LOG_ERROR("conv_db_create_continuation: prepare insert failed: %s", sqlite3_errmsg(s_db.db));
@@ -285,6 +343,12 @@ int conv_db_create_continuation(int user_id,
    } else {
       sqlite3_bind_null(stmt, 6);
    }
+   /* Bind inherited LLM settings */
+   sqlite3_bind_text(stmt, 7, parent_llm_type, -1, SQLITE_TRANSIENT);
+   sqlite3_bind_text(stmt, 8, parent_cloud_provider, -1, SQLITE_TRANSIENT);
+   sqlite3_bind_text(stmt, 9, parent_model, -1, SQLITE_TRANSIENT);
+   sqlite3_bind_text(stmt, 10, parent_tools_mode, -1, SQLITE_TRANSIENT);
+   sqlite3_bind_text(stmt, 11, parent_thinking_mode, -1, SQLITE_TRANSIENT);
 
    rc = sqlite3_step(stmt);
    sqlite3_finalize(stmt);
@@ -682,6 +746,58 @@ int conv_db_update_context(int64_t conv_id, int user_id, int context_tokens, int
    AUTH_DB_UNLOCK();
 
    /* No rows updated = conversation not found or wrong owner */
+   return (changes > 0) ? AUTH_DB_SUCCESS : AUTH_DB_NOT_FOUND;
+}
+
+int conv_db_lock_llm_settings(int64_t conv_id,
+                              int user_id,
+                              const char *llm_type,
+                              const char *cloud_provider,
+                              const char *model,
+                              const char *tools_mode,
+                              const char *thinking_mode) {
+   if (conv_id <= 0) {
+      return AUTH_DB_INVALID;
+   }
+
+   AUTH_DB_LOCK_OR_FAIL();
+
+   /* Update LLM settings only if message_count is 0 (prevents race conditions) */
+   const char *sql = "UPDATE conversations SET "
+                     "llm_type = ?, cloud_provider = ?, model = ?, "
+                     "tools_mode = ?, thinking_mode = ? "
+                     "WHERE id = ? AND user_id = ? AND message_count = 0";
+
+   sqlite3_stmt *stmt = NULL;
+   int rc = sqlite3_prepare_v2(s_db.db, sql, -1, &stmt, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare lock_llm_settings failed: %s", sqlite3_errmsg(s_db.db));
+      AUTH_DB_UNLOCK();
+      return AUTH_DB_FAILURE;
+   }
+
+   /* Bind parameters - use empty string if NULL to avoid storing NULL */
+   sqlite3_bind_text(stmt, 1, llm_type ? llm_type : "", -1, SQLITE_STATIC);
+   sqlite3_bind_text(stmt, 2, cloud_provider ? cloud_provider : "", -1, SQLITE_STATIC);
+   sqlite3_bind_text(stmt, 3, model ? model : "", -1, SQLITE_STATIC);
+   sqlite3_bind_text(stmt, 4, tools_mode ? tools_mode : "", -1, SQLITE_STATIC);
+   sqlite3_bind_text(stmt, 5, thinking_mode ? thinking_mode : "", -1, SQLITE_STATIC);
+   sqlite3_bind_int64(stmt, 6, conv_id);
+   sqlite3_bind_int(stmt, 7, user_id);
+
+   rc = sqlite3_step(stmt);
+   sqlite3_finalize(stmt);
+
+   if (rc != SQLITE_DONE) {
+      LOG_ERROR("auth_db: lock_llm_settings step failed: %s", sqlite3_errmsg(s_db.db));
+      AUTH_DB_UNLOCK();
+      return AUTH_DB_FAILURE;
+   }
+
+   int changes = sqlite3_changes(s_db.db);
+   AUTH_DB_UNLOCK();
+
+   /* No rows updated = conversation not found, wrong owner, or already has messages */
    return (changes > 0) ? AUTH_DB_SUCCESS : AUTH_DB_NOT_FOUND;
 }
 

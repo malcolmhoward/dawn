@@ -928,6 +928,7 @@
          restoreHistorySidebarState: DawnHistory.restoreSidebarState,
       });
       DawnSettings.init();
+      DawnSettings.initConversationLlmControls();
       DawnTools.init();
       DawnMetricsPanel.init();
       initUserBadgeDropdown();

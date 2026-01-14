@@ -142,17 +142,18 @@ typedef struct {
 #define LLM_CLOUD_MODEL_NAME_MAX 64
 
 typedef struct {
-   char provider[16];                  /* "openai" or "claude" */
-   char openai_model[CONFIG_NAME_MAX]; /* Model for OpenAI API */
-   char claude_model[CONFIG_NAME_MAX]; /* Model for Claude API */
-   char endpoint[CONFIG_PATH_MAX];     /* Empty = default, or custom endpoint */
-   bool vision_enabled;                /* Model supports vision/image analysis */
+   char provider[16];              /* "openai" or "claude" */
+   char endpoint[CONFIG_PATH_MAX]; /* Empty = default, or custom endpoint */
+   bool vision_enabled;            /* Model supports vision/image analysis */
 
    /* Configurable model lists for quick controls dropdown */
    char openai_models[LLM_CLOUD_MAX_MODELS][LLM_CLOUD_MODEL_NAME_MAX];
    int openai_models_count;
+   int openai_default_model_idx; /* Index into openai_models for default */
+
    char claude_models[LLM_CLOUD_MAX_MODELS][LLM_CLOUD_MODEL_NAME_MAX];
    int claude_models_count;
+   int claude_default_model_idx; /* Index into claude_models for default */
 } llm_cloud_config_t;
 
 typedef struct {

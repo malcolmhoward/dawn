@@ -137,7 +137,8 @@ static const char *SCHEMA_SQL =
     "   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE"
     ");"
 
-    /* Conversations table (added in schema v4, context columns in v5, continuation in v7) */
+    /* Conversations table (added in schema v4, context columns in v5, continuation in v7,
+     * LLM settings in v11) */
     "CREATE TABLE IF NOT EXISTS conversations ("
     "   id INTEGER PRIMARY KEY AUTOINCREMENT,"
     "   user_id INTEGER NOT NULL,"
@@ -150,6 +151,11 @@ static const char *SCHEMA_SQL =
     "   context_max INTEGER DEFAULT 0,"
     "   continued_from INTEGER DEFAULT NULL,"
     "   compaction_summary TEXT DEFAULT NULL,"
+    "   llm_type TEXT DEFAULT NULL,"
+    "   cloud_provider TEXT DEFAULT NULL,"
+    "   model TEXT DEFAULT NULL,"
+    "   tools_mode TEXT DEFAULT NULL,"
+    "   thinking_mode TEXT DEFAULT NULL,"
     "   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,"
     "   FOREIGN KEY (continued_from) REFERENCES conversations(id) ON DELETE SET NULL"
     ");"
@@ -400,6 +406,26 @@ static int create_schema(void) {
       }
    }
 
+   /* v11 migration: add per-conversation LLM settings columns */
+   if (current_version >= 4 && current_version < 11) {
+      const char *cols[] = {
+         "ALTER TABLE conversations ADD COLUMN llm_type TEXT DEFAULT NULL",
+         "ALTER TABLE conversations ADD COLUMN cloud_provider TEXT DEFAULT NULL",
+         "ALTER TABLE conversations ADD COLUMN model TEXT DEFAULT NULL",
+         "ALTER TABLE conversations ADD COLUMN tools_mode TEXT DEFAULT NULL",
+         "ALTER TABLE conversations ADD COLUMN thinking_mode TEXT DEFAULT NULL"
+      };
+      for (int i = 0; i < 5; i++) {
+         rc = sqlite3_exec(s_db.db, cols[i], NULL, NULL, &errmsg);
+         if (rc != SQLITE_OK) {
+            LOG_INFO("auth_db: v11 migration note: %s", errmsg ? errmsg : "ok");
+            sqlite3_free(errmsg);
+            errmsg = NULL;
+         }
+      }
+      LOG_INFO("auth_db: added LLM settings columns to conversations (v11)");
+   }
+
    /* Create continuation index (runs for both new databases and migrations) */
    rc = sqlite3_exec(s_db.db,
                      "CREATE INDEX IF NOT EXISTS idx_conversations_continued "
@@ -633,7 +659,8 @@ static int prepare_statements(void) {
    rc = sqlite3_prepare_v2(
        s_db.db,
        "SELECT id, user_id, title, created_at, updated_at, message_count, is_archived, "
-       "context_tokens, context_max, continued_from, compaction_summary "
+       "context_tokens, context_max, continued_from, compaction_summary, "
+       "llm_type, cloud_provider, model, tools_mode, thinking_mode "
        "FROM conversations WHERE id = ?",
        -1, &s_db.stmt_conv_get, NULL);
    if (rc != SQLITE_OK) {

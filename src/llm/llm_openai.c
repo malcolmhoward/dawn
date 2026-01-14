@@ -689,7 +689,7 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
    // Model: use passed model, or fall back to config default
    const char *model_name = model;
    if (!model_name || model_name[0] == '\0') {
-      model_name = (api_key == NULL) ? g_config.llm.local.model : g_config.llm.cloud.openai_model;
+      model_name = (api_key == NULL) ? g_config.llm.local.model : llm_get_default_openai_model();
    }
    if (model_name && model_name[0] != '\0') {
       json_object_object_add(root, "model", json_object_new_string(model_name));
@@ -1102,7 +1102,7 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
    // Model: use passed model, or fall back to config default
    const char *model_name = model;
    if (!model_name || model_name[0] == '\0') {
-      model_name = (api_key == NULL) ? g_config.llm.local.model : g_config.llm.cloud.openai_model;
+      model_name = (api_key == NULL) ? g_config.llm.local.model : llm_get_default_openai_model();
    }
    if (model_name && model_name[0] != '\0') {
       json_object_object_add(root, "model", json_object_new_string(model_name));
@@ -1121,7 +1121,9 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
 
       // Add extended thinking for local LLM (llama.cpp with DeepSeek-R1, QwQ, etc.)
       // Skip for internal utility calls (search summarization, context compaction)
-      if (strcmp(g_config.llm.thinking.mode, "disabled") != 0 && !llm_tools_suppressed()) {
+      // Use session-specific thinking mode if available, otherwise global config
+      const char *thinking_mode = llm_get_current_thinking_mode();
+      if (strcmp(thinking_mode, "disabled") != 0 && !llm_tools_suppressed()) {
          json_object *thinking = json_object_new_object();
          json_object_object_add(thinking, "type", json_object_new_string("enabled"));
 
@@ -1145,18 +1147,60 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
          LOG_INFO("Local LLM: Extended thinking enabled (budget: %d tokens, forced_open: true, "
                   "chat_template_kwargs.enable_thinking: true)",
                   budget);
+      } else if (strcmp(thinking_mode, "disabled") == 0) {
+         // Explicitly disable reasoning for llama.cpp reasoning models.
+         // NOTE: reasoning_budget is a llama.cpp-specific parameter (not OpenAI API).
+         // Setting to 0 disables thinking output for models like DeepSeek-R1.
+         json_object_object_add(root, "reasoning_budget", json_object_new_int(0));
+
+         // Pass enable_thinking=false to the chat template (Qwen3 requirement)
+         json_object *template_kwargs = json_object_new_object();
+         json_object_object_add(template_kwargs, "enable_thinking", json_object_new_boolean(0));
+         json_object_object_add(root, "chat_template_kwargs", template_kwargs);
+
+         LOG_INFO("Local LLM: Reasoning explicitly disabled (reasoning_budget: 0)");
       }
    } else {
-      // For cloud OpenAI with o-series models (o1, o3), add reasoning_effort
+      // For cloud OpenAI reasoning models, add reasoning_effort parameter
+      // Supported models: o1, o3 series and GPT-5 family
       // Skip for internal utility calls (search summarization, context compaction)
-      const char *model = g_config.llm.cloud.openai_model;
-      if (strcmp(g_config.llm.thinking.mode, "disabled") != 0 && !llm_tools_suppressed() &&
-          (strncmp(model, "o1", 2) == 0 || strncmp(model, "o3", 2) == 0)) {
-         const char *effort = g_config.llm.thinking.reasoning_effort;
-         if (effort[0] == '\0')
-            effort = "medium";
-         json_object_object_add(root, "reasoning_effort", json_object_new_string(effort));
-         LOG_INFO("OpenAI: Reasoning effort set to '%s' for model %s", effort, model);
+      // Note: use model_name (set from session override or config) not g_config directly
+      const char *thinking_mode = llm_get_current_thinking_mode();
+
+      // Check if model supports reasoning_effort
+      bool is_o_series = (strncmp(model_name, "o1", 2) == 0 || strncmp(model_name, "o3", 2) == 0);
+      bool is_gpt5 = (strncmp(model_name, "gpt-5", 5) == 0);
+      bool supports_reasoning = is_o_series || is_gpt5;
+
+      if (supports_reasoning && !llm_tools_suppressed()) {
+         const char *effort = NULL;
+
+         if (strcmp(thinking_mode, "disabled") == 0) {
+            // GPT-5 family: disable/minimize reasoning; o-series does not support this
+            if (is_gpt5) {
+               // GPT-5.2 supports "none", others use "minimal" for lowest reasoning
+               if (strncmp(model_name, "gpt-5.2", 7) == 0) {
+                  effort = "none";
+               } else {
+                  effort = "minimal";
+               }
+            }
+            // For o-series with disabled, don't send the parameter (they always reason)
+         } else {
+            // Session thinking_mode may be low/medium/high for reasoning models
+            effort = thinking_mode;
+            // Map enabled/auto to config default or medium
+            if (strcmp(effort, "enabled") == 0 || strcmp(effort, "auto") == 0) {
+               effort = g_config.llm.thinking.reasoning_effort;
+               if (effort[0] == '\0')
+                  effort = "medium";
+            }
+         }
+
+         if (effort != NULL) {
+            json_object_object_add(root, "reasoning_effort", json_object_new_string(effort));
+            LOG_INFO("OpenAI: Reasoning effort set to '%s' for model %s", effort, model_name);
+         }
       }
    }
 
@@ -1599,9 +1643,11 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
 
             // Convert conversation history from OpenAI to Claude format
             // Claude will handle the vision data if present
+            // Use copied model buffer for Claude model
+            const char *claude_model = model_buf_followup[0] ? model_buf_followup : NULL;
             result = llm_claude_chat_completion_streaming(
                 conversation_history, "", (char *)result_vision, result_vision_size,
-                current_config.endpoint, current_config.api_key,
+                current_config.endpoint, current_config.api_key, claude_model,
                 (llm_claude_text_chunk_callback)chunk_callback, callback_userdata);
          } else {
             // Still OpenAI-compatible (local or OpenAI cloud) - use resolved config or fallback

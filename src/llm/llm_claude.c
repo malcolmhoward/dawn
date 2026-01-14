@@ -29,6 +29,7 @@
 #include "config/dawn_config.h"
 #include "core/session_manager.h"
 #include "dawn.h"
+#include "llm/llm_claude_format.h"
 #include "llm/llm_interface.h"
 #include "llm/llm_openai.h"
 #include "llm/llm_streaming.h"
@@ -47,17 +48,6 @@ extern int llm_curl_progress_callback(void *clientp,
                                       curl_off_t dlnow,
                                       curl_off_t ultotal,
                                       curl_off_t ulnow);
-
-/**
- * @brief Check if current session is remote (WebUI, DAP, etc.)
- */
-static bool is_current_session_remote(void) {
-   session_t *session = session_get_command_context();
-   if (!session) {
-      return false; /* No session context = local */
-   }
-   return (session->type != SESSION_TYPE_LOCAL);
-}
 
 /**
  * @brief Build HTTP headers for Claude API request
@@ -83,828 +73,14 @@ static struct curl_slist *build_claude_headers(const char *api_key) {
    return headers;
 }
 
-/* =============================================================================
- * Claude Format Conversion Helpers
- * ============================================================================= */
-
-/**
- * @brief Collect tool result IDs from conversation history
- *
- * Pre-scans conversation to find all tool call IDs that have matching results.
- * Used to filter orphaned tool_use blocks.
- *
- * @param conversation OpenAI-format conversation history
- * @param tool_result_ids Output array for tool IDs
- * @param max_results Maximum number of results to collect
- * @return Number of tool result IDs collected
- */
-static int collect_tool_result_ids(struct json_object *conversation,
-                                   char tool_result_ids[][LLM_TOOLS_ID_LEN],
-                                   int max_results) {
-   int count = 0;
-   int conv_len = json_object_array_length(conversation);
-
-   for (int i = 0; i < conv_len && count < max_results; i++) {
-      json_object *msg = json_object_array_get_idx(conversation, i);
-      json_object *role_obj;
-      if (!json_object_object_get_ex(msg, "role", &role_obj)) {
-         continue;
-      }
-      const char *role = json_object_get_string(role_obj);
-
-      // OpenAI format: role="tool" with tool_call_id
-      if (strcmp(role, "tool") == 0) {
-         json_object *tool_call_id_obj;
-         if (json_object_object_get_ex(msg, "tool_call_id", &tool_call_id_obj)) {
-            const char *id = json_object_get_string(tool_call_id_obj);
-            if (id && count < max_results) {
-               strncpy(tool_result_ids[count], id, LLM_TOOLS_ID_LEN - 1);
-               tool_result_ids[count][LLM_TOOLS_ID_LEN - 1] = '\0';
-               count++;
-            }
-         }
-      }
-
-      // Claude format: role="user" with content array containing tool_result blocks
-      if (strcmp(role, "user") == 0) {
-         json_object *content_obj;
-         if (json_object_object_get_ex(msg, "content", &content_obj) &&
-             json_object_is_type(content_obj, json_type_array)) {
-            int content_len = json_object_array_length(content_obj);
-            for (int j = 0; j < content_len && count < max_results; j++) {
-               json_object *block = json_object_array_get_idx(content_obj, j);
-               json_object *type_obj;
-               if (json_object_object_get_ex(block, "type", &type_obj) &&
-                   strcmp(json_object_get_string(type_obj), "tool_result") == 0) {
-                  json_object *tool_use_id_obj;
-                  if (json_object_object_get_ex(block, "tool_use_id", &tool_use_id_obj)) {
-                     const char *id = json_object_get_string(tool_use_id_obj);
-                     if (id && count < max_results) {
-                        strncpy(tool_result_ids[count], id, LLM_TOOLS_ID_LEN - 1);
-                        tool_result_ids[count][LLM_TOOLS_ID_LEN - 1] = '\0';
-                        count++;
-                     }
-                  }
-               }
-            }
-         }
-      }
-   }
-   return count;
-}
-
-/**
- * @brief Check if a tool ID has a matching result
- */
-static bool has_matching_tool_result(const char *tool_id,
-                                     char tool_result_ids[][LLM_TOOLS_ID_LEN],
-                                     int count) {
-   for (int k = 0; k < count; k++) {
-      if (strcmp(tool_id, tool_result_ids[k]) == 0) {
-         return true;
-      }
-   }
-   return false;
-}
-
-/**
- * @brief Check if conversation history has tool_use blocks without thinking blocks
- *
- * Claude requires that when thinking is enabled, assistant messages with tool_use
- * must start with a thinking block. This checks for incompatible history that would
- * cause Claude API to reject the request.
- *
- * @param conversation OpenAI-format conversation history
- * @return true if history has tool_use without thinking (incompatible with thinking mode)
- */
-static bool history_has_tool_use_without_thinking(struct json_object *conversation) {
-   if (!conversation) {
-      return false;
-   }
-
-   int conv_len = json_object_array_length(conversation);
-   for (int i = 0; i < conv_len; i++) {
-      json_object *msg = json_object_array_get_idx(conversation, i);
-      json_object *role_obj, *content_obj;
-
-      if (!json_object_object_get_ex(msg, "role", &role_obj)) {
-         continue;
-      }
-      const char *role = json_object_get_string(role_obj);
-
-      // Check assistant messages with array content (Claude format with tool_use)
-      if (strcmp(role, "assistant") == 0 &&
-          json_object_object_get_ex(msg, "content", &content_obj) &&
-          json_object_is_type(content_obj, json_type_array)) {
-         int content_len = json_object_array_length(content_obj);
-         bool has_tool_use = false;
-         bool has_thinking = false;
-
-         for (int j = 0; j < content_len; j++) {
-            json_object *block = json_object_array_get_idx(content_obj, j);
-            json_object *type_obj;
-            if (json_object_object_get_ex(block, "type", &type_obj)) {
-               const char *block_type = json_object_get_string(type_obj);
-               if (strcmp(block_type, "tool_use") == 0) {
-                  has_tool_use = true;
-               } else if (strcmp(block_type, "thinking") == 0) {
-                  has_thinking = true;
-               }
-            }
-         }
-
-         // If this message has tool_use but no thinking, history is incompatible
-         if (has_tool_use && !has_thinking) {
-            return true;
-         }
-      }
-
-      // Check for OpenAI-format tool_calls (also incompatible - no thinking block format)
-      json_object *tool_calls_obj;
-      if (strcmp(role, "assistant") == 0 &&
-          json_object_object_get_ex(msg, "tool_calls", &tool_calls_obj) &&
-          json_object_is_type(tool_calls_obj, json_type_array) &&
-          json_object_array_length(tool_calls_obj) > 0) {
-         // OpenAI-format tool_calls - these never have thinking blocks
-         return true;
-      }
-   }
-
-   return false;
-}
-
-/**
- * @brief Create a Claude-format image content block
- */
-static json_object *create_claude_image_block(const char *vision_image) {
-   json_object *image_obj = json_object_new_object();
-   json_object_object_add(image_obj, "type", json_object_new_string("image"));
-
-   json_object *source_obj = json_object_new_object();
-   json_object_object_add(source_obj, "type", json_object_new_string("base64"));
-   json_object_object_add(source_obj, "media_type", json_object_new_string("image/jpeg"));
-   json_object_object_add(source_obj, "data", json_object_new_string(vision_image));
-   json_object_object_add(image_obj, "source", source_obj);
-
-   return image_obj;
-}
-
-/**
- * @brief Convert OpenAI image_url content block to Claude image format
- *
- * OpenAI format: {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,..."}}
- * Claude format: {"type": "image", "source": {"type": "base64", "media_type": "...", "data":
- * "..."}}
- *
- * @param block Content block to convert (or copy if not image_url)
- * @return New json_object in Claude format (caller must json_object_put), or NULL on error
- */
-static json_object *convert_content_block_to_claude(json_object *block) {
-   if (!block) {
-      return NULL;
-   }
-
-   json_object *type_obj;
-   if (!json_object_object_get_ex(block, "type", &type_obj)) {
-      // No type field - Claude requires type on all content blocks
-      // Check if it has a "text" field (possible malformed text block)
-      json_object *text_obj;
-      if (json_object_object_get_ex(block, "text", &text_obj)) {
-         // Convert to proper text block
-         json_object *fixed_block = json_object_new_object();
-         json_object_object_add(fixed_block, "type", json_object_new_string("text"));
-         json_object_object_add(fixed_block, "text", json_object_get(text_obj));
-         LOG_WARNING("Claude: Fixed content block missing type (had text field)");
-         return fixed_block;
-      }
-      // Unknown format - skip it to avoid Claude API errors
-      LOG_WARNING("Claude: Skipping content block with no type field");
-      return NULL;
-   }
-
-   const char *block_type = json_object_get_string(type_obj);
-   if (!block_type || strcmp(block_type, "image_url") != 0) {
-      // Not image_url - just copy the block (already has type)
-      return json_object_get(block);
-   }
-
-   // This is an OpenAI image_url block - convert to Claude format
-   json_object *image_url_obj;
-   if (!json_object_object_get_ex(block, "image_url", &image_url_obj)) {
-      LOG_WARNING("Claude: image_url block missing image_url field");
-      return NULL;
-   }
-
-   json_object *url_obj;
-   if (!json_object_object_get_ex(image_url_obj, "url", &url_obj)) {
-      LOG_WARNING("Claude: image_url block missing url field");
-      return NULL;
-   }
-
-   const char *url = json_object_get_string(url_obj);
-   if (!url) {
-      return NULL;
-   }
-
-   // Parse data URL: data:image/jpeg;base64,<data>
-   const char *data_prefix = "data:";
-   if (strncmp(url, data_prefix, strlen(data_prefix)) != 0) {
-      LOG_WARNING("Claude: image_url is not a data URL: %.50s...", url);
-      return NULL;
-   }
-
-   // Find media type and base64 data
-   const char *after_data = url + strlen(data_prefix);
-   const char *semicolon = strchr(after_data, ';');
-   const char *comma = strchr(after_data, ',');
-
-   if (!semicolon || !comma || comma < semicolon) {
-      LOG_WARNING("Claude: Invalid data URL format");
-      return NULL;
-   }
-
-   // Extract media type
-   size_t media_type_len = semicolon - after_data;
-   char media_type[64];
-   if (media_type_len >= sizeof(media_type)) {
-      media_type_len = sizeof(media_type) - 1;
-   }
-   strncpy(media_type, after_data, media_type_len);
-   media_type[media_type_len] = '\0';
-
-   // The base64 data is after the comma
-   const char *base64_data = comma + 1;
-
-   // Create Claude-format image block
-   json_object *image_obj = json_object_new_object();
-   json_object_object_add(image_obj, "type", json_object_new_string("image"));
-
-   json_object *source_obj = json_object_new_object();
-   json_object_object_add(source_obj, "type", json_object_new_string("base64"));
-   json_object_object_add(source_obj, "media_type", json_object_new_string(media_type));
-   json_object_object_add(source_obj, "data", json_object_new_string(base64_data));
-   json_object_object_add(image_obj, "source", source_obj);
-
-   LOG_INFO("Claude: Converted OpenAI image_url to Claude image (media_type=%s)", media_type);
-   return image_obj;
-}
-
-/**
- * @brief Add vision image to Claude messages array
- *
- * Either modifies the last user message to include the image, or creates
- * a new user message if the last message isn't suitable.
- *
- * @param messages_array Claude messages array
- * @param input_text Text to include with the image
- * @param vision_image Base64-encoded image data
- */
-static void add_vision_to_claude_messages(json_object *messages_array,
-                                          const char *input_text,
-                                          const char *vision_image) {
-   int msg_count = json_object_array_length(messages_array);
-   json_object *last_msg = msg_count > 0 ? json_object_array_get_idx(messages_array, msg_count - 1)
-                                         : NULL;
-   json_object *role_obj = NULL;
-   const char *last_role_str = NULL;
-
-   if (last_msg && json_object_object_get_ex(last_msg, "role", &role_obj)) {
-      last_role_str = json_object_get_string(role_obj);
-   }
-
-   // Check if last message is a user message with plain text content
-   json_object *last_content = NULL;
-   bool is_text_user_message = false;
-   if (last_msg && last_role_str && strcmp(last_role_str, "user") == 0) {
-      if (json_object_object_get_ex(last_msg, "content", &last_content)) {
-         if (json_object_is_type(last_content, json_type_string)) {
-            is_text_user_message = true;
-         }
-      }
-   }
-
-   if (is_text_user_message) {
-      // Last message is user message with text - add vision content
-      json_object *content_array = json_object_new_array();
-
-      json_object *text_obj = json_object_new_object();
-      json_object_object_add(text_obj, "type", json_object_new_string("text"));
-      json_object_object_add(text_obj, "text", json_object_new_string(input_text));
-      json_object_array_add(content_array, text_obj);
-
-      json_object_array_add(content_array, create_claude_image_block(vision_image));
-      json_object_object_add(last_msg, "content", content_array);
-   } else {
-      // Create a new user message with the vision image
-      LOG_INFO("Claude: Adding vision as new user message (last message not suitable)");
-
-      json_object *new_user_msg = json_object_new_object();
-      json_object_object_add(new_user_msg, "role", json_object_new_string("user"));
-
-      json_object *content_array = json_object_new_array();
-
-      json_object *text_obj = json_object_new_object();
-      json_object_object_add(text_obj, "type", json_object_new_string("text"));
-      json_object_object_add(text_obj, "text",
-                             json_object_new_string("Here is the captured image. "
-                                                    "Please respond to the user's request."));
-      json_object_array_add(content_array, text_obj);
-
-      json_object_array_add(content_array, create_claude_image_block(vision_image));
-      json_object_object_add(new_user_msg, "content", content_array);
-
-      json_object_array_add(messages_array, new_user_msg);
-   }
-}
-
-/**
- * @brief Convert OpenAI-format conversation to Claude format
- *
- * Claude format differences:
- * - System messages go in separate "system" array, not "messages"
- * - System messages support cache_control markers
- * - Messages array contains only user/assistant exchanges
- *
- * @param openai_conversation OpenAI format conversation history
- * @param input_text Current user input
- * @param vision_image Optional base64 vision image
- * @param vision_image_size Size of vision image
- * @return Claude-format request object (caller must free with json_object_put)
- */
-static json_object *convert_to_claude_format(struct json_object *openai_conversation,
-                                             const char *input_text,
-                                             char *vision_image,
-                                             size_t vision_image_size) {
-   json_object *claude_request = json_object_new_object();
-
-   // Model from config
-   json_object_object_add(claude_request, "model",
-                          json_object_new_string(g_config.llm.cloud.claude_model));
-
-   // Determine if extended thinking will be enabled
-   bool thinking_enabled = false;
-   int thinking_budget = 0;
-   if (strcmp(g_config.llm.thinking.mode, "disabled") != 0) {
-      const char *model = g_config.llm.cloud.claude_model;
-      // Check if model supports thinking (Claude Sonnet 3.7+, Claude 4 models)
-      bool model_supports = (strstr(model, "sonnet-4") != NULL || strstr(model, "opus-4") != NULL ||
-                             strstr(model, "3-7") != NULL || strstr(model, "3.7") != NULL);
-
-      if (model_supports || strcmp(g_config.llm.thinking.mode, "enabled") == 0) {
-         thinking_enabled = true;
-         thinking_budget = g_config.llm.thinking.budget_tokens;
-         if (thinking_budget < 1024)
-            thinking_budget = 1024;  // Claude minimum
-      }
-   }
-
-   // Disable thinking for internal utility calls (search summarization, context compaction)
-   // These calls suppress tools and expect simple text responses
-   if (thinking_enabled && llm_tools_suppressed()) {
-      thinking_enabled = false;
-   }
-
-   // Check if conversation history is compatible with thinking mode
-   // Claude requires assistant messages with tool_use to start with thinking blocks
-   if (thinking_enabled && history_has_tool_use_without_thinking(openai_conversation)) {
-      thinking_enabled = false;
-
-#ifdef ENABLE_WEBUI
-      /* Send notification to WebUI about thinking being disabled (once per session) */
-      static uint32_t last_notified_session = 0;
-      session_t *session = session_get_command_context();
-      if (session && session->type == SESSION_TYPE_WEBSOCKET &&
-          session->session_id != last_notified_session) {
-         last_notified_session = session->session_id;
-         LOG_INFO("Claude: Auto-disabled thinking for session %u (incompatible history)",
-                  session->session_id);
-         webui_send_error(session, "INFO_THINKING_DISABLED",
-                          "Extended thinking auto-disabled: conversation history from "
-                          "previous provider is incompatible. Start a new conversation "
-                          "to use thinking with Claude.");
-      }
-#endif
-   }
-
-   // Max tokens: Claude requires max_tokens > budget_tokens when thinking is enabled
-   int max_tokens = g_config.llm.max_tokens;
-   if (thinking_enabled && max_tokens <= thinking_budget) {
-      // Ensure max_tokens > budget_tokens, add buffer for response
-      max_tokens = thinking_budget + 4096;
-      LOG_INFO("Claude: Adjusted max_tokens to %d (budget %d + 4096 response buffer)", max_tokens,
-               thinking_budget);
-   }
-   json_object_object_add(claude_request, "max_tokens", json_object_new_int(max_tokens));
-
-   // Add extended thinking configuration
-   if (thinking_enabled) {
-      json_object *thinking = json_object_new_object();
-      json_object_object_add(thinking, "type", json_object_new_string("enabled"));
-      json_object_object_add(thinking, "budget_tokens", json_object_new_int(thinking_budget));
-      json_object_object_add(claude_request, "thinking", thinking);
-      LOG_INFO("Claude: Extended thinking enabled (budget: %d tokens)", thinking_budget);
-   }
-
-   // Add tools if native tool calling is enabled
-   if (llm_tools_enabled(NULL)) {
-      bool is_remote = is_current_session_remote();
-      struct json_object *tools = llm_tools_get_claude_format_filtered(is_remote);
-      if (tools) {
-         json_object_object_add(claude_request, "tools", tools);
-         LOG_INFO("Claude: Added %d tools to request (%s session)",
-                  llm_tools_get_enabled_count_filtered(is_remote), is_remote ? "remote" : "local");
-      }
-   }
-
-   // Extract system message and user/assistant messages
-   json_object *system_array = json_object_new_array();
-   json_object *messages_array = json_object_new_array();
-
-   int conv_len = json_object_array_length(openai_conversation);
-   const char *last_role = NULL;
-   json_object *last_message = NULL;
-
-// Pre-scan to collect tool result IDs for orphaned tool_use filtering
-#define MAX_TRACKED_TOOL_RESULTS 16
-   char tool_result_ids[MAX_TRACKED_TOOL_RESULTS][LLM_TOOLS_ID_LEN];
-   int tool_result_count = collect_tool_result_ids(openai_conversation, tool_result_ids,
-                                                   MAX_TRACKED_TOOL_RESULTS);
-
-   for (int i = 0; i < conv_len; i++) {
-      json_object *msg = json_object_array_get_idx(openai_conversation, i);
-      json_object *role_obj, *content_obj;
-
-      if (!json_object_object_get_ex(msg, "role", &role_obj) ||
-          !json_object_object_get_ex(msg, "content", &content_obj)) {
-         continue;
-      }
-
-      const char *role = json_object_get_string(role_obj);
-
-      // Handle Claude-format assistant messages with tool_use content blocks
-      // These need to be filtered to remove orphaned tool_use blocks
-      if (strcmp(role, "assistant") == 0 && json_object_is_type(content_obj, json_type_array)) {
-         int content_len = json_object_array_length(content_obj);
-         json_object *filtered_content = json_object_new_array();
-         int has_tool_use = 0;
-
-         for (int j = 0; j < content_len; j++) {
-            json_object *block = json_object_array_get_idx(content_obj, j);
-            json_object *type_obj;
-
-            if (!json_object_object_get_ex(block, "type", &type_obj)) {
-               // Skip malformed blocks without type - Claude requires type field
-               LOG_WARNING("Claude: Skipping content block without type field");
-               continue;
-            }
-
-            const char *block_type = json_object_get_string(type_obj);
-
-            if (strcmp(block_type, "tool_use") == 0) {
-               // Check if this tool_use has a matching result
-               json_object *id_obj;
-               if (json_object_object_get_ex(block, "id", &id_obj)) {
-                  const char *tool_id = json_object_get_string(id_obj);
-                  if (has_matching_tool_result(tool_id, tool_result_ids, tool_result_count)) {
-                     json_object_array_add(filtered_content, json_object_get(block));
-                     has_tool_use = 1;
-                  } else {
-                     LOG_WARNING("Claude: Skipping orphaned tool_use %s", tool_id);
-                  }
-               }
-            } else {
-               // Keep text and other blocks
-               json_object_array_add(filtered_content, json_object_get(block));
-            }
-         }
-
-         // Only add if we have content
-         if (json_object_array_length(filtered_content) > 0) {
-            last_message = json_object_new_object();
-            json_object_object_add(last_message, "role", json_object_new_string("assistant"));
-            json_object_object_add(last_message, "content", filtered_content);
-            json_object_array_add(messages_array, last_message);
-            last_role = "assistant";
-         } else {
-            json_object_put(filtered_content);
-         }
-         continue;
-      }
-
-      // Convert assistant messages with tool_calls (OpenAI format) to Claude tool_use format
-      json_object *tool_calls_obj;
-      if (strcmp(role, "assistant") == 0 &&
-          json_object_object_get_ex(msg, "tool_calls", &tool_calls_obj)) {
-         // Build Claude content array with tool_use blocks
-         json_object *content_array = json_object_new_array();
-
-         // Include any text content first
-         const char *text_content = json_object_get_string(content_obj);
-         if (text_content && strlen(text_content) > 0) {
-            json_object *text_block = json_object_new_object();
-            json_object_object_add(text_block, "type", json_object_new_string("text"));
-            json_object_object_add(text_block, "text", json_object_new_string(text_content));
-            json_object_array_add(content_array, text_block);
-         }
-
-         // Convert each tool call to Claude tool_use format
-         // Only include tool calls that have matching results in the history
-         int num_calls = json_object_array_length(tool_calls_obj);
-         int added_tool_uses = 0;
-         for (int j = 0; j < num_calls; j++) {
-            json_object *call = json_object_array_get_idx(tool_calls_obj, j);
-            json_object *func_obj, *id_obj, *name_obj, *args_obj;
-
-            const char *call_id = "";
-            const char *name = "";
-            const char *args_str = "{}";
-
-            if (json_object_object_get_ex(call, "id", &id_obj)) {
-               call_id = json_object_get_string(id_obj);
-            }
-
-            // Check if this tool call has a matching result
-            if (!has_matching_tool_result(call_id, tool_result_ids, tool_result_count)) {
-               LOG_WARNING("Claude: Skipping tool_use %s (no matching tool_result)", call_id);
-               continue;
-            }
-
-            if (json_object_object_get_ex(call, "function", &func_obj)) {
-               if (json_object_object_get_ex(func_obj, "name", &name_obj)) {
-                  name = json_object_get_string(name_obj);
-               }
-               if (json_object_object_get_ex(func_obj, "arguments", &args_obj)) {
-                  args_str = json_object_get_string(args_obj);
-               }
-            }
-
-            // Create tool_use block
-            json_object *tool_use = json_object_new_object();
-            json_object_object_add(tool_use, "type", json_object_new_string("tool_use"));
-            json_object_object_add(tool_use, "id", json_object_new_string(call_id));
-            json_object_object_add(tool_use, "name", json_object_new_string(name));
-
-            // Parse args string to JSON object
-            json_object *input = json_tokener_parse(args_str);
-            if (input) {
-               json_object_object_add(tool_use, "input", input);
-            } else {
-               json_object_object_add(tool_use, "input", json_object_new_object());
-            }
-
-            json_object_array_add(content_array, tool_use);
-            added_tool_uses++;
-         }
-
-         // Only add assistant message if we have content (text or tool_use blocks)
-         if (json_object_array_length(content_array) > 0) {
-            last_message = json_object_new_object();
-            json_object_object_add(last_message, "role", json_object_new_string("assistant"));
-            json_object_object_add(last_message, "content", content_array);
-            json_object_array_add(messages_array, last_message);
-            last_role = "assistant";
-         } else {
-            json_object_put(content_array);  // Free unused array
-         }
-         continue;
-      }
-
-      // Convert tool role messages (OpenAI format) to Claude tool_result format
-      if (strcmp(role, "tool") == 0) {
-         json_object *tool_call_id_obj;
-         const char *tool_call_id = NULL;
-         const char *result_content = json_object_get_string(content_obj);
-
-         if (json_object_object_get_ex(msg, "tool_call_id", &tool_call_id_obj)) {
-            tool_call_id = json_object_get_string(tool_call_id_obj);
-         }
-
-         // Handle orphaned tool messages (restored from DB without tool_call_id)
-         if (!tool_call_id || strlen(tool_call_id) == 0) {
-            LOG_WARNING(
-                "Claude: Orphaned tool message without tool_call_id, converting to summary");
-            // Convert to assistant summary to preserve context
-            if (result_content && strlen(result_content) > 0) {
-               char summary[2048];
-               snprintf(summary, sizeof(summary), "[Previous tool result: %.1900s%s]",
-                        result_content, strlen(result_content) > 1900 ? "..." : "");
-
-               json_object *summary_msg = json_object_new_object();
-               json_object_object_add(summary_msg, "role", json_object_new_string("assistant"));
-               json_object_object_add(summary_msg, "content", json_object_new_string(summary));
-
-               // Handle role alternation
-               if (last_role != NULL && strcmp(last_role, "assistant") == 0 &&
-                   last_message != NULL) {
-                  // Append to existing assistant content
-                  json_object *last_content;
-                  if (json_object_object_get_ex(last_message, "content", &last_content)) {
-                     if (json_object_is_type(last_content, json_type_array)) {
-                        // Content is an array - append a text block
-                        json_object *text_block = json_object_new_object();
-                        json_object_object_add(text_block, "type", json_object_new_string("text"));
-                        json_object_object_add(text_block, "text", json_object_new_string(summary));
-                        json_object_array_add(last_content, text_block);
-                     } else {
-                        // Content is a string - combine strings
-                        const char *existing = json_object_get_string(last_content);
-                        size_t existing_len = existing ? strlen(existing) : 0;
-                        size_t summary_len = strlen(summary);
-                        size_t needed = existing_len + summary_len + 2; /* +2 for \n and \0 */
-
-                        char combined[4096];
-                        if (needed > sizeof(combined)) {
-                           LOG_WARNING("Claude: Combined content truncated from %zu to %zu bytes",
-                                       needed, sizeof(combined));
-                        }
-                        snprintf(combined, sizeof(combined), "%s\n%s", existing ? existing : "",
-                                 summary);
-                        json_object_object_add(last_message, "content",
-                                               json_object_new_string(combined));
-                     }
-                  }
-                  json_object_put(summary_msg);
-               } else {
-                  json_object_array_add(messages_array, summary_msg);
-                  last_message = summary_msg;
-                  last_role = "assistant";
-               }
-            }
-            continue;
-         }
-
-         // Create tool_result block in a user message (Claude requirement)
-         json_object *result_array = json_object_new_array();
-         json_object *result_block = json_object_new_object();
-         json_object_object_add(result_block, "type", json_object_new_string("tool_result"));
-         json_object_object_add(result_block, "tool_use_id", json_object_new_string(tool_call_id));
-         json_object_object_add(result_block, "content",
-                                json_object_new_string(result_content ? result_content : ""));
-         json_object_array_add(result_array, result_block);
-
-         // Tool results must be in user messages for Claude
-         if (last_role != NULL && strcmp(last_role, "user") == 0 && last_message != NULL) {
-            // Append to existing user message content array
-            json_object *last_content;
-            if (json_object_object_get_ex(last_message, "content", &last_content) &&
-                json_object_is_type(last_content, json_type_array)) {
-               json_object_array_add(last_content, result_block);
-               json_object_put(result_array);  // Don't need the wrapper array
-            } else {
-               // Replace string content with array
-               json_object_object_add(last_message, "content", result_array);
-            }
-         } else {
-            last_message = json_object_new_object();
-            json_object_object_add(last_message, "role", json_object_new_string("user"));
-            json_object_object_add(last_message, "content", result_array);
-            json_object_array_add(messages_array, last_message);
-            last_role = "user";
-         }
-         continue;
-      }
-
-      if (strcmp(role, "system") == 0) {
-         // System message goes in separate "system" array with cache control
-         json_object *system_block = json_object_new_object();
-         json_object_object_add(system_block, "type", json_object_new_string("text"));
-         json_object_object_add(system_block, "text", json_object_get(content_obj));
-
-#if CLAUDE_ENABLE_PROMPT_CACHING
-         // Add cache control to system prompt for 90% cost savings
-         json_object *cache_control = json_object_new_object();
-         json_object_object_add(cache_control, "type", json_object_new_string("ephemeral"));
-         json_object_object_add(system_block, "cache_control", cache_control);
-#endif
-
-         json_object_array_add(system_array, system_block);
-      } else {
-         // Claude requires strict role alternation - consolidate consecutive same-role messages
-         if (last_role != NULL && strcmp(last_role, role) == 0 && last_message != NULL) {
-            // Same role as previous - need to consolidate
-            json_object *last_content_obj;
-            if (json_object_object_get_ex(last_message, "content", &last_content_obj)) {
-               bool last_is_array = json_object_is_type(last_content_obj, json_type_array);
-               bool curr_is_array = json_object_is_type(content_obj, json_type_array);
-
-               if (last_is_array) {
-                  // Last is array - append current content to it
-                  if (curr_is_array) {
-                     // Both arrays - copy all blocks from current to last
-                     // Convert any OpenAI image_url blocks to Claude image format
-                     int curr_len = json_object_array_length(content_obj);
-                     for (int j = 0; j < curr_len; j++) {
-                        json_object *block = json_object_array_get_idx(content_obj, j);
-                        json_object *converted = convert_content_block_to_claude(block);
-                        if (converted) {
-                           json_object_array_add(last_content_obj, converted);
-                        }
-                     }
-                  } else {
-                     // Current is string - add as text block
-                     const char *current_str = json_object_get_string(content_obj);
-                     if (current_str && strlen(current_str) > 0) {
-                        json_object *text_block = json_object_new_object();
-                        json_object_object_add(text_block, "type", json_object_new_string("text"));
-                        json_object_object_add(text_block, "text",
-                                               json_object_new_string(current_str));
-                        json_object_array_add(last_content_obj, text_block);
-                     }
-                  }
-               } else if (curr_is_array) {
-                  // Last is string, current is array - convert last to array and merge
-                  const char *last_str = json_object_get_string(last_content_obj);
-                  json_object *new_array = json_object_new_array();
-
-                  // Add last string as text block first
-                  if (last_str && strlen(last_str) > 0) {
-                     json_object *text_block = json_object_new_object();
-                     json_object_object_add(text_block, "type", json_object_new_string("text"));
-                     json_object_object_add(text_block, "text", json_object_new_string(last_str));
-                     json_object_array_add(new_array, text_block);
-                  }
-
-                  // Add all blocks from current array
-                  // Convert any OpenAI image_url blocks to Claude image format
-                  int curr_len = json_object_array_length(content_obj);
-                  for (int j = 0; j < curr_len; j++) {
-                     json_object *block = json_object_array_get_idx(content_obj, j);
-                     json_object *converted = convert_content_block_to_claude(block);
-                     if (converted) {
-                        json_object_array_add(new_array, converted);
-                     }
-                  }
-
-                  json_object_object_add(last_message, "content", new_array);
-               } else {
-                  // Both are strings - simple concatenation
-                  const char *last_str = json_object_get_string(last_content_obj);
-                  const char *curr_str = json_object_get_string(content_obj);
-                  if (!last_str)
-                     last_str = "";
-                  if (!curr_str)
-                     curr_str = "";
-
-                  size_t new_len = strlen(last_str) + strlen(curr_str) + 4;
-                  char *combined = malloc(new_len);
-                  if (combined) {
-                     snprintf(combined, new_len, "%s\n\n%s", last_str, curr_str);
-                     json_object_object_add(last_message, "content",
-                                            json_object_new_string(combined));
-                     free(combined);
-                  }
-               }
-            }
-         } else {
-            // Different role or first message - add new message
-            last_message = json_object_new_object();
-            json_object_object_add(last_message, "role", json_object_new_string(role));
-
-            // If content is an array, convert any image_url blocks to Claude format
-            if (json_object_is_type(content_obj, json_type_array)) {
-               json_object *converted_array = json_object_new_array();
-               int content_len = json_object_array_length(content_obj);
-               for (int j = 0; j < content_len; j++) {
-                  json_object *block = json_object_array_get_idx(content_obj, j);
-                  json_object *converted = convert_content_block_to_claude(block);
-                  if (converted) {
-                     json_object_array_add(converted_array, converted);
-                  }
-               }
-               json_object_object_add(last_message, "content", converted_array);
-            } else {
-               json_object_object_add(last_message, "content", json_object_get(content_obj));
-            }
-
-            json_object_array_add(messages_array, last_message);
-            last_role = role;
-         }
-      }
-   }
-
-   // Add system array if not empty
-   if (json_object_array_length(system_array) > 0) {
-      json_object_object_add(claude_request, "system", system_array);
-   } else {
-      json_object_put(system_array);
-   }
-
-   // If vision is provided, add it to a user message
-   if (vision_image != NULL && vision_image_size > 0) {
-      add_vision_to_claude_messages(messages_array, input_text, vision_image);
-   }
-
-   json_object_object_add(claude_request, "messages", messages_array);
-
-   return claude_request;
-}
 
 char *llm_claude_chat_completion(struct json_object *conversation_history,
                                  const char *input_text,
                                  char *vision_image,
                                  size_t vision_image_size,
                                  const char *base_url,
-                                 const char *api_key) {
+                                 const char *api_key,
+                                 const char *model) {
    CURL *curl_handle = NULL;
    CURLcode res;
    struct curl_slist *headers = NULL;
@@ -914,7 +90,7 @@ char *llm_claude_chat_completion(struct json_object *conversation_history,
 
    // Convert OpenAI format to Claude format
    json_object *request = convert_to_claude_format(conversation_history, input_text, vision_image,
-                                                   vision_image_size);
+                                                   vision_image_size, model);
 
    const char *payload = json_object_to_json_string_ext(
        request, JSON_C_TO_STRING_PLAIN | JSON_C_TO_STRING_NOSLASHESCAPE);
@@ -1210,6 +386,7 @@ static char *llm_claude_streaming_internal(struct json_object *conversation_hist
                                            size_t vision_image_size,
                                            const char *base_url,
                                            const char *api_key,
+                                           const char *model,
                                            llm_claude_text_chunk_callback chunk_callback,
                                            void *callback_userdata,
                                            int iteration) {
@@ -1241,7 +418,7 @@ static char *llm_claude_streaming_internal(struct json_object *conversation_hist
 
    // Convert OpenAI format to Claude format
    request = convert_to_claude_format(conversation_history, input_text, vision_image,
-                                      vision_image_size);
+                                      vision_image_size, model);
    if (!request) {
       LOG_ERROR("Failed to convert conversation to Claude format");
       return NULL;
@@ -1425,6 +602,27 @@ static char *llm_claude_streaming_internal(struct json_object *conversation_hist
          json_object_object_add(assistant_msg, "role", json_object_new_string("assistant"));
 
          json_object *content_array = json_object_new_array();
+
+         // If thinking was enabled, add the thinking block first (required by Claude API)
+         char *thinking_content = llm_stream_get_thinking(stream_ctx);
+         if (thinking_content) {
+            json_object *thinking_block = json_object_new_object();
+            json_object_object_add(thinking_block, "type", json_object_new_string("thinking"));
+            json_object_object_add(thinking_block, "thinking",
+                                   json_object_new_string(thinking_content));
+
+            // Signature is required when sending thinking content back to Claude
+            char *thinking_signature = llm_stream_get_thinking_signature(stream_ctx);
+            if (thinking_signature) {
+               json_object_object_add(thinking_block, "signature",
+                                      json_object_new_string(thinking_signature));
+               free(thinking_signature);
+            }
+
+            json_object_array_add(content_array, thinking_block);
+            free(thinking_content);
+         }
+
          for (int i = 0; i < tool_calls->count; i++) {
             json_object *tool_use = json_object_new_object();
             json_object_object_add(tool_use, "type", json_object_new_string("tool_use"));
@@ -1560,7 +758,7 @@ static char *llm_claude_streaming_internal(struct json_object *conversation_hist
 
             result = llm_claude_streaming_internal(conversation_history, "", (char *)result_vision,
                                                    result_vision_size, fresh_url, fresh_api_key,
-                                                   chunk_callback, callback_userdata,
+                                                   model, chunk_callback, callback_userdata,
                                                    iteration + 1);
          }
 
@@ -1600,9 +798,10 @@ char *llm_claude_chat_completion_streaming(struct json_object *conversation_hist
                                            size_t vision_image_size,
                                            const char *base_url,
                                            const char *api_key,
+                                           const char *model,
                                            llm_claude_text_chunk_callback chunk_callback,
                                            void *callback_userdata) {
    return llm_claude_streaming_internal(conversation_history, input_text, vision_image,
-                                        vision_image_size, base_url, api_key, chunk_callback,
+                                        vision_image_size, base_url, api_key, model, chunk_callback,
                                         callback_userdata, 0);
 }

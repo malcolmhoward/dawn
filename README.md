@@ -15,9 +15,15 @@ DAWN integrates modern speech recognition, large language models, and text-to-sp
 
 - **Multi-Provider LLM Integration**
   - Cloud: OpenAI GPT-4o, Anthropic Claude 4.5 Sonnet
-  - Local: llama.cpp with optimized Qwen3-4B model (81.9% quality @ 138ms TTFT)
+  - Local: llama.cpp or Ollama with optimized Qwen3-4B model (81.9% quality @ 138ms TTFT)
+  - Runtime model switching via WebUI for both cloud and local providers
   - Streaming responses with real-time TTS integration
+  - Real-time token streaming with generation speed metrics (tokens/sec)
   - Sentence-boundary buffering for natural speech output
+  - **Extended Thinking/Reasoning** - Enable deep reasoning mode for complex queries
+    - Claude: Thinking budget control (collapsible thinking blocks)
+    - OpenAI: Reasoning effort (low/medium/high) for o1/o3/o4 models
+    - Local: Qwen3 thinking mode with native template support
 
 - **High-Quality Text-to-Speech**
   - Piper TTS with ONNX Runtime (en_GB-alba-medium model included)
@@ -45,10 +51,12 @@ DAWN integrates modern speech recognition, large language models, and text-to-sp
   - **Settings panel** for live configuration editing
   - **Application restart** from browser when settings require it
   - **User authentication** with cookie-based sessions
+  - **"Remember Me" login** - 30-day persistent sessions across browser restarts
   - **Multi-user support** with separate conversation contexts
   - **User Management** (admin-only) - create/delete users, reset passwords
   - **My Settings** - per-user persona, location, timezone, units, TTS speed
   - **Conversation history** - browse, search, continue, and delete past conversations
+  - **Per-conversation LLM settings** - Reasoning mode and Tools mode lock after first message, inherited by continuations
   - **7 color themes** - cyan, purple, green, orange, red, blue, and terminal
   - **Accessibility** - keyboard navigation, screen reader support (ARIA), reduced motion preferences, WCAG-compliant touch targets
   - Mobile-friendly responsive design
@@ -749,10 +757,10 @@ make -j8
 
 ### Code Formatting
 
-**All code must be formatted with clang-format before committing!**
+**All code must be formatted before committing!**
 
 ```bash
-# Format all code
+# Format all C/C++ and web files
 ./format_code.sh
 
 # Check formatting (CI mode)
@@ -760,7 +768,14 @@ make -j8
 
 # Install pre-commit hook (auto-format on commit)
 ./install-git-hooks.sh
+
+# For web file formatting (optional, requires npm)
+npm install  # One-time setup for Prettier
 ```
+
+**Formatters used:**
+- **C/C++**: clang-format (3-space indent, 100-char lines, K&R style)
+- **JS/CSS/HTML**: Prettier (matching 3-space indent, 100-char lines)
 
 See `CODING_STYLE_GUIDE.md` for detailed coding standards.
 
@@ -1022,4 +1037,4 @@ See individual dependencies for their respective licenses.
 
 ---
 
-**Note**: This README reflects the reorganized codebase structure (as of January 2026, including modular CSS/JS). For historical reference, see git history before commit hash in `ARCHITECTURE.md`.
+**Note**: This README reflects the reorganized codebase structure (as of January 2026, including modular CSS/JS and Prettier formatting). For historical reference, see git history before commit hash in `ARCHITECTURE.md`.

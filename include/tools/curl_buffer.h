@@ -40,8 +40,8 @@
 
 // Predefined max capacities for different use cases
 #define CURL_BUFFER_MAX_WEB_SEARCH \
-   (512 * 1024)  // 512KB for web search (science category can exceed 256KB)
-#define CURL_BUFFER_MAX_LLM (128 * 1024)        // 128KB for LLM responses
+   (1024 * 1024)                          // 1MB for web search (IT/science categories can be large)
+#define CURL_BUFFER_MAX_LLM (128 * 1024)  // 128KB for LLM responses
 #define CURL_BUFFER_MAX_STREAMING (256 * 1024)  // 256KB for streaming responses
 
 /**
@@ -106,10 +106,12 @@ static inline size_t curl_buffer_write_callback(void *contents,
       if (new_capacity < required && required <= max_cap) {
          new_capacity = required;  // Exact fit instead of max
       }
-      // Reject if exceeds max capacity
+      // Handle exceeding max capacity gracefully - truncate instead of failing
       if (required > max_cap) {
          buf->truncated = 1;  // Mark as truncated for caller to check
-         return 0;            // Signal error to CURL - exceeds max capacity
+         // Return total_size to let curl continue (we just won't store more data)
+         // This allows partial results instead of complete failure
+         return total_size;
       }
 
       char *new_data = (char *)realloc(buf->data, new_capacity);

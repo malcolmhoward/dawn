@@ -156,10 +156,10 @@ void config_apply_env(dawn_config_t *config, secrets_config_t *secrets) {
 
    /* [llm.cloud] */
    ENV_STRING("DAWN_LLM_CLOUD_PROVIDER", config->llm.cloud.provider);
-   ENV_STRING("DAWN_LLM_CLOUD_OPENAI_MODEL", config->llm.cloud.openai_model);
-   ENV_STRING("DAWN_LLM_CLOUD_CLAUDE_MODEL", config->llm.cloud.claude_model);
    ENV_STRING("DAWN_LLM_CLOUD_ENDPOINT", config->llm.cloud.endpoint);
    ENV_BOOL("DAWN_LLM_CLOUD_VISION_ENABLED", config->llm.cloud.vision_enabled);
+   ENV_INT("DAWN_LLM_CLOUD_OPENAI_DEFAULT_MODEL_IDX", config->llm.cloud.openai_default_model_idx);
+   ENV_INT("DAWN_LLM_CLOUD_CLAUDE_DEFAULT_MODEL_IDX", config->llm.cloud.claude_default_model_idx);
 
    /* [llm.local] */
    ENV_STRING("DAWN_LLM_LOCAL_ENDPOINT", config->llm.local.endpoint);
@@ -286,9 +286,9 @@ void config_dump(const dawn_config_t *config) {
 
    printf("\n[llm.cloud]\n");
    printf("  provider = \"%s\"\n", config->llm.cloud.provider);
-   printf("  openai_model = \"%s\"\n", config->llm.cloud.openai_model);
-   printf("  claude_model = \"%s\"\n", config->llm.cloud.claude_model);
    printf("  endpoint = \"%s\"\n", config->llm.cloud.endpoint);
+   printf("  openai_default_model_idx = %d\n", config->llm.cloud.openai_default_model_idx);
+   printf("  claude_default_model_idx = %d\n", config->llm.cloud.claude_default_model_idx);
 
    printf("\n[llm.local]\n");
    printf("  endpoint = \"%s\"\n", config->llm.local.endpoint);
@@ -618,17 +618,19 @@ void config_dump_settings(const dawn_config_t *config,
    PRINT_SETTING_STR("provider", config->llm.cloud.provider, "DAWN_LLM_CLOUD_PROVIDER",
                      detect_source_str(config->llm.cloud.provider, defaults.llm.cloud.provider,
                                        "DAWN_LLM_CLOUD_PROVIDER"));
-   PRINT_SETTING_STR("openai_model", config->llm.cloud.openai_model, "DAWN_LLM_CLOUD_OPENAI_MODEL",
-                     detect_source_str(config->llm.cloud.openai_model,
-                                       defaults.llm.cloud.openai_model,
-                                       "DAWN_LLM_CLOUD_OPENAI_MODEL"));
-   PRINT_SETTING_STR("claude_model", config->llm.cloud.claude_model, "DAWN_LLM_CLOUD_CLAUDE_MODEL",
-                     detect_source_str(config->llm.cloud.claude_model,
-                                       defaults.llm.cloud.claude_model,
-                                       "DAWN_LLM_CLOUD_CLAUDE_MODEL"));
    PRINT_SETTING_STR("endpoint", config->llm.cloud.endpoint, "DAWN_LLM_CLOUD_ENDPOINT",
                      detect_source_str(config->llm.cloud.endpoint, defaults.llm.cloud.endpoint,
                                        "DAWN_LLM_CLOUD_ENDPOINT"));
+   PRINT_SETTING_INT("openai_default_model_idx", config->llm.cloud.openai_default_model_idx,
+                     "DAWN_LLM_CLOUD_OPENAI_DEFAULT_MODEL_IDX",
+                     detect_source_int(config->llm.cloud.openai_default_model_idx,
+                                       defaults.llm.cloud.openai_default_model_idx,
+                                       "DAWN_LLM_CLOUD_OPENAI_DEFAULT_MODEL_IDX"));
+   PRINT_SETTING_INT("claude_default_model_idx", config->llm.cloud.claude_default_model_idx,
+                     "DAWN_LLM_CLOUD_CLAUDE_DEFAULT_MODEL_IDX",
+                     detect_source_int(config->llm.cloud.claude_default_model_idx,
+                                       defaults.llm.cloud.claude_default_model_idx,
+                                       "DAWN_LLM_CLOUD_CLAUDE_DEFAULT_MODEL_IDX"));
    PRINT_SETTING_BOOL("vision_enabled", config->llm.cloud.vision_enabled,
                       "DAWN_LLM_CLOUD_VISION_ENABLED",
                       detect_source_bool(config->llm.cloud.vision_enabled,
@@ -857,10 +859,10 @@ void config_dump_toml(const dawn_config_t *config) {
 
    printf("\n[llm.cloud]\n");
    printf("provider = \"%s\"\n", config->llm.cloud.provider);
-   printf("openai_model = \"%s\"\n", config->llm.cloud.openai_model);
-   printf("claude_model = \"%s\"\n", config->llm.cloud.claude_model);
    if (config->llm.cloud.endpoint[0])
       printf("endpoint = \"%s\"\n", config->llm.cloud.endpoint);
+   printf("openai_default_model_idx = %d\n", config->llm.cloud.openai_default_model_idx);
+   printf("claude_default_model_idx = %d\n", config->llm.cloud.claude_default_model_idx);
 
    printf("\n[llm.local]\n");
    printf("endpoint = \"%s\"\n", config->llm.local.endpoint);
@@ -1011,10 +1013,6 @@ json_object *config_to_json(const dawn_config_t *config) {
    /* [llm.cloud] */
    json_object *cloud = json_object_new_object();
    json_object_object_add(cloud, "provider", json_object_new_string(config->llm.cloud.provider));
-   json_object_object_add(cloud, "openai_model",
-                          json_object_new_string(config->llm.cloud.openai_model));
-   json_object_object_add(cloud, "claude_model",
-                          json_object_new_string(config->llm.cloud.claude_model));
    json_object_object_add(cloud, "endpoint", json_object_new_string(config->llm.cloud.endpoint));
    json_object_object_add(cloud, "vision_enabled",
                           json_object_new_boolean(config->llm.cloud.vision_enabled));
@@ -1026,6 +1024,8 @@ json_object *config_to_json(const dawn_config_t *config) {
                             json_object_new_string(config->llm.cloud.openai_models[i]));
    }
    json_object_object_add(cloud, "openai_models", openai_models);
+   json_object_object_add(cloud, "openai_default_model_idx",
+                          json_object_new_int(config->llm.cloud.openai_default_model_idx));
 
    json_object *claude_models = json_object_new_array();
    for (int i = 0; i < config->llm.cloud.claude_models_count; i++) {
@@ -1033,6 +1033,8 @@ json_object *config_to_json(const dawn_config_t *config) {
                             json_object_new_string(config->llm.cloud.claude_models[i]));
    }
    json_object_object_add(cloud, "claude_models", claude_models);
+   json_object_object_add(cloud, "claude_default_model_idx",
+                          json_object_new_int(config->llm.cloud.claude_default_model_idx));
 
    json_object_object_add(llm, "cloud", cloud);
 
@@ -1356,8 +1358,6 @@ int config_write_toml(const dawn_config_t *config, const char *path) {
 
    fprintf(fp, "\n[llm.cloud]\n");
    fprintf(fp, "provider = \"%s\"\n", config->llm.cloud.provider);
-   fprintf(fp, "openai_model = \"%s\"\n", config->llm.cloud.openai_model);
-   fprintf(fp, "claude_model = \"%s\"\n", config->llm.cloud.claude_model);
    if (config->llm.cloud.endpoint[0])
       fprintf(fp, "endpoint = \"%s\"\n", config->llm.cloud.endpoint);
    fprintf(fp, "vision_enabled = %s\n", config->llm.cloud.vision_enabled ? "true" : "false");
@@ -1373,6 +1373,7 @@ int config_write_toml(const dawn_config_t *config, const char *path) {
       }
       fprintf(fp, "]\n");
    }
+   fprintf(fp, "openai_default_model_idx = %d\n", config->llm.cloud.openai_default_model_idx);
 
    /* Write claude_models array */
    if (config->llm.cloud.claude_models_count > 0) {
@@ -1385,6 +1386,7 @@ int config_write_toml(const dawn_config_t *config, const char *path) {
       }
       fprintf(fp, "]\n");
    }
+   fprintf(fp, "claude_default_model_idx = %d\n", config->llm.cloud.claude_default_model_idx);
 
    fprintf(fp, "\n[llm.local]\n");
    fprintf(fp, "endpoint = \"%s\"\n", config->llm.local.endpoint);

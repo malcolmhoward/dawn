@@ -77,6 +77,11 @@ static int s_token_estimate_remote = -1;
  * LLM calls without tools being added to the request. */
 static __thread int tl_suppress_count = 0;
 
+/* Thread-local pointer to current resolved config.
+ * Set by llm_tools_set_current_config() before LLM calls so that
+ * llm_tools_enabled() can check session-specific tool_mode. */
+static __thread const llm_resolved_config_t *tl_current_config = NULL;
+
 /* =============================================================================
  * Tool Execution Notification Callback
  * ============================================================================= */
@@ -1591,6 +1596,21 @@ bool llm_tools_suppressed(void) {
    return tl_suppress_count > 0;
 }
 
+void llm_tools_set_current_config(const llm_resolved_config_t *config) {
+   tl_current_config = config;
+}
+
+const char *llm_get_current_thinking_mode(void) {
+   /* Priority: thread-local config > global config > default */
+   if (tl_current_config && tl_current_config->thinking_mode[0] != '\0') {
+      return tl_current_config->thinking_mode;
+   }
+   if (g_config.llm.thinking.mode[0] != '\0') {
+      return g_config.llm.thinking.mode;
+   }
+   return "auto";
+}
+
 /* =============================================================================
  * Capability Checking
  * ============================================================================= */
@@ -1601,8 +1621,13 @@ bool llm_tools_enabled(const llm_resolved_config_t *config) {
       return false;
    }
 
-   /* Check config option - only "native" mode enables native tool calling */
-   if (strcmp(g_config.llm.tools.mode, "native") != 0) {
+   /* Check config option - only "native" mode enables native tool calling.
+    * Priority: explicit config > thread-local config > global config */
+   const llm_resolved_config_t *effective_config = config ? config : tl_current_config;
+   const char *tool_mode = (effective_config && effective_config->tool_mode[0] != '\0')
+                               ? effective_config->tool_mode
+                               : g_config.llm.tools.mode;
+   if (strcmp(tool_mode, "native") != 0) {
       return false;
    }
 

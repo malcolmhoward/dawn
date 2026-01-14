@@ -344,15 +344,16 @@ local_provider_t llm_local_detect_provider(const char *endpoint) {
    /* Probe endpoints to detect provider */
    local_provider_t detected = LOCAL_PROVIDER_GENERIC;
 
-   /* Try Ollama /api/tags first */
-   if (probe_endpoint(base_url, "/api/tags", LLM_LOCAL_PROBE_TIMEOUT_MS)) {
-      detected = LOCAL_PROVIDER_OLLAMA;
-      LOG_INFO("llm_local_provider: Detected Ollama at %s", base_url);
-   }
-   /* Try llama.cpp /props */
-   else if (probe_endpoint(base_url, "/props", LLM_LOCAL_PROBE_TIMEOUT_MS)) {
+   /* Try llama.cpp /props first - this endpoint is unique to llama.cpp.
+    * Must check before /api/tags because llama.cpp may have Ollama compatibility. */
+   if (probe_endpoint(base_url, "/props", LLM_LOCAL_PROBE_TIMEOUT_MS)) {
       detected = LOCAL_PROVIDER_LLAMA_CPP;
       LOG_INFO("llm_local_provider: Detected llama.cpp at %s", base_url);
+   }
+   /* Try Ollama /api/tags */
+   else if (probe_endpoint(base_url, "/api/tags", LLM_LOCAL_PROBE_TIMEOUT_MS)) {
+      detected = LOCAL_PROVIDER_OLLAMA;
+      LOG_INFO("llm_local_provider: Detected Ollama at %s", base_url);
    }
    /* Fallback to generic */
    else {

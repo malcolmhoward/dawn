@@ -1664,6 +1664,11 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
          session_get_llm_config(conn->session, &config);
          bool has_changes = false;
 
+         /* Track old tool_mode for prompt rebuild */
+         char old_tool_mode[LLM_TOOL_MODE_MAX];
+         strncpy(old_tool_mode, config.tool_mode, sizeof(old_tool_mode) - 1);
+         old_tool_mode[sizeof(old_tool_mode) - 1] = '\0';
+
          /* Parse type (local/cloud) */
          if (json_object_object_get_ex(payload, "type", &type_obj)) {
             const char *new_type = json_object_get_string(type_obj);
@@ -1718,6 +1723,49 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
             }
          }
 
+         /* Parse tool_mode (native/command_tags/disabled) */
+         struct json_object *tool_mode_obj;
+         if (json_object_object_get_ex(payload, "tool_mode", &tool_mode_obj)) {
+            const char *new_tool_mode = json_object_get_string(tool_mode_obj);
+            if (new_tool_mode) {
+               /* Validate tool mode value */
+               if (strcmp(new_tool_mode, "native") == 0 ||
+                   strcmp(new_tool_mode, "command_tags") == 0 ||
+                   strcmp(new_tool_mode, "disabled") == 0) {
+                  has_changes = true;
+                  strncpy(config.tool_mode, new_tool_mode, sizeof(config.tool_mode) - 1);
+                  config.tool_mode[sizeof(config.tool_mode) - 1] = '\0';
+                  LOG_INFO("WebUI: Session tool_mode set to '%s'", config.tool_mode);
+               } else {
+                  LOG_WARNING("WebUI: Rejected invalid tool_mode '%s' from client", new_tool_mode);
+               }
+            }
+         }
+
+         /* Parse thinking_mode (disabled/auto/enabled or low/medium/high for reasoning models) */
+         struct json_object *thinking_mode_obj;
+         if (json_object_object_get_ex(payload, "thinking_mode", &thinking_mode_obj)) {
+            const char *new_thinking_mode = json_object_get_string(thinking_mode_obj);
+            if (new_thinking_mode) {
+               /* Validate thinking mode value */
+               if (strcmp(new_thinking_mode, "disabled") == 0 ||
+                   strcmp(new_thinking_mode, "auto") == 0 ||
+                   strcmp(new_thinking_mode, "enabled") == 0 ||
+                   strcmp(new_thinking_mode, "low") == 0 ||
+                   strcmp(new_thinking_mode, "medium") == 0 ||
+                   strcmp(new_thinking_mode, "high") == 0) {
+                  has_changes = true;
+                  strncpy(config.thinking_mode, new_thinking_mode,
+                          sizeof(config.thinking_mode) - 1);
+                  config.thinking_mode[sizeof(config.thinking_mode) - 1] = '\0';
+                  LOG_INFO("WebUI: Session thinking_mode set to '%s'", config.thinking_mode);
+               } else {
+                  LOG_WARNING("WebUI: Rejected invalid thinking_mode '%s' from client",
+                              new_thinking_mode);
+               }
+            }
+         }
+
          /* Apply config if changes were made */
          if (has_changes) {
             int rc = session_set_llm_config(conn->session, &config);
@@ -1727,6 +1775,17 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
             } else {
                LOG_INFO("WebUI: Session %u LLM config updated (type=%d, provider=%d)",
                         conn->session->session_id, config.type, config.cloud_provider);
+
+               /* If tool_mode changed, rebuild and update the session's system prompt */
+               if (strcmp(old_tool_mode, config.tool_mode) != 0) {
+                  char *new_prompt = build_remote_prompt_for_mode(config.tool_mode);
+                  if (new_prompt) {
+                     session_update_system_prompt(conn->session, new_prompt);
+                     LOG_INFO("WebUI: Updated session prompt for tool_mode change to '%s'",
+                              config.tool_mode);
+                     free(new_prompt);
+                  }
+               }
             }
          }
       }
@@ -1759,9 +1818,9 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
             if (current.type == LLM_LOCAL) {
                model_name = cfg->llm.local.model[0] ? cfg->llm.local.model : "";
             } else if (current.cloud_provider == CLOUD_PROVIDER_OPENAI) {
-               model_name = cfg->llm.cloud.openai_model;
+               model_name = llm_get_default_openai_model();
             } else if (current.cloud_provider == CLOUD_PROVIDER_CLAUDE) {
-               model_name = cfg->llm.cloud.claude_model;
+               model_name = llm_get_default_claude_model();
             }
          }
          json_object_object_add(resp_payload, "model",
@@ -2167,6 +2226,10 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
    } else if (strcmp(type, "update_context") == 0) {
       if (payload) {
          handle_update_context(conn, payload);
+      }
+   } else if (strcmp(type, "lock_conversation_llm") == 0) {
+      if (payload) {
+         handle_lock_conversation_llm(conn, payload);
       }
    } else if (strcmp(type, "continue_conversation") == 0) {
       if (payload) {

@@ -637,6 +637,12 @@ do_request:
       return response;
    }
 
+   // Warn if response was truncated (but continue with partial data)
+   if (buffer.truncated) {
+      LOG_WARNING("web_search: Response truncated at %zu bytes (exceeded max capacity)",
+                  buffer.size);
+   }
+
    // Parse JSON response
    struct json_object *root = json_tokener_parse(buffer.data);
    curl_buffer_free(&buffer);

@@ -64,14 +64,11 @@ static void record_ttft_if_first_token(llm_stream_context_t *ctx) {
  * @brief Append text to accumulated response buffer
  */
 static int append_to_accumulated(llm_stream_context_t *ctx, const char *text) {
-   if (!text) {
+   if (!text || !*text) {
       return 1;
    }
 
    size_t text_len = strlen(text);
-   if (text_len == 0) {
-      return 1;
-   }
    size_t needed = ctx->accumulated_size + text_len + 1;
 
    // Prevent runaway memory allocation from excessively long LLM responses
@@ -115,14 +112,11 @@ static int append_to_accumulated(llm_stream_context_t *ctx, const char *text) {
  * @brief Append text to accumulated thinking buffer
  */
 static int append_to_thinking(llm_stream_context_t *ctx, const char *text) {
-   if (!text) {
+   if (!text || !*text) {
       return 1;
    }
 
    size_t text_len = strlen(text);
-   if (text_len == 0) {
-      return 1;
-   }
 
    // Lazy initialization of thinking buffer
    if (!ctx->accumulated_thinking) {
@@ -315,13 +309,14 @@ static void parse_openai_chunk(llm_stream_context_t *ctx, const char *event_data
                   if (json_object_object_get_ex(function_obj, "arguments", &args_obj)) {
                      const char *args_chunk = json_object_get_string(args_obj);
                      if (args_chunk) {
-                        size_t cur_len = strlen(ctx->openai.tool_args_buffer[tc_index]);
+                        size_t cur_len = strlen(ctx->provider.openai.tool_args_buffer[tc_index]);
                         size_t add_len = strlen(args_chunk);
                         if (cur_len + add_len < LLM_TOOLS_ARGS_LEN - 1) {
                            // Use memcpy instead of strcat to avoid O(n^2) scanning
-                           memcpy(ctx->openai.tool_args_buffer[tc_index] + cur_len, args_chunk,
-                                  add_len);
-                           ctx->openai.tool_args_buffer[tc_index][cur_len + add_len] = '\0';
+                           memcpy(ctx->provider.openai.tool_args_buffer[tc_index] + cur_len,
+                                  args_chunk, add_len);
+                           ctx->provider.openai.tool_args_buffer[tc_index][cur_len + add_len] =
+                               '\0';
                         }
                      }
                   }
@@ -344,8 +339,8 @@ static void parse_openai_chunk(llm_stream_context_t *ctx, const char *event_data
             // Finalize tool call arguments
             if (ctx->has_tool_calls) {
                for (int i = 0; i < ctx->tool_calls.count; i++) {
-                  strncpy(ctx->tool_calls.calls[i].arguments, ctx->openai.tool_args_buffer[i],
-                          LLM_TOOLS_ARGS_LEN - 1);
+                  strncpy(ctx->tool_calls.calls[i].arguments,
+                          ctx->provider.openai.tool_args_buffer[i], LLM_TOOLS_ARGS_LEN - 1);
                }
                LOG_INFO("Stream completed with %d tool call(s)", ctx->tool_calls.count);
             }
@@ -470,19 +465,19 @@ static void parse_claude_event(llm_stream_context_t *ctx, const char *event_data
    int has_ws_session = (ws_session && ws_session->type == SESSION_TYPE_WEBSOCKET);
 
    if (strcmp(type, "message_start") == 0) {
-      ctx->claude.message_started = 1;
+      ctx->provider.claude.message_started = 1;
 
       // Extract input_tokens from message.usage
       json_object *message_obj, *usage_obj, *input_tokens_obj;
       if (json_object_object_get_ex(event, "message", &message_obj)) {
          if (json_object_object_get_ex(message_obj, "usage", &usage_obj)) {
             if (json_object_object_get_ex(usage_obj, "input_tokens", &input_tokens_obj)) {
-               ctx->claude.input_tokens = json_object_get_int(input_tokens_obj);
+               ctx->provider.claude.input_tokens = json_object_get_int(input_tokens_obj);
             }
          }
       }
    } else if (strcmp(type, "content_block_start") == 0) {
-      ctx->claude.content_block_active = 1;
+      ctx->provider.claude.content_block_active = 1;
 
       // Check if this is a tool_use block
       json_object *content_block, *block_type_obj;
@@ -492,7 +487,7 @@ static void parse_claude_event(llm_stream_context_t *ctx, const char *event_data
 
             if (strcmp(block_type, "thinking") == 0) {
                // Extended thinking block
-               ctx->claude.thinking_block_active = 1;
+               ctx->provider.claude.thinking_block_active = 1;
                ctx->thinking_active = 1;
                ctx->has_thinking = 1;
                LOG_INFO("Claude: Starting thinking block (extended thinking)");
@@ -504,28 +499,28 @@ static void parse_claude_event(llm_stream_context_t *ctx, const char *event_data
             } else if (strcmp(block_type, "tool_use") == 0) {
                // Extract tool ID and name
                json_object *id_obj, *name_obj, *index_obj;
-               ctx->claude.tool_block_active = 1;
-               ctx->claude.tool_args[0] = '\0';
-               ctx->claude.tool_args_len = 0;
+               ctx->provider.claude.tool_block_active = 1;
+               ctx->provider.claude.tool_args[0] = '\0';
+               ctx->provider.claude.tool_args_len = 0;
 
                if (json_object_object_get_ex(event, "index", &index_obj)) {
-                  ctx->claude.tool_index = json_object_get_int(index_obj);
+                  ctx->provider.claude.tool_index = json_object_get_int(index_obj);
                }
 
                if (json_object_object_get_ex(content_block, "id", &id_obj)) {
-                  strncpy(ctx->claude.tool_id, json_object_get_string(id_obj),
+                  strncpy(ctx->provider.claude.tool_id, json_object_get_string(id_obj),
                           LLM_TOOLS_ID_LEN - 1);
-                  ctx->claude.tool_id[LLM_TOOLS_ID_LEN - 1] = '\0';
+                  ctx->provider.claude.tool_id[LLM_TOOLS_ID_LEN - 1] = '\0';
                }
 
                if (json_object_object_get_ex(content_block, "name", &name_obj)) {
-                  strncpy(ctx->claude.tool_name, json_object_get_string(name_obj),
+                  strncpy(ctx->provider.claude.tool_name, json_object_get_string(name_obj),
                           LLM_TOOLS_NAME_LEN - 1);
-                  ctx->claude.tool_name[LLM_TOOLS_NAME_LEN - 1] = '\0';
+                  ctx->provider.claude.tool_name[LLM_TOOLS_NAME_LEN - 1] = '\0';
                }
 
-               LOG_INFO("Claude: Starting tool_use block: %s (id=%s)", ctx->claude.tool_name,
-                        ctx->claude.tool_id);
+               LOG_INFO("Claude: Starting tool_use block: %s (id=%s)",
+                        ctx->provider.claude.tool_name, ctx->provider.claude.tool_id);
             }
          }
       }
@@ -538,7 +533,8 @@ static void parse_claude_event(llm_stream_context_t *ctx, const char *event_data
          if (json_object_object_get_ex(delta, "type", &delta_type_obj)) {
             const char *delta_type = json_object_get_string(delta_type_obj);
 
-            if (strcmp(delta_type, "thinking_delta") == 0 && ctx->claude.thinking_block_active) {
+            if (strcmp(delta_type, "thinking_delta") == 0 &&
+                ctx->provider.claude.thinking_block_active) {
                // Extended thinking content
                json_object *thinking_obj;
                if (json_object_object_get_ex(delta, "thinking", &thinking_obj)) {
@@ -580,31 +576,55 @@ static void parse_claude_event(llm_stream_context_t *ctx, const char *event_data
                   }
                }
             } else if (strcmp(delta_type, "input_json_delta") == 0 &&
-                       ctx->claude.tool_block_active) {
+                       ctx->provider.claude.tool_block_active) {
                // Accumulate partial_json for tool arguments
                json_object *partial_json_obj;
                if (json_object_object_get_ex(delta, "partial_json", &partial_json_obj)) {
                   const char *partial = json_object_get_string(partial_json_obj);
                   if (partial) {
                      size_t partial_len = strlen(partial);
-                     if (ctx->claude.tool_args_len + partial_len < LLM_TOOLS_ARGS_LEN - 1) {
-                        memcpy(ctx->claude.tool_args + ctx->claude.tool_args_len, partial,
-                               partial_len);
-                        ctx->claude.tool_args_len += partial_len;
-                        ctx->claude.tool_args[ctx->claude.tool_args_len] = '\0';
+                     if (ctx->provider.claude.tool_args_len + partial_len <
+                         LLM_TOOLS_ARGS_LEN - 1) {
+                        memcpy(ctx->provider.claude.tool_args + ctx->provider.claude.tool_args_len,
+                               partial, partial_len);
+                        ctx->provider.claude.tool_args_len += partial_len;
+                        ctx->provider.claude.tool_args[ctx->provider.claude.tool_args_len] = '\0';
+                     }
+                  }
+               }
+            } else if (strcmp(delta_type, "signature_delta") == 0 &&
+                       ctx->provider.claude.thinking_block_active) {
+               // Accumulate signature for thinking block (required when sending back to Claude)
+               json_object *signature_obj;
+               if (json_object_object_get_ex(delta, "signature", &signature_obj)) {
+                  const char *sig_chunk = json_object_get_string(signature_obj);
+                  if (sig_chunk) {
+                     size_t sig_len = strlen(sig_chunk);
+                     if (ctx->provider.claude.thinking_signature_len + sig_len <
+                         sizeof(ctx->provider.claude.thinking_signature) - 1) {
+                        memcpy(ctx->provider.claude.thinking_signature +
+                                   ctx->provider.claude.thinking_signature_len,
+                               sig_chunk, sig_len);
+                        ctx->provider.claude.thinking_signature_len += sig_len;
+                        ctx->provider.claude
+                            .thinking_signature[ctx->provider.claude.thinking_signature_len] = '\0';
+                     } else {
+                        LOG_WARNING(
+                            "Claude: Thinking signature truncated (buffer full at %zu bytes)",
+                            ctx->provider.claude.thinking_signature_len);
                      }
                   }
                }
             }
-            // Note: signature_delta is ignored (thinking verification)
          }
       }
    } else if (strcmp(type, "content_block_stop") == 0) {
       // If we were in a thinking block, finalize it
-      if (ctx->claude.thinking_block_active) {
-         ctx->claude.thinking_block_active = 0;
+      if (ctx->provider.claude.thinking_block_active) {
+         ctx->provider.claude.thinking_block_active = 0;
          ctx->thinking_active = 0;
-         LOG_INFO("Claude: Thinking block completed (%zu bytes)", ctx->thinking_size);
+         LOG_INFO("Claude: Thinking block completed (%zu bytes, signature %zu bytes)",
+                  ctx->thinking_size, ctx->provider.claude.thinking_signature_len);
 
          // Send thinking_end to WebUI
          if (has_ws_session) {
@@ -613,29 +633,32 @@ static void parse_claude_event(llm_stream_context_t *ctx, const char *event_data
       }
 
       // If we were in a tool_use block, finalize it
-      if (ctx->claude.tool_block_active) {
+      if (ctx->provider.claude.tool_block_active) {
          // Add to tool_calls list
          if (ctx->tool_calls.count < LLM_TOOLS_MAX_PARALLEL_CALLS) {
             int idx = ctx->tool_calls.count;
-            strncpy(ctx->tool_calls.calls[idx].id, ctx->claude.tool_id, LLM_TOOLS_ID_LEN - 1);
-            strncpy(ctx->tool_calls.calls[idx].name, ctx->claude.tool_name, LLM_TOOLS_NAME_LEN - 1);
-            strncpy(ctx->tool_calls.calls[idx].arguments, ctx->claude.tool_args,
+            strncpy(ctx->tool_calls.calls[idx].id, ctx->provider.claude.tool_id,
+                    LLM_TOOLS_ID_LEN - 1);
+            strncpy(ctx->tool_calls.calls[idx].name, ctx->provider.claude.tool_name,
+                    LLM_TOOLS_NAME_LEN - 1);
+            strncpy(ctx->tool_calls.calls[idx].arguments, ctx->provider.claude.tool_args,
                     LLM_TOOLS_ARGS_LEN - 1);
             ctx->tool_calls.count++;
             ctx->has_tool_calls = 1;
 
-            LOG_INFO("Claude: Completed tool_use: %s with args: %.100s%s", ctx->claude.tool_name,
-                     ctx->claude.tool_args, strlen(ctx->claude.tool_args) > 100 ? "..." : "");
+            LOG_INFO("Claude: Completed tool_use: %s with args: %.100s%s",
+                     ctx->provider.claude.tool_name, ctx->provider.claude.tool_args,
+                     strlen(ctx->provider.claude.tool_args) > 100 ? "..." : "");
          }
 
-         ctx->claude.tool_block_active = 0;
-         ctx->claude.tool_id[0] = '\0';
-         ctx->claude.tool_name[0] = '\0';
-         ctx->claude.tool_args[0] = '\0';
-         ctx->claude.tool_args_len = 0;
+         ctx->provider.claude.tool_block_active = 0;
+         ctx->provider.claude.tool_id[0] = '\0';
+         ctx->provider.claude.tool_name[0] = '\0';
+         ctx->provider.claude.tool_args[0] = '\0';
+         ctx->provider.claude.tool_args_len = 0;
       }
 
-      ctx->claude.content_block_active = 0;
+      ctx->provider.claude.content_block_active = 0;
    } else if (strcmp(type, "message_delta") == 0) {
       // Extract stop_reason
       json_object *delta_obj, *stop_reason_obj;
@@ -656,14 +679,15 @@ static void parse_claude_event(llm_stream_context_t *ctx, const char *event_data
          if (json_object_object_get_ex(usage_obj, "output_tokens", &output_tokens_obj)) {
             int output_tokens = json_object_get_int(output_tokens_obj);
             // Record token metrics (input was captured in message_start)
-            metrics_record_llm_tokens(LLM_CLOUD, CLOUD_PROVIDER_CLAUDE, ctx->claude.input_tokens,
-                                      output_tokens, 0);
+            metrics_record_llm_tokens(LLM_CLOUD, CLOUD_PROVIDER_CLAUDE,
+                                      ctx->provider.claude.input_tokens, output_tokens, 0);
 
             // Update context usage tracking with actual session ID
             uint32_t session_id = ws_session ? ws_session->session_id : 0;
-            llm_context_update_usage(session_id, ctx->claude.input_tokens, output_tokens, 0);
+            llm_context_update_usage(session_id, ctx->provider.claude.input_tokens, output_tokens,
+                                     0);
 
-            LOG_INFO("Claude usage: %d input, %d output tokens", ctx->claude.input_tokens,
+            LOG_INFO("Claude usage: %d input, %d output tokens", ctx->provider.claude.input_tokens,
                      output_tokens);
          }
       }
@@ -810,4 +834,36 @@ char *llm_stream_get_thinking(llm_stream_context_t *ctx) {
    }
 
    return strdup(ctx->accumulated_thinking);
+}
+
+char *llm_stream_get_thinking_signature(llm_stream_context_t *ctx) {
+   if (!ctx || ctx->provider.claude.thinking_signature_len == 0) {
+      return NULL;
+   }
+
+   return strdup(ctx->provider.claude.thinking_signature);
+}
+
+const char *llm_stream_get_response_ref(llm_stream_context_t *ctx) {
+   if (!ctx || !ctx->accumulated_response) {
+      return NULL;
+   }
+
+   return ctx->accumulated_response;
+}
+
+const char *llm_stream_get_thinking_ref(llm_stream_context_t *ctx) {
+   if (!ctx || !ctx->accumulated_thinking || ctx->thinking_size == 0) {
+      return NULL;
+   }
+
+   return ctx->accumulated_thinking;
+}
+
+const char *llm_stream_get_thinking_signature_ref(llm_stream_context_t *ctx) {
+   if (!ctx || ctx->provider.claude.thinking_signature_len == 0) {
+      return NULL;
+   }
+
+   return ctx->provider.claude.thinking_signature;
 }

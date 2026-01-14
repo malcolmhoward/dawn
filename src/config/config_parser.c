@@ -323,31 +323,21 @@ static void parse_llm_cloud(toml_table_t *table, llm_cloud_config_t *config) {
    if (!table)
       return;
 
-   static const char *const known_keys[] = {
-      "provider", "openai_model",   "claude_model",  "model", /* legacy */
-      "endpoint", "vision_enabled", "openai_models", "claude_models", NULL
-   };
+   static const char *const known_keys[] = { "provider",
+                                             "endpoint",
+                                             "vision_enabled",
+                                             "openai_models",
+                                             "openai_default_model_idx",
+                                             "claude_models",
+                                             "claude_default_model_idx",
+                                             NULL };
    warn_unknown_keys(table, "llm.cloud", known_keys);
 
    PARSE_STRING(table, "provider", config->provider);
-   PARSE_STRING(table, "openai_model", config->openai_model);
-   PARSE_STRING(table, "claude_model", config->claude_model);
    PARSE_STRING(table, "endpoint", config->endpoint);
    PARSE_BOOL(table, "vision_enabled", config->vision_enabled);
 
-   /* Backward compatibility: if legacy "model" is set but new fields aren't,
-    * copy it to the appropriate field based on provider */
-   toml_datum_t legacy = toml_string_in(table, "model");
-   if (legacy.ok && legacy.u.s[0] != '\0') {
-      if (strcmp(config->provider, "claude") == 0 && config->claude_model[0] == '\0') {
-         snprintf(config->claude_model, sizeof(config->claude_model), "%s", legacy.u.s);
-      } else if (config->openai_model[0] == '\0') {
-         snprintf(config->openai_model, sizeof(config->openai_model), "%s", legacy.u.s);
-      }
-      free(legacy.u.s);
-   }
-
-   /* Parse openai_models array (available models for quick controls) */
+   /* Parse openai_models array */
    toml_array_t *openai_arr = toml_array_in(table, "openai_models");
    if (openai_arr) {
       config->openai_models_count = 0;
@@ -361,7 +351,19 @@ static void parse_llm_cloud(toml_table_t *table, llm_cloud_config_t *config) {
       }
    }
 
-   /* Parse claude_models array (available models for quick controls) */
+   /* Parse openai_default_model_idx with bounds check */
+   toml_datum_t openai_idx = toml_int_in(table, "openai_default_model_idx");
+   if (openai_idx.ok) {
+      config->openai_default_model_idx = (int)openai_idx.u.i;
+      if (config->openai_default_model_idx < 0 ||
+          config->openai_default_model_idx >= config->openai_models_count) {
+         LOG_WARNING("llm.cloud.openai_default_model_idx %d out of range, defaulting to 0",
+                     config->openai_default_model_idx);
+         config->openai_default_model_idx = 0;
+      }
+   }
+
+   /* Parse claude_models array */
    toml_array_t *claude_arr = toml_array_in(table, "claude_models");
    if (claude_arr) {
       config->claude_models_count = 0;
@@ -372,6 +374,18 @@ static void parse_llm_cloud(toml_table_t *table, llm_cloud_config_t *config) {
                          LLM_CLOUD_MODEL_NAME_MAX);
             free(val.u.s);
          }
+      }
+   }
+
+   /* Parse claude_default_model_idx with bounds check */
+   toml_datum_t claude_idx = toml_int_in(table, "claude_default_model_idx");
+   if (claude_idx.ok) {
+      config->claude_default_model_idx = (int)claude_idx.u.i;
+      if (config->claude_default_model_idx < 0 ||
+          config->claude_default_model_idx >= config->claude_models_count) {
+         LOG_WARNING("llm.cloud.claude_default_model_idx %d out of range, defaulting to 0",
+                     config->claude_default_model_idx);
+         config->claude_default_model_idx = 0;
       }
    }
 }
@@ -469,8 +483,11 @@ static void parse_llm_thinking(toml_table_t *table, llm_thinking_config_t *confi
       config->mode[sizeof(config->mode) - 1] = '\0';
    }
 
-   /* Validate reasoning_effort (low, medium, high) */
-   if (config->reasoning_effort[0] != '\0' && strcmp(config->reasoning_effort, "low") != 0 &&
+   /* Validate reasoning_effort (none, minimal, low, medium, high) */
+   /* "none" is GPT-5.2 specific; "minimal" works on GPT-5/5-mini/5-nano */
+   if (config->reasoning_effort[0] != '\0' && strcmp(config->reasoning_effort, "none") != 0 &&
+       strcmp(config->reasoning_effort, "minimal") != 0 &&
+       strcmp(config->reasoning_effort, "low") != 0 &&
        strcmp(config->reasoning_effort, "medium") != 0 &&
        strcmp(config->reasoning_effort, "high") != 0) {
       LOG_WARNING("llm.thinking.reasoning_effort invalid '%s', defaulting to 'medium'",

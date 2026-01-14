@@ -54,6 +54,9 @@ typedef enum {
 /** Maximum length for tool mode strings */
 #define LLM_TOOL_MODE_MAX 16
 
+/** Maximum length for thinking mode strings */
+#define LLM_THINKING_MODE_MAX 16
+
 /**
  * @brief Per-session LLM configuration
  *
@@ -62,11 +65,13 @@ typedef enum {
  * Changes to one session's config do not affect other sessions.
  */
 typedef struct {
-   llm_type_t type;                   /**< LLM type (local or cloud) */
-   cloud_provider_t cloud_provider;   /**< Cloud provider (OpenAI, Claude, etc.) */
-   char endpoint[128];                /**< Endpoint URL (empty = use provider default) */
-   char model[LLM_MODEL_NAME_MAX];    /**< Model name (empty = use provider default) */
-   char tool_mode[LLM_TOOL_MODE_MAX]; /**< Tool mode: native, command_tags, disabled */
+   llm_type_t type;                           /**< LLM type (local or cloud) */
+   cloud_provider_t cloud_provider;           /**< Cloud provider (OpenAI, Claude, etc.) */
+   char endpoint[128];                        /**< Endpoint URL (empty = use provider default) */
+   char model[LLM_MODEL_NAME_MAX];            /**< Model name (empty = use provider default) */
+   char tool_mode[LLM_TOOL_MODE_MAX];         /**< Tool mode: native, command_tags, disabled */
+   char thinking_mode[LLM_THINKING_MODE_MAX]; /**< Thinking: disabled, auto, enabled,
+                                                 low/medium/high */
 } session_llm_config_t;
 
 /**
@@ -79,11 +84,14 @@ typedef struct {
  * buffers immediately using LLM_COPY_MODEL_SAFE() before any function calls.
  */
 typedef struct {
-   llm_type_t type;                 /**< Resolved LLM type */
-   cloud_provider_t cloud_provider; /**< Resolved cloud provider */
-   const char *endpoint;            /**< Endpoint URL (not owned, may be dangling) */
-   const char *api_key;             /**< API key for cloud providers (not owned) */
-   const char *model;               /**< Model name (not owned, may be dangling) */
+   llm_type_t type;                           /**< Resolved LLM type */
+   cloud_provider_t cloud_provider;           /**< Resolved cloud provider */
+   const char *endpoint;                      /**< Endpoint URL (not owned, may be dangling) */
+   const char *api_key;                       /**< API key for cloud providers (not owned) */
+   const char *model;                         /**< Model name (not owned, may be dangling) */
+   char tool_mode[LLM_TOOL_MODE_MAX];         /**< Tool mode: native, command_tags, disabled */
+   char thinking_mode[LLM_THINKING_MODE_MAX]; /**< Thinking: disabled, auto, enabled,
+                                                 low/medium/high */
 } llm_resolved_config_t;
 
 /**
@@ -266,6 +274,26 @@ cloud_provider_t llm_get_cloud_provider(void);
  * @return String name of model (e.g., "gpt-4o", "claude-sonnet-4-5-20250929")
  */
 const char *llm_get_model_name(void);
+
+/**
+ * @brief Get the default OpenAI model name from config
+ *
+ * Returns the model name at openai_default_model_idx in the openai_models array.
+ * Falls back to the first model if index is out of bounds or no models configured.
+ *
+ * @return Model name string (pointer to config memory, do not free)
+ */
+const char *llm_get_default_openai_model(void);
+
+/**
+ * @brief Get the default Claude model name from config
+ *
+ * Returns the model name at claude_default_model_idx in the claude_models array.
+ * Falls back to the first model if index is out of bounds or no models configured.
+ *
+ * @return Model name string (pointer to config memory, do not free)
+ */
+const char *llm_get_default_claude_model(void);
 
 /**
  * @brief Check internet connectivity to LLM endpoint

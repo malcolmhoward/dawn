@@ -29,6 +29,15 @@
 #include "llm/llm_tools.h"
 
 /**
+ * @brief Maximum size for Claude thinking signature buffer
+ *
+ * Claude's extended thinking returns a cryptographic signature that must be
+ * preserved and sent back in conversation history. 4KB should be sufficient
+ * for current signature formats.
+ */
+#define LLM_THINKING_SIGNATURE_MAX 4096
+
+/**
  * @brief Callback function type for text chunks from LLM stream
  *
  * Called for each incremental text chunk received from the LLM.
@@ -95,7 +104,10 @@ typedef struct {
    size_t tool_args_len;               /**< Length of accumulated args */
 
    /* Thinking block tracking (extended thinking) */
-   int thinking_block_active; /**< Currently in a thinking block */
+   int thinking_block_active;                           /**< Currently in a thinking block */
+   char thinking_signature[LLM_THINKING_SIGNATURE_MAX]; /**< Accumulated signature from
+                                                           signature_delta */
+   size_t thinking_signature_len;                       /**< Length of accumulated signature */
 } claude_stream_state_t;
 
 /**
@@ -127,9 +139,13 @@ typedef struct {
    llm_chunk_callback chunk_callback; /**< Callback with chunk type (NULL if not used) */
    void *chunk_callback_userdata;     /**< User context for chunk callback */
 
-   /* Provider-specific state (only one is active based on cloud_provider) */
-   claude_stream_state_t claude; /**< Claude state machine tracking */
-   openai_stream_state_t openai; /**< OpenAI tool args accumulation */
+   /* Provider-specific state (union - only one is active based on cloud_provider)
+    * Using a union makes it explicit that Claude and OpenAI parsing are mutually
+    * exclusive, and reduces memory from ~40KB to ~32KB per stream context. */
+   union {
+      claude_stream_state_t claude; /**< Claude state machine tracking */
+      openai_stream_state_t openai; /**< OpenAI tool args accumulation */
+   } provider;
 
    /* Accumulated complete response for conversation history */
    char *accumulated_response;
@@ -267,5 +283,49 @@ int llm_stream_has_thinking(llm_stream_context_t *ctx);
  * @return Complete thinking string (caller must free), or NULL if no thinking
  */
 char *llm_stream_get_thinking(llm_stream_context_t *ctx);
+
+/**
+ * @brief Get the thinking signature (Claude extended thinking)
+ *
+ * Returns the signature that was provided with the thinking block.
+ * This must be included when sending thinking content back to Claude.
+ *
+ * @param ctx Stream context
+ * @return Signature string (caller must free), or NULL if no signature
+ */
+char *llm_stream_get_thinking_signature(llm_stream_context_t *ctx);
+
+/**
+ * @brief Get response without allocation (reference to internal buffer)
+ *
+ * Returns a pointer to the internal response buffer. Caller must NOT free.
+ * Valid only while stream context exists.
+ *
+ * @param ctx Stream context
+ * @return Response string (do NOT free), or NULL on error
+ */
+const char *llm_stream_get_response_ref(llm_stream_context_t *ctx);
+
+/**
+ * @brief Get thinking content without allocation (reference to internal buffer)
+ *
+ * Returns a pointer to the internal thinking buffer. Caller must NOT free.
+ * Valid only while stream context exists.
+ *
+ * @param ctx Stream context
+ * @return Thinking string (do NOT free), or NULL if no thinking
+ */
+const char *llm_stream_get_thinking_ref(llm_stream_context_t *ctx);
+
+/**
+ * @brief Get thinking signature without allocation (reference to internal buffer)
+ *
+ * Returns a pointer to the internal signature buffer. Caller must NOT free.
+ * Valid only while stream context exists.
+ *
+ * @param ctx Stream context
+ * @return Signature string (do NOT free), or NULL if no signature
+ */
+const char *llm_stream_get_thinking_signature_ref(llm_stream_context_t *ctx);
 
 #endif  // LLM_STREAMING_H

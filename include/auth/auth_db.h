@@ -796,8 +796,10 @@ int auth_db_backup(const char *dest_path);
 
 /**
  * @brief Maximum conversations per user (0 = unlimited)
+ * Default 1000 to prevent potential DoS via conversation spam.
+ * Users can archive old conversations to free up slots.
  */
-#define CONV_MAX_PER_USER 100
+#define CONV_MAX_PER_USER 1000
 
 /**
  * @brief Maximum compaction summary length
@@ -834,6 +836,12 @@ typedef struct {
    int context_max;          /**< Context window size */
    int64_t continued_from;   /**< Parent conversation ID (0 = none) */
    char *compaction_summary; /**< Summary from parent (NULL if not a continuation) */
+   /* Per-conversation LLM settings (v11) - empty string means use defaults */
+   char llm_type[16];       /**< "local" or "cloud" */
+   char cloud_provider[16]; /**< "openai" or "claude" */
+   char model[64];          /**< Model name */
+   char tools_mode[16];     /**< "native", "command_tags", or "disabled" */
+   char thinking_mode[16];  /**< "disabled"/"auto"/"enabled" or "low"/"medium"/"high" */
 } conversation_t;
 
 /**
@@ -984,6 +992,30 @@ int conv_db_rename(int64_t conv_id, int user_id, const char *new_title);
  * @return AUTH_DB_SUCCESS, AUTH_DB_NOT_FOUND, AUTH_DB_FORBIDDEN, or AUTH_DB_FAILURE
  */
 int conv_db_update_context(int64_t conv_id, int user_id, int context_tokens, int context_max);
+
+/**
+ * @brief Lock LLM settings for a conversation
+ *
+ * Updates LLM settings only if message_count is 0 (first message lock).
+ * This prevents race conditions and ensures settings are captured when
+ * the first message is sent.
+ *
+ * @param conv_id Conversation ID
+ * @param user_id User ID (for authorization check)
+ * @param llm_type "local" or "cloud" (or NULL to keep current)
+ * @param cloud_provider "openai" or "claude" (or NULL to keep current)
+ * @param model Model name (or NULL to keep current)
+ * @param tools_mode "native", "command_tags", or "disabled"
+ * @param thinking_mode "disabled", "auto", "enabled", "low", "medium", or "high"
+ * @return AUTH_DB_SUCCESS, AUTH_DB_NOT_FOUND (no row updated), or AUTH_DB_FAILURE
+ */
+int conv_db_lock_llm_settings(int64_t conv_id,
+                              int user_id,
+                              const char *llm_type,
+                              const char *cloud_provider,
+                              const char *model,
+                              const char *tools_mode,
+                              const char *thinking_mode);
 
 /**
  * @brief Delete a conversation and all its messages

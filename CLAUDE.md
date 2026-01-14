@@ -1,0 +1,410 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+D.A.W.N. (part of The OASIS Project) is a voice-controlled AI assistant system written in C/C++ that integrates:
+- Speech recognition (Whisper with GPU acceleration, Vosk optional)
+- Text-to-speech (Piper with ONNX runtime)
+- LLM integration (OpenAI, Claude, Ollama, or llama.cpp local models)
+- MQTT command/control system
+- Network audio processing for remote clients (ESP32 devices)
+- Vision AI capabilities
+- Extended thinking/reasoning mode support
+
+The project is designed for embedded Linux systems (specifically targeting Jetson platforms with CUDA support).
+
+## Important: Working with the Developer
+
+When the developer asks questions, they are typically asking for feedback, analysis, or suggestions FIRST - not requesting immediate implementation. Always provide your thoughts, recommendations, and discuss trade-offs before taking action. Wait for explicit confirmation (e.g., "go ahead", "do it", "yes") before implementing changes.
+
+**CRITICAL: NEVER delete files.** Always tell the developer which files should be deleted and let them do it manually. Files may contain secrets, credentials, or other data that cannot be recovered.
+
+**CRITICAL: NEVER run `git add` or `git commit`.** Always tell the developer which files to add and suggest a commit message. Let them run the git commands manually.
+
+## Building the Project
+
+### Standard Build Process
+
+```bash
+# Configure with CMake preset (creates build directory automatically)
+cmake --preset debug
+
+# Build
+make -C build-debug -j8
+
+# Run from project root (requires LD_LIBRARY_PATH for local libs)
+LD_LIBRARY_PATH=/usr/local/lib ./build-debug/dawn
+```
+
+### Dependencies
+The project requires many external dependencies. See `README.md` for complete installation instructions including:
+- CMake 3.27.1+
+- spdlog
+- espeak-ng
+- ONNX Runtime (with CUDA support)
+- piper-phonemize
+- Kaldi and Vosk (for speech recognition)
+- PulseAudio or ALSA
+- MQTT (Mosquitto)
+- CUDA libraries (cuSPARSE, cuBLAS, cuSOLVER, cuRAND)
+
+### Command Line Options
+The `dawn` executable accepts various options (check `dawn.c` main function for details):
+- Command processing modes (direct, LLM, or hybrid)
+- Audio device selection
+- Configuration file paths
+
+## Code Formatting
+
+**MANDATORY**: All code MUST be formatted before committing.
+
+### C/C++ Formatting (clang-format)
+
+```bash
+# Format all code (run from repository root)
+./format_code.sh
+
+# Check formatting without modifying files
+./format_code.sh --dry-run
+
+# Check if files are properly formatted (CI mode)
+./format_code.sh --check
+```
+
+The `.clang-format` configuration enforces:
+- 3-space indentation (no tabs)
+- 100 character line limit
+- K&R brace style
+- Right-aligned pointers (`int *ptr`)
+- Automatic include sorting
+
+### JavaScript/CSS/HTML Formatting (Prettier)
+
+For web file formatting, install the optional Prettier dependency:
+
+```bash
+npm install
+```
+
+Then `./format_code.sh` will format both C/C++ and web files automatically.
+
+The `.prettierrc` configuration enforces:
+- 3-space indentation (matches C/C++)
+- 100 character line limit (matches C/C++)
+- Single quotes for JavaScript
+- Trailing commas in ES5 style
+
+**Note:** Prettier is optional. If not installed, `format_code.sh` will warn but still format C/C++ files.
+
+### Git Hooks
+Install the pre-commit hook to automatically check formatting:
+
+```bash
+./install-git-hooks.sh
+```
+
+This ensures code is formatted before every commit.
+
+## Architecture
+
+### Main Components
+
+**dawn.c**: Main application entry point and state machine
+- Handles local microphone input via state machine (SILENCE → WAKEWORD_LISTEN → COMMAND_RECORDING → PROCESSING)
+- Integrates all subsystems
+- Manages conversation history
+- Controls application lifecycle
+
+**dawn_server.c/h**: Network audio server for remote clients
+- Implements custom Dawn Audio Protocol (DAP) for reliable audio transmission
+- Handles TCP connections from ESP32 clients
+- Currently single-threaded (blocks main loop during processing)
+- See `remote_dawn/protocol_specification.md` for protocol details
+
+**dawn_network_audio.c/h**: Network audio processing
+- Extracts PCM data from network WAV files
+- Processes remote audio through ASR → LLM → TTS pipeline
+- Returns WAV responses to clients
+
+**mosquitto_comms.c/h**: MQTT integration
+- Publishes/subscribes to MQTT topics for device control
+- Device callback system for handling commands
+- Integrates with home automation systems
+
+**LLM Integration** (`src/llm/`):
+- `llm_openai.c/h`: OpenAI API and OpenAI-compatible endpoints (Ollama, llama.cpp)
+- `llm_claude.c/h`: Claude API with extended thinking support
+- `llm_local_provider.c/h`: Auto-detection for Ollama vs llama.cpp
+- `llm_streaming.c/h`: Streaming response handler with thinking content capture
+- `llm_tools.c/h`: Parallel tool execution with safety classification
+- Conversation context management
+- Vision API integration for image analysis
+
+**text_to_speech.cpp/h**: TTS engine wrapper
+- Uses Piper for high-quality speech synthesis
+- Thread-safe with mutex protection (`tts_mutex`)
+- Generates WAV output from text
+
+**text_to_command_nuevo.c/h**: Command parsing and execution
+- Parses LLM responses for `<command>` JSON tags
+- Routes commands to appropriate device callbacks
+- Supports both direct pattern matching and LLM-based command processing
+
+**llm_command_parser.c/h**: JSON command extraction
+- Extracts and validates JSON commands from LLM responses
+- Handles malformed JSON gracefully
+
+**logging.c/h**: Centralized logging
+- Use `LOG_INFO()`, `LOG_WARNING()`, `LOG_ERROR()` macros
+- Provides consistent log formatting
+
+**webui_server.c/h**: Web-based configuration interface
+- WebSocket-based real-time communication
+- Serves static files from `www/` directory
+- Handles configuration get/set via JSON messages
+- Dynamic model/interface discovery endpoints
+- SSL/TLS support optional
+
+### Key Configuration
+
+**dawn.toml**: Primary runtime configuration file (TOML format)
+- `[general]`: AI name, timezone, locale settings
+- `[llm]`: Provider selection (`type = "cloud"` or `"local"`)
+- `[llm.cloud]`: OpenAI/Claude settings, model arrays for runtime switching
+- `[llm.local]`: Ollama/llama.cpp endpoint, model, provider auto-detection
+- `[llm.thinking]`: Extended thinking settings (mode, budget_tokens, reasoning_effort)
+- `[asr]`: Speech recognition settings, model path, language
+- `[tts]`: Text-to-speech settings, voice model, sample rate
+- `[audio]`: Backend (auto/pulse/alsa), device selection
+- `[dap]`: Dawn Audio Protocol server settings
+- `[webui]`: Web interface bind address, port, SSL settings
+- `[mqtt]`: MQTT broker connection settings
+- See `docs/archive/CONFIG_FILE_DESIGN.md` for full schema
+
+**dawn.h** contains compile-time defaults:
+- `AI_NAME`: Default wake word ("friday")
+- `AI_DESCRIPTION`: System prompt for LLM defining personality and behavior
+- `DEFAULT_PCM_PLAYBACK_DEVICE` / `DEFAULT_PCM_CAPTURE_DEVICE`: Audio devices
+- `MQTT_IP` / `MQTT_PORT`: MQTT broker configuration
+
+**secrets.toml**: Runtime API keys and credentials (gitignored). Example:
+```toml
+openai_api_key = "sk-..."
+claude_api_key = "sk-ant-..."
+```
+
+**commands_config_nuevo.json**: Device/action mappings for command system
+
+### Dawn Audio Protocol (DAP)
+
+The network protocol for ESP32 clients uses a custom binary protocol:
+- 8-byte header: data_length (4) + protocol_version (1) + packet_type (1) + checksum (2)
+- Packet types: HANDSHAKE, DATA, DATA_END, ACK, NACK, RETRY
+- Fletcher-16 checksums for integrity
+- Sequence numbers for ordered delivery
+- **CRITICAL**: Client and server MUST use identical `PACKET_MAX_SIZE` (reference: 8192 bytes)
+
+See `remote_dawn/protocol_specification.md` for complete protocol details.
+
+### Multi-Client Architecture
+
+**Current limitation**: Server processes one network client at a time, blocking the main loop during LLM processing (10-15 seconds).
+
+**Planned improvement** (see `remote_dawn/dawn_multi_client_architecture.md`):
+- Main thread handles local audio (state machine)
+- Worker thread pool for concurrent network clients
+- Per-client session management with conversation history
+- Session timeout and cleanup
+
+## Development Guidelines
+
+### Coding Standards
+
+Follow `CODING_STYLE_GUIDE.md` strictly:
+
+**Naming**:
+- Functions and variables: `snake_case`
+- Constants and macros: `UPPER_CASE`
+- Types: `typedef` with `_t` suffix (e.g., `device_type_t`)
+
+**Error Handling**:
+- Use `SUCCESS` (0) and `FAILURE` (1) for return values
+- Define specific error codes > 1 for detailed errors
+- **DO NOT** use negative return values (-1, negative errno)
+- Always check return values from functions that can fail
+
+**Memory Management**:
+- Prefer static allocation for embedded systems
+- Minimize dynamic allocation (malloc/calloc)
+- Always check for NULL after allocation
+- Free and NULL: `free(ptr); ptr = NULL;`
+
+**Functions**:
+- Soft target: < 50 lines
+- No hard limits - clarity over arbitrary counts
+- Inputs first, outputs last in parameters
+
+**Comments**:
+- Use Doxygen-style for public APIs
+- Comment the "why" not the "what"
+- File headers include GPL license block (see below)
+
+**File Header (REQUIRED for all new .c/.cpp/.h files)**:
+```c
+/*
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ * By contributing to this project, you agree to license your contributions
+ * under the GPLv3 (or any later version) or any future licenses chosen by
+ * the project author(s). Contributions include any modifications,
+ * enhancements, or additions to the project. These contributions become
+ * part of the project and are adopted by the project author(s).
+ *
+ * [Brief description of file purpose]
+ */
+```
+
+### Thread Safety
+
+When working with shared resources:
+- **ASR Model** (Whisper/Vosk): Read-only, create separate recognizers per thread
+- **TTS Engine**: Already mutex-protected (`tts_mutex`)
+- **LLM Endpoint**: Handles concurrent HTTP requests
+- **Conversation History**: Needs mutex protection when implementing multi-client
+- **Local Provider Detection**: Cached with mutex protection (5-minute TTL)
+
+### File Size Monitoring
+
+**Proactively warn** when files approach size limits:
+
+- **1,500+ lines (C)** or **1,000+ lines (JS)**: Mention that the file is getting large
+- **2,500+ lines**: Recommend splitting before adding more features
+- **New feature in large file**: Suggest creating a separate module instead
+
+**When asked to add features to large files**, propose creating a new module rather than expanding the existing file.
+
+### Refactoring Large Files
+
+If asked to refactor a large file:
+
+1. **Never attempt full rewrites** - They frequently fail due to interconnected features
+2. **Use incremental extraction** - One feature at a time
+3. **Keep original working** - Extract into new file, import back, test
+4. **Test after each extraction** - Don't batch multiple extractions
+
+### Common Patterns
+
+**Command Callbacks**:
+```c
+char *myCallback(const char *actionName, char *value, int *should_respond) {
+   // should_respond: set to 1 to return data to AI, 0 to handle directly
+   // Return: allocated string for AI (if should_respond=1), or NULL
+}
+```
+
+**Logging**:
+```c
+LOG_INFO("System initialized");
+LOG_WARNING("Battery voltage low: %.2fV", voltage);
+LOG_ERROR("I2C communication failed: %d", error);
+```
+
+**Device Registration** (in mosquitto_comms.c):
+```c
+deviceCallback callbacks[] = {
+   { DEVICE_TYPE, myCallback },
+   // ...
+};
+```
+
+## Remote Client Development
+
+ESP32 client implementation (`remote_dawn/remote_dawn.ino`) demonstrates:
+- WiFi connection management
+- DAP protocol implementation
+- Audio recording and transmission
+- Response playback
+
+**Key requirements**:
+- Must use same `PACKET_MAX_SIZE` as server (8192 bytes)
+- Must use same `PROTOCOL_VERSION` (0x01)
+- Implement proper handshake before data transfer
+- Handle retries with exponential backoff
+- Validate checksums on all packets
+
+## Testing
+
+Currently no automated test framework. Manual testing involves:
+- Local microphone wake word detection
+- Voice command processing
+- Network client connections (ESP32)
+- MQTT command execution
+- Vision AI processing
+
+## Important Files to Know
+
+**Configuration:**
+- `dawn.toml`: Runtime configuration file (TOML format)
+- `secrets.toml`: API keys and credentials (gitignored)
+- `commands_config_nuevo.json`: Device/action mappings for command system
+
+**Code Formatting:**
+- `.clang-format`: C/C++ formatting rules (3-space indent, 100 char lines)
+- `.prettierrc`: JS/CSS/HTML formatting rules (matching style)
+- `.prettierignore`: Files to exclude from Prettier
+- `package.json`: npm config for Prettier (optional)
+- `pre-commit.hook`: Git pre-commit hook for formatting
+
+**Models:**
+- `models/whisper.cpp/`: Whisper ASR models directory (primary)
+- `vosk-model-en-us-0.22/`: Vosk ASR model (optional fallback)
+- `models/*.onnx*`: TTS voice models
+
+**Generated:**
+- `version.h`: Auto-generated version info with git SHA
+
+**WebUI:**
+- `www/`: WebUI static files
+- `www/css/main.css`: CSS entry point with @import statements (modular CSS)
+- `www/js/core/`: Core JS modules (constants, websocket, audio)
+- `www/js/ui/`: UI JS modules (settings, history, themes)
+- `docs/WEBUI_DESIGN.md`: WebUI architecture and feature documentation
+
+## Known Issues and TODOs
+
+1. Network server blocks main loop during client processing (single client at a time)
+2. No automated testing infrastructure
+3. SmartThings OAuth blocked at AWS WAF level (403 Forbidden)
+4. AudioWorklet migration needed (ScriptProcessorNode deprecated)
+
+**Recently Completed:**
+- Parallel tool execution for concurrent API calls
+- Ollama support with auto-detection
+- Extended thinking/reasoning mode (Claude, OpenAI, local models)
+- "Remember Me" persistent login
+- Real-time token streaming metrics
+- Cloud model switching via WebUI
+- Prettier formatting for JS/CSS/HTML
+
+## Agent Terminology
+
+When the developer refers to review agents:
+- **"The big three"** or **"the main three"**: architecture-reviewer, embedded-efficiency-reviewer, security-auditor
+- **"All four"** or **"all my agents"**: The above three plus ui-design-architect
+
+## License
+
+GPLv3 or later. All source files include GPL header block.

@@ -550,11 +550,39 @@ const char *llm_get_model_name(void) {
 
    /* Cloud LLM - return model from config based on provider */
    if (provider == CLOUD_PROVIDER_OPENAI) {
-      return g_config.llm.cloud.openai_model;
+      return llm_get_default_openai_model();
    } else if (provider == CLOUD_PROVIDER_CLAUDE) {
-      return g_config.llm.cloud.claude_model;
+      return llm_get_default_claude_model();
    }
    return "None";
+}
+
+const char *llm_get_default_openai_model(void) {
+   int idx = g_config.llm.cloud.openai_default_model_idx;
+   int count = g_config.llm.cloud.openai_models_count;
+
+   /* Fallback to first model if index out of bounds or no models */
+   if (count <= 0) {
+      return "gpt-5-mini"; /* Hard-coded fallback if no models configured */
+   }
+   if (idx < 0 || idx >= count) {
+      idx = 0;
+   }
+   return g_config.llm.cloud.openai_models[idx];
+}
+
+const char *llm_get_default_claude_model(void) {
+   int idx = g_config.llm.cloud.claude_default_model_idx;
+   int count = g_config.llm.cloud.claude_models_count;
+
+   /* Fallback to first model if index out of bounds or no models */
+   if (count <= 0) {
+      return "claude-sonnet-4-5"; /* Hard-coded fallback if no models configured */
+   }
+   if (idx < 0 || idx >= count) {
+      idx = 0;
+   }
+   return g_config.llm.cloud.claude_models[idx];
 }
 
 void llm_request_interrupt(void) {
@@ -653,7 +681,7 @@ char *llm_chat_completion(struct json_object *conversation_history,
 
          case CLOUD_PROVIDER_CLAUDE:
             response = llm_claude_chat_completion(conversation_history, input_text, vision_image,
-                                                  vision_image_size, url, api_key);
+                                                  vision_image_size, url, api_key, model);
             break;
 
          default:
@@ -748,7 +776,7 @@ char *llm_chat_completion_streaming(struct json_object *conversation_history,
          case CLOUD_PROVIDER_CLAUDE:
             response = llm_claude_chat_completion_streaming(conversation_history, input_text,
                                                             vision_image, vision_image_size, url,
-                                                            api_key, chunk_callback,
+                                                            api_key, model, chunk_callback,
                                                             callback_userdata);
             break;
 
@@ -959,10 +987,34 @@ int llm_resolve_config(const session_llm_config_t *session_config,
       if (resolved->type == LLM_LOCAL) {
          resolved->model = g_config.llm.local.model;
       } else if (resolved->cloud_provider == CLOUD_PROVIDER_OPENAI) {
-         resolved->model = g_config.llm.cloud.openai_model;
+         resolved->model = llm_get_default_openai_model();
       } else if (resolved->cloud_provider == CLOUD_PROVIDER_CLAUDE) {
-         resolved->model = g_config.llm.cloud.claude_model;
+         resolved->model = llm_get_default_claude_model();
       }
+   }
+
+   // Resolve tool_mode - use session config if set, otherwise global config
+   if (session_config->tool_mode[0] != '\0') {
+      strncpy(resolved->tool_mode, session_config->tool_mode, sizeof(resolved->tool_mode) - 1);
+      resolved->tool_mode[sizeof(resolved->tool_mode) - 1] = '\0';
+   } else if (g_config.llm.tools.mode[0] != '\0') {
+      strncpy(resolved->tool_mode, g_config.llm.tools.mode, sizeof(resolved->tool_mode) - 1);
+      resolved->tool_mode[sizeof(resolved->tool_mode) - 1] = '\0';
+   } else {
+      strncpy(resolved->tool_mode, "native", sizeof(resolved->tool_mode) - 1);
+   }
+
+   // Resolve thinking_mode - use session config if set, otherwise global config
+   if (session_config->thinking_mode[0] != '\0') {
+      strncpy(resolved->thinking_mode, session_config->thinking_mode,
+              sizeof(resolved->thinking_mode) - 1);
+      resolved->thinking_mode[sizeof(resolved->thinking_mode) - 1] = '\0';
+   } else if (g_config.llm.thinking.mode[0] != '\0') {
+      strncpy(resolved->thinking_mode, g_config.llm.thinking.mode,
+              sizeof(resolved->thinking_mode) - 1);
+      resolved->thinking_mode[sizeof(resolved->thinking_mode) - 1] = '\0';
+   } else {
+      strncpy(resolved->thinking_mode, "auto", sizeof(resolved->thinking_mode) - 1);
    }
 
    return 0;
@@ -979,6 +1031,9 @@ char *llm_chat_completion_with_config(struct json_object *conversation_history,
    }
 
    char *response = NULL;
+
+   // Set thread-local config so llm_tools_enabled() can check session-specific tool_mode
+   llm_tools_set_current_config(config);
 
    if (config->type == LLM_LOCAL) {
       // Local LLM uses OpenAI-compatible API (no API key needed)
@@ -997,14 +1052,18 @@ char *llm_chat_completion_with_config(struct json_object *conversation_history,
          case CLOUD_PROVIDER_CLAUDE:
             response = llm_claude_chat_completion(conversation_history, input_text, vision_image,
                                                   vision_image_size, config->endpoint,
-                                                  config->api_key);
+                                                  config->api_key, config->model);
             break;
 
          default:
             LOG_ERROR("No cloud provider configured in session config");
+            llm_tools_set_current_config(NULL);
             return NULL;
       }
    }
+
+   // Clear thread-local config
+   llm_tools_set_current_config(NULL);
 
    // Note: No automatic fallback for per-session config - caller handles this
 
@@ -1040,6 +1099,9 @@ char *llm_chat_completion_streaming_with_config(struct json_object *conversation
    // Record query metrics
    metrics_record_llm_query(config->type);
 
+   // Set thread-local config so llm_tools_enabled() can check session-specific tool_mode
+   llm_tools_set_current_config(config);
+
    if (config->type == LLM_LOCAL) {
       // Local LLM uses OpenAI-compatible API (no API key needed)
       response = llm_openai_chat_completion_streaming(conversation_history, input_text,
@@ -1056,17 +1118,20 @@ char *llm_chat_completion_streaming_with_config(struct json_object *conversation
             break;
 
          case CLOUD_PROVIDER_CLAUDE:
-            response = llm_claude_chat_completion_streaming(conversation_history, input_text,
-                                                            vision_image, vision_image_size,
-                                                            config->endpoint, config->api_key,
-                                                            chunk_callback, callback_userdata);
+            response = llm_claude_chat_completion_streaming(
+                conversation_history, input_text, vision_image, vision_image_size, config->endpoint,
+                config->api_key, config->model, chunk_callback, callback_userdata);
             break;
 
          default:
             LOG_ERROR("No cloud provider configured in session config");
+            llm_tools_set_current_config(NULL);
             return NULL;
       }
    }
+
+   // Clear thread-local config
+   llm_tools_set_current_config(NULL);
 
    // Record LLM total time
    if (response != NULL) {

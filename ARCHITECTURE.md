@@ -4,7 +4,7 @@ This document describes the architecture of the D.A.W.N. (Digital Assistant for 
 
 **D.A.W.N.** is the central intelligence layer of the OASIS ecosystem, responsible for interpreting user intent, fusing data from every subsystem, and routing commands. At its core, DAWN performs neural-inference to understand context and drive decision-making, acting as OASIS's orchestration hub for MIRAGE, AURA, SPARK, STAT, and any future modules.
 
-**Last Updated**: November 25, 2025 (after LLM interrupt implementation)
+**Last Updated**: January 13, 2026 (added Ollama support, Extended Thinking, Prettier formatting)
 
 ## Table of Contents
 
@@ -213,14 +213,17 @@ Audio Input → VAD (Silero) → Chunking Manager → ASR Engine (Whisper/Vosk) 
 
 - **llm_openai.c/h**: OpenAI API implementation
   - Supports GPT-4o, GPT-4, GPT-3.5
-  - Also supports llama.cpp local server (OpenAI-compatible endpoint)
+  - Supports llama.cpp local server (OpenAI-compatible endpoint)
+  - Supports Ollama with runtime model switching
   - Both blocking and streaming modes
   - Conversation history management
+  - Extended thinking support (reasoning_effort for OpenAI models)
 
 - **llm_claude.c/h**: Claude API implementation
   - Supports Claude 4.5 Sonnet, Claude 3 Opus
   - Streaming support
   - Different API format than OpenAI (Messages API)
+  - Extended thinking support with configurable token budget
 
 - **llm_streaming.c/h**: Streaming response handler
   - Manages Server-Sent Events (SSE) connections
@@ -262,6 +265,7 @@ User Query → LLM Provider (OpenAI/Claude/Local)
 | OpenAI GPT-4o           | 100%    | ~300ms    | ~3.1s   | ~$0.01/query  |
 | Claude 4.5 Sonnet       | 92.4%   | ~400ms    | ~3.5s   | ~$0.015/query |
 | llama.cpp (Qwen3-4B Q4) | 81.9%   | 116-138ms | ~1.5s   | FREE          |
+| Ollama (Qwen3-4B Q4)    | 81.9%   | ~150ms    | ~1.6s   | FREE          |
 
 **TTFT = Time To First Token** (lower = faster perceived response)
 
@@ -797,14 +801,16 @@ ASRContext *asr_init(const char *model_path) {
 ```c
 // src/llm/llm_interface.c
 LLMContext *llm_init() {
-   if (strstr(OPENAI_MODEL, "gpt")) {
-      return llm_openai_init();  // OpenAI models (GPT-4o, etc.)
-   } else if (strstr(OPENAI_API_BASE, "localhost")) {
-      return llm_openai_init();  // llama.cpp local server (OpenAI-compatible)
-   } else if (ANTHROPIC_API_KEY[0] != '\0') {
-      return llm_claude_init();  // Claude models
+   if (config.llm.type == LLM_TYPE_CLOUD) {
+      if (config.llm.cloud.provider == PROVIDER_OPENAI) {
+         return llm_openai_init();  // OpenAI models (GPT-4o, etc.)
+      } else {
+         return llm_claude_init();  // Claude models
+      }
+   } else {
+      // Local: Both llama.cpp and Ollama use OpenAI-compatible endpoint
+      return llm_openai_init();
    }
-   return NULL;
 }
 ```
 
@@ -1145,7 +1151,7 @@ Key settings:
 ---
 
 **Document Version**: 1.0
-**Last Updated**: November 25, 2025 (after LLM interrupt implementation)
+**Last Updated**: January 13, 2026 (added Ollama support, Extended Thinking, Prettier formatting)
 **Reorganization Commit**: [Git SHA to be added after commit]
 
 ### LLM Threading Architecture (Post-Interrupt Implementation)

@@ -1859,11 +1859,11 @@ char *switchLlmCallback(const char *actionName, char *value, int *should_respond
    } else if (strcmp(actionName, "cloud") == 0 || strcmp(actionName, "openai") == 0) {
       target_type = LLM_CLOUD;
       target_provider = CLOUD_PROVIDER_OPENAI;
-      target_model = g_config.llm.cloud.openai_model;
+      target_model = llm_get_default_openai_model();
    } else if (strcmp(actionName, "claude") == 0) {
       target_type = LLM_CLOUD;
       target_provider = CLOUD_PROVIDER_CLAUDE;
-      target_model = g_config.llm.cloud.claude_model;
+      target_model = llm_get_default_claude_model();
    }
 
    /* Check if we need to compact before switching (especially cloud->local) */

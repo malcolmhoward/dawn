@@ -349,6 +349,7 @@ set(DAWN_SOURCES
     src/llm/llm_interface.c
     src/llm/llm_openai.c
     src/llm/llm_claude.c
+    src/llm/llm_claude_format.c
     src/llm/llm_streaming.c
     src/llm/llm_command_parser.c
     src/llm/llm_tools.c

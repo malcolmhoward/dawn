@@ -108,23 +108,23 @@ void config_set_defaults(dawn_config_t *config) {
 
    /* LLM Cloud */
    SAFE_COPY(config->llm.cloud.provider, "openai");
-   SAFE_COPY(config->llm.cloud.openai_model, "gpt-5-mini");
-   SAFE_COPY(config->llm.cloud.claude_model, "claude-sonnet-4-5");
    config->llm.cloud.endpoint[0] = '\0'; /* Empty = use default */
    config->llm.cloud.vision_enabled = true;
 
-   /* Default OpenAI model list for quick controls */
+   /* Default OpenAI model list (first entry is default) */
    config->llm.cloud.openai_models_count = 4;
-   SAFE_COPY(config->llm.cloud.openai_models[0], "gpt-5.2");
-   SAFE_COPY(config->llm.cloud.openai_models[1], "gpt-5-mini");
+   SAFE_COPY(config->llm.cloud.openai_models[0], "gpt-5-mini");
+   SAFE_COPY(config->llm.cloud.openai_models[1], "gpt-5.2");
    SAFE_COPY(config->llm.cloud.openai_models[2], "gpt-5-nano");
    SAFE_COPY(config->llm.cloud.openai_models[3], "gpt-5");
+   config->llm.cloud.openai_default_model_idx = 0;
 
-   /* Default Claude model list for quick controls */
+   /* Default Claude model list (first entry is default) */
    config->llm.cloud.claude_models_count = 3;
-   SAFE_COPY(config->llm.cloud.claude_models[0], "claude-opus-4-5");
-   SAFE_COPY(config->llm.cloud.claude_models[1], "claude-sonnet-4-5");
+   SAFE_COPY(config->llm.cloud.claude_models[0], "claude-sonnet-4-5");
+   SAFE_COPY(config->llm.cloud.claude_models[1], "claude-opus-4-5");
    SAFE_COPY(config->llm.cloud.claude_models[2], "claude-haiku-4-5");
+   config->llm.cloud.claude_default_model_idx = 0;
 
    /* LLM Local */
    SAFE_COPY(config->llm.local.endpoint, "http://127.0.0.1:8080");

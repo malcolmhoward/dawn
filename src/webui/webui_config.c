@@ -162,9 +162,9 @@ void handle_get_config(ws_connection_t *conn) {
    } else if (resolved.type == LLM_LOCAL) {
       model_name = g_config.llm.local.model[0] ? g_config.llm.local.model : "local";
    } else if (resolved.cloud_provider == CLOUD_PROVIDER_OPENAI) {
-      model_name = g_config.llm.cloud.openai_model;
+      model_name = llm_get_default_openai_model();
    } else if (resolved.cloud_provider == CLOUD_PROVIDER_CLAUDE) {
-      model_name = g_config.llm.cloud.claude_model;
+      model_name = llm_get_default_claude_model();
    }
    json_object_object_add(llm_runtime, "model",
                           json_object_new_string(model_name ? model_name : ""));
@@ -332,8 +332,6 @@ static void apply_config_from_json(dawn_config_t *config, struct json_object *pa
                         config->llm.cloud.provider);
             strncpy(config->llm.cloud.provider, "openai", sizeof(config->llm.cloud.provider) - 1);
          }
-         JSON_TO_CONFIG_STR(cloud, "openai_model", config->llm.cloud.openai_model);
-         JSON_TO_CONFIG_STR(cloud, "claude_model", config->llm.cloud.claude_model);
          JSON_TO_CONFIG_STR(cloud, "endpoint", config->llm.cloud.endpoint);
          JSON_TO_CONFIG_BOOL(cloud, "vision_enabled", config->llm.cloud.vision_enabled);
 
@@ -356,6 +354,18 @@ static void apply_config_from_json(dawn_config_t *config, struct json_object *pa
             }
          }
 
+         /* Parse default model index with bounds check */
+         struct json_object *openai_idx_obj;
+         if (json_object_object_get_ex(cloud, "openai_default_model_idx", &openai_idx_obj)) {
+            int idx = json_object_get_int(openai_idx_obj);
+            if (idx >= 0 && idx < config->llm.cloud.openai_models_count) {
+               config->llm.cloud.openai_default_model_idx = idx;
+            } else if (config->llm.cloud.openai_models_count > 0) {
+               LOG_WARNING("WebUI: openai_default_model_idx %d out of range, using 0", idx);
+               config->llm.cloud.openai_default_model_idx = 0;
+            }
+         }
+
          struct json_object *claude_models_arr;
          if (json_object_object_get_ex(cloud, "claude_models", &claude_models_arr) &&
              json_object_is_type(claude_models_arr, json_type_array)) {
@@ -371,6 +381,18 @@ static void apply_config_from_json(dawn_config_t *config, struct json_object *pa
                                                  [LLM_CLOUD_MODEL_NAME_MAX - 1] = '\0';
                   config->llm.cloud.claude_models_count++;
                }
+            }
+         }
+
+         /* Parse default model index with bounds check */
+         struct json_object *claude_idx_obj;
+         if (json_object_object_get_ex(cloud, "claude_default_model_idx", &claude_idx_obj)) {
+            int idx = json_object_get_int(claude_idx_obj);
+            if (idx >= 0 && idx < config->llm.cloud.claude_models_count) {
+               config->llm.cloud.claude_default_model_idx = idx;
+            } else if (config->llm.cloud.claude_models_count > 0) {
+               LOG_WARNING("WebUI: claude_default_model_idx %d out of range, using 0", idx);
+               config->llm.cloud.claude_default_model_idx = 0;
             }
          }
       }
@@ -519,6 +541,11 @@ void handle_set_config(ws_connection_t *conn, struct json_object *payload) {
    strncpy(old_tools_mode, g_config.llm.tools.mode, sizeof(old_tools_mode) - 1);
    old_tools_mode[sizeof(old_tools_mode) - 1] = '\0';
 
+   /* Track local endpoint changes for provider cache invalidation */
+   char old_local_endpoint[128];
+   strncpy(old_local_endpoint, g_config.llm.local.endpoint, sizeof(old_local_endpoint) - 1);
+   old_local_endpoint[sizeof(old_local_endpoint) - 1] = '\0';
+
    /* Apply changes to global config with mutex protection.
     * The write lock ensures no other threads are reading config during modification. */
    pthread_rwlock_wrlock(&s_config_rwlock);
@@ -581,6 +608,13 @@ void handle_set_config(ws_connection_t *conn, struct json_object *payload) {
                                           "API key not configured"));
             }
          }
+      }
+
+      /* Invalidate local provider and models cache if endpoint changed */
+      if (strcmp(old_local_endpoint, g_config.llm.local.endpoint) != 0) {
+         llm_local_invalidate_cache();
+         llm_local_invalidate_models_cache();
+         LOG_INFO("WebUI: Local LLM endpoint changed, invalidated provider and models cache");
       }
 
       /* If tool calling mode changed, rebuild system prompt for current session */
@@ -1322,15 +1356,42 @@ void handle_list_llm_models(ws_connection_t *conn) {
                           json_object_new_string(llm_local_provider_name(provider)));
    json_object_object_add(payload, "endpoint", json_object_new_string(endpoint));
 
-   /* Return session's model if set, otherwise config default */
-   const char *current_model = g_config.llm.local.model;
-   if (conn->session) {
-      session_llm_config_t session_config;
-      session_get_llm_config(conn->session, &session_config);
-      if (session_config.model[0] != '\0') {
-         current_model = session_config.model;
+   /* Determine current model - provider-specific logic */
+   const char *current_model = NULL;
+
+   /* For llama.cpp: always use actual loaded model (server can only run one model)
+    * Config/session settings are not meaningful since llama.cpp can't switch models */
+   if (provider == LOCAL_PROVIDER_LLAMA_CPP && count > 0) {
+      current_model = models[0].name;
+      LOG_INFO("WebUI: llama.cpp actual loaded model: %s", current_model);
+   }
+   /* For Ollama and others: priority is session > config > first available */
+   else {
+      /* Check session config first */
+      if (conn->session) {
+         session_llm_config_t session_config;
+         session_get_llm_config(conn->session, &session_config);
+         if (session_config.model[0] != '\0') {
+            current_model = session_config.model;
+         }
+      }
+
+      /* Fall back to global config */
+      if (!current_model && g_config.llm.local.model[0] != '\0') {
+         current_model = g_config.llm.local.model;
+      }
+
+      /* Fall back to first available model */
+      if (!current_model && count > 0) {
+         current_model = models[0].name;
       }
    }
+
+   /* Last resort: unknown */
+   if (!current_model || current_model[0] == '\0') {
+      current_model = "(unknown)";
+   }
+
    json_object_object_add(payload, "current_model", json_object_new_string(current_model));
    json_object_object_add(payload, "count", json_object_new_int((int)count));
 

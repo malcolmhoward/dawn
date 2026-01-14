@@ -1075,6 +1075,214 @@ const char *get_remote_command_prompt(void) {
    return remote_command_prompt;
 }
 
+char *build_remote_prompt_for_mode(const char *tool_mode) {
+   if (!tool_mode) {
+      tool_mode = "native";
+   }
+
+   /* Allocate output buffer */
+   char *prompt = malloc(PROMPT_BUFFER_SIZE);
+   if (!prompt) {
+      LOG_ERROR("Failed to allocate prompt buffer");
+      return NULL;
+   }
+
+   /* Native tools mode or disabled mode - minimal prompt */
+   if (strcmp(tool_mode, "native") == 0 || strcmp(tool_mode, "disabled") == 0) {
+      int prompt_len = snprintf(prompt, PROMPT_BUFFER_SIZE,
+                                "%s\n\n"  // Persona
+                                "%s\n\n"  // System instructions
+                                "%s",     // Localization context
+                                get_persona_description(), get_system_instructions(),
+                                get_localization_context());
+      LOG_INFO("Built prompt for %s mode. Length: %d", tool_mode, prompt_len);
+      return prompt;
+   }
+
+   /* Command tags mode: include <command> tag instructions */
+   int prompt_len = snprintf(prompt, PROMPT_BUFFER_SIZE,
+                             "%s\n\n"  // Persona
+                             "%s\n\n"  // System instructions
+                             "%s",     // Localization context
+                             get_persona_description(), get_system_instructions(),
+                             get_localization_context());
+
+   /* Read the commands config file */
+   FILE *configFile = fopen(g_config.paths.commands_config, "r");
+   if (configFile == NULL) {
+      LOG_ERROR("Unable to open commands config file: %s", g_config.paths.commands_config);
+      return prompt;
+   }
+
+   char buffer[32 * 1024];
+   int bytes_read = fread(buffer, 1, sizeof(buffer) - 1, configFile);
+   fclose(configFile);
+
+   if (bytes_read <= 0) {
+      LOG_ERROR("Failed to read config file for prompt");
+      return prompt;
+   }
+   buffer[bytes_read] = '\0';
+
+   /* Parse JSON */
+   struct json_object *parsedJson = json_tokener_parse(buffer);
+   if (parsedJson == NULL) {
+      LOG_ERROR("Failed to parse config JSON for prompt");
+      return prompt;
+   }
+
+   struct json_object *typesObject = NULL;
+   struct json_object *devicesObject = NULL;
+   if (!json_object_object_get_ex(parsedJson, "types", &typesObject) ||
+       !json_object_object_get_ex(parsedJson, "devices", &devicesObject)) {
+      LOG_ERROR("Required objects not found in json for prompt");
+      json_object_put(parsedJson);
+      return prompt;
+   }
+
+   /* Iterate through types and add command sections */
+   struct json_object_iterator type_it = json_object_iter_begin(typesObject);
+   struct json_object_iterator type_it_end = json_object_iter_end(typesObject);
+
+   while (!json_object_iter_equal(&type_it, &type_it_end)) {
+      const char *type_name = json_object_iter_peek_name(&type_it);
+      struct json_object *type_obj;
+      json_object_object_get_ex(typesObject, type_name, &type_obj);
+
+      /* Check if there are any enabled devices of this type */
+      int has_devices = 0;
+      struct json_object_iterator dev_check = json_object_iter_begin(devicesObject);
+      struct json_object_iterator dev_check_end = json_object_iter_end(devicesObject);
+
+      while (!json_object_iter_equal(&dev_check, &dev_check_end)) {
+         const char *device_name = json_object_iter_peek_name(&dev_check);
+         struct json_object *device_obj;
+         json_object_object_get_ex(devicesObject, device_name, &device_obj);
+
+         struct json_object *device_type_obj, *topic_obj;
+         if (json_object_object_get_ex(device_obj, "type", &device_type_obj)) {
+            const char *device_type = json_object_get_string(device_type_obj);
+            if (strcmp(device_type, type_name) == 0) {
+               /* Check if topic is excluded (hud, helmet) */
+               const char *topic = NULL;
+               if (json_object_object_get_ex(device_obj, "topic", &topic_obj)) {
+                  topic = json_object_get_string(topic_obj);
+               }
+               if (!is_topic_excluded(topic) && llm_tools_is_device_enabled(device_name, true)) {
+                  has_devices = 1;
+                  break;
+               }
+            }
+         }
+         json_object_iter_next(&dev_check);
+      }
+
+      if (!has_devices) {
+         json_object_iter_next(&type_it);
+         continue;
+      }
+
+      /* Add type header */
+      prompt_len += snprintf(prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len,
+                             "== %s Commands ==\n", type_name);
+
+      /* Get actions for this type and add them */
+      struct json_object *actions_obj;
+      if (json_object_object_get_ex(type_obj, "actions", &actions_obj)) {
+         struct json_object_iterator action_it = json_object_iter_begin(actions_obj);
+         struct json_object_iterator action_it_end = json_object_iter_end(actions_obj);
+
+         while (!json_object_iter_equal(&action_it, &action_it_end)) {
+            const char *action_name = json_object_iter_peek_name(&action_it);
+            struct json_object *action_obj;
+            json_object_object_get_ex(actions_obj, action_name, &action_obj);
+
+            struct json_object *command_obj;
+            if (json_object_object_get_ex(action_obj, "action_command", &command_obj)) {
+               const char *command = json_object_get_string(command_obj);
+               prompt_len += snprintf(prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len,
+                                      "- %s: %s\n", action_name, command);
+            }
+            json_object_iter_next(&action_it);
+         }
+      }
+
+      /* Add list of valid devices for this type */
+      prompt_len += snprintf(prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len,
+                             "  Valid devices for this command only: ");
+
+      int device_count = 0;
+      struct json_object_iterator dev_it = json_object_iter_begin(devicesObject);
+      struct json_object_iterator dev_it_end = json_object_iter_end(devicesObject);
+
+      while (!json_object_iter_equal(&dev_it, &dev_it_end)) {
+         const char *device_name = json_object_iter_peek_name(&dev_it);
+         struct json_object *device_obj;
+         json_object_object_get_ex(devicesObject, device_name, &device_obj);
+
+         struct json_object *device_type_obj, *topic_obj;
+         if (json_object_object_get_ex(device_obj, "type", &device_type_obj)) {
+            const char *device_type = json_object_get_string(device_type_obj);
+            if (strcmp(device_type, type_name) == 0) {
+               const char *topic = NULL;
+               if (json_object_object_get_ex(device_obj, "topic", &topic_obj)) {
+                  topic = json_object_get_string(topic_obj);
+               }
+               if (!is_topic_excluded(topic) && llm_tools_is_device_enabled(device_name, true)) {
+                  if (device_count > 0) {
+                     prompt_len += snprintf(prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len,
+                                            ", ");
+                  }
+                  prompt_len += snprintf(prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len, "%s",
+                                         device_name);
+                  device_count++;
+               }
+            }
+         }
+         json_object_iter_next(&dev_it);
+      }
+
+      prompt_len += snprintf(prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len, "\n\n");
+      json_object_iter_next(&type_it);
+   }
+
+   /* Add examples if any relevant devices are enabled */
+   bool has_any_example = llm_tools_is_device_enabled("armor_display", true) ||
+                          llm_tools_is_device_enabled("time", true) ||
+                          llm_tools_is_device_enabled("volume", true) ||
+                          llm_tools_is_device_enabled("weather", true);
+
+   if (has_any_example) {
+      prompt_len += snprintf(prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len, "%s",
+                             LEGACY_EXAMPLES_HEADER);
+
+      if (llm_tools_is_device_enabled("armor_display", true)) {
+         prompt_len += snprintf(prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len, "%s",
+                                LEGACY_EXAMPLE_ARMOR_DISPLAY);
+      }
+      if (llm_tools_is_device_enabled("time", true)) {
+         prompt_len += snprintf(prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len, "%s",
+                                LEGACY_EXAMPLE_TIME);
+      }
+      if (llm_tools_is_device_enabled("volume", true)) {
+         prompt_len += snprintf(prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len, "%s",
+                                LEGACY_EXAMPLE_VOLUME);
+      }
+      if (llm_tools_is_device_enabled("weather", true)) {
+         prompt_len += snprintf(prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len, "%s",
+                                LEGACY_EXAMPLES_WEATHER);
+      }
+   }
+
+   /* Add command format instructions */
+   prompt_len += snprintf(prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len, "%s",
+                          LEGACY_REMOTE_COMMAND_INSTRUCTIONS);
+
+   json_object_put(parsedJson);
+   LOG_INFO("Built prompt for command_tags mode. Length: %d", prompt_len);
+   return prompt;
+}
+
 /**
  * @brief Parses an LLM response for commands and executes them
  *

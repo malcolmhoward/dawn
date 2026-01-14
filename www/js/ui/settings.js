@@ -30,6 +30,24 @@
       claude_available: false,
    };
 
+   // Per-conversation LLM settings state
+   let conversationLlmState = {
+      tools_mode: 'native',
+      thinking_mode: 'auto',
+      locked: false,
+   };
+
+   // Global defaults from config (populated on config load)
+   let globalDefaults = {
+      type: 'cloud',
+      provider: 'openai',
+      openai_model: '',
+      claude_model: '',
+      tools_mode: 'native',
+      thinking_mode: 'disabled', // For Claude/local: disabled/auto/enabled
+      reasoning_effort: 'medium', // For OpenAI o-series/GPT-5: none/minimal/low/medium/high
+   };
+
    // Modal state
    let confirmModalCleanup = null;
    let inputModalCleanup = null;
@@ -325,16 +343,6 @@
                      options: ['openai', 'claude'],
                      hint: 'Cloud LLM provider',
                   },
-                  openai_model: {
-                     type: 'text',
-                     label: 'OpenAI Model',
-                     hint: 'e.g., gpt-4o, gpt-4-turbo, gpt-4o-mini',
-                  },
-                  claude_model: {
-                     type: 'text',
-                     label: 'Claude Model',
-                     hint: 'e.g., claude-sonnet-4-20250514, claude-opus-4-20250514',
-                  },
                   endpoint: {
                      type: 'text',
                      label: 'Custom Endpoint',
@@ -353,12 +361,24 @@
                      placeholder: 'gpt-4o\ngpt-4-turbo\ngpt-4o-mini',
                      hint: 'Available models for quick controls (one per line)',
                   },
+                  openai_default_model_idx: {
+                     type: 'model_default_select',
+                     label: 'Default OpenAI Model',
+                     sourceKey: 'llm.cloud.openai_models',
+                     hint: 'Default model for new conversations',
+                  },
                   claude_models: {
                      type: 'model_list',
                      label: 'Claude Models',
                      rows: 5,
                      placeholder: 'claude-sonnet-4-20250514\nclaude-opus-4-20250514',
                      hint: 'Available models for quick controls (one per line)',
+                  },
+                  claude_default_model_idx: {
+                     type: 'model_default_select',
+                     label: 'Default Claude Model',
+                     sourceKey: 'llm.cloud.claude_models',
+                     hint: 'Default model for new conversations',
                   },
                },
             },
@@ -405,8 +425,8 @@
                   reasoning_effort: {
                      type: 'select',
                      label: 'Reasoning Effort',
-                     options: ['low', 'medium', 'high'],
-                     hint: 'OpenAI o-series only: controls internal reasoning depth',
+                     options: ['none', 'minimal', 'low', 'medium', 'high'],
+                     hint: 'OpenAI reasoning models: none (GPT-5.2), minimal (GPT-5), low/medium/high (all)',
                   },
                },
             },
@@ -914,6 +934,12 @@
       // Extract cloud model lists from config for quick controls dropdown
       updateCloudModelLists(currentConfig);
 
+      // Extract global defaults from config for new conversation reset
+      extractGlobalDefaults(currentConfig);
+
+      // Apply defaults to conversation controls (reasoning, tools dropdowns)
+      applyGlobalDefaultsToControls();
+
       // Update LLM runtime controls
       if (payload.llm_runtime) {
          updateLlmControls(payload.llm_runtime);
@@ -1195,6 +1221,23 @@
             const listValue = Array.isArray(value) ? value.join('\n') : value || '';
             inputHtml = `<textarea id="${inputId}" rows="${def.rows || 5}" placeholder="${def.placeholder || ''}" data-key="${fullKey}" data-type="model_list">${escapeHtml(listValue)}</textarea>`;
             break;
+         case 'model_default_select':
+            // Dropdown populated from a model_list textarea
+            // Get current options from the source model list
+            const sourceKey = def.sourceKey;
+            const sourceModels = getNestedValue(currentConfig, sourceKey) || [];
+            const selectedIdx = parseInt(value, 10) || 0;
+            let defaultSelectHtml = sourceModels
+               .map(
+                  (model, idx) =>
+                     `<option value="${idx}" ${idx === selectedIdx ? 'selected' : ''}>${escapeHtml(model)}</option>`
+               )
+               .join('');
+            if (sourceModels.length === 0) {
+               defaultSelectHtml = '<option value="0">No models configured</option>';
+            }
+            inputHtml = `<select id="${inputId}" data-key="${fullKey}" data-type="model_default_select" data-source-key="${sourceKey}">${defaultSelectHtml}</select>`;
+            break;
       }
 
       if (def.type === 'checkbox') {
@@ -1228,6 +1271,49 @@
             settingsElements.restartNotice.classList.remove('hidden');
          }
       }
+
+      // If this is a model_list textarea, update any dropdowns that depend on it
+      if (input.dataset.type === 'model_list') {
+         updateDependentModelSelects(key, input.value);
+      }
+   }
+
+   /**
+    * Update model_default_select dropdowns when their source model_list changes
+    */
+   function updateDependentModelSelects(sourceKey, textareaValue) {
+      // Parse models from textarea (same logic as collectConfigValues)
+      const models = textareaValue
+         .split('\n')
+         .map((line) => line.trim())
+         .filter((line) => line.length > 0);
+
+      // Find all selects that depend on this source
+      const selects = settingsElements.sectionsContainer.querySelectorAll(
+         `select[data-source-key="${sourceKey}"]`
+      );
+
+      selects.forEach((select) => {
+         const currentIdx = parseInt(select.value, 10) || 0;
+         // Preserve selection if still valid, otherwise reset to 0
+         const newIdx = currentIdx < models.length ? currentIdx : 0;
+
+         // Rebuild options
+         select.innerHTML =
+            models.length > 0
+               ? models
+                    .map(
+                       (model, idx) =>
+                          `<option value="${idx}" ${idx === newIdx ? 'selected' : ''}>${escapeHtml(model)}</option>`
+                    )
+                    .join('')
+               : '<option value="0">No models configured</option>';
+
+         // Mark as changed if index changed
+         if (newIdx !== currentIdx) {
+            changedFields.add(select.dataset.key);
+         }
+      });
    }
 
    /* =============================================================================
@@ -1268,6 +1354,9 @@
                .split('\n')
                .map((line) => line.trim())
                .filter((line) => line.length > 0);
+         } else if (input.dataset.type === 'model_default_select') {
+            // Parse as integer index
+            value = parseInt(input.value, 10) || 0;
          } else {
             value = input.value;
          }
@@ -1381,6 +1470,9 @@
 
          // Clear changed fields tracking
          changedFields.clear();
+
+         // Refresh config to update globalDefaults and other cached values
+         requestConfig();
       } else {
          console.error('Failed to save config:', payload.error);
          alert('Failed to save configuration: ' + (payload.error || 'Unknown error'));
@@ -1891,8 +1983,13 @@
     * LLM Runtime Controls
     * ============================================================================= */
 
-   // Cached model lists from config and local LLM
-   let cloudModelLists = { openai: [], claude: [] };
+   // Cached model lists from config and local LLM (includes default indices)
+   let cloudModelLists = {
+      openai: [],
+      claude: [],
+      openaiDefaultIdx: 0,
+      claudeDefaultIdx: 0,
+   };
    let localModelList = [];
    let localProviderType = 'unknown'; // 'ollama', 'llama.cpp', 'Generic', 'Unknown'
 
@@ -1910,8 +2007,33 @@
             if (newType === 'local') {
                requestLocalModels();
             } else {
-               // Populate cloud models from cached config
-               updateModelDropdownForCloud();
+               // Switching to cloud: restore provider dropdown and update model
+               if (providerSelect) {
+                  // Rebuild cloud provider options
+                  providerSelect.innerHTML = '';
+                  providerSelect.disabled = false;
+                  if (cloudModelLists.openai.length > 0) {
+                     const opt = document.createElement('option');
+                     opt.value = 'openai';
+                     opt.textContent = 'OpenAI';
+                     providerSelect.appendChild(opt);
+                  }
+                  if (cloudModelLists.claude.length > 0) {
+                     const opt = document.createElement('option');
+                     opt.value = 'claude';
+                     opt.textContent = 'Claude';
+                     providerSelect.appendChild(opt);
+                  }
+                  // Select default provider from global defaults
+                  const defaultProvider = globalDefaults.provider || 'openai';
+                  if (providerSelect.querySelector(`option[value="${defaultProvider}"]`)) {
+                     providerSelect.value = defaultProvider;
+                  }
+                  // Also send provider to session
+                  setSessionLlm({ provider: providerSelect.value });
+               }
+               // Populate cloud models and send model to session
+               updateModelDropdownForCloud(true);
             }
          });
       }
@@ -1919,8 +2041,8 @@
       if (providerSelect) {
          providerSelect.addEventListener('change', () => {
             setSessionLlm({ provider: providerSelect.value });
-            // Update model dropdown for new provider
-            updateModelDropdownForCloud();
+            // Update model dropdown for new provider and send model to session
+            updateModelDropdownForCloud(true);
          });
       }
 
@@ -1931,6 +2053,225 @@
             }
          });
       }
+   }
+
+   /* =============================================================================
+    * Per-Conversation LLM Settings
+    * ============================================================================= */
+
+   /**
+    * Set the locked state for conversation LLM controls
+    */
+   function setConversationLlmLocked(locked) {
+      conversationLlmState.locked = locked;
+      const container = document.getElementById('llm-conversation-controls');
+      const indicator = document.getElementById('llm-lock-indicator');
+      const reasoningSelect = document.getElementById('reasoning-mode-select');
+      const toolsSelect = document.getElementById('tools-mode-select');
+
+      if (container) {
+         container.classList.toggle('locked', locked);
+      }
+      if (reasoningSelect) {
+         reasoningSelect.disabled = locked;
+      }
+      if (toolsSelect) {
+         toolsSelect.disabled = locked;
+      }
+      if (indicator) {
+         indicator.classList.toggle('hidden', !locked);
+      }
+   }
+
+   /**
+    * Initialize per-conversation LLM controls
+    */
+   function initConversationLlmControls() {
+      const reasoningSelect = document.getElementById('reasoning-mode-select');
+      const toolsSelect = document.getElementById('tools-mode-select');
+
+      if (reasoningSelect) {
+         reasoningSelect.addEventListener('change', () => {
+            conversationLlmState.thinking_mode = reasoningSelect.value;
+            // Immediately update session config so thinking_mode takes effect
+            if (!conversationLlmState.locked) {
+               setSessionLlm({ thinking_mode: reasoningSelect.value });
+            }
+         });
+      }
+
+      if (toolsSelect) {
+         toolsSelect.addEventListener('change', () => {
+            conversationLlmState.tools_mode = toolsSelect.value;
+            // Immediately update session config so tool_mode takes effect
+            if (!conversationLlmState.locked) {
+               setSessionLlm({ tool_mode: toolsSelect.value });
+            }
+         });
+      }
+
+      // Initial session defaults are applied after config loads via applyGlobalDefaultsToControls()
+
+      // Tools help button popup
+      const toolsHelpBtn = document.getElementById('tools-help-btn');
+      const toolsHelpPopup = document.getElementById('tools-help-popup');
+
+      if (toolsHelpBtn && toolsHelpPopup) {
+         // Toggle popup on button click
+         toolsHelpBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            toolsHelpPopup.classList.toggle('hidden');
+         });
+
+         // Close popup when clicking outside
+         // NOTE: These document-level listeners are intentionally not removed.
+         // The popup is a singleton that lives for the entire session, so cleanup
+         // is not necessary and the handlers have negligible overhead when inactive.
+         document.addEventListener('click', (e) => {
+            if (!toolsHelpPopup.contains(e.target) && e.target !== toolsHelpBtn) {
+               toolsHelpPopup.classList.add('hidden');
+            }
+         });
+
+         // Close popup on Escape key
+         document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && !toolsHelpPopup.classList.contains('hidden')) {
+               toolsHelpPopup.classList.add('hidden');
+            }
+         });
+      }
+   }
+
+   /**
+    * Reset conversation LLM controls for a new conversation
+    * Resets all controls (mode, provider, model, reasoning, tools) to global defaults
+    */
+   function resetConversationLlmControls() {
+      setConversationLlmLocked(false);
+
+      const typeSelect = document.getElementById('llm-type-select');
+      const providerSelect = document.getElementById('llm-provider-select');
+      const modelSelect = document.getElementById('llm-model-select');
+      const reasoningSelect = document.getElementById('reasoning-mode-select');
+      const toolsSelect = document.getElementById('tools-mode-select');
+
+      // Reset type (local/cloud)
+      if (typeSelect) {
+         typeSelect.value = globalDefaults.type;
+      }
+
+      // Build session reset payload
+      const sessionReset = {
+         type: globalDefaults.type,
+         tool_mode: globalDefaults.tools_mode,
+         thinking_mode: globalDefaults.thinking_mode,
+      };
+
+      // Reset provider and model based on type
+      if (globalDefaults.type === 'cloud') {
+         if (providerSelect) {
+            providerSelect.value = globalDefaults.provider;
+         }
+
+         // Reset model to provider's default
+         const defaultModel =
+            globalDefaults.provider === 'claude'
+               ? globalDefaults.claude_model
+               : globalDefaults.openai_model;
+
+         if (modelSelect && defaultModel) {
+            // Update dropdown options first
+            updateModelDropdownForCloud();
+            modelSelect.value = defaultModel;
+         }
+
+         sessionReset.cloud_provider = globalDefaults.provider;
+         sessionReset.model =
+            globalDefaults.provider === 'claude'
+               ? globalDefaults.claude_model
+               : globalDefaults.openai_model;
+      }
+
+      // Reset reasoning dropdown to global default
+      if (reasoningSelect) {
+         reasoningSelect.value = globalDefaults.thinking_mode;
+         conversationLlmState.thinking_mode = globalDefaults.thinking_mode;
+         sessionReset.thinking_mode = globalDefaults.thinking_mode;
+      }
+
+      // Reset tools dropdown
+      if (toolsSelect) {
+         toolsSelect.value = globalDefaults.tools_mode;
+         conversationLlmState.tools_mode = globalDefaults.tools_mode;
+      }
+
+      // Update runtime state
+      llmRuntimeState.type = globalDefaults.type;
+      llmRuntimeState.provider = globalDefaults.provider;
+      if (sessionReset.model) {
+         llmRuntimeState.model = sessionReset.model;
+      }
+
+      // Send reset to session
+      setSessionLlm(sessionReset);
+   }
+
+   /**
+    * Apply LLM settings from a loaded conversation
+    */
+   function applyConversationLlmSettings(settings, isLocked) {
+      const reasoningSelect = document.getElementById('reasoning-mode-select');
+      const toolsSelect = document.getElementById('tools-mode-select');
+
+      if (settings) {
+         if (settings.thinking_mode && reasoningSelect) {
+            reasoningSelect.value = settings.thinking_mode;
+            conversationLlmState.thinking_mode = settings.thinking_mode;
+         }
+
+         if (settings.tools_mode && toolsSelect) {
+            toolsSelect.value = settings.tools_mode;
+            conversationLlmState.tools_mode = settings.tools_mode;
+         }
+      }
+
+      setConversationLlmLocked(isLocked);
+   }
+
+   /**
+    * Get current conversation LLM settings for locking
+    */
+   function getConversationLlmSettings() {
+      return {
+         llm_type: llmRuntimeState.type,
+         cloud_provider: llmRuntimeState.provider,
+         model: llmRuntimeState.model,
+         tools_mode: conversationLlmState.tools_mode,
+         thinking_mode: conversationLlmState.thinking_mode,
+      };
+   }
+
+   /**
+    * Lock conversation LLM settings (called when first message is sent)
+    */
+   function lockConversationLlmSettings(conversationId) {
+      if (conversationLlmState.locked) {
+         return; // Already locked
+      }
+
+      const settings = getConversationLlmSettings();
+      if (typeof DawnWS !== 'undefined' && DawnWS.isConnected()) {
+         DawnWS.send({
+            type: 'lock_conversation_llm',
+            payload: {
+               conversation_id: conversationId,
+               llm_settings: settings,
+            },
+         });
+      }
+
+      // Optimistically lock the UI
+      setConversationLlmLocked(true);
    }
 
    let detectLocalProviderTimeout = null;
@@ -2005,6 +2346,11 @@
          modelSelect.appendChild(opt);
          modelSelect.disabled = true;
          modelSelect.title = 'Model switching not supported with llama.cpp';
+         // Update session with the loaded model (only if changed to avoid feedback loop)
+         if (payload.current_model && llmRuntimeState.model !== payload.current_model) {
+            llmRuntimeState.model = payload.current_model;
+            setSessionLlm({ model: payload.current_model });
+         }
          return;
       }
 
@@ -2025,15 +2371,19 @@
          modelSelect.appendChild(opt);
       });
 
-      // Select current model
+      // Select current model and update session (only if changed to avoid feedback loop)
       if (payload.current_model) {
          modelSelect.value = payload.current_model;
+         if (llmRuntimeState.model !== payload.current_model) {
+            llmRuntimeState.model = payload.current_model;
+            setSessionLlm({ model: payload.current_model });
+         }
       }
       modelSelect.disabled = false;
       modelSelect.title = 'Select local model';
    }
 
-   function updateModelDropdownForCloud() {
+   function updateModelDropdownForCloud(sendToSession = false) {
       const modelSelect = document.getElementById('llm-model-select');
       const providerSelect = document.getElementById('llm-provider-select');
       if (!modelSelect || !providerSelect) return;
@@ -2060,22 +2410,113 @@
          modelSelect.appendChild(opt);
       });
 
-      // Select current model if in list
+      // Select current model if in list, otherwise use provider's default
       const currentModel = llmRuntimeState?.model;
       if (currentModel && models.includes(currentModel)) {
          modelSelect.value = currentModel;
+      } else {
+         // Use default index for this provider, fall back to first model
+         const defaultIdx =
+            provider === 'claude'
+               ? cloudModelLists.claudeDefaultIdx
+               : cloudModelLists.openaiDefaultIdx;
+         // Ensure index is valid
+         if (defaultIdx >= 0 && defaultIdx < models.length) {
+            modelSelect.value = models[defaultIdx];
+         } else {
+            modelSelect.value = models[0];
+         }
       }
 
       modelSelect.disabled = false;
       modelSelect.title = 'Select cloud model';
+
+      // Send selected model to session if requested (e.g., after provider switch)
+      // Only send if model actually changed to avoid feedback loops
+      if (sendToSession && modelSelect.value && llmRuntimeState.model !== modelSelect.value) {
+         llmRuntimeState.model = modelSelect.value;
+         setSessionLlm({ model: modelSelect.value });
+      }
    }
 
    function updateCloudModelLists(config) {
-      // Extract model lists from config response
+      // Extract model lists and default indices from config response
       if (config?.llm?.cloud) {
-         cloudModelLists.openai = config.llm.cloud.openai_models || [];
-         cloudModelLists.claude = config.llm.cloud.claude_models || [];
+         const cloud = config.llm.cloud;
+         cloudModelLists.openai = cloud.openai_models || [];
+         cloudModelLists.claude = cloud.claude_models || [];
+         cloudModelLists.openaiDefaultIdx = cloud.openai_default_model_idx || 0;
+         cloudModelLists.claudeDefaultIdx = cloud.claude_default_model_idx || 0;
       }
+   }
+
+   /**
+    * Extract global defaults from config for resetting new conversations
+    */
+   function extractGlobalDefaults(config) {
+      if (!config) return;
+
+      // LLM type (local/cloud)
+      if (config.llm?.type) {
+         globalDefaults.type = config.llm.type;
+      }
+
+      // Cloud provider
+      if (config.llm?.cloud?.provider) {
+         globalDefaults.provider = config.llm.cloud.provider;
+      }
+
+      // Default models (resolve idx to model name)
+      if (config.llm?.cloud) {
+         const cloud = config.llm.cloud;
+         const openaiModels = cloud.openai_models || [];
+         const claudeModels = cloud.claude_models || [];
+         const openaiIdx = cloud.openai_default_model_idx || 0;
+         const claudeIdx = cloud.claude_default_model_idx || 0;
+
+         globalDefaults.openai_model = openaiModels[openaiIdx] || openaiModels[0] || '';
+         globalDefaults.claude_model = claudeModels[claudeIdx] || claudeModels[0] || '';
+      }
+
+      // Tools mode
+      if (config.llm?.tools?.mode) {
+         globalDefaults.tools_mode = config.llm.tools.mode;
+      }
+
+      // Thinking mode (Claude/local)
+      if (config.llm?.thinking?.mode) {
+         globalDefaults.thinking_mode = config.llm.thinking.mode;
+      }
+
+      // Reasoning effort (OpenAI o-series/GPT-5)
+      if (config.llm?.thinking?.reasoning_effort) {
+         globalDefaults.reasoning_effort = config.llm.thinking.reasoning_effort;
+      }
+   }
+
+   /**
+    * Apply global defaults to conversation LLM controls
+    * Called after config loads to set initial UI state
+    */
+   function applyGlobalDefaultsToControls() {
+      const reasoningSelect = document.getElementById('reasoning-mode-select');
+      const toolsSelect = document.getElementById('tools-mode-select');
+
+      if (reasoningSelect) {
+         reasoningSelect.value = globalDefaults.thinking_mode;
+         conversationLlmState.thinking_mode = globalDefaults.thinking_mode;
+      }
+
+      if (toolsSelect) {
+         toolsSelect.value = globalDefaults.tools_mode;
+         conversationLlmState.tools_mode = globalDefaults.tools_mode;
+      }
+
+      // Send initial defaults to session
+      setSessionLlm({
+         tool_mode: globalDefaults.tools_mode,
+         thinking_mode: globalDefaults.thinking_mode,
+      });
    }
 
    function updateLlmControls(runtime) {
@@ -2193,6 +2634,23 @@
    function escapeHtml(str) {
       // Use shared implementation from format.js
       return DawnFormat.escapeHtml(str);
+   }
+
+   /**
+    * Get a nested value from an object using dot notation
+    * @param {Object} obj - The object to traverse
+    * @param {string} path - Dot-separated path (e.g., 'llm.cloud.openai_models')
+    * @returns {*} The value at the path, or undefined if not found
+    */
+   function getNestedValue(obj, path) {
+      if (!obj || !path) return undefined;
+      const parts = path.split('.');
+      let current = obj;
+      for (const part of parts) {
+         if (current === null || current === undefined) return undefined;
+         current = current[part];
+      }
+      return current;
    }
 
    /**
@@ -2401,6 +2859,13 @@
       // LLM controls
       updateLlmControls: updateLlmControls,
       updateCloudModelLists: updateCloudModelLists,
+      // Per-conversation LLM settings
+      initConversationLlmControls: initConversationLlmControls,
+      resetConversationLlmControls: resetConversationLlmControls,
+      applyConversationLlmSettings: applyConversationLlmSettings,
+      lockConversationLlmSettings: lockConversationLlmSettings,
+      getConversationLlmSettings: getConversationLlmSettings,
+      isConversationLlmLocked: () => conversationLlmState.locked,
       // Modals (shared with other modules)
       showConfirmModal: showConfirmModal,
       showInputModal: showInputModal,

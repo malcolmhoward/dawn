@@ -136,6 +136,15 @@ void handle_new_conversation(ws_connection_t *conn, struct json_object *payload)
       json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
       json_object_object_add(resp_payload, "conversation_id", json_object_new_int64(conv_id));
 
+      /* Clear session history for fresh start and re-add system prompt */
+      if (conn->session) {
+         session_clear_history(conn->session);
+         char *prompt = build_user_prompt(conn->auth_user_id);
+         session_add_message(conn->session, "system",
+                             prompt ? prompt : get_remote_command_prompt());
+         free(prompt);
+      }
+
       auth_db_log_event("CONVERSATION_CREATED", conn->username, conn->client_ip,
                         "New conversation");
    } else if (result == AUTH_DB_LIMIT_EXCEEDED) {
@@ -408,6 +417,41 @@ void handle_load_conversation(ws_connection_t *conn, struct json_object *payload
             }
             LOG_INFO("WebUI: Restored %d messages to session %u context", total_messages,
                      conn->session->session_id);
+
+            /* Apply stored LLM settings to session (if any were locked) */
+            if (conv.llm_type[0] != '\0' || conv.tools_mode[0] != '\0') {
+               session_llm_config_t cfg;
+               session_get_llm_config(conn->session, &cfg);
+
+               /* Map stored strings to enums/values */
+               if (conv.llm_type[0] != '\0') {
+                  if (strcmp(conv.llm_type, "local") == 0) {
+                     cfg.type = LLM_LOCAL;
+                  } else if (strcmp(conv.llm_type, "cloud") == 0) {
+                     cfg.type = LLM_CLOUD;
+                  }
+               }
+               if (conv.cloud_provider[0] != '\0') {
+                  if (strcmp(conv.cloud_provider, "openai") == 0) {
+                     cfg.cloud_provider = CLOUD_PROVIDER_OPENAI;
+                  } else if (strcmp(conv.cloud_provider, "claude") == 0) {
+                     cfg.cloud_provider = CLOUD_PROVIDER_CLAUDE;
+                  }
+               }
+               if (conv.model[0] != '\0') {
+                  strncpy(cfg.model, conv.model, sizeof(cfg.model) - 1);
+                  cfg.model[sizeof(cfg.model) - 1] = '\0';
+               }
+               if (conv.tools_mode[0] != '\0') {
+                  strncpy(cfg.tool_mode, conv.tools_mode, sizeof(cfg.tool_mode) - 1);
+                  cfg.tool_mode[sizeof(cfg.tool_mode) - 1] = '\0';
+               }
+               /* Note: thinking_mode is handled per-request, not stored in session */
+
+               session_set_llm_config(conn->session, &cfg);
+               LOG_INFO("WebUI: Applied stored LLM config to session (type=%s, model=%s, tools=%s)",
+                        conv.llm_type, conv.model, conv.tools_mode);
+            }
          } else if (conv.is_archived) {
             LOG_INFO(
                 "WebUI: Loaded archived conversation %lld (read-only, not restored to session)",
@@ -423,6 +467,26 @@ void handle_load_conversation(ws_connection_t *conn, struct json_object *payload
          json_object_object_add(resp_payload, "context_tokens",
                                 json_object_new_int(conv.context_tokens));
          json_object_object_add(resp_payload, "context_max", json_object_new_int(conv.context_max));
+
+         /* Per-conversation LLM settings (schema v11+) */
+         json_object *llm_settings = json_object_new_object();
+         json_object_object_add(llm_settings, "llm_type",
+                                json_object_new_string(conv.llm_type[0] ? conv.llm_type : ""));
+         json_object_object_add(llm_settings, "cloud_provider",
+                                json_object_new_string(conv.cloud_provider[0] ? conv.cloud_provider
+                                                                              : ""));
+         json_object_object_add(llm_settings, "model",
+                                json_object_new_string(conv.model[0] ? conv.model : ""));
+         json_object_object_add(llm_settings, "tools_mode",
+                                json_object_new_string(conv.tools_mode[0] ? conv.tools_mode : ""));
+         json_object_object_add(llm_settings, "thinking_mode",
+                                json_object_new_string(conv.thinking_mode[0] ? conv.thinking_mode
+                                                                             : ""));
+         json_object_object_add(resp_payload, "llm_settings", llm_settings);
+
+         /* Settings are locked if conversation has messages (message_count > 0) */
+         json_object_object_add(resp_payload, "llm_locked",
+                                json_object_new_boolean(total_messages > 0));
 
          /* Continuation data for context banner */
          if (conv.continued_from > 0) {
@@ -779,4 +843,105 @@ void handle_update_context(ws_connection_t *conn, struct json_object *payload) {
 
    /* Update in database - no response needed */
    conv_db_update_context(conv_id, conn->auth_user_id, context_tokens, context_max);
+}
+
+/**
+ * @brief Lock LLM settings for a conversation
+ *
+ * Called when the first message is sent in a conversation.
+ * Stores the current LLM settings and locks them for the conversation's lifetime.
+ */
+void handle_lock_conversation_llm(ws_connection_t *conn, struct json_object *payload) {
+   if (!conn_require_auth(conn)) {
+      return;
+   }
+
+   json_object *response = json_object_new_object();
+   json_object_object_add(response, "type",
+                          json_object_new_string("lock_conversation_llm_response"));
+   json_object *resp_payload = json_object_new_object();
+
+   /* Get conversation ID */
+   json_object *conv_id_obj;
+   if (!json_object_object_get_ex(payload, "conversation_id", &conv_id_obj)) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Missing conversation_id"));
+      json_object_object_add(response, "payload", resp_payload);
+      send_json_response(conn->wsi, response);
+      json_object_put(response);
+      return;
+   }
+   int64_t conv_id = json_object_get_int64(conv_id_obj);
+
+   /* Get LLM settings object */
+   json_object *settings_obj;
+   if (!json_object_object_get_ex(payload, "llm_settings", &settings_obj)) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error", json_object_new_string("Missing llm_settings"));
+      json_object_object_add(response, "payload", resp_payload);
+      send_json_response(conn->wsi, response);
+      json_object_put(response);
+      return;
+   }
+
+   /* Extract settings fields */
+   const char *llm_type = NULL;
+   const char *cloud_provider = NULL;
+   const char *model = NULL;
+   const char *tools_mode = NULL;
+   const char *thinking_mode = NULL;
+
+   json_object *val;
+   if (json_object_object_get_ex(settings_obj, "llm_type", &val)) {
+      llm_type = json_object_get_string(val);
+   }
+   if (json_object_object_get_ex(settings_obj, "cloud_provider", &val)) {
+      cloud_provider = json_object_get_string(val);
+   }
+   if (json_object_object_get_ex(settings_obj, "model", &val)) {
+      model = json_object_get_string(val);
+   }
+   if (json_object_object_get_ex(settings_obj, "tools_mode", &val)) {
+      tools_mode = json_object_get_string(val);
+   }
+   if (json_object_object_get_ex(settings_obj, "thinking_mode", &val)) {
+      thinking_mode = json_object_get_string(val);
+   }
+
+   /* Validate input lengths against database field sizes */
+   if ((llm_type && strlen(llm_type) > 15) || (cloud_provider && strlen(cloud_provider) > 15) ||
+       (model && strlen(model) > 63) || (tools_mode && strlen(tools_mode) > 15) ||
+       (thinking_mode && strlen(thinking_mode) > 15)) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error", json_object_new_string("Field value too long"));
+      json_object_object_add(response, "payload", resp_payload);
+      send_json_response(conn->wsi, response);
+      json_object_put(response);
+      return;
+   }
+
+   /* Lock settings in database (only works if message_count == 0) */
+   int result = conv_db_lock_llm_settings(conv_id, conn->auth_user_id, llm_type, cloud_provider,
+                                          model, tools_mode, thinking_mode);
+
+   if (result == AUTH_DB_SUCCESS) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
+      json_object_object_add(resp_payload, "locked", json_object_new_boolean(1));
+      LOG_INFO("WebUI: Locked LLM settings for conversation %lld (user %d)", (long long)conv_id,
+               conn->auth_user_id);
+   } else if (result == AUTH_DB_NOT_FOUND) {
+      /* Conversation already has messages - settings already locked */
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
+      json_object_object_add(resp_payload, "locked", json_object_new_boolean(1));
+      json_object_object_add(resp_payload, "already_locked", json_object_new_boolean(1));
+   } else {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Failed to lock settings"));
+   }
+
+   json_object_object_add(response, "payload", resp_payload);
+   send_json_response(conn->wsi, response);
+   json_object_put(response);
 }

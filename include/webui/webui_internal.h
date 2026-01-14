@@ -510,6 +510,13 @@ void handle_save_message(ws_connection_t *conn, struct json_object *payload);
  */
 void handle_update_context(ws_connection_t *conn, struct json_object *payload);
 
+/**
+ * @brief Lock LLM settings for a conversation
+ *
+ * Called when first message is sent. Stores the current LLM settings.
+ */
+void handle_lock_conversation_llm(ws_connection_t *conn, struct json_object *payload);
+
 /* =============================================================================
  * Config Handler Functions (defined in webui_config.c)
  * ============================================================================= */

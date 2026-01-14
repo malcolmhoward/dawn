@@ -227,6 +227,11 @@
 
       setActiveConversationId(payload.conversation_id);
 
+      // Lock per-conversation LLM settings on first message
+      if (typeof DawnSettings !== 'undefined') {
+         DawnSettings.lockConversationLlmSettings(payload.conversation_id);
+      }
+
       // Process any pending messages
       if (historyState.pendingMessages.length > 0) {
          historyState.pendingMessages.forEach((msg) => {
@@ -370,6 +375,14 @@
                typeof DawnMetrics !== 'undefined' ? DawnMetrics.updatePanel : null
             );
          }
+      }
+
+      // Apply per-conversation LLM settings
+      if (typeof DawnSettings !== 'undefined') {
+         DawnSettings.applyConversationLlmSettings(
+            payload.llm_settings || null,
+            payload.llm_locked || false
+         );
       }
 
       renderConversationList();
@@ -957,6 +970,10 @@
       if (!authState.authenticated) return;
 
       if (historyState.activeConversationId) {
+         // Lock LLM settings on user message (only applies if conversation has 0 messages)
+         if (role === 'user' && typeof DawnSettings !== 'undefined') {
+            DawnSettings.lockConversationLlmSettings(historyState.activeConversationId);
+         }
          requestSaveMessage(historyState.activeConversationId, role, content);
          return;
       }
@@ -987,6 +1004,11 @@
       const transcript = document.getElementById('transcript');
       if (transcript) {
          transcript.innerHTML = '';
+      }
+
+      // Reset per-conversation LLM settings
+      if (typeof DawnSettings !== 'undefined') {
+         DawnSettings.resetConversationLlmControls();
       }
 
       if (typeof DawnWS !== 'undefined' && DawnWS.isConnected()) {

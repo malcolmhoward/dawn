@@ -501,6 +501,29 @@ void llm_tools_suppress_pop(void);
 bool llm_tools_suppressed(void);
 
 /**
+ * @brief Set current resolved config for thread-local tool_mode checking
+ *
+ * Called by llm_chat_completion_*_with_config() before invoking provider
+ * functions, so that llm_tools_enabled() can check session-specific tool_mode.
+ * Set to NULL after the LLM call completes.
+ *
+ * Thread-safe: Uses thread-local storage.
+ *
+ * @param config Resolved config (or NULL to clear)
+ */
+void llm_tools_set_current_config(const llm_resolved_config_t *config);
+
+/**
+ * @brief Get current session's thinking mode
+ *
+ * Returns the thinking_mode from the thread-local resolved config if set,
+ * otherwise returns the global config thinking mode.
+ *
+ * @return Thinking mode string ("disabled", "auto", "enabled", "low", "medium", "high")
+ */
+const char *llm_get_current_thinking_mode(void);
+
+/**
  * @brief Get count of currently enabled tools
  *
  * @return Number of enabled tools

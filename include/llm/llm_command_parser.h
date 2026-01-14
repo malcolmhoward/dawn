@@ -69,4 +69,15 @@ int is_vision_enabled_for_current_llm(void);
  */
 void invalidate_system_instructions(void);
 
+/**
+ * @brief Build a remote prompt for a specific tool mode
+ *
+ * Creates a prompt string based on the specified tool_mode, independent of
+ * global config. Used for per-session tool_mode overrides.
+ *
+ * @param tool_mode Tool mode: "native", "command_tags", or "disabled"
+ * @return Allocated prompt string (caller must free), or NULL on error
+ */
+char *build_remote_prompt_for_mode(const char *tool_mode);
+
 #endif  // LLM_COMMAND_PARSER_H
