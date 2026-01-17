@@ -285,9 +285,6 @@
             case 'load_conversation_response':
                DawnHistory.handleLoadResponse(msg.payload);
                break;
-            case 'conversation_messages_chunk':
-               DawnHistory.handleChunk(msg.payload);
-               break;
             case 'delete_conversation_response':
                DawnHistory.handleDeleteResponse(msg.payload);
                break;
@@ -468,6 +465,16 @@
          DawnElements.ringContainer.classList.add('fft-active');
       }
 
+      // Toggle send/stop button based on state
+      // Show stop button during processing, speaking, or thinking states
+      const showStop = state === 'processing' || state === 'speaking' || state === 'thinking';
+      if (DawnElements.sendBtn) {
+         DawnElements.sendBtn.classList.toggle('hidden', showStop);
+      }
+      if (DawnElements.stopBtn) {
+         DawnElements.stopBtn.classList.toggle('hidden', !showStop);
+      }
+
       // Emit state event for decoupled modules
       if (typeof DawnEvents !== 'undefined') {
          DawnEvents.emit('state', { state, previousState, detail, tools });
@@ -568,6 +575,13 @@
          event.preventDefault();
          handleSend();
       }
+   }
+
+   function handleStop() {
+      console.log('Stop button clicked - sending cancel');
+      DawnWS.send({ type: 'cancel' });
+      // Finalize any active stream immediately on the client side
+      DawnStreaming.finalize();
    }
 
    // =============================================================================
@@ -731,6 +745,7 @@
 
       // Event listeners
       DawnElements.sendBtn.addEventListener('click', handleSend);
+      DawnElements.stopBtn.addEventListener('click', handleStop);
       DawnElements.textInput.addEventListener('keydown', handleKeydown);
 
       // Auto-resize textarea as user types

@@ -171,7 +171,8 @@ typedef struct session {
    dap2_capabilities_t capabilities;  // Local ASR/TTS/wake word
 
    // Cancellation (atomic for cross-thread visibility on ARM64)
-   atomic_bool disconnected;  // Set on client disconnect
+   atomic_bool disconnected;         // Set on client disconnect
+   atomic_uint request_generation;   // Incremented on each new request, used to detect superseded requests
 
    // LLM streaming state (atomic for cross-thread visibility on ARM64)
    atomic_bool llm_streaming_active;  // True while streaming LLM response
@@ -475,6 +476,19 @@ char *session_get_system_prompt(session_t *session);
 char *session_llm_call(session_t *session, const char *user_text);
 
 /**
+ * @brief Call LLM without adding user message to history
+ *
+ * Same as session_llm_call but skips adding user message to history.
+ * Use when caller has already added the message before the call.
+ * This ensures message is in history even if the call is cancelled.
+ *
+ * @param session Session context
+ * @param user_text User input text
+ * @return LLM response (caller must free), or NULL on failure
+ */
+char *session_llm_call_no_add(session_t *session, const char *user_text);
+
+/**
  * @brief Sentence callback for TTS streaming
  *
  * Called for each complete sentence detected in the LLM response.
@@ -506,6 +520,17 @@ char *session_llm_call_with_tts(session_t *session,
                                 const char *user_text,
                                 session_sentence_callback sentence_cb,
                                 void *userdata);
+
+/**
+ * @brief Call LLM with TTS streaming, without adding user message
+ *
+ * Same as session_llm_call_with_tts but skips adding user message to history.
+ * Use when caller has already added the message before the call.
+ */
+char *session_llm_call_with_tts_no_add(session_t *session,
+                                       const char *user_text,
+                                       session_sentence_callback sentence_cb,
+                                       void *userdata);
 #endif /* ENABLE_MULTI_CLIENT */
 
 // =============================================================================

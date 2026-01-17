@@ -16,6 +16,10 @@
       searchTimeout: null,
       pendingMessages: [], // Messages to save once conversation is created
       creatingConversation: false, // Prevent duplicate creation
+      // Pagination state for current conversation
+      oldestMessageId: null,
+      hasMoreMessages: false,
+      loadingMoreMessages: false,
    };
 
    // Callbacks for shared utilities
@@ -28,9 +32,6 @@
 
    // Cleanup function for focus trap
    let historyFocusTrapCleanup = null;
-
-   // State for chunked conversation loading
-   let pendingChunkedLoad = null;
 
    // Track pending delete to clear UI if deleting active conversation
    let pendingDeleteId = null;
@@ -167,6 +168,24 @@
       });
    }
 
+   function requestLoadMoreMessages() {
+      if (typeof DawnWS === 'undefined' || !DawnWS.isConnected()) return;
+      if (!historyState.activeConversationId) return;
+      if (!historyState.hasMoreMessages) return;
+      if (historyState.loadingMoreMessages) return;
+      if (!historyState.oldestMessageId) return;
+
+      historyState.loadingMoreMessages = true;
+
+      DawnWS.send({
+         type: 'load_conversation',
+         payload: {
+            conversation_id: historyState.activeConversationId,
+            before_id: historyState.oldestMessageId,
+         },
+      });
+   }
+
    function requestDeleteConversation(convId) {
       if (typeof DawnWS === 'undefined' || !DawnWS.isConnected()) return;
 
@@ -241,11 +260,10 @@
       }
 
       // Only show toast and clear transcript if this was a manual "New Chat" action
-      if (historyElements.panel && historyElements.panel.classList.contains('open')) {
+      if (historyElements.panel && !historyElements.panel.classList.contains('hidden')) {
          if (typeof DawnToast !== 'undefined') {
             DawnToast.show('New conversation created', 'success');
          }
-         closeHistory();
 
          // Clear transcript for new conversation
          const transcript = document.getElementById('transcript');
@@ -260,12 +278,47 @@
 
    function handleLoadConversationResponse(payload) {
       if (!payload.success) {
+         historyState.loadingMoreMessages = false;
          if (typeof DawnToast !== 'undefined') {
             DawnToast.show(payload.error || 'Failed to load conversation', 'error');
          }
          return;
       }
 
+      const isLoadMore = payload.is_load_more || false;
+      const transcript = document.getElementById('transcript');
+
+      // Update pagination state
+      historyState.oldestMessageId = payload.oldest_id || null;
+      historyState.hasMoreMessages = payload.has_more || false;
+      historyState.loadingMoreMessages = false;
+
+      if (isLoadMore) {
+         // Load more: prepend older messages to existing transcript
+         if (transcript) {
+            const messages = payload.messages || [];
+            // Get the first child after any banners to insert before
+            const firstMessage = transcript.querySelector('.transcript-entry');
+            const scrollHeightBefore = transcript.scrollHeight;
+
+            messages.forEach((msg) => {
+               if (msg.role === 'system') return;
+               if (typeof DawnTranscript !== 'undefined') {
+                  DawnTranscript.prependEntry(msg.role, msg.content, firstMessage);
+               }
+            });
+
+            // Preserve scroll position after prepending
+            const scrollHeightAfter = transcript.scrollHeight;
+            transcript.scrollTop = scrollHeightAfter - scrollHeightBefore;
+
+            // Update "load more" indicator
+            updateLoadMoreIndicator();
+         }
+         return;
+      }
+
+      // Initial load: full setup
       setActiveConversationId(payload.conversation_id);
 
       // Track archived state and continuation
@@ -273,16 +326,25 @@
       const continuedBy = payload.continued_by || null;
 
       console.log(
-         `Load conversation: id=${payload.conversation_id}, is_archived=${isArchived}, continued_by=${continuedBy}`
+         `Load conversation: id=${payload.conversation_id}, total=${payload.total}, has_more=${payload.has_more}`
       );
 
       // Update input area state based on archived status
       setArchivedMode(isArchived);
 
       // Clear transcript
-      const transcript = document.getElementById('transcript');
       if (transcript) {
          transcript.innerHTML = '';
+
+         // Add "load more" indicator at top if there are more messages
+         if (payload.has_more) {
+            const loadMoreHtml = `
+          <div class="load-more-indicator" id="load-more-indicator">
+            <button class="load-more-btn" id="load-more-btn">Load earlier messages</button>
+          </div>
+        `;
+            transcript.insertAdjacentHTML('beforeend', loadMoreHtml);
+         }
 
          // Add archived notice at top for archived conversations
          if (isArchived) {
@@ -324,27 +386,8 @@
         `;
             transcript.insertAdjacentHTML('beforeend', bannerHtml);
          }
-      }
 
-      // Check if this is a chunked load (large conversation)
-      if (payload.chunked) {
-         pendingChunkedLoad = {
-            conversation_id: payload.conversation_id,
-            title: payload.title,
-            chunks_received: 0,
-            context_tokens: payload.context_tokens,
-            context_max: payload.context_max,
-            is_archived: isArchived,
-            continued_by: continuedBy,
-         };
-         if (typeof DawnToast !== 'undefined') {
-            DawnToast.show(`Loading ${payload.message_count} messages...`, 'info');
-         }
-         return;
-      }
-
-      // Non-chunked: display messages immediately
-      if (transcript) {
+         // Display messages
          const messages = payload.messages || [];
          messages.forEach((msg) => {
             if (msg.role === 'system') return;
@@ -360,6 +403,9 @@
          }
 
          transcript.scrollTop = transcript.scrollHeight;
+
+         // Setup scroll detection for loading more
+         setupScrollDetection(transcript);
       }
 
       // Restore context gauge if available
@@ -386,7 +432,6 @@
       }
 
       renderConversationList();
-      closeHistory();
       const statusMsg = isArchived
          ? `Loaded archived: ${payload.title}`
          : `Loaded: ${payload.title}`;
@@ -395,62 +440,48 @@
       }
    }
 
-   function handleConversationMessagesChunk(payload) {
-      if (!pendingChunkedLoad || pendingChunkedLoad.conversation_id !== payload.conversation_id) {
-         console.warn('Received chunk for unknown conversation:', payload.conversation_id);
-         return;
-      }
-
-      const transcript = document.getElementById('transcript');
-      const messages = payload.messages || [];
-      pendingChunkedLoad.chunks_received++;
-
-      // Progressive rendering: display messages as they arrive
-      if (transcript) {
-         messages.forEach((msg) => {
-            if (msg.role !== 'system') {
-               if (typeof DawnTranscript !== 'undefined') {
-                  DawnTranscript.addEntry(msg.role, msg.content);
-               }
+   function updateLoadMoreIndicator() {
+      const indicator = document.getElementById('load-more-indicator');
+      if (indicator) {
+         if (historyState.hasMoreMessages) {
+            const btn = indicator.querySelector('.load-more-btn');
+            if (btn) {
+               btn.textContent = 'Load earlier messages';
+               btn.classList.remove('loading');
+               btn.disabled = false;
             }
+         } else {
+            indicator.remove();
+         }
+      }
+   }
+
+   function setupScrollDetection(transcript) {
+      // Remove any existing listener
+      transcript.removeEventListener('scroll', handleTranscriptScroll);
+      transcript.addEventListener('scroll', handleTranscriptScroll);
+
+      // Setup click handler for load more button
+      const loadMoreBtn = document.getElementById('load-more-btn');
+      if (loadMoreBtn) {
+         loadMoreBtn.addEventListener('click', () => {
+            loadMoreBtn.textContent = 'Loading...';
+            loadMoreBtn.classList.add('loading');
+            loadMoreBtn.disabled = true;
+            requestLoadMoreMessages();
          });
       }
+   }
 
-      // On last chunk, finalize the load
-      if (payload.is_last) {
-         if (pendingChunkedLoad.is_archived && pendingChunkedLoad.continued_by && transcript) {
-            addContinuationLink(pendingChunkedLoad.continued_by);
-         }
-
-         if (transcript) {
-            transcript.scrollTop = transcript.scrollHeight;
-         }
-
-         // Restore context gauge
-         if (pendingChunkedLoad.context_tokens && pendingChunkedLoad.context_max) {
-            const usage =
-               (pendingChunkedLoad.context_tokens / pendingChunkedLoad.context_max) * 100;
-            if (typeof DawnContextGauge !== 'undefined') {
-               DawnContextGauge.updateDisplay(
-                  {
-                     current: pendingChunkedLoad.context_tokens,
-                     max: pendingChunkedLoad.context_max,
-                     usage: usage,
-                  },
-                  typeof DawnMetrics !== 'undefined' ? DawnMetrics.updatePanel : null
-               );
-            }
-         }
-
-         renderConversationList();
-         closeHistory();
-         const statusMsg = pendingChunkedLoad.is_archived
-            ? `Loaded archived: ${pendingChunkedLoad.title}`
-            : `Loaded: ${pendingChunkedLoad.title}`;
-         if (typeof DawnToast !== 'undefined') {
-            DawnToast.show(statusMsg, 'info');
-         }
-         pendingChunkedLoad = null;
+   function handleTranscriptScroll(e) {
+      const transcript = e.target;
+      // Load more when scrolled near the top (within 100px)
+      if (
+         transcript.scrollTop < 100 &&
+         historyState.hasMoreMessages &&
+         !historyState.loadingMoreMessages
+      ) {
+         requestLoadMoreMessages();
       }
    }
 
@@ -1047,7 +1078,6 @@
       if (historyElements.newBtn) {
          historyElements.newBtn.addEventListener('click', () => {
             startNewChat();
-            closeHistory();
          });
       }
 
@@ -1127,11 +1157,11 @@
       startNewChat: startNewChat,
       requestUpdateContext: requestUpdateContext,
       getActiveConversationId: getActiveConversationId,
+      requestLoadMoreMessages: requestLoadMoreMessages,
       // Response handlers
       handleListResponse: handleListConversationsResponse,
       handleNewResponse: handleNewConversationResponse,
       handleLoadResponse: handleLoadConversationResponse,
-      handleChunk: handleConversationMessagesChunk,
       handleDeleteResponse: handleDeleteConversationResponse,
       handleRenameResponse: handleRenameConversationResponse,
       handleSearchResponse: handleSearchConversationsResponse,

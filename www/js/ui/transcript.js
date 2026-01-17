@@ -306,6 +306,105 @@
       <div class="text">${DawnFormat.markdown(text)}</div>
     `;
       transcript.appendChild(entry);
+
+      // Add copy buttons to code blocks in the new entry
+      const textEl = entry.querySelector('.text');
+      if (textEl) {
+         DawnFormat.addCopyButtons(textEl);
+      }
+   }
+
+   /**
+    * Prepend a transcript entry (for loading older messages)
+    * @param {string} role - Message role
+    * @param {string} text - Message text
+    * @param {HTMLElement|null} beforeElement - Element to insert before (null = append)
+    */
+   function prependTranscriptEntry(role, text, beforeElement) {
+      const transcript = DawnElements.transcript;
+      if (!transcript) return;
+
+      // Handle thinking content in assistant messages
+      let thinkingBlock = null;
+      if (role === 'assistant' && containsThinkingContent(text)) {
+         const { thinking, remaining } = extractThinkingContent(text);
+         if (thinking) {
+            thinkingBlock = createThinkingBlock(thinking);
+            if (remaining.length > 0) {
+               text = remaining;
+            } else {
+               // Only thinking content, insert and return
+               if (beforeElement) {
+                  transcript.insertBefore(thinkingBlock, beforeElement);
+               } else {
+                  transcript.appendChild(thinkingBlock);
+               }
+               return;
+            }
+         }
+      }
+
+      // Handle reasoning content (OpenAI o-series)
+      let reasoningBlock = null;
+      if (role === 'assistant' && containsReasoningContent(text)) {
+         const { reasoning, remaining } = extractReasoningContent(text);
+         if (reasoning) {
+            reasoningBlock = createReasoningBlock(reasoning);
+            if (remaining.length > 0) {
+               text = remaining;
+            } else {
+               if (beforeElement) {
+                  transcript.insertBefore(reasoningBlock, beforeElement);
+               } else {
+                  transcript.appendChild(reasoningBlock);
+               }
+               return;
+            }
+         }
+      }
+
+      // Skip debug/tool content for prepend (keeping it simple)
+      if (role === 'tool' || text.startsWith('[Tool Result:') || text.startsWith('[Tool Call:')) {
+         return;
+      }
+
+      // Extract user-facing text if mixed content
+      if (containsCommandTags(text)) {
+         if (isOnlyDebugContent(text)) {
+            return; // Skip pure debug content
+         }
+         text = extractUserFacingText(text);
+         if (!text) return;
+      }
+
+      // Create the entry
+      const entry = document.createElement('div');
+      entry.className = `transcript-entry ${role}`;
+      entry.innerHTML = `
+      <div class="role">${DawnFormat.escapeHtml(role)}</div>
+      <div class="text">${DawnFormat.markdown(text)}</div>
+    `;
+
+      // Add copy buttons to code blocks
+      const textEl = entry.querySelector('.text');
+      if (textEl) {
+         DawnFormat.addCopyButtons(textEl);
+      }
+
+      // Insert thinking/reasoning block first if present
+      if (thinkingBlock && beforeElement) {
+         transcript.insertBefore(thinkingBlock, beforeElement);
+      }
+      if (reasoningBlock && beforeElement) {
+         transcript.insertBefore(reasoningBlock, beforeElement);
+      }
+
+      // Insert the entry
+      if (beforeElement) {
+         transcript.insertBefore(entry, beforeElement);
+      } else {
+         transcript.appendChild(entry);
+      }
    }
 
    /**
@@ -452,6 +551,7 @@
       addEntry: addTranscriptEntry,
       addDebug: addDebugEntry,
       addNormal: addNormalEntry,
+      prependEntry: prependTranscriptEntry,
       // Expose helpers for other modules
       containsCommandTags: containsCommandTags,
       isOnlyDebugContent: isOnlyDebugContent,

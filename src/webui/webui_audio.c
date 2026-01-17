@@ -25,6 +25,7 @@
 
 #include <opus/opus.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -726,7 +727,8 @@ typedef struct {
    session_t *session;
    uint8_t *audio_data;
    size_t audio_len;
-   bool use_opus; /* True if audio_data is Opus-encoded, false if raw PCM */
+   bool use_opus;            /* True if audio_data is Opus-encoded, false if raw PCM */
+   unsigned int request_gen; /* Captured request_generation to detect superseded requests */
 } audio_work_t;
 
 /**
@@ -815,6 +817,8 @@ static void webui_sentence_audio_callback(const char *sentence, void *userdata) 
    free(cleaned);
 }
 
+/* REQUEST_SUPERSEDED macro now defined in webui_internal.h */
+
 /**
  * @brief Audio worker thread - process voice input and generate response
  *
@@ -827,9 +831,10 @@ static void *audio_worker_thread(void *arg) {
    session_t *session = work->session;
    uint8_t *audio_data = work->audio_data;
    size_t audio_len = work->audio_len;
+   unsigned int expected_gen = work->request_gen;
 
-   if (!session || session->disconnected) {
-      LOG_INFO("WebUI: Audio session disconnected, aborting");
+   if (!session || REQUEST_SUPERSEDED(session, expected_gen)) {
+      LOG_INFO("WebUI: Audio session disconnected or request superseded, aborting");
       if (session) {
          session_release(session);
       }
@@ -873,8 +878,8 @@ static void *audio_worker_thread(void *arg) {
 
    LOG_INFO("WebUI: Transcribed: \"%s\"", transcript);
 
-   /* Check disconnection */
-   if (session->disconnected) {
+   /* Check if request was superseded */
+   if (REQUEST_SUPERSEDED(session, expected_gen)) {
       session_release(session);
       free(transcript);
       free(work);
@@ -884,17 +889,20 @@ static void *audio_worker_thread(void *arg) {
    /* Echo transcription as user message */
    webui_send_transcript(session, "user", transcript);
 
+   /* Add user message to history immediately (before LLM call can be cancelled) */
+   session_add_message(session, "user", transcript);
+
    /* Send "thinking" state while LLM processes - streaming callback will switch to "speaking" */
    webui_send_state_with_detail(session, "thinking", "Processing request...");
 
    /* Call LLM with TTS streaming - audio is generated and sent per-sentence */
-   char *response = session_llm_call_with_tts(session, transcript, webui_sentence_audio_callback,
-                                              session);
+   char *response = session_llm_call_with_tts_no_add(session, transcript,
+                                                     webui_sentence_audio_callback, session);
    free(transcript);
 
-   if (!response || session->disconnected) {
-      LOG_WARNING("WebUI: LLM call failed or session disconnected");
-      if (!session->disconnected) {
+   if (!response || REQUEST_SUPERSEDED(session, expected_gen)) {
+      LOG_WARNING("WebUI: LLM call failed or request superseded");
+      if (!REQUEST_SUPERSEDED(session, expected_gen)) {
          webui_send_error(session, "LLM_ERROR", "Failed to get response");
       }
       webui_send_state(session, "idle");
@@ -910,7 +918,7 @@ static void *audio_worker_thread(void *arg) {
       webui_send_state(session, "processing");
 
       char *processed = webui_process_commands(response, session);
-      if (processed && !session->disconnected) {
+      if (processed && !REQUEST_SUPERSEDED(session, expected_gen)) {
          free(response);
          response = processed;
 
@@ -1028,6 +1036,15 @@ void handle_binary_message(ws_connection_t *conn, const uint8_t *data, size_t le
 
          LOG_INFO("WebUI: Audio end, processing %zu bytes", conn->audio_buffer_len);
 
+         /* Increment request generation FIRST to invalidate any pending requests,
+          * then reset disconnected flag. This prevents race conditions where an
+          * old worker sees disconnected=false after a new message is sent. */
+         unsigned int new_gen = 0;
+         if (conn->session) {
+            new_gen = atomic_fetch_add(&conn->session->request_generation, 1) + 1;
+            conn->session->disconnected = false;
+         }
+
          /* Create work item for worker thread */
          audio_work_t *work = malloc(sizeof(audio_work_t));
          if (!work) {
@@ -1043,6 +1060,7 @@ void handle_binary_message(ws_connection_t *conn, const uint8_t *data, size_t le
          work->audio_data = conn->audio_buffer;
          work->audio_len = conn->audio_buffer_len;
          work->use_opus = conn->use_opus;
+         work->request_gen = new_gen;
 
          /* Transfer ownership to worker */
          conn->audio_buffer = NULL;

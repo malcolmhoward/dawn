@@ -38,9 +38,33 @@
 #include <stdint.h>
 #include <time.h>
 
+#include <stdatomic.h>
+
 #include "auth/auth_db.h"
 #include "core/session_manager.h"
 #include "webui/webui_server.h"
+
+/* =============================================================================
+ * Request Supersession Macro (used by worker threads)
+ * ============================================================================= */
+
+/**
+ * @brief Check if a request has been superseded by a newer one
+ *
+ * A request is superseded if:
+ * 1. The session was disconnected (user closed connection or clicked stop)
+ * 2. A newer request was initiated (user sent new message before old completed)
+ *
+ * Workers should check this before and after long operations (LLM calls, etc.)
+ * to avoid processing stale requests.
+ *
+ * @param session Pointer to session_t
+ * @param expected_gen The request_generation captured when work was queued
+ * @return true if request should be aborted, false if still valid
+ */
+#define REQUEST_SUPERSEDED(session, expected_gen)                            \
+   (atomic_load(&(session)->disconnected) ||                                 \
+    atomic_load(&(session)->request_generation) != (expected_gen))
 
 #ifdef __cplusplus
 extern "C" {

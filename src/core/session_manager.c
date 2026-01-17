@@ -980,13 +980,19 @@ typedef struct {
 /**
  * @brief Prepare for LLM call - common setup for all LLM call variants
  *
+ * @param skip_add_message If true, don't add user message to history (caller already did)
  * @return 0 on success, non-zero on failure (session disconnected, config error, etc.)
  */
-static int llm_call_prepare(session_t *session, const char *user_text, llm_call_ctx_t *ctx) {
+static int llm_call_prepare(session_t *session,
+                            const char *user_text,
+                            llm_call_ctx_t *ctx,
+                            bool skip_add_message) {
    memset(ctx, 0, sizeof(*ctx));
 
-   // Add user message to history
-   session_add_message(session, "user", user_text);
+   // Add user message to history (unless caller already did)
+   if (!skip_add_message) {
+      session_add_message(session, "user", user_text);
+   }
 
    // Update activity timestamp
    session_touch(session);
@@ -1123,7 +1129,7 @@ char *session_llm_call(session_t *session, const char *user_text) {
    }
 
    llm_call_ctx_t ctx;
-   if (llm_call_prepare(session, user_text, &ctx) != 0) {
+   if (llm_call_prepare(session, user_text, &ctx, false) != 0) {
       llm_call_cleanup(&ctx);
       return NULL;
    }
@@ -1137,9 +1143,53 @@ char *session_llm_call(session_t *session, const char *user_text) {
    session->last_token_ms = 0;
    session->stream_token_count = 0;
 
+   /* Set per-session cancel flag for multi-user WebUI support */
+   llm_set_cancel_flag(&session->disconnected);
+
    char *response = llm_chat_completion_streaming_with_config(ctx.history, ctx.llm_input, NULL, 0,
                                                               session_text_chunk_callback, session,
                                                               &ctx.resolved_config);
+
+   /* Clear per-session cancel flag */
+   llm_set_cancel_flag(NULL);
+
+   return llm_call_finalize(session, response, &ctx);
+}
+
+char *session_llm_call_no_add(session_t *session, const char *user_text) {
+   if (!session || !user_text) {
+      return NULL;
+   }
+
+   if (session->disconnected) {
+      LOG_INFO("Session %u disconnected, aborting LLM call", session->session_id);
+      return NULL;
+   }
+
+   llm_call_ctx_t ctx;
+   if (llm_call_prepare(session, user_text, &ctx, true) != 0) {
+      llm_call_cleanup(&ctx);
+      return NULL;
+   }
+
+   LOG_INFO("Session %u: Calling LLM (no-add) with %d messages in history", session->session_id,
+            json_object_array_length(ctx.history));
+
+   /* Initialize streaming metrics before LLM call */
+   session->stream_start_ms = get_time_ms();
+   session->first_token_ms = 0;
+   session->last_token_ms = 0;
+   session->stream_token_count = 0;
+
+   /* Set per-session cancel flag for multi-user WebUI support */
+   llm_set_cancel_flag(&session->disconnected);
+
+   char *response = llm_chat_completion_streaming_with_config(ctx.history, ctx.llm_input, NULL, 0,
+                                                              session_text_chunk_callback, session,
+                                                              &ctx.resolved_config);
+
+   /* Clear per-session cancel flag */
+   llm_set_cancel_flag(NULL);
 
    return llm_call_finalize(session, response, &ctx);
 }
@@ -1266,7 +1316,7 @@ char *session_llm_call_with_tts(session_t *session,
    }
 
    llm_call_ctx_t ctx;
-   if (llm_call_prepare(session, user_text, &ctx) != 0) {
+   if (llm_call_prepare(session, user_text, &ctx, false) != 0) {
       llm_call_cleanup(&ctx);
       return NULL;
    }
@@ -1294,10 +1344,76 @@ char *session_llm_call_with_tts(session_t *session,
       return NULL;
    }
 
+   /* Set per-session cancel flag for multi-user WebUI support */
+   llm_set_cancel_flag(&session->disconnected);
+
    // Call LLM with combined callback (text streaming + sentence buffering)
    char *response = llm_chat_completion_streaming_with_config(ctx.history, ctx.llm_input, NULL, 0,
                                                               combined_chunk_callback, &stream_ctx,
                                                               &ctx.resolved_config);
+
+   /* Clear per-session cancel flag */
+   llm_set_cancel_flag(NULL);
+
+   // Flush remaining sentence and free buffer
+   sentence_buffer_flush(stream_ctx.sentence_buffer);
+   sentence_buffer_free(stream_ctx.sentence_buffer);
+
+   return llm_call_finalize(session, response, &ctx);
+}
+
+char *session_llm_call_with_tts_no_add(session_t *session,
+                                       const char *user_text,
+                                       session_sentence_callback sentence_cb,
+                                       void *userdata) {
+   if (!session || !user_text) {
+      return NULL;
+   }
+
+   if (session->disconnected) {
+      LOG_INFO("Session %u disconnected, aborting LLM call", session->session_id);
+      return NULL;
+   }
+
+   llm_call_ctx_t ctx;
+   if (llm_call_prepare(session, user_text, &ctx, true) != 0) {
+      llm_call_cleanup(&ctx);
+      return NULL;
+   }
+
+   LOG_INFO("Session %u: Calling LLM (TTS streaming, no-add) with %d messages in history",
+            session->session_id, json_object_array_length(ctx.history));
+
+   /* Initialize streaming metrics before LLM call */
+   session->stream_start_ms = get_time_ms();
+   session->first_token_ms = 0;
+   session->last_token_ms = 0;
+   session->stream_token_count = 0;
+
+   // Create combined streaming context for text + sentence audio
+   combined_stream_ctx_t stream_ctx = { .session = session,
+                                        .sentence_cb = sentence_cb,
+                                        .sentence_userdata = userdata,
+                                        .sentence_buffer = NULL };
+
+   // Create sentence buffer for TTS
+   stream_ctx.sentence_buffer = sentence_buffer_create(combined_sentence_callback, &stream_ctx);
+   if (!stream_ctx.sentence_buffer) {
+      LOG_ERROR("Session %u: Failed to create sentence buffer", session->session_id);
+      llm_call_cleanup(&ctx);
+      return NULL;
+   }
+
+   /* Set per-session cancel flag for multi-user WebUI support */
+   llm_set_cancel_flag(&session->disconnected);
+
+   // Call LLM with combined callback (text streaming + sentence buffering)
+   char *response = llm_chat_completion_streaming_with_config(ctx.history, ctx.llm_input, NULL, 0,
+                                                              combined_chunk_callback, &stream_ctx,
+                                                              &ctx.resolved_config);
+
+   /* Clear per-session cancel flag */
+   llm_set_cancel_flag(NULL);
 
    // Flush remaining sentence and free buffer
    sentence_buffer_flush(stream_ctx.sentence_buffer);

@@ -327,6 +327,27 @@ void llm_clear_interrupt(void);
 int llm_is_interrupt_requested(void);
 
 /**
+ * @brief Set thread-local cancel flag for per-session cancellation
+ *
+ * Call this before starting an LLM request to enable per-session cancellation.
+ * The cancel flag should point to a session-owned atomic_bool that gets set to
+ * true when cancellation is requested. Set to NULL after the request completes.
+ *
+ * Implementation note: The flag is cast internally to _Atomic bool* for proper
+ * atomic reads. Callers should pass &session->disconnected (an atomic_bool).
+ *
+ * @param flag Pointer to session's cancel flag (atomic_bool cast to void*), or NULL
+ */
+void llm_set_cancel_flag(void *flag);
+
+/**
+ * @brief Get current thread-local cancel flag
+ *
+ * @return Current cancel flag pointer, or NULL if not set
+ */
+void *llm_get_cancel_flag(void);
+
+/**
  * @brief Check if OpenAI API key is available
  *
  * Checks runtime config (secrets.toml)

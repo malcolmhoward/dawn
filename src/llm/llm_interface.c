@@ -27,6 +27,7 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <signal.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -94,6 +95,10 @@ static char llm_url[2048] = "";
 
 // Global interrupt flag - set by main thread when wake word detected during LLM processing
 static volatile sig_atomic_t llm_interrupt_requested = 0;
+
+// Thread-local cancel flag for per-session cancellation (WebUI multi-user support)
+// When set, this takes precedence over the global interrupt flag
+static __thread _Atomic bool *tls_cancel_flag = NULL;
 
 int llm_get_current_resolved_config(llm_resolved_config_t *config_out) {
    if (!config_out) {
@@ -597,10 +602,20 @@ int llm_is_interrupt_requested(void) {
    return llm_interrupt_requested;
 }
 
+void llm_set_cancel_flag(void *flag) {
+   tls_cancel_flag = (_Atomic bool *)flag;
+}
+
+void *llm_get_cancel_flag(void) {
+   return (void *)tls_cancel_flag;
+}
+
 /**
  * @brief CURL progress callback to check for interruption requests
  *
  * Called periodically by CURL during transfer. Returns non-zero to abort.
+ * Checks per-session cancel flag first (for multi-user WebUI support),
+ * then falls back to global interrupt flag (for local wake word detection).
  *
  * @param clientp User data pointer (unused)
  * @param dltotal Total bytes to download
@@ -620,9 +635,15 @@ int llm_curl_progress_callback(void *clientp,
    (void)ultotal;
    (void)ulnow;
 
-   // Check if interrupt was requested
+   // Check per-session cancel flag first (multi-user WebUI support)
+   if (tls_cancel_flag && atomic_load(tls_cancel_flag)) {
+      LOG_INFO("LLM transfer cancelled by session");
+      return 1;  // Non-zero aborts transfer
+   }
+
+   // Fall back to global interrupt flag (local wake word detection)
    if (llm_interrupt_requested) {
-      LOG_INFO("LLM transfer interrupted by user");
+      LOG_INFO("LLM transfer interrupted by wake word");
       return 1;  // Non-zero aborts transfer
    }
    return 0;  // Zero continues transfer
@@ -712,6 +733,9 @@ char *llm_chat_completion_streaming(struct json_object *conversation_history,
                                     size_t vision_image_size,
                                     llm_text_chunk_callback chunk_callback,
                                     void *callback_userdata) {
+   // Clear any previous interrupt flag from cancelled requests
+   llm_clear_interrupt();
+
    char *response = NULL;
    llm_type_t type = current_type;
    cloud_provider_t provider = current_cloud_provider;
@@ -1077,6 +1101,9 @@ char *llm_chat_completion_streaming_with_config(struct json_object *conversation
                                                 llm_text_chunk_callback chunk_callback,
                                                 void *callback_userdata,
                                                 const llm_resolved_config_t *config) {
+   // Clear any previous interrupt flag from cancelled requests
+   llm_clear_interrupt();
+
    if (!config) {
       // No config provided, use global
       return llm_chat_completion_streaming(conversation_history, input_text, vision_image,

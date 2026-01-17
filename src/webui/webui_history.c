@@ -273,11 +273,12 @@ void handle_continue_conversation(ws_connection_t *conn, struct json_object *pay
    json_object_put(response);
 }
 
-/* Callback for message enumeration */
+/* Callback for message enumeration - includes message ID for pagination */
 static int load_msg_callback(const conversation_message_t *msg, void *context) {
    json_object *msg_array = (json_object *)context;
    json_object *msg_obj = json_object_new_object();
 
+   json_object_object_add(msg_obj, "id", json_object_new_int64(msg->id));
    json_object_object_add(msg_obj, "role", json_object_new_string(msg->role));
    json_object_object_add(msg_obj, "content",
                           json_object_new_string(msg->content ? msg->content : ""));
@@ -287,52 +288,40 @@ static int load_msg_callback(const conversation_message_t *msg, void *context) {
    return 0;
 }
 
-/* Size-based chunking to stay under HTTP/2 frame size (~16KB).
- * Target 12KB to leave room for JSON envelope overhead. */
-#define CHUNK_TARGET_SIZE 12288 /* 12KB target chunk size */
-#define CHUNK_MSG_OVERHEAD \
-   80 /* JSON overhead per message: {"role":"...","content":"...","created_at":N} */
-#define CHUNK_ENVELOPE 256 /* Envelope overhead: {"type":"...","payload":{...}} */
+/* Default page size for message pagination */
+#define MESSAGE_PAGE_SIZE 50
 
 /**
- * @brief Estimate serialized size of a message
- */
-static size_t estimate_message_size(json_object *msg) {
-   json_object *content_obj;
-   if (json_object_object_get_ex(msg, "content", &content_obj)) {
-      const char *content = json_object_get_string(content_obj);
-      return (content ? strlen(content) : 0) + CHUNK_MSG_OVERHEAD;
-   }
-   return CHUNK_MSG_OVERHEAD;
-}
-
-/**
- * @brief Send a chunk of conversation messages
- */
-static void send_messages_chunk(struct lws *wsi,
-                                int64_t conv_id,
-                                json_object *chunk,
-                                int offset,
-                                bool is_last) {
-   json_object *response = json_object_new_object();
-   json_object_object_add(response, "type", json_object_new_string("conversation_messages_chunk"));
-   json_object *resp_payload = json_object_new_object();
-
-   json_object_object_add(resp_payload, "conversation_id", json_object_new_int64(conv_id));
-   json_object_object_add(resp_payload, "offset", json_object_new_int(offset));
-   json_object_object_add(resp_payload, "is_last", json_object_new_boolean(is_last));
-   json_object_object_add(resp_payload, "messages", chunk);
-
-   json_object_object_add(response, "payload", resp_payload);
-   send_json_response(wsi, response);
-   json_object_put(response);
-}
-
-/**
- * @brief Load a conversation and its messages
+ * @brief Reverse a JSON array in place
  *
- * For large conversations, messages are sent in chunks to avoid HTTP/2 frame size limits.
- * Client receives: load_conversation_response (metadata) + conversation_messages_chunk(s)
+ * Messages come from DB in reverse order (newest first for cursor pagination)
+ * but need to be displayed oldest first.
+ */
+static void reverse_json_array(json_object *array) {
+   int len = json_object_array_length(array);
+   for (int i = 0; i < len / 2; i++) {
+      json_object *a = json_object_array_get_idx(array, i);
+      json_object *b = json_object_array_get_idx(array, len - 1 - i);
+      /* Increment refs before replacing */
+      json_object_get(a);
+      json_object_get(b);
+      json_object_array_put_idx(array, i, b);
+      json_object_array_put_idx(array, len - 1 - i, a);
+   }
+}
+
+/**
+ * @brief Load a conversation and its messages with pagination
+ *
+ * Supports cursor-based pagination for efficient "scroll up to load more":
+ * - Initial load: Returns latest MESSAGE_PAGE_SIZE messages
+ * - Load more: Pass before_id to get older messages
+ *
+ * Response includes:
+ * - messages: Array of messages (oldest first within the page)
+ * - total: Total message count in conversation
+ * - has_more: Whether there are older messages to load
+ * - oldest_id: ID of oldest message in response (use as before_id for next request)
  */
 void handle_load_conversation(ws_connection_t *conn, struct json_object *payload) {
    if (!conn_require_auth(conn)) {
@@ -357,24 +346,115 @@ void handle_load_conversation(ws_connection_t *conn, struct json_object *payload
 
    int64_t conv_id = json_object_get_int64(id_obj);
 
+   /* Get pagination parameters (optional) */
+   int limit = MESSAGE_PAGE_SIZE;
+   int64_t before_id = 0;
+
+   json_object *limit_obj;
+   if (json_object_object_get_ex(payload, "limit", &limit_obj)) {
+      int requested_limit = json_object_get_int(limit_obj);
+      if (requested_limit > 0 && requested_limit <= 200) {
+         limit = requested_limit;
+      }
+   }
+
+   json_object *before_obj;
+   if (json_object_object_get_ex(payload, "before_id", &before_obj)) {
+      before_id = json_object_get_int64(before_obj);
+   }
+
+   bool is_load_more = (before_id > 0);
+   bool needs_session_context = !is_load_more && conn->session;
+
    /* Get conversation metadata */
    conversation_t conv;
    int result = conv_db_get(conv_id, conn->auth_user_id, &conv);
 
    if (result == AUTH_DB_SUCCESS) {
       json_object *msg_array = json_object_new_array();
-      result = conv_db_get_messages(conv_id, conn->auth_user_id, load_msg_callback, msg_array);
+      json_object *all_msgs = NULL;  /* For session context restoration */
+      int total_messages = 0;
+      int returned_count = 0;
+      int64_t oldest_id = 0;
+      bool has_more = false;
+
+      /* Optimization: For initial load of non-archived conversations that need session context,
+       * fetch ALL messages once and use them for both session context and UI display.
+       * This avoids the previous double-fetch pattern. */
+      if (needs_session_context && !conv.is_archived) {
+         /* Fetch all messages in one query */
+         all_msgs = json_object_new_array();
+         result = conv_db_get_messages(conv_id, conn->auth_user_id, load_msg_callback, all_msgs);
+
+         if (result == AUTH_DB_SUCCESS) {
+            total_messages = json_object_array_length(all_msgs);
+
+            /* Extract last 'limit' messages for UI display */
+            int start_idx = (total_messages > limit) ? (total_messages - limit) : 0;
+            for (int i = start_idx; i < total_messages; i++) {
+               json_object *msg = json_object_array_get_idx(all_msgs, i);
+               json_object_get(msg);  /* Increment ref count before adding to new array */
+               json_object_array_add(msg_array, msg);
+            }
+            returned_count = json_object_array_length(msg_array);
+
+            /* Get oldest message ID for cursor (first message in display array) */
+            if (returned_count > 0) {
+               json_object *first_msg = json_object_array_get_idx(msg_array, 0);
+               json_object *id_field;
+               if (json_object_object_get_ex(first_msg, "id", &id_field)) {
+                  oldest_id = json_object_get_int64(id_field);
+               }
+            }
+
+            /* has_more is true if we couldn't show all messages */
+            has_more = (total_messages > limit);
+         }
+      } else {
+         /* For load-more requests or archived/no-session cases, use paginated query.
+          * Fetch limit+1 to determine has_more accurately (avoid false positive when
+          * exactly 'limit' messages remain). */
+         result = conv_db_get_messages_paginated(conv_id, conn->auth_user_id, limit + 1, before_id,
+                                                 load_msg_callback, msg_array, &total_messages);
+
+         if (result == AUTH_DB_SUCCESS) {
+            returned_count = json_object_array_length(msg_array);
+
+            /* Determine has_more based on whether we got the extra message */
+            if (returned_count > limit) {
+               /* Got extra message, so there are definitely more */
+               has_more = true;
+               /* Remove the extra message (it's at position 0 since DB returns newest-first) */
+               json_object_array_del_idx(msg_array, 0, 1);
+               returned_count = limit;
+            } else {
+               /* Didn't get extra, so this is the last page */
+               has_more = false;
+            }
+
+            /* Messages come from DB newest-first, reverse for display (oldest first) */
+            reverse_json_array(msg_array);
+
+            /* Get oldest message ID for cursor (after reversal, it's the first message) */
+            if (returned_count > 0) {
+               json_object *first_msg = json_object_array_get_idx(msg_array, 0);
+               json_object *id_field;
+               if (json_object_object_get_ex(first_msg, "id", &id_field)) {
+                  oldest_id = json_object_get_int64(id_field);
+               }
+            }
+         }
+      }
 
       if (result == AUTH_DB_SUCCESS) {
-         int total_messages = json_object_array_length(msg_array);
+         /* Restore to session context on initial load of non-archived conversations */
+         if (all_msgs && !conv.is_archived && conn->session) {
+            int all_count = json_object_array_length(all_msgs);
 
-         /* Only restore to session context for non-archived conversations.
-          * Archived conversations are read-only (view history only). */
-         if (!conv.is_archived && conn->session && total_messages > 0) {
             /* Check if first message is a system prompt */
             bool has_system_prompt = false;
-            json_object *first_msg = json_object_array_get_idx(msg_array, 0);
-            if (first_msg) {
+            if (all_count > 0) {
+               json_object *first_msg = json_object_array_get_idx(all_msgs, 0);
                json_object *role_obj;
                if (json_object_object_get_ex(first_msg, "role", &role_obj)) {
                   const char *role = json_object_get_string(role_obj);
@@ -395,19 +475,19 @@ void handle_load_conversation(ws_connection_t *conn, struct json_object *payload
                LOG_INFO("WebUI: Added system prompt to restored conversation");
             }
 
-            /* If this is a continuation conversation, inject the compaction summary
-             * as a system message so the LLM has context from the previous conversation */
+            /* If this is a continuation conversation, inject the compaction summary */
             if (conv.compaction_summary && strlen(conv.compaction_summary) > 0) {
                char summary_msg[4096];
                snprintf(summary_msg, sizeof(summary_msg),
-                        "Previous conversation context (summarized): %s", conv.compaction_summary);
+                        "Previous conversation context (summarized): %s",
+                        conv.compaction_summary);
                session_add_message(conn->session, "system", summary_msg);
                LOG_INFO("WebUI: Injected compaction summary into session context");
             }
 
-            /* Add all stored messages */
-            for (int i = 0; i < total_messages; i++) {
-               json_object *msg = json_object_array_get_idx(msg_array, i);
+            /* Add all stored messages to session context */
+            for (int i = 0; i < all_count; i++) {
+               json_object *msg = json_object_array_get_idx(all_msgs, i);
                json_object *role_obj, *content_obj;
                if (json_object_object_get_ex(msg, "role", &role_obj) &&
                    json_object_object_get_ex(msg, "content", &content_obj)) {
@@ -415,15 +495,14 @@ void handle_load_conversation(ws_connection_t *conn, struct json_object *payload
                                       json_object_get_string(content_obj));
                }
             }
-            LOG_INFO("WebUI: Restored %d messages to session %u context", total_messages,
-                     conn->session->session_id);
+            LOG_INFO("WebUI: Restored %d messages to session %u context (single-fetch optimization)",
+                     all_count, conn->session->session_id);
 
             /* Apply stored LLM settings to session (if any were locked) */
             if (conv.llm_type[0] != '\0' || conv.tools_mode[0] != '\0') {
                session_llm_config_t cfg;
                session_get_llm_config(conn->session, &cfg);
 
-               /* Map stored strings to enums/values */
                if (conv.llm_type[0] != '\0') {
                   if (strcmp(conv.llm_type, "local") == 0) {
                      cfg.type = LLM_LOCAL;
@@ -446,128 +525,93 @@ void handle_load_conversation(ws_connection_t *conn, struct json_object *payload
                   strncpy(cfg.tool_mode, conv.tools_mode, sizeof(cfg.tool_mode) - 1);
                   cfg.tool_mode[sizeof(cfg.tool_mode) - 1] = '\0';
                }
-               /* Note: thinking_mode is handled per-request, not stored in session */
 
                session_set_llm_config(conn->session, &cfg);
-               LOG_INFO("WebUI: Applied stored LLM config to session (type=%s, model=%s, tools=%s)",
+               LOG_INFO("WebUI: Applied stored LLM config (type=%s, model=%s, tools=%s)",
                         conv.llm_type, conv.model, conv.tools_mode);
             }
-         } else if (conv.is_archived) {
-            LOG_INFO(
-                "WebUI: Loaded archived conversation %lld (read-only, not restored to session)",
-                (long long)conv.id);
          }
 
+         /* Free all_msgs if it was allocated */
+         if (all_msgs) {
+            json_object_put(all_msgs);
+         }
+
+         if (conv.is_archived && !is_load_more) {
+            LOG_INFO("WebUI: Loaded archived conversation %lld (read-only)", (long long)conv.id);
+         }
+
+         /* Build response */
          json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
-         json_object_object_add(resp_payload, "is_archived",
-                                json_object_new_boolean(conv.is_archived));
          json_object_object_add(resp_payload, "conversation_id", json_object_new_int64(conv.id));
-         json_object_object_add(resp_payload, "title", json_object_new_string(conv.title));
-         json_object_object_add(resp_payload, "message_count", json_object_new_int(total_messages));
-         json_object_object_add(resp_payload, "context_tokens",
-                                json_object_new_int(conv.context_tokens));
-         json_object_object_add(resp_payload, "context_max", json_object_new_int(conv.context_max));
+         json_object_object_add(resp_payload, "messages", msg_array);
 
-         /* Per-conversation LLM settings (schema v11+) */
-         json_object *llm_settings = json_object_new_object();
-         json_object_object_add(llm_settings, "llm_type",
-                                json_object_new_string(conv.llm_type[0] ? conv.llm_type : ""));
-         json_object_object_add(llm_settings, "cloud_provider",
-                                json_object_new_string(conv.cloud_provider[0] ? conv.cloud_provider
-                                                                              : ""));
-         json_object_object_add(llm_settings, "model",
-                                json_object_new_string(conv.model[0] ? conv.model : ""));
-         json_object_object_add(llm_settings, "tools_mode",
-                                json_object_new_string(conv.tools_mode[0] ? conv.tools_mode : ""));
-         json_object_object_add(llm_settings, "thinking_mode",
-                                json_object_new_string(conv.thinking_mode[0] ? conv.thinking_mode
+         /* Pagination info */
+         json_object_object_add(resp_payload, "total", json_object_new_int(total_messages));
+         json_object_object_add(resp_payload, "has_more", json_object_new_boolean(has_more));
+         json_object_object_add(resp_payload, "oldest_id", json_object_new_int64(oldest_id));
+         json_object_object_add(resp_payload, "is_load_more",
+                                json_object_new_boolean(is_load_more));
+
+         /* Only include metadata on initial load, not on load-more requests */
+         if (!is_load_more) {
+            json_object_object_add(resp_payload, "is_archived",
+                                   json_object_new_boolean(conv.is_archived));
+            json_object_object_add(resp_payload, "title", json_object_new_string(conv.title));
+            json_object_object_add(resp_payload, "message_count",
+                                   json_object_new_int(total_messages));
+            json_object_object_add(resp_payload, "context_tokens",
+                                   json_object_new_int(conv.context_tokens));
+            json_object_object_add(resp_payload, "context_max",
+                                   json_object_new_int(conv.context_max));
+
+            /* Per-conversation LLM settings */
+            json_object *llm_settings = json_object_new_object();
+            json_object_object_add(llm_settings, "llm_type",
+                                   json_object_new_string(conv.llm_type[0] ? conv.llm_type : ""));
+            json_object_object_add(llm_settings, "cloud_provider",
+                                   json_object_new_string(
+                                       conv.cloud_provider[0] ? conv.cloud_provider : ""));
+            json_object_object_add(llm_settings, "model",
+                                   json_object_new_string(conv.model[0] ? conv.model : ""));
+            json_object_object_add(llm_settings, "tools_mode",
+                                   json_object_new_string(conv.tools_mode[0] ? conv.tools_mode
                                                                              : ""));
-         json_object_object_add(resp_payload, "llm_settings", llm_settings);
+            json_object_object_add(llm_settings, "thinking_mode",
+                                   json_object_new_string(conv.thinking_mode[0] ? conv.thinking_mode
+                                                                                : ""));
+            json_object_object_add(resp_payload, "llm_settings", llm_settings);
 
-         /* Settings are locked if conversation has messages (message_count > 0) */
-         json_object_object_add(resp_payload, "llm_locked",
-                                json_object_new_boolean(total_messages > 0));
+            json_object_object_add(resp_payload, "llm_locked",
+                                   json_object_new_boolean(total_messages > 0));
 
-         /* Continuation data for context banner */
-         if (conv.continued_from > 0) {
-            json_object_object_add(resp_payload, "continued_from",
-                                   json_object_new_int64(conv.continued_from));
-            if (conv.compaction_summary) {
-               json_object_object_add(resp_payload, "compaction_summary",
-                                      json_object_new_string(conv.compaction_summary));
+            /* Continuation data */
+            if (conv.continued_from > 0) {
+               json_object_object_add(resp_payload, "continued_from",
+                                      json_object_new_int64(conv.continued_from));
+               if (conv.compaction_summary) {
+                  json_object_object_add(resp_payload, "compaction_summary",
+                                         json_object_new_string(conv.compaction_summary));
+               }
+            }
+
+            /* For archived conversations, find continuation ID */
+            if (conv.is_archived) {
+               int64_t continuation_id = 0;
+               if (conv_db_find_continuation(conv.id, conn->auth_user_id, &continuation_id) ==
+                       AUTH_DB_SUCCESS &&
+                   continuation_id > 0) {
+                  json_object_object_add(resp_payload, "continued_by",
+                                         json_object_new_int64(continuation_id));
+               }
             }
          }
 
-         /* For archived conversations, find and include the continuation ID */
-         if (conv.is_archived) {
-            int64_t continuation_id = 0;
-            if (conv_db_find_continuation(conv.id, conn->auth_user_id, &continuation_id) ==
-                    AUTH_DB_SUCCESS &&
-                continuation_id > 0) {
-               json_object_object_add(resp_payload, "continued_by",
-                                      json_object_new_int64(continuation_id));
-            }
-         }
-
-         /* Calculate total size to decide if chunking is needed */
-         size_t total_size = CHUNK_ENVELOPE;
-         for (int i = 0; i < total_messages; i++) {
-            total_size += estimate_message_size(json_object_array_get_idx(msg_array, i));
-         }
-
-         /* Small conversations: include all messages in single response */
-         if (total_size <= CHUNK_TARGET_SIZE) {
-            json_object_object_add(resp_payload, "messages", msg_array);
-            json_object_object_add(resp_payload, "chunked", json_object_new_boolean(0));
-            json_object_object_add(response, "payload", resp_payload);
-            send_json_response(conn->wsi, response);
-            json_object_put(response);
-            conv_free(&conv);
-            return;
-         }
-
-         /* Large conversation - send metadata first, then size-based chunks */
-         json_object_object_add(resp_payload, "messages", json_object_new_array());
-         json_object_object_add(resp_payload, "chunked", json_object_new_boolean(1));
          json_object_object_add(response, "payload", resp_payload);
          send_json_response(conn->wsi, response);
          json_object_put(response);
-
-         /* Size-based chunking */
-         json_object *current_chunk = json_object_new_array();
-         size_t current_size = CHUNK_ENVELOPE;
-         int chunk_start = 0;
-
-         for (int i = 0; i < total_messages; i++) {
-            json_object *msg = json_object_array_get_idx(msg_array, i);
-            size_t msg_size = estimate_message_size(msg);
-
-            /* If adding this message exceeds target AND chunk isn't empty, flush first */
-            if (current_size + msg_size > CHUNK_TARGET_SIZE &&
-                json_object_array_length(current_chunk) > 0) {
-               /* send_messages_chunk takes ownership of chunk via json_object_object_add */
-               send_messages_chunk(conn->wsi, conv_id, current_chunk, chunk_start, false);
-               current_chunk = json_object_new_array();
-               current_size = CHUNK_ENVELOPE;
-               chunk_start = i;
-            }
-
-            /* Add message to current chunk (even if oversized - single msg gets its own chunk) */
-            json_object_array_add(current_chunk, json_object_get(msg));
-            current_size += msg_size;
-         }
-
-         /* Send final chunk (send_messages_chunk takes ownership) */
-         if (json_object_array_length(current_chunk) > 0) {
-            send_messages_chunk(conn->wsi, conv_id, current_chunk, chunk_start, true);
-         } else {
-            /* Empty final chunk - need to free since send_messages_chunk won't */
-            json_object_put(current_chunk);
-         }
-         json_object_put(msg_array);
-
          conv_free(&conv);
-         return; /* Already sent response */
+         return;
       } else {
          json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
          json_object_object_add(resp_payload, "error",

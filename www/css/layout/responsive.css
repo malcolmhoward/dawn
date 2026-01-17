@@ -69,6 +69,7 @@
 
    /* Buttons share the second row */
    #send-btn,
+   #stop-btn,
    #mic-btn {
       flex: 1;
    }

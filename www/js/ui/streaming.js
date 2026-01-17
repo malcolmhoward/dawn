@@ -112,23 +112,14 @@
       // Append delta to content
       DawnState.streamingState.content += payload.delta;
 
-      // During streaming, use plain text with line breaks (no markdown)
-      // This prevents layout shifts from <p> tag margins during typing
-      // Full markdown formatting is applied in finalizeStream()
+      // Render with markdown formatting for better readability during streaming
+      // Debounced to avoid heavy parsing on every token
       const nowMs = performance.now();
       if (
          nowMs - DawnState.streamingState.lastRenderMs >=
          DawnState.streamingState.renderDebounceMs
       ) {
-         // Strip command tags and render as plain text with line breaks
-         const cleanText = DawnState.streamingState.content.replace(
-            /<command>[\s\S]*?<\/command>/g,
-            ''
-         );
-         DawnState.streamingState.textElement.innerHTML = DawnFormat.escapeHtml(cleanText).replace(
-            /\n/g,
-            '<br>'
-         );
+         renderStreamingContent();
          DawnState.streamingState.lastRenderMs = nowMs;
          DawnState.streamingState.pendingRender = false;
       } else if (!DawnState.streamingState.pendingRender) {
@@ -139,13 +130,7 @@
             (nowMs - DawnState.streamingState.lastRenderMs);
          setTimeout(() => {
             if (DawnState.streamingState.active && DawnState.streamingState.pendingRender) {
-               const cleanText = DawnState.streamingState.content.replace(
-                  /<command>[\s\S]*?<\/command>/g,
-                  ''
-               );
-               DawnState.streamingState.textElement.innerHTML = DawnFormat.escapeHtml(
-                  cleanText
-               ).replace(/\n/g, '<br>');
+               renderStreamingContent();
                DawnState.streamingState.lastRenderMs = performance.now();
                DawnState.streamingState.pendingRender = false;
                if (DawnElements.transcript) {
@@ -158,6 +143,22 @@
       if (DawnElements.transcript) {
          DawnElements.transcript.scrollTop = DawnElements.transcript.scrollHeight;
       }
+   }
+
+   /**
+    * Render streaming content with markdown formatting
+    */
+   function renderStreamingContent() {
+      if (!DawnState.streamingState.textElement) return;
+
+      // Strip command tags before rendering
+      const cleanText = DawnState.streamingState.content.replace(
+         /<command>[\s\S]*?<\/command>/g,
+         ''
+      );
+
+      // Apply markdown formatting
+      DawnState.streamingState.textElement.innerHTML = DawnFormat.markdown(cleanText);
    }
 
    // =============================================================================
@@ -208,6 +209,8 @@
          DawnState.streamingState.textElement.innerHTML = DawnFormat.markdown(
             DawnState.streamingState.content
          );
+         // Add copy buttons to code blocks
+         DawnFormat.addCopyButtons(DawnState.streamingState.textElement);
       }
 
       // Remove streaming class

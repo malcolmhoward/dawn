@@ -43,6 +43,33 @@
 }
 
 /* =============================================================================
+ * Stop Button
+ * ============================================================================= */
+#stop-btn {
+   background-color: var(--error);
+   color: white;
+   border: 1px solid var(--error);
+   min-width: 60px;
+}
+
+#stop-btn:hover {
+   background-color: var(--error-hover);
+   border-color: var(--error-hover);
+}
+
+#stop-btn:focus-visible {
+   outline: 2px solid white;
+   outline-offset: 2px;
+   box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.4);
+}
+
+/* Hidden state for send/stop button toggle */
+#send-btn.hidden,
+#stop-btn.hidden {
+   display: none;
+}
+
+/* =============================================================================
  * Mic Button
  * ============================================================================= */
 #mic-btn {

@@ -36,6 +36,7 @@
       // Input
       textInput: null,
       sendBtn: null,
+      stopBtn: null,
       micBtn: null,
       debugBtn: null,
 
@@ -85,6 +86,7 @@
       // Input
       elements.textInput = document.getElementById('text-input');
       elements.sendBtn = document.getElementById('send-btn');
+      elements.stopBtn = document.getElementById('stop-btn');
       elements.micBtn = document.getElementById('mic-btn');
       elements.debugBtn = document.getElementById('debug-btn');
 

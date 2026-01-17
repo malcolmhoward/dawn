@@ -2249,6 +2249,10 @@ static void handle_cancel_message(ws_connection_t *conn) {
    if (conn->session) {
       LOG_INFO("WebUI: Cancel requested for session %u", conn->session->session_id);
       conn->session->disconnected = true; /* Signal worker to abort */
+      /* Note: llm_request_interrupt() is NOT called here because it uses a global flag
+       * that would affect all users. Instead, session_manager.c sets the TLS cancel flag
+       * to &session->disconnected before each LLM call, so the CURL progress callback
+       * will check THIS session's disconnected flag only. */
       send_state_impl(conn->wsi, "idle", NULL);
    }
 }
@@ -3632,6 +3636,7 @@ void webui_send_metrics_update(session_t *session,
 typedef struct {
    session_t *session;
    char *text;
+   unsigned int request_gen;  /* Captured request_generation to detect superseded requests */
 } text_work_t;
 
 /**
@@ -3877,14 +3882,17 @@ static void strip_command_tags(char *text) {
    }
 }
 
+/* REQUEST_SUPERSEDED macro now defined in webui_internal.h */
+
 static void *text_worker_thread(void *arg) {
    text_work_t *work = (text_work_t *)arg;
    session_t *session = work->session;
    char *text = work->text;
+   unsigned int expected_gen = work->request_gen;
 
-   /* Check if session is still valid */
-   if (!session || session->disconnected) {
-      LOG_INFO("WebUI: Session already disconnected, aborting text processing");
+   /* Check if session is still valid or if this request was superseded */
+   if (!session || REQUEST_SUPERSEDED(session, expected_gen)) {
+      LOG_INFO("WebUI: Session disconnected or request superseded, aborting text processing");
       if (session) {
          session_release(session);
       }
@@ -3901,13 +3909,16 @@ static void *text_worker_thread(void *arg) {
    /* Echo user input as transcript */
    webui_send_transcript(session, "user", text);
 
-   /* Call LLM with session's conversation history */
-   char *response = session_llm_call(session, text);
+   /* Add user message to history immediately (before LLM call can be cancelled) */
+   session_add_message(session, "user", text);
 
-   /* Check disconnection again - session may have been invalidated during LLM call */
-   if (session->disconnected) {
-      /* Client disconnected during processing - don't try to send response */
-      LOG_INFO("WebUI: Session %u disconnected during LLM call", session->session_id);
+   /* Call LLM with session's conversation history (message already added above) */
+   char *response = session_llm_call_no_add(session, text);
+
+   /* Check if request was superseded during LLM call */
+   if (REQUEST_SUPERSEDED(session, expected_gen)) {
+      /* Request superseded - don't try to send response */
+      LOG_INFO("WebUI: Session %u request superseded during LLM call", session->session_id);
       session_release(session);
       free(response);
       free(text);
@@ -3935,9 +3946,9 @@ static void *text_worker_thread(void *arg) {
       /* Process commands and get follow-up response */
       char *processed = webui_process_commands(response, session);
       if (processed) {
-         /* Check for disconnection after command processing */
-         if (session->disconnected) {
-            LOG_INFO("WebUI: Session %u disconnected during command processing",
+         /* Check if request was superseded after command processing */
+         if (REQUEST_SUPERSEDED(session, expected_gen)) {
+            LOG_INFO("WebUI: Session %u request superseded during command processing",
                      session->session_id);
             session_release(session);
             free(response);
@@ -3952,7 +3963,7 @@ static void *text_worker_thread(void *arg) {
          int follow_up_iterations = 0;
          const int MAX_FOLLOW_UP_ITERATIONS = 5;
 
-         while (strstr(processed, "<command>") && !session->disconnected) {
+         while (strstr(processed, "<command>") && !REQUEST_SUPERSEDED(session, expected_gen)) {
             follow_up_iterations++;
             if (follow_up_iterations > MAX_FOLLOW_UP_ITERATIONS) {
                LOG_WARNING("WebUI: Command loop limit reached (%d iterations), breaking",
@@ -4018,6 +4029,12 @@ int webui_process_text_input(session_t *session, const char *text) {
       return 1;
    }
 
+   /* Increment request generation FIRST to invalidate any pending requests,
+    * then reset disconnected flag. This prevents race conditions where an
+    * old worker sees disconnected=false after a new message is sent. */
+   unsigned int new_gen = atomic_fetch_add(&session->request_generation, 1) + 1;
+   session->disconnected = false;
+
    /* Create work item */
    text_work_t *work = malloc(sizeof(text_work_t));
    if (!work) {
@@ -4027,6 +4044,7 @@ int webui_process_text_input(session_t *session, const char *text) {
 
    work->session = session;
    work->text = strdup(text);
+   work->request_gen = new_gen; /* Capture generation for this request */
    if (!work->text) {
       LOG_ERROR("WebUI: Failed to allocate text copy");
       free(work);
