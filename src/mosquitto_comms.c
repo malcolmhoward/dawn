@@ -1727,8 +1727,16 @@ char *llmStatusCallback(const char *actionName, char *value, int *should_respond
             return strdup("Failed to switch to Claude. API key not configured.");
          }
          return strdup("AI switched to Claude");
+      } else if (value && strcasecmp(value, "gemini") == 0) {
+         LOG_INFO("Setting AI to Gemini via unified llm.set command.");
+         config.type = LLM_CLOUD;
+         config.cloud_provider = CLOUD_PROVIDER_GEMINI;
+         if (session_set_llm_config(session, &config) != 0) {
+            return strdup("Failed to switch to Gemini. API key not configured.");
+         }
+         return strdup("AI switched to Gemini");
       } else {
-         return strdup("Invalid LLM type. Use 'local', 'cloud', 'openai', or 'claude'.");
+         return strdup("Invalid LLM type. Use 'local', 'cloud', 'openai', 'claude', or 'gemini'.");
       }
    }
 
@@ -1741,6 +1749,7 @@ char *llmStatusCallback(const char *actionName, char *value, int *should_respond
    llm_type_t current = resolved.type;
    const char *provider = resolved.cloud_provider == CLOUD_PROVIDER_OPENAI   ? "OpenAI"
                           : resolved.cloud_provider == CLOUD_PROVIDER_CLAUDE ? "Claude"
+                          : resolved.cloud_provider == CLOUD_PROVIDER_GEMINI ? "Gemini"
                                                                              : "None";
    const char *model = resolved.model;
    const char *type_str = (current == LLM_LOCAL) ? "local" : "cloud";
@@ -1819,6 +1828,7 @@ char *cloudProviderCallback(const char *actionName, char *value, int *should_res
 
    const char *provider = resolved.cloud_provider == CLOUD_PROVIDER_OPENAI   ? "OpenAI"
                           : resolved.cloud_provider == CLOUD_PROVIDER_CLAUDE ? "Claude"
+                          : resolved.cloud_provider == CLOUD_PROVIDER_GEMINI ? "Gemini"
                                                                              : "None";
    char *result = malloc(128);
    if (result) {
@@ -1864,6 +1874,10 @@ char *switchLlmCallback(const char *actionName, char *value, int *should_respond
       target_type = LLM_CLOUD;
       target_provider = CLOUD_PROVIDER_CLAUDE;
       target_model = llm_get_default_claude_model();
+   } else if (strcmp(actionName, "gemini") == 0) {
+      target_type = LLM_CLOUD;
+      target_provider = CLOUD_PROVIDER_GEMINI;
+      target_model = llm_get_default_gemini_model();
    }
 
    /* Check if we need to compact before switching (especially cloud->local) */

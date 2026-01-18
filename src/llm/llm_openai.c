@@ -1168,15 +1168,19 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
       const char *thinking_mode = llm_get_current_thinking_mode();
 
       // Check if model supports reasoning_effort
+      // OpenAI: o1, o3 series and GPT-5 family
+      // Gemini: 2.5+ and 3.x models (via OpenAI-compatible API)
       bool is_o_series = (strncmp(model_name, "o1", 2) == 0 || strncmp(model_name, "o3", 2) == 0);
       bool is_gpt5 = (strncmp(model_name, "gpt-5", 5) == 0);
-      bool supports_reasoning = is_o_series || is_gpt5;
+      bool is_gemini_thinking = (strncmp(model_name, "gemini-2.5", 10) == 0 ||
+                                 strncmp(model_name, "gemini-3", 8) == 0);
+      bool supports_reasoning = is_o_series || is_gpt5 || is_gemini_thinking;
 
       if (supports_reasoning && !llm_tools_suppressed()) {
          const char *effort = NULL;
 
          if (strcmp(thinking_mode, "disabled") == 0) {
-            // GPT-5 family: disable/minimize reasoning; o-series does not support this
+            // GPT-5 family: disable/minimize reasoning
             if (is_gpt5) {
                // GPT-5.2 supports "none", others use "minimal" for lowest reasoning
                if (strncmp(model_name, "gpt-5.2", 7) == 0) {
@@ -1184,6 +1188,10 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
                } else {
                   effort = "minimal";
                }
+            }
+            // Gemini 2.5+/3.x: reasoning cannot be fully disabled, use "low" as minimum
+            else if (is_gemini_thinking) {
+               effort = "low";
             }
             // For o-series with disabled, don't send the parameter (they always reason)
          } else {
@@ -1198,8 +1206,12 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
          }
 
          if (effort != NULL) {
+            // Both OpenAI and Gemini (via OpenAI-compatible API) use reasoning_effort
+            // Note: Gemini's OpenAI-compatible endpoint doesn't support google.thinking_config
+            // extension, so we can't get visible thinking content. The model still does
+            // internal reasoning based on reasoning_effort level.
             json_object_object_add(root, "reasoning_effort", json_object_new_string(effort));
-            LOG_INFO("OpenAI: Reasoning effort set to '%s' for model %s", effort, model_name);
+            LOG_INFO("Cloud LLM: Reasoning effort set to '%s' for model %s", effort, model_name);
          }
       }
    }
@@ -1355,7 +1367,19 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
    // Create streaming context
    // Determine LLM type based on whether we have an API key (cloud) or not (local)
    llm_type_t stream_llm_type = (api_key != NULL) ? LLM_CLOUD : LLM_LOCAL;
-   stream_ctx = llm_stream_create(stream_llm_type, CLOUD_PROVIDER_OPENAI, chunk_callback,
+
+   // Get cloud provider from session context (preferred) or fall back to URL detection
+   cloud_provider_t stream_provider = CLOUD_PROVIDER_OPENAI;
+   session_t *ctx_session = session_get_command_context();
+   if (ctx_session && stream_llm_type == LLM_CLOUD) {
+      session_llm_config_t session_config;
+      session_get_llm_config(ctx_session, &session_config);
+      stream_provider = session_config.cloud_provider;
+   } else if (base_url && strstr(base_url, "generativelanguage.googleapis.com")) {
+      // Fallback: detect from URL for cases without session context
+      stream_provider = CLOUD_PROVIDER_GEMINI;
+   }
+   stream_ctx = llm_stream_create(stream_llm_type, stream_provider, chunk_callback,
                                   callback_userdata);
    if (!stream_ctx) {
       LOG_ERROR("Failed to create LLM stream context");
@@ -1516,7 +1540,8 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
          // Add assistant message with tool_calls to conversation history
          json_object *assistant_msg = json_object_new_object();
          json_object_object_add(assistant_msg, "role", json_object_new_string("assistant"));
-         json_object_object_add(assistant_msg, "content", NULL);  // No text content
+         // Use empty string instead of NULL for Gemini API compatibility
+         json_object_object_add(assistant_msg, "content", json_object_new_string(""));
 
          // Add tool_calls array
          json_object *tc_array = json_object_new_array();
@@ -1530,6 +1555,18 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
             json_object_object_add(func, "arguments",
                                    json_object_new_string(tool_calls->calls[i].arguments));
             json_object_object_add(tc, "function", func);
+
+            // Gemini 3+ models: Include thought_signature in first tool call
+            // Required for follow-up requests when reasoning mode is enabled
+            if (i == 0 && tool_calls->thought_signature[0] != '\0') {
+               json_object *extra_content = json_object_new_object();
+               json_object *google_obj = json_object_new_object();
+               json_object_object_add(google_obj, "thought_signature",
+                                      json_object_new_string(tool_calls->thought_signature));
+               json_object_object_add(extra_content, "google", google_obj);
+               json_object_object_add(tc, "extra_content", extra_content);
+               LOG_INFO("OpenAI streaming: Including thought_signature in follow-up request");
+            }
 
             json_object_array_add(tc_array, tc);
          }

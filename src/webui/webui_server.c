@@ -1585,11 +1585,13 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                   LOG_INFO("WebUI: Switched to local LLM");
                } else if (strcmp(new_type, "cloud") == 0) {
                   /* When switching to cloud, ensure we have a valid provider selected.
-                   * Prefer OpenAI if available, otherwise Claude. */
+                   * Prefer OpenAI if available, otherwise Claude, otherwise Gemini. */
                   if (llm_has_openai_key()) {
                      llm_set_cloud_provider(CLOUD_PROVIDER_OPENAI);
                   } else if (llm_has_claude_key()) {
                      llm_set_cloud_provider(CLOUD_PROVIDER_CLAUDE);
+                  } else if (llm_has_gemini_key()) {
+                     llm_set_cloud_provider(CLOUD_PROVIDER_GEMINI);
                   }
                   int rc = llm_set_type(LLM_CLOUD);
                   if (rc != 0) {
@@ -1602,7 +1604,7 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
             }
          }
 
-         /* Handle cloud provider change (openai/claude) */
+         /* Handle cloud provider change (openai/claude/gemini) */
          if (success && json_object_object_get_ex(payload, "provider", &provider_obj)) {
             const char *new_provider = json_object_get_string(provider_obj);
             if (new_provider) {
@@ -1611,6 +1613,8 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                   rc = llm_set_cloud_provider(CLOUD_PROVIDER_OPENAI);
                } else if (strcmp(new_provider, "claude") == 0) {
                   rc = llm_set_cloud_provider(CLOUD_PROVIDER_CLAUDE);
+               } else if (strcmp(new_provider, "gemini") == 0) {
+                  rc = llm_set_cloud_provider(CLOUD_PROVIDER_GEMINI);
                }
                if (rc != 0) {
                   success = 0;
@@ -1640,6 +1644,8 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                              json_object_new_boolean(llm_has_openai_key()));
       json_object_object_add(resp_payload, "claude_available",
                              json_object_new_boolean(llm_has_claude_key()));
+      json_object_object_add(resp_payload, "gemini_available",
+                             json_object_new_boolean(llm_has_gemini_key()));
 
       json_object_object_add(response, "payload", resp_payload);
       send_json_response(conn->wsi, response);
@@ -1693,7 +1699,7 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
             }
          }
 
-         /* Parse provider (openai/claude) */
+         /* Parse provider (openai/claude/gemini) */
          if (json_object_object_get_ex(payload, "provider", &provider_obj)) {
             const char *new_provider = json_object_get_string(provider_obj);
             if (new_provider) {
@@ -1702,6 +1708,8 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                   config.cloud_provider = CLOUD_PROVIDER_OPENAI;
                } else if (strcmp(new_provider, "claude") == 0) {
                   config.cloud_provider = CLOUD_PROVIDER_CLAUDE;
+               } else if (strcmp(new_provider, "gemini") == 0) {
+                  config.cloud_provider = CLOUD_PROVIDER_GEMINI;
                }
             }
          }
@@ -1801,11 +1809,10 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
          session_get_llm_config(conn->session, &current);
 
          const char *type_str = current.type == LLM_LOCAL ? "local" : "cloud";
-         const char *provider_str = current.cloud_provider == CLOUD_PROVIDER_OPENAI   ? "openai"
-                                    : current.cloud_provider == CLOUD_PROVIDER_CLAUDE ? "claude"
-                                                                                      : "none";
          json_object_object_add(resp_payload, "type", json_object_new_string(type_str));
-         json_object_object_add(resp_payload, "provider", json_object_new_string(provider_str));
+         json_object_object_add(resp_payload, "provider",
+                                json_object_new_string(
+                                    cloud_provider_to_string(current.cloud_provider)));
 
          /* Get model name - prefer session model, fall back to config */
          const char *model_name = NULL;
@@ -1821,6 +1828,8 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                model_name = llm_get_default_openai_model();
             } else if (current.cloud_provider == CLOUD_PROVIDER_CLAUDE) {
                model_name = llm_get_default_claude_model();
+            } else if (current.cloud_provider == CLOUD_PROVIDER_GEMINI) {
+               model_name = llm_get_default_gemini_model();
             }
          }
          json_object_object_add(resp_payload, "model",
@@ -1832,6 +1841,8 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                              json_object_new_boolean(llm_has_openai_key()));
       json_object_object_add(resp_payload, "claude_available",
                              json_object_new_boolean(llm_has_claude_key()));
+      json_object_object_add(resp_payload, "gemini_available",
+                             json_object_new_boolean(llm_has_gemini_key()));
 
       json_object_object_add(response, "payload", resp_payload);
       send_json_response(conn->wsi, response);
@@ -2685,17 +2696,17 @@ static void webui_send_llm_state_update(session_t *session) {
    json_object_object_add(payload, "success", json_object_new_boolean(1));
 
    const char *type_str = config.type == LLM_LOCAL ? "local" : "cloud";
-   const char *provider_str = config.cloud_provider == CLOUD_PROVIDER_OPENAI   ? "openai"
-                              : config.cloud_provider == CLOUD_PROVIDER_CLAUDE ? "claude"
-                                                                               : "none";
 
    json_object_object_add(payload, "type", json_object_new_string(type_str));
-   json_object_object_add(payload, "provider", json_object_new_string(provider_str));
+   json_object_object_add(payload, "provider",
+                          json_object_new_string(cloud_provider_to_string(config.cloud_provider)));
    json_object_object_add(payload, "model", json_object_new_string(config.model));
    json_object_object_add(payload, "openai_available",
                           json_object_new_boolean(llm_has_openai_key()));
    json_object_object_add(payload, "claude_available",
                           json_object_new_boolean(llm_has_claude_key()));
+   json_object_object_add(payload, "gemini_available",
+                          json_object_new_boolean(llm_has_gemini_key()));
 
    json_object_object_add(response, "payload", payload);
 
@@ -3636,7 +3647,7 @@ void webui_send_metrics_update(session_t *session,
 typedef struct {
    session_t *session;
    char *text;
-   unsigned int request_gen;  /* Captured request_generation to detect superseded requests */
+   unsigned int request_gen; /* Captured request_generation to detect superseded requests */
 } text_work_t;
 
 /**

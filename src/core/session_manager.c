@@ -1078,6 +1078,14 @@ static char *llm_call_finalize(session_t *session, char *response, llm_call_ctx_
 #ifdef ENABLE_WEBUI
    // End WebSocket streaming
    if (session->type == SESSION_TYPE_WEBSOCKET) {
+      // Send idle state update (rate is calculated accurately by streaming layer from usage stats)
+      // Only send if we had streaming activity
+      if (session->stream_token_count > 0 && session->first_token_ms > 0) {
+         int ttft_ms = (int)(session->first_token_ms - session->stream_start_ms);
+         // Send idle state with TTFT but rate=0 (accurate rate already sent by streaming layer)
+         webui_send_metrics_update(session, "idle", ttft_ms, 0.0f, -1);
+      }
+
       if (session->llm_streaming_active) {
          webui_send_stream_end(session, response ? "complete" : "error");
       }
@@ -1440,6 +1448,11 @@ int session_set_llm_config(session_t *session, const session_llm_config_t *confi
       }
       if (config->cloud_provider == CLOUD_PROVIDER_CLAUDE && !llm_has_claude_key()) {
          LOG_WARNING("Session %u: Cannot set Claude provider - no API key configured",
+                     session->session_id);
+         return 1;
+      }
+      if (config->cloud_provider == CLOUD_PROVIDER_GEMINI && !llm_has_gemini_key()) {
+         LOG_WARNING("Session %u: Cannot set Gemini provider - no API key configured",
                      session->session_id);
          return 1;
       }

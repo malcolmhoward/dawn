@@ -171,8 +171,9 @@ typedef struct session {
    dap2_capabilities_t capabilities;  // Local ASR/TTS/wake word
 
    // Cancellation (atomic for cross-thread visibility on ARM64)
-   atomic_bool disconnected;         // Set on client disconnect
-   atomic_uint request_generation;   // Incremented on each new request, used to detect superseded requests
+   atomic_bool disconnected;  // Set on client disconnect
+   atomic_uint
+       request_generation;  // Incremented on each new request, used to detect superseded requests
 
    // LLM streaming state (atomic for cross-thread visibility on ARM64)
    atomic_bool llm_streaming_active;  // True while streaming LLM response

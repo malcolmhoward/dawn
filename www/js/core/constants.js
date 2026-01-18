@@ -29,6 +29,11 @@
    const WS_BIN_AUDIO_OUT = 0x11;
    const WS_BIN_AUDIO_SEGMENT_END = 0x12; // Play accumulated audio segment now
 
+   // Context/token limits
+   // Default context window size - used when model-specific limit is unknown
+   // TODO: Make this dynamic based on selected model (GPT-4o: 128k, Claude: 200k, Gemini: 1M+)
+   const DEFAULT_CONTEXT_MAX = 128000;
+
    // Expose globally
    global.DawnConfig = {
       // WebSocket
@@ -48,5 +53,8 @@
       WS_BIN_AUDIO_IN_END: WS_BIN_AUDIO_IN_END,
       WS_BIN_AUDIO_OUT: WS_BIN_AUDIO_OUT,
       WS_BIN_AUDIO_SEGMENT_END: WS_BIN_AUDIO_SEGMENT_END,
+
+      // Context limits
+      DEFAULT_CONTEXT_MAX: DEFAULT_CONTEXT_MAX,
    };
 })(window);

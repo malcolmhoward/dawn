@@ -907,11 +907,13 @@
                               id="secret-openai"
                               class="secret-input"
                               placeholder="Enter API key..."
+                              maxlength="256"
                            />
                            <button
                               class="secret-toggle"
                               data-target="secret-openai"
                               title="Show/hide"
+                              aria-label="Toggle OpenAI API key visibility"
                            >
                               <svg
                                  class="eye-icon"
@@ -926,7 +928,7 @@
                                  <circle cx="12" cy="12" r="3" />
                               </svg>
                            </button>
-                           <span class="secret-status" id="status-openai"></span>
+                           <span class="secret-status" id="status-openai" aria-live="polite"></span>
                         </div>
                      </div>
                      <div class="setting-item">
@@ -937,11 +939,13 @@
                               id="secret-claude"
                               class="secret-input"
                               placeholder="Enter API key..."
+                              maxlength="256"
                            />
                            <button
                               class="secret-toggle"
                               data-target="secret-claude"
                               title="Show/hide"
+                              aria-label="Toggle Claude API key visibility"
                            >
                               <svg
                                  class="eye-icon"
@@ -956,7 +960,39 @@
                                  <circle cx="12" cy="12" r="3" />
                               </svg>
                            </button>
-                           <span class="secret-status" id="status-claude"></span>
+                           <span class="secret-status" id="status-claude" aria-live="polite"></span>
+                        </div>
+                     </div>
+                     <div class="setting-item">
+                        <label for="secret-gemini">Gemini API Key</label>
+                        <div class="secret-input-wrapper">
+                           <input
+                              type="password"
+                              id="secret-gemini"
+                              class="secret-input"
+                              placeholder="Enter API key..."
+                              maxlength="256"
+                           />
+                           <button
+                              class="secret-toggle"
+                              data-target="secret-gemini"
+                              title="Show/hide"
+                              aria-label="Toggle Gemini API key visibility"
+                           >
+                              <svg
+                                 class="eye-icon"
+                                 width="16"
+                                 height="16"
+                                 viewBox="0 0 24 24"
+                                 fill="none"
+                                 stroke="currentColor"
+                                 stroke-width="2"
+                              >
+                                 <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                                 <circle cx="12" cy="12" r="3" />
+                              </svg>
+                           </button>
+                           <span class="secret-status" id="status-gemini" aria-live="polite"></span>
                         </div>
                      </div>
                      <div class="setting-item">
@@ -972,6 +1008,7 @@
                               class="secret-toggle"
                               data-target="secret-mqtt-user"
                               title="Show/hide"
+                              aria-label="Toggle MQTT username visibility"
                            >
                               <svg
                                  class="eye-icon"
@@ -986,7 +1023,11 @@
                                  <circle cx="12" cy="12" r="3" />
                               </svg>
                            </button>
-                           <span class="secret-status" id="status-mqtt-user"></span>
+                           <span
+                              class="secret-status"
+                              id="status-mqtt-user"
+                              aria-live="polite"
+                           ></span>
                         </div>
                      </div>
                      <div class="setting-item">
@@ -1002,6 +1043,7 @@
                               class="secret-toggle"
                               data-target="secret-mqtt-pass"
                               title="Show/hide"
+                              aria-label="Toggle MQTT password visibility"
                            >
                               <svg
                                  class="eye-icon"
@@ -1016,7 +1058,11 @@
                                  <circle cx="12" cy="12" r="3" />
                               </svg>
                            </button>
-                           <span class="secret-status" id="status-mqtt-pass"></span>
+                           <span
+                              class="secret-status"
+                              id="status-mqtt-pass"
+                              aria-live="polite"
+                           ></span>
                         </div>
                      </div>
                      <button id="save-secrets-btn" class="save-btn">Save Secrets</button>

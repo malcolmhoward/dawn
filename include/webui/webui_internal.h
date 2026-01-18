@@ -34,11 +34,10 @@
 #include <json-c/json.h>
 #include <libwebsockets.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <time.h>
-
-#include <stdatomic.h>
 
 #include "auth/auth_db.h"
 #include "core/session_manager.h"
@@ -62,8 +61,8 @@
  * @param expected_gen The request_generation captured when work was queued
  * @return true if request should be aborted, false if still valid
  */
-#define REQUEST_SUPERSEDED(session, expected_gen)                            \
-   (atomic_load(&(session)->disconnected) ||                                 \
+#define REQUEST_SUPERSEDED(session, expected_gen) \
+   (atomic_load(&(session)->disconnected) ||      \
     atomic_load(&(session)->request_generation) != (expected_gen))
 
 #ifdef __cplusplus

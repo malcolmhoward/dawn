@@ -153,6 +153,7 @@ void handle_get_config(ws_connection_t *conn) {
 
    const char *provider_name = resolved.cloud_provider == CLOUD_PROVIDER_OPENAI   ? "OpenAI"
                                : resolved.cloud_provider == CLOUD_PROVIDER_CLAUDE ? "Claude"
+                               : resolved.cloud_provider == CLOUD_PROVIDER_GEMINI ? "Gemini"
                                                                                   : "None";
    json_object_object_add(llm_runtime, "provider", json_object_new_string(provider_name));
    /* Get actual model name from config based on type/provider */
@@ -165,6 +166,8 @@ void handle_get_config(ws_connection_t *conn) {
       model_name = llm_get_default_openai_model();
    } else if (resolved.cloud_provider == CLOUD_PROVIDER_CLAUDE) {
       model_name = llm_get_default_claude_model();
+   } else if (resolved.cloud_provider == CLOUD_PROVIDER_GEMINI) {
+      model_name = llm_get_default_gemini_model();
    }
    json_object_object_add(llm_runtime, "model",
                           json_object_new_string(model_name ? model_name : ""));
@@ -172,6 +175,8 @@ void handle_get_config(ws_connection_t *conn) {
                           json_object_new_boolean(llm_has_openai_key()));
    json_object_object_add(llm_runtime, "claude_available",
                           json_object_new_boolean(llm_has_claude_key()));
+   json_object_object_add(llm_runtime, "gemini_available",
+                          json_object_new_boolean(llm_has_gemini_key()));
    json_object_object_add(payload, "llm_runtime", llm_runtime);
 
    /* Add auth state for frontend UI visibility control */
@@ -324,10 +329,11 @@ static void apply_config_from_json(dawn_config_t *config, struct json_object *pa
       struct json_object *cloud;
       if (json_object_object_get_ex(section, "cloud", &cloud)) {
          JSON_TO_CONFIG_STR(cloud, "provider", config->llm.cloud.provider);
-         /* Validate cloud provider - must be openai or claude */
+         /* Validate cloud provider - must be openai, claude, or gemini */
          if (config->llm.cloud.provider[0] != '\0' &&
              strcmp(config->llm.cloud.provider, "openai") != 0 &&
-             strcmp(config->llm.cloud.provider, "claude") != 0) {
+             strcmp(config->llm.cloud.provider, "claude") != 0 &&
+             strcmp(config->llm.cloud.provider, "gemini") != 0) {
             LOG_WARNING("WebUI: Invalid cloud.provider '%s', using 'openai'",
                         config->llm.cloud.provider);
             strncpy(config->llm.cloud.provider, "openai", sizeof(config->llm.cloud.provider) - 1);
@@ -393,6 +399,36 @@ static void apply_config_from_json(dawn_config_t *config, struct json_object *pa
             } else if (config->llm.cloud.claude_models_count > 0) {
                LOG_WARNING("WebUI: claude_default_model_idx %d out of range, using 0", idx);
                config->llm.cloud.claude_default_model_idx = 0;
+            }
+         }
+
+         struct json_object *gemini_models_arr;
+         if (json_object_object_get_ex(cloud, "gemini_models", &gemini_models_arr) &&
+             json_object_is_type(gemini_models_arr, json_type_array)) {
+            config->llm.cloud.gemini_models_count = 0;
+            int arr_len = json_object_array_length(gemini_models_arr);
+            for (int i = 0; i < arr_len && i < LLM_CLOUD_MAX_MODELS; i++) {
+               struct json_object *model_obj = json_object_array_get_idx(gemini_models_arr, i);
+               const char *model = json_object_get_string(model_obj);
+               if (model && model[0] != '\0') {
+                  strncpy(config->llm.cloud.gemini_models[config->llm.cloud.gemini_models_count],
+                          model, LLM_CLOUD_MODEL_NAME_MAX - 1);
+                  config->llm.cloud.gemini_models[config->llm.cloud.gemini_models_count]
+                                                 [LLM_CLOUD_MODEL_NAME_MAX - 1] = '\0';
+                  config->llm.cloud.gemini_models_count++;
+               }
+            }
+         }
+
+         /* Parse default model index with bounds check */
+         struct json_object *gemini_idx_obj;
+         if (json_object_object_get_ex(cloud, "gemini_default_model_idx", &gemini_idx_obj)) {
+            int idx = json_object_get_int(gemini_idx_obj);
+            if (idx >= 0 && idx < config->llm.cloud.gemini_models_count) {
+               config->llm.cloud.gemini_default_model_idx = idx;
+            } else if (config->llm.cloud.gemini_models_count > 0) {
+               LOG_WARNING("WebUI: gemini_default_model_idx %d out of range, using 0", idx);
+               config->llm.cloud.gemini_default_model_idx = 0;
             }
          }
       }
@@ -600,6 +636,8 @@ void handle_set_config(ws_connection_t *conn, struct json_object *payload) {
                rc = llm_set_cloud_provider(CLOUD_PROVIDER_OPENAI);
             } else if (strcmp(new_provider, "claude") == 0) {
                rc = llm_set_cloud_provider(CLOUD_PROVIDER_CLAUDE);
+            } else if (strcmp(new_provider, "gemini") == 0) {
+               rc = llm_set_cloud_provider(CLOUD_PROVIDER_GEMINI);
             }
             if (rc != 0) {
                json_object_object_add(resp_payload, "warning",
@@ -683,6 +721,13 @@ void handle_set_secrets(ws_connection_t *conn, struct json_object *payload) {
       if (str) {
          strncpy(mutable_secrets->claude_api_key, str, sizeof(mutable_secrets->claude_api_key) - 1);
          mutable_secrets->claude_api_key[sizeof(mutable_secrets->claude_api_key) - 1] = '\0';
+      }
+   }
+   if (json_object_object_get_ex(payload, "gemini_api_key", &val)) {
+      const char *str = json_object_get_string(val);
+      if (str) {
+         strncpy(mutable_secrets->gemini_api_key, str, sizeof(mutable_secrets->gemini_api_key) - 1);
+         mutable_secrets->gemini_api_key[sizeof(mutable_secrets->gemini_api_key) - 1] = '\0';
       }
    }
    if (json_object_object_get_ex(payload, "mqtt_username", &val)) {

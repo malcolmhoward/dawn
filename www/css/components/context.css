@@ -99,6 +99,7 @@
  * LLM Quick Controls
  * ============================================================================= */
 #llm-controls {
+   position: relative;
    display: flex;
    justify-content: center;
    align-items: center;
@@ -161,6 +162,31 @@
 #llm-model-select:disabled {
    opacity: 0.5;
    cursor: not-allowed;
+}
+
+/* Loading state for LLM controls during sync */
+#llm-controls.llm-syncing {
+   opacity: 0.7;
+   pointer-events: none;
+}
+
+#llm-controls.llm-syncing::after {
+   content: '';
+   position: absolute;
+   top: 50%;
+   right: 0.5rem;
+   width: 1rem;
+   height: 1rem;
+   border: 2px solid var(--text-secondary);
+   border-top-color: transparent;
+   border-radius: 50%;
+   animation: llm-sync-spin 0.8s linear infinite;
+}
+
+@keyframes llm-sync-spin {
+   to {
+      transform: rotate(360deg);
+   }
 }
 
 #llm-model-select {

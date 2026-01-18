@@ -372,7 +372,7 @@ void handle_load_conversation(ws_connection_t *conn, struct json_object *payload
 
    if (result == AUTH_DB_SUCCESS) {
       json_object *msg_array = json_object_new_array();
-      json_object *all_msgs = NULL;  /* For session context restoration */
+      json_object *all_msgs = NULL; /* For session context restoration */
       int total_messages = 0;
       int returned_count = 0;
       int64_t oldest_id = 0;
@@ -393,7 +393,7 @@ void handle_load_conversation(ws_connection_t *conn, struct json_object *payload
             int start_idx = (total_messages > limit) ? (total_messages - limit) : 0;
             for (int i = start_idx; i < total_messages; i++) {
                json_object *msg = json_object_array_get_idx(all_msgs, i);
-               json_object_get(msg);  /* Increment ref count before adding to new array */
+               json_object_get(msg); /* Increment ref count before adding to new array */
                json_object_array_add(msg_array, msg);
             }
             returned_count = json_object_array_length(msg_array);
@@ -479,8 +479,7 @@ void handle_load_conversation(ws_connection_t *conn, struct json_object *payload
             if (conv.compaction_summary && strlen(conv.compaction_summary) > 0) {
                char summary_msg[4096];
                snprintf(summary_msg, sizeof(summary_msg),
-                        "Previous conversation context (summarized): %s",
-                        conv.compaction_summary);
+                        "Previous conversation context (summarized): %s", conv.compaction_summary);
                session_add_message(conn->session, "system", summary_msg);
                LOG_INFO("WebUI: Injected compaction summary into session context");
             }
@@ -495,8 +494,9 @@ void handle_load_conversation(ws_connection_t *conn, struct json_object *payload
                                       json_object_get_string(content_obj));
                }
             }
-            LOG_INFO("WebUI: Restored %d messages to session %u context (single-fetch optimization)",
-                     all_count, conn->session->session_id);
+            LOG_INFO(
+                "WebUI: Restored %d messages to session %u context (single-fetch optimization)",
+                all_count, conn->session->session_id);
 
             /* Apply stored LLM settings to session (if any were locked) */
             if (conv.llm_type[0] != '\0' || conv.tools_mode[0] != '\0') {
@@ -515,6 +515,8 @@ void handle_load_conversation(ws_connection_t *conn, struct json_object *payload
                      cfg.cloud_provider = CLOUD_PROVIDER_OPENAI;
                   } else if (strcmp(conv.cloud_provider, "claude") == 0) {
                      cfg.cloud_provider = CLOUD_PROVIDER_CLAUDE;
+                  } else if (strcmp(conv.cloud_provider, "gemini") == 0) {
+                     cfg.cloud_provider = CLOUD_PROVIDER_GEMINI;
                   }
                }
                if (conv.model[0] != '\0') {

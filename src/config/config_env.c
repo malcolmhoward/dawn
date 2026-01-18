@@ -51,6 +51,16 @@
       }                                                     \
    } while (0)
 
+/* Like ENV_STRING but redacts value in logs - use for API keys and secrets */
+#define ENV_SECRET(env_name, dest)                             \
+   do {                                                        \
+      const char *val = getenv(env_name);                      \
+      if (val) {                                               \
+         SAFE_COPY(dest, val);                                 \
+         LOG_INFO("Config override: %s=[REDACTED]", env_name); \
+      }                                                        \
+   } while (0)
+
 #define ENV_INT(env_name, dest)                              \
    do {                                                      \
       const char *val = getenv(env_name);                    \
@@ -96,9 +106,10 @@ void config_apply_env(dawn_config_t *config, secrets_config_t *secrets) {
    if (!config || !secrets)
       return;
 
-   /* Standard API keys (highest priority) */
-   ENV_STRING("OPENAI_API_KEY", secrets->openai_api_key);
-   ENV_STRING("ANTHROPIC_API_KEY", secrets->claude_api_key);
+   /* Standard API keys (highest priority) - use ENV_SECRET to redact in logs */
+   ENV_SECRET("OPENAI_API_KEY", secrets->openai_api_key);
+   ENV_SECRET("ANTHROPIC_API_KEY", secrets->claude_api_key);
+   ENV_SECRET("GEMINI_API_KEY", secrets->gemini_api_key);
 
    /* DAWN_ prefixed environment variables */
 
@@ -160,6 +171,7 @@ void config_apply_env(dawn_config_t *config, secrets_config_t *secrets) {
    ENV_BOOL("DAWN_LLM_CLOUD_VISION_ENABLED", config->llm.cloud.vision_enabled);
    ENV_INT("DAWN_LLM_CLOUD_OPENAI_DEFAULT_MODEL_IDX", config->llm.cloud.openai_default_model_idx);
    ENV_INT("DAWN_LLM_CLOUD_CLAUDE_DEFAULT_MODEL_IDX", config->llm.cloud.claude_default_model_idx);
+   ENV_INT("DAWN_LLM_CLOUD_GEMINI_DEFAULT_MODEL_IDX", config->llm.cloud.gemini_default_model_idx);
 
    /* [llm.local] */
    ENV_STRING("DAWN_LLM_LOCAL_ENDPOINT", config->llm.local.endpoint);
@@ -289,6 +301,7 @@ void config_dump(const dawn_config_t *config) {
    printf("  endpoint = \"%s\"\n", config->llm.cloud.endpoint);
    printf("  openai_default_model_idx = %d\n", config->llm.cloud.openai_default_model_idx);
    printf("  claude_default_model_idx = %d\n", config->llm.cloud.claude_default_model_idx);
+   printf("  gemini_default_model_idx = %d\n", config->llm.cloud.gemini_default_model_idx);
 
    printf("\n[llm.local]\n");
    printf("  endpoint = \"%s\"\n", config->llm.local.endpoint);
@@ -631,6 +644,11 @@ void config_dump_settings(const dawn_config_t *config,
                      detect_source_int(config->llm.cloud.claude_default_model_idx,
                                        defaults.llm.cloud.claude_default_model_idx,
                                        "DAWN_LLM_CLOUD_CLAUDE_DEFAULT_MODEL_IDX"));
+   PRINT_SETTING_INT("gemini_default_model_idx", config->llm.cloud.gemini_default_model_idx,
+                     "DAWN_LLM_CLOUD_GEMINI_DEFAULT_MODEL_IDX",
+                     detect_source_int(config->llm.cloud.gemini_default_model_idx,
+                                       defaults.llm.cloud.gemini_default_model_idx,
+                                       "DAWN_LLM_CLOUD_GEMINI_DEFAULT_MODEL_IDX"));
    PRINT_SETTING_BOOL("vision_enabled", config->llm.cloud.vision_enabled,
                       "DAWN_LLM_CLOUD_VISION_ENABLED",
                       detect_source_bool(config->llm.cloud.vision_enabled,
@@ -786,6 +804,8 @@ void config_dump_settings(const dawn_config_t *config,
           (secrets && secrets->openai_api_key[0]) ? "[set]" : "[not set]");
    printf("  ANTHROPIC_API_KEY                        %s\n",
           (secrets && secrets->claude_api_key[0]) ? "[set]" : "[not set]");
+   printf("  GEMINI_API_KEY                           %s\n",
+          (secrets && secrets->gemini_api_key[0]) ? "[set]" : "[not set]");
    printf("  MQTT_USERNAME                            %s\n",
           (secrets && secrets->mqtt_username[0]) ? "[set]" : "[not set]");
    printf("  MQTT_PASSWORD                            %s\n",
@@ -863,6 +883,7 @@ void config_dump_toml(const dawn_config_t *config) {
       printf("endpoint = \"%s\"\n", config->llm.cloud.endpoint);
    printf("openai_default_model_idx = %d\n", config->llm.cloud.openai_default_model_idx);
    printf("claude_default_model_idx = %d\n", config->llm.cloud.claude_default_model_idx);
+   printf("gemini_default_model_idx = %d\n", config->llm.cloud.gemini_default_model_idx);
 
    printf("\n[llm.local]\n");
    printf("endpoint = \"%s\"\n", config->llm.local.endpoint);
@@ -1036,6 +1057,15 @@ json_object *config_to_json(const dawn_config_t *config) {
    json_object_object_add(cloud, "claude_default_model_idx",
                           json_object_new_int(config->llm.cloud.claude_default_model_idx));
 
+   json_object *gemini_models = json_object_new_array();
+   for (int i = 0; i < config->llm.cloud.gemini_models_count; i++) {
+      json_object_array_add(gemini_models,
+                            json_object_new_string(config->llm.cloud.gemini_models[i]));
+   }
+   json_object_object_add(cloud, "gemini_models", gemini_models);
+   json_object_object_add(cloud, "gemini_default_model_idx",
+                          json_object_new_int(config->llm.cloud.gemini_default_model_idx));
+
    json_object_object_add(llm, "cloud", cloud);
 
    /* [llm.local] */
@@ -1189,6 +1219,8 @@ json_object *secrets_to_json_status(const secrets_config_t *secrets) {
                           json_object_new_boolean(secrets && secrets->openai_api_key[0]));
    json_object_object_add(obj, "claude_api_key",
                           json_object_new_boolean(secrets && secrets->claude_api_key[0]));
+   json_object_object_add(obj, "gemini_api_key",
+                          json_object_new_boolean(secrets && secrets->gemini_api_key[0]));
    json_object_object_add(obj, "mqtt_username",
                           json_object_new_boolean(secrets && secrets->mqtt_username[0]));
    json_object_object_add(obj, "mqtt_password",
@@ -1362,31 +1394,39 @@ int config_write_toml(const dawn_config_t *config, const char *path) {
       fprintf(fp, "endpoint = \"%s\"\n", config->llm.cloud.endpoint);
    fprintf(fp, "vision_enabled = %s\n", config->llm.cloud.vision_enabled ? "true" : "false");
 
-   /* Write openai_models array */
-   if (config->llm.cloud.openai_models_count > 0) {
-      fprintf(fp, "openai_models = [\n");
-      for (int i = 0; i < config->llm.cloud.openai_models_count; i++) {
-         char *escaped = toml_escape_string(config->llm.cloud.openai_models[i]);
-         fprintf(fp, "    \"%s\"%s\n", escaped ? escaped : config->llm.cloud.openai_models[i],
-                 i < config->llm.cloud.openai_models_count - 1 ? "," : "");
-         free(escaped);
-      }
-      fprintf(fp, "]\n");
-   }
-   fprintf(fp, "openai_default_model_idx = %d\n", config->llm.cloud.openai_default_model_idx);
+   /* Helper macro for writing model arrays with proper escaping.
+    * Model names are expected to be ASCII alphanumeric (e.g., "gpt-4o", "gemini-2.5-flash"),
+    * so escape failures are unlikely. We log a warning but continue with unescaped value
+    * to avoid breaking config save for the entire file. */
+#define WRITE_MODEL_ARRAY(name, array, count, idx_var)                                             \
+   do {                                                                                            \
+      if ((count) > 0) {                                                                           \
+         fprintf(fp, "%s = [\n", name);                                                            \
+         for (int i = 0; i < (count); i++) {                                                       \
+            char *escaped = toml_escape_string((array)[i]);                                        \
+            if (!escaped) {                                                                        \
+               LOG_WARNING("Failed to escape model name '%s', using unescaped value", (array)[i]); \
+            }                                                                                      \
+            fprintf(fp, "    \"%s\"%s\n", escaped ? escaped : (array)[i],                          \
+                    i < (count)-1 ? "," : "");                                                     \
+            free(escaped);                                                                         \
+         }                                                                                         \
+         fprintf(fp, "]\n");                                                                       \
+      }                                                                                            \
+      fprintf(fp, "%s_default_model_idx = %d\n", name, idx_var);                                   \
+   } while (0)
 
-   /* Write claude_models array */
-   if (config->llm.cloud.claude_models_count > 0) {
-      fprintf(fp, "claude_models = [\n");
-      for (int i = 0; i < config->llm.cloud.claude_models_count; i++) {
-         char *escaped = toml_escape_string(config->llm.cloud.claude_models[i]);
-         fprintf(fp, "    \"%s\"%s\n", escaped ? escaped : config->llm.cloud.claude_models[i],
-                 i < config->llm.cloud.claude_models_count - 1 ? "," : "");
-         free(escaped);
-      }
-      fprintf(fp, "]\n");
-   }
-   fprintf(fp, "claude_default_model_idx = %d\n", config->llm.cloud.claude_default_model_idx);
+   WRITE_MODEL_ARRAY("openai_models", config->llm.cloud.openai_models,
+                     config->llm.cloud.openai_models_count,
+                     config->llm.cloud.openai_default_model_idx);
+   WRITE_MODEL_ARRAY("claude_models", config->llm.cloud.claude_models,
+                     config->llm.cloud.claude_models_count,
+                     config->llm.cloud.claude_default_model_idx);
+   WRITE_MODEL_ARRAY("gemini_models", config->llm.cloud.gemini_models,
+                     config->llm.cloud.gemini_models_count,
+                     config->llm.cloud.gemini_default_model_idx);
+
+#undef WRITE_MODEL_ARRAY
 
    fprintf(fp, "\n[llm.local]\n");
    fprintf(fp, "endpoint = \"%s\"\n", config->llm.local.endpoint);
@@ -1523,23 +1563,36 @@ int secrets_write_toml(const secrets_config_t *secrets, const char *path) {
    fprintf(fp, "# WARNING: This file contains sensitive information!\n\n");
 
    fprintf(fp, "[secrets]\n");
-   if (secrets->openai_api_key[0])
-      fprintf(fp, "openai_api_key = \"%s\"\n", secrets->openai_api_key);
-   if (secrets->claude_api_key[0])
-      fprintf(fp, "claude_api_key = \"%s\"\n", secrets->claude_api_key);
-   if (secrets->mqtt_username[0])
-      fprintf(fp, "mqtt_username = \"%s\"\n", secrets->mqtt_username);
-   if (secrets->mqtt_password[0])
-      fprintf(fp, "mqtt_password = \"%s\"\n", secrets->mqtt_password);
+
+   /* Helper macro to write escaped string, with error handling for allocation failure */
+#define WRITE_SECRET(key, value)                                                 \
+   do {                                                                          \
+      if ((value)[0]) {                                                          \
+         char *escaped = toml_escape_string(value);                              \
+         if (!escaped) {                                                         \
+            LOG_ERROR("Failed to allocate memory for escaping secret: %s", key); \
+            fclose(fp);                                                          \
+            return 1;                                                            \
+         }                                                                       \
+         fprintf(fp, "%s = \"%s\"\n", key, escaped);                             \
+         free(escaped);                                                          \
+      }                                                                          \
+   } while (0)
+
+   WRITE_SECRET("openai_api_key", secrets->openai_api_key);
+   WRITE_SECRET("claude_api_key", secrets->claude_api_key);
+   WRITE_SECRET("gemini_api_key", secrets->gemini_api_key);
+   WRITE_SECRET("mqtt_username", secrets->mqtt_username);
+   WRITE_SECRET("mqtt_password", secrets->mqtt_password);
 
    /* SmartThings OAuth client credentials */
    if (secrets->smartthings_client_id[0] || secrets->smartthings_client_secret[0]) {
       fprintf(fp, "\n[secrets.smartthings]\n");
-      if (secrets->smartthings_client_id[0])
-         fprintf(fp, "client_id = \"%s\"\n", secrets->smartthings_client_id);
-      if (secrets->smartthings_client_secret[0])
-         fprintf(fp, "client_secret = \"%s\"\n", secrets->smartthings_client_secret);
+      WRITE_SECRET("client_id", secrets->smartthings_client_id);
+      WRITE_SECRET("client_secret", secrets->smartthings_client_secret);
    }
+
+#undef WRITE_SECRET
 
    fclose(fp);
 

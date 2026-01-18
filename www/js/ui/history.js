@@ -259,16 +259,13 @@
          historyState.pendingMessages = [];
       }
 
-      // Only show toast and clear transcript if this was a manual "New Chat" action
+      // Only show toast if this was a manual "New Chat" action
+      // Note: We don't clear transcript here - startNewChat() already handles that,
+      // and if this was an auto-created conversation from sending a message, we
+      // definitely don't want to clear (the message is already displayed)
       if (historyElements.panel && !historyElements.panel.classList.contains('hidden')) {
          if (typeof DawnToast !== 'undefined') {
             DawnToast.show('New conversation created', 'success');
-         }
-
-         // Clear transcript for new conversation
-         const transcript = document.getElementById('transcript');
-         if (transcript) {
-            transcript.innerHTML = '';
          }
       }
 
@@ -408,16 +405,29 @@
          setupScrollDetection(transcript);
       }
 
-      // Restore context gauge if available
-      if (payload.context_tokens && payload.context_max) {
-         const usage = (payload.context_tokens / payload.context_max) * 100;
-         if (typeof DawnContextGauge !== 'undefined') {
+      // Reset metrics averages for loaded conversation (fresh start)
+      if (typeof DawnMetrics !== 'undefined') {
+         DawnMetrics.resetAverages();
+      }
+
+      // Restore context gauge if available, otherwise reset to 0
+      if (typeof DawnContextGauge !== 'undefined') {
+         if (payload.context_tokens && payload.context_max) {
+            const usage = (payload.context_tokens / payload.context_max) * 100;
             DawnContextGauge.updateDisplay(
                {
                   current: payload.context_tokens,
                   max: payload.context_max,
                   usage: usage,
                },
+               typeof DawnMetrics !== 'undefined' ? DawnMetrics.updatePanel : null
+            );
+         } else {
+            // No saved context - reset to 0 with default max
+            const defaultMax =
+               typeof DawnConfig !== 'undefined' ? DawnConfig.DEFAULT_CONTEXT_MAX : 128000;
+            DawnContextGauge.updateDisplay(
+               { current: 0, max: defaultMax, usage: 0 },
                typeof DawnMetrics !== 'undefined' ? DawnMetrics.updatePanel : null
             );
          }
@@ -1040,6 +1050,21 @@
       // Reset per-conversation LLM settings
       if (typeof DawnSettings !== 'undefined') {
          DawnSettings.resetConversationLlmControls();
+      }
+
+      // Reset context gauge to 0 (new conversation has no tokens)
+      if (typeof DawnContextGauge !== 'undefined') {
+         const defaultMax =
+            typeof DawnConfig !== 'undefined' ? DawnConfig.DEFAULT_CONTEXT_MAX : 128000;
+         DawnContextGauge.updateDisplay(
+            { current: 0, max: defaultMax, usage: 0 },
+            typeof DawnMetrics !== 'undefined' ? DawnMetrics.updatePanel : null
+         );
+      }
+
+      // Reset metrics averages for new conversation
+      if (typeof DawnMetrics !== 'undefined') {
+         DawnMetrics.resetAverages();
       }
 
       if (typeof DawnWS !== 'undefined' && DawnWS.isConnected()) {

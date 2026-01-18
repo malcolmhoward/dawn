@@ -1705,6 +1705,8 @@ int main(int argc, char *argv[]) {
          has_api_key = llm_has_openai_key();
       } else if (strcmp(provider, "claude") == 0) {
          has_api_key = llm_has_claude_key();
+      } else if (strcmp(provider, "gemini") == 0) {
+         has_api_key = llm_has_gemini_key();
       }
 
       if (!has_api_key) {

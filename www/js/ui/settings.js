@@ -28,6 +28,7 @@
       model: '',
       openai_available: false,
       claude_available: false,
+      gemini_available: false,
    };
 
    // Per-conversation LLM settings state
@@ -43,6 +44,7 @@
       provider: 'openai',
       openai_model: '',
       claude_model: '',
+      gemini_model: '',
       tools_mode: 'native',
       thinking_mode: 'disabled', // For Claude/local: disabled/auto/enabled
       reasoning_effort: 'medium', // For OpenAI o-series/GPT-5: none/minimal/low/medium/high
@@ -340,7 +342,7 @@
                   provider: {
                      type: 'select',
                      label: 'Provider',
-                     options: ['openai', 'claude'],
+                     options: ['openai', 'claude', 'gemini'],
                      hint: 'Cloud LLM provider',
                   },
                   endpoint: {
@@ -378,6 +380,19 @@
                      type: 'model_default_select',
                      label: 'Default Claude Model',
                      sourceKey: 'llm.cloud.claude_models',
+                     hint: 'Default model for new conversations',
+                  },
+                  gemini_models: {
+                     type: 'model_list',
+                     label: 'Gemini Models',
+                     rows: 5,
+                     placeholder: 'gemini-2.5-flash\ngemini-2.5-pro\ngemini-3-flash-preview',
+                     hint: 'Available models for quick controls (one per line). 2.5+ and 3.x support reasoning.',
+                  },
+                  gemini_default_model_idx: {
+                     type: 'model_default_select',
+                     label: 'Default Gemini Model',
+                     sourceKey: 'llm.cloud.gemini_models',
                      hint: 'Default model for new conversations',
                   },
                },
@@ -712,12 +727,14 @@
       // Secret inputs
       settingsElements.secretOpenai = document.getElementById('secret-openai');
       settingsElements.secretClaude = document.getElementById('secret-claude');
+      settingsElements.secretGemini = document.getElementById('secret-gemini');
       settingsElements.secretMqttUser = document.getElementById('secret-mqtt-user');
       settingsElements.secretMqttPass = document.getElementById('secret-mqtt-pass');
 
       // Secret status indicators
       settingsElements.statusOpenai = document.getElementById('status-openai');
       settingsElements.statusClaude = document.getElementById('status-claude');
+      settingsElements.statusGemini = document.getElementById('status-gemini');
       settingsElements.statusMqttUser = document.getElementById('status-mqtt-user');
       settingsElements.statusMqttPass = document.getElementById('status-mqtt-pass');
 
@@ -1331,6 +1348,7 @@
 
       updateStatus(settingsElements.statusOpenai, secrets.openai_api_key);
       updateStatus(settingsElements.statusClaude, secrets.claude_api_key);
+      updateStatus(settingsElements.statusGemini, secrets.gemini_api_key);
       updateStatus(settingsElements.statusMqttUser, secrets.mqtt_username);
       updateStatus(settingsElements.statusMqttPass, secrets.mqtt_password);
    }
@@ -1391,7 +1409,9 @@
    function saveConfig() {
       if (typeof DawnWS === 'undefined' || !DawnWS.isConnected()) {
          console.error('WebSocket not connected');
-         alert('Cannot save: Not connected to server');
+         if (typeof DawnToast !== 'undefined') {
+            DawnToast.show('Cannot save: Not connected to server', 'error');
+         }
          return;
       }
 
@@ -1414,7 +1434,9 @@
    function saveSecrets() {
       if (typeof DawnWS === 'undefined' || !DawnWS.isConnected()) {
          console.error('WebSocket not connected');
-         alert('Cannot save: Not connected to server');
+         if (typeof DawnToast !== 'undefined') {
+            DawnToast.show('Cannot save: Not connected to server', 'error');
+         }
          return;
       }
 
@@ -1427,6 +1449,9 @@
       if (settingsElements.secretClaude && settingsElements.secretClaude.value) {
          secrets.claude_api_key = settingsElements.secretClaude.value;
       }
+      if (settingsElements.secretGemini && settingsElements.secretGemini.value) {
+         secrets.gemini_api_key = settingsElements.secretGemini.value;
+      }
       if (settingsElements.secretMqttUser && settingsElements.secretMqttUser.value) {
          secrets.mqtt_username = settingsElements.secretMqttUser.value;
       }
@@ -1435,7 +1460,9 @@
       }
 
       if (Object.keys(secrets).length === 0) {
-         alert('No secrets entered to save');
+         if (typeof DawnToast !== 'undefined') {
+            DawnToast.show('No secrets entered to save', 'warning');
+         }
          return;
       }
 
@@ -1447,6 +1474,7 @@
       // Clear inputs after sending
       if (settingsElements.secretOpenai) settingsElements.secretOpenai.value = '';
       if (settingsElements.secretClaude) settingsElements.secretClaude.value = '';
+      if (settingsElements.secretGemini) settingsElements.secretGemini.value = '';
       if (settingsElements.secretMqttUser) settingsElements.secretMqttUser.value = '';
       if (settingsElements.secretMqttPass) settingsElements.secretMqttPass.value = '';
    }
@@ -1465,7 +1493,9 @@
          if (restartFields.length > 0) {
             showRestartConfirmation(restartFields);
          } else {
-            alert('Configuration saved successfully!');
+            if (typeof DawnToast !== 'undefined') {
+               DawnToast.show('Configuration saved successfully!', 'success');
+            }
          }
 
          // Clear changed fields tracking
@@ -1475,7 +1505,12 @@
          requestConfig();
       } else {
          console.error('Failed to save config:', payload.error);
-         alert('Failed to save configuration: ' + (payload.error || 'Unknown error'));
+         if (typeof DawnToast !== 'undefined') {
+            DawnToast.show(
+               'Failed to save configuration: ' + (payload.error || 'Unknown error'),
+               'error'
+            );
+         }
       }
    }
 
@@ -1532,7 +1567,9 @@
    function requestRestart() {
       if (typeof DawnWS === 'undefined' || !DawnWS.isConnected()) {
          console.error('WebSocket not connected');
-         alert('Cannot restart: Not connected to server');
+         if (typeof DawnToast !== 'undefined') {
+            DawnToast.show('Cannot restart: Not connected to server', 'error');
+         }
          return;
       }
 
@@ -1541,10 +1578,17 @@
 
    function handleRestartResponse(payload) {
       if (payload.success) {
-         alert('DAWN is restarting. The page will attempt to reconnect automatically.');
+         if (typeof DawnToast !== 'undefined') {
+            DawnToast.show(
+               'DAWN is restarting. The page will attempt to reconnect automatically.',
+               'info'
+            );
+         }
       } else {
          console.error('Restart failed:', payload.error);
-         alert('Failed to restart: ' + (payload.error || 'Unknown error'));
+         if (typeof DawnToast !== 'undefined') {
+            DawnToast.show('Failed to restart: ' + (payload.error || 'Unknown error'), 'error');
+         }
       }
    }
 
@@ -1987,8 +2031,10 @@
    let cloudModelLists = {
       openai: [],
       claude: [],
+      gemini: [],
       openaiDefaultIdx: 0,
       claudeDefaultIdx: 0,
+      geminiDefaultIdx: 0,
    };
    let localModelList = [];
    let localProviderType = 'unknown'; // 'ollama', 'llama.cpp', 'Generic', 'Unknown'
@@ -2022,6 +2068,12 @@
                      const opt = document.createElement('option');
                      opt.value = 'claude';
                      opt.textContent = 'Claude';
+                     providerSelect.appendChild(opt);
+                  }
+                  if (cloudModelLists.gemini.length > 0) {
+                     const opt = document.createElement('option');
+                     opt.value = 'gemini';
+                     opt.textContent = 'Gemini';
                      providerSelect.appendChild(opt);
                   }
                   // Select default provider from global defaults
@@ -2174,10 +2226,14 @@
          }
 
          // Reset model to provider's default
-         const defaultModel =
-            globalDefaults.provider === 'claude'
-               ? globalDefaults.claude_model
-               : globalDefaults.openai_model;
+         let defaultModel;
+         if (globalDefaults.provider === 'claude') {
+            defaultModel = globalDefaults.claude_model;
+         } else if (globalDefaults.provider === 'gemini') {
+            defaultModel = globalDefaults.gemini_model;
+         } else {
+            defaultModel = globalDefaults.openai_model;
+         }
 
          if (modelSelect && defaultModel) {
             // Update dropdown options first
@@ -2186,10 +2242,7 @@
          }
 
          sessionReset.cloud_provider = globalDefaults.provider;
-         sessionReset.model =
-            globalDefaults.provider === 'claude'
-               ? globalDefaults.claude_model
-               : globalDefaults.openai_model;
+         sessionReset.model = defaultModel;
       }
 
       // Reset reasoning dropdown to global default
@@ -2232,6 +2285,29 @@
          if (settings.tools_mode && toolsSelect) {
             toolsSelect.value = settings.tools_mode;
             conversationLlmState.tools_mode = settings.tools_mode;
+         }
+
+         // Apply provider/model settings to sync UI with loaded conversation
+         // The backend has already restored the LLM config - this syncs the frontend UI
+         if (settings.llm_type || settings.cloud_provider || settings.model) {
+            const changes = {};
+            if (settings.llm_type) changes.type = settings.llm_type;
+            if (settings.cloud_provider) changes.provider = settings.cloud_provider;
+            if (settings.model) changes.model = settings.model;
+
+            // Show loading state while syncing
+            const llmControls = document.getElementById('llm-controls');
+            if (llmControls) {
+               llmControls.classList.add('llm-syncing');
+            }
+
+            // Request backend to confirm settings - response will update UI via updateLlmControls
+            if (typeof DawnWS !== 'undefined' && DawnWS.isConnected()) {
+               DawnWS.send({
+                  type: 'set_session_llm',
+                  payload: changes,
+               });
+            }
          }
       }
 
@@ -2416,10 +2492,14 @@
          modelSelect.value = currentModel;
       } else {
          // Use default index for this provider, fall back to first model
-         const defaultIdx =
-            provider === 'claude'
-               ? cloudModelLists.claudeDefaultIdx
-               : cloudModelLists.openaiDefaultIdx;
+         let defaultIdx;
+         if (provider === 'claude') {
+            defaultIdx = cloudModelLists.claudeDefaultIdx;
+         } else if (provider === 'gemini') {
+            defaultIdx = cloudModelLists.geminiDefaultIdx;
+         } else {
+            defaultIdx = cloudModelLists.openaiDefaultIdx;
+         }
          // Ensure index is valid
          if (defaultIdx >= 0 && defaultIdx < models.length) {
             modelSelect.value = models[defaultIdx];
@@ -2445,8 +2525,10 @@
          const cloud = config.llm.cloud;
          cloudModelLists.openai = cloud.openai_models || [];
          cloudModelLists.claude = cloud.claude_models || [];
+         cloudModelLists.gemini = cloud.gemini_models || [];
          cloudModelLists.openaiDefaultIdx = cloud.openai_default_model_idx || 0;
          cloudModelLists.claudeDefaultIdx = cloud.claude_default_model_idx || 0;
+         cloudModelLists.geminiDefaultIdx = cloud.gemini_default_model_idx || 0;
       }
    }
 
@@ -2471,11 +2553,14 @@
          const cloud = config.llm.cloud;
          const openaiModels = cloud.openai_models || [];
          const claudeModels = cloud.claude_models || [];
+         const geminiModels = cloud.gemini_models || [];
          const openaiIdx = cloud.openai_default_model_idx || 0;
          const claudeIdx = cloud.claude_default_model_idx || 0;
+         const geminiIdx = cloud.gemini_default_model_idx || 0;
 
          globalDefaults.openai_model = openaiModels[openaiIdx] || openaiModels[0] || '';
          globalDefaults.claude_model = claudeModels[claudeIdx] || claudeModels[0] || '';
+         globalDefaults.gemini_model = geminiModels[geminiIdx] || geminiModels[0] || '';
       }
 
       // Tools mode
@@ -2547,8 +2632,15 @@
             providerSelect.appendChild(opt);
          }
 
+         if (runtime.gemini_available) {
+            const opt = document.createElement('option');
+            opt.value = 'gemini';
+            opt.textContent = 'Gemini';
+            providerSelect.appendChild(opt);
+         }
+
          // If no providers available, show disabled message
-         if (!runtime.openai_available && !runtime.claude_available) {
+         if (!runtime.openai_available && !runtime.claude_available && !runtime.gemini_available) {
             const opt = document.createElement('option');
             opt.value = '';
             opt.textContent = 'No API keys configured';
@@ -2576,7 +2668,11 @@
             providerSelect.appendChild(opt);
             providerSelect.disabled = true;
             providerSelect.title = 'Auto-detecting local provider';
-         } else if (runtime.openai_available || runtime.claude_available) {
+         } else if (
+            runtime.openai_available ||
+            runtime.claude_available ||
+            runtime.gemini_available
+         ) {
             providerSelect.disabled = false;
             providerSelect.title = 'Switch cloud provider';
          }
@@ -2605,11 +2701,19 @@
    }
 
    function handleSetSessionLlmResponse(payload) {
+      // Clear loading state
+      const llmControls = document.getElementById('llm-controls');
+      if (llmControls) {
+         llmControls.classList.remove('llm-syncing');
+      }
+
       if (payload.success) {
          updateLlmControls(payload);
       } else {
          console.error('Failed to update session LLM:', payload.error);
-         alert('Failed to switch LLM: ' + (payload.error || 'Unknown error'));
+         if (typeof DawnToast !== 'undefined') {
+            DawnToast.show('Failed to switch LLM: ' + (payload.error || 'Unknown error'), 'error');
+         }
 
          // Revert controls to actual state
          if (llmRuntimeState) {

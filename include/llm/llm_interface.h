@@ -36,6 +36,7 @@
 typedef enum {
    CLOUD_PROVIDER_OPENAI, /**< OpenAI (GPT models) */
    CLOUD_PROVIDER_CLAUDE, /**< Anthropic Claude models */
+   CLOUD_PROVIDER_GEMINI, /**< Google Gemini models (OpenAI-compatible API) */
    CLOUD_PROVIDER_NONE    /**< No cloud provider configured */
 } cloud_provider_t;
 
@@ -245,9 +246,19 @@ llm_type_t llm_get_type(void);
 /**
  * @brief Get current cloud provider name (for display/logging)
  *
- * @return String name of provider ("OpenAI", "Claude", "None")
+ * @return String name of provider ("OpenAI", "Claude", "Gemini", "None")
  */
 const char *llm_get_cloud_provider_name(void);
+
+/**
+ * @brief Convert cloud provider enum to lowercase string
+ *
+ * Use this instead of inline ternary chains for provider-to-string conversion.
+ *
+ * @param provider Cloud provider enum value
+ * @return Lowercase string ("openai", "claude", "gemini", "none")
+ */
+const char *cloud_provider_to_string(cloud_provider_t provider);
 
 /**
  * @brief Set the cloud provider at runtime
@@ -294,6 +305,16 @@ const char *llm_get_default_openai_model(void);
  * @return Model name string (pointer to config memory, do not free)
  */
 const char *llm_get_default_claude_model(void);
+
+/**
+ * @brief Get the default Gemini model name from config
+ *
+ * Returns the model name at gemini_default_model_idx in the gemini_models array.
+ * Falls back to the first model if index is out of bounds or no models configured.
+ *
+ * @return Model name string (pointer to config memory, do not free)
+ */
+const char *llm_get_default_gemini_model(void);
 
 /**
  * @brief Check internet connectivity to LLM endpoint
@@ -364,6 +385,15 @@ bool llm_has_openai_key(void);
  * @return true if API key is available, false otherwise
  */
 bool llm_has_claude_key(void);
+
+/**
+ * @brief Check if Gemini API key is available
+ *
+ * Checks runtime config (secrets.toml)
+ *
+ * @return true if API key is available, false otherwise
+ */
+bool llm_has_gemini_key(void);
 
 /* ============================================================================
  * Per-Session LLM Configuration Support

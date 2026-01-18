@@ -141,8 +141,14 @@ typedef struct {
 #define LLM_CLOUD_MAX_MODELS 8
 #define LLM_CLOUD_MODEL_NAME_MAX 64
 
+/* Default fallback models when no models are configured
+ * Updated: 2026-01 - Update these when new model generations are released */
+#define LLM_DEFAULT_OPENAI_MODEL "gpt-5-mini"
+#define LLM_DEFAULT_CLAUDE_MODEL "claude-sonnet-4-5"
+#define LLM_DEFAULT_GEMINI_MODEL "gemini-2.5-flash"
+
 typedef struct {
-   char provider[16];              /* "openai" or "claude" */
+   char provider[16];              /* "openai", "claude", or "gemini" */
    char endpoint[CONFIG_PATH_MAX]; /* Empty = default, or custom endpoint */
    bool vision_enabled;            /* Model supports vision/image analysis */
 
@@ -154,6 +160,10 @@ typedef struct {
    char claude_models[LLM_CLOUD_MAX_MODELS][LLM_CLOUD_MODEL_NAME_MAX];
    int claude_models_count;
    int claude_default_model_idx; /* Index into claude_models for default */
+
+   char gemini_models[LLM_CLOUD_MAX_MODELS][LLM_CLOUD_MODEL_NAME_MAX];
+   int gemini_models_count;
+   int gemini_default_model_idx; /* Index into gemini_models for default */
 } llm_cloud_config_t;
 
 typedef struct {
@@ -181,7 +191,11 @@ typedef struct {
 typedef struct {
    char mode[16];            /* "disabled", "enabled", "auto" */
    int budget_tokens;        /* Token budget (min 1024 for Claude) */
-   char reasoning_effort[8]; /* OpenAI o-series: "low", "medium", "high" */
+   char reasoning_effort[8]; /* "low", "medium", "high" for reasoning models
+                              * OpenAI o-series/GPT-5: maps to reasoning_effort param
+                              * Claude: maps to budget_tokens (low=1024, medium=8192, high=16384)
+                              * Gemini 2.5+/3.x: maps to reasoning_effort; NOTE: Gemini cannot
+                              *   fully disable reasoning - "disabled" mode uses "low" effort */
 } llm_thinking_config_t;
 
 typedef struct {
@@ -303,6 +317,7 @@ typedef struct {
 typedef struct {
    char openai_api_key[CONFIG_API_KEY_MAX];
    char claude_api_key[CONFIG_API_KEY_MAX];
+   char gemini_api_key[CONFIG_API_KEY_MAX];
    char mqtt_username[CONFIG_CREDENTIAL_MAX];
    char mqtt_password[CONFIG_CREDENTIAL_MAX];
 

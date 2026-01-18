@@ -55,6 +55,7 @@
 // LLM URLs - cloud endpoints (local endpoint comes from g_config.llm.local.endpoint)
 #define CLOUDAI_URL "https://api.openai.com"
 #define CLAUDE_URL "https://api.anthropic.com"
+#define GEMINI_URL "https://generativelanguage.googleapis.com/v1beta/openai"
 
 // Helper functions to get API keys from runtime config (secrets.toml)
 static const char *get_openai_api_key(void) {
@@ -71,12 +72,23 @@ static const char *get_claude_api_key(void) {
    return NULL;
 }
 
+static const char *get_gemini_api_key(void) {
+   if (g_secrets.gemini_api_key[0] != '\0') {
+      return g_secrets.gemini_api_key;
+   }
+   return NULL;
+}
+
 static bool is_openai_available(void) {
    return get_openai_api_key() != NULL;
 }
 
 static bool is_claude_available(void) {
    return get_claude_api_key() != NULL;
+}
+
+static bool is_gemini_available(void) {
+   return get_gemini_api_key() != NULL;
 }
 
 // Public API key availability functions (wrappers for static helpers)
@@ -86,6 +98,10 @@ bool llm_has_openai_key(void) {
 
 bool llm_has_claude_key(void) {
    return is_claude_available();
+}
+
+bool llm_has_gemini_key(void) {
+   return is_gemini_available();
 }
 
 // Global state
@@ -286,8 +302,9 @@ void llm_init(const char *cloud_provider_override) {
    // Detect available providers from runtime config (secrets.toml)
    bool openai_available = is_openai_available();
    bool claude_available = is_claude_available();
+   bool gemini_available = is_gemini_available();
 
-   if (!openai_available && !claude_available) {
+   if (!openai_available && !claude_available && !gemini_available) {
       LOG_WARNING("No cloud LLM providers configured (check secrets.toml)");
       current_cloud_provider = CLOUD_PROVIDER_NONE;
       llm_set_type(LLM_LOCAL);
@@ -319,8 +336,16 @@ void llm_init(const char *cloud_provider_override) {
          current_cloud_provider = CLOUD_PROVIDER_CLAUDE;
          LOG_INFO("Cloud provider set to Claude (%s)",
                   cloud_provider_override ? "CLI override" : "config file");
+      } else if (strcmp(provider_source, "gemini") == 0) {
+         if (!gemini_available) {
+            LOG_ERROR("Gemini requested but no API key available");
+            exit(1);
+         }
+         current_cloud_provider = CLOUD_PROVIDER_GEMINI;
+         LOG_INFO("Cloud provider set to Gemini (%s)",
+                  cloud_provider_override ? "CLI override" : "config file");
       } else {
-         LOG_ERROR("Unknown cloud provider: %s (valid: openai, claude)", provider_source);
+         LOG_ERROR("Unknown cloud provider: %s (valid: openai, claude, gemini)", provider_source);
          exit(1);
       }
    } else {
@@ -328,9 +353,12 @@ void llm_init(const char *cloud_provider_override) {
       if (openai_available) {
          current_cloud_provider = CLOUD_PROVIDER_OPENAI;
          LOG_INFO("Cloud provider auto-detected: OpenAI");
-      } else {
+      } else if (claude_available) {
          current_cloud_provider = CLOUD_PROVIDER_CLAUDE;
          LOG_INFO("Cloud provider auto-detected: Claude");
+      } else {
+         current_cloud_provider = CLOUD_PROVIDER_GEMINI;
+         LOG_INFO("Cloud provider auto-detected: Gemini");
       }
    }
 
@@ -341,8 +369,9 @@ void llm_init(const char *cloud_provider_override) {
 int llm_refresh_providers(void) {
    bool openai_available = is_openai_available();
    bool claude_available = is_claude_available();
+   bool gemini_available = is_gemini_available();
 
-   if (!openai_available && !claude_available) {
+   if (!openai_available && !claude_available && !gemini_available) {
       LOG_INFO("LLM refresh: No cloud providers available");
       current_cloud_provider = CLOUD_PROVIDER_NONE;
       return 0;
@@ -350,20 +379,39 @@ int llm_refresh_providers(void) {
 
    // Check if current provider is still valid
    if (current_cloud_provider == CLOUD_PROVIDER_OPENAI && !openai_available) {
-      // OpenAI key removed, switch to Claude if available
+      // OpenAI key removed, switch to Claude or Gemini if available
       if (claude_available) {
          current_cloud_provider = CLOUD_PROVIDER_CLAUDE;
          LOG_INFO("LLM refresh: Switched to Claude (OpenAI key removed)");
+      } else if (gemini_available) {
+         current_cloud_provider = CLOUD_PROVIDER_GEMINI;
+         LOG_INFO("LLM refresh: Switched to Gemini (OpenAI key removed)");
       } else {
          current_cloud_provider = CLOUD_PROVIDER_NONE;
          LOG_INFO("LLM refresh: No cloud providers available");
          return 0;
       }
    } else if (current_cloud_provider == CLOUD_PROVIDER_CLAUDE && !claude_available) {
-      // Claude key removed, switch to OpenAI if available
+      // Claude key removed, switch to OpenAI or Gemini if available
       if (openai_available) {
          current_cloud_provider = CLOUD_PROVIDER_OPENAI;
          LOG_INFO("LLM refresh: Switched to OpenAI (Claude key removed)");
+      } else if (gemini_available) {
+         current_cloud_provider = CLOUD_PROVIDER_GEMINI;
+         LOG_INFO("LLM refresh: Switched to Gemini (Claude key removed)");
+      } else {
+         current_cloud_provider = CLOUD_PROVIDER_NONE;
+         LOG_INFO("LLM refresh: No cloud providers available");
+         return 0;
+      }
+   } else if (current_cloud_provider == CLOUD_PROVIDER_GEMINI && !gemini_available) {
+      // Gemini key removed, switch to OpenAI or Claude if available
+      if (openai_available) {
+         current_cloud_provider = CLOUD_PROVIDER_OPENAI;
+         LOG_INFO("LLM refresh: Switched to OpenAI (Gemini key removed)");
+      } else if (claude_available) {
+         current_cloud_provider = CLOUD_PROVIDER_CLAUDE;
+         LOG_INFO("LLM refresh: Switched to Claude (Gemini key removed)");
       } else {
          current_cloud_provider = CLOUD_PROVIDER_NONE;
          LOG_INFO("LLM refresh: No cloud providers available");
@@ -374,14 +422,16 @@ int llm_refresh_providers(void) {
       if (openai_available) {
          current_cloud_provider = CLOUD_PROVIDER_OPENAI;
          LOG_INFO("LLM refresh: OpenAI now available");
-      } else {
+      } else if (claude_available) {
          current_cloud_provider = CLOUD_PROVIDER_CLAUDE;
          LOG_INFO("LLM refresh: Claude now available");
+      } else {
+         current_cloud_provider = CLOUD_PROVIDER_GEMINI;
+         LOG_INFO("LLM refresh: Gemini now available");
       }
    }
 
-   LOG_INFO("LLM refresh: Cloud provider ready (%s)",
-            current_cloud_provider == CLOUD_PROVIDER_OPENAI ? "OpenAI" : "Claude");
+   LOG_INFO("LLM refresh: Cloud provider ready (%s)", llm_get_cloud_provider_name());
    return 1;
 }
 
@@ -394,6 +444,9 @@ int llm_set_type(llm_type_t type) {
       if (current_cloud_provider == CLOUD_PROVIDER_CLAUDE) {
          has_api_key = is_claude_available();
          provider_name = "Claude";
+      } else if (current_cloud_provider == CLOUD_PROVIDER_GEMINI) {
+         has_api_key = is_gemini_available();
+         provider_name = "Gemini";
       } else {
          has_api_key = is_openai_available();
          provider_name = "OpenAI";
@@ -418,6 +471,9 @@ int llm_set_type(llm_type_t type) {
       if (current_cloud_provider == CLOUD_PROVIDER_CLAUDE) {
          snprintf(llm_url, sizeof(llm_url), "%s", cloud_endpoint ? cloud_endpoint : CLAUDE_URL);
          text_to_speech("Setting AI to cloud LLM using Claude.");
+      } else if (current_cloud_provider == CLOUD_PROVIDER_GEMINI) {
+         snprintf(llm_url, sizeof(llm_url), "%s", cloud_endpoint ? cloud_endpoint : GEMINI_URL);
+         text_to_speech("Setting AI to cloud LLM using Gemini.");
       } else {
          snprintf(llm_url, sizeof(llm_url), "%s", cloud_endpoint ? cloud_endpoint : CLOUDAI_URL);
          text_to_speech("Setting AI to cloud LLM using OpenAI.");
@@ -469,10 +525,26 @@ const char *llm_get_cloud_provider_name(void) {
          return "OpenAI";
       case CLOUD_PROVIDER_CLAUDE:
          return "Claude";
+      case CLOUD_PROVIDER_GEMINI:
+         return "Gemini";
       case CLOUD_PROVIDER_NONE:
          return "None";
       default:
          return "Unknown";
+   }
+}
+
+const char *cloud_provider_to_string(cloud_provider_t provider) {
+   switch (provider) {
+      case CLOUD_PROVIDER_OPENAI:
+         return "openai";
+      case CLOUD_PROVIDER_CLAUDE:
+         return "claude";
+      case CLOUD_PROVIDER_GEMINI:
+         return "gemini";
+      case CLOUD_PROVIDER_NONE:
+      default:
+         return "none";
    }
 }
 
@@ -506,6 +578,21 @@ int llm_set_cloud_provider(cloud_provider_t provider) {
          snprintf(llm_url, sizeof(llm_url), "%s", cloud_endpoint);
       }
       LOG_INFO("Cloud provider set to Claude");
+      return 0;
+   } else if (provider == CLOUD_PROVIDER_GEMINI) {
+      if (!is_gemini_available()) {
+         LOG_ERROR("Cannot switch to Gemini: API key not configured");
+         return 1;
+      }
+      current_cloud_provider = CLOUD_PROVIDER_GEMINI;
+      // Update URL if we're currently in cloud mode
+      if (current_type == LLM_CLOUD) {
+         const char *cloud_endpoint = g_config.llm.cloud.endpoint[0] != '\0'
+                                          ? g_config.llm.cloud.endpoint
+                                          : GEMINI_URL;
+         snprintf(llm_url, sizeof(llm_url), "%s", cloud_endpoint);
+      }
+      LOG_INFO("Cloud provider set to Gemini");
       return 0;
    }
    return 1;
@@ -558,6 +645,8 @@ const char *llm_get_model_name(void) {
       return llm_get_default_openai_model();
    } else if (provider == CLOUD_PROVIDER_CLAUDE) {
       return llm_get_default_claude_model();
+   } else if (provider == CLOUD_PROVIDER_GEMINI) {
+      return llm_get_default_gemini_model();
    }
    return "None";
 }
@@ -568,7 +657,7 @@ const char *llm_get_default_openai_model(void) {
 
    /* Fallback to first model if index out of bounds or no models */
    if (count <= 0) {
-      return "gpt-5-mini"; /* Hard-coded fallback if no models configured */
+      return LLM_DEFAULT_OPENAI_MODEL;
    }
    if (idx < 0 || idx >= count) {
       idx = 0;
@@ -582,12 +671,26 @@ const char *llm_get_default_claude_model(void) {
 
    /* Fallback to first model if index out of bounds or no models */
    if (count <= 0) {
-      return "claude-sonnet-4-5"; /* Hard-coded fallback if no models configured */
+      return LLM_DEFAULT_CLAUDE_MODEL;
    }
    if (idx < 0 || idx >= count) {
       idx = 0;
    }
    return g_config.llm.cloud.claude_models[idx];
+}
+
+const char *llm_get_default_gemini_model(void) {
+   int idx = g_config.llm.cloud.gemini_default_model_idx;
+   int count = g_config.llm.cloud.gemini_models_count;
+
+   /* Fallback to first model if index out of bounds or no models */
+   if (count <= 0) {
+      return LLM_DEFAULT_GEMINI_MODEL;
+   }
+   if (idx < 0 || idx >= count) {
+      idx = 0;
+   }
+   return g_config.llm.cloud.gemini_models[idx];
 }
 
 void llm_request_interrupt(void) {
@@ -685,6 +788,8 @@ char *llm_chat_completion(struct json_object *conversation_history,
          api_key = get_openai_api_key();
       } else if (provider == CLOUD_PROVIDER_CLAUDE) {
          api_key = get_claude_api_key();
+      } else if (provider == CLOUD_PROVIDER_GEMINI) {
+         api_key = get_gemini_api_key();
       }
    }
 
@@ -705,6 +810,12 @@ char *llm_chat_completion(struct json_object *conversation_history,
                                                   vision_image_size, url, api_key, model);
             break;
 
+         case CLOUD_PROVIDER_GEMINI:
+            /* Gemini uses OpenAI-compatible API */
+            response = llm_openai_chat_completion(conversation_history, input_text, vision_image,
+                                                  vision_image_size, url, api_key, model);
+            break;
+
          default:
             LOG_ERROR("No cloud provider configured");
             return NULL;
@@ -713,7 +824,8 @@ char *llm_chat_completion(struct json_object *conversation_history,
 
    /* If cloud LLM failed (but not interrupted by user), try falling back to local */
    if (response == NULL && type == LLM_CLOUD && !llm_is_interrupt_requested()) {
-      if (strcmp(CLOUDAI_URL, url) == 0 || strcmp(CLAUDE_URL, url) == 0) {
+      if (strcmp(CLOUDAI_URL, url) == 0 || strcmp(CLAUDE_URL, url) == 0 ||
+          strcmp(GEMINI_URL, url) == 0) {
          LOG_WARNING("Falling back to local LLM due to connection failure.");
          text_to_speech("Unable to contact cloud LLM.");
          llm_set_type(LLM_LOCAL);
@@ -768,6 +880,8 @@ char *llm_chat_completion_streaming(struct json_object *conversation_history,
          api_key = get_openai_api_key();
       } else if (provider == CLOUD_PROVIDER_CLAUDE) {
          api_key = get_claude_api_key();
+      } else if (provider == CLOUD_PROVIDER_GEMINI) {
+         api_key = get_gemini_api_key();
       }
    }
 
@@ -804,6 +918,14 @@ char *llm_chat_completion_streaming(struct json_object *conversation_history,
                                                             callback_userdata);
             break;
 
+         case CLOUD_PROVIDER_GEMINI:
+            /* Gemini uses OpenAI-compatible API */
+            response = llm_openai_chat_completion_streaming(conversation_history, input_text,
+                                                            vision_image, vision_image_size, url,
+                                                            api_key, model, chunk_callback,
+                                                            callback_userdata);
+            break;
+
          default:
             LOG_ERROR("No cloud provider configured");
             return NULL;
@@ -812,7 +934,8 @@ char *llm_chat_completion_streaming(struct json_object *conversation_history,
 
    /* If cloud LLM failed (but not interrupted by user), try falling back to local */
    if (response == NULL && type == LLM_CLOUD && !llm_is_interrupt_requested()) {
-      if (strcmp(CLOUDAI_URL, url) == 0 || strcmp(CLAUDE_URL, url) == 0) {
+      if (strcmp(CLOUDAI_URL, url) == 0 || strcmp(CLAUDE_URL, url) == 0 ||
+          strcmp(GEMINI_URL, url) == 0) {
          LOG_WARNING("Falling back to local LLM due to connection failure.");
          text_to_speech("Unable to contact cloud LLM.");
          llm_set_type(LLM_LOCAL);
@@ -939,6 +1062,8 @@ void llm_get_default_config(session_llm_config_t *config) {
    // Always set default cloud provider (used when switching from local to cloud)
    if (strcasecmp(g_config.llm.cloud.provider, "claude") == 0) {
       config->cloud_provider = CLOUD_PROVIDER_CLAUDE;
+   } else if (strcasecmp(g_config.llm.cloud.provider, "gemini") == 0) {
+      config->cloud_provider = CLOUD_PROVIDER_GEMINI;
    } else {
       config->cloud_provider = CLOUD_PROVIDER_OPENAI;
    }
@@ -957,9 +1082,7 @@ void llm_get_default_config(session_llm_config_t *config) {
 
    LOG_INFO("Default LLM config: type=%s, provider=%s",
             config->type == LLM_LOCAL ? "local" : "cloud",
-            config->cloud_provider == CLOUD_PROVIDER_CLAUDE   ? "claude"
-            : config->cloud_provider == CLOUD_PROVIDER_OPENAI ? "openai"
-                                                              : "none");
+            cloud_provider_to_string(config->cloud_provider));
 }
 
 int llm_resolve_config(const session_llm_config_t *session_config,
@@ -989,6 +1112,12 @@ int llm_resolve_config(const session_llm_config_t *session_config,
             return 1;
          }
          resolved->api_key = get_claude_api_key();
+      } else if (resolved->cloud_provider == CLOUD_PROVIDER_GEMINI) {
+         if (!is_gemini_available()) {
+            LOG_ERROR("Session config requests Gemini but no API key configured");
+            return 1;
+         }
+         resolved->api_key = get_gemini_api_key();
       } else {
          LOG_ERROR("Session config requests cloud but no provider specified");
          return 1;
@@ -1003,6 +1132,8 @@ int llm_resolve_config(const session_llm_config_t *session_config,
          resolved->endpoint = CLOUDAI_URL;
       } else if (resolved->cloud_provider == CLOUD_PROVIDER_CLAUDE) {
          resolved->endpoint = CLAUDE_URL;
+      } else if (resolved->cloud_provider == CLOUD_PROVIDER_GEMINI) {
+         resolved->endpoint = GEMINI_URL;
       }
    }
 
@@ -1014,6 +1145,8 @@ int llm_resolve_config(const session_llm_config_t *session_config,
          resolved->model = llm_get_default_openai_model();
       } else if (resolved->cloud_provider == CLOUD_PROVIDER_CLAUDE) {
          resolved->model = llm_get_default_claude_model();
+      } else if (resolved->cloud_provider == CLOUD_PROVIDER_GEMINI) {
+         resolved->model = llm_get_default_gemini_model();
       }
    }
 
@@ -1075,6 +1208,13 @@ char *llm_chat_completion_with_config(struct json_object *conversation_history,
 
          case CLOUD_PROVIDER_CLAUDE:
             response = llm_claude_chat_completion(conversation_history, input_text, vision_image,
+                                                  vision_image_size, config->endpoint,
+                                                  config->api_key, config->model);
+            break;
+
+         case CLOUD_PROVIDER_GEMINI:
+            /* Gemini uses OpenAI-compatible API */
+            response = llm_openai_chat_completion(conversation_history, input_text, vision_image,
                                                   vision_image_size, config->endpoint,
                                                   config->api_key, config->model);
             break;
@@ -1146,6 +1286,13 @@ char *llm_chat_completion_streaming_with_config(struct json_object *conversation
 
          case CLOUD_PROVIDER_CLAUDE:
             response = llm_claude_chat_completion_streaming(
+                conversation_history, input_text, vision_image, vision_image_size, config->endpoint,
+                config->api_key, config->model, chunk_callback, callback_userdata);
+            break;
+
+         case CLOUD_PROVIDER_GEMINI:
+            /* Gemini uses OpenAI-compatible API */
+            response = llm_openai_chat_completion_streaming(
                 conversation_history, input_text, vision_image, vision_image_size, config->endpoint,
                 config->api_key, config->model, chunk_callback, callback_userdata);
             break;

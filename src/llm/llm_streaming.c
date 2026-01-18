@@ -306,17 +306,70 @@ static void parse_openai_chunk(llm_stream_context_t *ctx, const char *event_data
                   }
 
                   // Arguments come as deltas, accumulate them
+                  // OpenAI sends incremental string fragments, but Gemini sends
+                  // complete JSON objects on each chunk.
                   if (json_object_object_get_ex(function_obj, "arguments", &args_obj)) {
                      const char *args_chunk = json_object_get_string(args_obj);
                      if (args_chunk) {
                         size_t cur_len = strlen(ctx->provider.openai.tool_args_buffer[tc_index]);
                         size_t add_len = strlen(args_chunk);
-                        if (cur_len + add_len < LLM_TOOLS_ARGS_LEN - 1) {
-                           // Use memcpy instead of strcat to avoid O(n^2) scanning
+
+                        // Gemini sends complete JSON on each chunk - replace instead of append
+                        // Use explicit provider check rather than heuristic
+                        if (ctx->cloud_provider == CLOUD_PROVIDER_GEMINI && cur_len > 0) {
+                           // Replace with latest complete JSON
+                           if (add_len < LLM_TOOLS_ARGS_LEN - 1) {
+                              memcpy(ctx->provider.openai.tool_args_buffer[tc_index], args_chunk,
+                                     add_len);
+                              ctx->provider.openai.tool_args_buffer[tc_index][add_len] = '\0';
+                           }
+                        } else if (cur_len + add_len < LLM_TOOLS_ARGS_LEN - 1) {
+                           // OpenAI-style: append incremental delta
                            memcpy(ctx->provider.openai.tool_args_buffer[tc_index] + cur_len,
                                   args_chunk, add_len);
                            ctx->provider.openai.tool_args_buffer[tc_index][cur_len + add_len] =
                                '\0';
+                        }
+                     }
+                  }
+               }
+
+               // Gemini 3+ models: Capture thought_signature from first tool call
+               // Required for follow-up requests when reasoning mode is enabled
+               if (ctx->cloud_provider == CLOUD_PROVIDER_GEMINI &&
+                   ctx->tool_calls.thought_signature[0] == '\0') {
+                  json_object *extra_content, *google_obj, *sig_obj;
+                  // Try extra_content.google.thought_signature (OpenAI-compatible format)
+                  if (json_object_object_get_ex(tc, "extra_content", &extra_content) &&
+                      json_object_object_get_ex(extra_content, "google", &google_obj) &&
+                      json_object_object_get_ex(google_obj, "thought_signature", &sig_obj)) {
+                     const char *sig = json_object_get_string(sig_obj);
+                     if (sig && sig[0] != '\0') {
+                        size_t sig_len = strlen(sig);
+                        strncpy(ctx->tool_calls.thought_signature, sig,
+                                LLM_TOOLS_THOUGHT_SIG_LEN - 1);
+                        ctx->tool_calls.thought_signature[LLM_TOOLS_THOUGHT_SIG_LEN - 1] = '\0';
+                        if (sig_len >= LLM_TOOLS_THOUGHT_SIG_LEN) {
+                           LOG_WARNING("Gemini thought_signature truncated: %zu -> %d bytes",
+                                       sig_len, LLM_TOOLS_THOUGHT_SIG_LEN - 1);
+                        } else {
+                           LOG_INFO("Captured Gemini thought_signature (%zu bytes)", sig_len);
+                        }
+                     }
+                  }
+                  // Also try direct thought_signature field as fallback
+                  else if (json_object_object_get_ex(tc, "thought_signature", &sig_obj)) {
+                     const char *sig = json_object_get_string(sig_obj);
+                     if (sig && sig[0] != '\0') {
+                        size_t sig_len = strlen(sig);
+                        strncpy(ctx->tool_calls.thought_signature, sig,
+                                LLM_TOOLS_THOUGHT_SIG_LEN - 1);
+                        ctx->tool_calls.thought_signature[LLM_TOOLS_THOUGHT_SIG_LEN - 1] = '\0';
+                        if (sig_len >= LLM_TOOLS_THOUGHT_SIG_LEN) {
+                           LOG_WARNING("Gemini thought_signature truncated: %zu -> %d bytes",
+                                       sig_len, LLM_TOOLS_THOUGHT_SIG_LEN - 1);
+                        } else {
+                           LOG_INFO("Captured Gemini thought_signature (%zu bytes)", sig_len);
                         }
                      }
                   }
@@ -427,6 +480,26 @@ static void parse_openai_chunk(llm_stream_context_t *ctx, const char *event_data
          // Update context usage tracking with actual session ID
          uint32_t session_id = ws_session ? ws_session->session_id : 0;
          llm_context_update_usage(session_id, input_tokens, output_tokens, cached_tokens);
+
+         // Calculate accurate token rate from actual output tokens and streaming duration
+         // This is more accurate than counting chunks for providers like Gemini
+         if (output_tokens > 0 && has_ws_session) {
+            struct timeval now;
+            gettimeofday(&now, NULL);
+            double duration_ms = (now.tv_sec - ctx->stream_start_time.tv_sec) * 1000.0 +
+                                 (now.tv_usec - ctx->stream_start_time.tv_usec) / 1000.0;
+            /* Require minimum 100ms to avoid artificially high rates from timing jitter */
+            if (duration_ms > 100) {
+               float accurate_rate = (float)output_tokens * 1000.0f / (float)duration_ms;
+               ctx->tokens_per_second = accurate_rate;
+               ctx->tokens_generated = output_tokens;
+               LOG_INFO("Stream rate: %.1f tok/s (%d tokens in %.0fms)", accurate_rate,
+                        output_tokens, duration_ms);
+               // Send accurate final metrics to WebUI
+               // TTFT was already sent during streaming, just update token rate
+               webui_send_metrics_update(ws_session, "thinking", 0, accurate_rate, -1);
+            }
+         }
 
          LOG_INFO("Stream usage: %d input, %d output, %d cached tokens", input_tokens,
                   output_tokens, cached_tokens);
@@ -687,6 +760,23 @@ static void parse_claude_event(llm_stream_context_t *ctx, const char *event_data
             llm_context_update_usage(session_id, ctx->provider.claude.input_tokens, output_tokens,
                                      0);
 
+            // Calculate accurate token rate from actual output tokens
+            if (output_tokens > 0 && has_ws_session) {
+               struct timeval now;
+               gettimeofday(&now, NULL);
+               double duration_ms = (now.tv_sec - ctx->stream_start_time.tv_sec) * 1000.0 +
+                                    (now.tv_usec - ctx->stream_start_time.tv_usec) / 1000.0;
+               /* Require minimum 100ms to avoid artificially high rates from timing jitter */
+               if (duration_ms > 100) {
+                  float accurate_rate = (float)output_tokens * 1000.0f / (float)duration_ms;
+                  ctx->tokens_per_second = accurate_rate;
+                  ctx->tokens_generated = output_tokens;
+                  LOG_INFO("Claude rate: %.1f tok/s (%d tokens in %.0fms)", accurate_rate,
+                           output_tokens, duration_ms);
+                  webui_send_metrics_update(ws_session, "thinking", 0, accurate_rate, -1);
+               }
+            }
+
             LOG_INFO("Claude usage: %d input, %d output tokens", ctx->provider.claude.input_tokens,
                      output_tokens);
          }
@@ -762,8 +852,10 @@ void llm_stream_handle_event(llm_stream_context_t *ctx, const char *event_data) 
 
    // Route to provider-specific parser
    // Local LLM (llama.cpp) uses OpenAI-compatible format
-   // Cloud can be OpenAI or Claude
-   if (ctx->llm_type == LLM_LOCAL || ctx->cloud_provider == CLOUD_PROVIDER_OPENAI) {
+   // Gemini also uses OpenAI-compatible format
+   // Cloud can be OpenAI, Gemini, or Claude
+   if (ctx->llm_type == LLM_LOCAL || ctx->cloud_provider == CLOUD_PROVIDER_OPENAI ||
+       ctx->cloud_provider == CLOUD_PROVIDER_GEMINI) {
       parse_openai_chunk(ctx, event_data);
    } else if (ctx->cloud_provider == CLOUD_PROVIDER_CLAUDE) {
       parse_claude_event(ctx, event_data);

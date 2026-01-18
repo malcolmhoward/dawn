@@ -113,7 +113,7 @@ void config_set_defaults(dawn_config_t *config) {
 
    /* Default OpenAI model list (first entry is default) */
    config->llm.cloud.openai_models_count = 4;
-   SAFE_COPY(config->llm.cloud.openai_models[0], "gpt-5-mini");
+   SAFE_COPY(config->llm.cloud.openai_models[0], LLM_DEFAULT_OPENAI_MODEL);
    SAFE_COPY(config->llm.cloud.openai_models[1], "gpt-5.2");
    SAFE_COPY(config->llm.cloud.openai_models[2], "gpt-5-nano");
    SAFE_COPY(config->llm.cloud.openai_models[3], "gpt-5");
@@ -121,10 +121,18 @@ void config_set_defaults(dawn_config_t *config) {
 
    /* Default Claude model list (first entry is default) */
    config->llm.cloud.claude_models_count = 3;
-   SAFE_COPY(config->llm.cloud.claude_models[0], "claude-sonnet-4-5");
+   SAFE_COPY(config->llm.cloud.claude_models[0], LLM_DEFAULT_CLAUDE_MODEL);
    SAFE_COPY(config->llm.cloud.claude_models[1], "claude-opus-4-5");
    SAFE_COPY(config->llm.cloud.claude_models[2], "claude-haiku-4-5");
    config->llm.cloud.claude_default_model_idx = 0;
+
+   /* Default Gemini model list (first entry is default) */
+   config->llm.cloud.gemini_models_count = 4;
+   SAFE_COPY(config->llm.cloud.gemini_models[0], LLM_DEFAULT_GEMINI_MODEL);
+   SAFE_COPY(config->llm.cloud.gemini_models[1], "gemini-2.5-pro");
+   SAFE_COPY(config->llm.cloud.gemini_models[2], "gemini-3-flash-preview");
+   SAFE_COPY(config->llm.cloud.gemini_models[3], "gemini-3-pro-preview");
+   config->llm.cloud.gemini_default_model_idx = 0;
 
    /* LLM Local */
    SAFE_COPY(config->llm.local.endpoint, "http://127.0.0.1:8080");

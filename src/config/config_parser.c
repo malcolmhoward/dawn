@@ -24,6 +24,7 @@
 #include "config/config_parser.h"
 
 #include <fcntl.h>
+#include <limits.h>
 #include <pwd.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -330,6 +331,8 @@ static void parse_llm_cloud(toml_table_t *table, llm_cloud_config_t *config) {
                                              "openai_default_model_idx",
                                              "claude_models",
                                              "claude_default_model_idx",
+                                             "gemini_models",
+                                             "gemini_default_model_idx",
                                              NULL };
    warn_unknown_keys(table, "llm.cloud", known_keys);
 
@@ -354,12 +357,13 @@ static void parse_llm_cloud(toml_table_t *table, llm_cloud_config_t *config) {
    /* Parse openai_default_model_idx with bounds check */
    toml_datum_t openai_idx = toml_int_in(table, "openai_default_model_idx");
    if (openai_idx.ok) {
-      config->openai_default_model_idx = (int)openai_idx.u.i;
-      if (config->openai_default_model_idx < 0 ||
-          config->openai_default_model_idx >= config->openai_models_count) {
-         LOG_WARNING("llm.cloud.openai_default_model_idx %d out of range, defaulting to 0",
-                     config->openai_default_model_idx);
+      /* Check range before cast to avoid integer overflow */
+      if (openai_idx.u.i < 0 || openai_idx.u.i > INT_MAX ||
+          (int)openai_idx.u.i >= config->openai_models_count) {
+         LOG_WARNING("llm.cloud.openai_default_model_idx out of range, defaulting to 0");
          config->openai_default_model_idx = 0;
+      } else {
+         config->openai_default_model_idx = (int)openai_idx.u.i;
       }
    }
 
@@ -380,12 +384,40 @@ static void parse_llm_cloud(toml_table_t *table, llm_cloud_config_t *config) {
    /* Parse claude_default_model_idx with bounds check */
    toml_datum_t claude_idx = toml_int_in(table, "claude_default_model_idx");
    if (claude_idx.ok) {
-      config->claude_default_model_idx = (int)claude_idx.u.i;
-      if (config->claude_default_model_idx < 0 ||
-          config->claude_default_model_idx >= config->claude_models_count) {
-         LOG_WARNING("llm.cloud.claude_default_model_idx %d out of range, defaulting to 0",
-                     config->claude_default_model_idx);
+      /* Check range before cast to avoid integer overflow */
+      if (claude_idx.u.i < 0 || claude_idx.u.i > INT_MAX ||
+          (int)claude_idx.u.i >= config->claude_models_count) {
+         LOG_WARNING("llm.cloud.claude_default_model_idx out of range, defaulting to 0");
          config->claude_default_model_idx = 0;
+      } else {
+         config->claude_default_model_idx = (int)claude_idx.u.i;
+      }
+   }
+
+   /* Parse gemini_models array */
+   toml_array_t *gemini_arr = toml_array_in(table, "gemini_models");
+   if (gemini_arr) {
+      config->gemini_models_count = 0;
+      for (int i = 0; i < toml_array_nelem(gemini_arr) && i < LLM_CLOUD_MAX_MODELS; i++) {
+         toml_datum_t val = toml_string_at(gemini_arr, i);
+         if (val.ok) {
+            safe_strncpy(config->gemini_models[config->gemini_models_count++], val.u.s,
+                         LLM_CLOUD_MODEL_NAME_MAX);
+            free(val.u.s);
+         }
+      }
+   }
+
+   /* Parse gemini_default_model_idx with bounds check */
+   toml_datum_t gemini_idx = toml_int_in(table, "gemini_default_model_idx");
+   if (gemini_idx.ok) {
+      /* Check range before cast to avoid integer overflow */
+      if (gemini_idx.u.i < 0 || gemini_idx.u.i > INT_MAX ||
+          (int)gemini_idx.u.i >= config->gemini_models_count) {
+         LOG_WARNING("llm.cloud.gemini_default_model_idx out of range, defaulting to 0");
+         config->gemini_default_model_idx = 0;
+      } else {
+         config->gemini_default_model_idx = (int)gemini_idx.u.i;
       }
    }
 }
@@ -825,6 +857,7 @@ int config_parse_secrets(const char *path, secrets_config_t *secrets) {
    if (secrets_section) {
       PARSE_STRING(secrets_section, "openai_api_key", secrets->openai_api_key);
       PARSE_STRING(secrets_section, "claude_api_key", secrets->claude_api_key);
+      PARSE_STRING(secrets_section, "gemini_api_key", secrets->gemini_api_key);
       PARSE_STRING(secrets_section, "mqtt_username", secrets->mqtt_username);
       PARSE_STRING(secrets_section, "mqtt_password", secrets->mqtt_password);
 
