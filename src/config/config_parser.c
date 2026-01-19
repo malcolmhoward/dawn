@@ -591,7 +591,8 @@ static void parse_search(toml_table_t *table, search_config_t *config) {
    if (!table)
       return;
 
-   static const char *const known_keys[] = { "engine", "endpoint", "summarizer", NULL };
+   static const char *const known_keys[] = { "engine", "endpoint", "summarizer", "title_filters",
+                                             NULL };
    warn_unknown_keys(table, "search", known_keys);
 
    PARSE_STRING(table, "engine", config->engine);
@@ -600,6 +601,32 @@ static void parse_search(toml_table_t *table, search_config_t *config) {
    /* Parse [search.summarizer] sub-table */
    toml_table_t *summarizer = toml_table_in(table, "summarizer");
    parse_summarizer(summarizer, &config->summarizer);
+
+   /* Parse title_filters array - exclude results with these terms in title (case-insensitive) */
+   toml_array_t *filters_arr = toml_array_in(table, "title_filters");
+   if (filters_arr) {
+      int count = toml_array_nelem(filters_arr);
+      if (count > SEARCH_MAX_TITLE_FILTERS) {
+         LOG_WARNING("search.title_filters has %d entries, max is %d - truncating", count,
+                     SEARCH_MAX_TITLE_FILTERS);
+         count = SEARCH_MAX_TITLE_FILTERS;
+      }
+
+      /* Clear default filters when config specifies explicit list */
+      config->title_filters_count = 0;
+
+      for (int i = 0; i < count; i++) {
+         toml_datum_t d = toml_string_at(filters_arr, i);
+         if (d.ok && d.u.s) {
+            strncpy(config->title_filters[config->title_filters_count], d.u.s,
+                    SEARCH_TITLE_FILTER_MAX - 1);
+            config->title_filters[config->title_filters_count][SEARCH_TITLE_FILTER_MAX - 1] = '\0';
+            config->title_filters_count++;
+            free(d.u.s);
+         }
+      }
+      LOG_INFO("Parsed %d title filters in search.title_filters", config->title_filters_count);
+   }
 }
 
 static void parse_flaresolverr(toml_table_t *table, flaresolverr_config_t *config) {

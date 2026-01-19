@@ -74,9 +74,39 @@ include_directories(${JSONC_INCLUDE_DIRS})
 pkg_check_modules(MOSQUITTO REQUIRED libmosquitto)
 include_directories(${MOSQUITTO_INCLUDE_DIRS})
 
-# Audio file playback
+# Audio file playback - FLAC (always required)
 pkg_check_modules(FLAC REQUIRED flac)
 include_directories(${FLAC_INCLUDE_DIRS})
+
+# Audio file playback - MP3 (optional, libmpg123)
+option(DAWN_ENABLE_MP3 "Enable MP3 decoding (libmpg123)" ON)
+if(DAWN_ENABLE_MP3)
+    pkg_check_modules(MPG123 libmpg123)
+    if(MPG123_FOUND)
+        include_directories(${MPG123_INCLUDE_DIRS})
+        add_definitions(-DDAWN_ENABLE_MP3)
+        message(STATUS "MP3 support: ENABLED (libmpg123 ${MPG123_VERSION})")
+    else()
+        message(WARNING "libmpg123 not found - MP3 support disabled")
+        message(WARNING "Install with: sudo apt install libmpg123-dev")
+        set(DAWN_ENABLE_MP3 OFF)
+    endif()
+endif()
+
+# Audio file playback - Ogg Vorbis (optional, libvorbis)
+option(DAWN_ENABLE_OGG "Enable Ogg Vorbis decoding (libvorbis)" ON)
+if(DAWN_ENABLE_OGG)
+    pkg_check_modules(VORBISFILE vorbisfile)
+    if(VORBISFILE_FOUND)
+        include_directories(${VORBISFILE_INCLUDE_DIRS})
+        add_definitions(-DDAWN_ENABLE_OGG)
+        message(STATUS "Ogg support: ENABLED (libvorbisfile ${VORBISFILE_VERSION})")
+    else()
+        message(WARNING "libvorbisfile not found - Ogg Vorbis support disabled")
+        message(WARNING "Install with: sudo apt install libvorbis-dev")
+        set(DAWN_ENABLE_OGG OFF)
+    endif()
+endif()
 
 # Base64 Encoding
 find_package(OpenSSL REQUIRED)
@@ -365,6 +395,8 @@ set(DAWN_SOURCES
     # Audio subsystem
     src/audio/audio_capture_thread.c
     src/audio/ring_buffer.c
+    src/audio/audio_decoder.c
+    src/audio/flac_decoder.c
     src/audio/flac_playback.c
     src/audio/mic_passthrough.c
     src/audio/resampler.c
@@ -469,6 +501,16 @@ else()
     message(STATUS "ASR Engine: Whisper")
 endif()
 
+# Conditionally add MP3 decoder source file
+if(DAWN_ENABLE_MP3)
+    list(APPEND DAWN_SOURCES src/audio/mp3_decoder.c)
+endif()
+
+# Conditionally add Ogg Vorbis decoder source file
+if(DAWN_ENABLE_OGG)
+    list(APPEND DAWN_SOURCES src/audio/ogg_decoder.c)
+endif()
+
 # Conditionally add AEC source files
 if(AEC_ENABLED)
     list(APPEND DAWN_SOURCES ${AEC_SOURCES})
@@ -501,6 +543,18 @@ target_link_libraries(dawn
 # Link both audio libraries for runtime backend selection
 # Both backends are statically linked; runtime selection via vtable
 target_link_libraries(dawn asound pulse-simple pulse)
+
+# Conditionally link libmpg123 for MP3 decoding
+if(DAWN_ENABLE_MP3)
+    target_link_libraries(dawn ${MPG123_LIBRARIES})
+    message(STATUS "Linking MP3 library (libmpg123)")
+endif()
+
+# Conditionally link libvorbisfile for Ogg Vorbis decoding
+if(DAWN_ENABLE_OGG)
+    target_link_libraries(dawn ${VORBISFILE_LIBRARIES})
+    message(STATUS "Linking Ogg library (libvorbisfile)")
+endif()
 
 # Conditionally link ncurses for TUI
 if(ENABLE_TUI)

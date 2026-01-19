@@ -33,7 +33,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h> /* For strcasestr */
 
+#include "config/dawn_config.h"
 #include "logging.h"
 #include "tools/curl_buffer.h"
 #include "tools/string_utils.h"
@@ -250,6 +252,37 @@ static int compare_scored_results(const void *a, const void *b) {
    return rb->score - ra->score;  // Descending order
 }
 
+/**
+ * @brief Check if a title should be filtered based on configured title_filters
+ *
+ * Uses case-insensitive substring matching against all configured filters.
+ *
+ * @param title Result title to check
+ * @return true if title should be filtered (excluded), false to keep
+ */
+static bool should_filter_title(const char *title) {
+   if (!title || title[0] == '\0') {
+      return false;
+   }
+
+   const dawn_config_t *config = config_get();
+   if (!config || config->search.title_filters_count == 0) {
+      return false;
+   }
+
+   for (int i = 0; i < config->search.title_filters_count; i++) {
+      if (config->search.title_filters[i][0] != '\0') {
+         if (strcasestr(title, config->search.title_filters[i]) != NULL) {
+            LOG_INFO("web_search: Filtering result with title containing '%s': %s",
+                     config->search.title_filters[i], title);
+            return true;
+         }
+      }
+   }
+
+   return false;
+}
+
 // =============================================================================
 // Search Query (internal implementation)
 // =============================================================================
@@ -362,9 +395,17 @@ static void parse_results_array(struct json_object *results_array,
          host_counts[host_idx].count++;
       }
 
+      // Get title and check title filters before accepting
+      char *title = get_json_string(item, "title");
+      if (should_filter_title(title)) {
+         free(url);
+         free(title);
+         continue;  // Skip this result (filtered title)
+      }
+
       // Accept this result
       temp_results[accepted_count].result.url = url;
-      temp_results[accepted_count].result.title = get_json_string(item, "title");
+      temp_results[accepted_count].result.title = title;
       temp_results[accepted_count].result.engine = get_json_string(item, "engine");
 
       // Get snippet (called "content" in SearXNG)

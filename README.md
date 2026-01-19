@@ -14,7 +14,7 @@ DAWN integrates modern speech recognition, large language models, and text-to-sp
   - Intelligent chunking for long utterances
 
 - **Multi-Provider LLM Integration**
-  - Cloud: OpenAI GPT-4o, Anthropic Claude 4.5 Sonnet
+  - Cloud: OpenAI GPT-4o, Anthropic Claude 4.5 Sonnet, Google Gemini 2.5/3
   - Local: llama.cpp or Ollama with optimized Qwen3-4B model (81.9% quality @ 138ms TTFT)
   - Runtime model switching via WebUI for both cloud and local providers
   - Streaming responses with real-time TTS integration
@@ -30,6 +30,13 @@ DAWN integrates modern speech recognition, large language models, and text-to-sp
   - Text preprocessing for natural phrasing
   - Streaming integration with LLM responses
 
+- **Multi-Format Music Playback**
+  - FLAC (always available via libFLAC)
+  - MP3 (optional, via libmpg123)
+  - Ogg Vorbis (optional, via libvorbis)
+  - Unified decoder abstraction with auto-format detection
+  - Mixed-format playlists supported
+
 - **Network Audio Processing**
   - Custom Dawn Audio Protocol (DAP) for ESP32 clients
   - Reliable binary protocol with checksums and retries
@@ -43,6 +50,7 @@ DAWN integrates modern speech recognition, large language models, and text-to-sp
 - **Web UI**
   - Browser-based interface on port 3000
   - Push-to-talk voice input (requires HTTPS for remote access)
+  - **Opus audio streaming** - Low-latency bidirectional audio via WebCodecs API (48kHz native, server resamples to 16kHz for ASR)
   - TTS audio playback through browser
   - FFT waveform visualization with lightning trail effect
   - Real-time WebSocket communication
@@ -247,6 +255,9 @@ sudo apt install -y build-essential cmake git pkg-config
 
 # Audio libraries
 sudo apt install -y libasound2-dev libpulse-dev libsndfile1-dev libflac-dev
+
+# Optional: MP3 and Ogg Vorbis decoding for music playback
+sudo apt install -y libmpg123-dev libvorbis-dev
 
 # MQTT
 sudo apt install -y libmosquitto-dev
@@ -525,6 +536,7 @@ Create `secrets.toml` in the project root or `~/.config/dawn/secrets.toml` for A
 ```toml
 openai_api_key = "sk-your-openai-key-here"
 claude_api_key = "sk-ant-your-claude-key-here"
+gemini_api_key = "your-gemini-api-key-here"
 ```
 
 **Note**: `secrets.toml` is already in `.gitignore` - never commit API keys!
@@ -801,6 +813,7 @@ The `AI_DESCRIPTION` constant defines the system prompt/personality for the LLM.
 See `LLM_INTEGRATION_GUIDE.md` for detailed setup instructions for:
 - OpenAI API (cloud) - GPT-4o
 - Anthropic Claude API (cloud) - Claude 4.5 Sonnet
+- Google Gemini API (cloud) - Gemini 2.5 Flash/Pro, Gemini 3
 - llama.cpp local server (free, on-device)
 
 **Recommended local configuration**:

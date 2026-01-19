@@ -24,6 +24,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 /* Local */
 #include "config/dawn_config.h"
@@ -59,11 +60,13 @@
 /* Rules for native tool calling mode (default) */
 static const char *NATIVE_TOOLS_RULES =
    "RULES\n"
-   "1. Keep responses concise - max 30 words unless asked to explain.\n"
+   "1. Keep responses concise and conversational.\n"
    "2. Use available tools when the user requests actions or information.\n"
    "3. If a request is ambiguous, ask for clarification.\n"
-   "4. After tool execution, provide a brief confirmation.\n"
-   "5. Do NOT lead responses with comments about location, weather, or time of day.\n"
+   "4. After tool execution, summarize the results briefly. Do not call the same tool again.\n"
+   "5. Search results include snippets with key information. Answer from snippets directly.\n"
+   "   Only fetch a URL if the user asks for details about a specific article.\n"
+   "6. Do NOT lead responses with weather, time, or location info unless explicitly asked.\n"
    "   Vary your greetings and openers. The user's context below is for tool use only.\n";
 
 /* Core behavior rules for <command> tag mode (legacy) */
@@ -485,6 +488,25 @@ static const char *get_localization_context(void) {
    if (g_config.localization.timezone[0] != '\0') {
       offset += snprintf(localization_context + offset, LOCALIZATION_BUFFER_SIZE - offset,
                          " TZ=%s.", g_config.localization.timezone);
+   }
+
+   // Always include current date so model knows what "today" means
+   // This is critical for models with older training data cutoffs
+   time_t now = time(NULL);
+   struct tm *tm_info = localtime(&now);
+   if (tm_info) {
+      char date_str[32];
+      size_t date_len = strftime(date_str, sizeof(date_str), "%B %d, %Y", tm_info);
+      if (date_len > 0) {
+         if (!has_context) {
+            offset = snprintf(
+                localization_context, LOCALIZATION_BUFFER_SIZE,
+                "TOOL DEFAULTS (for tool calls only, do not mention in conversation):");
+            has_context = 1;
+         }
+         offset += snprintf(localization_context + offset, LOCALIZATION_BUFFER_SIZE - offset,
+                            " Today=%s.", date_str);
+      }
    }
 
    if (has_context) {

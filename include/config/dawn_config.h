@@ -218,10 +218,18 @@ typedef struct {
    size_t target_words;    /* Target summary length */
 } summarizer_file_config_t;
 
+/* Maximum configurable title filters */
+#define SEARCH_MAX_TITLE_FILTERS 16
+#define SEARCH_TITLE_FILTER_MAX 64
+
 typedef struct {
    char engine[32];                /* Search engine name */
    char endpoint[CONFIG_PATH_MAX]; /* SearXNG instance URL */
    summarizer_file_config_t summarizer;
+
+   /* Title filters - exclude results with these terms (case-insensitive) */
+   char title_filters[SEARCH_MAX_TITLE_FILTERS][SEARCH_TITLE_FILTER_MAX];
+   int title_filters_count;
 } search_config_t;
 
 /* =============================================================================

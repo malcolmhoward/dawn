@@ -4,7 +4,7 @@ This document describes the architecture of the D.A.W.N. (Digital Assistant for 
 
 **D.A.W.N.** is the central intelligence layer of the OASIS ecosystem, responsible for interpreting user intent, fusing data from every subsystem, and routing commands. At its core, DAWN performs neural-inference to understand context and drive decision-making, acting as OASIS's orchestration hub for MIRAGE, AURA, SPARK, STAT, and any future modules.
 
-**Last Updated**: January 13, 2026 (added Ollama support, Extended Thinking, Prettier formatting)
+**Last Updated**: January 18, 2026 (added Gemini provider, Opus audio streaming, multi-format audio decoder)
 
 ## Table of Contents
 
@@ -62,14 +62,14 @@ D.A.W.N. is a modular voice assistant system that processes voice commands throu
             │  (abstraction)   │
             └───────┬──────────┘
                     │
-         ┌──────────┼──────────┐
-         │          │          │
-    ┌────▼───┐ ┌───▼────┐ ┌───▼──────┐
-    │ OpenAI │ │ Claude │ │ llama.cpp│
-    │ GPT-4o │ │ 4.5    │ │ (local)  │
-    └────┬───┘ └───┬────┘ └───┬──────┘
-         │         │          │
-         └─────────┼──────────┘
+         ┌──────────┼─────────┬──────────┐
+         │          │         │          │
+    ┌────▼───┐ ┌───▼────┐ ┌──▼───┐ ┌───▼──────┐
+    │ OpenAI │ │ Claude │ │Gemini│ │ llama.cpp│
+    │ GPT-4o │ │ 4.5    │ │ 2.5  │ │ (local)  │
+    └────┬───┘ └───┬────┘ └──┬───┘ └───┬──────┘
+         │         │         │         │
+         └─────────┴────┬────┴─────────┘
                    │ (streaming)
            ┌───────▼──────────┐
            │  SSE Parser +    │
@@ -199,7 +199,7 @@ Audio Input → VAD (Silero) → Chunking Manager → ASR Engine (Whisper/Vosk) 
 
 #### Architecture Pattern: **Strategy + Observer Patterns**
 
-- **Strategy**: Multiple LLM providers (OpenAI, Claude, local) via unified interface
+- **Strategy**: Multiple LLM providers (OpenAI, Claude, Gemini, local) via unified interface
 - **Observer**: Streaming responses notify sentence buffer for real-time TTS
 
 #### Key Components
@@ -215,15 +215,17 @@ Audio Input → VAD (Silero) → Chunking Manager → ASR Engine (Whisper/Vosk) 
   - Supports GPT-4o, GPT-4, GPT-3.5
   - Supports llama.cpp local server (OpenAI-compatible endpoint)
   - Supports Ollama with runtime model switching
+  - Supports Google Gemini (via OpenAI-compatible endpoint)
   - Both blocking and streaming modes
   - Conversation history management
-  - Extended thinking support (reasoning_effort for OpenAI models)
+  - Extended thinking support (reasoning_effort for OpenAI/Gemini models)
 
 - **llm_claude.c/h**: Claude API implementation
   - Supports Claude 4.5 Sonnet, Claude 3 Opus
   - Streaming support
   - Different API format than OpenAI (Messages API)
   - Extended thinking support with configurable token budget
+  - Full thinking content visibility (unlike OpenAI/Gemini)
 
 - **llm_streaming.c/h**: Streaming response handler
   - Manages Server-Sent Events (SSE) connections
@@ -264,6 +266,7 @@ User Query → LLM Provider (OpenAI/Claude/Local)
 |-------------------------|---------|-----------|---------|---------------|
 | OpenAI GPT-4o           | 100%    | ~300ms    | ~3.1s   | ~$0.01/query  |
 | Claude 4.5 Sonnet       | 92.4%   | ~400ms    | ~3.5s   | ~$0.015/query |
+| Gemini 2.5 Flash        | ~90%    | ~250ms    | ~2.5s   | ~$0.002/query |
 | llama.cpp (Qwen3-4B Q4) | 81.9%   | 116-138ms | ~1.5s   | FREE          |
 | Ollama (Qwen3-4B Q4)    | 81.9%   | ~150ms    | ~1.6s   | FREE          |
 
@@ -416,6 +419,94 @@ ESP32 Client → TCP Connection → Handshake → Audio Stream (DAP packets)
 ```
 
 **RB = Ring Buffer**
+
+### 7. WebUI Audio Subsystem
+
+**Purpose**: Browser-based voice input/output with low-latency audio streaming
+
+#### Architecture: **Opus Codec + WebCodecs API**
+
+The WebUI uses Opus audio compression for efficient bidirectional audio streaming between browser and server.
+
+```
+┌───────────────────────────────────────────────────────────────────────┐
+│                        Browser (WebUI)                                 │
+│                                                                        │
+│  ┌───────────────┐    ┌───────────────┐    ┌───────────────┐          │
+│  │ getUserMedia  │───>│ Opus Encoder  │───>│  WebSocket    │──────────┼──>
+│  │ (48kHz input) │    │ (Web Worker)  │    │ Binary Send   │          │
+│  └───────────────┘    └───────────────┘    └───────────────┘          │
+│                                                                        │
+│  ┌───────────────┐    ┌───────────────┐    ┌───────────────┐          │
+│  │ AudioContext  │<───│ Opus Decoder  │<───│  WebSocket    │<─────────┼──
+│  │ (48kHz output)│    │ (Web Worker)  │    │ Binary Recv   │          │
+│  └───────────────┘    └───────────────┘    └───────────────┘          │
+└───────────────────────────────────────────────────────────────────────┘
+                                │
+                                │ Opus frames (length-prefixed)
+                                │
+                                ▼
+┌───────────────────────────────────────────────────────────────────────┐
+│                        DAWN Server                                     │
+│                                                                        │
+│  ┌───────────────┐    ┌───────────────┐    ┌───────────────┐          │
+│  │ Opus Decoder  │───>│  Resampler    │───>│     ASR       │          │
+│  │ (libopus)     │    │ 48kHz → 16kHz │    │   (Whisper)   │          │
+│  └───────────────┘    └───────────────┘    └───────────────┘          │
+│                                                                        │
+│  ┌───────────────┐    ┌───────────────┐    ┌───────────────┐          │
+│  │ Opus Encoder  │<───│  Resampler    │<───│     TTS       │          │
+│  │ (libopus)     │    │ 22kHz → 48kHz │    │   (Piper)     │          │
+│  └───────────────┘    └───────────────┘    └───────────────┘          │
+└───────────────────────────────────────────────────────────────────────┘
+```
+
+#### Key Components
+
+- **opus-worker.js**: Web Worker for encoding/decoding using WebCodecs API
+  - Encodes browser microphone input (48kHz) to Opus frames
+  - Decodes server TTS audio (Opus frames) to PCM for playback
+  - Falls back to raw PCM if WebCodecs unavailable
+
+- **Codec Configuration**:
+  - Sample rate: 48kHz (Opus native rate)
+  - Channels: Mono
+  - Bitrate: Adaptive (typically 24-32 kbps for voice)
+  - Frame size: 20ms (960 samples at 48kHz)
+
+- **Capability Negotiation**:
+  - Browser sends `audio_codecs: ["opus", "pcm"]` during WebSocket connect
+  - Server selects best available codec
+  - Graceful fallback to uncompressed PCM if Opus unavailable
+
+#### Data Flow (Browser Voice Input)
+
+```
+1. getUserMedia() captures audio at 48kHz
+   ↓
+2. AudioWorklet sends PCM frames to Opus worker
+   ↓
+3. Worker encodes to Opus frames (length-prefixed)
+   ↓
+4. WebSocket sends binary data to server
+   ↓
+5. Server decodes Opus → resamples to 16kHz → ASR
+   ↓
+6. LLM processing → TTS generation
+   ↓
+7. Server encodes TTS audio to Opus → sends to browser
+   ↓
+8. Worker decodes Opus → AudioContext plays at 48kHz
+```
+
+#### Benefits of Opus Streaming
+
+| Metric | Raw PCM (16-bit) | Opus Compressed |
+|--------|------------------|-----------------|
+| Bandwidth (1s audio) | ~192 KB | ~3-4 KB |
+| Latency | Minimal | +2-5ms encoding |
+| Quality | Lossless | Near-lossless (voice optimized) |
+| Browser Support | Universal | WebCodecs (Chrome/Edge/Firefox 90+) |
 
 ---
 
@@ -804,6 +895,8 @@ LLMContext *llm_init() {
    if (config.llm.type == LLM_TYPE_CLOUD) {
       if (config.llm.cloud.provider == PROVIDER_OPENAI) {
          return llm_openai_init();  // OpenAI models (GPT-4o, etc.)
+      } else if (config.llm.cloud.provider == PROVIDER_GEMINI) {
+         return llm_openai_init();  // Gemini via OpenAI-compatible endpoint
       } else {
          return llm_claude_init();  // Claude models
       }
@@ -1150,8 +1243,8 @@ Key settings:
 
 ---
 
-**Document Version**: 1.0
-**Last Updated**: January 13, 2026 (added Ollama support, Extended Thinking, Prettier formatting)
+**Document Version**: 1.1
+**Last Updated**: January 18, 2026 (added Gemini provider, Opus audio streaming, multi-format audio decoder)
 **Reorganization Commit**: [Git SHA to be added after commit]
 
 ### LLM Threading Architecture (Post-Interrupt Implementation)

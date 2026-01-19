@@ -399,6 +399,21 @@ Currently no automated test framework. Manual testing involves:
 - Cloud model switching via WebUI
 - Prettier formatting for JS/CSS/HTML
 
+## Code Review Workflow
+
+When the developer requests a "code review" (or similar phrasing like "review my changes", "run the agents on this"):
+
+1. **Gather changes**: Run `git status` and `git diff` to capture all current uncommitted changes
+2. **Launch agents in parallel**: Feed the diff output to the appropriate review agents:
+   - **"Code review"** or **"run the big three"**: Launch architecture-reviewer, embedded-efficiency-reviewer, and security-auditor in parallel
+   - **"Full review"** or **"run all four"**: Also include ui-design-architect (if UI changes are present)
+3. **Synthesize results**: After all agents complete, provide a consolidated summary of findings
+
+**Trigger phrases:**
+- "code review", "review my changes", "review this code"
+- "run the agents", "run the big three", "run all my agents"
+- "what do the agents think?"
+
 ## Agent Terminology
 
 When the developer refers to review agents:

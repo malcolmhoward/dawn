@@ -161,6 +161,15 @@ void config_set_defaults(dawn_config_t *config) {
    config->search.summarizer.threshold_bytes = 3072;
    config->search.summarizer.target_words = 600;
 
+   /* Search Title Filters - exclude low-quality SEO spam from news results */
+   SAFE_COPY(config->search.title_filters[0], "wordle");
+   SAFE_COPY(config->search.title_filters[1], "connections hints");
+   SAFE_COPY(config->search.title_filters[2], "connections answers");
+   SAFE_COPY(config->search.title_filters[3], "nyt connections");
+   SAFE_COPY(config->search.title_filters[4], "puzzle hints");
+   SAFE_COPY(config->search.title_filters[5], "puzzle answers");
+   config->search.title_filters_count = 6;
+
    /* URL Fetcher - whitelist is zeroed by memset */
    config->url_fetcher.whitelist_count = 0;
 

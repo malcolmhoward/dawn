@@ -1112,6 +1112,13 @@ json_object *config_to_json(const dawn_config_t *config) {
    json_object_object_add(summarizer, "target_words",
                           json_object_new_int64((int64_t)config->search.summarizer.target_words));
    json_object_object_add(search, "summarizer", summarizer);
+
+   /* title_filters array */
+   json_object *title_filters = json_object_new_array();
+   for (int i = 0; i < config->search.title_filters_count; i++) {
+      json_object_array_add(title_filters, json_object_new_string(config->search.title_filters[i]));
+   }
+   json_object_object_add(search, "title_filters", title_filters);
    json_object_object_add(root, "search", search);
 
    /* [url_fetcher] */
@@ -1367,8 +1374,8 @@ int config_write_toml(const dawn_config_t *config, const char *path) {
    fprintf(fp, "\n[vad.chunking]\n");
    fprintf(fp, "enabled = %s\n", config->vad.chunking.enabled ? "true" : "false");
    fprintf(fp, "pause_duration = %.2f\n", config->vad.chunking.pause_duration);
-   fprintf(fp, "min_duration = %.1f\n", config->vad.chunking.min_duration);
-   fprintf(fp, "max_duration = %.1f\n", config->vad.chunking.max_duration);
+   fprintf(fp, "min_chunk_duration = %.1f\n", config->vad.chunking.min_duration);
+   fprintf(fp, "max_chunk_duration = %.1f\n", config->vad.chunking.max_duration);
 
    fprintf(fp, "\n[asr]\n");
    fprintf(fp, "model = \"%s\"\n", config->asr.model);
@@ -1398,10 +1405,10 @@ int config_write_toml(const dawn_config_t *config, const char *path) {
     * Model names are expected to be ASCII alphanumeric (e.g., "gpt-4o", "gemini-2.5-flash"),
     * so escape failures are unlikely. We log a warning but continue with unescaped value
     * to avoid breaking config save for the entire file. */
-#define WRITE_MODEL_ARRAY(name, array, count, idx_var)                                             \
+#define WRITE_MODEL_ARRAY(array_name, idx_key, array, count, idx_var)                              \
    do {                                                                                            \
       if ((count) > 0) {                                                                           \
-         fprintf(fp, "%s = [\n", name);                                                            \
+         fprintf(fp, "%s = [\n", array_name);                                                      \
          for (int i = 0; i < (count); i++) {                                                       \
             char *escaped = toml_escape_string((array)[i]);                                        \
             if (!escaped) {                                                                        \
@@ -1413,16 +1420,16 @@ int config_write_toml(const dawn_config_t *config, const char *path) {
          }                                                                                         \
          fprintf(fp, "]\n");                                                                       \
       }                                                                                            \
-      fprintf(fp, "%s_default_model_idx = %d\n", name, idx_var);                                   \
+      fprintf(fp, "%s = %d\n", idx_key, idx_var);                                                  \
    } while (0)
 
-   WRITE_MODEL_ARRAY("openai_models", config->llm.cloud.openai_models,
+   WRITE_MODEL_ARRAY("openai_models", "openai_default_model_idx", config->llm.cloud.openai_models,
                      config->llm.cloud.openai_models_count,
                      config->llm.cloud.openai_default_model_idx);
-   WRITE_MODEL_ARRAY("claude_models", config->llm.cloud.claude_models,
+   WRITE_MODEL_ARRAY("claude_models", "claude_default_model_idx", config->llm.cloud.claude_models,
                      config->llm.cloud.claude_models_count,
                      config->llm.cloud.claude_default_model_idx);
-   WRITE_MODEL_ARRAY("gemini_models", config->llm.cloud.gemini_models,
+   WRITE_MODEL_ARRAY("gemini_models", "gemini_default_model_idx", config->llm.cloud.gemini_models,
                      config->llm.cloud.gemini_models_count,
                      config->llm.cloud.gemini_default_model_idx);
 
@@ -1483,13 +1490,28 @@ int config_write_toml(const dawn_config_t *config, const char *path) {
    fprintf(fp, "threshold_bytes = %zu\n", config->search.summarizer.threshold_bytes);
    fprintf(fp, "target_words = %zu\n", config->search.summarizer.target_words);
 
+   /* Write title_filters if any are configured */
+   if (config->search.title_filters_count > 0) {
+      fprintf(fp, "\n# Exclude search results with these terms in title (case-insensitive)\n");
+      fprintf(fp, "title_filters = [\n");
+      for (int i = 0; i < config->search.title_filters_count; i++) {
+         char *escaped = toml_escape_string(config->search.title_filters[i]);
+         fprintf(fp, "    \"%s\"%s\n", escaped ? escaped : config->search.title_filters[i],
+                 i < config->search.title_filters_count - 1 ? "," : "");
+         free(escaped);
+      }
+      fprintf(fp, "]\n");
+   }
+
    if (config->url_fetcher.whitelist_count > 0 || config->url_fetcher.flaresolverr.enabled) {
       fprintf(fp, "\n[url_fetcher]\n");
       if (config->url_fetcher.whitelist_count > 0) {
          fprintf(fp, "whitelist = [\n");
          for (int i = 0; i < config->url_fetcher.whitelist_count; i++) {
-            fprintf(fp, "    \"%s\"%s\n", config->url_fetcher.whitelist[i],
+            char *escaped = toml_escape_string(config->url_fetcher.whitelist[i]);
+            fprintf(fp, "    \"%s\"%s\n", escaped ? escaped : config->url_fetcher.whitelist[i],
                     i < config->url_fetcher.whitelist_count - 1 ? "," : "");
+            free(escaped);
          }
          fprintf(fp, "]\n");
       }

@@ -1010,15 +1010,107 @@ static void openai_sse_event_handler(const char *event_type,
 /* Maximum tool call iterations to prevent infinite loops */
 #define MAX_TOOL_ITERATIONS 5
 
+/* Maximum messages to check for duplicate tool calls (performance optimization) */
+#define DUPLICATE_CHECK_LOOKBACK 10
+
+/**
+ * @brief Check if a tool call is a duplicate of a previous call in conversation history
+ *
+ * Prevents infinite loops where the LLM keeps making the same tool call repeatedly.
+ * Compares tool name and arguments against previous tool calls in the history.
+ * Only checks the last DUPLICATE_CHECK_LOOKBACK messages for efficiency.
+ *
+ * @param history Conversation history (JSON array)
+ * @param tool_name Name of the tool being called
+ * @param tool_args Arguments for the tool call
+ * @return true if this exact call was already made, false otherwise
+ */
+static bool is_duplicate_tool_call(struct json_object *history,
+                                   const char *tool_name,
+                                   const char *tool_args) {
+   if (!history || !tool_name)
+      return false;
+
+   int len = json_object_array_length(history);
+
+   /* Limit lookback for efficiency - duplicate loops happen within a few iterations */
+   int min_idx = len - DUPLICATE_CHECK_LOOKBACK;
+   if (min_idx < 0) {
+      min_idx = 0;
+   }
+
+   // Search backwards through recent history for assistant messages with tool_calls
+   for (int i = len - 1; i >= min_idx; i--) {
+      json_object *msg = json_object_array_get_idx(history, i);
+      if (!msg)
+         continue;
+
+      json_object *role_obj;
+      if (!json_object_object_get_ex(msg, "role", &role_obj))
+         continue;
+
+      const char *role = json_object_get_string(role_obj);
+      if (!role || strcmp(role, "assistant") != 0)
+         continue;
+
+      // Check for tool_calls array
+      json_object *tool_calls;
+      if (!json_object_object_get_ex(msg, "tool_calls", &tool_calls))
+         continue;
+      if (!json_object_is_type(tool_calls, json_type_array))
+         continue;
+
+      // Compare each tool call in this message
+      int tc_len = json_object_array_length(tool_calls);
+      for (int j = 0; j < tc_len; j++) {
+         json_object *tc = json_object_array_get_idx(tool_calls, j);
+         if (!tc)
+            continue;
+
+         json_object *func;
+         if (!json_object_object_get_ex(tc, "function", &func))
+            continue;
+
+         json_object *name_obj, *args_obj;
+         if (!json_object_object_get_ex(func, "name", &name_obj))
+            continue;
+
+         const char *prev_name = json_object_get_string(name_obj);
+         if (!prev_name || strcmp(prev_name, tool_name) != 0)
+            continue;
+
+         // Name matches - check arguments
+         if (json_object_object_get_ex(func, "arguments", &args_obj)) {
+            const char *prev_args = json_object_get_string(args_obj);
+            // Compare arguments (both NULL/empty counts as match)
+            bool args_match = false;
+            if ((!prev_args || prev_args[0] == '\0') && (!tool_args || tool_args[0] == '\0')) {
+               args_match = true;
+            } else if (prev_args && tool_args && strcmp(prev_args, tool_args) == 0) {
+               args_match = true;
+            }
+
+            if (args_match) {
+               LOG_INFO("Duplicate tool call detected: %s with args %s", tool_name,
+                        tool_args ? tool_args : "(none)");
+               return true;
+            }
+         }
+      }
+   }
+
+   return false;
+}
+
 /**
  * @brief Extract error message from OpenAI/compatible API error response
  *
  * Parses JSON like: {"error": {"message": "...", "code": "..."}}
  * Returns a formatted error message or a default message if parsing fails.
- * The returned string is static and should not be freed.
+ * The returned string is thread-local and should not be freed.
  */
 static const char *parse_api_error_message(const char *response_body, long http_code) {
-   static char error_msg[512];
+   static _Thread_local char error_msg[512];
 
    if (!response_body || response_body[0] == '\0') {
       snprintf(error_msg, sizeof(error_msg), "API request failed (HTTP %ld)", http_code);
@@ -1307,7 +1399,8 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
    }
 
    // Add tools if native tool calling is enabled
-   if (llm_tools_enabled(NULL)) {
+   // Skip tools at max iterations (used by duplicate detection to force text response)
+   if (llm_tools_enabled(NULL) && iteration < MAX_TOOL_ITERATIONS) {
       bool is_remote = is_current_session_remote();
       struct json_object *tools = llm_tools_get_openai_format_filtered(is_remote);
       if (tools) {
@@ -1316,6 +1409,9 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
          LOG_INFO("OpenAI streaming: Added %d tools to request (%s session)",
                   llm_tools_get_enabled_count_filtered(is_remote), is_remote ? "remote" : "local");
       }
+   } else if (iteration >= MAX_TOOL_ITERATIONS) {
+      LOG_INFO("OpenAI streaming: Skipping tools (forcing text response at iteration %d)",
+               iteration);
    }
 
    payload = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN |
@@ -1531,6 +1627,50 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
          for (int i = 0; i < tool_calls->count; i++) {
             LOG_INFO("  Tool call [%d]: id=%s name=%s args=%s", i, tool_calls->calls[i].id,
                      tool_calls->calls[i].name, tool_calls->calls[i].arguments);
+         }
+
+         // Check for duplicate tool calls (prevents infinite loops with weak models)
+         // Only check the first/primary tool call - if it's a duplicate, the LLM is stuck
+         if (tool_calls->count > 0 &&
+             is_duplicate_tool_call(conversation_history, tool_calls->calls[0].name,
+                                    tool_calls->calls[0].arguments)) {
+            LOG_WARNING("OpenAI streaming: Duplicate tool call detected, forcing text response");
+
+            // Add a system hint to use existing results and make one more call without tools
+            json_object *hint_msg = json_object_new_object();
+            json_object_object_add(hint_msg, "role", json_object_new_string("user"));
+            json_object_object_add(
+                hint_msg, "content",
+                json_object_new_string(
+                    "[System: You already performed this search. Use the search results you "
+                    "already have to answer the question. Do not search again.]"));
+            json_object_array_add(conversation_history, hint_msg);
+
+            // Cleanup current stream context
+            sse_parser_free(sse_parser);
+            llm_stream_free(stream_ctx);
+            json_object_put(root);
+            free(streaming_ctx.raw_buffer);
+
+            // Make one more call with tools disabled to force a text response
+            LOG_INFO("OpenAI streaming: Making final call without tools to force text response");
+
+            // Get fresh config
+            llm_resolved_config_t config;
+            char model_buf[LLM_MODEL_NAME_MAX] = "";
+            bool config_ok = (llm_get_current_resolved_config(&config) == 0);
+            if (config_ok && config.model && config.model[0] != '\0') {
+               strncpy(model_buf, config.model, sizeof(model_buf) - 1);
+            }
+
+            const char *fresh_url = config_ok ? config.endpoint : base_url;
+            const char *fresh_key = config_ok ? config.api_key : api_key;
+            const char *fresh_model = model_buf[0] ? model_buf : model;
+
+            // Recursive call with MAX_TOOL_ITERATIONS to skip further tool processing
+            return llm_openai_streaming_internal(conversation_history, "", NULL, 0, fresh_url,
+                                                 fresh_key, fresh_model, chunk_callback,
+                                                 callback_userdata, MAX_TOOL_ITERATIONS);
          }
 
          // Execute tools

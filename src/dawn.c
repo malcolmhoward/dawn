@@ -52,6 +52,7 @@
 #include "asr/vad_silero.h"
 #include "audio/audio_backend.h"
 #include "audio/audio_capture_thread.h"
+#include "audio/audio_decoder.h"
 #include "audio/flac_playback.h"
 #include "core/command_executor.h"
 #include "core/command_registry.h"
@@ -180,6 +181,8 @@ static void init_wake_words(void) {
                g_config.general.ai_name);
       wakeWords[i] = wakeWordBuffers[i];
    }
+   LOG_INFO("Wake words configured for '%s' (e.g., '%s', '%s')", g_config.general.ai_name,
+            wakeWords[0], wakeWords[1]);
 }
 
 // Array of words/phrases used to signal the end of an interaction with the AI.
@@ -1876,6 +1879,12 @@ int main(int argc, char *argv[]) {
    }
    LOG_INFO("Audio backend initialized: %s", audio_backend_type_name(audio_backend_get_type()));
 
+   // Initialize audio decoder subsystem (FLAC, MP3, Ogg Vorbis)
+   if (audio_decoder_init() != AUDIO_DECODER_SUCCESS) {
+      LOG_ERROR("Failed to initialize audio decoder subsystem");
+      return 1;
+   }
+
    // Start dedicated audio capture thread with ring buffer
    // Ring buffer size: 262144 bytes = ~8 seconds of audio at 16kHz mono 16-bit
    // Increased to prevent audio loss during Vosk processing which can take 100-500ms per iteration
@@ -2997,8 +3006,9 @@ int main(int argc, char *argv[]) {
                         pthread_cond_signal(&tts_cond);
                      }
                      pthread_mutex_unlock(&tts_mutex);
+                  }
 
-                     // Check if there's any meaningful text after wake word
+                  if (i < numWakeWords) {
                      // Skip whitespace and punctuation to see if there's actual command text
                      const char *check_ptr = next_char_ptr;
                      LOG_INFO("Wake word found. next_char_ptr='%s'",
@@ -3672,6 +3682,9 @@ int main(int argc, char *argv[]) {
       audio_capture_stop(audio_capture_ctx);
       audio_capture_ctx = NULL;
    }
+
+   // Clean up audio decoder subsystem
+   audio_decoder_cleanup();
 
    // Clean up audio backend (after all audio handles are closed)
    audio_backend_cleanup();

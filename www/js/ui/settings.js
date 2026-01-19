@@ -359,7 +359,7 @@
                   openai_models: {
                      type: 'model_list',
                      label: 'OpenAI Models',
-                     rows: 5,
+                     rows: 8, // LLM_CLOUD_MAX_MODELS
                      placeholder: 'gpt-4o\ngpt-4-turbo\ngpt-4o-mini',
                      hint: 'Available models for quick controls (one per line)',
                   },
@@ -372,7 +372,7 @@
                   claude_models: {
                      type: 'model_list',
                      label: 'Claude Models',
-                     rows: 5,
+                     rows: 8, // LLM_CLOUD_MAX_MODELS
                      placeholder: 'claude-sonnet-4-20250514\nclaude-opus-4-20250514',
                      hint: 'Available models for quick controls (one per line)',
                   },
@@ -385,7 +385,7 @@
                   gemini_models: {
                      type: 'model_list',
                      label: 'Gemini Models',
-                     rows: 5,
+                     rows: 8, // LLM_CLOUD_MAX_MODELS
                      placeholder: 'gemini-2.5-flash\ngemini-2.5-pro\ngemini-3-flash-preview',
                      hint: 'Available models for quick controls (one per line). 2.5+ and 3.x support reasoning.',
                   },
@@ -505,6 +505,13 @@
                      hint: 'Target word count for summarized output',
                   },
                },
+            },
+            title_filters: {
+               type: 'string_list',
+               label: 'Title Filters',
+               rows: 8, // SEARCH_MAX_TITLE_FILTERS=16, but 8 rows is reasonable visible height
+               placeholder: 'wordle\nconnections hints\nnyt connections',
+               hint: 'Exclude results containing these terms in title (one per line, case-insensitive)',
             },
          },
       },
@@ -1238,6 +1245,11 @@
             const listValue = Array.isArray(value) ? value.join('\n') : value || '';
             inputHtml = `<textarea id="${inputId}" rows="${def.rows || 5}" placeholder="${def.placeholder || ''}" data-key="${fullKey}" data-type="model_list">${escapeHtml(listValue)}</textarea>`;
             break;
+         case 'string_list':
+            // Generic string array - same as model_list but without dropdown update behavior
+            const strListValue = Array.isArray(value) ? value.join('\n') : value || '';
+            inputHtml = `<textarea id="${inputId}" rows="${def.rows || 4}" placeholder="${def.placeholder || ''}" data-key="${fullKey}" data-type="string_list">${escapeHtml(strListValue)}</textarea>`;
+            break;
          case 'model_default_select':
             // Dropdown populated from a model_list textarea
             // Get current options from the source model list
@@ -1366,7 +1378,7 @@
             value = input.checked;
          } else if (input.type === 'number') {
             value = input.value !== '' ? parseFloat(input.value) : null;
-         } else if (input.dataset.type === 'model_list') {
+         } else if (input.dataset.type === 'model_list' || input.dataset.type === 'string_list') {
             // Convert newline-separated text to array, filtering empty lines
             value = input.value
                .split('\n')

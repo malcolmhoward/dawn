@@ -75,30 +75,41 @@ void setMusicPlay(int play);
 int getMusicPlay(void);
 
 /**
- * Plays a FLAC audio file.
- * This function sets up a FLAC decoder and a PulseAudio playback stream to play the specified FLAC
- * audio file. It utilizes callbacks for writing decoded audio to the PulseAudio stream, handling
- * metadata, and managing errors.
+ * @brief Plays an audio file (FLAC, MP3, Ogg Vorbis, or other supported formats).
+ *
+ * This function uses the unified audio decoder to play audio files. Despite the legacy function
+ * name, it supports all formats registered with the audio_decoder subsystem.
  *
  * @param arg A pointer to a PlaybackArgs structure containing playback parameters such as the file
- * name and PulseAudio sink name.
+ * name and audio sink name.
  * @return NULL always. This function does not return a value and is intended to be used with
  * threading.
  *
  * The function performs the following steps:
- * 1. Initializes a PulseAudio playback stream with a specified sample format, channel count, and
- * sample rate.
- * 2. Creates a new FLAC stream decoder and configures it for MD5 checking to verify the integrity
- * of the decoded audio.
- * 3. Initializes the FLAC decoder with the specified file and sets up callbacks for writing audio
- * data, handling metadata, and errors.
- * 4. Starts the decoding process and continues until the end of the stream or an error occurs.
- * 5. Cleans up resources by finishing the decoding process, deleting the decoder, and freeing the
- * PulseAudio stream.
- * 6. If an error occurs during decoding, a callback is triggered to handle the next action, such as
- * playing the next track.
+ * 1. Opens the audio file with the appropriate decoder based on file extension.
+ * 2. Initializes an audio playback stream with the detected sample format.
+ * 3. Reads and plays audio samples, applying volume adjustment.
+ * 4. Cleans up resources when playback completes or is stopped.
+ * 5. If an error occurs, triggers a callback to handle the next action (e.g., skip to next track).
+ *
+ * @note The function name is retained for backward compatibility. Use playAudioFile() for new code.
  */
 void *playFlacAudio(void *arg);
+
+/**
+ * @brief Plays an audio file (wrapper for playFlacAudio with clearer naming).
+ *
+ * This is the preferred entry point for playing audio files. It supports all formats
+ * registered with the audio_decoder subsystem (FLAC, MP3, Ogg Vorbis, etc.).
+ *
+ * @param arg A pointer to a PlaybackArgs structure containing playback parameters.
+ * @return NULL always. Intended for use with pthread_create().
+ *
+ * @see playFlacAudio() for implementation details.
+ */
+static inline void *playAudioFile(void *arg) {
+   return playFlacAudio(arg);
+}
 
 /**
  * @brief Sets the global music playback volume.

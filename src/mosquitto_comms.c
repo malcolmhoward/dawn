@@ -38,6 +38,7 @@
 #include <openssl/evp.h>
 
 /* Local */
+#include "audio/audio_decoder.h"
 #include "audio/flac_playback.h"
 #include "audio/mic_passthrough.h"
 #include "config/dawn_config.h"
@@ -265,6 +266,144 @@ static Playlist playlist = { .count = 0 };
 static int current_track = 0;
 
 /**
+ * @brief Escape glob metacharacters in a string for safe use with fnmatch()
+ *
+ * Escapes the characters `*`, `?`, `[`, `]`, and `\` with backslashes to prevent
+ * them from being interpreted as glob patterns.
+ *
+ * @param src Source string to escape
+ * @param dst Destination buffer
+ * @param dst_size Size of destination buffer
+ * @return Number of characters written (excluding null terminator), or -1 if truncated
+ */
+static int escape_glob_chars(const char *src, char *dst, size_t dst_size) {
+   if (!src || !dst || dst_size == 0) {
+      return -1;
+   }
+
+   size_t j = 0;
+   for (size_t i = 0; src[i] != '\0'; i++) {
+      /* Check if this character needs escaping */
+      bool needs_escape = (src[i] == '*' || src[i] == '?' || src[i] == '[' || src[i] == ']' ||
+                           src[i] == '\\');
+
+      if (needs_escape) {
+         if (j + 2 >= dst_size) {
+            dst[j] = '\0';
+            return -1; /* Truncated */
+         }
+         dst[j++] = '\\';
+      } else {
+         if (j + 1 >= dst_size) {
+            dst[j] = '\0';
+            return -1; /* Truncated */
+         }
+      }
+      dst[j++] = src[i];
+   }
+   dst[j] = '\0';
+   return (int)j;
+}
+
+/**
+ * @brief Check if a filename matches a base pattern and any of the given extensions
+ *
+ * @param filename The filename to check
+ * @param base_pattern The base pattern (without extension)
+ * @param extensions NULL-terminated array of extensions (e.g., ".flac", ".mp3")
+ * @return true if matches, false otherwise
+ */
+static bool matches_pattern_with_extensions(const char *filename,
+                                            const char *base_pattern,
+                                            const char **extensions) {
+   if (!filename || !base_pattern || !extensions) {
+      return false;
+   }
+
+   /* Build full pattern and check for each extension */
+   char full_pattern[MAX_FILENAME_LENGTH];
+   for (int i = 0; extensions[i] != NULL; i++) {
+      int written = snprintf(full_pattern, sizeof(full_pattern), "%s%s", base_pattern,
+                             extensions[i]);
+      if (written >= (int)sizeof(full_pattern)) {
+         continue; /* Pattern too long, skip */
+      }
+      if (fnmatch(full_pattern, filename, FNM_CASEFOLD) == 0) {
+         return true;
+      }
+   }
+   return false;
+}
+
+/**
+ * @brief Recursively searches a directory for files matching a pattern with multiple extensions.
+ *
+ * This function searches through the given root directory and all its subdirectories
+ * for files that match the provided base pattern combined with any of the given extensions.
+ * Single-pass traversal for efficiency with multiple formats.
+ *
+ * @param rootDir The root directory where the search begins.
+ * @param base_pattern The base pattern (without extension, e.g., "*artist*album*").
+ * @param extensions NULL-terminated array of extensions to match (e.g., ".flac", ".mp3").
+ * @param playlist Pointer to the Playlist structure where matching files will be added.
+ *
+ * @note The function stops adding files if the playlist reaches its maximum length.
+ * @note Uses the `fnmatch()` function to match filenames with case folding.
+ */
+static void searchDirectoryMultiExt(const char *rootDir,
+                                    const char *base_pattern,
+                                    const char **extensions,
+                                    Playlist *playlist) {
+   DIR *dir = opendir(rootDir);
+   if (!dir) {
+      LOG_ERROR("Error opening directory: %s", rootDir);
+      return;
+   }
+
+   struct dirent *entry;
+   while ((entry = readdir(dir)) != NULL) {
+      // Check if playlist is full before processing
+      if (playlist->count >= MAX_PLAYLIST_LENGTH) {
+         LOG_WARNING("Playlist is full.");
+         closedir(dir);
+         return;
+      }
+
+      if (entry->d_type == DT_REG) {
+         /* Check against all extensions in single pass */
+         if (matches_pattern_with_extensions(entry->d_name, base_pattern, extensions)) {
+            char filePath[MAX_FILENAME_LENGTH];
+            int written = snprintf(filePath, sizeof(filePath), "%s/%s", rootDir, entry->d_name);
+
+            // Check if path was truncated
+            if (written >= MAX_FILENAME_LENGTH) {
+               LOG_WARNING("Path too long, skipping: %s/%s", rootDir, entry->d_name);
+               continue;
+            }
+
+            strncpy(playlist->filenames[playlist->count], filePath, MAX_FILENAME_LENGTH - 1);
+            playlist->filenames[playlist->count][MAX_FILENAME_LENGTH - 1] = '\0';
+            playlist->count++;
+         }
+      } else if (entry->d_type == DT_DIR && strcmp(entry->d_name, ".") != 0 &&
+                 strcmp(entry->d_name, "..") != 0) {
+         char subPath[MAX_FILENAME_LENGTH];
+         int written = snprintf(subPath, sizeof(subPath), "%s/%s", rootDir, entry->d_name);
+
+         // Check if path was truncated
+         if (written >= MAX_FILENAME_LENGTH) {
+            LOG_WARNING("Path too long, skipping directory: %s/%s", rootDir, entry->d_name);
+            continue;
+         }
+
+         searchDirectoryMultiExt(subPath, base_pattern, extensions, playlist);
+      }
+   }
+
+   closedir(dir);
+}
+
+/**
  * @brief Recursively searches a directory for files matching a pattern and adds them to a playlist.
  *
  * This function searches through the given root directory and all its subdirectories
@@ -276,6 +415,7 @@ static int current_track = 0;
  *
  * @note The function stops adding files if the playlist reaches its maximum length.
  * @note Uses the `fnmatch()` function to match filenames.
+ * @deprecated Use searchDirectoryMultiExt() for multi-format search efficiency.
  */
 void searchDirectory(const char *rootDir, const char *pattern, Playlist *playlist) {
    DIR *dir = opendir(rootDir);
@@ -1094,23 +1234,33 @@ char *musicCallback(const char *actionName, char *value, int *should_respond) {
          }
       }
 
+      /* Build base pattern from search terms: "*term1*term2*"
+       * First escape any glob metacharacters in the user input */
+      char escaped_value[MAX_FILENAME_LENGTH];
+      if (escape_glob_chars(value, escaped_value, sizeof(escaped_value)) < 0) {
+         LOG_WARNING("Search term too long after escaping, using original");
+         strncpy(escaped_value, value, sizeof(escaped_value) - 1);
+         escaped_value[sizeof(escaped_value) - 1] = '\0';
+      }
+
       strWildcards[0] = '*';
-      for (i = 0; value[i] != '\0'; i++) {
-         if (value[i] == ' ') {
+      for (i = 0; escaped_value[i] != '\0'; i++) {
+         if (escaped_value[i] == ' ') {
             strWildcards[i + 1] = '*';
          } else {
-            strWildcards[i + 1] = value[i];
+            strWildcards[i + 1] = escaped_value[i];
          }
       }
       strWildcards[i + 1] = '*';
       strWildcards[i + 2] = '\0';
-      strcat(strWildcards, ".flac");
 
-      searchDirectory(musicDir, strWildcards, &playlist);
+      /* Search for all supported audio formats in single pass */
+      const char **extensions = audio_decoder_get_extensions();
+      searchDirectoryMultiExt(musicDir, strWildcards, extensions, &playlist);
 
-      free(musicDir);  // free the allocated memory
+      free(musicDir); /* free the allocated memory */
 
-      // Sort the array using qsort
+      /* Sort the combined results */
       qsort(playlist.filenames, playlist.count, MAX_FILENAME_LENGTH, compare);
 
       LOG_INFO("New playlist:");
