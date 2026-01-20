@@ -2,8 +2,8 @@
 # ========================
 # Copy this file to one of:
 #   ./dawn.toml                    (current directory - highest priority)
-#   ~/.config/dawn/config.toml     (user config)
-#   /etc/dawn/config.toml          (system-wide)
+#   ~/.config/dawn/dawn.toml       (user config)
+#   /etc/dawn/dawn.toml            (system-wide)
 #
 # Or specify explicitly: dawn --config /path/to/config.toml
 #
@@ -14,8 +14,12 @@
 # Environment variables: Each setting can be overridden via DAWN_<SECTION>_<KEY>
 # Example: [audio] capture_device -> DAWN_AUDIO_CAPTURE_DEVICE
 
+# =============================================================================
+# General Settings
+# =============================================================================
+
 [general]
-# ai_name = "friday"              # Wake word / assistant name
+# ai_name = "friday"              # Wake word / assistant name (lowercase)
                                   # Env: DAWN_GENERAL_AI_NAME
 # log_file = ""                   # Log to file (empty = console only)
                                   # Env: DAWN_GENERAL_LOG_FILE
@@ -27,18 +31,24 @@
 
 [localization]
 # location = ""                   # Your location (e.g., "New York, NY")
+                                  # Used for weather and contextual responses
                                   # Env: DAWN_LOCALIZATION_LOCATION
 # timezone = ""                   # Timezone (e.g., "America/New_York")
+                                  # Empty = system default
                                   # Env: DAWN_LOCALIZATION_TIMEZONE
 # units = "imperial"              # "imperial" or "metric"
                                   # Env: DAWN_LOCALIZATION_UNITS
 
+# =============================================================================
+# Audio Settings
+# =============================================================================
+
 [audio]
 # backend = "auto"                # "auto", "alsa", or "pulse"
                                   # Env: DAWN_AUDIO_BACKEND
-# capture_device = "default"      # Microphone device
+# capture_device = "default"      # Microphone device (use `arecord -L` to list)
                                   # Env: DAWN_AUDIO_CAPTURE_DEVICE
-# playback_device = "default"     # Speaker device
+# playback_device = "default"     # Speaker device (use `aplay -L` to list)
                                   # Env: DAWN_AUDIO_PLAYBACK_DEVICE
 # output_rate = 44100             # Playback sample rate (44100 or 48000)
                                   # Env: DAWN_AUDIO_OUTPUT_RATE
@@ -48,18 +58,23 @@
 [audio.bargein]
 # enabled = true                  # Allow interrupting TTS with speech
                                   # Env: DAWN_AUDIO_BARGEIN_ENABLED
-# cooldown_ms = 1500              # Ignore speech for this long after TTS ends
+# cooldown_ms = 1500              # Keep high VAD threshold after TTS stops
                                   # Env: DAWN_AUDIO_BARGEIN_COOLDOWN_MS
-# startup_cooldown_ms = 300       # Ignore speech for this long after TTS starts
+# startup_cooldown_ms = 300       # Block barge-in when TTS starts
                                   # Env: DAWN_AUDIO_BARGEIN_STARTUP_COOLDOWN_MS
 
+# =============================================================================
+# Voice Activity Detection (VAD)
+# =============================================================================
+
 [vad]
-# Voice Activity Detection settings
 # speech_threshold = 0.50         # Sensitivity for detecting speech (0.0-1.0)
+                                  # Lower = more sensitive
                                   # Env: DAWN_VAD_SPEECH_THRESHOLD
 # speech_threshold_tts = 0.92     # Higher threshold during TTS playback
+                                  # Prevents echo from triggering VAD
                                   # Env: DAWN_VAD_SPEECH_THRESHOLD_TTS
-# silence_threshold = 0.30        # Below this = silence
+# silence_threshold = 0.30        # Below this probability = silence
                                   # Env: DAWN_VAD_SILENCE_THRESHOLD
 # end_of_speech_duration = 1.2    # Seconds of silence to end recording
                                   # Env: DAWN_VAD_END_OF_SPEECH_DURATION
@@ -69,104 +84,181 @@
                                   # Env: DAWN_VAD_PREROLL_MS
 
 [vad.chunking]
-# enabled = true                  # Enable chunked transcription
+# enabled = true                  # Enable chunked transcription for long utterances
                                   # Env: DAWN_VAD_CHUNKING_ENABLED
-# pause_duration = 0.30           # Pause duration to trigger chunk
+# pause_duration = 0.30           # Silence duration (seconds) to trigger chunk boundary
                                   # Env: DAWN_VAD_CHUNKING_PAUSE_DURATION
-# min_duration = 1.0              # Minimum chunk duration
+# min_duration = 1.0              # Minimum chunk duration (seconds)
                                   # Env: DAWN_VAD_CHUNKING_MIN_DURATION
-# max_duration = 10.0             # Maximum chunk duration
+# max_duration = 10.0             # Maximum chunk duration (seconds)
                                   # Env: DAWN_VAD_CHUNKING_MAX_DURATION
 
+# =============================================================================
+# Automatic Speech Recognition (ASR)
+# =============================================================================
+
 [asr]
-# Automatic Speech Recognition (Whisper)
-# model = "base"                  # "tiny", "base", "small", "medium", "large"
+# model = "base"                  # Whisper model: "tiny", "base", "small", "medium"
+                                  # tiny=fastest, medium=most accurate
                                   # Env: DAWN_ASR_MODEL
-# models_path = "../whisper.cpp/models"  # Path to Whisper model files
+# models_path = "models/whisper.cpp"  # Path to Whisper model files
                                   # Env: DAWN_ASR_MODELS_PATH
 
+# =============================================================================
+# Text-to-Speech (TTS)
+# =============================================================================
+
 [tts]
-# Text-to-Speech (Piper)
+# models_path = "models"          # Path to TTS model files
+                                  # Env: DAWN_TTS_MODELS_PATH
 # voice_model = "en_GB-alba-medium"  # Piper voice model name
+                                  # Included: en_GB-alba-medium, en_GB-northern_english_male-medium
                                   # Env: DAWN_TTS_VOICE_MODEL
-# length_scale = 0.85             # Speech speed (lower = faster)
+# length_scale = 0.85             # Speech speed: <1.0 = faster, >1.0 = slower
                                   # Env: DAWN_TTS_LENGTH_SCALE
 
+# =============================================================================
+# Command Processing
+# =============================================================================
+
 [commands]
-# processing_mode = "direct_first"  # "direct_only", "llm_only", "direct_first"
-                                    # direct_only: Pattern matching only
-                                    # llm_only: All commands via LLM
-                                    # direct_first: Try patterns, fall back to LLM
+# processing_mode = "direct_first"  # Command processing strategy:
+                                    # "direct_only": Pattern matching only (fastest)
+                                    # "llm_only": All commands via LLM (most flexible)
+                                    # "direct_first": Try patterns, fall back to LLM
                                     # Env: DAWN_COMMANDS_PROCESSING_MODE
+
+# =============================================================================
+# Large Language Model (LLM)
+# =============================================================================
 
 [llm]
 # type = "cloud"                  # "cloud" or "local"
                                   # Env: DAWN_LLM_TYPE
 # max_tokens = 4096               # Maximum response tokens
                                   # Env: DAWN_LLM_MAX_TOKENS
+# summarize_threshold = 0.80      # Compact conversation at this % of context limit
+                                  # Env: DAWN_LLM_SUMMARIZE_THRESHOLD
+# conversation_logging = false    # Save chat history to log files (WebUI saves to DB)
+                                  # Env: DAWN_LLM_CONVERSATION_LOGGING
 
 [llm.cloud]
-# provider = "openai"             # "openai" or "claude"
+# provider = "openai"             # "openai", "claude", or "gemini"
                                   # Env: DAWN_LLM_CLOUD_PROVIDER
-# model = "gpt-4o"                # Model name (provider-specific)
-                                  # Env: DAWN_LLM_CLOUD_MODEL
-# endpoint = ""                   # Custom endpoint (empty = default)
+# endpoint = ""                   # Custom endpoint (empty = default provider URL)
                                   # Env: DAWN_LLM_CLOUD_ENDPOINT
-# vision_enabled = true           # Cloud models typically support vision
+# vision_enabled = true           # Cloud models typically support vision/images
                                   # Env: DAWN_LLM_CLOUD_VISION_ENABLED
 
+# Model lists for quick switching via WebUI or voice
+# First model in list is used when switching to that provider
+# openai_models = ["gpt-5-mini", "gpt-5.2", "gpt-5-nano", "gpt-5"]
+# openai_default_model_idx = 0
+# claude_models = ["claude-sonnet-4-5", "claude-opus-4-5", "claude-haiku-4-5"]
+# claude_default_model_idx = 0
+# gemini_models = ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-3-flash-preview", "gemini-3-pro-preview"]
+# gemini_default_model_idx = 0
+
 [llm.local]
-# endpoint = "http://127.0.0.1:8080"  # llama.cpp server endpoint
+# endpoint = "http://127.0.0.1:8080"  # Local LLM server endpoint
+                                  # llama.cpp default: 8080, Ollama default: 11434
                                   # Env: DAWN_LLM_LOCAL_ENDPOINT
-# model = ""                      # Model identifier (optional)
+# model = ""                      # Model identifier (optional, server may auto-select)
                                   # Env: DAWN_LLM_LOCAL_MODEL
 # vision_enabled = false          # Enable for vision models (LLaVA, Qwen-VL, etc.)
                                   # Env: DAWN_LLM_LOCAL_VISION_ENABLED
+# provider = "auto"               # "auto", "ollama", "llama_cpp", or "generic"
+                                  # "auto" probes endpoint to detect server type
+                                  # Env: DAWN_LLM_LOCAL_PROVIDER
+
+[llm.tools]
+# mode = "native"                 # Tool/function calling mode:
+                                  # "native": Use provider's native tool calling (recommended)
+                                  # "command_tags": Extract JSON from <command> tags (legacy)
+                                  # "disabled": No tool calling
+                                  # Env: DAWN_LLM_TOOLS_MODE
+# local_enabled = []              # Tools enabled for local voice interface (empty = all)
+                                  # Example: ["weather", "search", "calculator"]
+# remote_enabled = []             # Tools enabled for WebUI/remote clients (empty = all)
+
+[llm.thinking]
+# Extended thinking/reasoning mode for complex queries
+# mode = "disabled"               # "disabled", "enabled", or "auto"
+                                  # Env: DAWN_LLM_THINKING_MODE
+# budget_tokens = 10000           # Token budget for thinking (Claude minimum: 1024)
+                                  # Env: DAWN_LLM_THINKING_BUDGET_TOKENS
+# reasoning_effort = "medium"     # "low", "medium", "high"
+                                  # Maps to provider-specific settings:
+                                  # - OpenAI o-series/GPT-5: reasoning_effort parameter
+                                  # - Claude: budget_tokens (low=1024, medium=8192, high=16384)
+                                  # - Gemini 2.5+: reasoning_effort (cannot fully disable)
+                                  # Env: DAWN_LLM_THINKING_REASONING_EFFORT
+
+# =============================================================================
+# Web Search (SearXNG)
+# =============================================================================
 
 [search]
-# Web search configuration (SearXNG)
 # engine = "searxng"              # Only "searxng" supported currently
                                   # Env: DAWN_SEARCH_ENGINE
-# endpoint = "http://127.0.0.1:8888"  # SearXNG instance URL
+# endpoint = "http://127.0.0.1:8384"  # SearXNG instance URL
                                   # Env: DAWN_SEARCH_ENDPOINT
+# title_filters = []              # Exclude results with these terms (case-insensitive)
+                                  # Default filters spam like "wordle", "connections hints"
 
 [search.summarizer]
-# backend = "disabled"            # "disabled", "local", or "default"
+# backend = "disabled"            # Summarize large search results:
+                                  # "disabled": Return raw results
+                                  # "local": Use dedicated local summarizer
+                                  # "default": Use same LLM as conversation
                                   # Env: DAWN_SEARCH_SUMMARIZER_BACKEND
 # threshold_bytes = 3072          # Summarize results larger than this
                                   # Env: DAWN_SEARCH_SUMMARIZER_THRESHOLD_BYTES
-# target_words = 600              # Target summary length
+# target_words = 600              # Target summary length in words
                                   # Env: DAWN_SEARCH_SUMMARIZER_TARGET_WORDS
 
+# =============================================================================
+# URL Fetcher
+# =============================================================================
+
 [url_fetcher]
-# whitelist = []                  # Domains to always allow (array of strings)
-                                  # Env: (not supported for arrays)
+# whitelist = []                  # Domains to always allow fetching (array of strings)
+                                  # Example: ["github.com", "docs.python.org"]
 
 [url_fetcher.flaresolverr]
-# enabled = false                 # Enable FlareSolverr for JS-heavy sites
+# enabled = false                 # Auto-fallback to FlareSolverr on 403 errors
                                   # Env: DAWN_URL_FETCHER_FLARESOLVERR_ENABLED
-# endpoint = "http://127.0.0.1:8191"
+# endpoint = "http://127.0.0.1:8191/v1"  # FlareSolverr API endpoint
                                   # Env: DAWN_URL_FETCHER_FLARESOLVERR_ENDPOINT
-# timeout_sec = 60
+# timeout_sec = 60                # Request timeout in seconds
                                   # Env: DAWN_URL_FETCHER_FLARESOLVERR_TIMEOUT_SEC
-# max_response_bytes = 1048576    # 1MB
+# max_response_bytes = 4194304    # Max response size (4MB)
                                   # Env: DAWN_URL_FETCHER_FLARESOLVERR_MAX_RESPONSE_BYTES
 
+# =============================================================================
+# MQTT (Home Automation)
+# =============================================================================
+
 [mqtt]
-# MQTT broker for home automation
-# enabled = false                 # Env: DAWN_MQTT_ENABLED
+# enabled = true                  # Enable MQTT integration
+                                  # Env: DAWN_MQTT_ENABLED
 # broker = "127.0.0.1"            # MQTT broker hostname/IP
                                   # Env: DAWN_MQTT_BROKER
-# port = 1883                     # Env: DAWN_MQTT_PORT
-# Note: credentials go in secrets.toml under [mqtt]
+# port = 1883                     # MQTT broker port
+                                  # Env: DAWN_MQTT_PORT
+# Note: Credentials go in secrets.toml under [mqtt]
 #       or use env vars: MQTT_USERNAME, MQTT_PASSWORD
 
+# =============================================================================
+# Network Audio Server (ESP32 Clients)
+# =============================================================================
+
 [network]
-# Network audio server for remote clients (ESP32)
-# enabled = false                 # Env: DAWN_NETWORK_ENABLED
-# host = "0.0.0.0"                # Bind address
+# enabled = false                 # Enable DAP server for ESP32 satellite clients
+                                  # Env: DAWN_NETWORK_ENABLED
+# host = "0.0.0.0"                # Bind address (0.0.0.0 = all interfaces)
                                   # Env: DAWN_NETWORK_HOST
-# port = 5000                     # Listen port
+# port = 5000                     # Listen port for DAP protocol
                                   # Env: DAWN_NETWORK_PORT
 # workers = 4                     # Concurrent processing threads
                                   # Env: DAWN_NETWORK_WORKERS
@@ -174,35 +266,85 @@
                                   # Env: DAWN_NETWORK_SOCKET_TIMEOUT_SEC
 # session_timeout_sec = 1800      # Idle session expiry (30 minutes)
                                   # Env: DAWN_NETWORK_SESSION_TIMEOUT_SEC
-# llm_timeout_ms = 30000          # Per-request LLM timeout (30 seconds)
+# llm_timeout_ms = 60000          # Per-request LLM timeout (60 seconds)
                                   # Env: DAWN_NETWORK_LLM_TIMEOUT_MS
 
+# =============================================================================
+# Web UI
+# =============================================================================
+
+[webui]
+# enabled = false                 # Enable Web UI server (set true to use browser interface)
+                                  # Env: DAWN_WEBUI_ENABLED
+# port = 3000                     # HTTP/WebSocket port
+                                  # Env: DAWN_WEBUI_PORT
+# bind_address = "0.0.0.0"        # Bind address (0.0.0.0 = all interfaces)
+                                  # Env: DAWN_WEBUI_BIND_ADDRESS
+# max_clients = 4                 # Max concurrent WebSocket clients
+                                  # Env: DAWN_WEBUI_MAX_CLIENTS
+# audio_chunk_ms = 200            # Audio chunk size for streaming (100-500ms)
+                                  # Env: DAWN_WEBUI_AUDIO_CHUNK_MS
+# workers = 1                     # ASR worker threads for voice input
+                                  # Env: DAWN_WEBUI_WORKERS
+# www_path = "www"                # Path to static web files
+                                  # Env: DAWN_WEBUI_WWW_PATH
+
+# SSL/HTTPS (required for microphone access from non-localhost)
+# https = false                   # Enable HTTPS
+                                  # Env: DAWN_WEBUI_HTTPS
+# ssl_cert_path = ""              # Path to SSL certificate (.pem or .crt)
+                                  # Env: DAWN_WEBUI_SSL_CERT_PATH
+# ssl_key_path = ""               # Path to SSL private key (.pem or .key)
+                                  # Env: DAWN_WEBUI_SSL_KEY_PATH
+
+# =============================================================================
+# Shutdown Control
+# =============================================================================
+
+[shutdown]
+# enabled = false                 # Enable voice/command shutdown (security risk)
+                                  # Env: DAWN_SHUTDOWN_ENABLED
+# passphrase = ""                 # Required passphrase (empty = no passphrase)
+                                  # Env: DAWN_SHUTDOWN_PASSPHRASE
+
+# =============================================================================
+# Terminal UI (TUI)
+# =============================================================================
+
 [tui]
-# Terminal UI settings
-# enabled = false                 # Enable ncurses TUI
+# enabled = false                 # Enable ncurses TUI dashboard
                                   # Env: DAWN_TUI_ENABLED
 
+# =============================================================================
+# Debug Settings
+# =============================================================================
+
 [debug]
-# Debug recording options
 # mic_record = false              # Record raw microphone input
                                   # Env: DAWN_DEBUG_MIC_RECORD
-# asr_record = false              # Record ASR input audio
+# asr_record = false              # Record audio sent to ASR
                                   # Env: DAWN_DEBUG_ASR_RECORD
 # aec_record = false              # Record AEC processed audio
                                   # Env: DAWN_DEBUG_AEC_RECORD
-# record_path = "/tmp/dawn_debug" # Directory for debug recordings
+# record_path = "/tmp"            # Directory for debug recordings
                                   # Env: DAWN_DEBUG_RECORD_PATH
 
+# =============================================================================
+# File Paths
+# =============================================================================
+
 [paths]
-# music_dir = "~/Music"           # Music library location
+# music_dir = "~/Music"           # Music library location for playback
                                   # Env: DAWN_PATHS_MUSIC_DIR
-# commands_config = "commands_config_nuevo.json"  # Device/command mappings
+# commands_config = "commands_config_nuevo.json"  # Device/command mappings for MQTT
                                   # Env: DAWN_PATHS_COMMANDS_CONFIG
 
 # =============================================================================
-# Secrets (in separate secrets.toml file)
+# Secrets (separate file)
 # =============================================================================
-# API keys should go in ~/.config/dawn/secrets.toml (mode 600)
-# Or use environment variables:
-#   OPENAI_API_KEY, ANTHROPIC_API_KEY (for LLM)
+# API keys and credentials should go in secrets.toml (mode 600 recommended)
+# See secrets.toml.example for format
+#
+# Environment variable alternatives:
+#   OPENAI_API_KEY, CLAUDE_API_KEY, GEMINI_API_KEY (for LLM)
 #   MQTT_USERNAME, MQTT_PASSWORD (for MQTT auth)

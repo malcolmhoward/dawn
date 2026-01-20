@@ -2,7 +2,11 @@
 
 **D.A.W.N.** (Digital Assistant for Workflow Neural-inference) is the central intelligence layer of the OASIS ecosystem, responsible for interpreting user intent, fusing data from every subsystem, and routing commands. At its core, DAWN performs neural-inference to understand context and drive decision-making, acting as OASIS's orchestration hub for MIRAGE, AURA, SPARK, STAT, and any future modules. Instead of handling a single task, DAWN evaluates the entire system's workflow — what the user wants, what the hardware is reporting, and what action it should take next — transforming raw data into coordinated behavior across the entire platform.
 
-DAWN integrates modern speech recognition, large language models, and text-to-speech into a unified conversational AI system designed for embedded Linux platforms (Jetson, Raspberry Pi).
+**In plain English:** DAWN is a voice-controlled AI assistant that runs on embedded hardware. Talk to it, and it understands you (speech recognition), thinks about what you said (LLM), and talks back (text-to-speech). It can control your smart home, answer questions, search the web, and more — all by voice, without sending your data to the cloud if you run a local LLM.
+
+DAWN is designed for embedded Linux platforms (Jetson, Raspberry Pi) and supports multiple interfaces: a local microphone, a browser-based Web UI with voice and text input, and ESP32 satellite clients that can be placed throughout your home.
+
+> **New to DAWN?** See **[GETTING_STARTED.md](GETTING_STARTED.md)** for a 10-minute quickstart guide.
 
 ## Features
 
@@ -14,19 +18,21 @@ DAWN integrates modern speech recognition, large language models, and text-to-sp
   - Intelligent chunking for long utterances
 
 - **Multi-Provider LLM Integration**
-  - Cloud: OpenAI GPT-4o, Anthropic Claude 4.5 Sonnet, Google Gemini 2.5/3
-  - Local: llama.cpp or Ollama with optimized Qwen3-4B model (81.9% quality @ 138ms TTFT)
-  - Runtime model switching via WebUI for both cloud and local providers
+  - Cloud: OpenAI GPT-5 series, Anthropic Claude 4.5 (Sonnet/Opus/Haiku), Google Gemini 2.5/3
+  - Local: llama.cpp or Ollama (setup is beyond this guide — see [llama.cpp](https://github.com/ggerganov/llama.cpp) or [Ollama](https://ollama.ai))
+  - Runtime model switching via WebUI or voice commands
   - Streaming responses with real-time TTS integration
   - Real-time token streaming with generation speed metrics (tokens/sec)
   - Sentence-boundary buffering for natural speech output
-  - **Extended Thinking/Reasoning** - Enable deep reasoning mode for complex queries
+  - **Extended Thinking/Reasoning** — Enable deep reasoning mode for complex queries:
     - Claude: Thinking budget control (collapsible thinking blocks)
     - OpenAI: Reasoning effort (low/medium/high) for o1/o3/o4 models
+    - Gemini: Thinking mode for Gemini 2.5 Flash/Pro
     - Local: Qwen3 thinking mode with native template support
 
 - **High-Quality Text-to-Speech**
-  - Piper TTS with ONNX Runtime (en_GB-alba-medium model included)
+  - Piper TTS with ONNX Runtime
+  - Two voices included: en_GB-alba-medium (Friday) and en_GB-northern_english_male-medium (Jarvis)
   - Text preprocessing for natural phrasing
   - Streaming integration with LLM responses
 
@@ -87,100 +93,42 @@ DAWN integrates modern speech recognition, large language models, and text-to-sp
   - Whisper small: RTF 0.225 (4.4x faster than realtime)
 
 - **LLM Performance**:
-  - Cloud (GPT-4o): 100% quality, ~3.1s latency
-  - Cloud (Claude 4.5 Sonnet): 92.4% quality, ~3.5s latency
-  - Local (Qwen3-4B Q4): 81.9% quality, 116-138ms TTFT, FREE
-  - Streaming reduces perceived latency to ~1.3s (ASR + TTFT + TTS start)
+  - Cloud providers: ~2-4s response latency depending on provider and model
+  - Local (llama.cpp): ~100-200ms time-to-first-token on Jetson with quantized models
+  - Streaming reduces perceived latency significantly (response starts as tokens arrive)
 
 ## Directory Structure
 
 ```
 dawn/
-├── src/                          # Source files (.c, .cpp)
-│   ├── asr/                      # Speech recognition subsystem
-│   │   ├── asr_interface.c       # ASR abstraction layer
-│   │   ├── asr_whisper.c         # Whisper implementation
-│   │   ├── asr_vosk.c            # Vosk implementation (optional)
-│   │   ├── vad_silero.c          # Voice Activity Detection
-│   │   └── chunking_manager.c    # Long utterance handling
-│   ├── llm/                      # LLM integration subsystem
-│   │   ├── llm_interface.c       # LLM abstraction layer
-│   │   ├── llm_openai.c          # OpenAI API implementation
-│   │   ├── llm_claude.c          # Claude API implementation
-│   │   ├── llm_streaming.c       # Streaming response handler
-│   │   ├── sse_parser.c          # Server-Sent Events parser
-│   │   ├── sentence_buffer.c     # Sentence boundary detection
-│   │   └── llm_command_parser.c  # JSON command extraction
-│   ├── tts/                      # Text-to-speech subsystem
-│   │   ├── text_to_speech.cpp    # TTS engine wrapper
-│   │   └── piper.cpp             # Piper integration
-│   ├── network/                  # Network server subsystem
-│   │   ├── dawn_server.c         # Network audio server
-│   │   ├── dawn_network_audio.c  # Network audio processing
-│   │   └── dawn_wav_utils.c      # WAV file utilities
-│   ├── audio/                    # Audio capture/playback subsystem
-│   │   ├── audio_capture_thread.c # Dedicated capture thread
-│   │   ├── ring_buffer.c         # Thread-safe audio buffer
-│   │   ├── flac_playback.c       # Music playback
-│   │   └── mic_passthrough.c     # Microphone passthrough
-│   ├── tools/                    # LLM tool implementations
-│   │   ├── web_search.c          # SearXNG web search integration
-│   │   ├── weather_service.c     # Open-Meteo weather API
-│   │   ├── calculator.c          # Math expression evaluation
-│   │   └── tinyexpr.c            # Expression parser library
-│   ├── webui/                    # Web UI server subsystem
-│   │   └── webui_server.c        # HTTP/WebSocket server (libwebsockets)
-│   └── (core files)              # Core application files
-│       ├── dawn.c                # Main application & state machine
-│       ├── logging.c             # Centralized logging
-│       ├── mosquitto_comms.c     # MQTT integration
-│       ├── text_to_command_nuevo.c # Command parsing
-│       └── word_to_number.c      # Natural language number parsing
+├── src/                    # C/C++ source files
+│   ├── asr/                # Speech recognition (Whisper, Vosk, VAD)
+│   ├── llm/                # LLM integration (OpenAI, Claude, Gemini, local)
+│   ├── tts/                # Text-to-speech (Piper)
+│   ├── network/            # DAP server for ESP32 clients
+│   ├── audio/              # Audio capture, playback, music
+│   ├── tools/              # LLM tools (search, weather, calculator)
+│   └── webui/              # Web UI server
 │
-├── include/                      # Header files (mirrors src/)
-│   ├── asr/
-│   ├── llm/
-│   ├── tts/
-│   ├── network/
-│   ├── audio/
-│   ├── tools/                    # LLM tool headers
-│   ├── webui/                    # Web UI headers
-│   ├── utf8/                     # UTF-8 library for TTS
-│   └── (core headers)
+├── include/                # Header files (mirrors src/)
+├── www/                    # Web UI static files (HTML, CSS, JS)
+├── models/                 # ML models (TTS voices, VAD)
+├── whisper.cpp/            # Whisper ASR engine (git submodule)
+├── remote_dawn/            # ESP32 satellite client code
+├── services/               # Systemd service files
+├── tests/                  # Test programs
+├── llm_testing/            # LLM benchmarking tools
+├── docs/                   # Additional documentation
 │
-├── www/                          # Web UI static files
-│   ├── index.html                # Main HTML page
-│   ├── css/                      # Modular stylesheets (18 files)
-│   │   ├── main.css              # Entry point with @imports
-│   │   ├── base/                 # Variables, themes, typography, reset
-│   │   ├── layout/               # App structure, responsive breakpoints
-│   │   └── components/           # Feature-specific styles
-│   └── js/                       # Modular JavaScript (22 files)
-│       ├── dawn.js               # Main orchestrator
-│       ├── core/                 # Constants, state, WebSocket
-│       ├── ui/                   # UI components (toast, settings, history, etc.)
-│       ├── audio/                # Capture, playback, visualization
-│       └── admin/                # Admin features (users, sessions, tools)
-│
-├── whisper.cpp/                  # Whisper ASR engine (submodule)
-├── models/                       # ML models (TTS, VAD)
-├── test_recordings/              # ASR test data & benchmarks
-├── tests/                        # Test programs
-├── llm_testing/                  # LLM testing infrastructure
-├── services/                     # Systemd services (llama-server)
-├── remote_dawn/                  # ESP32 client code
-├── vosk-model-en-us-0.22/        # Vosk model (if using Vosk)
-├── setup_models.sh               # Model download and symlink setup
-├── format_code.sh                # Code formatting script
-├── install-git-hooks.sh          # Git hooks installer
-├── generate_ssl_cert.sh          # SSL certificate generator
-├── commands_config_nuevo.json    # Device/action mappings
-├── CMakeLists.txt                # Build configuration
-├── CODING_STYLE_GUIDE.md         # Code formatting standards
-├── LLM_INTEGRATION_GUIDE.md      # LLM setup guide
-├── ARCHITECTURE.md               # System architecture (see this for details)
-└── README.md                     # This file
+├── dawn.toml.example       # Configuration template
+├── secrets.toml.example    # API keys template
+├── setup_models.sh         # Model download script
+├── format_code.sh          # Code formatting script
+├── generate_ssl_cert.sh    # SSL certificate generator
+└── CMakeLists.txt          # Build configuration
 ```
+
+For detailed architecture, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## System Requirements
 
@@ -199,15 +147,16 @@ dawn/
 
 | Platform | Price | AI Performance | Notes |
 |----------|-------|----------------|-------|
-| **Jetson Orin Nano** | ~$250 | 40 TOPS | Primary target, GPU Whisper ~0.1s RTF |
+| **Jetson Orin Nano Super** | ~$249 | 67 TOPS | Primary target, GPU Whisper ~0.1s RTF |
 | **Jetson Orin NX** | ~$400 | 100 TOPS | Excellent headroom for all features |
+| **Jetson AGX Orin** | ~$999+ | 275 TOPS | Best for running large local LLMs alongside DAWN |
 
 #### Tier 2: Good (Usable with minor tradeoffs)
 
 | Platform | Price | AI Performance | Notes |
 |----------|-------|----------------|-------|
-| **Raspberry Pi 5 (8GB)** | ~$80 | CPU-only, ~1.0 RTF | Whisper base: ~6s for 10s audio |
-| **Raspberry Pi 5 + AI Kit** | ~$180 | 13 TOPS | Hailo-8L accelerator helps vision, not ASR |
+| **Raspberry Pi 5 (8GB)** | ~$90 | CPU-only, ~1.0 RTF | Whisper base: ~6s for 10s audio |
+| **Raspberry Pi 5 + AI Kit** | ~$190 | 13 TOPS | Hailo-8L accelerator helps vision, not ASR |
 | **Orange Pi 5 (RK3588)** | ~$100-150 | 6 TOPS NPU | Requires RKNN conversion for NPU; ONNX runs on CPU |
 | **Intel N100 Mini PC** | ~$150 | CPU AVX2 | Whisper tiny: ~1.5s; base: ~5-8s |
 
@@ -231,11 +180,12 @@ dawn/
 
 | Use Case | Recommended Platform | Why |
 |----------|---------------------|-----|
-| **Cost-conscious hobbyist** | Raspberry Pi 5 (4GB) ~$60 | Works with Whisper tiny/base, acceptable latency |
+| **Cost-conscious hobbyist** | Raspberry Pi 5 (4GB) ~$65 | Works with Whisper tiny/base, acceptable latency |
 | **Better performance on budget** | Orange Pi 5 (8GB) ~$100 | RK3588 CPU faster than RPi 5 |
-| **x86 preference** | Intel N100 Mini PC ~$150 | AVX2 support, can run local LLMs |
-| **Production/commercial** | Jetson Orin Nano ~$250 | Best price/performance for real-time voice AI |
-| **Maximum capability** | Jetson Orin NX ~$400+ | Handles everything including large local LLMs |
+| **x86 preference** | Intel N100 Mini PC ~$150 | AVX2 support, can run small local LLMs |
+| **Production/commercial** | Jetson Orin Nano Super ~$249 | Best price/performance for real-time voice AI |
+| **Local LLM + DAWN** | Jetson AGX Orin ~$999+ | Run 7B-13B models alongside voice pipeline |
+| **Maximum capability** | Jetson Thor (future) | Designed for humanoid robotics and large models |
 
 ### Software Requirements
 - Debian/Ubuntu-based distribution (tested on Ubuntu 20.04+ and Jetson Linux)
@@ -483,7 +433,12 @@ wget https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/me
 
 ### 6. Create Configuration Files
 
-DAWN uses TOML-based configuration files for runtime settings. Configuration is optional - sensible defaults are built-in.
+DAWN uses TOML-based configuration files. Example files are provided — copy and customize:
+
+```bash
+cp dawn.toml.example dawn.toml      # Main configuration
+cp secrets.toml.example secrets.toml # API keys
+```
 
 #### Configuration File Locations (searched in order)
 1. Path specified via `--config` CLI option
@@ -493,53 +448,34 @@ DAWN uses TOML-based configuration files for runtime settings. Configuration is 
 
 #### dawn.toml (main configuration)
 
-Create `dawn.toml` to customize settings. Only include settings you want to change:
+The `dawn.toml.example` file contains all available settings with documentation. Key sections:
 
-```toml
-[general]
-ai_name = "friday"           # Wake word (lowercase)
+- `[general]` — Wake word, logging
+- `[audio]` — Capture/playback devices, backend selection
+- `[llm]` — Provider (cloud/local), model selection, streaming
+- `[llm.cloud]` — Cloud provider settings (OpenAI, Claude, Gemini)
+- `[llm.local]` — Local LLM endpoint (llama.cpp or Ollama)
+- `[asr]` — Whisper model selection
+- `[tts]` — Voice model, speech speed
+- `[webui]` — Port, SSL settings
 
-[audio]
-capture_device = "default"   # ALSA/Pulse device name
-playback_device = "default"  # ALSA/Pulse device name
-backend = "auto"             # "auto", "alsa", or "pulse"
-
-[llm]
-type = "local"               # "local" or "cloud"
-max_tokens = 4096
-streaming = true
-
-[llm.local]
-endpoint = "http://127.0.0.1:8080"
-model = "qwen3"
-
-[llm.cloud]
-provider = "openai"          # "openai" or "claude"
-openai_model = "gpt-4o"      # Model for OpenAI API
-claude_model = "claude-sonnet-4-20250514"  # Model for Claude API
-
-[mqtt]
-enabled = true
-broker = "127.0.0.1"
-port = 1883
-
-[paths]
-music_dir = "/Music"
-```
-
-See `docs/CONFIG_FILE_DESIGN.md` for the complete configuration reference.
+Most settings can also be changed via the Web UI settings panel.
 
 #### secrets.toml (API keys)
 
-Create `secrets.toml` in the project root or `~/.config/dawn/secrets.toml` for API keys:
+The `secrets.toml.example` shows the required format:
 
 ```toml
+[secrets]
 openai_api_key = "sk-your-openai-key-here"
 claude_api_key = "sk-ant-your-claude-key-here"
 gemini_api_key = "your-gemini-api-key-here"
 ```
 
-**Note**: `secrets.toml` is already in `.gitignore` - never commit API keys!
+**Security notes:**
+- `secrets.toml` is in `.gitignore` — never commit API keys
+- Set file permissions: `chmod 600 secrets.toml`
+- Alternative: use environment variables (`OPENAI_API_KEY`, `CLAUDE_API_KEY`, `GEMINI_API_KEY`)
 
 #### Environment Variables
 
@@ -659,6 +595,7 @@ ui:
   static_use_hash: true
 
 engines:
+  # Web search engines
   - name: google
     disabled: false
   - name: duckduckgo
@@ -668,6 +605,15 @@ engines:
   - name: wikipedia
     disabled: false
   - name: bing
+    disabled: false
+  # News-specific engines
+  - name: bing news
+    disabled: false
+  - name: google news
+    disabled: false
+  - name: duckduckgo news
+    disabled: false
+  - name: yahoo news
     disabled: false
 EOF
 
@@ -793,44 +739,51 @@ See `CODING_STYLE_GUIDE.md` for detailed coding standards.
 
 ## Configuration
 
-### Main Configuration (include/dawn.h)
+### Main Configuration (dawn.toml)
 
 Key settings to customize:
 
-```c
-#define AI_NAME "friday"                    // Wake word
-#define OPENAI_MODEL "gpt-4o"              // Cloud LLM model
-#define DEFAULT_PCM_PLAYBACK_DEVICE "..."  // ALSA playback device
-#define DEFAULT_PCM_CAPTURE_DEVICE "..."   // ALSA capture device
-#define MQTT_IP "192.168.1.100"            // MQTT broker IP
-#define MQTT_PORT 1883                      // MQTT broker port
+```toml
+[general]
+ai_name = "friday"              # Wake word
+
+[audio]
+capture_device = "default"      # Microphone (use `arecord -L` to list)
+playback_device = "default"     # Speaker (use `aplay -L` to list)
+
+[llm.cloud]
+provider = "openai"             # "openai", "claude", or "gemini"
+
+[mqtt]
+broker = "192.168.1.100"        # MQTT broker IP
+port = 1883                     # MQTT broker port
 ```
 
-The `AI_DESCRIPTION` constant defines the system prompt/personality for the LLM.
+See `dawn.toml.example` for all available options. The `[persona]` section allows customizing the AI's personality.
 
 ### LLM Configuration
 
-See `LLM_INTEGRATION_GUIDE.md` for detailed setup instructions for:
-- OpenAI API (cloud) - GPT-4o
-- Anthropic Claude API (cloud) - Claude 4.5 Sonnet
-- Google Gemini API (cloud) - Gemini 2.5 Flash/Pro, Gemini 3
+See `docs/LLM_INTEGRATION_GUIDE.md` for detailed setup instructions for:
+- OpenAI API (cloud) - GPT-5 series (gpt-5-mini default)
+- Anthropic Claude API (cloud) - Claude Sonnet 4.5 (default)
+- Google Gemini API (cloud) - Gemini 2.5 Flash (default), Gemini 3
 - llama.cpp local server (free, on-device)
 
 **Recommended local configuration**:
 - Model: Qwen3-4B-Instruct-2507-Q4_K_M.gguf
 - Batch size: 768 (critical for quality!)
-- Context: 1024
+- Context: 8192 (Varies based on available memory.)
 - Service: `services/llama-server/` (systemd service included)
 
 ### Web UI Configuration
 
-The Web UI is enabled by default. Configure via `dawn.toml`:
+The Web UI is compiled in by default but disabled at runtime. Enable it in `dawn.toml`:
 
 ```toml
 [webui]
-enabled = true              # Enable/disable Web UI server
-port = 3000                 # HTTP/WebSocket port
-host = "0.0.0.0"            # Bind address (0.0.0.0 = all interfaces)
+enabled = true                  # Enable Web UI server
+port = 3000                     # HTTP/WebSocket port
+bind_address = "0.0.0.0"        # Bind address (0.0.0.0 = all interfaces)
 ```
 
 ### SSL/HTTPS Setup (for remote voice input)
@@ -847,12 +800,34 @@ Browsers require HTTPS (secure context) to access the microphone from non-localh
 
 **Note**: You'll need to accept the self-signed certificate warning in your browser on first visit.
 
+### Optional Features
+
+**Terminal UI (TUI)**: An ncurses-based dashboard for monitoring DAWN status:
+```toml
+[tui]
+enabled = true
+```
+
+**Shutdown Control**: Allow voice commands to shut down the system (security consideration):
+```toml
+[shutdown]
+enabled = true
+passphrase = "optional-security-phrase"  # Recommended if enabled
+```
+
+**SmartThings Integration**: For Samsung SmartThings home automation, add OAuth credentials to `secrets.toml`:
+```toml
+[secrets.smartthings]
+client_id = "your-client-id"
+client_secret = "your-client-secret"
+```
+
 ## Running
 
 ### Local Mode (microphone input)
 ```bash
-cd build
-./dawn
+# Run from project root (where dawn.toml is located)
+./build/dawn
 ```
 
 The system listens for the wake word ("friday" by default), then captures your command, processes it through ASR → LLM → TTS, and speaks the response.
@@ -872,10 +847,10 @@ See `remote_dawn/protocol_specification.md` for protocol details.
 
 The Web UI provides a browser-based interface for interacting with DAWN:
 
-1. Start DAWN (the Web UI server starts automatically):
+1. Start DAWN (the Web UI server starts automatically if enabled):
    ```bash
-   cd build
-   ./dawn
+   # Run from project root
+   ./build/dawn
    ```
 
 2. Open a browser and navigate to:
@@ -936,34 +911,6 @@ When authentication is enabled (DAP or WebUI modes), you'll need to create user 
 
 See `docs/USER_AUTH_DESIGN.md` for complete authentication system documentation.
 
-## Testing
-
-### ASR Benchmarks
-```bash
-cd tests
-./asr_benchmark ../test_recordings/
-```
-
-Results are documented in `test_recordings/BENCHMARK_RESULTS.md`.
-
-### LLM Quality Testing
-```bash
-cd llm_testing/scripts
-./test_single_model.sh <model_name>
-./benchmark_all_models.sh
-python3 test_cloud_baseline.py
-```
-
-See `llm_testing/docs/MODEL_TEST_ANALYSIS.md` for optimization results.
-
-### Unit Tests
-```bash
-cd build
-./test_sse_parser
-./test_sentence_buffer
-./test_streaming
-```
-
 ## Performance Optimization
 
 ### ASR Performance Tips
@@ -1004,7 +951,7 @@ cd build
 
 - **ARCHITECTURE.md** - System architecture and data flow
 - **CODING_STYLE_GUIDE.md** - Code formatting and standards
-- **LLM_INTEGRATION_GUIDE.md** - LLM setup (cloud and local)
+- **docs/LLM_INTEGRATION_GUIDE.md** - LLM setup (cloud and local)
 - **services/llama-server/README.md** - Local LLM service setup
 - **llm_testing/docs/** - LLM optimization research
 - **remote_dawn/protocol_specification.md** - Network protocol spec
