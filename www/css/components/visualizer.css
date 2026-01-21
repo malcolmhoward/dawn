@@ -312,6 +312,10 @@
    position: relative;
 }
 
+.telemetry-row.hidden {
+   display: none;
+}
+
 /* Container for value + average side by side */
 .telemetry-values {
    display: flex;

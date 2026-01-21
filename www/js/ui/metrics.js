@@ -169,6 +169,34 @@
          latencyAvg.textContent = `avg ${Math.round(avg)}`;
       }
 
+      // Update thinking tokens (from reasoning models)
+      // Show row when reasoning mode is enabled OR we have tokens to display
+      const thinkingTokens = document.getElementById('telem-thinking');
+      const thinkingRow = document.getElementById('telem-thinking-row');
+      if (thinkingTokens && thinkingRow) {
+         const liveTokens = DawnState.streamingState.reasoningTokens || 0;
+         if (liveTokens > 0) {
+            DawnState.metricsState.last_thinking_tokens = liveTokens;
+         }
+         const displayTokens = liveTokens || DawnState.metricsState.last_thinking_tokens;
+
+         // Show row if: reasoning mode enabled OR we have tokens to show
+         const reasoningSelect = document.getElementById('reasoning-mode-select');
+         const reasoningEnabled = reasoningSelect && reasoningSelect.value === 'enabled';
+         const shouldShow = reasoningEnabled || displayTokens > 0;
+
+         if (shouldShow) {
+            if (displayTokens > 0) {
+               thinkingTokens.innerHTML = `${displayTokens.toLocaleString()} <small>tokens</small>`;
+            } else {
+               thinkingTokens.innerHTML = `-- <small>tokens</small>`;
+            }
+            thinkingRow.classList.remove('hidden');
+         } else {
+            thinkingRow.classList.add('hidden');
+         }
+      }
+
       // Dim ring container when idle - not the telemetry panel
       // Keep bright while speaking (audio still playing) even if server sent idle
       if (DawnElements.ringContainer) {

@@ -188,14 +188,21 @@ typedef struct {
    bool remote_enabled_configured; /* true if explicitly set in config (even if empty) */
 } llm_tools_config_t;
 
+/* Default token budget levels for reasoning_effort dropdown */
+#define LLM_THINKING_BUDGET_LOW_DEFAULT 1024
+#define LLM_THINKING_BUDGET_MEDIUM_DEFAULT 8192
+#define LLM_THINKING_BUDGET_HIGH_DEFAULT 16384
+
 typedef struct {
    char mode[16];            /* "disabled", "enabled", "auto" */
-   int budget_tokens;        /* Token budget (min 1024 for Claude) */
    char reasoning_effort[8]; /* "low", "medium", "high" for reasoning models
-                              * OpenAI o-series/GPT-5: maps to reasoning_effort param
-                              * Claude: maps to budget_tokens (low=1024, medium=8192, high=16384)
+                              * Controls token budget via dropdown.
+                              * OpenAI o-series/GPT-5: also maps to reasoning_effort param
                               * Gemini 2.5+/3.x: maps to reasoning_effort; NOTE: Gemini cannot
                               *   fully disable reasoning - "disabled" mode uses "low" effort */
+   int budget_low;           /* Token budget for "low" effort (default: 1024) */
+   int budget_medium;        /* Token budget for "medium" effort (default: 8192) */
+   int budget_high;          /* Token budget for "high" effort (default: 16384) */
 } llm_thinking_config_t;
 
 typedef struct {
@@ -213,9 +220,10 @@ typedef struct {
  * Search Configuration
  * ============================================================================= */
 typedef struct {
-   char backend[16];       /* "disabled", "local", "default" */
+   char backend[16];       /* "disabled", "local", "default", "tfidf" */
    size_t threshold_bytes; /* Summarize results larger than this */
-   size_t target_words;    /* Target summary length */
+   size_t target_words;    /* Target summary length (for LLM backends) */
+   float target_ratio;     /* Target sentence ratio for TF-IDF (0.0-1.0, e.g., 0.2 = 20%) */
 } summarizer_file_config_t;
 
 /* Maximum configurable title filters */

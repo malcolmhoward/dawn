@@ -44,6 +44,7 @@
 #include "core/worker_pool.h"
 #include "dawn.h"
 #include "llm/llm_command_parser.h"
+#include "llm/llm_context.h"
 #include "llm/llm_interface.h"
 #include "logging.h"
 #include "mosquitto_comms.h"
@@ -1609,6 +1610,69 @@ const char *llm_get_current_thinking_mode(void) {
       return g_config.llm.thinking.mode;
    }
    return "auto";
+}
+
+const char *llm_get_current_reasoning_effort(void) {
+   /* Priority: thread-local config > global config > default */
+   if (tl_current_config && tl_current_config->reasoning_effort[0] != '\0') {
+      return tl_current_config->reasoning_effort;
+   }
+   if (g_config.llm.thinking.reasoning_effort[0] != '\0') {
+      return g_config.llm.thinking.reasoning_effort;
+   }
+   return "medium";
+}
+
+int llm_get_effective_budget_tokens(void) {
+   /* Map reasoning_effort to configured budget using first-char for efficiency */
+   const char *effort = llm_get_current_reasoning_effort();
+   int budget;
+   switch (effort[0]) {
+      case 'l':
+         budget = g_config.llm.thinking.budget_low;
+         break;
+      case 'h':
+         budget = g_config.llm.thinking.budget_high;
+         break;
+      default:
+         budget = g_config.llm.thinking.budget_medium;
+         break;
+   }
+
+   /* Clamp to 50% of model's context size if we have session config */
+   if (tl_current_config) {
+      int context_size = llm_context_get_size(tl_current_config->type,
+                                              tl_current_config->cloud_provider,
+                                              tl_current_config->model);
+      int max_budget = context_size / 2; /* 50% limit */
+
+      if (budget > max_budget) {
+         LOG_WARNING("Thinking budget %d exceeds 50%% of context (%d tokens), clamping to %d",
+                     budget, context_size, max_budget);
+         budget = max_budget;
+      }
+   }
+
+   return budget;
+}
+
+bool llm_check_thinking_trigger(const char *text) {
+   if (!text || text[0] == '\0') {
+      return false;
+   }
+
+   /* Trigger phrases that should enable extended thinking (case-insensitive) */
+   static const char *triggers[] = { "think about it",     "think carefully",  "reason through",
+                                     "think step by step", "think it through", "let's think" };
+   static const size_t trigger_count = sizeof(triggers) / sizeof(triggers[0]);
+
+   for (size_t i = 0; i < trigger_count; i++) {
+      if (strcasestr_portable(text, triggers[i]) != NULL) {
+         return true;
+      }
+   }
+
+   return false;
 }
 
 /* =============================================================================

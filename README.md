@@ -80,7 +80,7 @@ DAWN is designed for embedded Linux platforms (Jetson, Raspberry Pi) and support
     - Multiple search categories: web, news, social, science, IT, Q&A, dictionary, academic papers
     - Host-based deduplication (max 2 results per domain)
     - Relevance-based reranking with quality engine boosting
-  - **URL Fetcher** - Fetch and read web pages; large pages auto-summarized via local LLM
+  - **URL Fetcher** - Fetch and read web pages; large pages auto-summarized via TF-IDF
   - **Weather** - Real-time weather and forecasts via Open-Meteo API (free, no API key)
   - **Calculator** - Mathematical expression evaluation with tinyexpr engine
   - **Parallel Tool Execution** - Multiple tool calls execute concurrently (e.g., weather + search in ~1s vs ~3s sequential)
@@ -508,7 +508,13 @@ DAWN includes several tools that the LLM can invoke automatically:
   Example queries: "Search for the latest news about CES 2026", "What's Reddit saying about the new iPhone?", "Find scientific papers on quantum computing"
 - **URL Fetcher** - Built-in. Ask "Read the article at example.com/page" or "What does this URL say?"
 
-**How summarization works:** When search results or fetched pages exceed ~3KB, DAWN can summarize the content before passing it to the main LLM. This keeps context windows manageable and responses fast. Summarization can use `local` (dedicated llama-server) or `default` (same LLM as conversation). Configure via `[search.summarizer]` in `dawn.toml`.
+**How summarization works:** When search results or fetched pages exceed ~3KB, DAWN summarizes the content before passing it to the main LLM. This keeps context windows manageable and responses fast.
+
+Summarization backends (configured via `[search.summarizer]` in `dawn.toml`):
+- **`tfidf`** (default) - Fast local TF-IDF extractive summarization. Selects the most important sentences using term frequency analysis with MMR (Maximal Marginal Relevance) for diversity. Filters out chart descriptions, ad elements, and sentence fragments. No LLM required, processes in milliseconds.
+- **`local`** - Uses a dedicated llama-server for abstractive summarization
+- **`default`** - Uses the same LLM as the conversation
+- **`disabled`** - Pass content through without summarization
 
 **FlareSolverr (optional):** For JavaScript-heavy sites that block simple fetches, DAWN supports [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr) as a headless browser proxy. Enable via `[url_fetcher.flaresolverr]` in `dawn.toml`.
 

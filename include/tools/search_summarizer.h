@@ -55,7 +55,8 @@
 typedef enum {
    SUMMARIZER_BACKEND_DISABLED = 0,  // No summarization, pass-through
    SUMMARIZER_BACKEND_LOCAL,         // Use dedicated local llama-server (127.0.0.1:8080)
-   SUMMARIZER_BACKEND_DEFAULT        // Use main LLM interface (whatever is configured)
+   SUMMARIZER_BACKEND_DEFAULT,       // Use main LLM interface (whatever is configured)
+   SUMMARIZER_BACKEND_TFIDF          // Use local TF-IDF extractive summarization
 } summarizer_backend_t;
 
 /**
@@ -73,7 +74,8 @@ typedef struct {
    summarizer_backend_t backend;
    summarizer_failure_policy_t failure_policy;
    size_t threshold_bytes;       // Summarize if results exceed this size
-   size_t target_summary_words;  // Target word count for summary
+   size_t target_summary_words;  // Target word count for summary (for LLM backends)
+   float target_ratio;           // Target sentence ratio for TF-IDF (0.0-1.0)
 } summarizer_config_t;
 
 /**

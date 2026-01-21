@@ -27,6 +27,7 @@
 #ifndef STRING_UTILS_H
 #define STRING_UTILS_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -133,6 +134,50 @@ static inline void extract_url_host(const char *url, char *out, size_t out_size)
    memcpy(out, p, len);
    out[len] = '\0';
 }
+
+/**
+ * @brief Check if a period is part of an abbreviation
+ *
+ * Looks backwards from the period position to find the preceding word
+ * and checks against a list of common abbreviations (Mr., Mrs., U.S., etc.)
+ *
+ * Also handles:
+ * - Single capital letters (middle initials like "John F. Kennedy")
+ * - Embedded periods (like "U.S." or "e.g.")
+ *
+ * Thread Safety: This function is thread-safe (uses only input parameters).
+ *
+ * @param text The full text being processed
+ * @param period_pos Pointer to the period character in the text
+ * @return true if this period is part of an abbreviation, false otherwise
+ */
+bool str_is_abbreviation(const char *text, const char *period_pos);
+
+/**
+ * @brief Check if a character is a sentence terminator
+ *
+ * Thread Safety: This function is thread-safe.
+ *
+ * @param c Character to check
+ * @return true if c is '.', '!', '?', or ':'
+ */
+bool str_is_sentence_terminator(char c);
+
+/**
+ * @brief Check if this is a valid sentence boundary
+ *
+ * Combines terminator detection with abbreviation checking.
+ * A valid sentence boundary is a terminator (.!?:) followed by
+ * whitespace or end of string, where the terminator is NOT part
+ * of an abbreviation (for periods only).
+ *
+ * Thread Safety: This function is thread-safe (uses only input parameters).
+ *
+ * @param text The full text being processed
+ * @param pos Position in the text to check
+ * @return true if this is a valid sentence boundary
+ */
+bool str_is_sentence_boundary(const char *text, const char *pos);
 
 #ifdef __cplusplus
 }

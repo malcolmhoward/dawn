@@ -23,6 +23,7 @@
 
 #include "tools/string_utils.h"
 
+#include <ctype.h>
 #include <string.h>
 #include <strings.h>
 
@@ -114,4 +115,113 @@ const char *strcasestr_portable(const char *haystack, const char *needle) {
       }
    }
    return NULL;
+}
+
+/* =============================================================================
+ * Sentence Boundary Detection
+ * ============================================================================= */
+
+/* Common abbreviations that end with a period but aren't sentence endings */
+static const char *ABBREVIATIONS[] = {
+   /* Titles */
+   "Mr", "Mrs", "Ms", "Dr", "Prof", "Sr", "Jr", "Rev", "Gen", "Col", "Lt", "Sgt", "Capt",
+   /* Geographic */
+   "U.S", "U.K", "E.U", "St", "Mt", "Ave", "Blvd", "Rd",
+   /* Time/Date */
+   "Jan", "Feb", "Mar", "Apr", "Jun", "Jul", "Aug", "Sep", "Sept", "Oct", "Nov", "Dec", "Mon",
+   "Tue", "Wed", "Thu", "Fri", "Sat", "Sun",
+   /* Common */
+   "vs", "etc", "e.g", "i.e", "al", "approx", "govt", "dept", "est", "inc", "corp", "ltd", "no",
+   "nos", "vol", "pp", "fig", "ch", "sec", "pt", NULL /* Sentinel */
+};
+
+bool str_is_abbreviation(const char *text, const char *period_pos) {
+   if (!text || !period_pos || period_pos <= text) {
+      return false;
+   }
+
+   /* Find start of word before the period */
+   const char *word_end = period_pos;
+   const char *word_start = period_pos;
+
+   /* Skip back over any periods (handles U.S., e.g., etc.) */
+   while (word_start > text) {
+      const char *prev = word_start - 1;
+      if (isalpha((unsigned char)*prev)) {
+         word_start = prev;
+      } else if (*prev == '.' && word_start - 1 > text &&
+                 isalpha((unsigned char)*(word_start - 2))) {
+         /* Skip embedded period (like in U.S.) */
+         word_start = prev;
+      } else {
+         break;
+      }
+   }
+
+   if (word_start >= word_end) {
+      return false;
+   }
+
+   /* Extract the word (without trailing period) */
+   size_t word_len = word_end - word_start;
+   if (word_len == 0 || word_len > 10) {
+      return false;
+   }
+
+   char word[12];
+   size_t j = 0;
+   for (const char *p = word_start; p < word_end && j < sizeof(word) - 1; p++) {
+      if (isalpha((unsigned char)*p)) {
+         word[j++] = *p;
+      }
+   }
+   word[j] = '\0';
+
+   /* Check against abbreviation list (case-insensitive) */
+   for (int i = 0; ABBREVIATIONS[i] != NULL; i++) {
+      if (strcasecmp(word, ABBREVIATIONS[i]) == 0) {
+         return true;
+      }
+   }
+
+   /* Also check for single capital letter (like middle initials: John F. Kennedy) */
+   if (j == 1 && isupper((unsigned char)word[0])) {
+      return true;
+   }
+
+   return false;
+}
+
+bool str_is_sentence_terminator(char c) {
+   /* Note: Colon excluded - causes over-segmentation on times (3:00) and lists */
+   return (c == '.' || c == '!' || c == '?');
+}
+
+bool str_is_sentence_boundary(const char *text, const char *pos) {
+   if (!text || !pos || !*pos) {
+      return false;
+   }
+
+   /* Must be a sentence terminator */
+   if (!str_is_sentence_terminator(*pos)) {
+      return false;
+   }
+
+   /* Look ahead - skip closing quotes/parens */
+   const char *next = pos + 1;
+   while (*next && (*next == '"' || *next == '\'' || *next == ')')) {
+      next++;
+   }
+
+   /* Must be followed by whitespace or end of string */
+   if (*next && !isspace((unsigned char)*next)) {
+      return false;
+   }
+
+   /* For periods, check if this is an abbreviation */
+   if (*pos == '.' && str_is_abbreviation(text, pos)) {
+      return false;
+   }
+
+   return true;
 }

@@ -35,6 +35,7 @@
 #include "llm/llm_tools.h"
 #include "logging.h"
 #include "tools/curl_buffer.h"
+#include "tools/tfidf_summarizer.h"
 #include "tts/text_to_speech.h"
 #include "ui/metrics.h"
 #ifdef ENABLE_WEBUI
@@ -170,6 +171,7 @@ int search_summarizer_init(const summarizer_config_t *config) {
       g_config.failure_policy = SUMMARIZER_ON_FAILURE_PASSTHROUGH;
       g_config.threshold_bytes = SUMMARIZER_DEFAULT_THRESHOLD;
       g_config.target_summary_words = SUMMARIZER_DEFAULT_TARGET_WORDS;
+      g_config.target_ratio = TFIDF_DEFAULT_RATIO;
    }
 
    g_initialized = 1;
@@ -179,9 +181,15 @@ int search_summarizer_init(const summarizer_config_t *config) {
    metrics_set_summarizer_config(search_summarizer_backend_name(g_config.backend),
                                  g_config.threshold_bytes);
 
-   LOG_INFO("search_summarizer: Initialized (backend=%s, threshold=%zu, target_words=%zu)",
-            search_summarizer_backend_name(g_config.backend), g_config.threshold_bytes,
-            g_config.target_summary_words);
+   if (g_config.backend == SUMMARIZER_BACKEND_TFIDF) {
+      LOG_INFO("search_summarizer: Initialized (backend=%s, threshold=%zu, target_ratio=%.2f)",
+               search_summarizer_backend_name(g_config.backend), g_config.threshold_bytes,
+               g_config.target_ratio);
+   } else {
+      LOG_INFO("search_summarizer: Initialized (backend=%s, threshold=%zu, target_words=%zu)",
+               search_summarizer_backend_name(g_config.backend), g_config.threshold_bytes,
+               g_config.target_summary_words);
+   }
 
    return SUMMARIZER_SUCCESS;
 }
@@ -210,6 +218,8 @@ const char *search_summarizer_backend_name(summarizer_backend_t backend) {
          return "local";
       case SUMMARIZER_BACKEND_DEFAULT:
          return "default";
+      case SUMMARIZER_BACKEND_TFIDF:
+         return "tfidf";
       case SUMMARIZER_BACKEND_DISABLED:
       default:
          return "disabled";
@@ -225,6 +235,9 @@ summarizer_backend_t search_summarizer_parse_backend(const char *str) {
    }
    if (strcmp(str, "default") == 0) {
       return SUMMARIZER_BACKEND_DEFAULT;
+   }
+   if (strcmp(str, "tfidf") == 0) {
+      return SUMMARIZER_BACKEND_TFIDF;
    }
    return SUMMARIZER_BACKEND_DISABLED;
 }
@@ -380,7 +393,9 @@ static int summarize_with_default_llm(const char *prompt, char **out_summary) {
    llm_tools_suppress_push();
 
    // Call cloud LLM (non-streaming for summarization)
-   char *response = llm_chat_completion(conversation, prompt, NULL, 0);
+   // Pass allow_fallback=false to prevent summarizer failures from triggering
+   // global LLM fallback (which would switch to local LLM and play TTS notification)
+   char *response = llm_chat_completion(conversation, prompt, NULL, 0, false);
 
    // Restore tools
    llm_tools_suppress_pop();
@@ -475,39 +490,55 @@ int search_summarizer_process(const char *search_results,
    // Notify user that summarization is starting (may take a while for local LLM)
    notify_summarization_starting();
 
-   // Build the summarization prompt
-   size_t prompt_size = strlen(SUMMARIZER_PROMPT_TEMPLATE) + strlen(original_query) + input_size +
-                        32;  // Extra for word count
-   char *prompt = malloc(prompt_size);
-   if (!prompt) {
-      if (g_config.failure_policy == SUMMARIZER_ON_FAILURE_PASSTHROUGH) {
-         if (input_size > SUMMARIZER_MAX_PASSTHROUGH_BYTES) {
-            LOG_WARNING("search_summarizer: Allocation failed, truncating for passthrough");
-            *out_result = truncate_with_notice(search_results, SUMMARIZER_MAX_PASSTHROUGH_BYTES,
-                                               input_size);
-         } else {
-            LOG_WARNING("search_summarizer: Allocation failed, passing through raw results");
-            *out_result = strdup(search_results);
-         }
-         return *out_result ? SUMMARIZER_SUCCESS : SUMMARIZER_ERROR_ALLOC;
-      }
-      return SUMMARIZER_ERROR_ALLOC;
-   }
-
-   snprintf(prompt, prompt_size, SUMMARIZER_PROMPT_TEMPLATE, original_query,
-            g_config.target_summary_words, search_results);
-
-   // Call appropriate backend
    int result;
    char *summary = NULL;
 
-   if (g_config.backend == SUMMARIZER_BACKEND_LOCAL) {
-      result = summarize_with_local_llm(prompt, &summary);
-   } else {
-      result = summarize_with_default_llm(prompt, &summary);
-   }
+   // Handle TF-IDF backend specially - it doesn't need an LLM prompt
+   if (g_config.backend == SUMMARIZER_BACKEND_TFIDF) {
+      result = tfidf_summarize(search_results, &summary, g_config.target_ratio,
+                               TFIDF_MIN_SENTENCES);
 
-   free(prompt);
+      if (result != TFIDF_SUCCESS) {
+         LOG_ERROR("search_summarizer: TF-IDF summarization failed: %s",
+                   tfidf_error_string(result));
+         result = SUMMARIZER_ERROR_BACKEND;
+      } else {
+         result = SUMMARIZER_SUCCESS;
+         /* TODO: Remove this debug log after quality verification */
+         LOG_INFO("search_summarizer: TF-IDF output:\n%s", summary);
+      }
+   } else {
+      // Build the summarization prompt for LLM backends
+      size_t prompt_size = strlen(SUMMARIZER_PROMPT_TEMPLATE) + strlen(original_query) +
+                           input_size + 32; /* Extra for word count */
+      char *prompt = malloc(prompt_size);
+      if (!prompt) {
+         if (g_config.failure_policy == SUMMARIZER_ON_FAILURE_PASSTHROUGH) {
+            if (input_size > SUMMARIZER_MAX_PASSTHROUGH_BYTES) {
+               LOG_WARNING("search_summarizer: Allocation failed, truncating for passthrough");
+               *out_result = truncate_with_notice(search_results, SUMMARIZER_MAX_PASSTHROUGH_BYTES,
+                                                  input_size);
+            } else {
+               LOG_WARNING("search_summarizer: Allocation failed, passing through raw results");
+               *out_result = strdup(search_results);
+            }
+            return *out_result ? SUMMARIZER_SUCCESS : SUMMARIZER_ERROR_ALLOC;
+         }
+         return SUMMARIZER_ERROR_ALLOC;
+      }
+
+      snprintf(prompt, prompt_size, SUMMARIZER_PROMPT_TEMPLATE, original_query,
+               g_config.target_summary_words, search_results);
+
+      // Call appropriate LLM backend
+      if (g_config.backend == SUMMARIZER_BACKEND_LOCAL) {
+         result = summarize_with_local_llm(prompt, &summary);
+      } else {
+         result = summarize_with_default_llm(prompt, &summary);
+      }
+
+      free(prompt);
+   }
 
    if (result != SUMMARIZER_SUCCESS) {
       if (g_config.failure_policy == SUMMARIZER_ON_FAILURE_PASSTHROUGH) {

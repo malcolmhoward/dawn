@@ -97,7 +97,8 @@ static const char *find_closing_tag(const char *html, const char *tag_name) {
 /**
  * @brief Check if tag should be skipped (optimized with first-char switch)
  * Tags: script, style, nav, footer, header, aside, noscript, iframe, object,
- *       embed, svg, canvas, template, form, button, input, select, meta, link, comments
+ *       embed, svg, canvas, template, form, button, input, select, meta, link,
+ *       figcaption, comments
  *
  * @param tag_name Tag name (already lowercased during extraction at line ~1000)
  * @param len Length of tag name (avoids repeated strlen calls)
@@ -121,12 +122,16 @@ static int is_skip_tag(const char *tag_name, size_t len) {
          if (len == 8 && strcmp(tag_name, "comments") == 0)
             return 1;
          return 0;
+      case 'd':
+         return (len == 6 && strcmp(tag_name, "dialog") == 0);
       case 'e':
          return (len == 5 && strcmp(tag_name, "embed") == 0);
       case 'f':
          if (len == 6 && strcmp(tag_name, "footer") == 0)
             return 1;
          if (len == 4 && strcmp(tag_name, "form") == 0)
+            return 1;
+         if (len == 10 && strcmp(tag_name, "figcaption") == 0)
             return 1;
          return 0;
       case 'h':
@@ -164,6 +169,74 @@ static int is_skip_tag(const char *tag_name, size_t len) {
       default:
          return 0;
    }
+}
+
+/* Forward declaration for extract_attr (defined later) */
+static int extract_attr(const char *tag_content,
+                        const char *attr_name,
+                        char *value,
+                        size_t value_size);
+
+/**
+ * @brief Noise patterns for class/id attributes
+ * Elements with class or id containing these substrings are skipped
+ */
+static const char *NOISE_CLASS_PATTERNS[] = {
+   /* Modals and popups */
+   "modal", "popup", "dialog", "overlay", "lightbox",
+   /* Subscription and newsletter */
+   "subscri", "newsletter", "signup", "sign-up", "optin", "opt-in",
+   /* Cookie and consent */
+   "cookie", "consent", "gdpr", "privacy-notice",
+   /* Ads and promotions */
+   "advert", "promo", "sponsor", "banner-ad", "ad-slot", "ad-container",
+   /* Navigation and sidebars */
+   "sidebar", "widget", "related-", "recommended", "tags",
+   /* Social sharing */
+   "share-", "social-", "follow-us",
+   /* Comments sections */
+   "comment", "disqus", "discuss",
+   /* Author bios */
+   "author-bio", "byline",
+   /* Misc UI */
+   "tooltip", "toast", "alert-", "notification", NULL /* Sentinel */
+};
+
+/**
+ * @brief Check if class or id attribute contains noise patterns
+ * @param tag_content Full tag content (e.g., "<div class=\"modal popup\">")
+ * @return 1 if should skip, 0 otherwise
+ */
+static int has_noise_class_or_id(const char *tag_content) {
+   if (!tag_content)
+      return 0;
+
+   /* Extract class attribute */
+   char class_val[256] = { 0 };
+   char id_val[128] = { 0 };
+
+   extract_attr(tag_content, "class", class_val, sizeof(class_val));
+   extract_attr(tag_content, "id", id_val, sizeof(id_val));
+
+   /* If no class or id, not noise */
+   if (class_val[0] == '\0' && id_val[0] == '\0')
+      return 0;
+
+   /* Lowercase for case-insensitive matching */
+   for (char *p = class_val; *p; p++)
+      *p = tolower((unsigned char)*p);
+   for (char *p = id_val; *p; p++)
+      *p = tolower((unsigned char)*p);
+
+   /* Check each pattern */
+   for (int i = 0; NOISE_CLASS_PATTERNS[i] != NULL; i++) {
+      if (class_val[0] && strstr(class_val, NOISE_CLASS_PATTERNS[i]))
+         return 1;
+      if (id_val[0] && strstr(id_val, NOISE_CLASS_PATTERNS[i]))
+         return 1;
+   }
+
+   return 0;
 }
 
 /**
@@ -779,6 +852,12 @@ static void handle_tag_open(html_parser_state_t *state,
       return;
    }
 
+   // Figure elements (images with captions) - ensure separation
+   if (strcasecmp(tag_name, "figure") == 0) {
+      ensure_blank_line(state);
+      return;
+   }
+
    // Line breaks
    if (strcasecmp(tag_name, "br") == 0) {
       emit_char(state, '\n');
@@ -1093,6 +1172,15 @@ int html_extract_text_with_base(const char *html,
          memcpy(tag_content, tag_start, copy_len);
          tag_content[copy_len] = '\0';
 
+         // Check for noise class/id patterns (modals, popups, subscriptions, etc.)
+         if (!is_closing && has_noise_class_or_id(tag_content)) {
+            const char *close = find_closing_tag(p, tag_name);
+            if (close) {
+               p = close + 1;
+               continue;
+            }
+         }
+
          if (is_closing) {
             handle_tag_close(&state, tag_name);
          } else {
@@ -1134,16 +1222,15 @@ int html_extract_text_with_base(const char *html,
       if (isspace(*p)) {
          if (state.in_pre) {
             emit_char(&state, *p);
-         } else if (!state.suppress_whitespace && !state.last_was_newline) {
-            if (state.in_link) {
-               if (state.link_text_pos < sizeof(state.link_text) - 1 && state.link_text_pos > 0 &&
-                   state.link_text[state.link_text_pos - 1] != ' ') {
-                  state.link_text[state.link_text_pos++] = ' ';
-                  state.link_text[state.link_text_pos] = '\0';
-               }
-            } else {
-               emit_char(&state, ' ');
+         } else if (state.in_link) {
+            // Link text: always convert whitespace to space (don't depend on last_was_newline)
+            if (state.link_text_pos < sizeof(state.link_text) - 1 && state.link_text_pos > 0 &&
+                state.link_text[state.link_text_pos - 1] != ' ') {
+               state.link_text[state.link_text_pos++] = ' ';
+               state.link_text[state.link_text_pos] = '\0';
             }
+         } else if (!state.suppress_whitespace && !state.last_was_newline) {
+            emit_char(&state, ' ');
          }
          p++;
          continue;

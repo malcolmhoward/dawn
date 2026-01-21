@@ -1219,9 +1219,7 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
          json_object *thinking = json_object_new_object();
          json_object_object_add(thinking, "type", json_object_new_string("enabled"));
 
-         int budget = g_config.llm.thinking.budget_tokens;
-         if (budget < 1024)
-            budget = 1024;
+         int budget = llm_get_effective_budget_tokens();
          json_object_object_add(thinking, "budget_tokens", json_object_new_int(budget));
 
          json_object_object_add(root, "thinking", thinking);

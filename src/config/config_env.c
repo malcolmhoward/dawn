@@ -189,6 +189,7 @@ void config_apply_env(dawn_config_t *config, secrets_config_t *secrets) {
    ENV_STRING("DAWN_SEARCH_SUMMARIZER_BACKEND", config->search.summarizer.backend);
    ENV_SIZE_T("DAWN_SEARCH_SUMMARIZER_THRESHOLD_BYTES", config->search.summarizer.threshold_bytes);
    ENV_SIZE_T("DAWN_SEARCH_SUMMARIZER_TARGET_WORDS", config->search.summarizer.target_words);
+   ENV_FLOAT("DAWN_SEARCH_SUMMARIZER_TARGET_RATIO", config->search.summarizer.target_ratio);
 
    /* [url_fetcher.flaresolverr] */
    ENV_BOOL("DAWN_URL_FETCHER_FLARESOLVERR_ENABLED", config->url_fetcher.flaresolverr.enabled);
@@ -315,6 +316,7 @@ void config_dump(const dawn_config_t *config) {
    printf("  backend = \"%s\"\n", config->search.summarizer.backend);
    printf("  threshold_bytes = %zu\n", config->search.summarizer.threshold_bytes);
    printf("  target_words = %zu\n", config->search.summarizer.target_words);
+   printf("  target_ratio = %.2f\n", config->search.summarizer.target_ratio);
 
    printf("\n[url_fetcher]\n");
    printf("  whitelist_count = %d\n", config->url_fetcher.whitelist_count);
@@ -700,6 +702,11 @@ void config_dump_settings(const dawn_config_t *config,
                       detect_source_size(config->search.summarizer.target_words,
                                          defaults.search.summarizer.target_words,
                                          "DAWN_SEARCH_SUMMARIZER_TARGET_WORDS"));
+   PRINT_SETTING_FLOAT("target_ratio", config->search.summarizer.target_ratio,
+                       "DAWN_SEARCH_SUMMARIZER_TARGET_RATIO",
+                       detect_source_float(config->search.summarizer.target_ratio,
+                                           defaults.search.summarizer.target_ratio,
+                                           "DAWN_SEARCH_SUMMARIZER_TARGET_RATIO"));
 
    /* [url_fetcher.flaresolverr] */
    printf("[url_fetcher.flaresolverr]\n");
@@ -898,6 +905,7 @@ void config_dump_toml(const dawn_config_t *config) {
    printf("backend = \"%s\"\n", config->search.summarizer.backend);
    printf("threshold_bytes = %zu\n", config->search.summarizer.threshold_bytes);
    printf("target_words = %zu\n", config->search.summarizer.target_words);
+   printf("target_ratio = %.2f\n", config->search.summarizer.target_ratio);
 
    printf("\n[mqtt]\n");
    printf("enabled = %s\n", config->mqtt.enabled ? "true" : "false");
@@ -1084,10 +1092,14 @@ json_object *config_to_json(const dawn_config_t *config) {
    /* [llm.thinking] */
    json_object *thinking = json_object_new_object();
    json_object_object_add(thinking, "mode", json_object_new_string(config->llm.thinking.mode));
-   json_object_object_add(thinking, "budget_tokens",
-                          json_object_new_int(config->llm.thinking.budget_tokens));
    json_object_object_add(thinking, "reasoning_effort",
                           json_object_new_string(config->llm.thinking.reasoning_effort));
+   json_object_object_add(thinking, "budget_low",
+                          json_object_new_int(config->llm.thinking.budget_low));
+   json_object_object_add(thinking, "budget_medium",
+                          json_object_new_int(config->llm.thinking.budget_medium));
+   json_object_object_add(thinking, "budget_high",
+                          json_object_new_int(config->llm.thinking.budget_high));
    json_object_object_add(llm, "thinking", thinking);
 
    /* Context management settings */
@@ -1111,6 +1123,8 @@ json_object *config_to_json(const dawn_config_t *config) {
                               (int64_t)config->search.summarizer.threshold_bytes));
    json_object_object_add(summarizer, "target_words",
                           json_object_new_int64((int64_t)config->search.summarizer.target_words));
+   json_object_object_add(summarizer, "target_ratio",
+                          json_object_new_double(config->search.summarizer.target_ratio));
    json_object_object_add(search, "summarizer", summarizer);
 
    /* title_filters array */
@@ -1478,8 +1492,10 @@ int config_write_toml(const dawn_config_t *config, const char *path) {
 
    fprintf(fp, "\n[llm.thinking]\n");
    fprintf(fp, "mode = \"%s\"\n", config->llm.thinking.mode);
-   fprintf(fp, "budget_tokens = %d\n", config->llm.thinking.budget_tokens);
    fprintf(fp, "reasoning_effort = \"%s\"\n", config->llm.thinking.reasoning_effort);
+   fprintf(fp, "budget_low = %d\n", config->llm.thinking.budget_low);
+   fprintf(fp, "budget_medium = %d\n", config->llm.thinking.budget_medium);
+   fprintf(fp, "budget_high = %d\n", config->llm.thinking.budget_high);
 
    fprintf(fp, "\n[search]\n");
    fprintf(fp, "engine = \"%s\"\n", config->search.engine);
@@ -1489,6 +1505,7 @@ int config_write_toml(const dawn_config_t *config, const char *path) {
    fprintf(fp, "backend = \"%s\"\n", config->search.summarizer.backend);
    fprintf(fp, "threshold_bytes = %zu\n", config->search.summarizer.threshold_bytes);
    fprintf(fp, "target_words = %zu\n", config->search.summarizer.target_words);
+   fprintf(fp, "target_ratio = %.2f\n", config->search.summarizer.target_ratio);
 
    /* Write title_filters if any are configured */
    if (config->search.title_filters_count > 0) {

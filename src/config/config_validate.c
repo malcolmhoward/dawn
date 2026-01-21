@@ -225,10 +225,10 @@ int config_validate(const dawn_config_t *config,
 
    /* ===== Summarizer Backend (enum) ===== */
    {
-      const char *valid_backends[] = { "disabled", "local", "default" };
-      if (!string_in_list(config->search.summarizer.backend, valid_backends, 3)) {
+      const char *valid_backends[] = { "disabled", "local", "default", "tfidf" };
+      if (!string_in_list(config->search.summarizer.backend, valid_backends, 4)) {
          ADD_ERROR("search.summarizer.backend",
-                   "must be 'disabled', 'local', or 'default' (got '%s')",
+                   "must be 'disabled', 'local', 'default', or 'tfidf' (got '%s')",
                    config->search.summarizer.backend);
       }
    }

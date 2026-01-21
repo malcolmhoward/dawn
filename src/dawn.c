@@ -29,6 +29,7 @@
 #include <math.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -77,6 +78,7 @@
 #include "text_to_command_nuevo.h"
 #include "tools/search_summarizer.h"
 #include "tools/smartthings_service.h"
+#include "tools/tfidf_summarizer.h"
 #include "tts/text_to_speech.h"
 #include "tts/tts_preprocessing.h"
 #include "ui/metrics.h"
@@ -1299,7 +1301,8 @@ int main(int argc, char *argv[]) {
       .backend = SUMMARIZER_BACKEND_DISABLED,
       .failure_policy = SUMMARIZER_ON_FAILURE_PASSTHROUGH,
       .threshold_bytes = SUMMARIZER_DEFAULT_THRESHOLD,
-      .target_summary_words = SUMMARIZER_DEFAULT_TARGET_WORDS
+      .target_summary_words = SUMMARIZER_DEFAULT_TARGET_WORDS,
+      .target_ratio = TFIDF_DEFAULT_RATIO
    };
 
    // Config system variables
@@ -1666,6 +1669,10 @@ int main(int argc, char *argv[]) {
       summarizer_config.target_summary_words = g_config.search.summarizer.target_words;
       LOG_INFO("Search summarizer target words from config: %zu",
                summarizer_config.target_summary_words);
+   }
+   if (g_config.search.summarizer.target_ratio > 0.0f) {
+      summarizer_config.target_ratio = g_config.search.summarizer.target_ratio;
+      LOG_INFO("Search summarizer target ratio from config: %.2f", summarizer_config.target_ratio);
    }
 
    // Apply CLI LLM type override to g_config (needed for validation)
@@ -3518,6 +3525,19 @@ int main(int argc, char *argv[]) {
                                              &speech_duration, &recording_duration,
                                              &preroll_write_pos, &preroll_valid_bytes);
                      break;  // Exit DAWN_STATE_PROCESS_COMMAND case
+                  }
+
+                  // Check for thinking trigger phrases and enable extended thinking for this
+                  // request
+                  if (llm_check_thinking_trigger(command_text)) {
+                     LOG_INFO(
+                         "Voice trigger detected - enabling extended thinking for this request");
+                     session_llm_config_t trigger_config;
+                     session_get_llm_config(local_session, &trigger_config);
+                     strncpy(trigger_config.thinking_mode, "enabled",
+                             sizeof(trigger_config.thinking_mode) - 1);
+                     trigger_config.thinking_mode[sizeof(trigger_config.thinking_mode) - 1] = '\0';
+                     session_set_llm_config(local_session, &trigger_config);
                   }
 
                   // Spawn LLM thread to process request (non-blocking)

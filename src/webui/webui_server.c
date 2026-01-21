@@ -1750,7 +1750,7 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
             }
          }
 
-         /* Parse thinking_mode (disabled/auto/enabled or low/medium/high for reasoning models) */
+         /* Parse thinking_mode (disabled/auto/enabled) */
          struct json_object *thinking_mode_obj;
          if (json_object_object_get_ex(payload, "thinking_mode", &thinking_mode_obj)) {
             const char *new_thinking_mode = json_object_get_string(thinking_mode_obj);
@@ -1758,10 +1758,7 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                /* Validate thinking mode value */
                if (strcmp(new_thinking_mode, "disabled") == 0 ||
                    strcmp(new_thinking_mode, "auto") == 0 ||
-                   strcmp(new_thinking_mode, "enabled") == 0 ||
-                   strcmp(new_thinking_mode, "low") == 0 ||
-                   strcmp(new_thinking_mode, "medium") == 0 ||
-                   strcmp(new_thinking_mode, "high") == 0) {
+                   strcmp(new_thinking_mode, "enabled") == 0) {
                   has_changes = true;
                   strncpy(config.thinking_mode, new_thinking_mode,
                           sizeof(config.thinking_mode) - 1);
@@ -1770,6 +1767,25 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                } else {
                   LOG_WARNING("WebUI: Rejected invalid thinking_mode '%s' from client",
                               new_thinking_mode);
+               }
+            }
+         }
+
+         /* Parse reasoning_effort (low/medium/high) */
+         struct json_object *reasoning_effort_obj;
+         if (json_object_object_get_ex(payload, "reasoning_effort", &reasoning_effort_obj)) {
+            const char *new_effort = json_object_get_string(reasoning_effort_obj);
+            if (new_effort) {
+               /* Validate reasoning effort value */
+               if (strcmp(new_effort, "low") == 0 || strcmp(new_effort, "medium") == 0 ||
+                   strcmp(new_effort, "high") == 0) {
+                  has_changes = true;
+                  strncpy(config.reasoning_effort, new_effort, sizeof(config.reasoning_effort) - 1);
+                  config.reasoning_effort[sizeof(config.reasoning_effort) - 1] = '\0';
+                  LOG_INFO("WebUI: Session reasoning_effort set to '%s'", config.reasoning_effort);
+               } else {
+                  LOG_WARNING("WebUI: Rejected invalid reasoning_effort '%s' from client",
+                              new_effort);
                }
             }
          }
@@ -1875,10 +1891,9 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                   LOG_INFO("WebUI: Reconnected to session %u with token %.8s...",
                            existing->session_id, token);
 
-                  /* Send confirmation, config, history replay, and current state */
+                  /* Send confirmation - history is loaded by client via load_conversation */
                   send_session_token_impl(conn, token);
                   send_config_impl(conn->wsi);
-                  send_history_impl(conn->wsi, existing);
                   send_state_impl(conn->wsi, "idle", NULL);
                } else {
                   /* Token not found or session expired - create new session */
@@ -2437,10 +2452,9 @@ static int callback_websocket(struct lws *wsi,
                                  existing_session->session_id, token, s_client_count,
                                  conn->use_opus ? "yes" : "no");
 
-                        /* Send confirmation */
+                        /* Send confirmation - history is loaded by client via load_conversation */
                         send_session_token_impl(conn, token);
                         send_config_impl(conn->wsi);
-                        send_history_impl(conn->wsi, existing_session);
                         send_state_impl(conn->wsi, "idle", NULL);
                      }
                   }
@@ -2940,11 +2954,12 @@ static void webui_tool_execution_callback(void *session_ptr,
    /* Tool execution completed - remove from active list */
    session_remove_active_tool(session, display_name);
 
-   /* Format as debug entry for transcript */
+   /* Format as debug entry for transcript - use "tool" role (not "assistant")
+    * to avoid confusion with actual LLM responses and ensure proper JS routing */
    char debug_msg[LLM_TOOLS_RESULT_LEN + 256];
    snprintf(debug_msg, sizeof(debug_msg), "[Tool Call: %s(%s) -> %s%s]", tool_name,
             tool_args ? tool_args : "", success ? "" : "FAILED: ", result);
-   webui_send_transcript(session, "assistant", debug_msg);
+   webui_send_transcript(session, "tool", debug_msg);
 
    /* Send updated state (may still have other active tools) */
    pthread_mutex_lock(&session->tools_mutex);
@@ -3157,6 +3172,24 @@ int webui_server_get_port(void) {
  * Worker-Callable Response Functions (Thread-Safe)
  * ============================================================================= */
 
+/**
+ * @brief Send a transcript message to the WebUI client
+ *
+ * Valid roles and their WebUI behavior:
+ *   - "user"      : User input, saved to conversation history, displayed normally
+ *   - "assistant" : LLM response, saved to conversation history, displayed normally
+ *   - "tool"      : Tool execution debug info, NOT saved to history, debug-only display
+ *   - "system"    : System/error messages, displayed with error styling
+ *   - "streaming" : Partial assistant response (handled separately by streaming code)
+ *
+ * The "tool" role is specifically for internal debug output (tool calls, results)
+ * that should be visible in debug mode but not pollute conversation history.
+ * This prevents LLM context pollution when debug output is replayed.
+ *
+ * @param session WebSocket session to send to
+ * @param role    Message role (see above)
+ * @param text    Message content
+ */
 void webui_send_transcript(session_t *session, const char *role, const char *text) {
    if (!session || session->type != SESSION_TYPE_WEBSOCKET) {
       return;

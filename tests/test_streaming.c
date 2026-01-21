@@ -60,7 +60,7 @@ int main(int argc, char *argv[]) {
 
    // First test non-streaming to verify API keys work
    printf("--- Testing Non-Streaming First ---\n");
-   char *non_streaming_response = llm_chat_completion(conversation, test_prompt, NULL, 0);
+   char *non_streaming_response = llm_chat_completion(conversation, test_prompt, NULL, 0, true);
    if (non_streaming_response) {
       printf("Non-streaming works! Response: %s\n\n", non_streaming_response);
       free(non_streaming_response);
@@ -74,7 +74,7 @@ int main(int argc, char *argv[]) {
 
    // Make streaming request
    char *response = llm_chat_completion_streaming(conversation, test_prompt, NULL, 0,
-                                                  test_chunk_callback, NULL);
+                                                  test_chunk_callback, NULL, true);
 
    printf("\n--- End of Chunk Stream ---\n\n");
 
@@ -92,7 +92,7 @@ int main(int argc, char *argv[]) {
 
    // Make streaming request with sentence buffering
    response = llm_chat_completion_streaming_tts(conversation, test_prompt, NULL, 0,
-                                                test_sentence_callback, NULL);
+                                                test_sentence_callback, NULL, true);
 
    printf("\n--- End of Sentence Stream ---\n\n");
 

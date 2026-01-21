@@ -535,6 +535,42 @@ void llm_tools_set_current_config(const llm_resolved_config_t *config);
 const char *llm_get_current_thinking_mode(void);
 
 /**
+ * @brief Get current session's reasoning effort
+ *
+ * Returns the reasoning_effort from the thread-local resolved config if set,
+ * otherwise returns the global config reasoning effort.
+ *
+ * @return Reasoning effort string ("low", "medium", "high")
+ */
+const char *llm_get_current_reasoning_effort(void);
+
+/**
+ * @brief Get effective budget tokens for thinking
+ *
+ * Maps reasoning_effort to token budget using the standard levels:
+ *   low    = LLM_THINKING_BUDGET_LOW    (1024)
+ *   medium = LLM_THINKING_BUDGET_MEDIUM (8192)
+ *   high   = LLM_THINKING_BUDGET_HIGH   (16384)
+ *
+ * If global config budget_tokens > 0, uses that as an explicit override.
+ *
+ * @return Token budget for thinking/reasoning
+ */
+int llm_get_effective_budget_tokens(void);
+
+/**
+ * @brief Check if text contains thinking trigger phrases
+ *
+ * Scans the input text for phrases that should trigger extended thinking mode
+ * for the current request (case-insensitive). Trigger phrases include:
+ * "think carefully", "think step by step", "reason through", etc.
+ *
+ * @param text User command text to scan (can be NULL)
+ * @return true if a thinking trigger phrase was found, false otherwise
+ */
+bool llm_check_thinking_trigger(const char *text);
+
+/**
  * @brief Get count of currently enabled tools
  *
  * @return Number of enabled tools

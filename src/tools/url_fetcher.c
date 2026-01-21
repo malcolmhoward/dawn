@@ -1397,9 +1397,10 @@ int url_fetch_content_with_base(const char *url,
          curl_slist_free_all(resolve_list);
       curl_easy_cleanup(curl);
 
-      // If we got 403 Forbidden, try FlareSolverr as fallback (Cloudflare/bot protection)
-      if (http_code == 403) {
-         LOG_INFO("url_fetcher: HTTP 403, trying FlareSolverr fallback");
+      // If we got 401/403, try FlareSolverr as fallback (bot protection)
+      // Note: Some sites like Reuters use 401 Unauthorized instead of 403 for bot blocking
+      if (http_code == 401 || http_code == 403) {
+         LOG_INFO("url_fetcher: HTTP %ld, trying FlareSolverr fallback", http_code);
          if (try_flaresolverr_fallback(url, base_url, out_content, out_size) == URL_FETCH_SUCCESS) {
             return URL_FETCH_SUCCESS;
          }

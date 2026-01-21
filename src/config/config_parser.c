@@ -500,12 +500,15 @@ static void parse_llm_thinking(toml_table_t *table, llm_thinking_config_t *confi
    if (!table)
       return;
 
-   static const char *const known_keys[] = { "mode", "budget_tokens", "reasoning_effort", NULL };
+   static const char *const known_keys[] = { "mode",          "reasoning_effort", "budget_low",
+                                             "budget_medium", "budget_high",      NULL };
    warn_unknown_keys(table, "llm.thinking", known_keys);
 
    PARSE_STRING(table, "mode", config->mode);
-   PARSE_INT(table, "budget_tokens", config->budget_tokens);
    PARSE_STRING(table, "reasoning_effort", config->reasoning_effort);
+   PARSE_INT(table, "budget_low", config->budget_low);
+   PARSE_INT(table, "budget_medium", config->budget_medium);
+   PARSE_INT(table, "budget_high", config->budget_high);
 
    /* Validate mode (disabled, auto, enabled) */
    if (config->mode[0] != '\0' && strcmp(config->mode, "disabled") != 0 &&
@@ -515,11 +518,8 @@ static void parse_llm_thinking(toml_table_t *table, llm_thinking_config_t *confi
       config->mode[sizeof(config->mode) - 1] = '\0';
    }
 
-   /* Validate reasoning_effort (none, minimal, low, medium, high) */
-   /* "none" is GPT-5.2 specific; "minimal" works on GPT-5/5-mini/5-nano */
-   if (config->reasoning_effort[0] != '\0' && strcmp(config->reasoning_effort, "none") != 0 &&
-       strcmp(config->reasoning_effort, "minimal") != 0 &&
-       strcmp(config->reasoning_effort, "low") != 0 &&
+   /* Validate reasoning_effort (low, medium, high) */
+   if (config->reasoning_effort[0] != '\0' && strcmp(config->reasoning_effort, "low") != 0 &&
        strcmp(config->reasoning_effort, "medium") != 0 &&
        strcmp(config->reasoning_effort, "high") != 0) {
       LOG_WARNING("llm.thinking.reasoning_effort invalid '%s', defaulting to 'medium'",
@@ -528,16 +528,19 @@ static void parse_llm_thinking(toml_table_t *table, llm_thinking_config_t *confi
       config->reasoning_effort[sizeof(config->reasoning_effort) - 1] = '\0';
    }
 
-   /* Clamp budget_tokens to valid range (min 1024 for Claude, max 100000) */
-   if (config->budget_tokens > 0 && config->budget_tokens < 1024) {
-      LOG_WARNING("llm.thinking.budget_tokens too low (%d), clamping to 1024",
-                  config->budget_tokens);
-      config->budget_tokens = 1024;
+   /* Validate budget values (minimum 1024 tokens for Claude compatibility) */
+   if (config->budget_low > 0 && config->budget_low < 1024) {
+      LOG_WARNING("llm.thinking.budget_low too low (%d), clamping to 1024", config->budget_low);
+      config->budget_low = 1024;
    }
-   if (config->budget_tokens > 100000) {
-      LOG_WARNING("llm.thinking.budget_tokens too high (%d), clamping to 100000",
-                  config->budget_tokens);
-      config->budget_tokens = 100000;
+   if (config->budget_medium > 0 && config->budget_medium < 1024) {
+      LOG_WARNING("llm.thinking.budget_medium too low (%d), clamping to 1024",
+                  config->budget_medium);
+      config->budget_medium = 1024;
+   }
+   if (config->budget_high > 0 && config->budget_high < 1024) {
+      LOG_WARNING("llm.thinking.budget_high too low (%d), clamping to 1024", config->budget_high);
+      config->budget_high = 1024;
    }
 }
 
@@ -579,12 +582,19 @@ static void parse_summarizer(toml_table_t *table, summarizer_file_config_t *conf
    if (!table)
       return;
 
-   static const char *const known_keys[] = { "backend", "threshold_bytes", "target_words", NULL };
+   static const char *const known_keys[] = { "backend", "threshold_bytes", "target_words",
+                                             "target_ratio", NULL };
    warn_unknown_keys(table, "search.summarizer", known_keys);
 
    PARSE_STRING(table, "backend", config->backend);
    PARSE_SIZE_T(table, "threshold_bytes", config->threshold_bytes);
    PARSE_SIZE_T(table, "target_words", config->target_words);
+
+   /* Parse target_ratio for TF-IDF summarization */
+   toml_datum_t ratio = toml_double_in(table, "target_ratio");
+   if (ratio.ok) {
+      config->target_ratio = (float)ratio.u.d;
+   }
 }
 
 static void parse_search(toml_table_t *table, search_config_t *config) {

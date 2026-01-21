@@ -66,6 +66,9 @@
          DawnState.streamingState.textElement = entry.querySelector('.text');
          DawnState.streamingState.content = '';
 
+         // Reset thinking tokens for new stream (will be populated by reasoning_summary if applicable)
+         DawnState.metricsState.last_thinking_tokens = 0;
+
          transcript.scrollTop = transcript.scrollHeight;
       }
 

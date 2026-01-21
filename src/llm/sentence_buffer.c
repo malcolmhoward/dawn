@@ -21,20 +21,15 @@
 
 #include "llm/sentence_buffer.h"
 
+#include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "logging.h"
+#include "tools/string_utils.h"
 
 #define DEFAULT_CAPACITY 512
 #define MAX_BUFFER_SIZE (10 * 1024 * 1024)  // 10MB hard limit for sentence buffering
-
-/**
- * @brief Check if character is a sentence terminator
- */
-static int is_sentence_terminator(char c) {
-   return (c == '.' || c == '!' || c == '?' || c == ':');
-}
 
 /**
  * @brief Ensure buffer has enough capacity
@@ -136,29 +131,34 @@ void sentence_buffer_feed(sentence_buffer_t *buf, const char *chunk) {
    size_t search_start = 0;
 
    while (search_start < buf->size) {
-      // Find next sentence terminator
+      // Find next sentence boundary
       size_t i;
-      int found_terminator = 0;
+      int found_boundary = 0;
       size_t terminator_pos = 0;
 
       for (i = search_start; i < buf->size; i++) {
          // Look for sentence terminators (input should be pre-filtered of command tags)
-         if (is_sentence_terminator(buf->buffer[i])) {
+         if (str_is_sentence_terminator(buf->buffer[i])) {
             // Found a terminator - check if followed by space/newline/end
             if (i + 1 >= buf->size) {
                // At end of buffer - not complete yet (might get more text)
                break;
             } else if (buf->buffer[i + 1] == ' ' || buf->buffer[i + 1] == '\n' ||
                        buf->buffer[i + 1] == '\r') {
+               // Check if this is an abbreviation (only for periods)
+               if (buf->buffer[i] == '.' && str_is_abbreviation(buf->buffer, &buf->buffer[i])) {
+                  // This is an abbreviation, keep looking
+                  continue;
+               }
                // Complete sentence found
-               found_terminator = 1;
+               found_boundary = 1;
                terminator_pos = i + 1;  // Include the space/newline
                break;
             }
          }
       }
 
-      if (!found_terminator) {
+      if (!found_boundary) {
          // No complete sentence found
          break;
       }

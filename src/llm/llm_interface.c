@@ -755,7 +755,8 @@ int llm_curl_progress_callback(void *clientp,
 char *llm_chat_completion(struct json_object *conversation_history,
                           const char *input_text,
                           char *vision_image,
-                          size_t vision_image_size) {
+                          size_t vision_image_size,
+                          bool allow_fallback) {
    char *response = NULL;
    llm_type_t type = current_type;
    cloud_provider_t provider = current_cloud_provider;
@@ -823,7 +824,7 @@ char *llm_chat_completion(struct json_object *conversation_history,
    }
 
    /* If cloud LLM failed (but not interrupted by user), try falling back to local */
-   if (response == NULL && type == LLM_CLOUD && !llm_is_interrupt_requested()) {
+   if (response == NULL && type == LLM_CLOUD && allow_fallback && !llm_is_interrupt_requested()) {
       if (strcmp(CLOUDAI_URL, url) == 0 || strcmp(CLAUDE_URL, url) == 0 ||
           strcmp(GEMINI_URL, url) == 0) {
          LOG_WARNING("Falling back to local LLM due to connection failure.");
@@ -844,7 +845,8 @@ char *llm_chat_completion_streaming(struct json_object *conversation_history,
                                     char *vision_image,
                                     size_t vision_image_size,
                                     llm_text_chunk_callback chunk_callback,
-                                    void *callback_userdata) {
+                                    void *callback_userdata,
+                                    bool allow_fallback) {
    // Clear any previous interrupt flag from cancelled requests
    llm_clear_interrupt();
 
@@ -933,7 +935,7 @@ char *llm_chat_completion_streaming(struct json_object *conversation_history,
    }
 
    /* If cloud LLM failed (but not interrupted by user), try falling back to local */
-   if (response == NULL && type == LLM_CLOUD && !llm_is_interrupt_requested()) {
+   if (response == NULL && type == LLM_CLOUD && allow_fallback && !llm_is_interrupt_requested()) {
       if (strcmp(CLOUDAI_URL, url) == 0 || strcmp(CLAUDE_URL, url) == 0 ||
           strcmp(GEMINI_URL, url) == 0) {
          LOG_WARNING("Falling back to local LLM due to connection failure.");
@@ -1014,7 +1016,8 @@ char *llm_chat_completion_streaming_tts(struct json_object *conversation_history
                                         char *vision_image,
                                         size_t vision_image_size,
                                         llm_sentence_callback sentence_callback,
-                                        void *callback_userdata) {
+                                        void *callback_userdata,
+                                        bool allow_fallback) {
    char *response = NULL;
    tts_streaming_context_t ctx;
 
@@ -1030,7 +1033,8 @@ char *llm_chat_completion_streaming_tts(struct json_object *conversation_history
 
    // Call streaming with chunk callback that feeds sentence buffer
    response = llm_chat_completion_streaming(conversation_history, input_text, vision_image,
-                                            vision_image_size, tts_chunk_callback, &ctx);
+                                            vision_image_size, tts_chunk_callback, &ctx,
+                                            allow_fallback);
 
    // Flush any remaining sentence
    sentence_buffer_flush(ctx.sentence_buffer);
@@ -1078,6 +1082,23 @@ void llm_get_default_config(session_llm_config_t *config) {
       config->tool_mode[sizeof(config->tool_mode) - 1] = '\0';
    } else {
       strncpy(config->tool_mode, "native", sizeof(config->tool_mode) - 1);
+   }
+
+   // Copy thinking mode from global config
+   if (g_config.llm.thinking.mode[0] != '\0') {
+      strncpy(config->thinking_mode, g_config.llm.thinking.mode, sizeof(config->thinking_mode) - 1);
+      config->thinking_mode[sizeof(config->thinking_mode) - 1] = '\0';
+   } else {
+      strncpy(config->thinking_mode, "disabled", sizeof(config->thinking_mode) - 1);
+   }
+
+   // Copy reasoning effort from global config
+   if (g_config.llm.thinking.reasoning_effort[0] != '\0') {
+      strncpy(config->reasoning_effort, g_config.llm.thinking.reasoning_effort,
+              sizeof(config->reasoning_effort) - 1);
+      config->reasoning_effort[sizeof(config->reasoning_effort) - 1] = '\0';
+   } else {
+      strncpy(config->reasoning_effort, "medium", sizeof(config->reasoning_effort) - 1);
    }
 
    LOG_INFO("Default LLM config: type=%s, provider=%s",
@@ -1174,6 +1195,19 @@ int llm_resolve_config(const session_llm_config_t *session_config,
       strncpy(resolved->thinking_mode, "auto", sizeof(resolved->thinking_mode) - 1);
    }
 
+   // Resolve reasoning_effort - use session config if set, otherwise global config
+   if (session_config->reasoning_effort[0] != '\0') {
+      strncpy(resolved->reasoning_effort, session_config->reasoning_effort,
+              sizeof(resolved->reasoning_effort) - 1);
+      resolved->reasoning_effort[sizeof(resolved->reasoning_effort) - 1] = '\0';
+   } else if (g_config.llm.thinking.reasoning_effort[0] != '\0') {
+      strncpy(resolved->reasoning_effort, g_config.llm.thinking.reasoning_effort,
+              sizeof(resolved->reasoning_effort) - 1);
+      resolved->reasoning_effort[sizeof(resolved->reasoning_effort) - 1] = '\0';
+   } else {
+      strncpy(resolved->reasoning_effort, "medium", sizeof(resolved->reasoning_effort) - 1);
+   }
+
    return 0;
 }
 
@@ -1183,8 +1217,9 @@ char *llm_chat_completion_with_config(struct json_object *conversation_history,
                                       size_t vision_image_size,
                                       const llm_resolved_config_t *config) {
    if (!config) {
-      // No config provided, use global
-      return llm_chat_completion(conversation_history, input_text, vision_image, vision_image_size);
+      // No config provided, use global (with fallback enabled)
+      return llm_chat_completion(conversation_history, input_text, vision_image, vision_image_size,
+                                 true);
    }
 
    char *response = NULL;
@@ -1245,9 +1280,10 @@ char *llm_chat_completion_streaming_with_config(struct json_object *conversation
    llm_clear_interrupt();
 
    if (!config) {
-      // No config provided, use global
+      // No config provided, use global (with fallback enabled)
       return llm_chat_completion_streaming(conversation_history, input_text, vision_image,
-                                           vision_image_size, chunk_callback, callback_userdata);
+                                           vision_image_size, chunk_callback, callback_userdata,
+                                           true);
    }
 
    char *response = NULL;
@@ -1326,10 +1362,10 @@ char *llm_chat_completion_streaming_tts_with_config(struct json_object *conversa
                                                     void *callback_userdata,
                                                     const llm_resolved_config_t *config) {
    if (!config) {
-      // No config provided, use global
+      // No config provided, use global (with fallback enabled)
       return llm_chat_completion_streaming_tts(conversation_history, input_text, vision_image,
                                                vision_image_size, sentence_callback,
-                                               callback_userdata);
+                                               callback_userdata, true);
    }
 
    char *response = NULL;

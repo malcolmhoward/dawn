@@ -455,8 +455,10 @@ static void apply_config_from_json(dawn_config_t *config, struct json_object *pa
       struct json_object *thinking;
       if (json_object_object_get_ex(section, "thinking", &thinking)) {
          JSON_TO_CONFIG_STR(thinking, "mode", config->llm.thinking.mode);
-         JSON_TO_CONFIG_INT(thinking, "budget_tokens", config->llm.thinking.budget_tokens);
          JSON_TO_CONFIG_STR(thinking, "reasoning_effort", config->llm.thinking.reasoning_effort);
+         JSON_TO_CONFIG_INT(thinking, "budget_low", config->llm.thinking.budget_low);
+         JSON_TO_CONFIG_INT(thinking, "budget_medium", config->llm.thinking.budget_medium);
+         JSON_TO_CONFIG_INT(thinking, "budget_high", config->llm.thinking.budget_high);
       }
 
       /* Context management settings */

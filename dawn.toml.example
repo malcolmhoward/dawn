@@ -183,16 +183,22 @@
 
 [llm.thinking]
 # Extended thinking/reasoning mode for complex queries
-# mode = "disabled"               # "disabled", "enabled", or "auto"
+# mode = "disabled"               # "disabled" or "enabled"
                                   # Env: DAWN_LLM_THINKING_MODE
-# budget_tokens = 10000           # Token budget for thinking (Claude minimum: 1024)
-                                  # Env: DAWN_LLM_THINKING_BUDGET_TOKENS
-# reasoning_effort = "medium"     # "low", "medium", "high"
+# reasoning_effort = "medium"     # "low", "medium", "high" - selects which budget to use
                                   # Maps to provider-specific settings:
                                   # - OpenAI o-series/GPT-5: reasoning_effort parameter
-                                  # - Claude: budget_tokens (low=1024, medium=8192, high=16384)
+                                  # - Claude: budget_tokens
                                   # - Gemini 2.5+: reasoning_effort (cannot fully disable)
+                                  # - Local (llama.cpp): budget_tokens
                                   # Env: DAWN_LLM_THINKING_REASONING_EFFORT
+# budget_low = 1024               # Token budget for "low" reasoning effort
+                                  # Env: DAWN_LLM_THINKING_BUDGET_LOW
+# budget_medium = 8192            # Token budget for "medium" reasoning effort
+                                  # Env: DAWN_LLM_THINKING_BUDGET_MEDIUM
+# budget_high = 16384             # Token budget for "high" reasoning effort
+                                  # Env: DAWN_LLM_THINKING_BUDGET_HIGH
+                                  # NOTE: Budgets are clamped to 50% of model context size
 
 # =============================================================================
 # Web Search (SearXNG)
@@ -209,13 +215,16 @@
 [search.summarizer]
 # backend = "disabled"            # Summarize large search results:
                                   # "disabled": Return raw results
-                                  # "local": Use dedicated local summarizer
+                                  # "local": Use dedicated local summarizer (llama-server)
                                   # "default": Use same LLM as conversation
+                                  # "tfidf": Fast extractive summarization (no LLM needed)
                                   # Env: DAWN_SEARCH_SUMMARIZER_BACKEND
 # threshold_bytes = 3072          # Summarize results larger than this
                                   # Env: DAWN_SEARCH_SUMMARIZER_THRESHOLD_BYTES
-# target_words = 600              # Target summary length in words
+# target_words = 600              # Target summary length in words (for LLM backends)
                                   # Env: DAWN_SEARCH_SUMMARIZER_TARGET_WORDS
+# target_ratio = 0.2              # Ratio of sentences to keep for TF-IDF (0.2 = 20%)
+                                  # Env: DAWN_SEARCH_SUMMARIZER_TARGET_RATIO
 
 # =============================================================================
 # URL Fetcher

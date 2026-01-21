@@ -457,9 +457,7 @@ json_object *convert_to_claude_format(struct json_object *openai_conversation,
 
       if (model_supports || strcmp(thinking_mode, "enabled") == 0) {
          thinking_enabled = true;
-         thinking_budget = g_config.llm.thinking.budget_tokens;
-         if (thinking_budget < 1024)
-            thinking_budget = 1024;  // Claude minimum
+         thinking_budget = llm_get_effective_budget_tokens();
       }
    }
 

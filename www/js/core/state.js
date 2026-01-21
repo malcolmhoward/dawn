@@ -49,6 +49,7 @@
       lastUpdate: 0,
       last_ttft_ms: 0,
       last_token_rate: 0,
+      last_thinking_tokens: 0, // Preserved reasoning tokens for telemetry display
    };
 
    /**

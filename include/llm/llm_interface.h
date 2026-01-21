@@ -66,13 +66,13 @@ typedef enum {
  * Changes to one session's config do not affect other sessions.
  */
 typedef struct {
-   llm_type_t type;                           /**< LLM type (local or cloud) */
-   cloud_provider_t cloud_provider;           /**< Cloud provider (OpenAI, Claude, etc.) */
-   char endpoint[128];                        /**< Endpoint URL (empty = use provider default) */
-   char model[LLM_MODEL_NAME_MAX];            /**< Model name (empty = use provider default) */
-   char tool_mode[LLM_TOOL_MODE_MAX];         /**< Tool mode: native, command_tags, disabled */
-   char thinking_mode[LLM_THINKING_MODE_MAX]; /**< Thinking: disabled, auto, enabled,
-                                                 low/medium/high */
+   llm_type_t type;                              /**< LLM type (local or cloud) */
+   cloud_provider_t cloud_provider;              /**< Cloud provider (OpenAI, Claude, etc.) */
+   char endpoint[128];                           /**< Endpoint URL (empty = use provider default) */
+   char model[LLM_MODEL_NAME_MAX];               /**< Model name (empty = use provider default) */
+   char tool_mode[LLM_TOOL_MODE_MAX];            /**< Tool mode: native, command_tags, disabled */
+   char thinking_mode[LLM_THINKING_MODE_MAX];    /**< Thinking: disabled, auto, enabled */
+   char reasoning_effort[LLM_THINKING_MODE_MAX]; /**< Reasoning effort: low, medium, high */
 } session_llm_config_t;
 
 /**
@@ -85,14 +85,14 @@ typedef struct {
  * buffers immediately using LLM_COPY_MODEL_SAFE() before any function calls.
  */
 typedef struct {
-   llm_type_t type;                           /**< Resolved LLM type */
-   cloud_provider_t cloud_provider;           /**< Resolved cloud provider */
-   const char *endpoint;                      /**< Endpoint URL (not owned, may be dangling) */
-   const char *api_key;                       /**< API key for cloud providers (not owned) */
-   const char *model;                         /**< Model name (not owned, may be dangling) */
-   char tool_mode[LLM_TOOL_MODE_MAX];         /**< Tool mode: native, command_tags, disabled */
-   char thinking_mode[LLM_THINKING_MODE_MAX]; /**< Thinking: disabled, auto, enabled,
-                                                 low/medium/high */
+   llm_type_t type;                              /**< Resolved LLM type */
+   cloud_provider_t cloud_provider;              /**< Resolved cloud provider */
+   const char *endpoint;                         /**< Endpoint URL (not owned, may be dangling) */
+   const char *api_key;                          /**< API key for cloud providers (not owned) */
+   const char *model;                            /**< Model name (not owned, may be dangling) */
+   char tool_mode[LLM_TOOL_MODE_MAX];            /**< Tool mode: native, command_tags, disabled */
+   char thinking_mode[LLM_THINKING_MODE_MAX];    /**< Thinking: disabled, auto, enabled */
+   char reasoning_effort[LLM_THINKING_MODE_MAX]; /**< Reasoning effort: low, medium, high */
 } llm_resolved_config_t;
 
 /**
@@ -168,7 +168,7 @@ typedef void (*llm_sentence_callback)(const char *sentence, void *userdata);
  * @brief Get chat completion from configured LLM (non-streaming)
  *
  * Routes to appropriate provider based on current configuration.
- * Handles local/cloud fallback automatically on connection failure.
+ * Handles local/cloud fallback automatically on connection failure if allow_fallback is true.
  * Conversation history is always stored in OpenAI format internally,
  * but converted as needed for Claude API calls.
  *
@@ -176,12 +176,14 @@ typedef void (*llm_sentence_callback)(const char *sentence, void *userdata);
  * @param input_text User's input text
  * @param vision_image Optional base64 image for vision models (NULL if not used)
  * @param vision_image_size Size of vision image data (0 if not used)
+ * @param allow_fallback If true, falls back to local LLM on cloud failure
  * @return Response text (caller must free), or NULL on error
  */
 char *llm_chat_completion(struct json_object *conversation_history,
                           const char *input_text,
                           char *vision_image,
-                          size_t vision_image_size);
+                          size_t vision_image_size,
+                          bool allow_fallback);
 
 /**
  * @brief Get chat completion from configured LLM with streaming
@@ -189,7 +191,7 @@ char *llm_chat_completion(struct json_object *conversation_history,
  * Routes to appropriate provider based on current configuration.
  * Calls chunk_callback for each incremental text chunk as it arrives.
  * The complete accumulated response is returned when streaming completes.
- * Handles local/cloud fallback automatically on connection failure.
+ * Handles local/cloud fallback automatically on connection failure if allow_fallback is true.
  *
  * @param conversation_history JSON array of conversation messages (OpenAI format)
  * @param input_text User's input text
@@ -197,6 +199,7 @@ char *llm_chat_completion(struct json_object *conversation_history,
  * @param vision_image_size Size of vision image data (0 if not used)
  * @param chunk_callback Function to call for each text chunk (NULL for non-streaming)
  * @param callback_userdata User context passed to chunk_callback
+ * @param allow_fallback If true, falls back to local LLM on cloud failure
  * @return Complete response text (caller must free), or NULL on error
  */
 char *llm_chat_completion_streaming(struct json_object *conversation_history,
@@ -204,7 +207,8 @@ char *llm_chat_completion_streaming(struct json_object *conversation_history,
                                     char *vision_image,
                                     size_t vision_image_size,
                                     llm_text_chunk_callback chunk_callback,
-                                    void *callback_userdata);
+                                    void *callback_userdata,
+                                    bool allow_fallback);
 
 /**
  * @brief Get chat completion with streaming and sentence-boundary buffering for TTS
@@ -219,6 +223,7 @@ char *llm_chat_completion_streaming(struct json_object *conversation_history,
  * @param vision_image_size Size of vision image data (0 if not used)
  * @param sentence_callback Function to call for each complete sentence
  * @param callback_userdata User context passed to sentence_callback
+ * @param allow_fallback If true, falls back to local LLM on cloud failure
  * @return Complete response text (caller must free), or NULL on error
  */
 char *llm_chat_completion_streaming_tts(struct json_object *conversation_history,
@@ -226,7 +231,8 @@ char *llm_chat_completion_streaming_tts(struct json_object *conversation_history
                                         char *vision_image,
                                         size_t vision_image_size,
                                         llm_sentence_callback sentence_callback,
-                                        void *callback_userdata);
+                                        void *callback_userdata,
+                                        bool allow_fallback);
 
 /**
  * @brief Switch between local and cloud LLM

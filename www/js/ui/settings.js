@@ -35,6 +35,7 @@
    let conversationLlmState = {
       tools_mode: 'native',
       thinking_mode: 'auto',
+      reasoning_effort: 'medium',
       locked: false,
    };
 
@@ -46,8 +47,8 @@
       claude_model: '',
       gemini_model: '',
       tools_mode: 'native',
-      thinking_mode: 'disabled', // For Claude/local: disabled/auto/enabled
-      reasoning_effort: 'medium', // For OpenAI o-series/GPT-5: none/minimal/low/medium/high
+      thinking_mode: 'disabled', // disabled/enabled
+      reasoning_effort: 'medium', // low/medium/high - controls token budget
    };
 
    // Modal state
@@ -426,22 +427,35 @@
                   mode: {
                      type: 'select',
                      label: 'Mode',
-                     options: ['disabled', 'auto', 'enabled'],
-                     hint: 'disabled: never request thinking, auto: enable for supported models, enabled: always request',
-                  },
-                  budget_tokens: {
-                     type: 'number',
-                     label: 'Budget Tokens',
-                     min: 1024,
-                     max: 100000,
-                     step: 1000,
-                     hint: 'Maximum tokens for reasoning (min 1024 for Claude)',
+                     options: ['disabled', 'enabled'],
+                     hint: 'Enable extended thinking for complex queries',
                   },
                   reasoning_effort: {
                      type: 'select',
                      label: 'Reasoning Effort',
-                     options: ['none', 'minimal', 'low', 'medium', 'high'],
-                     hint: 'OpenAI reasoning models: none (GPT-5.2), minimal (GPT-5), low/medium/high (all)',
+                     options: ['low', 'medium', 'high'],
+                     hint: 'Controls which budget level is used (see below)',
+                  },
+                  budget_low: {
+                     type: 'number',
+                     label: 'Budget Low',
+                     min: 256,
+                     step: 256,
+                     hint: 'Token budget for "low" reasoning effort (default: 1024)',
+                  },
+                  budget_medium: {
+                     type: 'number',
+                     label: 'Budget Medium',
+                     min: 512,
+                     step: 512,
+                     hint: 'Token budget for "medium" reasoning effort (default: 8192)',
+                  },
+                  budget_high: {
+                     type: 'number',
+                     label: 'Budget High',
+                     min: 1024,
+                     step: 1024,
+                     hint: 'Token budget for "high" reasoning effort (default: 16384)',
                   },
                },
             },
@@ -487,8 +501,8 @@
                   backend: {
                      type: 'select',
                      label: 'Backend',
-                     options: ['disabled', 'local', 'default'],
-                     hint: 'disabled: no summarization, local: use local LLM, default: use active LLM',
+                     options: ['disabled', 'local', 'default', 'tfidf'],
+                     hint: 'disabled: pass-through, local: local LLM, default: active LLM, tfidf: fast extractive',
                   },
                   threshold_bytes: {
                      type: 'number',
@@ -502,7 +516,15 @@
                      label: 'Target Words',
                      min: 50,
                      step: 50,
-                     hint: 'Target word count for summarized output',
+                     hint: 'Target word count for LLM summarization',
+                  },
+                  target_ratio: {
+                     type: 'number',
+                     label: 'TF-IDF Ratio',
+                     min: 0.1,
+                     max: 1.0,
+                     step: 0.05,
+                     hint: 'Ratio of sentences to keep for TF-IDF (0.2 = 20%)',
                   },
                },
             },
@@ -2152,16 +2174,38 @@
     */
    function initConversationLlmControls() {
       const reasoningSelect = document.getElementById('reasoning-mode-select');
+      const depthSelect = document.getElementById('reasoning-effort-select');
       const toolsSelect = document.getElementById('tools-mode-select');
+
+      // Helper to update depth selector enabled state based on reasoning mode
+      function updateDepthEnabled() {
+         if (depthSelect) {
+            depthSelect.disabled = reasoningSelect && reasoningSelect.value === 'disabled';
+         }
+      }
 
       if (reasoningSelect) {
          reasoningSelect.addEventListener('change', () => {
             conversationLlmState.thinking_mode = reasoningSelect.value;
+            // Update depth selector enabled state
+            updateDepthEnabled();
             // Immediately update session config so thinking_mode takes effect
             if (!conversationLlmState.locked) {
                setSessionLlm({ thinking_mode: reasoningSelect.value });
             }
          });
+      }
+
+      if (depthSelect) {
+         depthSelect.addEventListener('change', () => {
+            conversationLlmState.reasoning_effort = depthSelect.value;
+            // Immediately update session config so reasoning_effort takes effect
+            if (!conversationLlmState.locked) {
+               setSessionLlm({ reasoning_effort: depthSelect.value });
+            }
+         });
+         // Initialize enabled state
+         updateDepthEnabled();
       }
 
       if (toolsSelect) {
@@ -2213,10 +2257,14 @@
    function resetConversationLlmControls() {
       setConversationLlmLocked(false);
 
+      // Clear thinking tokens from previous conversation to prevent stale display
+      DawnState.metricsState.last_thinking_tokens = 0;
+
       const typeSelect = document.getElementById('llm-type-select');
       const providerSelect = document.getElementById('llm-provider-select');
       const modelSelect = document.getElementById('llm-model-select');
       const reasoningSelect = document.getElementById('reasoning-mode-select');
+      const depthSelect = document.getElementById('reasoning-effort-select');
       const toolsSelect = document.getElementById('tools-mode-select');
 
       // Reset type (local/cloud)
@@ -2229,6 +2277,7 @@
          type: globalDefaults.type,
          tool_mode: globalDefaults.tools_mode,
          thinking_mode: globalDefaults.thinking_mode,
+         reasoning_effort: globalDefaults.reasoning_effort,
       };
 
       // Reset provider and model based on type
@@ -2264,6 +2313,13 @@
          sessionReset.thinking_mode = globalDefaults.thinking_mode;
       }
 
+      // Reset depth dropdown and enabled state
+      if (depthSelect) {
+         depthSelect.value = globalDefaults.reasoning_effort;
+         conversationLlmState.reasoning_effort = globalDefaults.reasoning_effort;
+         depthSelect.disabled = globalDefaults.thinking_mode === 'disabled';
+      }
+
       // Reset tools dropdown
       if (toolsSelect) {
          toolsSelect.value = globalDefaults.tools_mode;
@@ -2286,12 +2342,22 @@
     */
    function applyConversationLlmSettings(settings, isLocked) {
       const reasoningSelect = document.getElementById('reasoning-mode-select');
+      const depthSelect = document.getElementById('reasoning-effort-select');
       const toolsSelect = document.getElementById('tools-mode-select');
 
       if (settings) {
          if (settings.thinking_mode && reasoningSelect) {
             reasoningSelect.value = settings.thinking_mode;
             conversationLlmState.thinking_mode = settings.thinking_mode;
+         }
+
+         if (settings.reasoning_effort && depthSelect) {
+            depthSelect.value = settings.reasoning_effort;
+            conversationLlmState.reasoning_effort = settings.reasoning_effort;
+         }
+         // Update depth enabled state based on thinking mode
+         if (depthSelect && reasoningSelect) {
+            depthSelect.disabled = reasoningSelect.value === 'disabled';
          }
 
          if (settings.tools_mode && toolsSelect) {
@@ -2336,6 +2402,7 @@
          model: llmRuntimeState.model,
          tools_mode: conversationLlmState.tools_mode,
          thinking_mode: conversationLlmState.thinking_mode,
+         reasoning_effort: conversationLlmState.reasoning_effort,
       };
    }
 
@@ -2597,11 +2664,18 @@
     */
    function applyGlobalDefaultsToControls() {
       const reasoningSelect = document.getElementById('reasoning-mode-select');
+      const depthSelect = document.getElementById('reasoning-effort-select');
       const toolsSelect = document.getElementById('tools-mode-select');
 
       if (reasoningSelect) {
          reasoningSelect.value = globalDefaults.thinking_mode;
          conversationLlmState.thinking_mode = globalDefaults.thinking_mode;
+      }
+
+      if (depthSelect) {
+         depthSelect.value = globalDefaults.reasoning_effort;
+         conversationLlmState.reasoning_effort = globalDefaults.reasoning_effort;
+         depthSelect.disabled = globalDefaults.thinking_mode === 'disabled';
       }
 
       if (toolsSelect) {
@@ -2613,6 +2687,7 @@
       setSessionLlm({
          tool_mode: globalDefaults.tools_mode,
          thinking_mode: globalDefaults.thinking_mode,
+         reasoning_effort: globalDefaults.reasoning_effort,
       });
    }
 

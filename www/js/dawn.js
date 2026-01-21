@@ -68,6 +68,10 @@
                   } catch (e) {
                      console.error('Failed to parse LLM state update:', e);
                   }
+               } else if (msg.payload.role === 'tool') {
+                  // Tool execution debug messages - display only, don't save to history
+                  // This prevents polluting history with internal tool call formatting
+                  DawnTranscript.addEntry(msg.payload.role, msg.payload.text);
                } else {
                   DawnTranscript.addEntry(msg.payload.role, msg.payload.text);
                   // Save to conversation history (auto-creates conversation on first message)

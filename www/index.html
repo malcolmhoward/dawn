@@ -329,6 +329,14 @@
                      <span id="telem-latency-avg" class="telemetry-avg">avg --</span>
                   </div>
                </div>
+               <div class="telemetry-row hidden" id="telem-thinking-row">
+                  <span class="telemetry-label">THINKING</span>
+                  <div class="telemetry-values">
+                     <span id="telem-thinking" class="telemetry-value"
+                        >-- <small>tokens</small></span
+                     >
+                  </div>
+               </div>
                <div id="telem-message" class="telemetry-message"></div>
                <!-- Context Usage Gauge (bottom of telemetry panel) -->
                <div id="context-display" class="context-display">
@@ -411,10 +419,24 @@
          <div id="llm-conversation-controls">
             <div class="llm-control-group" id="reasoning-group">
                <label for="reasoning-mode-select" id="reasoning-label">Reasoning:</label>
-               <select id="reasoning-mode-select" title="Reasoning mode for this conversation">
-                  <option value="disabled">Disabled</option>
-                  <option value="auto" selected>Auto</option>
+               <select
+                  id="reasoning-mode-select"
+                  title="Enable extended thinking for complex queries"
+               >
+                  <option value="disabled" selected>Disabled</option>
                   <option value="enabled">Enabled</option>
+               </select>
+            </div>
+            <div class="llm-control-group" id="effort-group">
+               <label for="reasoning-effort-select">Effort:</label>
+               <select
+                  id="reasoning-effort-select"
+                  title="Reasoning depth: Low (quick), Medium (balanced), High (thorough)"
+                  disabled
+               >
+                  <option value="low">Low</option>
+                  <option value="medium" selected>Medium</option>
+                  <option value="high">High</option>
                </select>
             </div>
             <div class="llm-control-group" id="tools-group">

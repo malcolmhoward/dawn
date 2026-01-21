@@ -145,8 +145,10 @@ void config_set_defaults(dawn_config_t *config) {
 
    /* LLM Thinking/Reasoning */
    SAFE_COPY(config->llm.thinking.mode, "disabled");           /* "disabled", "enabled", "auto" */
-   config->llm.thinking.budget_tokens = 10000;                 /* Default budget when enabled */
-   SAFE_COPY(config->llm.thinking.reasoning_effort, "medium"); /* OpenAI o-series default */
+   SAFE_COPY(config->llm.thinking.reasoning_effort, "medium"); /* Controls budget via dropdown */
+   config->llm.thinking.budget_low = LLM_THINKING_BUDGET_LOW_DEFAULT;
+   config->llm.thinking.budget_medium = LLM_THINKING_BUDGET_MEDIUM_DEFAULT;
+   config->llm.thinking.budget_high = LLM_THINKING_BUDGET_HIGH_DEFAULT;
 
    /* LLM Context Management */
    config->llm.summarize_threshold = 0.80f;  /* Compact at 80% of context limit */
@@ -157,9 +159,10 @@ void config_set_defaults(dawn_config_t *config) {
    SAFE_COPY(config->search.endpoint, "http://127.0.0.1:8384");
 
    /* Search Summarizer */
-   SAFE_COPY(config->search.summarizer.backend, "disabled");
+   SAFE_COPY(config->search.summarizer.backend, "tfidf"); /* Fast local extractive summarization */
    config->search.summarizer.threshold_bytes = 3072;
    config->search.summarizer.target_words = 600;
+   config->search.summarizer.target_ratio = 0.2f; /* Keep 20% of sentences for TF-IDF */
 
    /* Search Title Filters - exclude low-quality SEO spam from news results */
    SAFE_COPY(config->search.title_filters[0], "wordle");

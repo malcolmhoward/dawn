@@ -133,6 +133,25 @@ add_executable(test_session_commands
 target_link_libraries(test_session_commands
                       pthread)
 
+# Test: TF-IDF Summarizer Quality
+# Fetches articles from diverse outlets and analyzes summarizer output quality
+add_executable(test_summarizer_quality
+               test_summarizer_quality.c
+               ${SRC_ROOT}/src/tools/tfidf_summarizer.c
+               ${SRC_ROOT}/src/tools/url_fetcher.c
+               ${SRC_ROOT}/src/tools/html_parser.c
+               ${SRC_ROOT}/src/tools/string_utils.c
+               ${SRC_ROOT}/src/config/config_parser.c
+               ${SRC_ROOT}/src/config/config_defaults.c
+               ${SRC_ROOT}/src/config/config_env.c
+               ${SRC_ROOT}/src/tools/toml.c
+               ${SRC_ROOT}/src/logging.c)
+
+target_link_libraries(test_summarizer_quality
+                      ${CURL_LIBRARIES}
+                      ${JSONC_LIBRARIES}
+                      m)
+
 # =============================================================================
 # Aggregate "tests" target
 # =============================================================================
@@ -146,4 +165,5 @@ add_custom_target(tests
                           test_vad_api
                           test_asr_concurrent
                           test_session_commands
+                          test_summarizer_quality
                   COMMENT "Building all tests")
