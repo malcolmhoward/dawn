@@ -617,7 +617,7 @@ static void executeJsonCommand(struct json_object *parsedJson, struct mosquitto 
    json_object_object_add(system_response_message, "content", json_object_new_string(gpt_response));
    json_object_array_add(conversation_history, system_response_message);
 
-   response_text = llm_chat_completion(conversation_history, gpt_response, NULL, 0, true);
+   response_text = llm_chat_completion(conversation_history, gpt_response, NULL, NULL, 0, true);
    if (response_text != NULL) {
       // AI returned successfully, vocalize response.
       LOG_WARNING("AI: %s\n", response_text);

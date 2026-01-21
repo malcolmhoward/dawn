@@ -46,13 +46,14 @@ typedef void (*llm_openai_text_chunk_callback)(const char *chunk, void *userdata
  * @brief OpenAI chat completion (non-streaming)
  *
  * Handles OpenAI-compatible API calls (works for both cloud OpenAI and local LLMs).
- * Supports vision API when vision_image is provided.
+ * Supports vision API when vision_images is provided.
  * Conversation history is always in OpenAI format (role/content pairs).
  *
  * @param conversation_history JSON array of messages (OpenAI format)
  * @param input_text User input text
- * @param vision_image Optional base64 image for vision models (NULL if not used)
- * @param vision_image_size Image size in bytes (0 if not used)
+ * @param vision_images Array of base64 images for vision models (NULL if not used)
+ * @param vision_image_sizes Array of image sizes in bytes (NULL if not used)
+ * @param vision_image_count Number of images (0 if not used)
  * @param base_url Base URL (cloud: https://api.openai.com, local: http://127.0.0.1:8080)
  * @param api_key API key (NULL for local LLM, required for cloud)
  * @param model Model name (NULL = use config default)
@@ -60,8 +61,9 @@ typedef void (*llm_openai_text_chunk_callback)(const char *chunk, void *userdata
  */
 char *llm_openai_chat_completion(struct json_object *conversation_history,
                                  const char *input_text,
-                                 char *vision_image,
-                                 size_t vision_image_size,
+                                 const char **vision_images,
+                                 const size_t *vision_image_sizes,
+                                 int vision_image_count,
                                  const char *base_url,
                                  const char *api_key,
                                  const char *model);
@@ -75,8 +77,9 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
  *
  * @param conversation_history JSON array of messages (OpenAI format)
  * @param input_text User input text
- * @param vision_image Optional base64 image for vision models (NULL if not used)
- * @param vision_image_size Image size in bytes (0 if not used)
+ * @param vision_images Array of base64 images for vision models (NULL if not used)
+ * @param vision_image_sizes Array of image sizes in bytes (NULL if not used)
+ * @param vision_image_count Number of images (0 if not used)
  * @param base_url Base URL (cloud: https://api.openai.com, local: http://127.0.0.1:8080)
  * @param api_key API key (NULL for local LLM, required for cloud)
  * @param model Model name (NULL = use config default)
@@ -86,8 +89,9 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
  */
 char *llm_openai_chat_completion_streaming(struct json_object *conversation_history,
                                            const char *input_text,
-                                           char *vision_image,
-                                           size_t vision_image_size,
+                                           const char **vision_images,
+                                           const size_t *vision_image_sizes,
+                                           int vision_image_count,
                                            const char *base_url,
                                            const char *api_key,
                                            const char *model,

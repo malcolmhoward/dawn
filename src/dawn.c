@@ -1157,7 +1157,7 @@ void *llm_worker_thread(void *arg) {
    // and we only read it here, so no mutex needed for conversation_history itself
    // Vision is handled by native tool calling - viewing tool captures image internally
    char *response = llm_chat_completion_streaming_tts_with_config(conversation_history,
-                                                                  request_text, NULL, 0,
+                                                                  request_text, NULL, NULL, 0,
                                                                   dawn_tts_sentence_callback, NULL,
                                                                   &resolved_config);
    // Command context auto-cleared by scope guard

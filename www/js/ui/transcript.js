@@ -173,6 +173,40 @@
    }
 
    // =============================================================================
+   // Image Marker Helpers
+   // =============================================================================
+
+   /**
+    * Create a secure image element from a validated data URI
+    * SECURITY: Only renders images with safe data URI prefixes
+    * @param {string} dataUrl - The validated data URI
+    * @returns {HTMLElement|null} - Image wrapper element or null if invalid
+    */
+   function createImageElement(dataUrl) {
+      // SECURITY: Validate data URI using DawnVision's security check
+      if (!DawnVision || !DawnVision.isSafeDataUri(dataUrl)) {
+         console.warn('Transcript: Rejected unsafe image data URI');
+         return null;
+      }
+
+      const wrapper = document.createElement('div');
+      wrapper.className = 'transcript-image-wrapper';
+
+      const img = document.createElement('img');
+      img.className = 'transcript-image';
+      img.alt = 'Uploaded image';
+      img.src = dataUrl;
+
+      // Add click to expand (optional enhancement)
+      img.addEventListener('click', () => {
+         img.classList.toggle('expanded');
+      });
+
+      wrapper.appendChild(img);
+      return wrapper;
+   }
+
+   // =============================================================================
    // Content Detection Helpers
    // =============================================================================
 
@@ -299,11 +333,21 @@
       const transcript = DawnElements.transcript;
       if (!transcript) return;
 
+      // Parse image markers if present (user messages may have embedded images)
+      let imageDataUrls = [];
+      let displayText = text;
+
+      if (DawnVision && DawnVision.parseImageMarkers) {
+         const parsed = DawnVision.parseImageMarkers(text);
+         displayText = parsed.text;
+         imageDataUrls = parsed.imageDataUrls || [];
+      }
+
       const entry = document.createElement('div');
       entry.className = `transcript-entry ${role}`;
       entry.innerHTML = `
       <div class="role">${DawnFormat.escapeHtml(role)}</div>
-      <div class="text">${DawnFormat.markdown(text)}</div>
+      <div class="text">${DawnFormat.markdown(displayText)}</div>
     `;
       transcript.appendChild(entry);
 
@@ -311,6 +355,21 @@
       const textEl = entry.querySelector('.text');
       if (textEl) {
          DawnFormat.addCopyButtons(textEl);
+      }
+
+      // Add images if present (after text content)
+      if (imageDataUrls.length > 0) {
+         const imagesContainer = document.createElement('div');
+         imagesContainer.className = 'transcript-images-container';
+         for (const dataUrl of imageDataUrls) {
+            const imageEl = createImageElement(dataUrl);
+            if (imageEl) {
+               imagesContainer.appendChild(imageEl);
+            }
+         }
+         if (imagesContainer.children.length > 0) {
+            textEl.appendChild(imagesContainer);
+         }
       }
    }
 
@@ -377,18 +436,43 @@
          if (!text) return;
       }
 
+      // Parse image markers if present (user messages may have embedded images)
+      let imageDataUrls = [];
+      let displayText = text;
+
+      if (DawnVision && DawnVision.parseImageMarkers) {
+         const parsed = DawnVision.parseImageMarkers(text);
+         displayText = parsed.text;
+         imageDataUrls = parsed.imageDataUrls || [];
+      }
+
       // Create the entry
       const entry = document.createElement('div');
       entry.className = `transcript-entry ${role}`;
       entry.innerHTML = `
       <div class="role">${DawnFormat.escapeHtml(role)}</div>
-      <div class="text">${DawnFormat.markdown(text)}</div>
+      <div class="text">${DawnFormat.markdown(displayText)}</div>
     `;
 
       // Add copy buttons to code blocks
       const textEl = entry.querySelector('.text');
       if (textEl) {
          DawnFormat.addCopyButtons(textEl);
+      }
+
+      // Add images if present (after text content)
+      if (imageDataUrls.length > 0) {
+         const imagesContainer = document.createElement('div');
+         imagesContainer.className = 'transcript-images-container';
+         for (const dataUrl of imageDataUrls) {
+            const imageEl = createImageElement(dataUrl);
+            if (imageEl) {
+               imagesContainer.appendChild(imageEl);
+            }
+         }
+         if (imagesContainer.children.length > 0) {
+            textEl.appendChild(imagesContainer);
+         }
       }
 
       // Insert thinking/reasoning block first if present

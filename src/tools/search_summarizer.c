@@ -395,7 +395,7 @@ static int summarize_with_default_llm(const char *prompt, char **out_summary) {
    // Call cloud LLM (non-streaming for summarization)
    // Pass allow_fallback=false to prevent summarizer failures from triggering
    // global LLM fallback (which would switch to local LLM and play TTS notification)
-   char *response = llm_chat_completion(conversation, prompt, NULL, 0, false);
+   char *response = llm_chat_completion(conversation, prompt, NULL, NULL, 0, false);
 
    // Restore tools
    llm_tools_suppress_pop();

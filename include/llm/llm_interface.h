@@ -174,15 +174,17 @@ typedef void (*llm_sentence_callback)(const char *sentence, void *userdata);
  *
  * @param conversation_history JSON array of conversation messages (OpenAI format)
  * @param input_text User's input text
- * @param vision_image Optional base64 image for vision models (NULL if not used)
- * @param vision_image_size Size of vision image data (0 if not used)
+ * @param vision_images Array of base64 images for vision models (NULL if not used)
+ * @param vision_image_sizes Array of image sizes (NULL if not used)
+ * @param vision_image_count Number of images (0 if not used)
  * @param allow_fallback If true, falls back to local LLM on cloud failure
  * @return Response text (caller must free), or NULL on error
  */
 char *llm_chat_completion(struct json_object *conversation_history,
                           const char *input_text,
-                          char *vision_image,
-                          size_t vision_image_size,
+                          const char **vision_images,
+                          const size_t *vision_image_sizes,
+                          int vision_image_count,
                           bool allow_fallback);
 
 /**
@@ -195,8 +197,9 @@ char *llm_chat_completion(struct json_object *conversation_history,
  *
  * @param conversation_history JSON array of conversation messages (OpenAI format)
  * @param input_text User's input text
- * @param vision_image Optional base64 image for vision models (NULL if not used)
- * @param vision_image_size Size of vision image data (0 if not used)
+ * @param vision_images Array of base64 images for vision models (NULL if not used)
+ * @param vision_image_sizes Array of image sizes (NULL if not used)
+ * @param vision_image_count Number of images (0 if not used)
  * @param chunk_callback Function to call for each text chunk (NULL for non-streaming)
  * @param callback_userdata User context passed to chunk_callback
  * @param allow_fallback If true, falls back to local LLM on cloud failure
@@ -204,8 +207,9 @@ char *llm_chat_completion(struct json_object *conversation_history,
  */
 char *llm_chat_completion_streaming(struct json_object *conversation_history,
                                     const char *input_text,
-                                    char *vision_image,
-                                    size_t vision_image_size,
+                                    const char **vision_images,
+                                    const size_t *vision_image_sizes,
+                                    int vision_image_count,
                                     llm_text_chunk_callback chunk_callback,
                                     void *callback_userdata,
                                     bool allow_fallback);
@@ -219,8 +223,9 @@ char *llm_chat_completion_streaming(struct json_object *conversation_history,
  *
  * @param conversation_history JSON array of conversation messages (OpenAI format)
  * @param input_text User's input text
- * @param vision_image Optional base64 image for vision models (NULL if not used)
- * @param vision_image_size Size of vision image data (0 if not used)
+ * @param vision_images Array of base64 images for vision models (NULL if not used)
+ * @param vision_image_sizes Array of image sizes (NULL if not used)
+ * @param vision_image_count Number of images (0 if not used)
  * @param sentence_callback Function to call for each complete sentence
  * @param callback_userdata User context passed to sentence_callback
  * @param allow_fallback If true, falls back to local LLM on cloud failure
@@ -228,8 +233,9 @@ char *llm_chat_completion_streaming(struct json_object *conversation_history,
  */
 char *llm_chat_completion_streaming_tts(struct json_object *conversation_history,
                                         const char *input_text,
-                                        char *vision_image,
-                                        size_t vision_image_size,
+                                        const char **vision_images,
+                                        const size_t *vision_image_sizes,
+                                        int vision_image_count,
                                         llm_sentence_callback sentence_callback,
                                         void *callback_userdata,
                                         bool allow_fallback);
@@ -435,15 +441,17 @@ void llm_get_default_config(session_llm_config_t *config);
  *
  * @param conversation_history JSON array of conversation messages (OpenAI format)
  * @param input_text User's input text
- * @param vision_image Optional base64 image for vision models (NULL if not used)
- * @param vision_image_size Size of vision image data (0 if not used)
+ * @param vision_images Array of base64 images for vision models (NULL if not used)
+ * @param vision_image_sizes Array of image sizes (NULL if not used)
+ * @param vision_image_count Number of images (0 if not used)
  * @param config Resolved LLM configuration to use
  * @return Response text (caller must free), or NULL on error
  */
 char *llm_chat_completion_with_config(struct json_object *conversation_history,
                                       const char *input_text,
-                                      char *vision_image,
-                                      size_t vision_image_size,
+                                      const char **vision_images,
+                                      const size_t *vision_image_sizes,
+                                      int vision_image_count,
                                       const llm_resolved_config_t *config);
 
 /**
@@ -453,8 +461,9 @@ char *llm_chat_completion_with_config(struct json_object *conversation_history,
  *
  * @param conversation_history JSON array of conversation messages (OpenAI format)
  * @param input_text User's input text
- * @param vision_image Optional base64 image for vision models (NULL if not used)
- * @param vision_image_size Size of vision image data (0 if not used)
+ * @param vision_images Array of base64 images for vision models (NULL if not used)
+ * @param vision_image_sizes Array of image sizes (NULL if not used)
+ * @param vision_image_count Number of images (0 if not used)
  * @param chunk_callback Function to call for each text chunk
  * @param callback_userdata User context passed to chunk_callback
  * @param config Resolved LLM configuration to use
@@ -462,8 +471,9 @@ char *llm_chat_completion_with_config(struct json_object *conversation_history,
  */
 char *llm_chat_completion_streaming_with_config(struct json_object *conversation_history,
                                                 const char *input_text,
-                                                char *vision_image,
-                                                size_t vision_image_size,
+                                                const char **vision_images,
+                                                const size_t *vision_image_sizes,
+                                                int vision_image_count,
                                                 llm_text_chunk_callback chunk_callback,
                                                 void *callback_userdata,
                                                 const llm_resolved_config_t *config);
@@ -475,8 +485,9 @@ char *llm_chat_completion_streaming_with_config(struct json_object *conversation
  *
  * @param conversation_history JSON array of conversation messages (OpenAI format)
  * @param input_text User's input text
- * @param vision_image Optional base64 image for vision models (NULL if not used)
- * @param vision_image_size Size of vision image data (0 if not used)
+ * @param vision_images Array of base64 images for vision models (NULL if not used)
+ * @param vision_image_sizes Array of image sizes (NULL if not used)
+ * @param vision_image_count Number of images (0 if not used)
  * @param sentence_callback Function to call for each complete sentence
  * @param callback_userdata User context passed to sentence_callback
  * @param config Resolved LLM configuration to use
@@ -484,8 +495,9 @@ char *llm_chat_completion_streaming_with_config(struct json_object *conversation
  */
 char *llm_chat_completion_streaming_tts_with_config(struct json_object *conversation_history,
                                                     const char *input_text,
-                                                    char *vision_image,
-                                                    size_t vision_image_size,
+                                                    const char **vision_images,
+                                                    const size_t *vision_image_sizes,
+                                                    int vision_image_count,
                                                     llm_sentence_callback sentence_callback,
                                                     void *callback_userdata,
                                                     const llm_resolved_config_t *config);

@@ -371,6 +371,158 @@ bool is_path_within_www(const char *filepath, const char *www_path) {
 }
 
 /* =============================================================================
+ * Vision Image Validation
+ *
+ * Security-hardened validation for uploaded images. Prevents memory
+ * amplification attacks by checking sizes BEFORE allocation.
+ * ============================================================================= */
+
+/**
+ * @brief Check if MIME type is in vision whitelist
+ *
+ * SVG explicitly excluded to prevent XSS attacks.
+ *
+ * @param mime_type MIME type string to check
+ * @return true if allowed, false if rejected
+ */
+static bool is_vision_mime_allowed(const char *mime_type) {
+   if (!mime_type)
+      return false;
+
+   /* Explicit whitelist - SVG excluded for XSS prevention */
+   static const char *allowed[] = { "image/jpeg", "image/png", "image/gif", "image/webp" };
+   static const int num_allowed = sizeof(allowed) / sizeof(allowed[0]);
+
+   for (int i = 0; i < num_allowed; i++) {
+      if (strcasecmp(mime_type, allowed[i]) == 0) {
+         return true;
+      }
+   }
+   return false;
+}
+
+/**
+ * @brief Check if string contains only valid base64 characters
+ *
+ * @param str String to check
+ * @param len Length of string
+ * @return true if valid base64 charset, false otherwise
+ */
+static bool is_valid_base64_charset(const char *str, size_t len) {
+   for (size_t i = 0; i < len; i++) {
+      char c = str[i];
+      /* Valid base64: A-Z, a-z, 0-9, +, /, = (padding) */
+      if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+            c == '+' || c == '/' || c == '=')) {
+         return false;
+      }
+   }
+   return true;
+}
+
+/**
+ * @brief Check image magic bytes against expected MIME type
+ *
+ * @param data First 16 bytes of decoded image
+ * @param len Length of data (may be less than 16)
+ * @param mime_type Expected MIME type
+ * @return true if magic bytes match, false otherwise
+ */
+static bool check_image_magic(const unsigned char *data, size_t len, const char *mime_type) {
+   if (!data || len < 3 || !mime_type)
+      return false;
+
+   /* JPEG: FF D8 FF */
+   if (strcasecmp(mime_type, "image/jpeg") == 0) {
+      return (len >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF);
+   }
+
+   /* PNG: 89 50 4E 47 0D 0A 1A 0A */
+   if (strcasecmp(mime_type, "image/png") == 0) {
+      static const unsigned char png_magic[] = { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A };
+      return (len >= 8 && memcmp(data, png_magic, 8) == 0);
+   }
+
+   /* GIF: 47 49 46 38 ("GIF8") */
+   if (strcasecmp(mime_type, "image/gif") == 0) {
+      return (len >= 4 && memcmp(data, "GIF8", 4) == 0);
+   }
+
+   /* WebP: RIFF....WEBP */
+   if (strcasecmp(mime_type, "image/webp") == 0) {
+      return (len >= 12 && memcmp(data, "RIFF", 4) == 0 && memcmp(data + 8, "WEBP", 4) == 0);
+   }
+
+   return false;
+}
+
+/**
+ * @brief Validate base64-encoded image data (security-hardened)
+ *
+ * Validation order prevents memory amplification attacks:
+ * 1. Check MIME type against whitelist (no allocation)
+ * 2. Check base64 string length against WEBUI_MAX_BASE64_SIZE (no allocation)
+ * 3. Validate base64 character set (no allocation)
+ * 4. Decode first 24 bytes only to check magic bytes (stack buffer)
+ *
+ * @param base64_data Base64 encoded image string
+ * @param base64_len Length of base64 string
+ * @param mime_type MIME type string
+ * @return 0 on success, error code on failure:
+ *         1 = Invalid MIME type
+ *         2 = Base64 data too large
+ *         3 = Invalid base64 characters
+ *         4 = Magic bytes don't match MIME type
+ *         5 = Decode error
+ */
+static int validate_image_data(const char *base64_data, size_t base64_len, const char *mime_type) {
+   /* Step 1: MIME type whitelist (no allocation) */
+   if (!is_vision_mime_allowed(mime_type)) {
+      LOG_WARNING("WebUI Vision: Rejected MIME type: %s", mime_type ? mime_type : "(null)");
+      return 1;
+   }
+
+   /* Step 2: Size check (no allocation) - prevents memory amplification */
+   if (base64_len > WEBUI_MAX_BASE64_SIZE) {
+      LOG_WARNING("WebUI Vision: Base64 data too large: %zu > %zu", base64_len,
+                  (size_t)WEBUI_MAX_BASE64_SIZE);
+      return 2;
+   }
+
+   /* Step 3: Validate base64 character set (no allocation) */
+   if (!is_valid_base64_charset(base64_data, base64_len)) {
+      LOG_WARNING("WebUI Vision: Invalid base64 characters");
+      return 3;
+   }
+
+   /* Step 4: Decode minimal prefix to check magic bytes (stack buffer)
+    * We need 24 base64 chars to decode 18 bytes (enough for all magic checks) */
+   if (base64_len >= 24) {
+      /* Create null-terminated subset for decoder */
+      char prefix[25];
+      memcpy(prefix, base64_data, 24);
+      prefix[24] = '\0';
+
+      size_t decoded_len = 0;
+      unsigned char *decoded = ocp_base64_decode(prefix, &decoded_len);
+      if (!decoded) {
+         LOG_WARNING("WebUI Vision: Failed to decode base64 prefix");
+         return 5;
+      }
+
+      bool magic_ok = check_image_magic(decoded, decoded_len, mime_type);
+      free(decoded);
+
+      if (!magic_ok) {
+         LOG_WARNING("WebUI Vision: Magic bytes don't match MIME type %s", mime_type);
+         return 4;
+      }
+   }
+
+   return 0;
+}
+
+/* =============================================================================
  * HTTP Session Data
  *
  * struct http_session_data and related constants are in webui_internal.h
@@ -1286,7 +1438,13 @@ char *build_user_prompt(int user_id) {
  * JSON Message Handling
  * ============================================================================= */
 
-static void handle_text_message(ws_connection_t *conn, const char *json_str, size_t len);
+static void handle_text_message(ws_connection_t *conn,
+                                const char *text,
+                                size_t len,
+                                const char **vision_images,
+                                const size_t *vision_image_sizes,
+                                const char **vision_mimes,
+                                int vision_image_count);
 static void handle_cancel_message(ws_connection_t *conn);
 /* Config handlers: handle_get_config, handle_set_config, handle_set_secrets,
  * handle_get_audio_devices, handle_list_models, handle_list_interfaces
@@ -1472,13 +1630,77 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
    json_object_object_get_ex(root, "payload", &payload);
 
    if (strcmp(type, "text") == 0) {
-      /* Text input from user */
+      /* Text input from user (with optional vision images - supports multiple) */
       if (payload) {
          struct json_object *text_obj;
          if (json_object_object_get_ex(payload, "text", &text_obj)) {
             const char *text = json_object_get_string(text_obj);
             if (text && strlen(text) > 0) {
-               handle_text_message(conn, text, strlen(text));
+               /* Extract optional images for vision (array format) */
+               const char *vision_images[WEBUI_MAX_VISION_IMAGES] = { 0 };
+               size_t vision_image_sizes[WEBUI_MAX_VISION_IMAGES] = { 0 };
+               const char *vision_mimes[WEBUI_MAX_VISION_IMAGES] = { 0 };
+               int vision_image_count = 0;
+
+               struct json_object *images_obj;
+               if (json_object_object_get_ex(payload, "images", &images_obj) &&
+                   json_object_is_type(images_obj, json_type_array)) {
+                  int array_len = json_object_array_length(images_obj);
+                  if (array_len > WEBUI_MAX_VISION_IMAGES) {
+                     LOG_WARNING("WebUI: Too many images (%d), limiting to %d", array_len,
+                                 WEBUI_MAX_VISION_IMAGES);
+                     array_len = WEBUI_MAX_VISION_IMAGES;
+                  }
+
+                  for (int i = 0; i < array_len; i++) {
+                     struct json_object *image_obj = json_object_array_get_idx(images_obj, i);
+                     struct json_object *data_obj, *mime_obj;
+                     if (json_object_object_get_ex(image_obj, "data", &data_obj) &&
+                         json_object_object_get_ex(image_obj, "mime_type", &mime_obj)) {
+                        const char *img_data = json_object_get_string(data_obj);
+                        const char *img_mime = json_object_get_string(mime_obj);
+                        if (img_data) {
+                           size_t img_size = strlen(img_data);
+
+                           /* Validate each image BEFORE passing to handler */
+                           int val_result = validate_image_data(img_data, img_size, img_mime);
+                           if (val_result != 0) {
+                              const char *err_msg = "Image validation failed";
+                              switch (val_result) {
+                                 case 1:
+                                    err_msg = "Unsupported image type";
+                                    break;
+                                 case 2:
+                                    err_msg = "Image too large (max 4MB)";
+                                    break;
+                                 case 3:
+                                    err_msg = "Invalid image data encoding";
+                                    break;
+                                 case 4:
+                                    err_msg = "Image format doesn't match declared type";
+                                    break;
+                              }
+                              send_error_impl(conn->wsi, "INVALID_IMAGE", err_msg);
+                              json_object_put(root);
+                              free(json_str);
+                              return;
+                           }
+
+                           vision_images[vision_image_count] = img_data;
+                           vision_image_sizes[vision_image_count] = img_size;
+                           vision_mimes[vision_image_count] = img_mime;
+                           vision_image_count++;
+                        }
+                     }
+                  }
+
+                  if (vision_image_count > 0) {
+                     LOG_INFO("WebUI: %d vision image(s) attached", vision_image_count);
+                  }
+               }
+
+               handle_text_message(conn, text, strlen(text), vision_images, vision_image_sizes,
+                                   vision_mimes, vision_image_count);
             }
          }
       }
@@ -3681,6 +3903,11 @@ typedef struct {
    session_t *session;
    char *text;
    unsigned int request_gen; /* Captured request_generation to detect superseded requests */
+   /* Vision support fields - supports multiple images per message */
+   char *vision_images[WEBUI_MAX_VISION_IMAGES];                      /* Base64 encoded images */
+   size_t vision_image_sizes[WEBUI_MAX_VISION_IMAGES];                /* Size of each image */
+   char vision_mimes[WEBUI_MAX_VISION_IMAGES][WEBUI_VISION_MIME_MAX]; /* MIME types */
+   int vision_image_count;                                            /* Number of images */
 } text_work_t;
 
 /**
@@ -3928,6 +4155,26 @@ static void strip_command_tags(char *text) {
 
 /* REQUEST_SUPERSEDED macro now defined in webui_internal.h */
 
+static void text_worker_cleanup(text_work_t *work, session_t *session, char *text) {
+   if (session) {
+      session_release(session);
+   }
+   if (text) {
+      free(text);
+   }
+   if (work) {
+      /* Free all vision images if present */
+      for (int i = 0; i < work->vision_image_count; i++) {
+         if (work->vision_images[i]) {
+            free(work->vision_images[i]);
+            work->vision_images[i] = NULL;
+         }
+      }
+      work->vision_image_count = 0;
+      free(work);
+   }
+}
+
 static void *text_worker_thread(void *arg) {
    text_work_t *work = (text_work_t *)arg;
    session_t *session = work->session;
@@ -3937,27 +4184,59 @@ static void *text_worker_thread(void *arg) {
    /* Check if session is still valid or if this request was superseded */
    if (!session || REQUEST_SUPERSEDED(session, expected_gen)) {
       LOG_INFO("WebUI: Session disconnected or request superseded, aborting text processing");
-      if (session) {
-         session_release(session);
-      }
-      free(text);
-      free(work);
+      text_worker_cleanup(work, session, text);
       return NULL;
    }
 
-   LOG_INFO("WebUI: Processing text input for session %u: %s", session->session_id, text);
+   if (work->vision_image_count > 0) {
+      size_t total_bytes = 0;
+      for (int i = 0; i < work->vision_image_count; i++) {
+         total_bytes += work->vision_image_sizes[i];
+      }
+      LOG_INFO("WebUI: Processing text+vision for session %u: %s (%d images, %zu total bytes)",
+               session->session_id, text, work->vision_image_count, total_bytes);
+   } else {
+      LOG_INFO("WebUI: Processing text input for session %u: %s", session->session_id, text);
+   }
 
    /* Send "thinking" state */
-   webui_send_state_with_detail(session, "thinking", "Processing request...");
+   if (work->vision_image_count > 0) {
+      if (work->vision_image_count == 1) {
+         webui_send_state_with_detail(session, "thinking", "Analyzing image...");
+      } else {
+         webui_send_state_with_detail(session, "thinking", "Analyzing images...");
+      }
+   } else {
+      webui_send_state_with_detail(session, "thinking", "Processing request...");
+   }
 
    /* Echo user input as transcript */
    webui_send_transcript(session, "user", text);
 
-   /* Add user message to history immediately (before LLM call can be cancelled) */
-   session_add_message(session, "user", text);
+   /* Add user message to history immediately (before LLM call can be cancelled)
+    * If images present, store in multi-part format so they persist across turns */
+   if (work->vision_image_count > 0) {
+      session_add_message_with_images(session, "user", text,
+                                      (const char *const *)work->vision_images,
+                                      work->vision_image_count);
+   } else {
+      session_add_message(session, "user", text);
+   }
 
-   /* Call LLM with session's conversation history (message already added above) */
-   char *response = session_llm_call_no_add(session, text);
+   /* Call LLM with session's conversation history (message already added above)
+    * Pass vision data if present - LLM will include in request */
+   char *response = session_llm_call_no_add(
+       session, text, (const char **)work->vision_images, work->vision_image_sizes,
+       (const char(*)[WEBUI_VISION_MIME_MAX])work->vision_mimes, work->vision_image_count);
+
+   /* Free vision data after LLM call (it's been sent over HTTP, no longer needed) */
+   for (int i = 0; i < work->vision_image_count; i++) {
+      if (work->vision_images[i]) {
+         free(work->vision_images[i]);
+         work->vision_images[i] = NULL;
+      }
+   }
+   work->vision_image_count = 0;
 
    /* Check if request was superseded during LLM call */
    if (REQUEST_SUPERSEDED(session, expected_gen)) {
@@ -4042,7 +4321,8 @@ static void *text_worker_thread(void *arg) {
    strip_command_tags(final_response);
 
    /* Note: Don't send transcript here - streaming already delivered the content.
-    * The session_llm_call() uses webui_send_stream_start/delta/end for real-time delivery. */
+    * The session_llm_call() uses webui_send_stream_start/delta/end for real-time delivery.
+    * Assistant response is already added to history inside session_llm_call_no_add(). */
 
    /* Free the final response (either original response or processed copy) */
    free(final_response);
@@ -4068,9 +4348,32 @@ static void *text_worker_thread(void *arg) {
    return NULL;
 }
 
-int webui_process_text_input(session_t *session, const char *text) {
+/**
+ * @brief Process text input with optional vision images (internal)
+ *
+ * @param session Session context
+ * @param text User text input
+ * @param vision_images Array of base64 encoded image data (NULL for text-only)
+ * @param vision_image_sizes Array of image sizes
+ * @param vision_mimes Array of MIME type strings
+ * @param vision_image_count Number of images (0 for text-only)
+ * @return 0 on success, non-zero on failure
+ */
+int webui_process_text_input_with_vision(session_t *session,
+                                         const char *text,
+                                         const char **vision_images,
+                                         const size_t *vision_image_sizes,
+                                         const char **vision_mimes,
+                                         int vision_image_count) {
    if (!session || !text || strlen(text) == 0) {
       return 1;
+   }
+
+   /* Validate image count */
+   if (vision_image_count > WEBUI_MAX_VISION_IMAGES) {
+      LOG_WARNING("WebUI: Too many images (%d), limiting to %d", vision_image_count,
+                  WEBUI_MAX_VISION_IMAGES);
+      vision_image_count = WEBUI_MAX_VISION_IMAGES;
    }
 
    /* Increment request generation FIRST to invalidate any pending requests,
@@ -4085,6 +4388,7 @@ int webui_process_text_input(session_t *session, const char *text) {
       LOG_ERROR("WebUI: Failed to allocate text work item");
       return 1;
    }
+   memset(work, 0, sizeof(text_work_t));
 
    work->session = session;
    work->text = strdup(text);
@@ -4093,6 +4397,34 @@ int webui_process_text_input(session_t *session, const char *text) {
       LOG_ERROR("WebUI: Failed to allocate text copy");
       free(work);
       return 1;
+   }
+
+   /* Copy vision images if present */
+   if (vision_images && vision_image_count > 0) {
+      for (int i = 0; i < vision_image_count; i++) {
+         if (!vision_images[i] || vision_image_sizes[i] == 0) {
+            continue;
+         }
+
+         work->vision_images[work->vision_image_count] = strdup(vision_images[i]);
+         if (!work->vision_images[work->vision_image_count]) {
+            LOG_ERROR("WebUI: Failed to allocate vision image %d copy", i);
+            /* Free previously allocated images */
+            for (int j = 0; j < work->vision_image_count; j++) {
+               free(work->vision_images[j]);
+            }
+            free(work->text);
+            free(work);
+            return 1;
+         }
+         work->vision_image_sizes[work->vision_image_count] = vision_image_sizes[i];
+         if (vision_mimes && vision_mimes[i]) {
+            strncpy(work->vision_mimes[work->vision_image_count], vision_mimes[i],
+                    WEBUI_VISION_MIME_MAX - 1);
+            work->vision_mimes[work->vision_image_count][WEBUI_VISION_MIME_MAX - 1] = '\0';
+         }
+         work->vision_image_count++;
+      }
    }
 
    /* Retain session for worker thread (worker will release when done) */
@@ -4111,11 +4443,18 @@ int webui_process_text_input(session_t *session, const char *text) {
       LOG_ERROR("WebUI: Failed to create text worker thread");
       session_release(session);
       free(work->text);
+      for (int i = 0; i < work->vision_image_count; i++) {
+         free(work->vision_images[i]);
+      }
       free(work);
       return 1;
    }
 
    return 0;
+}
+
+int webui_process_text_input(session_t *session, const char *text) {
+   return webui_process_text_input_with_vision(session, text, NULL, NULL, NULL, 0);
 }
 
 /* =============================================================================
@@ -4161,17 +4500,39 @@ int webui_force_logout_by_auth_token(const char *auth_token_prefix) {
  * JSON Message Handler Implementation
  * ============================================================================= */
 
-static void handle_text_message(ws_connection_t *conn, const char *text, size_t len) {
+static void handle_text_message(ws_connection_t *conn,
+                                const char *text,
+                                size_t len,
+                                const char **vision_images,
+                                const size_t *vision_image_sizes,
+                                const char **vision_mimes,
+                                int vision_image_count) {
    (void)len; /* Length already validated by caller */
+
+   /* SECURITY: Require authentication for text processing */
+   if (!conn_require_auth(conn)) {
+      return; /* conn_require_auth already sent error */
+   }
 
    if (!conn->session) {
       LOG_WARNING("WebUI: Text message received but no session");
       return;
    }
 
-   LOG_INFO("WebUI: Text input from session %u: %s", conn->session->session_id, text);
+   if (vision_image_count > 0) {
+      size_t total_bytes = 0;
+      for (int i = 0; i < vision_image_count; i++) {
+         total_bytes += vision_image_sizes[i];
+      }
+      LOG_INFO("WebUI: Text+Vision input from session %u: %s (%d images, %zu total bytes)",
+               conn->session->session_id, text, vision_image_count, total_bytes);
+   } else {
+      LOG_INFO("WebUI: Text input from session %u: %s", conn->session->session_id, text);
+   }
 
-   int ret = webui_process_text_input(conn->session, text);
+   int ret = webui_process_text_input_with_vision(conn->session, text, vision_images,
+                                                  vision_image_sizes, vision_mimes,
+                                                  vision_image_count);
    if (ret != 0) {
       send_error_impl(conn->wsi, "PROCESSING_ERROR", "Failed to process text input");
    }

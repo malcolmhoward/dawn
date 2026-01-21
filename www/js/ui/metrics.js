@@ -212,7 +212,7 @@
    }
 
    /**
-    * Reset session averages
+    * Reset session averages and displayed metrics for new conversation
     */
    function resetAverages() {
       avgState = {
@@ -220,6 +220,16 @@
          ttft: { sum: 0, count: 0 },
          latency: { sum: 0, count: 0 },
       };
+
+      // Also reset the "last" values so they don't persist across conversations
+      if (typeof DawnState !== 'undefined' && DawnState.metricsState) {
+         DawnState.metricsState.last_ttft_ms = 0;
+         DawnState.metricsState.last_token_rate = 0;
+         DawnState.metricsState.last_thinking_tokens = 0;
+      }
+
+      // Refresh the panel to show cleared values
+      updateTelemetryPanel();
    }
 
    // =============================================================================

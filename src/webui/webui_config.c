@@ -44,6 +44,7 @@
 #include "llm/llm_local_provider.h"
 #include "logging.h"
 #include "webui/webui_internal.h"
+#include "webui/webui_server.h" /* For WEBUI_MAX_VISION_* constants */
 
 /* =============================================================================
  * Module State
@@ -185,6 +186,18 @@ void handle_get_config(ws_connection_t *conn) {
    if (conn->authenticated) {
       json_object_object_add(payload, "username", json_object_new_string(conn->username));
    }
+
+   /* Add vision limits (server-authoritative values for client) */
+   json_object *vision_limits = json_object_new_object();
+   json_object_object_add(vision_limits, "max_images",
+                          json_object_new_int(WEBUI_MAX_VISION_IMAGES));
+   json_object_object_add(vision_limits, "max_image_size",
+                          json_object_new_int(WEBUI_MAX_IMAGE_SIZE));
+   json_object_object_add(vision_limits, "max_dimension",
+                          json_object_new_int(WEBUI_MAX_IMAGE_DIMENSION));
+   json_object_object_add(vision_limits, "max_thumbnail_size",
+                          json_object_new_int(WEBUI_MAX_THUMBNAIL_SIZE));
+   json_object_object_add(payload, "vision_limits", vision_limits);
 
    json_object_object_add(response, "payload", payload);
 

@@ -50,6 +50,18 @@ extern "C" {
 #define WEBUI_MAX_CLIENTS 4
 #define WEBUI_SUBPROTOCOL "dawn-1.0"
 
+/* Vision image limits - conservative for embedded (Jetson) */
+#define WEBUI_MAX_IMAGE_SIZE (4 * 1024 * 1024)                   /* 4MB decoded max */
+#define WEBUI_MAX_BASE64_SIZE (WEBUI_MAX_IMAGE_SIZE * 4 / 3 + 4) /* ~5.3MB encoded */
+#define WEBUI_MAX_IMAGE_DIMENSION 1024 /* 1024px max edge (optimized for LLM APIs) */
+#define WEBUI_MAX_CONCURRENT_VISION 2  /* Limit concurrent */
+#define WEBUI_VISION_MIME_MAX 24       /* MIME type buffer */
+#define WEBUI_MAX_VISION_IMAGES 5      /* Max images per message */
+
+/* Thumbnail limits for conversation history storage (security/DoS prevention) */
+#define WEBUI_MAX_THUMBNAIL_SIZE (150 * 1024)   /* 150KB max per thumbnail */
+#define WEBUI_MAX_THUMBNAIL_BASE64 (200 * 1024) /* ~200KB encoded (150KB * 4/3) */
+
 /* =============================================================================
  * Return Codes
  * ============================================================================= */

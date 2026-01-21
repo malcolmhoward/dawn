@@ -96,6 +96,20 @@
       username: '',
    };
 
+   /**
+    * Vision state (for image upload and preview)
+    * Note: maxImages, maxSize, maxDimension are defaults that get overridden
+    * by server-provided values in vision_limits config response.
+    */
+   const visionState = {
+      pendingImages: [], // Array of { data: base64, mimeType: string, thumbnail: string }
+      maxImages: 5, // Default, overridden by server WEBUI_MAX_VISION_IMAGES
+      maxSize: 4 * 1024 * 1024, // Default, overridden by server WEBUI_MAX_IMAGE_SIZE
+      maxDimension: 1024, // Default, overridden by server WEBUI_MAX_IMAGE_DIMENSION
+      isProcessing: false, // Loading indicator state
+      visionEnabled: false, // Whether current model supports vision
+   };
+
    // =============================================================================
    // Expose globally
    // =============================================================================
@@ -127,5 +141,6 @@
       hesitationState: hesitationState,
       thinkingState: thinkingState,
       authState: authState,
+      visionState: visionState,
    };
 })(window);

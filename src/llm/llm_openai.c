@@ -641,8 +641,9 @@ static struct curl_slist *build_openai_headers(const char *api_key) {
 
 char *llm_openai_chat_completion(struct json_object *conversation_history,
                                  const char *input_text,
-                                 char *vision_image,
-                                 size_t vision_image_size,
+                                 const char **vision_images,
+                                 const size_t *vision_image_sizes,
+                                 int vision_image_count,
                                  const char *base_url,
                                  const char *api_key,
                                  const char *model) {
@@ -696,8 +697,8 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
    }
 
    // User message is now added by dawn.c before calling this function
-   // If vision is provided, modify the last user message to include image
-   if (vision_image != NULL && vision_image_size > 0) {
+   // If vision is provided, modify the last user message to include images
+   if (vision_images != NULL && vision_image_count > 0) {
       int msg_count = json_object_array_length(converted_history);
       if (msg_count > 0) {
          json_object *last_msg = json_object_array_get_idx(converted_history, msg_count - 1);
@@ -711,20 +712,27 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
             json_object_object_add(text_obj, "text", json_object_new_string(input_text));
             json_object_array_add(content_array, text_obj);
 
-            json_object *image_obj = json_object_new_object();
-            json_object_object_add(image_obj, "type", json_object_new_string("image_url"));
+            // Add each image to the content array
+            for (int i = 0; i < vision_image_count; i++) {
+               if (!vision_images[i] || (vision_image_sizes && vision_image_sizes[i] == 0)) {
+                  continue;
+               }
 
-            json_object *image_url_obj = json_object_new_object();
-            char *data_uri_prefix = "data:image/jpeg;base64,";
-            size_t data_uri_length = strlen(data_uri_prefix) + strlen(vision_image) + 1;
-            char *data_uri = malloc(data_uri_length);
-            if (data_uri != NULL) {
-               snprintf(data_uri, data_uri_length, "%s%s", data_uri_prefix, vision_image);
-               json_object_object_add(image_url_obj, "url", json_object_new_string(data_uri));
-               free(data_uri);
+               json_object *image_obj = json_object_new_object();
+               json_object_object_add(image_obj, "type", json_object_new_string("image_url"));
+
+               json_object *image_url_obj = json_object_new_object();
+               const char *data_uri_prefix = "data:image/jpeg;base64,";
+               size_t data_uri_length = strlen(data_uri_prefix) + strlen(vision_images[i]) + 1;
+               char *data_uri = malloc(data_uri_length);
+               if (data_uri != NULL) {
+                  snprintf(data_uri, data_uri_length, "%s%s", data_uri_prefix, vision_images[i]);
+                  json_object_object_add(image_url_obj, "url", json_object_new_string(data_uri));
+                  free(data_uri);
+               }
+               json_object_object_add(image_obj, "image_url", image_url_obj);
+               json_object_array_add(content_array, image_obj);
             }
-            json_object_object_add(image_obj, "image_url", image_url_obj);
-            json_object_array_add(content_array, image_obj);
 
             json_object_object_add(last_msg, "content", content_array);
          }
@@ -1151,8 +1159,9 @@ static const char *parse_api_error_message(const char *response_body, long http_
  */
 static char *llm_openai_streaming_internal(struct json_object *conversation_history,
                                            const char *input_text,
-                                           char *vision_image,
-                                           size_t vision_image_size,
+                                           const char **vision_images,
+                                           const size_t *vision_image_sizes,
+                                           int vision_image_count,
                                            const char *base_url,
                                            const char *api_key,
                                            const char *model,
@@ -1307,15 +1316,22 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
    }
 
    // Handle vision if provided
-   if (vision_image != NULL && vision_image_size > 0) {
-      LOG_INFO("OpenAI streaming: Vision image provided (%zu bytes)", vision_image_size);
+   if (vision_images != NULL && vision_image_count > 0) {
+      size_t total_bytes = 0;
+      for (int i = 0; i < vision_image_count; i++) {
+         if (vision_image_sizes && vision_images[i]) {
+            total_bytes += vision_image_sizes[i];
+         }
+      }
+      LOG_INFO("OpenAI streaming: %d vision images provided (%zu total bytes)", vision_image_count,
+               total_bytes);
       int msg_count = json_object_array_length(converted_history);
       if (msg_count > 0) {
          json_object *last_msg = json_object_array_get_idx(converted_history, msg_count - 1);
          json_object *role_obj;
          if (json_object_object_get_ex(last_msg, "role", &role_obj) &&
              strcmp(json_object_get_string(role_obj), "user") == 0) {
-            LOG_INFO("OpenAI streaming: Adding vision to last user message");
+            LOG_INFO("OpenAI streaming: Adding %d images to last user message", vision_image_count);
             // Last message is user message - add vision content
             json_object *content_array = json_object_new_array();
             json_object *text_obj = json_object_new_object();
@@ -1323,25 +1339,31 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
             json_object_object_add(text_obj, "text", json_object_new_string(input_text));
             json_object_array_add(content_array, text_obj);
 
-            json_object *image_obj = json_object_new_object();
-            json_object_object_add(image_obj, "type", json_object_new_string("image_url"));
+            // Add each image
+            for (int i = 0; i < vision_image_count; i++) {
+               if (!vision_images[i] || (vision_image_sizes && vision_image_sizes[i] == 0)) {
+                  continue;
+               }
+               json_object *image_obj = json_object_new_object();
+               json_object_object_add(image_obj, "type", json_object_new_string("image_url"));
 
-            json_object *image_url_obj = json_object_new_object();
-            char *data_uri_prefix = "data:image/jpeg;base64,";
-            size_t data_uri_length = strlen(data_uri_prefix) + strlen(vision_image) + 1;
-            char *data_uri = malloc(data_uri_length);
-            if (data_uri != NULL) {
-               snprintf(data_uri, data_uri_length, "%s%s", data_uri_prefix, vision_image);
-               json_object_object_add(image_url_obj, "url", json_object_new_string(data_uri));
-               free(data_uri);
+               json_object *image_url_obj = json_object_new_object();
+               const char *data_uri_prefix = "data:image/jpeg;base64,";
+               size_t data_uri_length = strlen(data_uri_prefix) + strlen(vision_images[i]) + 1;
+               char *data_uri = malloc(data_uri_length);
+               if (data_uri != NULL) {
+                  snprintf(data_uri, data_uri_length, "%s%s", data_uri_prefix, vision_images[i]);
+                  json_object_object_add(image_url_obj, "url", json_object_new_string(data_uri));
+                  free(data_uri);
+               }
+               json_object_object_add(image_obj, "image_url", image_url_obj);
+               json_object_array_add(content_array, image_obj);
             }
-            json_object_object_add(image_obj, "image_url", image_url_obj);
-            json_object_array_add(content_array, image_obj);
 
             json_object_object_add(last_msg, "content", content_array);
          } else {
             /* Last message is not user (e.g., tool result after viewing command).
-             * Create a new user message with the vision image. */
+             * Create a new user message with the vision images. */
             LOG_INFO("OpenAI streaming: Adding vision as new user message (last was role=%s)",
                      role_obj ? json_object_get_string(role_obj) : "null");
 
@@ -1354,25 +1376,30 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
             json_object *text_obj = json_object_new_object();
             json_object_object_add(text_obj, "type", json_object_new_string("text"));
             json_object_object_add(text_obj, "text",
-                                   json_object_new_string("Here is the captured image. "
+                                   json_object_new_string("Here are the captured images. "
                                                           "Please respond to the user's request."));
             json_object_array_add(content_array, text_obj);
 
-            /* Add the image */
-            json_object *image_obj = json_object_new_object();
-            json_object_object_add(image_obj, "type", json_object_new_string("image_url"));
+            /* Add each image */
+            for (int i = 0; i < vision_image_count; i++) {
+               if (!vision_images[i] || (vision_image_sizes && vision_image_sizes[i] == 0)) {
+                  continue;
+               }
+               json_object *image_obj = json_object_new_object();
+               json_object_object_add(image_obj, "type", json_object_new_string("image_url"));
 
-            json_object *image_url_obj = json_object_new_object();
-            char *data_uri_prefix = "data:image/jpeg;base64,";
-            size_t data_uri_length = strlen(data_uri_prefix) + strlen(vision_image) + 1;
-            char *data_uri = malloc(data_uri_length);
-            if (data_uri != NULL) {
-               snprintf(data_uri, data_uri_length, "%s%s", data_uri_prefix, vision_image);
-               json_object_object_add(image_url_obj, "url", json_object_new_string(data_uri));
-               free(data_uri);
+               json_object *image_url_obj = json_object_new_object();
+               const char *data_uri_prefix = "data:image/jpeg;base64,";
+               size_t data_uri_length = strlen(data_uri_prefix) + strlen(vision_images[i]) + 1;
+               char *data_uri = malloc(data_uri_length);
+               if (data_uri != NULL) {
+                  snprintf(data_uri, data_uri_length, "%s%s", data_uri_prefix, vision_images[i]);
+                  json_object_object_add(image_url_obj, "url", json_object_new_string(data_uri));
+                  free(data_uri);
+               }
+               json_object_object_add(image_obj, "image_url", image_url_obj);
+               json_object_array_add(content_array, image_obj);
             }
-            json_object_object_add(image_obj, "image_url", image_url_obj);
-            json_object_array_add(content_array, image_obj);
 
             json_object_object_add(new_user_msg, "content", content_array);
 
@@ -1666,7 +1693,7 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
             const char *fresh_model = model_buf[0] ? model_buf : model;
 
             // Recursive call with MAX_TOOL_ITERATIONS to skip further tool processing
-            return llm_openai_streaming_internal(conversation_history, "", NULL, 0, fresh_url,
+            return llm_openai_streaming_internal(conversation_history, "", NULL, NULL, 0, fresh_url,
                                                  fresh_key, fresh_model, chunk_callback,
                                                  callback_userdata, MAX_TOOL_ITERATIONS);
          }
@@ -1820,9 +1847,13 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
             // Claude will handle the vision data if present
             // Use copied model buffer for Claude model
             const char *claude_model = model_buf_followup[0] ? model_buf_followup : NULL;
+            // Pass tool result vision as a single-item array
+            const char *result_vision_arr[1] = { result_vision };
+            size_t result_vision_size_arr[1] = { result_vision_size };
+            int result_vision_count = result_vision ? 1 : 0;
             result = llm_claude_chat_completion_streaming(
-                conversation_history, "", (char *)result_vision, result_vision_size,
-                current_config.endpoint, current_config.api_key, claude_model,
+                conversation_history, "", result_vision_arr, result_vision_size_arr,
+                result_vision_count, current_config.endpoint, current_config.api_key, claude_model,
                 (llm_claude_text_chunk_callback)chunk_callback, callback_userdata);
          } else {
             // Still OpenAI-compatible (local or OpenAI cloud) - use resolved config or fallback
@@ -1835,9 +1866,14 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
                LOG_INFO("OpenAI streaming: Credentials refreshed to %s", fresh_url);
             }
 
-            result = llm_openai_streaming_internal(conversation_history, "", (char *)result_vision,
-                                                   result_vision_size, fresh_url, fresh_api_key,
-                                                   fresh_model, chunk_callback, callback_userdata,
+            // Pass tool result vision as a single-item array
+            const char *result_vision_arr[1] = { result_vision };
+            size_t result_vision_size_arr[1] = { result_vision_size };
+            int result_vision_count = result_vision ? 1 : 0;
+            result = llm_openai_streaming_internal(conversation_history, "", result_vision_arr,
+                                                   result_vision_size_arr, result_vision_count,
+                                                   fresh_url, fresh_api_key, fresh_model,
+                                                   chunk_callback, callback_userdata,
                                                    iteration + 1);
          }
 
@@ -1877,14 +1913,15 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
 
 char *llm_openai_chat_completion_streaming(struct json_object *conversation_history,
                                            const char *input_text,
-                                           char *vision_image,
-                                           size_t vision_image_size,
+                                           const char **vision_images,
+                                           const size_t *vision_image_sizes,
+                                           int vision_image_count,
                                            const char *base_url,
                                            const char *api_key,
                                            const char *model,
                                            llm_openai_text_chunk_callback chunk_callback,
                                            void *callback_userdata) {
-   return llm_openai_streaming_internal(conversation_history, input_text, vision_image,
-                                        vision_image_size, base_url, api_key, model, chunk_callback,
-                                        callback_userdata, 0);
+   return llm_openai_streaming_internal(conversation_history, input_text, vision_images,
+                                        vision_image_sizes, vision_image_count, base_url, api_key,
+                                        model, chunk_callback, callback_userdata, 0);
 }

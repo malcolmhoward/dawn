@@ -76,8 +76,9 @@ static struct curl_slist *build_claude_headers(const char *api_key) {
 
 char *llm_claude_chat_completion(struct json_object *conversation_history,
                                  const char *input_text,
-                                 char *vision_image,
-                                 size_t vision_image_size,
+                                 const char **vision_images,
+                                 const size_t *vision_image_sizes,
+                                 int vision_image_count,
                                  const char *base_url,
                                  const char *api_key,
                                  const char *model) {
@@ -89,8 +90,8 @@ char *llm_claude_chat_completion(struct json_object *conversation_history,
    char *response = NULL;
 
    // Convert OpenAI format to Claude format
-   json_object *request = convert_to_claude_format(conversation_history, input_text, vision_image,
-                                                   vision_image_size, model);
+   json_object *request = convert_to_claude_format(conversation_history, input_text, vision_images,
+                                                   vision_image_sizes, vision_image_count, model);
 
    const char *payload = json_object_to_json_string_ext(
        request, JSON_C_TO_STRING_PLAIN | JSON_C_TO_STRING_NOSLASHESCAPE);
@@ -382,8 +383,9 @@ static const char *parse_claude_error_message(const char *response_body, long ht
  */
 static char *llm_claude_streaming_internal(struct json_object *conversation_history,
                                            const char *input_text,
-                                           char *vision_image,
-                                           size_t vision_image_size,
+                                           const char **vision_images,
+                                           const size_t *vision_image_sizes,
+                                           int vision_image_count,
                                            const char *base_url,
                                            const char *api_key,
                                            const char *model,
@@ -417,8 +419,8 @@ static char *llm_claude_streaming_internal(struct json_object *conversation_hist
    }
 
    // Convert OpenAI format to Claude format
-   request = convert_to_claude_format(conversation_history, input_text, vision_image,
-                                      vision_image_size, model);
+   request = convert_to_claude_format(conversation_history, input_text, vision_images,
+                                      vision_image_sizes, vision_image_count, model);
    if (!request) {
       LOG_ERROR("Failed to convert conversation to Claude format");
       return NULL;
@@ -739,6 +741,11 @@ static char *llm_claude_streaming_internal(struct json_object *conversation_hist
             model_buf_followup[sizeof(model_buf_followup) - 1] = '\0';
          }
 
+         // Create single-item array for tool result vision
+         const char *result_vision_arr[1] = { result_vision };
+         size_t result_vision_size_arr[1] = { result_vision_size };
+         int result_vision_count = result_vision ? 1 : 0;
+
          if (config_valid && (current_config.type == LLM_LOCAL ||
                               current_config.cloud_provider == CLOUD_PROVIDER_OPENAI)) {
             // Provider switched to OpenAI or local - hand off to OpenAI code path
@@ -747,8 +754,8 @@ static char *llm_claude_streaming_internal(struct json_object *conversation_hist
             // OpenAI will handle the vision data if present
             // Use copied model buffer to avoid dangling pointer
             result = llm_openai_chat_completion_streaming(
-                conversation_history, "", (char *)result_vision, result_vision_size,
-                current_config.endpoint, current_config.api_key,
+                conversation_history, "", result_vision_arr, result_vision_size_arr,
+                result_vision_count, current_config.endpoint, current_config.api_key,
                 model_buf_followup[0] ? model_buf_followup : NULL,
                 (llm_openai_text_chunk_callback)chunk_callback, callback_userdata);
          } else {
@@ -756,10 +763,10 @@ static char *llm_claude_streaming_internal(struct json_object *conversation_hist
             const char *fresh_url = config_valid ? current_config.endpoint : base_url;
             const char *fresh_api_key = config_valid ? current_config.api_key : api_key;
 
-            result = llm_claude_streaming_internal(conversation_history, "", (char *)result_vision,
-                                                   result_vision_size, fresh_url, fresh_api_key,
-                                                   model, chunk_callback, callback_userdata,
-                                                   iteration + 1);
+            result = llm_claude_streaming_internal(conversation_history, "", result_vision_arr,
+                                                   result_vision_size_arr, result_vision_count,
+                                                   fresh_url, fresh_api_key, model, chunk_callback,
+                                                   callback_userdata, iteration + 1);
          }
 
          // Free vision data from tool results after use
@@ -794,14 +801,15 @@ static char *llm_claude_streaming_internal(struct json_object *conversation_hist
 
 char *llm_claude_chat_completion_streaming(struct json_object *conversation_history,
                                            const char *input_text,
-                                           char *vision_image,
-                                           size_t vision_image_size,
+                                           const char **vision_images,
+                                           const size_t *vision_image_sizes,
+                                           int vision_image_count,
                                            const char *base_url,
                                            const char *api_key,
                                            const char *model,
                                            llm_claude_text_chunk_callback chunk_callback,
                                            void *callback_userdata) {
-   return llm_claude_streaming_internal(conversation_history, input_text, vision_image,
-                                        vision_image_size, base_url, api_key, model, chunk_callback,
-                                        callback_userdata, 0);
+   return llm_claude_streaming_internal(conversation_history, input_text, vision_images,
+                                        vision_image_sizes, vision_image_count, base_url, api_key,
+                                        model, chunk_callback, callback_userdata, 0);
 }

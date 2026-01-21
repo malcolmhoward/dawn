@@ -34,6 +34,136 @@
 #include "llm/llm_command_parser.h"
 #include "logging.h"
 #include "webui/webui_internal.h"
+#include "webui/webui_server.h" /* For WEBUI_MAX_THUMBNAIL_BASE64 */
+
+/* =============================================================================
+ * Image Marker Validation (Security)
+ * ============================================================================ */
+
+/* Safe data URI prefixes for thumbnails (SVG explicitly excluded for XSS prevention) */
+static const char *SAFE_IMAGE_PREFIXES[] = { "data:image/jpeg;base64,", "data:image/png;base64,",
+                                             "data:image/gif;base64,", "data:image/webp;base64,",
+                                             NULL };
+
+/* Valid base64 character lookup table (A-Z, a-z, 0-9, +, /, =) */
+static const unsigned char BASE64_VALID[256] = {
+   ['A'] = 1, ['B'] = 1, ['C'] = 1, ['D'] = 1, ['E'] = 1, ['F'] = 1, ['G'] = 1, ['H'] = 1,
+   ['I'] = 1, ['J'] = 1, ['K'] = 1, ['L'] = 1, ['M'] = 1, ['N'] = 1, ['O'] = 1, ['P'] = 1,
+   ['Q'] = 1, ['R'] = 1, ['S'] = 1, ['T'] = 1, ['U'] = 1, ['V'] = 1, ['W'] = 1, ['X'] = 1,
+   ['Y'] = 1, ['Z'] = 1, ['a'] = 1, ['b'] = 1, ['c'] = 1, ['d'] = 1, ['e'] = 1, ['f'] = 1,
+   ['g'] = 1, ['h'] = 1, ['i'] = 1, ['j'] = 1, ['k'] = 1, ['l'] = 1, ['m'] = 1, ['n'] = 1,
+   ['o'] = 1, ['p'] = 1, ['q'] = 1, ['r'] = 1, ['s'] = 1, ['t'] = 1, ['u'] = 1, ['v'] = 1,
+   ['w'] = 1, ['x'] = 1, ['y'] = 1, ['z'] = 1, ['0'] = 1, ['1'] = 1, ['2'] = 1, ['3'] = 1,
+   ['4'] = 1, ['5'] = 1, ['6'] = 1, ['7'] = 1, ['8'] = 1, ['9'] = 1, ['+'] = 1, ['/'] = 1,
+   ['='] = 1
+};
+
+/**
+ * @brief Validate a single image marker
+ *
+ * @param marker_start Pointer to start of "[IMAGE:" marker
+ * @param marker_end Output: pointer to closing ']' if found
+ * @return true if marker is valid, false if malicious/oversized
+ */
+static bool validate_single_image_marker(const char *marker_start, const char **marker_end) {
+   /* Find the closing bracket */
+   const char *end = strchr(marker_start + 7, ']');
+   if (!end) {
+      return false; /* Malformed marker */
+   }
+   *marker_end = end;
+
+   /* Extract data URI (skip "[IMAGE:" prefix) */
+   const char *data_uri = marker_start + 7;
+   size_t data_uri_len = end - data_uri;
+
+   /* Check against safe prefixes */
+   bool has_safe_prefix = false;
+   for (int i = 0; SAFE_IMAGE_PREFIXES[i] != NULL; i++) {
+      size_t prefix_len = strlen(SAFE_IMAGE_PREFIXES[i]);
+      if (data_uri_len > prefix_len && strncmp(data_uri, SAFE_IMAGE_PREFIXES[i], prefix_len) == 0) {
+         has_safe_prefix = true;
+         break;
+      }
+   }
+
+   if (!has_safe_prefix) {
+      LOG_WARNING("WebUI: Rejected message with unsafe image data URI prefix");
+      return false;
+   }
+
+   /* Check size (base64 portion only) */
+   const char *base64_start = strchr(data_uri, ',');
+   if (!base64_start || base64_start >= end) {
+      return false; /* Malformed data URI */
+   }
+   base64_start++; /* Skip comma */
+
+   size_t base64_len = end - base64_start;
+   if (base64_len > WEBUI_MAX_THUMBNAIL_BASE64) {
+      LOG_WARNING("WebUI: Rejected oversized thumbnail (%zu > %d bytes)", base64_len,
+                  WEBUI_MAX_THUMBNAIL_BASE64);
+      return false;
+   }
+
+   /* Validate base64 characters (prevents injection via malformed data) */
+   for (size_t i = 0; i < base64_len; i++) {
+      unsigned char c = (unsigned char)base64_start[i];
+      if (!BASE64_VALID[c]) {
+         LOG_WARNING("WebUI: Rejected thumbnail with invalid base64 character at position %zu", i);
+         return false;
+      }
+   }
+
+   return true;
+}
+
+/**
+ * @brief Validate ALL embedded image markers in message content
+ *
+ * Checks for all [IMAGE:data:image/...] markers and validates each:
+ * 1. Data URI has safe prefix (JPEG, PNG, GIF, WebP only)
+ * 2. Base64 size is within thumbnail limit
+ * 3. Base64 contains only valid characters (A-Z, a-z, 0-9, +, /, =)
+ *
+ * SECURITY: Validates every marker, not just the first, to prevent bypass
+ * attacks where a valid first image masks a malicious second image.
+ *
+ * @param content Message content to validate
+ * @return true if all markers are safe, false if any malicious/oversized image found
+ */
+static bool validate_image_marker(const char *content) {
+   if (!content)
+      return true;
+
+   const char *search_pos = content;
+   const char *marker_start;
+   int marker_count = 0;
+
+   /* Iterate through ALL [IMAGE: markers in content */
+   while ((marker_start = strstr(search_pos, "[IMAGE:")) != NULL) {
+      const char *marker_end = NULL;
+
+      if (!validate_single_image_marker(marker_start, &marker_end)) {
+         LOG_WARNING("WebUI: Rejected invalid image marker #%d in message", marker_count + 1);
+         return false;
+      }
+
+      marker_count++;
+
+      /* Limit total markers to prevent DoS (matches WEBUI_MAX_VISION_IMAGES) */
+      if (marker_count > WEBUI_MAX_VISION_IMAGES) {
+         LOG_WARNING("WebUI: Rejected message with too many image markers (%d > %d)", marker_count,
+                     WEBUI_MAX_VISION_IMAGES);
+         return false;
+      }
+
+      /* Move search position past this marker */
+      search_pos = marker_end + 1;
+   }
+
+   return true;
+}
 
 /* =============================================================================
  * Conversation History Handlers (Authenticated Users)
@@ -136,14 +266,22 @@ void handle_new_conversation(ws_connection_t *conn, struct json_object *payload)
       json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
       json_object_object_add(resp_payload, "conversation_id", json_object_new_int64(conv_id));
 
-      /* Clear session history for fresh start and re-add system prompt */
-      if (conn->session) {
-         session_clear_history(conn->session);
-         char *prompt = build_user_prompt(conn->auth_user_id);
-         session_add_message(conn->session, "system",
-                             prompt ? prompt : get_remote_command_prompt());
-         free(prompt);
-      }
+      /* NOTE: We intentionally do NOT clear session history here.
+       *
+       * The client sends "new_conversation" AFTER sending the first text message.
+       * The server may have already added that message to session history and started
+       * the LLM call. Clearing the history here would wipe out the user's message
+       * mid-request, breaking conversation continuity.
+       *
+       * The session history is the active in-memory context for the LLM.
+       * The database conversation is for persistence across sessions.
+       * These serve different purposes and should not be coupled.
+       *
+       * Session history is cleared only when:
+       * - User explicitly requests clear_history
+       * - User loads a different conversation (load_conversation)
+       * - User starts a new chat via UI (which sends clear_history first)
+       */
 
       auth_db_log_event("CONVERSATION_CREATED", conn->username, conn->client_ip,
                         "New conversation");
@@ -846,6 +984,17 @@ void handle_save_message(ws_connection_t *conn, struct json_object *payload) {
    int64_t conv_id = json_object_get_int64(conv_id_obj);
    const char *role = json_object_get_string(role_obj);
    const char *content = json_object_get_string(content_obj);
+
+   /* SECURITY: Validate any embedded image thumbnails (size limit, safe prefix) */
+   if (!validate_image_marker(content)) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Invalid or oversized image data"));
+      json_object_object_add(response, "payload", resp_payload);
+      send_json_response(conn->wsi, response);
+      json_object_put(response);
+      return;
+   }
 
    int result = conv_db_add_message(conv_id, conn->auth_user_id, role, content);
 

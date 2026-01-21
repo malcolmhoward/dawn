@@ -395,6 +395,33 @@ void session_cleanup_expired(void);
 void session_add_message(session_t *session, const char *role, const char *content);
 
 /**
+ * @brief Add message with images to session's conversation history
+ *
+ * Creates a multi-part content message in OpenAI format:
+ * { "role": "user", "content": [
+ *     { "type": "text", "text": "..." },
+ *     { "type": "image_url", "image_url": { "url": "data:image/jpeg;base64,..." } },
+ *     ...
+ * ]}
+ *
+ * This allows images to persist across conversation turns for follow-up questions.
+ *
+ * @param session Session to update
+ * @param role Message role ("user" typically)
+ * @param text Text content of the message
+ * @param vision_images Array of base64-encoded image strings
+ * @param vision_image_count Number of images in array
+ *
+ * @locks session->history_mutex
+ * @lock_order 3
+ */
+void session_add_message_with_images(session_t *session,
+                                     const char *role,
+                                     const char *text,
+                                     const char *const *vision_images,
+                                     int vision_image_count);
+
+/**
  * @brief Get conversation history JSON (for LLM API calls)
  *
  * @param session Session to query
@@ -477,7 +504,7 @@ char *session_get_system_prompt(session_t *session);
 char *session_llm_call(session_t *session, const char *user_text);
 
 /**
- * @brief Call LLM without adding user message to history
+ * @brief Call LLM without adding user message to history (with optional vision)
  *
  * Same as session_llm_call but skips adding user message to history.
  * Use when caller has already added the message before the call.
@@ -485,9 +512,18 @@ char *session_llm_call(session_t *session, const char *user_text);
  *
  * @param session Session context
  * @param user_text User input text
+ * @param vision_images Array of base64 encoded image data (NULL for text-only)
+ * @param vision_image_sizes Array of image sizes (NULL for text-only)
+ * @param vision_mimes Array of MIME type strings (NULL for text-only)
+ * @param vision_image_count Number of images (0 for text-only)
  * @return LLM response (caller must free), or NULL on failure
  */
-char *session_llm_call_no_add(session_t *session, const char *user_text);
+char *session_llm_call_no_add(session_t *session,
+                              const char *user_text,
+                              const char **vision_images,
+                              const size_t *vision_image_sizes,
+                              const char (*vision_mimes)[24],
+                              int vision_image_count);
 
 /**
  * @brief Sentence callback for TTS streaming

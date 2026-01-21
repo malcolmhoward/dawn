@@ -749,7 +749,7 @@ int llm_context_compact(uint32_t session_id,
    g_config.network.llm_timeout_ms = 180000; /* 3 minutes for summarization */
 
    /* Make LLM call for summary (with fallback enabled) */
-   char *summary = llm_chat_completion(summary_request, NULL, NULL, 0, true);
+   char *summary = llm_chat_completion(summary_request, NULL, NULL, NULL, 0, true);
 
    /* Restore timeout and tools */
    g_config.network.llm_timeout_ms = saved_timeout;

@@ -801,6 +801,85 @@ void session_add_message(session_t *session, const char *role, const char *conte
 
    json_object_array_add(session->conversation_history, message);
 
+   int count = json_object_array_length(session->conversation_history);
+   LOG_INFO("Session %u: Added %s message to history (now %d messages)", session->session_id, role,
+            count);
+
+   pthread_mutex_unlock(&session->history_mutex);
+}
+
+void session_add_message_with_images(session_t *session,
+                                     const char *role,
+                                     const char *text,
+                                     const char *const *vision_images,
+                                     int vision_image_count) {
+   if (!session || !role || !text) {
+      return;
+   }
+
+   /* No images? Fall back to simple text message */
+   if (!vision_images || vision_image_count <= 0) {
+      session_add_message(session, role, text);
+      return;
+   }
+
+   pthread_mutex_lock(&session->history_mutex);
+
+   struct json_object *message = json_object_new_object();
+   if (!message) {
+      pthread_mutex_unlock(&session->history_mutex);
+      LOG_ERROR("Failed to create message object");
+      return;
+   }
+
+   json_object_object_add(message, "role", json_object_new_string(role));
+
+   /* Build multi-part content array in OpenAI format */
+   struct json_object *content = json_object_new_array();
+   if (!content) {
+      json_object_put(message);
+      pthread_mutex_unlock(&session->history_mutex);
+      LOG_ERROR("Failed to create content array");
+      return;
+   }
+
+   /* Add text part first */
+   struct json_object *text_part = json_object_new_object();
+   json_object_object_add(text_part, "type", json_object_new_string("text"));
+   json_object_object_add(text_part, "text", json_object_new_string(text));
+   json_object_array_add(content, text_part);
+
+   /* Add image parts */
+   for (int i = 0; i < vision_image_count; i++) {
+      if (!vision_images[i] || vision_images[i][0] == '\0') {
+         continue;
+      }
+
+      struct json_object *image_part = json_object_new_object();
+      json_object_object_add(image_part, "type", json_object_new_string("image_url"));
+
+      struct json_object *image_url = json_object_new_object();
+
+      /* Build data URI: data:image/jpeg;base64,<data> */
+      size_t data_len = strlen(vision_images[i]);
+      size_t uri_len = 23 + data_len + 1; /* "data:image/jpeg;base64," + data + null */
+      char *data_uri = malloc(uri_len);
+      if (data_uri) {
+         snprintf(data_uri, uri_len, "data:image/jpeg;base64,%s", vision_images[i]);
+         json_object_object_add(image_url, "url", json_object_new_string(data_uri));
+         free(data_uri);
+      }
+
+      json_object_object_add(image_part, "image_url", image_url);
+      json_object_array_add(content, image_part);
+   }
+
+   json_object_object_add(message, "content", content);
+   json_object_array_add(session->conversation_history, message);
+
+   LOG_INFO("Session %u: Added message with %d images to history", session->session_id,
+            vision_image_count);
+
    pthread_mutex_unlock(&session->history_mutex);
 }
 
@@ -1154,9 +1233,9 @@ char *session_llm_call(session_t *session, const char *user_text) {
    /* Set per-session cancel flag for multi-user WebUI support */
    llm_set_cancel_flag(&session->disconnected);
 
-   char *response = llm_chat_completion_streaming_with_config(ctx.history, ctx.llm_input, NULL, 0,
-                                                              session_text_chunk_callback, session,
-                                                              &ctx.resolved_config);
+   char *response = llm_chat_completion_streaming_with_config(ctx.history, ctx.llm_input, NULL,
+                                                              NULL, 0, session_text_chunk_callback,
+                                                              session, &ctx.resolved_config);
 
    /* Clear per-session cancel flag */
    llm_set_cancel_flag(NULL);
@@ -1164,7 +1243,14 @@ char *session_llm_call(session_t *session, const char *user_text) {
    return llm_call_finalize(session, response, &ctx);
 }
 
-char *session_llm_call_no_add(session_t *session, const char *user_text) {
+char *session_llm_call_no_add(session_t *session,
+                              const char *user_text,
+                              const char **vision_images,
+                              const size_t *vision_image_sizes,
+                              const char (*vision_mimes)[24],
+                              int vision_image_count) {
+   (void)vision_mimes; /* MIME types passed to LLM layer via provider-specific handling */
+
    if (!session || !user_text) {
       return NULL;
    }
@@ -1180,8 +1266,20 @@ char *session_llm_call_no_add(session_t *session, const char *user_text) {
       return NULL;
    }
 
-   LOG_INFO("Session %u: Calling LLM (no-add) with %d messages in history", session->session_id,
-            json_object_array_length(ctx.history));
+   if (vision_image_count > 0) {
+      size_t total_bytes = 0;
+      for (int i = 0; i < vision_image_count; i++) {
+         if (vision_image_sizes) {
+            total_bytes += vision_image_sizes[i];
+         }
+      }
+      LOG_INFO("Session %u: Calling LLM (no-add) with %d messages + %d images (%zu total bytes)",
+               session->session_id, json_object_array_length(ctx.history), vision_image_count,
+               total_bytes);
+   } else {
+      LOG_INFO("Session %u: Calling LLM (no-add) with %d messages in history", session->session_id,
+               json_object_array_length(ctx.history));
+   }
 
    /* Initialize streaming metrics before LLM call */
    session->stream_start_ms = get_time_ms();
@@ -1192,9 +1290,9 @@ char *session_llm_call_no_add(session_t *session, const char *user_text) {
    /* Set per-session cancel flag for multi-user WebUI support */
    llm_set_cancel_flag(&session->disconnected);
 
-   char *response = llm_chat_completion_streaming_with_config(ctx.history, ctx.llm_input, NULL, 0,
-                                                              session_text_chunk_callback, session,
-                                                              &ctx.resolved_config);
+   char *response = llm_chat_completion_streaming_with_config(
+       ctx.history, ctx.llm_input, vision_images, vision_image_sizes, vision_image_count,
+       session_text_chunk_callback, session, &ctx.resolved_config);
 
    /* Clear per-session cancel flag */
    llm_set_cancel_flag(NULL);
@@ -1356,9 +1454,9 @@ char *session_llm_call_with_tts(session_t *session,
    llm_set_cancel_flag(&session->disconnected);
 
    // Call LLM with combined callback (text streaming + sentence buffering)
-   char *response = llm_chat_completion_streaming_with_config(ctx.history, ctx.llm_input, NULL, 0,
-                                                              combined_chunk_callback, &stream_ctx,
-                                                              &ctx.resolved_config);
+   char *response = llm_chat_completion_streaming_with_config(ctx.history, ctx.llm_input, NULL,
+                                                              NULL, 0, combined_chunk_callback,
+                                                              &stream_ctx, &ctx.resolved_config);
 
    /* Clear per-session cancel flag */
    llm_set_cancel_flag(NULL);
@@ -1416,9 +1514,9 @@ char *session_llm_call_with_tts_no_add(session_t *session,
    llm_set_cancel_flag(&session->disconnected);
 
    // Call LLM with combined callback (text streaming + sentence buffering)
-   char *response = llm_chat_completion_streaming_with_config(ctx.history, ctx.llm_input, NULL, 0,
-                                                              combined_chunk_callback, &stream_ctx,
-                                                              &ctx.resolved_config);
+   char *response = llm_chat_completion_streaming_with_config(ctx.history, ctx.llm_input, NULL,
+                                                              NULL, 0, combined_chunk_callback,
+                                                              &stream_ctx, &ctx.resolved_config);
 
    /* Clear per-session cancel flag */
    llm_set_cancel_flag(NULL);

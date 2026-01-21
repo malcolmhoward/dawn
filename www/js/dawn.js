@@ -13,6 +13,7 @@
    // UI state
    let visualizerCollapsed = false;
    let pendingIdleState = false; // Server sent "idle" but audio still playing
+   let pendingThumbnailsForSave = []; // Thumbnails to attach when saving user message
 
    // Opus codec state
    let opusWorker = null;
@@ -73,11 +74,23 @@
                   // This prevents polluting history with internal tool call formatting
                   DawnTranscript.addEntry(msg.payload.role, msg.payload.text);
                } else {
-                  DawnTranscript.addEntry(msg.payload.role, msg.payload.text);
+                  // For user messages with pending images, format with thumbnail markers
+                  // This ensures images display immediately AND are saved to history
+                  let displayContent = msg.payload.text;
+                  if (msg.payload.role === 'user' && pendingThumbnailsForSave.length > 0) {
+                     displayContent = DawnVision.formatMessageWithImages(
+                        msg.payload.text,
+                        pendingThumbnailsForSave
+                     );
+                     pendingThumbnailsForSave = []; // Clear after use
+                  }
+
+                  DawnTranscript.addEntry(msg.payload.role, displayContent);
+
                   // Save to conversation history (auto-creates conversation on first message)
                   // Skip replay messages - these are history replay on reconnect, already in DB
                   if (!msg.payload.replay) {
-                     DawnHistory.saveMessage(msg.payload.role, msg.payload.text);
+                     DawnHistory.saveMessage(msg.payload.role, displayContent);
                   }
                }
                break;
@@ -155,6 +168,14 @@
                break;
             case 'get_config_response':
                DawnSettings.handleGetConfigResponse(msg.payload);
+               // Update vision limits from server (single source of truth)
+               if (msg.payload.vision_limits) {
+                  DawnVision.updateLimits(msg.payload.vision_limits);
+               }
+               // Update vision button state based on model capabilities
+               if (msg.payload.config) {
+                  DawnVision.checkVisionSupport(msg.payload.config);
+               }
                break;
             case 'set_config_response':
                DawnSettings.handleSetConfigResponse(msg.payload);
@@ -394,6 +415,20 @@
          type: 'text',
          payload: { text: text },
       };
+
+      // Add vision images if pending (supports multiple)
+      const pendingImages = DawnVision.getPendingImages();
+      if (pendingImages.length > 0) {
+         msg.payload.images = pendingImages.map((img) => ({
+            data: img.data,
+            mime_type: img.mimeType,
+         }));
+         // Save thumbnails for history storage (before clearing)
+         pendingThumbnailsForSave = DawnVision.getPendingThumbnails();
+         DawnVision.clearImages(); // Clear after adding to message
+      } else {
+         pendingThumbnailsForSave = [];
+      }
 
       DawnWS.send(msg);
       // Note: Server echoes user message back as transcript, so no local entry needed
@@ -975,6 +1010,9 @@
          getAuthState: () => DawnState.authState,
       });
       DawnHistory.init();
+
+      // Initialize vision module (image upload/paste/drag-drop)
+      DawnVision.init();
 
       // Set up WebSocket callbacks and connect
       initWebSocketCallbacks();

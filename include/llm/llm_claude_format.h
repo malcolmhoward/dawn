@@ -67,16 +67,18 @@ bool claude_history_has_thinking_blocks(struct json_object *conversation);
  *
  * @param openai_conversation OpenAI-format conversation array
  * @param input_text Current user input (may be NULL if already in conversation)
- * @param vision_image Base64-encoded image data (may be NULL)
- * @param vision_image_size Size of vision image data
+ * @param vision_images Array of base64-encoded image data (may be NULL)
+ * @param vision_image_sizes Array of image sizes (may be NULL)
+ * @param vision_image_count Number of images (0 if not used)
  * @param model Model name (NULL to use config default)
  * @return json_object containing Claude-format request, or NULL on error
  *         Caller must json_object_put() when done
  */
 json_object *convert_to_claude_format(struct json_object *openai_conversation,
                                       const char *input_text,
-                                      char *vision_image,
-                                      size_t vision_image_size,
+                                      const char **vision_images,
+                                      const size_t *vision_image_sizes,
+                                      int vision_image_count,
                                       const char *model);
 
 #endif  // LLM_CLAUDE_FORMAT_H

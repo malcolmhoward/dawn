@@ -4,7 +4,7 @@
       <meta charset="UTF-8" />
       <meta
          http-equiv="Content-Security-Policy"
-         content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' wss: ws:; img-src 'self' data:; manifest-src 'self'; worker-src 'self'"
+         content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' wss: ws:; img-src 'self' data: blob:; manifest-src 'self'; worker-src 'self'"
       />
       <meta name="viewport" content="width=device-width, initial-scale=1.0" />
       <meta name="theme-color" content="#22d3ee" />
@@ -497,8 +497,26 @@
             <div class="transcript-placeholder">Transcripts will appear here...</div>
          </div>
 
+         <!-- Screen reader announcements for image actions -->
+         <div id="vision-announcer" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+
+         <!-- Image preview container (above input) - multi-image grid -->
+         <div id="image-preview-wrapper">
+            <div
+               id="image-preview"
+               class="image-preview hidden"
+               role="region"
+               aria-label="Attached images"
+            >
+               <!-- Preview items dynamically added by vision.js -->
+               <div class="preview-loading hidden" aria-hidden="true">
+                  <span class="spinner"></span>
+               </div>
+            </div>
+         </div>
+
          <!-- Input area -->
-         <div id="input-area">
+         <div id="input-area" class="drop-target">
             <label for="text-input" class="sr-only">Type your message to the AI assistant</label>
             <textarea
                id="text-input"
@@ -506,6 +524,29 @@
                autocomplete="off"
                rows="1"
             ></textarea>
+            <div class="image-btn-wrapper">
+               <button
+                  id="image-btn"
+                  class="input-button"
+                  title="Attach image"
+                  aria-label="Attach image"
+                  disabled
+               >
+                  <svg
+                     width="20"
+                     height="20"
+                     viewBox="0 0 24 24"
+                     fill="none"
+                     stroke="currentColor"
+                     stroke-width="2"
+                  >
+                     <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                     <circle cx="8.5" cy="8.5" r="1.5" />
+                     <path d="M21 15l-5-5L5 21" />
+                  </svg>
+               </button>
+               <span id="image-counter" class="image-counter hidden">0/5</span>
+            </div>
             <button id="send-btn" title="Send message">Send</button>
             <button
                id="stop-btn"
@@ -518,6 +559,15 @@
             <button id="mic-btn" title="Hold to speak" aria-label="Hold to speak" disabled>
                Mic
             </button>
+
+            <!-- Hidden file input for image selection -->
+            <input
+               type="file"
+               id="image-input"
+               accept="image/jpeg,image/png,image/gif,image/webp"
+               hidden
+               aria-label="Select image file"
+            />
          </div>
 
          <!-- Footer -->
@@ -1446,6 +1496,7 @@ client_secret = "..."</pre
       <script src="/js/ui/context.js"></script>
       <script src="/js/ui/transcript.js"></script>
       <script src="/js/ui/streaming.js"></script>
+      <script src="/js/ui/vision.js"></script>
       <script src="/js/ui/metrics.js"></script>
       <script src="/js/admin/smartthings.js"></script>
       <script src="/js/admin/tools.js"></script>

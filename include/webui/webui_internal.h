@@ -82,7 +82,8 @@ extern "C" {
 
 /* WebSocket text buffer limits */
 #define WEBUI_TEXT_BUFFER_INITIAL_CAP 8192
-#define WEBUI_TEXT_BUFFER_MAX_CAP (1024 * 1024)
+#define WEBUI_TEXT_BUFFER_MAX_CAP \
+   (8 * 1024 * 1024) /* 8MB for vision (4MB image + base64 overhead) */
 
 /* =============================================================================
  * Per-WebSocket Connection Data

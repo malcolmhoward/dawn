@@ -222,17 +222,64 @@ bool claude_history_has_thinking_blocks(struct json_object *conversation) {
 }
 
 /**
+ * @brief Detect MIME type from base64-encoded image data
+ *
+ * Checks the first few base64 characters which encode the magic bytes:
+ * - PNG:  starts with "iVBORw0KGgo" (0x89 0x50 0x4E 0x47...)
+ * - JPEG: starts with "/9j/"        (0xFF 0xD8 0xFF)
+ * - GIF:  starts with "R0lGOD"      ("GIF8")
+ * - WebP: starts with "UklGR"       ("RIFF")
+ *
+ * @param base64_data Base64-encoded image data
+ * @return MIME type string (static, do not free)
+ */
+static const char *detect_image_mime_type(const char *base64_data) {
+   if (!base64_data || strlen(base64_data) < 8) {
+      return "image/jpeg"; /* Default fallback */
+   }
+
+   /* PNG: 0x89 0x50 0x4E 0x47 0x0D 0x0A 0x1A 0x0A -> "iVBORw0KGgo" */
+   if (strncmp(base64_data, "iVBORw", 6) == 0) {
+      return "image/png";
+   }
+
+   /* JPEG: 0xFF 0xD8 0xFF -> "/9j/" */
+   if (strncmp(base64_data, "/9j/", 4) == 0) {
+      return "image/jpeg";
+   }
+
+   /* GIF: "GIF8" -> "R0lGOD" */
+   if (strncmp(base64_data, "R0lGOD", 6) == 0) {
+      return "image/gif";
+   }
+
+   /* WebP: "RIFF" -> "UklGR" */
+   if (strncmp(base64_data, "UklGR", 5) == 0) {
+      return "image/webp";
+   }
+
+   return "image/jpeg"; /* Default fallback */
+}
+
+/**
  * @brief Create a Claude-format image content block
+ *
+ * Automatically detects the image MIME type from the base64 data.
  */
 static json_object *create_claude_image_block(const char *vision_image) {
    json_object *image_obj = json_object_new_object();
    json_object_object_add(image_obj, "type", json_object_new_string("image"));
 
+   /* Detect actual MIME type from base64 data */
+   const char *media_type = detect_image_mime_type(vision_image);
+
    json_object *source_obj = json_object_new_object();
    json_object_object_add(source_obj, "type", json_object_new_string("base64"));
-   json_object_object_add(source_obj, "media_type", json_object_new_string("image/jpeg"));
+   json_object_object_add(source_obj, "media_type", json_object_new_string(media_type));
    json_object_object_add(source_obj, "data", json_object_new_string(vision_image));
    json_object_object_add(image_obj, "source", source_obj);
+
+   LOG_INFO("Claude: Created image block with detected media_type=%s", media_type);
 
    return image_obj;
 }
@@ -338,18 +385,24 @@ static json_object *convert_content_block_to_claude(json_object *block) {
 }
 
 /**
- * @brief Add vision image to Claude messages array
+ * @brief Add vision images to Claude messages array
  *
- * Either modifies the last user message to include the image, or creates
+ * Either modifies the last user message to include the images, or creates
  * a new user message if the last message isn't suitable.
  *
  * @param messages_array Claude messages array
- * @param input_text Text to include with the image
- * @param vision_image Base64-encoded image data
+ * @param input_text Text to include with the images
+ * @param vision_images Array of base64-encoded image data
+ * @param vision_image_count Number of images in the array
  */
 static void add_vision_to_claude_messages(json_object *messages_array,
                                           const char *input_text,
-                                          const char *vision_image) {
+                                          const char **vision_images,
+                                          int vision_image_count) {
+   if (vision_image_count <= 0 || !vision_images) {
+      return;
+   }
+
    int msg_count = json_object_array_length(messages_array);
    json_object *last_msg = msg_count > 0 ? json_object_array_get_idx(messages_array, msg_count - 1)
                                          : NULL;
@@ -380,10 +433,15 @@ static void add_vision_to_claude_messages(json_object *messages_array,
       json_object_object_add(text_obj, "text", json_object_new_string(input_text));
       json_object_array_add(content_array, text_obj);
 
-      json_object_array_add(content_array, create_claude_image_block(vision_image));
+      // Add all images
+      for (int i = 0; i < vision_image_count; i++) {
+         if (vision_images[i]) {
+            json_object_array_add(content_array, create_claude_image_block(vision_images[i]));
+         }
+      }
       json_object_object_add(last_msg, "content", content_array);
    } else {
-      // Create a new user message with the vision image
+      // Create a new user message with the vision images
       LOG_INFO("Claude: Adding vision as new user message (last message not suitable)");
 
       json_object *new_user_msg = json_object_new_object();
@@ -394,11 +452,16 @@ static void add_vision_to_claude_messages(json_object *messages_array,
       json_object *text_obj = json_object_new_object();
       json_object_object_add(text_obj, "type", json_object_new_string("text"));
       json_object_object_add(text_obj, "text",
-                             json_object_new_string("Here is the captured image. "
+                             json_object_new_string("Here are the captured images. "
                                                     "Please respond to the user's request."));
       json_object_array_add(content_array, text_obj);
 
-      json_object_array_add(content_array, create_claude_image_block(vision_image));
+      // Add all images
+      for (int i = 0; i < vision_image_count; i++) {
+         if (vision_images[i]) {
+            json_object_array_add(content_array, create_claude_image_block(vision_images[i]));
+         }
+      }
       json_object_object_add(new_user_msg, "content", content_array);
 
       json_object_array_add(messages_array, new_user_msg);
@@ -407,9 +470,11 @@ static void add_vision_to_claude_messages(json_object *messages_array,
 
 json_object *convert_to_claude_format(struct json_object *openai_conversation,
                                       const char *input_text,
-                                      char *vision_image,
-                                      size_t vision_image_size,
+                                      const char **vision_images,
+                                      const size_t *vision_image_sizes,
+                                      int vision_image_count,
                                       const char *model) {
+   (void)vision_image_sizes;  // Sizes not needed for base64 strings
    json_object *claude_request = json_object_new_object();
 
    // Model: use passed model, or fall back to config default
@@ -909,9 +974,9 @@ json_object *convert_to_claude_format(struct json_object *openai_conversation,
       json_object_put(system_array);
    }
 
-   // If vision is provided, add it to a user message
-   if (vision_image != NULL && vision_image_size > 0) {
-      add_vision_to_claude_messages(messages_array, input_text, vision_image);
+   // If vision images are provided, add them to a user message
+   if (vision_images != NULL && vision_image_count > 0) {
+      add_vision_to_claude_messages(messages_array, input_text, vision_images, vision_image_count);
    }
 
    json_object_object_add(claude_request, "messages", messages_array);
