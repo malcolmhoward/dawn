@@ -72,7 +72,9 @@
          // Bound queue to prevent memory exhaustion on rapid TTS
          const MAX_QUEUE_SIZE = 10;
          if (audioPlaybackQueue.length >= MAX_QUEUE_SIZE) {
-            console.warn('Audio playback queue full, dropping oldest segment');
+            // Drop oldest segment - this is expected during rapid TTS streaming
+            // and doesn't affect playback quality since we're dropping already-stale audio
+            console.debug('Audio playback queue full, dropping oldest segment');
             audioPlaybackQueue.shift();
          }
          console.log(

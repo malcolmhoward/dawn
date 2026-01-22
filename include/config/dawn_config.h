@@ -302,6 +302,15 @@ typedef struct {
 } webui_config_t;
 
 /* =============================================================================
+ * Images Configuration
+ * ============================================================================= */
+typedef struct {
+   int retention_days; /* Auto-delete images after N days (0 = never, default: 0) */
+   int max_size_mb;    /* Max image size in MB (default: 4) */
+   int max_per_user;   /* Max images per user (default: 1000) */
+} images_config_t;
+
+/* =============================================================================
  * Shutdown Configuration
  * ============================================================================= */
 typedef struct {
@@ -365,6 +374,7 @@ typedef struct {
    network_config_t network;
    tui_config_t tui;
    webui_config_t webui;
+   images_config_t images;
    shutdown_config_t shutdown;
    debug_config_t debug;
    paths_config_t paths;

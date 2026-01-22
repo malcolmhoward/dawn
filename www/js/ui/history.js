@@ -298,19 +298,22 @@
             const firstMessage = transcript.querySelector('.transcript-entry');
             const scrollHeightBefore = transcript.scrollHeight;
 
-            messages.forEach((msg) => {
-               if (msg.role === 'system') return;
-               if (typeof DawnTranscript !== 'undefined') {
-                  DawnTranscript.prependEntry(msg.role, msg.content, firstMessage);
+            // Process messages sequentially to preserve order with async image loading
+            (async () => {
+               for (const msg of messages) {
+                  if (msg.role === 'system') continue;
+                  if (typeof DawnTranscript !== 'undefined') {
+                     await DawnTranscript.prependEntry(msg.role, msg.content, firstMessage);
+                  }
                }
-            });
 
-            // Preserve scroll position after prepending
-            const scrollHeightAfter = transcript.scrollHeight;
-            transcript.scrollTop = scrollHeightAfter - scrollHeightBefore;
+               // Preserve scroll position after prepending
+               const scrollHeightAfter = transcript.scrollHeight;
+               transcript.scrollTop = scrollHeightAfter - scrollHeightBefore;
 
-            // Update "load more" indicator
-            updateLoadMoreIndicator();
+               // Update "load more" indicator
+               updateLoadMoreIndicator();
+            })();
          }
          return;
       }
@@ -384,22 +387,25 @@
             transcript.insertAdjacentHTML('beforeend', bannerHtml);
          }
 
-         // Display messages
+         // Display messages (sequentially to preserve order with async image loading)
          const messages = payload.messages || [];
-         messages.forEach((msg) => {
-            if (msg.role === 'system') return;
-            if (typeof DawnTranscript !== 'undefined') {
-               DawnTranscript.addEntry(msg.role, msg.content);
+         (async () => {
+            for (const msg of messages) {
+               if (msg.role === 'system') continue;
+               if (typeof DawnTranscript !== 'undefined') {
+                  await DawnTranscript.addEntry(msg.role, msg.content);
+               }
             }
-         });
 
-         // Add continuation link at bottom for archived conversations
-         if (isArchived && continuedBy) {
-            console.log(`Adding continuation link to conversation ${continuedBy}`);
-            addContinuationLink(continuedBy);
-         }
+            // Add continuation link at bottom for archived conversations (after all messages)
+            if (isArchived && continuedBy) {
+               console.log(`Adding continuation link to conversation ${continuedBy}`);
+               addContinuationLink(continuedBy);
+            }
 
-         transcript.scrollTop = transcript.scrollHeight;
+            // Scroll to bottom after all messages loaded
+            transcript.scrollTop = transcript.scrollHeight;
+         })();
 
          // Setup scroll detection for loading more
          setupScrollDetection(transcript);

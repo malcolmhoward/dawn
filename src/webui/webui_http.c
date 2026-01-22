@@ -46,6 +46,8 @@
 
 #include "auth/auth_crypto.h"
 #include "auth/auth_db.h"
+#include "image_store.h"
+#include "webui/webui_images.h"
 #endif
 
 /* HTTP 429 Too Many Requests - not defined in older libwebsockets */
@@ -752,11 +754,40 @@ int callback_http(struct lws *wsi,
             return 0;
          }
 
+         /* Image API endpoints (require auth) */
+         /* GET /api/images/:id - download image */
+         if (strncmp(path, "/api/images/", 12) == 0 && pss && !pss->is_post) {
+            auth_session_t session;
+            if (is_request_authenticated(wsi, &session)) {
+               const char *image_id = path + 12;
+               return webui_images_handle_download(wsi, image_id, session.user_id);
+            }
+            /* Fall through to auth redirect */
+         }
+
+         /* POST /api/images - upload image (defer to body completion) */
+         if (strcmp(path, "/api/images") == 0 && pss && pss->is_post) {
+            auth_session_t session;
+            if (is_request_authenticated(wsi, &session)) {
+               pss->image_session = NULL;
+               int result = webui_images_handle_upload_start(wsi, &pss->image_session,
+                                                             session.user_id);
+               if (result == 0) {
+                  /* Return 0 to allow body callbacks */
+                  return 0;
+               }
+               return result; /* Error response already sent */
+            }
+            /* Fall through to auth redirect */
+         }
+
          /* Public paths that don't require auth */
-         bool is_public_path = (strcmp(path, "/login.html") == 0 || strcmp(path, "/health") == 0 ||
-                                strncmp(path, "/css/", 5) == 0 ||
-                                strncmp(path, "/fonts/", 7) == 0 ||
-                                strcmp(path, "/favicon.svg") == 0);
+         bool is_public_path =
+             (strcmp(path, "/login.html") == 0 || strcmp(path, "/health") == 0 ||
+              strncmp(path, "/css/", 5) == 0 || strncmp(path, "/fonts/", 7) == 0 ||
+              strcmp(path, "/favicon.svg") == 0 ||
+              /* AudioWorklet.addModule() doesn't send cookies, so worklet must be public */
+              strcmp(path, "/js/audio/capture-worklet.js") == 0);
 
          /* Check authentication for protected paths */
          if (!is_public_path && !is_request_authenticated(wsi, NULL)) {
@@ -927,6 +958,12 @@ int callback_http(struct lws *wsi,
          if (!pss)
             return -1;
 
+         /* Image upload - route to image handler */
+         if (pss->image_session) {
+            return webui_images_handle_upload_body(wsi, pss->image_session, in, len);
+         }
+
+         /* Regular POST body */
          size_t remaining = HTTP_MAX_POST_BODY - pss->post_body_len - 1;
          size_t to_copy = (len < remaining) ? len : remaining;
 
@@ -943,6 +980,13 @@ int callback_http(struct lws *wsi,
          if (!pss)
             return -1;
 
+         /* Image upload complete */
+         if (pss->image_session) {
+            int result = webui_images_handle_upload_complete(wsi, pss->image_session);
+            pss->image_session = NULL; /* Session freed by handler */
+            return result;
+         }
+
          /* Handle login endpoint */
          if (strcmp(pss->path, "/api/auth/login") == 0) {
             return handle_auth_login(wsi, pss);
@@ -952,6 +996,14 @@ int callback_http(struct lws *wsi,
          lws_return_http_status(wsi, HTTP_STATUS_NOT_FOUND, NULL);
          return -1;
       }
+
+      case LWS_CALLBACK_CLOSED_HTTP:
+         /* Connection closed - clean up image session if any */
+         if (pss && pss->image_session) {
+            webui_images_session_free(pss->image_session);
+            pss->image_session = NULL;
+         }
+         break;
 #endif /* ENABLE_AUTH */
 
       default:

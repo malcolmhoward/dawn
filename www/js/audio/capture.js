@@ -2,6 +2,9 @@
  * DAWN Audio Capture Module
  * Microphone input, PCM conversion, and transmission
  *
+ * Uses AudioWorklet when available (modern browsers) with
+ * ScriptProcessorNode fallback for older browsers.
+ *
  * Usage:
  *   DawnAudioCapture.init()           // Check audio support
  *   DawnAudioCapture.start()          // Start recording
@@ -14,8 +17,11 @@
    // Audio capture state
    let audioContext = null;
    let mediaStream = null;
-   let audioProcessor = null;
+   let audioProcessor = null; // ScriptProcessorNode or AudioWorkletNode
+   let mediaStreamSource = null;
    let audioChunkMs = 200; // Updated from server config
+   let useWorklet = false; // Whether AudioWorklet is being used
+   let workletLoaded = false; // Whether worklet module has been loaded into context
 
    // Callbacks (set by dawn.js)
    let callbacks = {
@@ -85,61 +91,34 @@
             },
          });
 
-         // Create audio context at target sample rate
-         const AudioContext = window.AudioContext || window.webkitAudioContext;
-         audioContext = new AudioContext({ sampleRate: DawnConfig.AUDIO_SAMPLE_RATE });
-         console.log(
-            'AudioContext created: requested',
-            DawnConfig.AUDIO_SAMPLE_RATE,
-            'Hz, actual',
-            audioContext.sampleRate,
-            'Hz'
-         );
+         // Reuse existing AudioContext or create new one
+         const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+         if (!audioContext || audioContext.state === 'closed') {
+            audioContext = new AudioContextClass({ sampleRate: DawnConfig.AUDIO_SAMPLE_RATE });
+            workletLoaded = false; // New context needs worklet loaded
+            console.log(
+               'AudioContext created: requested',
+               DawnConfig.AUDIO_SAMPLE_RATE,
+               'Hz, actual',
+               audioContext.sampleRate,
+               'Hz'
+            );
+         } else if (audioContext.state === 'suspended') {
+            await audioContext.resume();
+            console.log('AudioContext resumed');
+         }
 
          // Create source from microphone stream
-         const source = audioContext.createMediaStreamSource(mediaStream);
+         mediaStreamSource = audioContext.createMediaStreamSource(mediaStream);
 
-         // Create ScriptProcessorNode for audio processing
-         // Note: ScriptProcessorNode is deprecated but AudioWorklet requires HTTPS
-         const desiredSamples = Math.floor((DawnConfig.AUDIO_SAMPLE_RATE * audioChunkMs) / 1000);
-         const bufferSize = Math.pow(2, Math.ceil(Math.log2(desiredSamples)));
-         console.log(
-            'Audio buffer size:',
-            bufferSize,
-            'samples (',
-            (bufferSize / DawnConfig.AUDIO_SAMPLE_RATE) * 1000,
-            'ms)'
-         );
-         audioProcessor = audioContext.createScriptProcessor(bufferSize, 1, 1);
-
-         audioProcessor.onaudioprocess = function (e) {
-            // Clear output buffer to prevent feedback/garbage
-            const outputData = e.outputBuffer.getChannelData(0);
-            outputData.fill(0);
-
-            if (!DawnState.getIsRecording()) return;
-
-            // Get input audio data (Float32Array)
-            const inputData = e.inputBuffer.getChannelData(0);
-
-            // Convert Float32 (-1 to 1) to Int16 (-32768 to 32767)
-            const pcmData = new Int16Array(inputData.length);
-            for (let i = 0; i < inputData.length; i++) {
-               const s = Math.max(-1, Math.min(1, inputData[i]));
-               pcmData[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-            }
-
-            // Send audio chunk to server
-            sendAudioChunk(pcmData.buffer);
-         };
-
-         // Connect nodes: source -> processor -> destination
-         source.connect(audioProcessor);
-         audioProcessor.connect(audioContext.destination);
+         // Try to use AudioWorklet, fall back to ScriptProcessorNode
+         const workletAvailable = await trySetupWorklet();
+         if (!workletAvailable) {
+            setupScriptProcessor();
+         }
 
          DawnState.setIsRecording(true);
          updateMicButton(true);
-         console.log('Recording started');
       } catch (e) {
          console.error('Failed to start recording:', e);
          const msg =
@@ -153,6 +132,114 @@
    }
 
    /**
+    * Try to set up AudioWorklet for recording
+    * @returns {Promise<boolean>} True if worklet was set up successfully
+    */
+   async function trySetupWorklet() {
+      // Check if AudioWorklet is supported
+      if (typeof AudioWorklet === 'undefined' || !audioContext.audioWorklet) {
+         return false;
+      }
+
+      try {
+         // Ensure context is running before loading worklet (MDN recommendation)
+         await audioContext.resume();
+
+         // Load worklet module only once per context (calling again throws error)
+         // Note: Worklet path is tightly coupled to server's static file serving
+         if (!workletLoaded) {
+            await audioContext.audioWorklet.addModule('/js/audio/capture-worklet.js');
+            workletLoaded = true;
+         }
+
+         // Create AudioWorkletNode
+         audioProcessor = new AudioWorkletNode(audioContext, 'pcm-capture-processor');
+
+         // Handle messages from worklet
+         audioProcessor.port.onmessage = function (event) {
+            const msg = event.data;
+            if (msg.type === 'audio' && DawnState.getIsRecording()) {
+               // msg.data is already Int16Array
+               sendAudioChunk(msg.data.buffer);
+            }
+         };
+
+         // Calculate target samples for configured chunk duration
+         const targetSamples = Math.floor((audioContext.sampleRate * audioChunkMs) / 1000);
+
+         // Configure worklet
+         audioProcessor.port.postMessage({
+            type: 'config',
+            sampleRate: audioContext.sampleRate,
+            targetSamples: targetSamples,
+         });
+
+         // Tell worklet to start recording
+         audioProcessor.port.postMessage({ type: 'start' });
+
+         // Connect: source -> worklet
+         mediaStreamSource.connect(audioProcessor);
+
+         useWorklet = true;
+         console.log(
+            'Recording started (AudioWorklet):',
+            targetSamples,
+            'samples per chunk (~' + audioChunkMs + 'ms)'
+         );
+         return true;
+      } catch (e) {
+         console.warn('AudioWorklet setup failed, falling back to ScriptProcessorNode:', e);
+         return false;
+      }
+   }
+
+   /**
+    * Set up ScriptProcessorNode for recording (fallback)
+    */
+   function setupScriptProcessor() {
+      // Calculate buffer size (must be power of 2)
+      const desiredSamples = Math.floor((DawnConfig.AUDIO_SAMPLE_RATE * audioChunkMs) / 1000);
+      const bufferSize = Math.pow(2, Math.ceil(Math.log2(desiredSamples)));
+
+      // Create ScriptProcessorNode
+      audioProcessor = audioContext.createScriptProcessor(bufferSize, 1, 1);
+
+      audioProcessor.onaudioprocess = function (e) {
+         // Clear output buffer to prevent feedback/garbage
+         const outputData = e.outputBuffer.getChannelData(0);
+         outputData.fill(0);
+
+         if (!DawnState.getIsRecording()) return;
+
+         // Get input audio data (Float32Array)
+         const inputData = e.inputBuffer.getChannelData(0);
+
+         // Convert Float32 (-1 to 1) to Int16 (-32768 to 32767)
+         const pcmData = new Int16Array(inputData.length);
+         for (let i = 0; i < inputData.length; i++) {
+            const s = Math.max(-1, Math.min(1, inputData[i]));
+            pcmData[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+         }
+
+         // Send audio chunk to server
+         sendAudioChunk(pcmData.buffer);
+      };
+
+      // Connect nodes: source -> processor -> destination
+      mediaStreamSource.connect(audioProcessor);
+      audioProcessor.connect(audioContext.destination);
+
+      useWorklet = false;
+      console.log(
+         'Recording started (ScriptProcessorNode fallback):',
+         bufferSize,
+         'samples per chunk (~' +
+            ((bufferSize / DawnConfig.AUDIO_SAMPLE_RATE) * 1000).toFixed(0) +
+            'ms)'
+      );
+   }
+
+   /**
     * Stop recording and send end marker
     */
    function stop() {
@@ -162,16 +249,27 @@
 
       DawnState.setIsRecording(false);
 
+      // Tell worklet to stop (will flush remaining buffer)
+      if (useWorklet && audioProcessor && audioProcessor.port) {
+         audioProcessor.port.postMessage({ type: 'stop' });
+      }
+
       // Stop audio processing
       if (audioProcessor) {
          audioProcessor.disconnect();
          audioProcessor = null;
       }
 
-      // Close audio context
-      if (audioContext && audioContext.state !== 'closed') {
-         audioContext.close();
-         audioContext = null;
+      // Disconnect source
+      if (mediaStreamSource) {
+         mediaStreamSource.disconnect();
+         mediaStreamSource = null;
+      }
+
+      // Suspend audio context (don't close - reuse for next recording session)
+      // This avoids the overhead of creating a new context each time
+      if (audioContext && audioContext.state === 'running') {
+         audioContext.suspend();
       }
 
       // Stop microphone stream

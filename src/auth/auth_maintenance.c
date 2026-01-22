@@ -30,6 +30,7 @@
 #include <unistd.h>
 
 #include "auth/auth_db.h"
+#include "image_store.h"
 #include "logging.h"
 
 /* Thread state */
@@ -67,6 +68,14 @@ static void *maintenance_thread_func(void *arg) {
       int cleanup_result = auth_db_run_cleanup();
       if (cleanup_result != AUTH_DB_SUCCESS) {
          LOG_WARNING("auth_maintenance: cleanup failed");
+      }
+
+      /* Clean up old images past retention period */
+      if (image_store_is_ready()) {
+         int deleted = image_store_cleanup();
+         if (deleted > 0) {
+            LOG_INFO("auth_maintenance: cleaned %d old images", deleted);
+         }
       }
 
       /* Passive WAL checkpoint (non-blocking) */

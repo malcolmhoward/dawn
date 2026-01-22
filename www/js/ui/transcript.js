@@ -329,20 +329,20 @@
     * @param {string} role - Message role (user, assistant, system)
     * @param {string} text - Message text
     */
-   function addNormalEntry(role, text) {
+   async function addNormalEntry(role, text) {
       const transcript = DawnElements.transcript;
       if (!transcript) return;
 
       // Parse image markers if present (user messages may have embedded images)
-      let imageDataUrls = [];
+      let parsed = null;
       let displayText = text;
 
       if (DawnVision && DawnVision.parseImageMarkers) {
-         const parsed = DawnVision.parseImageMarkers(text);
+         parsed = DawnVision.parseImageMarkers(text);
          displayText = parsed.text;
-         imageDataUrls = parsed.imageDataUrls || [];
       }
 
+      // Create and append entry FIRST (before loading images) for immediate visibility
       const entry = document.createElement('div');
       entry.className = `transcript-entry ${role}`;
       entry.innerHTML = `
@@ -351,24 +351,32 @@
     `;
       transcript.appendChild(entry);
 
+      // Scroll immediately after adding entry
+      transcript.scrollTop = transcript.scrollHeight;
+
       // Add copy buttons to code blocks in the new entry
       const textEl = entry.querySelector('.text');
       if (textEl) {
          DawnFormat.addCopyButtons(textEl);
       }
 
-      // Add images if present (after text content)
-      if (imageDataUrls.length > 0) {
-         const imagesContainer = document.createElement('div');
-         imagesContainer.className = 'transcript-images-container';
-         for (const dataUrl of imageDataUrls) {
-            const imageEl = createImageElement(dataUrl);
-            if (imageEl) {
-               imagesContainer.appendChild(imageEl);
+      // Load and add images AFTER entry is visible (async, may involve network requests)
+      if (parsed && DawnVision.loadParsedImages) {
+         const imageDataUrls = await DawnVision.loadParsedImages(parsed);
+         if (imageDataUrls.length > 0) {
+            const imagesContainer = document.createElement('div');
+            imagesContainer.className = 'transcript-images-container';
+            for (const dataUrl of imageDataUrls) {
+               const imageEl = createImageElement(dataUrl);
+               if (imageEl) {
+                  imagesContainer.appendChild(imageEl);
+               }
             }
-         }
-         if (imagesContainer.children.length > 0) {
-            textEl.appendChild(imagesContainer);
+            if (imagesContainer.children.length > 0) {
+               textEl.appendChild(imagesContainer);
+               // Scroll again after images are added (they increase height)
+               transcript.scrollTop = transcript.scrollHeight;
+            }
          }
       }
    }
@@ -379,7 +387,7 @@
     * @param {string} text - Message text
     * @param {HTMLElement|null} beforeElement - Element to insert before (null = append)
     */
-   function prependTranscriptEntry(role, text, beforeElement) {
+   async function prependTranscriptEntry(role, text, beforeElement) {
       const transcript = DawnElements.transcript;
       if (!transcript) return;
 
@@ -437,13 +445,12 @@
       }
 
       // Parse image markers if present (user messages may have embedded images)
-      let imageDataUrls = [];
+      let parsed = null;
       let displayText = text;
 
       if (DawnVision && DawnVision.parseImageMarkers) {
-         const parsed = DawnVision.parseImageMarkers(text);
+         parsed = DawnVision.parseImageMarkers(text);
          displayText = parsed.text;
-         imageDataUrls = parsed.imageDataUrls || [];
       }
 
       // Create the entry
@@ -460,21 +467,6 @@
          DawnFormat.addCopyButtons(textEl);
       }
 
-      // Add images if present (after text content)
-      if (imageDataUrls.length > 0) {
-         const imagesContainer = document.createElement('div');
-         imagesContainer.className = 'transcript-images-container';
-         for (const dataUrl of imageDataUrls) {
-            const imageEl = createImageElement(dataUrl);
-            if (imageEl) {
-               imagesContainer.appendChild(imageEl);
-            }
-         }
-         if (imagesContainer.children.length > 0) {
-            textEl.appendChild(imagesContainer);
-         }
-      }
-
       // Insert thinking/reasoning block first if present
       if (thinkingBlock && beforeElement) {
          transcript.insertBefore(thinkingBlock, beforeElement);
@@ -483,11 +475,29 @@
          transcript.insertBefore(reasoningBlock, beforeElement);
       }
 
-      // Insert the entry
+      // Insert the entry FIRST (before loading images) for immediate visibility
       if (beforeElement) {
          transcript.insertBefore(entry, beforeElement);
       } else {
          transcript.appendChild(entry);
+      }
+
+      // Load and add images AFTER entry is visible (async, may involve network requests)
+      if (parsed && DawnVision.loadParsedImages) {
+         const imageDataUrls = await DawnVision.loadParsedImages(parsed);
+         if (imageDataUrls.length > 0) {
+            const imagesContainer = document.createElement('div');
+            imagesContainer.className = 'transcript-images-container';
+            for (const dataUrl of imageDataUrls) {
+               const imageEl = createImageElement(dataUrl);
+               if (imageEl) {
+                  imagesContainer.appendChild(imageEl);
+               }
+            }
+            if (imagesContainer.children.length > 0) {
+               textEl.appendChild(imagesContainer);
+            }
+         }
       }
    }
 
@@ -496,7 +506,7 @@
     * @param {string} role - Message role
     * @param {string} text - Message text
     */
-   function addTranscriptEntry(role, text) {
+   async function addTranscriptEntry(role, text) {
       const transcript = DawnElements.transcript;
       if (!transcript) return;
 
@@ -599,7 +609,7 @@
 
       if (!hasDebugContent) {
          // Pure user-facing message - show normally
-         addNormalEntry(role, text);
+         await addNormalEntry(role, text);
       } else if (isOnlyDebugContent(text)) {
          // Pure debug message (only commands/tool results) - debug only
          addDebugEntry(`debug (${role})`, text);
@@ -620,7 +630,7 @@
 
          // Add user-facing text if any
          if (userText.length > 0) {
-            addNormalEntry(role, userText);
+            await addNormalEntry(role, userText);
          }
       }
 

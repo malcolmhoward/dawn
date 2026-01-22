@@ -423,8 +423,11 @@
             data: img.data,
             mime_type: img.mimeType,
          }));
-         // Save thumbnails for history storage (before clearing)
-         pendingThumbnailsForSave = DawnVision.getPendingThumbnails();
+         // Save image IDs for history storage (before clearing)
+         // Images are now stored server-side and referenced by ID
+         pendingThumbnailsForSave = DawnVision.getPendingImageIds
+            ? DawnVision.getPendingImageIds()
+            : [];
          DawnVision.clearImages(); // Clear after adding to message
       } else {
          pendingThumbnailsForSave = [];

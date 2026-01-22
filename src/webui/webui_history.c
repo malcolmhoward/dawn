@@ -59,7 +59,42 @@ static const unsigned char BASE64_VALID[256] = {
 };
 
 /**
+ * @brief Check if string is a valid image ID
+ *
+ * Image ID format: "img_" + 12 alphanumeric characters (16 total)
+ *
+ * @param str String to check
+ * @param len Length of string
+ * @return true if valid image ID format
+ */
+static bool is_valid_image_id(const char *str, size_t len) {
+   /* Must be exactly 16 characters: "img_" + 12 alphanumeric */
+   if (len != 16) {
+      return false;
+   }
+
+   /* Must start with "img_" */
+   if (strncmp(str, "img_", 4) != 0) {
+      return false;
+   }
+
+   /* Characters 4-15 must be alphanumeric */
+   for (int i = 4; i < 16; i++) {
+      char c = str[i];
+      if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'))) {
+         return false;
+      }
+   }
+
+   return true;
+}
+
+/**
  * @brief Validate a single image marker
+ *
+ * Accepts two formats:
+ * 1. Image ID: [IMAGE:img_xxxxxxxxxxxx] - server-stored image reference
+ * 2. Data URI: [IMAGE:data:image/jpeg;base64,...] - legacy inline data
  *
  * @param marker_start Pointer to start of "[IMAGE:" marker
  * @param marker_end Output: pointer to closing ']' if found
@@ -73,15 +108,22 @@ static bool validate_single_image_marker(const char *marker_start, const char **
    }
    *marker_end = end;
 
-   /* Extract data URI (skip "[IMAGE:" prefix) */
-   const char *data_uri = marker_start + 7;
-   size_t data_uri_len = end - data_uri;
+   /* Extract content (skip "[IMAGE:" prefix) */
+   const char *content = marker_start + 7;
+   size_t content_len = end - content;
+
+   /* Check if it's an image ID (new format: img_xxxxxxxxxxxx) */
+   if (is_valid_image_id(content, content_len)) {
+      return true; /* Valid image ID reference */
+   }
+
+   /* Otherwise, validate as legacy data URI */
 
    /* Check against safe prefixes */
    bool has_safe_prefix = false;
    for (int i = 0; SAFE_IMAGE_PREFIXES[i] != NULL; i++) {
       size_t prefix_len = strlen(SAFE_IMAGE_PREFIXES[i]);
-      if (data_uri_len > prefix_len && strncmp(data_uri, SAFE_IMAGE_PREFIXES[i], prefix_len) == 0) {
+      if (content_len > prefix_len && strncmp(content, SAFE_IMAGE_PREFIXES[i], prefix_len) == 0) {
          has_safe_prefix = true;
          break;
       }
@@ -93,7 +135,7 @@ static bool validate_single_image_marker(const char *marker_start, const char **
    }
 
    /* Check size (base64 portion only) */
-   const char *base64_start = strchr(data_uri, ',');
+   const char *base64_start = strchr(content, ',');
    if (!base64_start || base64_start >= end) {
       return false; /* Malformed data URI */
    }
@@ -121,16 +163,18 @@ static bool validate_single_image_marker(const char *marker_start, const char **
 /**
  * @brief Validate ALL embedded image markers in message content
  *
- * Checks for all [IMAGE:data:image/...] markers and validates each:
- * 1. Data URI has safe prefix (JPEG, PNG, GIF, WebP only)
- * 2. Base64 size is within thumbnail limit
- * 3. Base64 contains only valid characters (A-Z, a-z, 0-9, +, /, =)
+ * Accepts two marker formats:
+ * - Image ID: [IMAGE:img_xxxxxxxxxxxx] (server-stored reference)
+ * - Data URI: [IMAGE:data:image/jpeg;base64,...] (legacy inline)
+ *
+ * For image IDs: validates format (img_ + 12 alphanumeric)
+ * For data URIs: validates prefix, size, and base64 characters
  *
  * SECURITY: Validates every marker, not just the first, to prevent bypass
  * attacks where a valid first image masks a malicious second image.
  *
  * @param content Message content to validate
- * @return true if all markers are safe, false if any malicious/oversized image found
+ * @return true if all markers are safe, false if any malicious/invalid marker found
  */
 static bool validate_image_marker(const char *content) {
    if (!content)

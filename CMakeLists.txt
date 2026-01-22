@@ -444,6 +444,7 @@ if(ENABLE_WEBUI)
         src/webui/webui_session.c
         src/webui/webui_settings.c
         src/webui/webui_tools.c
+        src/webui/webui_images.c
     )
     if(OPUS_FOUND)
         list(APPEND DAWN_SOURCES src/webui/webui_audio.c)
@@ -475,6 +476,7 @@ if(ENABLE_AUTH)
         src/auth/auth_db_metrics.c
         src/auth/auth_crypto.c
         src/auth/auth_maintenance.c
+        src/image_store.c
     )
 endif()
 

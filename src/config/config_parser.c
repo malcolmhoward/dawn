@@ -760,6 +760,38 @@ static void parse_webui(toml_table_t *table, webui_config_t *config) {
    }
 }
 
+static void parse_images(toml_table_t *table, images_config_t *config) {
+   if (!table)
+      return;
+
+   static const char *const known_keys[] = { "retention_days", "max_size_mb", "max_per_user",
+                                             NULL };
+   warn_unknown_keys(table, "images", known_keys);
+
+   PARSE_INT(table, "retention_days", config->retention_days);
+   PARSE_INT(table, "max_size_mb", config->max_size_mb);
+   PARSE_INT(table, "max_per_user", config->max_per_user);
+
+   /* Clamp retention_days to valid range (0 = never delete) */
+   if (config->retention_days < 0) {
+      config->retention_days = 0;
+   }
+
+   /* Clamp max_size_mb to valid range */
+   if (config->max_size_mb < 1) {
+      config->max_size_mb = 1;
+   } else if (config->max_size_mb > 50) {
+      config->max_size_mb = 50;
+   }
+
+   /* Clamp max_per_user to valid range */
+   if (config->max_per_user < 1) {
+      config->max_per_user = 1;
+   } else if (config->max_per_user > 10000) {
+      config->max_per_user = 10000;
+   }
+}
+
 static void parse_shutdown(toml_table_t *table, shutdown_config_t *config) {
    if (!table)
       return;
@@ -855,6 +887,7 @@ int config_parse_file(const char *path, dawn_config_t *config) {
    parse_network(toml_table_in(root, "network"), &config->network);
    parse_tui(toml_table_in(root, "tui"), &config->tui);
    parse_webui(toml_table_in(root, "webui"), &config->webui);
+   parse_images(toml_table_in(root, "images"), &config->images);
    parse_shutdown(toml_table_in(root, "shutdown"), &config->shutdown);
    parse_debug(toml_table_in(root, "debug"), &config->debug);
    parse_paths(toml_table_in(root, "paths"), &config->paths);

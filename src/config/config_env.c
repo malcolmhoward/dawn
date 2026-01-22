@@ -1227,6 +1227,14 @@ json_object *config_to_json(const dawn_config_t *config) {
                           json_object_new_string(config->paths.commands_config));
    json_object_object_add(root, "paths", paths);
 
+   /* [images] */
+   json_object *images = json_object_new_object();
+   json_object_object_add(images, "retention_days",
+                          json_object_new_int(config->images.retention_days));
+   json_object_object_add(images, "max_size_mb", json_object_new_int(config->images.max_size_mb));
+   json_object_object_add(images, "max_per_user", json_object_new_int(config->images.max_per_user));
+   json_object_object_add(root, "images", images);
+
    return root;
 }
 
@@ -1581,6 +1589,11 @@ int config_write_toml(const dawn_config_t *config, const char *path) {
    fprintf(fp, "\n[paths]\n");
    fprintf(fp, "music_dir = \"%s\"\n", config->paths.music_dir);
    fprintf(fp, "commands_config = \"%s\"\n", config->paths.commands_config);
+
+   fprintf(fp, "\n[images]\n");
+   fprintf(fp, "retention_days = %d\n", config->images.retention_days);
+   fprintf(fp, "max_size_mb = %d\n", config->images.max_size_mb);
+   fprintf(fp, "max_per_user = %d\n", config->images.max_per_user);
 
    fclose(fp);
    LOG_INFO("Configuration written to %s", path);

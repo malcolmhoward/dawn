@@ -734,6 +734,34 @@
             },
          },
       },
+      images: {
+         label: 'Image Storage',
+         icon: '&#x1F5BC;',
+         adminOnly: true,
+         description: 'Settings for uploaded images in vision conversations',
+         fields: {
+            retention_days: {
+               type: 'number',
+               label: 'Retention Period (days)',
+               min: 0,
+               hint: 'Auto-delete images after this many days (0 = keep forever)',
+            },
+            max_size_mb: {
+               type: 'number',
+               label: 'Max Size (MB)',
+               min: 1,
+               max: 50,
+               hint: 'Maximum allowed image upload size (1-50 MB)',
+            },
+            max_per_user: {
+               type: 'number',
+               label: 'Max Images Per User',
+               min: 1,
+               max: 10000,
+               hint: 'Maximum stored images per user account (1-10,000)',
+            },
+         },
+      },
    };
 
    /* =============================================================================

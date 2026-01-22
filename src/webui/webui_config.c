@@ -562,6 +562,13 @@ static void apply_config_from_json(dawn_config_t *config, struct json_object *pa
       JSON_TO_CONFIG_STR(section, "music_dir", config->paths.music_dir);
       JSON_TO_CONFIG_STR(section, "commands_config", config->paths.commands_config);
    }
+
+   /* [images] */
+   if (json_object_object_get_ex(payload, "images", &section)) {
+      JSON_TO_CONFIG_INT(section, "retention_days", config->images.retention_days);
+      JSON_TO_CONFIG_INT(section, "max_size_mb", config->images.max_size_mb);
+      JSON_TO_CONFIG_INT(section, "max_per_user", config->images.max_per_user);
+   }
 }
 
 void handle_set_config(ws_connection_t *conn, struct json_object *payload) {

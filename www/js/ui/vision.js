@@ -20,11 +20,11 @@
    // Allowed MIME types (SVG explicitly excluded for XSS prevention)
    const VALID_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 
-   // Thumbnail settings for conversation history storage
-   // Sized for readability while staying reasonable for storage
-   const THUMBNAIL_MAX_DIM = 600; // Max dimension for storage thumbnail
-   const THUMBNAIL_QUALITY = 0.85; // JPEG quality for thumbnail (better readability)
-   const THUMBNAIL_MAX_SIZE = 150 * 1024; // 150KB max for stored thumbnail (security limit)
+   // Image ID format: "img_" + 12 alphanumeric characters
+   const IMAGE_ID_REGEX = /^img_[a-zA-Z0-9]{12}$/;
+
+   // LocalStorage prefix for cached images
+   const IMAGE_CACHE_PREFIX = 'dawn_img_';
 
    // DOM element references
    let imageBtn = null;
@@ -35,6 +35,25 @@
    let textInput = null;
    let imageCounter = null;
    let announcer = null;
+
+   // Dropdown elements
+   let dropdownBtn = null;
+   let dropdownMenu = null;
+
+   // Camera elements
+   let cameraModal = null;
+   let cameraVideo = null;
+   let cameraCanvas = null;
+   let cameraPreviewImg = null;
+   let cameraError = null;
+   let cameraLiveControls = null;
+   let cameraReviewControls = null;
+
+   // Camera state
+   let cameraStream = null;
+   let currentFacingMode = 'environment'; // Default to rear camera on mobile
+   let hasMultipleCameras = true; // Assume multiple until enumerated
+   let cameraCanvasCtx = null; // Cached 2D context for camera canvas
 
    /**
     * Initialize the vision module
@@ -49,6 +68,19 @@
       imageCounter = document.getElementById('image-counter');
       announcer = document.getElementById('vision-announcer');
 
+      // Dropdown elements
+      dropdownBtn = document.getElementById('image-dropdown-btn');
+      dropdownMenu = document.getElementById('image-dropdown');
+
+      // Camera elements
+      cameraModal = document.getElementById('camera-modal');
+      cameraVideo = document.getElementById('camera-video');
+      cameraCanvas = document.getElementById('camera-canvas');
+      cameraPreviewImg = document.getElementById('camera-preview-img');
+      cameraError = document.getElementById('camera-error');
+      cameraLiveControls = document.getElementById('camera-live-controls');
+      cameraReviewControls = document.getElementById('camera-review-controls');
+
       if (!imageBtn || !imageInput) {
          console.warn('Vision: Required elements not found');
          return;
@@ -58,6 +90,8 @@
       imageInput.setAttribute('multiple', 'multiple');
 
       bindEvents();
+      bindDropdownEvents();
+      bindCameraEvents();
       // Vision support check will happen when config is received
    }
 
@@ -68,7 +102,7 @@
       // File input change
       imageInput.addEventListener('change', handleFileSelect);
 
-      // Upload button click
+      // Upload button click - opens file picker directly (quick action)
       imageBtn.addEventListener('click', () => imageInput.click());
 
       // Paste handler on text input
@@ -83,6 +117,484 @@
          dropTarget.addEventListener('dragleave', handleDragLeave);
          dropTarget.addEventListener('drop', handleDrop);
       }
+   }
+
+   /**
+    * Bind dropdown menu events
+    */
+   function bindDropdownEvents() {
+      if (!dropdownBtn || !dropdownMenu) return;
+
+      // Toggle dropdown on chevron click
+      dropdownBtn.addEventListener('click', (e) => {
+         e.stopPropagation();
+         toggleDropdown();
+      });
+
+      // Handle dropdown item clicks
+      dropdownMenu.addEventListener('click', (e) => {
+         const item = e.target.closest('.dropdown-item');
+         if (!item) return;
+
+         const action = item.dataset.action;
+         closeDropdown();
+
+         if (action === 'upload') {
+            imageInput.click();
+         } else if (action === 'camera') {
+            openCamera();
+         }
+      });
+
+      // Close dropdown when clicking outside
+      document.addEventListener('click', (e) => {
+         if (!dropdownBtn.contains(e.target) && !dropdownMenu.contains(e.target)) {
+            closeDropdown();
+         }
+      });
+
+      // Keyboard navigation
+      dropdownBtn.addEventListener('keydown', (e) => {
+         if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            toggleDropdown();
+         } else if (e.key === 'Escape') {
+            closeDropdown();
+         }
+      });
+
+      dropdownMenu.addEventListener('keydown', (e) => {
+         const items = dropdownMenu.querySelectorAll('.dropdown-item');
+         const currentIndex = Array.from(items).indexOf(document.activeElement);
+
+         if (e.key === 'Escape') {
+            closeDropdown();
+            dropdownBtn.focus();
+         } else if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            const nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % items.length;
+            items[nextIndex].focus();
+         } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            const prevIndex =
+               currentIndex < 0
+                  ? items.length - 1
+                  : (currentIndex - 1 + items.length) % items.length;
+            items[prevIndex].focus();
+         } else if (e.key === 'Home') {
+            e.preventDefault();
+            items[0].focus();
+         } else if (e.key === 'End') {
+            e.preventDefault();
+            items[items.length - 1].focus();
+         }
+      });
+   }
+
+   /**
+    * Toggle dropdown visibility
+    */
+   function toggleDropdown() {
+      const isOpen = !dropdownMenu.classList.contains('hidden');
+      if (isOpen) {
+         closeDropdown();
+      } else {
+         openDropdown();
+      }
+   }
+
+   /**
+    * Open dropdown menu
+    */
+   function openDropdown() {
+      dropdownMenu.classList.remove('hidden');
+      dropdownBtn.setAttribute('aria-expanded', 'true');
+      // Focus first item for discoverability and keyboard navigation
+      const firstItem = dropdownMenu.querySelector('.dropdown-item');
+      if (firstItem) {
+         firstItem.focus();
+      }
+   }
+
+   /**
+    * Close dropdown menu
+    */
+   function closeDropdown() {
+      dropdownMenu.classList.add('hidden');
+      dropdownBtn.setAttribute('aria-expanded', 'false');
+   }
+
+   /**
+    * Bind camera modal events
+    */
+   function bindCameraEvents() {
+      if (!cameraModal) return;
+
+      // Close button
+      const closeBtn = document.getElementById('camera-close');
+      if (closeBtn) {
+         closeBtn.addEventListener('click', closeCamera);
+      }
+
+      // Capture button
+      const captureBtn = document.getElementById('camera-capture-btn');
+      if (captureBtn) {
+         captureBtn.addEventListener('click', captureFrame);
+      }
+
+      // Switch camera button
+      const switchBtn = document.getElementById('camera-switch');
+      if (switchBtn) {
+         switchBtn.addEventListener('click', switchCamera);
+      }
+
+      // Retake button
+      const retakeBtn = document.getElementById('camera-retake');
+      if (retakeBtn) {
+         retakeBtn.addEventListener('click', retakePhoto);
+      }
+
+      // Use photo button
+      const useBtn = document.getElementById('camera-use');
+      if (useBtn) {
+         useBtn.addEventListener('click', usePhoto);
+      }
+
+      // Upload fallback button (when camera fails)
+      const fallbackBtn = document.getElementById('camera-upload-fallback');
+      if (fallbackBtn) {
+         fallbackBtn.addEventListener('click', () => {
+            closeCamera();
+            imageInput.click();
+         });
+      }
+
+      // Keyboard handling: Escape to close, Tab trap for focus
+      cameraModal.addEventListener('keydown', (e) => {
+         if (e.key === 'Escape') {
+            closeCamera();
+         } else if (e.key === 'Tab') {
+            // Focus trap: keep focus within modal
+            const focusableSelector =
+               'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+            const focusableElements = cameraModal.querySelectorAll(focusableSelector);
+            const visibleFocusable = Array.from(focusableElements).filter(
+               (el) => el.offsetParent !== null && !el.closest('.hidden')
+            );
+            if (visibleFocusable.length === 0) return;
+
+            const firstElement = visibleFocusable[0];
+            const lastElement = visibleFocusable[visibleFocusable.length - 1];
+
+            if (e.shiftKey && document.activeElement === firstElement) {
+               e.preventDefault();
+               lastElement.focus();
+            } else if (!e.shiftKey && document.activeElement === lastElement) {
+               e.preventDefault();
+               firstElement.focus();
+            }
+         }
+      });
+
+      // Close on backdrop click
+      cameraModal.addEventListener('click', (e) => {
+         if (e.target === cameraModal) {
+            closeCamera();
+         }
+      });
+   }
+
+   /**
+    * Check how many cameras are available and update switch button visibility
+    */
+   async function enumerateCameras() {
+      try {
+         const devices = await navigator.mediaDevices.enumerateDevices();
+         const cameras = devices.filter((d) => d.kind === 'videoinput');
+         hasMultipleCameras = cameras.length > 1;
+      } catch (err) {
+         console.warn('Vision: Could not enumerate cameras:', err);
+         hasMultipleCameras = true; // Assume multiple on error (more conservative)
+      }
+   }
+
+   /**
+    * Update camera switch button visibility based on camera count
+    */
+   function updateCameraSwitchVisibility() {
+      const switchBtn = document.getElementById('camera-switch');
+      const placeholder = document.querySelector('.btn-placeholder');
+      if (switchBtn) {
+         if (hasMultipleCameras) {
+            switchBtn.classList.remove('hidden');
+            if (placeholder) placeholder.classList.add('hidden');
+         } else {
+            switchBtn.classList.add('hidden');
+            // Show placeholder to maintain layout balance
+            if (placeholder) placeholder.classList.remove('hidden');
+         }
+      }
+   }
+
+   /**
+    * Open camera modal and start video stream
+    */
+   async function openCamera() {
+      if (!cameraModal || !cameraVideo) {
+         console.warn('Vision: Camera elements not found');
+         return;
+      }
+
+      // Check if at image limit
+      const max = DawnState.visionState.maxImages || 5;
+      if (DawnState.visionState.pendingImages.length >= max) {
+         if (typeof DawnToast !== 'undefined') {
+            DawnToast.show(`Maximum ${max} images reached`, 'warning');
+         }
+         return;
+      }
+
+      // Show modal
+      cameraModal.classList.remove('hidden');
+      showCameraLiveControls();
+      hideCameraError();
+
+      try {
+         // Request camera access
+         cameraStream = await navigator.mediaDevices.getUserMedia({
+            video: {
+               facingMode: currentFacingMode,
+               width: { ideal: 1280 },
+               height: { ideal: 720 },
+            },
+         });
+
+         cameraVideo.srcObject = cameraStream;
+
+         // Update video mirror based on facing mode
+         updateVideoMirror();
+
+         // Check camera count (requires permission first to get labels)
+         await enumerateCameras();
+         updateCameraSwitchVisibility();
+
+         // Focus the modal for keyboard navigation
+         cameraModal.focus();
+      } catch (err) {
+         console.error('Vision: Camera access error:', err);
+         showCameraError();
+
+         if (typeof DawnToast !== 'undefined') {
+            if (err.name === 'NotAllowedError') {
+               DawnToast.show('Camera access denied. Check browser permissions.', 'error');
+            } else if (err.name === 'NotFoundError') {
+               DawnToast.show('No camera found on this device.', 'error');
+            } else {
+               DawnToast.show('Could not access camera.', 'error');
+            }
+         }
+      }
+   }
+
+   /**
+    * Close camera modal and stop video stream
+    */
+   function closeCamera() {
+      if (cameraStream) {
+         cameraStream.getTracks().forEach((track) => track.stop());
+         cameraStream = null;
+      }
+
+      if (cameraVideo) {
+         cameraVideo.srcObject = null;
+      }
+
+      if (cameraPreviewImg) {
+         cameraPreviewImg.src = '';
+         cameraPreviewImg.classList.add('hidden');
+      }
+
+      if (cameraModal) {
+         cameraModal.classList.add('hidden');
+      }
+
+      showCameraLiveControls();
+   }
+
+   /**
+    * Capture a frame from the video stream
+    */
+   function captureFrame() {
+      if (!cameraVideo || !cameraCanvas || !cameraPreviewImg) return;
+
+      // Set canvas size to video dimensions
+      cameraCanvas.width = cameraVideo.videoWidth;
+      cameraCanvas.height = cameraVideo.videoHeight;
+
+      // Cache 2D context (reuse across captures)
+      if (!cameraCanvasCtx) {
+         cameraCanvasCtx = cameraCanvas.getContext('2d');
+      }
+
+      // Reset transform (in case previous capture applied flip)
+      cameraCanvasCtx.setTransform(1, 0, 0, 1, 0, 0);
+
+      // If front camera (mirrored), flip the canvas
+      if (currentFacingMode === 'user') {
+         cameraCanvasCtx.translate(cameraCanvas.width, 0);
+         cameraCanvasCtx.scale(-1, 1);
+      }
+
+      cameraCanvasCtx.drawImage(cameraVideo, 0, 0);
+
+      // Convert to data URL
+      const dataUrl = cameraCanvas.toDataURL('image/jpeg', 0.9);
+      cameraPreviewImg.src = dataUrl;
+
+      // Show preview, hide video
+      cameraVideo.classList.add('hidden');
+      cameraPreviewImg.classList.remove('hidden');
+
+      // Switch to review controls
+      showCameraReviewControls();
+   }
+
+   /**
+    * Go back to live camera view
+    */
+   function retakePhoto() {
+      if (cameraPreviewImg) {
+         cameraPreviewImg.src = '';
+         cameraPreviewImg.classList.add('hidden');
+      }
+
+      if (cameraVideo) {
+         cameraVideo.classList.remove('hidden');
+      }
+
+      showCameraLiveControls();
+   }
+
+   /**
+    * Use the captured photo - add to pending images
+    */
+   async function usePhoto() {
+      if (!cameraPreviewImg || !cameraPreviewImg.src) return;
+
+      try {
+         // Convert data URL to blob (without fetch, to avoid CSP issues)
+         const dataUrl = cameraPreviewImg.src;
+         const blob = dataUrlToBlob(dataUrl);
+
+         // Create a File object
+         const file = new File([blob], 'camera-capture.jpg', { type: 'image/jpeg' });
+
+         // Close modal first
+         closeCamera();
+
+         // Process through existing image pipeline
+         await processImage(file);
+      } catch (err) {
+         console.error('Vision: Error processing captured image:', err);
+         if (typeof DawnToast !== 'undefined') {
+            DawnToast.show('Error processing captured image', 'error');
+         }
+      }
+   }
+
+   /**
+    * Convert a data URL to a Blob (CSP-safe, no fetch required)
+    */
+   function dataUrlToBlob(dataUrl) {
+      const parts = dataUrl.split(',');
+      const mimeMatch = parts[0].match(/:(.*?);/);
+      const mime = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+      const base64 = parts[1];
+      const binary = atob(base64);
+      const array = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+         array[i] = binary.charCodeAt(i);
+      }
+      return new Blob([array], { type: mime });
+   }
+
+   /**
+    * Switch between front and rear cameras
+    */
+   async function switchCamera() {
+      // Toggle facing mode
+      currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
+
+      // Stop current stream
+      if (cameraStream) {
+         cameraStream.getTracks().forEach((track) => track.stop());
+      }
+
+      try {
+         // Get new stream with different camera
+         cameraStream = await navigator.mediaDevices.getUserMedia({
+            video: {
+               facingMode: currentFacingMode,
+               width: { ideal: 1280 },
+               height: { ideal: 720 },
+            },
+         });
+
+         cameraVideo.srcObject = cameraStream;
+         updateVideoMirror();
+      } catch (err) {
+         console.error('Vision: Error switching camera:', err);
+         if (typeof DawnToast !== 'undefined') {
+            DawnToast.show('Could not switch camera', 'error');
+         }
+      }
+   }
+
+   /**
+    * Update video element mirror based on facing mode
+    */
+   function updateVideoMirror() {
+      if (!cameraVideo) return;
+
+      // Mirror front camera (user), don't mirror rear camera (environment)
+      if (currentFacingMode === 'user') {
+         cameraVideo.classList.remove('rear-camera');
+      } else {
+         cameraVideo.classList.add('rear-camera');
+      }
+   }
+
+   /**
+    * Show live camera controls
+    */
+   function showCameraLiveControls() {
+      if (cameraLiveControls) cameraLiveControls.classList.remove('hidden');
+      if (cameraReviewControls) cameraReviewControls.classList.add('hidden');
+   }
+
+   /**
+    * Show review controls (after capture)
+    */
+   function showCameraReviewControls() {
+      if (cameraLiveControls) cameraLiveControls.classList.add('hidden');
+      if (cameraReviewControls) cameraReviewControls.classList.remove('hidden');
+   }
+
+   /**
+    * Show camera error state
+    */
+   function showCameraError() {
+      if (cameraError) cameraError.classList.remove('hidden');
+      if (cameraVideo) cameraVideo.classList.add('hidden');
+      if (cameraLiveControls) cameraLiveControls.classList.add('hidden');
+   }
+
+   /**
+    * Hide camera error state
+    */
+   function hideCameraError() {
+      if (cameraError) cameraError.classList.add('hidden');
+      if (cameraVideo) cameraVideo.classList.remove('hidden');
    }
 
    /**
@@ -222,8 +734,8 @@
    }
 
    /**
-    * Process a single image file - validate, compress, and add to pending
-    * Generates both full image (for LLM) and thumbnail (for history storage)
+    * Process a single image file - validate, compress, upload, and add to pending
+    * Uploads image to server and stores the returned image ID for history.
     */
    async function processImage(file) {
       // Validate type (SECURITY: explicit whitelist, no SVG)
@@ -242,7 +754,7 @@
             return;
          }
 
-         // Read full image as base64 (for LLM)
+         // Read full image as base64 (for LLM and preview)
          const dataUrl = await readAsDataURL(compressed);
 
          // SECURITY: Validate data URI format before storing
@@ -251,14 +763,26 @@
             return;
          }
 
-         // Generate smaller thumbnail for conversation history storage
-         const thumbnailDataUrl = await generateThumbnail(compressed);
+         // Upload to server and get image ID
+         const uploadResult = await uploadImage(compressed);
+         if (!uploadResult || !uploadResult.id) {
+            DawnToast.show(`Failed to upload image: ${file.name}`, 'error');
+            return;
+         }
+
+         // Cache the image data locally for preview
+         const cacheKey = IMAGE_CACHE_PREFIX + uploadResult.id;
+         try {
+            localStorage.setItem(cacheKey, dataUrl);
+         } catch (e) {
+            console.warn('localStorage cache full');
+         }
 
          const base64 = dataUrl.split(',')[1];
          const imageData = {
-            data: base64,
+            id: uploadResult.id, // Server-assigned ID for history storage
+            data: base64, // Full image data for LLM
             mimeType: compressed.type,
-            thumbnail: thumbnailDataUrl,
             previewUrl: dataUrl, // Keep for preview display
          };
 
@@ -346,79 +870,88 @@
    }
 
    /**
-    * Generate a small thumbnail for conversation history storage
-    * Always JPEG for consistent compression
-    *
-    * @param {Blob} originalBlob - The compressed image blob
-    * @returns {Promise<string|null>} - Data URL of thumbnail, or null if too large
+    * Upload an image to the server and return the image ID
+    * @param {Blob} blob - Image data blob
+    * @returns {Promise<{id: string, mimeType: string, size: number}|null>}
     */
-   async function generateThumbnail(originalBlob) {
-      return new Promise((resolve) => {
-         const img = new Image();
+   async function uploadImage(blob) {
+      const formData = new FormData();
+      formData.append('image', blob, 'image.jpg');
 
-         img.onload = async () => {
-            let { width, height } = img;
+      try {
+         const response = await fetch('/api/images', {
+            method: 'POST',
+            credentials: 'include',
+            body: formData,
+         });
 
-            // Scale down to thumbnail size
-            if (width > THUMBNAIL_MAX_DIM || height > THUMBNAIL_MAX_DIM) {
-               const scale = Math.min(THUMBNAIL_MAX_DIM / width, THUMBNAIL_MAX_DIM / height);
-               width = Math.round(width * scale);
-               height = Math.round(height * scale);
-            }
+         if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            console.error('Image upload failed:', response.status, errorData);
+            throw new Error(errorData.error || `Upload failed: ${response.status}`);
+         }
 
-            const canvas = document.createElement('canvas');
-            canvas.width = width;
-            canvas.height = height;
-            const ctx = canvas.getContext('2d');
+         const result = await response.json();
+         console.log('Image uploaded:', result.id, result.size, 'bytes');
+         return result;
+      } catch (err) {
+         console.error('Image upload error:', err);
+         return null;
+      }
+   }
 
-            // White background for JPEG (no transparency)
-            ctx.fillStyle = '#FFFFFF';
-            ctx.fillRect(0, 0, width, height);
-            ctx.drawImage(img, 0, 0, width, height);
+   /**
+    * Load an image from server by ID (with localStorage caching)
+    * @param {string} imageId - Image ID (e.g., "img_a1b2c3d4e5f6")
+    * @returns {Promise<string|null>} - Data URL or null if not found
+    */
+   async function loadImageById(imageId) {
+      if (!IMAGE_ID_REGEX.test(imageId)) {
+         console.warn('Invalid image ID format:', imageId);
+         return null;
+      }
 
-            // Convert to JPEG for consistent compression
-            canvas.toBlob(
-               async (blob) => {
-                  URL.revokeObjectURL(img.src);
+      // Check localStorage cache first
+      const cacheKey = IMAGE_CACHE_PREFIX + imageId;
+      const cached = localStorage.getItem(cacheKey);
+      if (cached) {
+         return cached;
+      }
 
-                  if (!blob) {
-                     resolve(null);
-                     return;
-                  }
+      try {
+         const response = await fetch(`/api/images/${imageId}`, {
+            credentials: 'include',
+         });
 
-                  // SECURITY: Enforce max thumbnail size
-                  if (blob.size > THUMBNAIL_MAX_SIZE) {
-                     console.warn(
-                        `Thumbnail too large (${blob.size} > ${THUMBNAIL_MAX_SIZE}), skipping storage`
-                     );
-                     resolve(null);
-                     return;
-                  }
+         if (!response.ok) {
+            console.warn('Image load failed:', response.status);
+            return null;
+         }
 
-                  try {
-                     const dataUrl = await readAsDataURL(blob);
-                     // SECURITY: Validate before returning
-                     if (isSafeDataUri(dataUrl)) {
-                        resolve(dataUrl);
-                     } else {
-                        resolve(null);
-                     }
-                  } catch (e) {
-                     resolve(null);
-                  }
-               },
-               'image/jpeg',
-               THUMBNAIL_QUALITY
-            );
-         };
+         const blob = await response.blob();
+         const dataUrl = await readAsDataURL(blob);
 
-         img.onerror = () => {
-            URL.revokeObjectURL(img.src);
-            resolve(null);
-         };
+         // Cache in localStorage (with error handling for quota)
+         try {
+            localStorage.setItem(cacheKey, dataUrl);
+         } catch (e) {
+            console.warn('localStorage cache full, continuing without caching');
+         }
 
-         img.src = URL.createObjectURL(originalBlob);
-      });
+         return dataUrl;
+      } catch (err) {
+         console.error('Image load error:', err);
+         return null;
+      }
+   }
+
+   /**
+    * Check if a string is a valid image ID
+    * @param {string} str - String to check
+    * @returns {boolean}
+    */
+   function isImageId(str) {
+      return IMAGE_ID_REGEX.test(str);
    }
 
    /**
@@ -675,6 +1208,11 @@
          imageBtn.title = visionEnabled ? 'Attach image' : 'Vision not available for current model';
       }
 
+      // Also update dropdown button state
+      if (dropdownBtn) {
+         dropdownBtn.disabled = !visionEnabled;
+      }
+
       updateCounter();
    }
 
@@ -690,13 +1228,14 @@
    }
 
    /**
-    * Get all thumbnail data URLs for history storage
-    * @returns {string[]} Array of data URLs (nulls filtered out)
+    * Get all image IDs for history storage
+    * @deprecated Use getPendingImageIds instead
+    * @returns {string[]} Array of image IDs (nulls filtered out)
     */
    function getPendingThumbnails() {
-      return DawnState.visionState.pendingImages
-         .map((img) => img.thumbnail)
-         .filter((t) => t !== null);
+      // Return IDs for backward compatibility
+      // Images are now stored server-side and referenced by ID
+      return DawnState.visionState.pendingImages.map((img) => img.id).filter((id) => id != null);
    }
 
    /**
@@ -707,20 +1246,51 @@
    }
 
    /**
+    * Get image IDs from pending images for history storage
+    * @returns {string[]} Array of image IDs
+    */
+   function getPendingImageIds() {
+      return DawnState.visionState.pendingImages.map((img) => img.id).filter((id) => id);
+   }
+
+   /**
     * Format text with image markers for storage (multiple images)
-    * SECURITY: Only accepts validated data URIs
+    * Uses image IDs instead of inline data for efficient storage.
     *
     * @param {string} text - User's message text
-    * @param {string[]} thumbnailDataUrls - Array of validated thumbnail data URLs
+    * @param {string[]} imageIds - Array of server-assigned image IDs
     * @returns {string} - Formatted message with image markers
     */
-   function formatMessageWithImages(text, thumbnailDataUrls) {
-      if (!thumbnailDataUrls || thumbnailDataUrls.length === 0) {
+   function formatMessageWithImages(text, imageIds) {
+      if (!imageIds || imageIds.length === 0) {
+         return text;
+      }
+
+      // Filter to only valid image IDs
+      const validIds = imageIds.filter((id) => isImageId(id));
+      if (validIds.length === 0) {
+         return text;
+      }
+
+      // Append each image as separate marker on new line
+      let result = text;
+      for (const id of validIds) {
+         result += '\n[IMAGE:' + id + ']';
+      }
+      return result;
+   }
+
+   /**
+    * Format text with inline data URLs (legacy compatibility)
+    * @deprecated Use formatMessageWithImages with image IDs instead
+    */
+   function formatMessageWithDataUrls(text, dataUrls) {
+      if (!dataUrls || dataUrls.length === 0) {
          return text;
       }
 
       // Filter to only safe data URIs
-      const safeUrls = thumbnailDataUrls.filter((url) => isSafeDataUri(url));
+      const safeUrls = dataUrls.filter((url) => isSafeDataUri(url));
       if (safeUrls.length === 0) {
          return text;
       }
@@ -734,25 +1304,38 @@
    }
 
    /**
-    * Parse image markers from stored message (supports multiple images)
-    * SECURITY: Validates data URIs before returning
+    * Parse image markers from stored message (supports both image IDs and inline data)
+    * Supports:
+    *   - New format: [IMAGE:img_a1b2c3d4e5f6] (image ID)
+    *   - Legacy format: [IMAGE:data:image/...] (inline data URL)
     *
     * @param {string} content - Message content potentially containing image markers
-    * @returns {{ text: string, imageDataUrls: string[] }} - Parsed text and images
+    * @returns {{ text: string, imageIds: string[], imageDataUrls: string[] }}
     */
    function parseImageMarkers(content) {
       if (!content || typeof content !== 'string') {
-         return { text: content || '', imageDataUrls: [] };
+         return { text: content || '', imageIds: [], imageDataUrls: [] };
       }
 
+      const imageIds = [];
       const imageDataUrls = [];
       let text = content;
 
-      // Find all [IMAGE:data:image/...] markers
-      const markerRegex = /\n?\[IMAGE:(data:image\/[^\[\]]+)\]/g;
+      // Find all image markers (both ID and data URL formats)
+      // New format: [IMAGE:img_xxx]
+      const idRegex = /\n?\[IMAGE:(img_[a-zA-Z0-9]{12})\]/g;
+      // Legacy format: [IMAGE:data:image/...]
+      const dataRegex = /\n?\[IMAGE:(data:image\/[^\[\]]+)\]/g;
+
       let match;
 
-      while ((match = markerRegex.exec(content)) !== null) {
+      // Extract image IDs
+      while ((match = idRegex.exec(content)) !== null) {
+         imageIds.push(match[1]);
+      }
+
+      // Extract inline data URLs (legacy)
+      while ((match = dataRegex.exec(content)) !== null) {
          const dataUrl = match[1];
          // SECURITY: Validate each extracted data URI
          if (isSafeDataUri(dataUrl)) {
@@ -763,9 +1346,35 @@
       }
 
       // Remove all markers from text
-      text = content.replace(markerRegex, '').trimEnd();
+      text = content.replace(idRegex, '').replace(dataRegex, '').trimEnd();
 
-      return { text, imageDataUrls };
+      return { text, imageIds, imageDataUrls };
+   }
+
+   /**
+    * Load images from parsed markers (handles both IDs and inline data)
+    * Returns array of data URLs ready for rendering.
+    *
+    * @param {{ imageIds: string[], imageDataUrls: string[] }} parsed - Output from parseImageMarkers
+    * @returns {Promise<string[]>} - Array of data URLs
+    */
+   async function loadParsedImages(parsed) {
+      const results = [];
+
+      // Load images by ID from server (with local caching)
+      for (const id of parsed.imageIds || []) {
+         const dataUrl = await loadImageById(id);
+         if (dataUrl) {
+            results.push(dataUrl);
+         }
+      }
+
+      // Include inline data URLs directly (legacy)
+      for (const dataUrl of parsed.imageDataUrls || []) {
+         results.push(dataUrl);
+      }
+
+      return results;
    }
 
    // Legacy single-image functions for backward compatibility
@@ -775,25 +1384,32 @@
    }
 
    function getPendingThumbnail() {
+      // Return image ID instead of thumbnail (server-side storage)
       const images = DawnState.visionState.pendingImages;
-      return images.length > 0 ? images[0]?.thumbnail || null : null;
+      return images.length > 0 ? images[0]?.id || null : null;
    }
 
    function hasPendingImage() {
       return DawnState.visionState.pendingImages.length > 0;
    }
 
-   // Legacy wrapper for single image format
-   function formatMessageWithImage(text, thumbnailDataUrl) {
-      if (!thumbnailDataUrl) return text;
-      return formatMessageWithImages(text, [thumbnailDataUrl]);
+   // Legacy wrapper for single image format (accepts either ID or data URL)
+   function formatMessageWithImage(text, imageIdOrDataUrl) {
+      if (!imageIdOrDataUrl) return text;
+      // Check if it's an image ID or a data URL
+      if (isImageId(imageIdOrDataUrl)) {
+         return formatMessageWithImages(text, [imageIdOrDataUrl]);
+      }
+      // Legacy data URL path
+      return formatMessageWithDataUrls(text, [imageIdOrDataUrl]);
    }
 
    // Legacy wrapper for single image parse
    function parseImageMarker(content) {
-      const { text, imageDataUrls } = parseImageMarkers(content);
+      const { text, imageIds, imageDataUrls } = parseImageMarkers(content);
       return {
          text,
+         imageId: imageIds.length > 0 ? imageIds[0] : null,
          imageDataUrl: imageDataUrls.length > 0 ? imageDataUrls[0] : null,
       };
    }
@@ -810,20 +1426,27 @@
       updateLimits,
       // Multi-image API
       getPendingImages,
-      getPendingThumbnails,
+      getPendingImageIds,
       hasPendingImages,
       formatMessageWithImages,
       parseImageMarkers,
+      loadParsedImages,
       removeImage,
+      // Image loading
+      loadImageById,
+      isImageId,
       // Legacy single-image API (backward compatibility)
       getPendingImage,
       getPendingThumbnail,
       hasPendingImage,
       formatMessageWithImage,
       parseImageMarker,
+      // Camera capture
+      openCamera,
+      closeCamera,
       // Utilities
       isSafeDataUri,
       SAFE_PREFIXES,
-      THUMBNAIL_MAX_SIZE,
+      IMAGE_ID_REGEX,
    };
 })(window);

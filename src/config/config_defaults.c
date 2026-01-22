@@ -211,6 +211,11 @@ void config_set_defaults(dawn_config_t *config) {
    config->webui.ssl_cert_path[0] = '\0';
    config->webui.ssl_key_path[0] = '\0';
 
+   /* Images - storage settings for vision uploads */
+   config->images.retention_days = 0; /* 0 = never delete (user preference) */
+   config->images.max_size_mb = 4;    /* 4MB max per image */
+   config->images.max_per_user = 1000;
+
    /* Shutdown - disabled by default for security */
    config->shutdown.enabled = false;
    config->shutdown.passphrase[0] = '\0';

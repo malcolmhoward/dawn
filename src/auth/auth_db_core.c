@@ -211,7 +211,21 @@ static const char *SCHEMA_SQL =
     "   FOREIGN KEY (session_metrics_id) REFERENCES session_metrics(id) ON DELETE CASCADE"
     ");"
     "CREATE INDEX IF NOT EXISTS idx_metrics_providers_session ON "
-    "session_metrics_providers(session_metrics_id);";
+    "session_metrics_providers(session_metrics_id);"
+
+    /* Images table for vision uploads (added in schema v12) */
+    "CREATE TABLE IF NOT EXISTS images ("
+    "   id TEXT PRIMARY KEY,"
+    "   user_id INTEGER NOT NULL,"
+    "   mime_type TEXT NOT NULL,"
+    "   size INTEGER NOT NULL,"
+    "   data BLOB NOT NULL,"
+    "   created_at INTEGER NOT NULL,"
+    "   last_accessed INTEGER,"
+    "   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE"
+    ");"
+    "CREATE INDEX IF NOT EXISTS idx_images_user ON images(user_id);"
+    "CREATE INDEX IF NOT EXISTS idx_images_created ON images(created_at);";
 
 /* =============================================================================
  * Schema Version and Migration
@@ -424,6 +438,44 @@ static int create_schema(void) {
          }
       }
       LOG_INFO("auth_db: added LLM settings columns to conversations (v11)");
+   }
+
+   /* v12 migration: images table for vision uploads (now superseded by v13) */
+   if (current_version >= 1 && current_version < 12) {
+      LOG_INFO("auth_db: added images table for vision uploads (v12)");
+   }
+
+   /* v13 migration: add data BLOB column to images table
+    * Since v12 images table didn't have the data column, we need to recreate it.
+    * Drop existing table (likely empty) and let SCHEMA_SQL recreate with data column. */
+   if (current_version == 12) {
+      rc = sqlite3_exec(s_db.db, "DROP TABLE IF EXISTS images", NULL, NULL, &errmsg);
+      if (rc != SQLITE_OK) {
+         LOG_WARNING("auth_db: v13 migration - failed to drop images: %s", errmsg ? errmsg : "ok");
+         sqlite3_free(errmsg);
+         errmsg = NULL;
+      }
+      /* Recreate with data column (from SCHEMA_SQL) */
+      const char *images_sql =
+          "CREATE TABLE IF NOT EXISTS images ("
+          "   id TEXT PRIMARY KEY,"
+          "   user_id INTEGER NOT NULL,"
+          "   mime_type TEXT NOT NULL,"
+          "   size INTEGER NOT NULL,"
+          "   data BLOB NOT NULL,"
+          "   created_at INTEGER NOT NULL,"
+          "   last_accessed INTEGER,"
+          "   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE"
+          ");"
+          "CREATE INDEX IF NOT EXISTS idx_images_user ON images(user_id);"
+          "CREATE INDEX IF NOT EXISTS idx_images_created ON images(created_at);";
+      rc = sqlite3_exec(s_db.db, images_sql, NULL, NULL, &errmsg);
+      if (rc != SQLITE_OK) {
+         LOG_ERROR("auth_db: v13 migration - failed to create images: %s", errmsg ? errmsg : "ok");
+         sqlite3_free(errmsg);
+         return AUTH_DB_FAILURE;
+      }
+      LOG_INFO("auth_db: migrated images table to include BLOB storage (v13)");
    }
 
    /* Create continuation index (runs for both new databases and migrations) */
@@ -856,6 +908,60 @@ static int prepare_statements(void) {
       return AUTH_DB_FAILURE;
    }
 
+   /* Image statements */
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "INSERT INTO images (id, user_id, mime_type, size, data, created_at) "
+                           "VALUES (?, ?, ?, ?, ?, ?)",
+                           -1, &s_db.stmt_image_create, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare image_create failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT id, user_id, mime_type, size, created_at, last_accessed "
+                           "FROM images WHERE id = ?",
+                           -1, &s_db.stmt_image_get, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare image_get failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db, "SELECT user_id, mime_type, data FROM images WHERE id = ?", -1,
+                           &s_db.stmt_image_get_data, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare image_get_data failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM images WHERE id = ? AND user_id = ?", -1,
+                           &s_db.stmt_image_delete, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare image_delete failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db, "UPDATE images SET last_accessed = ? WHERE id = ?", -1,
+                           &s_db.stmt_image_update_access, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare image_update_access failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db, "SELECT COUNT(*) FROM images WHERE user_id = ?", -1,
+                           &s_db.stmt_image_count_user, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare image_count_user failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM images WHERE created_at < ?", -1,
+                           &s_db.stmt_image_delete_old, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare image_delete_old failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
    return AUTH_DB_SUCCESS;
 }
 
@@ -949,11 +1055,26 @@ static void finalize_statements(void) {
    if (s_db.stmt_provider_metrics_delete)
       sqlite3_finalize(s_db.stmt_provider_metrics_delete);
 
+   /* Image statements */
+   if (s_db.stmt_image_create)
+      sqlite3_finalize(s_db.stmt_image_create);
+   if (s_db.stmt_image_get)
+      sqlite3_finalize(s_db.stmt_image_get);
+   if (s_db.stmt_image_get_data)
+      sqlite3_finalize(s_db.stmt_image_get_data);
+   if (s_db.stmt_image_delete)
+      sqlite3_finalize(s_db.stmt_image_delete);
+   if (s_db.stmt_image_update_access)
+      sqlite3_finalize(s_db.stmt_image_update_access);
+   if (s_db.stmt_image_count_user)
+      sqlite3_finalize(s_db.stmt_image_count_user);
+   if (s_db.stmt_image_delete_old)
+      sqlite3_finalize(s_db.stmt_image_delete_old);
+
    /* Clear all statement pointers using offsetof for safety
     * MAINTENANCE: If statements are reordered, update first/last_stmt names */
    size_t first_stmt_offset = offsetof(auth_db_state_t, stmt_create_user);
-   size_t last_stmt_end = offsetof(auth_db_state_t, stmt_provider_metrics_delete) +
-                          sizeof(sqlite3_stmt *);
+   size_t last_stmt_end = offsetof(auth_db_state_t, stmt_image_delete_old) + sizeof(sqlite3_stmt *);
    memset((char *)&s_db + first_stmt_offset, 0, last_stmt_end - first_stmt_offset);
 }
 

@@ -93,6 +93,7 @@
 #include "auth/auth_crypto.h"
 #include "auth/auth_db.h"
 #include "auth/auth_maintenance.h"
+#include "image_store.h"
 #endif
 #ifdef ENABLE_AEC
 #include "audio/aec_processor.h"
@@ -2213,6 +2214,17 @@ int main(int argc, char *argv[]) {
       LOG_ERROR("Failed to initialize auth database - authentication disabled");
       auth_crypto_shutdown();
    } else {
+      /* Initialize image storage (depends on auth_db for metadata) */
+      image_store_config_t img_config = {
+         .max_size = (size_t)g_config.images.max_size_mb * 1024 * 1024,
+         .max_per_user = g_config.images.max_per_user,
+         .retention_days = g_config.images.retention_days,
+      };
+      if (image_store_init(&img_config) != IMAGE_STORE_SUCCESS) {
+         LOG_WARNING("Failed to initialize image store - vision uploads disabled");
+         /* Non-fatal - continue without image storage */
+      }
+
       /* Initialize admin socket for dawn-admin CLI communication */
       if (admin_socket_init() != 0) {
          LOG_WARNING("Failed to initialize admin socket - CLI management disabled");
@@ -3625,9 +3637,10 @@ int main(int argc, char *argv[]) {
 
 #ifdef ENABLE_AUTH
    /* Shutdown auth subsystem in reverse initialization order:
-    * maintenance_thread -> admin_socket -> auth_db -> auth_crypto */
+    * maintenance_thread -> admin_socket -> image_store -> auth_db -> auth_crypto */
    auth_maintenance_stop();
    admin_socket_shutdown();
+   image_store_shutdown();
    auth_db_shutdown();
    auth_crypto_shutdown();
 #endif

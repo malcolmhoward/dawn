@@ -800,17 +800,15 @@ void webui_send_audio(session_t *session, const uint8_t *opus_data, size_t len, 
 
 **Goal:** Full voice interaction with binary WebSocket frames
 
-**Browser Audio Flow (Web Audio API + libopus.js):**
+**Browser Audio Flow (Web Audio API + Opus):**
 
-> **Deprecation Note:** This implementation uses `ScriptProcessorNode` for initial
-> compatibility. ScriptProcessor is deprecated; a future enhancement should migrate
-> to `AudioWorkletNode` for better performance (separate thread, no main-thread blocking).
-> Migration path: Create `opus-encoder-worklet.js` using AudioWorkletProcessor.
+> **Note:** Audio capture uses `AudioWorkletNode` for low-latency recording on the
+> audio thread, with `ScriptProcessorNode` fallback for older browsers.
+> See `www/js/audio/capture-worklet.js` for the worklet processor.
 
 ```javascript
-// js/audio.js - Uses Web Audio API for raw PCM, libopus.js for encoding
-// This avoids WebM container parsing on the server
-// TODO: Migrate from ScriptProcessorNode to AudioWorkletNode (Phase 5+)
+// js/audio.js - Uses Web Audio API for raw PCM, Opus encoding via worker
+// AudioWorklet for capture, Opus worker for encoding
 
 const AUDIO_CHUNK_MS = 200;  // Configurable: 200ms default (better ASR context)
 const AUDIO_IN = 0x01;
@@ -1493,24 +1491,6 @@ session_manager_cleanup();     // Now safe to clean up sessions
 
 ## Future Enhancements
 
-### Audio Pipeline Enhancements
-
-7. **Opus codec integration**: Reduce bandwidth ~70% vs raw PCM
-   - Browser: libopus.js or WebCodecs API for encoding
-   - Server: Per-worker Opus contexts (encoder + decoder)
-   - Enables mobile use over cellular networks
-   - AudioWorklet migration (replace deprecated ScriptProcessorNode)
-
-8. **VAD-based auto-stop**: Voice Activity Detection for hands-free operation
-   - Detect speech end automatically (no push-to-talk required)
-   - WebRTC VAD or Silero VAD integration
-   - Configurable silence threshold and timeout
-
-9. **Always-listening local interface**: Wake word detection in browser
-   - Lightweight wake word model (Porcupine or similar)
-   - Background listening with minimal CPU
-   - Automatic recording start on wake word
-
 ### UI/UX Enhancements
 
 1. **Multi-room visualization**: Show all active satellites
@@ -1638,3 +1618,7 @@ session_manager_cleanup();     // Now safe to clean up sessions
   - Converted debug checkbox to icon button (bug icon) for consistent header UI
   - Added TTS notification before context compaction for local session
   - All Phase 5 deliverables complete
+- 2026-01-22: **Audio Pipeline Enhancements Complete**
+  - Opus codec integration complete (server: `webui_audio.c`, client: Opus worker)
+  - AudioWorklet migration complete (`capture-worklet.js` with ScriptProcessorNode fallback)
+  - Removed VAD-based auto-stop from roadmap (not implementing)

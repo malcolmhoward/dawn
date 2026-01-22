@@ -545,6 +545,59 @@
                      <path d="M21 15l-5-5L5 21" />
                   </svg>
                </button>
+               <button
+                  id="image-dropdown-btn"
+                  class="input-button-dropdown"
+                  aria-haspopup="true"
+                  aria-expanded="false"
+                  aria-controls="image-dropdown"
+                  aria-label="Image options"
+                  disabled
+               >
+                  <svg
+                     width="10"
+                     height="10"
+                     viewBox="0 0 24 24"
+                     fill="none"
+                     stroke="currentColor"
+                     stroke-width="2"
+                  >
+                     <polyline points="6 9 12 15 18 9" />
+                  </svg>
+               </button>
+               <div id="image-dropdown" class="image-dropdown hidden" role="menu">
+                  <button class="dropdown-item" data-action="upload" role="menuitem">
+                     <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                     >
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                        <polyline points="17 8 12 3 7 8" />
+                        <line x1="12" y1="3" x2="12" y2="15" />
+                     </svg>
+                     Upload File
+                  </button>
+                  <button class="dropdown-item" data-action="camera" role="menuitem">
+                     <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                     >
+                        <path
+                           d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"
+                        />
+                        <circle cx="12" cy="13" r="4" />
+                     </svg>
+                     Take Photo
+                  </button>
+               </div>
                <span id="image-counter" class="image-counter hidden">0/5</span>
             </div>
             <button id="send-btn" title="Send message">Send</button>
@@ -1473,6 +1526,88 @@ client_secret = "..."</pre
                <button type="button" id="input-modal-cancel" class="btn btn-secondary">
                   Cancel
                </button>
+            </div>
+         </div>
+      </div>
+
+      <!-- Camera Capture Modal -->
+      <div
+         id="camera-modal"
+         class="modal hidden"
+         role="dialog"
+         aria-modal="true"
+         aria-labelledby="camera-modal-title"
+         tabindex="-1"
+      >
+         <div class="modal-content camera-modal-content">
+            <div class="camera-header">
+               <h3 id="camera-modal-title">Camera Capture</h3>
+               <button id="camera-close" class="camera-close-btn" aria-label="Close">
+                  &times;
+               </button>
+            </div>
+            <div class="camera-viewport">
+               <video id="camera-video" autoplay playsinline></video>
+               <canvas id="camera-canvas" class="hidden"></canvas>
+               <img id="camera-preview-img" class="hidden" alt="Captured image" />
+               <div id="camera-error" class="camera-error hidden">
+                  <svg
+                     width="48"
+                     height="48"
+                     viewBox="0 0 24 24"
+                     fill="none"
+                     stroke="currentColor"
+                     stroke-width="1.5"
+                  >
+                     <circle cx="12" cy="12" r="10" />
+                     <line x1="12" y1="8" x2="12" y2="12" />
+                     <line x1="12" y1="16" x2="12.01" y2="16" />
+                  </svg>
+                  <p>Camera access denied or unavailable</p>
+                  <button id="camera-upload-fallback" class="btn btn-secondary">
+                     Upload File Instead
+                  </button>
+               </div>
+            </div>
+            <div class="camera-controls">
+               <!-- Live state controls -->
+               <div id="camera-live-controls">
+                  <button
+                     id="camera-switch"
+                     class="btn btn-icon"
+                     title="Switch camera"
+                     aria-label="Switch camera"
+                  >
+                     <svg
+                        width="20"
+                        height="20"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                     >
+                        <!-- Horizontal flip arrows -->
+                        <path d="M7 9l-4 3 4 3" />
+                        <path d="M17 9l4 3-4 3" />
+                        <path d="M3 12h8" />
+                        <path d="M13 12h8" />
+                     </svg>
+                  </button>
+                  <button
+                     id="camera-capture-btn"
+                     class="btn btn-capture"
+                     aria-label="Capture photo"
+                     title="Capture photo"
+                  >
+                     <span class="capture-icon"></span>
+                  </button>
+                  <div class="btn-placeholder"></div>
+               </div>
+               <!-- Review state controls -->
+               <div id="camera-review-controls" class="hidden">
+                  <button id="camera-retake" class="btn btn-secondary">Retake</button>
+                  <button id="camera-use" class="btn btn-primary">Use Photo</button>
+               </div>
             </div>
          </div>
       </div>

@@ -48,7 +48,7 @@
  * ============================================================================= */
 
 /* Current schema version */
-#define AUTH_DB_SCHEMA_VERSION 11
+#define AUTH_DB_SCHEMA_VERSION 13
 
 /* Retention periods */
 #define LOGIN_ATTEMPT_RETENTION_SEC (7 * 24 * 60 * 60) /* 7 days */
@@ -125,6 +125,15 @@ typedef struct {
    sqlite3_stmt *stmt_metrics_delete_old;
    sqlite3_stmt *stmt_provider_metrics_save;
    sqlite3_stmt *stmt_provider_metrics_delete;
+
+   /* === Image module statements (image_store.c) === */
+   sqlite3_stmt *stmt_image_create;
+   sqlite3_stmt *stmt_image_get;
+   sqlite3_stmt *stmt_image_get_data;
+   sqlite3_stmt *stmt_image_delete;
+   sqlite3_stmt *stmt_image_update_access;
+   sqlite3_stmt *stmt_image_count_user;
+   sqlite3_stmt *stmt_image_delete_old;
 } auth_db_state_t;
 
 /* =============================================================================
