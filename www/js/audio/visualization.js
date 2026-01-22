@@ -864,7 +864,7 @@
    document.addEventListener('visibilitychange', function () {
       if (!document.hidden) {
          // Restart FFT if it was running
-         if (fftAnalyser && !fftAnimationId) {
+         if (DawnAudioPlayback.getAnalyser() && !fftAnimationId) {
             fftAnimationId = requestAnimationFrame(function animate() {
                // Re-trigger the visualization loop
                global.DawnVisualization.startFFT();
