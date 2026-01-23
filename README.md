@@ -74,6 +74,14 @@ DAWN is designed for embedded Linux platforms (Jetson, Raspberry Pi) and support
   - **7 color themes** - cyan, purple, green, orange, red, blue, and terminal
   - **Accessibility** - keyboard navigation, screen reader support (ARIA), reduced motion preferences, WCAG-compliant touch targets
   - Mobile-friendly responsive design
+  - **Vision/Image Support** - Send images for AI analysis:
+    - Multiple input methods: file upload, paste, drag-and-drop, camera capture
+    - Camera capture with front/rear camera switching (mobile-friendly)
+    - Multi-image support (up to 5 images per message)
+    - Client-side compression (max 1024px, JPEG 85%) for efficient uploads
+    - SQLite BLOB storage for conversation history persistence
+    - Auto-detects vision-capable models (GPT-4o, Claude 3, Gemini, LLaVA, etc.)
+    - Security: SVG excluded to prevent XSS attacks
 
 - **LLM Tools**
   - **Web Search** - Voice-activated search via SearXNG (self-hosted, privacy-focused)

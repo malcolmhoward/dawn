@@ -1433,6 +1433,56 @@ If UDP is added in Phase 6, follow WebRTC best practices ([GetStream](https://ge
 
 ---
 
+## 13. Memory System Integration
+
+### User Mapping for Satellites
+
+DAP2 satellites operate as "guest" sessions by default and do NOT store memories. This prevents visitors or other household members from polluting a user's memory profile.
+
+**Configuration for memory-enabled satellites:**
+
+```toml
+[dap2.satellites]
+# Map satellite UUIDs to authenticated users for memory storage
+# Only mapped satellites will have memories stored
+# Unmapped satellites operate in guest mode (no memory)
+
+[dap2.satellites."550e8400-e29b-41d4-a716-446655440000"]
+name = "Kitchen Assistant"
+user = "krisk"              # Map to user for memory storage
+
+[dap2.satellites."660f9511-f3ac-52e5-b827-557766551111"]
+name = "Office Assistant"
+user = "tomp"               # Different user
+
+[dap2.satellites."770a0622-g4bd-63f6-c938-668877662222"]
+name = "Guest Room"
+# No user mapping = guest mode, no memory storage
+```
+
+**Behavior:**
+- **Mapped satellite**: Queries associated with configured user, memories stored and retrieved
+- **Unmapped satellite**: Guest mode, no memory storage, core facts not injected
+- **Registration response** includes memory status:
+  ```json
+  {
+    "type": "REGISTER_ACK",
+    "session_id": "sess-abc123",
+    "memory_enabled": true,
+    "memory_user": "krisk"
+  }
+  ```
+
+**Why not auto-create users for satellites?**
+- Security: Prevents unauthorized memory accumulation
+- Privacy: Explicit opt-in for memory features
+- Simplicity: Reuses existing auth user database
+- Future: Speaker identification will provide automatic user resolution
+
+See `MEMORY_SYSTEM_DESIGN.md` for full memory system specification.
+
+---
+
 ## Appendix A: Comparison with DAP 1.0
 
 | Aspect | DAP 1.0 | DAP 2.0 |

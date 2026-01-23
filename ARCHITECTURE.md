@@ -4,7 +4,7 @@ This document describes the architecture of the D.A.W.N. (Digital Assistant for 
 
 **D.A.W.N.** is the central intelligence layer of the OASIS ecosystem, responsible for interpreting user intent, fusing data from every subsystem, and routing commands. At its core, DAWN performs neural-inference to understand context and drive decision-making, acting as OASIS's orchestration hub for MIRAGE, AURA, SPARK, STAT, and any future modules.
 
-**Last Updated**: January 18, 2026 (added Gemini provider, Opus audio streaming, multi-format audio decoder)
+**Last Updated**: January 22, 2026 (added Vision/Image subsystem documentation)
 
 ## Table of Contents
 
@@ -507,6 +507,127 @@ The WebUI uses Opus audio compression for efficient bidirectional audio streamin
 | Latency | Minimal | +2-5ms encoding |
 | Quality | Lossless | Near-lossless (voice optimized) |
 | Browser Support | Universal | WebCodecs (Chrome/Edge/Firefox 90+) |
+
+### 8. Vision/Image Subsystem (`src/image_store.c`, `src/webui/webui_images.c`, `www/js/ui/vision.js`)
+
+**Purpose**: Image upload, storage, and vision AI integration for the WebUI
+
+#### Architecture: **Client-Side Compression + Server-Side BLOB Storage**
+
+```
+┌───────────────────────────────────────────────────────────────────────┐
+│                        Browser (WebUI)                                 │
+│                                                                        │
+│  ┌─────────────────────────────────────────────────────────────────┐  │
+│  │                    Input Methods                                 │  │
+│  │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐        │  │
+│  │  │  File    │  │  Paste   │  │  Drag &  │  │  Camera  │        │  │
+│  │  │  Upload  │  │  (Ctrl+V)│  │  Drop    │  │  Capture │        │  │
+│  │  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘        │  │
+│  │       └─────────────┴─────────────┴─────────────┘               │  │
+│  │                           │                                      │  │
+│  │                    ┌──────▼──────┐                               │  │
+│  │                    │ Compression │ (max 1024px, JPEG 85%)        │  │
+│  │                    └──────┬──────┘                               │  │
+│  └───────────────────────────┼─────────────────────────────────────┘  │
+│                              │                                        │
+│  ┌───────────────────────────▼─────────────────────────────────────┐  │
+│  │ POST /api/images (multipart/form-data)                          │  │
+│  └───────────────────────────┬─────────────────────────────────────┘  │
+└──────────────────────────────┼────────────────────────────────────────┘
+                               │
+                               ▼
+┌───────────────────────────────────────────────────────────────────────┐
+│                        DAWN Server                                     │
+│                                                                        │
+│  ┌───────────────────────────────────────────────────────────────┐    │
+│  │ webui_images.c - HTTP Endpoint Handler                        │    │
+│  │                                                               │    │
+│  │  POST /api/images  → Validate → Store → Return image ID       │    │
+│  │  GET /api/images/:id → Retrieve BLOB → Return image data      │    │
+│  └───────────────────────────┬───────────────────────────────────┘    │
+│                              │                                        │
+│  ┌───────────────────────────▼───────────────────────────────────┐    │
+│  │ image_store.c - SQLite BLOB Storage                           │    │
+│  │                                                               │    │
+│  │  Table: images (id, user_id, mime_type, data BLOB, created)   │    │
+│  │  - Thread-safe via auth_db mutex                              │    │
+│  │  - Automatic cleanup of old images (retention policy)         │    │
+│  │  - Per-user image limits                                      │    │
+│  └───────────────────────────────────────────────────────────────┘    │
+│                                                                        │
+│  ┌───────────────────────────────────────────────────────────────┐    │
+│  │ LLM Vision Integration                                        │    │
+│  │                                                               │    │
+│  │  llm_openai.c: data:image/jpeg;base64,... format              │    │
+│  │  llm_claude.c: source.type="base64", source.media_type=...    │    │
+│  └───────────────────────────────────────────────────────────────┘    │
+└───────────────────────────────────────────────────────────────────────┘
+```
+
+#### Key Components
+
+- **vision.js**: Client-side image handling (1,400+ lines)
+  - Input methods: file picker, clipboard paste, drag-and-drop, camera capture
+  - Camera API with front/rear switching (`navigator.mediaDevices.getUserMedia`)
+  - Client-side compression via Canvas API (max 1024px longest edge, JPEG 85%)
+  - Multi-image support (up to 5 images per message)
+  - LocalStorage caching of uploaded images by ID
+  - Security: SVG explicitly excluded to prevent XSS attacks
+  - Accessibility: ARIA announcements, keyboard navigation
+
+- **image_store.c/h**: Server-side image storage
+  - SQLite BLOB storage (uses auth_db for thread safety)
+  - Image ID format: `img_` + 12 alphanumeric characters
+  - Configurable limits: max size, max per user, retention days
+  - Automatic cleanup of expired images
+
+- **webui_images.c/h**: HTTP endpoint handlers
+  - `POST /api/images`: Upload image, returns `{id, mime_type, size}`
+  - `GET /api/images/:id`: Retrieve image by ID
+  - Authentication required (uses session validation)
+
+#### Data Flow (Image Upload)
+
+```
+1. User selects/pastes/drops/captures image
+   ↓
+2. Browser validates type (JPEG, PNG, GIF, WebP - NO SVG)
+   ↓
+3. Canvas API compresses to max 1024px, JPEG 85%
+   ↓
+4. POST /api/images with multipart form data
+   ↓
+5. Server validates auth, stores BLOB in SQLite
+   ↓
+6. Server returns image ID (e.g., "img_a1b2c3d4e5f6")
+   ↓
+7. Browser caches in localStorage, shows preview
+   ↓
+8. On send: Full base64 data sent to LLM with message
+   ↓
+9. History stores image ID reference (not inline data)
+```
+
+#### Vision Model Support
+
+The system auto-detects vision capability based on model name:
+
+| Model Pattern | Provider | Vision Support |
+|---------------|----------|----------------|
+| `gpt-4o`, `gpt-4-vision`, `gpt-4-turbo` | OpenAI | Yes |
+| `claude-3-*` | Anthropic | Yes |
+| `gemini-*` | Google | Yes |
+| `llava-*`, `qwen-vl-*`, `cogvlm-*` | Local | Yes |
+| Other models | Various | No (button disabled) |
+
+#### Security Measures
+
+- **SVG Exclusion**: SVG files explicitly blocked to prevent XSS via embedded scripts
+- **Data URI Validation**: Only `data:image/{jpeg,png,gif,webp};base64,` prefixes accepted
+- **Base64 Character Validation**: Only `[A-Za-z0-9+/=]` allowed in base64 portion
+- **Authentication Required**: All image endpoints require valid session
+- **Per-User Limits**: Configurable maximum images per user
 
 ---
 
@@ -1243,8 +1364,8 @@ Key settings:
 
 ---
 
-**Document Version**: 1.1
-**Last Updated**: January 18, 2026 (added Gemini provider, Opus audio streaming, multi-format audio decoder)
+**Document Version**: 1.2
+**Last Updated**: January 22, 2026 (added Vision/Image subsystem documentation)
 **Reorganization Commit**: [Git SHA to be added after commit]
 
 ### LLM Threading Architecture (Post-Interrupt Implementation)
