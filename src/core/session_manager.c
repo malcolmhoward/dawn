@@ -33,6 +33,7 @@
 #include "llm/llm_interface.h"
 #include "llm/sentence_buffer.h"
 #include "logging.h"
+#include "memory/memory_extraction.h"
 #include "tools/time_utils.h"
 #ifdef ENABLE_WEBUI
 #include "webui/webui_server.h"
@@ -741,6 +742,30 @@ void session_destroy(uint32_t session_id) {
                m->queries_total, m->queries_cloud, m->queries_local);
    }
    pthread_mutex_unlock(&session->metrics_mutex);
+
+   /* Trigger memory extraction for authenticated WebSocket sessions with queries */
+   if (session->type == SESSION_TYPE_WEBSOCKET && session->metrics.user_id > 0 &&
+       session->metrics.queries_total > 0 && g_config.memory.enabled) {
+      /* Copy conversation history reference while we still have it */
+      pthread_mutex_lock(&session->history_mutex);
+      struct json_object *history = session->conversation_history;
+      int message_count = history ? (int)json_object_array_length(history) : 0;
+      int duration_seconds = (int)(time(NULL) - session->created_at);
+
+      if (message_count > 2 && history) {
+         /* Create session ID string for the summary */
+         char session_id_str[32];
+         snprintf(session_id_str, sizeof(session_id_str), "ws_%u", session->session_id);
+
+         /* Trigger extraction (copies history internally)
+          * Pass 0 for conversation_id - session doesn't track which DB conversation
+          * it's associated with. Incremental extraction works when triggered from
+          * WebUI with known conversation_id. */
+         memory_trigger_extraction(session->metrics.user_id, 0, session_id_str, history,
+                                   message_count, duration_seconds);
+      }
+      pthread_mutex_unlock(&session->history_mutex);
+   }
 
    LOG_INFO("Destroying session %u (type=%s)", session_id, session_type_name(session->type));
    session_free(session);

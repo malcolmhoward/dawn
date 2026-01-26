@@ -4,7 +4,7 @@ This document describes the architecture of the D.A.W.N. (Digital Assistant for 
 
 **D.A.W.N.** is the central intelligence layer of the OASIS ecosystem, responsible for interpreting user intent, fusing data from every subsystem, and routing commands. At its core, DAWN performs neural-inference to understand context and drive decision-making, acting as OASIS's orchestration hub for MIRAGE, AURA, SPARK, STAT, and any future modules.
 
-**Last Updated**: January 22, 2026 (added Vision/Image subsystem documentation)
+**Last Updated**: January 25, 2026 (added Memory Subsystem section)
 
 ## Table of Contents
 
@@ -628,6 +628,145 @@ The system auto-detects vision capability based on model name:
 - **Base64 Character Validation**: Only `[A-Za-z0-9+/=]` allowed in base64 portion
 - **Authentication Required**: All image endpoints require valid session
 - **Per-User Limits**: Configurable maximum images per user
+
+### 9. Memory Subsystem (`src/memory/`, `include/memory/`)
+
+**Purpose**: Persistent memory system for user facts, preferences, and conversation summaries
+
+#### Architecture: **Sleep Consolidation Model**
+
+Memory extraction happens at session end, not during conversation. This adds zero latency to conversations while building a persistent user profile.
+
+```
+┌───────────────────────────────────────────────────────────────────────┐
+│                    DURING CONVERSATION                                 │
+├───────────────────────────────────────────────────────────────────────┤
+│  • Full conversation in LLM context window                            │
+│  • Core facts + preferences pre-loaded at session start               │
+│  • Memory tool available for explicit remember/search/forget          │
+│  • Zero extraction overhead                                           │
+└───────────────────────────────────────────────────────────────────────┘
+                                │
+                                │ Session ends (WebSocket disconnect/timeout)
+                                ▼
+┌───────────────────────────────────────────────────────────────────────┐
+│                    SESSION END EXTRACTION                              │
+├───────────────────────────────────────────────────────────────────────┤
+│  • Load conversation messages from database                           │
+│  • Build extraction prompt with transcript + existing profile         │
+│  • Call extraction LLM (can differ from conversation model)           │
+│  • Parse JSON: facts, preferences, corrections, summary               │
+│  • Store in SQLite (skip if conversation marked private)              │
+│  • Runs in background thread (non-blocking)                           │
+└───────────────────────────────────────────────────────────────────────┘
+```
+
+#### Key Components
+
+- **memory_types.h**: Data structures (`memory_fact_t`, `memory_preference_t`, `memory_summary_t`)
+
+- **memory_db.c/h**: SQLite CRUD operations
+  - Prepared statements for all memory tables
+  - Similarity detection for duplicate prevention
+  - Access counting for confidence reinforcement
+
+- **memory_context.c/h**: Session start context builder
+  - `memory_build_context()` builds ~800 token block
+  - Loads preferences, top facts by confidence, recent summaries
+  - Injected into LLM system prompt
+
+- **memory_extraction.c/h**: Session end extraction
+  - Triggered via `memory_trigger_extraction()`
+  - Spawns background thread for non-blocking extraction
+  - Parses LLM JSON response, stores facts/preferences/summaries
+  - Respects conversation privacy flag
+
+- **memory_callback.c**: Tool handler for `MEMORY` device type
+  - `search`: Keyword search across all memory tables
+  - `recent`: Time-based retrieval (e.g., "24h", "7d", "1w")
+  - `remember`: Immediate fact storage with guardrails
+  - `forget`: Delete matching facts
+
+#### Database Schema
+
+Three tables in the auth database (`/var/lib/dawn/auth.db`):
+
+```sql
+-- Facts: discrete pieces of information
+memory_facts (id, user_id, fact_text, confidence, source, created_at,
+              last_accessed, access_count, superseded_by)
+
+-- Preferences: communication style preferences
+memory_preferences (id, user_id, category, value, confidence, source,
+                    created_at, updated_at, reinforcement_count)
+
+-- Summaries: conversation digests
+memory_summaries (id, user_id, session_id, summary, topics, sentiment,
+                  created_at, message_count, duration_seconds, consolidated)
+```
+
+#### Privacy Toggle
+
+Users can mark conversations as private to skip memory extraction:
+
+- `is_private` column in `conversations` table
+- Set via WebSocket message or Ctrl+Shift+P keyboard shortcut
+- Can be set before conversation starts (pending state)
+- Visual badge in conversation history list
+
+#### Security Guardrails
+
+Memory content flows into future prompts, creating potential attack vectors:
+
+```c
+// Blocked patterns (hardcoded in memory_callback.c)
+const char *MEMORY_BLOCKED_PATTERNS[] = {
+   "whenever", "always", "you should", "you must",
+   "ignore", "forget", "disregard", "pretend",
+   "act as if", "system prompt", "instructions",
+   "password", "api key", "token", "secret",
+   NULL
+};
+```
+
+#### Configuration
+
+```toml
+[memory]
+enabled = true
+context_budget_tokens = 800
+session_timeout_minutes = 15
+
+[memory.extraction]
+provider = "local"        # "local", "openai", "claude", "ollama"
+model = "qwen2.5:7b"      # Model for extraction
+```
+
+#### Data Flow (Memory Lifecycle)
+
+```
+1. Session Start (WebSocket connect)
+   ↓
+2. Load user profile: memory_build_context(user_id)
+   ↓
+3. Inject facts/preferences into LLM system prompt
+   ↓
+4. During conversation:
+   - User: "Remember I'm vegetarian" → memory_remember() → immediate storage
+   - User: "What do you know about me?" → memory_search() → return facts
+   ↓
+5. Session End (WebSocket disconnect/timeout)
+   ↓
+6. Check privacy flag: if private, skip extraction
+   ↓
+7. memory_trigger_extraction() → background thread
+   ↓
+8. Load conversation, build extraction prompt
+   ↓
+9. Call extraction LLM, parse JSON response
+   ↓
+10. Store new facts, update preferences, save summary
+```
 
 ---
 
@@ -1284,30 +1423,111 @@ The internal header contains:
 
 ---
 
-## Configuration Files
+## Configuration Architecture
 
-### secrets.toml (API Keys)
+### Design Principles
+
+1. **Config Files as Source of Truth**: All DAWN application settings are defined in `dawn.toml` (runtime configuration) or `secrets.toml` (credentials and API keys). The SQLite database is reserved for:
+   - User authentication and sessions
+   - Conversation history
+   - Uploaded images
+   - Other user-generated content
+
+   **Settings are NEVER stored in the database.** This separation ensures configuration is portable, version-controllable (minus secrets), and easily inspectable.
+
+2. **WebUI Settings Exposure**: All settings defined in `dawn.toml` are exposed in the WebUI settings panel unless explicitly excluded. Exclusions are limited to:
+   - File system paths (security risk if editable remotely)
+   - Internal debugging flags
+   - Settings that require restart and have no runtime effect
+
+3. **Secrets Isolation**: Credentials (`secrets.toml`) are kept separate from general configuration (`dawn.toml`) to allow:
+   - Sharing `dawn.toml` without exposing API keys
+   - Different secrets per deployment (dev/staging/prod)
+   - Credential rotation without touching main config
+
+4. **Compile-Time vs Runtime**: `dawn.h` provides compile-time defaults only. All user-configurable settings should be in TOML files, with `dawn.h` values serving as fallbacks when config is missing.
+
+### Configuration File Hierarchy
+
+```
+~/.config/dawn/          # User-specific (highest priority)
+├── dawn.toml
+└── secrets.toml
+
+./                       # Project root (fallback)
+├── dawn.toml
+└── secrets.toml
+
+/etc/dawn/               # System-wide (lowest priority, future)
+├── dawn.toml
+└── secrets.toml
+```
+
+Settings are merged with higher-priority files overriding lower ones.
+
+### Configuration Files
+
+#### dawn.toml (Runtime Configuration)
+
+Primary configuration file with sections for each subsystem:
 
 ```toml
-# Create in project root or ~/.config/dawn/secrets.toml
-openai_api_key = "sk-..."           # For GPT-4o
-claude_api_key = "sk-ant-..."       # For Claude 4.5 Sonnet
+[general]
+ai_name = "friday"
+timezone = "America/New_York"
+
+[llm]
+type = "cloud"                    # "cloud" or "local"
+
+[llm.cloud]
+provider = "openai"               # "openai", "anthropic", "gemini"
+model = "gpt-4o"
+
+[llm.local]
+endpoint = "http://localhost:8080"
+model = "qwen3-4b"
+
+[asr]
+model_path = "models/whisper.cpp/ggml-base.en.bin"
+language = "en"
+
+[tts]
+model_path = "models/en_GB-alba-medium.onnx"
+sample_rate = 22050
+
+[webui]
+bind_address = "0.0.0.0"
+port = 3000
+```
+
+#### secrets.toml (Credentials)
+
+API keys and sensitive credentials (gitignored):
+
+```toml
+openai_api_key = "sk-..."
+claude_api_key = "sk-ant-..."
+gemini_api_key = "..."
+
+[smartthings]
+access_token = "..."
 ```
 
 **Note**: Already in `.gitignore` - never commit API keys!
 
-### dawn.h (System Configuration)
+#### dawn.h (Compile-Time Defaults)
 
-Key settings:
-- `AI_NAME`: Wake word ("friday")
+Fallback values when config files are missing:
+
+- `AI_NAME`: Default wake word ("friday")
 - `AI_DESCRIPTION`: System prompt for LLM
-- `OPENAI_MODEL`: LLM model name
 - `DEFAULT_PCM_PLAYBACK_DEVICE`: ALSA playback device
 - `DEFAULT_PCM_CAPTURE_DEVICE`: ALSA capture device
-- `MQTT_IP`: MQTT broker address
-- `MQTT_PORT`: MQTT broker port
+- `MQTT_IP` / `MQTT_PORT`: MQTT broker defaults
 
-### commands_config_nuevo.json (Device Mappings)
+#### commands_config_nuevo.json (Device/Tool Definitions)
+
+Device types, actions, and LLM tool definitions:
 
 ```json
 {
@@ -1315,11 +1535,30 @@ Key settings:
     {
       "type": "light",
       "name": "living_room",
-      "actions": ["on", "off", "dim"]
+      "actions": ["on", "off", "dim"],
+      "tool": {
+        "description": "Control living room light",
+        "parameters": [...]
+      }
     }
   ]
 }
 ```
+
+### WebUI Settings Panel Mapping
+
+The WebUI settings panel (`www/js/ui/settings.js`) defines a `SETTINGS_SCHEMA` that maps to `dawn.toml` sections:
+
+| WebUI Section | Config Section | Notes |
+|---------------|----------------|-------|
+| Language Model | `[llm]`, `[llm.cloud]`, `[llm.local]` | Provider, model selection |
+| Speech Recognition | `[asr]` | Model, language |
+| Text-to-Speech | `[tts]` | Voice model, rate |
+| Audio | `[audio]` | Backend, devices |
+| Tool Calling | `[llm.tools]` | Mode, per-tool toggles |
+| Network | `[webui]`, `[dap]`, `[mqtt]` | Ports, addresses |
+
+**Implementation Note**: When adding new settings to `dawn.toml`, also add corresponding entries to `SETTINGS_SCHEMA` to expose them in the WebUI, unless they fall under the exclusion criteria above.
 
 ---
 
@@ -1364,8 +1603,8 @@ Key settings:
 
 ---
 
-**Document Version**: 1.2
-**Last Updated**: January 22, 2026 (added Vision/Image subsystem documentation)
+**Document Version**: 1.5
+**Last Updated**: January 26, 2026 (added memory recent action, review fixes)
 **Reorganization Commit**: [Git SHA to be added after commit]
 
 ### LLM Threading Architecture (Post-Interrupt Implementation)

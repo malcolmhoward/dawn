@@ -43,6 +43,19 @@
    let savedScrollPosition = 0;
 
    /* =============================================================================
+    * Constants
+    * ============================================================================= */
+
+   // Private conversation icon HTML (shared between renderHistoryItem and updateConversationPrivacy)
+   const PRIVATE_ICON_HTML = `<span class="history-item-private" title="Private (no memory extraction)" aria-label="Private conversation" role="img">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+         <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
+         <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
+         <line x1="1" y1="1" x2="23" y2="23"/>
+      </svg>
+   </span>`;
+
+   /* =============================================================================
     * Elements
     * ============================================================================= */
 
@@ -246,6 +259,20 @@
 
       setActiveConversationId(payload.conversation_id);
 
+      // Update privacy toggle with new conversation ID, preserving pending privacy state
+      if (typeof DawnSettingsLlm !== 'undefined' && DawnSettingsLlm.setCurrentConversation) {
+         // Get the pending privacy state (may have been set before conversation was created)
+         const pendingPrivacy = DawnSettingsLlm.getPrivacyState
+            ? DawnSettingsLlm.getPrivacyState()
+            : false;
+         DawnSettingsLlm.setCurrentConversation(payload.conversation_id);
+
+         // If privacy was set before conversation was created, apply it now
+         if (pendingPrivacy && DawnSettingsLlm.setPrivacy) {
+            DawnSettingsLlm.setPrivacy(true);
+         }
+      }
+
       // Lock per-conversation LLM settings on first message
       if (typeof DawnSettings !== 'undefined') {
          DawnSettings.lockConversationLlmSettings(payload.conversation_id);
@@ -320,6 +347,14 @@
 
       // Initial load: full setup
       setActiveConversationId(payload.conversation_id);
+
+      // Update privacy toggle state
+      if (typeof DawnSettingsLlm !== 'undefined' && DawnSettingsLlm.setCurrentConversation) {
+         DawnSettingsLlm.setCurrentConversation(
+            payload.conversation_id,
+            payload.is_private || false
+         );
+      }
 
       // Track archived state and continuation
       const isArchived = payload.is_archived || false;
@@ -699,15 +734,19 @@
     `
          : '';
 
+      const isPrivate = conv.is_private === true;
+      const privateIcon = isPrivate ? PRIVATE_ICON_HTML : '';
+
       const classes = ['history-item'];
       if (isActive) classes.push('active');
       if (isArchived) classes.push('archived');
+      if (isPrivate) classes.push('private');
       if (isChainChild) classes.push('chain-child');
 
       return `
       <div class="${classes.join(' ')}" data-conv-id="${conv.id}">
         <div class="history-item-content">
-          <div class="history-item-title">${archivedIcon}${chainIcon}${DawnFormat.escapeHtml(conv.title)}</div>
+          <div class="history-item-title">${privateIcon}${archivedIcon}${chainIcon}${DawnFormat.escapeHtml(conv.title)}</div>
           <div class="history-item-meta">
             <span class="history-item-time">${time}</span>
             <span class="history-item-count">${conv.message_count} messages</span>
@@ -1172,6 +1211,41 @@
       requestLoadConversation(convId);
    };
 
+   /**
+    * Update a conversation's privacy state in the history list and local state
+    * Called when privacy is toggled via the UI
+    * @param {number} convId - Conversation ID
+    * @param {boolean} isPrivate - New privacy state
+    */
+   function updateConversationPrivacy(convId, isPrivate) {
+      // Update local state
+      const conv = historyState.conversations.find((c) => c.id === convId);
+      if (conv) {
+         conv.is_private = isPrivate;
+      }
+
+      // Update DOM element if visible
+      const item = historyElements.list?.querySelector(`.history-item[data-conv-id="${convId}"]`);
+      if (item) {
+         item.classList.toggle('private', isPrivate);
+
+         // Update the private icon in the title
+         const title = item.querySelector('.history-item-title');
+         if (title) {
+            // Remove existing private icon
+            const existingPrivate = title.querySelector('.history-item-private');
+            if (existingPrivate) {
+               existingPrivate.remove();
+            }
+
+            // Add private icon if now private
+            if (isPrivate) {
+               title.insertAdjacentHTML('afterbegin', PRIVATE_ICON_HTML);
+            }
+         }
+      }
+   }
+
    /* =============================================================================
     * Export
     * ============================================================================= */
@@ -1199,5 +1273,6 @@
       handleSaveResponse: handleSaveMessageResponse,
       handleContextCompacted: handleContextCompacted,
       handleContinueResponse: handleContinueConversationResponse,
+      updateConversationPrivacy: updateConversationPrivacy,
    };
 })();

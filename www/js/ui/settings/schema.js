@@ -441,6 +441,7 @@
       search: {
          label: 'Web Search',
          icon: '&#x1F50D;',
+         adminOnly: true,
          fields: {
             engine: {
                type: 'select',
@@ -499,6 +500,7 @@
       url_fetcher: {
          label: 'URL Fetcher',
          icon: '&#x1F310;',
+         adminOnly: true,
          fields: {
             flaresolverr: {
                type: 'group',
@@ -529,6 +531,67 @@
                      hint: 'Maximum response size to accept',
                   },
                },
+            },
+         },
+      },
+      memory: {
+         label: 'Memory System',
+         icon: '&#x1F9E0;',
+         adminOnly: true,
+         fields: {
+            enabled: {
+               type: 'checkbox',
+               label: 'Enable Memory',
+               hint: 'Store and recall facts, preferences, and conversation summaries per user',
+            },
+            context_budget_tokens: {
+               type: 'number',
+               label: 'Context Budget (tokens)',
+               min: 100,
+               max: 4000,
+               step: 100,
+               hint: 'Max tokens for memory context injected into system prompt (~800 recommended)',
+            },
+            extraction_provider: {
+               type: 'select',
+               label: 'Extraction Provider',
+               options: ['local', 'openai', 'claude'],
+               hint: 'LLM provider for extracting facts from conversations',
+               id: 'memory-extraction-provider',
+            },
+            extraction_model: {
+               type: 'dynamic_select',
+               label: 'Extraction Model',
+               hint: 'Model for memory extraction (populated based on provider)',
+               dynamicKey: 'memory_extraction_models',
+               id: 'memory-extraction-model',
+            },
+            pruning_enabled: {
+               type: 'checkbox',
+               label: 'Enable Pruning',
+               hint: 'Automatically remove old superseded and stale facts',
+            },
+            prune_superseded_days: {
+               type: 'number',
+               label: 'Superseded Retention (days)',
+               min: 1,
+               max: 365,
+               hint: 'Keep superseded facts for this many days before deletion',
+            },
+            prune_stale_days: {
+               type: 'number',
+               label: 'Stale Threshold (days)',
+               min: 7,
+               max: 730,
+               hint: 'Delete low-confidence facts not accessed in this many days',
+            },
+            prune_stale_min_confidence: {
+               type: 'number',
+               label: 'Stale Min Confidence',
+               min: 0,
+               max: 1,
+               step: 0.1,
+               hint: 'Only prune stale facts with confidence below this value (0-1)',
             },
          },
       },

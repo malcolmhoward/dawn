@@ -10,7 +10,12 @@
    let currentSecrets = null;
    let restartRequiredFields = [];
    let changedFields = new Set();
-   let dynamicOptions = { asr_models: [], tts_voices: [], bind_addresses: [] };
+   let dynamicOptions = {
+      asr_models: [],
+      tts_voices: [],
+      bind_addresses: [],
+      memory_extraction_models: [],
+   };
 
    // DOM element references (injected by main settings module)
    let settingsElements = {};
@@ -194,6 +199,90 @@
    }
 
    /**
+    * Update memory extraction model dropdown based on selected provider
+    * Uses cloud model lists from config for openai/claude providers
+    */
+   function updateMemoryExtractionModels() {
+      const providerSelect = document.querySelector(
+         'select[data-key="memory.extraction_provider"]'
+      );
+      const modelSelect = document.querySelector('select[data-key="memory.extraction_model"]');
+
+      if (!providerSelect || !modelSelect) return;
+
+      const provider = providerSelect.value?.toLowerCase() || 'local';
+      const currentValue = modelSelect.value || '';
+
+      // Get models based on provider
+      let models = [];
+      if (currentConfig?.llm?.cloud) {
+         if (provider === 'openai') {
+            models = currentConfig.llm.cloud.openai_models || [];
+         } else if (provider === 'claude') {
+            models = currentConfig.llm.cloud.claude_models || [];
+         }
+      }
+
+      // For local provider, we can't easily get the model list (llama.cpp only has one loaded)
+      // Show a helpful placeholder
+      if (provider === 'local') {
+         modelSelect.innerHTML = '';
+         const opt = document.createElement('option');
+         opt.value = currentValue || '';
+         opt.textContent = currentValue || '(uses loaded llama-server model)';
+         modelSelect.appendChild(opt);
+         modelSelect.disabled = true;
+         modelSelect.title = 'Local mode uses whatever model is loaded in llama-server';
+         return;
+      }
+
+      // Update dynamic options for the model select
+      dynamicOptions.memory_extraction_models = models;
+
+      // Clear and rebuild options
+      modelSelect.innerHTML = '';
+      modelSelect.disabled = false;
+      modelSelect.title = 'Select extraction model';
+
+      // Add current value first if set
+      if (currentValue) {
+         const currentOpt = document.createElement('option');
+         currentOpt.value = currentValue;
+         currentOpt.textContent = models.includes(currentValue)
+            ? currentValue
+            : currentValue + ' (current)';
+         currentOpt.selected = true;
+         modelSelect.appendChild(currentOpt);
+      }
+
+      // Add available models (skip current value to avoid duplicate)
+      models.forEach((model) => {
+         if (model === currentValue) return;
+         const opt = document.createElement('option');
+         opt.value = model;
+         opt.textContent = model;
+         modelSelect.appendChild(opt);
+      });
+
+      // If no current value and we have models, select first one
+      if (!currentValue && models.length > 0) {
+         modelSelect.value = models[0];
+      }
+   }
+
+   /**
+    * Initialize memory extraction provider/model event handlers
+    */
+   function initMemoryExtractionHandlers() {
+      // Use event delegation since elements may not exist yet
+      document.addEventListener('change', (e) => {
+         if (e.target.matches('select[data-key="memory.extraction_provider"]')) {
+            updateMemoryExtractionModels();
+         }
+      });
+   }
+
+   /**
     * Handle get_config response from server
     * @param {Object} payload - Response payload
     */
@@ -221,6 +310,9 @@
       if (callbacks.renderSettingsSections) {
          callbacks.renderSettingsSections();
       }
+
+      // Update memory extraction model dropdown based on provider
+      updateMemoryExtractionModels();
 
       // Update secrets status
       updateSecretsStatus(currentSecrets);
@@ -540,5 +632,7 @@
       handleSetSecretsResponse,
       getChangedRestartRequiredFields,
       updateDynamicSelects,
+      initMemoryExtractionHandlers,
+      updateMemoryExtractionModels,
    };
 })();

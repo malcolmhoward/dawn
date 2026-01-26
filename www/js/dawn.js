@@ -325,6 +325,9 @@
             case 'continue_conversation_response':
                DawnHistory.handleContinueResponse(msg.payload);
                break;
+            case 'set_private_response':
+               DawnSettings.handleSetPrivateResponse(msg.payload);
+               break;
             default:
                console.log('Unknown message type:', msg.type);
          }

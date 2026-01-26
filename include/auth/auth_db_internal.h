@@ -48,7 +48,7 @@
  * ============================================================================= */
 
 /* Current schema version */
-#define AUTH_DB_SCHEMA_VERSION 13
+#define AUTH_DB_SCHEMA_VERSION 16
 
 /* Retention periods */
 #define LOGIN_ATTEMPT_RETENTION_SEC (7 * 24 * 60 * 60) /* 7 days */
@@ -134,6 +134,37 @@ typedef struct {
    sqlite3_stmt *stmt_image_update_access;
    sqlite3_stmt *stmt_image_count_user;
    sqlite3_stmt *stmt_image_delete_old;
+
+   /* === Memory module statements (memory_db.c) === */
+   sqlite3_stmt *stmt_memory_fact_create;
+   sqlite3_stmt *stmt_memory_fact_get;
+   sqlite3_stmt *stmt_memory_fact_list;
+   sqlite3_stmt *stmt_memory_fact_search;
+   sqlite3_stmt *stmt_memory_fact_update_access;
+   sqlite3_stmt *stmt_memory_fact_update_confidence;
+   sqlite3_stmt *stmt_memory_fact_supersede;
+   sqlite3_stmt *stmt_memory_fact_delete;
+   sqlite3_stmt *stmt_memory_fact_find_similar;
+   sqlite3_stmt *stmt_memory_fact_find_by_hash;
+   sqlite3_stmt *stmt_memory_fact_prune_superseded;
+   sqlite3_stmt *stmt_memory_fact_prune_stale;
+
+   sqlite3_stmt *stmt_memory_pref_upsert;
+   sqlite3_stmt *stmt_memory_pref_get;
+   sqlite3_stmt *stmt_memory_pref_list;
+   sqlite3_stmt *stmt_memory_pref_delete;
+
+   sqlite3_stmt *stmt_memory_summary_create;
+   sqlite3_stmt *stmt_memory_summary_list;
+   sqlite3_stmt *stmt_memory_summary_mark_consolidated;
+   sqlite3_stmt *stmt_memory_summary_search;
+
+   /* Extraction tracking */
+   sqlite3_stmt *stmt_conv_get_last_extracted;
+   sqlite3_stmt *stmt_conv_set_last_extracted;
+
+   /* Privacy flag */
+   sqlite3_stmt *stmt_conv_set_private;
 } auth_db_state_t;
 
 /* =============================================================================

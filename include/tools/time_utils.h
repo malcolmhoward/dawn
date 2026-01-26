@@ -47,6 +47,92 @@ static inline uint64_t get_time_ms(void) {
    return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
 }
 
+/**
+ * @brief Parse a human-readable time period string into seconds
+ *
+ * Supports formats like "1h", "24h", "7d", "2w", "30m".
+ * Units: h=hours, d=days, w=weeks, m=minutes (case insensitive)
+ * If no unit is specified, defaults to hours.
+ *
+ * Security: Uses bounded integer parsing, rejects negative values.
+ *
+ * Thread Safety: This function is thread-safe (pure function).
+ *
+ * @param period Time period string (e.g., "24h", "7d", "1w")
+ * @return Number of seconds, or 0 if invalid/empty input
+ *
+ * Examples:
+ *   "1h"  -> 3600
+ *   "24h" -> 86400
+ *   "7d"  -> 604800
+ *   "2w"  -> 1209600
+ *   "30m" -> 1800
+ *   "12"  -> 43200 (defaults to hours)
+ *   ""    -> 0
+ *   "-5d" -> 0 (negative rejected)
+ */
+static inline time_t parse_time_period(const char *period) {
+   if (!period || !period[0]) {
+      return 0;
+   }
+
+   /* Skip leading whitespace */
+   while (*period == ' ' || *period == '\t') {
+      period++;
+   }
+
+   /* Reject negative values */
+   if (*period == '-') {
+      return 0;
+   }
+
+   /* Parse the numeric value (bounded to prevent overflow) */
+   long value = 0;
+   const char *p = period;
+   while (*p >= '0' && *p <= '9') {
+      value = value * 10 + (*p - '0');
+      if (value > 365 * 10) { /* Cap at ~10 years to prevent overflow */
+         return 0;
+      }
+      p++;
+   }
+
+   if (value <= 0) {
+      return 0;
+   }
+
+   /* Skip whitespace between number and unit */
+   while (*p == ' ' || *p == '\t') {
+      p++;
+   }
+
+   /* Determine multiplier based on unit */
+   time_t multiplier;
+   switch (*p) {
+      case 'm':
+      case 'M':
+         multiplier = 60; /* minutes */
+         break;
+      case 'h':
+      case 'H':
+      case '\0':            /* default to hours if no unit */
+         multiplier = 3600; /* hours */
+         break;
+      case 'd':
+      case 'D':
+         multiplier = 86400; /* days */
+         break;
+      case 'w':
+      case 'W':
+         multiplier = 604800; /* weeks */
+         break;
+      default:
+         return 0; /* unknown unit */
+   }
+
+   return (time_t)value * multiplier;
+}
+
 #ifdef __cplusplus
 }
 #endif

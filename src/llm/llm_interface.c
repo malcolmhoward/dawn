@@ -1234,34 +1234,48 @@ char *llm_chat_completion_with_config(struct json_object *conversation_history,
 
    char *response = NULL;
 
+   // Resolve default endpoint for cloud providers if not specified
+   const char *endpoint = config->endpoint;
+   if (endpoint == NULL || endpoint[0] == '\0') {
+      if (config->type == LLM_LOCAL) {
+         endpoint = g_config.llm.local.endpoint;
+      } else if (config->cloud_provider == CLOUD_PROVIDER_OPENAI) {
+         endpoint = CLOUDAI_URL;
+      } else if (config->cloud_provider == CLOUD_PROVIDER_CLAUDE) {
+         endpoint = CLAUDE_URL;
+      } else if (config->cloud_provider == CLOUD_PROVIDER_GEMINI) {
+         endpoint = GEMINI_URL;
+      }
+   }
+
    // Set thread-local config so llm_tools_enabled() can check session-specific tool_mode
    llm_tools_set_current_config(config);
 
    if (config->type == LLM_LOCAL) {
       // Local LLM uses OpenAI-compatible API (no API key needed)
       response = llm_openai_chat_completion(conversation_history, input_text, vision_images,
-                                            vision_image_sizes, vision_image_count,
-                                            config->endpoint, NULL, config->model);
+                                            vision_image_sizes, vision_image_count, endpoint, NULL,
+                                            config->model);
    } else {
       // Route to cloud provider
       switch (config->cloud_provider) {
          case CLOUD_PROVIDER_OPENAI:
             response = llm_openai_chat_completion(conversation_history, input_text, vision_images,
-                                                  vision_image_sizes, vision_image_count,
-                                                  config->endpoint, config->api_key, config->model);
+                                                  vision_image_sizes, vision_image_count, endpoint,
+                                                  config->api_key, config->model);
             break;
 
          case CLOUD_PROVIDER_CLAUDE:
             response = llm_claude_chat_completion(conversation_history, input_text, vision_images,
-                                                  vision_image_sizes, vision_image_count,
-                                                  config->endpoint, config->api_key, config->model);
+                                                  vision_image_sizes, vision_image_count, endpoint,
+                                                  config->api_key, config->model);
             break;
 
          case CLOUD_PROVIDER_GEMINI:
             /* Gemini uses OpenAI-compatible API */
             response = llm_openai_chat_completion(conversation_history, input_text, vision_images,
-                                                  vision_image_sizes, vision_image_count,
-                                                  config->endpoint, config->api_key, config->model);
+                                                  vision_image_sizes, vision_image_count, endpoint,
+                                                  config->api_key, config->model);
             break;
 
          default:

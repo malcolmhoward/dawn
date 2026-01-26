@@ -91,8 +91,20 @@ DAWN is designed for embedded Linux platforms (Jetson, Raspberry Pi) and support
   - **URL Fetcher** - Fetch and read web pages; large pages auto-summarized via TF-IDF
   - **Weather** - Real-time weather and forecasts via Open-Meteo API (free, no API key)
   - **Calculator** - Mathematical expression evaluation with tinyexpr engine
+  - **Memory Tool** - Search, remember, and forget facts across sessions
   - **Parallel Tool Execution** - Multiple tool calls execute concurrently (e.g., weather + search in ~1s vs ~3s sequential)
   - LLM automatically invokes tools and incorporates results into responses
+
+- **Persistent Memory System**
+  - DAWN remembers facts and preferences about users across sessions
+  - **Memory Tool** - "Remember that I'm vegetarian", "What do you know about me?"
+  - **Recent Query** - Retrieve memories by time period (e.g., "24h", "7d", "1w")
+  - **Automated Extraction** - Facts automatically extracted at session end
+  - **Context Injection** - User facts loaded into system prompt at session start
+  - **Privacy Toggle** - Mark conversations as private to prevent memory extraction (Ctrl+Shift+P)
+  - Per-user memory isolation for multi-user households
+  - Guardrails prevent instruction injection via memory content
+  - See `docs/MEMORY_SYSTEM_DESIGN.md` for full architecture
 
 ### Performance Highlights
 - **ASR Performance** (Jetson GPU acceleration):
@@ -112,6 +124,7 @@ dawn/
 ├── src/                    # C/C++ source files
 │   ├── asr/                # Speech recognition (Whisper, Vosk, VAD)
 │   ├── llm/                # LLM integration (OpenAI, Claude, Gemini, local)
+│   ├── memory/             # Persistent memory system
 │   ├── tts/                # Text-to-speech (Piper)
 │   ├── network/            # DAP server for ESP32 clients
 │   ├── audio/              # Audio capture, playback, music
@@ -966,6 +979,7 @@ See `docs/USER_AUTH_DESIGN.md` for complete authentication system documentation.
 - **ARCHITECTURE.md** - System architecture and data flow
 - **CODING_STYLE_GUIDE.md** - Code formatting and standards
 - **docs/LLM_INTEGRATION_GUIDE.md** - LLM setup (cloud and local)
+- **docs/MEMORY_SYSTEM_DESIGN.md** - Memory system architecture and design
 - **services/llama-server/README.md** - Local LLM service setup
 - **llm_testing/docs/** - LLM optimization research
 - **remote_dawn/protocol_specification.md** - Network protocol spec

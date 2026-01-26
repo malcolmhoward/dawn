@@ -692,6 +692,11 @@ void llm_tools_refresh(void) {
       if (strcmp(t->name, "search") == 0) {
          t->enabled = (g_config.search.endpoint[0] != '\0');
       }
+
+      /* Memory requires memory system to be enabled */
+      if (strcmp(t->name, "memory") == 0) {
+         t->enabled = g_config.memory.enabled;
+      }
    }
 
    /* Update cached enabled count (total capability-enabled) */

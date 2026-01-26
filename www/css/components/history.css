@@ -334,6 +334,24 @@
    stroke: currentColor;
 }
 
+/* Private conversation indicator */
+.history-item.private {
+   border-left: 2px solid var(--text-secondary);
+}
+
+.history-item-private {
+   display: inline-flex;
+   align-items: center;
+   color: var(--text-secondary);
+   opacity: 0.7;
+   margin-right: 0.35rem;
+   flex-shrink: 0;
+}
+
+.history-item-private svg {
+   stroke: currentColor;
+}
+
 /* Conversation Chain Groups - collapsible accordion */
 .history-chain-group {
    position: relative;

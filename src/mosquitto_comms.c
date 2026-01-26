@@ -86,6 +86,9 @@ char *switchLlmCallback(const char *actionName, char *value, int *should_respond
  *
  * TODO: should_respond is not being used consistently. This needs review.
  */
+/* Forward declaration for memoryCallback (defined in memory_callback.c) */
+char *memoryCallback(const char *actionName, char *value, int *should_respond);
+
 static deviceCallback deviceCallbackArray[] = { { AUDIO_PLAYBACK_DEVICE, setPcmPlaybackDevice },
                                                 { AUDIO_CAPTURE_DEVICE, setPcmCaptureDevice },
                                                 { TEXT_TO_SPEECH, textToSpeechCallback },
@@ -105,7 +108,8 @@ static deviceCallback deviceCallbackArray[] = { { AUDIO_PLAYBACK_DEVICE, setPcmP
                                                 { LLM_STATUS, llmStatusCallback },
                                                 { CLOUD_PROVIDER, cloudProviderCallback },
                                                 { SMARTTHINGS, smartThingsCallback },
-                                                { SWITCH_LLM, switchLlmCallback } };
+                                                { SWITCH_LLM, switchLlmCallback },
+                                                { MEMORY, memoryCallback } };
 
 /**
  * @brief Send a status detail update to the WebUI (if connected)

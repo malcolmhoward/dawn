@@ -1,15 +1,22 @@
 # DAWN Memory System Design
 
-**Status:** Planning Complete - Ready for Implementation
+**Status:** Phases 1-4 Complete - Core Memory System Implemented
 **Date:** January 2026
 **Authors:** Kris Kersey, with input from community proposals
-**Last Updated:** 2026-01-23
+**Last Updated:** 2026-01-26
 
 ---
 
 ## What This Document Is
 
-A comprehensive design for DAWN's persistent memory system with integrated RAG (Retrieval-Augmented Generation) for document search. All major design decisions have been finalized and are documented here.
+A comprehensive design for DAWN's persistent memory system with integrated RAG (Retrieval-Augmented Generation) for document search. All major design decisions have been finalized and documented here.
+
+**Implementation Status:**
+- **Phases 1-4 (Core Memory):** ✅ Complete - Storage, tool, context injection, and extraction
+- **Phase 4.5 (Privacy Toggle):** ✅ Complete - Per-conversation privacy flag
+- **Phase 5 (Decay/Maintenance):** Pending - Nightly decay job, pruning
+- **Phase 6 (Memory WebUI):** Pending - See `NEXT_STEPS.md` Section 15
+- **Phases 7-11 (RAG):** Pending - Document search and retrieval
 
 ---
 
@@ -867,7 +874,53 @@ int memory_remember(const char *user_id, const char *fact_text);
 {"status": "stored", "fact": "User is vegetarian"}
 ```
 
-#### 9.1.3 LLM Prompt Addition
+#### 9.1.3 Recent Action
+
+Handles time-based queries when the user wants to see what's been learned recently without specific keywords.
+
+**Tool Definition:**
+
+```json
+{"device": "memory", "action": "recent", "value": "24h"}
+```
+
+**Supported Time Periods:**
+- Minutes: `30m`, `60m`
+- Hours: `1h`, `24h`, `48h`
+- Days: `1d`, `7d`, `30d`
+- Weeks: `1w`, `2w`
+
+**Design Principles:**
+- **No keywords required**: Returns all memories within the time window
+- **Discovery-oriented**: For "what have you learned about me lately?"
+- **Reusable parser**: `parse_time_period()` in `include/tools/time_utils.h` available to other tools
+
+**Recent Implementation:**
+
+```c
+// Parse human-readable time period into seconds
+// Located in include/tools/time_utils.h for reuse
+time_t parse_time_period(const char *period);  // "24h" -> 86400, "7d" -> 604800
+
+// Get memories created within time window
+char *memory_action_recent(int user_id, const char *period);
+```
+
+**Recent Response Format:**
+
+```
+RECENT FACTS:
+- User prefers dark mode (explicit, 12 hours ago)
+- Working on home automation project (inferred, 2 days ago)
+
+RECENT CONVERSATIONS:
+- [3 hours ago] Discussed memory system implementation...
+  Topics: memory, dawn, sqlite
+
+Total: 2 facts, 1 conversations
+```
+
+#### 9.1.4 LLM Prompt Addition
 
 ```
 For MEMORY:
@@ -875,13 +928,16 @@ For MEMORY:
   Use short keywords (1-3 words). Returns matching facts and conversation summaries.
   Optional: Add "date":"YYYY-MM-DD" or "date_from"/"date_to" for time-based queries.
   Example: {"device":"memory","action":"search","value":"","date":"2026-01-16"}
+- To see recent: <command>{"device":"memory","action":"recent","value":"24h"}</command>
+  Use for time-based discovery: "24h", "7d", "1w", "30m", etc.
+  Example: {"device":"memory","action":"recent","value":"1w"}
 - To store: <command>{"device":"memory","action":"remember","value":"the fact"}</command>
   Use when user shares personal info or asks you to remember something.
   Phrase facts to be self-describing (include context in the text).
   Respond naturally: "I'll remember that."
 ```
 
-#### 9.1.4 When to Use Each
+#### 9.1.5 When to Use Each
 
 | User Says | LLM Action |
 |-----------|------------|
@@ -891,10 +947,12 @@ For MEMORY:
 | "Do you remember my daughter's name?" | Call `search` with "daughter name" |
 | "What did we talk about last Thursday?" | Call `search` with date filter (convert to YYYY-MM-DD) |
 | "What did we decide about the garage?" | Call `search` with "garage decide" |
-| "What were we working on last week?" | Call `search` with date range filter |
-| "What did we talk about last week?" | Call `search` with relevant topic keywords |
+| "What have you learned about me lately?" | Call `recent` with "7d" or "1w" |
+| "What's new in the past 24 hours?" | Call `recent` with "24h" |
+| "What were we working on last week?" | Call `recent` with "1w" |
+| "Catch me up on the past few days" | Call `recent` with "3d" |
 
-#### 9.1.5 Three-Tier Retrieval
+#### 9.1.6 Three-Tier Retrieval
 
 | Tier | Mechanism | When | Budget |
 |------|-----------|------|--------|
@@ -902,7 +960,7 @@ For MEMORY:
 | **Memory search** | Tool call | LLM needs to recall something | ~500 tokens per search |
 | **Document search** | Tool call (RAG) | LLM needs info from files | ~500 tokens per search |
 
-#### 9.1.6 Active Store vs Session-End Extraction
+#### 9.1.7 Active Store vs Session-End Extraction
 
 Both mechanisms work together:
 
@@ -1014,35 +1072,44 @@ Memory and RAG are independent features. Memory can be fully implemented and dep
 
 ### MEMORY SYSTEM
 
-### Phase 1: Memory Storage Foundation (~1 week)
-- [ ] Add SQLite tables: memory_facts, memory_preferences, memory_summaries
-- [ ] Create migration system (if not present)
-- [ ] Basic CRUD operations in C
-- [ ] Unit tests for storage layer
+### Phase 1: Memory Storage Foundation ✅ COMPLETE
+- [x] Add SQLite tables: memory_facts, memory_preferences, memory_summaries
+- [x] Create migration system (schema v14-v16)
+- [x] Basic CRUD operations in C (`memory_db.c`)
+- [x] Prepared statements for all operations
 
-### Phase 2: Memory Tool (~1.5 weeks)
-- [ ] Memory tool with two actions:
-  - [ ] `search` - keyword search across facts/preferences/summaries
-  - [ ] `remember` - immediate fact storage from LLM
-- [ ] Add `memory` device to commands_config_nuevo.json
-- [ ] Register callback in mosquitto_comms.c
-- [ ] Delete commands: "Forget that I'm vegetarian"
-- [ ] Duplicate detection (don't store same fact twice)
-- [ ] Update AI_DESCRIPTION with memory tool instructions
+### Phase 2: Memory Tool ✅ COMPLETE
+- [x] Memory tool with four actions:
+  - [x] `search` - keyword search across facts/preferences/summaries
+  - [x] `recent` - time-based retrieval (e.g., "24h", "7d", "1w")
+  - [x] `remember` - immediate fact storage from LLM
+  - [x] `forget` - delete matching facts
+- [x] Add `memory` device to commands_config_nuevo.json
+- [x] Register callback in mosquitto_comms.c (MEMORY device type)
+- [x] Duplicate detection via similarity matching
+- [x] Guardrails: blocked patterns prevent instruction injection
 
-### Phase 3: Context Injection (~1 week)
-- [ ] Load facts and preferences at session start
-- [ ] Augment system prompt with user context
-- [ ] Context budget management (~800 tokens)
-- [ ] Track which facts were loaded (for reinforcement)
+### Phase 3: Context Injection ✅ COMPLETE
+- [x] Load facts and preferences at session start
+- [x] Augment system prompt with user context (`memory_build_context()`)
+- [x] Context budget management (~800 tokens)
+- [x] Format: preferences, facts by confidence, recent summaries
 
-### Phase 4: Automated Extraction (~2 weeks)
-- [ ] Session-end consolidation trigger
-- [ ] Extraction prompt refinement
-- [ ] JSON parsing and validation
-- [ ] Fact/preference/summary storage
-- [ ] Contradiction resolution (new fact supersedes old)
-- [ ] Skip facts already stored via tool call
+### Phase 4: Automated Extraction ✅ COMPLETE
+- [x] Session-end consolidation trigger (WebSocket disconnect/timeout)
+- [x] Extraction prompt with JSON output format
+- [x] JSON parsing and validation
+- [x] Fact/preference/summary storage
+- [x] Threaded extraction (non-blocking)
+- [x] Privacy toggle: conversations marked private skip extraction
+
+### Phase 4.5: Privacy Toggle ✅ COMPLETE (Bonus Feature)
+- [x] Per-conversation `is_private` flag in database
+- [x] WebSocket handler (`set_private` / `set_private_response`)
+- [x] Frontend toggle in LLM controls bar (eye/eye-off icon)
+- [x] Keyboard shortcut: Ctrl+Shift+P
+- [x] Can set before conversation starts (pending state applied on creation)
+- [x] Privacy badge in conversation history list
 
 ### Phase 5: Decay and Maintenance (~1 week)
 - [ ] Nightly decay job (configurable hour)
@@ -1052,13 +1119,13 @@ Memory and RAG are independent features. Memory can be fully implemented and dep
 - [ ] Crash recovery for unconsolidated sessions
 
 ### Phase 6: Memory WebUI (~1 week)
-- [ ] Memory viewer in settings panel
+- [ ] Memory viewer in settings panel (see NEXT_STEPS.md Section 15)
 - [ ] Fact/preference editing
 - [ ] Delete individual memories
 - [ ] Memory statistics display
 - [ ] "Forget everything" option
 
-**Memory System Total: ~7-8 weeks**
+**Memory System Status: Phases 1-4 Complete, Phases 5-6 Pending**
 
 ---
 

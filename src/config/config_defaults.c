@@ -216,6 +216,16 @@ void config_set_defaults(dawn_config_t *config) {
    config->images.max_size_mb = 4;    /* 4MB max per image */
    config->images.max_per_user = 1000;
 
+   /* Memory - persistent user memory system */
+   config->memory.enabled = true;
+   config->memory.context_budget_tokens = 800; /* ~3200 chars for memory context */
+   SAFE_COPY(config->memory.extraction_provider, "local");
+   SAFE_COPY(config->memory.extraction_model, "qwen2.5:7b");
+   config->memory.pruning_enabled = true;
+   config->memory.prune_superseded_days = 30; /* Delete old superseded facts after 30 days */
+   config->memory.prune_stale_days = 180; /* Delete unused low-confidence facts after 6 months */
+   config->memory.prune_stale_min_confidence = 0.5f; /* Only prune facts below 50% confidence */
+
    /* Shutdown - disabled by default for security */
    config->shutdown.enabled = false;
    config->shutdown.passphrase[0] = '\0';

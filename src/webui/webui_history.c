@@ -29,10 +29,12 @@
 #include <string.h>
 
 #include "auth/auth_db.h"
+#include "config/dawn_config.h"
 #include "core/ocp_helpers.h"
 #include "core/session_manager.h"
 #include "llm/llm_command_parser.h"
 #include "logging.h"
+#include "memory/memory_extraction.h"
 #include "webui/webui_internal.h"
 #include "webui/webui_server.h" /* For WEBUI_MAX_THUMBNAIL_BASE64 */
 
@@ -224,6 +226,7 @@ static int list_conv_callback(const conversation_t *conv, void *context) {
    json_object_object_add(conv_obj, "updated_at", json_object_new_int64(conv->updated_at));
    json_object_object_add(conv_obj, "message_count", json_object_new_int(conv->message_count));
    json_object_object_add(conv_obj, "is_archived", json_object_new_boolean(conv->is_archived));
+   json_object_object_add(conv_obj, "is_private", json_object_new_boolean(conv->is_private));
 
    /* Continuation indicator for history panel chain icon */
    if (conv->continued_from > 0) {
@@ -282,12 +285,71 @@ void handle_list_conversations(ws_connection_t *conn, struct json_object *payloa
    json_object_put(response);
 }
 
+/* =============================================================================
+ * Privacy Check Helper
+ * ============================================================================ */
+
+/**
+ * @brief Check if memory extraction should be skipped for the active conversation
+ *
+ * Centralizes the privacy check logic and handles race conditions by re-verifying
+ * from the database when needed. Also updates the cached state if stale.
+ *
+ * @param conn WebSocket connection with conversation context
+ * @return true if memory extraction should be skipped, false otherwise
+ */
+static bool should_skip_memory_extraction(ws_connection_t *conn) {
+   /* No conversation to extract from */
+   if (conn->active_conversation_id <= 0) {
+      return true;
+   }
+
+   /* Memory system disabled */
+   if (!g_config.memory.enabled) {
+      return true;
+   }
+
+   /* Check cached privacy flag first */
+   if (conn->active_conversation_private) {
+      return true;
+   }
+
+   /* Re-verify from database to handle race conditions (e.g., set_private in flight) */
+   int db_private = conv_db_is_private(conn->active_conversation_id, conn->auth_user_id);
+   if (db_private > 0) {
+      /* Update cached state to match database */
+      conn->active_conversation_private = true;
+      LOG_INFO("WebUI: privacy check found stale cache, conversation %lld is private",
+               (long long)conn->active_conversation_id);
+      return true;
+   }
+
+   /* db_private == 0 means not private, -1 means error/not found - proceed with extraction */
+   return false;
+}
+
 /**
  * @brief Create a new conversation
  */
 void handle_new_conversation(ws_connection_t *conn, struct json_object *payload) {
    if (!conn_require_auth(conn)) {
       return;
+   }
+
+   /* Trigger memory extraction for old conversation before creating new one (async, non-blocking).
+    * This captures the conversation state before switching to a fresh context. */
+   if (conn->session && !should_skip_memory_extraction(conn)) {
+      struct json_object *old_history = session_get_history(conn->session);
+      if (old_history) {
+         int msg_count = json_object_array_length(old_history);
+         if (msg_count >= 2) {
+            LOG_INFO("WebUI: Triggering memory extraction for conversation %lld before new",
+                     (long long)conn->active_conversation_id);
+            memory_trigger_extraction(conn->auth_user_id, conn->active_conversation_id, NULL,
+                                      old_history, msg_count, 0);
+         }
+         json_object_put(old_history);
+      }
    }
 
    json_object *response = json_object_new_object();
@@ -329,6 +391,9 @@ void handle_new_conversation(ws_connection_t *conn, struct json_object *payload)
 
       auth_db_log_event("CONVERSATION_CREATED", conn->username, conn->client_ip,
                         "New conversation");
+
+      /* Update active conversation tracking */
+      conn->active_conversation_id = conv_id;
    } else if (result == AUTH_DB_LIMIT_EXCEEDED) {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
       json_object_object_add(resp_payload, "error",
@@ -547,6 +612,23 @@ void handle_load_conversation(ws_connection_t *conn, struct json_object *payload
 
    bool is_load_more = (before_id > 0);
    bool needs_session_context = !is_load_more && conn->session;
+
+   /* Trigger memory extraction for old conversation before switching (async, non-blocking).
+    * Only triggers on actual conversation switch, not pagination or reloading same conversation. */
+   if (!is_load_more && conn->active_conversation_id != conv_id && conn->session &&
+       !should_skip_memory_extraction(conn)) {
+      struct json_object *old_history = session_get_history(conn->session);
+      if (old_history) {
+         int msg_count = json_object_array_length(old_history);
+         if (msg_count >= 2) {
+            LOG_INFO("WebUI: Triggering memory extraction for conversation %lld before switch",
+                     (long long)conn->active_conversation_id);
+            memory_trigger_extraction(conn->auth_user_id, conn->active_conversation_id, NULL,
+                                      old_history, msg_count, 0);
+         }
+         json_object_put(old_history);
+      }
+   }
 
    /* Get conversation metadata */
    conversation_t conv;
@@ -769,6 +851,10 @@ void handle_load_conversation(ws_connection_t *conn, struct json_object *payload
             json_object_object_add(resp_payload, "llm_locked",
                                    json_object_new_boolean(total_messages > 0));
 
+            /* Privacy flag */
+            json_object_object_add(resp_payload, "is_private",
+                                   json_object_new_boolean(conv.is_private));
+
             /* Continuation data */
             if (conv.continued_from > 0) {
                json_object_object_add(resp_payload, "continued_from",
@@ -789,6 +875,12 @@ void handle_load_conversation(ws_connection_t *conn, struct json_object *payload
                                          json_object_new_int64(continuation_id));
                }
             }
+         }
+
+         /* Update active conversation tracking (only on initial load, not load-more) */
+         if (!is_load_more) {
+            conn->active_conversation_id = conv_id;
+            conn->active_conversation_private = conv.is_private;
          }
 
          json_object_object_add(response, "payload", resp_payload);
@@ -924,6 +1016,65 @@ void handle_rename_conversation(ws_connection_t *conn, struct json_object *paylo
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
       json_object_object_add(resp_payload, "error",
                              json_object_new_string("Failed to rename conversation"));
+   }
+
+   json_object_object_add(response, "payload", resp_payload);
+   send_json_response(conn->wsi, response);
+   json_object_put(response);
+}
+
+/**
+ * @brief Set private mode for a conversation
+ *
+ * Private conversations are excluded from memory extraction.
+ */
+void handle_set_private(ws_connection_t *conn, struct json_object *payload) {
+   if (!conn_require_auth(conn)) {
+      return;
+   }
+
+   json_object *response = json_object_new_object();
+   json_object_object_add(response, "type", json_object_new_string("set_private_response"));
+   json_object *resp_payload = json_object_new_object();
+
+   /* Get conversation ID and private flag */
+   json_object *id_obj, *private_obj;
+   if (!json_object_object_get_ex(payload, "conversation_id", &id_obj) ||
+       !json_object_object_get_ex(payload, "is_private", &private_obj)) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Missing conversation_id or is_private"));
+      json_object_object_add(response, "payload", resp_payload);
+      send_json_response(conn->wsi, response);
+      json_object_put(response);
+      return;
+   }
+
+   int64_t conv_id = json_object_get_int64(id_obj);
+   bool is_private = json_object_get_boolean(private_obj);
+
+   int result = conv_db_set_private(conv_id, conn->auth_user_id, is_private);
+
+   if (result == AUTH_DB_SUCCESS) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
+      json_object_object_add(resp_payload, "conversation_id", json_object_new_int64(conv_id));
+      json_object_object_add(resp_payload, "is_private", json_object_new_boolean(is_private));
+      json_object_object_add(resp_payload, "message",
+                             json_object_new_string(is_private ? "Conversation marked private"
+                                                               : "Conversation marked public"));
+
+      /* Update active conversation tracking if this is the current conversation */
+      if (conn->active_conversation_id == conv_id) {
+         conn->active_conversation_private = is_private;
+      }
+   } else if (result == AUTH_DB_NOT_FOUND) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Conversation not found"));
+   } else {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Failed to update privacy"));
    }
 
    json_object_object_add(response, "payload", resp_payload);

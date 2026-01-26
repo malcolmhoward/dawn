@@ -21,6 +21,8 @@
       thinking_mode: 'auto',
       reasoning_effort: 'medium',
       locked: false,
+      is_private: false,
+      conversation_id: null, // Current conversation ID for privacy toggle
    };
 
    // Global defaults from config (populated on config load)
@@ -250,6 +252,186 @@
             }
          });
       }
+
+      // Privacy toggle button
+      initPrivacyToggle();
+   }
+
+   /**
+    * Initialize privacy toggle button and keyboard shortcut
+    */
+   function initPrivacyToggle() {
+      const privacyToggle = document.getElementById('privacy-toggle');
+      if (!privacyToggle) return;
+
+      // Toggle on click
+      privacyToggle.addEventListener('click', () => {
+         if (conversationLlmState.is_private) {
+            // Turning OFF privacy - show confirmation
+            showPrivacyConfirmation();
+         } else {
+            // Turning ON privacy - no confirmation needed
+            setPrivacy(true);
+         }
+      });
+
+      // Keyboard shortcut: Ctrl+Shift+P (works before and during conversation)
+      document.addEventListener('keydown', (e) => {
+         if (e.ctrlKey && e.shiftKey && e.key === 'P') {
+            e.preventDefault();
+            if (conversationLlmState.is_private) {
+               showPrivacyConfirmation();
+            } else {
+               setPrivacy(true);
+            }
+         }
+      });
+   }
+
+   /**
+    * Show confirmation modal before turning off privacy
+    */
+   function showPrivacyConfirmation() {
+      if (typeof DawnModal !== 'undefined' && DawnModal.confirm) {
+         DawnModal.confirm({
+            title: 'Disable Private Mode?',
+            message:
+               'Future messages in this conversation may be analyzed to extract memories and preferences. ' +
+               'Messages already sent while private will remain unanalyzed.',
+            confirmText: 'Disable Privacy',
+            cancelText: 'Keep Private',
+            onConfirm: () => setPrivacy(false),
+         });
+      } else {
+         // Fallback to browser confirm
+         const confirmed = confirm(
+            'Disable Private Mode?\n\n' +
+               'Future messages in this conversation may be analyzed to extract memories and preferences.'
+         );
+         if (confirmed) {
+            setPrivacy(false);
+         }
+      }
+   }
+
+   /**
+    * Set privacy mode for current conversation (or pending state for new conversation)
+    * @param {boolean} isPrivate - True to enable private mode
+    */
+   function setPrivacy(isPrivate) {
+      // Always update local state and UI - privacy can be set before conversation exists
+      updatePrivacyToggleUI(isPrivate);
+
+      // If no conversation exists yet, just update local state (will be applied when conversation is created)
+      if (!conversationLlmState.conversation_id) {
+         console.log('Privacy set to', isPrivate, '- will apply when conversation is created');
+         if (typeof DawnToast !== 'undefined') {
+            DawnToast.show(
+               isPrivate ? 'Private mode enabled for new conversation' : 'Private mode disabled',
+               'info'
+            );
+         }
+         return;
+      }
+
+      // Conversation exists - send to server
+      if (!DawnWS || !DawnWS.isConnected()) {
+         console.error('WebSocket not connected');
+         if (typeof DawnToast !== 'undefined') {
+            DawnToast.show('Cannot update privacy: not connected', 'error');
+         }
+         return;
+      }
+
+      DawnWS.send({
+         type: 'set_private',
+         payload: {
+            conversation_id: conversationLlmState.conversation_id,
+            is_private: isPrivate,
+         },
+      });
+   }
+
+   /**
+    * Handle set_private_response from server
+    * @param {Object} payload - Response payload
+    */
+   function handleSetPrivateResponse(payload) {
+      if (payload.success) {
+         conversationLlmState.is_private = payload.is_private;
+         updatePrivacyToggleUI(payload.is_private);
+
+         if (typeof DawnToast !== 'undefined') {
+            DawnToast.show(
+               payload.message ||
+                  (payload.is_private ? 'Private mode enabled' : 'Private mode disabled'),
+               'success'
+            );
+         }
+
+         // Update history list if visible
+         if (typeof DawnHistory !== 'undefined' && DawnHistory.updateConversationPrivacy) {
+            DawnHistory.updateConversationPrivacy(payload.conversation_id, payload.is_private);
+         }
+      } else {
+         // Revert UI on failure
+         updatePrivacyToggleUI(conversationLlmState.is_private);
+
+         if (typeof DawnToast !== 'undefined') {
+            DawnToast.show(
+               'Failed to update privacy: ' + (payload.error || 'Unknown error'),
+               'error'
+            );
+         }
+      }
+   }
+
+   /**
+    * Update privacy toggle button UI
+    * @param {boolean} isPrivate - Current privacy state
+    */
+   function updatePrivacyToggleUI(isPrivate) {
+      conversationLlmState.is_private = isPrivate;
+
+      const privacyToggle = document.getElementById('privacy-toggle');
+      if (!privacyToggle) return;
+
+      privacyToggle.setAttribute('aria-pressed', isPrivate ? 'true' : 'false');
+
+      const eyeIcon = privacyToggle.querySelector('.eye-icon');
+      const eyeOffIcon = privacyToggle.querySelector('.eye-off-icon');
+
+      if (eyeIcon && eyeOffIcon) {
+         if (isPrivate) {
+            eyeIcon.classList.add('hidden');
+            eyeOffIcon.classList.remove('hidden');
+         } else {
+            eyeIcon.classList.remove('hidden');
+            eyeOffIcon.classList.add('hidden');
+         }
+      }
+   }
+
+   /**
+    * Set the current conversation ID for privacy toggle
+    * @param {number|null} convId - Conversation ID or null
+    * @param {boolean} isPrivate - Initial privacy state (optional, preserves pending state if not provided)
+    */
+   function setCurrentConversation(convId, isPrivate) {
+      conversationLlmState.conversation_id = convId;
+      // Only update privacy if explicitly provided; otherwise preserve pending state
+      if (typeof isPrivate === 'boolean') {
+         conversationLlmState.is_private = isPrivate;
+         updatePrivacyToggleUI(isPrivate);
+      }
+   }
+
+   /**
+    * Get the current (or pending) privacy state
+    * @returns {boolean} True if private mode is set
+    */
+   function getPrivacyState() {
+      return conversationLlmState.is_private;
    }
 
    /**
@@ -258,6 +440,11 @@
     */
    function resetConversationLlmControls() {
       setConversationLlmLocked(false);
+
+      // Reset privacy state (new conversations start as public)
+      conversationLlmState.conversation_id = null;
+      conversationLlmState.is_private = false;
+      updatePrivacyToggleUI(false);
 
       // Clear thinking tokens from previous conversation to prevent stale display
       if (typeof DawnState !== 'undefined') {
@@ -872,5 +1059,10 @@
       setSessionLlm,
       handleSetSessionLlmResponse,
       isConversationLlmLocked,
+      setCurrentConversation,
+      getPrivacyState,
+      setPrivacy,
+      handleSetPrivateResponse,
+      updatePrivacyToggleUI,
    };
 })();

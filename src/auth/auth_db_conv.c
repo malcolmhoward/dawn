@@ -215,6 +215,9 @@ int conv_db_get(int64_t conv_id, int user_id, conversation_t *conv_out) {
       conv_out->thinking_mode[sizeof(conv_out->thinking_mode) - 1] = '\0';
    }
 
+   /* Privacy flag (schema v16+) */
+   conv_out->is_private = sqlite3_column_int(s_db.stmt_conv_get, 16) != 0;
+
    sqlite3_reset(s_db.stmt_conv_get);
    AUTH_DB_UNLOCK();
 
@@ -422,6 +425,9 @@ int conv_db_list(int user_id,
       conv.continued_from = sqlite3_column_int64(s_db.stmt_conv_list, 9);
       conv.compaction_summary = NULL; /* Load on demand via conv_db_get */
 
+      /* Privacy flag (schema v16+) */
+      conv.is_private = sqlite3_column_int(s_db.stmt_conv_list, 11) != 0;
+
       if (callback(&conv, ctx) != 0) {
          break; /* Callback requested stop */
       }
@@ -480,7 +486,10 @@ int conv_db_list_all(bool include_archived,
       conv.continued_from = sqlite3_column_int64(s_db.stmt_conv_list_all, 9);
       conv.compaction_summary = NULL;
 
-      const char *uname = (const char *)sqlite3_column_text(s_db.stmt_conv_list_all, 11);
+      /* Privacy flag (schema v16+) */
+      conv.is_private = sqlite3_column_int(s_db.stmt_conv_list_all, 11) != 0;
+
+      const char *uname = (const char *)sqlite3_column_text(s_db.stmt_conv_list_all, 12);
       if (uname) {
          strncpy(username, uname, AUTH_USERNAME_MAX - 1);
          username[AUTH_USERNAME_MAX - 1] = '\0';
@@ -521,6 +530,68 @@ int conv_db_rename(int64_t conv_id, int user_id, const char *new_title) {
 
    /* No rows updated means either not found or forbidden */
    return (changes > 0) ? AUTH_DB_SUCCESS : AUTH_DB_NOT_FOUND;
+}
+
+int conv_db_set_private(int64_t conv_id, int user_id, bool is_private) {
+   if (conv_id <= 0 || user_id <= 0) {
+      return AUTH_DB_INVALID;
+   }
+
+   AUTH_DB_LOCK_OR_FAIL();
+
+   sqlite3_reset(s_db.stmt_conv_set_private);
+   sqlite3_bind_int(s_db.stmt_conv_set_private, 1, is_private ? 1 : 0);
+   sqlite3_bind_int64(s_db.stmt_conv_set_private, 2, conv_id);
+   sqlite3_bind_int(s_db.stmt_conv_set_private, 3, user_id);
+
+   int rc = sqlite3_step(s_db.stmt_conv_set_private);
+   int changes = sqlite3_changes(s_db.db);
+   sqlite3_reset(s_db.stmt_conv_set_private);
+
+   AUTH_DB_UNLOCK();
+
+   if (rc != SQLITE_DONE) {
+      LOG_ERROR("conv_db_set_private: update failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   if (changes > 0) {
+      LOG_INFO("Conversation %lld privacy set to %s", (long long)conv_id,
+               is_private ? "private" : "public");
+   }
+
+   /* No rows updated means either not found or forbidden */
+   return (changes > 0) ? AUTH_DB_SUCCESS : AUTH_DB_NOT_FOUND;
+}
+
+int conv_db_is_private(int64_t conv_id, int user_id) {
+   if (conv_id <= 0) {
+      return -1;
+   }
+
+   AUTH_DB_LOCK_OR_RETURN(-1);
+
+   /* Use a direct query for efficiency (no prepared statement needed for rare calls) */
+   const char *sql = "SELECT is_private FROM conversations WHERE id = ? AND user_id = ?";
+   sqlite3_stmt *stmt = NULL;
+   int rc = sqlite3_prepare_v2(s_db.db, sql, -1, &stmt, NULL);
+   if (rc != SQLITE_OK) {
+      AUTH_DB_UNLOCK();
+      return -1;
+   }
+
+   sqlite3_bind_int64(stmt, 1, conv_id);
+   sqlite3_bind_int(stmt, 2, user_id);
+
+   int result = -1;
+   if (sqlite3_step(stmt) == SQLITE_ROW) {
+      result = sqlite3_column_int(stmt, 0);
+   }
+
+   sqlite3_finalize(stmt);
+   AUTH_DB_UNLOCK();
+
+   return result;
 }
 
 int conv_db_delete(int64_t conv_id, int user_id) {

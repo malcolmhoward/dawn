@@ -320,6 +320,17 @@
            {"name": "setting", "type": "string", "description": "Value for the action (brightness: 0-100, color: hex code, temperature: degrees)", "required": false, "maps_to": "custom:setting"}
          ]
        }
+    },
+    "memory": {
+       "type": "getter",
+       "topic": "dawn",
+       "tool": {
+         "description": "Search or store memories about the user. Use 'search' to recall facts by keywords. Use 'recent' to list facts/conversations from a time period (e.g., '24h', '7d', '1w'). Use 'remember' to store important facts. Use 'forget' to remove stored facts.",
+         "parameters": [
+           {"name": "action", "type": "enum", "enum": ["search", "recent", "remember", "forget"], "description": "Action type: search (by keywords), recent (by time period), remember (store), forget (delete)", "required": true, "maps_to": "action"},
+           {"name": "value", "type": "string", "description": "For search: keywords. For recent: time period like '24h', '7d', '1w'. For remember: the fact. For forget: text to match.", "required": true, "maps_to": "value"}
+         ]
+       }
     }
   },
   "tools": {

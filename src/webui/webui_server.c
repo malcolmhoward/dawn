@@ -73,6 +73,7 @@
 #ifdef ENABLE_AUTH
 #include "auth/auth_crypto.h"
 #include "auth/auth_db.h"
+#include "memory/memory_context.h"
 /* HTTP rate limiting and CSRF constants moved to webui_http.c */
 #endif /* ENABLE_AUTH */
 
@@ -1341,6 +1342,17 @@ char *build_user_prompt(int user_id) {
 
    size_t base_len = strlen(base_prompt);
 
+   /* Build memory context if enabled */
+   char memory_ctx[4096] = { 0 };
+   size_t memory_len = 0;
+   if (g_config.memory.enabled) {
+      int ctx_len = memory_build_context(user_id, memory_ctx, sizeof(memory_ctx),
+                                         g_config.memory.context_budget_tokens);
+      if (ctx_len > 0) {
+         memory_len = (size_t)ctx_len;
+      }
+   }
+
    /* Replace mode: Prepend custom persona with override instruction */
    if (is_replace_mode && has_persona) {
       /* Build replacement prefix (persona 512 + boilerplate ~130 = ~650 max) */
@@ -1374,19 +1386,23 @@ char *build_user_prompt(int user_id) {
          suffix[0] = '\0';
       }
 
-      /* Allocate: prefix + base + suffix */
+      /* Allocate: prefix + base + suffix + memory */
       size_t suffix_len = strlen(suffix);
-      char *combined = malloc(prefix_len + base_len + suffix_len + 1);
+      char *combined = malloc(prefix_len + base_len + suffix_len + memory_len + 1);
       if (!combined) {
          return strdup(base_prompt);
       }
 
       memcpy(combined, prefix, prefix_len);
       memcpy(combined + prefix_len, base_prompt, base_len);
-      memcpy(combined + prefix_len + base_len, suffix, suffix_len + 1);
+      memcpy(combined + prefix_len + base_len, suffix, suffix_len);
+      if (memory_len > 0) {
+         memcpy(combined + prefix_len + base_len + suffix_len, memory_ctx, memory_len);
+      }
+      combined[prefix_len + base_len + suffix_len + memory_len] = '\0';
 
-      LOG_INFO("Built REPLACE prompt for user_id=%d (%d + %zu + %zu bytes)", user_id, prefix_len,
-               base_len, suffix_len);
+      LOG_INFO("Built REPLACE prompt for user_id=%d (%d + %zu + %zu + %zu bytes)", user_id,
+               prefix_len, base_len, suffix_len, memory_len);
 
       return combined;
    }
@@ -1415,17 +1431,22 @@ char *build_user_prompt(int user_id) {
                          "Preferred units: %s\n", settings.units);
    }
 
-   /* Allocate combined prompt */
+   /* Allocate combined prompt with memory context */
    size_t context_len = strlen(user_context);
-   char *combined = malloc(base_len + context_len + 1);
+   char *combined = malloc(base_len + context_len + memory_len + 1);
    if (!combined) {
       return strdup(base_prompt);
    }
 
    memcpy(combined, base_prompt, base_len);
-   memcpy(combined + base_len, user_context, context_len + 1);
+   memcpy(combined + base_len, user_context, context_len);
+   if (memory_len > 0) {
+      memcpy(combined + base_len + context_len, memory_ctx, memory_len);
+   }
+   combined[base_len + context_len + memory_len] = '\0';
 
-   LOG_INFO("Built APPEND prompt for user_id=%d (%zu + %zu bytes)", user_id, base_len, context_len);
+   LOG_INFO("Built APPEND prompt for user_id=%d (%zu + %zu + %zu bytes)", user_id, base_len,
+            context_len, memory_len);
 
    return combined;
 }
@@ -2123,7 +2144,9 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                   if (!conn->session) {
                      conn->session = session_create(SESSION_TYPE_WEBSOCKET, -1);
                      if (conn->session) {
-                        /* Build personalized prompt with user settings */
+                        /* Set user_id for metrics and memory extraction */
+                        session_set_metrics_user(conn->session, conn->auth_user_id);
+                        /* Build personalized prompt with user settings + memory context */
                         char *prompt = build_user_prompt(conn->auth_user_id);
                         session_init_system_prompt(conn->session,
                                                    prompt ? prompt : get_remote_command_prompt());
@@ -2463,6 +2486,10 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
       if (payload) {
          handle_rename_conversation(conn, payload);
       }
+   } else if (strcmp(type, "set_private") == 0) {
+      if (payload) {
+         handle_set_private(conn, payload);
+      }
    } else if (strcmp(type, "search_conversations") == 0) {
       if (payload) {
          handle_search_conversations(conn, payload);
@@ -2709,7 +2736,9 @@ static int callback_websocket(struct lws *wsi,
                   return -1;
                }
 
-               /* Build personalized prompt with user settings */
+               /* Set user_id for metrics and memory extraction */
+               session_set_metrics_user(conn->session, conn->auth_user_id);
+               /* Build personalized prompt with user settings + memory context */
                char *prompt = build_user_prompt(conn->auth_user_id);
                session_init_system_prompt(conn->session,
                                           prompt ? prompt : get_remote_command_prompt());

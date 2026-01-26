@@ -138,7 +138,7 @@ static const char *SCHEMA_SQL =
     ");"
 
     /* Conversations table (added in schema v4, context columns in v5, continuation in v7,
-     * LLM settings in v11) */
+     * LLM settings in v11, extraction tracking in v15, privacy in v16) */
     "CREATE TABLE IF NOT EXISTS conversations ("
     "   id INTEGER PRIMARY KEY AUTOINCREMENT,"
     "   user_id INTEGER NOT NULL,"
@@ -156,6 +156,8 @@ static const char *SCHEMA_SQL =
     "   model TEXT DEFAULT NULL,"
     "   tools_mode TEXT DEFAULT NULL,"
     "   thinking_mode TEXT DEFAULT NULL,"
+    "   last_extracted_msg_count INTEGER DEFAULT 0,"
+    "   is_private INTEGER DEFAULT 0,"
     "   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,"
     "   FOREIGN KEY (continued_from) REFERENCES conversations(id) ON DELETE SET NULL"
     ");"
@@ -478,6 +480,102 @@ static int create_schema(void) {
       LOG_INFO("auth_db: migrated images table to include BLOB storage (v13)");
    }
 
+   /* v14 migration: add memory system tables
+    * Creates memory_facts, memory_preferences, and memory_summaries tables */
+   if (current_version >= 1 && current_version < 14) {
+      const char *memory_sql =
+          /* memory_facts table */
+          "CREATE TABLE IF NOT EXISTS memory_facts ("
+          "   id INTEGER PRIMARY KEY AUTOINCREMENT,"
+          "   user_id INTEGER NOT NULL,"
+          "   fact_text TEXT NOT NULL,"
+          "   confidence REAL DEFAULT 1.0,"
+          "   source TEXT DEFAULT 'inferred',"
+          "   created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),"
+          "   last_accessed INTEGER,"
+          "   access_count INTEGER DEFAULT 0,"
+          "   superseded_by INTEGER,"
+          "   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,"
+          "   FOREIGN KEY (superseded_by) REFERENCES memory_facts(id) ON DELETE SET NULL"
+          ");"
+          "CREATE INDEX IF NOT EXISTS idx_memory_facts_user ON memory_facts(user_id);"
+          "CREATE INDEX IF NOT EXISTS idx_memory_facts_confidence ON "
+          "memory_facts(user_id, confidence DESC);"
+
+          /* memory_preferences table */
+          "CREATE TABLE IF NOT EXISTS memory_preferences ("
+          "   id INTEGER PRIMARY KEY AUTOINCREMENT,"
+          "   user_id INTEGER NOT NULL,"
+          "   category TEXT NOT NULL,"
+          "   value TEXT NOT NULL,"
+          "   confidence REAL DEFAULT 0.5,"
+          "   source TEXT DEFAULT 'inferred',"
+          "   created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),"
+          "   updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),"
+          "   reinforcement_count INTEGER DEFAULT 1,"
+          "   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,"
+          "   UNIQUE(user_id, category)"
+          ");"
+
+          /* memory_summaries table */
+          "CREATE TABLE IF NOT EXISTS memory_summaries ("
+          "   id INTEGER PRIMARY KEY AUTOINCREMENT,"
+          "   user_id INTEGER NOT NULL,"
+          "   session_id TEXT NOT NULL,"
+          "   summary TEXT NOT NULL,"
+          "   topics TEXT,"
+          "   sentiment TEXT,"
+          "   created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),"
+          "   message_count INTEGER,"
+          "   duration_seconds INTEGER,"
+          "   consolidated INTEGER DEFAULT 0,"
+          "   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE"
+          ");"
+          "CREATE INDEX IF NOT EXISTS idx_memory_summaries_user ON "
+          "memory_summaries(user_id, created_at DESC);";
+
+      rc = sqlite3_exec(s_db.db, memory_sql, NULL, NULL, &errmsg);
+      if (rc != SQLITE_OK) {
+         LOG_ERROR("auth_db: v14 migration - failed to create memory tables: %s",
+                   errmsg ? errmsg : "unknown");
+         sqlite3_free(errmsg);
+         return AUTH_DB_FAILURE;
+      }
+      LOG_INFO("auth_db: added memory system tables (v14)");
+   }
+
+   /* v15 migration: add deduplication and extraction tracking
+    * - normalized_hash for fast duplicate detection in memory_facts
+    * - last_extracted_msg_count for incremental extraction in conversations */
+   if (current_version >= 1 && current_version < 15) {
+      const char *v15_sql =
+          "ALTER TABLE memory_facts ADD COLUMN normalized_hash INTEGER DEFAULT 0;"
+          "CREATE INDEX IF NOT EXISTS idx_memory_facts_hash ON memory_facts(user_id, "
+          "normalized_hash);"
+          "ALTER TABLE conversations ADD COLUMN last_extracted_msg_count INTEGER DEFAULT 0;";
+
+      rc = sqlite3_exec(s_db.db, v15_sql, NULL, NULL, &errmsg);
+      if (rc != SQLITE_OK) {
+         LOG_ERROR("auth_db: v15 migration failed: %s", errmsg ? errmsg : "unknown");
+         sqlite3_free(errmsg);
+         return AUTH_DB_FAILURE;
+      }
+      LOG_INFO("auth_db: added deduplication and extraction tracking (v15)");
+   }
+
+   /* v16 migration: add is_private flag to conversations for privacy mode */
+   if (current_version >= 1 && current_version < 16) {
+      const char *v16_sql = "ALTER TABLE conversations ADD COLUMN is_private INTEGER DEFAULT 0;";
+
+      rc = sqlite3_exec(s_db.db, v16_sql, NULL, NULL, &errmsg);
+      if (rc != SQLITE_OK) {
+         LOG_ERROR("auth_db: v16 migration failed: %s", errmsg ? errmsg : "unknown");
+         sqlite3_free(errmsg);
+         return AUTH_DB_FAILURE;
+      }
+      LOG_INFO("auth_db: added conversation privacy flag (v16)");
+   }
+
    /* Create continuation index (runs for both new databases and migrations) */
    rc = sqlite3_exec(s_db.db,
                      "CREATE INDEX IF NOT EXISTS idx_conversations_continued "
@@ -712,7 +810,7 @@ static int prepare_statements(void) {
        s_db.db,
        "SELECT id, user_id, title, created_at, updated_at, message_count, is_archived, "
        "context_tokens, context_max, continued_from, compaction_summary, "
-       "llm_type, cloud_provider, model, tools_mode, thinking_mode "
+       "llm_type, cloud_provider, model, tools_mode, thinking_mode, is_private "
        "FROM conversations WHERE id = ?",
        -1, &s_db.stmt_conv_get, NULL);
    if (rc != SQLITE_OK) {
@@ -723,7 +821,7 @@ static int prepare_statements(void) {
    rc = sqlite3_prepare_v2(
        s_db.db,
        "SELECT id, user_id, title, created_at, updated_at, message_count, is_archived, "
-       "context_tokens, context_max, continued_from, compaction_summary "
+       "context_tokens, context_max, continued_from, compaction_summary, is_private "
        "FROM conversations WHERE user_id = ? AND (is_archived = 0 OR ? = 1) "
        "ORDER BY updated_at DESC LIMIT ? OFFSET ?",
        -1, &s_db.stmt_conv_list, NULL);
@@ -737,7 +835,7 @@ static int prepare_statements(void) {
        s_db.db,
        "SELECT c.id, c.user_id, c.title, c.created_at, c.updated_at, c.message_count, "
        "c.is_archived, c.context_tokens, c.context_max, c.continued_from, "
-       "c.compaction_summary, u.username "
+       "c.compaction_summary, c.is_private, u.username "
        "FROM conversations c LEFT JOIN users u ON c.user_id = u.id "
        "WHERE (c.is_archived = 0 OR ? = 1) "
        "ORDER BY c.updated_at DESC LIMIT ? OFFSET ?",
@@ -751,7 +849,7 @@ static int prepare_statements(void) {
        s_db.db,
        "SELECT id, user_id, title, created_at, updated_at, message_count, is_archived, "
        "context_tokens, context_max, continued_from, compaction_summary "
-       "FROM conversations WHERE user_id = ? AND title LIKE ? ESCAPE '\\' "
+       "FROM conversations WHERE user_id = ? AND title LIKE ? "
        "ORDER BY updated_at DESC LIMIT ? OFFSET ?",
        -1, &s_db.stmt_conv_search, NULL);
    if (rc != SQLITE_OK) {
@@ -765,7 +863,7 @@ static int prepare_statements(void) {
                            "c.continued_from, c.compaction_summary "
                            "FROM conversations c "
                            "INNER JOIN messages m ON m.conversation_id = c.id "
-                           "WHERE c.user_id = ? AND m.content LIKE ? ESCAPE '\\' "
+                           "WHERE c.user_id = ? AND m.content LIKE ? "
                            "ORDER BY c.updated_at DESC LIMIT ? OFFSET ?",
                            -1, &s_db.stmt_conv_search_content, NULL);
    if (rc != SQLITE_OK) {
@@ -962,6 +1060,234 @@ static int prepare_statements(void) {
       return AUTH_DB_FAILURE;
    }
 
+   /* Memory fact statements */
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "INSERT INTO memory_facts (user_id, fact_text, confidence, source, "
+                           "created_at, normalized_hash) "
+                           "VALUES (?, ?, ?, ?, ?, ?)",
+                           -1, &s_db.stmt_memory_fact_create, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare memory_fact_create failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "SELECT id, user_id, fact_text, confidence, source, created_at, last_accessed, "
+       "access_count, superseded_by FROM memory_facts WHERE id = ?",
+       -1, &s_db.stmt_memory_fact_get, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare memory_fact_get failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "SELECT id, user_id, fact_text, confidence, source, created_at, last_accessed, "
+       "access_count, superseded_by FROM memory_facts "
+       "WHERE user_id = ? AND superseded_by IS NULL "
+       "ORDER BY confidence DESC LIMIT ? OFFSET ?",
+       -1, &s_db.stmt_memory_fact_list, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare memory_fact_list failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "SELECT id, user_id, fact_text, confidence, source, created_at, last_accessed, "
+       "access_count, superseded_by FROM memory_facts "
+       "WHERE user_id = ? AND superseded_by IS NULL AND fact_text LIKE ? ESCAPE '\\' "
+       "ORDER BY confidence DESC LIMIT ?",
+       -1, &s_db.stmt_memory_fact_search, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare memory_fact_search failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "UPDATE memory_facts SET last_accessed = ?, access_count = access_count + 1 "
+       "WHERE id = ?",
+       -1, &s_db.stmt_memory_fact_update_access, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare memory_fact_update_access failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db, "UPDATE memory_facts SET confidence = ? WHERE id = ?", -1,
+                           &s_db.stmt_memory_fact_update_confidence, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare memory_fact_update_confidence failed: %s",
+                sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db, "UPDATE memory_facts SET superseded_by = ? WHERE id = ?", -1,
+                           &s_db.stmt_memory_fact_supersede, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare memory_fact_supersede failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM memory_facts WHERE id = ? AND user_id = ?", -1,
+                           &s_db.stmt_memory_fact_delete, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare memory_fact_delete failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT id, fact_text, confidence FROM memory_facts "
+                           "WHERE user_id = ? AND superseded_by IS NULL "
+                           "AND fact_text LIKE ? ESCAPE '\\' "
+                           "ORDER BY confidence DESC LIMIT 5",
+                           -1, &s_db.stmt_memory_fact_find_similar, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare memory_fact_find_similar failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT id, fact_text, confidence FROM memory_facts "
+                           "WHERE user_id = ? AND normalized_hash = ? AND superseded_by IS NULL",
+                           -1, &s_db.stmt_memory_fact_find_by_hash, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare memory_fact_find_by_hash failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "DELETE FROM memory_facts WHERE user_id = ? AND superseded_by IS NOT NULL "
+       "AND created_at < ?",
+       -1, &s_db.stmt_memory_fact_prune_superseded, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare memory_fact_prune_superseded failed: %s",
+                sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "DELETE FROM memory_facts WHERE user_id = ? AND superseded_by IS NULL "
+                           "AND last_accessed < ? AND confidence < ?",
+                           -1, &s_db.stmt_memory_fact_prune_stale, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare memory_fact_prune_stale failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   /* Memory preference statements */
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "INSERT INTO memory_preferences (user_id, category, value, confidence, source, created_at, "
+       "updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) "
+       "ON CONFLICT(user_id, category) DO UPDATE SET "
+       "value=excluded.value, confidence=excluded.confidence, updated_at=excluded.updated_at, "
+       "reinforcement_count=reinforcement_count+1",
+       -1, &s_db.stmt_memory_pref_upsert, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare memory_pref_upsert failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "SELECT id, user_id, category, value, confidence, source, created_at, updated_at, "
+       "reinforcement_count FROM memory_preferences WHERE user_id = ? AND category = ?",
+       -1, &s_db.stmt_memory_pref_get, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare memory_pref_get failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "SELECT id, user_id, category, value, confidence, source, created_at, updated_at, "
+       "reinforcement_count FROM memory_preferences WHERE user_id = ? ORDER BY category",
+       -1, &s_db.stmt_memory_pref_list, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare memory_pref_list failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "DELETE FROM memory_preferences WHERE user_id = ? AND category = ?", -1,
+                           &s_db.stmt_memory_pref_delete, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare memory_pref_delete failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   /* Memory summary statements */
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "INSERT INTO memory_summaries (user_id, session_id, summary, topics, sentiment, "
+       "created_at, message_count, duration_seconds) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+       -1, &s_db.stmt_memory_summary_create, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare memory_summary_create failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "SELECT id, user_id, session_id, summary, topics, sentiment, created_at, "
+       "message_count, duration_seconds, consolidated FROM memory_summaries "
+       "WHERE user_id = ? AND consolidated = 0 ORDER BY created_at DESC LIMIT ?",
+       -1, &s_db.stmt_memory_summary_list, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare memory_summary_list failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db, "UPDATE memory_summaries SET consolidated = 1 WHERE id = ?", -1,
+                           &s_db.stmt_memory_summary_mark_consolidated, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare memory_summary_mark_consolidated failed: %s",
+                sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "SELECT id, user_id, session_id, summary, topics, sentiment, created_at, "
+       "message_count, duration_seconds, consolidated FROM memory_summaries "
+       "WHERE user_id = ? AND (summary LIKE ? ESCAPE '\\' OR topics LIKE ? ESCAPE '\\') "
+       "ORDER BY created_at DESC LIMIT ?",
+       -1, &s_db.stmt_memory_summary_search, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare memory_summary_search failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   /* Conversation extraction tracking statements */
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT last_extracted_msg_count FROM conversations WHERE id = ?", -1,
+                           &s_db.stmt_conv_get_last_extracted, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare conv_get_last_extracted failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "UPDATE conversations SET last_extracted_msg_count = ? WHERE id = ?", -1,
+                           &s_db.stmt_conv_set_last_extracted, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare conv_set_last_extracted failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   /* Conversation privacy statement */
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "UPDATE conversations SET is_private = ? "
+                           "WHERE id = ? AND user_id = ?",
+                           -1, &s_db.stmt_conv_set_private, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare conv_set_private failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
    return AUTH_DB_SUCCESS;
 }
 
@@ -1071,10 +1397,64 @@ static void finalize_statements(void) {
    if (s_db.stmt_image_delete_old)
       sqlite3_finalize(s_db.stmt_image_delete_old);
 
+   /* Memory statements */
+   if (s_db.stmt_memory_fact_create)
+      sqlite3_finalize(s_db.stmt_memory_fact_create);
+   if (s_db.stmt_memory_fact_get)
+      sqlite3_finalize(s_db.stmt_memory_fact_get);
+   if (s_db.stmt_memory_fact_list)
+      sqlite3_finalize(s_db.stmt_memory_fact_list);
+   if (s_db.stmt_memory_fact_search)
+      sqlite3_finalize(s_db.stmt_memory_fact_search);
+   if (s_db.stmt_memory_fact_update_access)
+      sqlite3_finalize(s_db.stmt_memory_fact_update_access);
+   if (s_db.stmt_memory_fact_update_confidence)
+      sqlite3_finalize(s_db.stmt_memory_fact_update_confidence);
+   if (s_db.stmt_memory_fact_supersede)
+      sqlite3_finalize(s_db.stmt_memory_fact_supersede);
+   if (s_db.stmt_memory_fact_delete)
+      sqlite3_finalize(s_db.stmt_memory_fact_delete);
+   if (s_db.stmt_memory_fact_find_similar)
+      sqlite3_finalize(s_db.stmt_memory_fact_find_similar);
+   if (s_db.stmt_memory_pref_upsert)
+      sqlite3_finalize(s_db.stmt_memory_pref_upsert);
+   if (s_db.stmt_memory_pref_get)
+      sqlite3_finalize(s_db.stmt_memory_pref_get);
+   if (s_db.stmt_memory_pref_list)
+      sqlite3_finalize(s_db.stmt_memory_pref_list);
+   if (s_db.stmt_memory_pref_delete)
+      sqlite3_finalize(s_db.stmt_memory_pref_delete);
+   if (s_db.stmt_memory_summary_create)
+      sqlite3_finalize(s_db.stmt_memory_summary_create);
+   if (s_db.stmt_memory_summary_list)
+      sqlite3_finalize(s_db.stmt_memory_summary_list);
+   if (s_db.stmt_memory_summary_mark_consolidated)
+      sqlite3_finalize(s_db.stmt_memory_summary_mark_consolidated);
+   if (s_db.stmt_memory_summary_search)
+      sqlite3_finalize(s_db.stmt_memory_summary_search);
+
+   /* Deduplication and pruning statements */
+   if (s_db.stmt_memory_fact_find_by_hash)
+      sqlite3_finalize(s_db.stmt_memory_fact_find_by_hash);
+   if (s_db.stmt_memory_fact_prune_superseded)
+      sqlite3_finalize(s_db.stmt_memory_fact_prune_superseded);
+   if (s_db.stmt_memory_fact_prune_stale)
+      sqlite3_finalize(s_db.stmt_memory_fact_prune_stale);
+
+   /* Extraction tracking statements */
+   if (s_db.stmt_conv_get_last_extracted)
+      sqlite3_finalize(s_db.stmt_conv_get_last_extracted);
+   if (s_db.stmt_conv_set_last_extracted)
+      sqlite3_finalize(s_db.stmt_conv_set_last_extracted);
+
+   /* Privacy statement */
+   if (s_db.stmt_conv_set_private)
+      sqlite3_finalize(s_db.stmt_conv_set_private);
+
    /* Clear all statement pointers using offsetof for safety
     * MAINTENANCE: If statements are reordered, update first/last_stmt names */
    size_t first_stmt_offset = offsetof(auth_db_state_t, stmt_create_user);
-   size_t last_stmt_end = offsetof(auth_db_state_t, stmt_image_delete_old) + sizeof(sqlite3_stmt *);
+   size_t last_stmt_end = offsetof(auth_db_state_t, stmt_conv_set_private) + sizeof(sqlite3_stmt *);
    memset((char *)&s_db + first_stmt_offset, 0, last_stmt_end - first_stmt_offset);
 }
 

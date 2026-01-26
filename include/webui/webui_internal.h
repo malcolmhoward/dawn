@@ -114,6 +114,10 @@ typedef struct {
 
    /* Client IP address (captured at connection establishment for reliable logging) */
    char client_ip[64];
+
+   /* Active conversation tracking (for memory extraction on switch) */
+   int64_t active_conversation_id;
+   bool active_conversation_private; /* If true, skip memory extraction */
 } ws_connection_t;
 
 /* =============================================================================
@@ -522,6 +526,13 @@ void handle_delete_conversation(ws_connection_t *conn, struct json_object *paylo
  * @brief Rename a conversation
  */
 void handle_rename_conversation(ws_connection_t *conn, struct json_object *payload);
+
+/**
+ * @brief Set private mode for a conversation
+ *
+ * Private conversations are excluded from memory extraction.
+ */
+void handle_set_private(ws_connection_t *conn, struct json_object *payload);
 
 /**
  * @brief Search conversations by title or content

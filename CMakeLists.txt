@@ -477,6 +477,11 @@ if(ENABLE_AUTH)
         src/auth/auth_crypto.c
         src/auth/auth_maintenance.c
         src/image_store.c
+        src/memory/memory_db.c
+        src/memory/memory_context.c
+        src/memory/memory_callback.c
+        src/memory/memory_extraction.c
+        src/memory/memory_similarity.c
     )
 endif()
 

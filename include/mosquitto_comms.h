@@ -59,6 +59,7 @@ typedef enum {
    CLOUD_PROVIDER,        /**< Switch cloud provider (openai/claude). */
    SMARTTHINGS,           /**< SmartThings home automation control. */
    SWITCH_LLM,            /**< Switch LLM mode/provider (local/cloud/openai/claude). */
+   MEMORY,                /**< Memory system for storing/retrieving user facts. */
    MAX_DEVICE_TYPES       /**< Used to determine the number of device types. */
 } deviceType;
 
@@ -88,7 +89,8 @@ static const char *deviceTypeStrings[] = { "audio playback device",
                                            "llm",
                                            "cloud provider",
                                            "smartthings",
-                                           "switch_llm" };
+                                           "switch_llm",
+                                           "memory" };
 
 /* Compile-time check: deviceTypeStrings must have one entry per deviceType enum value */
 _Static_assert(sizeof(deviceTypeStrings) / sizeof(deviceTypeStrings[0]) == MAX_DEVICE_TYPES,
@@ -353,6 +355,19 @@ char *cloudProviderCallback(const char *actionName, char *value, int *should_res
  * @return Response string (caller must free), or NULL on error.
  */
 char *smartThingsCallback(const char *actionName, char *value, int *should_respond);
+
+/**
+ * @brief Callback function for memory system operations.
+ *
+ * Handles memory actions: search (recall facts/preferences/summaries),
+ * remember (store new facts), forget (delete facts).
+ *
+ * @param actionName The action ("search", "remember", "forget").
+ * @param value      Keywords (search), fact text (remember), or text to forget.
+ * @param should_respond Should the callback return data to the AI.
+ * @return Response string (caller must free), or NULL on error.
+ */
+char *memoryCallback(const char *actionName, char *value, int *should_respond);
 
 /**
  * @brief Look up a callback function by device name string

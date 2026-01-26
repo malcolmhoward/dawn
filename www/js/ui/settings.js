@@ -490,6 +490,9 @@
 
       // Initialize listeners
       initListeners();
+
+      // Initialize memory extraction provider/model handlers
+      Config.initMemoryExtractionHandlers();
    }
 
    /**
@@ -556,6 +559,7 @@
       handleSystemPromptResponse: handleSystemPromptResponse,
       handleSetSessionLlmResponse: Llm.handleSetSessionLlmResponse,
       handleListLlmModelsResponse: Llm.handleListLlmModelsResponse,
+      handleSetPrivateResponse: Llm.handleSetPrivateResponse,
 
       // LLM controls (delegated to Llm module)
       updateLlmControls: Llm.updateLlmControls,

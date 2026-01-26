@@ -319,6 +319,22 @@ typedef struct {
 } shutdown_config_t;
 
 /* =============================================================================
+ * Memory Configuration
+ * ============================================================================= */
+typedef struct {
+   bool enabled;                 /* Enable memory system */
+   int context_budget_tokens;    /* Max tokens for memory context (~800) */
+   char extraction_provider[16]; /* LLM provider for extraction */
+   char extraction_model[64];    /* Model for extraction */
+
+   /* Pruning settings */
+   bool pruning_enabled;             /* Enable automatic fact pruning */
+   int prune_superseded_days;        /* Delete superseded facts older than N days */
+   int prune_stale_days;             /* Delete stale facts not accessed in N days */
+   float prune_stale_min_confidence; /* Only prune stale facts below this confidence */
+} memory_config_t;
+
+/* =============================================================================
  * Debug Configuration
  * ============================================================================= */
 typedef struct {
@@ -375,6 +391,7 @@ typedef struct {
    tui_config_t tui;
    webui_config_t webui;
    images_config_t images;
+   memory_config_t memory;
    shutdown_config_t shutdown;
    debug_config_t debug;
    paths_config_t paths;

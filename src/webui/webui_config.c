@@ -490,6 +490,7 @@ static void apply_config_from_json(dawn_config_t *config, struct json_object *pa
          JSON_TO_CONFIG_SIZE_T(summarizer, "threshold_bytes",
                                config->search.summarizer.threshold_bytes);
          JSON_TO_CONFIG_SIZE_T(summarizer, "target_words", config->search.summarizer.target_words);
+         JSON_TO_CONFIG_DOUBLE(summarizer, "target_ratio", config->search.summarizer.target_ratio);
       }
    }
 
@@ -541,6 +542,19 @@ static void apply_config_from_json(dawn_config_t *config, struct json_object *pa
       JSON_TO_CONFIG_BOOL(section, "https", config->webui.https);
       JSON_TO_CONFIG_STR(section, "ssl_cert_path", config->webui.ssl_cert_path);
       JSON_TO_CONFIG_STR(section, "ssl_key_path", config->webui.ssl_key_path);
+   }
+
+   /* [memory] */
+   if (json_object_object_get_ex(payload, "memory", &section)) {
+      JSON_TO_CONFIG_BOOL(section, "enabled", config->memory.enabled);
+      JSON_TO_CONFIG_INT(section, "context_budget_tokens", config->memory.context_budget_tokens);
+      JSON_TO_CONFIG_STR(section, "extraction_provider", config->memory.extraction_provider);
+      JSON_TO_CONFIG_STR(section, "extraction_model", config->memory.extraction_model);
+      JSON_TO_CONFIG_BOOL(section, "pruning_enabled", config->memory.pruning_enabled);
+      JSON_TO_CONFIG_INT(section, "prune_superseded_days", config->memory.prune_superseded_days);
+      JSON_TO_CONFIG_INT(section, "prune_stale_days", config->memory.prune_stale_days);
+      JSON_TO_CONFIG_DOUBLE(section, "prune_stale_min_confidence",
+                            config->memory.prune_stale_min_confidence);
    }
 
    /* [shutdown] */

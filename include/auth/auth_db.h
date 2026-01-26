@@ -842,6 +842,7 @@ typedef struct {
    char model[64];          /**< Model name */
    char tools_mode[16];     /**< "native", "command_tags", or "disabled" */
    char thinking_mode[16];  /**< "disabled"/"auto"/"enabled" or "low"/"medium"/"high" */
+   bool is_private;         /**< If true, no memory extraction for this conversation (v16) */
 } conversation_t;
 
 /**
@@ -981,6 +982,31 @@ int conv_db_list_all(bool include_archived,
  * @return AUTH_DB_SUCCESS, AUTH_DB_NOT_FOUND, AUTH_DB_FORBIDDEN, or AUTH_DB_FAILURE
  */
 int conv_db_rename(int64_t conv_id, int user_id, const char *new_title);
+
+/**
+ * @brief Set private mode for a conversation
+ *
+ * Private conversations are excluded from memory extraction.
+ *
+ * @param conv_id Conversation ID
+ * @param user_id User ID (for authorization check)
+ * @param is_private True to enable private mode, false to disable
+ * @return AUTH_DB_SUCCESS, AUTH_DB_NOT_FOUND, AUTH_DB_FORBIDDEN, or AUTH_DB_FAILURE
+ */
+int conv_db_set_private(int64_t conv_id, int user_id, bool is_private);
+
+/**
+ * @brief Check if a conversation is private
+ *
+ * Lightweight query that only checks the is_private flag without loading
+ * the full conversation. Used by memory extraction to re-verify privacy
+ * status from the database (prevents race conditions).
+ *
+ * @param conv_id Conversation ID
+ * @param user_id User ID (for authorization check)
+ * @return 1 if private, 0 if not private, -1 on error/not found
+ */
+int conv_db_is_private(int64_t conv_id, int user_id);
 
 /**
  * @brief Update context usage for a conversation

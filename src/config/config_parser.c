@@ -792,6 +792,69 @@ static void parse_images(toml_table_t *table, images_config_t *config) {
    }
 }
 
+static void parse_memory(toml_table_t *table, memory_config_t *config) {
+   if (!table)
+      return;
+
+   static const char *const known_keys[] = { "enabled",
+                                             "context_budget_tokens",
+                                             "extraction_provider",
+                                             "extraction_model",
+                                             "pruning_enabled",
+                                             "prune_superseded_days",
+                                             "prune_stale_days",
+                                             "prune_stale_min_confidence",
+                                             NULL };
+   warn_unknown_keys(table, "memory", known_keys);
+
+   PARSE_BOOL(table, "enabled", config->enabled);
+   PARSE_INT(table, "context_budget_tokens", config->context_budget_tokens);
+   PARSE_STRING(table, "extraction_provider", config->extraction_provider);
+   PARSE_STRING(table, "extraction_model", config->extraction_model);
+
+   /* Parse pruning settings - support both flat keys and [memory.pruning] sub-table */
+   PARSE_BOOL(table, "pruning_enabled", config->pruning_enabled);
+   PARSE_INT(table, "prune_superseded_days", config->prune_superseded_days);
+   PARSE_INT(table, "prune_stale_days", config->prune_stale_days);
+   PARSE_DOUBLE(table, "prune_stale_min_confidence", config->prune_stale_min_confidence);
+
+   toml_table_t *pruning = toml_table_in(table, "pruning");
+   if (pruning) {
+      static const char *const pruning_keys[] = { "enabled", "superseded_days", "stale_days",
+                                                  "stale_min_confidence", NULL };
+      warn_unknown_keys(pruning, "memory.pruning", pruning_keys);
+
+      PARSE_BOOL(pruning, "enabled", config->pruning_enabled);
+      PARSE_INT(pruning, "superseded_days", config->prune_superseded_days);
+      PARSE_INT(pruning, "stale_days", config->prune_stale_days);
+      PARSE_DOUBLE(pruning, "stale_min_confidence", config->prune_stale_min_confidence);
+   }
+
+   /* Clamp context_budget_tokens to valid range */
+   if (config->context_budget_tokens < 100) {
+      config->context_budget_tokens = 100;
+   } else if (config->context_budget_tokens > 2000) {
+      config->context_budget_tokens = 2000;
+   }
+
+   /* Clamp pruning days to sensible values */
+   if (config->prune_superseded_days < 1) {
+      config->prune_superseded_days = 1;
+   } else if (config->prune_superseded_days > 365) {
+      config->prune_superseded_days = 365;
+   }
+   if (config->prune_stale_days < 7) {
+      config->prune_stale_days = 7;
+   } else if (config->prune_stale_days > 730) {
+      config->prune_stale_days = 730;
+   }
+   if (config->prune_stale_min_confidence < 0.0f) {
+      config->prune_stale_min_confidence = 0.0f;
+   } else if (config->prune_stale_min_confidence > 1.0f) {
+      config->prune_stale_min_confidence = 1.0f;
+   }
+}
+
 static void parse_shutdown(toml_table_t *table, shutdown_config_t *config) {
    if (!table)
       return;
@@ -888,6 +951,7 @@ int config_parse_file(const char *path, dawn_config_t *config) {
    parse_tui(toml_table_in(root, "tui"), &config->tui);
    parse_webui(toml_table_in(root, "webui"), &config->webui);
    parse_images(toml_table_in(root, "images"), &config->images);
+   parse_memory(toml_table_in(root, "memory"), &config->memory);
    parse_shutdown(toml_table_in(root, "shutdown"), &config->shutdown);
    parse_debug(toml_table_in(root, "debug"), &config->debug);
    parse_paths(toml_table_in(root, "paths"), &config->paths);

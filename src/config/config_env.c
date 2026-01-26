@@ -1205,6 +1205,25 @@ json_object *config_to_json(const dawn_config_t *config) {
                           json_object_new_string(config->webui.ssl_key_path));
    json_object_object_add(root, "webui", webui);
 
+   /* [memory] */
+   json_object *memory = json_object_new_object();
+   json_object_object_add(memory, "enabled", json_object_new_boolean(config->memory.enabled));
+   json_object_object_add(memory, "context_budget_tokens",
+                          json_object_new_int(config->memory.context_budget_tokens));
+   json_object_object_add(memory, "extraction_provider",
+                          json_object_new_string(config->memory.extraction_provider));
+   json_object_object_add(memory, "extraction_model",
+                          json_object_new_string(config->memory.extraction_model));
+   json_object_object_add(memory, "pruning_enabled",
+                          json_object_new_boolean(config->memory.pruning_enabled));
+   json_object_object_add(memory, "prune_superseded_days",
+                          json_object_new_int(config->memory.prune_superseded_days));
+   json_object_object_add(memory, "prune_stale_days",
+                          json_object_new_int(config->memory.prune_stale_days));
+   json_object_object_add(memory, "prune_stale_min_confidence",
+                          json_object_new_double(config->memory.prune_stale_min_confidence));
+   json_object_object_add(root, "memory", memory);
+
    /* [shutdown] */
    json_object *shutdown = json_object_new_object();
    json_object_object_add(shutdown, "enabled", json_object_new_boolean(config->shutdown.enabled));
@@ -1579,6 +1598,16 @@ int config_write_toml(const dawn_config_t *config, const char *path) {
       fprintf(fp, "ssl_cert_path = \"%s\"\n", config->webui.ssl_cert_path);
    if (config->webui.ssl_key_path[0])
       fprintf(fp, "ssl_key_path = \"%s\"\n", config->webui.ssl_key_path);
+
+   fprintf(fp, "\n[memory]\n");
+   fprintf(fp, "enabled = %s\n", config->memory.enabled ? "true" : "false");
+   fprintf(fp, "context_budget_tokens = %d\n", config->memory.context_budget_tokens);
+   fprintf(fp, "extraction_provider = \"%s\"\n", config->memory.extraction_provider);
+   fprintf(fp, "extraction_model = \"%s\"\n", config->memory.extraction_model);
+   fprintf(fp, "pruning_enabled = %s\n", config->memory.pruning_enabled ? "true" : "false");
+   fprintf(fp, "prune_superseded_days = %d\n", config->memory.prune_superseded_days);
+   fprintf(fp, "prune_stale_days = %d\n", config->memory.prune_stale_days);
+   fprintf(fp, "prune_stale_min_confidence = %.2f\n", config->memory.prune_stale_min_confidence);
 
    fprintf(fp, "\n[debug]\n");
    fprintf(fp, "mic_record = %s\n", config->debug.mic_record ? "true" : "false");
