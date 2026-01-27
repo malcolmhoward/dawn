@@ -1,0 +1,546 @@
+/*
+ * DAWN WebUI - Memory Panel Component
+ * Floating popover for viewing and managing user memories
+ */
+
+/* =============================================================================
+ * Memory Button (in header)
+ * ============================================================================= */
+#memory-btn {
+   background: none;
+   border: none;
+   color: var(--text-secondary);
+   cursor: pointer;
+   padding: 0.4rem;
+   display: flex;
+   align-items: center;
+   justify-content: center;
+   transition: color var(--transition-fast);
+   position: relative;
+}
+
+#memory-btn:hover {
+   color: var(--accent);
+}
+
+#memory-btn.active {
+   color: var(--accent);
+}
+
+#memory-btn svg {
+   width: 20px;
+   height: 20px;
+}
+
+/* =============================================================================
+ * Memory Popover Container
+ * ============================================================================= */
+#memory-popover {
+   position: fixed;
+   top: 50px;
+   right: 60px;
+   width: 360px;
+   max-height: 70vh;
+   background: rgba(18, 18, 26, 0.98);
+   backdrop-filter: blur(20px);
+   -webkit-backdrop-filter: blur(20px);
+   border: 1px solid var(--accent-border);
+   border-radius: 12px;
+   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+   z-index: 1000;
+   display: flex;
+   flex-direction: column;
+   opacity: 1;
+   transform: translateY(0);
+   transition:
+      opacity 0.15s ease,
+      transform 0.15s ease;
+}
+
+#memory-popover.hidden {
+   opacity: 0;
+   transform: translateY(-8px);
+   pointer-events: none;
+}
+
+/* Arrow pointing to trigger button */
+.popover-arrow {
+   position: absolute;
+   top: -6px;
+   right: 30px;
+   width: 12px;
+   height: 12px;
+   background: rgba(18, 18, 26, 0.98);
+   border-left: 1px solid var(--accent-border);
+   border-top: 1px solid var(--accent-border);
+   transform: rotate(45deg);
+}
+
+/* =============================================================================
+ * Memory Header
+ * ============================================================================= */
+.memory-header {
+   display: flex;
+   justify-content: space-between;
+   align-items: center;
+   padding: 0.875rem 1rem;
+   border-bottom: 1px solid var(--accent-border);
+   background: rgba(10, 10, 15, 0.5);
+   border-radius: 12px 12px 0 0;
+}
+
+.memory-header h3 {
+   font-size: 1rem;
+   font-weight: 600;
+   color: var(--accent);
+   letter-spacing: 0.03em;
+   margin: 0;
+   display: flex;
+   align-items: center;
+   gap: 0.5rem;
+}
+
+#memory-close {
+   width: 28px;
+   height: 28px;
+   padding: 0;
+   background: transparent;
+   border: 1px solid var(--text-secondary);
+   border-radius: 50%;
+   color: var(--text-secondary);
+   font-size: 1.1rem;
+   line-height: 1;
+   cursor: pointer;
+   transition: all var(--transition-fast);
+   display: flex;
+   align-items: center;
+   justify-content: center;
+}
+
+#memory-close:hover {
+   border-color: var(--accent);
+   color: var(--accent);
+}
+
+/* =============================================================================
+ * Memory Stats Bar
+ * ============================================================================= */
+.memory-stats {
+   display: flex;
+   justify-content: space-around;
+   padding: 0.625rem 1rem;
+   background: rgba(0, 0, 0, 0.2);
+   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+   font-size: 0.8rem;
+   color: var(--text-secondary);
+}
+
+.memory-stats span {
+   display: flex;
+   align-items: center;
+   gap: 0.25rem;
+}
+
+.memory-stats span span {
+   color: var(--text-primary);
+   font-weight: 500;
+   font-family: 'IBM Plex Mono', monospace;
+}
+
+/* =============================================================================
+ * Memory Tabs
+ * ============================================================================= */
+.memory-tabs {
+   display: flex;
+   gap: 0;
+   padding: 0 0.75rem;
+   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+   background: rgba(0, 0, 0, 0.15);
+}
+
+.memory-tab {
+   flex: 1;
+   padding: 0.625rem 0.5rem;
+   background: transparent;
+   border: none;
+   border-bottom: 2px solid transparent;
+   color: var(--text-secondary);
+   font-size: 0.8rem;
+   font-weight: 500;
+   cursor: pointer;
+   transition: all var(--transition-fast);
+}
+
+.memory-tab:hover {
+   color: var(--text-primary);
+   background: rgba(255, 255, 255, 0.03);
+}
+
+.memory-tab.active {
+   color: var(--accent);
+   border-bottom-color: var(--accent);
+}
+
+/* =============================================================================
+ * Memory Search
+ * ============================================================================= */
+.memory-search {
+   padding: 0.625rem 0.75rem;
+   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+#memory-search-input {
+   width: 100%;
+   padding: 0.5rem 0.75rem;
+   background: rgba(0, 0, 0, 0.3);
+   border: 1px solid var(--accent-focus);
+   border-radius: 6px;
+   color: var(--text-primary);
+   font-size: 0.85rem;
+   outline: none;
+   transition: all var(--transition-fast);
+}
+
+#memory-search-input:focus {
+   border-color: var(--accent);
+   box-shadow: 0 0 0 2px var(--accent-border);
+}
+
+#memory-search-input::placeholder {
+   color: var(--text-secondary);
+}
+
+/* =============================================================================
+ * Memory List
+ * ============================================================================= */
+.memory-list {
+   flex: 1;
+   overflow-y: auto;
+   max-height: 300px;
+   min-height: 100px;
+}
+
+.memory-empty {
+   padding: 2rem 1rem;
+   text-align: center;
+   color: var(--text-secondary);
+   font-style: italic;
+   font-size: 0.9rem;
+}
+
+/* =============================================================================
+ * Memory Item (Fact)
+ * ============================================================================= */
+.memory-item {
+   padding: 0.75rem 1rem;
+   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+   cursor: default;
+   transition: background var(--transition-fast);
+   position: relative;
+}
+
+.memory-item:hover {
+   background: var(--accent-subtle);
+}
+
+.memory-item:hover .memory-item-delete {
+   opacity: 1;
+}
+
+.memory-item-text {
+   font-size: 0.9rem;
+   color: var(--text-primary);
+   line-height: 1.4;
+   margin-bottom: 0.35rem;
+   word-break: break-word;
+}
+
+.memory-item-meta {
+   display: flex;
+   gap: 0.5rem;
+   font-size: 0.75rem;
+   color: var(--text-secondary);
+   flex-wrap: wrap;
+   align-items: center;
+}
+
+.memory-item-confidence {
+   font-family: 'IBM Plex Mono', monospace;
+}
+
+.memory-item-source {
+   padding: 0.1rem 0.35rem;
+   background: var(--accent-hover);
+   border-radius: 3px;
+   font-size: 0.7rem;
+   text-transform: uppercase;
+   letter-spacing: 0.03em;
+}
+
+.memory-item-date {
+   opacity: 0.7;
+}
+
+/* Delete button */
+.memory-item-delete {
+   position: absolute;
+   right: 0.5rem;
+   top: 0.75rem;
+   width: 24px;
+   height: 24px;
+   padding: 0;
+   background: rgba(0, 0, 0, 0.4);
+   border: 1px solid rgba(255, 255, 255, 0.1);
+   border-radius: 4px;
+   color: var(--text-secondary);
+   cursor: pointer;
+   opacity: 0;
+   transition:
+      opacity var(--transition-fast),
+      background var(--transition-fast),
+      border-color var(--transition-fast),
+      color var(--transition-fast);
+   display: flex;
+   align-items: center;
+   justify-content: center;
+}
+
+.memory-item-delete:hover {
+   background: rgba(239, 68, 68, 0.15);
+   border-color: rgba(239, 68, 68, 0.3);
+   color: var(--error);
+}
+
+.memory-item-delete svg {
+   width: 14px;
+   height: 14px;
+}
+
+/* Confidence color coding */
+.confidence-high {
+   color: var(--success);
+}
+
+.confidence-medium {
+   color: var(--warning);
+}
+
+.confidence-low {
+   color: var(--text-secondary);
+}
+
+/* =============================================================================
+ * Preference Item
+ * ============================================================================= */
+.memory-item.preference .memory-item-category {
+   font-size: 0.75rem;
+   color: var(--accent);
+   text-transform: uppercase;
+   letter-spacing: 0.05em;
+   margin-bottom: 0.2rem;
+}
+
+.memory-item.preference .memory-item-value {
+   font-size: 0.9rem;
+   color: var(--text-primary);
+   margin-bottom: 0.35rem;
+}
+
+/* =============================================================================
+ * Summary Item
+ * ============================================================================= */
+.memory-item.summary {
+   padding: 0.875rem 1rem;
+}
+
+.memory-item.summary .memory-item-text {
+   font-size: 0.85rem;
+   line-height: 1.5;
+}
+
+.memory-item.summary .memory-item-topics {
+   display: flex;
+   flex-wrap: wrap;
+   gap: 0.35rem;
+   margin-top: 0.5rem;
+}
+
+.memory-item-topic {
+   padding: 0.15rem 0.4rem;
+   background: var(--accent-hover);
+   border: 1px solid var(--accent-focus);
+   border-radius: 4px;
+   font-size: 0.7rem;
+   color: var(--accent);
+}
+
+/* =============================================================================
+ * Memory Footer
+ * ============================================================================= */
+.memory-footer {
+   display: flex;
+   justify-content: space-between;
+   align-items: center;
+   padding: 0.75rem 1rem;
+   border-top: 1px solid var(--accent-border);
+   background: rgba(10, 10, 15, 0.5);
+   border-radius: 0 0 12px 12px;
+}
+
+#memory-load-more {
+   color: var(--accent);
+   background: none;
+   border: none;
+   padding: 0.25rem 0.5rem;
+   cursor: pointer;
+   font-size: 0.8rem;
+   transition:
+      opacity var(--transition-fast),
+      color var(--transition-fast);
+}
+
+#memory-load-more:hover:not(:disabled) {
+   text-decoration: underline;
+}
+
+#memory-load-more:disabled {
+   color: var(--text-secondary);
+   opacity: 0.5;
+   cursor: default;
+}
+
+#memory-forget-all {
+   padding: 0.35rem 0.75rem;
+   background: rgba(239, 68, 68, 0.1);
+   border: 1px solid rgba(239, 68, 68, 0.3);
+   border-radius: 4px;
+   color: var(--error);
+   font-size: 0.75rem;
+   cursor: pointer;
+   transition: all var(--transition-fast);
+}
+
+#memory-forget-all:hover {
+   background: rgba(239, 68, 68, 0.2);
+   border-color: rgba(239, 68, 68, 0.5);
+}
+
+/* Button link helper class */
+.btn-link {
+   background: none;
+   border: none;
+   color: var(--accent);
+   cursor: pointer;
+   padding: 0;
+   font-size: inherit;
+}
+
+.btn-link:hover {
+   text-decoration: underline;
+}
+
+.btn-danger-small {
+   padding: 0.35rem 0.75rem;
+   background: rgba(239, 68, 68, 0.1);
+   border: 1px solid rgba(239, 68, 68, 0.3);
+   border-radius: 4px;
+   color: var(--error);
+   font-size: 0.75rem;
+   cursor: pointer;
+   transition: all var(--transition-fast);
+}
+
+.btn-danger-small:hover {
+   background: rgba(239, 68, 68, 0.2);
+   border-color: rgba(239, 68, 68, 0.5);
+}
+
+/* =============================================================================
+ * Loading State
+ * ============================================================================= */
+.memory-loading {
+   display: flex;
+   align-items: center;
+   justify-content: center;
+   padding: 2rem;
+   color: var(--text-secondary);
+   font-size: 0.85rem;
+}
+
+.memory-loading::before {
+   content: '';
+   width: 16px;
+   height: 16px;
+   border: 2px solid var(--accent-border);
+   border-top-color: var(--accent);
+   border-radius: 50%;
+   margin-right: 0.5rem;
+   animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+   to {
+      transform: rotate(360deg);
+   }
+}
+
+/* =============================================================================
+ * Mobile Responsive - Bottom Sheet Style
+ * ============================================================================= */
+@media (max-width: 480px) {
+   #memory-popover {
+      position: fixed;
+      top: auto;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      width: 100%;
+      max-height: 80vh;
+      border-radius: 16px 16px 0 0;
+      transform: translateY(0);
+   }
+
+   #memory-popover.hidden {
+      transform: translateY(100%);
+   }
+
+   .popover-arrow {
+      display: none;
+   }
+
+   .memory-header {
+      border-radius: 16px 16px 0 0;
+   }
+
+   .memory-footer {
+      border-radius: 0;
+      padding-bottom: 1.25rem; /* Extra padding for bottom safe area */
+   }
+
+   .memory-list {
+      max-height: calc(80vh - 220px);
+   }
+
+   .memory-item-delete {
+      opacity: 1;
+      width: 44px;
+      height: 44px;
+   }
+
+   #memory-search-input {
+      font-size: 16px; /* Prevent iOS zoom */
+   }
+}
+
+/* Small screens - slightly narrower popover */
+@media (min-width: 481px) and (max-width: 768px) {
+   #memory-popover {
+      width: 320px;
+      right: 10px;
+   }
+
+   /* Hide arrow on tablet - position becomes unreliable */
+   .popover-arrow {
+      display: none;
+   }
+}

@@ -303,6 +303,15 @@ int memory_db_summary_search(int user_id,
                              memory_summary_t *out_summaries,
                              int max_summaries);
 
+/**
+ * @brief Delete a summary
+ *
+ * @param summary_id Summary ID
+ * @param user_id User ID (for ownership check)
+ * @return MEMORY_DB_SUCCESS, MEMORY_DB_NOT_FOUND, or MEMORY_DB_FAILURE
+ */
+int memory_db_summary_delete(int64_t summary_id, int user_id);
+
 /* =============================================================================
  * Utility Operations
  * ============================================================================= */

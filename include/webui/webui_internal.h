@@ -557,6 +557,55 @@ void handle_update_context(ws_connection_t *conn, struct json_object *payload);
 void handle_lock_conversation_llm(ws_connection_t *conn, struct json_object *payload);
 
 /* =============================================================================
+ * Memory Handler Functions (defined in webui_memory.c)
+ * ============================================================================= */
+
+/**
+ * @brief Get memory statistics for the current user
+ */
+void handle_get_memory_stats(ws_connection_t *conn);
+
+/**
+ * @brief List memory facts for the current user (paginated)
+ */
+void handle_list_memory_facts(ws_connection_t *conn, struct json_object *payload);
+
+/**
+ * @brief Delete a memory fact
+ */
+void handle_delete_memory_fact(ws_connection_t *conn, struct json_object *payload);
+
+/**
+ * @brief List memory preferences for the current user
+ */
+void handle_list_memory_preferences(ws_connection_t *conn);
+
+/**
+ * @brief Delete a memory preference by category
+ */
+void handle_delete_memory_preference(ws_connection_t *conn, struct json_object *payload);
+
+/**
+ * @brief List memory summaries for the current user
+ */
+void handle_list_memory_summaries(ws_connection_t *conn);
+
+/**
+ * @brief Delete a memory summary
+ */
+void handle_delete_memory_summary(ws_connection_t *conn, struct json_object *payload);
+
+/**
+ * @brief Search memory facts and summaries by keyword
+ */
+void handle_search_memory(ws_connection_t *conn, struct json_object *payload);
+
+/**
+ * @brief Delete all memories for the current user
+ */
+void handle_delete_all_memories(ws_connection_t *conn, struct json_object *payload);
+
+/* =============================================================================
  * Config Handler Functions (defined in webui_config.c)
  * ============================================================================= */
 

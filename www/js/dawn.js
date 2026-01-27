@@ -328,6 +328,34 @@
             case 'set_private_response':
                DawnSettings.handleSetPrivateResponse(msg.payload);
                break;
+            // Memory management responses
+            case 'get_memory_stats_response':
+               DawnMemory.handleStatsResponse(msg.payload);
+               break;
+            case 'list_memory_facts_response':
+               DawnMemory.handleFactsResponse(msg.payload);
+               break;
+            case 'list_memory_preferences_response':
+               DawnMemory.handlePreferencesResponse(msg.payload);
+               break;
+            case 'list_memory_summaries_response':
+               DawnMemory.handleSummariesResponse(msg.payload);
+               break;
+            case 'search_memory_response':
+               DawnMemory.handleSearchResponse(msg.payload);
+               break;
+            case 'delete_memory_fact_response':
+               DawnMemory.handleDeleteFactResponse(msg.payload);
+               break;
+            case 'delete_memory_preference_response':
+               DawnMemory.handleDeletePreferenceResponse(msg.payload);
+               break;
+            case 'delete_memory_summary_response':
+               DawnMemory.handleDeleteSummaryResponse(msg.payload);
+               break;
+            case 'delete_all_memories_response':
+               DawnMemory.handleDeleteAllResponse(msg.payload);
+               break;
             default:
                console.log('Unknown message type:', msg.type);
          }
@@ -985,6 +1013,7 @@
             DawnState.authState.username = state.username;
          },
          updateHistoryButtonVisibility: DawnHistory.updateButtonVisibility,
+         updateMemoryButtonVisibility: DawnMemory.updateVisibility,
          restoreHistorySidebarState: DawnHistory.restoreSidebarState,
       });
       DawnSettings.init();
@@ -1016,6 +1045,14 @@
          getAuthState: () => DawnState.authState,
       });
       DawnHistory.init();
+
+      // Initialize memory module (memory panel for viewing/managing user memories)
+      DawnMemory.init({
+         showConfirmModal: DawnSettings.showConfirmModal,
+         showInputModal: DawnSettings.showInputModal,
+         trapFocus: DawnSettings.trapFocus,
+         getAuthState: () => DawnState.authState,
+      });
 
       // Initialize vision module (image upload/paste/drag-drop)
       DawnVision.init();

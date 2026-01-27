@@ -29,6 +29,7 @@
       getAuthState: null,
       setAuthState: null,
       updateHistoryButtonVisibility: null,
+      updateMemoryButtonVisibility: null,
       restoreHistorySidebarState: null,
    };
 
@@ -167,6 +168,11 @@
       // Update history button visibility
       if (callbacks.updateHistoryButtonVisibility) {
          callbacks.updateHistoryButtonVisibility();
+      }
+
+      // Update memory button visibility
+      if (callbacks.updateMemoryButtonVisibility) {
+         callbacks.updateMemoryButtonVisibility();
       }
 
       // Restore history sidebar state on desktop (only when authenticated)
@@ -503,6 +509,8 @@
       if (cbs.setAuthState) callbacks.setAuthState = cbs.setAuthState;
       if (cbs.updateHistoryButtonVisibility)
          callbacks.updateHistoryButtonVisibility = cbs.updateHistoryButtonVisibility;
+      if (cbs.updateMemoryButtonVisibility)
+         callbacks.updateMemoryButtonVisibility = cbs.updateMemoryButtonVisibility;
       if (cbs.restoreHistorySidebarState)
          callbacks.restoreHistorySidebarState = cbs.restoreHistorySidebarState;
 

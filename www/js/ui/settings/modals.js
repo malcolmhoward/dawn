@@ -58,6 +58,7 @@
     * @param {string} options.okText - OK button text (default: "OK")
     * @param {string} options.cancelText - Cancel button text (default: "Cancel")
     * @param {boolean} options.danger - If true, styles OK button as danger/red
+    * @param {string} options.detail - Optional detail text to show (e.g., item being deleted)
     */
    function showConfirmModal(message, onConfirm, options = {}) {
       const modal = document.getElementById('confirm-modal');
@@ -70,6 +71,7 @@
       const content = modal.querySelector('.modal-content');
       const titleEl = document.getElementById('confirm-modal-title');
       const messageEl = document.getElementById('confirm-modal-message');
+      const detailEl = document.getElementById('confirm-modal-detail');
       const okBtn = document.getElementById('confirm-modal-ok');
       const cancelBtn = document.getElementById('confirm-modal-cancel');
 
@@ -78,6 +80,17 @@
       if (messageEl) messageEl.textContent = message;
       if (okBtn) okBtn.textContent = options.okText || 'OK';
       if (cancelBtn) cancelBtn.textContent = options.cancelText || 'Cancel';
+
+      // Set detail text if provided
+      if (detailEl) {
+         if (options.detail) {
+            detailEl.textContent = options.detail;
+            detailEl.classList.remove('hidden');
+         } else {
+            detailEl.textContent = '';
+            detailEl.classList.add('hidden');
+         }
+      }
 
       // Apply danger styling if requested
       if (content) {

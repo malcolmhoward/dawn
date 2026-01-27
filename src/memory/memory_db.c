@@ -693,6 +693,37 @@ int memory_db_summary_search(int user_id,
    return count;
 }
 
+int memory_db_summary_delete(int64_t summary_id, int user_id) {
+   if (summary_id <= 0 || user_id <= 0) {
+      return MEMORY_DB_FAILURE;
+   }
+
+   AUTH_DB_LOCK_OR_RETURN(MEMORY_DB_FAILURE);
+
+   sqlite3_stmt *stmt = NULL;
+   int rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM memory_summaries WHERE id = ? AND user_id = ?",
+                               -1, &stmt, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("memory_db: summary_delete prepare failed: %s", sqlite3_errmsg(s_db.db));
+      AUTH_DB_UNLOCK();
+      return MEMORY_DB_FAILURE;
+   }
+
+   sqlite3_bind_int64(stmt, 1, summary_id);
+   sqlite3_bind_int(stmt, 2, user_id);
+
+   rc = sqlite3_step(stmt);
+   int changes = sqlite3_changes(s_db.db);
+   sqlite3_finalize(stmt);
+
+   AUTH_DB_UNLOCK();
+
+   if (rc != SQLITE_DONE) {
+      return MEMORY_DB_FAILURE;
+   }
+   return (changes > 0) ? MEMORY_DB_SUCCESS : MEMORY_DB_NOT_FOUND;
+}
+
 /* =============================================================================
  * Utility Operations
  * ============================================================================= */

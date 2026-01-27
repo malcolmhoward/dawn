@@ -2512,6 +2512,36 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
       }
    } else if (strcmp(type, "clear_session") == 0) {
       handle_clear_session(conn);
+   }
+   /* Memory management (authenticated users) */
+   else if (strcmp(type, "get_memory_stats") == 0) {
+      handle_get_memory_stats(conn);
+   } else if (strcmp(type, "list_memory_facts") == 0) {
+      handle_list_memory_facts(conn, payload);
+   } else if (strcmp(type, "list_memory_preferences") == 0) {
+      handle_list_memory_preferences(conn);
+   } else if (strcmp(type, "list_memory_summaries") == 0) {
+      handle_list_memory_summaries(conn);
+   } else if (strcmp(type, "search_memory") == 0) {
+      if (payload) {
+         handle_search_memory(conn, payload);
+      }
+   } else if (strcmp(type, "delete_memory_fact") == 0) {
+      if (payload) {
+         handle_delete_memory_fact(conn, payload);
+      }
+   } else if (strcmp(type, "delete_memory_preference") == 0) {
+      if (payload) {
+         handle_delete_memory_preference(conn, payload);
+      }
+   } else if (strcmp(type, "delete_memory_summary") == 0) {
+      if (payload) {
+         handle_delete_memory_summary(conn, payload);
+      }
+   } else if (strcmp(type, "delete_all_memories") == 0) {
+      if (payload) {
+         handle_delete_all_memories(conn, payload);
+      }
    } else {
       LOG_WARNING("WebUI: Unknown message type: %s", type);
    }

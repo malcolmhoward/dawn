@@ -1008,6 +1008,20 @@ This is part of The OASIS Project. Contributions welcome!
 - Update documentation
 - Use descriptive commit messages
 
+## Design Notes
+
+### MCP (Model Context Protocol) Not Supported
+
+DAWN does not implement MCP. While MCP has become an industry standard for connecting LLMs to external tools in composable applications, DAWN's architecture serves different goals:
+
+- **Native C/C++ implementation**: DAWN is implemented entirely in C/C++ — a deliberate choice for reliability, deterministic timing, and single-binary deployment. MCP's ecosystem (SDKs, servers, tooling) is built around TypeScript and Python. No C implementation exists, and integrating one would require either writing an MCP client from scratch or embedding a managed runtime, negating the architectural benefits.
+
+- **Voice-first responsiveness**: MCP's process-per-server model with JSON-RPC communication introduces latency and unpredictability. Voice assistants require sub-second response times with consistent behavior. DAWN's direct function calls and shared-memory architecture eliminate IPC overhead entirely.
+
+- **Integrated tool system**: DAWN's native tool execution provides parallel thread-pool execution, automatic schema generation for multiple LLM providers (OpenAI, Claude, llama.cpp), session-scoped filtering, and built-in iterative tool loops. MCP defines a transport protocol — these capabilities remain the host's responsibility.
+
+- **Self-contained design**: DAWN is a complete voice assistant, not a plugin framework. All tools are local (MQTT devices, system commands, media control, vision) with no architectural need for external server composition.
+
 ## Credits
 
 - **Piper TTS**: https://github.com/rhasspy/piper (MIT License)
