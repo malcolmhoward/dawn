@@ -5,6 +5,7 @@
  * Usage:
  *   DawnAudioPlayback.queueAudio(pcmData)     // Queue PCM data for playback
  *   DawnAudioPlayback.play()                  // Start playback of queued audio
+ *   DawnAudioPlayback.stop()                  // Stop playback and clear queue
  *   DawnAudioPlayback.isPlaying()             // Check if currently playing
  *   DawnAudioPlayback.getAnalyser()           // Get analyser node for FFT
  *   DawnAudioPlayback.getFFTData()            // Get FFT data array
@@ -20,6 +21,7 @@
    let audioChunks = [];
    let audioPlaybackQueue = [];
    let isPlayingAudio = false;
+   let currentSource = null; // Track current source for stop()
 
    // Callbacks
    let callbacks = {
@@ -155,6 +157,7 @@
          source.buffer = audioBuffer;
          source.connect(playbackAnalyser);
          playbackAnalyser.connect(playbackContext.destination);
+         currentSource = source; // Track for stop()
 
          // Notify playback start
          if (callbacks.onPlaybackStart) {
@@ -208,6 +211,36 @@
    }
 
    /**
+    * Stop all audio playback immediately
+    * Clears pending audio and stops current playback
+    */
+   function stop() {
+      // Clear pending audio
+      audioChunks = [];
+      audioPlaybackQueue = [];
+
+      // Stop current source if playing
+      if (currentSource) {
+         try {
+            currentSource.stop();
+         } catch (e) {
+            // Source may already be stopped
+         }
+         currentSource = null;
+      }
+
+      // Reset state
+      if (isPlayingAudio) {
+         isPlayingAudio = false;
+         if (callbacks.onPlaybackEnd) {
+            callbacks.onPlaybackEnd();
+         }
+      }
+
+      console.log('Audio playback stopped');
+   }
+
+   /**
     * Get the analyser node for FFT visualization
     * @returns {AnalyserNode|null}
     */
@@ -236,6 +269,7 @@
    global.DawnAudioPlayback = {
       queueAudio: queueAudio,
       play: play,
+      stop: stop,
       isPlaying: isPlaying,
       getAnalyser: getAnalyser,
       getFFTData: getFFTData,

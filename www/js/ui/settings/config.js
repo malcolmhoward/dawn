@@ -15,6 +15,7 @@
       tts_voices: [],
       bind_addresses: [],
       memory_extraction_models: [],
+      users: [],
    };
 
    // DOM element references (injected by main settings module)
@@ -169,7 +170,37 @@
    }
 
    /**
+    * Request users list from server (admin only)
+    */
+   function requestUsersList() {
+      if (typeof DawnWS === 'undefined' || !DawnWS.isConnected()) {
+         return;
+      }
+
+      DawnWS.send({ type: 'list_users' });
+   }
+
+   /**
+    * Handle users list response from server
+    * Converts to {value, label} format for dynamic select
+    * @param {Object} payload - Response payload with users array
+    */
+   function handleUsersListResponse(payload) {
+      if (payload.success && payload.users) {
+         // Convert users to {value, label} format for dynamic select
+         dynamicOptions.users = payload.users.map((user) => ({
+            value: user.id,
+            label: user.username + (user.is_admin ? ' (Admin)' : ''),
+         }));
+      }
+
+      // Update any already-rendered dynamic selects
+      updateDynamicSelects();
+   }
+
+   /**
     * Update dynamic select dropdowns with server-provided options
+    * Supports both plain string options and {value, label} object options
     */
    function updateDynamicSelects() {
       document.querySelectorAll('select[data-dynamic-key]').forEach((select) => {
@@ -182,17 +213,30 @@
             select.remove(1);
          }
 
+         // Check if current value exists in options and update first option's label
+         let foundCurrent = false;
+         options.forEach((opt) => {
+            const optVal = typeof opt === 'object' ? String(opt.value) : opt;
+            const optLabel = typeof opt === 'object' ? opt.label : opt;
+            if (optVal === currentValue) {
+               foundCurrent = true;
+               select.options[0].textContent = optLabel;
+            }
+         });
+
          // Add options from server (skip current value to avoid duplicate)
          options.forEach((opt) => {
-            if (opt === currentValue) return; // Skip - already in first option
+            const optVal = typeof opt === 'object' ? String(opt.value) : opt;
+            const optLabel = typeof opt === 'object' ? opt.label : opt;
+            if (optVal === currentValue) return; // Skip - already in first option
             const option = document.createElement('option');
-            option.value = opt;
-            option.textContent = opt;
+            option.value = optVal;
+            option.textContent = optLabel;
             select.appendChild(option);
          });
 
          // If current value isn't in options, mark it as "(current)"
-         if (currentValue && !options.includes(currentValue)) {
+         if (currentValue && !foundCurrent) {
             select.options[0].textContent = currentValue + ' (current)';
          }
       });
@@ -405,7 +449,7 @@
          let value;
          if (input.type === 'checkbox') {
             value = input.checked;
-         } else if (input.type === 'number') {
+         } else if (input.type === 'number' || input.type === 'range') {
             value = input.value !== '' ? parseFloat(input.value) : null;
          } else if (input.dataset.type === 'model_list' || input.dataset.type === 'string_list') {
             // Convert newline-separated text to array, filtering empty lines
@@ -621,8 +665,10 @@
       requestConfig,
       requestModelsList,
       requestInterfacesList,
+      requestUsersList,
       handleModelsListResponse,
       handleInterfacesListResponse,
+      handleUsersListResponse,
       handleGetConfigResponse,
       updateSecretsStatus,
       collectConfigValues,

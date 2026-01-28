@@ -804,6 +804,8 @@ static void parse_memory(toml_table_t *table, memory_config_t *config) {
                                              "prune_superseded_days",
                                              "prune_stale_days",
                                              "prune_stale_min_confidence",
+                                             "conversation_idle_timeout_min",
+                                             "default_voice_user_id",
                                              NULL };
    warn_unknown_keys(table, "memory", known_keys);
 
@@ -830,6 +832,10 @@ static void parse_memory(toml_table_t *table, memory_config_t *config) {
       PARSE_DOUBLE(pruning, "stale_min_confidence", config->prune_stale_min_confidence);
    }
 
+   /* Parse voice conversation idle timeout settings */
+   PARSE_INT(table, "conversation_idle_timeout_min", config->conversation_idle_timeout_min);
+   PARSE_INT(table, "default_voice_user_id", config->default_voice_user_id);
+
    /* Clamp context_budget_tokens to valid range */
    if (config->context_budget_tokens < 100) {
       config->context_budget_tokens = 100;
@@ -852,6 +858,21 @@ static void parse_memory(toml_table_t *table, memory_config_t *config) {
       config->prune_stale_min_confidence = 0.0f;
    } else if (config->prune_stale_min_confidence > 1.0f) {
       config->prune_stale_min_confidence = 1.0f;
+   }
+
+   /* Clamp conversation idle timeout (0 = disabled, otherwise 10-60 min) */
+   if (config->conversation_idle_timeout_min < 0) {
+      config->conversation_idle_timeout_min = 0;
+   } else if (config->conversation_idle_timeout_min > 0 &&
+              config->conversation_idle_timeout_min < 10) {
+      config->conversation_idle_timeout_min = 10;
+   } else if (config->conversation_idle_timeout_min > 60) {
+      config->conversation_idle_timeout_min = 60;
+   }
+
+   /* Default voice user ID must be positive */
+   if (config->default_voice_user_id < 1) {
+      config->default_voice_user_id = 1;
    }
 }
 

@@ -945,6 +945,154 @@ void session_clear_history(session_t *session) {
    pthread_mutex_unlock(&session->history_mutex);
 }
 
+bool session_has_messages(session_t *session) {
+   if (!session) {
+      return false;
+   }
+
+   pthread_mutex_lock(&session->history_mutex);
+   int count = session->conversation_history
+                   ? (int)json_object_array_length(session->conversation_history)
+                   : 0;
+   pthread_mutex_unlock(&session->history_mutex);
+
+   /* Require at least 2 messages (system prompt + user message) */
+   return count >= 2;
+}
+
+void session_update_interaction_complete(session_t *session) {
+   if (!session) {
+      return;
+   }
+   session->last_interaction_complete = time(NULL);
+}
+
+int64_t session_save_voice_conversation(session_t *session) {
+   if (!session) {
+      return -1;
+   }
+
+   pthread_mutex_lock(&session->history_mutex);
+
+   /* Check if there are messages to save */
+   if (!session->conversation_history) {
+      pthread_mutex_unlock(&session->history_mutex);
+      return -1;
+   }
+
+   int msg_count = (int)json_object_array_length(session->conversation_history);
+   if (msg_count < 2) {
+      /* No user messages, just system prompt */
+      pthread_mutex_unlock(&session->history_mutex);
+      return -1;
+   }
+
+   /* Get user ID from config */
+   int user_id = g_config.memory.default_voice_user_id;
+   if (user_id <= 0) {
+      user_id = 1; /* Fallback to admin */
+   }
+
+   /* Generate title from first user message */
+   char title[128] = "Voice Conversation";
+   for (int i = 0; i < msg_count; i++) {
+      struct json_object *msg = json_object_array_get_idx(session->conversation_history, i);
+      if (!msg)
+         continue;
+
+      struct json_object *role_obj;
+      if (!json_object_object_get_ex(msg, "role", &role_obj))
+         continue;
+
+      const char *role = json_object_get_string(role_obj);
+      if (role && strcmp(role, "user") == 0) {
+         struct json_object *content_obj;
+         if (json_object_object_get_ex(msg, "content", &content_obj)) {
+            const char *content = json_object_get_string(content_obj);
+            if (content && strlen(content) > 0) {
+               /* Truncate to title length, add ellipsis if needed */
+               size_t max_len = sizeof(title) - 4; /* Room for "..." */
+               if (strlen(content) <= max_len) {
+                  strncpy(title, content, sizeof(title) - 1);
+               } else {
+                  strncpy(title, content, max_len);
+                  title[max_len] = '\0';
+                  strcat(title, "...");
+               }
+               title[sizeof(title) - 1] = '\0';
+            }
+         }
+         break;
+      }
+   }
+
+   /* Create conversation in database with voice origin */
+   int64_t conv_id = -1;
+   int rc = conv_db_create_with_origin(user_id, title, "voice", &conv_id);
+   if (rc != AUTH_DB_SUCCESS) {
+      LOG_ERROR("Session %u: Failed to create voice conversation: %d", session->session_id, rc);
+      pthread_mutex_unlock(&session->history_mutex);
+      return -1;
+   }
+
+   /* Save all messages to database */
+   for (int i = 0; i < msg_count; i++) {
+      struct json_object *msg = json_object_array_get_idx(session->conversation_history, i);
+      if (!msg)
+         continue;
+
+      struct json_object *role_obj, *content_obj;
+      if (!json_object_object_get_ex(msg, "role", &role_obj))
+         continue;
+      if (!json_object_object_get_ex(msg, "content", &content_obj))
+         continue;
+
+      const char *role = json_object_get_string(role_obj);
+      const char *content = json_object_get_string(content_obj);
+
+      if (role && content) {
+         conv_db_add_message(conv_id, user_id, role, content);
+      }
+   }
+
+   /* Trigger memory extraction (async) if enabled */
+   if (g_config.memory.enabled) {
+      int duration_seconds = (int)(time(NULL) - session->created_at);
+      char session_id_str[32];
+      snprintf(session_id_str, sizeof(session_id_str), "voice_%u", session->session_id);
+
+      /* Make a copy of history for extraction (it will be freed when we clear) */
+      struct json_object *history_copy = NULL;
+      const char *history_str = json_object_to_json_string(session->conversation_history);
+      if (history_str) {
+         history_copy = json_tokener_parse(history_str);
+      }
+
+      if (history_copy) {
+         memory_trigger_extraction(user_id, conv_id, session_id_str, history_copy, msg_count,
+                                   duration_seconds);
+         /* Note: memory_trigger_extraction takes ownership and frees history_copy */
+      }
+   }
+
+   pthread_mutex_unlock(&session->history_mutex);
+
+   /* Clear session history and reset timestamp */
+   session_clear_history(session);
+   session->last_interaction_complete = 0;
+
+   /* Re-initialize with system prompt (use local command prompt for voice sessions) */
+   const char *system_prompt = get_local_command_prompt();
+   if (system_prompt) {
+      session_init_system_prompt(session, system_prompt);
+   }
+
+   LOG_INFO("Session %u: Saved voice conversation %lld (%d messages, user %d)", session->session_id,
+            (long long)conv_id, msg_count, user_id);
+
+   return conv_id;
+}
+
 void session_init_system_prompt(session_t *session, const char *system_prompt) {
    if (!session || !system_prompt) {
       return;
@@ -1268,63 +1416,6 @@ char *session_llm_call(session_t *session, const char *user_text) {
    return llm_call_finalize(session, response, &ctx);
 }
 
-char *session_llm_call_no_add(session_t *session,
-                              const char *user_text,
-                              const char **vision_images,
-                              const size_t *vision_image_sizes,
-                              const char (*vision_mimes)[24],
-                              int vision_image_count) {
-   (void)vision_mimes; /* MIME types passed to LLM layer via provider-specific handling */
-
-   if (!session || !user_text) {
-      return NULL;
-   }
-
-   if (session->disconnected) {
-      LOG_INFO("Session %u disconnected, aborting LLM call", session->session_id);
-      return NULL;
-   }
-
-   llm_call_ctx_t ctx;
-   if (llm_call_prepare(session, user_text, &ctx, true) != 0) {
-      llm_call_cleanup(&ctx);
-      return NULL;
-   }
-
-   if (vision_image_count > 0) {
-      size_t total_bytes = 0;
-      for (int i = 0; i < vision_image_count; i++) {
-         if (vision_image_sizes) {
-            total_bytes += vision_image_sizes[i];
-         }
-      }
-      LOG_INFO("Session %u: Calling LLM (no-add) with %d messages + %d images (%zu total bytes)",
-               session->session_id, json_object_array_length(ctx.history), vision_image_count,
-               total_bytes);
-   } else {
-      LOG_INFO("Session %u: Calling LLM (no-add) with %d messages in history", session->session_id,
-               json_object_array_length(ctx.history));
-   }
-
-   /* Initialize streaming metrics before LLM call */
-   session->stream_start_ms = get_time_ms();
-   session->first_token_ms = 0;
-   session->last_token_ms = 0;
-   session->stream_token_count = 0;
-
-   /* Set per-session cancel flag for multi-user WebUI support */
-   llm_set_cancel_flag(&session->disconnected);
-
-   char *response = llm_chat_completion_streaming_with_config(
-       ctx.history, ctx.llm_input, vision_images, vision_image_sizes, vision_image_count,
-       session_text_chunk_callback, session, &ctx.resolved_config);
-
-   /* Clear per-session cancel flag */
-   llm_set_cancel_flag(NULL);
-
-   return llm_call_finalize(session, response, &ctx);
-}
-
 /**
  * @brief Combined streaming context for text display + sentence audio
  *
@@ -1493,10 +1584,16 @@ char *session_llm_call_with_tts(session_t *session,
    return llm_call_finalize(session, response, &ctx);
 }
 
-char *session_llm_call_with_tts_no_add(session_t *session,
-                                       const char *user_text,
-                                       session_sentence_callback sentence_cb,
-                                       void *userdata) {
+char *session_llm_call_with_tts_vision_no_add(session_t *session,
+                                              const char *user_text,
+                                              const char **vision_images,
+                                              const size_t *vision_image_sizes,
+                                              const char (*vision_mimes)[24],
+                                              int vision_image_count,
+                                              session_sentence_callback sentence_cb,
+                                              void *userdata) {
+   (void)vision_mimes; /* MIME types passed to LLM layer via provider-specific handling */
+
    if (!session || !user_text) {
       return NULL;
    }
@@ -1512,8 +1609,22 @@ char *session_llm_call_with_tts_no_add(session_t *session,
       return NULL;
    }
 
-   LOG_INFO("Session %u: Calling LLM (TTS streaming, no-add) with %d messages in history",
-            session->session_id, json_object_array_length(ctx.history));
+   /* Log call details */
+   const char *mode = sentence_cb ? (vision_image_count > 0 ? "TTS+vision" : "TTS") : "no-add";
+   if (vision_image_count > 0) {
+      size_t total_bytes = 0;
+      for (int i = 0; i < vision_image_count; i++) {
+         if (vision_image_sizes) {
+            total_bytes += vision_image_sizes[i];
+         }
+      }
+      LOG_INFO("Session %u: Calling LLM (%s) with %d messages + %d images (%zu bytes)",
+               session->session_id, mode, json_object_array_length(ctx.history), vision_image_count,
+               total_bytes);
+   } else {
+      LOG_INFO("Session %u: Calling LLM (%s) with %d messages in history", session->session_id,
+               mode, json_object_array_length(ctx.history));
+   }
 
    /* Initialize streaming metrics before LLM call */
    session->stream_start_ms = get_time_ms();
@@ -1521,34 +1632,41 @@ char *session_llm_call_with_tts_no_add(session_t *session,
    session->last_token_ms = 0;
    session->stream_token_count = 0;
 
-   // Create combined streaming context for text + sentence audio
-   combined_stream_ctx_t stream_ctx = { .session = session,
-                                        .sentence_cb = sentence_cb,
-                                        .sentence_userdata = userdata,
-                                        .sentence_buffer = NULL };
-
-   // Create sentence buffer for TTS
-   stream_ctx.sentence_buffer = sentence_buffer_create(combined_sentence_callback, &stream_ctx);
-   if (!stream_ctx.sentence_buffer) {
-      LOG_ERROR("Session %u: Failed to create sentence buffer", session->session_id);
-      llm_call_cleanup(&ctx);
-      return NULL;
-   }
-
    /* Set per-session cancel flag for multi-user WebUI support */
    llm_set_cancel_flag(&session->disconnected);
 
-   // Call LLM with combined callback (text streaming + sentence buffering)
-   char *response = llm_chat_completion_streaming_with_config(ctx.history, ctx.llm_input, NULL,
-                                                              NULL, 0, combined_chunk_callback,
-                                                              &stream_ctx, &ctx.resolved_config);
+   char *response;
+
+   if (sentence_cb) {
+      /* TTS enabled: use sentence buffering for per-sentence audio */
+      combined_stream_ctx_t stream_ctx = { .session = session,
+                                           .sentence_cb = sentence_cb,
+                                           .sentence_userdata = userdata,
+                                           .sentence_buffer = NULL };
+
+      stream_ctx.sentence_buffer = sentence_buffer_create(combined_sentence_callback, &stream_ctx);
+      if (!stream_ctx.sentence_buffer) {
+         LOG_ERROR("Session %u: Failed to create sentence buffer", session->session_id);
+         llm_set_cancel_flag(NULL);
+         llm_call_cleanup(&ctx);
+         return NULL;
+      }
+
+      response = llm_chat_completion_streaming_with_config(
+          ctx.history, ctx.llm_input, vision_images, vision_image_sizes, vision_image_count,
+          combined_chunk_callback, &stream_ctx, &ctx.resolved_config);
+
+      sentence_buffer_flush(stream_ctx.sentence_buffer);
+      sentence_buffer_free(stream_ctx.sentence_buffer);
+   } else {
+      /* No TTS: use simple text streaming callback */
+      response = llm_chat_completion_streaming_with_config(
+          ctx.history, ctx.llm_input, vision_images, vision_image_sizes, vision_image_count,
+          session_text_chunk_callback, session, &ctx.resolved_config);
+   }
 
    /* Clear per-session cancel flag */
    llm_set_cancel_flag(NULL);
-
-   // Flush remaining sentence and free buffer
-   sentence_buffer_flush(stream_ctx.sentence_buffer);
-   sentence_buffer_free(stream_ctx.sentence_buffer);
 
    return llm_call_finalize(session, response, &ctx);
 }

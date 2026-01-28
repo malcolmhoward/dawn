@@ -658,6 +658,46 @@
 
          <!-- Input area -->
          <div id="input-area" class="drop-target">
+            <button
+               id="tts-toggle"
+               class="input-button"
+               title="Enable speech output"
+               aria-label="Speech output disabled"
+               aria-pressed="false"
+            >
+               <svg
+                  id="tts-icon-on"
+                  class="tts-icon hidden"
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+               >
+                  <path d="M11 5L6 9H2v6h4l5 4V5z" />
+                  <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+                  <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+               </svg>
+               <svg
+                  id="tts-icon-off"
+                  class="tts-icon"
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+               >
+                  <path d="M11 5L6 9H2v6h4l5 4V5z" />
+                  <line x1="23" y1="9" x2="17" y2="15" />
+                  <line x1="17" y1="9" x2="23" y2="15" />
+               </svg>
+            </button>
             <label for="text-input" class="sr-only">Type your message to the AI assistant</label>
             <textarea
                id="text-input"
@@ -1765,6 +1805,7 @@ client_secret = "..."</pre
       <script src="/js/core/state.js"></script>
       <script src="/js/core/websocket.js"></script>
       <script src="/js/ui/theme.js"></script>
+      <script src="/js/ui/tts.js"></script>
       <script src="/js/ui/toast.js"></script>
       <script src="/js/ui/format.js"></script>
       <script src="/js/audio/capture.js"></script>

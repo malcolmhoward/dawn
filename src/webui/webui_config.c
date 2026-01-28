@@ -555,6 +555,22 @@ static void apply_config_from_json(dawn_config_t *config, struct json_object *pa
       JSON_TO_CONFIG_INT(section, "prune_stale_days", config->memory.prune_stale_days);
       JSON_TO_CONFIG_DOUBLE(section, "prune_stale_min_confidence",
                             config->memory.prune_stale_min_confidence);
+      JSON_TO_CONFIG_INT(section, "conversation_idle_timeout_min",
+                         config->memory.conversation_idle_timeout_min);
+      /* Clamp conversation idle timeout (0 = disabled, else 10-60 min) */
+      if (config->memory.conversation_idle_timeout_min < 0) {
+         config->memory.conversation_idle_timeout_min = 0;
+      } else if (config->memory.conversation_idle_timeout_min > 0 &&
+                 config->memory.conversation_idle_timeout_min < 10) {
+         config->memory.conversation_idle_timeout_min = 10;
+      } else if (config->memory.conversation_idle_timeout_min > 60) {
+         config->memory.conversation_idle_timeout_min = 60;
+      }
+      JSON_TO_CONFIG_INT(section, "default_voice_user_id", config->memory.default_voice_user_id);
+      /* Default voice user ID must be positive */
+      if (config->memory.default_voice_user_id < 1) {
+         config->memory.default_voice_user_id = 1;
+      }
    }
 
    /* [shutdown] */

@@ -20,6 +20,9 @@
       oldestMessageId: null,
       hasMoreMessages: false,
       loadingMoreMessages: false,
+      // Reassign modal state
+      usersList: [],
+      reassignModalConvId: null,
    };
 
    // Callbacks for shared utilities
@@ -32,6 +35,7 @@
 
    // Cleanup function for focus trap
    let historyFocusTrapCleanup = null;
+   let reassignFocusTrapCleanup = null;
 
    // Track pending delete to clear UI if deleting active conversation
    let pendingDeleteId = null;
@@ -737,16 +741,45 @@
       const isPrivate = conv.is_private === true;
       const privateIcon = isPrivate ? PRIVATE_ICON_HTML : '';
 
+      const isVoice = conv.origin === 'voice';
+      const voiceIcon = isVoice
+         ? `
+      <span class="history-item-voice" title="Voice conversation">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 14.2 14.47 16 12 16s-4.52-1.8-4.93-4.15c-.08-.49-.49-.85-.98-.85-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.91 5.78V20H9c-.55 0-1 .45-1 1s.45 1 1 1h6c.55 0 1-.45 1-1s-.45-1-1-1h-2v-2.08c3.02-.43 5.42-2.78 5.91-5.78.1-.6-.39-1.14-1-1.14z"/>
+        </svg>
+      </span>
+    `
+         : '';
+
+      // Reassign button (voice conversations + admin only)
+      const isAdmin =
+         typeof DawnState !== 'undefined' && DawnState.authState && DawnState.authState.isAdmin;
+      const reassignButton =
+         isVoice && isAdmin
+            ? `
+          <button class="reassign" title="Reassign to user" data-action="reassign">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+              <circle cx="9" cy="7" r="4"/>
+              <path d="M22 21v-2a4 4 0 0 0-3-3.87"/>
+              <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+            </svg>
+          </button>
+        `
+            : '';
+
       const classes = ['history-item'];
       if (isActive) classes.push('active');
       if (isArchived) classes.push('archived');
       if (isPrivate) classes.push('private');
+      if (isVoice) classes.push('voice');
       if (isChainChild) classes.push('chain-child');
 
       return `
       <div class="${classes.join(' ')}" data-conv-id="${conv.id}">
         <div class="history-item-content">
-          <div class="history-item-title">${privateIcon}${archivedIcon}${chainIcon}${DawnFormat.escapeHtml(conv.title)}</div>
+          <div class="history-item-title">${privateIcon}${voiceIcon}${archivedIcon}${chainIcon}${DawnFormat.escapeHtml(conv.title)}</div>
           <div class="history-item-meta">
             <span class="history-item-time">${time}</span>
             <span class="history-item-count">${conv.message_count} messages</span>
@@ -759,6 +792,7 @@
               <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
             </svg>
           </button>
+          ${reassignButton}
           <button class="delete" title="Delete" data-action="delete">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polyline points="3 6 5 6 21 6"/>
@@ -915,6 +949,15 @@
                   },
                   { title: 'Delete Conversation', okText: 'Delete', danger: true }
                );
+            });
+         }
+
+         // Reassign button (voice conversations, admin only)
+         const reassignBtn = item.querySelector('[data-action="reassign"]');
+         if (reassignBtn) {
+            reassignBtn.addEventListener('click', (e) => {
+               e.stopPropagation();
+               showReassignModal(convId);
             });
          }
       });
@@ -1247,6 +1290,182 @@
    }
 
    /* =============================================================================
+    * Reassign Modal (Admin Only)
+    * ============================================================================= */
+
+   /**
+    * Show the reassign user modal for a voice conversation
+    * @param {number} convId - Conversation ID to reassign
+    */
+   function showReassignModal(convId) {
+      historyState.reassignModalConvId = convId;
+
+      // Request users list from server
+      if (typeof DawnWS !== 'undefined' && DawnWS.isConnected()) {
+         DawnWS.send({ type: 'list_users' });
+      }
+   }
+
+   /**
+    * Handle users list response for reassign modal
+    * @param {Object} payload - Response payload with users array
+    */
+   function handleUsersListForReassign(payload) {
+      if (!payload.success || !historyState.reassignModalConvId) {
+         return;
+      }
+
+      historyState.usersList = payload.users || [];
+      renderReassignModal();
+   }
+
+   /**
+    * Render the reassign modal with user list
+    */
+   function renderReassignModal() {
+      // Remove existing modal if any
+      const existing = document.getElementById('reassign-modal');
+      if (existing) {
+         existing.remove();
+      }
+
+      const users = historyState.usersList;
+      const convId = historyState.reassignModalConvId;
+
+      // Find conversation title for display
+      const conv = historyState.conversations.find((c) => c.id === convId);
+      const convTitle = conv ? DawnFormat.escapeHtml(conv.title) : `Conversation #${convId}`;
+
+      // Build user options
+      const userOptions = users
+         .map(
+            (user) => `
+            <option value="${user.id}">${DawnFormat.escapeHtml(user.username)}${user.is_admin ? ' (Admin)' : ''}</option>
+         `
+         )
+         .join('');
+
+      const modalHtml = `
+         <div id="reassign-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="reassign-title">
+            <div class="modal-content">
+               <h3 id="reassign-title" class="modal-header">Reassign Conversation</h3>
+               <p class="modal-description">Reassign "<span class="modal-conv-title">${convTitle}</span>" to:</p>
+               <div class="modal-form">
+                  <label for="reassign-user-select" class="sr-only">Select User</label>
+                  <select id="reassign-user-select" class="modal-select" aria-label="Select user">
+                     <option value="">-- Select User --</option>
+                     ${userOptions}
+                  </select>
+               </div>
+               <div class="modal-actions">
+                  <button id="reassign-cancel" class="modal-btn secondary">Cancel</button>
+                  <button id="reassign-confirm" class="modal-btn primary" disabled>Reassign</button>
+               </div>
+            </div>
+         </div>
+      `;
+
+      document.body.insertAdjacentHTML('beforeend', modalHtml);
+
+      const modal = document.getElementById('reassign-modal');
+      const select = document.getElementById('reassign-user-select');
+      const confirmBtn = document.getElementById('reassign-confirm');
+      const cancelBtn = document.getElementById('reassign-cancel');
+
+      // Enable confirm button when user is selected
+      select.addEventListener('change', () => {
+         confirmBtn.disabled = !select.value;
+      });
+
+      // Handle confirm
+      confirmBtn.addEventListener('click', () => {
+         const userId = parseInt(select.value, 10);
+         if (userId > 0) {
+            requestReassignConversation(convId, userId);
+            closeReassignModal();
+         }
+      });
+
+      // Handle cancel
+      cancelBtn.addEventListener('click', closeReassignModal);
+
+      // Close on overlay click
+      modal.addEventListener('click', (e) => {
+         if (e.target === modal) {
+            closeReassignModal();
+         }
+      });
+
+      // Close on Escape
+      modal.addEventListener('keydown', (e) => {
+         if (e.key === 'Escape') {
+            closeReassignModal();
+         }
+      });
+
+      // Focus the select and trap focus within modal
+      select.focus();
+      if (callbacks.trapFocus) {
+         reassignFocusTrapCleanup = callbacks.trapFocus(modal);
+      }
+   }
+
+   /**
+    * Close the reassign modal
+    */
+   function closeReassignModal() {
+      if (reassignFocusTrapCleanup) {
+         reassignFocusTrapCleanup();
+         reassignFocusTrapCleanup = null;
+      }
+      const modal = document.getElementById('reassign-modal');
+      if (modal) {
+         modal.remove();
+      }
+      historyState.reassignModalConvId = null;
+   }
+
+   /**
+    * Request to reassign a conversation to a new user
+    * @param {number} convId - Conversation ID
+    * @param {number} newUserId - New user ID
+    */
+   function requestReassignConversation(convId, newUserId) {
+      if (typeof DawnWS !== 'undefined' && DawnWS.isConnected()) {
+         DawnWS.send({
+            type: 'reassign_conversation',
+            payload: {
+               conversation_id: convId,
+               new_user_id: newUserId,
+            },
+         });
+      }
+   }
+
+   /**
+    * Handle reassign conversation response
+    * @param {Object} payload - Response payload
+    */
+   function handleReassignResponse(payload) {
+      if (payload.success) {
+         // Remove the conversation from current user's list
+         const convId = payload.conversation_id;
+         historyState.conversations = historyState.conversations.filter((c) => c.id !== convId);
+         renderConversationList();
+
+         // Clear active conversation if it was the reassigned one
+         if (historyState.activeConversationId === convId) {
+            historyState.activeConversationId = null;
+            localStorage.removeItem('dawn_active_conv');
+         }
+
+         console.log('Conversation reassigned successfully');
+      } else {
+         console.error('Failed to reassign conversation:', payload.error);
+      }
+   }
+
+   /* =============================================================================
     * Export
     * ============================================================================= */
 
@@ -1274,5 +1493,8 @@
       handleContextCompacted: handleContextCompacted,
       handleContinueResponse: handleContinueConversationResponse,
       updateConversationPrivacy: updateConversationPrivacy,
+      // Reassign modal handlers (admin only)
+      handleUsersListForReassign: handleUsersListForReassign,
+      handleReassignResponse: handleReassignResponse,
    };
 })();

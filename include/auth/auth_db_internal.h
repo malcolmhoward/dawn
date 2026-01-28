@@ -48,7 +48,7 @@
  * ============================================================================= */
 
 /* Current schema version */
-#define AUTH_DB_SCHEMA_VERSION 16
+#define AUTH_DB_SCHEMA_VERSION 17
 
 /* Retention periods */
 #define LOGIN_ATTEMPT_RETENTION_SEC (7 * 24 * 60 * 60) /* 7 days */
@@ -118,6 +118,8 @@ typedef struct {
    sqlite3_stmt *stmt_msg_get_admin;
    sqlite3_stmt *stmt_conv_update_meta;
    sqlite3_stmt *stmt_conv_update_context;
+   sqlite3_stmt *stmt_conv_create_origin;
+   sqlite3_stmt *stmt_conv_reassign;
 
    /* === Metrics module statements (auth_db_metrics.c) === */
    sqlite3_stmt *stmt_metrics_save;

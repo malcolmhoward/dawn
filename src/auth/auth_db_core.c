@@ -138,7 +138,7 @@ static const char *SCHEMA_SQL =
     ");"
 
     /* Conversations table (added in schema v4, context columns in v5, continuation in v7,
-     * LLM settings in v11, extraction tracking in v15, privacy in v16) */
+     * LLM settings in v11, extraction tracking in v15, privacy in v16, origin in v17) */
     "CREATE TABLE IF NOT EXISTS conversations ("
     "   id INTEGER PRIMARY KEY AUTOINCREMENT,"
     "   user_id INTEGER NOT NULL,"
@@ -158,6 +158,7 @@ static const char *SCHEMA_SQL =
     "   thinking_mode TEXT DEFAULT NULL,"
     "   last_extracted_msg_count INTEGER DEFAULT 0,"
     "   is_private INTEGER DEFAULT 0,"
+    "   origin TEXT DEFAULT 'webui',"
     "   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,"
     "   FOREIGN KEY (continued_from) REFERENCES conversations(id) ON DELETE SET NULL"
     ");"
@@ -576,6 +577,19 @@ static int create_schema(void) {
       LOG_INFO("auth_db: added conversation privacy flag (v16)");
    }
 
+   /* v17 migration: add origin column to conversations for voice/webui distinction */
+   if (current_version >= 1 && current_version < 17) {
+      const char *v17_sql = "ALTER TABLE conversations ADD COLUMN origin TEXT DEFAULT 'webui';";
+
+      rc = sqlite3_exec(s_db.db, v17_sql, NULL, NULL, &errmsg);
+      if (rc != SQLITE_OK) {
+         LOG_ERROR("auth_db: v17 migration failed: %s", errmsg ? errmsg : "unknown");
+         sqlite3_free(errmsg);
+         return AUTH_DB_FAILURE;
+      }
+      LOG_INFO("auth_db: added conversation origin column (v17)");
+   }
+
    /* Create continuation index (runs for both new databases and migrations) */
    rc = sqlite3_exec(s_db.db,
                      "CREATE INDEX IF NOT EXISTS idx_conversations_continued "
@@ -810,7 +824,7 @@ static int prepare_statements(void) {
        s_db.db,
        "SELECT id, user_id, title, created_at, updated_at, message_count, is_archived, "
        "context_tokens, context_max, continued_from, compaction_summary, "
-       "llm_type, cloud_provider, model, tools_mode, thinking_mode, is_private "
+       "llm_type, cloud_provider, model, tools_mode, thinking_mode, is_private, origin "
        "FROM conversations WHERE id = ?",
        -1, &s_db.stmt_conv_get, NULL);
    if (rc != SQLITE_OK) {
@@ -821,7 +835,7 @@ static int prepare_statements(void) {
    rc = sqlite3_prepare_v2(
        s_db.db,
        "SELECT id, user_id, title, created_at, updated_at, message_count, is_archived, "
-       "context_tokens, context_max, continued_from, compaction_summary, is_private "
+       "context_tokens, context_max, continued_from, compaction_summary, is_private, origin "
        "FROM conversations WHERE user_id = ? AND (is_archived = 0 OR ? = 1) "
        "ORDER BY updated_at DESC LIMIT ? OFFSET ?",
        -1, &s_db.stmt_conv_list, NULL);
@@ -835,7 +849,7 @@ static int prepare_statements(void) {
        s_db.db,
        "SELECT c.id, c.user_id, c.title, c.created_at, c.updated_at, c.message_count, "
        "c.is_archived, c.context_tokens, c.context_max, c.continued_from, "
-       "c.compaction_summary, c.is_private, u.username "
+       "c.compaction_summary, c.is_private, c.origin, u.username "
        "FROM conversations c LEFT JOIN users u ON c.user_id = u.id "
        "WHERE (c.is_archived = 0 OR ? = 1) "
        "ORDER BY c.updated_at DESC LIMIT ? OFFSET ?",
@@ -848,7 +862,7 @@ static int prepare_statements(void) {
    rc = sqlite3_prepare_v2(
        s_db.db,
        "SELECT id, user_id, title, created_at, updated_at, message_count, is_archived, "
-       "context_tokens, context_max, continued_from, compaction_summary "
+       "context_tokens, context_max, continued_from, compaction_summary, is_private, origin "
        "FROM conversations WHERE user_id = ? AND title LIKE ? "
        "ORDER BY updated_at DESC LIMIT ? OFFSET ?",
        -1, &s_db.stmt_conv_search, NULL);
@@ -860,7 +874,7 @@ static int prepare_statements(void) {
    rc = sqlite3_prepare_v2(s_db.db,
                            "SELECT DISTINCT c.id, c.user_id, c.title, c.created_at, c.updated_at, "
                            "c.message_count, c.is_archived, c.context_tokens, c.context_max, "
-                           "c.continued_from, c.compaction_summary "
+                           "c.continued_from, c.compaction_summary, c.is_private, c.origin "
                            "FROM conversations c "
                            "INNER JOIN messages m ON m.conversation_id = c.id "
                            "WHERE c.user_id = ? AND m.content LIKE ? "
@@ -947,6 +961,23 @@ static int prepare_statements(void) {
                            -1, &s_db.stmt_conv_update_context, NULL);
    if (rc != SQLITE_OK) {
       LOG_ERROR("auth_db: prepare conv_update_context failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "INSERT INTO conversations (user_id, title, created_at, updated_at, origin) "
+       "VALUES (?, ?, ?, ?, ?)",
+       -1, &s_db.stmt_conv_create_origin, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare conv_create_origin failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db, "UPDATE conversations SET user_id = ? WHERE id = ?", -1,
+                           &s_db.stmt_conv_reassign, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare conv_reassign failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -1368,6 +1399,10 @@ static void finalize_statements(void) {
       sqlite3_finalize(s_db.stmt_conv_update_meta);
    if (s_db.stmt_conv_update_context)
       sqlite3_finalize(s_db.stmt_conv_update_context);
+   if (s_db.stmt_conv_create_origin)
+      sqlite3_finalize(s_db.stmt_conv_create_origin);
+   if (s_db.stmt_conv_reassign)
+      sqlite3_finalize(s_db.stmt_conv_reassign);
 
    /* Session metrics statements */
    if (s_db.stmt_metrics_save)

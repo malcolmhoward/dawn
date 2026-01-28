@@ -92,6 +92,10 @@
       Config.requestConfig();
       Config.requestModelsList();
       Config.requestInterfacesList();
+      // Request users list for admin settings (default voice user dropdown)
+      if (typeof DawnState !== 'undefined' && DawnState.authState && DawnState.authState.isAdmin) {
+         Config.requestUsersList();
+      }
       if (typeof DawnSmartThings !== 'undefined') {
          DawnSmartThings.requestStatus();
       }
@@ -562,6 +566,7 @@
       handleSetSecretsResponse: Config.handleSetSecretsResponse,
       handleModelsListResponse: Config.handleModelsListResponse,
       handleInterfacesListResponse: Config.handleInterfacesListResponse,
+      handleUsersListResponse: Config.handleUsersListResponse,
       handleRestartResponse: handleRestartResponse,
       handleGetAudioDevicesResponse: Audio.handleGetAudioDevicesResponse,
       handleSystemPromptResponse: handleSystemPromptResponse,

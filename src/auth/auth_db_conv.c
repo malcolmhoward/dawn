@@ -141,6 +141,120 @@ int conv_db_create(int user_id, const char *title, int64_t *conv_id_out) {
    return AUTH_DB_SUCCESS;
 }
 
+int conv_db_create_with_origin(int user_id,
+                               const char *title,
+                               const char *origin,
+                               int64_t *conv_id_out) {
+   if (user_id <= 0 || !conv_id_out) {
+      return AUTH_DB_INVALID;
+   }
+
+   AUTH_DB_LOCK_OR_FAIL();
+
+   /* Check conversation limit per user */
+   if (CONV_MAX_PER_USER > 0) {
+      sqlite3_reset(s_db.stmt_conv_count);
+      sqlite3_bind_int(s_db.stmt_conv_count, 1, user_id);
+      if (sqlite3_step(s_db.stmt_conv_count) == SQLITE_ROW) {
+         int count = sqlite3_column_int(s_db.stmt_conv_count, 0);
+         if (count >= CONV_MAX_PER_USER) {
+            sqlite3_reset(s_db.stmt_conv_count);
+            AUTH_DB_UNLOCK();
+            return AUTH_DB_LIMIT_EXCEEDED;
+         }
+      }
+      sqlite3_reset(s_db.stmt_conv_count);
+   }
+
+   time_t now = time(NULL);
+
+   /* Use default title if none provided, truncate if too long */
+   char safe_title[CONV_TITLE_MAX];
+   if (title && title[0] != '\0') {
+      strncpy(safe_title, title, CONV_TITLE_MAX - 1);
+      safe_title[CONV_TITLE_MAX - 1] = '\0';
+   } else {
+      strcpy(safe_title, "Voice Conversation");
+   }
+
+   /* Use 'webui' as default origin if not specified */
+   const char *safe_origin = (origin && origin[0] != '\0') ? origin : "webui";
+
+   /* Insert with origin field using prepared statement */
+   sqlite3_reset(s_db.stmt_conv_create_origin);
+   sqlite3_bind_int(s_db.stmt_conv_create_origin, 1, user_id);
+   sqlite3_bind_text(s_db.stmt_conv_create_origin, 2, safe_title, -1, SQLITE_TRANSIENT);
+   sqlite3_bind_int64(s_db.stmt_conv_create_origin, 3, (int64_t)now);
+   sqlite3_bind_int64(s_db.stmt_conv_create_origin, 4, (int64_t)now);
+   sqlite3_bind_text(s_db.stmt_conv_create_origin, 5, safe_origin, -1, SQLITE_TRANSIENT);
+
+   int rc = sqlite3_step(s_db.stmt_conv_create_origin);
+   sqlite3_reset(s_db.stmt_conv_create_origin);
+
+   if (rc != SQLITE_DONE) {
+      LOG_ERROR("conv_db_create_with_origin: insert failed: %s", sqlite3_errmsg(s_db.db));
+      AUTH_DB_UNLOCK();
+      return AUTH_DB_FAILURE;
+   }
+
+   *conv_id_out = sqlite3_last_insert_rowid(s_db.db);
+
+   AUTH_DB_UNLOCK();
+
+   LOG_INFO("Created %s conversation %lld for user %d", safe_origin, (long long)*conv_id_out,
+            user_id);
+   return AUTH_DB_SUCCESS;
+}
+
+int conv_db_reassign(int64_t conv_id, int new_user_id) {
+   if (conv_id <= 0 || new_user_id <= 0) {
+      return AUTH_DB_INVALID;
+   }
+
+   AUTH_DB_LOCK_OR_FAIL();
+
+   /* Verify target user exists before reassigning */
+   const char *check_sql = "SELECT 1 FROM users WHERE id = ?";
+   sqlite3_stmt *check_stmt;
+   int rc = sqlite3_prepare_v2(s_db.db, check_sql, -1, &check_stmt, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("conv_db_reassign: user check prepare failed: %s", sqlite3_errmsg(s_db.db));
+      AUTH_DB_UNLOCK();
+      return AUTH_DB_FAILURE;
+   }
+   sqlite3_bind_int(check_stmt, 1, new_user_id);
+   rc = sqlite3_step(check_stmt);
+   sqlite3_finalize(check_stmt);
+   if (rc != SQLITE_ROW) {
+      LOG_WARNING("conv_db_reassign: target user %d does not exist", new_user_id);
+      AUTH_DB_UNLOCK();
+      return AUTH_DB_INVALID;
+   }
+
+   /* Update conversation to new user */
+   sqlite3_reset(s_db.stmt_conv_reassign);
+   sqlite3_bind_int(s_db.stmt_conv_reassign, 1, new_user_id);
+   sqlite3_bind_int64(s_db.stmt_conv_reassign, 2, conv_id);
+
+   rc = sqlite3_step(s_db.stmt_conv_reassign);
+   int changes = sqlite3_changes(s_db.db);
+   sqlite3_reset(s_db.stmt_conv_reassign);
+
+   AUTH_DB_UNLOCK();
+
+   if (rc != SQLITE_DONE) {
+      LOG_ERROR("conv_db_reassign: update failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   if (changes == 0) {
+      return AUTH_DB_NOT_FOUND;
+   }
+
+   LOG_INFO("Reassigned conversation %lld to user %d", (long long)conv_id, new_user_id);
+   return AUTH_DB_SUCCESS;
+}
+
 int conv_db_get(int64_t conv_id, int user_id, conversation_t *conv_out) {
    if (conv_id <= 0 || !conv_out) {
       return AUTH_DB_INVALID;
@@ -217,6 +331,15 @@ int conv_db_get(int64_t conv_id, int user_id, conversation_t *conv_out) {
 
    /* Privacy flag (schema v16+) */
    conv_out->is_private = sqlite3_column_int(s_db.stmt_conv_get, 16) != 0;
+
+   /* Origin field (schema v17+) */
+   const char *origin = (const char *)sqlite3_column_text(s_db.stmt_conv_get, 17);
+   if (origin) {
+      strncpy(conv_out->origin, origin, sizeof(conv_out->origin) - 1);
+      conv_out->origin[sizeof(conv_out->origin) - 1] = '\0';
+   } else {
+      strcpy(conv_out->origin, "webui"); /* Default for old conversations */
+   }
 
    sqlite3_reset(s_db.stmt_conv_get);
    AUTH_DB_UNLOCK();
@@ -428,6 +551,15 @@ int conv_db_list(int user_id,
       /* Privacy flag (schema v16+) */
       conv.is_private = sqlite3_column_int(s_db.stmt_conv_list, 11) != 0;
 
+      /* Origin field (schema v17+) */
+      const char *origin = (const char *)sqlite3_column_text(s_db.stmt_conv_list, 12);
+      if (origin) {
+         strncpy(conv.origin, origin, sizeof(conv.origin) - 1);
+         conv.origin[sizeof(conv.origin) - 1] = '\0';
+      } else {
+         strcpy(conv.origin, "webui");
+      }
+
       if (callback(&conv, ctx) != 0) {
          break; /* Callback requested stop */
       }
@@ -489,7 +621,16 @@ int conv_db_list_all(bool include_archived,
       /* Privacy flag (schema v16+) */
       conv.is_private = sqlite3_column_int(s_db.stmt_conv_list_all, 11) != 0;
 
-      const char *uname = (const char *)sqlite3_column_text(s_db.stmt_conv_list_all, 12);
+      /* Origin field (schema v17+) */
+      const char *origin = (const char *)sqlite3_column_text(s_db.stmt_conv_list_all, 12);
+      if (origin) {
+         strncpy(conv.origin, origin, sizeof(conv.origin) - 1);
+         conv.origin[sizeof(conv.origin) - 1] = '\0';
+      } else {
+         strcpy(conv.origin, "webui");
+      }
+
+      const char *uname = (const char *)sqlite3_column_text(s_db.stmt_conv_list_all, 13);
       if (uname) {
          strncpy(username, uname, AUTH_USERNAME_MAX - 1);
          username[AUTH_USERNAME_MAX - 1] = '\0';
@@ -710,6 +851,18 @@ int conv_db_search(int user_id,
       conv.continued_from = sqlite3_column_int64(s_db.stmt_conv_search, 9);
       conv.compaction_summary = NULL; /* Load on demand via conv_db_get */
 
+      /* Privacy flag (schema v16+) */
+      conv.is_private = sqlite3_column_int(s_db.stmt_conv_search, 11) != 0;
+
+      /* Origin field (schema v17+) */
+      const char *origin = (const char *)sqlite3_column_text(s_db.stmt_conv_search, 12);
+      if (origin) {
+         strncpy(conv.origin, origin, sizeof(conv.origin) - 1);
+         conv.origin[sizeof(conv.origin) - 1] = '\0';
+      } else {
+         strcpy(conv.origin, "webui");
+      }
+
       if (callback(&conv, ctx) != 0) {
          break;
       }
@@ -775,6 +928,18 @@ int conv_db_search_content(int user_id,
       /* Continuation fields - only load continued_from for search results (chain indicator) */
       conv.continued_from = sqlite3_column_int64(s_db.stmt_conv_search_content, 9);
       conv.compaction_summary = NULL; /* Load on demand via conv_db_get */
+
+      /* Privacy flag (schema v16+) */
+      conv.is_private = sqlite3_column_int(s_db.stmt_conv_search_content, 11) != 0;
+
+      /* Origin field (schema v17+) */
+      const char *origin = (const char *)sqlite3_column_text(s_db.stmt_conv_search_content, 12);
+      if (origin) {
+         strncpy(conv.origin, origin, sizeof(conv.origin) - 1);
+         conv.origin[sizeof(conv.origin) - 1] = '\0';
+      } else {
+         strcpy(conv.origin, "webui");
+      }
 
       if (callback(&conv, ctx) != 0) {
          break;

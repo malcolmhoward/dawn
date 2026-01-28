@@ -738,10 +738,21 @@ typedef struct {
  * Generates TTS and sends audio immediately, enabling sentence-by-sentence
  * playback instead of waiting for the full response.
  */
-static void webui_sentence_audio_callback(const char *sentence, void *userdata) {
+void webui_sentence_audio_callback(const char *sentence, void *userdata) {
    session_t *session = (session_t *)userdata;
 
    if (!sentence || strlen(sentence) == 0 || !session || session->disconnected) {
+      return;
+   }
+
+   /* Skip TTS if disabled for this connection.
+    * Defensive check: client_data must be a valid ws_connection_t pointer.
+    * This is guaranteed for WebUI sessions but guards against misuse. */
+   if (!session->client_data) {
+      return;
+   }
+   ws_connection_t *conn = (ws_connection_t *)session->client_data;
+   if (!conn->tts_enabled) {
       return;
    }
 
@@ -776,14 +787,14 @@ static void webui_sentence_audio_callback(const char *sentence, void *userdata) 
       cleaned[--len] = '\0';
    }
 
-   /* Only generate TTS if there's actual content */
-   if (len > 0) {
+   /* Only generate TTS if there's actual content and TTS still enabled.
+    * Re-check tts_enabled before expensive encoding (user may have disabled during cleanup). */
+   if (len > 0 && conn->tts_enabled) {
       /* Switch to "speaking" state when first audio is ready */
       webui_send_state(session, "speaking");
 
-      /* Check if client supports Opus codec */
-      ws_connection_t *conn = (ws_connection_t *)session->client_data;
-      bool use_opus = conn && conn->use_opus;
+      /* Check if client supports Opus codec (conn already validated above) */
+      bool use_opus = conn->use_opus;
 
       LOG_INFO("WebUI: TTS streaming sentence (%s): %.60s%s", use_opus ? "opus" : "pcm", cleaned,
                len > 60 ? "..." : "");
@@ -795,8 +806,11 @@ static void webui_sentence_audio_callback(const char *sentence, void *userdata) 
          int ret = webui_audio_text_to_opus(cleaned, &opus, &opus_len);
 
          if (ret == WEBUI_AUDIO_SUCCESS && opus && opus_len > 0) {
-            webui_send_audio(session, opus, opus_len);
-            webui_send_audio_end(session);
+            /* Re-check TTS enabled after encoding (user may have disabled mid-synthesis) */
+            if (conn->tts_enabled) {
+               webui_send_audio(session, opus, opus_len);
+               webui_send_audio_end(session);
+            }
             free(opus);
          }
       } else {
@@ -806,9 +820,12 @@ static void webui_sentence_audio_callback(const char *sentence, void *userdata) 
          int ret = webui_audio_text_to_pcm(cleaned, &pcm, &samples);
 
          if (ret == WEBUI_AUDIO_SUCCESS && pcm && samples > 0) {
-            size_t bytes = samples * sizeof(int16_t);
-            webui_send_audio(session, (const uint8_t *)pcm, bytes);
-            webui_send_audio_end(session);
+            /* Re-check TTS enabled after encoding (user may have disabled mid-synthesis) */
+            if (conn->tts_enabled) {
+               size_t bytes = samples * sizeof(int16_t);
+               webui_send_audio(session, (const uint8_t *)pcm, bytes);
+               webui_send_audio_end(session);
+            }
             free(pcm);
          }
       }
@@ -895,9 +912,11 @@ static void *audio_worker_thread(void *arg) {
    /* Send "thinking" state while LLM processes - streaming callback will switch to "speaking" */
    webui_send_state_with_detail(session, "thinking", "Processing request...");
 
-   /* Call LLM with TTS streaming - audio is generated and sent per-sentence */
-   char *response = session_llm_call_with_tts_no_add(session, transcript,
-                                                     webui_sentence_audio_callback, session);
+   /* Call LLM with TTS streaming - audio is generated and sent per-sentence
+    * No vision images for voice input (pass NULL for vision params) */
+   char *response = session_llm_call_with_tts_vision_no_add(session, transcript, NULL, NULL, NULL,
+                                                            0, webui_sentence_audio_callback,
+                                                            session);
    free(transcript);
 
    if (!response || REQUEST_SUPERSEDED(session, expected_gen)) {

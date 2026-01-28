@@ -945,6 +945,75 @@
 }
 
 /* =============================================================================
+ * Range Input
+ * ============================================================================= */
+.range-input-wrapper {
+   display: flex;
+   align-items: center;
+   gap: 1rem;
+   width: 100%;
+}
+
+.range-input-wrapper input[type='range'] {
+   flex: 1;
+   height: 6px;
+   -webkit-appearance: none;
+   appearance: none;
+   background: var(--bg-tertiary);
+   border-radius: 3px;
+   outline: none;
+   cursor: pointer;
+}
+
+.range-input-wrapper input[type='range']::-webkit-slider-thumb {
+   -webkit-appearance: none;
+   appearance: none;
+   width: 18px;
+   height: 18px;
+   background: var(--accent);
+   border-radius: 50%;
+   cursor: pointer;
+   transition: background-color var(--transition-fast);
+}
+
+.range-input-wrapper input[type='range']::-moz-range-thumb {
+   width: 18px;
+   height: 18px;
+   background: var(--accent);
+   border: none;
+   border-radius: 50%;
+   cursor: pointer;
+}
+
+.range-input-wrapper input[type='range']:hover::-webkit-slider-thumb {
+   background: var(--accent-hover);
+}
+
+.range-input-wrapper input[type='range']:focus {
+   outline: none;
+}
+
+.range-input-wrapper:focus-within {
+   outline: 2px solid var(--accent);
+   outline-offset: 2px;
+   border-radius: 4px;
+}
+
+.range-input-wrapper input[type='range']:focus-visible::-webkit-slider-thumb {
+   outline: 2px solid var(--accent);
+   outline-offset: 2px;
+}
+
+.range-value {
+   min-width: 80px;
+   text-align: right;
+   font-size: 0.9rem;
+   color: var(--text-secondary);
+   font-family: 'IBM Plex Mono', monospace;
+   white-space: nowrap;
+}
+
+/* =============================================================================
  * Settings Responsive
  * ============================================================================= */
 @media (max-width: 500px) {

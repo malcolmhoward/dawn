@@ -225,6 +225,9 @@ void config_set_defaults(dawn_config_t *config) {
    config->memory.prune_superseded_days = 30; /* Delete old superseded facts after 30 days */
    config->memory.prune_stale_days = 180; /* Delete unused low-confidence facts after 6 months */
    config->memory.prune_stale_min_confidence = 0.5f; /* Only prune facts below 50% confidence */
+   config->memory.conversation_idle_timeout_min =
+       15;                                   /* Auto-save voice conversations after 15 min */
+   config->memory.default_voice_user_id = 1; /* Assign to first user (admin) by default */
 
    /* Shutdown - disabled by default for security */
    config->shutdown.enabled = false;

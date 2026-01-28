@@ -593,6 +593,22 @@
                step: 0.1,
                hint: 'Only prune stale facts with confidence below this value (0-1)',
             },
+            conversation_idle_timeout_min: {
+               type: 'range',
+               label: 'Voice Conversation Idle Timeout',
+               min: 0,
+               max: 60,
+               step: 5,
+               hint: 'Minutes of idle time before auto-saving voice conversations (0 = disabled, 10+ to enable)',
+               ariaLabel: 'Voice conversation idle timeout in minutes',
+               displayValue: (val) => (val === 0 ? 'Disabled' : `${val} minutes`),
+            },
+            default_voice_user_id: {
+               type: 'dynamic_select',
+               label: 'Default Voice User',
+               dynamicKey: 'users',
+               hint: 'User account for local microphone and DAP voice conversations',
+            },
          },
       },
       mqtt: {
@@ -1013,18 +1029,30 @@
             inputHtml = `<select id="${inputId}" data-key="${fullKey}">${options}</select>`;
             break;
          case 'dynamic_select':
-            // Dynamic select that gets options from server (e.g., model lists)
+            // Dynamic select that gets options from server (e.g., model lists, user lists)
+            // Supports both plain strings and {value, label} objects
             const dynKey = def.dynamicKey;
             const dynOptions = dynamicOptions[dynKey] || [];
-            const currentVal = value || '';
+            const currentVal = value ?? '';
+
+            // Find label for current value (for object options)
+            let currentLabel = String(currentVal) || '(none)';
+            dynOptions.forEach((opt) => {
+               const optVal = typeof opt === 'object' ? opt.value : opt;
+               if (String(optVal) === String(currentVal)) {
+                  currentLabel = typeof opt === 'object' ? opt.label : opt;
+               }
+            });
 
             // Start with current value as first option
-            let dynOptionsHtml = `<option value="${Utils.escapeAttr(currentVal)}" selected>${escapeHtml(currentVal) || '(none)'}</option>`;
+            let dynOptionsHtml = `<option value="${Utils.escapeAttr(currentVal)}" selected>${escapeHtml(currentLabel)}</option>`;
 
             // Add options from server if available
             dynOptions.forEach((opt) => {
-               if (opt !== currentVal) {
-                  dynOptionsHtml += `<option value="${Utils.escapeAttr(opt)}">${escapeHtml(opt)}</option>`;
+               const optVal = typeof opt === 'object' ? opt.value : opt;
+               const optLabel = typeof opt === 'object' ? opt.label : opt;
+               if (String(optVal) !== String(currentVal)) {
+                  dynOptionsHtml += `<option value="${Utils.escapeAttr(optVal)}">${escapeHtml(optLabel)}</option>`;
                }
             });
 
@@ -1060,6 +1088,26 @@
             }
             inputHtml = `<select id="${inputId}" data-key="${fullKey}" data-type="model_default_select" data-source-key="${sourceKey}">${defaultSelectHtml}</select>`;
             break;
+         case 'range':
+            // Range slider with value display
+            const rangeAttrs = [
+               def.min !== undefined ? `min="${def.min}"` : '',
+               def.max !== undefined ? `max="${def.max}"` : '',
+               def.step !== undefined ? `step="${def.step}"` : '',
+               def.ariaLabel ? `aria-label="${Utils.escapeAttr(def.ariaLabel)}"` : '',
+            ]
+               .filter(Boolean)
+               .join(' ');
+            const currentRangeValue = value !== undefined ? value : def.min || 0;
+            const displayValue = def.displayValue
+               ? def.displayValue(currentRangeValue)
+               : currentRangeValue;
+            inputHtml = `
+               <div class="range-input-wrapper">
+                  <input type="range" id="${inputId}" value="${currentRangeValue}" ${rangeAttrs} data-key="${fullKey}" aria-valuemin="${def.min || 0}" aria-valuemax="${def.max || 100}" aria-valuenow="${currentRangeValue}">
+                  <span class="range-value" id="${inputId}-value">${escapeHtml(String(displayValue))}</span>
+               </div>`;
+            break;
       }
 
       if (def.type === 'checkbox') {
@@ -1079,6 +1127,20 @@
       if (input && handleSettingChangeCallback) {
          input.addEventListener('change', () => handleSettingChangeCallback(fullKey, input));
          input.addEventListener('input', () => handleSettingChangeCallback(fullKey, input));
+      }
+
+      // Special handling for range inputs - update display value
+      if (def.type === 'range' && input) {
+         const valueDisplay = item.querySelector('.range-value');
+         if (valueDisplay) {
+            input.addEventListener('input', () => {
+               const newValue = parseFloat(input.value);
+               const displayText = def.displayValue ? def.displayValue(newValue) : newValue;
+               valueDisplay.textContent = String(displayText);
+               // Update ARIA attributes
+               input.setAttribute('aria-valuenow', newValue);
+            });
+         }
       }
 
       return item;

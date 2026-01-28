@@ -2490,6 +2490,10 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
       if (payload) {
          handle_set_private(conn, payload);
       }
+   } else if (strcmp(type, "reassign_conversation") == 0) {
+      if (payload) {
+         handle_reassign_conversation(conn, payload);
+      }
    } else if (strcmp(type, "search_conversations") == 0) {
       if (payload) {
          handle_search_conversations(conn, payload);
@@ -2541,6 +2545,20 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
    } else if (strcmp(type, "delete_all_memories") == 0) {
       if (payload) {
          handle_delete_all_memories(conn, payload);
+      }
+   }
+   /* TTS control (per-connection) */
+   else if (strcmp(type, "set_tts_enabled") == 0) {
+      if (!conn_require_auth(conn)) {
+         return;
+      }
+      if (payload) {
+         struct json_object *enabled_obj;
+         if (json_object_object_get_ex(payload, "enabled", &enabled_obj)) {
+            conn->tts_enabled = json_object_get_boolean(enabled_obj);
+            LOG_INFO("WebUI: TTS %s for session %u", conn->tts_enabled ? "enabled" : "disabled",
+                     conn->session ? conn->session->session_id : 0);
+         }
       }
    } else {
       LOG_WARNING("WebUI: Unknown message type: %s", type);
@@ -2721,15 +2739,22 @@ static int callback_websocket(struct lws *wsi,
                         /* Check for Opus codec support */
                         conn->use_opus = check_opus_capability(payload);
 
+                        /* Check for TTS preference (default off) */
+                        conn->tts_enabled = false;
+                        struct json_object *tts_obj;
+                        if (json_object_object_get_ex(payload, "tts_enabled", &tts_obj)) {
+                           conn->tts_enabled = json_object_get_boolean(tts_obj);
+                        }
+
                         /* Reconnections still count against client limit */
                         pthread_mutex_lock(&s_mutex);
                         s_client_count++;
                         pthread_mutex_unlock(&s_mutex);
 
                         LOG_INFO("WebUI: Reconnected to session %u with token %.8s... (total: %d, "
-                                 "opus: %s)",
+                                 "opus: %s, tts: %s)",
                                  existing_session->session_id, token, s_client_count,
-                                 conn->use_opus ? "yes" : "no");
+                                 conn->use_opus ? "yes" : "no", conn->tts_enabled ? "yes" : "no");
 
                         /* Send confirmation - history is loaded by client via load_conversation */
                         send_session_token_impl(conn, token);
@@ -2778,6 +2803,13 @@ static int callback_websocket(struct lws *wsi,
                /* Check for Opus codec support */
                conn->use_opus = check_opus_capability(payload);
 
+               /* Check for TTS preference (default off) */
+               conn->tts_enabled = false;
+               struct json_object *tts_obj;
+               if (json_object_object_get_ex(payload, "tts_enabled", &tts_obj)) {
+                  conn->tts_enabled = json_object_get_boolean(tts_obj);
+               }
+
                if (generate_session_token(conn->session_token) != 0) {
                   LOG_ERROR("WebUI: Failed to generate session token");
                   session_destroy(conn->session->session_id);
@@ -2790,9 +2822,10 @@ static int callback_websocket(struct lws *wsi,
                }
                register_token(conn->session_token, conn->session->session_id);
 
-               LOG_INFO("WebUI: New session %u created (token %.8s..., total: %d, opus: %s)",
+               LOG_INFO("WebUI: New session %u created (token %.8s..., total: %d, opus: %s, "
+                        "tts: %s)",
                         conn->session->session_id, conn->session_token, s_client_count,
-                        conn->use_opus ? "yes" : "no");
+                        conn->use_opus ? "yes" : "no", conn->tts_enabled ? "yes" : "no");
 
                send_session_token_impl(conn, conn->session_token);
                send_config_impl(conn->wsi);
@@ -4282,11 +4315,17 @@ static void *text_worker_thread(void *arg) {
       session_add_message(session, "user", text);
    }
 
+   /* Check if TTS is enabled for this connection */
+   ws_connection_t *conn = (ws_connection_t *)session->client_data;
+   bool tts_enabled = conn && conn->tts_enabled;
+
    /* Call LLM with session's conversation history (message already added above)
-    * Pass vision data if present - LLM will include in request */
-   char *response = session_llm_call_no_add(
+    * Pass vision data if present - LLM will include in request
+    * TTS callback is NULL when disabled, causing simple text streaming */
+   char *response = session_llm_call_with_tts_vision_no_add(
        session, text, (const char **)work->vision_images, work->vision_image_sizes,
-       (const char(*)[WEBUI_VISION_MIME_MAX])work->vision_mimes, work->vision_image_count);
+       (const char(*)[WEBUI_VISION_MIME_MAX])work->vision_mimes, work->vision_image_count,
+       tts_enabled ? webui_sentence_audio_callback : NULL, tts_enabled ? session : NULL);
 
    /* Free vision data after LLM call (it's been sent over HTTP, no longer needed) */
    for (int i = 0; i < work->vision_image_count; i++) {
@@ -4369,6 +4408,13 @@ static void *text_worker_thread(void *arg) {
          if (processed) {
             free(response);
             final_response = processed;
+
+            /* Generate TTS for the command result (follow-up response) */
+            if (tts_enabled && strlen(processed) > 0) {
+               LOG_INFO("WebUI: Generating TTS for command result: %.60s%s", processed,
+                        strlen(processed) > 60 ? "..." : "");
+               webui_sentence_audio_callback(processed, session);
+            }
          } else {
             /* Command processing failed, use original response */
             final_response = response;
@@ -4379,9 +4425,14 @@ static void *text_worker_thread(void *arg) {
    /* Strip any remaining command tags from final response */
    strip_command_tags(final_response);
 
+   /* Send audio end marker if TTS was enabled */
+   if (tts_enabled) {
+      webui_send_audio_end(session);
+   }
+
    /* Note: Don't send transcript here - streaming already delivered the content.
-    * The session_llm_call() uses webui_send_stream_start/delta/end for real-time delivery.
-    * Assistant response is already added to history inside session_llm_call_no_add(). */
+    * The LLM call uses webui_send_stream_start/delta/end for real-time delivery.
+    * Assistant response is already added to history inside the LLM call. */
 
    /* Free the final response (either original response or processed copy) */
    free(final_response);

@@ -99,6 +99,7 @@ typedef struct {
    bool in_binary_fragment; /* True if receiving fragmented binary frame */
    uint8_t binary_msg_type; /* Message type from first fragment */
    bool use_opus;           /* True if client supports Opus codec */
+   bool tts_enabled;        /* True if TTS output enabled for this connection */
 
    /* Text message fragmentation support (for large JSON payloads) */
    char *text_buffer;      /* Accumulation buffer for fragmented text messages */
@@ -556,6 +557,14 @@ void handle_update_context(ws_connection_t *conn, struct json_object *payload);
  */
 void handle_lock_conversation_llm(ws_connection_t *conn, struct json_object *payload);
 
+/**
+ * @brief Reassign a conversation to a different user (admin only)
+ *
+ * Used to reassign voice conversations to different users after they
+ * have been saved from local/DAP sessions.
+ */
+void handle_reassign_conversation(ws_connection_t *conn, struct json_object *payload);
+
 /* =============================================================================
  * Memory Handler Functions (defined in webui_memory.c)
  * ============================================================================= */
@@ -716,6 +725,18 @@ void webui_send_audio(session_t *session, const uint8_t *data, size_t len);
  * @param session WebSocket session
  */
 void webui_send_audio_end(session_t *session);
+
+/**
+ * @brief TTS sentence callback for LLM streaming
+ *
+ * Called for each complete sentence during LLM response streaming.
+ * Generates TTS audio and sends immediately, enabling real-time playback.
+ * Respects conn->tts_enabled flag (no audio if disabled).
+ *
+ * @param sentence Complete sentence text
+ * @param userdata Session pointer (cast to session_t*)
+ */
+void webui_sentence_audio_callback(const char *sentence, void *userdata);
 
 #ifdef __cplusplus
 }

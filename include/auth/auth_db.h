@@ -843,6 +843,7 @@ typedef struct {
    char tools_mode[16];     /**< "native", "command_tags", or "disabled" */
    char thinking_mode[16];  /**< "disabled"/"auto"/"enabled" or "low"/"medium"/"high" */
    bool is_private;         /**< If true, no memory extraction for this conversation (v16) */
+   char origin[16];         /**< "webui" or "voice" (v17) */
 } conversation_t;
 
 /**
@@ -903,6 +904,34 @@ typedef int (*conversation_all_callback_t)(const conversation_t *conv,
  * @return AUTH_DB_SUCCESS, AUTH_DB_LIMIT_EXCEEDED, or AUTH_DB_FAILURE
  */
 int conv_db_create(int user_id, const char *title, int64_t *conv_id_out);
+
+/**
+ * @brief Create a new conversation with origin field
+ *
+ * Used for voice conversations saved from Session 0 or DAP clients.
+ * The origin field distinguishes between 'webui' and 'voice' conversations.
+ *
+ * @param user_id User ID who owns the conversation
+ * @param title Initial title (can be NULL for "New Conversation")
+ * @param origin Origin of conversation: "webui" or "voice"
+ * @param conv_id_out Receives the new conversation ID
+ * @return AUTH_DB_SUCCESS, AUTH_DB_LIMIT_EXCEEDED, or AUTH_DB_FAILURE
+ */
+int conv_db_create_with_origin(int user_id,
+                               const char *title,
+                               const char *origin,
+                               int64_t *conv_id_out);
+
+/**
+ * @brief Reassign a conversation to a different user (admin only)
+ *
+ * Used to reassign voice conversations to different users.
+ *
+ * @param conv_id Conversation ID
+ * @param new_user_id New user ID to own the conversation
+ * @return AUTH_DB_SUCCESS, AUTH_DB_NOT_FOUND, or AUTH_DB_FAILURE
+ */
+int conv_db_reassign(int64_t conv_id, int new_user_id);
 
 /**
  * @brief Get conversation by ID

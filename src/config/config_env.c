@@ -1222,6 +1222,10 @@ json_object *config_to_json(const dawn_config_t *config) {
                           json_object_new_int(config->memory.prune_stale_days));
    json_object_object_add(memory, "prune_stale_min_confidence",
                           json_object_new_double(config->memory.prune_stale_min_confidence));
+   json_object_object_add(memory, "conversation_idle_timeout_min",
+                          json_object_new_int(config->memory.conversation_idle_timeout_min));
+   json_object_object_add(memory, "default_voice_user_id",
+                          json_object_new_int(config->memory.default_voice_user_id));
    json_object_object_add(root, "memory", memory);
 
    /* [shutdown] */
@@ -1608,6 +1612,9 @@ int config_write_toml(const dawn_config_t *config, const char *path) {
    fprintf(fp, "prune_superseded_days = %d\n", config->memory.prune_superseded_days);
    fprintf(fp, "prune_stale_days = %d\n", config->memory.prune_stale_days);
    fprintf(fp, "prune_stale_min_confidence = %.2f\n", config->memory.prune_stale_min_confidence);
+   fprintf(fp, "conversation_idle_timeout_min = %d\n",
+           config->memory.conversation_idle_timeout_min);
+   fprintf(fp, "default_voice_user_id = %d\n", config->memory.default_voice_user_id);
 
    fprintf(fp, "\n[debug]\n");
    fprintf(fp, "mic_record = %s\n", config->debug.mic_record ? "true" : "false");

@@ -332,6 +332,10 @@ typedef struct {
    int prune_superseded_days;        /* Delete superseded facts older than N days */
    int prune_stale_days;             /* Delete stale facts not accessed in N days */
    float prune_stale_min_confidence; /* Only prune stale facts below this confidence */
+
+   /* Voice conversation idle timeout */
+   int conversation_idle_timeout_min; /* Minutes before auto-save (default: 15, 0=disabled) */
+   int default_voice_user_id;         /* User ID for local/DAP conversations (default: 1) */
 } memory_config_t;
 
 /* =============================================================================

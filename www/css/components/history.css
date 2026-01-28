@@ -352,6 +352,31 @@
    stroke: currentColor;
 }
 
+/* Voice conversation indicator (microphone icon) */
+.history-item.voice {
+   border-left: 2px solid var(--accent);
+   transition: border-color 0.15s ease;
+}
+
+.history-item-voice {
+   display: inline-flex;
+   align-items: center;
+   margin-right: 6px;
+   color: var(--text-secondary);
+   transition: color 0.15s ease;
+   vertical-align: middle;
+   flex-shrink: 0;
+}
+
+.history-item-voice svg {
+   display: block;
+}
+
+.history-item-voice:hover,
+.history-item.active .history-item-voice {
+   color: var(--accent);
+}
+
 /* Conversation Chain Groups - collapsible accordion */
 .history-chain-group {
    position: relative;
@@ -508,6 +533,18 @@
 .history-item-actions button.delete:focus-visible {
    outline-color: var(--error);
    background: rgba(239, 68, 68, 0.1);
+}
+
+.history-item-actions button.reassign:hover {
+   background: var(--accent-border);
+   border-color: var(--accent-dim);
+   color: var(--accent);
+}
+
+.history-item-actions button.reassign:focus-visible {
+   outline: 2px solid var(--accent);
+   outline-offset: 2px;
+   background: var(--accent-border);
 }
 
 .history-item-actions svg {

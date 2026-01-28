@@ -154,6 +154,7 @@ typedef struct session {
    session_type_t type;
    time_t created_at;
    time_t last_activity;
+   time_t last_interaction_complete;  // Last wake-word-to-response cycle (for idle timeout)
 
    // Conversation history (owned by session, protected by history_mutex)
    struct json_object *conversation_history;
@@ -442,6 +443,40 @@ struct json_object *session_get_history(session_t *session);
 void session_clear_history(session_t *session);
 
 /**
+ * @brief Check if session has user messages (beyond system prompt)
+ *
+ * @param session Session to check
+ * @return true if session has at least 2 messages (system + user), false otherwise
+ *
+ * @locks session->history_mutex
+ */
+bool session_has_messages(session_t *session);
+
+/**
+ * @brief Update last interaction complete timestamp
+ *
+ * Called after a successful wake-word-to-response cycle completes.
+ * Used for idle timeout detection in voice conversations.
+ *
+ * @param session Session to update
+ */
+void session_update_interaction_complete(session_t *session);
+
+/**
+ * @brief Save voice conversation to database and start fresh
+ *
+ * Called on idle timeout for Session 0 (local mic) and DAP clients.
+ * Creates a new conversation in the database with origin='voice',
+ * saves all messages, triggers memory extraction, then clears session history.
+ *
+ * @param session Session to save
+ * @return Conversation ID on success, -1 on failure
+ *
+ * @locks session->history_mutex
+ */
+int64_t session_save_voice_conversation(session_t *session);
+
+/**
  * @brief Initialize session with system prompt
  *
  * Clears any existing history and adds the system message.
@@ -504,28 +539,6 @@ char *session_get_system_prompt(session_t *session);
 char *session_llm_call(session_t *session, const char *user_text);
 
 /**
- * @brief Call LLM without adding user message to history (with optional vision)
- *
- * Same as session_llm_call but skips adding user message to history.
- * Use when caller has already added the message before the call.
- * This ensures message is in history even if the call is cancelled.
- *
- * @param session Session context
- * @param user_text User input text
- * @param vision_images Array of base64 encoded image data (NULL for text-only)
- * @param vision_image_sizes Array of image sizes (NULL for text-only)
- * @param vision_mimes Array of MIME type strings (NULL for text-only)
- * @param vision_image_count Number of images (0 for text-only)
- * @return LLM response (caller must free), or NULL on failure
- */
-char *session_llm_call_no_add(session_t *session,
-                              const char *user_text,
-                              const char **vision_images,
-                              const size_t *vision_image_sizes,
-                              const char (*vision_mimes)[24],
-                              int vision_image_count);
-
-/**
  * @brief Sentence callback for TTS streaming
  *
  * Called for each complete sentence detected in the LLM response.
@@ -559,15 +572,33 @@ char *session_llm_call_with_tts(session_t *session,
                                 void *userdata);
 
 /**
- * @brief Call LLM with TTS streaming, without adding user message
+ * @brief Unified LLM call with optional TTS and vision, without adding user message
  *
- * Same as session_llm_call_with_tts but skips adding user message to history.
+ * Flexible LLM call that supports:
+ * - Optional vision images (pass NULL/0 for text-only)
+ * - Optional TTS sentence streaming (pass NULL for no TTS)
+ *
  * Use when caller has already added the message before the call.
+ * This ensures message is in history even if the call is cancelled.
+ *
+ * @param session Session context
+ * @param user_text User input text
+ * @param vision_images Array of base64 encoded image data (NULL for text-only)
+ * @param vision_image_sizes Array of image sizes (NULL for text-only)
+ * @param vision_mimes Array of MIME type strings (NULL for text-only)
+ * @param vision_image_count Number of images (0 for text-only)
+ * @param sentence_cb Callback for each complete sentence (NULL to disable TTS)
+ * @param userdata Context passed to sentence callback
+ * @return LLM response (caller must free), or NULL on failure
  */
-char *session_llm_call_with_tts_no_add(session_t *session,
-                                       const char *user_text,
-                                       session_sentence_callback sentence_cb,
-                                       void *userdata);
+char *session_llm_call_with_tts_vision_no_add(session_t *session,
+                                              const char *user_text,
+                                              const char **vision_images,
+                                              const size_t *vision_image_sizes,
+                                              const char (*vision_mimes)[24],
+                                              int vision_image_count,
+                                              session_sentence_callback sentence_cb,
+                                              void *userdata);
 #endif /* ENABLE_MULTI_CLIENT */
 
 // =============================================================================

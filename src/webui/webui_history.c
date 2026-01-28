@@ -227,6 +227,8 @@ static int list_conv_callback(const conversation_t *conv, void *context) {
    json_object_object_add(conv_obj, "message_count", json_object_new_int(conv->message_count));
    json_object_object_add(conv_obj, "is_archived", json_object_new_boolean(conv->is_archived));
    json_object_object_add(conv_obj, "is_private", json_object_new_boolean(conv->is_private));
+   json_object_object_add(conv_obj, "origin",
+                          json_object_new_string(conv->origin[0] ? conv->origin : "webui"));
 
    /* Continuation indicator for history panel chain icon */
    if (conv->continued_from > 0) {
@@ -1329,6 +1331,71 @@ void handle_lock_conversation_llm(ws_connection_t *conn, struct json_object *pay
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
       json_object_object_add(resp_payload, "error",
                              json_object_new_string("Failed to lock settings"));
+   }
+
+   json_object_object_add(response, "payload", resp_payload);
+   send_json_response(conn->wsi, response);
+   json_object_put(response);
+}
+
+/**
+ * @brief Reassign a conversation to a different user (admin only)
+ */
+void handle_reassign_conversation(ws_connection_t *conn, struct json_object *payload) {
+   if (!conn_require_admin(conn)) {
+      return;
+   }
+
+   json_object *response = json_object_new_object();
+   json_object_object_add(response, "type",
+                          json_object_new_string("reassign_conversation_response"));
+   json_object *resp_payload = json_object_new_object();
+
+   /* Get required fields */
+   json_object *conv_id_obj, *new_user_id_obj;
+   if (!json_object_object_get_ex(payload, "conversation_id", &conv_id_obj) ||
+       !json_object_object_get_ex(payload, "new_user_id", &new_user_id_obj)) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Missing conversation_id or new_user_id"));
+      json_object_object_add(response, "payload", resp_payload);
+      send_json_response(conn->wsi, response);
+      json_object_put(response);
+      return;
+   }
+
+   int64_t conv_id = json_object_get_int64(conv_id_obj);
+   int new_user_id = json_object_get_int(new_user_id_obj);
+
+   if (conv_id <= 0 || new_user_id <= 0) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Invalid conversation_id or user_id"));
+      json_object_object_add(response, "payload", resp_payload);
+      send_json_response(conn->wsi, response);
+      json_object_put(response);
+      return;
+   }
+
+   /* Perform the reassignment */
+   int result = conv_db_reassign(conv_id, new_user_id);
+
+   if (result == AUTH_DB_SUCCESS) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
+      json_object_object_add(resp_payload, "conversation_id", json_object_new_int64(conv_id));
+      json_object_object_add(resp_payload, "new_user_id", json_object_new_int(new_user_id));
+      json_object_object_add(resp_payload, "message",
+                             json_object_new_string("Conversation reassigned successfully"));
+      LOG_INFO("WebUI: Admin %s reassigned conversation %lld to user %d", conn->username,
+               (long long)conv_id, new_user_id);
+   } else if (result == AUTH_DB_NOT_FOUND) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Conversation not found"));
+   } else {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Failed to reassign conversation"));
    }
 
    json_object_object_add(response, "payload", resp_payload);

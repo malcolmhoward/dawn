@@ -2372,6 +2372,9 @@ int main(int argc, char *argv[]) {
             free(response_text);
             free(tts_response);
             free(history_response);
+
+            /* Mark successful interaction complete for idle timeout tracking */
+            session_update_interaction_complete(local_session);
          } else {
             // Response is NULL but not interrupted - error case
             pthread_mutex_lock(&tts_mutex);
@@ -2400,6 +2403,27 @@ int main(int argc, char *argv[]) {
             /* Check for text input from any source (TUI, future REST, etc.) */
             if (check_and_process_input_queue(&command_text, &recState, &silenceNextState)) {
                break;
+            }
+
+            /* Check voice conversation idle timeout (only when not processing LLM) */
+            if (!llm_processing && g_config.memory.enabled &&
+                g_config.memory.conversation_idle_timeout_min > 0) {
+               time_t last_interaction = local_session->last_interaction_complete;
+               if (last_interaction > 0 && session_has_messages(local_session)) {
+                  time_t idle_sec = time(NULL) - last_interaction;
+                  time_t timeout_sec = g_config.memory.conversation_idle_timeout_min * 60;
+
+                  if (idle_sec >= timeout_sec) {
+                     LOG_INFO("Session 0: Idle timeout after %d minutes, saving conversation",
+                              g_config.memory.conversation_idle_timeout_min);
+                     int64_t conv_id = session_save_voice_conversation(local_session);
+                     if (conv_id > 0) {
+                        LOG_INFO("Session 0: Saved as conversation %lld", (long long)conv_id);
+                        /* Update global pointer to the new history */
+                        conversation_history = local_session->conversation_history;
+                     }
+                  }
+               }
             }
 
             capture_buffer(&myAudioControls, max_buff, max_buff_size, &buff_size);
@@ -3633,6 +3657,15 @@ int main(int argc, char *argv[]) {
          LOG_ERROR("Error joining LLM thread: %d", join_result);
       }
       llm_processing = 0;
+   }
+
+   /* Save any non-empty voice conversation before shutdown */
+   if (local_session && session_has_messages(local_session)) {
+      LOG_INFO("Shutdown: Saving Session 0 voice conversation");
+      int64_t conv_id = session_save_voice_conversation(local_session);
+      if (conv_id > 0) {
+         LOG_INFO("Shutdown: Saved as conversation %lld", (long long)conv_id);
+      }
    }
 
 #ifdef ENABLE_AUTH

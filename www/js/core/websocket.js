@@ -27,6 +27,7 @@
       onTextMessage: null, // (data) => void
       onBinaryMessage: null, // (data) => void
       getOpusReady: null, // () => boolean
+      getTtsEnabled: null, // () => boolean
    };
 
    /**
@@ -74,6 +75,11 @@
             audio_codecs: opusReady ? ['opus', 'pcm'] : ['pcm'],
          };
 
+         // Get TTS preference from callback or localStorage
+         const ttsEnabled = callbacks.getTtsEnabled
+            ? callbacks.getTtsEnabled()
+            : localStorage.getItem('ttsEnabled') === 'true';
+
          // Try to reconnect with existing session token, or request new session
          const savedToken = localStorage.getItem('dawn_session_token');
          if (savedToken) {
@@ -81,7 +87,11 @@
             ws.send(
                JSON.stringify({
                   type: 'reconnect',
-                  payload: { token: savedToken, capabilities: capabilities },
+                  payload: {
+                     token: savedToken,
+                     capabilities: capabilities,
+                     tts_enabled: ttsEnabled,
+                  },
                })
             );
          } else {
@@ -89,11 +99,11 @@
             ws.send(
                JSON.stringify({
                   type: 'init',
-                  payload: { capabilities: capabilities },
+                  payload: { capabilities: capabilities, tts_enabled: ttsEnabled },
                })
             );
          }
-         console.log('Audio codecs:', capabilities.audio_codecs);
+         console.log('Audio codecs:', capabilities.audio_codecs, 'TTS:', ttsEnabled ? 'on' : 'off');
       };
 
       ws.onclose = function (event) {
@@ -236,6 +246,7 @@
       if (cbs.onTextMessage) callbacks.onTextMessage = cbs.onTextMessage;
       if (cbs.onBinaryMessage) callbacks.onBinaryMessage = cbs.onBinaryMessage;
       if (cbs.getOpusReady) callbacks.getOpusReady = cbs.getOpusReady;
+      if (cbs.getTtsEnabled) callbacks.getTtsEnabled = cbs.getTtsEnabled;
    }
 
    // Expose globally

@@ -31,6 +31,7 @@
          onTextMessage: handleTextMessage,
          onBinaryMessage: handleBinaryMessage,
          getOpusReady: () => opusReady,
+         getTtsEnabled: () => DawnTts.isEnabled(),
       });
    }
 
@@ -270,6 +271,10 @@
             // User management responses
             case 'list_users_response':
                DawnUsers.handleListResponse(msg.payload);
+               // Also handle for reassign modal in history panel
+               DawnHistory.handleUsersListForReassign(msg.payload);
+               // Also handle for settings config (default voice user dropdown)
+               DawnSettings.handleUsersListResponse(msg.payload);
                break;
             case 'create_user_response':
                DawnUsers.handleCreateResponse(msg.payload);
@@ -328,6 +333,9 @@
             case 'set_private_response':
                DawnSettings.handleSetPrivateResponse(msg.payload);
                break;
+            case 'reassign_conversation_response':
+               DawnHistory.handleReassignResponse(msg.payload);
+               break;
             // Memory management responses
             case 'get_memory_stats_response':
                DawnMemory.handleStatsResponse(msg.payload);
@@ -378,6 +386,10 @@
          switch (msgType) {
             case DawnConfig.WS_BIN_AUDIO_OUT:
                // TTS audio chunk - accumulate until segment end
+               // Skip if TTS was disabled (race: server may still be sending)
+               if (!DawnTts.isEnabled()) {
+                  break;
+               }
                if (bytes.length > 1) {
                   const payload = bytes.slice(1);
                   // Store raw data (Opus or PCM) until segment end
@@ -393,6 +405,11 @@
 
             case DawnConfig.WS_BIN_AUDIO_SEGMENT_END:
                // End of TTS audio segment - decode and play accumulated data
+               // Skip if TTS was disabled (also clear any pending data)
+               if (!DawnTts.isEnabled()) {
+                  pendingOpusData = [];
+                  break;
+               }
                if (pendingOpusData.length > 0) {
                   // Concatenate all pending data
                   const totalLen = pendingOpusData.reduce((sum, chunk) => sum + chunk.length, 0);
@@ -758,6 +775,11 @@
     * Queue decoded audio samples for playback
     */
    function queueDecodedAudio(pcmData) {
+      // Skip queueing if TTS was disabled (race condition: server may still be sending)
+      if (!DawnTts.isEnabled()) {
+         return;
+      }
+
       // Convert Int16 to Uint8 for existing playback pipeline
       const bytes = new Uint8Array(pcmData.buffer, pcmData.byteOffset, pcmData.byteLength);
       DawnAudioPlayback.queueAudio(bytes);
@@ -801,6 +823,7 @@
 
    // =============================================================================
    // Color Theme - Moved to /js/ui/theme.js (DawnTheme module)
+   // TTS Toggle - Moved to /js/ui/tts.js (DawnTts module)
    // =============================================================================
 
    // =============================================================================
@@ -868,6 +891,9 @@
             }
          });
       }
+
+      // TTS toggle button (via DawnTts module)
+      DawnTts.init();
 
       // Debug mode toggle
       DawnElements.debugBtn.addEventListener('click', function () {

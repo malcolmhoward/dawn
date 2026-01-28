@@ -89,9 +89,12 @@ char *llm_claude_chat_completion(struct json_object *conversation_history,
    curl_buffer_t chunk;
    char *response = NULL;
 
-   // Convert OpenAI format to Claude format
+   // Convert OpenAI format to Claude format.
+   // Always iteration 0: non-streaming does not support tool execution loops,
+   // so orphaned tool_use filtering is always needed to clean up any history artifacts.
    json_object *request = convert_to_claude_format(conversation_history, input_text, vision_images,
-                                                   vision_image_sizes, vision_image_count, model);
+                                                   vision_image_sizes, vision_image_count, model,
+                                                   0);
 
    const char *payload = json_object_to_json_string_ext(
        request, JSON_C_TO_STRING_PLAIN | JSON_C_TO_STRING_NOSLASHESCAPE);
@@ -420,7 +423,7 @@ static char *llm_claude_streaming_internal(struct json_object *conversation_hist
 
    // Convert OpenAI format to Claude format
    request = convert_to_claude_format(conversation_history, input_text, vision_images,
-                                      vision_image_sizes, vision_image_count, model);
+                                      vision_image_sizes, vision_image_count, model, iteration);
    if (!request) {
       LOG_ERROR("Failed to convert conversation to Claude format");
       return NULL;

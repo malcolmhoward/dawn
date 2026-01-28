@@ -54,13 +54,61 @@ static bool is_current_session_remote(void) {
 }
 
 /**
+ * @brief Count tool results in conversation history
+ *
+ * First pass to determine how many tool_result IDs exist, used to allocate
+ * the correct size for the ID collection array.
+ */
+static int count_tool_results(struct json_object *conversation) {
+   int count = 0;
+   int conv_len = json_object_array_length(conversation);
+
+   for (int i = 0; i < conv_len; i++) {
+      json_object *msg = json_object_array_get_idx(conversation, i);
+      json_object *role_obj;
+      if (!json_object_object_get_ex(msg, "role", &role_obj)) {
+         continue;
+      }
+      const char *role = json_object_get_string(role_obj);
+
+      // OpenAI format: role="tool" with tool_call_id
+      if (strcmp(role, "tool") == 0) {
+         count++;
+      }
+
+      // Claude format: role="user" with content array containing tool_result blocks
+      if (strcmp(role, "user") == 0) {
+         json_object *content_obj;
+         if (json_object_object_get_ex(msg, "content", &content_obj) &&
+             json_object_is_type(content_obj, json_type_array)) {
+            int content_len = json_object_array_length(content_obj);
+            for (int j = 0; j < content_len; j++) {
+               json_object *block = json_object_array_get_idx(content_obj, j);
+               json_object *type_obj;
+               if (json_object_object_get_ex(block, "type", &type_obj) &&
+                   strcmp(json_object_get_string(type_obj), "tool_result") == 0) {
+                  count++;
+               }
+            }
+         }
+      }
+   }
+   return count;
+}
+
+/**
  * @brief Collect tool result IDs from conversation history
  *
  * Pre-scans conversation to find all tool result IDs, used to filter
  * orphaned tool_use blocks that don't have matching results.
+ *
+ * @param conversation The conversation history to scan
+ * @param tool_result_ids Dynamically allocated array to store IDs (caller allocates)
+ * @param max_results Size of the tool_result_ids array
+ * @return Number of IDs collected
  */
 static int collect_tool_result_ids(struct json_object *conversation,
-                                   char tool_result_ids[][LLM_TOOLS_ID_LEN],
+                                   char (*tool_result_ids)[LLM_TOOLS_ID_LEN],
                                    int max_results) {
    int count = 0;
    int conv_len = json_object_array_length(conversation);
@@ -473,7 +521,8 @@ json_object *convert_to_claude_format(struct json_object *openai_conversation,
                                       const char **vision_images,
                                       const size_t *vision_image_sizes,
                                       int vision_image_count,
-                                      const char *model) {
+                                      const char *model,
+                                      int iteration) {
    (void)vision_image_sizes;  // Sizes not needed for base64 strings
    json_object *claude_request = json_object_new_object();
 
@@ -603,14 +652,36 @@ json_object *convert_to_claude_format(struct json_object *openai_conversation,
    const char *last_role = NULL;
    json_object *last_message = NULL;
 
-// Pre-scan to collect tool result IDs for orphaned tool_use filtering
-// NOTE: MAX_TRACKED_TOOL_RESULTS limits how many tool_result IDs we track.
-// If a conversation has more than 16 tool results, older orphaned tool_use
-// blocks may not be properly filtered. This is acceptable for typical usage.
-#define MAX_TRACKED_TOOL_RESULTS 16
-   char tool_result_ids[MAX_TRACKED_TOOL_RESULTS][LLM_TOOLS_ID_LEN];
-   int tool_result_count = collect_tool_result_ids(openai_conversation, tool_result_ids,
-                                                   MAX_TRACKED_TOOL_RESULTS);
+   // Pre-scan to collect tool result IDs for orphaned tool_use filtering.
+   // Only needed on iteration 0 (initial call). On follow-up calls after tool execution,
+   // we just added the tool_use and tool_result ourselves, so they're guaranteed paired.
+   //
+   // Two-pass approach (count then allocate) is preferred over a growing array:
+   // - Single exact-size malloc avoids fragmentation and realloc overhead
+   // - Memory footprint is predictable (typically 64-320 bytes)
+   // - CPU cost is acceptable since this runs once per user message, not in audio loops
+   char(*tool_result_ids)[LLM_TOOLS_ID_LEN] = NULL;
+   int tool_result_count = 0;
+
+   if (iteration == 0) {
+      // Count tool results first, then allocate exact size needed
+      int result_count = count_tool_results(openai_conversation);
+
+      // Sanity bound to prevent integer overflow in allocation calculation
+      if (result_count > 10000) {
+         LOG_WARNING("Claude: Excessive tool results in history (%d), capping at 10000",
+                     result_count);
+         result_count = 10000;
+      }
+
+      if (result_count > 0) {
+         tool_result_ids = malloc(result_count * LLM_TOOLS_ID_LEN);
+         if (tool_result_ids) {
+            tool_result_count = collect_tool_result_ids(openai_conversation, tool_result_ids,
+                                                        result_count);
+         }
+      }
+   }
 
    for (int i = 0; i < conv_len; i++) {
       json_object *msg = json_object_array_get_idx(openai_conversation, i);
@@ -643,11 +714,13 @@ json_object *convert_to_claude_format(struct json_object *openai_conversation,
             const char *block_type = json_object_get_string(type_obj);
 
             if (strcmp(block_type, "tool_use") == 0) {
-               // Check if this tool_use has a matching result
+               // Check if this tool_use has a matching result (only filter on iteration 0)
                json_object *id_obj;
                if (json_object_object_get_ex(block, "id", &id_obj)) {
                   const char *tool_id = json_object_get_string(id_obj);
-                  if (has_matching_tool_result(tool_id, tool_result_ids, tool_result_count)) {
+                  // If no filter active (iteration > 0), include all tool_use blocks
+                  if (!tool_result_ids ||
+                      has_matching_tool_result(tool_id, tool_result_ids, tool_result_count)) {
                      json_object_array_add(filtered_content, json_object_get(block));
                      has_tool_use = 1;
                   } else {
@@ -705,8 +778,9 @@ json_object *convert_to_claude_format(struct json_object *openai_conversation,
                call_id = json_object_get_string(id_obj);
             }
 
-            // Check if this tool call has a matching result
-            if (!has_matching_tool_result(call_id, tool_result_ids, tool_result_count)) {
+            // Check if this tool call has a matching result (only filter on iteration 0)
+            if (tool_result_ids &&
+                !has_matching_tool_result(call_id, tool_result_ids, tool_result_count)) {
                LOG_WARNING("Claude: Skipping tool_use %s (no matching tool_result)", call_id);
                continue;
             }
@@ -980,6 +1054,11 @@ json_object *convert_to_claude_format(struct json_object *openai_conversation,
    }
 
    json_object_object_add(claude_request, "messages", messages_array);
+
+   // Free dynamically allocated tool result IDs
+   if (tool_result_ids) {
+      free(tool_result_ids);
+   }
 
    return claude_request;
 }
