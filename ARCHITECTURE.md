@@ -4,7 +4,7 @@ This document describes the architecture of the D.A.W.N. (Digital Assistant for 
 
 **D.A.W.N.** is the central intelligence layer of the OASIS ecosystem, responsible for interpreting user intent, fusing data from every subsystem, and routing commands. At its core, DAWN performs neural-inference to understand context and drive decision-making, acting as OASIS's orchestration hub for MIRAGE, AURA, SPARK, STAT, and any future modules.
 
-**Last Updated**: January 25, 2026 (added Memory Subsystem section)
+**Last Updated**: January 30, 2026 (added Tool Registry System section)
 
 ## Table of Contents
 
@@ -1024,7 +1024,39 @@ Mismatch causes connection failure or data corruption.
 
 ## Command Processing Architecture
 
-DAWN supports three parallel command processing paths that all converge on a unified executor:
+DAWN supports three parallel command processing paths that all converge on a unified executor.
+
+### Tool Registry System
+
+The **tool_registry** (`src/tools/tool_registry.c`) is the primary mechanism for registering modular tools. Each tool is a self-contained module with its own metadata, parameters, and callback:
+
+```c
+static const tool_metadata_t my_tool_metadata = {
+   .name = "my_tool",              // API name for LLM tool calls
+   .device_string = "my device",   // Internal device identifier
+   .description = "Tool description for LLM schema",
+   .params = my_tool_params,       // Parameter definitions
+   .param_count = 2,
+   .device_type = TOOL_DEVICE_TYPE_GETTER,
+   .capabilities = TOOL_CAP_NETWORK,
+   .is_getter = true,
+   .default_remote = true,
+   .callback = my_tool_callback,
+};
+```
+
+**Key Features:**
+- **O(1) Lookup**: FNV-1a hash tables for name, device_string, and aliases
+- **Self-Registration**: Each tool calls `tool_registry_register()` during init
+- **LLM Schema Generation**: `tool_registry_generate_llm_tools()` builds provider-specific schemas
+- **Capability Flags**: `TOOL_CAP_NETWORK`, `TOOL_CAP_DANGEROUS`, etc. for safety classification
+
+**Registered Tools** (as of January 2026):
+- audio_tools, calculator_tool, datetime_tool, hud_tools, llm_status_tool
+- memory_tool, music_tool, reset_conversation_tool, search_tool, shutdown_tool
+- smartthings_tool, switch_llm_tool, url_tool, viewing_tool, volume_tool, weather_tool
+
+### Command Flow
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -1603,8 +1635,8 @@ The WebUI settings panel (`www/js/ui/settings.js`) defines a `SETTINGS_SCHEMA` t
 
 ---
 
-**Document Version**: 1.5
-**Last Updated**: January 26, 2026 (added memory recent action, review fixes)
+**Document Version**: 1.6
+**Last Updated**: January 30, 2026 (added Tool Registry System section)
 **Reorganization Commit**: [Git SHA to be added after commit]
 
 ### LLM Threading Architecture (Post-Interrupt Implementation)

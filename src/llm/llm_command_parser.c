@@ -493,7 +493,8 @@ static const char *get_localization_context(void) {
    // Always include current date so model knows what "today" means
    // This is critical for models with older training data cutoffs
    time_t now = time(NULL);
-   struct tm *tm_info = localtime(&now);
+   struct tm tm_storage;
+   struct tm *tm_info = localtime_r(&now, &tm_storage);
    if (tm_info) {
       char date_str[32];
       size_t date_len = strftime(date_str, sizeof(date_str), "%B %d, %Y", tm_info);

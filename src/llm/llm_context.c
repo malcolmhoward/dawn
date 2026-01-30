@@ -628,7 +628,8 @@ int llm_context_save_conversation(uint32_t session_id,
 
    /* Generate timestamped filename */
    time_t now = time(NULL);
-   struct tm *tm_info = localtime(&now);
+   struct tm tm_storage;
+   struct tm *tm_info = localtime_r(&now, &tm_storage);
    char timestamp[32];
    strftime(timestamp, sizeof(timestamp), "%Y%m%d_%H%M%S", tm_info);
 

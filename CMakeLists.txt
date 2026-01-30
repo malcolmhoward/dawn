@@ -196,6 +196,10 @@ if(ENABLE_DAP OR ENABLE_WEBUI)
     message(STATUS "Multi-client: ENABLED (session manager + worker pool)")
 endif()
 
+# Tool subsystem - compile-time tool configuration
+# Provides options to enable/disable individual tools
+include(cmake/DawnTools.cmake)
+
 # Platform-specific CUDA configuration (Jetson only)
 if(PLATFORM STREQUAL "JETSON")
     set(CUDA_TOOLKIT_ROOT_DIR "/usr/local/cuda-12.6")
@@ -368,6 +372,7 @@ set(DAWN_SOURCES
     src/core/command_router.c
     src/core/command_registry.c
     src/core/command_executor.c
+    src/core/device_types.c
     src/core/ocp_helpers.c
 
     # ASR subsystem
@@ -409,6 +414,8 @@ set(DAWN_SOURCES
     src/ui/metrics.c
 
     # Tools subsystem (web search, weather, calculator, etc.)
+    src/tools/tool_registry.c
+    src/tools/tools_init.c
     src/tools/web_search.c
     src/tools/weather_service.c
     src/tools/smartthings_service.c
@@ -427,6 +434,9 @@ set(DAWN_SOURCES
     src/config/config_validate.c
     src/config/config_env.c
 )
+
+# Add conditionally-compiled tool sources from DawnTools.cmake
+list(APPEND DAWN_SOURCES ${TOOL_SOURCES})
 
 # Conditionally add TUI source file
 if(ENABLE_TUI)

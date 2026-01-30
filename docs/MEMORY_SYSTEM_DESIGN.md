@@ -1617,3 +1617,317 @@ Legend:
 - Delete confirmations keyboard-navigable
 
 *This document reflects finalized design decisions as of January 2026. Implementation should follow this specification.*
+
+---
+
+## Appendix C: Future Work - Semantic Memory Search
+
+### C.1 Overview
+
+The current memory system uses **keyword-based search** (SQL LIKE queries). This works well for exact matches but misses semantic relationships:
+
+| Query | Stored Fact | Keyword Search | Semantic Search |
+|-------|-------------|----------------|-----------------|
+| "What's my dog's name?" | "My pet Bruno is a golden retriever" | ❌ No match (no word "dog") | ✅ Match (dog ≈ pet, golden retriever) |
+| "food allergies" | "User is allergic to shellfish" | ❌ No match | ✅ Match (allergies ≈ allergic) |
+| "daughter" | "Emma is the user's child" | ❌ No match | ✅ Match (daughter ≈ child) |
+
+**Semantic search** uses **embeddings** (vector representations of meaning) to find conceptually similar content even when words differ.
+
+### C.2 Hybrid Search Architecture
+
+Combine keyword and semantic search for best results:
+
+```
+User Query: "What's my dog's name?"
+                    │
+        ┌───────────┴───────────┐
+        ▼                       ▼
+┌───────────────┐       ┌───────────────┐
+│ Keyword Search│       │ Embed Query   │
+│ (SQL LIKE)    │       │ (API call)    │
+└───────┬───────┘       └───────┬───────┘
+        │                       │
+        ▼                       ▼
+┌───────────────┐       ┌───────────────┐
+│ Results with  │       │ Cosine        │
+│ BM25-style    │       │ Similarity    │
+│ ranking       │       │ Search        │
+└───────┬───────┘       └───────┬───────┘
+        │                       │
+        └───────────┬───────────┘
+                    ▼
+            ┌───────────────┐
+            │ Merge Results │
+            │ (weighted)    │
+            │ 0.3 keyword + │
+            │ 0.7 vector    │
+            └───────┬───────┘
+                    ▼
+            Return top N results
+```
+
+**Benefits:**
+- **Keywords** catch exact matches ("Bruno" finds "Bruno")
+- **Vectors** catch semantic matches ("dog" finds "golden retriever")
+- Together they're more robust than either alone
+
+### C.3 Embedding Provider Configuration
+
+Mirror the LLM provider pattern for consistency:
+
+**dawn.toml:**
+```toml
+[embeddings]
+type = "local"                    # "local" or "cloud"
+
+[embeddings.local]
+provider = "ollama"               # "ollama" or "llama_cpp"
+endpoint = "http://127.0.0.1:11434"
+model = "nomic-embed-text"        # 768 dimensions, ~275MB
+
+[embeddings.cloud]
+provider = "openai"               # "openai" (fallback or primary)
+model = "text-embedding-3-small"  # 1536 dimensions
+```
+
+**Provider Options:**
+
+| Provider | Endpoint | Model | Dimensions | Notes |
+|----------|----------|-------|------------|-------|
+| **Ollama** | `localhost:11434/api/embed` | nomic-embed-text | 768 | Recommended local |
+| **llama.cpp** | `localhost:8081/v1/embeddings` | nomic-embed-text | 768 | OpenAI-compatible API |
+| **OpenAI** | `api.openai.com/v1/embeddings` | text-embedding-3-small | 1536 | Cloud fallback |
+
+**Local-First Philosophy:**
+- Default to Ollama if available (same service as local LLM)
+- Cloud embeddings as optional fallback
+- Embedding cache reduces API calls significantly
+
+### C.4 Embedding Cache
+
+Avoid re-embedding identical text:
+
+```sql
+CREATE TABLE embedding_cache (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    content_hash TEXT NOT NULL UNIQUE,    -- SHA256 of text
+    provider TEXT NOT NULL,                -- "ollama", "llama_cpp", "openai"
+    model TEXT NOT NULL,                   -- Model name
+    dimensions INTEGER NOT NULL,           -- Vector size
+    embedding BLOB NOT NULL,               -- Float array
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_embedding_cache_hash ON embedding_cache(content_hash);
+```
+
+**Cache Strategy:**
+1. Hash incoming text (SHA256)
+2. Check cache: `SELECT embedding FROM embedding_cache WHERE content_hash = ?`
+3. If hit → return cached embedding (zero latency)
+4. If miss → call provider API, store result, return
+
+**Expected hit rates:**
+- Same fact accessed multiple times → 100% hit
+- File re-indexed without changes → 100% hit
+- Typical workload → 40-60% hit rate
+
+### C.5 Database Schema Changes
+
+Add embedding column to memory tables:
+
+```sql
+-- Add to memory_facts (Phase 1-4 already created this table)
+ALTER TABLE memory_facts ADD COLUMN embedding BLOB;
+
+-- New index for vector search (optional, for large datasets)
+-- SQLite doesn't have native vector indexes; we'll do linear scan for small N
+```
+
+**Storage Cost:**
+- nomic-embed-text: 768 floats × 4 bytes = 3,072 bytes per embedding
+- 1,000 facts = ~3 MB of embeddings
+- text-embedding-3-small: 1,536 floats × 4 bytes = 6,144 bytes per embedding
+
+Trivial for modern storage.
+
+### C.6 Cosine Similarity in C
+
+```c
+float embedding_cosine_similarity(const float *a, const float *b, int dims) {
+    float dot = 0.0f, norm_a = 0.0f, norm_b = 0.0f;
+    for (int i = 0; i < dims; i++) {
+        dot += a[i] * b[i];
+        norm_a += a[i] * a[i];
+        norm_b += b[i] * b[i];
+    }
+    if (norm_a == 0.0f || norm_b == 0.0f) return 0.0f;
+    return dot / (sqrtf(norm_a) * sqrtf(norm_b));
+}
+```
+
+For ~1,000 facts with 768-dim vectors, linear scan takes <1ms on modern hardware.
+
+### C.7 API Integration
+
+**Ollama:**
+```bash
+curl http://localhost:11434/api/embed \
+  -d '{"model": "nomic-embed-text", "input": "What is my dog named?"}'
+
+# Response:
+{"embeddings": [[0.123, -0.456, 0.789, ...]]}
+```
+
+**llama.cpp (OpenAI-compatible):**
+```bash
+curl http://localhost:8081/v1/embeddings \
+  -d '{"input": "What is my dog named?"}'
+
+# Response:
+{"data": [{"embedding": [0.123, -0.456, 0.789, ...]}]}
+```
+
+**OpenAI:**
+```bash
+curl https://api.openai.com/v1/embeddings \
+  -H "Authorization: Bearer $OPENAI_API_KEY" \
+  -d '{"model": "text-embedding-3-small", "input": "What is my dog named?"}'
+
+# Response:
+{"data": [{"embedding": [0.123, -0.456, 0.789, ...]}]}
+```
+
+### C.8 WebUI Configuration
+
+Add embeddings section to settings panel (similar to LLM settings):
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  ▼ Embeddings                                                   [?] │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  Type:     [Local ▼]              Provider:  [Ollama ▼]            │
+│                                                                     │
+│  Model:    [nomic-embed-text ▼]                                    │
+│                                                                     │
+│  Endpoint: [http://127.0.0.1:11434_______________________]         │
+│                                                                     │
+│  ─────────────────────────────────────────────────────────────────  │
+│                                                                     │
+│  Hybrid Search:  [✓] Enabled                                       │
+│                                                                     │
+│  Weights:        Keyword [====30%====]  Vector [=======70%=======] │
+│                                                                     │
+│  Cache:          [✓] Enabled    Entries: 847    Hit rate: 62%     │
+│                                                                     │
+│                                            [Clear Cache]           │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### C.9 Implementation Phases
+
+#### Phase S1: Embedding Infrastructure (~1 week)
+- [ ] Create `include/embeddings/embeddings.h` with provider abstraction
+- [ ] Create `src/embeddings/embeddings.c` with provider implementations
+- [ ] Implement Ollama provider (`/api/embed` endpoint)
+- [ ] Implement llama.cpp provider (OpenAI-compatible `/v1/embeddings`)
+- [ ] Implement OpenAI provider (cloud fallback)
+- [ ] Add `[embeddings]` section to config parser
+- [ ] Add embedding cache table and CRUD operations
+- [ ] Unit tests for embedding generation and cache
+
+#### Phase S2: Memory Integration (~1 week)
+- [ ] Add `embedding BLOB` column to `memory_facts` table (migration)
+- [ ] Generate embeddings on fact insert (remember tool + extraction)
+- [ ] Implement `embedding_cosine_similarity()` function
+- [ ] Implement hybrid search in `memory_search()`
+- [ ] Update `memory_action_search()` to use hybrid search
+- [ ] Integration tests for semantic search
+
+#### Phase S3: WebUI Configuration (~0.5 week)
+- [ ] Add embeddings section to settings schema
+- [ ] Provider/model dropdowns with dynamic population
+- [ ] Hybrid search weight sliders
+- [ ] Cache statistics display
+- [ ] Clear cache button
+
+#### Phase S4: RAG Integration (~0.5 week)
+- [ ] Use same embedding infrastructure for RAG chunks
+- [ ] Unified provider configuration (memory + RAG share settings)
+- [ ] Test cross-system embedding consistency
+
+**Total Estimate: ~3 weeks**
+
+### C.10 Configuration Reference
+
+**Full dawn.toml embeddings section:**
+
+```toml
+[embeddings]
+enabled = true
+type = "local"                    # "local" or "cloud"
+
+[embeddings.local]
+provider = "ollama"               # "ollama" or "llama_cpp"
+endpoint = "http://127.0.0.1:11434"
+model = "nomic-embed-text"
+
+[embeddings.cloud]
+provider = "openai"
+model = "text-embedding-3-small"
+
+[embeddings.hybrid]
+enabled = true
+keyword_weight = 0.3
+vector_weight = 0.7
+min_similarity = 0.5              # Ignore results below this threshold
+
+[embeddings.cache]
+enabled = true
+max_entries = 10000               # Prune oldest when exceeded
+```
+
+### C.11 Model Recommendations
+
+| Use Case | Model | Provider | Dims | Size | Quality |
+|----------|-------|----------|------|------|---------|
+| **Default** | nomic-embed-text | Ollama | 768 | 275 MB | Excellent |
+| **RAM constrained** | all-minilm | Ollama | 384 | 46 MB | Good |
+| **Max quality** | mxbai-embed-large | Ollama | 1024 | 670 MB | Best |
+| **Cloud fallback** | text-embedding-3-small | OpenAI | 1536 | N/A | Excellent |
+
+`nomic-embed-text` outperforms OpenAI's text-embedding-ada-002 on most benchmarks while running locally.
+
+### C.12 Running Two Models (LLM + Embeddings)
+
+**Q: Can I run my LLM and embedding model simultaneously?**
+
+**With Ollama (Recommended):**
+Ollama manages model loading automatically. Both models can be pulled:
+```bash
+ollama pull llama3.2:3b        # LLM
+ollama pull nomic-embed-text   # Embeddings
+```
+Ollama keeps recently-used models in memory and swaps as needed. On Jetson with 8GB+ RAM, both typically fit simultaneously.
+
+**With llama.cpp:**
+Run two server instances on different ports:
+```bash
+# Terminal 1: LLM
+llama-server --model llama-3.2-3b.gguf --port 8080
+
+# Terminal 2: Embeddings
+llama-server --model nomic-embed-text.gguf --port 8081 --embedding
+```
+
+**VRAM Budget:**
+| Model | VRAM |
+|-------|------|
+| Llama 3.2 3B Q4_K_M | ~2.0 GB |
+| nomic-embed-text | ~0.3 GB |
+| **Total** | ~2.3 GB |
+
+Leaves plenty of headroom on Jetson Orin (8-16 GB unified memory).

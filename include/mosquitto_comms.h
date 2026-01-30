@@ -197,8 +197,13 @@ char *musicCallback(const char *actionName, char *value, int *should_respond);
  * the default MUSIC_DIR from dawn.h. Pass NULL to use the default.
  *
  * @param path Absolute path to music directory, or NULL for default
+ *
+ * @note When DAWN_ENABLE_MUSIC_TOOL is defined, this function is provided
+ *       by music_tool.h instead.
  */
+#ifndef DAWN_ENABLE_MUSIC_TOOL
 void set_music_directory(const char *path);
+#endif
 
 /**
  * @brief Callback function to control the voice amplifier.

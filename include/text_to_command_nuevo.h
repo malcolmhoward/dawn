@@ -267,4 +267,24 @@ int parseCommandConfig(char *json,
  */
 void initActions(actionType *actions);
 
+/**
+ * @brief Try to match input against tool_registry tools using device_types patterns
+ *
+ * Iterates through all registered tools and tries to match the input against
+ * their device type patterns. This allows direct command matching using
+ * compile-time defined patterns instead of JSON.
+ *
+ * @param input       Normalized input text (lowercase, trimmed)
+ * @param out_command Buffer to receive the command JSON on match
+ * @param command_size Size of out_command buffer
+ * @param out_topic   Buffer to receive the MQTT topic on match (can be NULL)
+ * @param topic_size  Size of out_topic buffer
+ * @return 1 if matched, 0 if no match
+ */
+int try_tool_registry_match(const char *input,
+                            char *out_command,
+                            size_t command_size,
+                            char *out_topic,
+                            size_t topic_size);
+
 #endif  // TEXT_TO_COMMAND_H

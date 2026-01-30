@@ -68,6 +68,8 @@
 #include "llm/llm_tools.h"
 #include "logging.h"
 #include "mosquitto_comms.h"
+#include "tools/tool_registry.h"
+#include "tools/tools_init.h"
 #ifdef ENABLE_DAP
 #include "network/accept_thread.h"
 #include "network/dawn_network_audio.h"
@@ -512,7 +514,7 @@ void signal_handler(int signal) {
 }
 
 char *textToSpeechCallback(const char *actionName, char *value, int *should_respond) {
-   LOG_INFO("Received text to speech command: \"%s\"\n", value);
+   LOG_INFO("TTS: \"%s\"", value);
 
    // TTS commands always execute directly, regardless of mode
    if (should_respond != NULL) {
@@ -753,7 +755,8 @@ char *getTextResponse(const char *input) {
  */
 const char *timeOfDayGreeting(void) {
    time_t t = time(NULL);
-   struct tm *local_time = localtime(&t);  // Obtain local time from the system clock.
+   struct tm tm_storage;
+   struct tm *local_time = localtime_r(&t, &tm_storage);  // Obtain local time (thread-safe)
 
    int hour = local_time->tm_hour;  // Extract the hour component of the current time.
 
@@ -1829,6 +1832,33 @@ int main(int argc, char *argv[]) {
       LOG_ERROR("Command registry init failed - cannot continue safely");
       return 1;
    }
+
+   // Initialize tool registry (modular tool system)
+   if (tool_registry_init() != 0) {
+      LOG_ERROR("Tool registry init failed");
+      return 1;
+   }
+
+   // Register all modular tools (conditionally compiled via DAWN_ENABLE_X_TOOL)
+   tools_register_all();
+
+   // Parse tool-specific config sections from config file
+   // Tools must be registered before this call (via DAWN_ENABLE_X_TOOL defines)
+   const char *loaded_config_path = config_get_loaded_path();
+   if (loaded_config_path && strcmp(loaded_config_path, "(none - using defaults)") != 0) {
+      if (tool_registry_parse_configs(loaded_config_path) != 0) {
+         LOG_WARNING("Tool config parsing failed - tools using defaults");
+      }
+   }
+
+   // Initialize all registered tools (calls each tool's init function)
+   if (tool_registry_init_tools() != 0) {
+      LOG_ERROR("Tool initialization failed");
+      return 1;
+   }
+
+   // Lock registry to prevent further registrations during runtime
+   tool_registry_lock();
 
    // Initialize LLM system early - must happen before prompt is built
    // so llm_tools_enabled() returns correct value for native tool calling
@@ -3376,7 +3406,45 @@ int main(int argc, char *argv[]) {
                char normalized_text[MAX_COMMAND_LENGTH];
                normalize_for_matching(command_text, normalized_text, sizeof(normalized_text));
 
-               /* Process Commands before AI. */
+               /* Try tool_registry matching first (compile-time patterns) */
+               char treg_command[MAX_COMMAND_LENGTH + MAX_WORD_LENGTH];
+               char treg_topic[MAX_WORD_LENGTH];
+               if (try_tool_registry_match(normalized_text, treg_command, sizeof(treg_command),
+                                           treg_topic, sizeof(treg_topic))) {
+                  pthread_mutex_lock(&tts_mutex);
+                  if (tts_playback_state == TTS_PLAYBACK_PAUSE) {
+                     tts_playback_state = TTS_PLAYBACK_DISCARD;
+                     pthread_cond_signal(&tts_cond);
+                  }
+                  pthread_mutex_unlock(&tts_mutex);
+
+                  metrics_log_activity("TREG direct match");
+
+                  /* Execute via unified command executor */
+                  struct json_object *cmd_json = json_tokener_parse(treg_command);
+                  if (cmd_json) {
+                     cmd_exec_result_t exec_result;
+                     rc = command_execute_json(cmd_json, mosq, &exec_result);
+                     json_object_put(cmd_json);
+
+                     if (rc != 0 || !exec_result.success) {
+                        LOG_ERROR("TREG command execution failed: %s",
+                                  exec_result.result ? exec_result.result : "unknown error");
+                     } else {
+                        metrics_log_activity("TREG executed: %s",
+                                             exec_result.result ? exec_result.result : "OK");
+                        if (exec_result.should_respond && exec_result.result) {
+                           text_to_speech(exec_result.result);
+                        }
+                     }
+                     cmd_exec_result_free(&exec_result);
+                  }
+
+                  direct_command_found = 1;
+                  goto direct_match_done;
+               }
+
+               /* Fall back to JSON-based pattern matching */
                for (i = 0; i < numCommands; i++) {
                   if (searchString(commands[i].actionWordsWildcard, normalized_text) == 1) {
                      // Buffer sizes based on MAX_COMMAND_LENGTH (512) and MAX_WORD_LENGTH (256)
@@ -3466,7 +3534,10 @@ int main(int argc, char *argv[]) {
                      break;
                   }
                }
+
+direct_match_done:
                /* Command context auto-cleared by scope guard */
+               (void)0; /* Empty statement after label */
             }
 
             // Handle direct command found - transition back to listening state
@@ -3725,6 +3796,9 @@ int main(int argc, char *argv[]) {
 
    // Cleanup command router (after workers are stopped)
    command_router_shutdown();
+
+   // Cleanup tool registry (before command registry)
+   tool_registry_shutdown();
 
    // Cleanup command registry
    command_registry_shutdown();

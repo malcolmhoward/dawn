@@ -322,7 +322,32 @@ LOG_WARNING("Battery voltage low: %.2fV", voltage);
 LOG_ERROR("I2C communication failed: %d", error);
 ```
 
-**Device Registration** (in mosquitto_comms.c):
+**Tool Registration** (modular approach - preferred for new tools):
+
+Tools are self-contained modules in `src/tools/` with their own metadata, config, and callbacks:
+
+```c
+/* In src/tools/my_tool.c */
+static const tool_metadata_t my_tool_metadata = {
+   .name = "my_tool",
+   .device_string = "my device",
+   .description = "Tool description for LLM",
+   .params = my_tool_params,
+   .param_count = 2,
+   .device_type = TOOL_DEVICE_TYPE_GETTER,
+   .capabilities = TOOL_CAP_NETWORK,
+   .is_getter = true,
+   .callback = my_tool_callback,
+};
+
+int my_tool_register(void) {
+   return tool_registry_register(&my_tool_metadata);
+}
+```
+
+Register tools in `src/tools/tools_init.c` via `tools_register_all()`. The tool_registry provides O(1) lookup via FNV-1a hash tables for name, device_string, and aliases.
+
+**Legacy Device Registration** (in mosquitto_comms.c - for core system devices):
 ```c
 deviceCallback callbacks[] = {
    { DEVICE_TYPE, myCallback },
@@ -391,6 +416,7 @@ Currently no automated test framework. Manual testing involves:
 4. AudioWorklet migration needed (ScriptProcessorNode deprecated)
 
 **Recently Completed:**
+- Modular tool registry system with O(1) hash lookups (16 tools migrated)
 - Parallel tool execution for concurrent API calls
 - Ollama support with auto-detection
 - Extended thinking/reasoning mode (Claude, OpenAI, local models)

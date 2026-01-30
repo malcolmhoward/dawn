@@ -55,7 +55,9 @@
 #include <string.h>
 #include <time.h>
 
+#include "core/device_types.h"
 #include "logging.h"
+#include "tools/tool_registry.h"
 
 void normalize_for_matching(const char *input, char *output, size_t size) {
    if (input == NULL || output == NULL || size == 0) {
@@ -178,8 +180,9 @@ char *replaceWithValues(const char *templateStr, const char *deviceName, const c
                strcpy(modPtr, value);
                modPtr += slValue;
             } else if (strncmp(placeholder, "datetime", placeholderLen) == 0) {
+               struct tm tm_storage;
                time(&r_time);
-               l_time = localtime(&r_time);
+               l_time = localtime_r(&r_time, &tm_storage);
                strftime(datetime, sizeof(datetime), "%Y%m%d_%H%M%S", l_time);
 
                strcpy(modPtr, datetime);
@@ -708,7 +711,7 @@ int parseCommandConfig(char *json,
 
 // Initialize all of the action structs' counters.
 void initActions(actionType *actions) {
-   int i = 0, j = 0, k = 0;
+   int i = 0, j = 0;
 
    for (i = 0; i < MAX_ACTIONS; i++) {
       for (j = 0; j < MAX_SUBACTIONS; j++) {
@@ -723,4 +726,94 @@ void initActions(actionType *actions) {
 
       actions[i].numDevices = 0;
    }
+}
+
+/**
+ * @brief Try to match input against tool_registry tools using device_types patterns
+ *
+ * Iterates through all registered tools and tries to match the input against
+ * their device type patterns. This allows direct command matching using
+ * compile-time defined patterns instead of JSON.
+ *
+ * @param input       Normalized input text (lowercase, trimmed)
+ * @param out_command Buffer to receive the command JSON on match
+ * @param command_size Size of out_command buffer
+ * @param out_topic   Buffer to receive the MQTT topic on match (can be NULL)
+ * @param topic_size  Size of out_topic buffer
+ * @return 1 if matched, 0 if no match
+ */
+int try_tool_registry_match(const char *input,
+                            char *out_command,
+                            size_t command_size,
+                            char *out_topic,
+                            size_t topic_size) {
+   if (!input || !out_command || command_size == 0) {
+      return 0;
+   }
+
+   int tool_count = tool_registry_count();
+   if (tool_count == 0) {
+      return 0;
+   }
+
+   /* Iterate through all registered tools to find pattern match.
+    *
+    * NOTE: This O(tools × patterns) iteration is intentional and necessary.
+    * Voice command matching must check each tool's device name/aliases against
+    * the spoken input. With ~30 tools and ~5 patterns each, this performs ~150
+    * string comparisons per voice command - completing in <1ms on Jetson.
+    * Voice commands arrive at ~1/second max, so this is not a hot path concern.
+    * No early-exit optimization is possible without knowing which tool will match.
+    */
+   for (int i = 0; i < tool_count; i++) {
+      const tool_metadata_t *tool = tool_registry_get_by_index(i);
+      if (!tool) {
+         continue;
+      }
+
+      /* Get device type definition for this tool */
+      const device_type_def_t *type_def = device_type_get_def(tool->device_type);
+      if (!type_def) {
+         continue;
+      }
+
+      /* Build aliases array (NULL-terminated) */
+      const char *aliases[TOOL_ALIAS_MAX + 1];
+      for (int j = 0; j < tool->alias_count && j < TOOL_ALIAS_MAX; j++) {
+         aliases[j] = tool->aliases[j];
+      }
+      aliases[tool->alias_count < TOOL_ALIAS_MAX ? tool->alias_count : TOOL_ALIAS_MAX] = NULL;
+
+      /* Try to match input against this tool's device type patterns */
+      const char *action = NULL;
+      char value[DEVICE_TYPE_MAX_VALUE] = { 0 };
+
+      if (device_type_match_pattern(type_def, input, tool->device_string, aliases, &action, value,
+                                    sizeof(value))) {
+         /* Match found! Build command JSON using json-c for proper escaping */
+         struct json_object *cmd_json = json_object_new_object();
+         json_object_object_add(cmd_json, "device", json_object_new_string(tool->device_string));
+         json_object_object_add(cmd_json, "action", json_object_new_string(action));
+         if (value[0] != '\0') {
+            json_object_object_add(cmd_json, "value", json_object_new_string(value));
+         }
+
+         const char *json_str = json_object_to_json_string(cmd_json);
+         strncpy(out_command, json_str, command_size - 1);
+         out_command[command_size - 1] = '\0';
+         json_object_put(cmd_json);
+
+         if (out_topic && topic_size > 0) {
+            strncpy(out_topic, tool->topic, topic_size - 1);
+            out_topic[topic_size - 1] = '\0';
+         }
+
+         LOG_INFO("TREG MATCH: \"%s\" → tool=%s, action=%s, value=%s", input, tool->name, action,
+                  value[0] ? value : "(none)");
+
+         return 1;
+      }
+   }
+
+   return 0;
 }

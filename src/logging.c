@@ -42,17 +42,17 @@ static int g_suppress_console = 0;
 // Fixed width for the preamble
 #define PREAMBLE_WIDTH 45
 
-// Get current timestamp with milliseconds
+// Get current timestamp with milliseconds (thread-safe)
 static void get_timestamp_ms(char *buffer, size_t buffer_size) {
    struct timeval tv;
-   struct tm *tm_info;
+   struct tm tm_storage;
 
    gettimeofday(&tv, NULL);
-   tm_info = localtime(&tv.tv_sec);
+   localtime_r(&tv.tv_sec, &tm_storage);
 
    // Format: HH:MM:SS.mmm
-   snprintf(buffer, buffer_size, "%02d:%02d:%02d.%03d", tm_info->tm_hour, tm_info->tm_min,
-            tm_info->tm_sec, (int)(tv.tv_usec / 1000));
+   snprintf(buffer, buffer_size, "%02d:%02d:%02d.%03d", tm_storage.tm_hour, tm_storage.tm_min,
+            tm_storage.tm_sec, (int)(tv.tv_usec / 1000));
 }
 
 // Utility function to get the filename from the path

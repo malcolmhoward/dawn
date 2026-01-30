@@ -128,7 +128,7 @@ dawn/
 │   ├── tts/                # Text-to-speech (Piper)
 │   ├── network/            # DAP server for ESP32 clients
 │   ├── audio/              # Audio capture, playback, music
-│   ├── tools/              # LLM tools (search, weather, calculator)
+│   ├── tools/              # Modular LLM tools (search, weather, calculator, etc.)
 │   └── webui/              # Web UI server
 │
 ├── include/                # Header files (mirrors src/)

@@ -118,7 +118,8 @@ static double update_average(double old_avg, uint32_t count, double new_value) {
  */
 static void get_timestamp_str(char *buf, size_t buf_size) {
    time_t now = time(NULL);
-   struct tm *tm_info = localtime(&now);
+   struct tm tm_storage;
+   struct tm *tm_info = localtime_r(&now, &tm_storage);
    strftime(buf, buf_size, "%H:%M:%S", tm_info);
 }
 

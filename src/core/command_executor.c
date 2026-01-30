@@ -36,6 +36,7 @@
 #include "logging.h"
 #include "mosquitto_comms.h"
 #include "tools/string_utils.h"
+#include "tools/tool_registry.h"
 
 /* Default timeout for sync_wait commands (e.g., viewing) */
 #define DEFAULT_SYNC_TIMEOUT_MS 10000
@@ -140,9 +141,29 @@ int command_execute(const char *device,
       return 1;
    }
 
-   /* Look up in registry */
+   /* Look up in command_registry (legacy) */
    const cmd_definition_t *cmd = command_registry_lookup(device);
+
+   /* If not in command_registry, try tool_registry (new modular tools) */
    if (!cmd) {
+      const tool_metadata_t *tool = tool_registry_find(device);
+      if (tool && tool->callback) {
+         int should_respond = 0;
+         /* Copy value to mutable buffer (callback signature requires char*, not const char*) */
+         char value_buf[4096];
+         safe_strncpy(value_buf, value ? value : "", sizeof(value_buf));
+         char *cb_result = tool->callback(action ? action : "get", value_buf, &should_respond);
+
+         result->success = true;
+         result->should_respond = (should_respond != 0);
+         result->skip_followup = tool->skip_followup;
+         result->result = cb_result; /* Takes ownership (may be NULL) */
+
+         LOG_INFO("command_execute: Tool callback for '%s' -> %s", device,
+                  result->result ? result->result : "(no result)");
+         return 0;
+      }
+
       LOG_WARNING("command_execute: Unknown device '%s'", device);
       result->success = false;
       char errbuf[256];
@@ -159,15 +180,17 @@ int command_execute(const char *device,
       device_callback_fn callback = get_device_callback(cmd->device_string);
       if (callback) {
          int should_respond = 0;
-         char *cb_result = callback(action ? action : "get", (char *)(value ? value : ""),
-                                    &should_respond);
+         /* Copy value to mutable buffer (callback signature requires char*, not const char*) */
+         char value_buf[4096];
+         safe_strncpy(value_buf, value ? value : "", sizeof(value_buf));
+         char *cb_result = callback(action ? action : "get", value_buf, &should_respond);
 
          result->success = true;
          result->should_respond = (should_respond != 0);
          result->result = cb_result; /* Takes ownership (may be NULL) */
 
-         LOG_INFO("command_execute: Callback executed for '%s' -> %s", device,
-                  result->result ? "has result" : "no result");
+         LOG_INFO("command_execute: Callback for '%s' -> %s", device,
+                  result->result ? result->result : "(no result)");
          return 0;
       } else {
          LOG_WARNING("command_execute: Callback expected but not found for '%s'", device);

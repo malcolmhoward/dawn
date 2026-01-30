@@ -57,6 +57,7 @@
 #include "tools/search_summarizer.h"
 #include "tools/smartthings_service.h"
 #include "tools/string_utils.h"
+#include "tools/tool_registry.h"
 #include "tools/url_fetcher.h"
 #include "tools/weather_service.h"
 #include "tools/web_search.h"
@@ -151,7 +152,16 @@ device_callback_fn get_device_callback(const char *device_name) {
       return NULL;
    }
 
-   /* Step 1: Find the deviceType enum value from the name string */
+   /* Step 1: Check tool registry first (new modular tool system)
+    * This enables tools registered with tool_registry to work alongside
+    * legacy devices. As tools are migrated, they'll be found here first. */
+   tool_callback_fn tool_cb = tool_registry_get_callback(device_name);
+   if (tool_cb) {
+      return (device_callback_fn)tool_cb;
+   }
+
+   /* Step 2: Fall back to legacy deviceCallbackArray
+    * This will be removed once all tools are migrated to tool_registry */
    deviceType type = MAX_DEVICE_TYPES; /* Invalid sentinel */
    for (int i = 0; i < MAX_DEVICE_TYPES; i++) {
       if (strcmp(device_name, deviceTypeStrings[i]) == 0) {
@@ -164,7 +174,7 @@ device_callback_fn get_device_callback(const char *device_name) {
       return NULL; /* Device name not found */
    }
 
-   /* Step 2: Search callback array for this device type */
+   /* Step 3: Search callback array for this device type */
    size_t array_size = sizeof(deviceCallbackArray) / sizeof(deviceCallbackArray[0]);
    for (size_t i = 0; i < array_size; i++) {
       if (deviceCallbackArray[i].device == type) {
@@ -993,6 +1003,7 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
 
 char *dateCallback(const char *actionName, char *value, int *should_respond) {
    time_t current_time;
+   struct tm tm_storage;
    struct tm *time_info;
    char buffer[80];
    char *result = NULL;
@@ -1015,7 +1026,7 @@ char *dateCallback(const char *actionName, char *value, int *should_respond) {
       tzset();
    }
 
-   time_info = localtime(&current_time);
+   time_info = localtime_r(&current_time, &tm_storage);
 
    // Format the date data
    strftime(buffer, sizeof(buffer), "%A, %B %d, %Y", time_info);
@@ -1074,6 +1085,7 @@ char *dateCallback(const char *actionName, char *value, int *should_respond) {
 
 char *timeCallback(const char *actionName, char *value, int *should_respond) {
    time_t current_time;
+   struct tm tm_storage;
    struct tm *time_info;
    char buffer[80];
    char *result = NULL;
@@ -1096,7 +1108,7 @@ char *timeCallback(const char *actionName, char *value, int *should_respond) {
       tzset();
    }
 
-   time_info = localtime(&current_time);
+   time_info = localtime_r(&current_time, &tm_storage);
 
    // Format the time data with timezone
    strftime(buffer, sizeof(buffer), "%I:%M %p %Z", time_info);
@@ -1168,6 +1180,8 @@ int compare(const void *p1, const void *p2) {
 
 #define MUSIC_CALLBACK_BUFFER_SIZE 512
 
+/* Legacy set_music_directory - only compiled when new music tool is disabled */
+#ifndef DAWN_ENABLE_MUSIC_TOOL
 void set_music_directory(const char *path) {
    if (custom_music_dir) {
       free(custom_music_dir);
@@ -1183,6 +1197,7 @@ void set_music_directory(const char *path) {
       }
    }
 }
+#endif /* !DAWN_ENABLE_MUSIC_TOOL */
 
 char *musicCallback(const char *actionName, char *value, int *should_respond) {
    PlaybackArgs *args = NULL;

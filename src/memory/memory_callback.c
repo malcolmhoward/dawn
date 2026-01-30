@@ -223,10 +223,20 @@ static int get_current_user_id(void) {
 #ifdef ENABLE_MULTI_CLIENT
    session_t *session = session_get_command_context();
    if (session) {
-      return session->metrics.user_id;
+      /* For authenticated WebSocket sessions, use their user_id */
+      if (session->metrics.user_id > 0) {
+         return session->metrics.user_id;
+      }
+      /* For local voice sessions, use configured default user */
+      if (session->type == SESSION_TYPE_LOCAL) {
+         int user_id = g_config.memory.default_voice_user_id;
+         return (user_id > 0) ? user_id : 1; /* Fallback to admin */
+      }
    }
 #endif
-   return 0; /* Anonymous/local user */
+   /* Fallback for non-multi-client builds: use default voice user */
+   int user_id = g_config.memory.default_voice_user_id;
+   return (user_id > 0) ? user_id : 1;
 }
 
 /* =============================================================================
