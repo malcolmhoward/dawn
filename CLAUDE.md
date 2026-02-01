@@ -459,3 +459,31 @@ DAWN is part of the O.A.S.I.S. ecosystem. For ecosystem-level coordination, road
 | **SPARK** | Provides armor status for system awareness |
 
 *For contribution guidelines, see [CONTRIBUTING.md](CONTRIBUTING.md).*
+
+## Branch Naming Convention
+
+**Critical**: Branch names must include the GitHub issue number being addressed.
+
+### Format
+```
+feat/<component>/<issue#>-<short-description>
+```
+
+### Before Creating a Branch
+
+1. **Identify the issue** you're working on (check GitHub Issues)
+2. **Use that issue's number** in the branch name
+3. **Verify** the issue number matches the work being done
+
+### Examples
+```bash
+# Check available issues first
+gh issue list --repo malcolmhoward/dawn
+
+# Create branch with correct issue number
+git checkout -b feat/dawn/<issue#>-description
+```
+
+### Common Mistake
+❌ Using arbitrary numbers or the wrong issue number
+✅ Always check `gh issue list` or GitHub Issues before creating a branch
