@@ -1,104 +1,173 @@
-# D.A.W.N.
+# DAWN
+
+**Digital Assistant with Natural-language Workflow**
+
+> AI voice assistant for the [O.A.S.I.S. Project](https://github.com/The-OASIS-Project)
+
+## Overview
+
+DAWN is the AI voice assistant component of the O.A.S.I.S. ecosystem. Built in C/C++ for NVIDIA Jetson platforms, it provides speech recognition, natural language understanding, and text-to-speech capabilities for hands-free interaction.
+
+## Features
+
+- Speech recognition via Vosk
+- Text-to-speech via Piper
+- LLM integration (OpenAI API compatible)
+- MQTT communication with O.A.S.I.S. components
+- Music playback with FLAC support
+- Command parsing and execution
 
 ## Credits
 
 Initial adaptation from the piper project: https://github.com/rhasspy/piper
 
-Piper and the language models are covered under the MIT license.
-Vosk Licensed under the Apache License, Version 2.0.
+- Piper and language models: MIT License
+- Vosk: Apache License 2.0
 
-## Installation Notes
-### Cmake 3.27.1
-1. `tar xvf cmake-3.27.1.tar.gz`
-2. `cd cmake-3.27.1`
-3. `./configure --system-curl`
-4. `make -j8`
-5. `sudo make install`
+## Prerequisites
 
-### spdlog
-1. `git clone https://github.com/gabime/spdlog.git`
-2. `cd spdlog`
-3. `mkdir build && cd build`
-4. `cmake .. && make -j8`
-5. `sudo make install`
+- NVIDIA Jetson platform (Nano, Orin Nano, or NX)
+- JetPack SDK
+- CMake 3.27+
 
-### espeak-ng (git)
-Before we begin:
-`sudo apt purge espeak-ng-data libespeak-ng1 speech-dispatcher-espeak-ng`
+## Installation
 
-1. `git clone https://github.com/rhasspy/espeak-ng.git`
-2. `cd espeak-ng`
-3. `./autogen.sh`
-4. `./configure --prefix=/usr`
-5. `make -j8 src/espeak-ng src/speak-ng`
-6. `make`
-7. `# make docs` - Skip? bash: no: command not found
-8. `sudo make LIBDIR=/usr/lib/aarch64-linux-gnu install`
+### I. CMake 3.27.1
 
-### Onnxruntime (git)
-1. `git clone --recursive https://github.com/microsoft/onnxruntime`
-2. `cd onnxruntime`
-3. `./build.sh --use_cuda --cudnn_home /usr/local/cuda-11.4 --cuda_home  /usr/local/cuda-11.4 --config MinSizeRel --update --build --parallel --build_shared_lib`
-4. Needed? - `./build.sh --use_cuda --cudnn_home /usr/local/cuda-11.4 --cuda_home  /usr/local/cuda-11.4 --config MinSizeRel --enable_pybind --parallel --build_wheel`
-At this point, one test fails but it doesn't appear to be fatal to us.
-`67% tests passed, 1 tests failed out of 3
+```bash
+tar xvf cmake-3.27.1.tar.gz
+cd cmake-3.27.1
+./configure --system-curl
+make -j8
+sudo make install
+```
 
-Total Test time (real) = 342.80 sec
+### II. spdlog
 
-The following tests FAILED:
-	  1 - onnxruntime_test_all (Failed)`
-5. `sudo cp -a build/Linux/MinSizeRel/libonnxruntime.so* /usr/local/lib/`
-6. `sudo mkdir -p /usr/local/include/onnxruntime`
-7. `sudo cp include/onnxruntime/core/session/*.h /usr/local/include/onnxruntime`
+```bash
+git clone https://github.com/gabime/spdlog.git
+cd spdlog
+mkdir build && cd build
+cmake .. && make -j8
+sudo make install
+```
 
+### III. espeak-ng (from source)
 
-### piper-phonemize (git)
-1. `git clone https://github.com/rhasspy/piper-phonemize.git`
-2. `cd piper-phonemize`
-2.1. `cd src && cp ../../onnxruntime/include/onnxruntime/core/session/*.h .`
-2.2. `cd ..`
-3. `mkdir build && cd build`
-4. `cmake ..`
-5. `make`
-6. `sudo make install`
-7. Needed? - `make python`
+Before beginning:
+```bash
+sudo apt purge espeak-ng-data libespeak-ng1 speech-dispatcher-espeak-ng
+```
 
-### piper (git)
-1. `git clone https://github.com/rhasspy/piper.git`
-2. `cd piper`
-2.1. `vim src/cpp/CMakeLists.txt`
-2.2. Add `/usr/local/include/onnxruntime` and `/usr/local/include/piper-phonemize` to `target_include_directories`
-3. `make` - You'll get some errors on copies at the end but it builds.
+```bash
+git clone https://github.com/rhasspy/espeak-ng.git
+cd espeak-ng
+./autogen.sh
+./configure --prefix=/usr
+make -j8 src/espeak-ng src/speak-ng
+make
+sudo make LIBDIR=/usr/lib/aarch64-linux-gnu install
+```
 
-### kaldi (git) (This is a REALLY long build process!)
-1. `sudo apt-get install sox subversion`
-2. `sudo git clone -b vosk --single-branch --depth=1 https://github.com/alphacep/kaldi /opt/kaldi`
-3. `sudo chown -R $USER /opt/kaldi`
-4. `cd /opt/kaldi/tools`
-5. Edit Makefile. Remove `-msse -msse2` from `openfst_add_CXXFLAGS`
-6. `make openfst cub` (Note: -j# doesn't seem to work here.) *LONG BUILD*
-7. `./extras/install_openblas_clapack.sh`
-8. `cd ../src`
-9. `./configure --mathlib=OPENBLAS_CLAPACK --shared`
-10. `make -j 10 online2 lm rnnlm`
-11. `cd ../..`
+### IV. ONNX Runtime
 
-### vosk-api
-1. `sudo git clone https://github.com/alphacep/vosk-api --depth=1`
-2. `sudo chown -R $USER vosk-api`
-3. `cd vosk-api/src`
-4. `KALDI_ROOT=/opt/kaldi make -j8`
-5. `cd ../c`
-6. Edit Makefile. Add the following to LDFLAGS: `$(shell pkg-config --libs cuda-11.4 cudart-11.4) -lcusparse -lcublas -lcusolver -lcurand`
-7. `make`
-8. `wget https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip`
-  OR
-  THIS ONE -> `wget https://alphacephei.com/vosk/models/vosk-model-en-us-0.22.zip`
-9. `unzip vosk-model-en-us-0.22.zip`
-10. `ln -s vosk-model-en-us-0.22 model`
-11. `cp ../python/example/test.wav .`
-12. `./test_vosk`
+```bash
+git clone --recursive https://github.com/microsoft/onnxruntime
+cd onnxruntime
+./build.sh --use_cuda --cudnn_home /usr/local/cuda-11.4 --cuda_home /usr/local/cuda-11.4 --config MinSizeRel --update --build --parallel --build_shared_lib
+sudo cp -a build/Linux/MinSizeRel/libonnxruntime.so* /usr/local/lib/
+sudo mkdir -p /usr/local/include/onnxruntime
+sudo cp include/onnxruntime/core/session/*.h /usr/local/include/onnxruntime
+```
 
-### Copy some files over for compiling
-1. `cp -r vosk-model-en-us-0.22 SOURCE_DIR`
-2. `cp ../src/vosk_api.h ../src/libvosk.so SOURCE_DIR`
+### V. piper-phonemize
+
+```bash
+git clone https://github.com/rhasspy/piper-phonemize.git
+cd piper-phonemize
+cd src && cp ../../onnxruntime/include/onnxruntime/core/session/*.h .
+cd ..
+mkdir build && cd build
+cmake .. && make
+sudo make install
+```
+
+### VI. Piper
+
+```bash
+git clone https://github.com/rhasspy/piper.git
+cd piper
+# Edit src/cpp/CMakeLists.txt - add /usr/local/include/onnxruntime
+# and /usr/local/include/piper-phonemize to target_include_directories
+make
+```
+
+### VII. Kaldi (Long build process)
+
+```bash
+sudo apt-get install sox subversion
+sudo git clone -b vosk --single-branch --depth=1 https://github.com/alphacep/kaldi /opt/kaldi
+sudo chown -R $USER /opt/kaldi
+cd /opt/kaldi/tools
+# Edit Makefile - remove -msse -msse2 from openfst_add_CXXFLAGS
+make openfst cub
+./extras/install_openblas_clapack.sh
+cd ../src
+./configure --mathlib=OPENBLAS_CLAPACK --shared
+make -j 10 online2 lm rnnlm
+```
+
+### VIII. Vosk API
+
+```bash
+sudo git clone https://github.com/alphacep/vosk-api --depth=1
+sudo chown -R $USER vosk-api
+cd vosk-api/src
+KALDI_ROOT=/opt/kaldi make -j8
+cd ../c
+# Edit Makefile - add to LDFLAGS: $(shell pkg-config --libs cuda-11.4 cudart-11.4) -lcusparse -lcublas -lcusolver -lcurand
+make
+wget https://alphacephei.com/vosk/models/vosk-model-en-us-0.22.zip
+unzip vosk-model-en-us-0.22.zip
+ln -s vosk-model-en-us-0.22 model
+```
+
+### IX. Build DAWN
+
+```bash
+mkdir build && cd build
+cmake ..
+make -j$(nproc)
+```
+
+## Key Files
+
+| File | Purpose |
+|------|---------|
+| `dawn.c` | Main application entry point |
+| `mosquitto_comms.c` | MQTT communication |
+| `openai.c` | LLM API integration |
+| `text_to_speech.cpp` | Piper TTS integration |
+| `text_to_command_nuevo.c` | Command parsing |
+| `flac_playback.c` | Audio playback |
+
+## Related Projects
+
+- [S.C.O.P.E.](https://github.com/malcolmhoward/the-oasis-project-meta-repo) - O.A.S.I.S. coordination repository
+- [MIRAGE](https://github.com/The-OASIS-Project/mirage) - Heads-up display
+- [AURA](https://github.com/The-OASIS-Project/aura) - Helmet sensor firmware
+- [SPARK](https://github.com/The-OASIS-Project/spark) - Hand/gauntlet firmware
+
+## Contributing
+
+Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+## License
+
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or any later version.
+
+See [LICENSE](LICENSE) for full details.
+
+---
+
+*Part of the [O.A.S.I.S. Project](https://github.com/The-OASIS-Project) - Open-source Assistive System for Integrated Services*

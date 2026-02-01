@@ -4,3 +4,7 @@ vosk-model*/
 en_GB-alba-medium.onnx*
 utils/
 secrets.h
+
+# Working files
+scratch/
+.project_foundation_logs/
