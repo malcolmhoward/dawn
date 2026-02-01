@@ -53,3 +53,11 @@ llm_testing/scripts/archive/
 
 # Local planning/tracking docs (not for git)
 docs/TODO.md
+docs/FUTURE_WORK.md
+docs/RELEASE_TODO.md
+
+# PFT governance logs
+.project_foundation_logs/
+
+# Working files
+scratch/

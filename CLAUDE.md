@@ -157,3 +157,17 @@ Trigger phrases: "code review", "review my changes", "run the agents", "run the 
 ## License
 
 GPLv3 or later. Every new source file includes the GPL header block (see Code Standards above).
+
+---
+
+## O.A.S.I.S. Ecosystem Context
+
+DAWN is part of the O.A.S.I.S. ecosystem. For ecosystem-level coordination, roadmaps, and cross-component ADRs, see [S.C.O.P.E.](https://github.com/The-OASIS-Project).
+
+| Component | Interaction |
+|-----------|-------------|
+| **MIRAGE** | Sends AI state and TTS notifications; receives image capture requests (OCP v1.1 snapshot protocol) |
+| **AURA** | Provides environmental and motion data for situational context |
+| **SPARK** | Provides armor status for system awareness |
+
+*For contribution guidelines, see [CONTRIBUTING.md](CONTRIBUTING.md).*
