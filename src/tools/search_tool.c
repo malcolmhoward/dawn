@@ -42,6 +42,7 @@
 /* ========== Forward Declarations ========== */
 
 static char *search_tool_callback(const char *action, char *value, int *should_respond);
+static bool search_tool_is_available(void);
 
 /* ========== Tool Parameter Definition ========== */
 
@@ -95,10 +96,18 @@ static const tool_metadata_t search_metadata = {
    .config_parser = NULL,
    .config_section = NULL,
 
+   .is_available = search_tool_is_available,
+
    .init = NULL,
    .cleanup = NULL,
    .callback = search_tool_callback,
 };
+
+/* ========== Availability Check ========== */
+
+static bool search_tool_is_available(void) {
+   return g_config.search.endpoint[0] != '\0';
+}
 
 /* ========== Helper Functions ========== */
 

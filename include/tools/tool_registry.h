@@ -222,11 +222,14 @@ typedef struct {
    tool_device_type_t device_type; /**< boolean, analog, getter, etc. */
    tool_capability_t capabilities; /**< Capability flags */
    bool is_getter;                 /**< Read-only, no side effects */
-   bool skip_followup;             /**< Don't send result back to LLM */
+   bool skip_followup;             /**< Skip LLM follow-up response (see guide for details) */
    bool mqtt_only;                 /**< Only available via MQTT */
    bool sync_wait;                 /**< Wait for MQTT response */
    bool default_local;             /**< Available to local sessions */
    bool default_remote;            /**< Available to remote sessions */
+
+   /** Optional runtime availability check (NULL = always available) */
+   bool (*is_available)(void);
 
    /* Config (optional - NULL if tool has no config) */
    void *config;                        /**< Pointer to tool's config struct */
@@ -284,6 +287,16 @@ void tool_registry_lock(void);
  * @return true if locked, false if registrations still allowed
  */
 bool tool_registry_is_locked(void);
+
+/**
+ * @brief Check if tool registry is available for use
+ *
+ * Returns false if tool_registry_init() failed, indicating
+ * the system should operate in degraded mode without tool support.
+ *
+ * @return true if tools are available, false if degraded mode
+ */
+bool tool_registry_is_available(void);
 
 /**
  * @brief Shutdown all tools and free registry resources
@@ -373,6 +386,19 @@ bool tool_registry_is_enabled(const char *name);
  * @return The actual device name, or NULL if not found
  */
 const char *tool_registry_resolve_device(const tool_metadata_t *metadata, const char *key);
+
+/**
+ * @brief Get the effective parameter definition for a tool
+ *
+ * Returns the parameter with any dynamic enum overrides applied.
+ * This should be used for schema generation to ensure discovery
+ * updates are reflected.
+ *
+ * @param tool_name Tool name
+ * @param param_index Parameter index (0-based)
+ * @return Pointer to effective param, or NULL if not found
+ */
+const treg_param_t *tool_registry_get_effective_param(const char *tool_name, int param_index);
 
 /* =============================================================================
  * Config Integration
@@ -506,6 +532,81 @@ int tool_registry_generate_llm_schema(char *buffer,
                                       size_t size,
                                       bool remote_session,
                                       bool armor_mode);
+
+/* =============================================================================
+ * Dynamic Parameter Updates
+ * ============================================================================= */
+
+/**
+ * @brief Update enum values for a tool parameter dynamically
+ *
+ * This allows runtime modification of enum parameters, typically used for
+ * MQTT-based discovery where external devices advertise their capabilities.
+ *
+ * The function makes a deep copy of the enum values into mutable storage
+ * managed by the registry. The tool's original metadata is not modified;
+ * instead, the registry maintains override storage for dynamic enums.
+ *
+ * Thread-safe: Uses registry mutex for synchronization.
+ *
+ * @param tool_name Name of the tool to update
+ * @param param_name Name of the parameter with enum type
+ * @param values Array of enum value strings (will be copied)
+ * @param count Number of values in array
+ * @return 0 on success, non-zero on error:
+ *         1 = tool not found
+ *         2 = parameter not found
+ *         3 = parameter is not enum type
+ *         4 = count exceeds TOOL_PARAM_ENUM_MAX
+ */
+int tool_registry_update_param_enum(const char *tool_name,
+                                    const char *param_name,
+                                    const char **values,
+                                    int count);
+
+/**
+ * @brief Invalidate cached tool schemas
+ *
+ * Call after updating tool parameters to force regeneration of LLM schemas.
+ * This ensures the LLM sees the updated enum values on the next request.
+ *
+ * Thread-safe: Uses registry mutex for synchronization.
+ */
+void tool_registry_invalidate_cache(void);
+
+/**
+ * @brief Check if schema cache is valid
+ *
+ * @return true if cache is valid, false if invalidated
+ */
+bool tool_registry_is_cache_valid(void);
+
+/* =============================================================================
+ * Direct Command Variation Statistics
+ * ============================================================================= */
+
+/**
+ * @brief Count total direct command variations across all tools
+ *
+ * Calculates the total number of unique voice command patterns that can
+ * be recognized for direct command execution. This counts:
+ * - All patterns for each device type (boolean, analog, getter, etc.)
+ * - Multiplied by (1 + alias_count) for each tool
+ *
+ * For example, a boolean tool with 2 aliases has:
+ * - 14 patterns (8 enable + 6 disable) × 3 names (primary + 2 aliases) = 42 variations
+ *
+ * @return Total count of direct command variations
+ */
+int tool_registry_count_variations(void);
+
+/**
+ * @brief Count variations for a single tool
+ *
+ * @param name Tool name
+ * @return Number of variations, or 0 if tool not found
+ */
+int tool_registry_count_tool_variations(const char *name);
 
 #ifdef __cplusplus
 }

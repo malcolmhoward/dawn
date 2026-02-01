@@ -227,13 +227,87 @@ static void parse_audio_bargein(toml_table_t *table, bargein_config_t *config) {
    PARSE_INT(table, "startup_cooldown_ms", config->startup_cooldown_ms);
 }
 
+/**
+ * @brief Parse [[audio.named_devices]] array-of-tables
+ *
+ * Named devices allow voice command switching between audio devices,
+ * e.g., "switch to microphone" or "use headphones".
+ */
+static void parse_audio_named_devices(toml_table_t *audio_table, audio_config_t *config) {
+   toml_array_t *devices = toml_array_in(audio_table, "named_devices");
+   if (!devices) {
+      return; /* Optional section */
+   }
+
+   config->named_device_count = 0;
+   int n = toml_array_nelem(devices);
+
+   for (int i = 0; i < n && i < AUDIO_NAMED_DEVICE_MAX; i++) {
+      toml_table_t *dev = toml_table_at(devices, i);
+      if (!dev)
+         continue;
+
+      audio_named_device_t *nd = &config->named_devices[config->named_device_count];
+      memset(nd, 0, sizeof(*nd));
+
+      /* Parse required fields */
+      PARSE_STRING(dev, "name", nd->name);
+      PARSE_STRING(dev, "device", nd->device);
+
+      /* Validate required fields */
+      if (nd->name[0] == '\0' || nd->device[0] == '\0') {
+         LOG_WARNING("Skipping audio.named_devices[%d]: missing name or device", i);
+         continue;
+      }
+
+      /* Parse type (capture/playback) */
+      toml_datum_t type_val = toml_string_in(dev, "type");
+      if (type_val.ok) {
+         if (strcmp(type_val.u.s, "capture") == 0) {
+            nd->type = AUDIO_DEV_TYPE_CAPTURE;
+         } else if (strcmp(type_val.u.s, "playback") == 0) {
+            nd->type = AUDIO_DEV_TYPE_PLAYBACK;
+         } else {
+            LOG_WARNING("audio.named_devices[%d].type invalid '%s', defaulting to playback", i,
+                        type_val.u.s);
+            nd->type = AUDIO_DEV_TYPE_PLAYBACK;
+         }
+         free(type_val.u.s);
+      } else {
+         LOG_WARNING("audio.named_devices[%d] missing type, defaulting to playback", i);
+         nd->type = AUDIO_DEV_TYPE_PLAYBACK;
+      }
+
+      /* Parse aliases array */
+      toml_array_t *aliases = toml_array_in(dev, "aliases");
+      if (aliases) {
+         nd->alias_count = 0;
+         int alias_n = toml_array_nelem(aliases);
+         for (int j = 0; j < alias_n && j < AUDIO_DEVICE_ALIAS_MAX; j++) {
+            toml_datum_t alias = toml_string_at(aliases, j);
+            if (alias.ok) {
+               safe_strncpy(nd->aliases[nd->alias_count++], alias.u.s, AUDIO_ALIAS_LEN);
+               free(alias.u.s);
+            }
+         }
+      }
+
+      config->named_device_count++;
+   }
+
+   if (config->named_device_count > 0) {
+      LOG_INFO("Parsed %d named audio devices from config", config->named_device_count);
+   }
+}
+
 static void parse_audio(toml_table_t *table, audio_config_t *config) {
    if (!table)
       return;
 
-   static const char *const known_keys[] = { "backend",     "capture_device",  "playback_device",
-                                             "output_rate", "output_channels", "bargein",
-                                             NULL };
+   static const char *const known_keys[] = { "backend",         "capture_device",
+                                             "playback_device", "output_rate",
+                                             "output_channels", "bargein",
+                                             "named_devices",   NULL };
    warn_unknown_keys(table, "audio", known_keys);
 
    PARSE_STRING(table, "backend", config->backend);
@@ -245,6 +319,9 @@ static void parse_audio(toml_table_t *table, audio_config_t *config) {
    /* Parse [audio.bargein] sub-table */
    toml_table_t *bargein = toml_table_in(table, "bargein");
    parse_audio_bargein(bargein, &config->bargein);
+
+   /* Parse [[audio.named_devices]] array-of-tables */
+   parse_audio_named_devices(table, config);
 }
 
 static void parse_vad_chunking(toml_table_t *table, vad_chunking_config_t *config) {
@@ -905,11 +982,10 @@ static void parse_paths(toml_table_t *table, paths_config_t *config) {
    if (!table)
       return;
 
-   static const char *const known_keys[] = { "music_dir", "commands_config", NULL };
+   static const char *const known_keys[] = { "music_dir", NULL };
    warn_unknown_keys(table, "paths", known_keys);
 
    PARSE_STRING(table, "music_dir", config->music_dir);
-   PARSE_STRING(table, "commands_config", config->commands_config);
 }
 
 /* =============================================================================

@@ -45,6 +45,15 @@
 // 2MB is sufficient for most documents including large papers/articles.
 #define HTML_MAX_OUTPUT_SIZE (2 * 1024 * 1024)
 
+// Initial output buffer size (1/3 of HTML, minimum 4KB)
+#define HTML_INITIAL_BUFFER_MIN 4096
+
+// Minimum content length to consider output valid
+#define HTML_MIN_CONTENT_LEN 10
+
+// Maximum consecutive newlines to preserve (prevents excessive whitespace)
+#define MAX_CONSECUTIVE_NEWLINES 2
+
 // =============================================================================
 // Parser State
 // =============================================================================
@@ -1059,6 +1068,203 @@ static void handle_tag_close(html_parser_state_t *state, const char *tag_name) {
 }
 
 // =============================================================================
+// CSS Stripping (Post-Processing)
+// =============================================================================
+
+/**
+ * @brief Check if a line looks like a CSS rule
+ *
+ * Matches patterns like:
+ * - .class { property: value }
+ * - #id { property: value }
+ * - element { property: value }
+ * - [attr] { property: value }
+ *
+ * Also matches lines that are pure CSS property-value pairs:
+ * - property: value;
+ */
+static bool is_css_line(const char *line, size_t len) {
+   if (len == 0)
+      return false;
+
+   /* Skip leading whitespace */
+   size_t i = 0;
+   while (i < len && isspace(line[i]))
+      i++;
+
+   if (i >= len)
+      return false;
+
+   /* Check for @ rules that weren't in block form */
+   if (line[i] == '@')
+      return true;
+
+   /* Check for selectors starting with . # [ or alphanumeric */
+   bool has_selector_start = (line[i] == '.' || line[i] == '#' || line[i] == '[' ||
+                              line[i] == '*' || isalpha(line[i]));
+
+   if (!has_selector_start)
+      return false;
+
+   /* Look for { and } on the same line with : inside - strong CSS indicator */
+   const char *open_brace = memchr(line + i, '{', len - i);
+   const char *close_brace = memchr(line + i, '}', len - i);
+   const char *colon = memchr(line + i, ':', len - i);
+
+   if (open_brace && close_brace && colon && open_brace < colon && colon < close_brace) {
+      return true;
+   }
+
+   /* Check for standalone property: value; pattern */
+   if (colon && !open_brace) {
+      /* Look for ; after colon */
+      const char *semicolon = memchr(colon, ';', len - (colon - line));
+      if (semicolon) {
+         /* Check if before colon looks like a CSS property (alphanumeric and -) */
+         bool looks_like_property = true;
+         for (const char *p = line + i; p < colon && looks_like_property; p++) {
+            if (!isalnum(*p) && *p != '-' && !isspace(*p)) {
+               looks_like_property = false;
+            }
+         }
+         if (looks_like_property)
+            return true;
+      }
+   }
+
+   return false;
+}
+
+/* Maximum characters to scan when looking for CSS block end.
+ * Prevents hanging on malformed input (e.g., unclosed braces).
+ * 64KB should handle any legitimate CSS block while bounding worst-case. */
+#define CSS_BLOCK_MAX_SCAN 65536
+
+/* CSS at-rule prefixes to strip (with braced blocks) */
+static const char *CSS_BLOCK_KEYWORDS[] = { "@layer",    "@media",   "@keyframes", "@font-face",
+                                            "@supports", "@charset", "@import",    "@namespace" };
+#define CSS_BLOCK_KEYWORD_COUNT (sizeof(CSS_BLOCK_KEYWORDS) / sizeof(CSS_BLOCK_KEYWORDS[0]))
+
+/**
+ * @brief Find the end of a CSS block starting with @keyword
+ *
+ * Handles nested braces properly. Returns NULL if block exceeds
+ * CSS_BLOCK_MAX_SCAN characters to prevent hanging on malformed input.
+ */
+static const char *find_css_block_end(const char *start, const char *end) {
+   const char *p = start;
+   const char *max_scan = start + CSS_BLOCK_MAX_SCAN;
+   if (max_scan > end)
+      max_scan = end;
+
+   /* Find opening brace */
+   while (p < max_scan && *p != '{')
+      p++;
+
+   if (p >= max_scan)
+      return NULL;
+
+   p++; /* Skip { */
+   int depth = 1;
+
+   while (p < max_scan && depth > 0) {
+      if (*p == '{')
+         depth++;
+      else if (*p == '}')
+         depth--;
+      p++;
+   }
+
+   return (depth == 0) ? p : NULL;
+}
+
+/**
+ * @brief Strip CSS artifacts from markdown output (single-pass)
+ *
+ * Removes:
+ * - @layer { ... } blocks
+ * - @media { ... } blocks
+ * - @keyframes { ... } blocks
+ * - @font-face { ... } blocks
+ * - @supports { ... } blocks
+ * - Lines that look like CSS rules
+ * - Consecutive blank lines (max 2 newlines in a row)
+ *
+ * @param text Markdown text (modified in place)
+ * @return New length of text
+ */
+static size_t strip_css_artifacts(char *text) {
+   if (!text)
+      return 0;
+
+   size_t len = strlen(text);
+   char *read = text;
+   char *write = text;
+   const char *end = text + len;
+   int consecutive_newlines = 0;
+   bool at_line_start = true;
+
+   while (read < end) {
+      /* Check for CSS @ blocks */
+      if (*read == '@') {
+         bool is_css_block = false;
+         for (size_t k = 0; k < CSS_BLOCK_KEYWORD_COUNT; k++) {
+            size_t kw_len = strlen(CSS_BLOCK_KEYWORDS[k]);
+            if (strncmp(read, CSS_BLOCK_KEYWORDS[k], kw_len) == 0) {
+               is_css_block = true;
+               break;
+            }
+         }
+
+         if (is_css_block) {
+            const char *block_end = find_css_block_end(read, end);
+            if (block_end) {
+               /* Skip entire block */
+               read = (char *)block_end;
+               /* Skip trailing whitespace/newlines */
+               while (read < end && (*read == ' ' || *read == '\t' || *read == '\n'))
+                  read++;
+               at_line_start = true;
+               continue;
+            }
+         }
+      }
+
+      /* Check for CSS lines at start of line */
+      if (at_line_start) {
+         const char *line_end = memchr(read, '\n', end - read);
+         size_t line_len = line_end ? (size_t)(line_end - read) : (size_t)(end - read);
+
+         if (is_css_line(read, line_len)) {
+            /* Skip this line */
+            read = line_end ? (char *)line_end + 1 : (char *)end;
+            /* Don't increment consecutive_newlines - we're skipping the line entirely */
+            continue;
+         }
+      }
+
+      /* Handle newlines with consecutive limit */
+      if (*read == '\n') {
+         consecutive_newlines++;
+         if (consecutive_newlines <= MAX_CONSECUTIVE_NEWLINES) {
+            *write++ = *read;
+         }
+         read++;
+         at_line_start = true;
+         continue;
+      }
+
+      /* Non-newline character */
+      consecutive_newlines = 0;
+      at_line_start = false;
+      *write++ = *read++;
+   }
+
+   *write = '\0';
+   return (size_t)(write - text);
+}
+
+// =============================================================================
 // Public API
 // =============================================================================
 
@@ -1075,11 +1281,11 @@ int html_extract_text_with_base(const char *html,
 
    // Heuristic: Markdown output is typically much smaller than HTML
    // (we strip scripts, styles, navigation, comments, tags themselves, etc.)
-   // Start with ~1/3 of HTML size, minimum 4KB for small pages
+   // Start with ~1/3 of HTML size, minimum buffer for small pages
    // The buffer will grow via realloc if needed (doubling strategy)
    size_t initial_size = html_len / 3;
-   if (initial_size < 4096)
-      initial_size = 4096;
+   if (initial_size < HTML_INITIAL_BUFFER_MIN)
+      initial_size = HTML_INITIAL_BUFFER_MIN;
 
    state.out_capacity = initial_size;
    state.output = malloc(state.out_capacity);
@@ -1261,8 +1467,16 @@ int html_extract_text_with_base(const char *html,
       state.output[--state.out_pos] = '\0';
    }
 
+   // Strip CSS artifacts that leaked through (CSS-in-JS, critical CSS, etc.)
+   state.out_pos = strip_css_artifacts(state.output);
+
+   // Trim again after CSS stripping
+   while (state.out_pos > 0 && isspace(state.output[state.out_pos - 1])) {
+      state.output[--state.out_pos] = '\0';
+   }
+
    // Check minimum content
-   if (state.out_pos < 10) {
+   if (state.out_pos < HTML_MIN_CONTENT_LEN) {
       free(state.output);
       return HTML_PARSE_ERROR_EMPTY;
    }

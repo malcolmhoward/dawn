@@ -36,6 +36,7 @@
 /* ========== Forward Declarations ========== */
 
 static char *smartthings_tool_callback(const char *action, char *value, int *should_respond);
+static bool smartthings_tool_is_available(void);
 
 /* ========== Tool Parameter Definition ========== */
 
@@ -92,10 +93,18 @@ static const tool_metadata_t smartthings_metadata = {
    .config_parser = NULL,
    .config_section = NULL,
 
+   .is_available = smartthings_tool_is_available,
+
    .init = NULL,
    .cleanup = NULL,
    .callback = smartthings_tool_callback,
 };
+
+/* ========== Availability Check ========== */
+
+static bool smartthings_tool_is_available(void) {
+   return smartthings_is_authenticated();
+}
 
 /* ========== Color Name Mappings ========== */
 
@@ -155,28 +164,44 @@ static char *handle_list(void) {
       return make_error_msg("Failed to list devices: %s", smartthings_error_str(err));
    }
 
-   char *buf = malloc(8192);
+   const size_t buf_size = 8192;
+   char *buf = malloc(buf_size);
    if (!buf)
       return strdup("Memory allocation failed");
 
-   int len = snprintf(buf, 8192, "Found %d SmartThings devices:\n", devices->count);
-   for (int i = 0; i < devices->count && len < 8000; i++) {
+   size_t len = 0;
+   size_t remaining = buf_size;
+   int n = snprintf(buf, remaining, "Found %d SmartThings devices:\n", devices->count);
+   if (n > 0 && (size_t)n < remaining) {
+      len = (size_t)n;
+      remaining -= len;
+   }
+
+   for (int i = 0; i < devices->count && remaining > 100; i++) {
       const st_device_t *dev = &devices->devices[i];
 
       /* Build capability string */
       char caps[256] = "";
-      int caps_len = 0;
+      size_t caps_len = 0;
       for (int j = 0; j < 15 && caps_len < 240; j++) {
          st_capability_t cap = (st_capability_t)(1 << j);
          if (dev->capabilities & cap) {
-            if (caps_len > 0)
-               caps_len += snprintf(caps + caps_len, 256 - caps_len, ", ");
-            caps_len += snprintf(caps + caps_len, 256 - caps_len, "%s",
-                                 smartthings_capability_str(cap));
+            if (caps_len > 0) {
+               n = snprintf(caps + caps_len, 256 - caps_len, ", ");
+               if (n > 0)
+                  caps_len += (size_t)n;
+            }
+            n = snprintf(caps + caps_len, 256 - caps_len, "%s", smartthings_capability_str(cap));
+            if (n > 0)
+               caps_len += (size_t)n;
          }
       }
 
-      len += snprintf(buf + len, 8192 - len, "- %s (%s)\n", dev->label, caps);
+      n = snprintf(buf + len, remaining, "- %s (%s)\n", dev->label, caps);
+      if (n > 0 && (size_t)n < remaining) {
+         len += (size_t)n;
+         remaining -= (size_t)n;
+      }
    }
    return buf;
 }
@@ -197,45 +222,60 @@ static char *handle_status(const char *value) {
       return make_error_msg("Failed to get status: %s", smartthings_error_str(err));
    }
 
-   char *buf = malloc(1024);
+   const size_t buf_size = 1024;
+   char *buf = malloc(buf_size);
    if (!buf)
       return strdup("Memory allocation failed");
 
-   int len = snprintf(buf, 1024, "Status of '%s':\n", device->label);
+   size_t len = 0;
+   size_t remaining = buf_size;
+   int n;
+
+/* Helper macro for safe snprintf with truncation handling */
+#define SAFE_APPEND(...)                               \
+   do {                                                \
+      n = snprintf(buf + len, remaining, __VA_ARGS__); \
+      if (n > 0 && (size_t)n < remaining) {            \
+         len += (size_t)n;                             \
+         remaining -= (size_t)n;                       \
+      }                                                \
+   } while (0)
+
+   SAFE_APPEND("Status of '%s':\n", device->label);
 
    if (device->capabilities & ST_CAP_SWITCH) {
-      len += snprintf(buf + len, 1024 - len, "- Power: %s\n", state.switch_on ? "on" : "off");
+      SAFE_APPEND("- Power: %s\n", state.switch_on ? "on" : "off");
    }
    if (device->capabilities & ST_CAP_SWITCH_LEVEL) {
-      len += snprintf(buf + len, 1024 - len, "- Brightness: %d%%\n", state.level);
+      SAFE_APPEND("- Brightness: %d%%\n", state.level);
    }
    if (device->capabilities & ST_CAP_COLOR_CONTROL) {
-      len += snprintf(buf + len, 1024 - len, "- Color: hue=%d, saturation=%d\n", state.hue,
-                      state.saturation);
+      SAFE_APPEND("- Color: hue=%d, saturation=%d\n", state.hue, state.saturation);
    }
    if (device->capabilities & ST_CAP_COLOR_TEMP) {
-      len += snprintf(buf + len, 1024 - len, "- Color temp: %dK\n", state.color_temp);
+      SAFE_APPEND("- Color temp: %dK\n", state.color_temp);
    }
    if (device->capabilities & ST_CAP_TEMPERATURE) {
-      len += snprintf(buf + len, 1024 - len, "- Temperature: %.1f\n", state.temperature);
+      SAFE_APPEND("- Temperature: %.1f\n", state.temperature);
    }
    if (device->capabilities & ST_CAP_HUMIDITY) {
-      len += snprintf(buf + len, 1024 - len, "- Humidity: %.1f%%\n", state.humidity);
+      SAFE_APPEND("- Humidity: %.1f%%\n", state.humidity);
    }
    if (device->capabilities & ST_CAP_LOCK) {
-      len += snprintf(buf + len, 1024 - len, "- Lock: %s\n", state.locked ? "locked" : "unlocked");
+      SAFE_APPEND("- Lock: %s\n", state.locked ? "locked" : "unlocked");
    }
    if (device->capabilities & ST_CAP_BATTERY) {
-      len += snprintf(buf + len, 1024 - len, "- Battery: %d%%\n", state.battery);
+      SAFE_APPEND("- Battery: %d%%\n", state.battery);
    }
    if (device->capabilities & ST_CAP_MOTION) {
-      len += snprintf(buf + len, 1024 - len, "- Motion: %s\n",
-                      state.motion_active ? "detected" : "none");
+      SAFE_APPEND("- Motion: %s\n", state.motion_active ? "detected" : "none");
    }
    if (device->capabilities & ST_CAP_CONTACT) {
-      len += snprintf(buf + len, 1024 - len, "- Contact: %s\n",
-                      state.contact_open ? "open" : "closed");
+      SAFE_APPEND("- Contact: %s\n", state.contact_open ? "open" : "closed");
    }
+
+#undef SAFE_APPEND
+
    return buf;
 }
 

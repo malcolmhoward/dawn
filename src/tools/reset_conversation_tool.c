@@ -31,6 +31,7 @@
 #include "llm/llm_command_parser.h"
 #include "logging.h"
 #include "tools/tool_registry.h"
+#include "webui/webui_server.h"
 
 /* ========== Forward Declarations ========== */
 
@@ -53,7 +54,7 @@ static const tool_metadata_t reset_conversation_metadata = {
    .device_type = TOOL_DEVICE_TYPE_TRIGGER,
    .capabilities = TOOL_CAP_NONE,
    .is_getter = false,
-   .skip_followup = false,
+   .skip_followup = true, /* Must be true - conversation history is invalidated after reset */
    .default_remote = true,
 
    .config = NULL,
@@ -94,6 +95,11 @@ static char *reset_conversation_tool_callback(const char *action,
        * Note: WebUI sessions will have memory context rebuilt on next message */
       const char *system_prompt = get_local_command_prompt();
       session_init_system_prompt(session, system_prompt);
+   }
+
+   /* For WebUI sessions, send notification to clear the frontend display */
+   if (session && session->type == SESSION_TYPE_WEBSOCKET) {
+      webui_send_conversation_reset(session);
    }
 
    *should_respond = 1;

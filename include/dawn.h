@@ -182,15 +182,15 @@ char *setPcmPlaybackDevice(const char *actioName, char *value, int *should_respo
 char *setPcmCaptureDevice(const char *actioName, char *value, int *should_respond);
 
 /**
- * Searches for an audio playback device by name.
+ * Searches for a named playback device by name or alias.
  *
- * @param name The name of the audio playback device to search for.
+ * @param name The name or alias of the audio playback device to search for.
  * @return A pointer to the device identifier if found, otherwise NULL.
  *
- * This function iterates over the list of known audio playback devices, comparing each
- * device's name with the provided name. If a match is found, it returns the device identifier.
+ * Searches g_config.audio.named_devices for a playback device matching the
+ * given name or any of its aliases.
  */
-char *findAudioPlaybackDevice(char *name);
+const char *findAudioPlaybackDevice(const char *name);
 
 /**
  * Callback function for text-to-speech commands.

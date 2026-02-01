@@ -35,8 +35,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#include "core/command_registry.h"
 #include "llm/llm_interface.h"
+#include "tools/tool_registry.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -60,20 +60,17 @@ extern "C" {
 
 /* =============================================================================
  * Tool Definition Structures
- *
- * Note: Parameter types use cmd_param_type_t from command_registry.h
  * ============================================================================= */
 
 /**
  * @brief Tool parameter definition
  *
- * Uses cmd_param_type_t from command_registry.h for type field to maintain
- * a single source of truth for parameter types.
+ * Uses tool_param_type_t from tool_registry.h for type field.
  */
 typedef struct {
    char name[LLM_TOOLS_NAME_LEN];                   /**< Parameter name */
    char description[256];                           /**< Parameter description */
-   cmd_param_type_t type;                           /**< Parameter type (from command_registry.h) */
+   tool_param_type_t type;                          /**< Parameter type (from tool_registry.h) */
    bool required;                                   /**< Is this parameter required? */
    char enum_values[LLM_TOOLS_MAX_ENUM_VALUES][64]; /**< Allowed values for ENUM type */
    int enum_count;                                  /**< Number of enum values */
@@ -362,6 +359,14 @@ int llm_tools_get_enabled_count_filtered(bool is_remote_session);
  * @return Estimated token count
  */
 int llm_tools_estimate_tokens(bool is_remote_session);
+
+/**
+ * @brief Invalidate cached schemas (forces regeneration with current params)
+ *
+ * Call this when tool parameters are updated dynamically (e.g., by discovery).
+ * This ensures the next schema generation reflects the current parameter values.
+ */
+void llm_tools_invalidate_cache(void);
 
 /* =============================================================================
  * Tool Execution

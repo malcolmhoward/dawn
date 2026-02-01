@@ -4,7 +4,7 @@ This document describes the architecture of the D.A.W.N. (Digital Assistant for 
 
 **D.A.W.N.** is the central intelligence layer of the OASIS ecosystem, responsible for interpreting user intent, fusing data from every subsystem, and routing commands. At its core, DAWN performs neural-inference to understand context and drive decision-making, acting as OASIS's orchestration hub for MIRAGE, AURA, SPARK, STAT, and any future modules.
 
-**Last Updated**: January 30, 2026 (added Tool Registry System section)
+**Last Updated**: January 31, 2026 (added Module Dependency Hierarchy section)
 
 ## Table of Contents
 
@@ -766,6 +766,76 @@ model = "qwen2.5:7b"      # Model for extraction
 9. Call extraction LLM, parse JSON response
    ↓
 10. Store new facts, update preferences, save summary
+```
+
+---
+
+## Module Dependency Hierarchy
+
+To prevent circular dependencies and maintain clean architecture, modules are organized into layers. **Modules may only depend on modules in lower layers.**
+
+```
+Layer 0 (Foundation)
+├── logging.c/h           - Logging macros (no dependencies)
+├── config/               - Configuration parsing and defaults
+│   ├── dawn_config.h
+│   ├── config_parser.c
+│   └── config_defaults.c
+└── tools/string_utils.c  - String helpers
+
+Layer 1 (Core Infrastructure)
+├── tool_registry.c/h     - Tool registration and lookup (depends: logging, config)
+├── command_router.c/h    - Request/response routing (depends: logging)
+├── session_manager.c/h   - Session lifecycle (depends: logging, config)
+└── input_queue.c/h       - Thread-safe input queue (depends: logging)
+
+Layer 2 (Services)
+├── llm/                  - LLM providers and tools
+│   ├── llm_interface.c   - Provider abstraction (depends: Layer 0-1)
+│   ├── llm_openai.c      - OpenAI/Ollama/llama.cpp (depends: llm_interface)
+│   ├── llm_claude.c      - Anthropic Claude (depends: llm_interface)
+│   └── llm_tools.c       - Tool execution (depends: tool_registry)
+├── tts/                  - Text-to-speech (depends: Layer 0-1)
+├── asr/                  - Speech recognition (depends: Layer 0-1)
+├── mosquitto_comms.c     - MQTT integration (depends: Layer 0-1, tool_registry)
+└── memory/               - Persistent memory (depends: Layer 0-1)
+
+Layer 3 (Tools)
+├── tools/weather_tool.c  - Weather API (depends: Layer 0-2)
+├── tools/music_tool.c    - Music playback (depends: Layer 0-2)
+├── tools/search_tool.c   - Web search (depends: Layer 0-2)
+├── tools/memory_tool.c   - Memory commands (depends: Layer 0-2, memory/)
+└── tools/*.c             - All other tools (depends: Layer 0-2)
+
+Layer 4 (Application)
+├── dawn.c                - Main entry point (depends: all layers)
+├── worker_pool.c         - Concurrent processing (depends: Layer 0-3)
+├── state_machine.c       - Voice state machine (depends: Layer 0-3)
+└── webui/                - Web interface (depends: Layer 0-3)
+```
+
+### Dependency Rules
+
+1. **Downward only**: A module may only `#include` headers from its own layer or lower layers
+2. **No cycles**: If A depends on B, B must not depend on A (directly or transitively)
+3. **Interface segregation**: Use forward declarations and callbacks to break potential cycles
+4. **Same-layer allowed**: Modules in the same layer may depend on each other if acyclic
+
+### Common Patterns to Avoid Cycles
+
+**Callback registration** (Layer 2 → Layer 3 without direct dependency):
+```c
+// In tool_registry.h (Layer 1)
+typedef char *(*tool_callback_t)(const char *action, char *value, int *should_respond);
+
+// In weather_tool.c (Layer 3) - registers callback at init
+tool_registry_register(&weather_metadata);  // Passes function pointer up
+```
+
+**Forward declarations** (when header inclusion would create cycle):
+```c
+// In llm_tools.h - avoid including full tool_registry.h
+struct tool_metadata;  // Forward declaration
 ```
 
 ---
@@ -1636,7 +1706,7 @@ The WebUI settings panel (`www/js/ui/settings.js`) defines a `SETTINGS_SCHEMA` t
 ---
 
 **Document Version**: 1.6
-**Last Updated**: January 30, 2026 (added Tool Registry System section)
+**Last Updated**: January 31, 2026 (added Module Dependency Hierarchy section)
 **Reorganization Commit**: [Git SHA to be added after commit]
 
 ### LLM Threading Architecture (Post-Interrupt Implementation)

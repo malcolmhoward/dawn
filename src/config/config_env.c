@@ -231,7 +231,6 @@ void config_apply_env(dawn_config_t *config, secrets_config_t *secrets) {
 
    /* [paths] */
    ENV_STRING("DAWN_PATHS_MUSIC_DIR", config->paths.music_dir);
-   ENV_STRING("DAWN_PATHS_COMMANDS_CONFIG", config->paths.commands_config);
 }
 
 /* =============================================================================
@@ -352,7 +351,6 @@ void config_dump(const dawn_config_t *config) {
 
    printf("\n[paths]\n");
    printf("  music_dir = \"%s\"\n", config->paths.music_dir);
-   printf("  commands_config = \"%s\"\n", config->paths.commands_config);
 }
 
 /* =============================================================================
@@ -798,10 +796,6 @@ void config_dump_settings(const dawn_config_t *config,
    PRINT_SETTING_STR("music_dir", config->paths.music_dir, "DAWN_PATHS_MUSIC_DIR",
                      detect_source_str(config->paths.music_dir, defaults.paths.music_dir,
                                        "DAWN_PATHS_MUSIC_DIR"));
-   PRINT_SETTING_STR("commands_config", config->paths.commands_config, "DAWN_PATHS_COMMANDS_CONFIG",
-                     detect_source_str(config->paths.commands_config,
-                                       defaults.paths.commands_config,
-                                       "DAWN_PATHS_COMMANDS_CONFIG"));
 
    /* Secrets (only show env var names, not values) */
    printf("================================================================================\n");
@@ -929,7 +923,6 @@ void config_dump_toml(const dawn_config_t *config) {
 
    printf("\n[paths]\n");
    printf("music_dir = \"%s\"\n", config->paths.music_dir);
-   printf("commands_config = \"%s\"\n", config->paths.commands_config);
 }
 
 /* =============================================================================
@@ -1246,8 +1239,6 @@ json_object *config_to_json(const dawn_config_t *config) {
    /* [paths] */
    json_object *paths = json_object_new_object();
    json_object_object_add(paths, "music_dir", json_object_new_string(config->paths.music_dir));
-   json_object_object_add(paths, "commands_config",
-                          json_object_new_string(config->paths.commands_config));
    json_object_object_add(root, "paths", paths);
 
    /* [images] */
@@ -1624,7 +1615,6 @@ int config_write_toml(const dawn_config_t *config, const char *path) {
 
    fprintf(fp, "\n[paths]\n");
    fprintf(fp, "music_dir = \"%s\"\n", config->paths.music_dir);
-   fprintf(fp, "commands_config = \"%s\"\n", config->paths.commands_config);
 
    fprintf(fp, "\n[images]\n");
    fprintf(fp, "retention_days = %d\n", config->images.retention_days);

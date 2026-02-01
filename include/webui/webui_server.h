@@ -118,10 +118,13 @@ typedef enum {
    WS_RESP_COMPACTION_COMPLETE, /* Context compaction completed */
 
    /* Extended thinking types (reasoning/thinking content) */
-   WS_RESP_THINKING_START,   /* Start of thinking block */
-   WS_RESP_THINKING_DELTA,   /* Incremental thinking content */
-   WS_RESP_THINKING_END,     /* End of thinking block */
-   WS_RESP_REASONING_SUMMARY /* OpenAI o-series reasoning token summary (no content) */
+   WS_RESP_THINKING_START,    /* Start of thinking block */
+   WS_RESP_THINKING_DELTA,    /* Incremental thinking content */
+   WS_RESP_THINKING_END,      /* End of thinking block */
+   WS_RESP_REASONING_SUMMARY, /* OpenAI o-series reasoning token summary (no content) */
+
+   /* Tool-initiated events */
+   WS_RESP_CONVERSATION_RESET /* Conversation was reset via tool */
 } ws_response_type_t;
 
 /* =============================================================================
@@ -409,6 +412,19 @@ void webui_send_thinking_end(struct session *session, bool has_content);
  * @note Thread-safe
  */
 void webui_send_reasoning_summary(struct session *session, int reasoning_tokens);
+
+/**
+ * @brief Send conversation reset notification to WebSocket client
+ *
+ * Notifies the frontend that the conversation context was reset (e.g., via
+ * reset_conversation tool). The frontend should save the current conversation
+ * and clear the chat display.
+ *
+ * @param session Session to send to (must be SESSION_TYPE_WEBSOCKET)
+ *
+ * @note Thread-safe
+ */
+void webui_send_conversation_reset(struct session *session);
 
 /**
  * @brief Process a text message from WebSocket client

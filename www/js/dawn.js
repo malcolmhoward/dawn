@@ -364,6 +364,13 @@
             case 'delete_all_memories_response':
                DawnMemory.handleDeleteAllResponse(msg.payload);
                break;
+            case 'conversation_reset':
+               // Tool triggered conversation reset - sync frontend
+               console.log('Conversation reset by tool');
+               // Start new chat (saves current conversation and clears transcript)
+               DawnHistory.startNewChat();
+               DawnToast.show('Conversation reset', 'info');
+               break;
             default:
                console.log('Unknown message type:', msg.type);
          }

@@ -679,9 +679,10 @@ int weather_format_for_llm(const weather_response_t *response, char *buffer, siz
    }
 
    // Add daily forecasts with relative day labels
-   for (int i = 0; i < response->num_days && (size_t)written < buffer_size; i++) {
+   size_t remaining = buffer_size - (size_t)written;
+   for (int i = 0; i < response->num_days && remaining > 1; i++) {
       const char *day_label = get_relative_day_label(i, response->daily[i].date);
-      int day_written = snprintf(buffer + written, buffer_size - written,
+      int day_written = snprintf(buffer + written, remaining,
                                  "%s{"
                                  "\"day\": \"%s\", "
                                  "\"date\": \"%s\", "
@@ -700,13 +701,19 @@ int weather_format_for_llm(const weather_response_t *response, char *buffer, siz
       if (day_written < 0) {
          return day_written;
       }
+      /* Handle truncation: cap at remaining space */
+      if ((size_t)day_written >= remaining) {
+         written = (int)(buffer_size - 1);
+         break;
+      }
       written += day_written;
+      remaining -= (size_t)day_written;
    }
 
    // Close the forecast array and object
-   if ((size_t)written < buffer_size) {
-      int close_written = snprintf(buffer + written, buffer_size - written, "]}");
-      if (close_written > 0) {
+   if (remaining > 2) {
+      int close_written = snprintf(buffer + written, remaining, "]}");
+      if (close_written > 0 && (size_t)close_written < remaining) {
          written += close_written;
       }
    }

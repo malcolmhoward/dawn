@@ -39,7 +39,7 @@
 
 #include "config/dawn_config.h"
 #include "core/command_executor.h"
-#include "core/command_registry.h"
+#include "core/component_status.h"
 #include "core/session_manager.h"
 #include "core/worker_pool.h"
 #include "dawn.h"
@@ -48,6 +48,7 @@
 #include "llm/llm_interface.h"
 #include "logging.h"
 #include "mosquitto_comms.h"
+#include "tools/hud_discovery.h"
 #include "tools/string_utils.h"
 #include "tools/tool_registry.h"
 
@@ -397,11 +398,13 @@ static bool execute_viewing_sync(const char *action,
       return false;
    }
 
-   char topic[64] = "dawn";
-   if (!command_registry_validate("viewing", topic, sizeof(topic))) {
-      snprintf(tool_result->result, LLM_TOOLS_RESULT_LEN, "Error: viewing device not configured");
+   const tool_metadata_t *viewing_tool = tool_registry_find("viewing");
+   if (!viewing_tool || !viewing_tool->topic) {
+      snprintf(tool_result->result, LLM_TOOLS_RESULT_LEN, "Error: viewing tool not registered");
       return false;
    }
+   char topic[64];
+   safe_strncpy(topic, viewing_tool->topic, sizeof(topic));
 
    /* Use unified sync executor for the MQTT wait portion */
    cmd_exec_result_t exec_result;
@@ -436,211 +439,8 @@ static bool execute_viewing_sync(const char *action,
 }
 
 /* =============================================================================
- * Table-Driven Parameter Extraction
+ * Tool Registry-Based Tool Generation
  * ============================================================================= */
-
-/**
- * @brief Extract parameters from tool arguments using registry metadata
- *
- * Uses the maps_to field from command parameters to route values to
- * device/action/value fields, replacing the 160-line switch statement.
- *
- * @param cmd Command definition from registry
- * @param args Parsed JSON arguments
- * @param device Output device name (for meta-tools with device_map)
- * @param action Output action name
- * @param value Output value string
- * @param custom_fields Output for custom field mappings (e.g., setting for smartthings)
- * @return 0 on success, non-zero on validation error
- */
-static int extract_params_from_registry(const cmd_definition_t *cmd,
-                                        struct json_object *args,
-                                        char *device,
-                                        size_t device_len,
-                                        char *action,
-                                        size_t action_len,
-                                        char *value,
-                                        size_t value_len) {
-   if (!cmd) {
-      return 1;
-   }
-
-   /* Set defaults - action based on tool type (getter reads, setter writes) */
-   device[0] = '\0';
-   strcpy(action, cmd->is_getter ? "get" : "set");
-   value[0] = '\0';
-
-   /* For meta-tools, start with the tool's device_string as device */
-   if (cmd->is_meta_tool) {
-      safe_strncpy(device, cmd->device_string, device_len);
-   }
-
-   if (!args) {
-      return 0; /* No arguments to extract */
-   }
-
-   /* Track if we need to append to value (for smartthings device+value pattern) */
-   bool first_value = true;
-
-   /* Iterate through command parameters and extract based on maps_to */
-   for (int i = 0; i < cmd->param_count; i++) {
-      const cmd_param_t *param = &cmd->parameters[i];
-      struct json_object *arg_val = NULL;
-
-      if (!json_object_object_get_ex(args, param->name, &arg_val)) {
-         continue; /* Parameter not provided */
-      }
-
-      const char *str_val = NULL;
-      char int_buf[32];
-
-      /* Get string representation based on type */
-      if (param->type == CMD_PARAM_INTEGER) {
-         snprintf(int_buf, sizeof(int_buf), "%d", json_object_get_int(arg_val));
-         str_val = int_buf;
-      } else if (param->type == CMD_PARAM_NUMBER) {
-         snprintf(int_buf, sizeof(int_buf), "%g", json_object_get_double(arg_val));
-         str_val = int_buf;
-      } else if (param->type == CMD_PARAM_BOOLEAN) {
-         str_val = json_object_get_boolean(arg_val) ? "true" : "false";
-      } else {
-         str_val = json_object_get_string(arg_val);
-      }
-
-      if (!str_val) {
-         continue;
-      }
-
-      /* Validate enum values if applicable */
-      if (param->type == CMD_PARAM_ENUM && param->enum_count > 0) {
-         bool valid = false;
-         for (int j = 0; j < param->enum_count; j++) {
-            if (strcmp(str_val, param->enum_values[j]) == 0) {
-               valid = true;
-               break;
-            }
-         }
-         if (!valid) {
-            LOG_WARNING("Invalid enum value '%s' for parameter '%s'", str_val, param->name);
-            return 1; /* Validation failed */
-         }
-      }
-
-      /* Route value based on maps_to */
-      switch (param->maps_to) {
-         case CMD_MAPS_TO_ACTION:
-            safe_strncpy(action, str_val, action_len);
-            break;
-
-         case CMD_MAPS_TO_DEVICE:
-            /* For meta-tools, resolve through device_map if available */
-            if (cmd->is_meta_tool && cmd->device_map_count > 0) {
-               const char *resolved = command_registry_resolve_device(cmd, str_val);
-               if (resolved) {
-                  safe_strncpy(device, resolved, device_len);
-               } else {
-                  /* No mapping found, use value directly */
-                  safe_strncpy(device, str_val, device_len);
-               }
-            } else {
-               safe_strncpy(device, str_val, device_len);
-            }
-            break;
-
-         case CMD_MAPS_TO_VALUE:
-            if (first_value) {
-               safe_strncpy(value, str_val, value_len);
-               first_value = false;
-            } else {
-               /* Append with space (for smartthings device+value pattern) */
-               size_t cur_len = strlen(value);
-               if (cur_len > 0 && cur_len < value_len - 2) {
-                  value[cur_len] = ' ';
-                  safe_strncpy(value + cur_len + 1, str_val, value_len - cur_len - 1);
-               }
-            }
-            break;
-
-         case CMD_MAPS_TO_CUSTOM:
-            /* Custom fields like "custom:setting" - append to value with prefix */
-            /* For now, just append to value like the smartthings pattern */
-            if (first_value) {
-               safe_strncpy(value, str_val, value_len);
-               first_value = false;
-            } else {
-               size_t cur_len = strlen(value);
-               if (cur_len > 0 && cur_len < value_len - 2) {
-                  value[cur_len] = ' ';
-                  safe_strncpy(value + cur_len + 1, str_val, value_len - cur_len - 1);
-               }
-            }
-            break;
-      }
-   }
-
-   return 0;
-}
-
-/* Forward declaration */
-static bool tool_exists(const char *name);
-
-/* =============================================================================
- * Registry-Based Tool Generation
- * ============================================================================= */
-
-/**
- * @brief Generate a tool definition from a command registry entry
- *
- * Called for each command in the registry. Only creates tools for commands
- * that have a description (indicating they have a tool block in config).
- */
-static void generate_tool_from_cmd(const cmd_definition_t *cmd, void *user_data) {
-   (void)user_data;
-
-   /* Only create tools for commands with descriptions (have tool blocks) */
-   if (cmd->description[0] == '\0') {
-      return;
-   }
-
-   /* Skip if already registered from tool_registry (migrated tool takes precedence) */
-   if (tool_exists(cmd->name)) {
-      return;
-   }
-
-   if (s_tool_count >= LLM_TOOLS_MAX_TOOLS) {
-      LOG_ERROR("Maximum tool count (%d) reached, skipping '%s'", LLM_TOOLS_MAX_TOOLS, cmd->name);
-      return;
-   }
-
-   tool_definition_t *t = &s_tools[s_tool_count++];
-   memset(t, 0, sizeof(*t));
-
-   safe_strncpy(t->name, cmd->name, LLM_TOOLS_NAME_LEN);
-   safe_strncpy(t->description, cmd->description, LLM_TOOLS_DESC_LEN);
-   t->device_name = cmd->device_string;
-   t->enabled = cmd->enabled;
-   t->enabled_local = cmd->default_local;
-   t->enabled_remote = cmd->default_remote;
-   t->armor_feature = cmd->armor_feature;
-   t->parallel_safe = is_tool_parallel_safe(cmd->name);
-
-   /* Copy parameters (types are now unified - cmd_param_type_t used in both) */
-   for (int i = 0; i < cmd->param_count && i < LLM_TOOLS_MAX_PARAMS; i++) {
-      const cmd_param_t *src = &cmd->parameters[i];
-      tool_param_t *dst = &t->parameters[t->param_count++];
-
-      safe_strncpy(dst->name, src->name, LLM_TOOLS_NAME_LEN);
-      safe_strncpy(dst->description, src->description, sizeof(dst->description));
-      dst->type = src->type; /* Direct assignment - same enum type */
-      dst->required = src->required;
-
-      /* Copy enum values */
-      for (int j = 0; j < src->enum_count && j < LLM_TOOLS_MAX_ENUM_VALUES; j++) {
-         safe_strncpy(dst->enum_values[j], src->enum_values[j], sizeof(dst->enum_values[j]));
-         dst->enum_count++;
-      }
-   }
-}
 
 /**
  * @brief Check if a tool with given name already exists
@@ -690,7 +490,7 @@ static void generate_tool_from_treg(const tool_metadata_t *meta, void *user_data
    t->armor_feature = (meta->capabilities & TOOL_CAP_ARMOR_FEATURE) != 0;
    t->parallel_safe = is_tool_parallel_safe(meta->name);
 
-   /* Copy parameters (tool_param_type_t maps directly to cmd_param_type_t) */
+   /* Copy parameters */
    for (int i = 0; i < meta->param_count && i < LLM_TOOLS_MAX_PARAMS; i++) {
       const treg_param_t *src = &meta->params[i];
       tool_param_t *dst = &t->parameters[t->param_count++];
@@ -698,7 +498,7 @@ static void generate_tool_from_treg(const tool_metadata_t *meta, void *user_data
       safe_strncpy(dst->name, src->name, LLM_TOOLS_NAME_LEN);
       safe_strncpy(dst->description, src->description ? src->description : "",
                    sizeof(dst->description));
-      dst->type = (cmd_param_type_t)src->type; /* Direct cast - same enum values */
+      dst->type = src->type;
       dst->required = src->required;
 
       /* Copy enum values */
@@ -722,20 +522,11 @@ void llm_tools_init(void) {
 
    s_tool_count = 0;
 
-   /* Step 1: Generate tools from tool_registry (migrated tools with C struct metadata)
-    * These take precedence over JSON-based definitions in command_registry */
-   int treg_count = 0;
+   /* Generate tools from tool_registry (compile-time C struct metadata) */
    tool_registry_foreach_enabled(generate_tool_from_treg, NULL);
-   treg_count = s_tool_count;
-
-   /* Step 2: Generate remaining tools from command_registry (JSON-based, not yet migrated)
-    * The generate_tool_from_cmd function will skip tools that already exist */
-   command_registry_foreach_enabled(generate_tool_from_cmd, NULL);
-   int cmd_count = s_tool_count - treg_count;
 
    s_initialized = true;
-   LOG_INFO("Initialized %d LLM tools (%d from tool_registry, %d from command_registry)",
-            s_tool_count, treg_count, cmd_count);
+   LOG_INFO("Initialized %d LLM tools from tool_registry", s_tool_count);
 
    /* Refresh availability based on current config */
    llm_tools_refresh();
@@ -763,11 +554,19 @@ void llm_tools_refresh(void) {
 
    const secrets_config_t *secrets = config_get_secrets();
 
+   /* Check if HUD/helmet hardware is available via status keepalive */
+   bool hud_available = component_status_is_hud_online();
+
    for (int i = 0; i < s_tool_count; i++) {
       tool_definition_t *t = &s_tools[i];
 
       /* Default: capability enabled (local/remote defaults set during init from JSON) */
       t->enabled = true;
+
+      /* Armor/HUD tools require successful discovery (helmet must be connected) */
+      if (t->armor_feature) {
+         t->enabled = hud_available;
+      }
 
       /* SmartThings requires authentication */
       if (strcmp(t->name, "smartthings") == 0) {
@@ -794,7 +593,8 @@ void llm_tools_refresh(void) {
       }
    }
 
-   LOG_INFO("Refreshed tool availability: %d enabled", s_enabled_count);
+   LOG_INFO("Refreshed tool availability: %d enabled (HUD %s)", s_enabled_count,
+            hud_available ? "available" : "unavailable");
 }
 
 void llm_tools_cleanup(void) {
@@ -806,24 +606,80 @@ void llm_tools_cleanup(void) {
  * Schema Generation - Helper Functions
  * ============================================================================= */
 
-static const char *param_type_to_json_type(cmd_param_type_t type) {
+static const char *param_type_to_json_type(tool_param_type_t type) {
    switch (type) {
-      case CMD_PARAM_STRING:
-      case CMD_PARAM_ENUM:
+      case TOOL_PARAM_TYPE_STRING:
+      case TOOL_PARAM_TYPE_ENUM:
          return "string";
-      case CMD_PARAM_INTEGER:
+      case TOOL_PARAM_TYPE_INT:
          return "integer";
-      case CMD_PARAM_NUMBER:
+      case TOOL_PARAM_TYPE_NUMBER:
          return "number";
-      case CMD_PARAM_BOOLEAN:
+      case TOOL_PARAM_TYPE_BOOL:
          return "boolean";
       default:
          return "string";
    }
 }
 
-/* Build the parameters/input_schema JSON object (shared format) */
-static struct json_object *build_parameters_schema(const tool_definition_t *tool) {
+/**
+ * @brief Build parameters schema from tool_registry with live enum values
+ *
+ * For tools from tool_registry, this queries the registry at schema generation
+ * time to get current enum values (which may have been updated by discovery).
+ */
+static struct json_object *build_parameters_schema_from_treg(const char *tool_name,
+                                                             int param_count) {
+   struct json_object *schema = json_object_new_object();
+   json_object_object_add(schema, "type", json_object_new_string("object"));
+
+   struct json_object *properties = json_object_new_object();
+   struct json_object *required = json_object_new_array();
+
+   for (int i = 0; i < param_count; i++) {
+      /* Query tool_registry for effective parameter (includes discovery overrides) */
+      const treg_param_t *p = tool_registry_get_effective_param(tool_name, i);
+      if (!p) {
+         continue;
+      }
+
+      struct json_object *prop = json_object_new_object();
+      json_object_object_add(prop, "type",
+                             json_object_new_string(
+                                 param_type_to_json_type((tool_param_type_t)p->type)));
+      json_object_object_add(prop, "description",
+                             json_object_new_string(p->description ? p->description : ""));
+
+      /* Add enum values if present */
+      if (p->type == TOOL_PARAM_TYPE_ENUM && p->enum_count > 0) {
+         struct json_object *enum_arr = json_object_new_array();
+         for (int j = 0; j < p->enum_count; j++) {
+            if (p->enum_values[j]) {
+               json_object_array_add(enum_arr, json_object_new_string(p->enum_values[j]));
+            }
+         }
+         json_object_object_add(prop, "enum", enum_arr);
+      }
+
+      json_object_object_add(properties, p->name, prop);
+
+      if (p->required) {
+         json_object_array_add(required, json_object_new_string(p->name));
+      }
+   }
+
+   json_object_object_add(schema, "properties", properties);
+   json_object_object_add(schema, "required", required);
+
+   return schema;
+}
+
+/**
+ * @brief Build parameters schema from cached tool_definition_t
+ *
+ * Fallback for tools not found in tool_registry (shouldn't happen in normal operation).
+ */
+static struct json_object *build_parameters_schema_from_cached(const tool_definition_t *tool) {
    struct json_object *schema = json_object_new_object();
    json_object_object_add(schema, "type", json_object_new_string("object"));
 
@@ -839,7 +695,7 @@ static struct json_object *build_parameters_schema(const tool_definition_t *tool
       json_object_object_add(prop, "description", json_object_new_string(p->description));
 
       /* Add enum values if present */
-      if (p->type == CMD_PARAM_ENUM && p->enum_count > 0) {
+      if (p->type == TOOL_PARAM_TYPE_ENUM && p->enum_count > 0) {
          struct json_object *enum_arr = json_object_new_array();
          for (int j = 0; j < p->enum_count; j++) {
             json_object_array_add(enum_arr, json_object_new_string(p->enum_values[j]));
@@ -858,6 +714,21 @@ static struct json_object *build_parameters_schema(const tool_definition_t *tool
    json_object_object_add(schema, "required", required);
 
    return schema;
+}
+
+/**
+ * @brief Build the parameters/input_schema JSON object
+ *
+ * Uses tool_registry for dynamic enum updates when available.
+ */
+static struct json_object *build_parameters_schema(const tool_definition_t *tool) {
+   /* Check if this tool exists in tool_registry (supports dynamic params) */
+   if (tool_registry_find(tool->name) != NULL) {
+      return build_parameters_schema_from_treg(tool->name, tool->param_count);
+   }
+
+   /* Fall back to cached parameters */
+   return build_parameters_schema_from_cached(tool);
 }
 
 /* =============================================================================
@@ -1205,6 +1076,14 @@ int llm_tools_estimate_tokens(bool is_remote_session) {
    return *cache;
 }
 
+void llm_tools_invalidate_cache(void) {
+   pthread_mutex_lock(&s_tools_mutex);
+   s_token_estimate_local = -1;
+   s_token_estimate_remote = -1;
+   pthread_mutex_unlock(&s_tools_mutex);
+   LOG_INFO("LLM tools schema cache invalidated");
+}
+
 /* =============================================================================
  * Tool Execution
  * ============================================================================= */
@@ -1275,10 +1154,16 @@ static int llm_tools_execute_from_treg(const tool_call_t *call,
 
    /* Resolve device mapping for meta-tools */
    const char *effective_device = meta->device_string;
-   if (device_name[0] != '\0' && meta->device_map && meta->device_map_count > 0) {
-      const char *mapped = tool_registry_resolve_device(meta, device_name);
-      if (mapped) {
-         effective_device = mapped;
+   if (device_name[0] != '\0') {
+      if (meta->device_map && meta->device_map_count > 0) {
+         /* Use device_map to resolve the device name */
+         const char *mapped = tool_registry_resolve_device(meta, device_name);
+         if (mapped) {
+            effective_device = mapped;
+         }
+      } else {
+         /* No device_map - use device_name directly */
+         effective_device = device_name;
       }
    }
 
@@ -1292,6 +1177,40 @@ static int llm_tools_execute_from_treg(const tool_call_t *call,
    if (meta->sync_wait && strcmp(meta->name, "viewing") == 0) {
       result->success = execute_viewing_sync(action_name, value_buf, result);
       notify_tool_execution(call->name, call->arguments, result->result, result->success);
+      return result->success ? 0 : 1;
+   }
+
+   /* MQTT-only tools must go through command_execute for proper MQTT publishing */
+   if (meta->mqtt_only) {
+      struct mosquitto *mosq = worker_pool_get_mosq();
+      cmd_exec_result_t exec_result;
+
+      /* Default action for ANALOG mqtt_only tools without explicit action */
+      if (action_name[0] == '\0' && meta->device_type == TOOL_DEVICE_TYPE_ANALOG) {
+         safe_strncpy(action_name, "set", sizeof(action_name));
+      }
+
+      int rc = command_execute(effective_device, action_name, value_buf, mosq, &exec_result);
+
+      if (rc == 0 && exec_result.success) {
+         if (exec_result.result) {
+            safe_strncpy(result->result, exec_result.result, LLM_TOOLS_RESULT_LEN);
+         } else {
+            snprintf(result->result, LLM_TOOLS_RESULT_LEN, "Command sent to %s", effective_device);
+         }
+         result->success = true;
+      } else {
+         if (exec_result.result) {
+            safe_strncpy(result->result, exec_result.result, LLM_TOOLS_RESULT_LEN);
+         } else {
+            snprintf(result->result, LLM_TOOLS_RESULT_LEN, "Error executing '%s'", call->name);
+         }
+         result->success = false;
+      }
+
+      result->skip_followup = meta->skip_followup || exec_result.skip_followup;
+      notify_tool_execution(call->name, call->arguments, result->result, result->success);
+      cmd_exec_result_free(&exec_result);
       return result->success ? 0 : 1;
    }
 
@@ -1314,7 +1233,7 @@ static int llm_tools_execute_from_treg(const tool_call_t *call,
       return 0;
    }
 
-   /* No callback - must be MQTT-only, use command_execute */
+   /* No callback - fallback to command_execute */
    struct mosquitto *mosq = worker_pool_get_mosq();
    cmd_exec_result_t exec_result;
 
@@ -1350,93 +1269,15 @@ int llm_tools_execute(const tool_call_t *call, tool_result_t *result) {
    memset(result, 0, sizeof(*result));
    safe_strncpy(result->tool_call_id, call->id, LLM_TOOLS_ID_LEN);
 
-   /* Try tool_registry first (new modular tool system) */
+   /* Look up tool in tool_registry */
    const tool_metadata_t *treg_meta = tool_registry_find(call->name);
-   if (treg_meta) {
-      return llm_tools_execute_from_treg(call, treg_meta, result);
-   }
-
-   /* Fall back to command_registry (legacy JSON-based tools) */
-   const cmd_definition_t *cmd = command_registry_lookup(call->name);
-   if (!cmd) {
+   if (!treg_meta) {
       snprintf(result->result, LLM_TOOLS_RESULT_LEN, "Error: Unknown tool '%s'", call->name);
       result->success = false;
       return 1;
    }
 
-   /* Parse arguments JSON */
-   struct json_object *args = json_tokener_parse(call->arguments);
-   if (!args && call->arguments[0] != '\0') {
-      snprintf(result->result, LLM_TOOLS_RESULT_LEN, "Error: Invalid JSON arguments");
-      result->success = false;
-      return 1;
-   }
-
-   /* Table-driven parameter extraction using registry metadata */
-   char device_name[64];
-   char action_name[64];
-   char value_buf[4096];
-
-   int extract_result = extract_params_from_registry(cmd, args, device_name, sizeof(device_name),
-                                                     action_name, sizeof(action_name), value_buf,
-                                                     sizeof(value_buf));
-
-   if (args) {
-      json_object_put(args);
-   }
-
-   if (extract_result != 0) {
-      snprintf(result->result, LLM_TOOLS_RESULT_LEN, "Error: Invalid parameters for '%s'",
-               call->name);
-      result->success = false;
-      return 1;
-   }
-
-   /* Determine the actual device to use */
-   const char *effective_device = device_name[0] != '\0' ? device_name : cmd->device_string;
-
-   LOG_INFO("Executing tool '%s' -> device='%s', action='%s', value='%s'", call->name,
-            effective_device, action_name, value_buf);
-
-   /* Notify callback that tool execution is starting (result=NULL indicates start) */
-   notify_tool_execution(call->name, call->arguments, NULL, false);
-
-   /* Special handling for viewing (synchronous MQTT wait for image) */
-   if (cmd->sync_wait && strcmp(call->name, "viewing") == 0) {
-      result->success = execute_viewing_sync(action_name, value_buf, result);
-      /* Notify callback of viewing tool execution completion */
-      notify_tool_execution(call->name, call->arguments, result->result, result->success);
-      return result->success ? 0 : 1;
-   }
-
-   /* Use unified command executor for all other commands */
-   struct mosquitto *mosq = worker_pool_get_mosq();
-   cmd_exec_result_t exec_result;
-
-   int rc = command_execute(effective_device, action_name, value_buf, mosq, &exec_result);
-
-   if (rc == 0 && exec_result.success) {
-      if (exec_result.result) {
-         safe_strncpy(result->result, exec_result.result, LLM_TOOLS_RESULT_LEN);
-      } else {
-         snprintf(result->result, LLM_TOOLS_RESULT_LEN, "Tool '%s' completed", call->name);
-      }
-      result->success = true;
-      result->skip_followup = cmd->skip_followup || exec_result.skip_followup;
-   } else {
-      if (exec_result.result) {
-         safe_strncpy(result->result, exec_result.result, LLM_TOOLS_RESULT_LEN);
-      } else {
-         snprintf(result->result, LLM_TOOLS_RESULT_LEN, "Error executing '%s'", call->name);
-      }
-      result->success = false;
-   }
-
-   /* Notify callback of tool execution (for WebUI debug display) */
-   notify_tool_execution(call->name, call->arguments, result->result, result->success);
-
-   cmd_exec_result_free(&exec_result);
-   return rc;
+   return llm_tools_execute_from_treg(call, treg_meta, result);
 }
 
 int llm_tools_execute_all(const tool_call_list_t *calls, tool_result_list_t *results) {

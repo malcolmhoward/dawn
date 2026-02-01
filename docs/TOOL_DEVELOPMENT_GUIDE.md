@@ -264,7 +264,7 @@ static const tool_device_map_t audio_device_map[] = {
 | `device_type` | - | Classification affecting action word parsing (see Device Types) |
 | `capabilities` | `TOOL_CAP_NONE` | Security capabilities (see Capabilities) |
 | `is_getter` | `false` | `true` if tool only reads data (no side effects) |
-| `skip_followup` | `false` | `true` to not send callback result back to LLM |
+| `skip_followup` | `false` | `true` to skip LLM follow-up (see [skip_followup Behavior](#skip_followup-behavior) below) |
 | `mqtt_only` | `false` | `true` if tool only works via MQTT (not voice/WebUI) |
 | `sync_wait` | `false` | `true` to wait for MQTT response before continuing |
 | `default_local` | `true` | `true` if available for local (microphone) sessions |
@@ -359,6 +359,60 @@ Can be combined with bitwise OR (`|`):
 Example combining flags:
 ```c
 .capabilities = TOOL_CAP_NETWORK | TOOL_CAP_SECRETS,
+```
+
+### skip_followup Behavior
+
+The `skip_followup` flag controls whether the tool's callback result is sent back to the LLM for a follow-up response.
+
+**When `skip_followup = false` (default):**
+1. Tool callback executes and returns a result string
+2. Result is sent back to the LLM
+3. LLM generates a natural language response incorporating the result
+4. User hears/sees the LLM's conversational response
+
+**Example flow (weather tool):**
+```
+User: "What's the weather?"
+→ Tool returns: {"temp": 72, "condition": "sunny"}
+→ LLM responds: "It's currently 72 degrees and sunny outside."
+```
+
+**When `skip_followup = true`:**
+1. Tool callback executes and returns a result string
+2. Result is returned directly to the user (or discarded if NULL)
+3. LLM does NOT generate a follow-up response
+4. Saves an LLM API call and reduces latency
+
+**Example flow (music play action):**
+```
+User: "Play some jazz"
+→ Tool starts playback, returns NULL
+→ Music plays immediately (no LLM response needed)
+```
+
+**When to use `skip_followup = true`:**
+- **Media controls**: Play, pause, stop, next, previous - the action IS the response
+- **Toggle switches**: Turning lights on/off - confirmation via device state is sufficient
+- **Direct actions**: Where callback handles user notification (TTS, visual feedback)
+- **Performance-critical**: When minimizing latency matters more than conversational flow
+
+**When to use `skip_followup = false` (default):**
+- **Getter tools**: Where the data needs to be presented conversationally
+- **Complex results**: Where raw data benefits from LLM interpretation
+- **Context-dependent**: Where the LLM should acknowledge and potentially act further
+- **Error handling**: Where the LLM can explain what went wrong
+
+**Note:** The callback can also control this per-invocation via the `should_respond` parameter:
+```c
+static char *my_callback(const char *action, char *value, int *should_respond) {
+   if (some_condition) {
+      *should_respond = 0;  /* Skip follow-up for this specific call */
+      return NULL;
+   }
+   *should_respond = 1;  /* Normal flow */
+   return strdup("Result for LLM to interpret");
+}
 ```
 
 ---

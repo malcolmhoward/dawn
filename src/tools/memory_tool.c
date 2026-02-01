@@ -26,11 +26,15 @@
 
 #include "tools/memory_tool.h"
 
+#include "config/dawn_config.h"
 #include "logging.h"
 #include "tools/tool_registry.h"
 
 /* Forward declaration of callback from memory/memory_callback.c */
 char *memoryCallback(const char *actionName, char *value, int *should_respond);
+
+/* Forward declaration for availability check */
+static bool memory_tool_is_available(void);
 
 /* ========== Tool Parameter Definition ========== */
 
@@ -86,10 +90,18 @@ static const tool_metadata_t memory_metadata = {
    .config_parser = NULL,
    .config_section = NULL, /* Uses [memory] section from main config */
 
+   .is_available = memory_tool_is_available,
+
    .init = NULL,
    .cleanup = NULL,
    .callback = memoryCallback, /* Use existing callback from memory_callback.c */
 };
+
+/* ========== Availability Check ========== */
+
+static bool memory_tool_is_available(void) {
+   return g_config.memory.enabled;
+}
 
 /* ========== Public API ========== */
 

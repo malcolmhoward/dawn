@@ -623,6 +623,9 @@ void free_response(ws_response_t *resp) {
       case WS_RESP_THINKING_END:
          /* No data to free - text[] is inline fixed buffer */
          break;
+      case WS_RESP_CONVERSATION_RESET:
+         /* No data to free */
+         break;
    }
 }
 
@@ -797,6 +800,16 @@ void send_state_impl_full(struct lws *wsi,
 
 void send_state_impl(struct lws *wsi, const char *state, const char *detail) {
    send_state_impl_full(wsi, state, detail, NULL);
+}
+
+static void send_conversation_reset_impl(struct lws *wsi) {
+   struct json_object *obj = json_object_new_object();
+
+   json_object_object_add(obj, "type", json_object_new_string("conversation_reset"));
+
+   const char *json_str = json_object_to_json_string(obj);
+   send_json_message(wsi, json_str);
+   json_object_put(obj);
 }
 
 static void send_transcript_impl_ex(struct lws *wsi,
@@ -1215,6 +1228,9 @@ static void process_one_response(void) {
          send_reasoning_summary_impl(conn->wsi, resp.stream.stream_id,
                                      atoi(resp.stream.text)); /* reasoning_tokens as string */
          /* text[] reused for token count - no free needed */
+         break;
+      case WS_RESP_CONVERSATION_RESET:
+         send_conversation_reset_impl(conn->wsi);
          break;
    }
 
@@ -2045,6 +2061,7 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
 
                /* If tool_mode changed, rebuild and update the session's system prompt */
                if (strcmp(old_tool_mode, config.tool_mode) != 0) {
+                  invalidate_system_instructions(); /* Clear cached prompt first */
                   char *new_prompt = build_remote_prompt_for_mode(config.tool_mode);
                   if (new_prompt) {
                      session_update_system_prompt(conn->session, new_prompt);
@@ -3945,6 +3962,17 @@ void webui_send_reasoning_summary(session_t *session, int reasoning_tokens) {
    queue_response(&resp);
    LOG_INFO("WebUI: Reasoning summary id=%u tokens=%d for session %u", session->current_stream_id,
             reasoning_tokens, session->session_id);
+}
+
+void webui_send_conversation_reset(session_t *session) {
+   if (!session || session->type != SESSION_TYPE_WEBSOCKET) {
+      return;
+   }
+
+   ws_response_t resp = { .session = session, .type = WS_RESP_CONVERSATION_RESET };
+
+   queue_response(&resp);
+   LOG_INFO("WebUI: Conversation reset notification for session %u", session->session_id);
 }
 
 /* =============================================================================

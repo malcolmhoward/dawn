@@ -29,7 +29,6 @@
 /* Local */
 #include "config/dawn_config.h"
 #include "core/command_executor.h"
-#include "core/command_registry.h"
 #include "core/session_manager.h"
 #include "dawn.h"
 #include "llm/llm_interface.h"
@@ -38,6 +37,7 @@
 #include "mosquitto_comms.h"
 #include "text_to_command_nuevo.h"
 #include "tools/smartthings_service.h"
+#include "tools/tool_registry.h"
 #include "ui/metrics.h"
 
 /* =============================================================================
@@ -90,133 +90,11 @@ static const char *LEGACY_RULES_CORE =
    "9. Do NOT lead responses with comments about location, weather, or time of day.\n"
    "   Vary your greetings. The user's context below is for tool use only.\n";
 
-/* Vision rules (only if vision is enabled) */
-static const char *LEGACY_RULES_VISION =
-   "VISION: When user asks what they're looking at, send ONLY "
-   "<command>{\"device\":\"viewing\",\"action\":\"get\"}</command>. When the system then "
-   "provides an image, describe what you see in detail.\n";
-
-/* Weather rules (always available - uses Open-Meteo free API) */
-static const char *LEGACY_RULES_WEATHER =
-   "WEATHER: Use action 'today' (current), 'tomorrow' (2-day), or 'week' (7-day forecast).\n"
-   "   Example: <command>{\"device\":\"weather\",\"action\":\"week\",\"value\":\"City, State\"}"
-   "</command>. If user provides location, use it directly. Only ask for location if not "
-   "specified. Choose action based on user's question (e.g., 'this weekend' -> week, "
-   "'right now' -> today).\n";
-
-/* Search rules (only if SearXNG endpoint is configured) */
-static const char *LEGACY_RULES_SEARCH =
-   "SEARCH: <command>{\"device\":\"search\",\"action\":\"ACTION\",\"value\":\"query\"}</command> "
-   "Actions: web, news, science, tech, social, define, papers. No URLs aloud.\n";
-
-/* Calculator rules (always available - local computation) */
-static const char *LEGACY_RULES_CALCULATOR =
-   "CALCULATOR: Actions: 'evaluate' (math), 'convert' (units), 'base' (hex/bin), 'random'.\n"
-   "   evaluate: <command>{\"device\":\"calculator\",\"action\":\"evaluate\",\"value\":\"2+3*4\"}"
-   "</command>\n"
-   "   convert: <command>{\"device\":\"calculator\",\"action\":\"convert\",\"value\":\"5 miles "
-   "to km\"}</command>\n"
-   "   base: <command>{\"device\":\"calculator\",\"action\":\"base\",\"value\":\"255 to hex\"}"
-   "</command>\n"
-   "   random: <command>{\"device\":\"calculator\",\"action\":\"random\",\"value\":\"1 to 100\"}"
-   "</command>\n";
-
-/* URL fetcher rules (always available - basic HTTP fetch) */
-static const char *LEGACY_RULES_URL =
-   "URL: Fetch and read content from a URL. Use when you need to read a specific webpage.\n"
-   "   <command>{\"device\":\"url\",\"action\":\"get\",\"value\":\"https://example.com\"}"
-   "</command>\n";
-
-/* LLM control rules (always available - query and switch AI backend) */
-static const char *LEGACY_RULES_LLM_STATUS =
-   "LLM: Query or switch the AI model. Actions: 'get' (status), 'set' (switch).\n"
-   "   get: <command>{\"device\":\"llm\",\"action\":\"get\"}</command>\n"
-   "   set: <command>{\"device\":\"llm\",\"action\":\"set\",\"value\":\"local\"}"
-   "</command> or \"cloud\"\n";
-
-/* SmartThings home automation rules (only if SmartThings is authenticated) */
-static const char *LEGACY_RULES_SMARTTHINGS =
-   "SMARTTHINGS: Control smart home devices. Actions: list, status, on, off, brightness, "
-   "color, temperature, lock, unlock.\n"
-   "   list: <command>{\"device\":\"smartthings\",\"action\":\"list\"}</command>\n"
-   "   status: <command>{\"device\":\"smartthings\",\"action\":\"status\",\"value\":\"device "
-   "name\"}</command>\n"
-   "   on/off: <command>{\"device\":\"smartthings\",\"action\":\"on\",\"value\":\"living room "
-   "light\"}</command>\n"
-   "   brightness: <command>{\"device\":\"smartthings\",\"action\":\"brightness\","
-   "\"value\":\"lamp 75\"}</command> (0-100)\n"
-   "   color: <command>{\"device\":\"smartthings\",\"action\":\"color\",\"value\":\"desk "
-   "light red\"}</command> (red,orange,yellow,green,cyan,blue,purple,pink,white)\n"
-   "   temperature: <command>{\"device\":\"smartthings\",\"action\":\"temperature\","
-   "\"value\":\"thermostat 72\"}</command> (50-90F)\n"
-   "   lock/unlock: <command>{\"device\":\"smartthings\",\"action\":\"lock\",\"value\":\"front "
-   "door\"}</command>\n";
-
-/* Examples header - added once if any examples are included */
-static const char *LEGACY_EXAMPLES_HEADER = "\n=== EXAMPLES ===\n";
-
-/* Individual examples - each added only if the specific device is enabled */
-static const char *LEGACY_EXAMPLE_ARMOR_DISPLAY =
-   "User: Turn on the armor display.\n"
-   "FRIDAY: HUD online, boss. "
-   "<command>{\"device\":\"armor_display\",\"action\":\"enable\"}</command>\n"
-   "System-> {\"response\":\"armor display enabled\"}\n"
-   "FRIDAY: Display confirmed, sir.\n\n";
-
-static const char *LEGACY_EXAMPLE_TIME =
-   "User: What time is it?\n"
-   "FRIDAY: <command>{\"device\":\"time\",\"action\":\"get\"}</command>\n"
-   "System-> {\"response\":\"The time is 4:07 PM.\"}\n"
-   "FRIDAY: Time confirmed, sir.\n\n";
-
-static const char *LEGACY_EXAMPLE_VOLUME =
-   "User: Mute it.\n"
-   "FRIDAY: Need specifics, sir—audio playback or mic?\n\n"
-   "User: Mute playback.\n"
-   "FRIDAY: Volume to zero, boss. "
-   "<command>{\"device\":\"volume\",\"action\":\"set\",\"value\":0}</command>\n"
-   "System-> {\"response\":\"volume set\"}\n"
-   "FRIDAY: Muted, sir.\n\n";
-
-/* Weather example (only if weather is enabled) */
-static const char *LEGACY_EXAMPLES_WEATHER =
-   "\nUser: What's the weather in Atlanta?\n"
-   "FRIDAY: <command>{\"device\":\"weather\",\"action\":\"today\",\"value\":\"Atlanta, Georgia\"}"
-   "</command>\n"
-   "System-> {\"location\":\"Atlanta, Georgia, US\",\"current\":{\"temperature_f\":52.3,...},"
-   "\"forecast\":[{\"date\":\"2025-01-15\",\"high_f\":58,...}]}\n"
-   "FRIDAY: Atlanta right now: 52°F, partly cloudy. Today's high 58°F, low 42°F. Light jacket "
-   "weather, boss!\n";
-
-/* Command response format instructions for LOCAL interface (includes HUD-specific hints) */
-static const char *LEGACY_LOCAL_COMMAND_INSTRUCTIONS =
-   "When I ask for an action that matches one of these commands, respond with both:\n"
-   "1. A conversational response (e.g., \"I'll turn that on for you, sir.\")\n"
-   "2. The exact JSON command enclosed in <command> tags\n\n"
-   "For example: \"Let me turn on the map for you, sir. <command>{\"device\": \"map\", "
-   "\"action\": \"enable\"}</command>\"\n\n"
-   "The very next message I send you will be an automated response from the system. You should "
-   "use that information then to "
-   "reply with the information I requested or information on whether the command was "
-   "successful.\n"
-   "Command hints:\n"
-   "The \"viewing\" command will return an image to you so you can visually answer a query.\n"
-   "When running \"play\", the value is a simple string to search the media files for.\n"
-   "Current HUD names are \"default\", \"environmental\", and \"armor\".\n";
-
-/* Command response format instructions for REMOTE interface (no HUD-specific hints) */
-static const char *LEGACY_REMOTE_COMMAND_INSTRUCTIONS =
-   "When I ask for an action that matches one of these commands, respond with both:\n"
-   "1. A conversational response (e.g., \"I'll get that for you, sir.\")\n"
-   "2. The exact JSON command enclosed in <command> tags\n\n"
-   "For example: \"The current time is 3:45 PM. <command>{\"device\": \"time\", "
-   "\"action\": \"get\"}</command>\"\n\n"
-   "The very next message I send you will be an automated response from the system. You should "
-   "use that information then to "
-   "reply with the information I requested or information on whether the command was "
-   "successful.\n";
-
 // clang-format on
+
+/* Tool-specific rules (LEGACY_RULES_VISION, LEGACY_RULES_WEATHER, etc.) have been removed.
+ * Tool instructions are now generated dynamically from the tool_registry via
+ * generate_command_tag_instructions() and build_capabilities_list(). */
 
 /* =============================================================================
  * End Legacy Prompt Strings
@@ -227,12 +105,9 @@ static const char *LEGACY_REMOTE_COMMAND_INSTRUCTIONS =
 static char command_prompt[PROMPT_BUFFER_SIZE];
 static int prompt_initialized = 0;
 
-// Static buffer for remote command prompt (excludes local-only topics)
+// Static buffer for remote command prompt
 static char remote_command_prompt[PROMPT_BUFFER_SIZE];
 static int remote_prompt_initialized = 0;
-
-// Topics excluded from remote clients (local-only commands)
-static const char *excluded_remote_topics[] = { "hud", "helmet", NULL };
 
 // Static buffer for localization context
 #define LOCALIZATION_BUFFER_SIZE 512
@@ -243,15 +118,6 @@ static int localization_initialized = 0;
 #define SYSTEM_INSTRUCTIONS_BUFFER_SIZE 8192
 static char system_instructions_buffer[SYSTEM_INSTRUCTIONS_BUFFER_SIZE];
 static int system_instructions_initialized = 0;
-
-/**
- * @brief Checks if search functionality is available
- *
- * Search requires a configured SearXNG endpoint.
- */
-static int is_search_enabled(void) {
-   return g_config.search.endpoint[0] != '\0';
-}
 
 /**
  * @brief Checks if vision is enabled for the current LLM type
@@ -316,136 +182,311 @@ void invalidate_system_instructions(void) {
    LOG_INFO("System instructions cache invalidated - will rebuild on next LLM call");
 }
 
+/* =============================================================================
+ * Dynamic Command Tag Generation (from tool_registry)
+ * ============================================================================= */
+
+/**
+ * @brief Check if a tool is available at runtime
+ *
+ * Checks both the enabled status and the optional is_available() callback.
+ *
+ * @param tool The tool metadata
+ * @return true if tool is available, false otherwise
+ */
+static bool is_tool_available(const tool_metadata_t *tool) {
+   if (!tool)
+      return false;
+
+   /* Check if tool is enabled (handles DANGEROUS capability check) */
+   if (!tool_registry_is_enabled(tool->name))
+      return false;
+
+   /* Check runtime availability if function is provided */
+   if (tool->is_available && !tool->is_available())
+      return false;
+
+   return true;
+}
+
+/**
+ * @brief Generate command tag instructions for a single tool
+ *
+ * Output format:
+ *   TOOL_NAME: Description
+ *     <command>{"device":"name","action":"ACTION","value":"VALUE"}</command>
+ *     Actions: action1, action2, action3
+ *
+ * @param tool The tool metadata
+ * @param buffer Output buffer
+ * @param buffer_size Buffer size
+ * @return Number of bytes written
+ */
+static int generate_command_tag_instructions(const tool_metadata_t *tool,
+                                             char *buffer,
+                                             size_t buffer_size) {
+   if (!tool || !buffer || buffer_size == 0)
+      return 0;
+
+   int len = 0;
+   int remaining = (int)buffer_size;
+
+   /* Find action and value parameters */
+   const treg_param_t *action_param = NULL;
+   const treg_param_t *value_param = NULL;
+
+   for (int i = 0; i < tool->param_count; i++) {
+      if (tool->params[i].maps_to == TOOL_MAPS_TO_ACTION) {
+         action_param = &tool->params[i];
+      } else if (tool->params[i].maps_to == TOOL_MAPS_TO_VALUE) {
+         value_param = &tool->params[i];
+      }
+   }
+
+   /* Determine default action based on device_type when no action param exists */
+   const char *default_action = NULL;
+   if (!action_param) {
+      switch (tool->device_type) {
+         case TOOL_DEVICE_TYPE_BOOLEAN:
+            default_action = "enable/disable";
+            break;
+         case TOOL_DEVICE_TYPE_ANALOG:
+            default_action = "set";
+            break;
+         case TOOL_DEVICE_TYPE_GETTER:
+            default_action = "get";
+            break;
+         case TOOL_DEVICE_TYPE_MUSIC:
+            default_action = "play";
+            break;
+         case TOOL_DEVICE_TYPE_TRIGGER:
+            default_action = "trigger";
+            break;
+         default:
+            default_action = "get";
+            break;
+      }
+   }
+
+   /* Tool name in uppercase */
+   char upper_name[TOOL_NAME_MAX];
+   int i;
+   for (i = 0; tool->name[i] && i < TOOL_NAME_MAX - 1; i++) {
+      upper_name[i] = (tool->name[i] >= 'a' && tool->name[i] <= 'z') ? tool->name[i] - 32
+                                                                     : tool->name[i];
+   }
+   upper_name[i] = '\0';
+
+   /* Header: TOOL_NAME: Description */
+   len += snprintf(buffer + len, remaining - len, "%s: %s\n", upper_name, tool->description);
+
+   /* Example command tag - always include action field */
+   len += snprintf(buffer + len, remaining - len, "  <command>{\"device\":\"%s\"", tool->name);
+
+   if (action_param) {
+      len += snprintf(buffer + len, remaining - len, ",\"action\":\"ACTION\"");
+   } else if (default_action) {
+      /* Use default action for tools without action param */
+      len += snprintf(buffer + len, remaining - len, ",\"action\":\"%s\"", default_action);
+   }
+
+   if (value_param) {
+      /* Use param name as hint */
+      const char *value_hint = value_param->name ? value_param->name : "value";
+      len += snprintf(buffer + len, remaining - len, ",\"value\":\"%s\"", value_hint);
+   }
+   len += snprintf(buffer + len, remaining - len, "}</command>\n");
+
+   /* List available actions if enum type */
+   if (action_param && action_param->type == TOOL_PARAM_TYPE_ENUM && action_param->enum_count > 0) {
+      len += snprintf(buffer + len, remaining - len, "  Actions: ");
+      for (int j = 0; j < action_param->enum_count; j++) {
+         if (j > 0)
+            len += snprintf(buffer + len, remaining - len, ", ");
+         len += snprintf(buffer + len, remaining - len, "%s", action_param->enum_values[j]);
+      }
+      len += snprintf(buffer + len, remaining - len, "\n");
+   }
+
+   /* Add a blank line for readability */
+   len += snprintf(buffer + len, remaining - len, "\n");
+
+   return len;
+}
+
+/**
+ * @brief Context for combined capabilities + command tag generation
+ *
+ * This allows building both outputs in a single iteration pass over tools.
+ */
+typedef struct {
+   /* Capabilities list */
+   char *cap_buffer;
+   size_t cap_buffer_size;
+   int cap_offset;
+   int cap_count;
+
+   /* Command tags */
+   char *cmd_buffer;
+   size_t cmd_buffer_size;
+   int cmd_offset;
+} combined_build_ctx_t;
+
+/**
+ * @brief Callback to build both capability entry and command tag in single pass
+ */
+static void build_combined_entry(const tool_metadata_t *tool, void *user_data) {
+   combined_build_ctx_t *ctx = (combined_build_ctx_t *)user_data;
+
+   if (!is_tool_available(tool))
+      return;
+
+   /* Skip mqtt_only tools that are hardware-specific */
+   if (tool->mqtt_only && !tool->sync_wait)
+      return;
+
+   /* Build capability entry */
+   int cap_remaining = (int)ctx->cap_buffer_size - ctx->cap_offset;
+   if (cap_remaining > 0) {
+      /* Add comma separator after first item */
+      if (ctx->cap_count > 0) {
+         ctx->cap_offset += snprintf(ctx->cap_buffer + ctx->cap_offset, cap_remaining, ", ");
+         cap_remaining = (int)ctx->cap_buffer_size - ctx->cap_offset;
+      }
+
+      /* Generate capability description based on tool type */
+      if (tool->is_getter) {
+         ctx->cap_offset += snprintf(ctx->cap_buffer + ctx->cap_offset, cap_remaining,
+                                     "get %s info", tool->name);
+      } else if (tool->device_type == TOOL_DEVICE_TYPE_MUSIC) {
+         ctx->cap_offset += snprintf(ctx->cap_buffer + ctx->cap_offset, cap_remaining, "control %s",
+                                     tool->name);
+      } else {
+         ctx->cap_offset += snprintf(ctx->cap_buffer + ctx->cap_offset, cap_remaining, "use %s",
+                                     tool->name);
+      }
+      ctx->cap_count++;
+   }
+
+   /* Build command tag instruction */
+   int cmd_remaining = (int)ctx->cmd_buffer_size - ctx->cmd_offset;
+   if (cmd_remaining > 0) {
+      ctx->cmd_offset += generate_command_tag_instructions(tool, ctx->cmd_buffer + ctx->cmd_offset,
+                                                           cmd_remaining);
+   }
+}
+
+/* =============================================================================
+ * End Dynamic Generation Functions
+ * ============================================================================= */
+
+/**
+ * @brief Build system instructions for a specific mode into a provided buffer
+ *
+ * This is the core logic for building system instructions. It can be used
+ * for both cached (global) and non-cached (session-specific) builds.
+ *
+ * @param mode The tool mode: "native", "command_tags", or "disabled"
+ * @param buffer Output buffer to write instructions to
+ * @param buffer_size Size of the output buffer
+ * @return Number of bytes written (excluding null terminator)
+ */
+static int build_system_instructions_to_buffer(const char *mode, char *buffer, size_t buffer_size) {
+   int len = 0;
+   int remaining = (int)buffer_size;
+
+   bool use_native = (strcmp(mode, "native") == 0);
+
+   if (use_native) {
+      len += snprintf(buffer + len, remaining - len, "%s\n", NATIVE_TOOLS_RULES);
+      return len;
+   }
+
+   if (strcmp(mode, "disabled") == 0) {
+      /* No tool instructions for disabled mode */
+      buffer[0] = '\0';
+      return 0;
+   }
+
+   /* command_tags mode - dynamic generation from tool_registry */
+
+   /* Core behavior rules (static, minimal) */
+   len += snprintf(buffer + len, remaining - len, "%s\n", LEGACY_RULES_CORE);
+
+   /* Single-pass generation of both capabilities and command tags */
+   char cap_buffer[2048];
+   char cmd_buffer[16384];
+
+   combined_build_ctx_t ctx = {
+      .cap_buffer = cap_buffer,
+      .cap_buffer_size = sizeof(cap_buffer),
+      .cap_offset = 0,
+      .cap_count = 0,
+      .cmd_buffer = cmd_buffer,
+      .cmd_buffer_size = sizeof(cmd_buffer),
+      .cmd_offset = 0,
+   };
+
+   tool_registry_foreach_enabled(build_combined_entry, &ctx);
+
+   /* Assemble capabilities list with header and footer */
+   len += snprintf(buffer + len, remaining - len, "CAPABILITIES: You CAN %s.\n\n", cap_buffer);
+
+   /* Append command tag instructions */
+   int cmd_copy = (ctx.cmd_offset < remaining - len) ? ctx.cmd_offset : remaining - len - 1;
+   if (cmd_copy > 0) {
+      memcpy(buffer + len, cmd_buffer, cmd_copy);
+      len += cmd_copy;
+      buffer[len] = '\0';
+   }
+
+   /* Special case: SmartThings device list if authenticated */
+   if (smartthings_is_authenticated()) {
+      const st_device_list_t *devices = NULL;
+      if (smartthings_list_devices(&devices) == ST_OK && devices && devices->count > 0) {
+         len += snprintf(buffer + len, remaining - len, "Available SmartThings devices (%d):\n",
+                         devices->count);
+         for (int i = 0; i < devices->count && i < 30; i++) {
+            const st_device_t *dev = &devices->devices[i];
+            len += snprintf(buffer + len, remaining - len, "  - %s",
+                            dev->label[0] ? dev->label : dev->name);
+            if (dev->room[0]) {
+               len += snprintf(buffer + len, remaining - len, " (%s)", dev->room);
+            }
+            len += snprintf(buffer + len, remaining - len, "\n");
+         }
+         if (devices->count > 30) {
+            len += snprintf(buffer + len, remaining - len, "  - ... and %d more devices\n",
+                            devices->count - 30);
+         }
+         len += snprintf(buffer + len, remaining - len, "\n");
+      }
+   }
+
+   return len;
+}
+
 const char *get_system_instructions(void) {
    if (system_instructions_initialized) {
       return system_instructions_buffer;
    }
 
-   int len = 0;
-   int remaining = SYSTEM_INSTRUCTIONS_BUFFER_SIZE;
-
-   // Check if native tool calling is enabled - use minimal prompt
-   if (llm_tools_enabled(NULL)) {
-      len += snprintf(system_instructions_buffer + len, remaining - len, "%s\n",
-                      NATIVE_TOOLS_RULES);
-
-      // Note: Tool schemas are sent separately in the API request
-      LOG_INFO("Built system instructions for native tool calling (%d bytes)", len);
-      system_instructions_initialized = 1;
-      return system_instructions_buffer;
+   /* Determine mode from global config */
+   const char *mode = llm_tools_enabled(NULL) ? "native" : g_config.llm.tools.mode;
+   if (!mode || mode[0] == '\0') {
+      mode = "native";
    }
 
-   // Full prompt with <command> tag instructions for non-tool mode
-   // Always include core rules
-   len += snprintf(system_instructions_buffer + len, remaining - len, "%s\n", LEGACY_RULES_CORE);
-
-   // Build capabilities list based on what's enabled
-   len += snprintf(system_instructions_buffer + len, remaining - len, "\nCAPABILITIES: You CAN ");
-   int first_cap = 1;
-
-   // Weather is always available
-   if (!first_cap)
-      len += snprintf(system_instructions_buffer + len, remaining - len, ", ");
-   len += snprintf(system_instructions_buffer + len, remaining - len, "get weather");
-   first_cap = 0;
-
-   // Search if configured
-   if (is_search_enabled()) {
-      len += snprintf(system_instructions_buffer + len, remaining - len, ", perform web searches");
-   }
-
-   // Calculator always available
-   len += snprintf(system_instructions_buffer + len, remaining - len, ", do calculations");
-
-   // URL fetcher always available
-   len += snprintf(system_instructions_buffer + len, remaining - len, ", fetch URLs");
-
-   // LLM status always available
-   len += snprintf(system_instructions_buffer + len, remaining - len, ", report AI status");
-
-   // Vision if enabled
-   if (is_vision_enabled_for_current_llm()) {
-      len += snprintf(system_instructions_buffer + len, remaining - len,
-                      ", analyze images when asked what you see");
-   }
-
-   // SmartThings if authenticated
-   if (smartthings_is_authenticated()) {
-      len += snprintf(system_instructions_buffer + len, remaining - len,
-                      ", control smart home devices via SmartThings");
-   }
-
-   len += snprintf(system_instructions_buffer + len, remaining - len, ".\n\n");
-
-   // Add feature-specific rules based on config
-   if (is_vision_enabled_for_current_llm()) {
-      len += snprintf(system_instructions_buffer + len, remaining - len, "%s\n",
-                      LEGACY_RULES_VISION);
-      LOG_INFO("System instructions: Vision rules included (cloud LLM with vision support)");
-   }
-
-   // Weather always available
-   len += snprintf(system_instructions_buffer + len, remaining - len, "%s\n", LEGACY_RULES_WEATHER);
-
-   // Search only if endpoint configured
-   if (is_search_enabled()) {
-      len += snprintf(system_instructions_buffer + len, remaining - len, "%s\n",
-                      LEGACY_RULES_SEARCH);
-      LOG_INFO("System instructions: Search rules included (SearXNG endpoint: %s)",
-               g_config.search.endpoint);
-   } else {
-      LOG_INFO("System instructions: Search rules EXCLUDED (no SearXNG endpoint configured)");
-   }
-
-   // Calculator always available
-   len += snprintf(system_instructions_buffer + len, remaining - len, "%s\n",
-                   LEGACY_RULES_CALCULATOR);
-
-   // URL fetcher always available
-   len += snprintf(system_instructions_buffer + len, remaining - len, "%s\n", LEGACY_RULES_URL);
-
-   // LLM status always available
-   len += snprintf(system_instructions_buffer + len, remaining - len, "%s\n",
-                   LEGACY_RULES_LLM_STATUS);
-
-   // SmartThings only if authenticated
-   if (smartthings_is_authenticated()) {
-      len += snprintf(system_instructions_buffer + len, remaining - len, "%s\n",
-                      LEGACY_RULES_SMARTTHINGS);
-
-      // Include device list so LLM knows what's available
-      const st_device_list_t *devices = NULL;
-      if (smartthings_list_devices(&devices) == ST_OK && devices && devices->count > 0) {
-         len += snprintf(system_instructions_buffer + len, remaining - len,
-                         "   Available devices (%d):\n", devices->count);
-         for (int i = 0; i < devices->count && i < 30; i++) { /* Limit to 30 devices */
-            const st_device_t *dev = &devices->devices[i];
-            len += snprintf(system_instructions_buffer + len, remaining - len, "   - %s",
-                            dev->label[0] ? dev->label : dev->name);
-            if (dev->room[0]) {
-               len += snprintf(system_instructions_buffer + len, remaining - len, " (%s)",
-                               dev->room);
-            }
-            len += snprintf(system_instructions_buffer + len, remaining - len, "\n");
-         }
-         if (devices->count > 30) {
-            len += snprintf(system_instructions_buffer + len, remaining - len,
-                            "   - ... and %d more devices\n", devices->count - 30);
-         }
-      }
-      LOG_INFO("System instructions: SmartThings rules included (%d devices)",
-               devices ? devices->count : 0);
-   } else if (smartthings_is_configured()) {
-      LOG_INFO(
-          "System instructions: SmartThings rules EXCLUDED (configured but not authenticated)");
-   }
-
-   // Note: Examples are added by the prompt builders (initialize_command_prompt /
-   // initialize_remote_command_prompt) since they know the session type and can
-   // filter examples based on enabled commands for that session type.
+   int len = build_system_instructions_to_buffer(mode, system_instructions_buffer,
+                                                 SYSTEM_INSTRUCTIONS_BUFFER_SIZE);
 
    system_instructions_initialized = 1;
-   LOG_INFO("Built dynamic system instructions (%d bytes)", len);
+
+   if (strcmp(mode, "native") == 0) {
+      LOG_INFO("Built system instructions for native tool calling (%d bytes)", len);
+   } else {
+      LOG_INFO("Built dynamic system instructions (%d bytes)", len);
+   }
 
    return system_instructions_buffer;
 }
@@ -560,26 +601,16 @@ static const char *get_persona_description(void) {
 }
 
 /**
- * @brief Builds a simple command prompt string from the commands_config_nuevo.json file
+ * @brief Builds the system prompt for the local interface
  *
- * This function reads the config file, extracts command patterns,
- * and builds a simple string describing available commands for the LLM.
+ * All commands are now defined via the modular tool_registry system.
+ * Native tool calling is the primary mode; legacy <command> tag mode
+ * falls back to a minimal prompt without JSON-defined commands.
  */
 static void initialize_command_prompt(void) {
    if (prompt_initialized) {
       return;
    }
-
-   FILE *configFile = NULL;
-   char buffer[32 * 1024];  // 32KB for commands_config_nuevo.json (~17KB)
-   int bytes_read = 0;
-   struct json_object *parsedJson = NULL;
-   struct json_object *typesObject = NULL;
-   struct json_object *devicesObject = NULL;
-
-   // Start with persona, system instructions, localization context
-   // Persona is replaceable via config. System instructions are built dynamically based on
-   // which features are enabled (search, vision, etc.)
 
    // Check tool calling mode:
    // - "native": Use native function/tool calling (minimal prompt)
@@ -587,211 +618,24 @@ static void initialize_command_prompt(void) {
    // - "disabled": No tool/command handling at all
    const char *tools_mode = g_config.llm.tools.mode;
 
-   if (strcmp(tools_mode, "native") == 0 && llm_tools_enabled(NULL)) {
-      // Native tools mode - minimal prompt
-      int prompt_len = snprintf(command_prompt, PROMPT_BUFFER_SIZE,
-                                "%s\n\n"  // Persona (from config or AI_PERSONA)
-                                "%s\n\n"  // System instructions (minimal for tools mode)
-                                "%s",     // Localization context
-                                get_persona_description(), get_system_instructions(),
-                                get_localization_context());
-      prompt_initialized = 1;
-      LOG_INFO("AI prompt initialized (native tools mode). Length: %d", prompt_len);
-      return;
-   }
+   // All modes now use the same minimal prompt structure
+   // Tool definitions are provided via native tool calling API
+   int prompt_len = snprintf(command_prompt, PROMPT_BUFFER_SIZE,
+                             "%s\n\n"  // Persona (from config or AI_PERSONA)
+                             "%s\n\n"  // System instructions
+                             "%s",     // Localization context
+                             get_persona_description(), get_system_instructions(),
+                             get_localization_context());
 
-   if (strcmp(tools_mode, "disabled") == 0) {
-      // Disabled mode - no command/tool handling at all
-      int prompt_len = snprintf(command_prompt, PROMPT_BUFFER_SIZE,
-                                "%s\n\n"  // Persona (from config or AI_PERSONA)
-                                "%s\n\n"  // System instructions
-                                "%s",     // Localization context
-                                get_persona_description(), get_system_instructions(),
-                                get_localization_context());
-      prompt_initialized = 1;
-      LOG_INFO("AI prompt initialized (tools disabled). Length: %d", prompt_len);
-      return;
-   }
-
-   // Command tags mode: include <command> tag instructions
-   int prompt_len = snprintf(
-       command_prompt, PROMPT_BUFFER_SIZE,
-       "%s\n\n"  // Persona (from config or AI_PERSONA)
-       "%s\n\n"  // System instructions (dynamically built based on enabled features)
-       "%s"      // Localization context (empty string if not configured)
-       "You can also execute commands for me. These are the commands available:\n\n",
-       get_persona_description(), get_system_instructions(), get_localization_context());
-
-   LOG_INFO("Static prompt processed. Length: %d", prompt_len);
-
-   // Read the commands config file (path from g_config)
-   configFile = fopen(g_config.paths.commands_config, "r");
-   if (configFile == NULL) {
-      LOG_ERROR("Unable to open commands config file: %s", g_config.paths.commands_config);
-      return;
-   }
-
-   if ((bytes_read = fread(buffer, 1, sizeof(buffer), configFile)) > 0) {
-      buffer[bytes_read] = '\0';
-   } else {
-      LOG_ERROR("Failed to read config file");
-      fclose(configFile);
-      return;
-   }
-
-
-   if (bytes_read == sizeof(buffer)) {
-      LOG_ERROR("Config file buffer is too small.");
-      fclose(configFile);
-      return;
-   }
-
-   fclose(configFile);
-
-   LOG_INFO("Config file read for AI prompt. Length: %d", bytes_read);
-
-   // Parse JSON
-   parsedJson = json_tokener_parse(buffer);
-   if (parsedJson == NULL) {
-      LOG_ERROR("Failed to parse config JSON");
-      return;
-   }
-
-   // Get the "types" and "devices" objects
-   if (!json_object_object_get_ex(parsedJson, "types", &typesObject) ||
-       !json_object_object_get_ex(parsedJson, "devices", &devicesObject)) {
-      LOG_ERROR("Required objects not found in json");
-      json_object_put(parsedJson);
-      return;
-   }
-
-   // Add a section for each command type
-   struct json_object_iterator type_it = json_object_iter_begin(typesObject);
-   struct json_object_iterator type_it_end = json_object_iter_end(typesObject);
-
-   while (!json_object_iter_equal(&type_it, &type_it_end)) {
-      const char *type_name = json_object_iter_peek_name(&type_it);
-      struct json_object *type_obj;
-      json_object_object_get_ex(typesObject, type_name, &type_obj);
-
-      // Track position so we can roll back if no devices are enabled for this type
-      int type_header_start = prompt_len;
-
-      prompt_len += snprintf(command_prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len,
-                             "== %s Commands ==\n", type_name);
-
-      // Get the actions for this type
-      struct json_object *actions_obj;
-      if (json_object_object_get_ex(type_obj, "actions", &actions_obj)) {
-         struct json_object_iterator action_it = json_object_iter_begin(actions_obj);
-         struct json_object_iterator action_it_end = json_object_iter_end(actions_obj);
-
-         while (!json_object_iter_equal(&action_it, &action_it_end)) {
-            const char *action_name = json_object_iter_peek_name(&action_it);
-            struct json_object *action_obj;
-            json_object_object_get_ex(actions_obj, action_name, &action_obj);
-
-            struct json_object *command_obj;
-            if (json_object_object_get_ex(action_obj, "action_command", &command_obj)) {
-               const char *command = json_object_get_string(command_obj);
-
-               // Add the command format
-               prompt_len += snprintf(command_prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len,
-                                      "- %s: %s\n", action_name, command);
-            }
-
-            json_object_iter_next(&action_it);
-         }
-      }
-
-      // Add a list of devices for this type
-      prompt_len += snprintf(command_prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len,
-                             "  Valid devices for this command only: ");
-
-      // Find all enabled devices of this type (filter by tool enabled state)
-      int device_count = 0;
-      struct json_object_iterator dev_it = json_object_iter_begin(devicesObject);
-      struct json_object_iterator dev_it_end = json_object_iter_end(devicesObject);
-
-      while (!json_object_iter_equal(&dev_it, &dev_it_end)) {
-         const char *device_name = json_object_iter_peek_name(&dev_it);
-         struct json_object *device_obj;
-         json_object_object_get_ex(devicesObject, device_name, &device_obj);
-
-         struct json_object *device_type_obj;
-         if (json_object_object_get_ex(device_obj, "type", &device_type_obj)) {
-            const char *device_type = json_object_get_string(device_type_obj);
-
-            if (strcmp(device_type, type_name) == 0) {
-               // Check if device is enabled for local sessions
-               if (!llm_tools_is_device_enabled(device_name, false)) {
-                  json_object_iter_next(&dev_it);
-                  continue;
-               }
-
-               if (device_count > 0) {
-                  prompt_len += snprintf(command_prompt + prompt_len,
-                                         PROMPT_BUFFER_SIZE - prompt_len, ", ");
-               }
-               prompt_len += snprintf(command_prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len,
-                                      "%s", device_name);
-               device_count++;
-            }
-         }
-
-         json_object_iter_next(&dev_it);
-      }
-
-      // Skip type entirely if no devices are enabled
-      if (device_count == 0) {
-         // Roll back the type header we already wrote
-         prompt_len = type_header_start;
-         json_object_iter_next(&type_it);
-         continue;
-      }
-
-      prompt_len += snprintf(command_prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len, "\n\n");
-
-      json_object_iter_next(&type_it);
-   }
-
-   // Add examples conditionally based on enabled commands for LOCAL sessions
-   // Each example only included if that specific device is enabled
-   bool has_any_example = llm_tools_is_device_enabled("armor_display", false) ||
-                          llm_tools_is_device_enabled("time", false) ||
-                          llm_tools_is_device_enabled("volume", false) ||
-                          llm_tools_is_device_enabled("weather", false);
-
-   if (has_any_example) {
-      prompt_len += snprintf(command_prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len, "%s",
-                             LEGACY_EXAMPLES_HEADER);
-
-      if (llm_tools_is_device_enabled("armor_display", false)) {
-         prompt_len += snprintf(command_prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len, "%s",
-                                LEGACY_EXAMPLE_ARMOR_DISPLAY);
-      }
-      if (llm_tools_is_device_enabled("time", false)) {
-         prompt_len += snprintf(command_prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len, "%s",
-                                LEGACY_EXAMPLE_TIME);
-      }
-      if (llm_tools_is_device_enabled("volume", false)) {
-         prompt_len += snprintf(command_prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len, "%s",
-                                LEGACY_EXAMPLE_VOLUME);
-      }
-      if (llm_tools_is_device_enabled("weather", false)) {
-         prompt_len += snprintf(command_prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len, "%s",
-                                LEGACY_EXAMPLES_WEATHER);
-      }
-   }
-
-   // Add response format instructions (legacy <command> tag mode)
-   prompt_len += snprintf(command_prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len, "%s",
-                          LEGACY_LOCAL_COMMAND_INSTRUCTIONS);
-
-   json_object_put(parsedJson);
    prompt_initialized = 1;
 
-   LOG_INFO("AI prompt initialized. Length: %d", prompt_len);
+   if (strcmp(tools_mode, "native") == 0) {
+      LOG_INFO("AI prompt initialized (native tools mode). Length: %d", prompt_len);
+   } else if (strcmp(tools_mode, "disabled") == 0) {
+      LOG_INFO("AI prompt initialized (tools disabled). Length: %d", prompt_len);
+   } else {
+      LOG_INFO("AI prompt initialized (command_tags mode). Length: %d", prompt_len);
+   }
 }
 
 /**
@@ -807,280 +651,36 @@ const char *get_local_command_prompt(void) {
 }
 
 /**
- * @brief Check if a topic is excluded for remote clients
- */
-static int is_topic_excluded(const char *topic) {
-   if (!topic)
-      return 0;
-   for (int i = 0; excluded_remote_topics[i] != NULL; i++) {
-      if (strcmp(topic, excluded_remote_topics[i]) == 0) {
-         return 1;
-      }
-   }
-   return 0;
-}
-
-/**
  * @brief Builds the remote command prompt (excludes local-only topics like hud, helmet)
  *
- * This creates a prompt for network satellite clients that only includes
- * general commands (date, time, etc.) but excludes HUD and helmet controls.
+ * All commands are now defined via the modular tool_registry system.
+ * Native tool calling filters remote-available tools automatically.
  */
 static void initialize_remote_command_prompt(void) {
    if (remote_prompt_initialized) {
       return;
    }
 
-   FILE *configFile = NULL;
-   char buffer[32 * 1024];  // 32KB for commands_config_nuevo.json (~17KB)
-   int bytes_read = 0;
-   struct json_object *parsedJson = NULL;
-   struct json_object *typesObject = NULL;
-   struct json_object *devicesObject = NULL;
-
-   // Start with persona, system instructions, localization context
-   // Persona is replaceable via config. System instructions are built dynamically based on
-   // which features are enabled (search, vision, etc.)
-
-   // Check tool calling mode:
-   // - "native": Use native function/tool calling (minimal prompt)
-   // - "command_tags": Use <command> tag instructions (legacy)
-   // - "disabled": No tool/command handling at all
    const char *tools_mode = g_config.llm.tools.mode;
 
-   if (strcmp(tools_mode, "native") == 0 && llm_tools_enabled(NULL)) {
-      // Native tools mode - minimal prompt
-      int prompt_len = snprintf(remote_command_prompt, PROMPT_BUFFER_SIZE,
-                                "%s\n\n"  // Persona (from config or AI_PERSONA)
-                                "%s\n\n"  // System instructions (minimal for tools mode)
-                                "%s",     // Localization context
-                                get_persona_description(), get_system_instructions(),
-                                get_localization_context());
-      remote_prompt_initialized = 1;
-      LOG_INFO("Remote AI prompt initialized (native tools mode). Length: %d", prompt_len);
-      return;
-   }
+   // All modes now use the same minimal prompt structure
+   // Tool definitions are provided via native tool calling API
+   int prompt_len = snprintf(remote_command_prompt, PROMPT_BUFFER_SIZE,
+                             "%s\n\n"  // Persona (from config or AI_PERSONA)
+                             "%s\n\n"  // System instructions
+                             "%s",     // Localization context
+                             get_persona_description(), get_system_instructions(),
+                             get_localization_context());
 
-   if (strcmp(tools_mode, "disabled") == 0) {
-      // Disabled mode - no command/tool handling at all
-      int prompt_len = snprintf(remote_command_prompt, PROMPT_BUFFER_SIZE,
-                                "%s\n\n"  // Persona (from config or AI_PERSONA)
-                                "%s\n\n"  // System instructions
-                                "%s",     // Localization context
-                                get_persona_description(), get_system_instructions(),
-                                get_localization_context());
-      remote_prompt_initialized = 1;
-      LOG_INFO("Remote AI prompt initialized (tools disabled). Length: %d", prompt_len);
-      return;
-   }
-
-   // Command tags mode: include <command> tag instructions
-   int prompt_len = snprintf(
-       remote_command_prompt, PROMPT_BUFFER_SIZE,
-       "%s\n\n"  // Persona (from config or AI_PERSONA)
-       "%s\n\n"  // System instructions (dynamically built based on enabled features)
-       "%s"      // Localization context (empty string if not configured)
-       "You can also execute commands for me. These are the commands available:\n\n",
-       get_persona_description(), get_system_instructions(), get_localization_context());
-
-   // Read the commands config file (path from g_config)
-   configFile = fopen(g_config.paths.commands_config, "r");
-   if (configFile == NULL) {
-      LOG_ERROR("Unable to open commands config file: %s", g_config.paths.commands_config);
-      remote_prompt_initialized = 1;
-      return;
-   }
-
-   if ((bytes_read = fread(buffer, 1, sizeof(buffer), configFile)) > 0) {
-      buffer[bytes_read] = '\0';
-   } else {
-      LOG_ERROR("Failed to read config file for remote prompt");
-      fclose(configFile);
-      remote_prompt_initialized = 1;
-      return;
-   }
-
-   if (bytes_read == sizeof(buffer)) {
-      LOG_ERROR("Config file buffer is too small.");
-      fclose(configFile);
-      remote_prompt_initialized = 1;
-      return;
-   }
-
-   fclose(configFile);
-
-   // Parse JSON
-   parsedJson = json_tokener_parse(buffer);
-   if (parsedJson == NULL) {
-      LOG_ERROR("Failed to parse config JSON for remote prompt");
-      remote_prompt_initialized = 1;
-      return;
-   }
-
-   // Get the "types" and "devices" objects
-   if (!json_object_object_get_ex(parsedJson, "types", &typesObject) ||
-       !json_object_object_get_ex(parsedJson, "devices", &devicesObject)) {
-      LOG_ERROR("Required objects not found in json for remote prompt");
-      json_object_put(parsedJson);
-      remote_prompt_initialized = 1;
-      return;
-   }
-
-   // Add a section for each command type (only if it has non-excluded devices)
-   struct json_object_iterator type_it = json_object_iter_begin(typesObject);
-   struct json_object_iterator type_it_end = json_object_iter_end(typesObject);
-
-   while (!json_object_iter_equal(&type_it, &type_it_end)) {
-      const char *type_name = json_object_iter_peek_name(&type_it);
-      struct json_object *type_obj;
-      json_object_object_get_ex(typesObject, type_name, &type_obj);
-
-      // First, check if there are any non-excluded AND enabled devices of this type
-      int has_devices = 0;
-      struct json_object_iterator dev_check = json_object_iter_begin(devicesObject);
-      struct json_object_iterator dev_check_end = json_object_iter_end(devicesObject);
-
-      while (!json_object_iter_equal(&dev_check, &dev_check_end)) {
-         struct json_object *device_obj;
-         const char *device_name = json_object_iter_peek_name(&dev_check);
-         json_object_object_get_ex(devicesObject, device_name, &device_obj);
-
-         struct json_object *device_type_obj, *topic_obj;
-         if (json_object_object_get_ex(device_obj, "type", &device_type_obj)) {
-            const char *device_type = json_object_get_string(device_type_obj);
-            if (strcmp(device_type, type_name) == 0) {
-               // Check if topic is excluded
-               const char *topic = NULL;
-               if (json_object_object_get_ex(device_obj, "topic", &topic_obj)) {
-                  topic = json_object_get_string(topic_obj);
-               }
-               // Check both: not excluded AND enabled for remote sessions
-               if (!is_topic_excluded(topic) && llm_tools_is_device_enabled(device_name, true)) {
-                  has_devices = 1;
-                  break;
-               }
-            }
-         }
-         json_object_iter_next(&dev_check);
-      }
-
-      // Skip this type if no devices are available/enabled for remote clients
-      if (!has_devices) {
-         json_object_iter_next(&type_it);
-         continue;
-      }
-
-      prompt_len += snprintf(remote_command_prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len,
-                             "== %s Commands ==\n", type_name);
-
-      // Get the actions for this type
-      struct json_object *actions_obj;
-      if (json_object_object_get_ex(type_obj, "actions", &actions_obj)) {
-         struct json_object_iterator action_it = json_object_iter_begin(actions_obj);
-         struct json_object_iterator action_it_end = json_object_iter_end(actions_obj);
-
-         while (!json_object_iter_equal(&action_it, &action_it_end)) {
-            const char *action_name = json_object_iter_peek_name(&action_it);
-            struct json_object *action_obj;
-            json_object_object_get_ex(actions_obj, action_name, &action_obj);
-
-            struct json_object *command_obj;
-            if (json_object_object_get_ex(action_obj, "action_command", &command_obj)) {
-               const char *command = json_object_get_string(command_obj);
-
-               prompt_len += snprintf(remote_command_prompt + prompt_len,
-                                      PROMPT_BUFFER_SIZE - prompt_len, "- %s: %s\n", action_name,
-                                      command);
-            }
-
-            json_object_iter_next(&action_it);
-         }
-      }
-
-      // Add a list of devices for this type (only non-excluded ones)
-      prompt_len += snprintf(remote_command_prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len,
-                             "  Valid devices for this command only: ");
-
-      // Find all non-excluded AND enabled devices of this type
-      int device_count = 0;
-      struct json_object_iterator dev_it = json_object_iter_begin(devicesObject);
-      struct json_object_iterator dev_it_end = json_object_iter_end(devicesObject);
-
-      while (!json_object_iter_equal(&dev_it, &dev_it_end)) {
-         const char *device_name = json_object_iter_peek_name(&dev_it);
-         struct json_object *device_obj;
-         json_object_object_get_ex(devicesObject, device_name, &device_obj);
-
-         struct json_object *device_type_obj, *topic_obj;
-         if (json_object_object_get_ex(device_obj, "type", &device_type_obj)) {
-            const char *device_type = json_object_get_string(device_type_obj);
-
-            if (strcmp(device_type, type_name) == 0) {
-               // Check if topic is excluded
-               const char *topic = NULL;
-               if (json_object_object_get_ex(device_obj, "topic", &topic_obj)) {
-                  topic = json_object_get_string(topic_obj);
-               }
-
-               // Check both: not excluded AND enabled for remote sessions
-               if (!is_topic_excluded(topic) && llm_tools_is_device_enabled(device_name, true)) {
-                  if (device_count > 0) {
-                     prompt_len += snprintf(remote_command_prompt + prompt_len,
-                                            PROMPT_BUFFER_SIZE - prompt_len, ", ");
-                  }
-                  prompt_len += snprintf(remote_command_prompt + prompt_len,
-                                         PROMPT_BUFFER_SIZE - prompt_len, "%s", device_name);
-                  device_count++;
-               }
-            }
-         }
-
-         json_object_iter_next(&dev_it);
-      }
-
-      prompt_len += snprintf(remote_command_prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len,
-                             "\n\n");
-
-      json_object_iter_next(&type_it);
-   }
-
-   // Add examples conditionally based on enabled commands for REMOTE sessions
-   // Each example only included if that specific device is enabled
-   bool has_any_example = llm_tools_is_device_enabled("armor_display", true) ||
-                          llm_tools_is_device_enabled("time", true) ||
-                          llm_tools_is_device_enabled("volume", true) ||
-                          llm_tools_is_device_enabled("weather", true);
-
-   if (has_any_example) {
-      prompt_len += snprintf(remote_command_prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len,
-                             "%s", LEGACY_EXAMPLES_HEADER);
-
-      if (llm_tools_is_device_enabled("armor_display", true)) {
-         prompt_len += snprintf(remote_command_prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len,
-                                "%s", LEGACY_EXAMPLE_ARMOR_DISPLAY);
-      }
-      if (llm_tools_is_device_enabled("time", true)) {
-         prompt_len += snprintf(remote_command_prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len,
-                                "%s", LEGACY_EXAMPLE_TIME);
-      }
-      if (llm_tools_is_device_enabled("volume", true)) {
-         prompt_len += snprintf(remote_command_prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len,
-                                "%s", LEGACY_EXAMPLE_VOLUME);
-      }
-      if (llm_tools_is_device_enabled("weather", true)) {
-         prompt_len += snprintf(remote_command_prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len,
-                                "%s", LEGACY_EXAMPLES_WEATHER);
-      }
-   }
-
-   // Add response format instructions (legacy <command> tag mode)
-   prompt_len += snprintf(remote_command_prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len, "%s",
-                          LEGACY_REMOTE_COMMAND_INSTRUCTIONS);
-
-   json_object_put(parsedJson);
    remote_prompt_initialized = 1;
 
-   LOG_INFO("Remote AI prompt initialized. Length: %d", prompt_len);
+   if (strcmp(tools_mode, "native") == 0) {
+      LOG_INFO("Remote AI prompt initialized (native tools mode). Length: %d", prompt_len);
+   } else if (strcmp(tools_mode, "disabled") == 0) {
+      LOG_INFO("Remote AI prompt initialized (tools disabled). Length: %d", prompt_len);
+   } else {
+      LOG_INFO("Remote AI prompt initialized (command_tags mode). Length: %d", prompt_len);
+   }
 }
 
 /**
@@ -1110,199 +710,20 @@ char *build_remote_prompt_for_mode(const char *tool_mode) {
       return NULL;
    }
 
-   /* Native tools mode or disabled mode - minimal prompt */
-   if (strcmp(tool_mode, "native") == 0 || strcmp(tool_mode, "disabled") == 0) {
-      int prompt_len = snprintf(prompt, PROMPT_BUFFER_SIZE,
-                                "%s\n\n"  // Persona
-                                "%s\n\n"  // System instructions
-                                "%s",     // Localization context
-                                get_persona_description(), get_system_instructions(),
-                                get_localization_context());
-      LOG_INFO("Built prompt for %s mode. Length: %d", tool_mode, prompt_len);
-      return prompt;
-   }
+   int len = 0;
+   int remaining = PROMPT_BUFFER_SIZE;
 
-   /* Command tags mode: include <command> tag instructions */
-   int prompt_len = snprintf(prompt, PROMPT_BUFFER_SIZE,
-                             "%s\n\n"  // Persona
-                             "%s\n\n"  // System instructions
-                             "%s",     // Localization context
-                             get_persona_description(), get_system_instructions(),
-                             get_localization_context());
+   /* Add persona */
+   len += snprintf(prompt + len, remaining - len, "%s\n\n", get_persona_description());
 
-   /* Read the commands config file */
-   FILE *configFile = fopen(g_config.paths.commands_config, "r");
-   if (configFile == NULL) {
-      LOG_ERROR("Unable to open commands config file: %s", g_config.paths.commands_config);
-      return prompt;
-   }
+   /* Generate system instructions using the shared builder (respects mode parameter) */
+   len += build_system_instructions_to_buffer(tool_mode, prompt + len, remaining - len);
+   len += snprintf(prompt + len, remaining - len, "\n");
 
-   char buffer[32 * 1024];
-   int bytes_read = fread(buffer, 1, sizeof(buffer) - 1, configFile);
-   fclose(configFile);
+   /* Add localization context */
+   len += snprintf(prompt + len, remaining - len, "%s", get_localization_context());
 
-   if (bytes_read <= 0) {
-      LOG_ERROR("Failed to read config file for prompt");
-      return prompt;
-   }
-   buffer[bytes_read] = '\0';
-
-   /* Parse JSON */
-   struct json_object *parsedJson = json_tokener_parse(buffer);
-   if (parsedJson == NULL) {
-      LOG_ERROR("Failed to parse config JSON for prompt");
-      return prompt;
-   }
-
-   struct json_object *typesObject = NULL;
-   struct json_object *devicesObject = NULL;
-   if (!json_object_object_get_ex(parsedJson, "types", &typesObject) ||
-       !json_object_object_get_ex(parsedJson, "devices", &devicesObject)) {
-      LOG_ERROR("Required objects not found in json for prompt");
-      json_object_put(parsedJson);
-      return prompt;
-   }
-
-   /* Iterate through types and add command sections */
-   struct json_object_iterator type_it = json_object_iter_begin(typesObject);
-   struct json_object_iterator type_it_end = json_object_iter_end(typesObject);
-
-   while (!json_object_iter_equal(&type_it, &type_it_end)) {
-      const char *type_name = json_object_iter_peek_name(&type_it);
-      struct json_object *type_obj;
-      json_object_object_get_ex(typesObject, type_name, &type_obj);
-
-      /* Check if there are any enabled devices of this type */
-      int has_devices = 0;
-      struct json_object_iterator dev_check = json_object_iter_begin(devicesObject);
-      struct json_object_iterator dev_check_end = json_object_iter_end(devicesObject);
-
-      while (!json_object_iter_equal(&dev_check, &dev_check_end)) {
-         const char *device_name = json_object_iter_peek_name(&dev_check);
-         struct json_object *device_obj;
-         json_object_object_get_ex(devicesObject, device_name, &device_obj);
-
-         struct json_object *device_type_obj, *topic_obj;
-         if (json_object_object_get_ex(device_obj, "type", &device_type_obj)) {
-            const char *device_type = json_object_get_string(device_type_obj);
-            if (strcmp(device_type, type_name) == 0) {
-               /* Check if topic is excluded (hud, helmet) */
-               const char *topic = NULL;
-               if (json_object_object_get_ex(device_obj, "topic", &topic_obj)) {
-                  topic = json_object_get_string(topic_obj);
-               }
-               if (!is_topic_excluded(topic) && llm_tools_is_device_enabled(device_name, true)) {
-                  has_devices = 1;
-                  break;
-               }
-            }
-         }
-         json_object_iter_next(&dev_check);
-      }
-
-      if (!has_devices) {
-         json_object_iter_next(&type_it);
-         continue;
-      }
-
-      /* Add type header */
-      prompt_len += snprintf(prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len,
-                             "== %s Commands ==\n", type_name);
-
-      /* Get actions for this type and add them */
-      struct json_object *actions_obj;
-      if (json_object_object_get_ex(type_obj, "actions", &actions_obj)) {
-         struct json_object_iterator action_it = json_object_iter_begin(actions_obj);
-         struct json_object_iterator action_it_end = json_object_iter_end(actions_obj);
-
-         while (!json_object_iter_equal(&action_it, &action_it_end)) {
-            const char *action_name = json_object_iter_peek_name(&action_it);
-            struct json_object *action_obj;
-            json_object_object_get_ex(actions_obj, action_name, &action_obj);
-
-            struct json_object *command_obj;
-            if (json_object_object_get_ex(action_obj, "action_command", &command_obj)) {
-               const char *command = json_object_get_string(command_obj);
-               prompt_len += snprintf(prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len,
-                                      "- %s: %s\n", action_name, command);
-            }
-            json_object_iter_next(&action_it);
-         }
-      }
-
-      /* Add list of valid devices for this type */
-      prompt_len += snprintf(prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len,
-                             "  Valid devices for this command only: ");
-
-      int device_count = 0;
-      struct json_object_iterator dev_it = json_object_iter_begin(devicesObject);
-      struct json_object_iterator dev_it_end = json_object_iter_end(devicesObject);
-
-      while (!json_object_iter_equal(&dev_it, &dev_it_end)) {
-         const char *device_name = json_object_iter_peek_name(&dev_it);
-         struct json_object *device_obj;
-         json_object_object_get_ex(devicesObject, device_name, &device_obj);
-
-         struct json_object *device_type_obj, *topic_obj;
-         if (json_object_object_get_ex(device_obj, "type", &device_type_obj)) {
-            const char *device_type = json_object_get_string(device_type_obj);
-            if (strcmp(device_type, type_name) == 0) {
-               const char *topic = NULL;
-               if (json_object_object_get_ex(device_obj, "topic", &topic_obj)) {
-                  topic = json_object_get_string(topic_obj);
-               }
-               if (!is_topic_excluded(topic) && llm_tools_is_device_enabled(device_name, true)) {
-                  if (device_count > 0) {
-                     prompt_len += snprintf(prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len,
-                                            ", ");
-                  }
-                  prompt_len += snprintf(prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len, "%s",
-                                         device_name);
-                  device_count++;
-               }
-            }
-         }
-         json_object_iter_next(&dev_it);
-      }
-
-      prompt_len += snprintf(prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len, "\n\n");
-      json_object_iter_next(&type_it);
-   }
-
-   /* Add examples if any relevant devices are enabled */
-   bool has_any_example = llm_tools_is_device_enabled("armor_display", true) ||
-                          llm_tools_is_device_enabled("time", true) ||
-                          llm_tools_is_device_enabled("volume", true) ||
-                          llm_tools_is_device_enabled("weather", true);
-
-   if (has_any_example) {
-      prompt_len += snprintf(prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len, "%s",
-                             LEGACY_EXAMPLES_HEADER);
-
-      if (llm_tools_is_device_enabled("armor_display", true)) {
-         prompt_len += snprintf(prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len, "%s",
-                                LEGACY_EXAMPLE_ARMOR_DISPLAY);
-      }
-      if (llm_tools_is_device_enabled("time", true)) {
-         prompt_len += snprintf(prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len, "%s",
-                                LEGACY_EXAMPLE_TIME);
-      }
-      if (llm_tools_is_device_enabled("volume", true)) {
-         prompt_len += snprintf(prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len, "%s",
-                                LEGACY_EXAMPLE_VOLUME);
-      }
-      if (llm_tools_is_device_enabled("weather", true)) {
-         prompt_len += snprintf(prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len, "%s",
-                                LEGACY_EXAMPLES_WEATHER);
-      }
-   }
-
-   /* Add command format instructions */
-   prompt_len += snprintf(prompt + prompt_len, PROMPT_BUFFER_SIZE - prompt_len, "%s",
-                          LEGACY_REMOTE_COMMAND_INSTRUCTIONS);
-
-   json_object_put(parsedJson);
-   LOG_INFO("Built prompt for command_tags mode. Length: %d", prompt_len);
+   LOG_INFO("Built prompt for %s mode. Length: %d", tool_mode, len);
    return prompt;
 }
 

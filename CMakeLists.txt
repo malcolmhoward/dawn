@@ -370,8 +370,8 @@ set(DAWN_SOURCES
 
     # Multi-threaded core (command routing always needed)
     src/core/command_router.c
-    src/core/command_registry.c
     src/core/command_executor.c
+    src/core/component_status.c
     src/core/device_types.c
     src/core/ocp_helpers.c
 
@@ -416,6 +416,7 @@ set(DAWN_SOURCES
     # Tools subsystem (web search, weather, calculator, etc.)
     src/tools/tool_registry.c
     src/tools/tools_init.c
+    src/tools/hud_discovery.c
     src/tools/web_search.c
     src/tools/weather_service.c
     src/tools/smartthings_service.c

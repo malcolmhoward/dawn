@@ -33,6 +33,8 @@
 #include <string.h>
 
 #include "config/dawn_config.h"
+#include "core/device_types.h"
+#include "llm/llm_tools.h"
 #include "logging.h"
 #include "tools/string_utils.h"
 #include "tools/toml.h"
@@ -55,7 +57,43 @@ static tool_entry_t s_tools[TOOL_MAX_REGISTERED];
 static int s_tool_count = 0;
 static bool s_initialized = false;
 static bool s_locked = false;
+static bool s_available = false;  /* True if init succeeded, false for degraded mode */
+static bool s_cache_valid = true; /* Schema cache validity */
 static pthread_mutex_t s_registry_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+/* =============================================================================
+ * Dynamic Enum Override Storage
+ * ============================================================================= */
+
+/**
+ * @brief Storage for dynamically updated enum values
+ *
+ * When tool_registry_update_param_enum() is called, enum values are copied
+ * here and the tool's param pointer is updated to point to this storage.
+ */
+typedef struct {
+   int tool_index;                                  /* Index into s_tools */
+   int param_index;                                 /* Index into tool's params */
+   char values[TOOL_PARAM_ENUM_MAX][TOOL_NAME_MAX]; /* Deep copy of enum strings */
+   const char *value_ptrs[TOOL_PARAM_ENUM_MAX];     /* Pointers for param struct */
+   int count;                                       /* Number of values */
+   bool active;                                     /* Slot in use */
+   treg_param_t override_param;                     /* Copy of param with updated enum */
+} enum_override_t;
+
+/*
+ * Enum override storage for runtime-discovered values (e.g., HUD scene names).
+ * Memory footprint: 32 slots × ~1KB each = ~32KB static allocation.
+ * This is acceptable for Jetson/embedded Linux targets with 4GB+ RAM.
+ * If memory-constrained, reduce MAX_ENUM_OVERRIDES or use dynamic allocation.
+ */
+#define MAX_ENUM_OVERRIDES 32
+static enum_override_t s_enum_overrides[MAX_ENUM_OVERRIDES];
+static int s_override_count = 0;
+
+/* Forward declarations */
+static const treg_param_t *get_effective_param(int tool_index, int param_index);
+static int count_device_type_patterns(tool_device_type_t device_type);
 
 /* Alias lookup table */
 #define MAX_ALIASES_TOTAL 256
@@ -224,18 +262,26 @@ int tool_registry_init(void) {
    /* Clear state */
    memset(s_tools, 0, sizeof(s_tools));
    memset(s_aliases, 0, sizeof(s_aliases));
+   memset(s_enum_overrides, 0, sizeof(s_enum_overrides));
    s_tool_count = 0;
    s_alias_count = 0;
+   s_override_count = 0;
    s_locked = false;
+   s_cache_valid = true;
 
    /* Initialize hash tables */
    hash_init();
 
    s_initialized = true;
+   s_available = true;
    LOG_INFO("Tool registry initialized");
 
    pthread_mutex_unlock(&s_registry_mutex);
    return 0;
+}
+
+bool tool_registry_is_available(void) {
+   return s_available;
 }
 
 int tool_registry_init_tools(void) {
@@ -268,6 +314,21 @@ int tool_registry_init_tools(void) {
          entry->initialized = true; /* No init function = always initialized */
       }
    }
+
+   /* Log summary stats (calculate while still holding lock) */
+   int total_variations = 0;
+   for (int i = 0; i < s_tool_count; i++) {
+      if (!s_tools[i].registered) {
+         continue;
+      }
+      const tool_metadata_t *meta = &s_tools[i].metadata;
+      int patterns = count_device_type_patterns(meta->device_type);
+      int name_variations = 1 + meta->alias_count;
+      total_variations += patterns * name_variations;
+   }
+
+   LOG_INFO("tool_registry: %d tools initialized, %d direct command variations", s_tool_count,
+            total_variations);
 
    pthread_mutex_unlock(&s_registry_mutex);
    return failures;
@@ -308,9 +369,12 @@ void tool_registry_shutdown(void) {
    /* Clear state */
    memset(s_tools, 0, sizeof(s_tools));
    memset(s_aliases, 0, sizeof(s_aliases));
+   memset(s_enum_overrides, 0, sizeof(s_enum_overrides));
    s_tool_count = 0;
    s_alias_count = 0;
+   s_override_count = 0;
    s_locked = false;
+   s_cache_valid = true;
    s_initialized = false;
 
    hash_init();
@@ -839,7 +903,8 @@ int tool_registry_generate_llm_schema(char *buffer,
 
          bool first_param = true;
          for (int p = 0; p < meta->param_count; p++) {
-            const treg_param_t *param = &meta->params[p];
+            /* Use effective param (may have dynamic enum override) */
+            const treg_param_t *param = get_effective_param(i, p);
             if (!param->name) {
                continue;
             }
@@ -934,7 +999,8 @@ int tool_registry_generate_llm_schema(char *buffer,
          /* Add required array */
          bool has_required = false;
          for (int p = 0; p < meta->param_count; p++) {
-            if (meta->params[p].required) {
+            const treg_param_t *check_param = get_effective_param(i, p);
+            if (check_param->required) {
                has_required = true;
                break;
             }
@@ -950,7 +1016,7 @@ int tool_registry_generate_llm_schema(char *buffer,
 
             bool first_req = true;
             for (int p = 0; p < meta->param_count; p++) {
-               const treg_param_t *param = &meta->params[p];
+               const treg_param_t *param = get_effective_param(i, p);
                if (!param->required || !param->name) {
                   continue;
                }
@@ -1009,4 +1075,336 @@ int tool_registry_generate_llm_schema(char *buffer,
 
    pthread_mutex_unlock(&s_registry_mutex);
    return written;
+}
+
+/* =============================================================================
+ * Dynamic Enum Override Functions
+ * ============================================================================= */
+
+/**
+ * @brief Find existing override for a tool/param combination
+ * @return Index into s_enum_overrides, or -1 if not found
+ * @note Must be called with registry mutex held
+ */
+static int find_enum_override(int tool_index, int param_index) {
+   for (int i = 0; i < MAX_ENUM_OVERRIDES; i++) {
+      if (s_enum_overrides[i].active && s_enum_overrides[i].tool_index == tool_index &&
+          s_enum_overrides[i].param_index == param_index) {
+         return i;
+      }
+   }
+   return -1;
+}
+
+/**
+ * @brief Allocate a new override slot
+ * @return Index into s_enum_overrides, or -1 if full
+ * @note Must be called with registry mutex held
+ */
+static int alloc_enum_override(void) {
+   for (int i = 0; i < MAX_ENUM_OVERRIDES; i++) {
+      if (!s_enum_overrides[i].active) {
+         s_override_count++;
+         return i;
+      }
+   }
+   return -1;
+}
+
+/**
+ * @brief Sanitize an enum value string (security)
+ *
+ * Only allows alphanumeric characters, underscores, and hyphens.
+ * Prevents injection of control characters or special characters
+ * that could affect LLM prompt generation.
+ *
+ * @param dest Destination buffer
+ * @param src Source string
+ * @param max_len Maximum length including null terminator
+ * @return true if sanitization succeeded, false if value was rejected
+ */
+static bool sanitize_enum_value(char *dest, const char *src, size_t max_len) {
+   if (!dest || !src || max_len == 0) {
+      return false;
+   }
+
+   /* Check if source is empty */
+   if (src[0] == '\0') {
+      return false;
+   }
+
+   size_t j = 0;
+   for (size_t i = 0; src[i] != '\0' && j < max_len - 1; i++) {
+      char c = src[i];
+      /* Allow alphanumeric, underscore, hyphen, space */
+      if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' ||
+          c == '-' || c == ' ') {
+         dest[j++] = c;
+      }
+      /* Skip invalid characters silently */
+   }
+   dest[j] = '\0';
+
+   /* Reject if result is empty after sanitization */
+   if (j == 0) {
+      return false;
+   }
+
+   return true;
+}
+
+/**
+ * @brief Get the effective parameter for a tool
+ *
+ * Checks if there's an override for this parameter and returns it,
+ * otherwise returns the original parameter.
+ *
+ * @note Must be called with registry mutex held
+ */
+static const treg_param_t *get_effective_param(int tool_index, int param_index) {
+   int override_idx = find_enum_override(tool_index, param_index);
+   if (override_idx >= 0) {
+      return &s_enum_overrides[override_idx].override_param;
+   }
+   return &s_tools[tool_index].metadata.params[param_index];
+}
+
+int tool_registry_update_param_enum(const char *tool_name,
+                                    const char *param_name,
+                                    const char **values,
+                                    int count) {
+   if (!tool_name || !param_name || !values || count <= 0) {
+      return 1;
+   }
+
+   if (count > TOOL_PARAM_ENUM_MAX) {
+      LOG_ERROR("tool_registry: Enum count %d exceeds max %d", count, TOOL_PARAM_ENUM_MAX);
+      return 4;
+   }
+
+   pthread_mutex_lock(&s_registry_mutex);
+
+   if (!s_initialized) {
+      pthread_mutex_unlock(&s_registry_mutex);
+      return 1;
+   }
+
+   /* Find the tool by name */
+   int tool_idx = hash_lookup(s_name_hash, HASH_BUCKETS, tool_name);
+   if (tool_idx < 0 || !s_tools[tool_idx].registered) {
+      LOG_ERROR("tool_registry: Tool '%s' not found for enum update", tool_name);
+      pthread_mutex_unlock(&s_registry_mutex);
+      return 1;
+   }
+
+   tool_entry_t *entry = &s_tools[tool_idx];
+   const tool_metadata_t *meta = &entry->metadata;
+
+   /* Find the parameter by name */
+   int param_idx = -1;
+   for (int i = 0; i < meta->param_count; i++) {
+      if (meta->params[i].name && strcmp(meta->params[i].name, param_name) == 0) {
+         param_idx = i;
+         break;
+      }
+   }
+
+   if (param_idx < 0) {
+      LOG_ERROR("tool_registry: Parameter '%s' not found in tool '%s'", param_name, tool_name);
+      pthread_mutex_unlock(&s_registry_mutex);
+      return 2;
+   }
+
+   const treg_param_t *orig_param = &meta->params[param_idx];
+   if (orig_param->type != TOOL_PARAM_TYPE_ENUM) {
+      LOG_ERROR("tool_registry: Parameter '%s' in tool '%s' is not enum type", param_name,
+                tool_name);
+      pthread_mutex_unlock(&s_registry_mutex);
+      return 3;
+   }
+
+   /* Find or allocate override slot */
+   int override_idx = find_enum_override(tool_idx, param_idx);
+   if (override_idx < 0) {
+      override_idx = alloc_enum_override();
+      if (override_idx < 0) {
+         LOG_ERROR("tool_registry: Enum override slots exhausted");
+         pthread_mutex_unlock(&s_registry_mutex);
+         return 4;
+      }
+   }
+
+   enum_override_t *override = &s_enum_overrides[override_idx];
+
+   /* Clear and setup the override */
+   memset(override->values, 0, sizeof(override->values));
+   override->tool_index = tool_idx;
+   override->param_index = param_idx;
+   override->count = count;
+   override->active = true;
+
+   /* Deep copy and sanitize enum values */
+   int valid_count = 0;
+   for (int i = 0; i < count; i++) {
+      if (values[i]) {
+         if (sanitize_enum_value(override->values[valid_count], values[i], TOOL_NAME_MAX)) {
+            override->value_ptrs[valid_count] = override->values[valid_count];
+            valid_count++;
+         } else {
+            LOG_WARNING("tool_registry: Rejected invalid enum value for %s.%s", tool_name,
+                        param_name);
+         }
+      }
+   }
+   /* Null out remaining pointers */
+   for (int i = valid_count; i < TOOL_PARAM_ENUM_MAX; i++) {
+      override->value_ptrs[i] = NULL;
+   }
+
+   /* Copy original param and update with override pointers */
+   override->override_param = *orig_param;
+   for (int i = 0; i < TOOL_PARAM_ENUM_MAX; i++) {
+      override->override_param.enum_values[i] = override->value_ptrs[i];
+   }
+   override->override_param.enum_count = valid_count;
+
+   /* Invalidate schema cache */
+   s_cache_valid = false;
+
+   LOG_INFO("tool_registry: Updated enum for %s.%s with %d values (%d sanitized)", tool_name,
+            param_name, valid_count, count - valid_count);
+
+   pthread_mutex_unlock(&s_registry_mutex);
+   return 0;
+}
+
+void tool_registry_invalidate_cache(void) {
+   pthread_mutex_lock(&s_registry_mutex);
+   s_cache_valid = false;
+   pthread_mutex_unlock(&s_registry_mutex);
+
+   /* Also invalidate LLM tools cache for coherence */
+   llm_tools_invalidate_cache();
+
+   LOG_INFO("tool_registry: Schema cache invalidated (including LLM tools)");
+}
+
+bool tool_registry_is_cache_valid(void) {
+   pthread_mutex_lock(&s_registry_mutex);
+   bool valid = s_cache_valid;
+   pthread_mutex_unlock(&s_registry_mutex);
+   return valid;
+}
+
+const treg_param_t *tool_registry_get_effective_param(const char *tool_name, int param_index) {
+   if (!tool_name || param_index < 0) {
+      return NULL;
+   }
+
+   pthread_mutex_lock(&s_registry_mutex);
+
+   if (!s_initialized) {
+      pthread_mutex_unlock(&s_registry_mutex);
+      return NULL;
+   }
+
+   /* Find the tool by name */
+   int tool_idx = hash_lookup(s_name_hash, HASH_BUCKETS, tool_name);
+   if (tool_idx < 0 || !s_tools[tool_idx].registered) {
+      pthread_mutex_unlock(&s_registry_mutex);
+      return NULL;
+   }
+
+   const tool_metadata_t *meta = &s_tools[tool_idx].metadata;
+   if (param_index >= meta->param_count) {
+      pthread_mutex_unlock(&s_registry_mutex);
+      return NULL;
+   }
+
+   const treg_param_t *result = get_effective_param(tool_idx, param_index);
+   pthread_mutex_unlock(&s_registry_mutex);
+   return result;
+}
+
+/* =============================================================================
+ * Direct Command Variation Statistics
+ * ============================================================================= */
+
+/**
+ * @brief Count pattern variations for a single device type
+ *
+ * Sums all pattern_count values across all actions for the type.
+ */
+static int count_device_type_patterns(tool_device_type_t device_type) {
+   const device_type_def_t *type_def = device_type_get_def(device_type);
+   if (!type_def) {
+      return 0;
+   }
+
+   int total = 0;
+   for (int a = 0; a < type_def->action_count; a++) {
+      total += type_def->actions[a].pattern_count;
+   }
+   return total;
+}
+
+int tool_registry_count_tool_variations(const char *name) {
+   if (!name) {
+      return 0;
+   }
+
+   pthread_mutex_lock(&s_registry_mutex);
+
+   if (!s_initialized) {
+      pthread_mutex_unlock(&s_registry_mutex);
+      return 0;
+   }
+
+   /* Find the tool by name */
+   int tool_idx = hash_lookup(s_name_hash, HASH_BUCKETS, name);
+   if (tool_idx < 0 || !s_tools[tool_idx].registered) {
+      pthread_mutex_unlock(&s_registry_mutex);
+      return 0;
+   }
+
+   const tool_metadata_t *meta = &s_tools[tool_idx].metadata;
+
+   /* Get pattern count for this device type */
+   int patterns = count_device_type_patterns(meta->device_type);
+
+   /* Multiply by name variations: 1 (primary name) + alias_count */
+   int name_variations = 1 + meta->alias_count;
+
+   pthread_mutex_unlock(&s_registry_mutex);
+
+   return patterns * name_variations;
+}
+
+int tool_registry_count_variations(void) {
+   pthread_mutex_lock(&s_registry_mutex);
+
+   if (!s_initialized) {
+      pthread_mutex_unlock(&s_registry_mutex);
+      return 0;
+   }
+
+   int total = 0;
+   for (int i = 0; i < s_tool_count; i++) {
+      if (!s_tools[i].registered) {
+         continue;
+      }
+
+      const tool_metadata_t *meta = &s_tools[i].metadata;
+
+      /* Get pattern count for this device type */
+      int patterns = count_device_type_patterns(meta->device_type);
+
+      /* Multiply by name variations: 1 (primary name) + alias_count */
+      int name_variations = 1 + meta->alias_count;
+
+      total += patterns * name_variations;
+   }
+
+   pthread_mutex_unlock(&s_registry_mutex);
+   return total;
 }

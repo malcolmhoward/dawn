@@ -76,6 +76,9 @@ void config_set_defaults(dawn_config_t *config) {
    config->audio.bargein.cooldown_ms = 1500;        /* VAD_TTS_COOLDOWN_MS */
    config->audio.bargein.startup_cooldown_ms = 300; /* VAD_TTS_STARTUP_COOLDOWN_MS */
 
+   /* Audio named devices - empty by default (optional, configured per-user) */
+   config->audio.named_device_count = 0;
+
    /* VAD - matching defines in dawn.c */
    config->vad.speech_threshold = 0.5f;        /* VAD_SPEECH_THRESHOLD */
    config->vad.speech_threshold_tts = 0.92f;   /* VAD_SPEECH_THRESHOLD_TTS */
@@ -241,7 +244,6 @@ void config_set_defaults(dawn_config_t *config) {
 
    /* Paths - matching dawn.h */
    SAFE_COPY(config->paths.music_dir, "~/Music");
-   SAFE_COPY(config->paths.commands_config, "commands_config_nuevo.json");
 }
 
 void config_set_secrets_defaults(secrets_config_t *secrets) {

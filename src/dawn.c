@@ -56,8 +56,8 @@
 #include "audio/audio_decoder.h"
 #include "audio/flac_playback.h"
 #include "core/command_executor.h"
-#include "core/command_registry.h"
 #include "core/command_router.h"
+#include "core/component_status.h"
 #include "core/session_manager.h"
 #include "core/worker_pool.h"
 #include "dawn.h"
@@ -139,13 +139,6 @@
 
 static char pcm_capture_device[MAX_WORD_LENGTH + 1] = "";
 static char pcm_playback_device[MAX_WORD_LENGTH + 1] = "";
-
-/* Parsed audio devices. */
-static audioDevices captureDevices[MAX_AUDIO_DEVICES]; /**< Audio capture devices. */
-static int numAudioCaptureDevices = 0;                 /**< How many capture devices. */
-
-static audioDevices playbackDevices[MAX_AUDIO_DEVICES]; /**< Audio playback devices. */
-static int numAudioPlaybackDevices = 0;                 /**< How many playback devices. */
 
 /**
  * @struct audioControl
@@ -532,27 +525,52 @@ const char *getPcmCaptureDevice(void) {
    return (const char *)pcm_capture_device;
 }
 
-char *findAudioPlaybackDevice(char *name) {
-   int i = 0;
-   char speech[MAX_COMMAND_LENGTH];
+/**
+ * @brief Find a named playback device by name or alias
+ *
+ * Searches g_config.audio.named_devices for a playback device matching
+ * the given name or any of its aliases.
+ *
+ * @param name Device name or alias to search for
+ * @return Device identifier string, or NULL if not found
+ */
+const char *findAudioPlaybackDevice(const char *name) {
+   if (!name)
+      return NULL;
 
-   for (i = 0; i < numAudioPlaybackDevices; i++) {
-      if (strcmp(playbackDevices[i].name, name) == 0) {
-         return playbackDevices[i].device;
+   for (int i = 0; i < g_config.audio.named_device_count; i++) {
+      const audio_named_device_t *d = &g_config.audio.named_devices[i];
+      if (d->type != AUDIO_DEV_TYPE_PLAYBACK)
+         continue;
+
+      /* Check primary name */
+      if (strcasecmp(d->name, name) == 0) {
+         return d->device;
+      }
+
+      /* Check aliases */
+      for (int j = 0; j < d->alias_count; j++) {
+         if (strcasecmp(d->aliases[j], name) == 0) {
+            return d->device;
+         }
       }
    }
 
    return NULL;
 }
 
+/*
+ * Note: Uses static buffer for return value - NOT thread-safe.
+ * This is acceptable in the current single-threaded command processing model.
+ * If multi-threaded command handling is added, refactor to caller-provided buffer.
+ */
 char *setPcmPlaybackDevice(const char *actionName, char *value, int *should_respond) {
-   int i = 0;
    char speech[MAX_COMMAND_LENGTH];
    static char return_buffer[MAX_COMMAND_LENGTH];
 
-   *should_respond = 1;  // We always respond for device changes
+   *should_respond = 1; /* We always respond for device changes */
 
-   // Handle NULL value (e.g., from "get" action without a value)
+   /* Handle NULL value (e.g., from "get" action without a value) */
    if (value == NULL) {
       LOG_WARNING("setPcmPlaybackDevice called with NULL value (action: %s)",
                   actionName ? actionName : "NULL");
@@ -561,50 +579,67 @@ char *setPcmPlaybackDevice(const char *actionName, char *value, int *should_resp
       return return_buffer;
    }
 
-   for (i = 0; i < numAudioPlaybackDevices; i++) {
-      if (strcmp(playbackDevices[i].name, value) == 0) {
-         LOG_INFO("Setting audio playback device to \"%s\".\n", playbackDevices[i].device);
-         strncpy(pcm_playback_device, playbackDevices[i].device, MAX_WORD_LENGTH);
-         pcm_playback_device[MAX_WORD_LENGTH] = '\0';  // Ensure null termination
+   /* Search named devices by name and aliases */
+   for (int i = 0; i < g_config.audio.named_device_count; i++) {
+      const audio_named_device_t *d = &g_config.audio.named_devices[i];
+      if (d->type != AUDIO_DEV_TYPE_PLAYBACK)
+         continue;
+
+      /* Check primary name */
+      bool match = (strcasecmp(d->name, value) == 0);
+
+      /* Check aliases if primary name didn't match */
+      if (!match) {
+         for (int j = 0; j < d->alias_count && !match; j++) {
+            if (strcasecmp(d->aliases[j], value) == 0) {
+               match = true;
+            }
+         }
+      }
+
+      if (match) {
+         LOG_INFO("Setting audio playback device to \"%s\"", d->device);
+         strncpy(pcm_playback_device, d->device, MAX_WORD_LENGTH);
+         pcm_playback_device[MAX_WORD_LENGTH] = '\0';
 
          if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
-            snprintf(speech, MAX_COMMAND_LENGTH, "Switching playback device to %s.", value);
+            snprintf(speech, MAX_COMMAND_LENGTH, "Switching playback device to %s.", d->name);
             text_to_speech(speech);
-            return NULL;  // Already handled
+            return NULL;
          } else {
-            // AI modes: return the result for AI to process
             snprintf(return_buffer, MAX_COMMAND_LENGTH, "Audio playback device switched to %s",
-                     value);
+                     d->name);
             return return_buffer;
          }
       }
    }
 
-   if (i >= numAudioPlaybackDevices) {
-      LOG_ERROR("Requested audio playback device not found.\n");
+   /* Device not found */
+   LOG_ERROR("Requested audio playback device not found: %s", value);
 
-      if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
-         snprintf(speech, MAX_COMMAND_LENGTH,
-                  "Sorry sir. A playback device called %s was not found.", value);
-         text_to_speech(speech);
-         return NULL;
-      } else {
-         snprintf(return_buffer, MAX_COMMAND_LENGTH, "Audio playback device '%s' not found", value);
-         return return_buffer;
-      }
+   if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
+      snprintf(speech, MAX_COMMAND_LENGTH, "Sorry sir. A playback device called %s was not found.",
+               value);
+      text_to_speech(speech);
+      return NULL;
+   } else {
+      snprintf(return_buffer, MAX_COMMAND_LENGTH, "Audio playback device '%s' not found", value);
+      return return_buffer;
    }
-
-   return NULL;  // Should never reach here
 }
 
+/*
+ * Note: Uses static buffer for return value - NOT thread-safe.
+ * This is acceptable in the current single-threaded command processing model.
+ * If multi-threaded command handling is added, refactor to caller-provided buffer.
+ */
 char *setPcmCaptureDevice(const char *actionName, char *value, int *should_respond) {
-   int i = 0;
    char speech[MAX_COMMAND_LENGTH];
    static char return_buffer[MAX_COMMAND_LENGTH];
 
    *should_respond = 1;
 
-   // Handle NULL value (e.g., from "get" action without a value)
+   /* Handle NULL value (e.g., from "get" action without a value) */
    if (value == NULL) {
       LOG_WARNING("setPcmCaptureDevice called with NULL value (action: %s)",
                   actionName ? actionName : "NULL");
@@ -613,39 +648,53 @@ char *setPcmCaptureDevice(const char *actionName, char *value, int *should_respo
       return return_buffer;
    }
 
-   for (i = 0; i < numAudioCaptureDevices; i++) {
-      if (strcmp(captureDevices[i].name, value) == 0) {
-         LOG_INFO("Setting audio capture device to \"%s\".\n", captureDevices[i].device);
-         strncpy(pcm_capture_device, captureDevices[i].device, MAX_WORD_LENGTH);
-         pcm_capture_device[MAX_WORD_LENGTH] = '\0';  // Ensure null termination
+   /* Search named devices by name and aliases */
+   for (int i = 0; i < g_config.audio.named_device_count; i++) {
+      const audio_named_device_t *d = &g_config.audio.named_devices[i];
+      if (d->type != AUDIO_DEV_TYPE_CAPTURE)
+         continue;
+
+      /* Check primary name */
+      bool match = (strcasecmp(d->name, value) == 0);
+
+      /* Check aliases if primary name didn't match */
+      if (!match) {
+         for (int j = 0; j < d->alias_count && !match; j++) {
+            if (strcasecmp(d->aliases[j], value) == 0) {
+               match = true;
+            }
+         }
+      }
+
+      if (match) {
+         LOG_INFO("Setting audio capture device to \"%s\"", d->device);
+         strncpy(pcm_capture_device, d->device, MAX_WORD_LENGTH);
+         pcm_capture_device[MAX_WORD_LENGTH] = '\0';
 
          if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
-            snprintf(speech, MAX_COMMAND_LENGTH, "Switching capture device to %s.", value);
+            snprintf(speech, MAX_COMMAND_LENGTH, "Switching capture device to %s.", d->name);
             text_to_speech(speech);
             return NULL;
          } else {
             snprintf(return_buffer, MAX_COMMAND_LENGTH, "Audio capture device switched to %s",
-                     value);
+                     d->name);
             return return_buffer;
          }
       }
    }
 
-   if (i >= numAudioCaptureDevices) {
-      LOG_ERROR("Requested audio capture device not found.\n");
+   /* Device not found */
+   LOG_ERROR("Requested audio capture device not found: %s", value);
 
-      if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
-         snprintf(speech, MAX_COMMAND_LENGTH,
-                  "Sorry sir. A capture device called %s was not found.", value);
-         text_to_speech(speech);
-         return NULL;
-      } else {
-         snprintf(return_buffer, MAX_COMMAND_LENGTH, "Audio capture device '%s' not found", value);
-         return return_buffer;
-      }
+   if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
+      snprintf(speech, MAX_COMMAND_LENGTH, "Sorry sir. A capture device called %s was not found.",
+               value);
+      text_to_speech(speech);
+      return NULL;
+   } else {
+      snprintf(return_buffer, MAX_COMMAND_LENGTH, "Audio capture device '%s' not found", value);
+      return return_buffer;
    }
-
-   return NULL;
 }
 
 /**
@@ -1207,18 +1256,6 @@ int main(int argc, char *argv[]) {
                           DEFAULT_CAPTURE_SECONDS;
    uint32_t max_buff_size = (uint32_t)ceil(temp_buff_size);
    char *max_buff = NULL;
-
-   // Command Configuration
-   FILE *configFile = NULL;
-   char buffer[32 * 1024]; /* 32KB - commands_config_nuevo.json is ~17KB */
-   int bytes_read = 0;
-
-   // Command Parsing
-   actionType actions[MAX_ACTIONS]; /**< All of the available actions read from the JSON. */
-   int numActions = 0;              /**< Total actions in the actions array. */
-
-   commandSearchElement commands[MAX_COMMANDS];
-   int numCommands = 0;
 
    char *next_char_ptr = NULL;
 
@@ -1793,72 +1830,37 @@ int main(int argc, char *argv[]) {
       pcm_playback_device[sizeof(pcm_playback_device) - 1] = '\0';
    }
 
-   // Command Processing
-   initActions(actions);
-
-   LOG_INFO("Reading commands config file: %s", g_config.paths.commands_config);
-   configFile = fopen(g_config.paths.commands_config, "r");
-   if (configFile == NULL) {
-      LOG_ERROR("Unable to open commands config file: %s\n", g_config.paths.commands_config);
-      return 1;
-   }
-
-   if ((bytes_read = fread(buffer, 1, sizeof(buffer), configFile)) > 0) {
-      buffer[bytes_read] = '\0';
-   } else {
-      LOG_ERROR("Failed to read commands config file (%s): %s\n", g_config.paths.commands_config,
-                strerror(bytes_read));
-      fclose(configFile);
-      return 1;
-   }
-
-   fclose(configFile);
-   LOG_INFO("Done.\n");
-
-   if (parseCommandConfig(buffer, actions, &numActions, captureDevices, &numAudioCaptureDevices,
-                          playbackDevices, &numAudioPlaybackDevices)) {
-      LOG_ERROR("Error parsing json.\n");
-      return 1;
-   }
-
-   LOG_INFO("\n");
-   //printParsedData(actions, numActions);
-   convertActionsToCommands(actions, &numActions, commands, &numCommands);
-   LOG_INFO("Processed %d commands.", numCommands);
-   //printCommands(commands, numCommands);
-
-   // Initialize command registry (unified command lookup)
-   if (command_registry_init() != 0) {
-      LOG_ERROR("Command registry init failed - cannot continue safely");
-      return 1;
-   }
-
    // Initialize tool registry (modular tool system)
+   // Graceful degradation: continue without tools if init fails
+   bool tools_available = true;
    if (tool_registry_init() != 0) {
-      LOG_ERROR("Tool registry init failed");
-      return 1;
+      LOG_ERROR("Tool registry init failed - operating in degraded mode (no commands)");
+      tools_available = false;
    }
 
-   // Register all modular tools (conditionally compiled via DAWN_ENABLE_X_TOOL)
-   tools_register_all();
+   if (tools_available) {
+      // Register all modular tools (conditionally compiled via DAWN_ENABLE_X_TOOL)
+      tools_register_all();
 
-   // Parse tool-specific config sections from config file
-   // Tools must be registered before this call (via DAWN_ENABLE_X_TOOL defines)
-   const char *loaded_config_path = config_get_loaded_path();
-   if (loaded_config_path && strcmp(loaded_config_path, "(none - using defaults)") != 0) {
-      if (tool_registry_parse_configs(loaded_config_path) != 0) {
-         LOG_WARNING("Tool config parsing failed - tools using defaults");
+      // Parse tool-specific config sections from config file
+      // Tools must be registered before this call (via DAWN_ENABLE_X_TOOL defines)
+      const char *loaded_config_path = config_get_loaded_path();
+      if (loaded_config_path && strcmp(loaded_config_path, "(none - using defaults)") != 0) {
+         if (tool_registry_parse_configs(loaded_config_path) != 0) {
+            LOG_WARNING("Tool config parsing failed - tools using defaults");
+         }
       }
-   }
 
-   // Initialize all registered tools (calls each tool's init function)
-   if (tool_registry_init_tools() != 0) {
-      LOG_ERROR("Tool initialization failed");
-      return 1;
-   }
+      // Initialize all registered tools (calls each tool's init function)
+      if (tool_registry_init_tools() != 0) {
+         LOG_WARNING("Tool initialization failed - some tools may be unavailable");
+      }
 
-   // Lock registry to prevent further registrations during runtime
-   tool_registry_lock();
+      // Lock registry to prevent further registrations during runtime
+      tool_registry_lock();
+   } else {
+      LOG_WARNING("Commands/tools disabled - voice interaction still available");
+   }
 
    // Initialize LLM system early - must happen before prompt is built
    // so llm_tools_enabled() returns correct value for native tool calling
@@ -2031,6 +2033,11 @@ int main(int argc, char *argv[]) {
          LOG_WARNING("Anyone on the network can send commands to DAWN.");
          LOG_WARNING("Configure mqtt_username/mqtt_password in secrets.toml");
          LOG_WARNING("========================================");
+      }
+
+      /* Set Last Will and Testament for immediate disconnect detection */
+      if (component_status_set_lwt(mosq) != 0) {
+         LOG_WARNING("Failed to set LWT - status notifications may be delayed");
       }
 
       /* Connect to MQTT server (broker from config). */
@@ -3441,101 +3448,9 @@ int main(int argc, char *argv[]) {
                   }
 
                   direct_command_found = 1;
-                  goto direct_match_done;
                }
 
-               /* Fall back to JSON-based pattern matching */
-               for (i = 0; i < numCommands; i++) {
-                  if (searchString(commands[i].actionWordsWildcard, normalized_text) == 1) {
-                     // Buffer sizes based on MAX_COMMAND_LENGTH (512) and MAX_WORD_LENGTH (256)
-                     // from text_to_command_nuevo.h
-                     char thisValue[MAX_WORD_LENGTH];  // Extracted value (device/song name)
-                     char thisCommand[MAX_COMMAND_LENGTH + MAX_WORD_LENGTH];  // Template + value
-                     char thisSubstring[MAX_COMMAND_LENGTH];  // actionWordsRegex minus "%s"
-                     int strLength = 0;
-
-                     pthread_mutex_lock(&tts_mutex);
-                     if (tts_playback_state == TTS_PLAYBACK_PAUSE) {
-                        tts_playback_state = TTS_PLAYBACK_DISCARD;
-                        pthread_cond_signal(&tts_cond);
-                     }
-                     pthread_mutex_unlock(&tts_mutex);
-
-                     memset(thisValue, '\0', sizeof(thisValue));
-                     LOG_INFO("DIRECT MATCH: \"%s\" (normalized: \"%s\") → pattern: \"%s\"",
-                              command_text, normalized_text, commands[i].actionWordsWildcard);
-                     LOG_WARNING("Found command \"%s\".\n\tLooking for value in \"%s\".\n",
-                                 commands[i].actionWordsWildcard, commands[i].actionWordsRegex);
-
-                     strLength = strlen(commands[i].actionWordsRegex);
-                     if ((strLength >= 2) && (commands[i].actionWordsRegex[strLength - 2] == '%') &&
-                         (commands[i].actionWordsRegex[strLength - 1] == 's')) {
-                        strncpy(thisSubstring, commands[i].actionWordsRegex, strLength - 2);
-                        thisSubstring[strLength - 2] = '\0';
-                        /* Use normalized_text for extraction since patterns are lowercase */
-                        strcpy(thisValue,
-                               extract_remaining_after_substring(normalized_text, thisSubstring));
-                     } else {
-                        int retSs = sscanf(normalized_text, commands[i].actionWordsRegex,
-                                           thisValue);
-                        (void)retSs; /* Suppress unused variable warning */
-                     }
-
-                     /* Trim trailing punctuation from extracted value (e.g., "Iron Man." -> "Iron
-                      * Man") */
-                     size_t valueLen = strlen(thisValue);
-                     while (valueLen > 0 &&
-                            (thisValue[valueLen - 1] == '.' || thisValue[valueLen - 1] == ',' ||
-                             thisValue[valueLen - 1] == '!' || thisValue[valueLen - 1] == '?' ||
-                             thisValue[valueLen - 1] == ';' || thisValue[valueLen - 1] == ':')) {
-                        thisValue[--valueLen] = '\0';
-                     }
-
-                     snprintf(thisCommand, sizeof(thisCommand), commands[i].actionCommand,
-                              thisValue);
-                     LOG_WARNING("Sending: \"%s\"\n", thisCommand);
-
-                     // Log direct match to TUI (command bypassed LLM)
-                     metrics_log_activity("Direct match: %s", commands[i].actionWordsWildcard);
-
-                     /* Use unified command executor instead of raw MQTT publish */
-                     /* This enables callbacks for software commands (weather, search, etc.) */
-                     struct json_object *cmd_json = json_tokener_parse(thisCommand);
-                     if (cmd_json) {
-                        cmd_exec_result_t exec_result;
-                        rc = command_execute_json(cmd_json, mosq, &exec_result);
-                        json_object_put(cmd_json);
-
-                        if (rc != 0 || !exec_result.success) {
-                           LOG_ERROR("Command execution failed: %s",
-                                     exec_result.result ? exec_result.result : "unknown error");
-                        } else {
-                           metrics_log_activity("Executed: %s",
-                                                exec_result.result ? exec_result.result : "OK");
-
-                           /* Provide TTS feedback for commands that request it
-                            * (e.g., LLM switch confirmation) */
-                           if (exec_result.should_respond && exec_result.result) {
-                              text_to_speech(exec_result.result);
-                           }
-                        }
-                        cmd_exec_result_free(&exec_result);
-                     } else {
-                        /* Fallback to raw MQTT for malformed JSON (shouldn't happen) */
-                        LOG_WARNING("Failed to parse command JSON, falling back to MQTT publish");
-                        rc = mosquitto_publish(mosq, NULL, commands[i].topic, strlen(thisCommand),
-                                               thisCommand, 0, false);
-                        if (rc != MOSQ_ERR_SUCCESS) {
-                           LOG_ERROR("Error publishing: %s\n", mosquitto_strerror(rc));
-                        }
-                     }
-
-                     direct_command_found = 1;
-                     break;
-                  }
-               }
-
-direct_match_done:
+               /* Note: JSON-based pattern matching removed - tool_registry handles all patterns */
                /* Command context auto-cleared by scope guard */
                (void)0; /* Empty statement after label */
             }
@@ -3776,6 +3691,10 @@ direct_match_done:
       vad_ctx = NULL;
    }
 
+   // Publish offline status and shutdown status system before disconnecting MQTT
+   component_status_publish_offline(mosq);
+   component_status_shutdown();
+
    mosquitto_disconnect(mosq);
    mosquitto_loop_stop(mosq, false);
    mosquitto_lib_cleanup();
@@ -3799,9 +3718,6 @@ direct_match_done:
 
    // Cleanup tool registry (before command registry)
    tool_registry_shutdown();
-
-   // Cleanup command registry
-   command_registry_shutdown();
 
    // Cleanup chunking manager (if initialized)
    if (chunk_mgr) {

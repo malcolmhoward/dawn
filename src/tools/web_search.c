@@ -750,40 +750,61 @@ int web_search_format_for_llm(const search_response_t *response, char *buffer, s
    }
 
    if (response->error) {
-      return snprintf(buffer, buffer_size, "Search failed: %s", response->error);
+      int n = snprintf(buffer, buffer_size, "Search failed: %s", response->error);
+      return (n < 0) ? 0 : ((size_t)n >= buffer_size ? (int)buffer_size - 1 : n);
    }
 
    if (response->count == 0) {
-      return snprintf(buffer, buffer_size, "No search results found.");
+      int n = snprintf(buffer, buffer_size, "No search results found.");
+      return (n < 0) ? 0 : ((size_t)n >= buffer_size ? (int)buffer_size - 1 : n);
    }
 
-   int written = 0;
-   written += snprintf(buffer + written, buffer_size - written, "Web search results:\n\n");
+   size_t written = 0;
+   size_t remaining = buffer_size;
+   int n;
 
-   for (int i = 0; i < response->count && written < (int)buffer_size - 1; i++) {
+/* Helper macro: write to buffer, update written/remaining, break on truncation */
+#define SAFE_SNPRINTF(...)                                    \
+   do {                                                       \
+      n = snprintf(buffer + written, remaining, __VA_ARGS__); \
+      if (n < 0)                                              \
+         goto done;                                           \
+      if ((size_t)n >= remaining) {                           \
+         written = buffer_size - 1;                           \
+         goto done;                                           \
+      }                                                       \
+      written += (size_t)n;                                   \
+      remaining -= (size_t)n;                                 \
+   } while (0)
+
+   SAFE_SNPRINTF("Web search results:\n\n");
+
+   for (int i = 0; i < response->count && remaining > 1; i++) {
       search_result_t *r = &response->results[i];
 
-      written += snprintf(buffer + written, buffer_size - written, "%d. %s", i + 1,
-                          r->title ? r->title : "(no title)");
+      SAFE_SNPRINTF("%d. %s", i + 1, r->title ? r->title : "(no title)");
 
       if (r->engine) {
-         written += snprintf(buffer + written, buffer_size - written, " [%s]", r->engine);
+         SAFE_SNPRINTF(" [%s]", r->engine);
       }
 
-      written += snprintf(buffer + written, buffer_size - written, "\n");
+      SAFE_SNPRINTF("\n");
 
       if (r->snippet) {
-         written += snprintf(buffer + written, buffer_size - written, "   %s\n", r->snippet);
+         SAFE_SNPRINTF("   %s\n", r->snippet);
       }
 
       if (r->url) {
-         written += snprintf(buffer + written, buffer_size - written, "   URL: %s\n", r->url);
+         SAFE_SNPRINTF("   URL: %s\n", r->url);
       }
 
-      written += snprintf(buffer + written, buffer_size - written, "\n");
+      SAFE_SNPRINTF("\n");
    }
 
-   return written;
+#undef SAFE_SNPRINTF
+
+done:
+   return (int)written;
 }
 
 // =============================================================================

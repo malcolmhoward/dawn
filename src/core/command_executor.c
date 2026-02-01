@@ -30,7 +30,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "core/command_registry.h"
 #include "core/command_router.h"
 #include "core/ocp_helpers.h"
 #include "logging.h"
@@ -43,6 +42,35 @@
 
 /* Worker ID used for command executor sync requests */
 #define EXECUTOR_WORKER_ID 99
+
+/**
+ * @brief Get default action based on tool's device_type
+ *
+ * Provides consistent default action derivation for both mqtt_only
+ * and callback execution paths.
+ *
+ * @param tool Tool metadata
+ * @return Default action string (static, do not free)
+ */
+static const char *get_default_action(const tool_metadata_t *tool) {
+   if (!tool)
+      return "get";
+
+   switch (tool->device_type) {
+      case TOOL_DEVICE_TYPE_BOOLEAN:
+         return "toggle";
+      case TOOL_DEVICE_TYPE_ANALOG:
+         return "set";
+      case TOOL_DEVICE_TYPE_GETTER:
+         return "get";
+      case TOOL_DEVICE_TYPE_TRIGGER:
+         return "trigger";
+      case TOOL_DEVICE_TYPE_MUSIC:
+         return "play";
+      default:
+         return "get";
+   }
+}
 
 /* =============================================================================
  * Synchronous Execution (for sync_wait commands)
@@ -141,29 +169,9 @@ int command_execute(const char *device,
       return 1;
    }
 
-   /* Look up in command_registry (legacy) */
-   const cmd_definition_t *cmd = command_registry_lookup(device);
-
-   /* If not in command_registry, try tool_registry (new modular tools) */
-   if (!cmd) {
-      const tool_metadata_t *tool = tool_registry_find(device);
-      if (tool && tool->callback) {
-         int should_respond = 0;
-         /* Copy value to mutable buffer (callback signature requires char*, not const char*) */
-         char value_buf[4096];
-         safe_strncpy(value_buf, value ? value : "", sizeof(value_buf));
-         char *cb_result = tool->callback(action ? action : "get", value_buf, &should_respond);
-
-         result->success = true;
-         result->should_respond = (should_respond != 0);
-         result->skip_followup = tool->skip_followup;
-         result->result = cb_result; /* Takes ownership (may be NULL) */
-
-         LOG_INFO("command_execute: Tool callback for '%s' -> %s", device,
-                  result->result ? result->result : "(no result)");
-         return 0;
-      }
-
+   /* Look up in tool_registry */
+   const tool_metadata_t *tool = tool_registry_find(device);
+   if (!tool) {
       LOG_WARNING("command_execute: Unknown device '%s'", device);
       result->success = false;
       char errbuf[256];
@@ -172,69 +180,79 @@ int command_execute(const char *device,
       return 1;
    }
 
-   /* Inherit command flags */
-   result->skip_followup = cmd->skip_followup;
+   result->skip_followup = tool->skip_followup;
 
-   /* Case 1: Device has a callback - invoke directly */
-   if (cmd->has_callback) {
-      device_callback_fn callback = get_device_callback(cmd->device_string);
-      if (callback) {
-         int should_respond = 0;
-         /* Copy value to mutable buffer (callback signature requires char*, not const char*) */
-         char value_buf[4096];
-         safe_strncpy(value_buf, value ? value : "", sizeof(value_buf));
-         char *cb_result = callback(action ? action : "get", value_buf, &should_respond);
+   /* Check for sync_wait tools (need command_router for response) */
+   if (tool->sync_wait && tool->topic) {
+      cmd_exec_result_t sync_result;
+      int rc = command_execute_sync(device, action, value, mosq, tool->topic, &sync_result, 0);
+      *result = sync_result;
+      return rc;
+   }
 
-         result->success = true;
-         result->should_respond = (should_respond != 0);
-         result->result = cb_result; /* Takes ownership (may be NULL) */
-
-         LOG_INFO("command_execute: Callback for '%s' -> %s", device,
-                  result->result ? result->result : "(no result)");
-         return 0;
-      } else {
-         LOG_WARNING("command_execute: Callback expected but not found for '%s'", device);
-         /* Fall through to MQTT */
+   /* Check for mqtt_only tools - publish to MQTT instead of calling callback */
+   if (tool->mqtt_only && tool->topic) {
+      if (!mosq) {
+         result->success = false;
+         result->result = strdup("MQTT client not available for hardware command");
+         return 1;
       }
+
+      /* Determine default action based on device_type when action is empty */
+      const char *effective_action = (action && action[0] != '\0') ? action
+                                                                   : get_default_action(tool);
+
+      struct json_object *cmd_json = json_object_new_object();
+      json_object_object_add(cmd_json, "device", json_object_new_string(device));
+      json_object_object_add(cmd_json, "action", json_object_new_string(effective_action));
+      if (value && value[0] != '\0') {
+         json_object_object_add(cmd_json, "value", json_object_new_string(value));
+      }
+
+      const char *cmd_str = json_object_to_json_string(cmd_json);
+      int rc = mosquitto_publish(mosq, NULL, tool->topic, strlen(cmd_str), cmd_str, 0, false);
+      json_object_put(cmd_json);
+
+      if (rc != MOSQ_ERR_SUCCESS) {
+         result->success = false;
+         char errbuf[256];
+         snprintf(errbuf, sizeof(errbuf), "MQTT publish failed: %s", mosquitto_strerror(rc));
+         result->result = strdup(errbuf);
+         return 1;
+      }
+
+      result->success = true;
+      result->result = NULL; /* Fire-and-forget has no response */
+      result->should_respond = false;
+
+      LOG_INFO("command_execute: MQTT published to '%s' for tool '%s'", tool->topic, device);
+      return 0;
    }
 
-   /* Case 2: Sync wait command (e.g., viewing) - use command_router */
-   if (cmd->sync_wait) {
-      return command_execute_sync(device, action, value, mosq, cmd->topic, result, 0);
+   /* Standard callback execution */
+   if (tool->callback) {
+      int should_respond = 0;
+      /* Copy value to mutable buffer (callback signature requires char*, not const char*) */
+      char value_buf[4096];
+      safe_strncpy(value_buf, value ? value : "", sizeof(value_buf));
+      const char *effective_action = (action && action[0] != '\0') ? action
+                                                                   : get_default_action(tool);
+      char *cb_result = tool->callback(effective_action, value_buf, &should_respond);
+
+      result->success = true;
+      result->should_respond = (should_respond != 0);
+      result->result = cb_result; /* Takes ownership (may be NULL) */
+
+      LOG_INFO("command_execute: Tool callback for '%s' -> %s", device,
+               result->result ? result->result : "(no result)");
+      return 0;
    }
 
-   /* Case 3: MQTT-only (hardware command) - fire and forget */
-   if (!mosq) {
-      result->success = false;
-      result->result = strdup("MQTT client not available for hardware command");
-      return 1;
-   }
-
-   struct json_object *cmd_json = json_object_new_object();
-   json_object_object_add(cmd_json, "device", json_object_new_string(device));
-   json_object_object_add(cmd_json, "action", json_object_new_string(action ? action : "trigger"));
-   if (value && value[0] != '\0') {
-      json_object_object_add(cmd_json, "value", json_object_new_string(value));
-   }
-
-   const char *cmd_str = json_object_to_json_string(cmd_json);
-   int rc = mosquitto_publish(mosq, NULL, cmd->topic, strlen(cmd_str), cmd_str, 0, false);
-   json_object_put(cmd_json);
-
-   if (rc != MOSQ_ERR_SUCCESS) {
-      result->success = false;
-      char errbuf[256];
-      snprintf(errbuf, sizeof(errbuf), "MQTT publish failed: %s", mosquitto_strerror(rc));
-      result->result = strdup(errbuf);
-      return 1;
-   }
-
-   result->success = true;
-   result->result = NULL; /* Fire-and-forget has no response */
-   result->should_respond = false;
-
-   LOG_INFO("command_execute: MQTT published to '%s' for '%s'", cmd->topic, device);
-   return 0;
+   /* Tool has no callback and is not mqtt_only - this shouldn't happen */
+   LOG_WARNING("command_execute: Tool '%s' has no callback or topic", device);
+   result->success = false;
+   result->result = strdup("Tool has no execution path configured");
+   return 1;
 }
 
 /* =============================================================================

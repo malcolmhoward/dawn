@@ -48,6 +48,11 @@ extern "C" {
 #define URL_FETCHER_MAX_WHITELIST 16
 #define URL_FETCHER_ENTRY_MAX 128 /* Max length of each whitelist entry */
 
+/* Named audio devices configuration */
+#define AUDIO_NAMED_DEVICE_MAX 8  /* Max named audio devices */
+#define AUDIO_DEVICE_ALIAS_MAX 10 /* Max aliases per device */
+#define AUDIO_ALIAS_LEN 64        /* Max length of each alias */
+
 /* =============================================================================
  * General Configuration
  * ============================================================================= */
@@ -81,6 +86,28 @@ typedef struct {
    int startup_cooldown_ms; /* Block barge-in when TTS starts */
 } bargein_config_t;
 
+/**
+ * @brief Type of named audio device (capture/playback)
+ */
+typedef enum {
+   AUDIO_DEV_TYPE_CAPTURE,
+   AUDIO_DEV_TYPE_PLAYBACK
+} audio_device_type_t;
+
+/**
+ * @brief Named audio device for voice command switching
+ *
+ * Allows users to switch between audio devices using voice commands
+ * like "switch to microphone" or "use headphones".
+ */
+typedef struct {
+   char name[CONFIG_NAME_MAX];                            /* User-facing name */
+   audio_device_type_t type;                              /* capture or playback */
+   char device[CONFIG_DEVICE_MAX];                        /* Backend device ID */
+   char aliases[AUDIO_DEVICE_ALIAS_MAX][AUDIO_ALIAS_LEN]; /* Alternative names */
+   int alias_count;                                       /* Number of aliases */
+} audio_named_device_t;
+
 typedef struct {
    char backend[16];                        /* "auto", "pulseaudio", "alsa" */
    char capture_device[CONFIG_DEVICE_MAX];  /* Device name */
@@ -88,6 +115,10 @@ typedef struct {
    unsigned int output_rate;                /* Playback sample rate: 44100 or 48000 */
    unsigned int output_channels;            /* Playback channels: 2 (stereo for dmix) */
    bargein_config_t bargein;
+
+   /* Named device mappings for voice commands */
+   audio_named_device_t named_devices[AUDIO_NAMED_DEVICE_MAX];
+   int named_device_count;
 } audio_config_t;
 
 /* =============================================================================
@@ -352,8 +383,7 @@ typedef struct {
  * Paths Configuration
  * ============================================================================= */
 typedef struct {
-   char music_dir[CONFIG_PATH_MAX];       /* Music library location */
-   char commands_config[CONFIG_PATH_MAX]; /* Device/command mappings */
+   char music_dir[CONFIG_PATH_MAX]; /* Music library location */
 } paths_config_t;
 
 /* =============================================================================

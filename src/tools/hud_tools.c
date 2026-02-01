@@ -64,8 +64,8 @@ static const treg_param_t hud_control_params[] = {
        .type = TOOL_PARAM_TYPE_ENUM,
        .required = true,
        .maps_to = TOOL_MAPS_TO_DEVICE,
-       .enum_values = { "armor_display", "detect", "map", "info" },
-       .enum_count = 4,
+       .enum_values = { NULL }, /* Populated by discovery */
+       .enum_count = 0,
    },
    {
        .name = "action",
@@ -78,12 +78,7 @@ static const treg_param_t hud_control_params[] = {
    },
 };
 
-static const tool_device_map_t hud_control_device_map[] = {
-   { "armor_display", "armor_display" },
-   { "detect", "detect" },
-   { "map", "map" },
-   { "info", "info" },
-};
+/* Device map not needed - element names are used directly as device strings */
 
 static const tool_metadata_t hud_control_metadata = {
    .name = "hud_control",
@@ -97,8 +92,8 @@ static const tool_metadata_t hud_control_metadata = {
    .params = hud_control_params,
    .param_count = 2,
 
-   .device_map = hud_control_device_map,
-   .device_map_count = 4,
+   .device_map = NULL,
+   .device_map_count = 0,
 
    .device_type = TOOL_DEVICE_TYPE_BOOLEAN,
    .capabilities = TOOL_CAP_ARMOR_FEATURE,
@@ -133,8 +128,8 @@ static const treg_param_t hud_mode_params[] = {
        .type = TOOL_PARAM_TYPE_ENUM,
        .required = true,
        .maps_to = TOOL_MAPS_TO_VALUE,
-       .enum_values = { "default", "environmental", "armor" },
-       .enum_count = 3,
+       .enum_values = { "default" },
+       .enum_count = 1,
    },
 };
 

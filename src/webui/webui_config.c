@@ -590,7 +590,6 @@ static void apply_config_from_json(dawn_config_t *config, struct json_object *pa
    /* [paths] */
    if (json_object_object_get_ex(payload, "paths", &section)) {
       JSON_TO_CONFIG_STR(section, "music_dir", config->paths.music_dir);
-      JSON_TO_CONFIG_STR(section, "commands_config", config->paths.commands_config);
    }
 
    /* [images] */

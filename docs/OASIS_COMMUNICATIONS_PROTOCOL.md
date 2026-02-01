@@ -226,6 +226,9 @@ Components must echo the exact `request_id` received - no modification.
 |-------|---------|-------------|
 | `dawn` | Commands to Dawn, responses from other components | Dawn |
 | `hud` | Commands to Mirage HUD | Mirage |
+| `hud/status` | Mirage presence (online/offline) | Dawn |
+| `hud/discovery/#` | HUD capability discovery | Dawn |
+| `dawn/status` | Dawn presence (online/offline) | Mirage |
 | `oasis/broadcast` | System-wide announcements | All components |
 | `oasis/<component>` | Future per-component topics | Specific component |
 
@@ -255,6 +258,324 @@ Responses are sent to the topic associated with the requesting component.
 - Receivers must ignore unknown fields
 - Senders should not require `status` field (assume success if absent)
 - Receivers should support both `value` (reference) and `data` (inline)
+
+## Discovery Messages
+
+Discovery messages enable components to advertise their capabilities at runtime. Unlike request/response patterns, discovery uses a publish/subscribe model with retained messages.
+
+### Purpose
+
+- **Dynamic capability advertisement**: Components publish what features/modes they support
+- **Hot-reload**: Subscribers update their configuration when capabilities change
+- **Decoupling**: Publishers and subscribers don't need to know about each other
+
+### Topic Pattern
+
+```
+<component>/discovery/<capability>
+```
+
+Examples:
+- `hud/discovery/elements` - Available HUD elements
+- `hud/discovery/modes` - Available HUD screen modes
+- `audio/discovery/devices` - Available audio devices (future)
+
+### Discovery Message Format
+
+```json
+{
+  "device": "mirage",
+  "msg_type": "discovery",
+  "timestamp": 1706644800,
+  "<capability>": ["item1", "item2", "item3"]
+}
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `device` | Yes | Component publishing the discovery |
+| `msg_type` | Yes | Must be `"discovery"` |
+| `timestamp` | Yes | Unix seconds when published |
+| `<capability>` | Yes | Array of available items (field name matches capability) |
+
+### Discovery Request Format
+
+Components can request republication of discovery messages:
+
+```json
+{
+  "device": "dawn",
+  "msg_type": "discovery_request",
+  "timestamp": 1706644800
+}
+```
+
+**Topic**: `<component>/discovery/request`
+
+Publishers should subscribe to their request topic and republish all discovery messages when received.
+
+### Discovery Examples
+
+**HUD Elements Discovery** (Mirage → `hud/discovery/elements`):
+```json
+{
+  "device": "mirage",
+  "msg_type": "discovery",
+  "timestamp": 1706644800,
+  "elements": ["armor_display", "detect", "map", "info"]
+}
+```
+
+**HUD Modes Discovery** (Mirage → `hud/discovery/modes`):
+```json
+{
+  "device": "mirage",
+  "msg_type": "discovery",
+  "timestamp": 1706644800,
+  "huds": ["default", "armor", "environmental", "automotive"]
+}
+```
+
+**Discovery Request** (Dawn → `hud/discovery/request`):
+```json
+{
+  "device": "dawn",
+  "msg_type": "discovery_request",
+  "timestamp": 1706644800
+}
+```
+
+### Discovery Protocol Rules
+
+**For Publishers:**
+1. Publish discovery messages with `retain=true` (MQTT)
+2. Republish on startup and when capabilities change
+3. Subscribe to `<component>/discovery/request` and republish when received
+4. Include `timestamp` for staleness detection
+
+**For Subscribers:**
+1. Subscribe to `<component>/discovery/#` wildcard
+2. Handle retained messages on initial subscription
+3. Optionally publish discovery request if no retained messages received
+4. Consider messages stale after configurable threshold (e.g., 5 minutes)
+5. Fall back to defaults if discovery unavailable
+
+### Discovery vs Request/Response
+
+| Aspect | Request/Response | Discovery |
+|--------|------------------|-----------|
+| Correlation | Uses `request_id` | No correlation needed |
+| Delivery | One-to-one | One-to-many (broadcast) |
+| Persistence | Ephemeral | Retained (MQTT) |
+| Timing | On-demand | Startup + on-change |
+| Use case | Commands, queries | Capability advertisement |
+
+## Component Status (Keepalive)
+
+Component status messages enable presence detection and health monitoring. This is critical for components like Mirage (HUD) where Dawn needs to know if the hardware is available before exposing related tools to the LLM.
+
+### Purpose
+
+- **Presence detection**: Know when components connect/disconnect
+- **Graceful degradation**: Hide tools for unavailable hardware
+- **Immediate disconnect detection**: Via MQTT Last Will and Testament (LWT)
+- **Network issue detection**: Via periodic heartbeat timeout
+
+### Topic Pattern
+
+```
+<component>/status
+```
+
+Examples:
+- `hud/status` - Mirage HUD presence (Mirage publishes, Dawn subscribes)
+- `dawn/status` - Dawn AI assistant presence (Dawn publishes, Mirage subscribes)
+- `audio/status` - Audio subsystem presence (future)
+- `armor/status` - Armor systems presence (future)
+
+### Status Message Format
+
+```json
+{
+  "device": "mirage",
+  "msg_type": "status",
+  "status": "online",
+  "timestamp": 1706644800,
+  "version": "1.0.0"
+}
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `device` | Yes | Component name |
+| `msg_type` | Yes | Must be `"status"` |
+| `status` | Yes | `"online"` or `"offline"` |
+| `timestamp` | Yes | Unix seconds when published |
+| `version` | No | Component version string |
+| `capabilities` | No | Array of supported features (future) |
+
+### Implementation: MQTT Last Will and Testament (LWT)
+
+LWT provides immediate notification when a client disconnects unexpectedly (crash, network loss, etc.).
+
+**On MQTT Connect**, set LWT:
+- **Topic**: `<component>/status`
+- **Payload**: `{"device": "<name>", "msg_type": "status", "status": "offline", "timestamp": 0}`
+- **QoS**: 1 (at least once)
+- **Retain**: true
+
+**Immediately after connect**, publish online status:
+```json
+{
+  "device": "mirage",
+  "msg_type": "status",
+  "status": "online",
+  "timestamp": 1706644800
+}
+```
+- **Retain**: true (overwrites the LWT retained message)
+
+**On graceful disconnect**, publish offline status before disconnecting:
+```json
+{
+  "device": "mirage",
+  "msg_type": "status",
+  "status": "offline",
+  "timestamp": 1706644800
+}
+```
+
+### Implementation: Periodic Heartbeat
+
+Heartbeat provides backup detection for cases LWT might miss (network partitions, broker issues).
+
+**Publisher (e.g., Mirage)**:
+1. Publish status message every 30 seconds
+2. Use same `<component>/status` topic
+3. Set `retain=true` (updates the retained message)
+
+**Subscriber (e.g., Dawn)**:
+1. Track `timestamp` of last received status
+2. Consider component offline if no message for 90 seconds (3x heartbeat interval)
+3. On timeout, treat as if "offline" status received
+
+### Heartbeat Intervals
+
+| Interval | Value | Description |
+|----------|-------|-------------|
+| Publish | 30s | How often to send heartbeat |
+| Timeout | 90s | How long before considering offline (3x publish) |
+| Stale | 300s | Discovery data staleness threshold |
+
+### Status Flow Example (Bidirectional)
+
+```
+┌─────────────┐                         ┌─────────────┐
+│    Dawn     │                         │   Mirage    │
+└──────┬──────┘                         └──────┬──────┘
+       │                                       │
+       │    1. Both set LWT on MQTT connect    │
+       │◄── LWT: dawn/status offline           │
+       │                                       │◄── LWT: hud/status offline
+       │                                       │
+       │    2. Both publish online (retained)  │
+       │────────────────────────────────────────►│ dawn/status: online
+       │◄──────────────────────────────────────│ hud/status: online
+       │                                       │
+       │    3. Both subscribe to peer status   │
+       │──── subscribe: hud/status ────────────►│
+       │◄─── subscribe: dawn/status ───────────│
+       │                                       │
+       │    4. Dawn enables armor tools        │
+       │       Mirage shows "AI Online"        │
+       ├───────────────────────────────────────┤
+       │                                       │
+       │    5. Heartbeats every 30s            │
+       │────────────────────────────────────────►│ dawn/status: online
+       │◄──────────────────────────────────────│ hud/status: online
+       │                                       │
+       │         ... time passes ...           │
+       │                                       │
+       │    6. Mirage crashes unexpectedly     │
+       │                                       │ ╳
+       │                                       │
+       │    7. Broker publishes Mirage LWT     │
+       │◄──────────────────────────────────────│ hud/status: offline
+       │                                       │    (from LWT)
+       │                                       │
+       │    8. Dawn disables armor tools       │
+       ├───────────────────────────────────────┤
+       │                                       │
+       ▼                                       ▼
+```
+
+### Status Protocol Rules
+
+**For Publishers (e.g., Mirage, Dawn):**
+1. Set LWT on MQTT connect with offline status
+2. Publish online status immediately after connect (retained)
+3. Publish heartbeat every 30 seconds (retained)
+4. Publish offline status before graceful disconnect
+5. Include `timestamp` in all status messages
+
+**For Subscribers (e.g., Dawn, Mirage):**
+1. Subscribe to `<component>/status` topics
+2. On "online": trigger discovery request, enable related features
+3. On "offline": disable related features immediately
+4. Track last heartbeat timestamp
+5. If no heartbeat for 90 seconds, treat as offline
+6. Handle retained messages on initial subscription
+
+### Bidirectional Status
+
+Both Dawn and Mirage publish their status, enabling mutual awareness:
+
+| Publisher | Topic | Subscribers | Use Case |
+|-----------|-------|-------------|----------|
+| Dawn | `dawn/status` | Mirage | HUD can show "AI Online/Offline" indicator |
+| Mirage | `hud/status` | Dawn | Dawn enables/disables armor tools |
+
+**Dawn Status Example:**
+```json
+{
+  "device": "dawn",
+  "msg_type": "status",
+  "status": "online",
+  "timestamp": 1706644800,
+  "version": "2.0.0",
+  "capabilities": ["voice", "vision", "tools"]
+}
+```
+
+**Mirage Status Example:**
+```json
+{
+  "device": "mirage",
+  "msg_type": "status",
+  "status": "online",
+  "timestamp": 1706644800,
+  "version": "1.5.0",
+  "capabilities": ["hud", "camera", "recording"]
+}
+```
+
+The optional `capabilities` field allows components to advertise high-level features, useful for UI indicators or conditional behavior.
+
+### Relationship to Discovery
+
+Status and discovery work together:
+
+| Event | Status Action | Discovery Action |
+|-------|---------------|------------------|
+| Component connects | Publish "online" | Publish discovery (retained) |
+| Subscriber connects | Receive retained status | Receive retained discovery |
+| Component disconnects | LWT publishes "offline" | Discovery becomes stale |
+| Network timeout | Subscriber treats as offline | Subscriber uses defaults |
+
+**Important**: Discovery messages remain retained even after disconnect. Subscribers should:
+1. Check status first (is component online?)
+2. Only use discovery data if component is online
+3. Fall back to defaults if offline
 
 ## Examples
 
@@ -365,10 +686,22 @@ These fields are reserved for future use:
 |-------|---------|
 | `ocp_version` | Protocol version for breaking changes |
 | `reply_to` | Explicit response topic override |
-| `msg_type` | "request", "response", "progress", "event" |
+| `msg_type` | Message type (see below) |
 | `correlation_id` | For multi-message sequences |
 | `ttl` | Time-to-live for message expiration |
 | `priority` | Message priority level |
+
+### Message Types (`msg_type`)
+
+| Value | Description |
+|-------|-------------|
+| `request` | Command or query (implicit default) |
+| `response` | Reply to a request |
+| `discovery` | Capability advertisement |
+| `discovery_request` | Request for discovery republication |
+| `status` | Component presence/health (online/offline) |
+| `progress` | Intermediate status update (future) |
+| `event` | Unsolicited notification (future) |
 
 ## Implementation Checklist
 
@@ -398,9 +731,41 @@ These fields are reserved for future use:
 - [ ] Always respond (success or error) to requests with `request_id`
 - [ ] Support both data transport modes when appropriate
 
+### Discovery (HUD)
+- [ ] Mirage: Publish `hud/discovery/elements` on startup (retained)
+- [ ] Mirage: Publish `hud/discovery/modes` on startup (retained)
+- [ ] Mirage: Subscribe to `hud/discovery/request`, republish on receive
+- [x] Dawn: Subscribe to `hud/discovery/#`
+- [x] Dawn: Update tool parameters from discovery messages
+- [x] Dawn: Publish discovery request on connect
+- [x] Dawn: Fall back to defaults if no discovery within timeout
+- [x] Dawn: Disable armor tools until discovery succeeds
+
+### Component Status / Keepalive (Mirage → Dawn)
+- [ ] Mirage: Set LWT on MQTT connect (`hud/status` offline, retained)
+- [ ] Mirage: Publish online status after connect (retained)
+- [ ] Mirage: Publish heartbeat every 30 seconds
+- [ ] Mirage: Publish offline status before graceful disconnect
+- [ ] Dawn: Subscribe to `hud/status`
+- [ ] Dawn: Enable armor tools on "online" status
+- [ ] Dawn: Disable armor tools on "offline" status
+- [ ] Dawn: Track heartbeat timestamp, timeout after 90s
+- [ ] Dawn: Integrate status with discovery (only use discovery if online)
+
+### Component Status / Keepalive (Dawn → Mirage)
+- [ ] Dawn: Set LWT on MQTT connect (`dawn/status` offline, retained)
+- [ ] Dawn: Publish online status after connect (retained)
+- [ ] Dawn: Publish heartbeat every 30 seconds
+- [ ] Dawn: Publish offline status before graceful disconnect
+- [ ] Mirage: Subscribe to `dawn/status`
+- [ ] Mirage: Show "AI Online/Offline" indicator on HUD
+- [ ] Mirage: Track heartbeat timestamp, timeout after 90s
+
 ## Version History
 
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0 | 2024-12-20 | Initial specification |
 | 1.1 | 2025-12-27 | Added `timestamp` field (optional, for debugging). Standardized checksum to SHA256. Added `checksum` to file reference and inline data responses. Defined supported encodings: base64, utf8, none. Implemented in both Dawn (validation) and Mirage (generation). |
+| 1.2 | 2026-01-30 | Added Discovery Messages section for capability advertisement. Defined `msg_type` values: discovery, discovery_request. Standardized topic pattern `<component>/discovery/<capability>`. |
+| 1.3 | 2026-01-30 | Added Component Status (Keepalive) section. Defined MQTT LWT for immediate disconnect detection. Defined periodic heartbeat (30s publish, 90s timeout). Added `msg_type: status` with online/offline values. Standardized topic pattern `<component>/status`. |

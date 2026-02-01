@@ -29,12 +29,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "llm/llm_command_parser.h"
 #include "logging.h"
 #include "tools/tool_registry.h"
 
 /* ========== Forward Declarations ========== */
 
 static char *viewing_tool_callback(const char *action, char *value, int *should_respond);
+static bool viewing_tool_is_available(void);
 
 /* ========== Parameter Definitions ========== */
 
@@ -76,10 +78,18 @@ static const tool_metadata_t viewing_metadata = {
    .config_parser = NULL,
    .config_section = NULL,
 
+   .is_available = viewing_tool_is_available,
+
    .init = NULL,
    .cleanup = NULL,
    .callback = viewing_tool_callback,
 };
+
+/* ========== Availability Check ========== */
+
+static bool viewing_tool_is_available(void) {
+   return is_vision_enabled_for_current_llm();
+}
 
 /* ========== Callback Implementation ========== */
 

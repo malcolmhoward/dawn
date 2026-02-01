@@ -44,6 +44,7 @@
 #include "config/dawn_config.h"
 #include "conversation_manager.h"
 #include "core/command_router.h"
+#include "core/component_status.h"
 #include "core/ocp_helpers.h"
 #include "core/session_manager.h"
 #include "dawn.h"
@@ -54,6 +55,7 @@
 #include "logging.h"
 #include "mosquitto_comms.h"
 #include "tools/calculator.h"
+#include "tools/hud_discovery.h"
 #include "tools/search_summarizer.h"
 #include "tools/smartthings_service.h"
 #include "tools/string_utils.h"
@@ -767,6 +769,16 @@ void on_connect(struct mosquitto *mosq, void *obj, int reason_code) {
    } else {
       LOG_INFO("Subscribed to \"%s\" MQTT.", APPLICATION_NAME);
    }
+
+   /* Initialize component status (subscribes to hud/status, publishes dawn/status) */
+   if (component_status_init(mosq) != 0) {
+      LOG_WARNING("Component status initialization failed");
+   }
+
+   /* Initialize HUD discovery (subscribes to hud/discovery/# and requests state) */
+   if (hud_discovery_init(mosq) != 0) {
+      LOG_WARNING("HUD discovery initialization failed - using defaults");
+   }
 }
 
 /* Callback called when the broker sends a SUBACK in response to a SUBSCRIBE. */
@@ -978,6 +990,22 @@ static void execute_command_for_worker(struct json_object *parsed_json, const ch
 /* Callback called when the client receives a message. */
 void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_message *msg) {
    LOG_INFO("%s %d %s", msg->topic, msg->qos, (char *)msg->payload);
+
+   /* Check for component status messages (hud/status) */
+   if (strcmp(msg->topic, STATUS_TOPIC_HUD) == 0) {
+      component_status_handle_message(msg->topic, (const char *)msg->payload, msg->payloadlen);
+      return;
+   }
+
+   /* Check for HUD discovery messages (hud/discovery/#) */
+   if (strncmp(msg->topic, "hud/discovery/", 14) == 0) {
+      /* Skip our own discovery requests (we publish these, don't need to process) */
+      if (strcmp(msg->topic, "hud/discovery/request") == 0) {
+         return;
+      }
+      hud_discovery_handle_message(msg->topic, (const char *)msg->payload, msg->payloadlen);
+      return;
+   }
 
    // Parse the JSON to check for request_id
    struct json_object *parsed_json = json_tokener_parse((char *)msg->payload);
