@@ -25,3 +25,14 @@ dawn_satellite_arduino/arduino_secrets.h
 docs/NEXT_STEPS.md
 docs/RELEASE_TODO.md
 docs/DAWN_EVOLUTION_ROADMAP.md
+
+# PFT governance logs
+.project_foundation_logs/
+
+# Working files
+scratch/
+
+# Legacy pre-rewrite entries (kept for safety)
+en_GB-alba-medium.onnx*
+utils/
+secrets.h
