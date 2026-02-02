@@ -1140,9 +1140,17 @@ static int llm_tools_execute_from_treg(const tool_call_t *call,
             }
             break;
          case TOOL_MAPS_TO_CUSTOM:
-            /* Custom fields stored in value for now */
-            if (val_str && value_buf[0] == '\0') {
-               safe_strncpy(value_buf, val_str, sizeof(value_buf));
+            /* Custom fields appended to value with ::field_name::value format */
+            if (val_str) {
+               if (param->field_name && param->field_name[0]) {
+                  /* Append with field name for parsing in callback */
+                  size_t cur_len = strlen(value_buf);
+                  size_t remaining = sizeof(value_buf) - cur_len;
+                  snprintf(value_buf + cur_len, remaining, "::%s::%s", param->field_name, val_str);
+               } else if (value_buf[0] == '\0') {
+                  /* Fallback: store directly if value is empty */
+                  safe_strncpy(value_buf, val_str, sizeof(value_buf));
+               }
             }
             break;
       }

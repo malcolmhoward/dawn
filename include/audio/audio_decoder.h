@@ -123,6 +123,27 @@ typedef struct {
 } audio_decoder_info_t;
 
 /* =============================================================================
+ * Tag Metadata (Artist/Title/Album)
+ * ============================================================================= */
+
+/** Maximum length for metadata string fields (artist, title, album) */
+#define AUDIO_METADATA_STRING_MAX 256
+
+/**
+ * @brief Audio file tag metadata (ID3, Vorbis comments, etc.)
+ *
+ * Retrieved via audio_decoder_get_metadata() - separate from stream info
+ * because metadata parsing may be slower and not always needed.
+ */
+typedef struct {
+   char title[AUDIO_METADATA_STRING_MAX];  /**< Track title (e.g., "Time") */
+   char artist[AUDIO_METADATA_STRING_MAX]; /**< Artist name (e.g., "Pink Floyd") */
+   char album[AUDIO_METADATA_STRING_MAX];  /**< Album name (e.g., "Dark Side of the Moon") */
+   uint32_t duration_sec;                  /**< Duration in seconds (0 if unknown) */
+   bool has_metadata;                      /**< True if any tag metadata was found */
+} audio_metadata_t;
+
+/* =============================================================================
  * Initialization / Cleanup
  * ============================================================================= */
 
@@ -204,6 +225,23 @@ ssize_t audio_decoder_read(audio_decoder_t *dec, int16_t *buffer, size_t max_fra
  * @return AUDIO_DECODER_SUCCESS on success, or error code
  */
 int audio_decoder_seek(audio_decoder_t *dec, uint64_t sample_pos);
+
+/**
+ * @brief Get audio file tag metadata (artist, title, album)
+ *
+ * Extracts embedded tags from audio files:
+ *   - FLAC: Vorbis comments
+ *   - Ogg Vorbis: Vorbis comments
+ *   - MP3: ID3v1 and ID3v2 tags
+ *
+ * This function opens and closes the file independently of any decoder handle,
+ * making it suitable for batch metadata scanning.
+ *
+ * @param path Path to audio file
+ * @param metadata Output structure (will be zeroed on failure)
+ * @return AUDIO_DECODER_SUCCESS on success, or error code
+ */
+int audio_decoder_get_metadata(const char *path, audio_metadata_t *metadata);
 
 /* =============================================================================
  * Utility Functions

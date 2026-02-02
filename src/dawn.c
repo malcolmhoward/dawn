@@ -55,9 +55,12 @@
 #include "audio/audio_capture_thread.h"
 #include "audio/audio_decoder.h"
 #include "audio/flac_playback.h"
+#include "audio/music_db.h"
+#include "audio/music_scanner.h"
 #include "core/command_executor.h"
 #include "core/command_router.h"
 #include "core/component_status.h"
+#include "core/path_utils.h"
 #include "core/session_manager.h"
 #include "core/worker_pool.h"
 #include "dawn.h"
@@ -68,6 +71,7 @@
 #include "llm/llm_tools.h"
 #include "logging.h"
 #include "mosquitto_comms.h"
+#include "tools/music_tool.h"
 #include "tools/tool_registry.h"
 #include "tools/tools_init.h"
 #ifdef ENABLE_DAP
@@ -1925,6 +1929,21 @@ int main(int argc, char *argv[]) {
       return 1;
    }
 
+   // Initialize music metadata database for search by artist/title/album
+   // Construct path: {data_dir}/music.db
+   char music_db_path[CONFIG_PATH_MAX];
+   snprintf(music_db_path, sizeof(music_db_path), "%s/music.db", g_config.paths.data_dir);
+   if (music_db_init(music_db_path) == 0) {
+      // Start background scanner to index music library
+      // Uses paths.music_dir with tilde expansion handled by scanner
+      if (music_scanner_start(g_config.paths.music_dir, g_config.music.scan_interval_minutes) !=
+          0) {
+         LOG_WARNING("Music scanner failed to start");
+      }
+   } else {
+      LOG_WARNING("Music database init failed");
+   }
+
    // Start dedicated audio capture thread with ring buffer
    // Ring buffer size: 262144 bytes = ~8 seconds of audio at 16kHz mono 16-bit
    // Increased to prevent audio loss during Vosk processing which can take 100-500ms per iteration
@@ -2245,9 +2264,15 @@ int main(int argc, char *argv[]) {
    /* Initialize auth subsystem BEFORE admin socket starts its listener thread.
     * This prevents race conditions where CREATE_USER arrives before auth_db is ready.
     * Order: crypto -> database -> admin socket (per architecture review) */
+   char expanded_data_dir[CONFIG_PATH_MAX];
+   char auth_db_path[CONFIG_PATH_MAX];
+   if (!path_expand_tilde(g_config.paths.data_dir, expanded_data_dir, sizeof(expanded_data_dir))) {
+      LOG_ERROR("Failed to expand data_dir path: %s", g_config.paths.data_dir);
+   }
+   snprintf(auth_db_path, sizeof(auth_db_path), "%s/auth.db", expanded_data_dir);
    if (auth_crypto_init() != AUTH_CRYPTO_SUCCESS) {
       LOG_ERROR("Failed to initialize auth crypto - authentication disabled");
-   } else if (auth_db_init(NULL) != AUTH_DB_SUCCESS) {
+   } else if (auth_db_init(auth_db_path) != AUTH_DB_SUCCESS) {
       LOG_ERROR("Failed to initialize auth database - authentication disabled");
       auth_crypto_shutdown();
    } else {
@@ -3738,6 +3763,10 @@ int main(int argc, char *argv[]) {
       audio_capture_stop(audio_capture_ctx);
       audio_capture_ctx = NULL;
    }
+
+   // Stop music scanner and close database
+   music_scanner_stop();
+   music_db_cleanup();
 
    // Clean up audio decoder subsystem
    audio_decoder_cleanup();

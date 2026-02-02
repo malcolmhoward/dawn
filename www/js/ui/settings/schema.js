@@ -759,6 +759,12 @@
          label: 'Paths',
          icon: '&#x1F4C1;',
          fields: {
+            data_dir: {
+               type: 'text',
+               label: 'Data Directory',
+               restart: true,
+               hint: 'Directory for databases (auth.db, music.db). Supports ~ for home. Default: ~/.local/share/dawn',
+            },
             music_dir: {
                type: 'text',
                label: 'Music Directory',

@@ -242,8 +242,12 @@ void config_set_defaults(dawn_config_t *config) {
    config->debug.aec_record = false;
    SAFE_COPY(config->debug.record_path, "/tmp");
 
-   /* Paths - matching dawn.h */
+   /* Paths */
+   SAFE_COPY(config->paths.data_dir, "~/.local/share/dawn"); /* Database storage directory */
    SAFE_COPY(config->paths.music_dir, "~/Music");
+
+   /* Music - metadata indexing */
+   config->music.scan_interval_minutes = 60; /* Rescan every hour */
 }
 
 void config_set_secrets_defaults(secrets_config_t *secrets) {

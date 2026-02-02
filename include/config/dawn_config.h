@@ -383,8 +383,16 @@ typedef struct {
  * Paths Configuration
  * ============================================================================= */
 typedef struct {
+   char data_dir[CONFIG_PATH_MAX]; /* Data directory for databases (default: ~/.local/share/dawn) */
    char music_dir[CONFIG_PATH_MAX]; /* Music library location */
 } paths_config_t;
+
+/* =============================================================================
+ * Music Configuration
+ * ============================================================================= */
+typedef struct {
+   int scan_interval_minutes; /* Minutes between rescans (0 = disabled, default: 60) */
+} music_config_t;
 
 /* =============================================================================
  * Secrets Configuration (loaded separately from secrets.toml)
@@ -429,6 +437,7 @@ typedef struct {
    shutdown_config_t shutdown;
    debug_config_t debug;
    paths_config_t paths;
+   music_config_t music;
 } dawn_config_t;
 
 /* =============================================================================

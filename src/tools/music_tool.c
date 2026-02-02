@@ -20,23 +20,23 @@
  *
  * Music Tool - Audio playback with playlist management
  *
- * Supports actions: play, stop, next, previous
- * Searches music directory recursively for matching files.
+ * Supports actions: play, stop, next, previous, pause, resume, search, list
+ * Searches music database by artist, title, or album.
  */
 
 #define _GNU_SOURCE
 #include "tools/music_tool.h"
 
-#include <dirent.h>
-#include <fnmatch.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #include "audio/audio_decoder.h"
 #include "audio/flac_playback.h"
+#include "audio/music_db.h"
 #include "config/dawn_config.h"
 #include "dawn.h"
 #include "logging.h"
@@ -49,19 +49,16 @@
 #define MAX_PLAYLIST_LENGTH 100
 #define MUSIC_CALLBACK_BUFFER_SIZE 512
 
-/* Canonicalized music root for path validation (set during search) */
-static char s_music_root_canonical[MAX_FILENAME_LENGTH];
-static bool s_music_root_set = false;
-#define MAX_DIRECTORY_DEPTH 10
-
 /* ========== Types ========== */
 
 /**
  * @struct Playlist
- * @brief Structure to hold the list of matching filenames
+ * @brief Structure to hold the list of matching filenames and display names
  */
 typedef struct {
    char filenames[MAX_PLAYLIST_LENGTH][MAX_FILENAME_LENGTH];
+   char display_names[MAX_PLAYLIST_LENGTH]
+                     [MAX_FILENAME_LENGTH]; /**< "Artist - Title" or filename */
    int count;
 } Playlist;
 
@@ -70,7 +67,10 @@ typedef struct {
 static Playlist s_playlist = { .count = 0 };
 static int s_current_track = 0;
 static pthread_t s_music_thread = -1;
-static char *s_custom_music_dir = NULL;
+
+/* Pause/resume position tracking */
+static uint64_t s_paused_position = 0;    /* Position in samples when paused */
+static uint32_t s_paused_sample_rate = 0; /* Sample rate for position conversion */
 
 /* ========== Forward Declarations ========== */
 
@@ -85,22 +85,33 @@ static const treg_param_t music_params[] = {
        .description = "The playback action: 'play' (start/search and play), 'stop' (halt), "
                       "'pause' (halt, keeps position), 'resume' (restart current track), "
                       "'next' (skip forward), 'previous' (skip backward), "
-                      "'list' (show playlist), 'select' (jump to track N), "
-                      "'search' (find music without playing)",
+                      "'list' (show current playback queue - empty if nothing playing), "
+                      "'select' (jump to track N in queue), "
+                      "'search' (find music without playing), "
+                      "'library' (browse music collection - list artists/albums/stats)",
        .type = TOOL_PARAM_TYPE_ENUM,
        .required = true,
        .maps_to = TOOL_MAPS_TO_ACTION,
        .enum_values = { "play", "stop", "pause", "resume", "next", "previous", "list", "select",
-                        "search" },
-       .enum_count = 9,
+                        "search", "library" },
+       .enum_count = 10,
    },
    {
        .name = "query",
        .description = "For 'play'/'search': search terms matching artist, album, or track. "
-                      "For 'select': track number (1-based).",
+                      "For 'select': track number (1-based). "
+                      "For 'library': 'artists', 'albums', or omit for stats.",
        .type = TOOL_PARAM_TYPE_STRING,
        .required = false,
        .maps_to = TOOL_MAPS_TO_VALUE,
+   },
+   {
+       .name = "limit",
+       .description = "For 'search': maximum results to return (0 = all, default 10).",
+       .type = TOOL_PARAM_TYPE_NUMBER,
+       .required = false,
+       .maps_to = TOOL_MAPS_TO_CUSTOM,
+       .field_name = "limit",
    },
 };
 
@@ -118,7 +129,7 @@ static const tool_metadata_t music_metadata = {
                   "'next'/'previous' (skip tracks), 'list' (show playlist), "
                   "'select' (jump to track N), 'search' (find without playing).",
    .params = music_params,
-   .param_count = 2,
+   .param_count = 3,
 
    .device_type = TOOL_DEVICE_TYPE_MUSIC,
    .capabilities = TOOL_CAP_FILESYSTEM,
@@ -139,255 +150,75 @@ static const tool_metadata_t music_metadata = {
 /* ========== Helper Functions ========== */
 
 /**
- * @brief Retrieves the current user's home directory
- */
-static const char *get_user_home_directory(void) {
-   const char *home_dir = getenv("HOME");
-   if (!home_dir) {
-      LOG_ERROR("Error: HOME environment variable not set.");
-      return NULL;
-   }
-   return home_dir;
-}
-
-/**
- * @brief Resolves a path that may be absolute, tilde-prefixed, or relative to home
- *
- * @param path The path to resolve
- * @return Dynamically allocated resolved path (caller must free), or NULL on error
- */
-static char *construct_path_with_subdirectory(const char *path) {
-   if (!path || !*path) {
-      LOG_ERROR("Error: path is NULL or empty.");
-      return NULL;
-   }
-
-   /* Absolute path - return as-is */
-   if (path[0] == '/') {
-      return strdup(path);
-   }
-
-   const char *home_dir = get_user_home_directory();
-   if (!home_dir) {
-      return NULL;
-   }
-
-   char *full_path = NULL;
-
-   /* Tilde expansion: ~/path -> /home/user/path */
-   if (path[0] == '~' && (path[1] == '/' || path[1] == '\0')) {
-      const char *suffix = (path[1] == '/') ? path + 2 : "";
-      size_t full_path_size = strlen(home_dir) + 1 + strlen(suffix) + 1;
-      full_path = malloc(full_path_size);
-      if (!full_path) {
-         LOG_ERROR("Error: Memory allocation failed for full path.");
-         return NULL;
-      }
-      if (*suffix) {
-         snprintf(full_path, full_path_size, "%s/%s", home_dir, suffix);
-      } else {
-         snprintf(full_path, full_path_size, "%s", home_dir);
-      }
-   } else {
-      /* Relative path - prepend home directory */
-      size_t full_path_size = strlen(home_dir) + 1 + strlen(path) + 1;
-      full_path = malloc(full_path_size);
-      if (!full_path) {
-         LOG_ERROR("Error: Memory allocation failed for full path.");
-         return NULL;
-      }
-      snprintf(full_path, full_path_size, "%s/%s", home_dir, path);
-   }
-
-   return full_path;
-}
-
-/**
- * @brief Escape glob metacharacters in a string for safe use with fnmatch()
- */
-static int escape_glob_chars(const char *src, char *dst, size_t dst_size) {
-   if (!src || !dst || dst_size == 0) {
-      return -1;
-   }
-
-   size_t j = 0;
-   for (size_t i = 0; src[i] != '\0'; i++) {
-      bool needs_escape = (src[i] == '*' || src[i] == '?' || src[i] == '[' || src[i] == ']' ||
-                           src[i] == '\\');
-
-      if (needs_escape) {
-         if (j + 2 >= dst_size) {
-            dst[j] = '\0';
-            return -1;
-         }
-         dst[j++] = '\\';
-      } else {
-         if (j + 1 >= dst_size) {
-            dst[j] = '\0';
-            return -1;
-         }
-      }
-      dst[j++] = src[i];
-   }
-   dst[j] = '\0';
-   return (int)j;
-}
-
-/**
- * @brief Check if a filename matches a base pattern and any of the given extensions
- */
-static bool matches_pattern_with_extensions(const char *filename,
-                                            const char *base_pattern,
-                                            const char **extensions) {
-   if (!filename || !base_pattern || !extensions) {
-      return false;
-   }
-
-   char full_pattern[MAX_FILENAME_LENGTH];
-   for (int i = 0; extensions[i] != NULL; i++) {
-      int written = snprintf(full_pattern, sizeof(full_pattern), "%s%s", base_pattern,
-                             extensions[i]);
-      if (written >= (int)sizeof(full_pattern)) {
-         continue;
-      }
-      if (fnmatch(full_pattern, filename, FNM_CASEFOLD) == 0) {
-         return true;
-      }
-   }
-   return false;
-}
-
-/**
- * @brief Check if a path is within the allowed music root (security)
- *
- * Uses realpath() to canonicalize and verify the path doesn't escape
- * the music directory via symlinks or .. traversal.
- *
- * @param path Path to validate
- * @return true if path is within music root, false otherwise
- */
-static bool is_path_within_music_root(const char *path) {
-   if (!s_music_root_set || !path) {
-      return false;
-   }
-
-   char canonical[MAX_FILENAME_LENGTH];
-   if (!realpath(path, canonical)) {
-      /* Path doesn't exist or can't be resolved */
-      return false;
-   }
-
-   /* Check that canonical path starts with music root */
-   size_t root_len = strlen(s_music_root_canonical);
-   if (strncmp(canonical, s_music_root_canonical, root_len) != 0) {
-      LOG_WARNING("music_tool: Path escapes music root: %s -> %s", path, canonical);
-      return false;
-   }
-
-   /* Ensure it's not just a prefix match (e.g., /music vs /music2) */
-   if (canonical[root_len] != '\0' && canonical[root_len] != '/') {
-      return false;
-   }
-
-   return true;
-}
-
-/**
- * @brief Set up the music root for path validation
- *
- * @param root_dir The music directory path
- * @return true if successfully set, false on error
- */
-static bool setup_music_root_validation(const char *root_dir) {
-   if (!root_dir) {
-      s_music_root_set = false;
-      return false;
-   }
-
-   if (!realpath(root_dir, s_music_root_canonical)) {
-      LOG_ERROR("music_tool: Failed to canonicalize music root: %s", root_dir);
-      s_music_root_set = false;
-      return false;
-   }
-
-   s_music_root_set = true;
-   return true;
-}
-
-/**
- * @brief Recursively searches a directory for files matching a pattern with multiple extensions
- *
- * @param root_dir Directory to search
- * @param base_pattern Wildcard pattern to match (without extension)
- * @param extensions NULL-terminated array of file extensions
- * @param playlist Playlist to populate with matches
- * @param depth Current recursion depth (pass 0 for initial call)
- */
-static void search_directory_multi_ext(const char *root_dir,
-                                       const char *base_pattern,
-                                       const char **extensions,
-                                       Playlist *playlist,
-                                       int depth) {
-   if (depth >= MAX_DIRECTORY_DEPTH) {
-      LOG_WARNING("Max directory depth (%d) reached at: %s", MAX_DIRECTORY_DEPTH, root_dir);
-      return;
-   }
-
-   DIR *dir = opendir(root_dir);
-   if (!dir) {
-      LOG_ERROR("Error opening directory: %s", root_dir);
-      return;
-   }
-
-   struct dirent *entry;
-   while ((entry = readdir(dir)) != NULL) {
-      if (playlist->count >= MAX_PLAYLIST_LENGTH) {
-         LOG_WARNING("Playlist is full.");
-         closedir(dir);
-         return;
-      }
-
-      if (entry->d_type == DT_REG) {
-         if (matches_pattern_with_extensions(entry->d_name, base_pattern, extensions)) {
-            char file_path[MAX_FILENAME_LENGTH];
-            int written = snprintf(file_path, sizeof(file_path), "%s/%s", root_dir, entry->d_name);
-            if (written < (int)sizeof(file_path)) {
-               strncpy(playlist->filenames[playlist->count], file_path, MAX_FILENAME_LENGTH - 1);
-               playlist->filenames[playlist->count][MAX_FILENAME_LENGTH - 1] = '\0';
-               playlist->count++;
-            }
-         }
-      } else if (entry->d_type == DT_DIR) {
-         if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
-            char sub_path[MAX_FILENAME_LENGTH];
-            int written = snprintf(sub_path, sizeof(sub_path), "%s/%s", root_dir, entry->d_name);
-            if (written < (int)sizeof(sub_path)) {
-               /* Validate path stays within music root (prevent symlink escapes) */
-               if (is_path_within_music_root(sub_path)) {
-                  search_directory_multi_ext(sub_path, base_pattern, extensions, playlist,
-                                             depth + 1);
-               }
-            }
-         }
-      }
-   }
-
-   closedir(dir);
-}
-
-/**
- * @brief Comparison function for qsort
- */
-static int compare_filenames(const void *p1, const void *p2) {
-   return strcmp((const char *)p1, (const char *)p2);
-}
-
-/**
  * @brief Extract just the filename from a full path
  */
 static const char *extract_filename(const char *path) {
    const char *filename = strrchr(path, '/');
    return filename ? filename + 1 : path;
+}
+
+/**
+ * @brief Extract custom parameter from value string
+ *
+ * Value format: "base_value::field_name::field_value::..."
+ * Returns the value for field_name, or NULL if not found.
+ *
+ * @param value Full value string (may contain custom params)
+ * @param field_name Name of field to extract
+ * @param out_value Buffer for extracted value
+ * @param out_len Size of out_value buffer
+ * @return true if found, false otherwise
+ */
+static bool extract_custom_param(const char *value,
+                                 const char *field_name,
+                                 char *out_value,
+                                 size_t out_len) {
+   if (!value || !field_name || !out_value)
+      return false;
+
+   /* Search for ::field_name:: pattern */
+   char pattern[64];
+   snprintf(pattern, sizeof(pattern), "::%s::", field_name);
+
+   const char *pos = strstr(value, pattern);
+   if (!pos)
+      return false;
+
+   /* Skip past the pattern to get to the value */
+   const char *val_start = pos + strlen(pattern);
+
+   /* Value ends at next :: or end of string */
+   const char *val_end = strstr(val_start, "::");
+   size_t val_len = val_end ? (size_t)(val_end - val_start) : strlen(val_start);
+
+   if (val_len >= out_len)
+      val_len = out_len - 1;
+
+   strncpy(out_value, val_start, val_len);
+   out_value[val_len] = '\0';
+   return true;
+}
+
+/**
+ * @brief Extract base value (before any custom params)
+ *
+ * @param value Full value string
+ * @param out_base Buffer for base value
+ * @param out_len Size of out_base buffer
+ */
+static void extract_base_value(const char *value, char *out_base, size_t out_len) {
+   if (!value || !out_base)
+      return;
+
+   /* Base value ends at first :: */
+   const char *delim = strstr(value, "::");
+   size_t base_len = delim ? (size_t)(delim - value) : strlen(value);
+
+   if (base_len >= out_len)
+      base_len = out_len - 1;
+
+   strncpy(out_base, value, base_len);
+   out_base[base_len] = '\0';
 }
 
 /**
@@ -401,6 +232,34 @@ static void stop_current_playback(void) {
          s_music_thread = -1;
       }
    }
+}
+
+/**
+ * @brief Start playback of current track at a specific position
+ *
+ * @param start_time Time in seconds to start playback from
+ * @return Allocated result string, or NULL
+ */
+static char *start_playback_at(unsigned int start_time) {
+   PlaybackArgs *args = malloc(sizeof(PlaybackArgs));
+   if (!args) {
+      LOG_ERROR("Failed to allocate PlaybackArgs");
+      return NULL;
+   }
+
+   args->sink_name = getPcmPlaybackDevice();
+   args->file_name = s_playlist.filenames[s_current_track];
+   args->start_time = start_time;
+
+   LOG_INFO("Playing from %us: %s on %s", start_time, args->file_name, args->sink_name);
+
+   if (pthread_create(&s_music_thread, NULL, playFlacAudio, args)) {
+      LOG_ERROR("Error creating music thread");
+      free(args);
+      return NULL;
+   }
+
+   return NULL;
 }
 
 /**
@@ -436,6 +295,51 @@ static char *start_playback(bool report_result) {
       snprintf(result, MUSIC_CALLBACK_BUFFER_SIZE, "Playing: %s", filename);
    }
    return result;
+}
+
+/**
+ * @brief Search for music using the metadata database
+ *
+ * Falls back to filename-only search if database is not initialized.
+ *
+ * @param query Search query (space-separated terms)
+ * @param playlist Output playlist to populate
+ * @return Number of results found
+ */
+static int search_music_database(const char *query, Playlist *playlist) {
+   if (!music_db_is_initialized()) {
+      LOG_WARNING("Music database not initialized - search unavailable");
+      return 0;
+   }
+
+   /* Allocate results on heap to avoid ~300KB stack usage */
+   music_search_result_t *results = malloc(MAX_PLAYLIST_LENGTH * sizeof(music_search_result_t));
+   if (!results) {
+      LOG_ERROR("Failed to allocate search results buffer");
+      return -1;
+   }
+
+   int count = music_db_search(query, results, MAX_PLAYLIST_LENGTH);
+
+   if (count <= 0) {
+      free(results);
+      return count;
+   }
+
+   playlist->count = 0;
+   for (int i = 0; i < count && playlist->count < MAX_PLAYLIST_LENGTH; i++) {
+      strncpy(playlist->filenames[playlist->count], results[i].path, MAX_FILENAME_LENGTH - 1);
+      playlist->filenames[playlist->count][MAX_FILENAME_LENGTH - 1] = '\0';
+
+      strncpy(playlist->display_names[playlist->count], results[i].display_name,
+              MAX_FILENAME_LENGTH - 1);
+      playlist->display_names[playlist->count][MAX_FILENAME_LENGTH - 1] = '\0';
+
+      playlist->count++;
+   }
+
+   free(results);
+   return playlist->count;
 }
 
 /* ========== Callback Implementation ========== */
@@ -474,56 +378,15 @@ static char *music_tool_callback(const char *action, char *value, int *should_re
       /* Stop any current playback */
       stop_current_playback();
 
-      /* Reset playlist */
+      /* Reset playlist and paused state */
       s_playlist.count = 0;
       s_current_track = 0;
+      s_paused_position = 0;
+      s_paused_sample_rate = 0;
 
-      /* Determine music directory */
-      char *music_dir = NULL;
-      if (s_custom_music_dir) {
-         music_dir = strdup(s_custom_music_dir);
-      } else {
-         music_dir = construct_path_with_subdirectory(g_config.paths.music_dir);
-      }
-
-      if (!music_dir) {
-         LOG_ERROR("Error constructing music path.");
-         if (direct_mode) {
-            *should_respond = 0;
-            return NULL;
-         }
-         return strdup("Failed to access music directory");
-      }
-
-      /* Escape glob characters in search value */
-      char escaped_value[MAX_FILENAME_LENGTH];
-      if (escape_glob_chars(value, escaped_value, sizeof(escaped_value)) < 0) {
-         LOG_WARNING("Search term too long after escaping, using original");
-         strncpy(escaped_value, value, sizeof(escaped_value) - 1);
-         escaped_value[sizeof(escaped_value) - 1] = '\0';
-      }
-
-      /* Build wildcard pattern: *term1*term2* */
-      char wildcards[MAX_FILENAME_LENGTH];
-      wildcards[0] = '*';
-      int j = 1;
-      for (int i = 0; escaped_value[i] != '\0' && j < MAX_FILENAME_LENGTH - 2; i++) {
-         wildcards[j++] = (escaped_value[i] == ' ') ? '*' : escaped_value[i];
-      }
-      wildcards[j++] = '*';
-      wildcards[j] = '\0';
-
-      /* Set up path validation and search for matching files */
-      if (!setup_music_root_validation(music_dir)) {
-         free(music_dir);
-         return strdup("Invalid music directory configuration.");
-      }
-      const char **extensions = audio_decoder_get_extensions();
-      search_directory_multi_ext(music_dir, wildcards, extensions, &s_playlist, 0);
-      free(music_dir);
-
-      /* Sort results */
-      qsort(s_playlist.filenames, s_playlist.count, MAX_FILENAME_LENGTH, compare_filenames);
+      /* Search by artist, title, album via database */
+      search_music_database(value, &s_playlist);
+      LOG_INFO("Search found %d results for: %s", s_playlist.count, value);
 
       LOG_INFO("New playlist (%d tracks):", s_playlist.count);
       for (int i = 0; i < s_playlist.count; i++) {
@@ -572,6 +435,10 @@ static char *music_tool_callback(const char *action, char *value, int *should_re
    } else if (strcmp(action, "next") == 0) {
       stop_current_playback();
 
+      /* Clear paused state - new track starts from beginning */
+      s_paused_position = 0;
+      s_paused_sample_rate = 0;
+
       if (s_playlist.count > 0) {
          s_current_track++;
          if (s_current_track >= s_playlist.count) {
@@ -602,6 +469,10 @@ static char *music_tool_callback(const char *action, char *value, int *should_re
    } else if (strcmp(action, "previous") == 0) {
       stop_current_playback();
 
+      /* Clear paused state - new track starts from beginning */
+      s_paused_position = 0;
+      s_paused_sample_rate = 0;
+
       if (s_playlist.count > 0) {
          s_current_track--;
          if (s_current_track < 0) {
@@ -631,8 +502,17 @@ static char *music_tool_callback(const char *action, char *value, int *should_re
 
    } else if (strcmp(action, "pause") == 0) {
       /* Pause halts playback but keeps track position for resume */
-      LOG_INFO("Pausing music playback.");
-      stop_current_playback();
+      if (s_playlist.count > 0 && getMusicPlay()) {
+         /* Capture current position and sample rate before stopping */
+         s_paused_position = audio_playback_get_position();
+         s_paused_sample_rate = audio_playback_get_sample_rate();
+
+         stop_current_playback();
+         LOG_INFO("Paused at position %llu samples (rate: %u Hz)",
+                  (unsigned long long)s_paused_position, s_paused_sample_rate);
+      } else {
+         stop_current_playback();
+      }
 
       if (direct_mode) {
          *should_respond = 0;
@@ -641,22 +521,38 @@ static char *music_tool_callback(const char *action, char *value, int *should_re
       return strdup("Music paused");
 
    } else if (strcmp(action, "resume") == 0) {
-      /* Resume restarts the current track from the beginning */
-      /* Note: True resume-from-position requires audio layer changes */
+      /* Resume playback from paused position */
       if (s_playlist.count > 0) {
          stop_current_playback();
 
+         /* Calculate start time from saved position */
+         unsigned int start_seconds = 0;
+         if (s_paused_position > 0 && s_paused_sample_rate > 0) {
+            start_seconds = (unsigned int)(s_paused_position / s_paused_sample_rate);
+            LOG_INFO("Resuming from %u seconds (position: %llu samples)", start_seconds,
+                     (unsigned long long)s_paused_position);
+         }
+
+         /* Clear paused state after using it */
+         s_paused_position = 0;
+         s_paused_sample_rate = 0;
+
          if (direct_mode) {
             *should_respond = 0;
-            start_playback(false);
+            start_playback_at(start_seconds);
             return NULL;
          }
 
-         start_playback(false);
+         start_playback_at(start_seconds);
          const char *filename = extract_filename(s_playlist.filenames[s_current_track]);
          result = malloc(MUSIC_CALLBACK_BUFFER_SIZE);
          if (result) {
-            snprintf(result, MUSIC_CALLBACK_BUFFER_SIZE, "Resuming: %s", filename);
+            if (start_seconds > 0) {
+               snprintf(result, MUSIC_CALLBACK_BUFFER_SIZE, "Resuming %s from %u:%02u", filename,
+                        start_seconds / 60, start_seconds % 60);
+            } else {
+               snprintf(result, MUSIC_CALLBACK_BUFFER_SIZE, "Resuming: %s", filename);
+            }
          }
          return result;
       } else {
@@ -677,18 +573,21 @@ static char *music_tool_callback(const char *action, char *value, int *should_re
          return strdup("Playlist is empty");
       }
 
-      /* Build playlist string: "1. track1\n2. track2\n..." */
-      size_t buf_size = s_playlist.count * 128 + 64;
+      /* Build playlist string: "1. Artist - Title\n2. Artist - Title\n..." */
+      size_t buf_size = s_playlist.count * 256 + 64;
       result = malloc(buf_size);
       if (!result) {
          return strdup("Failed to allocate playlist buffer");
       }
 
       int offset = snprintf(result, buf_size, "Playlist (%d tracks):\n", s_playlist.count);
-      for (int i = 0; i < s_playlist.count && offset < (int)buf_size - 64; i++) {
-         const char *filename = extract_filename(s_playlist.filenames[i]);
+      for (int i = 0; i < s_playlist.count && offset < (int)buf_size - 128; i++) {
+         /* Use display name (Artist - Title) if available, else filename */
+         const char *display = s_playlist.display_names[i][0]
+                                   ? s_playlist.display_names[i]
+                                   : extract_filename(s_playlist.filenames[i]);
          const char *marker = (i == s_current_track) ? " [playing]" : "";
-         offset += snprintf(result + offset, buf_size - offset, "%d. %s%s\n", i + 1, filename,
+         offset += snprintf(result + offset, buf_size - offset, "%d. %s%s\n", i + 1, display,
                             marker);
       }
 
@@ -726,6 +625,10 @@ static char *music_tool_callback(const char *action, char *value, int *should_re
       stop_current_playback();
       s_current_track = track_num - 1;
 
+      /* Clear paused state - new track starts from beginning */
+      s_paused_position = 0;
+      s_paused_sample_rate = 0;
+
       if (direct_mode) {
          *should_respond = 0;
          start_playback(false);
@@ -743,111 +646,94 @@ static char *music_tool_callback(const char *action, char *value, int *should_re
 
    } else if (strcmp(action, "search") == 0) {
       /* Search without playing - return matching tracks */
-      /* Uses goto-based cleanup pattern for consistent resource management */
-      char *music_dir = NULL;
       Playlist *search_results = NULL;
 
       if (!value || !*value) {
-         if (!direct_mode) {
-            result = strdup("Search requires a query");
+         if (direct_mode) {
+            *should_respond = 0;
+            return NULL;
          }
-         goto search_cleanup;
+         return strdup("Search requires a query");
+      }
+
+      /* Extract query and optional limit from value */
+      char query[MAX_FILENAME_LENGTH];
+      extract_base_value(value, query, sizeof(query));
+
+      char limit_str[16] = "";
+      int limit = 10; /* Default: show 10 results */
+      if (extract_custom_param(value, "limit", limit_str, sizeof(limit_str))) {
+         char *endptr;
+         long parsed = strtol(limit_str, &endptr, 10);
+         /* Check if conversion was successful (not empty and fully consumed) */
+         if (endptr != limit_str && *endptr == '\0') {
+            if (parsed == 0) {
+               limit = MAX_PLAYLIST_LENGTH; /* 0 = show all */
+            } else if (parsed < 0 || parsed > MAX_PLAYLIST_LENGTH) {
+               limit = MAX_PLAYLIST_LENGTH;
+            } else {
+               limit = (int)parsed;
+            }
+         }
+         /* If parsing failed, keep default limit of 10 */
       }
 
       /* Validate search term length */
-      if ((strlen(value) + 8) > MAX_FILENAME_LENGTH) {
-         if (!direct_mode) {
-            result = strdup("Search term too long");
+      if ((strlen(query) + 8) > MAX_FILENAME_LENGTH) {
+         if (direct_mode) {
+            *should_respond = 0;
+            return NULL;
          }
-         goto search_cleanup;
-      }
-
-      /* Determine music directory */
-      if (s_custom_music_dir) {
-         music_dir = strdup(s_custom_music_dir);
-      } else {
-         music_dir = construct_path_with_subdirectory(g_config.paths.music_dir);
-      }
-
-      if (!music_dir) {
-         if (!direct_mode) {
-            result = strdup("Failed to access music directory");
-         }
-         goto search_cleanup;
+         return strdup("Search term too long");
       }
 
       /* Allocate search results on heap (~100KB struct) */
       search_results = malloc(sizeof(Playlist));
       if (!search_results) {
-         if (!direct_mode) {
-            result = strdup("Failed to allocate search buffer");
+         if (direct_mode) {
+            *should_respond = 0;
+            return NULL;
          }
-         goto search_cleanup;
+         return strdup("Failed to allocate search buffer");
       }
       search_results->count = 0;
 
-      /* Escape glob characters */
-      char escaped_value[MAX_FILENAME_LENGTH];
-      if (escape_glob_chars(value, escaped_value, sizeof(escaped_value)) < 0) {
-         strncpy(escaped_value, value, sizeof(escaped_value) - 1);
-         escaped_value[sizeof(escaped_value) - 1] = '\0';
-      }
-
-      /* Build wildcard pattern */
-      char wildcards[MAX_FILENAME_LENGTH];
-      wildcards[0] = '*';
-      int j = 1;
-      for (int i = 0; escaped_value[i] != '\0' && j < MAX_FILENAME_LENGTH - 2; i++) {
-         wildcards[j++] = (escaped_value[i] == ' ') ? '*' : escaped_value[i];
-      }
-      wildcards[j++] = '*';
-      wildcards[j] = '\0';
-
-      /* Set up path validation and search */
-      if (!setup_music_root_validation(music_dir)) {
-         if (!direct_mode) {
-            result = strdup("Invalid music directory configuration.");
-         }
-         goto search_cleanup;
-      }
-      const char **extensions = audio_decoder_get_extensions();
-      search_directory_multi_ext(music_dir, wildcards, extensions, search_results, 0);
+      /* Search by artist, title, album via database */
+      search_music_database(query, search_results);
 
       if (search_results->count == 0) {
-         if (!direct_mode) {
-            result = malloc(MUSIC_CALLBACK_BUFFER_SIZE);
-            if (result) {
-               snprintf(result, MUSIC_CALLBACK_BUFFER_SIZE, "No music found matching '%s'", value);
-            }
+         free(search_results);
+         if (direct_mode) {
+            *should_respond = 0;
+            return NULL;
          }
-         goto search_cleanup;
+         result = malloc(MUSIC_CALLBACK_BUFFER_SIZE);
+         if (result) {
+            snprintf(result, MUSIC_CALLBACK_BUFFER_SIZE, "No music found matching '%.100s'", query);
+         }
+         return result;
       }
 
-      /* Sort and build result string */
-      qsort(search_results->filenames, search_results->count, MAX_FILENAME_LENGTH,
-            compare_filenames);
-
+      /* Build result string using display names from database */
       size_t buf_size = search_results->count * 128 + 128;
       result = malloc(buf_size);
       if (!result) {
-         result = strdup("Failed to allocate result buffer");
-         goto search_cleanup;
+         free(search_results);
+         return strdup("Failed to allocate result buffer");
       }
 
       int offset = snprintf(result, buf_size, "Found %d tracks matching '%s':\n",
-                            search_results->count, value);
-      int max_show = (search_results->count > 10) ? 10 : search_results->count;
+                            search_results->count, query);
+      int max_show = (search_results->count > limit) ? limit : search_results->count;
       for (int i = 0; i < max_show && offset < (int)buf_size - 64; i++) {
-         const char *filename = extract_filename(search_results->filenames[i]);
-         offset += snprintf(result + offset, buf_size - offset, "- %s\n", filename);
+         offset += snprintf(result + offset, buf_size - offset, "- %s\n",
+                            search_results->display_names[i]);
       }
-      if (search_results->count > 10) {
+      if (search_results->count > max_show) {
          snprintf(result + offset, buf_size - offset, "... and %d more",
-                  search_results->count - 10);
+                  search_results->count - max_show);
       }
 
-search_cleanup:
-      free(music_dir);
       free(search_results);
 
       if (direct_mode) {
@@ -856,6 +742,105 @@ search_cleanup:
          return NULL;
       }
       return result;
+
+   } else if (strcmp(action, "library") == 0) {
+      /* Browse music library - show stats, artists, or albums */
+      if (!music_db_is_initialized()) {
+         if (direct_mode) {
+            *should_respond = 0;
+            return NULL;
+         }
+         return strdup("Music database not available");
+      }
+
+      /* Default: show stats and list of artists */
+      if (!value || !*value || strcasecmp(value, "stats") == 0) {
+         music_db_stats_t stats;
+         if (music_db_get_stats(&stats) != 0) {
+            return strdup("Failed to get music library stats");
+         }
+
+         /* Also get a sample of artists */
+         char artists[20][AUDIO_METADATA_STRING_MAX];
+         int artist_count = music_db_list_artists(artists, 20);
+
+         size_t buf_size = 2048;
+         result = malloc(buf_size);
+         if (!result)
+            return strdup("Memory allocation failed");
+
+         int offset = snprintf(result, buf_size,
+                               "Music library: %d tracks, %d artists, %d albums\n\nArtists:\n",
+                               stats.track_count, stats.artist_count, stats.album_count);
+
+         for (int i = 0; i < artist_count && offset < (int)buf_size - 128; i++) {
+            offset += snprintf(result + offset, buf_size - offset, "- %s\n", artists[i]);
+         }
+         if (stats.artist_count > 20) {
+            snprintf(result + offset, buf_size - offset, "... and %d more artists",
+                     stats.artist_count - 20);
+         }
+
+         if (direct_mode) {
+            *should_respond = 0;
+            free(result);
+            return NULL;
+         }
+         return result;
+
+      } else if (strcasecmp(value, "artists") == 0) {
+         char artists[50][AUDIO_METADATA_STRING_MAX];
+         int count = music_db_list_artists(artists, 50);
+
+         if (count <= 0) {
+            return strdup("No artists found in library");
+         }
+
+         size_t buf_size = count * 128 + 64;
+         result = malloc(buf_size);
+         if (!result)
+            return strdup("Memory allocation failed");
+
+         int offset = snprintf(result, buf_size, "Artists in library (%d):\n", count);
+         for (int i = 0; i < count && offset < (int)buf_size - 128; i++) {
+            offset += snprintf(result + offset, buf_size - offset, "- %s\n", artists[i]);
+         }
+
+         if (direct_mode) {
+            *should_respond = 0;
+            free(result);
+            return NULL;
+         }
+         return result;
+
+      } else if (strcasecmp(value, "albums") == 0) {
+         char albums[50][AUDIO_METADATA_STRING_MAX];
+         int count = music_db_list_albums(albums, 50);
+
+         if (count <= 0) {
+            return strdup("No albums found in library");
+         }
+
+         size_t buf_size = count * 128 + 64;
+         result = malloc(buf_size);
+         if (!result)
+            return strdup("Memory allocation failed");
+
+         int offset = snprintf(result, buf_size, "Albums in library (%d):\n", count);
+         for (int i = 0; i < count && offset < (int)buf_size - 128; i++) {
+            offset += snprintf(result + offset, buf_size - offset, "- %s\n", albums[i]);
+         }
+
+         if (direct_mode) {
+            *should_respond = 0;
+            free(result);
+            return NULL;
+         }
+         return result;
+
+      } else {
+         return strdup("Unknown library query. Use 'artists', 'albums', or omit for stats.");
+      }
    }
 
    return NULL;
@@ -865,12 +850,6 @@ search_cleanup:
 
 static void music_tool_cleanup(void) {
    stop_current_playback();
-
-   if (s_custom_music_dir) {
-      free(s_custom_music_dir);
-      s_custom_music_dir = NULL;
-   }
-
    s_playlist.count = 0;
    s_current_track = 0;
 }
@@ -878,18 +857,10 @@ static void music_tool_cleanup(void) {
 /* ========== Public API ========== */
 
 void set_music_directory(const char *path) {
-   if (s_custom_music_dir) {
-      free(s_custom_music_dir);
-      s_custom_music_dir = NULL;
-   }
-
+   /* Deprecated: Music directory is now configured in dawn.toml [paths] section */
+   /* The database-backed scanner uses that config value automatically */
    if (path) {
-      s_custom_music_dir = strdup(path);
-      if (!s_custom_music_dir) {
-         LOG_ERROR("Failed to allocate memory for custom music directory");
-      } else {
-         LOG_INFO("Music directory set to: %s", s_custom_music_dir);
-      }
+      LOG_WARNING("set_music_directory() is deprecated - configure [paths] music_dir in dawn.toml");
    }
 }
 

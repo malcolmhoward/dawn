@@ -68,7 +68,9 @@ static const tool_metadata_t url_metadata = {
 
    .description = "Fetch and extract readable content from a web page URL. "
                   "Returns the page content as structured Markdown text. "
-                  "Large pages are automatically summarized.",
+                  "Large pages are automatically summarized. "
+                  "Use this to get full details from search result URLs when "
+                  "snippets don't provide enough information to answer the question.",
    .params = url_params,
    .param_count = 1,
 

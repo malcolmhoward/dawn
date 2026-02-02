@@ -69,12 +69,33 @@ static float global_volume = 0.5f;
  */
 static int music_play = 0;
 
+/* Current playback position in samples (per channel).
+ * Used for pause/resume functionality - allows resuming from
+ * the approximate position where playback was paused.
+ * Volatile because it's written from playback thread and read from main thread.
+ */
+static volatile uint64_t s_current_position = 0;
+
+/* Current playback sample rate (cached for pause/resume).
+ * Avoids needing to re-open the decoder just to get sample rate on pause.
+ */
+static volatile uint32_t s_current_sample_rate = 0;
+
 void setMusicPlay(int play) {
    music_play = play;
 }
 
 int getMusicPlay(void) {
    return music_play;
+}
+
+uint64_t audio_playback_get_position(void) {
+   return s_current_position;
+}
+
+uint32_t audio_playback_get_sample_rate(void) {
+   /* Return cached sample rate from current playback, or 0 if not playing */
+   return s_current_sample_rate;
 }
 
 /**
@@ -140,6 +161,9 @@ void *playFlacAudio(void *arg) {
    LOG_INFO("Audio file: %s (%s)", args->file_name, audio_decoder_format_name(info.format));
    LOG_INFO("  Format: %uHz %uch %ubps", info.sample_rate, info.channels, info.bits_per_sample);
 
+   /* Cache sample rate for pause/resume (avoids re-opening decoder on pause) */
+   s_current_sample_rate = info.sample_rate;
+
    /* Get configured output rate/channels for dmix compatibility */
    unsigned int output_rate = audio_conv_get_output_rate();
    unsigned int output_channels = audio_conv_get_output_channels();
@@ -201,7 +225,12 @@ void *playFlacAudio(void *arg) {
       uint64_t start_sample = (uint64_t)args->start_time * info.sample_rate;
       if (audio_decoder_seek(decoder, start_sample) != AUDIO_DECODER_SUCCESS) {
          LOG_WARNING("Failed to seek to start time %u seconds", args->start_time);
+         s_current_position = 0; /* Reset position on seek failure */
+      } else {
+         s_current_position = start_sample;
       }
+   } else {
+      s_current_position = 0;
    }
 
    /* Main playback loop */
@@ -221,6 +250,9 @@ void *playFlacAudio(void *arg) {
          LOG_INFO("Audio playback completed");
          break;
       }
+
+      /* Update playback position for pause/resume tracking */
+      s_current_position += (uint64_t)frames_read;
 
       /* Apply volume */
       apply_volume(read_buffer, (size_t)frames_read, info.channels);

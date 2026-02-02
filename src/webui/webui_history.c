@@ -788,6 +788,22 @@ void handle_load_conversation(ws_connection_t *conn, struct json_object *payload
                if (conv.model[0] != '\0') {
                   strncpy(cfg.model, conv.model, sizeof(cfg.model) - 1);
                   cfg.model[sizeof(cfg.model) - 1] = '\0';
+
+                  /* Infer provider from model name if not explicitly stored
+                   * (for conversations created before cloud_provider was saved) */
+                  if (conv.cloud_provider[0] == '\0') {
+                     if (strncmp(conv.model, "gpt-", 4) == 0 ||
+                         strncmp(conv.model, "o1-", 3) == 0 || strncmp(conv.model, "o3-", 3) == 0) {
+                        cfg.cloud_provider = CLOUD_PROVIDER_OPENAI;
+                        LOG_INFO("WebUI: Inferred OpenAI provider from model '%s'", conv.model);
+                     } else if (strncmp(conv.model, "claude-", 7) == 0) {
+                        cfg.cloud_provider = CLOUD_PROVIDER_CLAUDE;
+                        LOG_INFO("WebUI: Inferred Claude provider from model '%s'", conv.model);
+                     } else if (strncmp(conv.model, "gemini-", 7) == 0) {
+                        cfg.cloud_provider = CLOUD_PROVIDER_GEMINI;
+                        LOG_INFO("WebUI: Inferred Gemini provider from model '%s'", conv.model);
+                     }
+                  }
                }
                if (conv.tools_mode[0] != '\0') {
                   strncpy(cfg.tool_mode, conv.tools_mode, sizeof(cfg.tool_mode) - 1);

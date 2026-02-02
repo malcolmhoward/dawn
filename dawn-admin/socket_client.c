@@ -1237,3 +1237,95 @@ admin_resp_code_t admin_client_delete_conversation(int fd,
 
    return (admin_resp_code_t)resp.response_code;
 }
+
+/* =============================================================================
+ * Phase 5: Music Database
+ * =============================================================================
+ */
+
+static admin_resp_code_t recv_text_response(int fd, char *response, size_t resp_len) {
+   admin_msg_response_t resp;
+   ssize_t n = read(fd, &resp, sizeof(resp));
+   if (n != sizeof(resp)) {
+      if (n == 0) {
+         fprintf(stderr, "Error: Daemon closed connection\n");
+      } else if (n < 0) {
+         fprintf(stderr, "Error: Failed to read response: %s\n", strerror(errno));
+      }
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+
+   if (resp.version != ADMIN_PROTOCOL_VERSION) {
+      fprintf(stderr, "Error: Protocol version mismatch\n");
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+
+   /* reserved field contains text length */
+   uint16_t text_len = resp.reserved;
+   if (text_len > 0 && response && resp_len > 0) {
+      size_t to_read = (text_len < resp_len - 1) ? text_len : resp_len - 1;
+      n = read(fd, response, to_read);
+      if (n > 0) {
+         response[n] = '\0';
+      } else {
+         response[0] = '\0';
+      }
+      /* Discard any remaining data if buffer was too small */
+      if (text_len > to_read) {
+         char discard[256];
+         size_t remaining = text_len - to_read;
+         while (remaining > 0) {
+            size_t chunk = (remaining < sizeof(discard)) ? remaining : sizeof(discard);
+            read(fd, discard, chunk);
+            remaining -= chunk;
+         }
+      }
+   } else if (response && resp_len > 0) {
+      response[0] = '\0';
+   }
+
+   return (admin_resp_code_t)resp.response_code;
+}
+
+admin_resp_code_t admin_client_music_stats(int fd, char *response, size_t resp_len) {
+   if (send_message(fd, ADMIN_MSG_MUSIC_STATS, NULL, 0) != 0) {
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+   return recv_text_response(fd, response, resp_len);
+}
+
+admin_resp_code_t admin_client_music_search(int fd,
+                                            const char *query,
+                                            char *response,
+                                            size_t resp_len) {
+   if (!query) {
+      return ADMIN_RESP_FAILURE;
+   }
+
+   size_t query_len = strlen(query);
+   if (query_len > 200) {
+      query_len = 200;
+   }
+
+   if (send_message(fd, ADMIN_MSG_MUSIC_SEARCH, query, (uint16_t)query_len) != 0) {
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+   return recv_text_response(fd, response, resp_len);
+}
+
+admin_resp_code_t admin_client_music_list(int fd, int limit, char *response, size_t resp_len) {
+   char payload[16];
+   int payload_len = snprintf(payload, sizeof(payload), "%d", limit);
+
+   if (send_message(fd, ADMIN_MSG_MUSIC_LIST, payload, (uint16_t)payload_len) != 0) {
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+   return recv_text_response(fd, response, resp_len);
+}
+
+admin_resp_code_t admin_client_music_rescan(int fd, char *response, size_t resp_len) {
+   if (send_message(fd, ADMIN_MSG_MUSIC_RESCAN, NULL, 0) != 0) {
+      return ADMIN_RESP_SERVICE_ERROR;
+   }
+   return recv_text_response(fd, response, resp_len);
+}

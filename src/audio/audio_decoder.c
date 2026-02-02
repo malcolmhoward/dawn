@@ -47,17 +47,20 @@
 
 /* FLAC decoder (always available) */
 extern const audio_decoder_vtable_t *flac_get_vtable(void);
+extern int flac_get_metadata(const char *path, audio_metadata_t *metadata);
 
 #ifdef DAWN_ENABLE_MP3
 /* MP3 decoder (optional, libmpg123) */
 extern const audio_decoder_vtable_t *mp3_get_vtable(void);
 extern int mp3_decoder_lib_init(void);
 extern void mp3_decoder_lib_cleanup(void);
+extern int mp3_get_metadata(const char *path, audio_metadata_t *metadata);
 #endif
 
 #ifdef DAWN_ENABLE_OGG
 /* Ogg Vorbis decoder (optional, libvorbis) */
 extern const audio_decoder_vtable_t *ogg_get_vtable(void);
+extern int ogg_get_metadata(const char *path, audio_metadata_t *metadata);
 #endif
 
 /* =============================================================================
@@ -293,6 +296,42 @@ int audio_decoder_seek(audio_decoder_t *dec, uint64_t sample_pos) {
    }
 
    return dec->vtable->seek(dec, sample_pos);
+}
+
+int audio_decoder_get_metadata(const char *path, audio_metadata_t *metadata) {
+   if (!path || !metadata) {
+      return AUDIO_DECODER_ERR_INVALID;
+   }
+
+   /* Clear output */
+   memset(metadata, 0, sizeof(*metadata));
+
+   if (!g_initialized) {
+      LOG_WARNING("Audio decoder not initialized, cannot get metadata");
+      return AUDIO_DECODER_ERR_NOT_INIT;
+   }
+
+   /* Detect format and dispatch to format-specific metadata parser */
+   audio_format_type_t format = audio_decoder_detect_format(path);
+
+   switch (format) {
+      case AUDIO_FORMAT_FLAC:
+         return flac_get_metadata(path, metadata);
+
+#ifdef DAWN_ENABLE_MP3
+      case AUDIO_FORMAT_MP3:
+         return mp3_get_metadata(path, metadata);
+#endif
+
+#ifdef DAWN_ENABLE_OGG
+      case AUDIO_FORMAT_OGG_VORBIS:
+         return ogg_get_metadata(path, metadata);
+#endif
+
+      default:
+         LOG_WARNING("No metadata parser for format: %s", audio_decoder_format_name(format));
+         return AUDIO_DECODER_ERR_FORMAT;
+   }
 }
 
 /* =============================================================================

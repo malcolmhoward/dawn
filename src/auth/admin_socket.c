@@ -40,6 +40,8 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "audio/music_db.h"
+#include "audio/music_scanner.h"
 #include "auth/auth_crypto.h"
 #include "auth/auth_db.h"
 #include "logging.h"
@@ -105,6 +107,7 @@ static int handle_list_conversations(int client_fd, const char *payload, uint16_
 static int handle_get_conversation(int client_fd, const char *payload, uint16_t payload_len);
 static int handle_delete_conversation(int client_fd, const char *payload, uint16_t payload_len);
 static int send_response(int client_fd, admin_resp_code_t code);
+static int send_text_response(int client_fd, admin_resp_code_t code, const char *text);
 static int send_list_response(int client_fd,
                               admin_resp_code_t code,
                               const void *data,
@@ -502,6 +505,34 @@ static int send_response(int client_fd, admin_resp_code_t code) {
 
    ssize_t sent = write(client_fd, &resp, sizeof(resp));
    return (sent == sizeof(resp)) ? 0 : 1;
+}
+
+static int send_text_response(int client_fd, admin_resp_code_t code, const char *text) {
+   /* Send response header with content length in reserved field */
+   uint16_t text_len = text ? (uint16_t)strlen(text) : 0;
+   if (text_len > ADMIN_MSG_CONTENT_MAX) {
+      text_len = ADMIN_MSG_CONTENT_MAX;
+   }
+
+   admin_msg_response_t resp = { 0 };
+   resp.version = ADMIN_PROTOCOL_VERSION;
+   resp.response_code = (uint8_t)code;
+   resp.reserved = text_len;
+
+   ssize_t sent = write(client_fd, &resp, sizeof(resp));
+   if (sent != sizeof(resp)) {
+      return 1;
+   }
+
+   /* Send text content if present */
+   if (text_len > 0) {
+      sent = write(client_fd, text, text_len);
+      if (sent != text_len) {
+         return 1;
+      }
+   }
+
+   return 0;
 }
 
 static int handle_ping(int client_fd) {
@@ -2002,6 +2033,137 @@ static int handle_delete_conversation(int client_fd, const char *payload, uint16
 }
 
 /* =============================================================================
+ * Music Database Handlers
+ * =============================================================================
+ */
+
+static int handle_music_stats(int client_fd) {
+   if (!music_db_is_initialized()) {
+      return send_text_response(client_fd, ADMIN_RESP_SERVICE_ERROR,
+                                "Music database not initialized");
+   }
+
+   music_db_stats_t stats;
+   if (music_db_get_stats(&stats) != 0) {
+      return send_text_response(client_fd, ADMIN_RESP_SERVICE_ERROR, "Failed to get music stats");
+   }
+
+   bool scanner_running = music_scanner_is_running();
+   bool initial_complete = music_scanner_initial_scan_complete();
+
+   char response[ADMIN_MSG_CONTENT_MAX];
+   snprintf(response, sizeof(response),
+            "Music Database Statistics\n"
+            "-------------------------\n"
+            "Tracks:  %d\n"
+            "Artists: %d\n"
+            "Albums:  %d\n"
+            "Scanner: %s\n"
+            "Status:  %s",
+            stats.track_count, stats.artist_count, stats.album_count,
+            scanner_running ? "running" : "stopped", initial_complete ? "ready" : "indexing");
+
+   return send_text_response(client_fd, ADMIN_RESP_SUCCESS, response);
+}
+
+static int handle_music_search(int client_fd, const char *payload, uint16_t len) {
+   if (len == 0 || len > 200) {
+      return send_text_response(client_fd, ADMIN_RESP_FAILURE, "Invalid search query");
+   }
+
+   if (!music_db_is_initialized()) {
+      return send_text_response(client_fd, ADMIN_RESP_SERVICE_ERROR,
+                                "Music database not initialized");
+   }
+
+   /* Allocate results on heap */
+   music_search_result_t *results = malloc(50 * sizeof(music_search_result_t));
+   if (!results) {
+      return send_text_response(client_fd, ADMIN_RESP_SERVICE_ERROR, "Memory allocation failed");
+   }
+
+   int count = music_db_search(payload, results, 50);
+   if (count < 0) {
+      free(results);
+      return send_text_response(client_fd, ADMIN_RESP_SERVICE_ERROR, "Search failed");
+   }
+
+   if (count == 0) {
+      free(results);
+      return send_text_response(client_fd, ADMIN_RESP_SUCCESS, "No results found");
+   }
+
+   /* Build response */
+   char response[ADMIN_MSG_CONTENT_MAX];
+   int offset = snprintf(response, sizeof(response), "Found %d result(s):\n", count);
+
+   for (int i = 0; i < count && offset < (int)sizeof(response) - 100; i++) {
+      offset += snprintf(response + offset, sizeof(response) - offset, "%d. %s\n", i + 1,
+                         results[i].display_name);
+   }
+
+   free(results);
+   return send_text_response(client_fd, ADMIN_RESP_SUCCESS, response);
+}
+
+static int handle_music_list(int client_fd, const char *payload, uint16_t len) {
+   if (!music_db_is_initialized()) {
+      return send_text_response(client_fd, ADMIN_RESP_SERVICE_ERROR,
+                                "Music database not initialized");
+   }
+
+   /* Parse limit from payload (0 or empty = all tracks) */
+   int limit = 0;
+   if (len > 0) {
+      limit = atoi(payload);
+   }
+   /* 0 means show all, cap at reasonable max for response size */
+   if (limit <= 0) {
+      limit = 1000;
+   } else if (limit > 1000) {
+      limit = 1000;
+   }
+
+   /* List all tracks (no pattern filtering) */
+   music_search_result_t *results = malloc(limit * sizeof(music_search_result_t));
+   if (!results) {
+      return send_text_response(client_fd, ADMIN_RESP_SERVICE_ERROR, "Memory allocation failed");
+   }
+
+   int count = music_db_list(results, limit);
+   if (count < 0) {
+      free(results);
+      return send_text_response(client_fd, ADMIN_RESP_SERVICE_ERROR, "List failed");
+   }
+
+   if (count == 0) {
+      free(results);
+      return send_text_response(client_fd, ADMIN_RESP_SUCCESS, "No tracks in database");
+   }
+
+   /* Build response */
+   char response[ADMIN_MSG_CONTENT_MAX];
+   int offset = snprintf(response, sizeof(response), "Showing %d track(s):\n", count);
+
+   for (int i = 0; i < count && offset < (int)sizeof(response) - 100; i++) {
+      offset += snprintf(response + offset, sizeof(response) - offset, "%d. %s\n", i + 1,
+                         results[i].display_name);
+   }
+
+   free(results);
+   return send_text_response(client_fd, ADMIN_RESP_SUCCESS, response);
+}
+
+static int handle_music_rescan(int client_fd) {
+   if (!music_scanner_is_running()) {
+      return send_text_response(client_fd, ADMIN_RESP_SERVICE_ERROR, "Music scanner not running");
+   }
+
+   music_scanner_trigger_rescan();
+   return send_text_response(client_fd, ADMIN_RESP_SUCCESS, "Rescan triggered");
+}
+
+/* =============================================================================
  * Client Handler
  * =============================================================================
  */
@@ -2122,6 +2284,19 @@ static int handle_client(int client_fd) {
 
       case ADMIN_MSG_DELETE_CONVERSATION:
          return handle_delete_conversation(client_fd, payload, header.payload_len);
+
+      /* Phase 5: Music Database */
+      case ADMIN_MSG_MUSIC_STATS:
+         return handle_music_stats(client_fd);
+
+      case ADMIN_MSG_MUSIC_SEARCH:
+         return handle_music_search(client_fd, payload, header.payload_len);
+
+      case ADMIN_MSG_MUSIC_LIST:
+         return handle_music_list(client_fd, payload, header.payload_len);
+
+      case ADMIN_MSG_MUSIC_RESCAN:
+         return handle_music_rescan(client_fd);
 
       default:
          LOG_WARNING("Unknown message type: 0x%02x", header.msg_type);

@@ -33,6 +33,7 @@
 
 #include "audio/audio_decoder.h"
 #include "audio_decoder_internal.h"
+#include "core/path_utils.h"
 #include "logging.h"
 
 /* =============================================================================
@@ -279,6 +280,64 @@ int ogg_decoder_seek(audio_decoder_t *dec, uint64_t sample_pos) {
    }
 
    handle->eof = false;
+   return AUDIO_DECODER_SUCCESS;
+}
+
+/* =============================================================================
+ * Metadata Extraction
+ * ============================================================================= */
+
+/**
+ * @brief Safe string copy with null termination
+ */
+/**
+ * @brief Extract metadata (title, artist, album) from Ogg Vorbis comments
+ *
+ * Uses libvorbis comment query functions to extract tags.
+ *
+ * @param path Path to Ogg file
+ * @param metadata Output structure
+ * @return AUDIO_DECODER_SUCCESS on success, or error code
+ */
+int ogg_get_metadata(const char *path, audio_metadata_t *metadata) {
+   if (!path || !metadata) {
+      return AUDIO_DECODER_ERR_INVALID;
+   }
+
+   memset(metadata, 0, sizeof(*metadata));
+
+   OggVorbis_File vf;
+   int err = ov_fopen(path, &vf);
+   if (err != 0) {
+      return AUDIO_DECODER_ERR_OPEN;
+   }
+
+   /* Get duration */
+   double duration = ov_time_total(&vf, -1);
+   if (duration > 0) {
+      metadata->duration_sec = (uint32_t)duration;
+   }
+
+   /* Get Vorbis comments */
+   vorbis_comment *vc = ov_comment(&vf, -1);
+   if (vc) {
+      char *val;
+
+      /* vorbis_comment_query returns the first matching value */
+      if ((val = vorbis_comment_query(vc, "TITLE", 0)) != NULL) {
+         safe_strncpy(metadata->title, val, AUDIO_METADATA_STRING_MAX);
+      }
+      if ((val = vorbis_comment_query(vc, "ARTIST", 0)) != NULL) {
+         safe_strncpy(metadata->artist, val, AUDIO_METADATA_STRING_MAX);
+      }
+      if ((val = vorbis_comment_query(vc, "ALBUM", 0)) != NULL) {
+         safe_strncpy(metadata->album, val, AUDIO_METADATA_STRING_MAX);
+      }
+
+      metadata->has_metadata = (metadata->title[0] || metadata->artist[0] || metadata->album[0]);
+   }
+
+   ov_clear(&vf);
    return AUDIO_DECODER_SUCCESS;
 }
 

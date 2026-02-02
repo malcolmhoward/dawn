@@ -151,6 +151,12 @@ typedef enum {
    ADMIN_MSG_LIST_CONVERSATIONS = 0x60,  /**< List conversations */
    ADMIN_MSG_GET_CONVERSATION = 0x61,    /**< Get conversation with messages */
    ADMIN_MSG_DELETE_CONVERSATION = 0x62, /**< Delete a conversation */
+
+   /* Phase 5: Music Database */
+   ADMIN_MSG_MUSIC_STATS = 0x70,  /**< Get music database statistics */
+   ADMIN_MSG_MUSIC_SEARCH = 0x71, /**< Search music by artist/title/album */
+   ADMIN_MSG_MUSIC_LIST = 0x72,   /**< List tracks in database */
+   ADMIN_MSG_MUSIC_RESCAN = 0x73, /**< Trigger immediate library rescan */
 } admin_msg_type_t;
 
 /**

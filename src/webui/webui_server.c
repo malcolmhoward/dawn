@@ -1959,10 +1959,12 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
          }
 
          /* Parse provider (openai/claude/gemini) */
+         bool provider_explicitly_set = false;
          if (json_object_object_get_ex(payload, "provider", &provider_obj)) {
             const char *new_provider = json_object_get_string(provider_obj);
-            if (new_provider) {
+            if (new_provider && new_provider[0] != '\0') {
                has_changes = true;
+               provider_explicitly_set = true;
                if (strcmp(new_provider, "openai") == 0) {
                   config.cloud_provider = CLOUD_PROVIDER_OPENAI;
                } else if (strcmp(new_provider, "claude") == 0) {
@@ -1984,6 +1986,22 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                   strncpy(config.model, new_model, sizeof(config.model) - 1);
                   config.model[sizeof(config.model) - 1] = '\0';
                   LOG_INFO("WebUI: Session model set to '%s'", config.model);
+
+                  /* Infer provider from model name if not explicitly set
+                   * (handles old conversations and frontend bugs) */
+                  if (!provider_explicitly_set) {
+                     if (strncmp(new_model, "gpt-", 4) == 0 || strncmp(new_model, "o1-", 3) == 0 ||
+                         strncmp(new_model, "o3-", 3) == 0) {
+                        config.cloud_provider = CLOUD_PROVIDER_OPENAI;
+                        LOG_INFO("WebUI: Inferred OpenAI provider from model '%s'", new_model);
+                     } else if (strncmp(new_model, "claude-", 7) == 0) {
+                        config.cloud_provider = CLOUD_PROVIDER_CLAUDE;
+                        LOG_INFO("WebUI: Inferred Claude provider from model '%s'", new_model);
+                     } else if (strncmp(new_model, "gemini-", 7) == 0) {
+                        config.cloud_provider = CLOUD_PROVIDER_GEMINI;
+                        LOG_INFO("WebUI: Inferred Gemini provider from model '%s'", new_model);
+                     }
+                  }
                } else {
                   LOG_WARNING("WebUI: Rejected invalid model name from client");
                }
@@ -4081,6 +4099,18 @@ char *webui_process_commands(const char *llm_response, session_t *session) {
       }
       memcpy(cmd_json, json_start, json_len);
       cmd_json[json_len] = '\0';
+
+      /* Send command to WebUI debug panel (wraps in tags for JS extraction)
+       * Only send if we had streamed content - otherwise the "didn't stream" fallback
+       * in session_manager.c already sends the full response with command tags */
+      if (session->stream_had_content) {
+         char *debug_cmd = malloc(json_len + 32);
+         if (debug_cmd) {
+            snprintf(debug_cmd, json_len + 32, "<command>%s</command>", cmd_json);
+            webui_send_transcript(session, "assistant", debug_cmd);
+            free(debug_cmd);
+         }
+      }
 
       LOG_INFO("WebUI: Processing command: %s", cmd_json);
 

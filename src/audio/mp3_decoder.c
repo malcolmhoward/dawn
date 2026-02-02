@@ -33,6 +33,7 @@
 
 #include "audio/audio_decoder.h"
 #include "audio_decoder_internal.h"
+#include "core/path_utils.h"
 #include "logging.h"
 
 /* =============================================================================
@@ -216,6 +217,133 @@ int mp3_decoder_seek(audio_decoder_t *dec, uint64_t sample_pos) {
    }
 
    handle->eof = false;
+   return AUDIO_DECODER_SUCCESS;
+}
+
+/* =============================================================================
+ * Metadata Extraction
+ * ============================================================================= */
+
+/**
+ * @brief Safe string copy with null termination
+ */
+/**
+ * @brief Copy mpg123 string to output buffer
+ *
+ * mpg123 provides strings as mpg123_string with separate data and size.
+ */
+static void copy_mpg123_string(char *dst, size_t dst_size, mpg123_string *src) {
+   if (!dst || dst_size == 0)
+      return;
+   if (!src || !src->p || src->fill == 0) {
+      dst[0] = '\0';
+      return;
+   }
+   /* src->fill includes null terminator */
+   size_t copy_len = src->fill - 1;
+   if (copy_len >= dst_size) {
+      copy_len = dst_size - 1;
+   }
+   memcpy(dst, src->p, copy_len);
+   dst[copy_len] = '\0';
+}
+
+/**
+ * @brief Trim trailing spaces from ID3v1 fixed-width fields
+ */
+static void trim_trailing_spaces(char *str) {
+   if (!str)
+      return;
+   size_t len = strlen(str);
+   while (len > 0 && str[len - 1] == ' ') {
+      str[--len] = '\0';
+   }
+}
+
+/**
+ * @brief Extract metadata (title, artist, album) from MP3 ID3 tags
+ *
+ * Uses mpg123's ID3 parsing to extract both ID3v1 and ID3v2 tags.
+ * ID3v2 takes priority if present.
+ *
+ * @param path Path to MP3 file
+ * @param metadata Output structure
+ * @return AUDIO_DECODER_SUCCESS on success, or error code
+ */
+int mp3_get_metadata(const char *path, audio_metadata_t *metadata) {
+   if (!path || !metadata) {
+      return AUDIO_DECODER_ERR_INVALID;
+   }
+
+   memset(metadata, 0, sizeof(*metadata));
+
+   int err;
+   mpg123_handle *mpg = mpg123_new(NULL, &err);
+   if (!mpg) {
+      return AUDIO_DECODER_ERR_MEMORY;
+   }
+
+   /* We need to scan the file for ID3 tags */
+   if (mpg123_open(mpg, path) != MPG123_OK) {
+      mpg123_delete(mpg);
+      return AUDIO_DECODER_ERR_OPEN;
+   }
+
+   /* Scan for metadata - this reads ID3 tags */
+   mpg123_scan(mpg);
+
+   /* Get duration */
+   off_t length = mpg123_length(mpg);
+   if (length >= 0) {
+      long rate;
+      int channels, encoding;
+      if (mpg123_getformat(mpg, &rate, &channels, &encoding) == MPG123_OK && rate > 0) {
+         metadata->duration_sec = (uint32_t)(length / rate);
+      }
+   }
+
+   /* Check what metadata is available */
+   int meta = mpg123_meta_check(mpg);
+
+   /* Try ID3v2 first (higher priority, more complete) */
+   if (meta & MPG123_ID3) {
+      mpg123_id3v1 *v1 = NULL;
+      mpg123_id3v2 *v2 = NULL;
+
+      if (mpg123_id3(mpg, &v1, &v2) == MPG123_OK) {
+         /* Prefer ID3v2 */
+         if (v2) {
+            if (v2->title)
+               copy_mpg123_string(metadata->title, AUDIO_METADATA_STRING_MAX, v2->title);
+            if (v2->artist)
+               copy_mpg123_string(metadata->artist, AUDIO_METADATA_STRING_MAX, v2->artist);
+            if (v2->album)
+               copy_mpg123_string(metadata->album, AUDIO_METADATA_STRING_MAX, v2->album);
+         }
+
+         /* Fall back to ID3v1 for any missing fields */
+         if (v1) {
+            if (!metadata->title[0] && v1->title[0]) {
+               safe_strncpy(metadata->title, v1->title, 31);
+               trim_trailing_spaces(metadata->title);
+            }
+            if (!metadata->artist[0] && v1->artist[0]) {
+               safe_strncpy(metadata->artist, v1->artist, 31);
+               trim_trailing_spaces(metadata->artist);
+            }
+            if (!metadata->album[0] && v1->album[0]) {
+               safe_strncpy(metadata->album, v1->album, 31);
+               trim_trailing_spaces(metadata->album);
+            }
+         }
+      }
+   }
+
+   metadata->has_metadata = (metadata->title[0] || metadata->artist[0] || metadata->album[0]);
+
+   mpg123_close(mpg);
+   mpg123_delete(mpg);
+
    return AUDIO_DECODER_SUCCESS;
 }
 

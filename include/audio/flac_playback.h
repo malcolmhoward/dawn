@@ -22,6 +22,8 @@
 #ifndef FLAC_PLAYBACK_H
 #define FLAC_PLAYBACK_H
 
+#include <stdint.h>
+
 /**
  * @brief Structure containing arguments for audio file playback.
  *
@@ -132,5 +134,28 @@ void setMusicVolume(float val);
  * @return The current volume level as a float (0.0 to 2.0).
  */
 float getMusicVolume(void);
+
+/**
+ * @brief Get current playback position in samples
+ *
+ * Returns the current playback position measured in samples per channel.
+ * This is used for pause/resume functionality - the position is updated
+ * continuously during playback and can be read to determine where to
+ * resume from after a pause.
+ *
+ * @return Current position in samples (per channel), or 0 if not playing
+ */
+uint64_t audio_playback_get_position(void);
+
+/**
+ * @brief Get current playback sample rate
+ *
+ * Returns the sample rate of the currently playing track. This is cached
+ * when playback starts, allowing callers to convert sample positions to
+ * time without re-opening the audio file.
+ *
+ * @return Sample rate in Hz, or 0 if not playing
+ */
+uint32_t audio_playback_get_sample_rate(void);
 
 #endif  // FLAC_PLAYBACK_H

@@ -83,6 +83,12 @@ static void print_usage(const char *prog) {
    fprintf(stderr, "  conv show <id>                    Show conversation messages\n");
    fprintf(stderr, "  conv delete <id>                  Delete a conversation\n");
    fprintf(stderr, "\n");
+   fprintf(stderr, "Music Database:\n");
+   fprintf(stderr, "  music stats                       Show music database statistics\n");
+   fprintf(stderr, "  music search <query>              Search by artist/title/album\n");
+   fprintf(stderr, "  music list [--limit N]            List tracks (default: all)\n");
+   fprintf(stderr, "  music rescan                      Trigger library rescan\n");
+   fprintf(stderr, "\n");
    fprintf(stderr, "Options:\n");
    fprintf(stderr, "  --yes, -y    Skip confirmation prompts\n");
    fprintf(stderr, "  help         Show this help message\n");
@@ -103,6 +109,9 @@ static void print_usage(const char *prog) {
    fprintf(stderr, "  %s metrics summary\n", prog);
    fprintf(stderr, "  %s conv list\n", prog);
    fprintf(stderr, "  %s conv show 123\n", prog);
+   fprintf(stderr, "  %s music stats\n", prog);
+   fprintf(stderr, "  %s music search \"pink floyd\"\n", prog);
+   fprintf(stderr, "  %s music list --limit 50\n", prog);
 }
 
 static int cmd_ping(void) {
@@ -1036,6 +1045,87 @@ static int cmd_conv_delete(int64_t conv_id, int skip_confirm) {
    return 0;
 }
 
+/* =============================================================================
+ * Music Commands
+ * =============================================================================
+ */
+
+static int cmd_music_stats(void) {
+   int fd = admin_client_connect();
+   if (fd < 0) {
+      return 1;
+   }
+
+   char response[4096];
+   admin_resp_code_t resp = admin_client_music_stats(fd, response, sizeof(response));
+   admin_client_disconnect(fd);
+
+   if (resp == ADMIN_RESP_SUCCESS) {
+      printf("%s\n", response);
+      return 0;
+   } else {
+      fprintf(stderr, "Error: %s\n", response[0] ? response : admin_resp_strerror(resp));
+      return 1;
+   }
+}
+
+static int cmd_music_search(const char *query) {
+   int fd = admin_client_connect();
+   if (fd < 0) {
+      return 1;
+   }
+
+   char response[4096];
+   admin_resp_code_t resp = admin_client_music_search(fd, query, response, sizeof(response));
+   admin_client_disconnect(fd);
+
+   if (resp == ADMIN_RESP_SUCCESS) {
+      printf("%s\n", response);
+      return 0;
+   } else {
+      fprintf(stderr, "Error: %s\n", response[0] ? response : admin_resp_strerror(resp));
+      return 1;
+   }
+}
+
+static int cmd_music_list(int limit) {
+   int fd = admin_client_connect();
+   if (fd < 0) {
+      return 1;
+   }
+
+   char response[4096];
+   admin_resp_code_t resp = admin_client_music_list(fd, limit, response, sizeof(response));
+   admin_client_disconnect(fd);
+
+   if (resp == ADMIN_RESP_SUCCESS) {
+      printf("%s\n", response);
+      return 0;
+   } else {
+      fprintf(stderr, "Error: %s\n", response[0] ? response : admin_resp_strerror(resp));
+      return 1;
+   }
+}
+
+static int cmd_music_rescan(void) {
+   int fd = admin_client_connect();
+   if (fd < 0) {
+      return 1;
+   }
+
+   char response[256];
+   admin_resp_code_t resp = admin_client_music_rescan(fd, response, sizeof(response));
+   admin_client_disconnect(fd);
+
+   if (resp == ADMIN_RESP_SUCCESS) {
+      printf("%s\n", response);
+      return 0;
+   } else {
+      fprintf(stderr, "Error: %s\n", response[0] ? response : admin_resp_strerror(resp));
+      return 1;
+   }
+}
+
 int main(int argc, char *argv[]) {
    if (argc < 2) {
       print_usage(argv[0]);
@@ -1383,6 +1473,55 @@ int main(int argc, char *argv[]) {
       } else {
          fprintf(stderr, "Error: Unknown conv subcommand: %s\n", subcmd);
          fprintf(stderr, "Available: list, show, delete\n");
+         return 1;
+      }
+   }
+
+   /* Music commands */
+   if (strcmp(cmd, "music") == 0) {
+      if (argc < 3) {
+         fprintf(stderr, "Error: Missing music subcommand\n");
+         fprintf(stderr, "Usage: %s music <stats|search|list|rescan>\n", argv[0]);
+         return 1;
+      }
+
+      const char *subcmd = argv[2];
+
+      if (strcmp(subcmd, "stats") == 0) {
+         return cmd_music_stats();
+
+      } else if (strcmp(subcmd, "search") == 0) {
+         if (argc < 4) {
+            fprintf(stderr, "Error: Missing search query\n");
+            fprintf(stderr, "Usage: %s music search <query>\n", argv[0]);
+            return 1;
+         }
+         return cmd_music_search(argv[3]);
+
+      } else if (strcmp(subcmd, "list") == 0) {
+         int limit = 0; /* 0 = show all */
+
+         /* Parse options */
+         for (int i = 3; i < argc; i++) {
+            if (strcmp(argv[i], "--limit") == 0 && i + 1 < argc) {
+               char *endptr;
+               long val = strtol(argv[++i], &endptr, 10);
+               if (*endptr != '\0' || val < 0) {
+                  limit = 0; /* Invalid input: show all */
+               } else {
+                  limit = (int)val;
+               }
+            }
+         }
+
+         return cmd_music_list(limit);
+
+      } else if (strcmp(subcmd, "rescan") == 0) {
+         return cmd_music_rescan();
+
+      } else {
+         fprintf(stderr, "Error: Unknown music subcommand: %s\n", subcmd);
+         fprintf(stderr, "Available: stats, search, list, rescan\n");
          return 1;
       }
    }

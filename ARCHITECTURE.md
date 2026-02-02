@@ -395,6 +395,18 @@ ESP32 Client → TCP Connection → Handshake → Audio Stream (DAP packets)
   - ALSA/PulseAudio output
   - Used for notification sounds, music playback
 
+- **music_db.c/h**: Music metadata database
+  - SQLite-based cache for artist/title/album tags
+  - Indexed search across metadata fields
+  - Incremental scanning (only reparse changed files by mtime)
+  - Automatic cleanup of deleted files
+
+- **music_scanner.c/h**: Background music library scanner
+  - Dedicated thread for non-blocking scans
+  - Configurable scan interval (default: 60 minutes)
+  - Manual rescan trigger via admin socket
+  - Mutex/condvar synchronization for thread safety
+
 - **mic_passthrough.c/h**: Microphone passthrough
   - Direct microphone → speaker routing
   - Used for testing, debugging

@@ -527,4 +527,58 @@ admin_resp_code_t admin_client_delete_conversation(int fd,
                                                    const char *admin_password,
                                                    int64_t conv_id);
 
+/* =============================================================================
+ * Phase 5: Music Database
+ * =============================================================================
+ */
+
+/**
+ * @brief Get music database statistics.
+ *
+ * @param fd       Socket file descriptor.
+ * @param response Output buffer for response text.
+ * @param resp_len Size of response buffer.
+ *
+ * @return Response code from daemon.
+ */
+admin_resp_code_t admin_client_music_stats(int fd, char *response, size_t resp_len);
+
+/**
+ * @brief Search music database by query.
+ *
+ * @param fd       Socket file descriptor.
+ * @param query    Search query string.
+ * @param response Output buffer for response text.
+ * @param resp_len Size of response buffer.
+ *
+ * @return Response code from daemon.
+ */
+admin_resp_code_t admin_client_music_search(int fd,
+                                            const char *query,
+                                            char *response,
+                                            size_t resp_len);
+
+/**
+ * @brief List tracks in music database.
+ *
+ * @param fd       Socket file descriptor.
+ * @param limit    Max tracks to return (0 = default).
+ * @param response Output buffer for response text.
+ * @param resp_len Size of response buffer.
+ *
+ * @return Response code from daemon.
+ */
+admin_resp_code_t admin_client_music_list(int fd, int limit, char *response, size_t resp_len);
+
+/**
+ * @brief Trigger immediate music library rescan.
+ *
+ * @param fd       Socket file descriptor.
+ * @param response Output buffer for response text.
+ * @param resp_len Size of response buffer.
+ *
+ * @return Response code from daemon.
+ */
+admin_resp_code_t admin_client_music_rescan(int fd, char *response, size_t resp_len);
+
 #endif /* DAWN_ADMIN_SOCKET_CLIENT_H */

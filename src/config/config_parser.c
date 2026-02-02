@@ -982,10 +982,21 @@ static void parse_paths(toml_table_t *table, paths_config_t *config) {
    if (!table)
       return;
 
-   static const char *const known_keys[] = { "music_dir", NULL };
+   static const char *const known_keys[] = { "data_dir", "music_dir", NULL };
    warn_unknown_keys(table, "paths", known_keys);
 
+   PARSE_STRING(table, "data_dir", config->data_dir);
    PARSE_STRING(table, "music_dir", config->music_dir);
+}
+
+static void parse_music(toml_table_t *table, music_config_t *config) {
+   if (!table)
+      return;
+
+   static const char *const known_keys[] = { "scan_interval_minutes", NULL };
+   warn_unknown_keys(table, "music", known_keys);
+
+   PARSE_INT(table, "scan_interval_minutes", config->scan_interval_minutes);
 }
 
 /* =============================================================================
@@ -1052,6 +1063,7 @@ int config_parse_file(const char *path, dawn_config_t *config) {
    parse_shutdown(toml_table_in(root, "shutdown"), &config->shutdown);
    parse_debug(toml_table_in(root, "debug"), &config->debug);
    parse_paths(toml_table_in(root, "paths"), &config->paths);
+   parse_music(toml_table_in(root, "music"), &config->music);
 
    toml_free(root);
 

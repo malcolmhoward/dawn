@@ -24,13 +24,16 @@
  * Uses a streaming decoder with internal buffering to provide the read() API.
  */
 
+#include <FLAC/metadata.h>
 #include <FLAC/stream_decoder.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h> /* For strncasecmp */
 
 #include "audio/audio_decoder.h"
 #include "audio_decoder_internal.h"
+#include "core/path_utils.h"
 #include "logging.h"
 
 /* =============================================================================
@@ -370,6 +373,89 @@ int flac_decoder_seek(audio_decoder_t *dec, uint64_t sample_pos) {
    handle->read_position = 0;
    handle->eof = false;
 
+   return AUDIO_DECODER_SUCCESS;
+}
+
+/* =============================================================================
+ * Metadata Extraction
+ * ============================================================================= */
+
+/**
+ * @brief Safe string copy with null termination
+ */
+/**
+ * @brief Extract metadata (title, artist, album) from FLAC Vorbis comments
+ *
+ * Uses libFLAC's metadata API to read Vorbis comment blocks without
+ * decoding the audio data.
+ *
+ * @param path Path to FLAC file
+ * @param metadata Output structure
+ * @return AUDIO_DECODER_SUCCESS on success, or error code
+ */
+int flac_get_metadata(const char *path, audio_metadata_t *metadata) {
+   if (!path || !metadata) {
+      return AUDIO_DECODER_ERR_INVALID;
+   }
+
+   memset(metadata, 0, sizeof(*metadata));
+
+   FLAC__Metadata_SimpleIterator *iter = FLAC__metadata_simple_iterator_new();
+   if (!iter) {
+      return AUDIO_DECODER_ERR_MEMORY;
+   }
+
+   if (!FLAC__metadata_simple_iterator_init(iter, path, true, false)) {
+      FLAC__metadata_simple_iterator_delete(iter);
+      return AUDIO_DECODER_ERR_OPEN;
+   }
+
+   /* Iterate through metadata blocks looking for VORBIS_COMMENT and STREAMINFO */
+   do {
+      FLAC__MetadataType type = FLAC__metadata_simple_iterator_get_block_type(iter);
+
+      if (type == FLAC__METADATA_TYPE_STREAMINFO) {
+         /* Get duration from stream info */
+         FLAC__StreamMetadata *block = FLAC__metadata_simple_iterator_get_block(iter);
+         if (block) {
+            const FLAC__StreamMetadata_StreamInfo *info = &block->data.stream_info;
+            if (info->sample_rate > 0 && info->total_samples > 0) {
+               metadata->duration_sec = (uint32_t)(info->total_samples / info->sample_rate);
+            }
+            FLAC__metadata_object_delete(block);
+         }
+      } else if (type == FLAC__METADATA_TYPE_VORBIS_COMMENT) {
+         /* Parse Vorbis comments for tags */
+         FLAC__StreamMetadata *block = FLAC__metadata_simple_iterator_get_block(iter);
+         if (block) {
+            FLAC__StreamMetadata_VorbisComment *vc = &block->data.vorbis_comment;
+
+            for (uint32_t i = 0; i < vc->num_comments; i++) {
+               const char *entry = (const char *)vc->comments[i].entry;
+               uint32_t length = vc->comments[i].length;
+
+               if (!entry || length == 0) {
+                  continue;
+               }
+
+               /* Parse "KEY=VALUE" format (case-insensitive key) */
+               if (strncasecmp(entry, "TITLE=", 6) == 0 && length > 6) {
+                  safe_strncpy(metadata->title, entry + 6, AUDIO_METADATA_STRING_MAX);
+               } else if (strncasecmp(entry, "ARTIST=", 7) == 0 && length > 7) {
+                  safe_strncpy(metadata->artist, entry + 7, AUDIO_METADATA_STRING_MAX);
+               } else if (strncasecmp(entry, "ALBUM=", 6) == 0 && length > 6) {
+                  safe_strncpy(metadata->album, entry + 6, AUDIO_METADATA_STRING_MAX);
+               }
+            }
+
+            metadata->has_metadata = (metadata->title[0] || metadata->artist[0] ||
+                                      metadata->album[0]);
+            FLAC__metadata_object_delete(block);
+         }
+      }
+   } while (FLAC__metadata_simple_iterator_next(iter));
+
+   FLAC__metadata_simple_iterator_delete(iter);
    return AUDIO_DECODER_SUCCESS;
 }
 

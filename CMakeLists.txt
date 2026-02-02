@@ -97,12 +97,13 @@ endif()
 option(DAWN_ENABLE_OGG "Enable Ogg Vorbis decoding (libvorbis)" ON)
 if(DAWN_ENABLE_OGG)
     pkg_check_modules(VORBISFILE vorbisfile)
-    if(VORBISFILE_FOUND)
+    pkg_check_modules(VORBIS vorbis)
+    if(VORBISFILE_FOUND AND VORBIS_FOUND)
         include_directories(${VORBISFILE_INCLUDE_DIRS})
         add_definitions(-DDAWN_ENABLE_OGG)
-        message(STATUS "Ogg support: ENABLED (libvorbisfile ${VORBISFILE_VERSION})")
+        message(STATUS "Ogg support: ENABLED (libvorbisfile ${VORBISFILE_VERSION}, libvorbis ${VORBIS_VERSION})")
     else()
-        message(WARNING "libvorbisfile not found - Ogg Vorbis support disabled")
+        message(WARNING "libvorbisfile or libvorbis not found - Ogg Vorbis support disabled")
         message(WARNING "Install with: sudo apt install libvorbis-dev")
         set(DAWN_ENABLE_OGG OFF)
     endif()
@@ -187,6 +188,18 @@ if(ENABLE_DAP OR ENABLE_WEBUI)
 else()
     set(ENABLE_AUTH OFF)
     message(STATUS "Authentication: DISABLED (no network features)")
+endif()
+
+# SQLite3 is always required (music metadata database + auth when enabled)
+if(NOT SQLITE3_FOUND)
+    pkg_check_modules(SQLITE3 REQUIRED sqlite3)
+    if(NOT SQLITE3_FOUND)
+        message(FATAL_ERROR
+            "SQLite3 not found.\n"
+            "Install with: sudo apt-get install libsqlite3-dev")
+    endif()
+    include_directories(${SQLITE3_INCLUDE_DIRS})
+    message(STATUS "SQLite3: Found (${SQLITE3_VERSION}) - required for music metadata")
 endif()
 
 # Multi-client session support (required if DAP or WebUI is enabled)
@@ -374,6 +387,7 @@ set(DAWN_SOURCES
     src/core/component_status.c
     src/core/device_types.c
     src/core/ocp_helpers.c
+    src/core/path_utils.c
 
     # ASR subsystem
     src/asr/asr_interface.c
@@ -409,6 +423,8 @@ set(DAWN_SOURCES
     src/audio/audio_alsa.c
     src/audio/audio_pulse.c
     src/audio/audio_converter.c
+    src/audio/music_db.c
+    src/audio/music_scanner.c
 
     # UI subsystem (TUI metrics)
     src/ui/metrics.c
@@ -570,10 +586,10 @@ if(DAWN_ENABLE_MP3)
     message(STATUS "Linking MP3 library (libmpg123)")
 endif()
 
-# Conditionally link libvorbisfile for Ogg Vorbis decoding
+# Conditionally link libvorbis + libvorbisfile for Ogg Vorbis decoding
 if(DAWN_ENABLE_OGG)
-    target_link_libraries(dawn ${VORBISFILE_LIBRARIES})
-    message(STATUS "Linking Ogg library (libvorbisfile)")
+    target_link_libraries(dawn ${VORBISFILE_LIBRARIES} ${VORBIS_LIBRARIES})
+    message(STATUS "Linking Ogg libraries (libvorbisfile, libvorbis)")
 endif()
 
 # Conditionally link ncurses for TUI
@@ -589,10 +605,13 @@ if(ENABLE_WEBUI)
     endif()
 endif()
 
-# Conditionally link libsodium and SQLite3 for authentication
+# Always link SQLite3 (music metadata database)
+target_link_libraries(dawn ${SQLITE3_LIBRARIES})
+
+# Conditionally link libsodium for authentication
 if(ENABLE_AUTH)
-    target_link_libraries(dawn ${SODIUM_LIBRARIES} ${SQLITE3_LIBRARIES})
-    message(STATUS "Linking auth libraries (libsodium, SQLite3)")
+    target_link_libraries(dawn ${SODIUM_LIBRARIES})
+    message(STATUS "Linking auth libraries (libsodium)")
 endif()
 
 # Conditionally link ASR library (Vosk OR Whisper, not both)

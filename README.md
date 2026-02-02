@@ -42,6 +42,9 @@ DAWN is designed for embedded Linux platforms (Jetson, Raspberry Pi) and support
   - Ogg Vorbis (optional, via libvorbis)
   - Unified decoder abstraction with auto-format detection
   - Mixed-format playlists supported
+  - **Metadata search** - Search by artist, title, or album (not just filename)
+  - **Background indexing** - SQLite metadata cache with configurable scan interval
+  - **Resume playback** - Pause saves position, resume continues from there
 
 - **Network Audio Processing**
   - Custom Dawn Audio Protocol (DAP) for ESP32 clients
@@ -934,6 +937,12 @@ When authentication is enabled (DAP or WebUI modes), you'll need to create user 
 ./dawn-admin session list           # View active sessions
 ./dawn-admin db status              # Database statistics
 ./dawn-admin --help                 # Full command reference
+
+# Music library management
+./dawn-admin music stats              # Database statistics
+./dawn-admin music search "pink floyd" # Search by artist/title/album
+./dawn-admin music list --limit 50    # List tracks
+./dawn-admin music rescan             # Trigger immediate rescan
 ```
 
 See `docs/USER_AUTH_DESIGN.md` for complete authentication system documentation.
