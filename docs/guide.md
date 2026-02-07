@@ -4,6 +4,27 @@
 
 <img src="https://www.oasisproject.net/assets/dawn_ai_concept.png" alt="DAWN AI Assistant" width="350" align="right">
 
+## Overview
+
+D.A.W.N. (Digital Assistant for Wearable Neutronics) is the AI assistant component of the O.A.S.I.S. ecosystem. It provides voice-controlled interaction for the wearable system, handling speech recognition, natural language processing, and text-to-speech output.
+
+DAWN listens for a wake word, records voice commands, processes them through either a local LLM or cloud AI (OpenAI), and executes actions by publishing MQTT commands to other O.A.S.I.S. components. It also provides text-to-speech feedback using Piper TTS with CUDA acceleration.
+
+Key capabilities:
+- Voice command recognition via Vosk speech-to-text
+- Local and cloud LLM support for natural language understanding
+- Text-to-speech output via Piper TTS with ONNX Runtime (CUDA-accelerated)
+- MQTT-based command dispatch to MIRAGE HUD, helmet systems, and audio devices
+- Configurable device commands via JSON configuration
+
+## Hardware
+
+| Component | Description | Link |
+|-----------|-------------|------|
+| NVIDIA Jetson Orin Nano/NX | Primary compute platform with CUDA GPU | [NVIDIA Jetson](https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/) |
+| Creative Sound Blaster Play! 3 | USB audio capture device (microphone input) | [Creative Labs](https://us.creative.com/p/sound-blaster/sound-blaster-play-3) |
+| Audio playback device | Headphones or speakers via PulseAudio | — |
+
 ## Application Notes
 
 * OpenAI API - An OpenAI API key is required for the current implementation of the cloud AI using OpenAI. Getting an API key is currently beyond the scope of this document. Please see OpenAI's documentation for details.
@@ -174,6 +195,53 @@ Hints:
 
 ## Run DAWN
 1. `./dawn`
+
+## Communication
+
+DAWN communicates with other O.A.S.I.S. components via MQTT. The broker runs locally on `127.0.0.1:1883` (configurable in `dawn.h`).
+
+### Subscribed Topics
+
+| Topic | Purpose |
+|-------|---------|
+| `dawn` | Receives device commands (audio control, TTS, music, LLM switching, shutdown) |
+
+Incoming messages are JSON with the format: `{"device": "<type>", "action": "<action>", "value": "<optional>"}`.
+
+Supported device types: `audio playback device`, `audio capture device`, `text to speech`, `date`, `time`, `music`, `voice amplifier`, `shutdown alpha bravo charlie`, `viewing`, `volume`, `local llm`, `cloud llm`.
+
+### Published Topics
+
+| Topic | Purpose | Payload Example |
+|-------|---------|-----------------|
+| `hud` | AI state updates for MIRAGE HUD display | `{"device": "ai", "name":"friday", "state":"WAKEWORD_LISTEN"}` |
+| Dynamic (from config) | Device commands routed to other components | `{"device": "<name>", "action": "<action>"}` |
+
+AI states published to `hud`: `SILENCE`, `WAKEWORD_LISTEN`, `COMMAND_RECORDING`, `PROCESS_COMMAND`, `VISION_AI_READY`.
+
+Dynamic publish topics are defined per-device in `commands_config_nuevo.json` and include `hud` (for MIRAGE HUD elements), `helmet` (for mask control), and `dawn` (for self-directed commands).
+
+## Troubleshooting
+
+| Issue | Possible Cause | Solution |
+|-------|---------------|----------|
+| No audio capture | Wrong PulseAudio device | Run `pactl list short sources` and update `commands_config_nuevo.json` |
+| No audio playback | Wrong PulseAudio sink | Run `pactl list short sinks` and update `commands_config_nuevo.json` |
+| TTS not working | Piper model not found | Verify Piper model files are in the expected location |
+| TTS slow / no CUDA | ONNX Runtime built without CUDA | Rebuild ONNX Runtime with `--use_cuda` flag |
+| Vosk recognition poor | Wrong model size | Try the larger `vosk-model-en-us-0.22` model |
+| MQTT connection failed | Mosquitto broker not running | Start the broker: `sudo systemctl start mosquitto` |
+| MQTT commands not received | Wrong topic subscription | Verify the broker is on `127.0.0.1:1883` and topic is `dawn` |
+| Build fails at CMake | Missing dependencies | Verify all prerequisites are installed (spdlog, espeak-ng, onnxruntime, piper, kaldi/vosk) |
+| espeak-ng conflicts | System espeak-ng still installed | Run `sudo apt purge espeak-ng-data libespeak-ng1 speech-dispatcher-espeak-ng` first |
+| kaldi build fails with SSE errors | ARM platform incompatibility | Remove `-msse -msse2` from Makefile `openfst_add_CXXFLAGS` |
+
+## Related Components
+
+- [M.I.R.A.G.E.](https://www.oasisproject.net/components/mirage/) - DAWN publishes AI state to the MIRAGE HUD and sends device commands for HUD elements (armor display, detection, map, visual offset)
+- [A.U.R.A.](https://www.oasisproject.net/components/aura/) - DAWN sends helmet control commands (mask enable/disable) via the `helmet` MQTT topic
+- [S.P.A.R.K.](https://www.oasisproject.net/components/spark/) - DAWN can send commands to hand-mounted components
+- [B.E.A.C.O.N.](https://www.oasisproject.net/components/beacon/) - Physical enclosure that houses DAWN's audio hardware and compute platform
 
 ## Credits
 
