@@ -1087,17 +1087,29 @@ static uint32_t fnv1a_hash(const char *s) {
    return h;
 }
 
-static void row_cache_invalidate(music_row_cache_t *cache, int count) {
+/**
+ * @brief Mark cache entries invalid WITHOUT destroying textures.
+ * Safe to call from any thread (e.g. WS callback). The render thread
+ * will destroy stale textures on the next frame when it rebuilds the slot.
+ */
+static void row_cache_mark_dirty(music_row_cache_t *cache, int count) {
+   for (int i = 0; i < count; i++)
+      cache[i].valid = false;
+}
+
+/**
+ * @brief Destroy all cached textures and mark invalid.
+ * MUST only be called from the SDL render thread (cleanup path).
+ */
+static void row_cache_destroy(music_row_cache_t *cache, int count) {
    for (int i = 0; i < count; i++) {
-      if (cache[i].valid) {
-         for (int j = 0; j < 4; j++) {
-            if (cache[i].tex[j]) {
-               SDL_DestroyTexture(cache[i].tex[j]);
-               cache[i].tex[j] = NULL;
-            }
+      for (int j = 0; j < 4; j++) {
+         if (cache[i].tex[j]) {
+            SDL_DestroyTexture(cache[i].tex[j]);
+            cache[i].tex[j] = NULL;
          }
-         cache[i].valid = false;
       }
+      cache[i].valid = false;
    }
 }
 
@@ -1785,9 +1797,9 @@ void ui_music_cleanup(ui_music_t *m) {
       m->queue_hdr_tex = NULL;
    }
 
-   /* Destroy row caches */
-   row_cache_invalidate(m->queue_row_cache, MUSIC_ROW_CACHE_SIZE);
-   row_cache_invalidate(m->lib_row_cache, MUSIC_ROW_CACHE_SIZE);
+   /* Destroy row caches (render thread only — safe to destroy textures) */
+   row_cache_destroy(m->queue_row_cache, MUSIC_ROW_CACHE_SIZE);
+   row_cache_destroy(m->lib_row_cache, MUSIC_ROW_CACHE_SIZE);
 
    if (m->label_font) {
       TTF_CloseFont(m->label_font);
@@ -2343,7 +2355,7 @@ void ui_music_on_queue(ui_music_t *m, const music_queue_update_t *queue) {
    if (queue->count > 0) {
       memcpy(m->queue, queue->tracks, queue->count * sizeof(music_track_t));
    }
-   row_cache_invalidate(m->queue_row_cache, MUSIC_ROW_CACHE_SIZE);
+   row_cache_mark_dirty(m->queue_row_cache, MUSIC_ROW_CACHE_SIZE);
    m->confirm_clear_pending = false;
    pthread_mutex_unlock(&m->mutex);
 }
@@ -2425,7 +2437,7 @@ void ui_music_on_library(ui_music_t *m, const music_library_update_t *lib) {
 
    m->browse_total_count = lib->total_count;
    m->browse_loading_more = false;
-   row_cache_invalidate(m->lib_row_cache, MUSIC_ROW_CACHE_SIZE);
+   row_cache_mark_dirty(m->lib_row_cache, MUSIC_ROW_CACHE_SIZE);
 
    pthread_mutex_unlock(&m->mutex);
 }
