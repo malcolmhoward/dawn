@@ -282,7 +282,7 @@ int audio_playback_init(audio_playback_t *ctx, const char *device) {
 void audio_playback_cleanup(audio_playback_t *ctx) {
    if (ctx && ctx->handle) {
       pthread_mutex_lock(&ctx->alsa_mutex);
-      snd_pcm_drain((snd_pcm_t *)ctx->handle);
+      snd_pcm_drop((snd_pcm_t *)ctx->handle);
       snd_pcm_close((snd_pcm_t *)ctx->handle);
       ctx->handle = NULL;
       ctx->initialized = 0;
