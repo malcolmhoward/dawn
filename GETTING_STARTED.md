@@ -169,7 +169,55 @@ Use the `dawn-admin` utility to create your admin account:
 # Set your password
 ```
 
-## 7. Run DAWN
+## 7. SSL Setup (for Remote Voice)
+
+Browsers require HTTPS to access the microphone from non-localhost origins. DAWN uses a private Certificate Authority (CA) so all clients (browsers, RPi satellites, ESP32 devices) can validate the server certificate without security warnings.
+
+```bash
+# Generate CA + server certificate (prompts for CA passphrase)
+./generate_ssl_cert.sh
+
+# If you have an external IP or domain (e.g., port forwarding), add extra SANs:
+# ./generate_ssl_cert.sh --san IP:203.0.113.50 --san DNS:dawn.example.com
+
+# This creates:
+#   ssl/ca.crt          — CA certificate (distribute to clients)
+#   ssl/ca.key          — CA private key (keep secret!)
+#   ssl/dawn.crt        — Server certificate (signed by CA)
+#   ssl/dawn.key        — Server private key
+#   ssl/dawn-chain.crt  — Full chain file (use in dawn.toml)
+```
+
+Configure `dawn.toml` to use the chain file:
+```toml
+[webui]
+https = true
+ssl_cert_path = "ssl/dawn-chain.crt"
+ssl_key_path = "ssl/dawn.key"
+```
+
+**Install the CA certificate** in your OS trust store to eliminate browser warnings:
+
+```bash
+# Linux
+sudo cp ssl/ca.crt /usr/local/share/ca-certificates/dawn-ca.crt && sudo update-ca-certificates
+
+# macOS
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain ssl/ca.crt
+
+# Windows
+certutil -addstore -f "ROOT" ssl\ca.crt
+```
+
+After installing, restart your browser and access `https://<dawn-ip>:3000` — no security warning.
+
+> **Note**: Browsers cache certificate trust state. You may need to fully restart the browser (not just refresh the tab) for the new CA to take effect.
+
+**Satellite setup**: See [DAP2_SATELLITE.md](docs/DAP2_SATELLITE.md#tls-setup) for RPi and ESP32 TLS configuration.
+
+**Certificate renewal**: When the daemon's IP changes or the cert expires, run `./generate_ssl_cert.sh --renew`. Clients don't need updating since the CA stays the same.
+
+## 8. Run DAWN
 
 ```bash
 # Always run from project root (where config files are)
@@ -181,29 +229,13 @@ Use the `dawn-admin` utility to create your admin account:
 [INFO] DAWN starting...
 [INFO] ASR: Whisper base model loaded
 [INFO] TTS: Piper engine ready
-[INFO] WebUI: Listening on http://0.0.0.0:3000
+[INFO] WebUI: Listening on https://0.0.0.0:3000
 [INFO] Listening for wake word "friday"...
 ```
 
 **Local voice**: Say any supported wake phrase followed by your command.
 
-**Web UI**: Open `http://localhost:3000` and log in with your admin account.
-
-## SSL Setup (for Remote Voice)
-
-Browsers require HTTPS to access the microphone from non-localhost origins. For voice input from other devices:
-
-```bash
-# Generate self-signed certificate
-./generate_ssl_cert.sh
-
-# This creates ssl/dawn.crt and ssl/dawn.key
-# DAWN auto-detects these and enables HTTPS
-```
-
-Then access the Web UI at `https://<dawn-ip>:3000`. Accept the browser's certificate warning on first visit.
-
-> **Production use**: Replace with a proper certificate from Let's Encrypt or your CA.
+**Web UI**: Open `https://localhost:3000` and log in with your admin account.
 
 ## Wake Words and Voice Commands
 

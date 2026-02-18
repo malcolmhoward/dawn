@@ -158,7 +158,8 @@ void satellite_config_init_defaults(satellite_config_t *config) {
    safe_strcpy(config->server.host, "localhost", CONFIG_HOST_SIZE);
    config->server.port = 8080;
    config->server.ssl = false;
-   config->server.ssl_verify = true; /* Default: verify certificates in production */
+   config->server.ssl_verify = true;      /* Default: verify certificates in production */
+   config->server.ca_cert_path[0] = '\0'; /* Empty = use system CA bundle */
    config->server.reconnect_delay_ms = 5000;
    config->server.max_reconnect_attempts = 0; /* infinite */
 
@@ -340,6 +341,13 @@ int satellite_config_load(satellite_config_t *config, const char *path) {
       config->server.port = (uint16_t)toml_int_or(server, "port", config->server.port);
       config->server.ssl = toml_bool_or(server, "ssl", config->server.ssl);
       config->server.ssl_verify = toml_bool_or(server, "ssl_verify", config->server.ssl_verify);
+
+      s = toml_string_or(server, "ca_cert_path", NULL);
+      if (s) {
+         safe_strcpy(config->server.ca_cert_path, s, CONFIG_PATH_SIZE);
+         free((void *)s);
+      }
+
       config->server.reconnect_delay_ms = (uint32_t)toml_int_or(server, "reconnect_delay_ms",
                                                                 config->server.reconnect_delay_ms);
       config->server.max_reconnect_attempts = (uint32_t)toml_int_or(
@@ -604,6 +612,7 @@ void satellite_config_apply_overrides(satellite_config_t *config,
                                       uint16_t port,
                                       int ssl,
                                       int ssl_verify,
+                                      const char *ca_cert_path,
                                       const char *name,
                                       const char *location,
                                       const char *capture_device,
@@ -627,6 +636,10 @@ void satellite_config_apply_overrides(satellite_config_t *config,
 
    if (ssl_verify >= 0) {
       config->server.ssl_verify = (ssl_verify != 0);
+   }
+
+   if (ca_cert_path && ca_cert_path[0]) {
+      safe_strcpy(config->server.ca_cert_path, ca_cert_path, CONFIG_PATH_SIZE);
    }
 
    if (name && name[0]) {
@@ -756,9 +769,11 @@ void satellite_config_print(const satellite_config_t *config) {
    printf("  secret   = %s\n", config->identity.reconnect_secret[0] ? "(set)" : "(empty)");
 
    printf("\n[server]\n");
-   printf("  host = \"%s\"\n", config->server.host);
-   printf("  port = %u\n", config->server.port);
-   printf("  ssl  = %s\n", config->server.ssl ? "true" : "false");
+   printf("  host         = \"%s\"\n", config->server.host);
+   printf("  port         = %u\n", config->server.port);
+   printf("  ssl          = %s\n", config->server.ssl ? "true" : "false");
+   printf("  ssl_verify   = %s\n", config->server.ssl_verify ? "true" : "false");
+   printf("  ca_cert_path = \"%s\"\n", config->server.ca_cert_path);
 
    printf("\n[audio]\n");
    printf("  capture_device  = \"%s\"\n", config->audio.capture_device);

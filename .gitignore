@@ -14,5 +14,9 @@ asr_*.wav
 __pycache__/
 node_modules/
 
+# SSL certificates and keys (generated per-deployment)
+ssl/
+dawn_satellite_arduino/ca_cert.h
+
 # Arduino secrets (WiFi credentials, server IP)
 dawn_satellite_arduino/arduino_secrets.h

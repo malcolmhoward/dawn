@@ -825,17 +825,20 @@ bind_address = "0.0.0.0"        # Bind address (0.0.0.0 = all interfaces)
 
 ### SSL/HTTPS Setup (for remote voice input)
 
-Browsers require HTTPS (secure context) to access the microphone from non-localhost origins. If accessing the Web UI from another device on your network:
+Browsers require HTTPS (secure context) to access the microphone from non-localhost origins. DAWN uses a private Certificate Authority (CA) to sign its server certificate, eliminating browser warnings and enabling proper TLS validation for all clients.
 
 ```bash
-# Generate self-signed certificate
+# Generate CA + server certificate (prompts for CA passphrase)
 ./generate_ssl_cert.sh
 
-# This creates ssl/dawn.crt and ssl/dawn.key
-# DAWN will automatically use HTTPS when these files exist
+# Add extra SANs for external IPs or domain names:
+./generate_ssl_cert.sh --san IP:203.0.113.50 --san DNS:dawn.example.com
+
+# Renew server cert (e.g., when IP changes): ./generate_ssl_cert.sh --renew
+# Check certificate status:                  ./generate_ssl_cert.sh --check
 ```
 
-**Note**: You'll need to accept the self-signed certificate warning in your browser on first visit.
+Then install `ssl/ca.crt` in your OS trust store — see [GETTING_STARTED.md](GETTING_STARTED.md#7-ssl-setup-for-remote-voice) for platform-specific commands.
 
 ### Optional Features
 

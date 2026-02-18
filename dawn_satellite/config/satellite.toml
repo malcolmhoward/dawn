@@ -44,6 +44,11 @@ ssl = true
 # WARNING: Disabling this in production enables man-in-the-middle attacks!
 ssl_verify = true
 
+# Path to CA certificate for SSL verification
+# Set this to the DAWN private CA cert (ca.crt) from generate_ssl_cert.sh
+# Empty string = use system CA bundle
+ca_cert_path = ""
+
 # Reconnect settings
 reconnect_delay_ms = 5000
 max_reconnect_attempts = 0  # 0 = infinite

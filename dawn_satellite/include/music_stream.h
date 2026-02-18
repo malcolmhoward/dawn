@@ -42,6 +42,7 @@ typedef struct music_stream music_stream_t;
  * @param port Main WebUI port (will connect to port+1)
  * @param use_ssl Use secure WebSocket
  * @param ssl_verify Verify SSL certificates
+ * @param ca_cert_path Path to CA certificate (NULL or "" for system default)
  * @param session_token 32-char hex token from register_ack
  * @param playback Music playback engine to push decoded frames into
  * @return New context, or NULL on failure
@@ -50,6 +51,7 @@ music_stream_t *music_stream_create(const char *host,
                                     uint16_t port,
                                     bool use_ssl,
                                     bool ssl_verify,
+                                    const char *ca_cert_path,
                                     const char *session_token,
                                     music_playback_t *playback);
 

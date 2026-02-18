@@ -79,6 +79,7 @@ typedef struct satellite_config {
       uint16_t port;
       bool ssl;
       bool ssl_verify; /* Verify SSL certificates (default: true for production) */
+      char ca_cert_path[CONFIG_PATH_SIZE]; /* Path to CA cert for SSL verification */
       uint32_t reconnect_delay_ms;
       uint32_t max_reconnect_attempts;
    } server;
@@ -218,6 +219,7 @@ int satellite_config_load(satellite_config_t *config, const char *path);
  * @param port Port override (0 to skip)
  * @param ssl SSL override (-1 to skip, 0=off, 1=on)
  * @param ssl_verify SSL cert verification (-1 to skip, 0=disable, 1=enable)
+ * @param ca_cert_path CA certificate path override (NULL to skip)
  * @param name Satellite name override
  * @param location Location override
  * @param capture_device Capture device override
@@ -230,6 +232,7 @@ void satellite_config_apply_overrides(satellite_config_t *config,
                                       uint16_t port,
                                       int ssl,
                                       int ssl_verify,
+                                      const char *ca_cert_path,
                                       const char *name,
                                       const char *location,
                                       const char *capture_device,

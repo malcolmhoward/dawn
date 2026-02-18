@@ -51,7 +51,8 @@ struct ws_client {
    char host[256];
    uint16_t port;
    bool use_ssl;
-   bool ssl_verify; /* Verify SSL certificates (default: true) */
+   bool ssl_verify;        /* Verify SSL certificates (default: true) */
+   char ca_cert_path[256]; /* Path to CA cert for SSL verification */
 
    /* State */
    ws_state_t state;
@@ -758,7 +759,11 @@ static int send_json(ws_client_t *client, struct json_object *obj) {
  * Public API - Lifecycle
  * ============================================================================= */
 
-ws_client_t *ws_client_create(const char *host, uint16_t port, bool use_ssl, bool ssl_verify) {
+ws_client_t *ws_client_create(const char *host,
+                              uint16_t port,
+                              bool use_ssl,
+                              bool ssl_verify,
+                              const char *ca_cert_path) {
    if (!host) {
       return NULL;
    }
@@ -772,6 +777,9 @@ ws_client_t *ws_client_create(const char *host, uint16_t port, bool use_ssl, boo
    client->port = port > 0 ? port : 8080;
    client->use_ssl = use_ssl;
    client->ssl_verify = ssl_verify;
+   if (ca_cert_path && ca_cert_path[0]) {
+      strncpy(client->ca_cert_path, ca_cert_path, sizeof(client->ca_cert_path) - 1);
+   }
    client->state = WS_STATE_DISCONNECTED;
 
    /* Allocate receive buffer */
@@ -853,6 +861,12 @@ int ws_client_connect(ws_client_t *client) {
    ctx_info.options = LWS_SERVER_OPTION_DO_SSL_GLOBAL_INIT;
    ctx_info.user = client; /* Store client pointer for callback access */
 
+   /* Set CA certificate path for SSL verification */
+   if (client->use_ssl && client->ssl_verify && client->ca_cert_path[0]) {
+      ctx_info.client_ssl_ca_filepath = client->ca_cert_path;
+      LOG_INFO("SSL: using CA cert: %s", client->ca_cert_path);
+   }
+
    /* Disable TCP keepalive to prevent 1-second blocking in lws_service */
    ctx_info.ka_time = 0;
    ctx_info.ka_probes = 0;
@@ -877,14 +891,17 @@ int ws_client_connect(ws_client_t *client) {
 
    if (client->use_ssl) {
       if (client->ssl_verify) {
-         /* Production mode: enforce certificate validation */
+         /* Production mode: enforce certificate validation.
+          * If ca_cert_path is set on the context, lws validates against it.
+          * Otherwise falls back to system CA bundle. */
          conn_info.ssl_connection = LCCSCF_USE_SSL;
-         LOG_INFO("SSL enabled with certificate verification");
+         LOG_INFO("SSL enabled with certificate verification%s",
+                  client->ca_cert_path[0] ? " (private CA)" : " (system CA)");
       } else {
          /* Development mode: skip verification (NOT FOR PRODUCTION) */
          conn_info.ssl_connection = LCCSCF_USE_SSL | LCCSCF_ALLOW_SELFSIGNED |
                                     LCCSCF_SKIP_SERVER_CERT_HOSTNAME_CHECK;
-         LOG_ERROR("WARNING: SSL certificate verification DISABLED - NOT FOR PRODUCTION");
+         LOG_WARNING("SSL certificate verification DISABLED — development only!");
       }
    }
 

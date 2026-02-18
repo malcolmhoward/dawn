@@ -49,6 +49,7 @@ struct music_stream {
    uint16_t port; /* main_port + 1 */
    bool use_ssl;
    bool ssl_verify;
+   char ca_cert_path[256];
    char session_token[33];
 
    struct lws_context *lws_ctx;
@@ -314,6 +315,10 @@ static int do_connect(music_stream_t *stream) {
       ctx_info.ka_interval = 0;
       ctx_info.timeout_secs = 0;
 
+      if (stream->use_ssl && stream->ssl_verify && stream->ca_cert_path[0]) {
+         ctx_info.client_ssl_ca_filepath = stream->ca_cert_path;
+      }
+
       stream->lws_ctx = lws_create_context(&ctx_info);
       if (!stream->lws_ctx) {
          LOG_ERROR("Music stream: failed to create LWS context");
@@ -368,6 +373,7 @@ music_stream_t *music_stream_create(const char *host,
                                     uint16_t port,
                                     bool use_ssl,
                                     bool ssl_verify,
+                                    const char *ca_cert_path,
                                     const char *session_token,
                                     music_playback_t *playback) {
    if (!host || !session_token || !playback)
@@ -381,6 +387,9 @@ music_stream_t *music_stream_create(const char *host,
    stream->port = port + 1; /* Music stream is on main_port + 1 */
    stream->use_ssl = use_ssl;
    stream->ssl_verify = ssl_verify;
+   if (ca_cert_path && ca_cert_path[0]) {
+      strncpy(stream->ca_cert_path, ca_cert_path, sizeof(stream->ca_cert_path) - 1);
+   }
    strncpy(stream->session_token, session_token, sizeof(stream->session_token) - 1);
    stream->playback = playback;
    stream->reconnect_delay_ms = 2000;

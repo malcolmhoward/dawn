@@ -135,6 +135,7 @@ static void print_usage(const char *prog) {
    printf("  -p, --port PORT      WebUI port (default: 8080)\n");
    printf("  -S, --ssl            Use secure WebSocket (wss://)\n");
    printf("  -I, --no-ssl-verify  Disable SSL certificate verification (dev only!)\n");
+   printf("      --ca-cert FILE   Path to CA certificate for SSL verification\n");
    printf("  -N, --name NAME      Satellite name (default: Satellite)\n");
    printf("  -L, --location LOC   Satellite location (default: unset)\n");
 #else
@@ -307,8 +308,8 @@ static int dap2_main_loop(satellite_ctx_t *ctx,
          music_pb = music_playback_create((audio_playback_t *)ctx->audio_playback);
          if (music_pb) {
             music_ws = music_stream_create(config->server.host, config->server.port,
-                                           config->server.ssl, config->server.ssl_verify, stok,
-                                           music_pb);
+                                           config->server.ssl, config->server.ssl_verify,
+                                           config->server.ca_cert_path, stok, music_pb);
             if (music_ws) {
                if (music_stream_connect(music_ws) == 0) {
                   printf("Music streaming connected\n");
@@ -710,6 +711,7 @@ int main(int argc, char *argv[]) {
    uint16_t cli_port = 0;
    int cli_ssl = -1;
    int cli_ssl_verify = -1; /* -1=default, 0=disable, 1=enable */
+   const char *cli_ca_cert = NULL;
    const char *cli_capture = NULL;
    const char *cli_playback = NULL;
    const char *cli_name = NULL;
@@ -735,6 +737,7 @@ int main(int argc, char *argv[]) {
 #ifdef ENABLE_DAP2
                                            { "ssl", no_argument, 0, 'S' },
                                            { "no-ssl-verify", no_argument, 0, 'I' },
+                                           { "ca-cert", required_argument, 0, 256 },
                                            { "name", required_argument, 0, 'N' },
                                            { "location", required_argument, 0, 'L' },
                                            { "voice", no_argument, 0, 'V' },
@@ -793,6 +796,9 @@ int main(int argc, char *argv[]) {
          case 'I':
             cli_ssl_verify = 0; /* Disable SSL verification (for development only) */
             break;
+         case 256: /* --ca-cert */
+            cli_ca_cert = optarg;
+            break;
          case 'N':
             cli_name = optarg;
             break;
@@ -824,8 +830,8 @@ int main(int argc, char *argv[]) {
 
    /* Apply command-line overrides */
    satellite_config_apply_overrides(&config, cli_server, cli_port, cli_ssl, cli_ssl_verify,
-                                    cli_name, cli_location, cli_capture, cli_playback, cli_num_leds,
-                                    use_keyboard);
+                                    cli_ca_cert, cli_name, cli_location, cli_capture, cli_playback,
+                                    cli_num_leds, use_keyboard);
 
    /* Ensure we have a UUID */
    satellite_config_ensure_uuid(&config);
@@ -1004,7 +1010,8 @@ int main(int argc, char *argv[]) {
       while (ctx.running) {
          /* Create WebSocket client */
          ws_client_t *ws = ws_client_create(config.server.host, config.server.port,
-                                            config.server.ssl, config.server.ssl_verify);
+                                            config.server.ssl, config.server.ssl_verify,
+                                            config.server.ca_cert_path);
          if (!ws) {
             fprintf(stderr, "Failed to create WebSocket client\n");
             break;

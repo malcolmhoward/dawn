@@ -344,7 +344,9 @@ location = ""  # e.g., "kitchen", "bedroom", "office"
 [server]
 host = "192.168.1.100"  # DAWN daemon IP
 port = 3000             # WebUI port
-ssl = false             # Use wss:// instead of ws://
+ssl = true              # Use wss:// instead of ws://
+ssl_verify = true       # Verify SSL certificates (default: true)
+ca_cert_path = "/etc/dawn/ca.crt"  # Path to DAWN private CA certificate
 reconnect_delay_ms = 5000
 max_reconnect_attempts = 0  # 0 = infinite
 
@@ -457,7 +459,82 @@ Command-line arguments override config file values:
 | `-c, --capture DEV` | ALSA capture device |
 | `-o, --playback DEV` | ALSA playback device |
 | `-k, --keyboard` | Use keyboard for testing (disables VAD) |
+| `--ca-cert FILE` | Path to CA certificate for SSL verification |
+| `-I, --no-ssl-verify` | Disable SSL cert verification (dev only) |
 | `-v, --verbose` | Enable debug output |
+
+## TLS Setup
+
+DAWN uses a private Certificate Authority (CA) to secure WebSocket connections. The daemon's `generate_ssl_cert.sh` creates a CA and signs the server certificate with it. Each client type needs the CA certificate to validate the server.
+
+### RPi Satellite
+
+1. On the daemon machine, generate certificates (if not already done):
+   ```bash
+   ./generate_ssl_cert.sh
+   ```
+
+2. Copy the CA certificate to the satellite:
+   ```bash
+   scp ssl/ca.crt pi@satellite-ip:/etc/dawn/ca.crt
+   ```
+
+3. Configure the satellite (`/etc/dawn/satellite.toml`):
+   ```toml
+   [server]
+   ssl = true
+   ssl_verify = true
+   ca_cert_path = "/etc/dawn/ca.crt"
+   ```
+
+4. Or use CLI flags:
+   ```bash
+   dawn_satellite --ssl --ca-cert /etc/dawn/ca.crt
+   ```
+
+### ESP32 Satellite
+
+The CA certificate is embedded at compile time:
+
+1. Run `./generate_ssl_cert.sh` on the daemon — this auto-generates `dawn_satellite_arduino/ca_cert.h`
+2. Flash the ESP32 with the updated firmware
+3. The ESP32 validates the server certificate against the embedded CA
+
+### Browser
+
+Install the CA certificate in your OS trust store:
+
+```bash
+# Linux
+sudo cp ssl/ca.crt /usr/local/share/ca-certificates/dawn-ca.crt
+sudo update-ca-certificates
+
+# macOS
+sudo security add-trusted-cert -d -r trustRoot \
+  -k /Library/Keychains/System.keychain ssl/ca.crt
+
+# Windows
+certutil -addstore -f "ROOT" ssl\ca.crt
+```
+
+After installing, restart your browser and access `https://<dawn-ip>:3000` with no security warnings.
+
+### Certificate Renewal
+
+When the daemon's IP changes or the server certificate expires (1 year):
+
+```bash
+./generate_ssl_cert.sh --renew   # Regenerates server cert, reuses CA
+./generate_ssl_cert.sh --check   # Show expiry dates
+```
+
+To include an external IP or domain name (e.g., for port forwarding):
+
+```bash
+./generate_ssl_cert.sh --renew --san IP:203.0.113.50 --san DNS:dawn.example.com
+```
+
+Only the server certificate needs renewal. The CA (10-year validity) remains unchanged, so clients don't need updating.
 
 ## Building for Raspberry Pi
 

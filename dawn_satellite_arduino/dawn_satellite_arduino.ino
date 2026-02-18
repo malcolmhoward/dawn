@@ -44,6 +44,7 @@
 #include <esp_random.h>
 
 #include "arduino_secrets.h"
+#include "ca_cert.h"
 
 /* ── Configuration (from arduino_secrets.h — gitignored) ─────────────────── */
 const char *ssid = SECRET_SSID;
@@ -1266,11 +1267,24 @@ void setup() {
       updateTFTStatus("LED task fail!", ST77XX_RED);
    }
 
-   /* Initialize WebSocket connection (WSS — daemon uses self-signed cert) */
-   webSocket.beginSSL(SERVER_IP, SERVER_PORT, "/", "", "dawn-1.0");
+   /* Sync NTP time (required for CA certificate expiry validation) */
+   configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+   Serial.print("Waiting for NTP time sync");
+   time_t now = time(nullptr);
+   int ntp_retries = 0;
+   while (now < 8 * 3600 * 2 && ntp_retries < 20) {
+      delay(500);
+      Serial.print(".");
+      now = time(nullptr);
+      ntp_retries++;
+   }
+   Serial.println(now > 8 * 3600 * 2 ? " OK" : " timeout (cert dates may fail)");
+
+   /* Initialize WebSocket connection (WSS with CA certificate validation) */
+   webSocket.beginSslWithCA(SERVER_IP, SERVER_PORT, "/", CA_CERT_PEM, "dawn-1.0");
    webSocket.onEvent(webSocketEvent);
    webSocket.setReconnectInterval(3000);
-   Serial.printf("WebSocket: connecting to wss://%s:%d\n", SERVER_IP, SERVER_PORT);
+   Serial.printf("WebSocket: connecting to wss://%s:%d (CA-validated)\n", SERVER_IP, SERVER_PORT);
 
    reportMemoryUsage();
 

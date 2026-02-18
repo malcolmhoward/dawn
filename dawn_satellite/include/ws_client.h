@@ -157,9 +157,14 @@ typedef struct ws_client ws_client_t;
  * @param port Daemon WebUI port (default 8080)
  * @param use_ssl Use wss:// instead of ws://
  * @param ssl_verify Verify SSL certificates (default: true for production)
+ * @param ca_cert_path Path to CA certificate for verification (NULL or "" for system default)
  * @return Client context or NULL on failure
  */
-ws_client_t *ws_client_create(const char *host, uint16_t port, bool use_ssl, bool ssl_verify);
+ws_client_t *ws_client_create(const char *host,
+                              uint16_t port,
+                              bool use_ssl,
+                              bool ssl_verify,
+                              const char *ca_cert_path);
 
 /**
  * @brief Destroy WebSocket client
