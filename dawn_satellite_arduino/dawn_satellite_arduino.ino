@@ -46,11 +46,6 @@
 #include "arduino_secrets.h"
 #include "ca_cert.h"
 
-/* Default for SECRET_REGISTRATION_KEY if not defined in arduino_secrets.h */
-#ifndef SECRET_REGISTRATION_KEY
-#define SECRET_REGISTRATION_KEY ""
-#endif
-
 /* ── Configuration (from arduino_secrets.h — gitignored) ─────────────────── */
 const char *ssid = SECRET_SSID;
 const char *password = SECRET_PASSWORD;

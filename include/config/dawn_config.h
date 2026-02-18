@@ -414,8 +414,9 @@ typedef struct {
    char smartthings_client_id[CONFIG_CREDENTIAL_MAX]; /* OAuth2 mode */
    char smartthings_client_secret[CONFIG_API_KEY_MAX];
 
-   /* Pre-shared key for satellite registration (empty = open registration) */
-   char satellite_registration_key[CONFIG_CREDENTIAL_MAX];
+   /* Pre-shared key for satellite registration (empty = open registration)
+    * 32-byte hex = 64 chars + null = 65 bytes minimum */
+   char satellite_registration_key[CONFIG_API_KEY_MAX];
 } secrets_config_t;
 
 /* =============================================================================
