@@ -4,7 +4,7 @@ This document describes the architecture of the D.A.W.N. (Digital Assistant for 
 
 **D.A.W.N.** is the central intelligence layer of the OASIS ecosystem, responsible for interpreting user intent, fusing data from every subsystem, and routing commands. At its core, DAWN performs neural-inference to understand context and drive decision-making, acting as OASIS's orchestration hub for MIRAGE, AURA, SPARK, STAT, and any future modules.
 
-**Last Updated**: February 13, 2026 (Phase 4 complete: Tier 2 ESP32-S3 satellite in dawn_satellite_arduino/)
+**Last Updated**: February 18, 2026 (Genre support, LLM playlist builder, music/TTS race fixes)
 
 ## Table of Contents
 
@@ -467,13 +467,13 @@ Swipe-up from the bottom edge is currently unassigned (reserved for future use).
   - Used for smooth audio streaming between threads
 
 - **flac_playback.c/h**: Music/audio file playback
-  - FLAC audio file decoding
-  - ALSA/PulseAudio output
+  - Multi-format decoding (FLAC, MP3, Ogg Vorbis) via unified audio_decoder API
+  - ALSA/PulseAudio output with automatic sample rate conversion
   - Used for notification sounds, music playback
 
 - **music_db.c/h**: Music metadata database
-  - SQLite-based cache for artist/title/album tags
-  - Indexed search across metadata fields
+  - SQLite-based cache for artist/title/album/genre tags
+  - Indexed search across metadata fields (including genre)
   - Incremental scanning (only reparse changed files by mtime)
   - Automatic cleanup of deleted files
 
@@ -1720,8 +1720,8 @@ The WebUI settings panel (`www/js/ui/settings.js`) defines a `SETTINGS_SCHEMA` t
 
 ---
 
-**Document Version**: 1.8
-**Last Updated**: February 13, 2026 (Phase 4 complete: Tier 2 ESP32-S3 satellite in dawn_satellite_arduino/)
+**Document Version**: 1.9
+**Last Updated**: February 18, 2026 (Genre support, LLM playlist builder, music/TTS race fixes)
 **Reorganization Commit**: [Git SHA to be added after commit]
 
 ### LLM Threading Architecture (Post-Interrupt Implementation)

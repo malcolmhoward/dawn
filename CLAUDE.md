@@ -184,8 +184,6 @@ openai_api_key = "sk-..."
 claude_api_key = "sk-ant-..."
 ```
 
-**commands_config_nuevo.json**: Device/action mappings for command system
-
 ### DAP2 Satellite System
 
 DAP2 is the unified WebSocket protocol for all satellite devices ("JARVIS in every room"). All tiers connect via WebSocket on the same port as WebUI (default 3000):
@@ -338,7 +336,7 @@ deviceCallback callbacks[] = {
 
 **Tier 1 (Raspberry Pi)**: Full satellite binary in `dawn_satellite/`. See `docs/DAP2_SATELLITE.md`.
 
-**Tier 2 (ESP32)**: Uses `esp_websocket_client` (built into ESP-IDF) to connect via WebSocket. Streams raw PCM audio (16-bit, 16kHz, mono) using binary message types 0x01/0x02 (audio in) and receives TTS audio via 0x11/0x12 (audio out). See `docs/DAP2_DESIGN.md` for protocol details.
+**Tier 2 (ESP32)**: Arduino-based satellite using arduinoWebSockets (Links2004) to connect via WebSocket. Streams raw PCM audio (16-bit, 16kHz, mono) using binary message types 0x01/0x02 (audio in) and receives TTS audio via 0x11/0x12 (audio out). See `docs/DAP2_DESIGN.md` for protocol details.
 
 ## Testing
 
@@ -354,8 +352,6 @@ Currently no automated test framework. Manual testing involves:
 **Configuration:**
 - `dawn.toml`: Runtime configuration file (TOML format)
 - `secrets.toml`: API keys and credentials (gitignored)
-- `commands_config_nuevo.json`: Device/action mappings for command system
-
 **Code Formatting:**
 - `.clang-format`: C/C++ formatting rules (3-space indent, 100 char lines)
 - `.prettierrc`: JS/CSS/HTML formatting rules (matching style)
@@ -388,20 +384,20 @@ Currently no automated test framework. Manual testing involves:
 
 ## Known Issues and TODOs
 
-1. Network server blocks main loop during client processing (single client at a time)
-2. No automated testing infrastructure
-3. SmartThings OAuth blocked at AWS WAF level (403 Forbidden)
-4. AudioWorklet migration needed (ScriptProcessorNode deprecated)
+1. No automated testing infrastructure
+2. SmartThings OAuth blocked at AWS WAF level (403 Forbidden)
 
 **Recently Completed:**
-- Modular tool registry system with O(1) hash lookups (16 tools migrated)
+- LLM playlist builder (add/remove/clear_queue actions) with genre search
+- Genre extraction and DB indexing for music library
+- Music/TTS race condition fixes (pause daemon during TTS)
+- Server-side shuffle/repeat for music playback
+- Tier 2 ESP32 satellite (Arduino-based)
+- SDL UI themes and screensaver
+- DAP1 removal and common library consolidation
+- Modular tool registry system with O(1) hash lookups
 - Parallel tool execution for concurrent API calls
-- Ollama support with auto-detection
 - Extended thinking/reasoning mode (Claude, OpenAI, local models)
-- "Remember Me" persistent login
-- Real-time token streaming metrics
-- Cloud model switching via WebUI
-- Prettier formatting for JS/CSS/HTML
 
 ## Code Review Workflow
 

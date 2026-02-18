@@ -53,7 +53,7 @@ sudo systemctl start dawn-satellite
 
 ## Overview
 
-DAP2 enables satellite devices to extend DAWN's voice assistant capabilities to multiple rooms. All satellites use **WebSocket** on the same port as the WebUI (default 8080). This document covers **Tier 1** (Raspberry Pi) satellites, which handle ASR/TTS locally and send only text to the daemon. For the complete protocol spec (both tiers) and Tier 2 (ESP32 audio path), see [DAP2_DESIGN.md](DAP2_DESIGN.md).
+DAP2 enables satellite devices to extend DAWN's voice assistant capabilities to multiple rooms. All satellites use **WebSocket** on the same port as the WebUI (default 3000). This document covers **Tier 1** (Raspberry Pi) satellites, which handle ASR/TTS locally and send only text to the daemon. For the complete protocol spec (both tiers) and Tier 2 (ESP32 audio path), see [DAP2_DESIGN.md](DAP2_DESIGN.md).
 
 Tier 1 satellites are **fully hands-free** — wake word detection triggers listening, VAD detects end-of-speech, and responses are spoken via local TTS. No buttons or LEDs required.
 
@@ -68,7 +68,7 @@ Tier 1 satellites are **fully hands-free** — wake word detection triggers list
 │       └────────────┴────────────┴───────────────────┘            │
 │                              │                                    │
 └──────────────────────────────┼────────────────────────────────────┘
-                               │ WebSocket (ws://host:8080)
+                               │ WebSocket (ws://host:3000)
            ┌───────────────────┼───────────────────┐
            │                   │                   │
            ▼                   ▼                   ▼
@@ -121,7 +121,7 @@ Tier 1 satellites are **fully hands-free** — wake word detection triggers list
 
 ## Protocol Specification
 
-DAP2 uses JSON messages over WebSocket, connecting to the same port as the WebUI (default 8080).
+DAP2 uses JSON messages over WebSocket, connecting to the same port as the WebUI (default 3000).
 
 ### Message Types
 
@@ -343,7 +343,7 @@ location = ""  # e.g., "kitchen", "bedroom", "office"
 # =============================================================================
 [server]
 host = "192.168.1.100"  # DAWN daemon IP
-port = 8080             # WebUI port
+port = 3000             # WebUI port
 ssl = false             # Use wss:// instead of ws://
 reconnect_delay_ms = 5000
 max_reconnect_attempts = 0  # 0 = infinite
@@ -437,7 +437,7 @@ Command-line arguments override config file values:
 ./dawn_satellite \
   --config /etc/dawn/satellite.toml \
   --server 192.168.1.100 \
-  --port 8080 \
+  --port 3000 \
   --name "Kitchen" \
   --location "kitchen" \
   --capture "plughw:1,0" \
@@ -465,9 +465,9 @@ Command-line arguments override config file values:
 
 | Model | RAM | CPU | Status | Notes |
 |-------|-----|-----|--------|-------|
-| **Pi Zero 2 W** | 512MB | Cortex-A53 (quad) | Primary target | Compile on-device is slow (~10 min) |
+| Pi Zero 2 W | 512MB | Cortex-A53 (quad) | Not recommended | Too slow for local ASR/TTS |
 | Pi 3B/3B+ | 1GB | Cortex-A53 (quad) | Supported | Good balance of cost/performance |
-| Pi 4B | 2-8GB | Cortex-A72 (quad) | Supported | Best performance, overkill for satellite |
+| **Pi 4B** | 2-8GB | Cortex-A72 (quad) | **Primary target** | Recommended for satellite |
 | Pi 5 | 4-8GB | Cortex-A76 (quad) | Supported | Fastest, best for local Whisper ASR |
 
 ### Step 1: Raspberry Pi OS Setup
@@ -752,7 +752,7 @@ For protocol testing without audio hardware:
 
 ```bash
 pip3 install websocket-client
-python3 tests/test_satellite_protocol.py --host localhost --port 8080
+python3 tests/test_satellite_protocol.py --host localhost --port 3000
 ```
 
 Commands:
@@ -765,7 +765,7 @@ Commands:
 
 ```bash
 npm install -g wscat
-wscat -c ws://localhost:8080
+wscat -c ws://localhost:3000
 
 # Register
 {"type":"satellite_register","payload":{"uuid":"test-123","name":"Test","location":"test","tier":1,"capabilities":{"local_asr":true,"local_tts":true}}}
@@ -877,7 +877,7 @@ wscat -c ws://localhost:8080
 
 ```bash
 # Check daemon is running and WebUI is accessible
-curl http://192.168.1.100:8080/
+curl http://192.168.1.100:3000/
 
 # Test WebSocket with verbose output
 ./dawn_satellite --server 192.168.1.100 --verbose
@@ -943,7 +943,7 @@ ping -c 3 google.com
 
 # Check if daemon is reachable
 ping -c 3 192.168.1.100  # Your daemon IP
-nc -zv 192.168.1.100 8080  # Test port
+nc -zv 192.168.1.100 3000  # Test port
 
 # Check firewall on daemon
 sudo ufw status  # On daemon machine

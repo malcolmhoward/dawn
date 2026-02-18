@@ -42,8 +42,9 @@ DAWN is designed for embedded Linux platforms (Jetson, Raspberry Pi) and support
   - Ogg Vorbis (optional, via libvorbis)
   - Unified decoder abstraction with auto-format detection
   - Mixed-format playlists supported
-  - **Metadata search** - Search by artist, title, or album (not just filename)
+  - **Metadata search** - Search by artist, title, album, or genre
   - **Background indexing** - SQLite metadata cache with configurable scan interval
+  - **LLM playlist builder** - AI can search, add, remove, and clear queue tracks incrementally
   - **Resume playback** - Pause saves position, resume continues from there
   - **Opus streaming** - Stream music to WebUI and DAP2 satellites via WebSocket
   - **Paginated library** - Browse artists/albums/tracks with 50-item pages
