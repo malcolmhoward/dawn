@@ -54,6 +54,9 @@ music_playback_t *music_playback_create(audio_playback_t *audio);
 
 /**
  * Destroy music playback context. Frees all resources.
+ *
+ * ORDERING: music_stream_destroy() must be called BEFORE this function —
+ * the stream's service thread writes into the playback ring buffer.
  */
 void music_playback_destroy(music_playback_t *ctx);
 

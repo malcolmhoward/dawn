@@ -58,6 +58,7 @@
 #define LIST_ROW_HEIGHT 48
 #define ADD_BTN_SIZE 44
 #define TAP_DEBOUNCE_MS 200
+#define CONFIRM_TIMEOUT_MS 3000
 #define PROGRESS_BAR_HEIGHT 12
 #define INSET_BG_R 0x0D
 #define INSET_BG_G 0x0F
@@ -493,8 +494,12 @@ enum {
    SLABEL_NO_TRACK = 0, /* "No track selected" (body_font) */
    SLABEL_CLEAR_ALL,    /* "Clear All" */
    SLABEL_BROWSE_HINT,  /* "Tap a category to browse" */
-   SLABEL_BACK,         /* "← Back" */
+   SLABEL_BACK,         /* "\xe2\x86\x90 Back" */
    SLABEL_PLUS,         /* "+" */
+   SLABEL_QUEUE_EMPTY,  /* "Queue is empty" */
+   SLABEL_CONFIRM_MSG,  /* "Clear queue?" */
+   SLABEL_CONFIRM_YES,  /* "Yes" */
+   SLABEL_CONFIRM_NO,   /* "No" */
 };
 
 static void build_static_caches(ui_music_t *m) {
@@ -539,6 +544,18 @@ static void build_static_caches(ui_music_t *m) {
    m->slabel_tex[SLABEL_PLUS] = build_white_tex(m->renderer, m->label_font, "+",
                                                 &m->slabel_w[SLABEL_PLUS],
                                                 &m->slabel_h[SLABEL_PLUS]);
+   m->slabel_tex[SLABEL_QUEUE_EMPTY] = build_white_tex(m->renderer, m->label_font, "Queue is empty",
+                                                       &m->slabel_w[SLABEL_QUEUE_EMPTY],
+                                                       &m->slabel_h[SLABEL_QUEUE_EMPTY]);
+   m->slabel_tex[SLABEL_CONFIRM_MSG] = build_white_tex(m->renderer, m->label_font, "Clear queue?",
+                                                       &m->slabel_w[SLABEL_CONFIRM_MSG],
+                                                       &m->slabel_h[SLABEL_CONFIRM_MSG]);
+   m->slabel_tex[SLABEL_CONFIRM_YES] = build_white_tex(m->renderer, m->label_font, "Yes",
+                                                       &m->slabel_w[SLABEL_CONFIRM_YES],
+                                                       &m->slabel_h[SLABEL_CONFIRM_YES]);
+   m->slabel_tex[SLABEL_CONFIRM_NO] = build_white_tex(m->renderer, m->label_font, "No",
+                                                      &m->slabel_w[SLABEL_CONFIRM_NO],
+                                                      &m->slabel_h[SLABEL_CONFIRM_NO]);
 
    m->static_cache_ready = true;
 }
@@ -1058,6 +1075,33 @@ static void render_scroll_indicator(SDL_Renderer *r,
 }
 
 /* =============================================================================
+ * Row-Level Texture Cache Helpers
+ * ============================================================================= */
+
+static uint32_t fnv1a_hash(const char *s) {
+   uint32_t h = 0x811c9dc5u;
+   for (; *s; s++) {
+      h ^= (uint8_t)*s;
+      h *= 0x01000193u;
+   }
+   return h;
+}
+
+static void row_cache_invalidate(music_row_cache_t *cache, int count) {
+   for (int i = 0; i < count; i++) {
+      if (cache[i].valid) {
+         for (int j = 0; j < 4; j++) {
+            if (cache[i].tex[j]) {
+               SDL_DestroyTexture(cache[i].tex[j]);
+               cache[i].tex[j] = NULL;
+            }
+         }
+         cache[i].valid = false;
+      }
+   }
+}
+
+/* =============================================================================
  * Rendering: Queue Tab
  * ============================================================================= */
 
@@ -1092,8 +1136,49 @@ static void render_queue(ui_music_t *m, SDL_Renderer *r) {
          SDL_RenderCopy(r, m->queue_hdr_tex, NULL, &dst);
       }
 
-      /* Clear button */
-      if (m->queue_count > 0 && m->slabel_tex[SLABEL_CLEAR_ALL]) {
+      /* Clear button / confirmation bar */
+      if (m->confirm_clear_pending) {
+         /* Auto-dismiss after timeout */
+         if (SDL_GetTicks() - m->confirm_clear_ms > CONFIRM_TIMEOUT_MS) {
+            m->confirm_clear_pending = false;
+         } else {
+            /* Draw confirmation overlay on right half of header */
+            int bar_x = m->panel_x + m->panel_w / 2;
+            int bar_w = m->panel_w - m->panel_w / 2;
+            SDL_SetRenderDrawColor(r, COLOR_ERROR_R, COLOR_ERROR_G, COLOR_ERROR_B, 220);
+            SDL_Rect bar = { bar_x, y, bar_w, header_h };
+            SDL_RenderFillRect(r, &bar);
+
+            /* "Clear queue?" label (left-aligned in bar) */
+            if (m->slabel_tex[SLABEL_CONFIRM_MSG]) {
+               SDL_SetTextureColorMod(m->slabel_tex[SLABEL_CONFIRM_MSG], 255, 255, 255);
+               int mw = m->slabel_w[SLABEL_CONFIRM_MSG];
+               int mh = m->slabel_h[SLABEL_CONFIRM_MSG];
+               SDL_Rect mdst = { bar_x + 8, y + (header_h - mh) / 2, mw, mh };
+               SDL_RenderCopy(r, m->slabel_tex[SLABEL_CONFIRM_MSG], NULL, &mdst);
+            }
+
+            /* "No" centered in left half, "Yes" centered in right half.
+             * Touch zones split at midpoint — labels must match. */
+            int midpoint = bar_x + bar_w / 2;
+            if (m->slabel_tex[SLABEL_CONFIRM_NO]) {
+               SDL_SetTextureColorMod(m->slabel_tex[SLABEL_CONFIRM_NO], 200, 200, 200);
+               int nw = m->slabel_w[SLABEL_CONFIRM_NO];
+               int nh = m->slabel_h[SLABEL_CONFIRM_NO];
+               int no_cx = bar_x + bar_w / 4;
+               SDL_Rect ndst = { no_cx - nw / 2, y + (header_h - nh) / 2, nw, nh };
+               SDL_RenderCopy(r, m->slabel_tex[SLABEL_CONFIRM_NO], NULL, &ndst);
+            }
+            if (m->slabel_tex[SLABEL_CONFIRM_YES]) {
+               SDL_SetTextureColorMod(m->slabel_tex[SLABEL_CONFIRM_YES], 255, 255, 255);
+               int yw = m->slabel_w[SLABEL_CONFIRM_YES];
+               int yh = m->slabel_h[SLABEL_CONFIRM_YES];
+               int yes_cx = midpoint + bar_w / 4;
+               SDL_Rect ydst = { yes_cx - yw / 2, y + (header_h - yh) / 2, yw, yh };
+               SDL_RenderCopy(r, m->slabel_tex[SLABEL_CONFIRM_YES], NULL, &ydst);
+            }
+         }
+      } else if (m->queue_count > 0 && m->slabel_tex[SLABEL_CLEAR_ALL]) {
          SDL_SetTextureColorMod(m->slabel_tex[SLABEL_CLEAR_ALL], COLOR_ERROR_R, COLOR_ERROR_G,
                                 COLOR_ERROR_B);
          int cw = m->slabel_w[SLABEL_CLEAR_ALL];
@@ -1109,6 +1194,19 @@ static void render_queue(ui_music_t *m, SDL_Renderer *r) {
    /* Clip to list area */
    SDL_Rect clip = { m->panel_x, y, m->panel_w, list_h };
    SDL_RenderSetClipRect(r, &clip);
+
+   /* Empty state */
+   if (m->queue_count == 0) {
+      if (m->slabel_tex[SLABEL_QUEUE_EMPTY]) {
+         int ew = m->slabel_w[SLABEL_QUEUE_EMPTY];
+         int eh = m->slabel_h[SLABEL_QUEUE_EMPTY];
+         SDL_SetTextureColorMod(m->slabel_tex[SLABEL_QUEUE_EMPTY], txt2.r, txt2.g, txt2.b);
+         SDL_Rect edst = { m->panel_x + (m->panel_w - ew) / 2, y + list_h / 3, ew, eh };
+         SDL_RenderCopy(r, m->slabel_tex[SLABEL_QUEUE_EMPTY], NULL, &edst);
+      }
+      SDL_RenderSetClipRect(r, NULL);
+      return;
+   }
 
    m->total_list_height = m->queue_count * LIST_ROW_HEIGHT;
    int start_y = y - m->scroll_offset;
@@ -1141,71 +1239,79 @@ static void render_queue(ui_music_t *m, SDL_Renderer *r) {
                          m->panel_x + m->panel_w - 16, row_y + LIST_ROW_HEIGHT - 1);
 
       if (m->label_font) {
-         /* Index number */
-         char idx_str[16];
-         snprintf(idx_str, sizeof(idx_str), "%d", i + 1);
-         SDL_Color ic = { txt2.r, txt2.g, txt2.b, 255 };
-         SDL_Surface *is = TTF_RenderUTF8_Blended(m->label_font, idx_str, ic);
-         if (is) {
-            SDL_Texture *itex = SDL_CreateTextureFromSurface(r, is);
-            SDL_Rect idst = { m->panel_x + 12, row_y + (LIST_ROW_HEIGHT - is->h) / 2, is->w,
-                              is->h };
-            SDL_RenderCopy(r, itex, NULL, &idst);
-            SDL_DestroyTexture(itex);
-            SDL_FreeSurface(is);
+         /* Compute row cache key from track content + index */
+         char key_buf[600];
+         snprintf(key_buf, sizeof(key_buf), "%d|%s|%s|%d", i, track->title, track->artist,
+                  track->duration_sec);
+         uint32_t key = fnv1a_hash(key_buf);
+         int slot = i % MUSIC_ROW_CACHE_SIZE;
+         music_row_cache_t *rc = &m->queue_row_cache[slot];
+
+         /* Rebuild cache if hash mismatch */
+         if (!rc->valid || rc->key_hash != key) {
+            for (int j = 0; j < 4; j++) {
+               if (rc->tex[j]) {
+                  SDL_DestroyTexture(rc->tex[j]);
+                  rc->tex[j] = NULL;
+               }
+            }
+            char idx_str[16];
+            snprintf(idx_str, sizeof(idx_str), "%d", i + 1);
+            rc->tex[0] = build_white_tex(r, m->label_font, idx_str, &rc->w[0], &rc->h[0]);
+
+            char dur[16];
+            format_time((float)track->duration_sec, dur, sizeof(dur));
+            rc->tex[1] = build_white_tex(r, m->label_font, dur, &rc->w[1], &rc->h[1]);
+            rc->tex[2] = build_white_tex(r, m->label_font, track->title, &rc->w[2], &rc->h[2]);
+            rc->tex[3] = build_white_tex(r, m->label_font, track->artist, &rc->w[3], &rc->h[3]);
+            rc->key_hash = key;
+            rc->valid = true;
          }
 
-         /* Duration (render first to compute text budget) */
-         char dur[16];
-         format_time((float)track->duration_sec, dur, sizeof(dur));
-         SDL_Color dc = { txt2.r, txt2.g, txt2.b, 255 };
-         SDL_Surface *ds = TTF_RenderUTF8_Blended(m->label_font, dur, dc);
-         int dur_w = ds ? ds->w : 50;
+         /* Draw index (slot 0) */
+         if (rc->tex[0]) {
+            SDL_SetTextureColorMod(rc->tex[0], txt2.r, txt2.g, txt2.b);
+            SDL_Rect idst = { m->panel_x + 12, row_y + (LIST_ROW_HEIGHT - rc->h[0]) / 2, rc->w[0],
+                              rc->h[0] };
+            SDL_RenderCopy(r, rc->tex[0], NULL, &idst);
+         }
+
+         /* Draw duration (slot 1) */
+         int dur_w = rc->tex[1] ? rc->w[1] : 50;
          int dur_right = m->panel_x + m->panel_w - 16;
-         if (ds) {
-            SDL_Texture *dtex = SDL_CreateTextureFromSurface(r, ds);
-            SDL_Rect ddst = { dur_right - ds->w, row_y + (LIST_ROW_HEIGHT - ds->h) / 2, ds->w,
-                              ds->h };
-            SDL_RenderCopy(r, dtex, NULL, &ddst);
-            SDL_DestroyTexture(dtex);
-            SDL_FreeSurface(ds);
+         if (rc->tex[1]) {
+            SDL_SetTextureColorMod(rc->tex[1], txt2.r, txt2.g, txt2.b);
+            SDL_Rect ddst = { dur_right - rc->w[1], row_y + (LIST_ROW_HEIGHT - rc->h[1]) / 2,
+                              rc->w[1], rc->h[1] };
+            SDL_RenderCopy(r, rc->tex[1], NULL, &ddst);
          }
 
-         /* Title + Artist (vertically centered, truncated before duration) */
+         /* Draw title (slot 2) + artist (slot 3) */
          int text_left = m->panel_x + 40;
          int max_w = dur_right - dur_w - 12 - text_left;
          if (max_w < 40)
             max_w = 40;
 
-         SDL_Color tc = is_current ? (SDL_Color){ ac.r, ac.g, ac.b, 255 }
-                                   : (SDL_Color){ txt0.r, txt0.g, txt0.b, 255 };
-         SDL_Surface *ts = TTF_RenderUTF8_Blended(m->label_font, track->title, tc);
-         if (ts) {
-            SDL_Texture *ttex = SDL_CreateTextureFromSurface(r, ts);
-            int tw = ts->w < max_w ? ts->w : max_w;
-
-            int block_h = ts->h + ts->h;
+         if (rc->tex[2]) {
+            if (is_current)
+               SDL_SetTextureColorMod(rc->tex[2], ac.r, ac.g, ac.b);
+            else
+               SDL_SetTextureColorMod(rc->tex[2], txt0.r, txt0.g, txt0.b);
+            int tw = rc->w[2] < max_w ? rc->w[2] : max_w;
+            int block_h = rc->h[2] + rc->h[2];
             int block_y = row_y + (LIST_ROW_HEIGHT - block_h) / 2;
+            SDL_Rect src_r = { 0, 0, tw, rc->h[2] };
+            SDL_Rect tdst = { text_left, block_y, tw, rc->h[2] };
+            SDL_RenderCopy(r, rc->tex[2], &src_r, &tdst);
 
-            SDL_Rect src_r = { 0, 0, tw, ts->h };
-            SDL_Rect tdst = { text_left, block_y, tw, ts->h };
-            SDL_RenderCopy(r, ttex, &src_r, &tdst);
-            SDL_DestroyTexture(ttex);
-
-            /* Artist (below title) */
-            SDL_Color ac = { txt1.r, txt1.g, txt1.b, 255 };
-            SDL_Surface *as = TTF_RenderUTF8_Blended(m->label_font, track->artist, ac);
-            if (as) {
-               SDL_Texture *atex = SDL_CreateTextureFromSurface(r, as);
-               int aw = as->w < max_w ? as->w : max_w;
-               SDL_Rect asrc = { 0, 0, aw, as->h };
-               SDL_Rect adst = { text_left, block_y + ts->h, aw, as->h };
-               SDL_RenderCopy(r, atex, &asrc, &adst);
-               SDL_DestroyTexture(atex);
-               SDL_FreeSurface(as);
+            /* Artist (slot 3, below title) */
+            if (rc->tex[3]) {
+               SDL_SetTextureColorMod(rc->tex[3], txt1.r, txt1.g, txt1.b);
+               int aw = rc->w[3] < max_w ? rc->w[3] : max_w;
+               SDL_Rect asrc = { 0, 0, aw, rc->h[3] };
+               SDL_Rect adst = { text_left, block_y + rc->h[2], aw, rc->h[3] };
+               SDL_RenderCopy(r, rc->tex[3], &asrc, &adst);
             }
-
-            SDL_FreeSurface(ts);
          }
       }
    }
@@ -1396,42 +1502,49 @@ static void render_library(ui_music_t *m, SDL_Renderer *r) {
                SDL_RenderCopy(r, m->slabel_tex[SLABEL_PLUS], NULL, &pdst);
             }
 
-            /* Name + track count (vertically centered, truncated before "+" btn) */
+            /* Cached name + track count */
+            char key_buf[300];
+            snprintf(key_buf, sizeof(key_buf), "b|%s|%d", item->name, item->track_count);
+            uint32_t key = fnv1a_hash(key_buf);
+            int slot = i % MUSIC_ROW_CACHE_SIZE;
+            music_row_cache_t *rc = &m->lib_row_cache[slot];
+
+            if (!rc->valid || rc->key_hash != key) {
+               for (int j = 0; j < 4; j++) {
+                  if (rc->tex[j]) {
+                     SDL_DestroyTexture(rc->tex[j]);
+                     rc->tex[j] = NULL;
+                  }
+               }
+               rc->tex[0] = build_white_tex(r, m->label_font, item->name, &rc->w[0], &rc->h[0]);
+               char sub[32];
+               snprintf(sub, sizeof(sub), "%d tracks", item->track_count);
+               rc->tex[1] = build_white_tex(r, m->label_font, sub, &rc->w[1], &rc->h[1]);
+               rc->key_hash = key;
+               rc->valid = true;
+            }
+
             int text_left = m->panel_x + 16;
             int max_w = add_x - 8 - text_left;
             if (max_w < 40)
                max_w = 40;
 
-            SDL_Color nc = { txt0.r, txt0.g, txt0.b, 255 };
-            SDL_Surface *ns = TTF_RenderUTF8_Blended(m->label_font, item->name, nc);
-            if (ns) {
-               SDL_Texture *ntex = SDL_CreateTextureFromSurface(r, ns);
-               int nw = ns->w < max_w ? ns->w : max_w;
-
-               int block_h = ns->h + ns->h;
+            if (rc->tex[0]) {
+               SDL_SetTextureColorMod(rc->tex[0], txt0.r, txt0.g, txt0.b);
+               int nw = rc->w[0] < max_w ? rc->w[0] : max_w;
+               int block_h = rc->h[0] + rc->h[0];
                int block_y = row_y + (LIST_ROW_HEIGHT - block_h) / 2;
+               SDL_Rect nsrc = { 0, 0, nw, rc->h[0] };
+               SDL_Rect ndst = { text_left, block_y, nw, rc->h[0] };
+               SDL_RenderCopy(r, rc->tex[0], &nsrc, &ndst);
 
-               SDL_Rect nsrc = { 0, 0, nw, ns->h };
-               SDL_Rect ndst = { text_left, block_y, nw, ns->h };
-               SDL_RenderCopy(r, ntex, &nsrc, &ndst);
-               SDL_DestroyTexture(ntex);
-
-               /* Track count */
-               char sub[32];
-               snprintf(sub, sizeof(sub), "%d tracks", item->track_count);
-               SDL_Color sc = { txt1.r, txt1.g, txt1.b, 255 };
-               SDL_Surface *ss = TTF_RenderUTF8_Blended(m->label_font, sub, sc);
-               if (ss) {
-                  SDL_Texture *stex = SDL_CreateTextureFromSurface(r, ss);
-                  int sw = ss->w < max_w ? ss->w : max_w;
-                  SDL_Rect ssrc = { 0, 0, sw, ss->h };
-                  SDL_Rect sdst = { text_left, block_y + ns->h, sw, ss->h };
-                  SDL_RenderCopy(r, stex, &ssrc, &sdst);
-                  SDL_DestroyTexture(stex);
-                  SDL_FreeSurface(ss);
+               if (rc->tex[1]) {
+                  SDL_SetTextureColorMod(rc->tex[1], txt1.r, txt1.g, txt1.b);
+                  int sw = rc->w[1] < max_w ? rc->w[1] : max_w;
+                  SDL_Rect ssrc = { 0, 0, sw, rc->h[1] };
+                  SDL_Rect sdst = { text_left, block_y + rc->h[0], sw, rc->h[1] };
+                  SDL_RenderCopy(r, rc->tex[1], &ssrc, &sdst);
                }
-
-               SDL_FreeSurface(ns);
             }
          }
       }
@@ -1483,69 +1596,74 @@ static void render_library(ui_music_t *m, SDL_Renderer *r) {
                SDL_RenderCopy(r, m->slabel_tex[SLABEL_PLUS], NULL, &pdst);
             }
 
-            /* Duration (right-aligned, left of "+" button) */
-            char dur[16];
-            format_time((float)track->duration_sec, dur, sizeof(dur));
-            SDL_Color dc = { txt2.r, txt2.g, txt2.b, 255 };
-            int dur_right = add_x - 8; /* right edge of duration text */
-            SDL_Surface *ds = TTF_RenderUTF8_Blended(m->label_font, dur, dc);
-            int dur_w = ds ? ds->w : 50; /* estimate if render fails */
-            if (ds) {
-               SDL_Texture *dtex = SDL_CreateTextureFromSurface(r, ds);
-               SDL_Rect ddst = { dur_right - ds->w, row_y + (LIST_ROW_HEIGHT - ds->h) / 2, ds->w,
-                                 ds->h };
-               SDL_RenderCopy(r, dtex, NULL, &ddst);
-               SDL_DestroyTexture(dtex);
-               SDL_FreeSurface(ds);
+            /* Cached: duration, title, subtitle */
+            char subtitle[540];
+            bool has_artist = track->artist[0] != '\0';
+            bool has_album = track->album[0] != '\0';
+            if (has_artist && has_album)
+               snprintf(subtitle, sizeof(subtitle), "%s - %s", track->artist, track->album);
+            else if (has_artist)
+               snprintf(subtitle, sizeof(subtitle), "%s", track->artist);
+            else if (has_album)
+               snprintf(subtitle, sizeof(subtitle), "%s", track->album);
+            else
+               snprintf(subtitle, sizeof(subtitle), "Unknown");
+
+            char key_buf[800];
+            snprintf(key_buf, sizeof(key_buf), "t|%s|%s|%d", track->title, subtitle,
+                     track->duration_sec);
+            uint32_t key = fnv1a_hash(key_buf);
+            int slot = i % MUSIC_ROW_CACHE_SIZE;
+            music_row_cache_t *rc = &m->lib_row_cache[slot];
+
+            if (!rc->valid || rc->key_hash != key) {
+               for (int j = 0; j < 4; j++) {
+                  if (rc->tex[j]) {
+                     SDL_DestroyTexture(rc->tex[j]);
+                     rc->tex[j] = NULL;
+                  }
+               }
+               char dur[16];
+               format_time((float)track->duration_sec, dur, sizeof(dur));
+               rc->tex[0] = build_white_tex(r, m->label_font, dur, &rc->w[0], &rc->h[0]);
+               rc->tex[1] = build_white_tex(r, m->label_font, track->title, &rc->w[1], &rc->h[1]);
+               rc->tex[2] = build_white_tex(r, m->label_font, subtitle, &rc->w[2], &rc->h[2]);
+               rc->key_hash = key;
+               rc->valid = true;
             }
 
-            /* Title + Artist (vertically centered, truncated before duration) */
+            /* Duration (right-aligned, left of "+" button) */
+            int dur_right = add_x - 8;
+            int dur_w = rc->tex[0] ? rc->w[0] : 50;
+            if (rc->tex[0]) {
+               SDL_SetTextureColorMod(rc->tex[0], txt2.r, txt2.g, txt2.b);
+               SDL_Rect ddst = { dur_right - rc->w[0], row_y + (LIST_ROW_HEIGHT - rc->h[0]) / 2,
+                                 rc->w[0], rc->h[0] };
+               SDL_RenderCopy(r, rc->tex[0], NULL, &ddst);
+            }
+
+            /* Title + subtitle */
             int text_left = m->panel_x + 16;
             int max_w = dur_right - dur_w - 12 - text_left;
             if (max_w < 40)
                max_w = 40;
 
-            SDL_Color tc = { txt0.r, txt0.g, txt0.b, 255 };
-            SDL_Surface *ts = TTF_RenderUTF8_Blended(m->label_font, track->title, tc);
-            if (ts) {
-               SDL_Texture *ttex = SDL_CreateTextureFromSurface(r, ts);
-               int tw = ts->w < max_w ? ts->w : max_w;
-
-               /* Vertically center the two-line block (title + artist) in the row */
-               int block_h = ts->h + ts->h; /* title + artist (same font) */
+            if (rc->tex[1]) {
+               SDL_SetTextureColorMod(rc->tex[1], txt0.r, txt0.g, txt0.b);
+               int tw = rc->w[1] < max_w ? rc->w[1] : max_w;
+               int block_h = rc->h[1] + rc->h[1];
                int block_y = row_y + (LIST_ROW_HEIGHT - block_h) / 2;
+               SDL_Rect tsrc = { 0, 0, tw, rc->h[1] };
+               SDL_Rect tdst = { text_left, block_y, tw, rc->h[1] };
+               SDL_RenderCopy(r, rc->tex[1], &tsrc, &tdst);
 
-               SDL_Rect tsrc = { 0, 0, tw, ts->h };
-               SDL_Rect tdst = { text_left, block_y, tw, ts->h };
-               SDL_RenderCopy(r, ttex, &tsrc, &tdst);
-               SDL_DestroyTexture(ttex);
-
-               /* Artist - Album subtitle line */
-               char subtitle[540];
-               bool has_artist = track->artist[0] != '\0';
-               bool has_album = track->album[0] != '\0';
-               if (has_artist && has_album)
-                  snprintf(subtitle, sizeof(subtitle), "%s - %s", track->artist, track->album);
-               else if (has_artist)
-                  snprintf(subtitle, sizeof(subtitle), "%s", track->artist);
-               else if (has_album)
-                  snprintf(subtitle, sizeof(subtitle), "%s", track->album);
-               else
-                  snprintf(subtitle, sizeof(subtitle), "Unknown");
-
-               SDL_Color ac = { txt1.r, txt1.g, txt1.b, 255 };
-               SDL_Surface *as = TTF_RenderUTF8_Blended(m->label_font, subtitle, ac);
-               if (as) {
-                  SDL_Texture *atex = SDL_CreateTextureFromSurface(r, as);
-                  int aw = as->w < max_w ? as->w : max_w;
-                  SDL_Rect asrc = { 0, 0, aw, as->h };
-                  SDL_Rect adst = { text_left, block_y + ts->h, aw, as->h };
-                  SDL_RenderCopy(r, atex, &asrc, &adst);
-                  SDL_DestroyTexture(atex);
-                  SDL_FreeSurface(as);
+               if (rc->tex[2]) {
+                  SDL_SetTextureColorMod(rc->tex[2], txt1.r, txt1.g, txt1.b);
+                  int aw = rc->w[2] < max_w ? rc->w[2] : max_w;
+                  SDL_Rect asrc = { 0, 0, aw, rc->h[2] };
+                  SDL_Rect adst = { text_left, block_y + rc->h[1], aw, rc->h[2] };
+                  SDL_RenderCopy(r, rc->tex[2], &asrc, &adst);
                }
-
-               SDL_FreeSurface(ts);
             }
          }
       }
@@ -1666,6 +1784,10 @@ void ui_music_cleanup(ui_music_t *m) {
       SDL_DestroyTexture(m->queue_hdr_tex);
       m->queue_hdr_tex = NULL;
    }
+
+   /* Destroy row caches */
+   row_cache_invalidate(m->queue_row_cache, MUSIC_ROW_CACHE_SIZE);
+   row_cache_invalidate(m->lib_row_cache, MUSIC_ROW_CACHE_SIZE);
 
    if (m->label_font) {
       TTF_CloseFont(m->label_font);
@@ -1955,10 +2077,30 @@ bool ui_music_handle_tap(ui_music_t *m, int x, int y) {
       int header_h = 44;
       int list_y = m->panel_y + TAB_HEIGHT + header_h;
 
-      /* Clear All button */
+      /* Clear All / confirmation handling */
       if (y >= m->panel_y + TAB_HEIGHT && y < list_y && x > m->panel_x + m->panel_w / 2) {
-         if (m->ws && m->queue_count > 0) {
-            ws_client_send_music_queue(m->ws, "clear", NULL, -1);
+         if (m->confirm_clear_pending) {
+            /* Check if timed out */
+            if (SDL_GetTicks() - m->confirm_clear_ms > CONFIRM_TIMEOUT_MS) {
+               m->confirm_clear_pending = false;
+            } else {
+               /* Divide right half into "No" and "Yes" zones */
+               int bar_x = m->panel_x + m->panel_w / 2;
+               int bar_w = m->panel_w - m->panel_w / 2;
+               int midpoint = bar_x + bar_w / 2;
+               if (x >= midpoint) {
+                  /* "Yes" — confirm clear */
+                  if (m->ws && m->queue_count > 0) {
+                     ws_client_send_music_queue(m->ws, "clear", NULL, -1);
+                  }
+               }
+               /* Both Yes and No dismiss the confirmation */
+               m->confirm_clear_pending = false;
+            }
+         } else if (m->ws && m->queue_count > 0) {
+            /* First tap — show confirmation */
+            m->confirm_clear_pending = true;
+            m->confirm_clear_ms = SDL_GetTicks();
          }
          handled = true;
       }
@@ -2201,6 +2343,8 @@ void ui_music_on_queue(ui_music_t *m, const music_queue_update_t *queue) {
    if (queue->count > 0) {
       memcpy(m->queue, queue->tracks, queue->count * sizeof(music_track_t));
    }
+   row_cache_invalidate(m->queue_row_cache, MUSIC_ROW_CACHE_SIZE);
+   m->confirm_clear_pending = false;
    pthread_mutex_unlock(&m->mutex);
 }
 
@@ -2281,6 +2425,7 @@ void ui_music_on_library(ui_music_t *m, const music_library_update_t *lib) {
 
    m->browse_total_count = lib->total_count;
    m->browse_loading_more = false;
+   row_cache_invalidate(m->lib_row_cache, MUSIC_ROW_CACHE_SIZE);
 
    pthread_mutex_unlock(&m->mutex);
 }
@@ -2305,7 +2450,7 @@ void ui_music_set_playback(ui_music_t *m, struct music_playback *pb) {
    if (!m)
       return;
    m->music_pb = pb;
-   m->volume = 80;
+   m->volume = pb ? music_playback_get_volume(pb) : 80;
 }
 
 void ui_music_update_spectrum(ui_music_t *m, const volatile float *spectrum64) {

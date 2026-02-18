@@ -252,6 +252,13 @@ void music_playback_stop(music_playback_t *ctx) {
    atomic_store_explicit(&ctx->ring_head, 0, memory_order_release);
    atomic_store_explicit(&ctx->ring_tail, 0, memory_order_release);
 
+   /* Clear spectrum/amplitude so visualizer doesn't show stale bars */
+   if (ctx->audio) {
+      ctx->audio->amplitude = 0.0f;
+      for (int i = 0; i < SPECTRUM_BINS; i++)
+         ctx->audio->spectrum[i] = 0.0f;
+   }
+
    atomic_store(&ctx->stop_flag, 0);
    opus_decoder_ctl(ctx->decoder, OPUS_RESET_STATE);
 

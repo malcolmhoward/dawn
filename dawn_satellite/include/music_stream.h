@@ -57,6 +57,10 @@ music_stream_t *music_stream_create(const char *host,
 
 /**
  * Destroy music stream. Disconnects and frees all resources.
+ *
+ * ORDERING: Must be called BEFORE music_playback_destroy() — the stream's
+ * service thread pushes decoded frames into the playback ring buffer, so the
+ * stream must be torn down first to avoid use-after-free.
  */
 void music_stream_destroy(music_stream_t *stream);
 

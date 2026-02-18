@@ -179,8 +179,26 @@ static bool secure_token_compare(const char *a, const char *b, size_t len) {
    return result == 0;
 }
 
+/**
+ * @brief Expire stale token mappings (must be called with s_token_mutex held)
+ */
+static void cleanup_expired_tokens(void) {
+   time_t now = time(NULL);
+   for (int i = 0; i < MAX_TOKEN_MAPPINGS; i++) {
+      if (s_token_map[i].in_use && (now - s_token_map[i].created) > AUTH_COOKIE_MAX_AGE) {
+         LOG_INFO("WebUI: Expiring token slot %d (age %lds)", i,
+                  (long)(now - s_token_map[i].created));
+         explicit_bzero(s_token_map[i].token, sizeof(s_token_map[i].token));
+         s_token_map[i].in_use = false;
+      }
+   }
+}
+
 void register_token(const char *token, uint32_t session_id) {
    pthread_mutex_lock(&s_token_mutex);
+
+   /* Lazy cleanup: expire stale tokens on each registration */
+   cleanup_expired_tokens();
 
    /* Find existing or empty slot */
    int empty_slot = -1;
@@ -211,6 +229,7 @@ void register_token(const char *token, uint32_t session_id) {
             oldest = i;
          }
       }
+      explicit_bzero(s_token_map[oldest].token, sizeof(s_token_map[oldest].token));
       strncpy(s_token_map[oldest].token, token, WEBUI_SESSION_TOKEN_LEN - 1);
       s_token_map[oldest].token[WEBUI_SESSION_TOKEN_LEN - 1] = '\0';
       s_token_map[oldest].session_id = session_id;
@@ -231,6 +250,15 @@ session_t *lookup_session_by_token(const char *token) {
       /* Use constant-time comparison to prevent timing attacks */
       if (s_token_map[i].in_use &&
           secure_token_compare(s_token_map[i].token, token, WEBUI_SESSION_TOKEN_LEN - 1)) {
+         /* Check token age against AUTH_COOKIE_MAX_AGE */
+         if ((time(NULL) - s_token_map[i].created) > AUTH_COOKIE_MAX_AGE) {
+            LOG_INFO("WebUI: Token %.4s... expired (session %u)", token, s_token_map[i].session_id);
+            explicit_bzero(s_token_map[i].token, sizeof(s_token_map[i].token));
+            s_token_map[i].in_use = false;
+            pthread_mutex_unlock(&s_token_mutex);
+            return NULL;
+         }
+
          uint32_t session_id = s_token_map[i].session_id;
          pthread_mutex_unlock(&s_token_mutex);
 
@@ -238,10 +266,10 @@ session_t *lookup_session_by_token(const char *token) {
          session_t *session = session_get_for_reconnect(session_id);
          if (session) {
             /* Session exists - reconnect handler will clear disconnected flag */
-            LOG_INFO("WebUI: Found existing session %u for token %.8s...", session_id, token);
+            LOG_INFO("WebUI: Found existing session %u for token %.4s...", session_id, token);
             return session;
          }
-         LOG_INFO("WebUI: Token %.8s... mapped to session %u but session destroyed", token,
+         LOG_INFO("WebUI: Token %.4s... mapped to session %u but session destroyed", token,
                   session_id);
          return NULL;
       }
@@ -2311,7 +2339,7 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                   strncpy(conn->session_token, token, WEBUI_SESSION_TOKEN_LEN - 1);
                   conn->session_token[WEBUI_SESSION_TOKEN_LEN - 1] = '\0';
 
-                  LOG_INFO("WebUI: Reconnected to session %u with token %.8s...",
+                  LOG_INFO("WebUI: Reconnected to session %u with token %.4s...",
                            existing->session_id, token);
 
                   /* Send confirmation - history is loaded by client via load_conversation */
@@ -2320,7 +2348,7 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                   send_state_impl(conn->wsi, "idle", NULL);
                } else {
                   /* Token not found or session expired - create new session */
-                  LOG_INFO("WebUI: Token %.8s... not found, creating new session", token);
+                  LOG_INFO("WebUI: Token %.4s... not found, creating new session", token);
                   if (!conn->session) {
                      conn->session = session_create(SESSION_TYPE_WEBUI, -1);
                      if (conn->session) {
@@ -2993,7 +3021,7 @@ static int callback_websocket(struct lws *wsi,
                         s_client_count++;
                         pthread_mutex_unlock(&s_mutex);
 
-                        LOG_INFO("WebUI: Reconnected to session %u with token %.8s... (total: %d, "
+                        LOG_INFO("WebUI: Reconnected to session %u with token %.4s... (total: %d, "
                                  "opus: %s, tts: %s)",
                                  existing_session->session_id, token, s_client_count,
                                  conn->use_opus ? "yes" : "no", conn->tts_enabled ? "yes" : "no");
@@ -3097,7 +3125,7 @@ static int callback_websocket(struct lws *wsi,
                }
                register_token(conn->session_token, conn->session->session_id);
 
-               LOG_INFO("WebUI: New session %u created (token %.8s..., total: %d, opus: %s, "
+               LOG_INFO("WebUI: New session %u created (token %.4s..., total: %d, opus: %s, "
                         "tts: %s)",
                         conn->session->session_id, conn->session_token, s_client_count,
                         conn->use_opus ? "yes" : "no", conn->tts_enabled ? "yes" : "no");
@@ -5027,7 +5055,7 @@ int webui_force_logout_by_auth_token(const char *auth_token_prefix) {
       if (conn && conn->wsi && conn->authenticated) {
          /* Check if auth token prefix matches */
          if (strncmp(conn->auth_session_token, auth_token_prefix, AUTH_TOKEN_PREFIX_LEN) == 0) {
-            LOG_INFO("WebUI: Forcing logout for connection with auth token %.8s...",
+            LOG_INFO("WebUI: Forcing logout for connection with auth token %.4s...",
                      auth_token_prefix);
             send_force_logout_impl(conn->wsi, "Session revoked");
             /* Mark as unauthenticated to prevent further requests */

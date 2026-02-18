@@ -50,6 +50,11 @@ struct tts_piper_context {
    int sample_rate;
    float length_scale;
 
+   /* Reusable audio buffer — avoids repeated heap allocations per synthesis call.
+    * .clear() preserves capacity, so after the first large sentence the buffer
+    * stays at its high-water mark for the lifetime of the context. */
+   std::vector<int16_t> reuse_buffer;
+
    /* Optional timing callback */
    tts_timing_callback_t timing_callback;
    void *timing_callback_user_data;
@@ -121,6 +126,9 @@ tts_piper_context_t *tts_piper_init(const tts_piper_config_t *config) {
    /* Store sample rate */
    ctx->sample_rate = ctx->voice.synthesisConfig.sampleRate;
 
+   /* Pre-allocate audio buffer (~3 seconds at 16 kHz) */
+   ctx->reuse_buffer.reserve(48000);
+
    DAWN_LOG_INFO("tts_piper_init: initialized (rate=%d, scale=%.2f, cuda=%s)", ctx->sample_rate,
                  ctx->length_scale, config->use_cuda ? "yes" : "no");
 
@@ -150,21 +158,21 @@ int tts_piper_synthesize(tts_piper_context_t *ctx,
    *samples_out = 0;
 
    try {
-      std::vector<int16_t> audioBuffer;
+      ctx->reuse_buffer.clear(); /* Preserves capacity from previous calls */
       piper::SynthesisResult synthResult = {};
       std::atomic<bool> stopFlag(false);
 
       /* Synthesize audio (nullptr callback to keep all samples in buffer) */
-      piper::textToAudio(ctx->config, ctx->voice, std::string(text), audioBuffer, synthResult,
+      piper::textToAudio(ctx->config, ctx->voice, std::string(text), ctx->reuse_buffer, synthResult,
                          stopFlag, nullptr);
 
-      if (audioBuffer.empty()) {
+      if (ctx->reuse_buffer.empty()) {
          DAWN_LOG_WARNING("tts_piper_synthesize: no audio generated for text");
          return TTS_SUCCESS; /* Not an error - just empty output */
       }
 
       /* Allocate output buffer */
-      *samples_out = audioBuffer.size();
+      *samples_out = ctx->reuse_buffer.size();
       *pcm_out = (int16_t *)malloc(*samples_out * sizeof(int16_t));
       if (!*pcm_out) {
          DAWN_LOG_ERROR("tts_piper_synthesize: failed to allocate %zu samples", *samples_out);
@@ -173,7 +181,7 @@ int tts_piper_synthesize(tts_piper_context_t *ctx,
       }
 
       /* Copy samples */
-      memcpy(*pcm_out, audioBuffer.data(), *samples_out * sizeof(int16_t));
+      memcpy(*pcm_out, ctx->reuse_buffer.data(), *samples_out * sizeof(int16_t));
 
       /* Fill result if provided */
       if (result) {

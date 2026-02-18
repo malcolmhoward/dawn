@@ -44,7 +44,19 @@ struct music_playback;
 /* Visualizer bar count (used in struct definition) */
 #define MUSIC_VIZ_BAR_COUNT 32
 
+/* Row-level texture cache for list rendering (queue and library) */
+#define MUSIC_ROW_CACHE_SIZE 32
+typedef struct {
+   SDL_Texture *tex[4]; /* Up to 4 text fields per row */
+   int w[4], h[4];
+   uint32_t key_hash;
+   bool valid;
+} music_row_cache_t;
+
 struct ui_music {
+   /* Lock ordering: if both ws_client.mutex and ui_music.mutex are needed,
+    * always acquire ws_client.mutex FIRST to prevent deadlock.
+    * In practice they protect disjoint data and are rarely held together. */
    pthread_mutex_t mutex;
    SDL_Renderer *renderer;
    TTF_Font *label_font;
@@ -125,7 +137,7 @@ struct ui_music {
    SDL_Texture *repeat_one_icon_tex; /* White repeat-one loop + "1" */
 
    /* Static label caches (white text, tinted at render time) */
-#define MUSIC_SLABEL_COUNT 5
+#define MUSIC_SLABEL_COUNT 9
    SDL_Texture *slabel_tex[MUSIC_SLABEL_COUNT];
    int slabel_w[MUSIC_SLABEL_COUNT], slabel_h[MUSIC_SLABEL_COUNT];
 
@@ -150,6 +162,10 @@ struct ui_music {
 
    /* Tap debounce */
    uint32_t last_tap_ms;
+
+   /* Clear All confirmation state */
+   bool confirm_clear_pending;
+   uint32_t confirm_clear_ms;
 
    /* Add-to-queue flash feedback */
    int add_flash_row;     /* Row index that was just added (-1 = none) */
@@ -180,6 +196,10 @@ struct ui_music {
    SDL_Texture *queue_hdr_tex;
    int queue_hdr_w, queue_hdr_h;
    int cached_queue_count; /* Key: previous queue count */
+
+   /* Row-level texture caches (queue and library lists) */
+   music_row_cache_t queue_row_cache[MUSIC_ROW_CACHE_SIZE];
+   music_row_cache_t lib_row_cache[MUSIC_ROW_CACHE_SIZE];
 };
 
 typedef struct ui_music ui_music_t;

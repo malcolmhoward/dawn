@@ -30,7 +30,7 @@
  * ============================================================================= */
 
 #define TAP_MAX_SEC 0.3      /* Max duration for a tap */
-#define LONG_PRESS_SEC 0.6   /* Hold duration for long press */
+#define LONG_PRESS_SEC 0.5   /* Hold duration for long press (500ms, matches iOS) */
 #define MOVE_THRESHOLD_PX 25 /* Max movement for tap/long-press */
 #define SWIPE_MIN_PX 60      /* Min displacement for a swipe */
 

@@ -17,12 +17,14 @@
 
 #include "ws_client.h"
 
+#include <errno.h>
 #include <json-c/json.h>
 #include <libwebsockets.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/random.h>
 #include <time.h>
 
 /* Shared logging (same format as daemon) */
@@ -111,7 +113,7 @@ struct ws_client {
    /* Connection timing */
    time_t connected_at; /* Wall-clock time of last successful connection (0 = not connected) */
 
-   /* Thread safety */
+   /* Thread safety — lock ordering: ws_client.mutex before ui_music.mutex */
    pthread_mutex_t mutex;
 
    /* Background service thread */
@@ -1168,14 +1170,40 @@ void ws_client_generate_uuid(char *uuid) {
       return;
    }
 
-   /* Simple UUID v4 generation using random numbers */
-   srand((unsigned int)time(NULL) ^ (unsigned int)getpid());
+   /* UUID v4 from kernel CSPRNG (getrandom with EINTR retry) */
+   uint8_t bytes[16];
+   ssize_t got = 0;
+   while (got < (ssize_t)sizeof(bytes)) {
+      ssize_t r = getrandom(bytes + got, sizeof(bytes) - got, 0);
+      if (r < 0) {
+         if (errno == EINTR)
+            continue;
+         break; /* Fall through to /dev/urandom */
+      }
+      got += r;
+   }
+   if (got != (ssize_t)sizeof(bytes)) {
+      /* Fallback: read from /dev/urandom */
+      FILE *f = fopen("/dev/urandom", "r");
+      if (!f || fread(bytes, 1, sizeof(bytes), f) != sizeof(bytes)) {
+         /* Last resort: time-based seed (weak entropy — log a warning) */
+         LOG_WARNING("UUID: CSPRNG unavailable, falling back to rand()");
+         srand((unsigned int)time(NULL) ^ (unsigned int)getpid());
+         for (int i = 0; i < 16; i++)
+            bytes[i] = (uint8_t)(rand() & 0xFF);
+      }
+      if (f)
+         fclose(f);
+   }
 
-   snprintf(uuid, WS_CLIENT_UUID_SIZE, "%08x-%04x-%04x-%04x-%04x%08x", (unsigned int)rand(),
-            (unsigned int)(rand() & 0xFFFF),
-            (unsigned int)((rand() & 0x0FFF) | 0x4000), /* Version 4 */
-            (unsigned int)((rand() & 0x3FFF) | 0x8000), /* Variant 1 */
-            (unsigned int)(rand() & 0xFFFF), (unsigned int)rand());
+   /* Set UUID v4 version and variant bits */
+   bytes[6] = (bytes[6] & 0x0F) | 0x40; /* Version 4 */
+   bytes[8] = (bytes[8] & 0x3F) | 0x80; /* Variant 1 */
+
+   snprintf(uuid, WS_CLIENT_UUID_SIZE,
+            "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x", bytes[0],
+            bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7], bytes[8],
+            bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]);
 }
 
 const char *ws_client_get_error(ws_client_t *client) {

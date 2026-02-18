@@ -89,9 +89,9 @@ static const int DOT_DX[15] = { 14, 13, 13, 13, 13, 13, 12, 12, 11, 10, 9, 8, 7,
 #define INFO_ROW_COUNT 5      /* Server, Device, IP, Uptime, Session */
 #define ORB_HIT_RADIUS 180    /* Tap/long-press detection radius around orb center */
 #define SWIPE_ZONE_FRAC 0.20f /* Top 20% of screen for swipe-down trigger */
-/* Music panel width = screen width (1024) minus orb area (401) = 623px.
- * Matches transcript panel width so the music overlay covers the same region. */
-#define MUSIC_PANEL_WIDTH 623
+/* Music panel width = screen width minus orb area (ORB_PANEL_WIDTH + 1).
+ * Computed dynamically via MUSIC_PANEL_W(ui) so it adapts to any logical resolution. */
+#define MUSIC_PANEL_W(ui) ((ui)->width - (ORB_PANEL_WIDTH + 1))
 
 /* =============================================================================
  * Internal Structure
@@ -120,6 +120,11 @@ struct sdl_ui {
    /* Configuration */
    int width;
    int height;
+
+   /* Cached logical-to-physical mapping (computed once at init and on resize) */
+   float logical_scale; /* min(phys_w/width, phys_h/height) */
+   float logical_off_x; /* Letterbox X offset in physical pixels */
+   float logical_off_y; /* Letterbox Y offset in physical pixels */
    char ai_name[32];
    char font_dir[256];
    char satellite_name[64];
@@ -229,6 +234,36 @@ static double get_time_sec(void) {
    struct timespec ts;
    clock_gettime(CLOCK_MONOTONIC, &ts);
    return ts.tv_sec + ts.tv_nsec / 1e9;
+}
+
+/** @brief Recompute cached logical-to-physical mapping from renderer output size. */
+static void update_logical_scale(sdl_ui_t *ui) {
+   int out_w, out_h;
+   SDL_GetRendererOutputSize(ui->renderer, &out_w, &out_h);
+   if (out_w <= 0 || out_h <= 0 || ui->width <= 0 || ui->height <= 0) {
+      ui->logical_scale = 1.0f;
+      ui->logical_off_x = 0.0f;
+      ui->logical_off_y = 0.0f;
+      return;
+   }
+   float sx = (float)out_w / ui->width;
+   float sy = (float)out_h / ui->height;
+   ui->logical_scale = (sx < sy) ? sx : sy;
+   ui->logical_off_x = (out_w - ui->width * ui->logical_scale) / 2.0f;
+   ui->logical_off_y = (out_h - ui->height * ui->logical_scale) / 2.0f;
+}
+
+/**
+ * @brief Convert physical mouse coordinates to logical coordinates.
+ *
+ * Touch events use normalized 0.0–1.0 values (already logical), but mouse
+ * events report physical pixel positions. Uses cached scale/offset computed
+ * at init and on window resize.
+ */
+static void mouse_to_logical(sdl_ui_t *ui, int px, int py, int *lx, int *ly) {
+   float s = ui->logical_scale;
+   *lx = (int)((px - ui->logical_off_x) / s);
+   *ly = (int)((py - ui->logical_off_y) / s);
 }
 
 /* =============================================================================
@@ -874,7 +909,7 @@ static void handle_gesture(sdl_ui_t *ui, touch_gesture_t gesture, double time_se
             int mx = gesture.x;
             int my = gesture.y;
             bool in_music_panel = (ui->panel_music.visible && !ui->panel_music.closing &&
-                                   mx >= ui->width - MUSIC_PANEL_WIDTH);
+                                   mx >= ui->width - MUSIC_PANEL_W(ui));
             ui_transcript_t *t = &ui->transcript;
             if (!in_music_panel && t->show_music_btn && mx >= t->music_btn_x &&
                 mx < t->music_btn_x + t->music_btn_w && my >= t->music_btn_y &&
@@ -897,7 +932,7 @@ static void handle_gesture(sdl_ui_t *ui, touch_gesture_t gesture, double time_se
          if (panel_any_open(ui)) {
             /* Music panel tap handling */
             if (ui->panel_music.visible && !ui->panel_music.closing) {
-               int music_panel_x = ui->width - MUSIC_PANEL_WIDTH;
+               int music_panel_x = ui->width - MUSIC_PANEL_W(ui);
                if (gesture.x >= music_panel_x) {
                   ui_music_handle_tap(&ui->music, gesture.x, gesture.y);
                   /* Check if tap was on the visualizer → go fullscreen */
@@ -1005,11 +1040,12 @@ static int sdl_init_on_thread(sdl_ui_t *ui) {
    }
 
    ui->window = SDL_CreateWindow("DAWN Satellite", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
-                                 ui->width, ui->height, fs_flag);
+                                 ui->width, ui->height, fs_flag | SDL_WINDOW_ALLOW_HIGHDPI);
    if (!ui->window) {
       LOG_WARNING("Fullscreen failed, trying windowed: %s", SDL_GetError());
       ui->window = SDL_CreateWindow("DAWN Satellite", SDL_WINDOWPOS_CENTERED,
-                                    SDL_WINDOWPOS_CENTERED, ui->width, ui->height, 0);
+                                    SDL_WINDOWPOS_CENTERED, ui->width, ui->height,
+                                    SDL_WINDOW_ALLOW_HIGHDPI);
    }
    if (!ui->window) {
       LOG_ERROR("SDL_CreateWindow failed: %s", SDL_GetError());
@@ -1038,6 +1074,17 @@ static int sdl_init_on_thread(sdl_ui_t *ui) {
    /* Enable alpha blending */
    SDL_SetRenderDrawBlendMode(ui->renderer, SDL_BLENDMODE_BLEND);
 
+   /* Set logical size so all rendering uses the design resolution (e.g. 1024x600).
+    * SDL scales the logical canvas to fit the physical display, adding letterbox
+    * bars if the aspect ratio differs. */
+   SDL_RenderSetLogicalSize(ui->renderer, ui->width, ui->height);
+   update_logical_scale(ui);
+
+   int phys_w, phys_h;
+   SDL_GetRendererOutputSize(ui->renderer, &phys_w, &phys_h);
+   LOG_INFO("SDL UI: logical=%dx%d physical=%dx%d scale=%.2fx", ui->width, ui->height, phys_w,
+            phys_h, ui->logical_scale);
+
    /* Initialize orb rendering (pre-generate glow textures) */
    ui_orb_init(&ui->orb, ui->renderer);
 
@@ -1053,9 +1100,10 @@ static int sdl_init_on_thread(sdl_ui_t *ui) {
    ui->last_state_change_time = get_time_sec();
 
    /* Initialize music panel (right-side overlay on transcript area) */
-   int music_x = ui->width - MUSIC_PANEL_WIDTH;
-   if (ui_music_init(&ui->music, ui->renderer, music_x, 0, MUSIC_PANEL_WIDTH, ui->height,
-                     ui->font_dir) != 0) {
+   int music_w = MUSIC_PANEL_W(ui);
+   int music_x = ui->width - music_w;
+   if (ui_music_init(&ui->music, ui->renderer, music_x, 0, music_w, ui->height, ui->font_dir) !=
+       0) {
       LOG_WARNING("Music panel init failed, continuing without music UI");
    }
    if (ui->ws_client) {
@@ -1451,8 +1499,9 @@ static void render_frame(sdl_ui_t *ui, double time_sec) {
       }
       if (mus_off > 0.001f) {
          /* Music panel slides in from right */
-         int full_x = ui->width - MUSIC_PANEL_WIDTH;
-         int anim_x = ui->width - (int)(mus_off * MUSIC_PANEL_WIDTH);
+         int mpw = MUSIC_PANEL_W(ui);
+         int full_x = ui->width - mpw;
+         int anim_x = ui->width - (int)(mus_off * mpw);
          ui->music.panel_x = anim_x > full_x ? anim_x : full_x;
 
          /* Feed spectrum from ALSA playback to music visualizer while music plays.
@@ -1545,8 +1594,7 @@ static void *render_thread_func(void *arg) {
                   tx = (int)(event.tfinger.x * ui->width);
                   ty = (int)(event.tfinger.y * ui->height);
                } else {
-                  tx = event.button.x;
-                  ty = event.button.y;
+                  mouse_to_logical(ui, event.button.x, event.button.y, &tx, &ty);
                }
 
                /* Check transport buttons in visualizer mode */
@@ -1683,19 +1731,33 @@ static void *render_thread_func(void *arg) {
             ui_slider_finger_up(&ui->volume_slider);
             ui_music_handle_finger_up(&ui->music);
          } else if (event.type == SDL_MOUSEMOTION && (event.motion.state & SDL_BUTTON_LMASK)) {
-            /* Mouse fallback for desktop testing */
-            if (ui->panel_music.visible && !ui->panel_music.closing &&
-                event.motion.x >= ui->music.panel_x) {
-               int dy = event.motion.yrel;
+            /* Mouse fallback for desktop testing — convert to logical coords */
+            int mlx, mly;
+            mouse_to_logical(ui, event.motion.x, event.motion.y, &mlx, &mly);
+            int dy = (int)(event.motion.yrel / ui->logical_scale);
+            if (ui->panel_music.visible && !ui->panel_music.closing && mlx >= ui->music.panel_x) {
                if (dy != 0) {
                   ui_music_scroll(&ui->music, dy);
                }
-            } else if (event.motion.x > ORB_PANEL_WIDTH && !panel_any_open(ui)) {
-               int dy = event.motion.yrel;
+            } else if (mlx > ORB_PANEL_WIDTH && !panel_any_open(ui)) {
                if (dy != 0) {
                   ui_transcript_scroll(&ui->transcript, dy);
                }
             }
+         }
+
+         /* Convert mouse event coordinates to logical before gesture processing.
+          * The event is a local copy from SDL_PollEvent so mutation is safe. */
+         if (event.type == SDL_MOUSEBUTTONDOWN || event.type == SDL_MOUSEBUTTONUP) {
+            int lx, ly;
+            mouse_to_logical(ui, event.button.x, event.button.y, &lx, &ly);
+            event.button.x = lx;
+            event.button.y = ly;
+         } else if (event.type == SDL_MOUSEMOTION) {
+            int lx, ly;
+            mouse_to_logical(ui, event.motion.x, event.motion.y, &lx, &ly);
+            event.motion.x = lx;
+            event.motion.y = ly;
          }
 
          touch_gesture_t gesture = ui_touch_process_event(&ui->touch, &event, time_sec);
