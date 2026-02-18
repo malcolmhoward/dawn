@@ -49,6 +49,10 @@ ssl_verify = true
 # Empty string = use system CA bundle
 ca_cert_path = ""
 
+# Pre-shared key for satellite registration (from generate_ssl_cert.sh --gen-key)
+# If the daemon has a key set and this is empty, registration will be rejected.
+registration_key = ""
+
 # Reconnect settings
 reconnect_delay_ms = 5000
 max_reconnect_attempts = 0  # 0 = infinite

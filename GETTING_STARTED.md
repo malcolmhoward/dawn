@@ -217,6 +217,14 @@ After installing, restart your browser and access `https://<dawn-ip>:3000` — n
 
 **Certificate renewal**: When the daemon's IP changes or the cert expires, run `./generate_ssl_cert.sh --renew`. Clients don't need updating since the CA stays the same.
 
+**Satellite registration key** (optional but recommended): Generate a pre-shared key to prevent unauthorized satellite registration:
+
+```bash
+./generate_ssl_cert.sh --gen-key
+```
+
+This appends a `satellite_registration_key` to `secrets.toml`. Copy the key to each satellite's config. See [DAP2_SATELLITE.md](docs/DAP2_SATELLITE.md#registration-key) for details.
+
 ## 8. Run DAWN
 
 ```bash

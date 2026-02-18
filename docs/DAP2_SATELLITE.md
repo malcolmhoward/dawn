@@ -217,100 +217,21 @@ DAP2 uses JSON messages over WebSocket, connecting to the same port as the WebUI
 
 ```
 dawn_satellite/
-├── assets/
-│   └── fonts/                  # TTF fonts (Source Sans 3, IBM Plex Mono)
-├── config/
-│   └── satellite.toml          # Default configuration
-├── include/
-│   ├── audio_capture.h         # ALSA audio capture (ring buffer + thread)
-│   ├── audio_playback.h        # ALSA audio playback + Goertzel spectrum
-│   ├── dap_client.h            # (reserved for Tier 2 WebSocket audio)
-│   ├── display.h               # Framebuffer display (optional)
-│   ├── gpio_control.h          # GPIO button support (optional)
-│   ├── music_playback.h        # Opus music decode + ALSA output
-│   ├── music_stream.h          # Music WebSocket message handling
-│   ├── neopixel.h              # WS2812 LED support (optional)
-│   ├── satellite_config.h      # TOML configuration
-│   ├── satellite_state.h       # State machine
-│   ├── sdl_ui.h                # SDL2 UI entry point
-│   ├── spectrum_defs.h         # Shared FFT spectrum constants
-│   ├── toml.h                  # TOML parser (tomlc99)
-│   ├── tts_playback_queue.h    # Producer-consumer TTS pipeline
-│   ├── voice_processing.h      # Voice pipeline (VAD + wake word + ASR + TTS)
-│   └── ws_client.h             # WebSocket client API
-├── src/
-│   ├── main.c                  # Entry point, CLI parsing, model loading
-│   ├── audio_capture.c         # ALSA capture with ring buffer
-│   ├── audio_playback.c        # ALSA playback with resampling + spectrum
-│   ├── dap_client.c            # (reserved for Tier 2 WebSocket audio)
-│   ├── display.c               # Framebuffer display driver
-│   ├── gpio_control.c          # libgpiod GPIO input
-│   ├── music_playback.c        # Opus decode + ALSA music output
-│   ├── music_stream.c          # Music WS message parsing + state
-│   ├── neopixel.c              # SPI-based NeoPixel driver
-│   ├── satellite_config.c      # TOML config + identity persistence
-│   ├── satellite_state.c       # State machine logic
-│   ├── toml.c                  # TOML parser
-│   ├── tts_playback_queue.c    # Queued TTS synthesis + playback
-│   ├── voice_processing.c      # Voice pipeline (~1100 lines)
-│   ├── ws_client.c             # libwebsockets client + background thread
-│   └── ui/                     # SDL2 touchscreen UI (optional, ENABLE_SDL_UI)
-│       ├── sdl_ui.c            # UI lifecycle, event loop, panel rendering
-│       ├── ui_orb.c            # Orb visualization + FFT spectrum bars
-│       ├── ui_orb.h            # Orb context and API
-│       ├── ui_transcript.c     # Scrollable transcript with caching
-│       ├── ui_transcript.h     # Transcript panel types and API
-│       ├── ui_markdown.c       # Inline markdown renderer (bold/italic/code)
-│       ├── ui_markdown.h       # Markdown font set and render API
-│       ├── ui_music.c          # Music player panel (Playing/Queue/Library)
-│       ├── ui_music.h          # Music panel types and API
-│       ├── music_types.h       # Shared music data structures
-│       ├── ui_slider.c         # Brightness/volume slider widgets
-│       ├── ui_slider.h         # Slider types and API
-│       ├── ui_touch.c          # Touch gesture recognition
-│       ├── ui_touch.h          # Touch state types
-│       ├── ui_screensaver.c    # Screensaver (clock + fullscreen visualizer)
-│       ├── ui_screensaver.h    # Screensaver types and API
-│       ├── ui_theme.c          # 5-theme system with crossfade transitions
-│       ├── ui_theme.h          # Theme API (set, tick, accessors)
-│       ├── ui_colors.h         # Color constants + HSV/easing utilities
-│       ├── backlight.c         # Display brightness control
-│       └── backlight.h         # Backlight API (sysfs + software fallback)
+├── assets/fonts/       # TTF fonts (Source Sans 3, IBM Plex Mono)
+├── config/             # Default satellite.toml configuration
+├── include/            # Public headers
+│   └── ui/             # SDL2 UI headers (music_types, orb, transcript, etc.)
+├── src/                # Implementation
+│   └── ui/             # SDL2 touchscreen UI (optional, ENABLE_SDL_UI)
 └── CMakeLists.txt
 
-common/                          # Shared library (daemon + satellite)
+common/                 # Shared library (daemon + satellite)
 ├── include/
-│   ├── asr/
-│   │   ├── asr_engine.h         # Unified ASR abstraction
-│   │   ├── asr_vosk.h           # Vosk streaming backend
-│   │   ├── asr_whisper.h        # Whisper batch backend
-│   │   ├── vad_silero.h         # Silero VAD
-│   │   └── vosk_api.h           # Vosk C API (third-party)
-│   ├── audio/
-│   │   └── ring_buffer.h        # Thread-safe ring buffer
-│   ├── tts/
-│   │   ├── tts_piper.h          # Piper TTS
-│   │   └── tts_preprocessing.h  # Text preprocessing for TTS
-│   ├── utils/
-│   │   ├── sentence_buffer.h    # Sentence boundary detection
-│   │   └── string_utils.h       # String utilities
-│   ├── logging.h                # Shared logging (daemon + satellite)
-│   └── logging_common.h         # Callback-based logging for common lib
-├── src/
-│   ├── asr/
-│   │   ├── asr_engine.c         # Engine dispatch (Whisper/Vosk)
-│   │   ├── asr_vosk.c           # Vosk streaming implementation
-│   │   ├── asr_whisper.c        # Whisper batch implementation
-│   │   └── vad_silero.c         # Silero ONNX VAD
-│   ├── audio/ring_buffer.c
-│   ├── tts/
-│   │   ├── tts_piper.cpp        # Piper synthesis
-│   │   └── tts_preprocessing.cpp
-│   ├── utils/
-│   │   ├── sentence_buffer.c
-│   │   └── string_utils.c
-│   ├── logging.c                # Logging impl + bridge callback
-│   └── logging_common.c
+│   ├── asr/            # ASR engine abstraction (Whisper, Vosk, VAD)
+│   ├── audio/          # Thread-safe ring buffer
+│   ├── tts/            # Piper TTS + text preprocessing
+│   └── utils/          # Sentence buffer, string utilities
+├── src/                # Implementations matching include/ layout
 └── CMakeLists.txt
 ```
 
@@ -460,6 +381,7 @@ Command-line arguments override config file values:
 | `-o, --playback DEV` | ALSA playback device |
 | `-k, --keyboard` | Use keyboard for testing (disables VAD) |
 | `--ca-cert FILE` | Path to CA certificate for SSL verification |
+| `--registration-key KEY` | Pre-shared key for satellite registration |
 | `-I, --no-ssl-verify` | Disable SSL cert verification (dev only) |
 | `-v, --verbose` | Enable debug output |
 
@@ -500,6 +422,8 @@ The CA certificate is embedded at compile time:
 2. Flash the ESP32 with the updated firmware
 3. The ESP32 validates the server certificate against the embedded CA
 
+> **Security note**: WiFi credentials and the session reconnect secret are stored in plaintext on the ESP32 (compiled into the binary and NVS respectively). An attacker with physical access to the device can extract them. For production deployments, consider WiFi provisioning (BLE/SoftAP) to remove credentials from the binary, and ESP-IDF flash encryption to protect NVS contents. These are beyond the current scope of this project.
+
 ### Browser
 
 Install the CA certificate in your OS trust store:
@@ -535,6 +459,45 @@ To include an external IP or domain name (e.g., for port forwarding):
 ```
 
 Only the server certificate needs renewal. The CA (10-year validity) remains unchanged, so clients don't need updating.
+
+## Registration Key
+
+A pre-shared key prevents unauthorized devices from registering as satellites. Without a key, any device on the LAN can register.
+
+### Generate a Key
+
+On the daemon machine:
+
+```bash
+./generate_ssl_cert.sh --gen-key
+```
+
+This generates a 32-byte hex key and appends it to `secrets.toml`. Running it again shows the existing key without regenerating.
+
+### Configure Satellites
+
+**RPi satellite** (`satellite.toml`):
+```toml
+[server]
+registration_key = "your-64-char-hex-key-here"
+```
+
+Or via CLI: `--registration-key <key>`
+
+**ESP32 satellite** (`arduino_secrets.h`):
+```c
+#define SECRET_REGISTRATION_KEY "your-64-char-hex-key-here"
+```
+
+**Environment variable** (alternative for all client types):
+```bash
+export DAWN_SATELLITE_KEY="your-64-char-hex-key-here"
+```
+
+### Behavior
+
+- **Key set on daemon**: Satellites must provide a matching `registration_key` in their `satellite_register` message. Mismatched or missing keys are rejected with a clear error.
+- **No key on daemon**: Registration is open (backward-compatible). The daemon logs a warning at startup.
 
 ## Building for Raspberry Pi
 

@@ -46,6 +46,11 @@
 #include "arduino_secrets.h"
 #include "ca_cert.h"
 
+/* Default for SECRET_REGISTRATION_KEY if not defined in arduino_secrets.h */
+#ifndef SECRET_REGISTRATION_KEY
+#define SECRET_REGISTRATION_KEY ""
+#endif
+
 /* ── Configuration (from arduino_secrets.h — gitignored) ─────────────────── */
 const char *ssid = SECRET_SSID;
 const char *password = SECRET_PASSWORD;
@@ -572,6 +577,11 @@ void sendRegistration() {
    JsonObject hw = payload["hardware"].to<JsonObject>();
    hw["platform"] = "esp32s3";
    hw["memory_mb"] = ESP.getPsramSize() / (1024 * 1024);
+
+   /* Include registration key if configured */
+   if (strlen(SECRET_REGISTRATION_KEY) > 0) {
+      payload["registration_key"] = SECRET_REGISTRATION_KEY;
+   }
 
    /* Include reconnect_secret if we have one from a previous session */
    if (strlen(reconnectSecret) > 0) {

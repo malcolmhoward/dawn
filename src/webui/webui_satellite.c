@@ -26,6 +26,7 @@
 #include <string.h>
 #include <time.h>
 
+#include "config/dawn_config.h"
 #include "core/session_manager.h"
 #include "logging.h"
 #include "webui/webui_internal.h"
@@ -414,6 +415,34 @@ void handle_satellite_register(ws_connection_t *conn, struct json_object *payloa
       if (!valid) {
          send_error_impl(conn->wsi, "INVALID_MESSAGE", "UUID must be hex with dashes (8-4-4-4-12)");
          return;
+      }
+   }
+
+   /* Validate registration key if daemon has one configured */
+   {
+      const secrets_config_t *secrets = config_get_secrets();
+      if (secrets && secrets->satellite_registration_key[0]) {
+         struct json_object *key_obj;
+         const char *provided_key = NULL;
+         if (json_object_object_get_ex(payload, "registration_key", &key_obj)) {
+            provided_key = json_object_get_string(key_obj);
+         }
+
+         if (!provided_key || provided_key[0] == '\0') {
+            LOG_WARNING("Satellite: Registration rejected — no key provided (uuid=%s)", uuid);
+            send_error_impl(conn->wsi, "registration_key_required",
+                            "Server requires a registration key. "
+                            "Set registration_key in satellite config.");
+            return;
+         }
+
+         if (strcmp(provided_key, secrets->satellite_registration_key) != 0) {
+            LOG_WARNING("Satellite: Registration rejected — invalid key (uuid=%s)", uuid);
+            send_error_impl(conn->wsi, "invalid_registration_key",
+                            "Registration key does not match. "
+                            "Check satellite_registration_key in secrets.toml.");
+            return;
+         }
       }
    }
 

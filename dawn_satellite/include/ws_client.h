@@ -358,6 +358,17 @@ const char *ws_client_get_reconnect_secret(ws_client_t *client);
  */
 void ws_client_set_reconnect_secret(ws_client_t *client, const char *secret);
 
+/**
+ * @brief Set the registration key for satellite authentication
+ *
+ * Pre-shared key that must match the daemon's satellite_registration_key.
+ * If not set, registration will only succeed if the daemon has no key configured.
+ *
+ * @param client Client context
+ * @param key Registration key string (64 hex chars from generate_ssl_cert.sh --gen-key)
+ */
+void ws_client_set_registration_key(ws_client_t *client, const char *key);
+
 /* =============================================================================
  * Music Callbacks (typed — ws_client parses JSON, passes structs to UI)
  * ============================================================================= */

@@ -211,6 +211,9 @@ void config_apply_env(dawn_config_t *config, secrets_config_t *secrets) {
    ENV_STRING("SMARTTHINGS_CLIENT_ID", secrets->smartthings_client_id);
    ENV_STRING("SMARTTHINGS_CLIENT_SECRET", secrets->smartthings_client_secret);
 
+   /* Satellite registration key */
+   ENV_SECRET("DAWN_SATELLITE_KEY", secrets->satellite_registration_key);
+
    /* [network] */
    ENV_INT("DAWN_NETWORK_WORKERS", config->network.workers);
    ENV_INT("DAWN_NETWORK_SESSION_TIMEOUT_SEC", config->network.session_timeout_sec);
@@ -793,8 +796,10 @@ void config_dump_settings(const dawn_config_t *config,
           (secrets && secrets->smartthings_access_token[0]) ? "[set]" : "[not set]");
    printf("  SMARTTHINGS_CLIENT_ID                    %s\n",
           (secrets && secrets->smartthings_client_id[0]) ? "[set]" : "[not set]");
-   printf("  SMARTTHINGS_CLIENT_SECRET                %s\n\n",
+   printf("  SMARTTHINGS_CLIENT_SECRET                %s\n",
           (secrets && secrets->smartthings_client_secret[0]) ? "[set]" : "[not set]");
+   printf("  DAWN_SATELLITE_KEY                       %s\n\n",
+          (secrets && secrets->satellite_registration_key[0]) ? "[set]" : "[not set]");
 }
 
 void config_dump_toml(const dawn_config_t *config) {
@@ -1258,6 +1263,9 @@ json_object *secrets_to_json_status(const secrets_config_t *secrets) {
    json_object_object_add(obj, "smartthings_client_secret",
                           json_object_new_boolean(secrets &&
                                                   secrets->smartthings_client_secret[0]));
+   json_object_object_add(obj, "satellite_registration_key",
+                          json_object_new_boolean(secrets &&
+                                                  secrets->satellite_registration_key[0]));
 
    return obj;
 }
@@ -1654,6 +1662,7 @@ int secrets_write_toml(const secrets_config_t *secrets, const char *path) {
    WRITE_SECRET("gemini_api_key", secrets->gemini_api_key);
    WRITE_SECRET("mqtt_username", secrets->mqtt_username);
    WRITE_SECRET("mqtt_password", secrets->mqtt_password);
+   WRITE_SECRET("satellite_registration_key", secrets->satellite_registration_key);
 
    /* SmartThings OAuth client credentials */
    if (secrets->smartthings_client_id[0] || secrets->smartthings_client_secret[0]) {

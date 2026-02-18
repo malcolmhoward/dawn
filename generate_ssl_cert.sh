@@ -40,6 +40,7 @@ CA_CERT_HEADER="$ARDUINO_DIR/ca_cert.h"
 FORCE_CA=0
 RENEW=0
 CHECK=0
+GEN_KEY=0
 EXTRA_SANS=""
 
 while [ $# -gt 0 ]; do
@@ -53,6 +54,9 @@ while [ $# -gt 0 ]; do
       --check)
          CHECK=1
          ;;
+      --gen-key)
+         GEN_KEY=1
+         ;;
       --san)
          if [ -z "$2" ]; then
             echo "Error: --san requires a value (e.g., --san IP:203.0.113.50 or --san DNS:dawn.example.com)"
@@ -62,12 +66,13 @@ while [ $# -gt 0 ]; do
          shift
          ;;
       --help|-h)
-         echo "Usage: $0 [--renew] [--check] [--force-ca] [--san SAN ...]"
+         echo "Usage: $0 [--renew] [--check] [--force-ca] [--gen-key] [--san SAN ...]"
          echo ""
          echo "  (no flags)   Generate CA (if needed) + server certificate"
          echo "  --renew      Regenerate server cert only (reuses existing CA)"
          echo "  --check      Show certificate expiry dates and SANs"
          echo "  --force-ca   Regenerate the CA (WARNING: invalidates all clients!)"
+         echo "  --gen-key    Generate satellite registration key (appends to secrets.toml)"
          echo "  --san SAN    Add extra Subject Alternative Name (repeatable)"
          echo "               Examples: --san IP:203.0.113.50  --san DNS:dawn.example.com"
          echo ""
@@ -81,6 +86,87 @@ while [ $# -gt 0 ]; do
    esac
    shift
 done
+
+# --gen-key: generate satellite registration key and exit
+if [ "$GEN_KEY" -eq 1 ]; then
+   SECRETS_FILE="secrets.toml"
+
+   # Check if key already exists in secrets.toml
+   if [ -f "$SECRETS_FILE" ]; then
+      EXISTING_KEY=$(grep -oP '^\s*satellite_registration_key\s*=\s*"\K[^"]+' "$SECRETS_FILE" 2>/dev/null || true)
+      if [ -n "$EXISTING_KEY" ]; then
+         echo "============================================"
+         echo "  Satellite Registration Key (existing)"
+         echo "============================================"
+         echo ""
+         echo "  Key: $EXISTING_KEY"
+         echo ""
+         echo "A key already exists in $SECRETS_FILE."
+         echo "To regenerate, remove the satellite_registration_key line first."
+         echo ""
+         echo "Copy this key to your satellite configs:"
+         echo "  RPi:   [server] registration_key = \"$EXISTING_KEY\""
+         echo "  ESP32: #define SECRET_REGISTRATION_KEY \"$EXISTING_KEY\""
+         echo ""
+         exit 0
+      fi
+   fi
+
+   # Generate new 32-byte hex key
+   NEW_KEY=$(openssl rand -hex 32)
+
+   # Append to secrets.toml
+   if [ -f "$SECRETS_FILE" ]; then
+      # Check if [secrets] section exists
+      if grep -q '^\[secrets\]' "$SECRETS_FILE"; then
+         # Append after the [secrets] section header (before next section or EOF)
+         # Find line number of [secrets] header
+         SECRETS_LINE=$(grep -n '^\[secrets\]' "$SECRETS_FILE" | head -1 | cut -d: -f1)
+         # Find next section header after [secrets]
+         NEXT_SECTION=$(tail -n +$((SECRETS_LINE + 1)) "$SECRETS_FILE" | grep -n '^\[' | head -1 | cut -d: -f1)
+
+         if [ -n "$NEXT_SECTION" ]; then
+            # Insert before the next section
+            INSERT_LINE=$((SECRETS_LINE + NEXT_SECTION - 1))
+            sed -i "${INSERT_LINE}i\\satellite_registration_key = \"${NEW_KEY}\"" "$SECRETS_FILE"
+         else
+            # No next section, append at end
+            echo "satellite_registration_key = \"${NEW_KEY}\"" >> "$SECRETS_FILE"
+         fi
+      else
+         # No [secrets] section, create it
+         echo "" >> "$SECRETS_FILE"
+         echo "[secrets]" >> "$SECRETS_FILE"
+         echo "satellite_registration_key = \"${NEW_KEY}\"" >> "$SECRETS_FILE"
+      fi
+   else
+      # Create new secrets.toml
+      echo "[secrets]" > "$SECRETS_FILE"
+      echo "satellite_registration_key = \"${NEW_KEY}\"" >> "$SECRETS_FILE"
+      chmod 600 "$SECRETS_FILE"
+   fi
+
+   echo "============================================"
+   echo "  Satellite Registration Key (new)"
+   echo "============================================"
+   echo ""
+   echo "  Key: $NEW_KEY"
+   echo "  Saved to: $SECRETS_FILE"
+   echo ""
+   echo "Copy this key to your satellite configs:"
+   echo ""
+   echo "  RPi satellite.toml:"
+   echo "    [server]"
+   echo "    registration_key = \"$NEW_KEY\""
+   echo ""
+   echo "  ESP32 arduino_secrets.h:"
+   echo "    #define SECRET_REGISTRATION_KEY \"$NEW_KEY\""
+   echo ""
+   echo "  Environment variable (alternative):"
+   echo "    DAWN_SATELLITE_KEY=\"$NEW_KEY\""
+   echo ""
+   exit 0
+fi
 
 # --check: display certificate info and exit
 if [ "$CHECK" -eq 1 ]; then

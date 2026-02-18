@@ -413,6 +413,9 @@ typedef struct {
    char smartthings_access_token[CONFIG_API_KEY_MAX]; /* PAT mode (preferred) */
    char smartthings_client_id[CONFIG_CREDENTIAL_MAX]; /* OAuth2 mode */
    char smartthings_client_secret[CONFIG_API_KEY_MAX];
+
+   /* Pre-shared key for satellite registration (empty = open registration) */
+   char satellite_registration_key[CONFIG_CREDENTIAL_MAX];
 } secrets_config_t;
 
 /* =============================================================================

@@ -79,7 +79,8 @@ typedef struct satellite_config {
       uint16_t port;
       bool ssl;
       bool ssl_verify; /* Verify SSL certificates (default: true for production) */
-      char ca_cert_path[CONFIG_PATH_SIZE]; /* Path to CA cert for SSL verification */
+      char ca_cert_path[CONFIG_PATH_SIZE];       /* Path to CA cert for SSL verification */
+      char registration_key[CONFIG_SECRET_SIZE]; /* Pre-shared key for satellite registration */
       uint32_t reconnect_delay_ms;
       uint32_t max_reconnect_attempts;
    } server;

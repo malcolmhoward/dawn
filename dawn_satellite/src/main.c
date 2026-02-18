@@ -136,6 +136,7 @@ static void print_usage(const char *prog) {
    printf("  -S, --ssl            Use secure WebSocket (wss://)\n");
    printf("  -I, --no-ssl-verify  Disable SSL certificate verification (dev only!)\n");
    printf("      --ca-cert FILE   Path to CA certificate for SSL verification\n");
+   printf("      --registration-key KEY  Pre-shared key for satellite registration\n");
    printf("  -N, --name NAME      Satellite name (default: Satellite)\n");
    printf("  -L, --location LOC   Satellite location (default: unset)\n");
 #else
@@ -712,6 +713,7 @@ int main(int argc, char *argv[]) {
    int cli_ssl = -1;
    int cli_ssl_verify = -1; /* -1=default, 0=disable, 1=enable */
    const char *cli_ca_cert = NULL;
+   const char *cli_registration_key = NULL;
    const char *cli_capture = NULL;
    const char *cli_playback = NULL;
    const char *cli_name = NULL;
@@ -738,6 +740,7 @@ int main(int argc, char *argv[]) {
                                            { "ssl", no_argument, 0, 'S' },
                                            { "no-ssl-verify", no_argument, 0, 'I' },
                                            { "ca-cert", required_argument, 0, 256 },
+                                           { "registration-key", required_argument, 0, 257 },
                                            { "name", required_argument, 0, 'N' },
                                            { "location", required_argument, 0, 'L' },
                                            { "voice", no_argument, 0, 'V' },
@@ -799,6 +802,9 @@ int main(int argc, char *argv[]) {
          case 256: /* --ca-cert */
             cli_ca_cert = optarg;
             break;
+         case 257: /* --registration-key */
+            cli_registration_key = optarg;
+            break;
          case 'N':
             cli_name = optarg;
             break;
@@ -832,6 +838,14 @@ int main(int argc, char *argv[]) {
    satellite_config_apply_overrides(&config, cli_server, cli_port, cli_ssl, cli_ssl_verify,
                                     cli_ca_cert, cli_name, cli_location, cli_capture, cli_playback,
                                     cli_num_leds, use_keyboard);
+
+   /* Apply registration key override (not part of satellite_config_apply_overrides
+    * to avoid further expanding its already-long parameter list) */
+   if (cli_registration_key && cli_registration_key[0]) {
+      strncpy(config.server.registration_key, cli_registration_key,
+              sizeof(config.server.registration_key) - 1);
+      config.server.registration_key[sizeof(config.server.registration_key) - 1] = '\0';
+   }
 
    /* Ensure we have a UUID */
    satellite_config_ensure_uuid(&config);
@@ -1015,6 +1029,11 @@ int main(int argc, char *argv[]) {
          if (!ws) {
             fprintf(stderr, "Failed to create WebSocket client\n");
             break;
+         }
+
+         /* Set registration key if configured */
+         if (config.server.registration_key[0]) {
+            ws_client_set_registration_key(ws, config.server.registration_key);
          }
 
          /* Attempt connection */

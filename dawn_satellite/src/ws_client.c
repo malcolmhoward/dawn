@@ -99,6 +99,9 @@ struct ws_client {
    music_playback_t *music_pb;
 #endif
 
+   /* Registration key for satellite authentication */
+   char registration_key[65]; /* 32 bytes hex-encoded + null */
+
    /* Error message */
    char error_msg[256];
 
@@ -1012,6 +1015,12 @@ int ws_client_register(ws_client_t *client,
    json_object_object_add(payload, "location", json_object_new_string(identity->location));
    json_object_object_add(payload, "tier", json_object_new_int(1)); /* Tier 1 */
 
+   /* Include registration key if configured (for satellite authentication) */
+   if (client->registration_key[0]) {
+      json_object_object_add(payload, "registration_key",
+                             json_object_new_string(client->registration_key));
+   }
+
    /* Include reconnect_secret if we have one (for session reclamation)
     * SECURITY: This allows the server to verify we own this session */
    if (identity->reconnect_secret[0]) {
@@ -1189,6 +1198,17 @@ void ws_client_set_reconnect_secret(ws_client_t *client, const char *secret) {
    strncpy(client->identity.reconnect_secret, secret,
            sizeof(client->identity.reconnect_secret) - 1);
    client->identity.reconnect_secret[sizeof(client->identity.reconnect_secret) - 1] = '\0';
+   pthread_mutex_unlock(&client->mutex);
+}
+
+void ws_client_set_registration_key(ws_client_t *client, const char *key) {
+   if (!client || !key) {
+      return;
+   }
+
+   pthread_mutex_lock(&client->mutex);
+   strncpy(client->registration_key, key, sizeof(client->registration_key) - 1);
+   client->registration_key[sizeof(client->registration_key) - 1] = '\0';
    pthread_mutex_unlock(&client->mutex);
 }
 

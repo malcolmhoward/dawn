@@ -1110,6 +1110,8 @@ int config_parse_secrets(const char *path, secrets_config_t *secrets) {
       PARSE_STRING(secrets_section, "gemini_api_key", secrets->gemini_api_key);
       PARSE_STRING(secrets_section, "mqtt_username", secrets->mqtt_username);
       PARSE_STRING(secrets_section, "mqtt_password", secrets->mqtt_password);
+      PARSE_STRING(secrets_section, "satellite_registration_key",
+                   secrets->satellite_registration_key);
 
       /* Parse [secrets.smartthings] sub-section for authentication
        * Supports two modes:

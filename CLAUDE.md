@@ -388,6 +388,8 @@ Currently no automated test framework. Manual testing involves:
 2. SmartThings OAuth blocked at AWS WAF level (403 Forbidden)
 
 **Recently Completed:**
+- Satellite registration key (pre-shared key authentication for satellite registration)
+- Private CA for TLS validation (all client types: ESP32, RPi, browser)
 - LLM playlist builder (add/remove/clear_queue actions) with genre search
 - Genre extraction and DB indexing for music library
 - Music/TTS race condition fixes (pause daemon during TTS)

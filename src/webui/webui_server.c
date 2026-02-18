@@ -3714,6 +3714,17 @@ int webui_server_init(int port, const char *www_path) {
    }
 
    LOG_INFO("WebUI: Server started successfully on port %d", port);
+
+   /* Warn if satellite registration is open (no pre-shared key configured) */
+   const secrets_config_t *secrets = config_get_secrets();
+   if (!secrets || !secrets->satellite_registration_key[0]) {
+      LOG_WARNING("WebUI: Satellite registration is OPEN (no registration key set)");
+      LOG_WARNING("WebUI: Any device on the network can register as a satellite.");
+      LOG_WARNING("WebUI: Generate a key with: ./generate_ssl_cert.sh --gen-key");
+   } else {
+      LOG_INFO("WebUI: Satellite registration key is active");
+   }
+
    return WEBUI_SUCCESS;
 }
 
