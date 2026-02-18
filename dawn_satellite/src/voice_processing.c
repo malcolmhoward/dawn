@@ -286,6 +286,7 @@ static void on_stream_callback(const char *text, bool is_end, void *user_data) {
 }
 
 static void on_state_callback(const char *state_str, void *user_data) {
+   (void)state_str; /* Used by LOG_DEBUG when debug logging is enabled */
    voice_ctx_t *ctx = (voice_ctx_t *)user_data;
    if (ctx) {
       ctx->last_server_activity = time(NULL);
@@ -412,6 +413,7 @@ static void init_wake_words(voice_ctx_t *ctx) {
             ctx->wakeWords[1]);
 }
 
+#ifdef HAVE_ASR_ENGINE
 /**
  * Normalize text for wake word matching.
  * Converts to lowercase, keeps only letters/digits/spaces, removes punctuation.
@@ -516,6 +518,7 @@ static bool check_wake_word(voice_ctx_t *ctx, const char *text, char **command_o
    free(normalized);
    return false;
 }
+#endif /* HAVE_ASR_ENGINE */
 
 /* =============================================================================
  * Sentence Buffer Callback (for streaming TTS)

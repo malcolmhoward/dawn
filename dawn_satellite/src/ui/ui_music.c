@@ -1161,6 +1161,10 @@ static void render_queue(ui_music_t *m, SDL_Renderer *r) {
             SDL_Rect bar = { bar_x, y, bar_w, header_h };
             SDL_RenderFillRect(r, &bar);
 
+            /* Layout: "Clear queue?" left-aligned, "No" and "Yes" right-aligned.
+             * Touch zones split at midpoint — "No" left half, "Yes" right half. */
+            int midpoint = bar_x + bar_w / 2;
+
             /* "Clear queue?" label (left-aligned in bar) */
             if (m->slabel_tex[SLABEL_CONFIRM_MSG]) {
                SDL_SetTextureColorMod(m->slabel_tex[SLABEL_CONFIRM_MSG], 255, 255, 255);
@@ -1170,22 +1174,21 @@ static void render_queue(ui_music_t *m, SDL_Renderer *r) {
                SDL_RenderCopy(r, m->slabel_tex[SLABEL_CONFIRM_MSG], NULL, &mdst);
             }
 
-            /* "No" centered in left half, "Yes" centered in right half.
-             * Touch zones split at midpoint — labels must match. */
-            int midpoint = bar_x + bar_w / 2;
+            /* "No" centered between midpoint and 3/4 mark */
             if (m->slabel_tex[SLABEL_CONFIRM_NO]) {
                SDL_SetTextureColorMod(m->slabel_tex[SLABEL_CONFIRM_NO], 200, 200, 200);
                int nw = m->slabel_w[SLABEL_CONFIRM_NO];
                int nh = m->slabel_h[SLABEL_CONFIRM_NO];
-               int no_cx = bar_x + bar_w / 4;
+               int no_cx = midpoint + bar_w / 8;
                SDL_Rect ndst = { no_cx - nw / 2, y + (header_h - nh) / 2, nw, nh };
                SDL_RenderCopy(r, m->slabel_tex[SLABEL_CONFIRM_NO], NULL, &ndst);
             }
+            /* "Yes" centered between 3/4 mark and right edge */
             if (m->slabel_tex[SLABEL_CONFIRM_YES]) {
                SDL_SetTextureColorMod(m->slabel_tex[SLABEL_CONFIRM_YES], 255, 255, 255);
                int yw = m->slabel_w[SLABEL_CONFIRM_YES];
                int yh = m->slabel_h[SLABEL_CONFIRM_YES];
-               int yes_cx = midpoint + bar_w / 4;
+               int yes_cx = midpoint + 3 * bar_w / 8;
                SDL_Rect ydst = { yes_cx - yw / 2, y + (header_h - yh) / 2, yw, yh };
                SDL_RenderCopy(r, m->slabel_tex[SLABEL_CONFIRM_YES], NULL, &ydst);
             }
@@ -2096,11 +2099,12 @@ bool ui_music_handle_tap(ui_music_t *m, int x, int y) {
             if (SDL_GetTicks() - m->confirm_clear_ms > CONFIRM_TIMEOUT_MS) {
                m->confirm_clear_pending = false;
             } else {
-               /* Divide right half into "No" and "Yes" zones */
+               /* "No" and "Yes" labels are in the right half of the bar.
+                * Split at 3/4 mark: left of it = No, right of it = Yes. */
                int bar_x = m->panel_x + m->panel_w / 2;
                int bar_w = m->panel_w - m->panel_w / 2;
-               int midpoint = bar_x + bar_w / 2;
-               if (x >= midpoint) {
+               int split = bar_x + bar_w / 2 + bar_w / 4;
+               if (x >= split) {
                   /* "Yes" — confirm clear */
                   if (m->ws && m->queue_count > 0) {
                      ws_client_send_music_queue(m->ws, "clear", NULL, -1);

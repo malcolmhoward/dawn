@@ -493,7 +493,7 @@ static SDL_Texture *build_music_note_icon(SDL_Renderer *r, int sz) {
 void ui_transcript_render(ui_transcript_t *t, SDL_Renderer *renderer, voice_state_t state) {
    if (!t || !renderer)
       return;
-   ui_color_t bg1 = ui_theme_bg(1), bg2 = ui_theme_bg(2);
+   ui_color_t bg1 = ui_theme_bg(1);
    ui_color_t txt0 = ui_theme_text(0), txt1 = ui_theme_text(1);
 
    /* Draw panel background */
@@ -613,7 +613,8 @@ void ui_transcript_render(ui_transcript_t *t, SDL_Renderer *renderer, voice_stat
                if (b < wifi_bars) {
                   SDL_SetRenderDrawColor(renderer, txt1.r, txt1.g, txt1.b, 255);
                } else {
-                  SDL_SetRenderDrawColor(renderer, bg2.r, bg2.g, bg2.b, 255);
+                  ui_color_t dim = ui_theme_text(2);
+                  SDL_SetRenderDrawColor(renderer, dim.r, dim.g, dim.b, 255);
                }
 
                SDL_Rect bar_rect = { bx, by, bar_w, bar_h };

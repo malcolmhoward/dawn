@@ -37,6 +37,7 @@
 #include <math.h>
 #include <net/if.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
@@ -121,10 +122,6 @@ struct sdl_ui {
    int width;
    int height;
 
-   /* Cached logical-to-physical mapping (computed once at init and on resize) */
-   float logical_scale; /* min(phys_w/width, phys_h/height) */
-   float logical_off_x; /* Letterbox X offset in physical pixels */
-   float logical_off_y; /* Letterbox Y offset in physical pixels */
    char ai_name[32];
    char font_dir[256];
    char satellite_name[64];
@@ -236,35 +233,6 @@ static double get_time_sec(void) {
    return ts.tv_sec + ts.tv_nsec / 1e9;
 }
 
-/** @brief Recompute cached logical-to-physical mapping from renderer output size. */
-static void update_logical_scale(sdl_ui_t *ui) {
-   int out_w, out_h;
-   SDL_GetRendererOutputSize(ui->renderer, &out_w, &out_h);
-   if (out_w <= 0 || out_h <= 0 || ui->width <= 0 || ui->height <= 0) {
-      ui->logical_scale = 1.0f;
-      ui->logical_off_x = 0.0f;
-      ui->logical_off_y = 0.0f;
-      return;
-   }
-   float sx = (float)out_w / ui->width;
-   float sy = (float)out_h / ui->height;
-   ui->logical_scale = (sx < sy) ? sx : sy;
-   ui->logical_off_x = (out_w - ui->width * ui->logical_scale) / 2.0f;
-   ui->logical_off_y = (out_h - ui->height * ui->logical_scale) / 2.0f;
-}
-
-/**
- * @brief Convert physical mouse coordinates to logical coordinates.
- *
- * Touch events use normalized 0.0–1.0 values (already logical), but mouse
- * events report physical pixel positions. Uses cached scale/offset computed
- * at init and on window resize.
- */
-static void mouse_to_logical(sdl_ui_t *ui, int px, int py, int *lx, int *ly) {
-   float s = ui->logical_scale;
-   *lx = (int)((px - ui->logical_off_x) / s);
-   *ly = (int)((py - ui->logical_off_y) / s);
-}
 
 /* =============================================================================
  * Panel Animation Helpers
@@ -1013,8 +981,11 @@ static int sdl_init_on_thread(sdl_ui_t *ui) {
    /* Hint KMSDRM backend for Pi OS Lite (no X11) */
    SDL_SetHint("SDL_VIDEO_DRIVER", "kmsdrm,x11,wayland");
 
-   /* Disable synthetic mouse events from touch — prevents double-processing scroll */
+   /* Disable synthetic events between touch and mouse — prevents double-processing.
+    * TOUCH_MOUSE_EVENTS=0: real touches don't generate SDL_MOUSE* events.
+    * MOUSE_TOUCH_EVENTS=0: real mouse doesn't generate SDL_FINGER* events. */
    SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
+   SDL_SetHint(SDL_HINT_MOUSE_TOUCH_EVENTS, "0");
 
    /* Initialize SDL */
    if (SDL_Init(SDL_INIT_VIDEO) < 0) {
@@ -1078,12 +1049,11 @@ static int sdl_init_on_thread(sdl_ui_t *ui) {
     * SDL scales the logical canvas to fit the physical display, adding letterbox
     * bars if the aspect ratio differs. */
    SDL_RenderSetLogicalSize(ui->renderer, ui->width, ui->height);
-   update_logical_scale(ui);
 
    int phys_w, phys_h;
    SDL_GetRendererOutputSize(ui->renderer, &phys_w, &phys_h);
    LOG_INFO("SDL UI: logical=%dx%d physical=%dx%d scale=%.2fx", ui->width, ui->height, phys_w,
-            phys_h, ui->logical_scale);
+            phys_h, (float)phys_w / ui->width);
 
    /* Initialize orb rendering (pre-generate glow textures) */
    ui_orb_init(&ui->orb, ui->renderer);
@@ -1582,7 +1552,31 @@ static void *render_thread_func(void *arg) {
       while (SDL_PollEvent(&event)) {
          if (event.type == SDL_QUIT) {
             ui->running = false;
+            raise(SIGINT); /* Trigger main thread shutdown via signal handler */
             break;
+         }
+
+         /* F11: toggle fullscreen/windowed for desktop testing */
+         if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_F11) {
+            Uint32 flags = SDL_GetWindowFlags(ui->window);
+            if (flags & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP)) {
+               SDL_SetWindowFullscreen(ui->window, 0);
+               SDL_SetWindowResizable(ui->window, SDL_TRUE);
+               SDL_ShowCursor(SDL_ENABLE);
+               SDL_SetWindowSize(ui->window, ui->width, ui->height);
+            } else {
+               SDL_SetWindowFullscreen(ui->window, SDL_WINDOW_FULLSCREEN_DESKTOP);
+               SDL_ShowCursor(SDL_DISABLE);
+            }
+            LOG_INFO("SDL UI: toggled fullscreen (now %s)",
+                     (SDL_GetWindowFlags(ui->window) & SDL_WINDOW_FULLSCREEN_DESKTOP) ? "fullscreen"
+                                                                                      : "windowed");
+            continue;
+         }
+
+         /* Force redraw on expose so content follows window moves */
+         if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_EXPOSED) {
+            render_frame(ui, get_time_sec() - start_time);
          }
 
          /* Screensaver touch handling: transport buttons pass through, others dismiss */
@@ -1594,7 +1588,8 @@ static void *render_thread_func(void *arg) {
                   tx = (int)(event.tfinger.x * ui->width);
                   ty = (int)(event.tfinger.y * ui->height);
                } else {
-                  mouse_to_logical(ui, event.button.x, event.button.y, &tx, &ty);
+                  tx = event.button.x;
+                  ty = event.button.y;
                }
 
                /* Check transport buttons in visualizer mode */
@@ -1616,12 +1611,26 @@ static void *render_thread_func(void *arg) {
             ui_screensaver_activity(&ui->screensaver, time_sec);
          }
 
-         /* Transcript scroll via manual finger position tracking.
-          * Using absolute positions instead of tfinger.dy for reliability
-          * across different touch drivers (KMSDRM, evdev, etc.). */
-         if (event.type == SDL_FINGERDOWN) {
-            int fx = (int)(event.tfinger.x * ui->width);
-            int fy = (int)(event.tfinger.y * ui->height);
+         /* Unified finger/mouse position tracking for sliders, scroll, etc.
+          * Finger events use normalized 0.0–1.0 × window size; mouse events
+          * arrive in logical coords (SDL_RenderSetLogicalSize handles mapping). */
+         bool is_down = (event.type == SDL_FINGERDOWN || (event.type == SDL_MOUSEBUTTONDOWN &&
+                                                          event.button.button == SDL_BUTTON_LEFT));
+         bool is_motion = (event.type == SDL_FINGERMOTION ||
+                           (event.type == SDL_MOUSEMOTION &&
+                            (event.motion.state & SDL_BUTTON_LMASK)));
+         bool is_up = (event.type == SDL_FINGERUP ||
+                       (event.type == SDL_MOUSEBUTTONUP && event.button.button == SDL_BUTTON_LEFT));
+
+         if (is_down) {
+            int fx, fy;
+            if (event.type == SDL_FINGERDOWN) {
+               fx = (int)(event.tfinger.x * ui->width);
+               fy = (int)(event.tfinger.y * ui->height);
+            } else {
+               fx = event.button.x;
+               fy = event.button.y;
+            }
 
             /* Settings panel sliders take priority when visible */
             if (ui->panel_settings.visible && !ui->panel_settings.closing && fy < PANEL_HEIGHT &&
@@ -1677,7 +1686,7 @@ static void *render_thread_func(void *arg) {
                }
             } else if (ui->panel_music.visible && !ui->panel_music.closing &&
                        fx >= ui->music.panel_x) {
-               /* Finger in music panel — scroll music lists */
+               /* Finger/mouse in music panel — scroll music lists */
                ui->finger_scrolling = true;
                ui->finger_last_y = fy;
                ui_music_handle_finger_down(&ui->music, fx, fy);
@@ -1687,9 +1696,15 @@ static void *render_thread_func(void *arg) {
             } else {
                ui->finger_scrolling = false;
             }
-         } else if (event.type == SDL_FINGERMOTION) {
-            int new_x = (int)(event.tfinger.x * ui->width);
-            int new_y = (int)(event.tfinger.y * ui->height);
+         } else if (is_motion) {
+            int new_x, new_y;
+            if (event.type == SDL_FINGERMOTION) {
+               new_x = (int)(event.tfinger.x * ui->width);
+               new_y = (int)(event.tfinger.y * ui->height);
+            } else {
+               new_x = event.motion.x;
+               new_y = event.motion.y;
+            }
 
             /* Settings panel slider drag */
             if (ui->sliders_initialized) {
@@ -1706,8 +1721,13 @@ static void *render_thread_func(void *arg) {
             }
 
             if (ui->finger_scrolling) {
-               int dy = new_y - ui->finger_last_y;
-               ui->finger_last_y = new_y;
+               int dy;
+               if (event.type == SDL_FINGERMOTION) {
+                  dy = new_y - ui->finger_last_y;
+                  ui->finger_last_y = new_y;
+               } else {
+                  dy = event.motion.yrel;
+               }
                if (dy != 0) {
                   if (ui->panel_music.visible && !ui->panel_music.closing) {
                      ui_music_scroll(&ui->music, dy);
@@ -1716,7 +1736,7 @@ static void *render_thread_func(void *arg) {
                   }
                }
             }
-         } else if (event.type == SDL_FINGERUP) {
+         } else if (is_up) {
             ui->finger_scrolling = false;
 
             /* Persist slider values to config on release */
@@ -1730,34 +1750,6 @@ static void *render_thread_func(void *arg) {
             ui_slider_finger_up(&ui->brightness_slider);
             ui_slider_finger_up(&ui->volume_slider);
             ui_music_handle_finger_up(&ui->music);
-         } else if (event.type == SDL_MOUSEMOTION && (event.motion.state & SDL_BUTTON_LMASK)) {
-            /* Mouse fallback for desktop testing — convert to logical coords */
-            int mlx, mly;
-            mouse_to_logical(ui, event.motion.x, event.motion.y, &mlx, &mly);
-            int dy = (int)(event.motion.yrel / ui->logical_scale);
-            if (ui->panel_music.visible && !ui->panel_music.closing && mlx >= ui->music.panel_x) {
-               if (dy != 0) {
-                  ui_music_scroll(&ui->music, dy);
-               }
-            } else if (mlx > ORB_PANEL_WIDTH && !panel_any_open(ui)) {
-               if (dy != 0) {
-                  ui_transcript_scroll(&ui->transcript, dy);
-               }
-            }
-         }
-
-         /* Convert mouse event coordinates to logical before gesture processing.
-          * The event is a local copy from SDL_PollEvent so mutation is safe. */
-         if (event.type == SDL_MOUSEBUTTONDOWN || event.type == SDL_MOUSEBUTTONUP) {
-            int lx, ly;
-            mouse_to_logical(ui, event.button.x, event.button.y, &lx, &ly);
-            event.button.x = lx;
-            event.button.y = ly;
-         } else if (event.type == SDL_MOUSEMOTION) {
-            int lx, ly;
-            mouse_to_logical(ui, event.motion.x, event.motion.y, &lx, &ly);
-            event.motion.x = lx;
-            event.motion.y = ly;
          }
 
          touch_gesture_t gesture = ui_touch_process_event(&ui->touch, &event, time_sec);
