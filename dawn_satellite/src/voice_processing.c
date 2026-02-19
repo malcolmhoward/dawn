@@ -506,6 +506,10 @@ static bool check_wake_word(voice_ctx_t *ctx, const char *text, char **command_o
 
             if (*after_wake != '\0') {
                *command_out = strdup(after_wake);
+               /* Capitalize first letter of the extracted command */
+               if (*command_out && (*command_out)[0] >= 'a' && (*command_out)[0] <= 'z') {
+                  (*command_out)[0] -= 32;
+               }
                LOG_DEBUG("Command after wake word: '%s'", *command_out);
             }
          }
@@ -1372,8 +1376,13 @@ int voice_processing_loop(voice_ctx_t *ctx,
                                  printf("\n>>> Command: %s\n\n", command_text);
                                  fflush(stdout);
 
-                                 /* Reset for new response (lock for buffer access) */
+                                 /* Store user text for UI display */
                                  pthread_mutex_lock(&ctx->response_mutex);
+                                 snprintf(ctx->user_text, sizeof(ctx->user_text), "%s",
+                                          command_text);
+                                 atomic_store(&ctx->user_text_new, true);
+
+                                 /* Reset for new response */
                                  ctx->response_buffer[0] = '\0';
                                  ctx->response_len = 0;
                                  pthread_mutex_unlock(&ctx->response_mutex);

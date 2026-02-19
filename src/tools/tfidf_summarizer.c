@@ -56,6 +56,9 @@
 /* MMR lambda: balance between relevance (1.0) and diversity (0.0) */
 #define MMR_LAMBDA 0.7f
 
+/* Maximum vocabulary size for dense MMR vectors (guards against pathological inputs) */
+#define MAX_VOCAB_SIZE 20000
+
 /* =============================================================================
  * Noise Keywords - Sentences containing these are filtered (non-article content)
  * ============================================================================= */
@@ -132,13 +135,13 @@ typedef struct hash_entry {
 
 /* Sentence with its score */
 typedef struct {
-   const char *start;          /* Pointer to start of sentence in original text */
-   size_t length;              /* Length of sentence */
-   float score;                /* TF-IDF score */
-   int original_idx;           /* Original position for maintaining order */
-   bool selected;              /* Selected for summary */
-   hash_entry_t **word_vector; /* Cached word vector for MMR (NULL if not built) */
-   float magnitude;            /* Cached magnitude for cosine similarity */
+   const char *start;   /* Pointer to start of sentence in original text */
+   size_t length;       /* Length of sentence */
+   float score;         /* TF-IDF score */
+   int original_idx;    /* Original position for maintaining order */
+   bool selected;       /* Selected for summary */
+   float *tfidf_vector; /* Dense TF-IDF vector for MMR (NULL if not built) */
+   float magnitude;     /* Cached magnitude for cosine similarity */
 } sentence_t;
 
 /* =============================================================================
@@ -771,117 +774,154 @@ static void calculate_tfidf_scores(sentence_t *sentences,
 }
 
 /* =============================================================================
- * MMR (Maximal Marginal Relevance) Selection
+ * MMR (Maximal Marginal Relevance) Selection — Dense Vector Implementation
  * ============================================================================= */
 
-/* Context for building word vector */
+/**
+ * @brief Set a specific value for a word in the hash table
+ */
+static void hash_table_set(hash_entry_t **table, const char *word, int value) {
+   unsigned int idx = hash_fnv1a(word);
+   hash_entry_t *entry = table[idx];
+
+   while (entry) {
+      if (strcmp(entry->word, word) == 0) {
+         entry->doc_freq = value;
+         return;
+      }
+      entry = entry->next;
+   }
+
+   hash_entry_t *new_entry = calloc(1, sizeof(hash_entry_t));
+   if (!new_entry) {
+      return;
+   }
+   strncpy(new_entry->word, word, MAX_WORD_LEN - 1);
+   new_entry->doc_freq = value;
+   new_entry->next = table[idx];
+   table[idx] = new_entry;
+}
+
+/**
+ * @brief Build vocabulary index from document frequency table
+ *
+ * Assigns a unique integer index (1-based) to each word so hash_table_get()
+ * returning 0 unambiguously means "not found".
+ * @return Number of unique words in vocabulary
+ */
+static int build_vocabulary(hash_entry_t **doc_freq_table, hash_entry_t **vocab_table) {
+   int idx = 1;
+   for (int i = 0; i < HASH_TABLE_SIZE; i++) {
+      hash_entry_t *entry = doc_freq_table[i];
+      while (entry) {
+         hash_table_set(vocab_table, entry->word, idx);
+         idx++;
+         entry = entry->next;
+      }
+   }
+   return idx - 1;
+}
+
+/* Context for counting words in a sentence */
 typedef struct {
    hash_entry_t **word_counts;
-   hash_entry_t **doc_freq_table;
-   int total_sentences;
-   float magnitude_sq;
-} word_vector_context_t;
+} word_count_context_t;
 
-static void build_word_vector_callback(const char *word, void *userdata) {
-   word_vector_context_t *ctx = (word_vector_context_t *)userdata;
+static void count_words_vector_callback(const char *word, void *userdata) {
+   word_count_context_t *ctx = (word_count_context_t *)userdata;
    hash_table_increment(ctx->word_counts, word);
 }
 
 /**
- * @brief Build and cache word vectors for all non-filtered sentences
- * This is called once before MMR selection to avoid repeated allocations
+ * @brief Build dense TF-IDF vectors for all non-filtered sentences
+ *
+ * Instead of hash-table-based sparse vectors, builds dense float arrays
+ * indexed by a global vocabulary mapping. Cosine similarity becomes a
+ * simple sequential dot product — cache-friendly and fast.
  */
-static void build_all_word_vectors(sentence_t *sentences,
-                                   int num_sentences,
-                                   hash_entry_t **doc_freq_table) {
+static void build_all_dense_vectors(sentence_t *sentences,
+                                    int num_sentences,
+                                    hash_entry_t **doc_freq_table,
+                                    hash_entry_t **vocab_table,
+                                    int vocab_size) {
+   hash_entry_t **word_counts = hash_table_create();
+   if (!word_counts) {
+      return;
+   }
+
    for (int i = 0; i < num_sentences; i++) {
-      /* Skip filtered sentences */
       if (sentences[i].score < 0.0f) {
-         sentences[i].word_vector = NULL;
+         sentences[i].tfidf_vector = NULL;
          sentences[i].magnitude = 0.0f;
          continue;
       }
 
-      /* Create word vector */
-      hash_entry_t **vec = hash_table_create();
+      float *vec = calloc(vocab_size, sizeof(float));
       if (!vec) {
-         sentences[i].word_vector = NULL;
+         sentences[i].tfidf_vector = NULL;
          sentences[i].magnitude = 0.0f;
          continue;
       }
 
-      word_vector_context_t ctx = { .word_counts = vec,
-                                    .doc_freq_table = doc_freq_table,
-                                    .total_sentences = num_sentences,
-                                    .magnitude_sq = 0.0f };
-
-      process_sentence_words(sentences[i].start, sentences[i].length, build_word_vector_callback,
+      /* Count word frequencies in this sentence */
+      word_count_context_t ctx = { .word_counts = word_counts };
+      process_sentence_words(sentences[i].start, sentences[i].length, count_words_vector_callback,
                              &ctx);
 
-      /* Pre-compute magnitude for cosine similarity */
+      /* Convert to dense TF-IDF vector */
       float mag_sq = 0.0f;
       for (int j = 0; j < HASH_TABLE_SIZE; j++) {
-         hash_entry_t *entry = vec[j];
+         hash_entry_t *entry = word_counts[j];
          while (entry) {
-            int df = hash_table_get(doc_freq_table, entry->word);
-            float idf = (df > 0) ? logf((float)num_sentences / (float)df) : 0.0f;
-            float tfidf = (float)entry->doc_freq * idf;
-            mag_sq += tfidf * tfidf;
+            int word_idx = hash_table_get(vocab_table, entry->word);
+            if (word_idx > 0) {
+               int df = hash_table_get(doc_freq_table, entry->word);
+               float idf = (df > 0) ? logf((float)num_sentences / (float)df) : 0.0f;
+               float tfidf = (float)entry->doc_freq * idf;
+               vec[word_idx - 1] = tfidf;
+               mag_sq += tfidf * tfidf;
+            }
             entry = entry->next;
          }
       }
 
-      sentences[i].word_vector = vec;
+      hash_table_clear(word_counts);
+
+      sentences[i].tfidf_vector = vec;
       sentences[i].magnitude = sqrtf(mag_sq);
    }
+
+   hash_table_free(word_counts);
 }
 
 /**
- * @brief Free all cached word vectors
+ * @brief Free all dense TF-IDF vectors
  */
-static void free_all_word_vectors(sentence_t *sentences, int num_sentences) {
+static void free_all_dense_vectors(sentence_t *sentences, int num_sentences) {
    for (int i = 0; i < num_sentences; i++) {
-      if (sentences[i].word_vector) {
-         hash_table_free(sentences[i].word_vector);
-         sentences[i].word_vector = NULL;
-      }
+      free(sentences[i].tfidf_vector);
+      sentences[i].tfidf_vector = NULL;
    }
 }
 
 /**
- * @brief Compute cosine similarity between two sentences using cached word vectors
+ * @brief Compute cosine similarity between two sentences using dense vectors
+ *
+ * Simple dot product over dense float arrays — cache-friendly and fast.
  */
-static float compute_sentence_similarity_cached(const sentence_t *s1,
-                                                const sentence_t *s2,
-                                                hash_entry_t **doc_freq_table,
-                                                int total_sentences) {
-   /* Use cached vectors */
-   if (!s1->word_vector || !s2->word_vector) {
+static float compute_similarity_dense(const sentence_t *s1, const sentence_t *s2, int vocab_size) {
+   if (!s1->tfidf_vector || !s2->tfidf_vector) {
       return 0.0f;
    }
-
    if (s1->magnitude == 0.0f || s2->magnitude == 0.0f) {
       return 0.0f;
    }
 
-   /* Compute dot product by iterating through s1's vector */
-   float dot_product = 0.0f;
-   for (int i = 0; i < HASH_TABLE_SIZE; i++) {
-      hash_entry_t *entry = s1->word_vector[i];
-      while (entry) {
-         int count2 = hash_table_get(s2->word_vector, entry->word);
-         if (count2 > 0) {
-            int df = hash_table_get(doc_freq_table, entry->word);
-            float idf = (df > 0) ? logf((float)total_sentences / (float)df) : 0.0f;
-            float tfidf1 = (float)entry->doc_freq * idf;
-            float tfidf2 = (float)count2 * idf;
-            dot_product += tfidf1 * tfidf2;
-         }
-         entry = entry->next;
-      }
+   float dot = 0.0f;
+   for (int i = 0; i < vocab_size; i++) {
+      dot += s1->tfidf_vector[i] * s2->tfidf_vector[i];
    }
-
-   return dot_product / (s1->magnitude * s2->magnitude);
+   return dot / (s1->magnitude * s2->magnitude);
 }
 
 /**
@@ -890,21 +930,28 @@ static float compute_sentence_similarity_cached(const sentence_t *s1,
  * MMR balances relevance and diversity:
  * Score = λ * Relevance - (1-λ) * max_similarity_to_selected
  *
- * This avoids selecting redundant sentences that say the same thing.
+ * Uses dense vectors for fast similarity and a selected-index array
+ * to avoid scanning all sentences for the selected subset.
  */
 static void select_sentences_mmr(sentence_t *sentences,
                                  int num_sentences,
                                  int num_to_select,
-                                 hash_entry_t **doc_freq_table) {
+                                 int vocab_size) {
    if (num_to_select <= 0 || num_sentences <= 0) {
       return;
    }
+
+   /* Track selected sentence indices for O(num_selected) inner loop */
+   int *sel_idx = calloc(num_to_select, sizeof(int));
+   if (!sel_idx) {
+      return;
+   }
+   int num_selected = 0;
 
    /* Find the highest-scoring non-filtered sentence as first selection */
    int best_idx = -1;
    float best_score = -1.0f;
    for (int i = 0; i < num_sentences; i++) {
-      /* Skip filtered sentences (score < 0) and already selected */
       if (sentences[i].score < 0.0f || sentences[i].selected) {
          continue;
       }
@@ -916,6 +963,7 @@ static void select_sentences_mmr(sentence_t *sentences,
 
    if (best_idx >= 0) {
       sentences[best_idx].selected = true;
+      sel_idx[num_selected++] = best_idx;
       num_to_select--;
    }
 
@@ -925,20 +973,16 @@ static void select_sentences_mmr(sentence_t *sentences,
       best_score = -999999.0f;
 
       for (int i = 0; i < num_sentences; i++) {
-         /* Skip filtered sentences (score < 0) and already selected */
          if (sentences[i].score < 0.0f || sentences[i].selected) {
             continue;
          }
 
          /* Find maximum similarity to any already-selected sentence */
          float max_sim = 0.0f;
-         for (int j = 0; j < num_sentences; j++) {
-            if (sentences[j].selected) {
-               float sim = compute_sentence_similarity_cached(&sentences[i], &sentences[j],
-                                                              doc_freq_table, num_sentences);
-               if (sim > max_sim) {
-                  max_sim = sim;
-               }
+         for (int k = 0; k < num_selected; k++) {
+            float sim = compute_similarity_dense(&sentences[i], &sentences[sel_idx[k]], vocab_size);
+            if (sim > max_sim) {
+               max_sim = sim;
             }
          }
 
@@ -953,12 +997,14 @@ static void select_sentences_mmr(sentence_t *sentences,
 
       if (best_idx >= 0) {
          sentences[best_idx].selected = true;
+         sel_idx[num_selected++] = best_idx;
          num_to_select--;
       } else {
-         /* No more valid candidates */
          break;
       }
    }
+
+   free(sel_idx);
 }
 
 /* =============================================================================
@@ -1122,14 +1168,32 @@ int tfidf_summarize(const char *input_text,
    LOG_INFO("tfidf_summarize: Selecting %d of %d valid sentences using MMR (%.0f%%)", num_to_keep,
             valid_sentences, (float)num_to_keep / valid_sentences * 100);
 
-   /* Build word vectors once for all sentences (optimization: avoids O(n^2) allocations) */
-   build_all_word_vectors(sentences, num_sentences, doc_freq_table);
+   /* Build vocabulary index for dense vector representation */
+   hash_entry_t **vocab_table = hash_table_create();
+   if (!vocab_table) {
+      hash_table_free(doc_freq_table);
+      free(sentences);
+      return TFIDF_ERROR_ALLOC;
+   }
+   int vocab_size = build_vocabulary(doc_freq_table, vocab_table);
+
+   if (vocab_size > MAX_VOCAB_SIZE) {
+      LOG_WARNING("tfidf_summarize: Vocabulary too large (%d > %d), capping for MMR", vocab_size,
+                  MAX_VOCAB_SIZE);
+      vocab_size = MAX_VOCAB_SIZE;
+   }
+
+   LOG_INFO("tfidf_summarize: Vocabulary size: %d unique words", vocab_size);
+
+   /* Build dense TF-IDF vectors for fast cosine similarity */
+   build_all_dense_vectors(sentences, num_sentences, doc_freq_table, vocab_table, vocab_size);
 
    /* Use MMR to select sentences (balances relevance and diversity) */
-   select_sentences_mmr(sentences, num_sentences, num_to_keep, doc_freq_table);
+   select_sentences_mmr(sentences, num_sentences, num_to_keep, vocab_size);
 
-   /* Clean up word vectors and doc_freq_table after MMR selection */
-   free_all_word_vectors(sentences, num_sentences);
+   /* Clean up vectors and tables after MMR selection */
+   free_all_dense_vectors(sentences, num_sentences);
+   hash_table_free(vocab_table);
    hash_table_free(doc_freq_table);
 
    /* Sort by original index to maintain document order */

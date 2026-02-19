@@ -128,6 +128,7 @@ struct sdl_ui {
    char satellite_location[64];
 
    /* Timing */
+   double start_time; /* Monotonic clock at UI thread start */
    voice_state_t last_state;
    double last_state_change_time;
 
@@ -222,6 +223,9 @@ struct sdl_ui {
       double tap_time;                /* For flash feedback */
    } mute_btn;
 };
+
+/* Forward declarations */
+static int resize_event_watcher(void *data, SDL_Event *event);
 
 /* =============================================================================
  * Helper: Get monotonic time in seconds
@@ -520,7 +524,7 @@ static int render_info_row(sdl_ui_t *ui,
             SDL_DestroyTexture(ui->panel_cache.info_values[label_idx]);
          snprintf(ui->panel_cache.info_value_str[label_idx],
                   sizeof(ui->panel_cache.info_value_str[label_idx]), "%s", value);
-         SDL_Surface *surf = TTF_RenderText_Blended(font, value, primary_clr);
+         SDL_Surface *surf = TTF_RenderUTF8_Blended(font, value, primary_clr);
          if (surf) {
             ui->panel_cache.info_values[label_idx] = SDL_CreateTextureFromSurface(r, surf);
             ui->panel_cache.info_value_w[label_idx] = surf->w;
@@ -1016,7 +1020,7 @@ static int sdl_init_on_thread(sdl_ui_t *ui) {
       LOG_WARNING("Fullscreen failed, trying windowed: %s", SDL_GetError());
       ui->window = SDL_CreateWindow("DAWN Satellite", SDL_WINDOWPOS_CENTERED,
                                     SDL_WINDOWPOS_CENTERED, ui->width, ui->height,
-                                    SDL_WINDOW_ALLOW_HIGHDPI);
+                                    SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE);
    }
    if (!ui->window) {
       LOG_ERROR("SDL_CreateWindow failed: %s", SDL_GetError());
@@ -1310,6 +1314,7 @@ static void sdl_cleanup_on_thread(sdl_ui_t *ui) {
       SDL_DestroyTexture(ui->theme_label_tex);
    panel_cache_cleanup(ui);
    ui_music_cleanup(&ui->music);
+   SDL_DelEventWatch(resize_event_watcher, ui);
    ui_transcript_cleanup(&ui->transcript);
    ui_orb_cleanup(&ui->orb);
 
@@ -1530,6 +1535,22 @@ static void render_frame(sdl_ui_t *ui, double time_sec) {
    SDL_RenderPresent(r);
 }
 
+/**
+ * @brief Event watcher callback — fires during X11 modal resize/move loops.
+ *
+ * When the user drags a window edge or title bar on X11, SDL enters a blocking
+ * modal loop and the main event loop never runs.  This watcher is invoked from
+ * inside that modal loop so we can keep rendering.
+ */
+static int resize_event_watcher(void *data, SDL_Event *event) {
+   sdl_ui_t *ui = (sdl_ui_t *)data;
+   if (event->type == SDL_WINDOWEVENT && (event->window.event == SDL_WINDOWEVENT_EXPOSED ||
+                                          event->window.event == SDL_WINDOWEVENT_SIZE_CHANGED)) {
+      render_frame(ui, get_time_sec() - ui->start_time);
+   }
+   return 0; /* Return value is ignored for event watchers */
+}
+
 static void *render_thread_func(void *arg) {
    sdl_ui_t *ui = (sdl_ui_t *)arg;
 
@@ -1541,11 +1562,14 @@ static void *render_thread_func(void *arg) {
    atomic_store(&ui->init_result, 1);
 
    LOG_INFO("SDL UI render thread started");
-   double start_time = get_time_sec();
+   ui->start_time = get_time_sec();
+
+   /* Register event watcher for live redraw during X11 modal resize/move */
+   SDL_AddEventWatch(resize_event_watcher, ui);
 
    while (ui->running) {
       double frame_start = get_time_sec();
-      double time_sec = frame_start - start_time;
+      double time_sec = frame_start - ui->start_time;
 
       /* Process SDL events including touch/mouse input */
       SDL_Event event;
@@ -1574,10 +1598,6 @@ static void *render_thread_func(void *arg) {
             continue;
          }
 
-         /* Force redraw on expose so content follows window moves */
-         if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_EXPOSED) {
-            render_frame(ui, get_time_sec() - start_time);
-         }
 
          /* Screensaver touch handling: transport buttons pass through, others dismiss */
          if (event.type == SDL_FINGERDOWN || event.type == SDL_MOUSEBUTTONDOWN) {

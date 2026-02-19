@@ -357,13 +357,13 @@ void ui_transcript_update_live(ui_transcript_t *t,
    if (t->entry_count > 0) {
       int last_idx = (t->write_index - 1 + TRANSCRIPT_MAX_ENTRIES) % TRANSCRIPT_MAX_ENTRIES;
       transcript_entry_t *last = &t->entries[last_idx];
-      if (!last->is_user) {
+      if (!last->is_user && last->is_streaming) {
          target = last;
       }
    }
 
    if (!target) {
-      /* No AI entry yet — create one (same as ui_transcript_add but without advancing) */
+      /* No streaming AI entry — create a new one */
       target = &t->entries[t->write_index];
       invalidate_entry_cache(target);
       snprintf(target->role, sizeof(target->role), "%s", role);
