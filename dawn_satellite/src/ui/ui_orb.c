@@ -47,18 +47,13 @@ static const float glow_alphas[GLOW_LAYERS] = { 0.3f, 0.2f, 0.12f, 0.05f };
 
 /* Ring system */
 #define RING_SEGMENTS 64
-#define RING_GAP_DEG 1.0f       /* Gap between segments in degrees */
-#define RING_ANGLE_STEPS 10     /* Points per segment arc */
-#define RING_MAX_WIDTH_LINES 13 /* Max width lines for scaled segments */
+#define RING_GAP_DEG 1.0f /* Gap between segments in degrees */
 #define RING_INNER_R 100
 #define RING_INNER_W 6
 #define RING_MIDDLE_R 145
 #define RING_MIDDLE_W 4
 #define RING_OUTER_R 178
 #define RING_OUTER_W 5
-
-/* Max points per ring: segments * steps * max_width */
-#define RING_MAX_POINTS (RING_SEGMENTS * RING_ANGLE_STEPS * RING_MAX_WIDTH_LINES)
 
 /* Glow texture dimensions */
 #define GLOW_TEX_SIZE 400
@@ -77,36 +72,6 @@ static const float glow_alphas[GLOW_LAYERS] = { 0.3f, 0.2f, 0.12f, 0.05f };
 #define TRAIL_SAMPLE_INTERVAL 5   /* Frames between trail samples (~167ms at 30 FPS) */
 #define SPECTRUM_SMOOTH_NEW 0.45f /* Snappy response */
 #define SPECTRUM_SMOOTH_OLD 0.55f /* Complement */
-
-/* =============================================================================
- * Shared Read-Only Trig Table (computed once, safe to share)
- * ============================================================================= */
-
-static float ring_cos_table[RING_SEGMENTS * RING_ANGLE_STEPS];
-static float ring_sin_table[RING_SEGMENTS * RING_ANGLE_STEPS];
-static _Atomic bool trig_table_initialized = false;
-
-static void init_ring_trig_table(void) {
-   if (atomic_exchange(&trig_table_initialized, true))
-      return;
-
-   float seg_deg = 360.0f / RING_SEGMENTS;
-   float gap = RING_GAP_DEG;
-
-   for (int seg = 0; seg < RING_SEGMENTS; seg++) {
-      float start_deg = seg * seg_deg + gap / 2.0f;
-      float end_deg = (seg + 1) * seg_deg - gap / 2.0f;
-      float start_rad = start_deg * (float)PI / 180.0f;
-      float end_rad = end_deg * (float)PI / 180.0f;
-
-      for (int step = 0; step < RING_ANGLE_STEPS; step++) {
-         float angle = start_rad + (end_rad - start_rad) * step / (float)(RING_ANGLE_STEPS - 1);
-         int idx = seg * RING_ANGLE_STEPS + step;
-         ring_cos_table[idx] = cosf(angle);
-         ring_sin_table[idx] = sinf(angle);
-      }
-   }
-}
 
 /* Pre-computed bar angle trig tables (one cos/sin per bar, evenly spaced around circle) */
 static float bar_cos[BAR_COUNT];
@@ -189,13 +154,30 @@ static void draw_ring(SDL_Renderer *renderer,
                       int active_segments,
                       ui_color_t active_color,
                       float segment_scale) {
-   SDL_Point active_pts[RING_MAX_POINTS];
-   SDL_Point inactive_pts[RING_MAX_POINTS];
-   int active_count = 0;
-   int inactive_count = 0;
+   /* Use SDL2_gfx arcRGBA for pixel-perfect circular arcs (Bresenham circle
+    * algorithm internally). For width > 1, draw concentric arcs at adjacent
+    * radii. This replaces the polygon-approximation approach which had visible
+    * gaps between discrete line segments at larger radii. */
+   float seg_deg = 360.0f / RING_SEGMENTS;
+   float gap = RING_GAP_DEG;
 
    for (int seg = 0; seg < RING_SEGMENTS; seg++) {
       bool active = (seg < active_segments);
+      Sint16 start_deg = (Sint16)(seg * seg_deg + gap / 2.0f);
+      Sint16 end_deg = (Sint16)((seg + 1) * seg_deg - gap / 2.0f);
+
+      uint8_t cr, cg, cb, ca;
+      if (active) {
+         cr = active_color.r;
+         cg = active_color.g;
+         cb = active_color.b;
+         ca = 200;
+      } else {
+         cr = COLOR_IDLE_R;
+         cg = COLOR_IDLE_G;
+         cb = COLOR_IDLE_B;
+         ca = 100;
+      }
 
       int seg_width = width;
       if (segment_scale != 1.0f && active) {
@@ -204,30 +186,11 @@ static void draw_ring(SDL_Renderer *renderer,
             seg_width = 1;
       }
 
-      SDL_Point *pts = active ? active_pts : inactive_pts;
-      int *count = active ? &active_count : &inactive_count;
       int half_w = seg_width / 2;
-
       for (int w = -half_w; w <= half_w; w++) {
-         int r_offset = radius + w;
-         for (int step = 0; step < RING_ANGLE_STEPS; step++) {
-            int idx = seg * RING_ANGLE_STEPS + step;
-            if (*count < RING_MAX_POINTS) {
-               pts[*count].x = cx + (int)(r_offset * ring_cos_table[idx]);
-               pts[*count].y = cy + (int)(r_offset * ring_sin_table[idx]);
-               (*count)++;
-            }
-         }
+         arcRGBA(renderer, (Sint16)cx, (Sint16)cy, (Sint16)(radius + w), start_deg, end_deg, cr, cg,
+                 cb, ca);
       }
-   }
-
-   if (active_count > 0) {
-      SDL_SetRenderDrawColor(renderer, active_color.r, active_color.g, active_color.b, 200);
-      SDL_RenderDrawPoints(renderer, active_pts, active_count);
-   }
-   if (inactive_count > 0) {
-      SDL_SetRenderDrawColor(renderer, COLOR_IDLE_R, COLOR_IDLE_G, COLOR_IDLE_B, 100);
-      SDL_RenderDrawPoints(renderer, inactive_pts, inactive_count);
    }
 }
 
@@ -264,9 +227,10 @@ static void bar_color(float mag, uint8_t *r, uint8_t *g, uint8_t *b) {
 }
 
 /**
- * Draw a single radial bar as a rotated filled rectangle using SDL_RenderFillRect.
- * Since SDL2 doesn't support rotated rects natively, we draw the bar as a series
- * of small rects along the radial direction.
+ * Draw a single radial bar using SDL_RenderDrawLine for gap-free rendering.
+ * For width > 1, parallel lines are offset along the perpendicular direction.
+ * This replaces per-pixel SDL_RenderFillRect stepping which produced dotted
+ * lines at non-axis-aligned angles due to integer rounding.
  */
 static void draw_radial_bar(SDL_Renderer *renderer,
                             int cx,
@@ -279,21 +243,33 @@ static void draw_radial_bar(SDL_Renderer *renderer,
                             uint8_t g,
                             uint8_t b,
                             uint8_t a) {
+   if (length <= 0)
+      return;
+
    SDL_SetRenderDrawColor(renderer, r, g, b, a);
 
    float cos_a = bar_cos[bar_idx];
    float sin_a = bar_sin[bar_idx];
-   int half_w = width / 2;
 
-   /* Draw filled rect along the radial direction, stepping outward */
-   for (int d = 0; d < length; d++) {
-      int dist = inner_r + d;
-      int px = cx + (int)(dist * cos_a);
-      int py = cy + (int)(dist * sin_a);
+   /* Inner and outer endpoints along the radial direction */
+   int x1 = cx + (int)(inner_r * cos_a);
+   int y1 = cy + (int)(inner_r * sin_a);
+   int outer_r = inner_r + length;
+   int x2 = cx + (int)(outer_r * cos_a);
+   int y2 = cy + (int)(outer_r * sin_a);
 
-      /* Small rect perpendicular to the radial direction */
-      SDL_Rect rect = { px - half_w, py - half_w, width, width };
-      SDL_RenderFillRect(renderer, &rect);
+   if (width <= 1) {
+      SDL_RenderDrawLine(renderer, x1, y1, x2, y2);
+   } else {
+      /* Draw parallel lines offset perpendicular to the bar direction */
+      float perp_x = -sin_a;
+      float perp_y = cos_a;
+      int half_w = width / 2;
+      for (int w = -half_w; w <= half_w; w++) {
+         int ox = (int)(w * perp_x);
+         int oy = (int)(w * perp_y);
+         SDL_RenderDrawLine(renderer, x1 + ox, y1 + oy, x2 + ox, y2 + oy);
+      }
    }
 }
 
@@ -372,8 +348,7 @@ void ui_orb_init(ui_orb_ctx_t *ctx, SDL_Renderer *renderer) {
 
    memset(ctx, 0, sizeof(*ctx));
 
-   /* Pre-compute trig lookup tables (shared, computed once) */
-   init_ring_trig_table();
+   /* Pre-compute bar trig lookup table (shared, computed once) */
    init_bar_trig_table();
 
    /* Pre-render glow textures for each state color */
