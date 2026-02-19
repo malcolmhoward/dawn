@@ -24,6 +24,8 @@
 #include "ui/ui_orb.h"
 
 #include <SDL2/SDL.h>
+
+#include "ui/ui_theme.h"
 #ifdef HAVE_SDL2_GFX
 #include <SDL2/SDL2_gfxPrimitives.h>
 #endif
@@ -47,7 +49,6 @@ static const float glow_alphas[GLOW_LAYERS] = { 0.3f, 0.2f, 0.12f, 0.05f };
 
 /* Ring system */
 #define RING_SEGMENTS 64
-#define RING_GAP_DEG 1.0f /* Gap between segments in degrees */
 #define RING_INNER_R 100
 #define RING_INNER_W 6
 #define RING_MIDDLE_R 145
@@ -143,9 +144,16 @@ static SDL_Texture *create_glow_texture(SDL_Renderer *renderer, ui_color_t color
 }
 
 /* =============================================================================
- * Ring Segment Drawing (batched)
+ * Ring Drawing (continuous arcs)
  * ============================================================================= */
 
+/**
+ * Draw a continuous circular ring with active/inactive portions.
+ * Active arc starts at 0° (3 o'clock) and sweeps clockwise.
+ * Inactive arc covers the remainder. No overlap between the two, so
+ * alpha values render cleanly without blending artifacts.
+ * Uses concentric arcRGBA calls for width.
+ */
 static void draw_ring(SDL_Renderer *renderer,
                       int cx,
                       int cy,
@@ -154,42 +162,82 @@ static void draw_ring(SDL_Renderer *renderer,
                       int active_segments,
                       ui_color_t active_color,
                       float segment_scale) {
-   /* Use SDL2_gfx arcRGBA for pixel-perfect circular arcs (Bresenham circle
-    * algorithm internally). For width > 1, draw concentric arcs at adjacent
-    * radii. This replaces the polygon-approximation approach which had visible
-    * gaps between discrete line segments at larger radii. */
-   float seg_deg = 360.0f / RING_SEGMENTS;
-   float gap = RING_GAP_DEG;
+   int active_deg = active_segments * 360 / RING_SEGMENTS;
+   if (active_deg > 359)
+      active_deg = 359; /* arcRGBA treats start==end as empty; cap at 359 */
+
+   /* Active portion: 0° to active_deg */
+   if (active_segments > 0) {
+      int active_width = width;
+      if (segment_scale != 1.0f) {
+         active_width = (int)(width * segment_scale);
+         if (active_width < 1)
+            active_width = 1;
+      }
+      int active_half = active_width / 2;
+
+      if (active_segments >= RING_SEGMENTS) {
+         /* Full circle */
+         for (int w = -active_half; w <= active_half; w++) {
+            arcRGBA(renderer, (Sint16)cx, (Sint16)cy, (Sint16)(radius + w), 0, 359, active_color.r,
+                    active_color.g, active_color.b, 200);
+         }
+      } else {
+         for (int w = -active_half; w <= active_half; w++) {
+            arcRGBA(renderer, (Sint16)cx, (Sint16)cy, (Sint16)(radius + w), 0, (Sint16)active_deg,
+                    active_color.r, active_color.g, active_color.b, 200);
+         }
+      }
+   }
+
+   /* Inactive portion: active_deg to 360° */
+   if (active_segments < RING_SEGMENTS) {
+      int half_w = width / 2;
+      Sint16 inactive_start = (active_segments > 0) ? (Sint16)active_deg : 0;
+      Sint16 inactive_end = 359;
+
+      for (int w = -half_w; w <= half_w; w++) {
+         arcRGBA(renderer, (Sint16)cx, (Sint16)cy, (Sint16)(radius + w), inactive_start,
+                 inactive_end, COLOR_IDLE_R, COLOR_IDLE_G, COLOR_IDLE_B, 100);
+      }
+   }
+}
+
+/**
+ * Draw background-colored radial tick marks over the rings to simulate segment
+ * gaps. Ticks are 2px wide lines at each segment boundary, drawn separately
+ * over each ring band so the gaps between rings remain clean.
+ */
+static void draw_ring_ticks(SDL_Renderer *renderer, int cx, int cy) {
+   ui_color_t bg = ui_theme_bg(0);
+
+   /* Ring bands: inner edge to outer edge of each ring */
+   static const struct {
+      int radius;
+      int width;
+   } rings[] = {
+      { RING_INNER_R, RING_INNER_W },
+      { RING_MIDDLE_R, RING_MIDDLE_W },
+      { RING_OUTER_R, RING_OUTER_W },
+   };
+   static const int ring_count = sizeof(rings) / sizeof(rings[0]);
+
+   float seg_rad = 2.0f * (float)PI / RING_SEGMENTS;
 
    for (int seg = 0; seg < RING_SEGMENTS; seg++) {
-      bool active = (seg < active_segments);
-      Sint16 start_deg = (Sint16)(seg * seg_deg + gap / 2.0f);
-      Sint16 end_deg = (Sint16)((seg + 1) * seg_deg - gap / 2.0f);
+      float angle = seg * seg_rad;
+      float cos_a = cosf(angle);
+      float sin_a = sinf(angle);
 
-      uint8_t cr, cg, cb, ca;
-      if (active) {
-         cr = active_color.r;
-         cg = active_color.g;
-         cb = active_color.b;
-         ca = 200;
-      } else {
-         cr = COLOR_IDLE_R;
-         cg = COLOR_IDLE_G;
-         cb = COLOR_IDLE_B;
-         ca = 100;
-      }
-
-      int seg_width = width;
-      if (segment_scale != 1.0f && active) {
-         seg_width = (int)(width * segment_scale);
-         if (seg_width < 1)
-            seg_width = 1;
-      }
-
-      int half_w = seg_width / 2;
-      for (int w = -half_w; w <= half_w; w++) {
-         arcRGBA(renderer, (Sint16)cx, (Sint16)cy, (Sint16)(radius + w), start_deg, end_deg, cr, cg,
-                 cb, ca);
+      for (int ri = 0; ri < ring_count; ri++) {
+         int inner = rings[ri].radius - rings[ri].width / 2 - 3;
+         int outer = rings[ri].radius + rings[ri].width / 2 + 5;
+         int x1 = cx + (int)(inner * cos_a);
+         int y1 = cy + (int)(inner * sin_a);
+         int x2 = cx + (int)(outer * cos_a);
+         int y2 = cy + (int)(outer * sin_a);
+         thickLineRGBA(renderer, (Sint16)x1, (Sint16)y1, (Sint16)x2, (Sint16)y2, 2, bg.r, bg.g,
+                       bg.b, 255);
       }
    }
 }
@@ -227,10 +275,8 @@ static void bar_color(float mag, uint8_t *r, uint8_t *g, uint8_t *b) {
 }
 
 /**
- * Draw a single radial bar using SDL_RenderDrawLine for gap-free rendering.
- * For width > 1, parallel lines are offset along the perpendicular direction.
- * This replaces per-pixel SDL_RenderFillRect stepping which produced dotted
- * lines at non-axis-aligned angles due to integer rounding.
+ * Draw a single radial bar using thickLineRGBA for solid, gap-free rendering
+ * at consistent width regardless of angle.
  */
 static void draw_radial_bar(SDL_Renderer *renderer,
                             int cx,
@@ -246,31 +292,15 @@ static void draw_radial_bar(SDL_Renderer *renderer,
    if (length <= 0)
       return;
 
-   SDL_SetRenderDrawColor(renderer, r, g, b, a);
-
    float cos_a = bar_cos[bar_idx];
    float sin_a = bar_sin[bar_idx];
 
-   /* Inner and outer endpoints along the radial direction */
-   int x1 = cx + (int)(inner_r * cos_a);
-   int y1 = cy + (int)(inner_r * sin_a);
-   int outer_r = inner_r + length;
-   int x2 = cx + (int)(outer_r * cos_a);
-   int y2 = cy + (int)(outer_r * sin_a);
+   Sint16 x1 = (Sint16)(cx + inner_r * cos_a);
+   Sint16 y1 = (Sint16)(cy + inner_r * sin_a);
+   Sint16 x2 = (Sint16)(cx + (inner_r + length) * cos_a);
+   Sint16 y2 = (Sint16)(cy + (inner_r + length) * sin_a);
 
-   if (width <= 1) {
-      SDL_RenderDrawLine(renderer, x1, y1, x2, y2);
-   } else {
-      /* Draw parallel lines offset perpendicular to the bar direction */
-      float perp_x = -sin_a;
-      float perp_y = cos_a;
-      int half_w = width / 2;
-      for (int w = -half_w; w <= half_w; w++) {
-         int ox = (int)(w * perp_x);
-         int oy = (int)(w * perp_y);
-         SDL_RenderDrawLine(renderer, x1 + ox, y1 + oy, x2 + ox, y2 + oy);
-      }
-   }
+   thickLineRGBA(renderer, x1, y1, x2, y2, (Uint8)width, r, g, b, a);
 }
 
 static void draw_spectrum_bars(ui_orb_ctx_t *ctx, SDL_Renderer *renderer, int cx, int cy) {
@@ -542,6 +572,13 @@ void ui_orb_render(ui_orb_ctx_t *ctx,
       draw_ring(renderer, cx, cy, RING_INNER_R, RING_INNER_W, inner_active, ctx->current_color,
                 inner_scale);
    }
+
+   /* Overlay background-colored tick marks to simulate segment gaps */
+   draw_ring_ticks(renderer, cx, cy);
+
+   /* Restore blend mode after SDL2_gfx primitives (arcRGBA, thickLineRGBA)
+    * which clobber it to BLENDMODE_NONE */
+   SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 
    /* Touch feedback: tap pulse (white flash expanding outward, 0.3s) */
    if (ctx->tap_pulse_time > 0.0) {
