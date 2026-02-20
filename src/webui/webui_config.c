@@ -584,6 +584,34 @@ static void apply_config_from_json(dawn_config_t *config, struct json_object *pa
       JSON_TO_CONFIG_INT(section, "max_per_user", config->images.max_per_user);
    }
 
+   /* [scheduler] */
+   if (json_object_object_get_ex(payload, "scheduler", &section)) {
+      JSON_TO_CONFIG_BOOL(section, "enabled", config->scheduler.enabled);
+      JSON_TO_CONFIG_INT(section, "default_snooze_minutes",
+                         config->scheduler.default_snooze_minutes);
+      JSON_TO_CONFIG_INT(section, "max_snooze_count", config->scheduler.max_snooze_count);
+      JSON_TO_CONFIG_INT(section, "max_events_per_user", config->scheduler.max_events_per_user);
+      JSON_TO_CONFIG_INT(section, "max_events_total", config->scheduler.max_events_total);
+      JSON_TO_CONFIG_BOOL(section, "missed_event_recovery",
+                          config->scheduler.missed_event_recovery);
+      JSON_TO_CONFIG_STR(section, "missed_task_policy", config->scheduler.missed_task_policy);
+      JSON_TO_CONFIG_INT(section, "missed_task_max_age_sec",
+                         config->scheduler.missed_task_max_age_sec);
+      JSON_TO_CONFIG_INT(section, "alarm_timeout_sec", config->scheduler.alarm_timeout_sec);
+      /* Clamp alarm timeout (10-300 seconds) */
+      if (config->scheduler.alarm_timeout_sec < 10)
+         config->scheduler.alarm_timeout_sec = 10;
+      if (config->scheduler.alarm_timeout_sec > 300)
+         config->scheduler.alarm_timeout_sec = 300;
+      JSON_TO_CONFIG_INT(section, "alarm_volume", config->scheduler.alarm_volume);
+      /* Clamp volume (0-100) */
+      if (config->scheduler.alarm_volume < 0)
+         config->scheduler.alarm_volume = 0;
+      if (config->scheduler.alarm_volume > 100)
+         config->scheduler.alarm_volume = 100;
+      JSON_TO_CONFIG_INT(section, "event_retention_days", config->scheduler.event_retention_days);
+   }
+
    /* [music] */
    if (json_object_object_get_ex(payload, "music", &section)) {
       JSON_TO_CONFIG_INT(section, "scan_interval_minutes", config->music.scan_interval_minutes);

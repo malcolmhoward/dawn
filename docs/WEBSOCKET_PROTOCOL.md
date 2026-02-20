@@ -794,6 +794,28 @@ Response: `smartthings_devices_response`
 
 ---
 
+### Scheduler
+
+#### `scheduler_action`
+Dismiss, snooze, or cancel a scheduler event (alarm/timer/reminder).
+```json
+{
+   "type": "scheduler_action",
+   "payload": {
+      "action": "dismiss|snooze|cancel",
+      "event_id": 42,
+      "snooze_minutes": 5
+   }
+}
+```
+- `action`: `dismiss` (stop ringing), `snooze` (reschedule, alarms only), `cancel` (delete pending)
+- `event_id`: Database ID of the scheduled event
+- `snooze_minutes`: Optional, defaults to configured snooze duration (default 5 min). Pass 0 for default.
+- Requires authentication
+- No direct response; server broadcasts updated `scheduler_notification` to all clients
+
+---
+
 ### DAP2 Satellite Messages
 
 These messages are only accepted from satellite connections (identified by
@@ -1162,6 +1184,36 @@ Queue operation result.
 
 ---
 
+### Scheduler Notifications
+
+#### `scheduler_notification`
+Broadcast to all authenticated WebUI clients when a scheduled event fires, is dismissed, or is snoozed.
+```json
+{
+   "type": "scheduler_notification",
+   "payload": {
+      "event_id": 42,
+      "event_type": "alarm|timer|reminder|task",
+      "status": "ringing|dismissed|snoozed|cancelled|fired",
+      "name": "Morning Alarm",
+      "message": "Morning Alarm"
+   }
+}
+```
+- `event_type`: `alarm`, `timer`, `reminder`, or `task`
+- `status`: Current event status after the action
+  - `ringing`: Event is actively firing (shows dismiss/snooze buttons)
+  - `dismissed`: Event was dismissed by user
+  - `snoozed`: Alarm was snoozed (will re-fire later)
+  - `cancelled`: Event was cancelled
+  - `fired`: Timer/reminder completed (auto-dismissed)
+- `name`: Event name/label
+- `message`: Display message (may include custom reminder text)
+- Alarms pulse and support snooze; timers/reminders auto-dismiss after firing
+- Not sent to satellite connections (satellites don't have WebUI notification UI)
+
+---
+
 ### Satellite Responses
 
 #### `satellite_register_ack`
@@ -1253,6 +1305,7 @@ Satellites also receive the same streaming messages as WebUI clients:
 | `music_search` | `music_search_response` |
 | `music_library` | `music_library_response` |
 | `music_queue` | `music_queue_response` |
+| `scheduler_action` | *(broadcast: `scheduler_notification`)* |
 | `satellite_register` | `satellite_register_ack` |
 | `satellite_ping` | `satellite_pong` |
 

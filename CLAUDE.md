@@ -12,6 +12,7 @@ D.A.W.N. (part of The OASIS Project) is a voice-controlled AI assistant system w
 - DAP2 satellite system for distributed voice assistants (Raspberry Pi + ESP32)
 - Vision AI capabilities
 - Extended thinking/reasoning mode support
+- Scheduler system (timers, alarms, reminders, scheduled tool execution)
 
 The project is designed for embedded Linux systems (specifically targeting Jetson platforms with CUDA support).
 
@@ -169,6 +170,7 @@ This ensures code is formatted before every commit.
 - `[audio]`: Backend (auto/pulse/alsa), device selection
 - `[network]`: Network settings (session timeout, LLM timeout, worker count)
 - `[webui]`: Web interface bind address, port, SSL settings
+- `[scheduler]`: Timers/alarms settings (snooze, timeout, volume, limits)
 - `[mqtt]`: MQTT broker connection settings
 - See `docs/archive/CONFIG_FILE_DESIGN.md` for full schema
 
@@ -340,7 +342,15 @@ deviceCallback callbacks[] = {
 
 ## Testing
 
-Currently no automated test framework. Manual testing involves:
+Unit tests in `tests/` (standalone binaries, no framework):
+- `test_scheduler` — Scheduler DB layer (94 assertions across 16 tests)
+- `test_sse_parser` — SSE stream parser
+- `test_sentence_buffer` — Sentence boundary detection
+- `test_session_commands` — Thread-local session context
+
+Build and run: `make -C build-debug test_scheduler && ./build-debug/tests/test_scheduler`
+
+Manual testing covers:
 - Local microphone wake word detection
 - Voice command processing
 - WebUI and satellite connections
@@ -372,7 +382,17 @@ Currently no automated test framework. Manual testing involves:
 - `www/css/main.css`: CSS entry point with @import statements (modular CSS)
 - `www/js/core/`: Core JS modules (constants, websocket, audio)
 - `www/js/ui/`: UI JS modules (settings, history, themes)
-- `docs/WEBUI_DESIGN.md`: WebUI architecture and feature documentation
+- `docs/archive/WEBUI_DESIGN.md`: WebUI architecture and feature documentation
+
+**Scheduler:**
+- `include/core/scheduler.h`: Scheduler public API (init, shutdown, dismiss, snooze)
+- `include/core/scheduler_db.h`: Database layer (CRUD, queries, string helpers)
+- `src/core/scheduler.c`: Background thread, event firing, chime audio, recurrence
+- `src/core/scheduler_db.c`: SQLite operations (uses auth_db shared handle)
+- `src/tools/scheduler_tool.c`: LLM tool interface (create/list/cancel/query/snooze/dismiss)
+- `www/js/ui/scheduler.js`: WebUI notification banners with dismiss/snooze
+- `www/css/components/scheduler.css`: Notification banner styles
+- `docs/SCHEDULER_DESIGN.md`: Full design document with automated test coverage
 
 **Satellite (DAP2):**
 - `dawn_satellite/`: Standalone satellite binary for Raspberry Pi
@@ -384,10 +404,10 @@ Currently no automated test framework. Manual testing involves:
 
 ## Known Issues and TODOs
 
-1. No automated testing infrastructure
-2. SmartThings OAuth blocked at AWS WAF level (403 Forbidden)
+1. SmartThings OAuth blocked at AWS WAF level (403 Forbidden)
 
 **Recently Completed:**
+- Scheduler system (timers, alarms, reminders, scheduled tool execution) with audible chimes, WebUI notifications, recurrence, snooze/dismiss
 - Satellite registration key (pre-shared key authentication for satellite registration)
 - Private CA for TLS validation (all client types: ESP32, RPi, browser)
 - LLM playlist builder (add/remove/clear_queue actions) with genre search

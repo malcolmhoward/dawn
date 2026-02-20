@@ -106,6 +106,13 @@ DAWN is designed for embedded Linux platforms (Jetson, Raspberry Pi) and support
   - **Weather** - Real-time weather and forecasts via Open-Meteo API (free, no API key)
   - **Calculator** - Mathematical expression evaluation with tinyexpr engine
   - **Memory Tool** - Search, remember, and forget facts across sessions
+  - **Scheduler** - Timers, alarms, reminders, and scheduled tool execution
+    - "Set a 10 minute timer", "Wake me up at 7 AM", "Remind me to call Mom at 3pm"
+    - Recurring events (daily, weekdays, weekends, weekly, custom days)
+    - Audible chimes with configurable volume, snooze, and dismiss via voice or WebUI
+    - Scheduled tasks: "Turn off the lights at midnight" (executes any registered tool)
+    - Per-user event limits, missed event recovery on restart, automatic cleanup
+    - WebUI notification banners with dismiss/snooze buttons
   - **Parallel Tool Execution** - Multiple tool calls execute concurrently (e.g., weather + search in ~1s vs ~3s sequential)
   - LLM automatically invokes tools and incorporates results into responses
 
@@ -142,7 +149,8 @@ dawn/
 │   ├── memory/             # Persistent memory system
 │   ├── tts/                # Text-to-speech (Piper)
 │   ├── audio/              # Audio capture, playback, music
-│   ├── tools/              # Modular LLM tools (search, weather, calculator, etc.)
+│   ├── core/               # Session manager, scheduler
+│   ├── tools/              # Modular LLM tools (search, weather, calculator, scheduler, etc.)
 │   └── webui/              # Web UI server
 │
 ├── include/                # Header files (mirrors src/)
@@ -500,6 +508,7 @@ The `dawn.toml.example` file contains all available settings with documentation.
 - `[asr]` — Whisper model selection
 - `[tts]` — Voice model, speech speed
 - `[webui]` — Port, SSL settings
+- `[scheduler]` — Timer/alarm settings (snooze duration, timeout, volume, per-user limits)
 
 Most settings can also be changed via the Web UI settings panel.
 
@@ -929,7 +938,7 @@ Click the gear icon in the header to access the settings panel. This provides a 
 - Sessions are tracked via token stored in browser localStorage
 - Each browser tab maintains its own conversation context
 
-See `docs/WEBUI_DESIGN.md` for technical architecture details.
+See `docs/archive/WEBUI_DESIGN.md` for technical architecture details.
 
 ### User Management (dawn-admin)
 

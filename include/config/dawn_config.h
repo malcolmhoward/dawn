@@ -385,6 +385,23 @@ typedef struct {
 } paths_config_t;
 
 /* =============================================================================
+ * Scheduler Configuration
+ * ============================================================================= */
+typedef struct {
+   bool enabled;                /* Master enable/disable */
+   int default_snooze_minutes;  /* Default snooze duration */
+   int max_snooze_count;        /* Auto-cancel after this many snoozes */
+   int max_events_per_user;     /* Prevent runaway event creation per user */
+   int max_events_total;        /* Hard cap across all users */
+   bool missed_event_recovery;  /* Handle missed events on startup */
+   char missed_task_policy[16]; /* "skip" or "execute" */
+   int missed_task_max_age_sec; /* Skip tasks older than this even if policy=execute */
+   int alarm_timeout_sec;       /* Stop ringing after this (hard max: 300) */
+   int alarm_volume;            /* Alarm sound volume (0-100) */
+   int event_retention_days;    /* Clean up fired/cancelled/missed events after N days */
+} scheduler_config_t;
+
+/* =============================================================================
  * Music Configuration
  * ============================================================================= */
 typedef struct {
@@ -444,6 +461,7 @@ typedef struct {
    debug_config_t debug;
    paths_config_t paths;
    music_config_t music;
+   scheduler_config_t scheduler;
 } dawn_config_t;
 
 /* =============================================================================

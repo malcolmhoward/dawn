@@ -488,6 +488,40 @@ void ws_client_set_music_playback(ws_client_t *client, void *music_pb);
  */
 int ws_client_send_music_subscribe(ws_client_t *client);
 
+/* =============================================================================
+ * Scheduler/Alarm Callbacks
+ * ============================================================================= */
+
+/**
+ * @brief Alarm/timer notification from daemon scheduler
+ */
+typedef struct {
+   int64_t event_id;
+   char label[128];
+   char type[16]; /* "alarm", "timer", "reminder" */
+} ws_alarm_notify_t;
+
+typedef void (*ws_alarm_notify_cb_t)(const ws_alarm_notify_t *alarm, void *user_data);
+
+/**
+ * @brief Set callback for alarm/timer notifications
+ */
+void ws_client_set_alarm_callback(ws_client_t *client, ws_alarm_notify_cb_t cb, void *user_data);
+
+/**
+ * @brief Send dismiss or snooze command for a scheduler event
+ *
+ * @param client Client context
+ * @param action "dismiss" or "snooze"
+ * @param event_id Server event ID
+ * @param snooze_minutes Snooze duration (0 = default, only for snooze action)
+ * @return 0 on success, -1 on failure
+ */
+int ws_client_send_alarm_action(ws_client_t *client,
+                                const char *action,
+                                int64_t event_id,
+                                int snooze_minutes);
+
 #ifdef __cplusplus
 }
 #endif

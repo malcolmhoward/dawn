@@ -32,6 +32,7 @@ option(DAWN_ENABLE_RESET_CONVERSATION_TOOL "Enable reset_conversation tool" ON)
 option(DAWN_ENABLE_VIEWING_TOOL "Enable viewing/vision tool (MQTT)" ON)
 option(DAWN_ENABLE_HUD_TOOLS "Enable HUD control tools (MQTT)" ON)
 option(DAWN_ENABLE_AUDIO_TOOLS "Enable voice amplifier and audio device tools" ON)
+option(DAWN_ENABLE_SCHEDULER_TOOL "Enable scheduler/timer/alarm/reminder tool" ON)
 
 # =============================================================================
 # Tool Registry (always included)
@@ -194,6 +195,15 @@ if(DAWN_ENABLE_AUDIO_TOOLS)
     message(STATUS "DAWN: Audio tools ENABLED")
 else()
     message(STATUS "DAWN: Audio tools DISABLED")
+endif()
+
+# Scheduler Tool
+if(DAWN_ENABLE_SCHEDULER_TOOL)
+    add_definitions(-DDAWN_ENABLE_SCHEDULER_TOOL)
+    list(APPEND TOOL_SOURCES src/tools/scheduler_tool.c)
+    message(STATUS "DAWN: Scheduler tool ENABLED")
+else()
+    message(STATUS "DAWN: Scheduler tool DISABLED")
 endif()
 
 # =============================================================================

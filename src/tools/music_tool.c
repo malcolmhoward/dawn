@@ -151,7 +151,7 @@ static const tool_metadata_t music_metadata = {
    .param_count = 4,
 
    .device_type = TOOL_DEVICE_TYPE_MUSIC,
-   .capabilities = TOOL_CAP_FILESYSTEM,
+   .capabilities = TOOL_CAP_FILESYSTEM | TOOL_CAP_SCHEDULABLE,
    .is_getter = false,
    .skip_followup = false,
    .default_remote = true,

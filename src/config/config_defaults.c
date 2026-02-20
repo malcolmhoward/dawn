@@ -245,6 +245,19 @@ void config_set_defaults(dawn_config_t *config) {
    /* Music - metadata indexing */
    config->music.scan_interval_minutes = 60; /* Rescan every hour */
 
+   /* Scheduler */
+   config->scheduler.enabled = true;
+   config->scheduler.default_snooze_minutes = 10;
+   config->scheduler.max_snooze_count = 10;
+   config->scheduler.max_events_per_user = 50;
+   config->scheduler.max_events_total = 200;
+   config->scheduler.missed_event_recovery = true;
+   SAFE_COPY(config->scheduler.missed_task_policy, "skip");
+   config->scheduler.missed_task_max_age_sec = 300;
+   config->scheduler.alarm_timeout_sec = 60;
+   config->scheduler.alarm_volume = 80;
+   config->scheduler.event_retention_days = 30;
+
    /* Music - streaming settings */
    config->music.streaming_enabled = true;
    strncpy(config->music.streaming_quality, "standard",

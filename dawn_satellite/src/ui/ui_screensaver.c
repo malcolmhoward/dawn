@@ -36,6 +36,7 @@
 #include "logging.h"
 #include "ui/ui_colors.h"
 #include "ui/ui_theme.h"
+#include "ui/ui_util.h"
 
 /* =============================================================================
  * Constants
@@ -86,47 +87,6 @@
 #define FALLBACK_BODY_FONT "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 
 /* =============================================================================
- * Helpers
- * ============================================================================= */
-
-/** @brief Load a font with fallback to system fonts */
-static TTF_Font *load_font(const char *font_dir,
-                           const char *filename,
-                           const char *fallback,
-                           int size) {
-   char path[512];
-   TTF_Font *font = NULL;
-
-   if (font_dir && filename) {
-      snprintf(path, sizeof(path), "%s/%s", font_dir, filename);
-      font = TTF_OpenFont(path, size);
-   }
-   if (!font && fallback) {
-      font = TTF_OpenFont(fallback, size);
-   }
-   return font;
-}
-
-/** @brief Build a white texture from text (tint later with SDL_SetTextureColorMod) */
-static SDL_Texture *build_white_tex(SDL_Renderer *r,
-                                    TTF_Font *font,
-                                    const char *text,
-                                    int *w,
-                                    int *h) {
-   SDL_Color white = { 255, 255, 255, 255 };
-   SDL_Surface *surf = TTF_RenderUTF8_Blended(font, text, white);
-   if (!surf)
-      return NULL;
-   SDL_Texture *tex = SDL_CreateTextureFromSurface(r, surf);
-   if (tex) {
-      *w = surf->w;
-      *h = surf->h;
-   }
-   SDL_FreeSurface(surf);
-   return tex;
-}
-
-/* =============================================================================
  * Clock Rendering
  * ============================================================================= */
 
@@ -148,7 +108,7 @@ static void update_clock_textures(ui_screensaver_t *ss, SDL_Renderer *r) {
       snprintf(ss->cached_time, sizeof(ss->cached_time), "%s", time_str);
       if (ss->time_tex)
          SDL_DestroyTexture(ss->time_tex);
-      ss->time_tex = build_white_tex(r, ss->clock_font, time_str, &ss->time_w, &ss->time_h);
+      ss->time_tex = ui_build_white_tex(r, ss->clock_font, time_str, &ss->time_w, &ss->time_h);
    }
 
    /* Date: "Tuesday, Feb 11" — re-render only on day change */
@@ -158,7 +118,7 @@ static void update_clock_textures(ui_screensaver_t *ss, SDL_Renderer *r) {
       snprintf(ss->cached_date, sizeof(ss->cached_date), "%s", date_str);
       if (ss->date_tex)
          SDL_DestroyTexture(ss->date_tex);
-      ss->date_tex = build_white_tex(r, ss->date_font, date_str, &ss->date_w, &ss->date_h);
+      ss->date_tex = ui_build_white_tex(r, ss->date_font, date_str, &ss->date_w, &ss->date_h);
    }
 }
 
@@ -532,12 +492,12 @@ int ui_screensaver_init(ui_screensaver_t *ss,
    }
 
    /* Load fonts for clock mode — mono font for time creates visual hierarchy */
-   ss->clock_font = load_font(font_dir, "IBMPlexMono-Regular.ttf", FALLBACK_MONO_FONT,
-                              CLOCK_FONT_SIZE);
-   ss->date_font = load_font(font_dir, "SourceSans3-Regular.ttf", FALLBACK_BODY_FONT,
-                             DATE_FONT_SIZE);
-   ss->track_font = load_font(font_dir, "SourceSans3-Bold.ttf", FALLBACK_BODY_FONT,
-                              TRACK_FONT_SIZE);
+   ss->clock_font = ui_try_load_font(font_dir, "IBMPlexMono-Regular.ttf", FALLBACK_MONO_FONT,
+                                     CLOCK_FONT_SIZE);
+   ss->date_font = ui_try_load_font(font_dir, "SourceSans3-Regular.ttf", FALLBACK_BODY_FONT,
+                                    DATE_FONT_SIZE);
+   ss->track_font = ui_try_load_font(font_dir, "SourceSans3-Bold.ttf", FALLBACK_BODY_FONT,
+                                     TRACK_FONT_SIZE);
 
    if (!ss->clock_font) {
       LOG_WARNING("Screensaver: Failed to load clock font");
@@ -545,11 +505,11 @@ int ui_screensaver_init(ui_screensaver_t *ss,
 
    /* Pre-render "D.A.W.N." watermark texture (bold, 32pt, static) */
    {
-      TTF_Font *wm_font = load_font(font_dir, "SourceSans3-Bold.ttf", FALLBACK_BODY_FONT,
-                                    WATERMARK_FONT_SIZE);
+      TTF_Font *wm_font = ui_try_load_font(font_dir, "SourceSans3-Bold.ttf", FALLBACK_BODY_FONT,
+                                           WATERMARK_FONT_SIZE);
       if (wm_font) {
-         ss->watermark_tex = build_white_tex(renderer, wm_font, "D.A.W.N.", &ss->watermark_w,
-                                             &ss->watermark_h);
+         ss->watermark_tex = ui_build_white_tex(renderer, wm_font, "D.A.W.N.", &ss->watermark_w,
+                                                &ss->watermark_h);
          TTF_CloseFont(wm_font);
       }
       ss->watermark_corner = rand() % 4;
@@ -708,8 +668,8 @@ static void rebuild_track_texture(ui_screensaver_t *ss) {
       SDL_DestroyTexture(ss->track_title_tex);
    ss->track_title_tex = NULL;
    if (ss->track_title[0] && ss->track_font) {
-      ss->track_title_tex = build_white_tex(ss->renderer, ss->track_font, ss->track_title,
-                                            &ss->track_title_w, &ss->track_title_h);
+      ss->track_title_tex = ui_build_white_tex(ss->renderer, ss->track_font, ss->track_title,
+                                               &ss->track_title_w, &ss->track_title_h);
    }
 
    /* Subtitle line: "Album - Artist" or just one (small font) */
@@ -729,8 +689,8 @@ static void rebuild_track_texture(ui_screensaver_t *ss) {
          sub_str[0] = '\0';
       }
       if (sub_str[0]) {
-         ss->track_sub_tex = build_white_tex(ss->renderer, ss->date_font, sub_str, &ss->track_sub_w,
-                                             &ss->track_sub_h);
+         ss->track_sub_tex = ui_build_white_tex(ss->renderer, ss->date_font, sub_str,
+                                                &ss->track_sub_w, &ss->track_sub_h);
       }
    }
 

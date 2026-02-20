@@ -135,6 +135,9 @@ typedef enum {
    WS_RESP_MUSIC_POSITION, /* Music playback position update */
    WS_RESP_MUSIC_STATE,    /* Music state update (JSON) */
    WS_RESP_MUSIC_ERROR,    /* Music error notification (JSON) */
+
+   /* Scheduler notifications */
+   WS_RESP_SCHEDULER_NOTIFICATION, /* Alarm/timer/reminder fired (JSON) */
 } ws_response_type_t;
 
 /* =============================================================================

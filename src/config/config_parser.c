@@ -1006,6 +1006,45 @@ static void parse_music(toml_table_t *table, music_config_t *config) {
    }
 }
 
+static void parse_scheduler(toml_table_t *table, scheduler_config_t *config) {
+   if (!table)
+      return;
+
+   static const char *const known_keys[] = { "enabled",
+                                             "default_snooze_minutes",
+                                             "max_snooze_count",
+                                             "max_events_per_user",
+                                             "max_events_total",
+                                             "missed_event_recovery",
+                                             "missed_task_policy",
+                                             "missed_task_max_age_sec",
+                                             "alarm_timeout_sec",
+                                             "alarm_volume",
+                                             "event_retention_days",
+                                             NULL };
+   warn_unknown_keys(table, "scheduler", known_keys);
+
+   PARSE_BOOL(table, "enabled", config->enabled);
+   PARSE_INT(table, "default_snooze_minutes", config->default_snooze_minutes);
+   PARSE_INT(table, "max_snooze_count", config->max_snooze_count);
+   PARSE_INT(table, "max_events_per_user", config->max_events_per_user);
+   PARSE_INT(table, "max_events_total", config->max_events_total);
+   PARSE_BOOL(table, "missed_event_recovery", config->missed_event_recovery);
+   PARSE_STRING(table, "missed_task_policy", config->missed_task_policy);
+   PARSE_INT(table, "missed_task_max_age_sec", config->missed_task_max_age_sec);
+   PARSE_INT(table, "alarm_timeout_sec", config->alarm_timeout_sec);
+   PARSE_INT(table, "alarm_volume", config->alarm_volume);
+   PARSE_INT(table, "event_retention_days", config->event_retention_days);
+
+   /* Clamp values */
+   if (config->alarm_timeout_sec > 300)
+      config->alarm_timeout_sec = 300;
+   if (config->alarm_volume < 0)
+      config->alarm_volume = 0;
+   if (config->alarm_volume > 100)
+      config->alarm_volume = 100;
+}
+
 /* =============================================================================
  * Public API
  * ============================================================================= */
@@ -1071,6 +1110,7 @@ int config_parse_file(const char *path, dawn_config_t *config) {
    parse_debug(toml_table_in(root, "debug"), &config->debug);
    parse_paths(toml_table_in(root, "paths"), &config->paths);
    parse_music(toml_table_in(root, "music"), &config->music);
+   parse_scheduler(toml_table_in(root, "scheduler"), &config->scheduler);
 
    toml_free(root);
 

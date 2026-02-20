@@ -101,6 +101,10 @@ struct ws_client {
    music_playback_t *music_pb;
 #endif
 
+   /* Alarm/scheduler callbacks */
+   ws_alarm_notify_cb_t alarm_notify_cb;
+   void *alarm_notify_cb_data;
+
    /* Registration key for satellite authentication */
    char registration_key[65]; /* 32 bytes hex-encoded + null */
 
@@ -537,6 +541,22 @@ static void handle_message(ws_client_t *client, const char *msg, size_t len) {
    } else if (strcmp(type, "music_error") == 0) {
       if (payload) {
          LOG_WARNING("Music error: %s", json_get_string(payload, "message"));
+      }
+   } else if (strcmp(type, "scheduler_notification") == 0) {
+      if (payload && client->alarm_notify_cb) {
+         ws_alarm_notify_t notify = { 0 };
+         struct json_object *obj;
+         if (json_object_object_get_ex(payload, "event_id", &obj))
+            notify.event_id = json_object_get_int64(obj);
+         if (json_object_object_get_ex(payload, "text", &obj))
+            snprintf(notify.label, sizeof(notify.label), "%s", json_object_get_string(obj));
+         if (json_object_object_get_ex(payload, "event_type", &obj))
+            snprintf(notify.type, sizeof(notify.type), "%s", json_object_get_string(obj));
+         ws_alarm_notify_cb_t cb = client->alarm_notify_cb;
+         void *ud = client->alarm_notify_cb_data;
+         pthread_mutex_unlock(&client->mutex);
+         cb(&notify, ud);
+         pthread_mutex_lock(&client->mutex);
       }
    } else {
       LOG_DEBUG("Unknown message type: %s", type);
@@ -1476,5 +1496,42 @@ int ws_client_send_music_subscribe(ws_client_t *client) {
    json_object_put(msg);
 
    LOG_INFO("Music subscribe sent");
+   return ret;
+}
+
+/* =============================================================================
+ * Alarm/Scheduler
+ * ============================================================================= */
+
+void ws_client_set_alarm_callback(ws_client_t *client, ws_alarm_notify_cb_t cb, void *user_data) {
+   if (!client)
+      return;
+   pthread_mutex_lock(&client->mutex);
+   client->alarm_notify_cb = cb;
+   client->alarm_notify_cb_data = user_data;
+   pthread_mutex_unlock(&client->mutex);
+}
+
+int ws_client_send_alarm_action(ws_client_t *client,
+                                const char *action,
+                                int64_t event_id,
+                                int snooze_minutes) {
+   if (!client || !action || !client->registered)
+      return -1;
+
+   struct json_object *msg = json_object_new_object();
+   json_object_object_add(msg, "type", json_object_new_string("scheduler_action"));
+
+   struct json_object *payload = json_object_new_object();
+   json_object_object_add(payload, "action", json_object_new_string(action));
+   json_object_object_add(payload, "event_id", json_object_new_int64(event_id));
+   if (snooze_minutes > 0)
+      json_object_object_add(payload, "snooze_minutes", json_object_new_int(snooze_minutes));
+   json_object_object_add(msg, "payload", payload);
+
+   int ret = send_json(client, msg);
+   json_object_put(msg);
+
+   LOG_INFO("Alarm action sent: %s (event_id=%lld)", action, (long long)event_id);
    return ret;
 }

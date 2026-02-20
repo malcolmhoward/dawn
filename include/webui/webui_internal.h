@@ -196,6 +196,9 @@ typedef struct {
       struct {
          char *json; /* Pre-serialized JSON string (heap-allocated) */
       } music_json;
+      struct {
+         char *json; /* Pre-serialized scheduler notification JSON */
+      } scheduler_json;
    };
 } ws_response_t;
 

@@ -47,6 +47,7 @@
 #include "logging.h"
 #include "satellite_config.h"
 #include "ui/backlight.h"
+#include "ui/ui_alarm.h"
 #include "ui/ui_colors.h"
 #include "ui/ui_music.h"
 #include "ui/ui_orb.h"
@@ -55,6 +56,7 @@
 #include "ui/ui_theme.h"
 #include "ui/ui_touch.h"
 #include "ui/ui_transcript.h"
+#include "ui/ui_util.h"
 #include "ws_client.h"
 
 #ifdef HAVE_OPUS
@@ -211,6 +213,9 @@ struct sdl_ui {
    int theme_label_w, theme_label_h;
    int theme_dots_row_y; /* Updated each frame for hit testing */
 
+   /* Alarm/timer overlay */
+   ui_alarm_t alarm;
+
    /* Screensaver / ambient mode */
    ui_screensaver_t screensaver;
 
@@ -226,17 +231,6 @@ struct sdl_ui {
 
 /* Forward declarations */
 static int resize_event_watcher(void *data, SDL_Event *event);
-
-/* =============================================================================
- * Helper: Get monotonic time in seconds
- * ============================================================================= */
-
-static double get_time_sec(void) {
-   struct timespec ts;
-   clock_gettime(CLOCK_MONOTONIC, &ts);
-   return ts.tv_sec + ts.tv_nsec / 1e9;
-}
-
 
 /* =============================================================================
  * Panel Animation Helpers
@@ -853,6 +847,13 @@ static void handle_gesture(sdl_ui_t *ui, touch_gesture_t gesture, double time_se
    if (gesture.type == TOUCH_GESTURE_NONE)
       return;
 
+   /* Alarm overlay consumes all touch input while active (modal) */
+   if (ui_alarm_is_active(&ui->alarm)) {
+      if (gesture.type == TOUCH_GESTURE_TAP)
+         ui_alarm_handle_tap(&ui->alarm, gesture.x, gesture.y);
+      return;
+   }
+
    int orb_cx = ORB_PANEL_WIDTH / 2;
    int orb_cy = ui->height / 2;
    int dx = gesture.x - orb_cx;
@@ -1071,7 +1072,7 @@ static int sdl_init_on_thread(sdl_ui_t *ui) {
    }
 
    ui->last_state = VOICE_STATE_SILENCE;
-   ui->last_state_change_time = get_time_sec();
+   ui->last_state_change_time = ui_get_time_sec();
 
    /* Initialize music panel (right-side overlay on transcript area) */
    int music_w = MUSIC_PANEL_W(ui);
@@ -1176,9 +1177,12 @@ static int sdl_init_on_thread(sdl_ui_t *ui) {
       }
       ui_screensaver_init(&ui->screensaver, ui->renderer, ui->width, ui->height, ui->font_dir,
                           ui->ai_name, ss_enabled, ss_timeout);
-      ui->screensaver.idle_start = get_time_sec();
+      ui->screensaver.idle_start = ui_get_time_sec();
       ui->screensaver.time_24h = ui->time_24h;
    }
+
+   /* Initialize alarm overlay */
+   ui_alarm_init(&ui->alarm, ui->renderer, ui->width, ui->height, ui->font_dir);
 
    LOG_INFO("SDL UI initialized (%dx%d, driver=%s)", ui->width, ui->height,
             SDL_GetCurrentVideoDriver());
@@ -1301,6 +1305,7 @@ static void sdl_cleanup_on_thread(sdl_ui_t *ui) {
       SDL_DestroyTexture(ui->mute_btn.mic_on_tex);
    if (ui->mute_btn.mic_off_tex)
       SDL_DestroyTexture(ui->mute_btn.mic_off_tex);
+   ui_alarm_cleanup(&ui->alarm);
    ui_screensaver_cleanup(&ui->screensaver);
    ui_slider_cleanup(&ui->brightness_slider);
    ui_slider_cleanup(&ui->volume_slider);
@@ -1532,6 +1537,10 @@ static void render_frame(sdl_ui_t *ui, double time_sec) {
       }
    }
 
+   /* Alarm overlay renders above everything (including screensaver) */
+   if (ui_alarm_is_active(&ui->alarm))
+      ui_alarm_render(&ui->alarm, r, time_sec);
+
    SDL_RenderPresent(r);
 }
 
@@ -1546,7 +1555,7 @@ static int resize_event_watcher(void *data, SDL_Event *event) {
    sdl_ui_t *ui = (sdl_ui_t *)data;
    if (event->type == SDL_WINDOWEVENT && (event->window.event == SDL_WINDOWEVENT_EXPOSED ||
                                           event->window.event == SDL_WINDOWEVENT_SIZE_CHANGED)) {
-      render_frame(ui, get_time_sec() - ui->start_time);
+      render_frame(ui, ui_get_time_sec() - ui->start_time);
    }
    return 0; /* Return value is ignored for event watchers */
 }
@@ -1562,13 +1571,13 @@ static void *render_thread_func(void *arg) {
    atomic_store(&ui->init_result, 1);
 
    LOG_INFO("SDL UI render thread started");
-   ui->start_time = get_time_sec();
+   ui->start_time = ui_get_time_sec();
 
    /* Register event watcher for live redraw during X11 modal resize/move */
    SDL_AddEventWatch(resize_event_watcher, ui);
 
    while (ui->running) {
-      double frame_start = get_time_sec();
+      double frame_start = ui_get_time_sec();
       double time_sec = frame_start - ui->start_time;
 
       /* Process SDL events including touch/mouse input */
@@ -1809,7 +1818,7 @@ static void *render_thread_func(void *arg) {
       if (ss_ms > 0 && ss_ms < target_ms)
          target_ms = ss_ms;
 
-      double elapsed_ms = (get_time_sec() - frame_start) * 1000.0;
+      double elapsed_ms = (ui_get_time_sec() - frame_start) * 1000.0;
       int delay = target_ms - (int)elapsed_ms;
       if (delay > 0) {
          SDL_Delay(delay);
@@ -1901,9 +1910,10 @@ void sdl_ui_cleanup(sdl_ui_t *ui) {
    if (!ui)
       return;
 
-   /* Deregister music callbacks before freeing (prevents use-after-free) */
+   /* Deregister callbacks before freeing (prevents use-after-free) */
    if (ui->ws_client) {
       ws_client_set_music_callbacks(ui->ws_client, NULL, NULL, NULL, NULL, NULL);
+      ws_client_set_alarm_callback(ui->ws_client, NULL, NULL);
       ui_music_set_ws_client(&ui->music, NULL);
       ui->ws_client = NULL;
    }
@@ -1950,6 +1960,27 @@ static void music_library_cb(const music_library_update_t *lib, void *user_data)
    ui_music_on_library(&ui->music, lib);
 }
 
+/* =============================================================================
+ * Alarm Callback Bridges (called from WS thread -> updates alarm overlay)
+ * ============================================================================= */
+
+static void alarm_notify_cb(const ws_alarm_notify_t *alarm, void *user_data) {
+   sdl_ui_t *ui = (sdl_ui_t *)user_data;
+   ui_alarm_trigger(&ui->alarm, alarm->event_id, alarm->label, alarm->type);
+}
+
+static void alarm_dismiss_cb(int64_t event_id, void *userdata) {
+   sdl_ui_t *ui = (sdl_ui_t *)userdata;
+   if (ui->ws_client)
+      ws_client_send_alarm_action(ui->ws_client, "dismiss", event_id, 0);
+}
+
+static void alarm_snooze_cb(int64_t event_id, int snooze_minutes, void *userdata) {
+   sdl_ui_t *ui = (sdl_ui_t *)userdata;
+   if (ui->ws_client)
+      ws_client_send_alarm_action(ui->ws_client, "snooze", event_id, snooze_minutes);
+}
+
 void sdl_ui_set_ws_client(sdl_ui_t *ui, struct ws_client *client) {
    if (!ui || !client)
       return;
@@ -1960,6 +1991,14 @@ void sdl_ui_set_ws_client(sdl_ui_t *ui, struct ws_client *client) {
    /* Register music callbacks so ws_client routes parsed data to our UI */
    ws_client_set_music_callbacks(client, music_state_cb, music_position_cb, music_queue_cb,
                                  music_library_cb, ui);
+
+   /* Register alarm callback */
+   ws_client_set_alarm_callback(client, alarm_notify_cb, ui);
+
+   /* Wire alarm overlay dismiss/snooze to ws_client */
+   ui->alarm.on_dismiss = alarm_dismiss_cb;
+   ui->alarm.on_snooze = alarm_snooze_cb;
+   ui->alarm.cb_userdata = ui;
 }
 
 void sdl_ui_set_audio_playback(sdl_ui_t *ui, struct audio_playback *pb) {

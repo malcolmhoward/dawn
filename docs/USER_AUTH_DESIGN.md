@@ -1,10 +1,10 @@
 # DAWN User Authentication System Design
 
-**Status**: Phase 3 Complete
+**Status**: Phases 0-4 Complete (WebUI auth, multi-user, conversation history, session management)
 **Date**: 2025-12-18
-**Last Updated**: 2026-01-22
+**Last Updated**: 2026-02-19
 
-**Note**: DAP device authentication moved to Phase 5, deferred until DAP2 protocol redesign.
+**Note**: DAP2 satellite authentication is now handled via pre-shared registration key in `secrets.toml`, validated in `handle_satellite_register()`. The `dawn-admin` CLI tool described in this document was never implemented — all administration is done via the WebUI. DAP1 has been removed entirely.
 **Note**: Phase 3 reviewed by architecture, efficiency, security, and UI agents (2026-01-04).
 
 ## Overview
@@ -12,7 +12,7 @@
 This document describes a user account system for DAWN that provides:
 - Multi-user support with individual preferences
 - Role-based access control (Admin / User)
-- Secure authentication for WebUI and DAP protocol
+- Secure authentication for WebUI and DAP2 satellites
 - Per-user settings (persona, locale, TTS preferences)
 
 ---
@@ -2766,9 +2766,11 @@ All auth UI colors meet WCAG AA standards (4.5:1 for text):
 
 ## DAP Protocol Authentication
 
+> **Note**: This section describes the original DAP1 binary protocol authentication design, which was **never implemented**. DAP1 has been removed entirely. DAP2 satellites authenticate via a pre-shared registration key sent in the `satellite_register` WebSocket message and validated in `webui_satellite.c`. The binary packet types below are obsolete.
+
 ESP32 and other DAP clients authenticate using device tokens.
 
-### Protocol Extension
+### Protocol Extension (OBSOLETE — DAP1 removed)
 
 Add a new packet type for authenticated handshake (maintains backwards compatibility):
 
@@ -3633,11 +3635,11 @@ typedef struct {
 
 ---
 
-### Phase 5: DAP2 Device Authentication (Deferred)
+### Phase 5: DAP2 Device Authentication — PARTIALLY SUPERSEDED
 
-**Purpose**: Device authentication for ESP32 clients (Mode 2, 4).
+**Purpose**: Device authentication for satellite clients.
 
-**Note**: This phase is deferred until the DAP2 protocol redesign (see `docs/DAP2_DESIGN.md`). The current DAP1 protocol will be deprecated, so authentication work should target the new protocol.
+**Note**: DAP1 has been removed. DAP2 satellite authentication is implemented via a pre-shared registration key (`satellite_registration_key` in `secrets.toml`), validated during the `satellite_register` WebSocket handshake in `webui_satellite.c`. The `dawn-admin` CLI tool was never built — all user and session management is done through the WebUI. The token rotation and device CRUD features below remain unimplemented but are lower priority given the registration key approach.
 
 #### DAP2 Authentication
 - Device token table and CRUD operations
@@ -3672,7 +3674,7 @@ typedef struct {
 | Phase 5 | DAP2 device auth | TBD | Mode 2, 4 functional |
 
 **Total (Phases 0-4): ~13-18 days**
-**Phase 5**: Deferred until DAP2 protocol redesign
+**Phase 5**: Partially superseded by registration key approach (see note above)
 
 ### Phase Dependencies
 
@@ -3693,9 +3695,9 @@ Phase 0 (Build Prep)
                                │
                                └─── Phase 4 (Enhancements)
 
-Phase 5 (DAP2 Device Auth) ─── Deferred, depends on DAP2 protocol redesign
+Phase 5 (DAP2 Device Auth) ─── Partially superseded (registration key implemented)
     │
-    └─── Mode 2, 4 ready
+    └─── Token rotation / device CRUD remain unimplemented
 ```
 
 ### Critical Path for Mode 3 (WebUI)
@@ -3707,14 +3709,13 @@ Mode 3 (WebUI-only) requires:
 
 **Minimum viable Mode 3: Phase 0 + Phase 1** (completed)
 
-### Critical Path for Mode 2/4 (DAP)
+### Critical Path for Mode 2/4 (DAP2 Satellites)
 
-Mode 2 (DAP-only) and Mode 4 (Full) require DAP2 device authentication:
-1. ✅ Phase 0: Build system + minimal bootstrap CLI
+DAP2 satellite authentication is implemented via pre-shared registration key:
+1. ✅ Phase 0: Build system
 2. ✅ Phase 1: Core auth database + setup token
-3. Phase 5: DAP2 device tokens (deferred)
-
-**Note**: Mode 2/4 authentication is deferred until DAP2 protocol redesign. See `docs/DAP2_DESIGN.md` for protocol work.
+3. ✅ Registration key: `satellite_registration_key` in `secrets.toml`, validated in `handle_satellite_register()`
+4. Future: Per-device token rotation and CRUD (Phase 5 remainder)
 
 ---
 
@@ -4465,7 +4466,7 @@ void auth_db_cleanup_expired_sessions(void) {
 
 This design addresses:
 - **#2 Unauthenticated WebUI Access** (Critical) - ✅ Implemented Phase 1
-- **#3 Unauthenticated DAP Protocol** (Critical) - Deferred to Phase 5 (DAP2 redesign)
+- **#3 Unauthenticated DAP Protocol** (Critical) - ✅ Resolved: DAP1 removed, DAP2 uses registration key authentication
 - **#5 WebUI Secrets API Unauthenticated** (High) - ✅ Implemented Phase 1
 
 ---

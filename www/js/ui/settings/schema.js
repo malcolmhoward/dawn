@@ -851,6 +851,84 @@
             },
          },
       },
+      scheduler: {
+         label: 'Scheduler',
+         icon: '&#x23F0;',
+         fields: {
+            enabled: {
+               type: 'checkbox',
+               label: 'Enable Scheduler',
+               hint: 'Enable timers, alarms, reminders, and scheduled tasks',
+            },
+            default_snooze_minutes: {
+               type: 'number',
+               label: 'Default Snooze (minutes)',
+               min: 1,
+               max: 60,
+               hint: 'Default snooze duration when user says "snooze"',
+            },
+            max_snooze_count: {
+               type: 'number',
+               label: 'Max Snooze Count',
+               min: 1,
+               max: 20,
+               hint: 'Auto-cancel after this many snoozes',
+            },
+            alarm_timeout_sec: {
+               type: 'number',
+               label: 'Alarm Timeout (seconds)',
+               min: 10,
+               max: 300,
+               hint: 'Stop ringing after this duration',
+            },
+            alarm_volume: {
+               type: 'number',
+               label: 'Alarm Volume',
+               min: 0,
+               max: 100,
+               hint: 'Alarm sound volume (0-100)',
+            },
+            max_events_per_user: {
+               type: 'number',
+               label: 'Max Events Per User',
+               min: 1,
+               max: 1000,
+               hint: 'Limit active events per user',
+            },
+            max_events_total: {
+               type: 'number',
+               label: 'Max Events Total',
+               min: 1,
+               max: 10000,
+               hint: 'Hard cap across all users',
+            },
+            missed_event_recovery: {
+               type: 'checkbox',
+               label: 'Missed Event Recovery',
+               hint: 'Handle missed events after daemon restart',
+            },
+            missed_task_policy: {
+               type: 'select',
+               label: 'Missed Task Policy',
+               options: ['skip', 'execute'],
+               hint: 'What to do with missed scheduled tasks after restart',
+            },
+            missed_task_max_age_sec: {
+               type: 'number',
+               label: 'Missed Task Max Age (seconds)',
+               min: 60,
+               max: 86400,
+               hint: 'Skip missed tasks older than this even if policy=execute',
+            },
+            event_retention_days: {
+               type: 'number',
+               label: 'Event Retention (days)',
+               min: 1,
+               max: 365,
+               hint: 'Clean up completed/cancelled events after this many days',
+            },
+         },
+      },
    };
 
    /**

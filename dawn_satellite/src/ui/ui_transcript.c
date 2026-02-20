@@ -36,6 +36,7 @@
 #include "tts/tts_preprocessing.h"
 #include "ui/ui_colors.h"
 #include "ui/ui_theme.h"
+#include "ui/ui_util.h"
 
 /* =============================================================================
  * Constants
@@ -52,28 +53,6 @@
 /* Fallback font paths if font_dir not specified */
 #define FALLBACK_MONO_FONT "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"
 #define FALLBACK_BODY_FONT "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-
-/* =============================================================================
- * Texture Caching Helper
- * ============================================================================= */
-
-static SDL_Texture *build_white_tex(SDL_Renderer *r,
-                                    TTF_Font *font,
-                                    const char *text,
-                                    int *out_w,
-                                    int *out_h) {
-   SDL_Color white = { 255, 255, 255, 255 };
-   SDL_Surface *s = TTF_RenderUTF8_Blended(font, text, white);
-   if (!s)
-      return NULL;
-   SDL_Texture *tex = SDL_CreateTextureFromSurface(r, s);
-   if (out_w)
-      *out_w = s->w;
-   if (out_h)
-      *out_h = s->h;
-   SDL_FreeSurface(s);
-   return tex;
-}
 
 /* =============================================================================
  * WiFi Signal Quality Reader
@@ -111,41 +90,6 @@ static int read_wifi_quality(void) {
 
    fclose(f);
    return quality;
-}
-
-/* =============================================================================
- * Font Loading Helper
- * ============================================================================= */
-
-static TTF_Font *try_load_font(const char *font_dir,
-                               const char *filename,
-                               const char *fallback,
-                               int size) {
-   TTF_Font *font = NULL;
-   char path[512];
-
-   /* Try specified font_dir first */
-   if (font_dir && font_dir[0]) {
-      snprintf(path, sizeof(path), "%s/%s", font_dir, filename);
-      font = TTF_OpenFont(path, size);
-      if (font)
-         return font;
-   }
-
-   /* Try relative to executable */
-   snprintf(path, sizeof(path), "assets/fonts/%s", filename);
-   font = TTF_OpenFont(path, size);
-   if (font)
-      return font;
-
-   /* Try fallback system font */
-   if (fallback) {
-      font = TTF_OpenFont(fallback, size);
-      if (font)
-         return font;
-   }
-
-   return NULL;
 }
 
 /* =============================================================================
@@ -251,10 +195,10 @@ int ui_transcript_init(ui_transcript_t *t,
    t->scroll_offset = 0;
 
    /* Load fonts */
-   t->label_font = try_load_font(font_dir, "IBMPlexMono-Regular.ttf", FALLBACK_MONO_FONT,
-                                 LABEL_FONT_SIZE);
-   t->body_font = try_load_font(font_dir, "SourceSans3-Medium.ttf", FALLBACK_BODY_FONT,
-                                BODY_FONT_SIZE);
+   t->label_font = ui_try_load_font(font_dir, "IBMPlexMono-Regular.ttf", FALLBACK_MONO_FONT,
+                                    LABEL_FONT_SIZE);
+   t->body_font = ui_try_load_font(font_dir, "SourceSans3-Medium.ttf", FALLBACK_BODY_FONT,
+                                   BODY_FONT_SIZE);
 
    if (!t->label_font) {
       LOG_WARNING("Failed to load label font, transcript text disabled");
@@ -522,8 +466,8 @@ void ui_transcript_render(ui_transcript_t *t, SDL_Renderer *renderer, voice_stat
             snprintf(state_str, sizeof(state_str), "[OFFLINE]");
          else
             snprintf(state_str, sizeof(state_str), "[%s]", ui_state_label(state));
-         t->cached_state_tex = build_white_tex(renderer, t->label_font, state_str,
-                                               &t->cached_state_w, &t->cached_state_h);
+         t->cached_state_tex = ui_build_white_tex(renderer, t->label_font, state_str,
+                                                  &t->cached_state_w, &t->cached_state_h);
          t->cached_state_val = state;
          t->cached_state_muted = t->mic_muted;
          t->cached_state_connected = t->connected;
@@ -539,8 +483,8 @@ void ui_transcript_render(ui_transcript_t *t, SDL_Renderer *renderer, voice_stat
       /* Draw [MUTED] indicator in red (cached, rarely changes) */
       if (t->mic_muted) {
          if (!t->cached_muted_tex) {
-            t->cached_muted_tex = build_white_tex(renderer, t->label_font, "[MUTED]",
-                                                  &t->cached_muted_w, &t->cached_muted_h);
+            t->cached_muted_tex = ui_build_white_tex(renderer, t->label_font, "[MUTED]",
+                                                     &t->cached_muted_w, &t->cached_muted_h);
          }
          if (t->cached_muted_tex) {
             SDL_SetTextureColorMod(t->cached_muted_tex, COLOR_ERROR_R, COLOR_ERROR_G,
@@ -566,8 +510,8 @@ void ui_transcript_render(ui_transcript_t *t, SDL_Renderer *renderer, voice_stat
             strftime(time_str, sizeof(time_str), "%a %b %-d  %H:%M", tm_info);
          else
             strftime(time_str, sizeof(time_str), "%a %b %-d  %-I:%M %p", tm_info);
-         t->cached_time_tex = build_white_tex(renderer, t->label_font, time_str, &t->cached_time_w,
-                                              &t->cached_time_h);
+         t->cached_time_tex = ui_build_white_tex(renderer, t->label_font, time_str,
+                                                 &t->cached_time_w, &t->cached_time_h);
          t->cached_time_min = tm_info->tm_min;
       }
 
@@ -659,8 +603,8 @@ void ui_transcript_render(ui_transcript_t *t, SDL_Renderer *renderer, voice_stat
       if (!t->cached_detail_tex || strcmp(t->cached_detail_str, t->status_detail) != 0) {
          if (t->cached_detail_tex)
             SDL_DestroyTexture(t->cached_detail_tex);
-         t->cached_detail_tex = build_white_tex(renderer, t->label_font, t->status_detail,
-                                                &t->cached_detail_w, &t->cached_detail_h);
+         t->cached_detail_tex = ui_build_white_tex(renderer, t->label_font, t->status_detail,
+                                                   &t->cached_detail_w, &t->cached_detail_h);
          strncpy(t->cached_detail_str, t->status_detail, sizeof(t->cached_detail_str) - 1);
          t->cached_detail_str[sizeof(t->cached_detail_str) - 1] = '\0';
       }

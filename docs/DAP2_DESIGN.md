@@ -1430,7 +1430,7 @@ name = "Guest Room"
 - `dawn_multi_client_architecture.md` - Multi-client threading design
 - `ARCHITECTURE.md` - DAWN system architecture
 - `LLM_INTEGRATION_GUIDE.md` - LLM setup and configuration
-- `WEBUI_DESIGN.md` - WebUI architecture
+- `archive/WEBUI_DESIGN.md` - WebUI architecture
 
 ---
 

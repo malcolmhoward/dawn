@@ -26,11 +26,12 @@
 
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
+#include <time.h>
 
 /**
  * @brief Render text as a white texture for later tinting via SDL_SetTextureColorMod.
  *
- * Pattern: build_white_tex() at init/state-change time, then at render time:
+ * Pattern: ui_build_white_tex() at init/state-change time, then at render time:
  *   SDL_SetTextureColorMod(tex, r, g, b) to apply theme or state color.
  * This avoids per-frame TTF_RenderUTF8_Blended calls.
  */
@@ -50,6 +51,52 @@ static inline SDL_Texture *ui_build_white_tex(SDL_Renderer *r,
       *out_h = s->h;
    SDL_FreeSurface(s);
    return tex;
+}
+
+/**
+ * @brief Try loading a TTF font from font_dir, then assets/fonts/, then fallback path.
+ *
+ * @param font_dir  Config-specified font directory (may be NULL)
+ * @param filename  Font filename (e.g. "SourceSans3-Bold.ttf")
+ * @param fallback  System fallback path (e.g. "/usr/share/fonts/..."), may be NULL
+ * @param size      Font point size
+ * @return Opened TTF_Font, or NULL if all paths fail
+ */
+static inline TTF_Font *ui_try_load_font(const char *font_dir,
+                                         const char *filename,
+                                         const char *fallback,
+                                         int size) {
+   TTF_Font *font = NULL;
+   char path[512];
+
+   if (font_dir && font_dir[0]) {
+      snprintf(path, sizeof(path), "%s/%s", font_dir, filename);
+      font = TTF_OpenFont(path, size);
+      if (font)
+         return font;
+   }
+
+   snprintf(path, sizeof(path), "assets/fonts/%s", filename);
+   font = TTF_OpenFont(path, size);
+   if (font)
+      return font;
+
+   if (fallback) {
+      font = TTF_OpenFont(fallback, size);
+      if (font)
+         return font;
+   }
+
+   return NULL;
+}
+
+/**
+ * @brief Get current monotonic time in seconds (for animations, frame timing).
+ */
+static inline double ui_get_time_sec(void) {
+   struct timespec ts;
+   clock_gettime(CLOCK_MONOTONIC, &ts);
+   return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
 }
 
 #endif /* UI_UTIL_H */

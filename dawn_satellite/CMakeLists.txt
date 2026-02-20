@@ -171,6 +171,7 @@ endif()
 if(ENABLE_SDL_UI)
     list(APPEND SATELLITE_SOURCES
         src/ui/sdl_ui.c
+        src/ui/ui_alarm.c
         src/ui/ui_markdown.c
         src/ui/ui_music.c
         src/ui/ui_orb.c

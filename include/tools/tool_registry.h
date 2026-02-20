@@ -49,7 +49,7 @@ extern "C" {
 #define TOOL_NAME_MAX 64       /* Max length of tool name */
 #define TOOL_DESC_MAX 512      /* Max length of description */
 #define TOOL_TOPIC_MAX 32      /* Max length of MQTT topic */
-#define TOOL_PARAM_MAX 8       /* Max parameters per tool */
+#define TOOL_PARAM_MAX 12      /* Max parameters per tool */
 #define TOOL_PARAM_ENUM_MAX 16 /* Max enum values per parameter */
 #define TOOL_ALIAS_MAX 8       /* Max aliases per tool */
 #define TOOL_DEVICE_MAP_MAX 8  /* Max device map entries for meta-tools */
@@ -104,6 +104,7 @@ typedef enum {
    TOOL_CAP_FILESYSTEM = (1 << 2),    /**< Accesses filesystem */
    TOOL_CAP_SECRETS = (1 << 3),       /**< Uses secrets.toml credentials */
    TOOL_CAP_ARMOR_FEATURE = (1 << 4), /**< OASIS armor-specific feature */
+   TOOL_CAP_SCHEDULABLE = (1 << 5),   /**< Safe for scheduled task execution */
 } tool_capability_t;
 
 /* =============================================================================

@@ -32,6 +32,7 @@
 #include <string.h>
 
 #include "logging.h"
+#include "ui/ui_util.h"
 
 /* =============================================================================
  * Constants
@@ -73,26 +74,6 @@ static md_word_t s_word_pool[MD_MAX_WORDS];
 static char s_scratch[MD_SCRATCH_SIZE];
 
 /* =============================================================================
- * Font Loading Helper
- * ============================================================================= */
-
-static TTF_Font *try_load_font(const char *font_dir, const char *filename, int size) {
-   TTF_Font *font = NULL;
-   char path[512];
-
-   if (font_dir && font_dir[0]) {
-      snprintf(path, sizeof(path), "%s/%s", font_dir, filename);
-      font = TTF_OpenFont(path, size);
-      if (font)
-         return font;
-   }
-
-   snprintf(path, sizeof(path), "assets/fonts/%s", filename);
-   font = TTF_OpenFont(path, size);
-   return font;
-}
-
-/* =============================================================================
  * md_fonts_init / md_fonts_cleanup
  * ============================================================================= */
 
@@ -103,9 +84,11 @@ int md_fonts_init(md_fonts_t *fonts, const char *font_dir, int body_size) {
    memset(fonts, 0, sizeof(*fonts));
 
    /* Regular (Medium weight for readability on embedded displays) */
-   fonts->fonts[MD_STYLE_NORMAL] = try_load_font(font_dir, "SourceSans3-Medium.ttf", body_size);
+   fonts->fonts[MD_STYLE_NORMAL] = ui_try_load_font(font_dir, "SourceSans3-Medium.ttf", NULL,
+                                                    body_size);
    if (!fonts->fonts[MD_STYLE_NORMAL]) {
-      fonts->fonts[MD_STYLE_NORMAL] = try_load_font(font_dir, "SourceSans3-Regular.ttf", body_size);
+      fonts->fonts[MD_STYLE_NORMAL] = ui_try_load_font(font_dir, "SourceSans3-Regular.ttf", NULL,
+                                                       body_size);
    }
    if (!fonts->fonts[MD_STYLE_NORMAL]) {
       fonts->fonts[MD_STYLE_NORMAL] = TTF_OpenFont(FALLBACK_BODY_FONT, body_size);
@@ -116,11 +99,13 @@ int md_fonts_init(md_fonts_t *fonts, const char *font_dir, int body_size) {
    }
 
    /* Bold — try real file, fallback to synthesized */
-   fonts->fonts[MD_STYLE_BOLD] = try_load_font(font_dir, "SourceSans3-Bold.ttf", body_size);
+   fonts->fonts[MD_STYLE_BOLD] = ui_try_load_font(font_dir, "SourceSans3-Bold.ttf", NULL,
+                                                  body_size);
    if (fonts->fonts[MD_STYLE_BOLD]) {
       LOG_INFO("md_fonts: Bold font loaded (real)");
    } else {
-      fonts->fonts[MD_STYLE_BOLD] = try_load_font(font_dir, "SourceSans3-Regular.ttf", body_size);
+      fonts->fonts[MD_STYLE_BOLD] = ui_try_load_font(font_dir, "SourceSans3-Regular.ttf", NULL,
+                                                     body_size);
       if (!fonts->fonts[MD_STYLE_BOLD])
          fonts->fonts[MD_STYLE_BOLD] = TTF_OpenFont(FALLBACK_BODY_FONT, body_size);
       if (fonts->fonts[MD_STYLE_BOLD]) {
@@ -130,11 +115,13 @@ int md_fonts_init(md_fonts_t *fonts, const char *font_dir, int body_size) {
    }
 
    /* Italic — try real file, fallback to synthesized */
-   fonts->fonts[MD_STYLE_ITALIC] = try_load_font(font_dir, "SourceSans3-Italic.ttf", body_size);
+   fonts->fonts[MD_STYLE_ITALIC] = ui_try_load_font(font_dir, "SourceSans3-Italic.ttf", NULL,
+                                                    body_size);
    if (fonts->fonts[MD_STYLE_ITALIC]) {
       LOG_INFO("md_fonts: Italic font loaded (real)");
    } else {
-      fonts->fonts[MD_STYLE_ITALIC] = try_load_font(font_dir, "SourceSans3-Regular.ttf", body_size);
+      fonts->fonts[MD_STYLE_ITALIC] = ui_try_load_font(font_dir, "SourceSans3-Regular.ttf", NULL,
+                                                       body_size);
       if (!fonts->fonts[MD_STYLE_ITALIC])
          fonts->fonts[MD_STYLE_ITALIC] = TTF_OpenFont(FALLBACK_BODY_FONT, body_size);
       if (fonts->fonts[MD_STYLE_ITALIC]) {
@@ -144,13 +131,13 @@ int md_fonts_init(md_fonts_t *fonts, const char *font_dir, int body_size) {
    }
 
    /* Bold+Italic — try real file, fallback to synthesized */
-   fonts->fonts[MD_STYLE_BOLD_ITALIC] = try_load_font(font_dir, "SourceSans3-BoldItalic.ttf",
-                                                      body_size);
+   fonts->fonts[MD_STYLE_BOLD_ITALIC] = ui_try_load_font(font_dir, "SourceSans3-BoldItalic.ttf",
+                                                         NULL, body_size);
    if (fonts->fonts[MD_STYLE_BOLD_ITALIC]) {
       LOG_INFO("md_fonts: BoldItalic font loaded (real)");
    } else {
-      fonts->fonts[MD_STYLE_BOLD_ITALIC] = try_load_font(font_dir, "SourceSans3-Regular.ttf",
-                                                         body_size);
+      fonts->fonts[MD_STYLE_BOLD_ITALIC] = ui_try_load_font(font_dir, "SourceSans3-Regular.ttf",
+                                                            NULL, body_size);
       if (!fonts->fonts[MD_STYLE_BOLD_ITALIC])
          fonts->fonts[MD_STYLE_BOLD_ITALIC] = TTF_OpenFont(FALLBACK_BODY_FONT, body_size);
       if (fonts->fonts[MD_STYLE_BOLD_ITALIC]) {
@@ -160,7 +147,8 @@ int md_fonts_init(md_fonts_t *fonts, const char *font_dir, int body_size) {
    }
 
    /* Code — IBM Plex Mono at slightly smaller size */
-   fonts->fonts[MD_STYLE_CODE] = try_load_font(font_dir, "IBMPlexMono-Regular.ttf", body_size - 2);
+   fonts->fonts[MD_STYLE_CODE] = ui_try_load_font(font_dir, "IBMPlexMono-Regular.ttf", NULL,
+                                                  body_size - 2);
    if (!fonts->fonts[MD_STYLE_CODE]) {
       fonts->fonts[MD_STYLE_CODE] = TTF_OpenFont(FALLBACK_MONO_FONT, body_size - 2);
    }

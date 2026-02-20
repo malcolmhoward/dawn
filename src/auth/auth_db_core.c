@@ -590,6 +590,50 @@ static int create_schema(void) {
       LOG_INFO("auth_db: added conversation origin column (v17)");
    }
 
+   /* v18 migration: scheduler events table */
+   if (current_version >= 1 && current_version < 18) {
+      const char *v18_sql = "CREATE TABLE IF NOT EXISTS scheduled_events ("
+                            "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                            "  user_id INTEGER NOT NULL,"
+                            "  event_type TEXT NOT NULL DEFAULT 'timer',"
+                            "  status TEXT NOT NULL DEFAULT 'pending',"
+                            "  name TEXT NOT NULL,"
+                            "  message TEXT,"
+                            "  fire_at INTEGER NOT NULL,"
+                            "  created_at INTEGER NOT NULL,"
+                            "  duration_sec INTEGER DEFAULT 0,"
+                            "  snoozed_until INTEGER DEFAULT 0,"
+                            "  recurrence TEXT DEFAULT 'once',"
+                            "  recurrence_days TEXT,"
+                            "  original_time TEXT,"
+                            "  source_uuid TEXT,"
+                            "  source_location TEXT,"
+                            "  announce_all INTEGER DEFAULT 0,"
+                            "  tool_name TEXT,"
+                            "  tool_action TEXT,"
+                            "  tool_value TEXT,"
+                            "  fired_at INTEGER DEFAULT 0,"
+                            "  snooze_count INTEGER DEFAULT 0,"
+                            "  FOREIGN KEY (user_id) REFERENCES users(id)"
+                            ");"
+                            "CREATE INDEX IF NOT EXISTS idx_sched_status_fire "
+                            "  ON scheduled_events(status, fire_at);"
+                            "CREATE INDEX IF NOT EXISTS idx_sched_user "
+                            "  ON scheduled_events(user_id, status);"
+                            "CREATE INDEX IF NOT EXISTS idx_sched_user_name "
+                            "  ON scheduled_events(user_id, status, name);"
+                            "CREATE INDEX IF NOT EXISTS idx_sched_source "
+                            "  ON scheduled_events(source_uuid);";
+
+      rc = sqlite3_exec(s_db.db, v18_sql, NULL, NULL, &errmsg);
+      if (rc != SQLITE_OK) {
+         LOG_ERROR("auth_db: v18 migration failed: %s", errmsg ? errmsg : "unknown");
+         sqlite3_free(errmsg);
+         return AUTH_DB_FAILURE;
+      }
+      LOG_INFO("auth_db: added scheduled_events table (v18)");
+   }
+
    /* Create continuation index (runs for both new databases and migrations) */
    rc = sqlite3_exec(s_db.db,
                      "CREATE INDEX IF NOT EXISTS idx_conversations_continued "

@@ -755,6 +755,30 @@ session_t *session_get(uint32_t session_id) {
    return found;
 }
 
+session_t *session_find_by_uuid(const char *uuid) {
+   if (!initialized || !uuid || !uuid[0]) {
+      return NULL;
+   }
+
+   pthread_rwlock_rdlock(&session_manager_rwlock);
+
+   session_t *found = find_session_by_uuid_unlocked(uuid);
+
+   if (found) {
+      if (found->disconnected) {
+         pthread_rwlock_unlock(&session_manager_rwlock);
+         return NULL;
+      }
+
+      pthread_mutex_lock(&found->ref_mutex);
+      found->ref_count++;
+      pthread_mutex_unlock(&found->ref_mutex);
+   }
+
+   pthread_rwlock_unlock(&session_manager_rwlock);
+   return found;
+}
+
 session_t *session_get_for_reconnect(uint32_t session_id) {
    if (!initialized) {
       return NULL;

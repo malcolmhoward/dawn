@@ -490,6 +490,12 @@ if(ENABLE_WEBUI)
     )
 endif()
 
+# Scheduler (depends on auth_db for storage, always compiled when DB is available)
+list(APPEND DAWN_SOURCES
+    src/core/scheduler_db.c
+    src/core/scheduler.c
+)
+
 # Database core + memory subsystem (always compiled — memory works in all modes)
 list(APPEND DAWN_SOURCES
     src/auth/auth_db_core.c

@@ -40,6 +40,7 @@
 @import url('components/users.css');
 @import url('components/visualizer.css');
 @import url('components/music.css');
+@import url('components/scheduler.css');
 
 /* =============================================================================
  * Responsive Overrides (load last to override component styles)

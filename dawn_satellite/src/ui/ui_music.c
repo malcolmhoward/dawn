@@ -38,6 +38,7 @@
 #include "logging.h"
 #include "ui/ui_colors.h"
 #include "ui/ui_theme.h"
+#include "ui/ui_util.h"
 #include "ws_client.h"
 
 #ifdef HAVE_OPUS
@@ -72,32 +73,6 @@
 #define FALLBACK_BODY_FONT "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 
 /* Struct definition is in ui_music.h (needed by sdl_ui.c for embedding) */
-
-/* =============================================================================
- * Font Loading Helper
- * ============================================================================= */
-
-static TTF_Font *load_font(const char *font_dir,
-                           const char *filename,
-                           const char *fallback,
-                           int size) {
-   TTF_Font *font = NULL;
-   char path[512];
-   if (font_dir && font_dir[0]) {
-      snprintf(path, sizeof(path), "%s/%s", font_dir, filename);
-      font = TTF_OpenFont(path, size);
-      if (font)
-         return font;
-   }
-   snprintf(path, sizeof(path), "assets/fonts/%s", filename);
-   font = TTF_OpenFont(path, size);
-   if (font)
-      return font;
-   if (fallback) {
-      font = TTF_OpenFont(fallback, size);
-   }
-   return font;
-}
 
 /* =============================================================================
  * Duration Formatting
@@ -186,24 +161,6 @@ static void ensure_track_cached(ui_music_t *m) {
 #define TOGGLE_ICON_DIM 22
 /* Size of transport icon drawing area (pixels) */
 #define TRANSPORT_ICON_DIM 24
-
-static SDL_Texture *build_white_tex(SDL_Renderer *r,
-                                    TTF_Font *font,
-                                    const char *text,
-                                    int *out_w,
-                                    int *out_h) {
-   SDL_Color white = { 255, 255, 255, 255 };
-   SDL_Surface *s = TTF_RenderUTF8_Blended(font, text, white);
-   if (!s)
-      return NULL;
-   SDL_Texture *tex = SDL_CreateTextureFromSurface(r, s);
-   if (out_w)
-      *out_w = s->w;
-   if (out_h)
-      *out_h = s->h;
-   SDL_FreeSurface(s);
-   return tex;
-}
 
 /* --- SDL primitive drawing helpers for transport/toggle icons --- */
 
@@ -508,8 +465,8 @@ static void build_static_caches(ui_music_t *m) {
 
    static const char *tab_names[] = { "Playing", "Queue", "Library" };
    for (int i = 0; i < 3; i++) {
-      m->tab_tex[i] = build_white_tex(m->renderer, m->label_font, tab_names[i], &m->tab_tex_w[i],
-                                      &m->tab_tex_h[i]);
+      m->tab_tex[i] = ui_build_white_tex(m->renderer, m->label_font, tab_names[i], &m->tab_tex_w[i],
+                                         &m->tab_tex_h[i]);
    }
 
    /* Transport icons: 0=prev, 1=play, 2=pause, 3=next (SDL primitives) */
@@ -528,34 +485,36 @@ static void build_static_caches(ui_music_t *m) {
    m->repeat_one_icon_tex = build_repeat_icon(m->renderer, m->label_font, true);
 
    /* Static labels (white text, tinted via SDL_SetTextureColorMod at render time) */
-   m->slabel_tex[SLABEL_NO_TRACK] = build_white_tex(
+   m->slabel_tex[SLABEL_NO_TRACK] = ui_build_white_tex(
        m->renderer, m->body_font ? m->body_font : m->label_font, "No track selected",
        &m->slabel_w[SLABEL_NO_TRACK], &m->slabel_h[SLABEL_NO_TRACK]);
-   m->slabel_tex[SLABEL_CLEAR_ALL] = build_white_tex(m->renderer, m->label_font, "Clear All",
-                                                     &m->slabel_w[SLABEL_CLEAR_ALL],
-                                                     &m->slabel_h[SLABEL_CLEAR_ALL]);
-   m->slabel_tex[SLABEL_BROWSE_HINT] = build_white_tex(m->renderer, m->label_font,
-                                                       "Tap a category to browse",
-                                                       &m->slabel_w[SLABEL_BROWSE_HINT],
-                                                       &m->slabel_h[SLABEL_BROWSE_HINT]);
-   m->slabel_tex[SLABEL_BACK] = build_white_tex(m->renderer, m->label_font, "\xE2\x86\x90 Back",
-                                                &m->slabel_w[SLABEL_BACK],
-                                                &m->slabel_h[SLABEL_BACK]);
-   m->slabel_tex[SLABEL_PLUS] = build_white_tex(m->renderer, m->label_font, "+",
-                                                &m->slabel_w[SLABEL_PLUS],
-                                                &m->slabel_h[SLABEL_PLUS]);
-   m->slabel_tex[SLABEL_QUEUE_EMPTY] = build_white_tex(m->renderer, m->label_font, "Queue is empty",
-                                                       &m->slabel_w[SLABEL_QUEUE_EMPTY],
-                                                       &m->slabel_h[SLABEL_QUEUE_EMPTY]);
-   m->slabel_tex[SLABEL_CONFIRM_MSG] = build_white_tex(m->renderer, m->label_font, "Clear queue?",
-                                                       &m->slabel_w[SLABEL_CONFIRM_MSG],
-                                                       &m->slabel_h[SLABEL_CONFIRM_MSG]);
-   m->slabel_tex[SLABEL_CONFIRM_YES] = build_white_tex(m->renderer, m->label_font, "Yes",
-                                                       &m->slabel_w[SLABEL_CONFIRM_YES],
-                                                       &m->slabel_h[SLABEL_CONFIRM_YES]);
-   m->slabel_tex[SLABEL_CONFIRM_NO] = build_white_tex(m->renderer, m->label_font, "No",
-                                                      &m->slabel_w[SLABEL_CONFIRM_NO],
-                                                      &m->slabel_h[SLABEL_CONFIRM_NO]);
+   m->slabel_tex[SLABEL_CLEAR_ALL] = ui_build_white_tex(m->renderer, m->label_font, "Clear All",
+                                                        &m->slabel_w[SLABEL_CLEAR_ALL],
+                                                        &m->slabel_h[SLABEL_CLEAR_ALL]);
+   m->slabel_tex[SLABEL_BROWSE_HINT] = ui_build_white_tex(m->renderer, m->label_font,
+                                                          "Tap a category to browse",
+                                                          &m->slabel_w[SLABEL_BROWSE_HINT],
+                                                          &m->slabel_h[SLABEL_BROWSE_HINT]);
+   m->slabel_tex[SLABEL_BACK] = ui_build_white_tex(m->renderer, m->label_font, "\xE2\x86\x90 Back",
+                                                   &m->slabel_w[SLABEL_BACK],
+                                                   &m->slabel_h[SLABEL_BACK]);
+   m->slabel_tex[SLABEL_PLUS] = ui_build_white_tex(m->renderer, m->label_font, "+",
+                                                   &m->slabel_w[SLABEL_PLUS],
+                                                   &m->slabel_h[SLABEL_PLUS]);
+   m->slabel_tex[SLABEL_QUEUE_EMPTY] = ui_build_white_tex(m->renderer, m->label_font,
+                                                          "Queue is empty",
+                                                          &m->slabel_w[SLABEL_QUEUE_EMPTY],
+                                                          &m->slabel_h[SLABEL_QUEUE_EMPTY]);
+   m->slabel_tex[SLABEL_CONFIRM_MSG] = ui_build_white_tex(m->renderer, m->label_font,
+                                                          "Clear queue?",
+                                                          &m->slabel_w[SLABEL_CONFIRM_MSG],
+                                                          &m->slabel_h[SLABEL_CONFIRM_MSG]);
+   m->slabel_tex[SLABEL_CONFIRM_YES] = ui_build_white_tex(m->renderer, m->label_font, "Yes",
+                                                          &m->slabel_w[SLABEL_CONFIRM_YES],
+                                                          &m->slabel_h[SLABEL_CONFIRM_YES]);
+   m->slabel_tex[SLABEL_CONFIRM_NO] = ui_build_white_tex(m->renderer, m->label_font, "No",
+                                                         &m->slabel_w[SLABEL_CONFIRM_NO],
+                                                         &m->slabel_h[SLABEL_CONFIRM_NO]);
 
    m->static_cache_ready = true;
 }
@@ -793,8 +752,8 @@ static void render_now_playing(ui_music_t *m, SDL_Renderer *r) {
       if (!m->time_cur_tex || m->time_cur_sec != cur_sec) {
          if (m->time_cur_tex)
             SDL_DestroyTexture(m->time_cur_tex);
-         m->time_cur_tex = build_white_tex(r, m->label_font, time_cur, &m->time_cur_w,
-                                           &m->time_cur_h);
+         m->time_cur_tex = ui_build_white_tex(r, m->label_font, time_cur, &m->time_cur_w,
+                                              &m->time_cur_h);
          m->time_cur_sec = cur_sec;
       }
 
@@ -803,8 +762,8 @@ static void render_now_playing(ui_music_t *m, SDL_Renderer *r) {
       if (!m->time_dur_tex || m->time_dur_sec != dur_sec) {
          if (m->time_dur_tex)
             SDL_DestroyTexture(m->time_dur_tex);
-         m->time_dur_tex = build_white_tex(r, m->label_font, time_dur, &m->time_dur_w,
-                                           &m->time_dur_h);
+         m->time_dur_tex = ui_build_white_tex(r, m->label_font, time_dur, &m->time_dur_w,
+                                              &m->time_dur_h);
          m->time_dur_sec = dur_sec;
       }
 
@@ -1013,8 +972,8 @@ static void render_now_playing(ui_music_t *m, SDL_Renderer *r) {
       if (!m->status_line_tex || strcmp(m->cached_status_line, status) != 0) {
          if (m->status_line_tex)
             SDL_DestroyTexture(m->status_line_tex);
-         m->status_line_tex = build_white_tex(r, m->label_font, status, &m->status_line_w,
-                                              &m->status_line_h);
+         m->status_line_tex = ui_build_white_tex(r, m->label_font, status, &m->status_line_w,
+                                                 &m->status_line_h);
          strncpy(m->cached_status_line, status, sizeof(m->cached_status_line) - 1);
          m->cached_status_line[sizeof(m->cached_status_line) - 1] = '\0';
       }
@@ -1137,8 +1096,8 @@ static void render_queue(ui_music_t *m, SDL_Renderer *r) {
             SDL_DestroyTexture(m->queue_hdr_tex);
          char title[64];
          snprintf(title, sizeof(title), "PLAYBACK QUEUE (%d)", m->queue_count);
-         m->queue_hdr_tex = build_white_tex(r, m->label_font, title, &m->queue_hdr_w,
-                                            &m->queue_hdr_h);
+         m->queue_hdr_tex = ui_build_white_tex(r, m->label_font, title, &m->queue_hdr_w,
+                                               &m->queue_hdr_h);
          m->cached_queue_count = m->queue_count;
       }
       if (m->queue_hdr_tex) {
@@ -1272,13 +1231,13 @@ static void render_queue(ui_music_t *m, SDL_Renderer *r) {
             }
             char idx_str[16];
             snprintf(idx_str, sizeof(idx_str), "%d", i + 1);
-            rc->tex[0] = build_white_tex(r, m->label_font, idx_str, &rc->w[0], &rc->h[0]);
+            rc->tex[0] = ui_build_white_tex(r, m->label_font, idx_str, &rc->w[0], &rc->h[0]);
 
             char dur[16];
             format_time((float)track->duration_sec, dur, sizeof(dur));
-            rc->tex[1] = build_white_tex(r, m->label_font, dur, &rc->w[1], &rc->h[1]);
-            rc->tex[2] = build_white_tex(r, m->label_font, track->title, &rc->w[2], &rc->h[2]);
-            rc->tex[3] = build_white_tex(r, m->label_font, track->artist, &rc->w[3], &rc->h[3]);
+            rc->tex[1] = ui_build_white_tex(r, m->label_font, dur, &rc->w[1], &rc->h[1]);
+            rc->tex[2] = ui_build_white_tex(r, m->label_font, track->title, &rc->w[2], &rc->h[2]);
+            rc->tex[3] = ui_build_white_tex(r, m->label_font, track->artist, &rc->w[3], &rc->h[3]);
             rc->key_hash = key;
             rc->valid = true;
          }
@@ -1531,10 +1490,10 @@ static void render_library(ui_music_t *m, SDL_Renderer *r) {
                      rc->tex[j] = NULL;
                   }
                }
-               rc->tex[0] = build_white_tex(r, m->label_font, item->name, &rc->w[0], &rc->h[0]);
+               rc->tex[0] = ui_build_white_tex(r, m->label_font, item->name, &rc->w[0], &rc->h[0]);
                char sub[32];
                snprintf(sub, sizeof(sub), "%d tracks", item->track_count);
-               rc->tex[1] = build_white_tex(r, m->label_font, sub, &rc->w[1], &rc->h[1]);
+               rc->tex[1] = ui_build_white_tex(r, m->label_font, sub, &rc->w[1], &rc->h[1]);
                rc->key_hash = key;
                rc->valid = true;
             }
@@ -1640,9 +1599,10 @@ static void render_library(ui_music_t *m, SDL_Renderer *r) {
                }
                char dur[16];
                format_time((float)track->duration_sec, dur, sizeof(dur));
-               rc->tex[0] = build_white_tex(r, m->label_font, dur, &rc->w[0], &rc->h[0]);
-               rc->tex[1] = build_white_tex(r, m->label_font, track->title, &rc->w[1], &rc->h[1]);
-               rc->tex[2] = build_white_tex(r, m->label_font, subtitle, &rc->w[2], &rc->h[2]);
+               rc->tex[0] = ui_build_white_tex(r, m->label_font, dur, &rc->w[0], &rc->h[0]);
+               rc->tex[1] = ui_build_white_tex(r, m->label_font, track->title, &rc->w[1],
+                                               &rc->h[1]);
+               rc->tex[2] = ui_build_white_tex(r, m->label_font, subtitle, &rc->w[2], &rc->h[2]);
                rc->key_hash = key;
                rc->valid = true;
             }
@@ -1731,9 +1691,10 @@ int ui_music_init(ui_music_t *m,
       return 1;
    }
 
-   m->label_font = load_font(font_dir, "IBMPlexMono-Regular.ttf", FALLBACK_MONO_FONT,
-                             LABEL_FONT_SIZE);
-   m->body_font = load_font(font_dir, "SourceSans3-Medium.ttf", FALLBACK_BODY_FONT, BODY_FONT_SIZE);
+   m->label_font = ui_try_load_font(font_dir, "IBMPlexMono-Regular.ttf", FALLBACK_MONO_FONT,
+                                    LABEL_FONT_SIZE);
+   m->body_font = ui_try_load_font(font_dir, "SourceSans3-Medium.ttf", FALLBACK_BODY_FONT,
+                                   BODY_FONT_SIZE);
 
    if (!m->label_font)
       LOG_WARNING("Music panel: failed to load label font");

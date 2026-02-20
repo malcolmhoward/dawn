@@ -83,7 +83,7 @@ static const tool_metadata_t smartthings_metadata = {
    .param_count = 2,
 
    .device_type = TOOL_DEVICE_TYPE_GETTER, /* Most actions return status */
-   .capabilities = TOOL_CAP_NETWORK | TOOL_CAP_SECRETS,
+   .capabilities = TOOL_CAP_NETWORK | TOOL_CAP_SECRETS | TOOL_CAP_SCHEDULABLE,
    .is_getter = false, /* Has side effects (on/off/etc) */
    .skip_followup = false,
    .default_remote = true,

@@ -53,6 +53,8 @@
 #include "core/command_router.h"
 #include "core/ocp_helpers.h"
 #include "core/rate_limiter.h"
+#include "core/scheduler.h"
+#include "core/scheduler_db.h"
 #include "core/session_manager.h"
 #include "core/text_filter.h"
 #include "core/worker_pool.h"
@@ -699,6 +701,9 @@ void free_response(ws_response_t *resp) {
       case WS_RESP_MUSIC_STATE:
       case WS_RESP_MUSIC_ERROR:
          free(resp->music_json.json);
+         break;
+      case WS_RESP_SCHEDULER_NOTIFICATION:
+         free(resp->scheduler_json.json);
          break;
    }
 }
@@ -1396,6 +1401,14 @@ static void process_one_response(void) {
             send_json_message(conn->wsi, resp.music_json.json);
             free(resp.music_json.json);
             resp.music_json.json = NULL;
+         }
+         break;
+      case WS_RESP_SCHEDULER_NOTIFICATION:
+         /* Pre-serialized JSON from scheduler — just send the string */
+         if (resp.scheduler_json.json) {
+            send_json_message(conn->wsi, resp.scheduler_json.json);
+            free(resp.scheduler_json.json);
+            resp.scheduler_json.json = NULL;
          }
          break;
    }
@@ -2805,6 +2818,46 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
       }
       if (payload) {
          handle_music_queue(conn, payload);
+      }
+   }
+   /* Scheduler dismiss/snooze from WebUI client */
+   else if (strcmp(type, "scheduler_action") == 0) {
+      if (!conn_require_auth(conn))
+         return;
+      if (!payload)
+         return;
+
+      json_object *action_obj, *event_id_obj, *snooze_obj;
+      json_object_object_get_ex(payload, "action", &action_obj);
+      json_object_object_get_ex(payload, "event_id", &event_id_obj);
+      const char *action = action_obj ? json_object_get_string(action_obj) : NULL;
+      int64_t event_id = event_id_obj ? json_object_get_int64(event_id_obj) : 0;
+
+      if (!action || !action[0]) {
+         send_error_impl(conn->wsi, "INVALID_PARAM", "Missing action");
+      } else if (event_id <= 0) {
+         send_error_impl(conn->wsi, "INVALID_PARAM", "Missing or invalid event_id");
+      } else {
+         /* Verify the event belongs to this user */
+         sched_event_t ev;
+         int get_rc = scheduler_db_get(event_id, &ev);
+         if (get_rc != 0) {
+            send_error_impl(conn->wsi, "NOT_FOUND", "Event not found");
+         } else if (ev.user_id != conn->auth_user_id) {
+            send_error_impl(conn->wsi, "FORBIDDEN", "Not your event");
+         } else if (strcmp(action, "dismiss") == 0) {
+            int rc = scheduler_dismiss(event_id);
+            if (rc != 0)
+               send_error_impl(conn->wsi, "NOT_FOUND", "No ringing event to dismiss");
+         } else if (strcmp(action, "snooze") == 0) {
+            json_object_object_get_ex(payload, "snooze_minutes", &snooze_obj);
+            int snooze_min = snooze_obj ? json_object_get_int(snooze_obj) : 0;
+            int rc = scheduler_snooze(event_id, snooze_min);
+            if (rc != 0)
+               send_error_impl(conn->wsi, "NOT_FOUND", "No ringing event to snooze");
+         } else {
+            send_error_impl(conn->wsi, "INVALID_PARAM", "Unknown scheduler action");
+         }
       }
    }
    /* Satellite (DAP2 Tier 1) messages — only accept from existing satellites.
@@ -5072,6 +5125,65 @@ int webui_force_logout_by_auth_token(const char *auth_token_prefix) {
    }
 
    return count;
+}
+
+/* =============================================================================
+ * Scheduler Notification Broadcast
+ * ============================================================================= */
+
+/**
+ * @brief Broadcast scheduler notification to all authenticated WebUI connections
+ *
+ * Strong symbol that overrides the weak stub in scheduler.c.
+ * Queues a response per connected browser client. Satellites are notified
+ * separately via satellite_send_response in the scheduler fire logic.
+ */
+void scheduler_broadcast_notification(const sched_event_t *event, const char *text) {
+   if (!event || !text)
+      return;
+
+   /* Build JSON notification */
+   json_object *root = json_object_new_object();
+   json_object_object_add(root, "type", json_object_new_string("scheduler_notification"));
+
+   json_object *payload = json_object_new_object();
+   json_object_object_add(payload, "event_id", json_object_new_int64(event->id));
+   json_object_object_add(payload, "event_type",
+                          json_object_new_string(sched_event_type_to_str(event->event_type)));
+   json_object_object_add(payload, "status",
+                          json_object_new_string(sched_status_to_str(event->status)));
+   json_object_object_add(payload, "name", json_object_new_string(event->name));
+   json_object_object_add(payload, "message", json_object_new_string(text));
+   json_object_object_add(payload, "fire_at", json_object_new_int64((int64_t)event->fire_at));
+
+   json_object_object_add(root, "payload", payload);
+   const char *json_str = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN);
+
+   /* Queue a response for each authenticated browser client */
+   int sent = 0;
+   pthread_mutex_lock(&s_conn_registry_mutex);
+   for (int i = 0; i < MAX_ACTIVE_CONNECTIONS; i++) {
+      ws_connection_t *conn = s_active_connections[i];
+      if (!conn || !conn->authenticated || conn->is_satellite || !conn->session)
+         continue;
+
+      char *json_copy = strdup(json_str);
+      if (!json_copy)
+         continue;
+
+      ws_response_t resp = { .session = conn->session,
+                             .type = WS_RESP_SCHEDULER_NOTIFICATION,
+                             .scheduler_json = { .json = json_copy } };
+      queue_response(&resp);
+      sent++;
+   }
+   pthread_mutex_unlock(&s_conn_registry_mutex);
+
+   json_object_put(root);
+
+   if (sent > 0) {
+      LOG_INFO("Scheduler: Broadcast notification to %d WebUI client(s): %s", sent, text);
+   }
 }
 
 /* =============================================================================

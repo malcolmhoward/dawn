@@ -1225,6 +1225,31 @@ json_object *config_to_json(const dawn_config_t *config) {
    json_object_object_add(images, "max_per_user", json_object_new_int(config->images.max_per_user));
    json_object_object_add(root, "images", images);
 
+   /* [scheduler] */
+   json_object *scheduler = json_object_new_object();
+   json_object_object_add(scheduler, "enabled", json_object_new_boolean(config->scheduler.enabled));
+   json_object_object_add(scheduler, "default_snooze_minutes",
+                          json_object_new_int(config->scheduler.default_snooze_minutes));
+   json_object_object_add(scheduler, "max_snooze_count",
+                          json_object_new_int(config->scheduler.max_snooze_count));
+   json_object_object_add(scheduler, "max_events_per_user",
+                          json_object_new_int(config->scheduler.max_events_per_user));
+   json_object_object_add(scheduler, "max_events_total",
+                          json_object_new_int(config->scheduler.max_events_total));
+   json_object_object_add(scheduler, "missed_event_recovery",
+                          json_object_new_boolean(config->scheduler.missed_event_recovery));
+   json_object_object_add(scheduler, "missed_task_policy",
+                          json_object_new_string(config->scheduler.missed_task_policy));
+   json_object_object_add(scheduler, "missed_task_max_age_sec",
+                          json_object_new_int(config->scheduler.missed_task_max_age_sec));
+   json_object_object_add(scheduler, "alarm_timeout_sec",
+                          json_object_new_int(config->scheduler.alarm_timeout_sec));
+   json_object_object_add(scheduler, "alarm_volume",
+                          json_object_new_int(config->scheduler.alarm_volume));
+   json_object_object_add(scheduler, "event_retention_days",
+                          json_object_new_int(config->scheduler.event_retention_days));
+   json_object_object_add(root, "scheduler", scheduler);
+
    /* Music configuration (music.streaming) */
    json_object *music = json_object_new_object();
    json_object_object_add(music, "scan_interval_minutes",

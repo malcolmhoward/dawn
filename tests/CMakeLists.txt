@@ -153,6 +153,18 @@ target_link_libraries(test_summarizer_quality
                       ${JSONC_LIBRARIES}
                       m)
 
+# Test: Scheduler DB Unit Test
+add_executable(test_scheduler
+               test_scheduler.c
+               test_scheduler_stub.c
+               ${SRC_ROOT}/src/core/scheduler_db.c)
+
+target_link_libraries(test_scheduler
+                      dawn_common
+                      sqlite3
+                      pthread
+                      ${JSONC_LIBRARIES})
+
 # =============================================================================
 # Aggregate "tests" target
 # =============================================================================
@@ -167,4 +179,5 @@ add_custom_target(tests
                           test_asr_concurrent
                           test_session_commands
                           test_summarizer_quality
+                          test_scheduler
                   COMMENT "Building all tests")

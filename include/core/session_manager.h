@@ -336,6 +336,20 @@ session_t *session_get(uint32_t session_id);
 session_t *session_get_for_reconnect(uint32_t session_id);
 
 /**
+ * @brief Find session by DAP2 UUID and retain it
+ *
+ * Searches for a DAP2 session matching the given UUID. If found,
+ * increments ref_count before returning (caller must session_release).
+ *
+ * @param uuid DAP2 satellite UUID string
+ * @return Session pointer (caller must release), or NULL if not found
+ *
+ * @locks session_manager_rwlock (read), then session->ref_mutex (brief)
+ * @note Returns NULL for disconnected sessions
+ */
+session_t *session_find_by_uuid(const char *uuid);
+
+/**
  * @brief Retain session reference (increments ref_count)
  *
  * Use this when passing a session pointer to another thread or storing
@@ -880,6 +894,11 @@ static inline void session_set_command_context(session_t *session) {
 
 static inline session_t *session_get(uint32_t session_id) {
    (void)session_id;
+   return NULL;
+}
+
+static inline session_t *session_find_by_uuid(const char *uuid) {
+   (void)uuid;
    return NULL;
 }
 

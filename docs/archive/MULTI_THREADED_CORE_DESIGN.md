@@ -1,14 +1,23 @@
 # DAWN Multi-Threaded Core Design
 
+> **ARCHIVED** — This design document is fully implemented and superseded.
+>
+> - **Phases 1-4** (session manager, worker pool, per-session history, robustness/metrics): All complete. The implementation lives in `src/core/session_manager.c`, `src/core/worker_pool.c`, `src/network/accept_thread.c`, and `src/core/dawn_metrics.c`.
+> - **Phase 5** (DAP2 protocol): Complete, but the actual implementation diverged significantly from this document. The binary protocol with CRC-16 headers and ADPCM audio described here was replaced by JSON-over-WebSocket with Opus audio streaming. See [DAP2_DESIGN.md](../DAP2_DESIGN.md) for the current protocol specification.
+> - **Phase 6** (WebSocket/WebUI): Complete. Implemented using libwebsockets on the same port as DAP2 satellites. See [WEBUI_DESIGN.md](../WEBUI_DESIGN.md) for the current architecture.
+> - **DAP1 references** in this document are obsolete — DAP1 has been removed entirely.
+>
+> For current project status, see [DAWN_EVOLUTION_ROADMAP.md](../DAWN_EVOLUTION_ROADMAP.md).
+
 ## Overview
 
 This document describes the architectural changes needed to transform DAWN from a single-threaded, blocking architecture to a multi-threaded design supporting concurrent clients.
 
-**Document Status**: Phases 1-4 implemented. Phase 5 (DAP2) or Phase 6 (WebUI) is NEXT.
+**Document Status**: All phases implemented. Archived February 2026.
 
 **Related Documents:**
-- [WEBUI_DESIGN.md](WEBUI_DESIGN.md) - WebUI implementation (requires Phase 4 first)
-- [DAP2_DESIGN.md](DAP2_DESIGN.md) - DAP2 protocol specification
+- [WEBUI_DESIGN.md](../WEBUI_DESIGN.md) - WebUI implementation
+- [DAP2_DESIGN.md](../DAP2_DESIGN.md) - DAP2 protocol specification
 
 ---
 

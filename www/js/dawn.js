@@ -382,6 +382,11 @@
                   DawnMusicPlayback.handleJsonMessage(msg);
                }
                break;
+            case 'scheduler_notification':
+               if (typeof DawnScheduler !== 'undefined') {
+                  DawnScheduler.handleNotification(msg.payload);
+               }
+               break;
             default:
                console.log('Unknown message type:', msg.type);
          }
