@@ -403,6 +403,7 @@ set(DAWN_SOURCES
     src/llm/llm_streaming.c
     src/llm/llm_command_parser.c
     src/llm/llm_tools.c
+    src/llm/llm_tool_loop.c
     src/llm/llm_context.c
     src/llm/llm_local_provider.c
     src/llm/sse_parser.c

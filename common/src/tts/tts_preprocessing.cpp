@@ -810,6 +810,16 @@ template<PassMode mode> static size_t process_text_impl(const char *src, size_t 
             }
          }
 
+         // Double-hyphen "--" -> comma (ASCII em-dash equivalent)
+         if (byte == '-' && i + 1 < len && src[i + 1] == '-') {
+            if constexpr (mode == PassMode::GenerateOutput) {
+               out[out_pos] = ',';
+            }
+            out_pos++;
+            i += 2;
+            continue;
+         }
+
          // Spaced dash " - " -> comma (creates pause like em-dash)
          // Check: previous char was space, current is dash, next is space
          if (byte == '-' && out_pos > 0 && i + 1 < len && src[i + 1] == ' ') {

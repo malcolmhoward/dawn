@@ -209,6 +209,22 @@ void sentence_buffer_feed(sentence_buffer_t *buf, const char *chunk) {
             }
          }
 
+         /* Em-dash (U+2014 = \xe2\x80\x94) as clause break.
+          * Break after the dash: "policy shifts—key context" →
+          *   sentence 1: "policy shifts—"
+          *   sentence 2: "key context..."
+          * TTS preprocessing converts trailing em-dash to comma for pause. */
+         if (i + 2 < buf->size && (unsigned char)buf->buffer[i] == 0xE2 &&
+             (unsigned char)buf->buffer[i + 1] == 0x80 &&
+             (unsigned char)buf->buffer[i + 2] == 0x94) {
+            /* Only break if there's content before the dash */
+            if (i > search_start) {
+               found_boundary = 1;
+               terminator_pos = i + 2; /* Include the em-dash in the sentence */
+               break;
+            }
+         }
+
          /* Colon followed by newline (list introduction) */
          if (buf->buffer[i] == ':' && i > search_start) {
             if (i + 1 < buf->size && buf->buffer[i + 1] == '\n') {

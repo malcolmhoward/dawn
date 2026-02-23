@@ -659,6 +659,66 @@ int llm_context_save_conversation(uint32_t session_id,
    return 0;
 }
 
+/**
+ * @brief Check if a message is part of a tool call/result exchange
+ *
+ * Detects tool-related messages in both OpenAI and Claude history formats:
+ * - OpenAI: role "tool", or assistant with "tool_calls" field
+ * - Claude: assistant content with "tool_use" blocks, user content with "tool_result" blocks
+ */
+static bool is_tool_message(struct json_object *msg) {
+   struct json_object *role_obj = NULL;
+   if (!json_object_object_get_ex(msg, "role", &role_obj)) {
+      return false;
+   }
+   const char *role = json_object_get_string(role_obj);
+
+   /* OpenAI: tool result message */
+   if (strcmp(role, "tool") == 0) {
+      return true;
+   }
+
+   /* Assistant with tool_calls (OpenAI) or tool_use content (Claude) */
+   if (strcmp(role, "assistant") == 0) {
+      if (json_object_object_get_ex(msg, "tool_calls", NULL)) {
+         return true;
+      }
+      struct json_object *content = NULL;
+      if (json_object_object_get_ex(msg, "content", &content) &&
+          json_object_is_type(content, json_type_array)) {
+         int len = json_object_array_length(content);
+         for (int i = 0; i < len; i++) {
+            struct json_object *block = json_object_array_get_idx(content, i);
+            struct json_object *type_val = NULL;
+            if (json_object_object_get_ex(block, "type", &type_val) &&
+                strcmp(json_object_get_string(type_val), "tool_use") == 0) {
+               return true;
+            }
+         }
+      }
+      return false;
+   }
+
+   /* User with tool_result content (Claude format) */
+   if (strcmp(role, "user") == 0) {
+      struct json_object *content = NULL;
+      if (json_object_object_get_ex(msg, "content", &content) &&
+          json_object_is_type(content, json_type_array)) {
+         int len = json_object_array_length(content);
+         for (int i = 0; i < len; i++) {
+            struct json_object *block = json_object_array_get_idx(content, i);
+            struct json_object *type_val = NULL;
+            if (json_object_object_get_ex(block, "type", &type_val) &&
+                strcmp(json_object_get_string(type_val), "tool_result") == 0) {
+               return true;
+            }
+         }
+      }
+   }
+
+   return false;
+}
+
 int llm_context_compact(uint32_t session_id,
                         struct json_object *history,
                         llm_type_t type,
@@ -700,6 +760,24 @@ int llm_context_compact(uint32_t session_id,
    /* Keep last N exchanges (user + assistant pairs) */
    int keep_messages = LLM_CONTEXT_KEEP_EXCHANGES * 2;
    int end_idx = history_len - keep_messages;
+
+   /* Expand keep window backward to preserve complete tool call sequences.
+    * The LLM needs to see: [user question] + [assistant(tool_calls)] + [tool results]
+    * to continue coherently. Walk backward past all tool messages, then include
+    * the preceding user message that triggered the tool exchange. */
+   while (end_idx > start_idx &&
+          is_tool_message(json_object_array_get_idx(history, end_idx - 1))) {
+      end_idx--;
+   }
+   /* Include the user message that triggered the tool call sequence */
+   if (end_idx > start_idx) {
+      struct json_object *prev = json_object_array_get_idx(history, end_idx - 1);
+      struct json_object *prev_role = NULL;
+      if (json_object_object_get_ex(prev, "role", &prev_role) &&
+          strcmp(json_object_get_string(prev_role), "user") == 0) {
+         end_idx--;
+      }
+   }
 
    if (end_idx <= start_idx) {
       /* Not enough messages to summarize */

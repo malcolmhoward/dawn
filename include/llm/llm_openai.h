@@ -25,6 +25,9 @@
 #include <json-c/json.h>
 #include <stddef.h>
 
+/* Forward declaration for single-shot result type (defined in llm_tools.h) */
+struct llm_tool_response;
+
 /*
  * OpenAI Configuration
  *
@@ -97,5 +100,38 @@ char *llm_openai_chat_completion_streaming(struct json_object *conversation_hist
                                            const char *model,
                                            llm_openai_text_chunk_callback chunk_callback,
                                            void *callback_userdata);
+
+/**
+ * @brief Single-shot OpenAI streaming call (no tool execution or recursion)
+ *
+ * Makes exactly one HTTP call and returns structured results. Does NOT execute
+ * tools, append to history, or recurse. Used by the central tool iteration loop.
+ *
+ * @param conversation_history JSON array of messages (OpenAI format)
+ * @param input_text User input text (empty string for follow-up calls)
+ * @param vision_images Array of base64 images (NULL if not used)
+ * @param vision_image_sizes Array of image sizes (NULL if not used)
+ * @param vision_image_count Number of images (0 if not used)
+ * @param base_url API base URL
+ * @param api_key API key (NULL for local LLM)
+ * @param model Model name (NULL = use config default)
+ * @param chunk_callback Streaming text callback
+ * @param callback_userdata User context for callback
+ * @param iteration Current iteration (controls whether tools are included)
+ * @param result Output: structured response (see llm_tools.h llm_tool_response_t)
+ * @return 0 on success, non-zero on error (result not populated)
+ */
+int llm_openai_streaming_single_shot(struct json_object *conversation_history,
+                                     const char *input_text,
+                                     const char **vision_images,
+                                     const size_t *vision_image_sizes,
+                                     int vision_image_count,
+                                     const char *base_url,
+                                     const char *api_key,
+                                     const char *model,
+                                     llm_openai_text_chunk_callback chunk_callback,
+                                     void *callback_userdata,
+                                     int iteration,
+                                     struct llm_tool_response *result);
 
 #endif  // LLM_OPENAI_H

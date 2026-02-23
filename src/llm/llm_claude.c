@@ -827,3 +827,186 @@ char *llm_claude_chat_completion_streaming(struct json_object *conversation_hist
                                         vision_image_sizes, vision_image_count, base_url, api_key,
                                         model, chunk_callback, callback_userdata, 0);
 }
+
+int llm_claude_streaming_single_shot(struct json_object *conversation_history,
+                                     const char *input_text,
+                                     const char **vision_images,
+                                     const size_t *vision_image_sizes,
+                                     int vision_image_count,
+                                     const char *base_url,
+                                     const char *api_key,
+                                     const char *model,
+                                     llm_claude_text_chunk_callback chunk_callback,
+                                     void *callback_userdata,
+                                     int iteration,
+                                     llm_tool_response_t *result) {
+   CURL *curl_handle = NULL;
+   CURLcode res = -1;
+   struct curl_slist *headers = NULL;
+   char full_url[2048 + 20] = "";
+   const char *payload = NULL;
+   json_object *request = NULL;
+   sse_parser_t *sse_parser = NULL;
+   llm_stream_context_t *stream_ctx = NULL;
+   claude_streaming_context_t streaming_ctx;
+
+   if (!result) {
+      return 1;
+   }
+   memset(result, 0, sizeof(*result));
+
+   if (!api_key) {
+      LOG_ERROR("Claude API key is required");
+      return 1;
+   }
+
+   if (!llm_check_connection(base_url, 4)) {
+      LOG_ERROR("URL did not return. Unavailable.");
+      return 1;
+   }
+
+   /* Convert to Claude format */
+   request = convert_to_claude_format(conversation_history, input_text, vision_images,
+                                      vision_image_sizes, vision_image_count, model, iteration);
+   if (!request) {
+      LOG_ERROR("Failed to convert conversation to Claude format");
+      return 1;
+   }
+
+   json_object_object_add(request, "stream", json_object_new_boolean(1));
+
+   payload = json_object_to_json_string_ext(request, JSON_C_TO_STRING_PLAIN |
+                                                         JSON_C_TO_STRING_NOSLASHESCAPE);
+
+   LOG_INFO("Claude single-shot iter %d: url=%s", iteration, base_url);
+
+   /* Create streaming context */
+   stream_ctx = llm_stream_create(LLM_CLOUD, CLOUD_PROVIDER_CLAUDE, chunk_callback,
+                                  callback_userdata);
+   if (!stream_ctx) {
+      LOG_ERROR("Failed to create LLM stream context");
+      json_object_put(request);
+      return 1;
+   }
+
+   sse_parser = sse_parser_create(claude_sse_event_handler, &streaming_ctx);
+   if (!sse_parser) {
+      LOG_ERROR("Failed to create SSE parser");
+      llm_stream_free(stream_ctx);
+      json_object_put(request);
+      return 1;
+   }
+
+   streaming_ctx.sse_parser = sse_parser;
+   streaming_ctx.stream_ctx = stream_ctx;
+   curl_buffer_init(&streaming_ctx.raw_response);
+
+   curl_handle = curl_easy_init();
+   if (!curl_handle) {
+      LOG_ERROR("Failed to initialize CURL");
+      sse_parser_free(sse_parser);
+      llm_stream_free(stream_ctx);
+      curl_buffer_free(&streaming_ctx.raw_response);
+      json_object_put(request);
+      return 1;
+   }
+
+   headers = build_claude_headers(api_key);
+   snprintf(full_url, sizeof(full_url), "%s%s", base_url, CLAUDE_MESSAGES_ENDPOINT);
+
+   curl_easy_setopt(curl_handle, CURLOPT_URL, full_url);
+   curl_easy_setopt(curl_handle, CURLOPT_POSTFIELDS, payload);
+   curl_easy_setopt(curl_handle, CURLOPT_HTTPHEADER, headers);
+   curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, claude_streaming_write_callback);
+   curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&streaming_ctx);
+   curl_easy_setopt(curl_handle, CURLOPT_NOPROGRESS, 0L);
+   curl_easy_setopt(curl_handle, CURLOPT_XFERINFOFUNCTION, llm_curl_progress_callback);
+   curl_easy_setopt(curl_handle, CURLOPT_XFERINFODATA, NULL);
+   curl_easy_setopt(curl_handle, CURLOPT_LOW_SPEED_LIMIT, 1L);
+   curl_easy_setopt(curl_handle, CURLOPT_LOW_SPEED_TIME, 30L);
+   if (g_config.network.llm_timeout_ms > 0) {
+      curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT_MS, (long)g_config.network.llm_timeout_ms);
+   }
+
+   res = curl_easy_perform(curl_handle);
+   if (res != CURLE_OK) {
+      if (res == CURLE_ABORTED_BY_CALLBACK) {
+         LOG_INFO("LLM transfer interrupted by user");
+      } else {
+         LOG_ERROR("CURL failed: %s", curl_easy_strerror(res));
+      }
+#ifdef ENABLE_WEBUI
+      if (res != CURLE_ABORTED_BY_CALLBACK) {
+         session_t *session = session_get_command_context();
+         if (session && session->type == SESSION_TYPE_WEBUI) {
+            const char *error_code = (res == CURLE_OPERATION_TIMEDOUT) ? "LLM_TIMEOUT"
+                                                                       : "LLM_ERROR";
+            webui_send_error(session, error_code, curl_easy_strerror(res));
+         }
+      }
+#endif
+      curl_easy_cleanup(curl_handle);
+      curl_slist_free_all(headers);
+      json_object_put(request);
+      sse_parser_free(sse_parser);
+      llm_stream_free(stream_ctx);
+      curl_buffer_free(&streaming_ctx.raw_response);
+      return 1;
+   }
+
+   long http_code = 0;
+   curl_easy_getinfo(curl_handle, CURLINFO_RESPONSE_CODE, &http_code);
+
+   if (http_code != 200) {
+      LOG_ERROR("Claude API: Request failed (HTTP %ld)", http_code);
+      if (http_code == 400 && streaming_ctx.raw_response.data) {
+         LOG_ERROR("Claude error response: %s", streaming_ctx.raw_response.data);
+      }
+#ifdef ENABLE_WEBUI
+      session_t *session = session_get_command_context();
+      if (session && session->type == SESSION_TYPE_WEBUI) {
+         const char *error_msg = parse_claude_error_message(streaming_ctx.raw_response.data,
+                                                            http_code);
+         webui_send_error(session, "LLM_ERROR", error_msg);
+      }
+#endif
+      curl_easy_cleanup(curl_handle);
+      curl_slist_free_all(headers);
+      json_object_put(request);
+      sse_parser_free(sse_parser);
+      llm_stream_free(stream_ctx);
+      curl_buffer_free(&streaming_ctx.raw_response);
+      return 1;
+   }
+
+   curl_easy_cleanup(curl_handle);
+   curl_slist_free_all(headers);
+   curl_buffer_free(&streaming_ctx.raw_response);
+
+   /* Populate result from stream context */
+   if (llm_stream_has_tool_calls(stream_ctx)) {
+      const tool_call_list_t *tool_calls = llm_stream_get_tool_calls(stream_ctx);
+      if (tool_calls && tool_calls->count > 0) {
+         result->has_tool_calls = true;
+         memcpy(&result->tool_calls, tool_calls, sizeof(tool_call_list_t));
+      }
+   }
+
+   if (!result->has_tool_calls) {
+      result->text = llm_stream_get_response(stream_ctx);
+   }
+
+   if (stream_ctx->finish_reason[0] != '\0') {
+      strncpy(result->finish_reason, stream_ctx->finish_reason, sizeof(result->finish_reason) - 1);
+   }
+
+   /* Extract thinking content and signature for follow-up history */
+   result->thinking_content = llm_stream_get_thinking(stream_ctx);
+   result->thinking_signature = llm_stream_get_thinking_signature(stream_ctx);
+
+   sse_parser_free(sse_parser);
+   llm_stream_free(stream_ctx);
+   json_object_put(request);
+
+   return 0;
+}

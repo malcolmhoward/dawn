@@ -1838,7 +1838,184 @@ void llm_tool_response_free(llm_tool_response_t *response) {
          free(response->text);
          response->text = NULL;
       }
+      if (response->thinking_content) {
+         free(response->thinking_content);
+         response->thinking_content = NULL;
+      }
+      if (response->thinking_signature) {
+         free(response->thinking_signature);
+         response->thinking_signature = NULL;
+      }
    }
+}
+
+/* =============================================================================
+ * Duplicate Tool Call Detection
+ * ============================================================================= */
+
+/* Maximum messages to check for duplicate tool calls (performance optimization) */
+#define DUPLICATE_CHECK_LOOKBACK 10
+
+/**
+ * @brief Check OpenAI-format history for duplicate tool call
+ */
+static bool is_duplicate_in_openai_history(struct json_object *history,
+                                           const char *tool_name,
+                                           const char *tool_args,
+                                           int min_idx) {
+   int len = json_object_array_length(history);
+
+   for (int i = len - 1; i >= min_idx; i--) {
+      json_object *msg = json_object_array_get_idx(history, i);
+      if (!msg)
+         continue;
+
+      json_object *role_obj;
+      if (!json_object_object_get_ex(msg, "role", &role_obj))
+         continue;
+
+      const char *role = json_object_get_string(role_obj);
+      if (!role || strcmp(role, "assistant") != 0)
+         continue;
+
+      json_object *tool_calls;
+      if (!json_object_object_get_ex(msg, "tool_calls", &tool_calls))
+         continue;
+      if (!json_object_is_type(tool_calls, json_type_array))
+         continue;
+
+      int tc_len = json_object_array_length(tool_calls);
+      for (int j = 0; j < tc_len; j++) {
+         json_object *tc = json_object_array_get_idx(tool_calls, j);
+         if (!tc)
+            continue;
+
+         json_object *func;
+         if (!json_object_object_get_ex(tc, "function", &func))
+            continue;
+
+         json_object *name_obj;
+         if (!json_object_object_get_ex(func, "name", &name_obj))
+            continue;
+
+         const char *prev_name = json_object_get_string(name_obj);
+         if (!prev_name || strcmp(prev_name, tool_name) != 0)
+            continue;
+
+         json_object *args_obj;
+         if (json_object_object_get_ex(func, "arguments", &args_obj)) {
+            const char *prev_args = json_object_get_string(args_obj);
+            bool args_match = false;
+            if ((!prev_args || prev_args[0] == '\0') && (!tool_args || tool_args[0] == '\0')) {
+               args_match = true;
+            } else if (prev_args && tool_args && strcmp(prev_args, tool_args) == 0) {
+               args_match = true;
+            }
+
+            if (args_match) {
+               return true;
+            }
+         }
+      }
+   }
+   return false;
+}
+
+/**
+ * @brief Check Claude-format history for duplicate tool call
+ */
+static bool is_duplicate_in_claude_history(struct json_object *history,
+                                           const char *tool_name,
+                                           const char *tool_args,
+                                           int min_idx) {
+   int len = json_object_array_length(history);
+
+   for (int i = len - 1; i >= min_idx; i--) {
+      json_object *msg = json_object_array_get_idx(history, i);
+      if (!msg)
+         continue;
+
+      json_object *role_obj;
+      if (!json_object_object_get_ex(msg, "role", &role_obj))
+         continue;
+
+      const char *role = json_object_get_string(role_obj);
+      if (!role || strcmp(role, "assistant") != 0)
+         continue;
+
+      json_object *content_obj;
+      if (!json_object_object_get_ex(msg, "content", &content_obj))
+         continue;
+      if (!json_object_is_type(content_obj, json_type_array))
+         continue;
+
+      int arr_len = json_object_array_length(content_obj);
+      for (int j = 0; j < arr_len; j++) {
+         json_object *block = json_object_array_get_idx(content_obj, j);
+         if (!block)
+            continue;
+
+         json_object *type_obj;
+         if (!json_object_object_get_ex(block, "type", &type_obj))
+            continue;
+
+         const char *type_str = json_object_get_string(type_obj);
+         if (!type_str || strcmp(type_str, "tool_use") != 0)
+            continue;
+
+         json_object *name_obj;
+         if (!json_object_object_get_ex(block, "name", &name_obj))
+            continue;
+
+         const char *prev_name = json_object_get_string(name_obj);
+         if (!prev_name || strcmp(prev_name, tool_name) != 0)
+            continue;
+
+         /* Claude stores input as object, compare JSON string representation */
+         json_object *input_obj;
+         if (json_object_object_get_ex(block, "input", &input_obj)) {
+            const char *prev_args = json_object_to_json_string(input_obj);
+            bool args_match = false;
+            if ((!prev_args || prev_args[0] == '\0') && (!tool_args || tool_args[0] == '\0')) {
+               args_match = true;
+            } else if (prev_args && tool_args && strcmp(prev_args, tool_args) == 0) {
+               args_match = true;
+            }
+
+            if (args_match) {
+               return true;
+            }
+         }
+      }
+   }
+   return false;
+}
+
+bool llm_tools_is_duplicate_call(struct json_object *history,
+                                 const char *tool_name,
+                                 const char *tool_args,
+                                 llm_history_format_t format) {
+   if (!history || !tool_name)
+      return false;
+
+   int len = json_object_array_length(history);
+   int min_idx = len - DUPLICATE_CHECK_LOOKBACK;
+   if (min_idx < 0) {
+      min_idx = 0;
+   }
+
+   bool is_dup;
+   if (format == LLM_HISTORY_CLAUDE) {
+      is_dup = is_duplicate_in_claude_history(history, tool_name, tool_args, min_idx);
+   } else {
+      is_dup = is_duplicate_in_openai_history(history, tool_name, tool_args, min_idx);
+   }
+
+   if (is_dup) {
+      LOG_INFO("Duplicate tool call detected: %s with args %s", tool_name,
+               tool_args ? tool_args : "(none)");
+   }
+   return is_dup;
 }
 
 /* =============================================================================

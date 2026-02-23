@@ -40,6 +40,7 @@
 #include "core/session_manager.h"
 #include "dawn.h"
 #include "llm/llm_context.h"
+#include "llm/llm_tool_loop.h"
 #include "llm/llm_tools.h"
 #include "logging.h"
 #include "tools/curl_buffer.h"
@@ -894,10 +895,6 @@ char *llm_chat_completion_streaming(struct json_object *conversation_history,
       }
    }
 
-   /* Auto-compact conversation if approaching context limit */
-   uint32_t session_id = session ? session->session_id : 0;
-   llm_context_auto_compact(conversation_history, session_id);
-
    /* Track LLM total time */
    struct timeval start_time, end_time;
    gettimeofday(&start_time, NULL);
@@ -905,42 +902,43 @@ char *llm_chat_completion_streaming(struct json_object *conversation_history,
    /* Record query metrics */
    metrics_record_llm_query(type);
 
-   if (type == LLM_LOCAL) {
-      /* Local LLM uses OpenAI-compatible API (no API key needed) */
-      response = llm_openai_chat_completion_streaming(conversation_history, input_text,
-                                                      vision_images, vision_image_sizes,
-                                                      vision_image_count, url, NULL, model,
-                                                      chunk_callback, callback_userdata);
+   /* Determine provider function and history format */
+   uint32_t session_id = session ? session->session_id : 0;
+   llm_single_shot_fn provider_fn;
+   llm_history_format_t history_format;
+
+   if (type == LLM_CLOUD && provider == CLOUD_PROVIDER_CLAUDE) {
+      provider_fn = (llm_single_shot_fn)llm_claude_streaming_single_shot;
+      history_format = LLM_HISTORY_CLAUDE;
    } else {
-      /* Route to cloud provider */
-      switch (provider) {
-         case CLOUD_PROVIDER_OPENAI:
-            response = llm_openai_chat_completion_streaming(conversation_history, input_text,
-                                                            vision_images, vision_image_sizes,
-                                                            vision_image_count, url, api_key, model,
-                                                            chunk_callback, callback_userdata);
-            break;
-
-         case CLOUD_PROVIDER_CLAUDE:
-            response = llm_claude_chat_completion_streaming(conversation_history, input_text,
-                                                            vision_images, vision_image_sizes,
-                                                            vision_image_count, url, api_key, model,
-                                                            chunk_callback, callback_userdata);
-            break;
-
-         case CLOUD_PROVIDER_GEMINI:
-            /* Gemini uses OpenAI-compatible API */
-            response = llm_openai_chat_completion_streaming(conversation_history, input_text,
-                                                            vision_images, vision_image_sizes,
-                                                            vision_image_count, url, api_key, model,
-                                                            chunk_callback, callback_userdata);
-            break;
-
-         default:
-            LOG_ERROR("No cloud provider configured");
-            return NULL;
+      /* OpenAI, Gemini, and local all use OpenAI-compatible API */
+      provider_fn = (llm_single_shot_fn)llm_openai_streaming_single_shot;
+      history_format = LLM_HISTORY_OPENAI;
+      if (type == LLM_LOCAL) {
+         api_key = NULL; /* Local LLM needs no API key */
       }
    }
+
+   /* Run the central tool iteration loop */
+   llm_tool_loop_params_t loop_params = {
+      .conversation_history = conversation_history,
+      .input_text = input_text,
+      .vision_images = vision_images,
+      .vision_image_sizes = vision_image_sizes,
+      .vision_image_count = vision_image_count,
+      .base_url = url,
+      .api_key = api_key,
+      .model = model,
+      .chunk_callback = (void *)chunk_callback,
+      .callback_userdata = callback_userdata,
+      .provider_fn = provider_fn,
+      .history_format = history_format,
+      .session_id = session_id,
+      .llm_type = type,
+      .cloud_provider = provider,
+   };
+
+   response = llm_tool_iteration_loop(&loop_params);
 
    /* If cloud LLM failed (but not interrupted by user), try falling back to local */
    if (response == NULL && type == LLM_CLOUD && allow_fallback && !llm_is_interrupt_requested()) {
@@ -950,11 +948,15 @@ char *llm_chat_completion_streaming(struct json_object *conversation_history,
          text_to_speech("Unable to contact cloud LLM.");
          llm_set_type(LLM_LOCAL);
 
-         /* Retry with local LLM (uses OpenAI-compatible API without auth) */
-         response = llm_openai_chat_completion_streaming(conversation_history, input_text,
-                                                         vision_images, vision_image_sizes,
-                                                         vision_image_count, llm_url, NULL, NULL,
-                                                         chunk_callback, callback_userdata);
+         /* Retry with local LLM via tool iteration loop */
+         loop_params.base_url = llm_url;
+         loop_params.api_key = NULL;
+         loop_params.model = NULL;
+         loop_params.provider_fn = (llm_single_shot_fn)llm_openai_streaming_single_shot;
+         loop_params.history_format = LLM_HISTORY_OPENAI;
+         loop_params.llm_type = LLM_LOCAL;
+         loop_params.cloud_provider = CLOUD_PROVIDER_NONE;
+         response = llm_tool_iteration_loop(&loop_params);
          /* Record fallback event */
          metrics_record_fallback();
       }
@@ -1313,13 +1315,6 @@ char *llm_chat_completion_streaming_with_config(struct json_object *conversation
 
    char *response = NULL;
 
-   // Auto-compact conversation if approaching context limit
-   // Use session-specific config, not global, for correct context size
-   session_t *session = session_get_command_context();
-   uint32_t session_id = session ? session->session_id : 0;
-   llm_context_auto_compact_with_config(conversation_history, session_id, config->type,
-                                        config->cloud_provider, config->model);
-
    // Track LLM total time
    struct timeval start_time, end_time;
    gettimeofday(&start_time, NULL);
@@ -1330,45 +1325,40 @@ char *llm_chat_completion_streaming_with_config(struct json_object *conversation
    // Set thread-local config so llm_tools_enabled() can check session-specific tool_mode
    llm_tools_set_current_config(config);
 
-   if (config->type == LLM_LOCAL) {
-      // Local LLM uses OpenAI-compatible API (no API key needed)
-      response = llm_openai_chat_completion_streaming(
-          conversation_history, input_text, vision_images, vision_image_sizes, vision_image_count,
-          config->endpoint, NULL, config->model, chunk_callback, callback_userdata);
+   // Determine provider function and history format
+   session_t *session = session_get_command_context();
+   uint32_t session_id = session ? session->session_id : 0;
+   llm_single_shot_fn provider_fn;
+   llm_history_format_t history_format;
+
+   if (config->type == LLM_CLOUD && config->cloud_provider == CLOUD_PROVIDER_CLAUDE) {
+      provider_fn = (llm_single_shot_fn)llm_claude_streaming_single_shot;
+      history_format = LLM_HISTORY_CLAUDE;
    } else {
-      // Route to cloud provider
-      switch (config->cloud_provider) {
-         case CLOUD_PROVIDER_OPENAI:
-            response = llm_openai_chat_completion_streaming(conversation_history, input_text,
-                                                            vision_images, vision_image_sizes,
-                                                            vision_image_count, config->endpoint,
-                                                            config->api_key, config->model,
-                                                            chunk_callback, callback_userdata);
-            break;
-
-         case CLOUD_PROVIDER_CLAUDE:
-            response = llm_claude_chat_completion_streaming(conversation_history, input_text,
-                                                            vision_images, vision_image_sizes,
-                                                            vision_image_count, config->endpoint,
-                                                            config->api_key, config->model,
-                                                            chunk_callback, callback_userdata);
-            break;
-
-         case CLOUD_PROVIDER_GEMINI:
-            /* Gemini uses OpenAI-compatible API */
-            response = llm_openai_chat_completion_streaming(conversation_history, input_text,
-                                                            vision_images, vision_image_sizes,
-                                                            vision_image_count, config->endpoint,
-                                                            config->api_key, config->model,
-                                                            chunk_callback, callback_userdata);
-            break;
-
-         default:
-            LOG_ERROR("No cloud provider configured in session config");
-            llm_tools_set_current_config(NULL);
-            return NULL;
-      }
+      provider_fn = (llm_single_shot_fn)llm_openai_streaming_single_shot;
+      history_format = LLM_HISTORY_OPENAI;
    }
+
+   // Run the central tool iteration loop
+   llm_tool_loop_params_t loop_params = {
+      .conversation_history = conversation_history,
+      .input_text = input_text,
+      .vision_images = vision_images,
+      .vision_image_sizes = vision_image_sizes,
+      .vision_image_count = vision_image_count,
+      .base_url = config->endpoint,
+      .api_key = (config->type == LLM_LOCAL) ? NULL : config->api_key,
+      .model = config->model,
+      .chunk_callback = (void *)chunk_callback,
+      .callback_userdata = callback_userdata,
+      .provider_fn = provider_fn,
+      .history_format = history_format,
+      .session_id = session_id,
+      .llm_type = config->type,
+      .cloud_provider = config->cloud_provider,
+   };
+
+   response = llm_tool_iteration_loop(&loop_params);
 
    // Clear thread-local config
    llm_tools_set_current_config(NULL);

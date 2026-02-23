@@ -1015,100 +1015,8 @@ static void openai_sse_event_handler(const char *event_type,
    llm_stream_handle_event(ctx->stream_ctx, event_data);
 }
 
-/* Maximum tool call iterations to prevent infinite loops */
+/* Maximum tool call iterations to prevent infinite loops (used by old recursive path) */
 #define MAX_TOOL_ITERATIONS 5
-
-/* Maximum messages to check for duplicate tool calls (performance optimization) */
-#define DUPLICATE_CHECK_LOOKBACK 10
-
-/**
- * @brief Check if a tool call is a duplicate of a previous call in conversation history
- *
- * Prevents infinite loops where the LLM keeps making the same tool call repeatedly.
- * Compares tool name and arguments against previous tool calls in the history.
- * Only checks the last DUPLICATE_CHECK_LOOKBACK messages for efficiency.
- *
- * @param history Conversation history (JSON array)
- * @param tool_name Name of the tool being called
- * @param tool_args Arguments for the tool call
- * @return true if this exact call was already made, false otherwise
- */
-static bool is_duplicate_tool_call(struct json_object *history,
-                                   const char *tool_name,
-                                   const char *tool_args) {
-   if (!history || !tool_name)
-      return false;
-
-   int len = json_object_array_length(history);
-
-   /* Limit lookback for efficiency - duplicate loops happen within a few iterations */
-   int min_idx = len - DUPLICATE_CHECK_LOOKBACK;
-   if (min_idx < 0) {
-      min_idx = 0;
-   }
-
-   // Search backwards through recent history for assistant messages with tool_calls
-   for (int i = len - 1; i >= min_idx; i--) {
-      json_object *msg = json_object_array_get_idx(history, i);
-      if (!msg)
-         continue;
-
-      json_object *role_obj;
-      if (!json_object_object_get_ex(msg, "role", &role_obj))
-         continue;
-
-      const char *role = json_object_get_string(role_obj);
-      if (!role || strcmp(role, "assistant") != 0)
-         continue;
-
-      // Check for tool_calls array
-      json_object *tool_calls;
-      if (!json_object_object_get_ex(msg, "tool_calls", &tool_calls))
-         continue;
-      if (!json_object_is_type(tool_calls, json_type_array))
-         continue;
-
-      // Compare each tool call in this message
-      int tc_len = json_object_array_length(tool_calls);
-      for (int j = 0; j < tc_len; j++) {
-         json_object *tc = json_object_array_get_idx(tool_calls, j);
-         if (!tc)
-            continue;
-
-         json_object *func;
-         if (!json_object_object_get_ex(tc, "function", &func))
-            continue;
-
-         json_object *name_obj, *args_obj;
-         if (!json_object_object_get_ex(func, "name", &name_obj))
-            continue;
-
-         const char *prev_name = json_object_get_string(name_obj);
-         if (!prev_name || strcmp(prev_name, tool_name) != 0)
-            continue;
-
-         // Name matches - check arguments
-         if (json_object_object_get_ex(func, "arguments", &args_obj)) {
-            const char *prev_args = json_object_get_string(args_obj);
-            // Compare arguments (both NULL/empty counts as match)
-            bool args_match = false;
-            if ((!prev_args || prev_args[0] == '\0') && (!tool_args || tool_args[0] == '\0')) {
-               args_match = true;
-            } else if (prev_args && tool_args && strcmp(prev_args, tool_args) == 0) {
-               args_match = true;
-            }
-
-            if (args_match) {
-               LOG_INFO("Duplicate tool call detected: %s with args %s", tool_name,
-                        tool_args ? tool_args : "(none)");
-               return true;
-            }
-         }
-      }
-   }
-
-   return false;
-}
 
 /**
  * @brief Extract error message from OpenAI/compatible API error response
@@ -1657,8 +1565,8 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
          // Check for duplicate tool calls (prevents infinite loops with weak models)
          // Only check the first/primary tool call - if it's a duplicate, the LLM is stuck
          if (tool_calls->count > 0 &&
-             is_duplicate_tool_call(conversation_history, tool_calls->calls[0].name,
-                                    tool_calls->calls[0].arguments)) {
+             llm_tools_is_duplicate_call(conversation_history, tool_calls->calls[0].name,
+                                         tool_calls->calls[0].arguments, LLM_HISTORY_OPENAI)) {
             LOG_WARNING("OpenAI streaming: Duplicate tool call detected, forcing text response");
 
             // Add a system hint to use existing results and make one more call without tools
@@ -1936,4 +1844,354 @@ char *llm_openai_chat_completion_streaming(struct json_object *conversation_hist
    return llm_openai_streaming_internal(conversation_history, input_text, vision_images,
                                         vision_image_sizes, vision_image_count, base_url, api_key,
                                         model, chunk_callback, callback_userdata, 0);
+}
+
+int llm_openai_streaming_single_shot(struct json_object *conversation_history,
+                                     const char *input_text,
+                                     const char **vision_images,
+                                     const size_t *vision_image_sizes,
+                                     int vision_image_count,
+                                     const char *base_url,
+                                     const char *api_key,
+                                     const char *model,
+                                     llm_openai_text_chunk_callback chunk_callback,
+                                     void *callback_userdata,
+                                     int iteration,
+                                     llm_tool_response_t *result) {
+   CURL *curl_handle = NULL;
+   CURLcode res = -1;
+   struct curl_slist *headers = NULL;
+   char full_url[2048 + 20] = "";
+   const char *payload = NULL;
+   json_object *root = NULL;
+   sse_parser_t *sse_parser = NULL;
+   llm_stream_context_t *stream_ctx = NULL;
+   openai_streaming_context_t streaming_ctx;
+
+   if (!result) {
+      return 1;
+   }
+   memset(result, 0, sizeof(*result));
+
+   /* Filter and convert history (same as llm_openai_streaming_internal) */
+   json_object *filtered_history = filter_orphaned_tool_messages(conversation_history);
+   json_object *converted_history = convert_claude_tool_messages(filtered_history);
+   json_object_put(filtered_history);
+
+   if (!is_vision_enabled_for_current_llm()) {
+      json_object *sanitized = strip_vision_content(converted_history);
+      json_object_put(converted_history);
+      converted_history = sanitized;
+   }
+
+   /* Build request JSON (same logic as llm_openai_streaming_internal) */
+   root = json_object_new_object();
+
+   const char *model_name = model;
+   if (!model_name || model_name[0] == '\0') {
+      model_name = (api_key == NULL) ? g_config.llm.local.model : llm_get_default_openai_model();
+   }
+   if (model_name && model_name[0] != '\0') {
+      json_object_object_add(root, "model", json_object_new_string(model_name));
+   }
+
+   json_object_object_add(root, "stream", json_object_new_boolean(1));
+   json_object *stream_opts = json_object_new_object();
+   json_object_object_add(stream_opts, "include_usage", json_object_new_boolean(1));
+   json_object_object_add(root, "stream_options", stream_opts);
+
+   /* Local LLM thinking/reasoning config */
+   if (api_key == NULL) {
+      json_object_object_add(root, "timings_per_token", json_object_new_boolean(1));
+      const char *thinking_mode = llm_get_current_thinking_mode();
+      if (strcmp(thinking_mode, "disabled") != 0 && !llm_tools_suppressed()) {
+         json_object *thinking = json_object_new_object();
+         json_object_object_add(thinking, "type", json_object_new_string("enabled"));
+         int budget = llm_get_effective_budget_tokens();
+         json_object_object_add(thinking, "budget_tokens", json_object_new_int(budget));
+         json_object_object_add(root, "thinking", thinking);
+         json_object_object_add(root, "thinking_forced_open", json_object_new_boolean(1));
+         json_object *template_kwargs = json_object_new_object();
+         json_object_object_add(template_kwargs, "enable_thinking", json_object_new_boolean(1));
+         json_object_object_add(root, "chat_template_kwargs", template_kwargs);
+      } else if (strcmp(thinking_mode, "disabled") == 0) {
+         json_object_object_add(root, "reasoning_budget", json_object_new_int(0));
+         json_object *template_kwargs = json_object_new_object();
+         json_object_object_add(template_kwargs, "enable_thinking", json_object_new_boolean(0));
+         json_object_object_add(root, "chat_template_kwargs", template_kwargs);
+      }
+   } else {
+      /* Cloud reasoning models */
+      const char *thinking_mode = llm_get_current_thinking_mode();
+      bool is_o_series = (strncmp(model_name, "o1", 2) == 0 || strncmp(model_name, "o3", 2) == 0);
+      bool is_gpt5 = (strncmp(model_name, "gpt-5", 5) == 0);
+      bool is_gemini_thinking = (strncmp(model_name, "gemini-2.5", 10) == 0 ||
+                                 strncmp(model_name, "gemini-3", 8) == 0);
+      bool supports_reasoning = is_o_series || is_gpt5 || is_gemini_thinking;
+
+      if (supports_reasoning && !llm_tools_suppressed()) {
+         const char *effort = NULL;
+         if (strcmp(thinking_mode, "disabled") == 0) {
+            if (is_gpt5) {
+               effort = (strncmp(model_name, "gpt-5.2", 7) == 0) ? "none" : "minimal";
+            } else if (is_gemini_thinking) {
+               effort = "low";
+            }
+         } else {
+            effort = thinking_mode;
+            if (strcmp(effort, "enabled") == 0 || strcmp(effort, "auto") == 0) {
+               effort = g_config.llm.thinking.reasoning_effort;
+               if (effort[0] == '\0')
+                  effort = "medium";
+            }
+         }
+         if (effort != NULL) {
+            json_object_object_add(root, "reasoning_effort", json_object_new_string(effort));
+         }
+      }
+   }
+
+   /* Handle vision (same as streaming_internal) */
+   if (vision_images != NULL && vision_image_count > 0) {
+      int msg_count = json_object_array_length(converted_history);
+      if (msg_count > 0) {
+         json_object *last_msg = json_object_array_get_idx(converted_history, msg_count - 1);
+         json_object *role_obj;
+         if (json_object_object_get_ex(last_msg, "role", &role_obj) &&
+             strcmp(json_object_get_string(role_obj), "user") == 0) {
+            json_object *content_array = json_object_new_array();
+            json_object *text_obj = json_object_new_object();
+            json_object_object_add(text_obj, "type", json_object_new_string("text"));
+            json_object_object_add(text_obj, "text", json_object_new_string(input_text));
+            json_object_array_add(content_array, text_obj);
+            for (int i = 0; i < vision_image_count; i++) {
+               if (!vision_images[i] || (vision_image_sizes && vision_image_sizes[i] == 0))
+                  continue;
+               json_object *image_obj = json_object_new_object();
+               json_object_object_add(image_obj, "type", json_object_new_string("image_url"));
+               json_object *image_url_obj = json_object_new_object();
+               const char *prefix = "data:image/jpeg;base64,";
+               size_t uri_len = strlen(prefix) + strlen(vision_images[i]) + 1;
+               char *data_uri = malloc(uri_len);
+               if (data_uri) {
+                  snprintf(data_uri, uri_len, "%s%s", prefix, vision_images[i]);
+                  json_object_object_add(image_url_obj, "url", json_object_new_string(data_uri));
+                  free(data_uri);
+               }
+               json_object_object_add(image_obj, "image_url", image_url_obj);
+               json_object_array_add(content_array, image_obj);
+            }
+            json_object_object_add(last_msg, "content", content_array);
+         } else {
+            json_object *new_user_msg = json_object_new_object();
+            json_object_object_add(new_user_msg, "role", json_object_new_string("user"));
+            json_object *content_array = json_object_new_array();
+            json_object *text_obj = json_object_new_object();
+            json_object_object_add(text_obj, "type", json_object_new_string("text"));
+            json_object_object_add(
+                text_obj, "text",
+                json_object_new_string(
+                    "Here are the captured images. Please respond to the user's request."));
+            json_object_array_add(content_array, text_obj);
+            for (int i = 0; i < vision_image_count; i++) {
+               if (!vision_images[i] || (vision_image_sizes && vision_image_sizes[i] == 0))
+                  continue;
+               json_object *image_obj = json_object_new_object();
+               json_object_object_add(image_obj, "type", json_object_new_string("image_url"));
+               json_object *image_url_obj = json_object_new_object();
+               const char *prefix = "data:image/jpeg;base64,";
+               size_t uri_len = strlen(prefix) + strlen(vision_images[i]) + 1;
+               char *data_uri = malloc(uri_len);
+               if (data_uri) {
+                  snprintf(data_uri, uri_len, "%s%s", prefix, vision_images[i]);
+                  json_object_object_add(image_url_obj, "url", json_object_new_string(data_uri));
+                  free(data_uri);
+               }
+               json_object_object_add(image_obj, "image_url", image_url_obj);
+               json_object_array_add(content_array, image_obj);
+            }
+            json_object_object_add(new_user_msg, "content", content_array);
+            json_object_array_add(converted_history, new_user_msg);
+         }
+      }
+   }
+
+   json_object_object_add(root, "messages", converted_history);
+
+   if (api_key == NULL) {
+      json_object_object_add(root, "max_tokens", json_object_new_int(g_config.llm.max_tokens));
+   } else {
+      json_object_object_add(root, "max_completion_tokens",
+                             json_object_new_int(g_config.llm.max_tokens));
+   }
+
+   /* Add tools if enabled and not at max iterations */
+   if (llm_tools_enabled(NULL) && iteration < LLM_TOOLS_MAX_ITERATIONS) {
+      bool is_remote = is_current_session_remote();
+      struct json_object *tools = llm_tools_get_openai_format_filtered(is_remote);
+      if (tools) {
+         json_object_object_add(root, "tools", tools);
+         json_object_object_add(root, "tool_choice", json_object_new_string("auto"));
+      }
+   }
+
+   payload = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN |
+                                                      JSON_C_TO_STRING_NOSLASHESCAPE);
+
+   LOG_INFO("OpenAI single-shot iter %d: url=%s model=%s", iteration, base_url,
+            (model_name && model_name[0]) ? model_name : "(server default)");
+
+   /* Connection check */
+   if (!llm_check_connection(base_url, 4)) {
+      LOG_ERROR("URL did not return. Unavailable.");
+      json_object_put(root);
+      return 1;
+   }
+
+   /* Create streaming context */
+   llm_type_t stream_llm_type = (api_key != NULL) ? LLM_CLOUD : LLM_LOCAL;
+   cloud_provider_t stream_provider = CLOUD_PROVIDER_OPENAI;
+   session_t *ctx_session = session_get_command_context();
+   if (ctx_session && stream_llm_type == LLM_CLOUD) {
+      session_llm_config_t session_config;
+      session_get_llm_config(ctx_session, &session_config);
+      stream_provider = session_config.cloud_provider;
+   } else if (base_url && strstr(base_url, "generativelanguage.googleapis.com")) {
+      stream_provider = CLOUD_PROVIDER_GEMINI;
+   }
+   stream_ctx = llm_stream_create(stream_llm_type, stream_provider, chunk_callback,
+                                  callback_userdata);
+   if (!stream_ctx) {
+      LOG_ERROR("Failed to create LLM stream context");
+      json_object_put(root);
+      return 1;
+   }
+
+   sse_parser = sse_parser_create(openai_sse_event_handler, &streaming_ctx);
+   if (!sse_parser) {
+      LOG_ERROR("Failed to create SSE parser");
+      llm_stream_free(stream_ctx);
+      json_object_put(root);
+      return 1;
+   }
+
+   streaming_ctx.sse_parser = sse_parser;
+   streaming_ctx.stream_ctx = stream_ctx;
+   streaming_ctx.raw_capacity = 4096;
+   streaming_ctx.raw_buffer = malloc(streaming_ctx.raw_capacity);
+   streaming_ctx.raw_size = 0;
+   if (streaming_ctx.raw_buffer) {
+      streaming_ctx.raw_buffer[0] = '\0';
+   }
+
+   /* CURL request */
+   curl_handle = curl_easy_init();
+   if (!curl_handle) {
+      LOG_ERROR("Failed to initialize CURL");
+      sse_parser_free(sse_parser);
+      llm_stream_free(stream_ctx);
+      json_object_put(root);
+      free(streaming_ctx.raw_buffer);
+      return 1;
+   }
+
+   headers = build_openai_headers(api_key);
+   snprintf(full_url, sizeof(full_url), "%s%s", base_url, OPENAI_CHAT_ENDPOINT);
+
+   curl_easy_setopt(curl_handle, CURLOPT_URL, full_url);
+   curl_easy_setopt(curl_handle, CURLOPT_POSTFIELDS, payload);
+   curl_easy_setopt(curl_handle, CURLOPT_HTTPHEADER, headers);
+   curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, streaming_write_callback);
+   curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&streaming_ctx);
+   curl_easy_setopt(curl_handle, CURLOPT_NOPROGRESS, 0L);
+   curl_easy_setopt(curl_handle, CURLOPT_XFERINFOFUNCTION, llm_curl_progress_callback);
+   curl_easy_setopt(curl_handle, CURLOPT_XFERINFODATA, NULL);
+   curl_easy_setopt(curl_handle, CURLOPT_LOW_SPEED_LIMIT, 1L);
+   curl_easy_setopt(curl_handle, CURLOPT_LOW_SPEED_TIME, 60L);
+
+   res = curl_easy_perform(curl_handle);
+   if (res != CURLE_OK) {
+      if (res == CURLE_ABORTED_BY_CALLBACK) {
+         LOG_INFO("LLM transfer interrupted by user");
+      } else {
+         LOG_ERROR("curl_easy_perform() failed: %s", curl_easy_strerror(res));
+      }
+#ifdef ENABLE_WEBUI
+      if (res != CURLE_ABORTED_BY_CALLBACK) {
+         session_t *session = session_get_command_context();
+         if (session && session->type == SESSION_TYPE_WEBUI) {
+            const char *error_code = (res == CURLE_OPERATION_TIMEDOUT) ? "LLM_TIMEOUT"
+                                                                       : "LLM_ERROR";
+            webui_send_error(session, error_code, curl_easy_strerror(res));
+         }
+      }
+#endif
+      curl_easy_cleanup(curl_handle);
+      curl_slist_free_all(headers);
+      sse_parser_free(sse_parser);
+      llm_stream_free(stream_ctx);
+      json_object_put(root);
+      free(streaming_ctx.raw_buffer);
+      return 1;
+   }
+
+   long http_code = 0;
+   curl_easy_getinfo(curl_handle, CURLINFO_RESPONSE_CODE, &http_code);
+
+   if (http_code != 200) {
+      LOG_ERROR("OpenAI API: Request failed (HTTP %ld)", http_code);
+#ifdef ENABLE_WEBUI
+      session_t *session = session_get_command_context();
+      if (session && session->type == SESSION_TYPE_WEBUI) {
+         const char *error_msg = parse_api_error_message(streaming_ctx.raw_buffer, http_code);
+         webui_send_error(session, "LLM_ERROR", error_msg);
+      }
+#endif
+      curl_easy_cleanup(curl_handle);
+      curl_slist_free_all(headers);
+      sse_parser_free(sse_parser);
+      llm_stream_free(stream_ctx);
+      json_object_put(root);
+      free(streaming_ctx.raw_buffer);
+      return 1;
+   }
+
+   curl_easy_cleanup(curl_handle);
+   curl_slist_free_all(headers);
+
+   /* Populate result from stream context */
+   if (llm_stream_has_tool_calls(stream_ctx)) {
+      const tool_call_list_t *tool_calls = llm_stream_get_tool_calls(stream_ctx);
+      if (tool_calls && tool_calls->count > 0) {
+         result->has_tool_calls = true;
+         memcpy(&result->tool_calls, tool_calls, sizeof(tool_call_list_t));
+      }
+   }
+
+   if (!result->has_tool_calls) {
+      result->text = llm_stream_get_response(stream_ctx);
+   }
+
+   /* Copy finish reason */
+   if (stream_ctx->finish_reason[0] != '\0') {
+      strncpy(result->finish_reason, stream_ctx->finish_reason, sizeof(result->finish_reason) - 1);
+   }
+
+   /* Copy thinking content if present (for Gemini thought_signature, handled via tool_calls) */
+
+#ifdef ENABLE_WEBUI
+   if (stream_ctx->reasoning_tokens > 0) {
+      session_t *ws_session = session_get_command_context();
+      if (ws_session && ws_session->type == SESSION_TYPE_WEBUI) {
+         webui_send_reasoning_summary(ws_session, stream_ctx->reasoning_tokens);
+      }
+   }
+#endif
+
+   sse_parser_free(sse_parser);
+   llm_stream_free(stream_ctx);
+   json_object_put(root);
+   free(streaming_ctx.raw_buffer);
+
+   return 0;
 }

@@ -43,6 +43,21 @@ extern "C" {
 #endif
 
 /* =============================================================================
+ * History Format Hint (for dual-format duplicate detection)
+ * ============================================================================= */
+
+/**
+ * @brief History format hint for functions that inspect conversation history
+ *
+ * Used by llm_tools_is_duplicate_call() to know which JSON structure to expect
+ * when walking conversation history for tool call entries.
+ */
+typedef enum {
+   LLM_HISTORY_OPENAI, /**< OpenAI format: assistant.tool_calls[].function.name */
+   LLM_HISTORY_CLAUDE  /**< Claude format: assistant.content[].type=tool_use, .name */
+} llm_history_format_t;
+
+/* =============================================================================
  * Constants
  * ============================================================================= */
 
@@ -177,11 +192,14 @@ typedef struct {
  * When the LLM decides to use tools, the response contains tool_calls
  * instead of (or in addition to) text content.
  */
-typedef struct {
+typedef struct llm_tool_response {
    char *text;                  /**< Text content (may be NULL if only tools) */
    tool_call_list_t tool_calls; /**< Tool calls requested by LLM */
    bool has_tool_calls;         /**< true if tool_calls.count > 0 */
    char finish_reason[32];      /**< "stop", "tool_calls", "tool_use", etc. */
+   /* Extended thinking fields (Claude/Gemini) */
+   char *thinking_content;   /**< Extended thinking text (caller must free) */
+   char *thinking_signature; /**< Thinking signature for follow-up (caller must free) */
 } llm_tool_response_t;
 
 /* =============================================================================
@@ -585,9 +603,27 @@ int llm_tools_get_enabled_count(void);
 /**
  * @brief Free an llm_tool_response_t structure
  *
- * @param response Response to free (text field is freed if not NULL)
+ * @param response Response to free (text and thinking fields are freed if not NULL)
  */
 void llm_tool_response_free(llm_tool_response_t *response);
+
+/**
+ * @brief Check if a tool call is a duplicate of a previous call in conversation history
+ *
+ * Prevents infinite loops where the LLM keeps making the same tool call repeatedly.
+ * Compares tool name and arguments against previous tool calls in the history.
+ * Supports both OpenAI and Claude history formats via the format hint parameter.
+ *
+ * @param history Conversation history (JSON array)
+ * @param tool_name Name of the tool being called
+ * @param tool_args Arguments for the tool call
+ * @param format History format hint (OpenAI or Claude)
+ * @return true if this exact call was already made, false otherwise
+ */
+bool llm_tools_is_duplicate_call(struct json_object *history,
+                                 const char *tool_name,
+                                 const char *tool_args,
+                                 llm_history_format_t format);
 
 /* =============================================================================
  * Common Tool Execution Helper
