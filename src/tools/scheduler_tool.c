@@ -95,13 +95,14 @@ static bool parse_tz_offset(const char *suffix, int *offset_sec) {
  * @brief Parse ISO 8601 datetime string to Unix timestamp (thread-safe)
  *
  * Supports formats:
- * - "2026-02-19T15:30:00"        (local time, uses system TZ)
+ * - "2026-02-19T15:30:00"        (local time, uses process-wide TZ)
  * - "2026-02-19T15:30:00Z"       (UTC)
  * - "2026-02-19T15:30:00-05:00"  (with timezone offset)
  * - "15:30" or "07:00"           (time only, assume today or tomorrow)
  *
- * Thread-safe: does NOT call setenv/tzset. Timezone offsets are parsed
- * arithmetically. Local times use the process-wide TZ set at startup.
+ * Thread-safe: relies on process-wide TZ set once at startup from
+ * g_config.localization.timezone. Explicit timezone offsets are parsed
+ * arithmetically.
  *
  * @param iso_str Input string
  * @return Unix timestamp, or -1 on error
@@ -366,6 +367,12 @@ static char *handle_create(struct json_object *details,
 
    /* Tool scheduling (Phase 5) */
    const char *tool_name = json_get_string(details, "tool_name");
+   if (type == SCHED_EVENT_TASK && !tool_name) {
+      snprintf(result, sizeof(result),
+               "Error: 'tool_name' is required for scheduled tasks. "
+               "System shutdown is not available as a schedulable tool.");
+      return strdup(result);
+   }
    if (tool_name) {
       /* Validate tool exists and is schedulable */
       const tool_metadata_t *meta = tool_registry_find(tool_name);
@@ -708,12 +715,14 @@ static const treg_param_t scheduler_params[] = {
        .name = "details",
        .description =
            "JSON object with action-specific fields. "
-           "For 'create': {type (timer|alarm|reminder|task), name (optional), "
+           "For 'create': {type (timer|alarm|reminder), name (optional), "
            "duration_minutes (1-43200, relative offset from now - works for ALL types), "
            "fire_at (ISO 8601 absolute time, alternative to duration_minutes), "
            "message (for reminders, max 512 chars), recurrence (once|daily|weekdays|weekends|"
-           "weekly|custom), recurrence_days (csv: mon,tue,...), announce_all (bool), "
-           "tool_name, tool_action, tool_value (for scheduled tasks)}. "
+           "weekly|custom), recurrence_days (csv: mon,tue,...), announce_all (bool)}. "
+           "Type 'task' is ONLY for scheduling execution of other registered tools and "
+           "requires tool_name (must be a valid registered tool), tool_action, tool_value. "
+           "Do NOT use type 'task' for arbitrary system operations like shutdown or reboot. "
            "For 'list': {type (optional filter)}. "
            "For 'cancel'/'query': {name or event_id}. "
            "For 'snooze': {event_id (optional), snooze_minutes (1-120, optional)}. "

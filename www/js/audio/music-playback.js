@@ -85,6 +85,9 @@
       connected: false,
       authenticated: false,
       reconnectTimer: null,
+      retryCount: 0,
+      maxRetries: 5,
+      authFailed: false, // True when server rejects token — stop retrying
 
       /**
        * Connect to the dedicated music streaming server
@@ -94,13 +97,19 @@
             return; // Already connected
          }
 
+         // Don't retry if auth was rejected — wait for fresh token
+         if (this.authFailed) {
+            console.log('Music stream: Auth failed previously, waiting for new session token');
+            return;
+         }
+
          const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
          const host = window.location.hostname;
          const mainPort = parseInt(window.location.port || '8080', 10);
          const musicPort = mainPort + 1;
          const url = `${protocol}//${host}:${musicPort}`;
 
-         console.log('Music stream: Connecting to', url);
+         console.log('Music stream: Connecting to', url, '(attempt', this.retryCount + 1 + ')');
 
          try {
             this.ws = new WebSocket(url, 'dawn-music');
@@ -132,6 +141,18 @@
       },
 
       /**
+       * Reconnect with a fresh session token (called when main WS gets new token)
+       */
+      reconnectWithFreshToken() {
+         this.disconnect();
+         this.retryCount = 0;
+         this.authFailed = false;
+         if (state.subscribed) {
+            this.connect();
+         }
+      },
+
+      /**
        * Handle connection open - send authentication
        */
       handleOpen() {
@@ -148,19 +169,32 @@
       },
 
       /**
-       * Handle connection close - attempt reconnect
+       * Handle connection close - attempt reconnect with backoff
        */
       handleClose() {
          this.connected = false;
          this.authenticated = false;
          console.log('Music stream: Disconnected');
 
-         // Attempt reconnect after 2 seconds if main socket is connected
-         if (DawnWS.isConnected && DawnWS.isConnected()) {
+         // Don't reconnect if auth was explicitly rejected
+         if (this.authFailed) {
+            return;
+         }
+
+         // Exponential backoff: 2s, 4s, 8s, 16s, 30s cap
+         if (this.retryCount < this.maxRetries && DawnWS.isConnected && DawnWS.isConnected()) {
+            const delay = Math.min(2000 * Math.pow(2, this.retryCount), 30000);
+            this.retryCount++;
+            console.log(
+               'Music stream: Reconnecting in',
+               delay + 'ms',
+               '(retry ' + this.retryCount + '/' + this.maxRetries + ')'
+            );
             this.reconnectTimer = setTimeout(() => {
-               console.log('Music stream: Attempting reconnect...');
                this.connect();
-            }, 2000);
+            }, delay);
+         } else if (this.retryCount >= this.maxRetries) {
+            console.warn('Music stream: Max retries reached, waiting for new session token');
          }
       },
 
@@ -177,9 +211,12 @@
                const msg = JSON.parse(event.data);
                if (msg.type === 'auth_ok') {
                   this.authenticated = true;
+                  this.retryCount = 0; // Reset on successful auth
+                  this.authFailed = false;
                   console.log('Music stream: Authenticated');
                } else if (msg.type === 'auth_failed') {
                   console.error('Music stream: Auth failed:', msg.reason);
+                  this.authFailed = true; // Stop retrying with stale token
                   this.ws.close();
                }
             } catch (e) {
@@ -859,6 +896,13 @@
       }
    }
 
+   /**
+    * Reconnect music stream with fresh token (called when main WS gets new session)
+    */
+   function reconnectMusicStream() {
+      MusicStreamConnection.reconnectWithFreshToken();
+   }
+
    // Expose globally
    global.DawnMusicPlayback = {
       subscribe: subscribe,
@@ -877,5 +921,6 @@
       updateQuality: updateQuality,
       handleBinaryMessage: handleBinaryMessage,
       handleJsonMessage: handleJsonMessage,
+      reconnectMusicStream: reconnectMusicStream,
    };
 })(window);

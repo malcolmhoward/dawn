@@ -26,7 +26,6 @@
 
 #include "core/scheduler.h"
 
-#include <math.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdio.h>
@@ -36,6 +35,7 @@
 #include <unistd.h>
 
 #include "audio/audio_backend.h"
+#include "audio/chime.h"
 #include "config/dawn_config.h"
 #include "core/scheduler_db.h"
 #include "core/session_manager.h"
@@ -83,80 +83,14 @@ static pthread_mutex_t ringing_mutex = PTHREAD_MUTEX_INITIALIZER;
 static atomic_bool alarm_sound_playing = false;
 static atomic_bool alarm_sound_stop = false;
 
-/* Alarm chime PCM buffer (generated at init) */
-static int16_t *chime_pcm = NULL;
-static size_t chime_samples = 0;
-static int16_t *alarm_tone_pcm = NULL;
-static size_t alarm_tone_samples = 0;
+/* Alarm chime PCM buffers (generated at init via common lib) */
+static dawn_chime_buf_t chime_buf;
+static dawn_chime_buf_t alarm_tone_buf;
 
-#define CHIME_SAMPLE_RATE 22050
-#define CHIME_NOTE_DURATION_MS 250
-#define ALARM_TONE_DURATION_MS 500
 #define ALARM_GAP_MS 200
 
 /* Forward declarations */
 static void schedule_next_occurrence(const sched_event_t *fired_event);
-
-/* =============================================================================
- * Alarm Chime Synthesis
- * ============================================================================= */
-
-static void generate_sine_tone(int16_t *buf, size_t samples, float freq, int sample_rate) {
-   for (size_t i = 0; i < samples; i++) {
-      /* ADSR envelope: 10% attack, 10% decay, 60% sustain at 0.7, 20% release */
-      float t = (float)i / (float)samples;
-      float env;
-      if (t < 0.1f)
-         env = t / 0.1f;
-      else if (t < 0.2f)
-         env = 1.0f - 0.3f * ((t - 0.1f) / 0.1f);
-      else if (t < 0.8f)
-         env = 0.7f;
-      else
-         env = 0.7f * (1.0f - (t - 0.8f) / 0.2f);
-
-      float sample = sinf(2.0f * (float)M_PI * freq * (float)i / (float)sample_rate) * env;
-      /* Mix with existing content (for multi-tone) */
-      float existing = (float)buf[i] / 32767.0f;
-      float mixed = existing + sample * 0.5f;
-      if (mixed > 1.0f)
-         mixed = 1.0f;
-      if (mixed < -1.0f)
-         mixed = -1.0f;
-      buf[i] = (int16_t)(mixed * 32767.0f);
-   }
-}
-
-static void generate_chime(void) {
-   /* 3-tone ascending chime: C5 (523Hz), E5 (659Hz), G5 (784Hz) */
-   size_t note_samples = (CHIME_SAMPLE_RATE * CHIME_NOTE_DURATION_MS) / 1000;
-   chime_samples = note_samples * 3;
-   chime_pcm = calloc(chime_samples, sizeof(int16_t));
-   if (!chime_pcm)
-      return;
-
-   static const float notes[] = { 523.25f, 659.25f, 783.99f };
-   for (int i = 0; i < 3; i++) {
-      generate_sine_tone(&chime_pcm[i * note_samples], note_samples, notes[i], CHIME_SAMPLE_RATE);
-   }
-
-   LOG_INFO("scheduler: generated chime PCM (%zu samples)", chime_samples);
-}
-
-static void generate_alarm_tone(void) {
-   /* Attention-getting repeating tone: alternating A5 (880Hz) and E5 (659Hz) */
-   size_t tone_samples = (CHIME_SAMPLE_RATE * ALARM_TONE_DURATION_MS) / 1000;
-   alarm_tone_samples = tone_samples;
-   alarm_tone_pcm = calloc(alarm_tone_samples, sizeof(int16_t));
-   if (!alarm_tone_pcm)
-      return;
-
-   generate_sine_tone(alarm_tone_pcm, alarm_tone_samples / 2, 880.0f, CHIME_SAMPLE_RATE);
-   generate_sine_tone(&alarm_tone_pcm[alarm_tone_samples / 2], alarm_tone_samples / 2, 659.25f,
-                      CHIME_SAMPLE_RATE);
-
-   LOG_INFO("scheduler: generated alarm tone PCM (%zu samples)", alarm_tone_samples);
-}
 
 /* =============================================================================
  * Announcement Generation
@@ -378,7 +312,7 @@ static void *alarm_sound_thread(void *arg) {
    /* Open playback stream for alarm audio */
    audio_stream_params_t params;
    audio_stream_playback_default_params(&params);
-   params.sample_rate = CHIME_SAMPLE_RATE;
+   params.sample_rate = DAWN_CHIME_SAMPLE_RATE;
    params.channels = 1;
 
    /* Apply volume scaling */
@@ -394,13 +328,13 @@ static void *alarm_sound_thread(void *arg) {
                                                                    &params, &hw_params);
 
    /* Play chime/tone */
-   if (is_alarm && alarm_tone_pcm && pb) {
+   if (is_alarm && alarm_tone_buf.pcm && pb) {
       /* Looping alarm tone until dismissed or timeout */
       while (!alarm_sound_stop && (time(NULL) - sound_start) < timeout_sec) {
-         if (!write_scaled_pcm(pb, alarm_tone_pcm, alarm_tone_samples, vol_scale))
+         if (!write_scaled_pcm(pb, alarm_tone_buf.pcm, alarm_tone_buf.samples, vol_scale))
             break;
          /* Gap between repetitions */
-         size_t gap_samples = (CHIME_SAMPLE_RATE * ALARM_GAP_MS) / 1000;
+         size_t gap_samples = (DAWN_CHIME_SAMPLE_RATE * ALARM_GAP_MS) / 1000;
          int16_t silence[512];
          memset(silence, 0, sizeof(silence));
          while (gap_samples > 0 && !alarm_sound_stop) {
@@ -409,9 +343,9 @@ static void *alarm_sound_thread(void *arg) {
             gap_samples -= chunk;
          }
       }
-   } else if (chime_pcm && pb) {
+   } else if (chime_buf.pcm && pb) {
       /* Single chime for timers/reminders */
-      write_scaled_pcm(pb, chime_pcm, chime_samples, vol_scale);
+      write_scaled_pcm(pb, chime_buf.pcm, chime_buf.samples, vol_scale);
    } else if (!pb) {
       /* Fallback: sleep for approximate duration if audio backend unavailable */
       LOG_WARNING("scheduler: audio playback unavailable, sleeping for chime duration");
@@ -419,7 +353,7 @@ static void *alarm_sound_thread(void *arg) {
          while (!alarm_sound_stop && (time(NULL) - sound_start) < timeout_sec)
             usleep(500000);
       } else {
-         usleep((unsigned int)(chime_samples * 1000000 / CHIME_SAMPLE_RATE));
+         usleep((unsigned int)(chime_buf.samples * 1000000 / DAWN_CHIME_SAMPLE_RATE));
       }
    }
 
@@ -565,7 +499,9 @@ static time_t calculate_next_recurrence(const sched_event_t *event) {
    if (event->recurrence == SCHED_RECUR_ONCE)
       return 0;
 
-   /* Parse original_time (HH:MM) for the alarm time-of-day */
+   /* Parse original_time (HH:MM) for the alarm time-of-day.
+    * original_time is always in the user's local timezone (any offset suffix
+    * from ISO 8601 input is intentionally ignored by sscanf). */
    int hour = 0, minute = 0;
    if (event->original_time[0]) {
       sscanf(event->original_time, "%d:%d", &hour, &minute);
@@ -852,8 +788,8 @@ int scheduler_init(void) {
    pthread_condattr_destroy(&cond_attr);
 
    /* Generate alarm sounds */
-   generate_chime();
-   generate_alarm_tone();
+   dawn_chime_generate(&chime_buf);
+   dawn_alarm_tone_generate(&alarm_tone_buf);
 
    /* Start scheduler thread */
    scheduler_shutdown_flag = false;
@@ -892,10 +828,8 @@ void scheduler_shutdown(void) {
       usleep(50000); /* Up to 3s for sound to stop */
 
    /* Free PCM buffers */
-   free(chime_pcm);
-   chime_pcm = NULL;
-   free(alarm_tone_pcm);
-   alarm_tone_pcm = NULL;
+   dawn_chime_free(&chime_buf);
+   dawn_chime_free(&alarm_tone_buf);
 
    pthread_cond_destroy(&scheduler_cond);
 
@@ -952,8 +886,13 @@ int scheduler_dismiss(int64_t event_id) {
 
       /* Schedule next occurrence for recurring events */
       sched_event_t dismissed;
-      if (scheduler_db_get(id, &dismissed) == 0)
+      if (scheduler_db_get(id, &dismissed) == 0) {
          schedule_next_occurrence(&dismissed);
+
+#ifdef ENABLE_WEBUI
+         scheduler_broadcast_notification(&dismissed, "Dismissed");
+#endif
+      }
    }
 
    return result;
@@ -984,6 +923,12 @@ int scheduler_snooze(int64_t event_id, int snooze_minutes) {
       scheduler_stop_alarm_sound();
       scheduler_db_dismiss(id);
       LOG_INFO("scheduler: dismissed event %lld (max snooze reached)", (long long)id);
+
+#ifdef ENABLE_WEBUI
+      sched_event_t updated;
+      if (scheduler_db_get(id, &updated) == 0)
+         scheduler_broadcast_notification(&updated, "Dismissed (max snooze reached)");
+#endif
       return 0;
    }
 
@@ -1002,6 +947,16 @@ int scheduler_snooze(int64_t event_id, int snooze_minutes) {
       /* Wake scheduler to recalculate next fire time */
       scheduler_notify_new_event();
       LOG_INFO("scheduler: snoozed event %lld for %d minutes", (long long)id, snooze_minutes);
+
+#ifdef ENABLE_WEBUI
+      sched_event_t updated;
+      if (scheduler_db_get(id, &updated) == 0) {
+         char msg[64];
+         snprintf(msg, sizeof(msg), "Snoozed for %d minute%s", snooze_minutes,
+                  snooze_minutes == 1 ? "" : "s");
+         scheduler_broadcast_notification(&updated, msg);
+      }
+#endif
    }
 
    return result;

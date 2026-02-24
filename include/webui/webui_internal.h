@@ -283,9 +283,17 @@ void free_response(ws_response_t *resp);
 void register_token(const char *token, uint32_t session_id);
 
 /**
+ * @brief Remove all token mappings for a given session ID
+ *
+ * Thread-safe. Call when a session is destroyed to prevent stale lookups.
+ */
+void unregister_tokens_for_session(uint32_t session_id);
+
+/**
  * @brief Look up session by reconnection token
  *
  * Thread-safe. Returns NULL if not found or session destroyed.
+ * Cleans up stale entries when a mapped session no longer exists.
  */
 session_t *lookup_session_by_token(const char *token);
 

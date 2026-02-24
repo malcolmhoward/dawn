@@ -498,7 +498,8 @@ int ws_client_send_music_subscribe(ws_client_t *client);
 typedef struct {
    int64_t event_id;
    char label[128];
-   char type[16]; /* "alarm", "timer", "reminder" */
+   char type[16];   /* "alarm", "timer", "reminder" */
+   char status[16]; /* "ringing", "dismissed", "snoozed", "timed_out" */
 } ws_alarm_notify_t;
 
 typedef void (*ws_alarm_notify_cb_t)(const ws_alarm_notify_t *alarm, void *user_data);

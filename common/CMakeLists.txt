@@ -40,6 +40,7 @@ set(DAWN_COMMON_SOURCES
     src/logging.c
     src/logging_common.c
     src/audio/ring_buffer.c
+    src/audio/chime.c
     src/utils/string_utils.c
     src/utils/sentence_buffer.c
 )
@@ -54,7 +55,7 @@ target_include_directories(dawn_common PUBLIC
 
 # Required libraries
 find_package(Threads REQUIRED)
-target_link_libraries(dawn_common PUBLIC Threads::Threads)
+target_link_libraries(dawn_common PUBLIC Threads::Threads m)
 
 # Compiler flags
 target_compile_options(dawn_common PRIVATE

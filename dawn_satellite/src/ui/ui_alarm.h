@@ -30,7 +30,12 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdbool.h>
+
+#include "audio/chime.h"
+
+struct audio_playback; /* forward declare */
 
 #define ALARM_LABEL_MAX 128
 #define ALARM_ID_MAX 64
@@ -87,6 +92,14 @@ typedef struct {
    void (*on_dismiss)(int64_t event_id, void *userdata);
    void (*on_snooze)(int64_t event_id, int snooze_minutes, void *userdata);
    void *cb_userdata;
+
+   /* Audio playback for chime sounds */
+   struct audio_playback *audio_pb;
+   dawn_chime_buf_t chime;
+   dawn_chime_buf_t alarm_tone;
+   pthread_t sound_thread;
+   atomic_int sound_stop;
+   bool sound_thread_active;
 } ui_alarm_t;
 
 /**
@@ -134,5 +147,12 @@ bool ui_alarm_is_active(const ui_alarm_t *a);
  * @return true if tap was consumed
  */
 bool ui_alarm_handle_tap(ui_alarm_t *a, int x, int y);
+
+/**
+ * @brief Set audio playback context for chime sounds
+ * @param a Alarm context
+ * @param pb Audio playback context (from satellite main)
+ */
+void ui_alarm_set_audio_playback(ui_alarm_t *a, struct audio_playback *pb);
 
 #endif /* UI_ALARM_H */

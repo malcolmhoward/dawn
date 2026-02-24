@@ -1038,39 +1038,12 @@ char *dateCallback(const char *actionName, char *value, int *should_respond) {
    char buffer[80];
    char *result = NULL;
    int choice;
-   char *old_tz = NULL;
 
    *should_respond = 1;  // Default to responding
 
    time(&current_time);
-
-   // Use configured timezone if set, otherwise use system default
-   if (g_config.localization.timezone[0] != '\0') {
-      // Save current TZ
-      const char *current_tz = getenv("TZ");
-      if (current_tz) {
-         old_tz = strdup(current_tz);
-      }
-      // Set configured timezone
-      setenv("TZ", g_config.localization.timezone, 1);
-      tzset();
-   }
-
    time_info = localtime_r(&current_time, &tm_storage);
-
-   // Format the date data
    strftime(buffer, sizeof(buffer), "%A, %B %d, %Y", time_info);
-
-   // Restore original TZ if we changed it
-   if (g_config.localization.timezone[0] != '\0') {
-      if (old_tz) {
-         setenv("TZ", old_tz, 1);
-         free(old_tz);
-      } else {
-         unsetenv("TZ");
-      }
-      tzset();
-   }
 
    if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
       // Direct mode: use text-to-speech with personality
@@ -1120,39 +1093,12 @@ char *timeCallback(const char *actionName, char *value, int *should_respond) {
    char buffer[80];
    char *result = NULL;
    int choice;
-   char *old_tz = NULL;
 
    *should_respond = 1;
 
    time(&current_time);
-
-   // Use configured timezone if set, otherwise use system default
-   if (g_config.localization.timezone[0] != '\0') {
-      // Save current TZ
-      const char *current_tz = getenv("TZ");
-      if (current_tz) {
-         old_tz = strdup(current_tz);
-      }
-      // Set configured timezone
-      setenv("TZ", g_config.localization.timezone, 1);
-      tzset();
-   }
-
    time_info = localtime_r(&current_time, &tm_storage);
-
-   // Format the time data with timezone
    strftime(buffer, sizeof(buffer), "%I:%M %p %Z", time_info);
-
-   // Restore original TZ if we changed it
-   if (g_config.localization.timezone[0] != '\0') {
-      if (old_tz) {
-         setenv("TZ", old_tz, 1);
-         free(old_tz);
-      } else {
-         unsetenv("TZ");
-      }
-      tzset();
-   }
 
    if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
       // Direct mode: use text-to-speech with personality

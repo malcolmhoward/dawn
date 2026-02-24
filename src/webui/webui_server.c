@@ -205,7 +205,8 @@ void register_token(const char *token, uint32_t session_id) {
    /* Find existing or empty slot */
    int empty_slot = -1;
    for (int i = 0; i < MAX_TOKEN_MAPPINGS; i++) {
-      if (s_token_map[i].in_use && strcmp(s_token_map[i].token, token) == 0) {
+      if (s_token_map[i].in_use &&
+          secure_token_compare(s_token_map[i].token, token, WEBUI_SESSION_TOKEN_LEN - 1)) {
          /* Update existing */
          s_token_map[i].session_id = session_id;
          s_token_map[i].created = time(NULL);
@@ -224,18 +225,47 @@ void register_token(const char *token, uint32_t session_id) {
       s_token_map[empty_slot].created = time(NULL);
       s_token_map[empty_slot].in_use = true;
    } else {
-      /* Table full - evict oldest */
-      int oldest = 0;
-      for (int i = 1; i < MAX_TOKEN_MAPPINGS; i++) {
-         if (s_token_map[i].created < s_token_map[oldest].created) {
-            oldest = i;
+      /* Table full - prefer evicting entries for destroyed sessions */
+      int evict = -1;
+      for (int i = 0; i < MAX_TOKEN_MAPPINGS; i++) {
+         if (s_token_map[i].in_use) {
+            session_t *s = session_get_for_reconnect(s_token_map[i].session_id);
+            if (!s) {
+               evict = i; /* Session gone — safe to evict */
+               break;
+            }
+            session_release(s);
          }
       }
-      explicit_bzero(s_token_map[oldest].token, sizeof(s_token_map[oldest].token));
-      strncpy(s_token_map[oldest].token, token, WEBUI_SESSION_TOKEN_LEN - 1);
-      s_token_map[oldest].token[WEBUI_SESSION_TOKEN_LEN - 1] = '\0';
-      s_token_map[oldest].session_id = session_id;
-      s_token_map[oldest].created = time(NULL);
+      if (evict < 0) {
+         /* All entries have live sessions — fall back to oldest */
+         evict = 0;
+         for (int i = 1; i < MAX_TOKEN_MAPPINGS; i++) {
+            if (s_token_map[i].created < s_token_map[evict].created) {
+               evict = i;
+            }
+         }
+      }
+      explicit_bzero(s_token_map[evict].token, sizeof(s_token_map[evict].token));
+      strncpy(s_token_map[evict].token, token, WEBUI_SESSION_TOKEN_LEN - 1);
+      s_token_map[evict].token[WEBUI_SESSION_TOKEN_LEN - 1] = '\0';
+      s_token_map[evict].session_id = session_id;
+      s_token_map[evict].created = time(NULL);
+      s_token_map[evict].in_use = true;
+   }
+
+   pthread_mutex_unlock(&s_token_mutex);
+}
+
+void unregister_tokens_for_session(uint32_t session_id) {
+   pthread_mutex_lock(&s_token_mutex);
+
+   for (int i = 0; i < MAX_TOKEN_MAPPINGS; i++) {
+      if (s_token_map[i].in_use && s_token_map[i].session_id == session_id) {
+         LOG_INFO("WebUI: Clearing token slot %d for destroyed session %u", i, session_id);
+         explicit_bzero(s_token_map[i].token, sizeof(s_token_map[i].token));
+         s_token_map[i].in_use = false;
+      }
    }
 
    pthread_mutex_unlock(&s_token_mutex);
@@ -271,8 +301,17 @@ session_t *lookup_session_by_token(const char *token) {
             LOG_INFO("WebUI: Found existing session %u for token %.4s...", session_id, token);
             return session;
          }
-         LOG_INFO("WebUI: Token %.4s... mapped to session %u but session destroyed", token,
-                  session_id);
+
+         /* Session destroyed — clean up the stale token map entry */
+         pthread_mutex_lock(&s_token_mutex);
+         if (s_token_map[i].in_use && s_token_map[i].session_id == session_id) {
+            explicit_bzero(s_token_map[i].token, sizeof(s_token_map[i].token));
+            s_token_map[i].in_use = false;
+         }
+         pthread_mutex_unlock(&s_token_mutex);
+
+         LOG_INFO("WebUI: Token %.4s... mapped to session %u but session destroyed (cleaned up)",
+                  token, session_id);
          return NULL;
       }
    }
@@ -2344,6 +2383,7 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                      /* Release ref_count (was 1 from creation) before destroy */
                      session_release(conn->session);
                      session_destroy(abandoned_id);
+                     unregister_tokens_for_session(abandoned_id);
                      LOG_INFO("WebUI: Destroyed abandoned session %u", abandoned_id);
                   }
                   conn->session = existing;
@@ -5159,12 +5199,12 @@ void scheduler_broadcast_notification(const sched_event_t *event, const char *te
    json_object_object_add(root, "payload", payload);
    const char *json_str = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN);
 
-   /* Queue a response for each authenticated browser client */
+   /* Queue a response for each authenticated client (WebUI + satellites) */
    int sent = 0;
    pthread_mutex_lock(&s_conn_registry_mutex);
    for (int i = 0; i < MAX_ACTIVE_CONNECTIONS; i++) {
       ws_connection_t *conn = s_active_connections[i];
-      if (!conn || !conn->authenticated || conn->is_satellite || !conn->session)
+      if (!conn || !conn->authenticated || !conn->session)
          continue;
 
       char *json_copy = strdup(json_str);
@@ -5182,7 +5222,7 @@ void scheduler_broadcast_notification(const sched_event_t *event, const char *te
    json_object_put(root);
 
    if (sent > 0) {
-      LOG_INFO("Scheduler: Broadcast notification to %d WebUI client(s): %s", sent, text);
+      LOG_INFO("Scheduler: Broadcast notification to %d client(s): %s", sent, text);
    }
 }
 

@@ -27,7 +27,6 @@
 #include <string.h>
 #include <time.h>
 
-#include "config/dawn_config.h"
 #include "dawn.h"
 #include "logging.h"
 #include "tools/tool_registry.h"
@@ -95,42 +94,6 @@ static const tool_metadata_t time_metadata = {
    .callback = time_tool_callback,
 };
 
-/* ========== Helper Functions ========== */
-
-/**
- * @brief Apply configured timezone temporarily
- *
- * @param old_tz Output: previous TZ value (caller must free if non-NULL)
- */
-static void apply_timezone(char **old_tz) {
-   *old_tz = NULL;
-   if (g_config.localization.timezone[0] != '\0') {
-      const char *current_tz = getenv("TZ");
-      if (current_tz) {
-         *old_tz = strdup(current_tz);
-      }
-      setenv("TZ", g_config.localization.timezone, 1);
-      tzset();
-   }
-}
-
-/**
- * @brief Restore original timezone
- *
- * @param old_tz Previous TZ value (will be freed if non-NULL)
- */
-static void restore_timezone(char *old_tz) {
-   if (g_config.localization.timezone[0] != '\0') {
-      if (old_tz) {
-         setenv("TZ", old_tz, 1);
-         free(old_tz);
-      } else {
-         unsetenv("TZ");
-      }
-      tzset();
-   }
-}
-
 /* ========== Callback Implementations ========== */
 
 static char *date_tool_callback(const char *action, char *value, int *should_respond) {
@@ -138,19 +101,15 @@ static char *date_tool_callback(const char *action, char *value, int *should_res
    (void)value;
 
    time_t current_time;
-   struct tm *time_info;
    char buffer[80];
    char *result = NULL;
-   char *old_tz = NULL;
 
    *should_respond = 1;
 
    time(&current_time);
-   apply_timezone(&old_tz);
    struct tm tm_storage;
-   time_info = localtime_r(&current_time, &tm_storage);
+   struct tm *time_info = localtime_r(&current_time, &tm_storage);
    strftime(buffer, sizeof(buffer), "%A, %B %d, %Y", time_info);
-   restore_timezone(old_tz);
 
    if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
       /* Direct mode: use TTS with personality */
@@ -199,19 +158,15 @@ static char *time_tool_callback(const char *action, char *value, int *should_res
    (void)value;
 
    time_t current_time;
-   struct tm *time_info;
    char buffer[80];
    char *result = NULL;
-   char *old_tz = NULL;
 
    *should_respond = 1;
 
    time(&current_time);
-   apply_timezone(&old_tz);
    struct tm tm_storage;
-   time_info = localtime_r(&current_time, &tm_storage);
+   struct tm *time_info = localtime_r(&current_time, &tm_storage);
    strftime(buffer, sizeof(buffer), "%I:%M %p %Z", time_info);
-   restore_timezone(old_tz);
 
    if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
       /* Direct mode: use TTS with personality */

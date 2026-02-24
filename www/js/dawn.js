@@ -139,6 +139,13 @@
                localStorage.setItem('dawn_session_token', msg.payload.token);
                // Server has processed our init/reconnect with capabilities
                DawnWS.setCapabilitiesSynced(true);
+               // Reconnect music stream with fresh token (fixes stale-token failures)
+               if (
+                  typeof DawnMusicPlayback !== 'undefined' &&
+                  DawnMusicPlayback.reconnectMusicStream
+               ) {
+                  DawnMusicPlayback.reconnectMusicStream();
+               }
                // Auth state is now included in session response (avoids extra config fetch)
                if (msg.payload.authenticated !== undefined) {
                   DawnState.authState.authenticated = msg.payload.authenticated;

@@ -548,10 +548,12 @@ static void handle_message(ws_client_t *client, const char *msg, size_t len) {
          struct json_object *obj;
          if (json_object_object_get_ex(payload, "event_id", &obj))
             notify.event_id = json_object_get_int64(obj);
-         if (json_object_object_get_ex(payload, "text", &obj))
+         if (json_object_object_get_ex(payload, "message", &obj))
             snprintf(notify.label, sizeof(notify.label), "%s", json_object_get_string(obj));
          if (json_object_object_get_ex(payload, "event_type", &obj))
             snprintf(notify.type, sizeof(notify.type), "%s", json_object_get_string(obj));
+         if (json_object_object_get_ex(payload, "status", &obj))
+            snprintf(notify.status, sizeof(notify.status), "%s", json_object_get_string(obj));
          ws_alarm_notify_cb_t cb = client->alarm_notify_cb;
          void *ud = client->alarm_notify_cb_data;
          pthread_mutex_unlock(&client->mutex);

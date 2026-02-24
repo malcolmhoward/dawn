@@ -378,13 +378,6 @@ char *llm_tool_iteration_loop(llm_tool_loop_params_t *params) {
       }
       llm_tools_execute_all(&result.tool_calls, results);
 
-      /* Step 6: Append assistant message + tool results to history */
-      if (params->history_format == LLM_HISTORY_CLAUDE) {
-         append_claude_tool_history(params->conversation_history, &result, results);
-      } else {
-         append_openai_tool_history(params->conversation_history, &result, results);
-      }
-
       /* Log tool results */
       for (int i = 0; i < results->count; i++) {
          LOG_INFO("  Tool result [%d] id=%s result=%.200s%s", i, results->results[i].tool_call_id,
@@ -392,16 +385,14 @@ char *llm_tool_iteration_loop(llm_tool_loop_params_t *params) {
                   strlen(results->results[i].result) > 200 ? "..." : "");
       }
 
-      /* Step 7: Check follow-up context */
+      /* Step 6: Check follow-up context BEFORE appending to history.
+       * Tools like reset_conversation invalidate the conversation history pointer,
+       * so we must not append to it after they run. */
       tool_followup_context_t followup;
       llm_tools_prepare_followup(results, &followup);
 
       if (followup.skip_followup) {
          LOG_INFO("Tool loop: Skipping follow-up (tool requested no follow-up)");
-
-         /* Add closing message to complete history */
-         append_closing_message(params->conversation_history, followup.direct_response,
-                                params->history_format);
 
          /* Send through chunk callback so TTS receives it */
          if (followup.direct_response && params->chunk_callback) {
@@ -413,6 +404,13 @@ char *llm_tool_iteration_loop(llm_tool_loop_params_t *params) {
          free(results);
          llm_tool_response_free(&result);
          return followup.direct_response; /* Caller must free */
+      }
+
+      /* Step 7: Append assistant message + tool results to history */
+      if (params->history_format == LLM_HISTORY_CLAUDE) {
+         append_claude_tool_history(params->conversation_history, &result, results);
+      } else {
+         append_openai_tool_history(params->conversation_history, &result, results);
       }
 
       /* Step 8: Check iteration limit */

@@ -28,8 +28,11 @@
 
 #include <SDL2/SDL2_gfxPrimitives.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
+#include "audio_playback.h"
 #include "ui_colors.h"
 #include "ui_util.h"
 
@@ -54,7 +57,98 @@
 #define BTN_WIDTH 200
 #define BTN_GAP 24
 #define BTN_RADIUS 12
-#define SCRIM_ALPHA 0.75f /* 75% opacity background */
+#define SCRIM_ALPHA 0.75f   /* 75% opacity background */
+#define ALARM_GAP_MS 200    /* Gap between alarm tone repeats (ms) */
+#define ALARM_TIMEOUT_S 120 /* Max alarm sound duration (seconds) */
+
+/* =============================================================================
+ * Chime Sound Thread
+ * ============================================================================= */
+
+typedef struct {
+   ui_alarm_t *alarm;
+   bool is_alarm;
+} chime_thread_arg_t;
+
+static void *chime_sound_thread(void *arg) {
+   chime_thread_arg_t *cta = (chime_thread_arg_t *)arg;
+   ui_alarm_t *a = cta->alarm;
+   bool is_alarm = cta->is_alarm;
+   free(cta);
+
+   audio_playback_t *pb = (audio_playback_t *)a->audio_pb;
+   if (!pb) {
+      a->sound_thread_active = false;
+      return NULL;
+   }
+
+   /* Get volume and pre-scale into temp buffer */
+   int vol_pct = audio_playback_get_volume(pb);
+   float vol_scale = (float)vol_pct / 100.0f;
+
+   dawn_chime_buf_t *src = is_alarm ? &a->alarm_tone : &a->chime;
+   if (!src->pcm || src->samples == 0) {
+      a->sound_thread_active = false;
+      return NULL;
+   }
+
+   int16_t *scaled = malloc(src->samples * sizeof(int16_t));
+   if (!scaled) {
+      a->sound_thread_active = false;
+      return NULL;
+   }
+   dawn_chime_apply_volume(scaled, src->pcm, src->samples, vol_scale);
+
+   if (is_alarm) {
+      /* Looping alarm tone until dismissed or timeout */
+      time_t start = time(NULL);
+      while (!atomic_load(&a->sound_stop) && (time(NULL) - start) < ALARM_TIMEOUT_S) {
+         audio_playback_play(pb, scaled, src->samples, (unsigned int)src->sample_rate,
+                             &a->sound_stop, true);
+         if (atomic_load(&a->sound_stop))
+            break;
+         usleep(ALARM_GAP_MS * 1000);
+      }
+   } else {
+      /* Single chime for timers/reminders */
+      audio_playback_play(pb, scaled, src->samples, (unsigned int)src->sample_rate, &a->sound_stop,
+                          true);
+   }
+
+   free(scaled);
+   a->sound_thread_active = false;
+   return NULL;
+}
+
+/** Stop and join any running sound thread */
+static void stop_sound_thread(ui_alarm_t *a) {
+   if (!a->sound_thread_active)
+      return;
+   atomic_store(&a->sound_stop, 1);
+   pthread_join(a->sound_thread, NULL);
+   a->sound_thread_active = false;
+}
+
+/** Start chime playback in background thread */
+static void start_sound_thread(ui_alarm_t *a, bool is_alarm) {
+   if (!a->audio_pb || !a->chime.pcm)
+      return;
+
+   stop_sound_thread(a);
+   atomic_store(&a->sound_stop, 0);
+
+   chime_thread_arg_t *cta = malloc(sizeof(chime_thread_arg_t));
+   if (!cta)
+      return;
+   cta->alarm = a;
+   cta->is_alarm = is_alarm;
+
+   a->sound_thread_active = true;
+   if (pthread_create(&a->sound_thread, NULL, chime_sound_thread, cta) != 0) {
+      a->sound_thread_active = false;
+      free(cta);
+   }
+}
 
 /* =============================================================================
  * Helpers
@@ -98,11 +192,20 @@ int ui_alarm_init(ui_alarm_t *a, SDL_Renderer *r, int w, int h, const char *font
    a->snooze_tex = ui_build_white_tex(r, a->btn_font, "Snooze", &a->snooze_w, &a->snooze_h);
    a->static_cache_ready = (a->dismiss_tex != NULL && a->snooze_tex != NULL);
 
+   /* Generate chime PCM buffers */
+   dawn_chime_generate(&a->chime);
+   dawn_alarm_tone_generate(&a->alarm_tone);
+   atomic_init(&a->sound_stop, 0);
+
    LOG_INFO("initialized (%dx%d)", w, h);
    return 0;
 }
 
 void ui_alarm_cleanup(ui_alarm_t *a) {
+   stop_sound_thread(a);
+   dawn_chime_free(&a->chime);
+   dawn_chime_free(&a->alarm_tone);
+
    if (a->title_tex)
       SDL_DestroyTexture(a->title_tex);
    if (a->label_tex)
@@ -134,18 +237,29 @@ void ui_alarm_trigger(ui_alarm_t *a, int64_t event_id, const char *label, const 
    if (type)
       snprintf(a->type, sizeof(a->type), "%s", type);
 
+   bool started_fade = false;
    if (a->state == ALARM_STATE_IDLE || a->state == ALARM_STATE_FADING_OUT) {
       a->state = ALARM_STATE_FADING_IN;
       a->fade_start = ui_get_time_sec();
       a->fade_alpha = 0.0f;
+      started_fade = true;
    }
 
    pthread_mutex_unlock(&a->mutex);
    LOG_INFO("triggered: [%s] %s (id=%lld)", type ? type : "?", label ? label : "?",
             (long long)event_id);
+
+   /* Start chime sound if overlay just activated */
+   if (started_fade && a->audio_pb) {
+      bool is_alarm = (type && strcmp(type, "alarm") == 0);
+      start_sound_thread(a, is_alarm);
+   }
 }
 
 void ui_alarm_dismiss(ui_alarm_t *a) {
+   /* Stop sound (non-blocking signal; thread self-exits) */
+   atomic_store(&a->sound_stop, 1);
+
    pthread_mutex_lock(&a->mutex);
    if (a->state == ALARM_STATE_FADING_IN || a->state == ALARM_STATE_ACTIVE) {
       a->state = ALARM_STATE_FADING_OUT;
@@ -360,4 +474,13 @@ bool ui_alarm_handle_tap(ui_alarm_t *a, int x, int y) {
    }
 
    return true; /* Consume tap even outside buttons (modal) */
+}
+
+/* =============================================================================
+ * Audio Playback Wiring
+ * ============================================================================= */
+
+void ui_alarm_set_audio_playback(ui_alarm_t *a, struct audio_playback *pb) {
+   if (a)
+      a->audio_pb = pb;
 }

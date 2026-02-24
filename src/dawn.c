@@ -1587,6 +1587,15 @@ int main(int argc, char *argv[]) {
    // If config_result != 0 without explicit path, no config file found - using defaults (OK)
    (void)config_result;  // Suppress unused warning when no explicit path given
 
+   // Step 2b: Apply configured timezone to process environment.
+   // All localtime_r/mktime calls throughout the codebase will use this timezone.
+   // This must happen before any time-dependent code (greetings, scheduler, LLM context).
+   if (g_config.localization.timezone[0] != '\0') {
+      setenv("TZ", g_config.localization.timezone, 1);
+      tzset();
+      LOG_INFO("Timezone set to %s", g_config.localization.timezone);
+   }
+
    // Step 3: Load secrets file (search default locations)
    config_load_secrets_from_search(&g_secrets);
 

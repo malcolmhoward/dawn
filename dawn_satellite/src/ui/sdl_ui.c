@@ -1966,6 +1966,13 @@ static void music_library_cb(const music_library_update_t *lib, void *user_data)
 
 static void alarm_notify_cb(const ws_alarm_notify_t *alarm, void *user_data) {
    sdl_ui_t *ui = (sdl_ui_t *)user_data;
+
+   /* Non-ringing statuses (dismissed, snoozed, timed_out) close the overlay */
+   if (alarm->status[0] && strcmp(alarm->status, "ringing") != 0) {
+      ui_alarm_dismiss(&ui->alarm);
+      return;
+   }
+
    ui_alarm_trigger(&ui->alarm, alarm->event_id, alarm->label, alarm->type);
 }
 
@@ -2005,6 +2012,9 @@ void sdl_ui_set_audio_playback(sdl_ui_t *ui, struct audio_playback *pb) {
    if (!ui)
       return;
    ui->audio_pb = (audio_playback_t *)pb;
+
+   /* Wire alarm overlay to audio playback for chime sounds */
+   ui_alarm_set_audio_playback(&ui->alarm, pb);
 
    /* Apply saved volume from config */
    if (pb && ui->sliders_initialized) {

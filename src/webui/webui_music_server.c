@@ -91,6 +91,12 @@ static int callback_music_websocket(struct lws *wsi,
       case LWS_CALLBACK_RECEIVE:
          /* Only expect JSON auth message before authentication */
          if (!conn->authenticated) {
+            /* Reject binary frames before auth (prevents reading past buffer) */
+            if (lws_frame_is_binary(wsi)) {
+               LOG_WARNING("Music server: Unexpected binary frame before auth");
+               return -1;
+            }
+
             /* Parse auth message */
             struct json_object *msg = json_tokener_parse((const char *)in);
             if (!msg) {
@@ -160,6 +166,9 @@ static int callback_music_websocket(struct lws *wsi,
          if (conn->authenticated && conn->session) {
             /* Clear the stream wsi from the session */
             webui_music_set_stream_wsi(conn->session, NULL);
+            /* Release the session reference acquired during auth */
+            session_release(conn->session);
+            conn->session = NULL;
          }
          break;
 

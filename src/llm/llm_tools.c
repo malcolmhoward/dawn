@@ -1114,6 +1114,11 @@ static int llm_tools_execute_from_treg(const tool_call_t *call,
    char value_buf[LLM_TOOLS_ARGS_LEN] = "";
    char device_name[LLM_TOOLS_NAME_LEN] = "";
 
+   /* Track which param names map to action/device so we can build a fallback value */
+   const char *action_param_name = NULL;
+   const char *device_param_name = NULL;
+   const char *value_param_name = NULL;
+
    for (int i = 0; i < meta->param_count; i++) {
       const treg_param_t *param = &meta->params[i];
       struct json_object *val_obj = NULL;
@@ -1126,16 +1131,19 @@ static int llm_tools_execute_from_treg(const tool_call_t *call,
 
       switch (param->maps_to) {
          case TOOL_MAPS_TO_ACTION:
+            action_param_name = param->name;
             if (val_str) {
                safe_strncpy(action_name, val_str, sizeof(action_name));
             }
             break;
          case TOOL_MAPS_TO_VALUE:
+            value_param_name = param->name;
             if (val_str) {
                safe_strncpy(value_buf, val_str, sizeof(value_buf));
             }
             break;
          case TOOL_MAPS_TO_DEVICE:
+            device_param_name = param->name;
             if (val_str) {
                safe_strncpy(device_name, val_str, sizeof(device_name));
             }
@@ -1155,6 +1163,29 @@ static int llm_tools_execute_from_treg(const tool_call_t *call,
             }
             break;
       }
+   }
+
+   /* Fallback: if value_buf is empty and the LLM sent a flat JSON (no "details" key),
+    * collect all non-extracted fields into a JSON object as the value.
+    * This handles LLMs that flatten {"action":"create","type":"timer",...}
+    * instead of nesting {"action":"create","details":"{\"type\":\"timer\",...}"}. */
+   if (value_buf[0] == '\0' && args && value_param_name) {
+      struct json_object *remaining = json_object_new_object();
+      json_object_object_foreach(args, key, val) {
+         /* Skip keys already extracted as action/device/value params */
+         if ((action_param_name && strcmp(key, action_param_name) == 0) ||
+             (device_param_name && strcmp(key, device_param_name) == 0) ||
+             (value_param_name && strcmp(key, value_param_name) == 0))
+            continue;
+         json_object_object_add(remaining, key, json_object_get(val));
+      }
+      if (json_object_object_length(remaining) > 0) {
+         const char *remaining_str = json_object_to_json_string(remaining);
+         safe_strncpy(value_buf, remaining_str, sizeof(value_buf));
+         LOG_INFO("Tool '%s': LLM sent flat args, reconstructed value from remaining fields",
+                  call->name);
+      }
+      json_object_put(remaining);
    }
 
    if (args) {
