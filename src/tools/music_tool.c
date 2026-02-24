@@ -177,70 +177,6 @@ static const char *extract_filename(const char *path) {
 }
 
 /**
- * @brief Extract custom parameter from value string
- *
- * Value format: "base_value::field_name::field_value::..."
- * Returns the value for field_name, or NULL if not found.
- *
- * @param value Full value string (may contain custom params)
- * @param field_name Name of field to extract
- * @param out_value Buffer for extracted value
- * @param out_len Size of out_value buffer
- * @return true if found, false otherwise
- */
-static bool extract_custom_param(const char *value,
-                                 const char *field_name,
-                                 char *out_value,
-                                 size_t out_len) {
-   if (!value || !field_name || !out_value)
-      return false;
-
-   /* Search for ::field_name:: pattern */
-   char pattern[64];
-   snprintf(pattern, sizeof(pattern), "::%s::", field_name);
-
-   const char *pos = strstr(value, pattern);
-   if (!pos)
-      return false;
-
-   /* Skip past the pattern to get to the value */
-   const char *val_start = pos + strlen(pattern);
-
-   /* Value ends at next :: or end of string */
-   const char *val_end = strstr(val_start, "::");
-   size_t val_len = val_end ? (size_t)(val_end - val_start) : strlen(val_start);
-
-   if (val_len >= out_len)
-      val_len = out_len - 1;
-
-   strncpy(out_value, val_start, val_len);
-   out_value[val_len] = '\0';
-   return true;
-}
-
-/**
- * @brief Extract base value (before any custom params)
- *
- * @param value Full value string
- * @param out_base Buffer for base value
- * @param out_len Size of out_base buffer
- */
-static void extract_base_value(const char *value, char *out_base, size_t out_len) {
-   if (!value || !out_base)
-      return;
-
-   /* Base value ends at first :: */
-   const char *delim = strstr(value, "::");
-   size_t base_len = delim ? (size_t)(delim - value) : strlen(value);
-
-   if (base_len >= out_len)
-      base_len = out_len - 1;
-
-   strncpy(out_base, value, base_len);
-   out_base[base_len] = '\0';
-}
-
-/**
  * @brief Stop current playback and wait for thread to finish
  */
 static void stop_current_playback(void) {
@@ -712,11 +648,11 @@ static char *music_tool_callback(const char *action, char *value, int *should_re
 
       /* Extract query and optional limit from value */
       char query[MAX_FILENAME_LENGTH];
-      extract_base_value(value, query, sizeof(query));
+      tool_param_extract_base(value, query, sizeof(query));
 
       char limit_str[16] = "";
       int limit = 10; /* Default: show 10 results */
-      if (extract_custom_param(value, "limit", limit_str, sizeof(limit_str))) {
+      if (tool_param_extract_custom(value, "limit", limit_str, sizeof(limit_str))) {
          char *endptr;
          long parsed = strtol(limit_str, &endptr, 10);
          /* Check if conversion was successful (not empty and fully consumed) */
@@ -810,7 +746,7 @@ static char *music_tool_callback(const char *action, char *value, int *should_re
       /* Extract page parameter (1-based, default 1) */
       int page = 1;
       char page_str[16] = "";
-      if (extract_custom_param(value, "page", page_str, sizeof(page_str))) {
+      if (tool_param_extract_custom(value, "page", page_str, sizeof(page_str))) {
          char *endptr;
          long parsed = strtol(page_str, &endptr, 10);
          if (endptr != page_str && *endptr == '\0' && parsed >= 1) {
@@ -824,7 +760,7 @@ static char *music_tool_callback(const char *action, char *value, int *should_re
       /* Extract base query (strip ::page::N suffix) */
       char lib_query[64] = "";
       if (value && *value) {
-         extract_base_value(value, lib_query, sizeof(lib_query));
+         tool_param_extract_base(value, lib_query, sizeof(lib_query));
       }
 
       /* Default: show stats and first page of artists */

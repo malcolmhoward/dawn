@@ -154,12 +154,19 @@ typedef struct {
    sqlite3_stmt *stmt_memory_pref_upsert;
    sqlite3_stmt *stmt_memory_pref_get;
    sqlite3_stmt *stmt_memory_pref_list;
+   sqlite3_stmt *stmt_memory_pref_search;
    sqlite3_stmt *stmt_memory_pref_delete;
 
    sqlite3_stmt *stmt_memory_summary_create;
    sqlite3_stmt *stmt_memory_summary_list;
    sqlite3_stmt *stmt_memory_summary_mark_consolidated;
    sqlite3_stmt *stmt_memory_summary_search;
+
+   /* Date-filtered memory queries */
+   sqlite3_stmt *stmt_memory_fact_search_since;
+   sqlite3_stmt *stmt_memory_summary_search_since;
+   sqlite3_stmt *stmt_memory_fact_list_since;
+   sqlite3_stmt *stmt_memory_summary_list_since;
 
    /* Extraction tracking */
    sqlite3_stmt *stmt_conv_get_last_extracted;

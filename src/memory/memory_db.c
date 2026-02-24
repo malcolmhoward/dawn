@@ -473,6 +473,129 @@ int memory_db_fact_prune_stale(int user_id, int stale_days, float min_confidence
 }
 
 /* =============================================================================
+ * Date-Filtered Queries
+ * ============================================================================= */
+
+int memory_db_fact_search_since(int user_id,
+                                const char *keywords,
+                                time_t since_ts,
+                                memory_fact_t *out_facts,
+                                int max_facts) {
+   if (!keywords || !out_facts || max_facts <= 0) {
+      return -1;
+   }
+
+   char pattern[MEMORY_FACT_TEXT_MAX];
+   build_like_pattern(keywords, pattern, sizeof(pattern));
+
+   AUTH_DB_LOCK_OR_RETURN(-1);
+
+   sqlite3_stmt *stmt = s_db.stmt_memory_fact_search_since;
+   sqlite3_reset(stmt);
+   sqlite3_bind_int(stmt, 1, user_id);
+   sqlite3_bind_text(stmt, 2, pattern, -1, SQLITE_STATIC);
+   sqlite3_bind_int64(stmt, 3, (int64_t)since_ts);
+   sqlite3_bind_int(stmt, 4, max_facts);
+
+   int count = 0;
+   while (count < max_facts && sqlite3_step(stmt) == SQLITE_ROW) {
+      populate_fact_from_row(stmt, &out_facts[count]);
+      count++;
+   }
+
+   sqlite3_reset(stmt);
+   AUTH_DB_UNLOCK();
+   return count;
+}
+
+int memory_db_summary_search_since(int user_id,
+                                   const char *keywords,
+                                   time_t since_ts,
+                                   memory_summary_t *out_summaries,
+                                   int max_summaries) {
+   if (!keywords || !out_summaries || max_summaries <= 0) {
+      return -1;
+   }
+
+   char pattern[MEMORY_SUMMARY_MAX];
+   build_like_pattern(keywords, pattern, sizeof(pattern));
+
+   AUTH_DB_LOCK_OR_RETURN(-1);
+
+   sqlite3_stmt *stmt = s_db.stmt_memory_summary_search_since;
+   sqlite3_reset(stmt);
+   sqlite3_bind_int(stmt, 1, user_id);
+   sqlite3_bind_text(stmt, 2, pattern, -1, SQLITE_STATIC);
+   sqlite3_bind_text(stmt, 3, pattern, -1, SQLITE_STATIC);
+   sqlite3_bind_int64(stmt, 4, (int64_t)since_ts);
+   sqlite3_bind_int(stmt, 5, max_summaries);
+
+   int count = 0;
+   while (count < max_summaries && sqlite3_step(stmt) == SQLITE_ROW) {
+      populate_summary_from_row(stmt, &out_summaries[count]);
+      count++;
+   }
+
+   sqlite3_reset(stmt);
+   AUTH_DB_UNLOCK();
+   return count;
+}
+
+int memory_db_fact_list_since(int user_id,
+                              time_t since_ts,
+                              memory_fact_t *out_facts,
+                              int max_facts) {
+   if (!out_facts || max_facts <= 0) {
+      return -1;
+   }
+
+   AUTH_DB_LOCK_OR_RETURN(-1);
+
+   sqlite3_stmt *stmt = s_db.stmt_memory_fact_list_since;
+   sqlite3_reset(stmt);
+   sqlite3_bind_int(stmt, 1, user_id);
+   sqlite3_bind_int64(stmt, 2, (int64_t)since_ts);
+   sqlite3_bind_int(stmt, 3, max_facts);
+
+   int count = 0;
+   while (count < max_facts && sqlite3_step(stmt) == SQLITE_ROW) {
+      populate_fact_from_row(stmt, &out_facts[count]);
+      count++;
+   }
+
+   sqlite3_reset(stmt);
+   AUTH_DB_UNLOCK();
+   return count;
+}
+
+int memory_db_summary_list_since(int user_id,
+                                 time_t since_ts,
+                                 memory_summary_t *out_summaries,
+                                 int max_summaries) {
+   if (!out_summaries || max_summaries <= 0) {
+      return -1;
+   }
+
+   AUTH_DB_LOCK_OR_RETURN(-1);
+
+   sqlite3_stmt *stmt = s_db.stmt_memory_summary_list_since;
+   sqlite3_reset(stmt);
+   sqlite3_bind_int(stmt, 1, user_id);
+   sqlite3_bind_int64(stmt, 2, (int64_t)since_ts);
+   sqlite3_bind_int(stmt, 3, max_summaries);
+
+   int count = 0;
+   while (count < max_summaries && sqlite3_step(stmt) == SQLITE_ROW) {
+      populate_summary_from_row(stmt, &out_summaries[count]);
+      count++;
+   }
+
+   sqlite3_reset(stmt);
+   AUTH_DB_UNLOCK();
+   return count;
+}
+
+/* =============================================================================
  * Preference Operations
  * ============================================================================= */
 
@@ -545,6 +668,37 @@ int memory_db_pref_list(int user_id, memory_preference_t *out_prefs, int max_pre
    sqlite3_stmt *stmt = s_db.stmt_memory_pref_list;
    sqlite3_reset(stmt);
    sqlite3_bind_int(stmt, 1, user_id);
+
+   int count = 0;
+   while (count < max_prefs && sqlite3_step(stmt) == SQLITE_ROW) {
+      populate_pref_from_row(stmt, &out_prefs[count]);
+      count++;
+   }
+
+   sqlite3_reset(stmt);
+   AUTH_DB_UNLOCK();
+   return count;
+}
+
+int memory_db_pref_search(int user_id,
+                          const char *keywords,
+                          memory_preference_t *out_prefs,
+                          int max_prefs) {
+   if (!keywords || !out_prefs || max_prefs <= 0) {
+      return -1;
+   }
+
+   char pattern[256];
+   build_like_pattern(keywords, pattern, sizeof(pattern));
+
+   AUTH_DB_LOCK_OR_RETURN(-1);
+
+   sqlite3_stmt *stmt = s_db.stmt_memory_pref_search;
+   sqlite3_reset(stmt);
+   sqlite3_bind_int(stmt, 1, user_id);
+   sqlite3_bind_text(stmt, 2, pattern, -1, SQLITE_STATIC);
+   sqlite3_bind_text(stmt, 3, pattern, -1, SQLITE_STATIC);
+   sqlite3_bind_int(stmt, 4, max_prefs);
 
    int count = 0;
    while (count < max_prefs && sqlite3_step(stmt) == SQLITE_ROW) {

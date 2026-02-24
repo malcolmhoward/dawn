@@ -191,6 +191,73 @@ int memory_db_fact_prune_superseded(int user_id, int retention_days);
 int memory_db_fact_prune_stale(int user_id, int stale_days, float min_confidence);
 
 /* =============================================================================
+ * Date-Filtered Queries
+ *
+ * Variants of search/list that only return results created at or after
+ * a given timestamp. Used for time_range search and fixed recent action.
+ * ============================================================================= */
+
+/**
+ * @brief Search facts by keyword with time filter
+ *
+ * @param user_id User ID
+ * @param keywords Search terms (will be wrapped in %...%)
+ * @param since_ts Only return facts created at or after this timestamp
+ * @param out_facts Output: array of matching facts
+ * @param max_facts Maximum facts to return
+ * @return Number of facts found, -1 on error
+ */
+int memory_db_fact_search_since(int user_id,
+                                const char *keywords,
+                                time_t since_ts,
+                                memory_fact_t *out_facts,
+                                int max_facts);
+
+/**
+ * @brief Search summaries by keyword with time filter
+ *
+ * @param user_id User ID
+ * @param keywords Search terms
+ * @param since_ts Only return summaries created at or after this timestamp
+ * @param out_summaries Output: array of matching summaries
+ * @param max_summaries Maximum to return
+ * @return Number of matches, -1 on error
+ */
+int memory_db_summary_search_since(int user_id,
+                                   const char *keywords,
+                                   time_t since_ts,
+                                   memory_summary_t *out_summaries,
+                                   int max_summaries);
+
+/**
+ * @brief List facts created since a timestamp (ordered by recency)
+ *
+ * @param user_id User ID
+ * @param since_ts Only return facts created at or after this timestamp
+ * @param out_facts Output: array of facts
+ * @param max_facts Maximum facts to return
+ * @return Number of facts returned, -1 on error
+ */
+int memory_db_fact_list_since(int user_id,
+                              time_t since_ts,
+                              memory_fact_t *out_facts,
+                              int max_facts);
+
+/**
+ * @brief List summaries created since a timestamp
+ *
+ * @param user_id User ID
+ * @param since_ts Only return summaries created at or after this timestamp
+ * @param out_summaries Output: array of summaries
+ * @param max_summaries Maximum to return
+ * @return Number of summaries, -1 on error
+ */
+int memory_db_summary_list_since(int user_id,
+                                 time_t since_ts,
+                                 memory_summary_t *out_summaries,
+                                 int max_summaries);
+
+/* =============================================================================
  * Preference Operations
  * ============================================================================= */
 
@@ -233,6 +300,20 @@ int memory_db_pref_get(int user_id, const char *category, memory_preference_t *o
  * @return Number of preferences, -1 on error
  */
 int memory_db_pref_list(int user_id, memory_preference_t *out_prefs, int max_prefs);
+
+/**
+ * @brief Search preferences by keyword (LIKE on category and value)
+ *
+ * @param user_id User ID
+ * @param keywords Search terms (will be wrapped in %...%)
+ * @param out_prefs Output: array of matching preferences
+ * @param max_prefs Maximum to return
+ * @return Number of matches, -1 on error
+ */
+int memory_db_pref_search(int user_id,
+                          const char *keywords,
+                          memory_preference_t *out_prefs,
+                          int max_prefs);
 
 /**
  * @brief Delete a preference

@@ -25,6 +25,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "config/dawn_config.h"
 #include "core/session_manager.h"
@@ -104,7 +105,7 @@ char *llm_claude_chat_completion(struct json_object *conversation_history,
 
    // Check connection
    if (!llm_check_connection(base_url, 4)) {
-      LOG_ERROR("Cannot reach Claude API");
+      LOG_ERROR("Pre-flight connection check failed (cloud unreachable)");
       json_object_put(request);
       return NULL;
    }
@@ -134,6 +135,9 @@ char *llm_claude_chat_completion(struct json_object *conversation_history,
    // Set low-speed timeout: abort if transfer drops below 1 byte/sec for 30 seconds
    curl_easy_setopt(curl_handle, CURLOPT_LOW_SPEED_LIMIT, 1L);
    curl_easy_setopt(curl_handle, CURLOPT_LOW_SPEED_TIME, 30L);
+
+   // Set connect timeout: fail fast on unreachable hosts instead of waiting for overall timeout
+   curl_easy_setopt(curl_handle, CURLOPT_CONNECTTIMEOUT_MS, LLM_CONNECT_TIMEOUT_MS);
 
    // Set overall timeout from config (default 30000ms)
    if (g_config.network.llm_timeout_ms > 0) {
@@ -417,7 +421,7 @@ static char *llm_claude_streaming_internal(struct json_object *conversation_hist
 
    // Check connection
    if (!llm_check_connection(base_url, 4)) {
-      LOG_ERROR("URL did not return. Unavailable.");
+      LOG_ERROR("Pre-flight connection check failed (cloud unreachable)");
       return NULL;
    }
 
@@ -486,6 +490,9 @@ static char *llm_claude_streaming_internal(struct json_object *conversation_hist
    // This catches hung/stalled streams from LLM servers
    curl_easy_setopt(curl_handle, CURLOPT_LOW_SPEED_LIMIT, 1L);
    curl_easy_setopt(curl_handle, CURLOPT_LOW_SPEED_TIME, 30L);
+
+   // Set connect timeout: fail fast on unreachable hosts instead of waiting for overall timeout
+   curl_easy_setopt(curl_handle, CURLOPT_CONNECTTIMEOUT_MS, LLM_CONNECT_TIMEOUT_MS);
 
    // Set overall timeout from config (default 30000ms)
    if (g_config.network.llm_timeout_ms > 0) {
@@ -861,7 +868,7 @@ int llm_claude_streaming_single_shot(struct json_object *conversation_history,
    }
 
    if (!llm_check_connection(base_url, 4)) {
-      LOG_ERROR("URL did not return. Unavailable.");
+      LOG_ERROR("Pre-flight connection check failed (cloud unreachable)");
       return 1;
    }
 
@@ -901,57 +908,94 @@ int llm_claude_streaming_single_shot(struct json_object *conversation_history,
    streaming_ctx.stream_ctx = stream_ctx;
    curl_buffer_init(&streaming_ctx.raw_response);
 
-   curl_handle = curl_easy_init();
-   if (!curl_handle) {
-      LOG_ERROR("Failed to initialize CURL");
-      sse_parser_free(sse_parser);
-      llm_stream_free(stream_ctx);
-      curl_buffer_free(&streaming_ctx.raw_response);
-      json_object_put(request);
-      return 1;
-   }
-
-   headers = build_claude_headers(api_key);
-   snprintf(full_url, sizeof(full_url), "%s%s", base_url, CLAUDE_MESSAGES_ENDPOINT);
-
-   curl_easy_setopt(curl_handle, CURLOPT_URL, full_url);
-   curl_easy_setopt(curl_handle, CURLOPT_POSTFIELDS, payload);
-   curl_easy_setopt(curl_handle, CURLOPT_HTTPHEADER, headers);
-   curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, claude_streaming_write_callback);
-   curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&streaming_ctx);
-   curl_easy_setopt(curl_handle, CURLOPT_NOPROGRESS, 0L);
-   curl_easy_setopt(curl_handle, CURLOPT_XFERINFOFUNCTION, llm_curl_progress_callback);
-   curl_easy_setopt(curl_handle, CURLOPT_XFERINFODATA, NULL);
-   curl_easy_setopt(curl_handle, CURLOPT_LOW_SPEED_LIMIT, 1L);
-   curl_easy_setopt(curl_handle, CURLOPT_LOW_SPEED_TIME, 30L);
-   if (g_config.network.llm_timeout_ms > 0) {
-      curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT_MS, (long)g_config.network.llm_timeout_ms);
-   }
-
-   res = curl_easy_perform(curl_handle);
-   if (res != CURLE_OK) {
-      if (res == CURLE_ABORTED_BY_CALLBACK) {
-         LOG_INFO("LLM transfer interrupted by user");
-      } else {
-         LOG_ERROR("CURL failed: %s", curl_easy_strerror(res));
+   /* Retry loop: attempt CURL request up to 2 times on transient connection failures */
+   int max_attempts = 2;
+   for (int attempt = 0; attempt < max_attempts; attempt++) {
+      curl_handle = curl_easy_init();
+      if (!curl_handle) {
+         LOG_ERROR("Failed to initialize CURL");
+         sse_parser_free(sse_parser);
+         llm_stream_free(stream_ctx);
+         curl_buffer_free(&streaming_ctx.raw_response);
+         json_object_put(request);
+         return 1;
       }
-#ifdef ENABLE_WEBUI
-      if (res != CURLE_ABORTED_BY_CALLBACK) {
-         session_t *session = session_get_command_context();
-         if (session && session->type == SESSION_TYPE_WEBUI) {
-            const char *error_code = (res == CURLE_OPERATION_TIMEDOUT) ? "LLM_TIMEOUT"
-                                                                       : "LLM_ERROR";
-            webui_send_error(session, error_code, curl_easy_strerror(res));
+
+      headers = build_claude_headers(api_key);
+      snprintf(full_url, sizeof(full_url), "%s%s", base_url, CLAUDE_MESSAGES_ENDPOINT);
+
+      curl_easy_setopt(curl_handle, CURLOPT_URL, full_url);
+      curl_easy_setopt(curl_handle, CURLOPT_POSTFIELDS, payload);
+      curl_easy_setopt(curl_handle, CURLOPT_HTTPHEADER, headers);
+      curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, claude_streaming_write_callback);
+      curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&streaming_ctx);
+      curl_easy_setopt(curl_handle, CURLOPT_NOPROGRESS, 0L);
+      curl_easy_setopt(curl_handle, CURLOPT_XFERINFOFUNCTION, llm_curl_progress_callback);
+      curl_easy_setopt(curl_handle, CURLOPT_XFERINFODATA, NULL);
+      curl_easy_setopt(curl_handle, CURLOPT_LOW_SPEED_LIMIT, 1L);
+      curl_easy_setopt(curl_handle, CURLOPT_LOW_SPEED_TIME, 30L);
+      curl_easy_setopt(curl_handle, CURLOPT_CONNECTTIMEOUT_MS, LLM_CONNECT_TIMEOUT_MS);
+      if (g_config.network.llm_timeout_ms > 0) {
+         curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT_MS, (long)g_config.network.llm_timeout_ms);
+      }
+
+      res = curl_easy_perform(curl_handle);
+      if (res != CURLE_OK) {
+         /* Check if this is a retryable connection error.
+          * Only retry CURLE_OPERATION_TIMEDOUT if no data was received (connect-phase
+          * timeout). If data arrived, the server was processing — retrying could cause
+          * duplicate side effects and would corrupt the accumulated stream_ctx state. */
+         bool retryable = (res == CURLE_COULDNT_CONNECT || res == CURLE_COULDNT_RESOLVE_HOST);
+         if (res == CURLE_OPERATION_TIMEDOUT && streaming_ctx.raw_response.size == 0) {
+            retryable = true;
          }
-      }
+
+         if (retryable && attempt < max_attempts - 1) {
+            LOG_WARNING("CURL connect failed (%s), retrying in 1s... (attempt %d/%d)",
+                        curl_easy_strerror(res), attempt + 1, max_attempts);
+            curl_easy_cleanup(curl_handle);
+            curl_slist_free_all(headers);
+            curl_handle = NULL;
+            headers = NULL;
+            /* Reset streaming context for retry */
+            curl_buffer_free(&streaming_ctx.raw_response);
+            curl_buffer_init(&streaming_ctx.raw_response);
+            sse_parser_reset(sse_parser);
+            /* Cancellation-aware 1s backoff before retry */
+            for (int ms = 0; ms < 1000; ms += 100) {
+               if (llm_is_interrupt_requested())
+                  break;
+               usleep(100000);
+            }
+            continue;
+         }
+
+         if (res == CURLE_ABORTED_BY_CALLBACK) {
+            LOG_INFO("LLM transfer interrupted by user");
+         } else {
+            LOG_ERROR("CURL failed: %s", curl_easy_strerror(res));
+         }
+#ifdef ENABLE_WEBUI
+         if (res != CURLE_ABORTED_BY_CALLBACK) {
+            session_t *session = session_get_command_context();
+            if (session && session->type == SESSION_TYPE_WEBUI) {
+               const char *error_code = (res == CURLE_OPERATION_TIMEDOUT) ? "LLM_TIMEOUT"
+                                                                          : "LLM_ERROR";
+               webui_send_error(session, error_code, curl_easy_strerror(res));
+            }
+         }
 #endif
-      curl_easy_cleanup(curl_handle);
-      curl_slist_free_all(headers);
-      json_object_put(request);
-      sse_parser_free(sse_parser);
-      llm_stream_free(stream_ctx);
-      curl_buffer_free(&streaming_ctx.raw_response);
-      return 1;
+         curl_easy_cleanup(curl_handle);
+         curl_slist_free_all(headers);
+         json_object_put(request);
+         sse_parser_free(sse_parser);
+         llm_stream_free(stream_ctx);
+         curl_buffer_free(&streaming_ctx.raw_response);
+         return 1;
+      }
+
+      /* CURL succeeded - break out of retry loop */
+      break;
    }
 
    long http_code = 0;

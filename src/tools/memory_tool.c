@@ -50,14 +50,23 @@ static const treg_param_t memory_params[] = {
        .enum_count = 4,
    },
    {
-       .name = "content",
+       .name = "query",
        .description = "For 'remember': the fact to store (e.g., 'User prefers dark mode'). "
-                      "For 'search': query text to find relevant memories. "
+                      "For 'search': keywords to find relevant memories. "
                       "For 'forget': memory ID to delete. "
                       "For 'recent': optional limit number (default 10).",
        .type = TOOL_PARAM_TYPE_STRING,
        .required = false,
        .maps_to = TOOL_MAPS_TO_VALUE,
+   },
+   {
+       .name = "time_range",
+       .description = "Optional time filter for 'search'. Limit results to memories from this "
+                      "period. Examples: '24h', '7d', '2w', '30d'. Only used with 'search'.",
+       .type = TOOL_PARAM_TYPE_STRING,
+       .required = false,
+       .maps_to = TOOL_MAPS_TO_CUSTOM,
+       .field_name = "time_range",
    },
 };
 
@@ -72,12 +81,13 @@ static const tool_metadata_t memory_metadata = {
 
    .description = "Store and retrieve persistent memories about the user. "
                   "Use 'remember' to store facts (preferences, information shared by user). "
-                  "Use 'search' to find relevant stored memories. "
+                  "Use 'search' to find relevant stored memories (optionally filtered by "
+                  "time_range like '24h', '7d', '2w'). "
                   "Use 'forget' to delete a specific memory by ID. "
                   "Use 'recent' to list recently stored memories. "
                   "Memories persist across sessions and are private to each user.",
    .params = memory_params,
-   .param_count = 2,
+   .param_count = 3,
 
    .device_type = TOOL_DEVICE_TYPE_GETTER,
    .capabilities = TOOL_CAP_FILESYSTEM,

@@ -1286,6 +1286,18 @@ static int prepare_statements(void) {
       return AUTH_DB_FAILURE;
    }
 
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "SELECT id, user_id, category, value, confidence, source, created_at, updated_at, "
+       "reinforcement_count FROM memory_preferences "
+       "WHERE user_id = ? AND (category LIKE ? ESCAPE '\\' OR value LIKE ? ESCAPE '\\') "
+       "ORDER BY confidence DESC LIMIT ?",
+       -1, &s_db.stmt_memory_pref_search, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare memory_pref_search failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
    rc = sqlite3_prepare_v2(s_db.db,
                            "DELETE FROM memory_preferences WHERE user_id = ? AND category = ?", -1,
                            &s_db.stmt_memory_pref_delete, NULL);
@@ -1333,6 +1345,55 @@ static int prepare_statements(void) {
        -1, &s_db.stmt_memory_summary_search, NULL);
    if (rc != SQLITE_OK) {
       LOG_ERROR("auth_db: prepare memory_summary_search failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   /* Date-filtered memory queries (for time_range search and fixed recent) */
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "SELECT id, user_id, fact_text, confidence, source, created_at, last_accessed, "
+       "access_count, superseded_by FROM memory_facts "
+       "WHERE user_id = ? AND superseded_by IS NULL AND fact_text LIKE ? ESCAPE '\\' "
+       "AND created_at >= ? ORDER BY confidence DESC LIMIT ?",
+       -1, &s_db.stmt_memory_fact_search_since, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare memory_fact_search_since failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "SELECT id, user_id, session_id, summary, topics, sentiment, created_at, "
+       "message_count, duration_seconds, consolidated FROM memory_summaries "
+       "WHERE user_id = ? AND (summary LIKE ? ESCAPE '\\' OR topics LIKE ? ESCAPE '\\') "
+       "AND created_at >= ? ORDER BY created_at DESC LIMIT ?",
+       -1, &s_db.stmt_memory_summary_search_since, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare memory_summary_search_since failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "SELECT id, user_id, fact_text, confidence, source, created_at, last_accessed, "
+       "access_count, superseded_by FROM memory_facts "
+       "WHERE user_id = ? AND superseded_by IS NULL AND created_at >= ? "
+       "ORDER BY created_at DESC LIMIT ?",
+       -1, &s_db.stmt_memory_fact_list_since, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare memory_fact_list_since failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "SELECT id, user_id, session_id, summary, topics, sentiment, created_at, "
+       "message_count, duration_seconds, consolidated FROM memory_summaries "
+       "WHERE user_id = ? AND created_at >= ? "
+       "ORDER BY created_at DESC LIMIT ?",
+       -1, &s_db.stmt_memory_summary_list_since, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare memory_summary_list_since failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -1501,6 +1562,8 @@ static void finalize_statements(void) {
       sqlite3_finalize(s_db.stmt_memory_pref_get);
    if (s_db.stmt_memory_pref_list)
       sqlite3_finalize(s_db.stmt_memory_pref_list);
+   if (s_db.stmt_memory_pref_search)
+      sqlite3_finalize(s_db.stmt_memory_pref_search);
    if (s_db.stmt_memory_pref_delete)
       sqlite3_finalize(s_db.stmt_memory_pref_delete);
    if (s_db.stmt_memory_summary_create)
@@ -1511,6 +1574,16 @@ static void finalize_statements(void) {
       sqlite3_finalize(s_db.stmt_memory_summary_mark_consolidated);
    if (s_db.stmt_memory_summary_search)
       sqlite3_finalize(s_db.stmt_memory_summary_search);
+
+   /* Date-filtered memory statements */
+   if (s_db.stmt_memory_fact_search_since)
+      sqlite3_finalize(s_db.stmt_memory_fact_search_since);
+   if (s_db.stmt_memory_summary_search_since)
+      sqlite3_finalize(s_db.stmt_memory_summary_search_since);
+   if (s_db.stmt_memory_fact_list_since)
+      sqlite3_finalize(s_db.stmt_memory_fact_list_since);
+   if (s_db.stmt_memory_summary_list_since)
+      sqlite3_finalize(s_db.stmt_memory_summary_list_since);
 
    /* Deduplication and pruning statements */
    if (s_db.stmt_memory_fact_find_by_hash)

@@ -765,8 +765,7 @@ int llm_context_compact(uint32_t session_id,
     * The LLM needs to see: [user question] + [assistant(tool_calls)] + [tool results]
     * to continue coherently. Walk backward past all tool messages, then include
     * the preceding user message that triggered the tool exchange. */
-   while (end_idx > start_idx &&
-          is_tool_message(json_object_array_get_idx(history, end_idx - 1))) {
+   while (end_idx > start_idx && is_tool_message(json_object_array_get_idx(history, end_idx - 1))) {
       end_idx--;
    }
    /* Include the user message that triggered the tool call sequence */

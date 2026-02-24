@@ -609,6 +609,75 @@ int tool_registry_count_variations(void);
  */
 int tool_registry_count_tool_variations(const char *name);
 
+/* =============================================================================
+ * Custom Parameter Extraction Helpers
+ *
+ * TOOL_MAPS_TO_CUSTOM parameters are encoded by llm_tools.c as:
+ *   "base_value::field_name::field_value[::field_name::field_value...]"
+ *
+ * These inline helpers decode the encoding. Co-located here so the
+ * encode/decode contract lives in one place.
+ * ============================================================================= */
+
+#include <stdio.h>
+#include <string.h>
+
+/**
+ * @brief Extract a custom parameter value from an encoded value string
+ *
+ * @param value Full value string (may contain custom params)
+ * @param field_name Name of field to extract
+ * @param out_value Buffer for extracted value
+ * @param out_len Size of out_value buffer
+ * @return true if found, false otherwise
+ */
+static inline bool tool_param_extract_custom(const char *value,
+                                             const char *field_name,
+                                             char *out_value,
+                                             size_t out_len) {
+   if (!value || !field_name || !out_value)
+      return false;
+
+   char pattern[64];
+   snprintf(pattern, sizeof(pattern), "::%s::", field_name);
+
+   const char *pos = strstr(value, pattern);
+   if (!pos)
+      return false;
+
+   const char *val_start = pos + strlen(pattern);
+   const char *val_end = strstr(val_start, "::");
+   size_t val_len = val_end ? (size_t)(val_end - val_start) : strlen(val_start);
+
+   if (val_len >= out_len)
+      val_len = out_len - 1;
+
+   memcpy(out_value, val_start, val_len);
+   out_value[val_len] = '\0';
+   return true;
+}
+
+/**
+ * @brief Extract the base value (before any custom params) from an encoded string
+ *
+ * @param value Full value string
+ * @param out_base Buffer for base value
+ * @param out_len Size of out_base buffer
+ */
+static inline void tool_param_extract_base(const char *value, char *out_base, size_t out_len) {
+   if (!value || !out_base)
+      return;
+
+   const char *delim = strstr(value, "::");
+   size_t base_len = delim ? (size_t)(delim - value) : strlen(value);
+
+   if (base_len >= out_len)
+      base_len = out_len - 1;
+
+   memcpy(out_base, value, base_len);
+   out_base[base_len] = '\0';
+}
+
 #ifdef __cplusplus
 }
 #endif

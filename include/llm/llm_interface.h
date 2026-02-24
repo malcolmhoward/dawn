@@ -52,6 +52,9 @@ typedef enum {
 /** Maximum length for LLM model names */
 #define LLM_MODEL_NAME_MAX 64
 
+/** CURL connect timeout in milliseconds (TCP + TLS handshake) */
+#define LLM_CONNECT_TIMEOUT_MS 10000L
+
 /** Maximum length for tool mode strings */
 #define LLM_TOOL_MODE_MAX 16
 
