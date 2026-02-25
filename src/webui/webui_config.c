@@ -37,6 +37,7 @@
 
 #include "auth/auth_db.h"
 #include "config/config_env.h"
+#include "dawn.h"
 #include "config/config_parser.h"
 #include "config/dawn_config.h"
 #include "llm/llm_command_parser.h"
@@ -107,6 +108,22 @@ void handle_get_config(ws_connection_t *conn) {
    json_object *config_json = config_to_json(config_get());
    if (config_json) {
       json_object_object_add(payload, "config", config_json);
+   }
+
+   /* Add effective default persona (built-in fallback when config field is empty) */
+   {
+      const char *ai_name =
+          g_config.general.ai_name[0] != '\0' ? g_config.general.ai_name : AI_NAME;
+      char capitalized_name[64];
+      snprintf(capitalized_name, sizeof(capitalized_name), "%s", ai_name);
+      if (capitalized_name[0] >= 'a' && capitalized_name[0] <= 'z') {
+         capitalized_name[0] -= 32;
+      }
+      char default_persona[2048];
+      snprintf(default_persona, sizeof(default_persona),
+               AI_PERSONA_NAME_TEMPLATE " " AI_PERSONA_TRAITS, capitalized_name);
+      json_object_object_add(payload, "default_persona",
+                             json_object_new_string(default_persona));
    }
 
    /* Add secrets status (only is_set flags, never actual values) */
@@ -720,17 +737,15 @@ void handle_set_config(ws_connection_t *conn, struct json_object *payload) {
    old_local_endpoint[sizeof(old_local_endpoint) - 1] = '\0';
 
    /* Apply changes to global config with mutex protection.
-    * The write lock ensures no other threads are reading config during modification. */
+    * The write lock ensures no other threads are reading config during modification.
+    * TOML write is also inside the lock to prevent concurrent reads of partial state.
+    * config_write_toml() is sub-millisecond so the extended lock duration is negligible. */
    pthread_rwlock_wrlock(&s_config_rwlock);
    dawn_config_t *mutable_config = (dawn_config_t *)config_get();
    apply_config_from_json(mutable_config, payload);
-   pthread_rwlock_unlock(&s_config_rwlock);
-
-   /* Check if tool calling mode changed */
    bool tools_mode_changed = (strcmp(old_tools_mode, g_config.llm.tools.mode) != 0);
-
-   /* Write to file (outside lock - file I/O shouldn't block config reads) */
    int result = config_write_toml(mutable_config, config_path);
+   pthread_rwlock_unlock(&s_config_rwlock);
 
    if (result == 0) {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(1));

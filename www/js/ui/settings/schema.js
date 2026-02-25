@@ -54,15 +54,16 @@
          },
       },
       persona: {
-         label: 'Persona',
+         label: 'Default Persona',
          icon: '&#x1F464;',
          fields: {
             description: {
                type: 'textarea',
                label: 'AI Description',
-               rows: 3,
-               placeholder: 'Custom personality description',
-               hint: 'Personality and behavior instructions for the AI. Changes apply to new conversations only.',
+               rows: 5,
+               placeholder:
+                  'Leave empty to use built-in default:\n"Your name is {AI Name}. Iron-Man-style AI assistant. Female voice; witty, playful, and kind..."',
+               hint: 'System-wide base persona for all users. Individual users can append to or replace this via My Settings. Leave empty for the built-in default.',
             },
          },
       },
@@ -1046,6 +1047,17 @@
          virtualConfig.tool_calling = { mode: 'native' }; // Default
       }
 
+      // Populate persona description with built-in default if not set
+      const Config = window.DawnSettingsConfig;
+      if (
+         Config &&
+         Config.getDefaultPersona &&
+         (!virtualConfig.persona || !virtualConfig.persona.description)
+      ) {
+         if (!virtualConfig.persona) virtualConfig.persona = {};
+         virtualConfig.persona.description = Config.getDefaultPersona();
+      }
+
       for (const [sectionKey, sectionDef] of Object.entries(SETTINGS_SCHEMA)) {
          const configSection = virtualConfig[sectionKey] || {};
          const sectionEl = createSettingsSection(sectionKey, sectionDef, configSection);
@@ -1080,10 +1092,9 @@
       <span class="section-toggle">&#9660;</span>
     `;
       const toggleSection = () => {
-         header.classList.toggle('collapsed');
-         content.classList.toggle('collapsed');
+         section.classList.toggle('collapsed');
          // Update aria-expanded for accessibility (M14)
-         const isExpanded = !header.classList.contains('collapsed');
+         const isExpanded = !section.classList.contains('collapsed');
          header.setAttribute('aria-expanded', isExpanded);
       };
       header.addEventListener('click', toggleSection);
@@ -1093,7 +1104,10 @@
             toggleSection();
          }
       });
-      header.setAttribute('aria-expanded', 'true'); // Expanded by default
+
+      // Start collapsed by default
+      section.classList.add('collapsed');
+      header.setAttribute('aria-expanded', 'false');
 
       // Content
       const content = document.createElement('div');
@@ -1149,7 +1163,7 @@
       <div id="tools-list" class="tools-list">
         <div class="tools-loading">Loading tools...</div>
       </div>
-      <button id="save-tools-btn" class="save-btn">Save Tool Settings</button>
+      <p class="tools-save-hint">Tool changes saved with main configuration.</p>
     `;
 
       // Re-initialize tools module with new button after DOM insertion

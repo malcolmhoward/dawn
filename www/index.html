@@ -882,6 +882,37 @@
                <button id="settings-close" aria-label="Close settings">&times;</button>
             </div>
 
+            <div class="settings-search admin-only">
+               <div class="settings-search-wrapper">
+                  <svg
+                     class="settings-search-icon"
+                     width="14"
+                     height="14"
+                     viewBox="0 0 24 24"
+                     fill="none"
+                     stroke="currentColor"
+                     stroke-width="2"
+                  >
+                     <circle cx="11" cy="11" r="8" />
+                     <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                  </svg>
+                  <input
+                     type="text"
+                     id="settings-search-input"
+                     placeholder="Search settings..."
+                     autocomplete="off"
+                     spellcheck="false"
+                  />
+                  <button
+                     class="settings-search-clear hidden"
+                     id="settings-search-clear"
+                     aria-label="Clear search"
+                  >
+                     &times;
+                  </button>
+               </div>
+            </div>
+
             <div class="settings-content">
                <!-- Config/Secrets paths (admin only) -->
                <div class="settings-paths admin-only">
@@ -1212,6 +1243,10 @@
                <div class="settings-sections admin-only" id="settings-sections">
                   <!-- Settings sections will be dynamically generated -->
                   <div class="settings-loading">Loading configuration...</div>
+                  <div class="settings-search-empty hidden" id="settings-search-empty">
+                     <div class="search-empty-title">No settings found</div>
+                     <div class="search-empty-hint">Try a different search term</div>
+                  </div>
                </div>
 
                <!-- Secrets Section (admin only) -->
@@ -2078,6 +2113,7 @@ client_secret = "..."</pre
       <script src="/js/ui/settings/modals.js"></script>
       <script src="/js/ui/settings/audio.js"></script>
       <script src="/js/ui/settings/config.js"></script>
+      <script src="/js/ui/settings/search.js"></script>
       <script src="/js/ui/settings/llm.js"></script>
       <script src="/js/ui/settings/schema.js"></script>
       <!-- Main settings orchestrator -->

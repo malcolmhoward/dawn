@@ -20,6 +20,7 @@
    const Config = window.DawnSettingsConfig;
    const Llm = window.DawnSettingsLlm;
    const Schema = window.DawnSettingsSchema;
+   const Search = window.DawnSettingsSearch;
 
    // Settings DOM elements (populated after init)
    const settingsElements = {};
@@ -104,8 +105,43 @@
    function close() {
       if (!settingsElements.panel) return;
 
+      // Check for unsaved changes
+      const configCount = Config.getChangedFields().size;
+      const toolsUnsaved =
+         typeof DawnTools !== 'undefined' && DawnTools.hasUnsavedChanges
+            ? DawnTools.hasUnsavedChanges()
+            : false;
+      const totalUnsaved = configCount + (toolsUnsaved ? 1 : 0);
+
+      if (totalUnsaved > 0) {
+         Modals.showConfirmModal(
+            'You have ' + totalUnsaved + ' unsaved change(s). Close without saving?',
+            function () {
+               // Discard: clear tracking and close
+               Config.clearChangedFields();
+               if (typeof DawnTools !== 'undefined' && DawnTools.clearUnsavedChanges) {
+                  DawnTools.clearUnsavedChanges();
+               }
+               clearUnsavedIndicators();
+               doClose();
+            },
+            {
+               title: 'Unsaved Changes',
+               okText: 'Discard',
+               cancelText: 'Go Back',
+            }
+         );
+         return;
+      }
+
+      doClose();
+   }
+
+   function doClose() {
+      if (!settingsElements.panel) return;
       settingsElements.panel.classList.add('hidden');
       settingsElements.overlay.classList.add('hidden');
+      if (Search) Search.clearSearch();
    }
 
    /**
@@ -223,6 +259,49 @@
       if (input.dataset.type === 'model_list') {
          Schema.updateDependentModelSelects(key, input.value);
       }
+
+      // Add unsaved indicators
+      const settingItem = input.closest('.setting-item, .setting-item-row');
+      if (settingItem) {
+         settingItem.classList.add('is-changed');
+      }
+      const sectionHeader = input.closest('.settings-section')?.querySelector('.section-header');
+      if (sectionHeader) {
+         sectionHeader.classList.add('has-changes');
+      }
+      updateSaveButtonState();
+   }
+
+   /**
+    * Update save button state based on pending changes
+    */
+   function updateSaveButtonState() {
+      const btn = settingsElements.saveConfigBtn;
+      if (!btn) return;
+
+      const configCount = Config.getChangedFields().size;
+      const toolsUnsaved =
+         typeof DawnTools !== 'undefined' && DawnTools.hasUnsavedChanges
+            ? DawnTools.hasUnsavedChanges()
+            : false;
+      const count = configCount + (toolsUnsaved ? 1 : 0);
+
+      if (count > 0) {
+         btn.classList.add('has-unsaved');
+         btn.dataset.unsavedCount = count;
+      } else {
+         btn.classList.remove('has-unsaved');
+         delete btn.dataset.unsavedCount;
+      }
+   }
+
+   /**
+    * Clear all unsaved change indicators
+    */
+   function clearUnsavedIndicators() {
+      document.querySelectorAll('.is-changed').forEach((el) => el.classList.remove('is-changed'));
+      document.querySelectorAll('.has-changes').forEach((el) => el.classList.remove('has-changes'));
+      updateSaveButtonState();
    }
 
    /* =============================================================================
@@ -413,18 +492,33 @@
          });
       });
 
-      // Escape key to close (but not if a modal is open)
+      // Keyboard shortcuts when settings panel is open
       document.addEventListener('keydown', (e) => {
-         if (
-            e.key === 'Escape' &&
-            settingsElements.panel &&
-            !settingsElements.panel.classList.contains('hidden')
-         ) {
-            // Don't close settings if a modal dialog is open
-            const openModal = document.querySelector('.modal:not(.hidden)');
-            if (!openModal) {
-               close();
+         if (!settingsElements.panel || settingsElements.panel.classList.contains('hidden')) return;
+
+         // Don't handle if a modal dialog is open
+         const openModal = document.querySelector('.modal:not(.hidden)');
+         if (openModal) return;
+
+         // Ctrl+F / Cmd+F — focus search
+         if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+            const searchInput = document.getElementById('settings-search-input');
+            if (searchInput) {
+               e.preventDefault();
+               searchInput.focus();
+               searchInput.select();
             }
+            return;
+         }
+
+         // Escape — clear search first, then close panel
+         if (e.key === 'Escape') {
+            const searchInput = document.getElementById('settings-search-input');
+            if (searchInput && searchInput.value.length > 0) {
+               if (Search) Search.clearSearch();
+               return;
+            }
+            close();
          }
       });
 
@@ -482,6 +576,8 @@
          setAuthState: callbacks.setAuthState,
          updateAuthVisibility: updateAuthVisibility,
          showRestartConfirmation: showRestartConfirmation,
+         clearUnsavedIndicators: clearUnsavedIndicators,
+         buildSearchIndex: Search ? Search.buildIndex : null,
       });
 
       Audio.setHandleSettingChange(handleSettingChange);
@@ -497,6 +593,9 @@
       // Initialize modals
       Modals.initConfirmModal();
       Modals.initInputModal();
+
+      // Initialize search
+      if (Search) Search.init();
 
       // Initialize listeners
       initListeners();
@@ -593,6 +692,10 @@
 
       // Auth visibility
       updateAuthVisibility: updateAuthVisibility,
+
+      // Unsaved indicators
+      updateSaveButtonState: updateSaveButtonState,
+      clearUnsavedIndicators: clearUnsavedIndicators,
 
       // SmartThings elements
       getSmartThingsElements: getSmartThingsElements,

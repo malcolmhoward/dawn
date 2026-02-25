@@ -10,6 +10,7 @@
     * ============================================================================= */
 
    let toolsConfig = [];
+   let toolsDirty = false;
 
    /* =============================================================================
     * API Communication
@@ -53,26 +54,37 @@
    function handleSetToolsConfigResponse(payload) {
       console.log('Tools config save:', payload.success ? 'success' : 'failed');
 
-      const saveBtn = document.getElementById('save-tools-btn');
       if (payload.success) {
-         saveBtn.textContent = 'Saved!';
-         saveBtn.classList.add('saved');
-         setTimeout(() => {
-            saveBtn.textContent = 'Save Tool Settings';
-            saveBtn.classList.remove('saved');
-         }, 2000);
+         toolsDirty = false;
 
          // Update token estimates with new values
          if (payload.token_estimate) {
             updateToolsTokenEstimates(payload.token_estimate);
          }
+
+         // Notify pending saves counter if orchestrated save is in progress
+         if (typeof pendingSaveCallback === 'function') {
+            pendingSaveCallback(true);
+            pendingSaveCallback = null;
+         }
       } else {
-         saveBtn.textContent = 'Error!';
-         setTimeout(() => {
-            saveBtn.textContent = 'Save Tool Settings';
-         }, 2000);
          console.error('Failed to save tools config:', payload.error);
+
+         if (typeof pendingSaveCallback === 'function') {
+            pendingSaveCallback(false);
+            pendingSaveCallback = null;
+         }
       }
+   }
+
+   // Callback for orchestrated save flow
+   let pendingSaveCallback = null;
+
+   /**
+    * Set callback for when tool save completes (used by config.js orchestrated save)
+    */
+   function onSaveComplete(cb) {
+      pendingSaveCallback = cb;
    }
 
    /* =============================================================================
@@ -90,6 +102,8 @@
          container.innerHTML = '<div class="tools-loading">No tools available</div>';
          return;
       }
+
+      toolsDirty = false;
 
       container.innerHTML = toolsConfig
          .map((tool) => {
@@ -129,6 +143,16 @@
       `;
          })
          .join('');
+
+      // Track tool checkbox changes for unsaved indicator
+      container.addEventListener('change', (e) => {
+         if (e.target.matches('input[type="checkbox"]')) {
+            toolsDirty = true;
+            if (typeof DawnSettings !== 'undefined' && DawnSettings.updateSaveButtonState) {
+               DawnSettings.updateSaveButtonState();
+            }
+         }
+      });
    }
 
    /**
@@ -190,16 +214,10 @@
     * ============================================================================= */
 
    /**
-    * Re-initialize the save button after dynamic content creation
+    * Re-initialize after dynamic content creation (button removed — now a no-op)
     */
    function reinitButton() {
-      const saveBtn = document.getElementById('save-tools-btn');
-      if (saveBtn) {
-         // Remove any existing listeners by cloning
-         const newBtn = saveBtn.cloneNode(true);
-         saveBtn.parentNode.replaceChild(newBtn, saveBtn);
-         newBtn.addEventListener('click', saveToolsConfig);
-      }
+      // Tool save button removed; saves orchestrated through main Save Configuration button
    }
 
    /**
@@ -236,6 +254,14 @@
       requestConfig: requestToolsConfig,
       handleGetConfigResponse: handleGetToolsConfigResponse,
       handleSetConfigResponse: handleSetToolsConfigResponse,
+      saveToolsConfig: saveToolsConfig,
+      onSaveComplete: onSaveComplete,
+      hasUnsavedChanges: function () {
+         return toolsDirty;
+      },
+      clearUnsavedChanges: function () {
+         toolsDirty = false;
+      },
       getConfig: getConfig,
    };
 })();

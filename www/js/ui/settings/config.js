@@ -330,10 +330,14 @@
     * Handle get_config response from server
     * @param {Object} payload - Response payload
     */
+   // Built-in default persona from backend (for display when config field is empty)
+   let defaultPersona = '';
+
    function handleGetConfigResponse(payload) {
       currentConfig = payload.config;
       currentSecrets = payload.secrets;
       restartRequiredFields = payload.requires_restart || [];
+      defaultPersona = payload.default_persona || '';
       changedFields.clear();
 
       // Update path displays
@@ -353,6 +357,11 @@
       // Render settings sections
       if (callbacks.renderSettingsSections) {
          callbacks.renderSettingsSections();
+      }
+
+      // Build search index after sections are rendered
+      if (callbacks.buildSearchIndex) {
+         callbacks.buildSearchIndex();
       }
 
       // Update memory extraction model dropdown based on provider
@@ -494,6 +503,10 @@
    /**
     * Save config to server
     */
+   // Track pending saves for orchestrated save flow
+   let pendingSaves = 0;
+   let saveHadError = false;
+
    function saveConfig() {
       if (typeof DawnWS === 'undefined' || !DawnWS.isConnected()) {
          console.error('WebSocket not connected');
@@ -505,7 +518,7 @@
 
       const config = collectConfigValues();
 
-      // Show loading state (H8)
+      // Show loading state
       const btn = settingsElements.saveConfigBtn;
       if (btn) {
          btn.disabled = true;
@@ -513,10 +526,30 @@
          btn.textContent = 'Saving...';
       }
 
+      // Determine if tools also need saving
+      const toolsNeedSave =
+         typeof DawnTools !== 'undefined' &&
+         DawnTools.hasUnsavedChanges &&
+         DawnTools.hasUnsavedChanges();
+
+      pendingSaves = 1 + (toolsNeedSave ? 1 : 0);
+      saveHadError = false;
+
+      // Send main config save
       DawnWS.send({
          type: 'set_config',
          payload: config,
       });
+
+      // Also save tools config if dirty
+      if (toolsNeedSave) {
+         DawnTools.onSaveComplete(function (success) {
+            if (!success) saveHadError = true;
+            pendingSaves--;
+            checkAllSavesComplete();
+         });
+         DawnTools.saveToolsConfig();
+      }
    }
 
    /**
@@ -575,30 +608,11 @@
     * @param {Object} payload - Response payload
     */
    function handleSetConfigResponse(payload) {
-      // Restore button state (H8)
-      const btn = settingsElements.saveConfigBtn;
-      if (btn) {
-         btn.disabled = false;
-         btn.textContent = btn.dataset.originalText || 'Save Configuration';
-      }
-
       if (payload.success) {
-         // Check if any changed fields require restart
-         const restartFields = getChangedRestartRequiredFields();
-         if (restartFields.length > 0 && callbacks.showRestartConfirmation) {
-            callbacks.showRestartConfirmation(restartFields);
-         } else {
-            if (typeof DawnToast !== 'undefined') {
-               DawnToast.show('Configuration saved successfully!', 'success');
-            }
-         }
-
-         // Clear changed fields tracking
-         changedFields.clear();
-
-         // Refresh config to update globalDefaults and other cached values
-         requestConfig();
+         // Store restart fields check before clearing
+         configSaveRestartFields = getChangedRestartRequiredFields();
       } else {
+         saveHadError = true;
          console.error('Failed to save config:', payload.error);
          if (typeof DawnToast !== 'undefined') {
             DawnToast.show(
@@ -607,6 +621,56 @@
             );
          }
       }
+
+      pendingSaves--;
+      checkAllSavesComplete();
+   }
+
+   // Temporarily stash restart fields between response and completion check
+   let configSaveRestartFields = [];
+
+   /**
+    * Called when all pending saves (config + tools) have completed
+    */
+   function checkAllSavesComplete() {
+      if (pendingSaves > 0) return;
+
+      // Restore button state
+      const btn = settingsElements.saveConfigBtn;
+      if (btn) {
+         btn.disabled = false;
+         btn.textContent = btn.dataset.originalText || 'Save Configuration';
+      }
+
+      if (!saveHadError) {
+         // Check if any changed fields require restart
+         if (configSaveRestartFields.length > 0 && callbacks.showRestartConfirmation) {
+            callbacks.showRestartConfirmation(configSaveRestartFields);
+         } else {
+            if (typeof DawnToast !== 'undefined') {
+               DawnToast.show('Configuration saved successfully!', 'success');
+            }
+         }
+
+         // Show brief success flash on save button
+         if (btn) {
+            btn.classList.add('save-success');
+            setTimeout(() => btn.classList.remove('save-success'), 1500);
+         }
+
+         // Clear changed fields tracking
+         changedFields.clear();
+
+         // Clear unsaved indicators
+         if (callbacks.clearUnsavedIndicators) {
+            callbacks.clearUnsavedIndicators();
+         }
+
+         // Refresh config to update globalDefaults and other cached values
+         requestConfig();
+      }
+
+      configSaveRestartFields = [];
    }
 
    /**
@@ -680,5 +744,8 @@
       updateDynamicSelects,
       initMemoryExtractionHandlers,
       updateMemoryExtractionModels,
+      getDefaultPersona: function () {
+         return defaultPersona;
+      },
    };
 })();
