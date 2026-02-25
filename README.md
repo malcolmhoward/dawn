@@ -124,6 +124,7 @@ DAWN is designed for embedded Linux platforms (Jetson, Raspberry Pi) and support
   - **Automated Extraction** - Facts automatically extracted at session end
   - **Context Injection** - User facts loaded into system prompt at session start
   - **Privacy Toggle** - Mark conversations as private to prevent memory extraction (Ctrl+Shift+P)
+  - **Confidence Decay** - Unused memories naturally fade; accessed memories are reinforced
   - Per-user memory isolation for multi-user households
   - Guardrails prevent instruction injection via memory content
   - See `docs/MEMORY_SYSTEM_DESIGN.md` for full architecture

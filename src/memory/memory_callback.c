@@ -425,7 +425,7 @@ static char *memory_action_search(int user_id, const char *keywords, time_t sinc
                             facts[i].fact_text, facts[i].confidence * 100, time_str);
 
          /* Update access time */
-         memory_db_fact_update_access(facts[i].id);
+         memory_db_fact_update_access(facts[i].id, user_id);
       }
    }
 

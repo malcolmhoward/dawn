@@ -30,6 +30,7 @@
 #include <time.h>
 
 #include "auth/auth_db_internal.h"
+#include "config/dawn_config.h"
 #include "logging.h"
 #include "memory/memory_similarity.h"
 
@@ -284,13 +285,15 @@ int memory_db_fact_search(int user_id,
    return count;
 }
 
-int memory_db_fact_update_access(int64_t fact_id) {
+int memory_db_fact_update_access(int64_t fact_id, int user_id) {
    AUTH_DB_LOCK_OR_RETURN(MEMORY_DB_FAILURE);
 
    sqlite3_stmt *stmt = s_db.stmt_memory_fact_update_access;
    sqlite3_reset(stmt);
    sqlite3_bind_int64(stmt, 1, (int64_t)time(NULL));
-   sqlite3_bind_int64(stmt, 2, fact_id);
+   sqlite3_bind_double(stmt, 2, (double)g_config.memory.access_reinforcement_boost);
+   sqlite3_bind_int64(stmt, 3, fact_id);
+   sqlite3_bind_int(stmt, 4, user_id);
 
    int rc = sqlite3_step(stmt);
    sqlite3_reset(stmt);
@@ -1037,4 +1040,211 @@ int memory_db_set_last_extracted(int64_t conversation_id, int message_count) {
 
    AUTH_DB_UNLOCK();
    return (rc == SQLITE_DONE) ? MEMORY_DB_SUCCESS : MEMORY_DB_FAILURE;
+}
+
+/* =============================================================================
+ * Decay and Maintenance Operations (Phase 5)
+ *
+ * These use ad-hoc prepared statements (acceptable for once-daily execution).
+ * ============================================================================= */
+
+int memory_db_apply_fact_decay(int user_id,
+                               float inferred_rate,
+                               float explicit_rate,
+                               float inferred_floor,
+                               float explicit_floor) {
+   AUTH_DB_LOCK_OR_RETURN(-1);
+
+   sqlite3_stmt *stmt = NULL;
+   int rc = sqlite3_prepare_v2(
+       s_db.db,
+       "UPDATE memory_facts SET confidence ="
+       "  CASE WHEN source = 'explicit'"
+       "    THEN MAX(?, confidence * powf(?, "
+       "         (CAST(strftime('%s','now') AS REAL) - last_accessed) / 604800.0))"
+       "    ELSE MAX(?, confidence * powf(?, "
+       "         (CAST(strftime('%s','now') AS REAL) - last_accessed) / 604800.0))"
+       "  END "
+       "WHERE user_id = ? AND superseded_by IS NULL AND last_accessed IS NOT NULL",
+       -1, &stmt, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("memory_db: apply_fact_decay prepare failed: %s", sqlite3_errmsg(s_db.db));
+      AUTH_DB_UNLOCK();
+      return -1;
+   }
+
+   sqlite3_bind_double(stmt, 1, (double)explicit_floor);
+   sqlite3_bind_double(stmt, 2, (double)explicit_rate);
+   sqlite3_bind_double(stmt, 3, (double)inferred_floor);
+   sqlite3_bind_double(stmt, 4, (double)inferred_rate);
+   sqlite3_bind_int(stmt, 5, user_id);
+
+   rc = sqlite3_step(stmt);
+   int affected = sqlite3_changes(s_db.db);
+   sqlite3_finalize(stmt);
+
+   AUTH_DB_UNLOCK();
+
+   if (rc != SQLITE_DONE) {
+      LOG_ERROR("memory_db: apply_fact_decay failed: %s", sqlite3_errmsg(s_db.db));
+      return -1;
+   }
+
+   return affected;
+}
+
+int memory_db_apply_pref_decay(int user_id, float pref_rate, float pref_floor) {
+   AUTH_DB_LOCK_OR_RETURN(-1);
+
+   sqlite3_stmt *stmt = NULL;
+   int rc = sqlite3_prepare_v2(
+       s_db.db,
+       "UPDATE memory_preferences SET confidence ="
+       "  MAX(?, confidence * powf(?, "
+       "      (CAST(strftime('%s','now') AS REAL) - updated_at) / 604800.0))"
+       " WHERE user_id = ?",
+       -1, &stmt, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("memory_db: apply_pref_decay prepare failed: %s", sqlite3_errmsg(s_db.db));
+      AUTH_DB_UNLOCK();
+      return -1;
+   }
+
+   sqlite3_bind_double(stmt, 1, (double)pref_floor);
+   sqlite3_bind_double(stmt, 2, (double)pref_rate);
+   sqlite3_bind_int(stmt, 3, user_id);
+
+   rc = sqlite3_step(stmt);
+   int affected = sqlite3_changes(s_db.db);
+   sqlite3_finalize(stmt);
+
+   AUTH_DB_UNLOCK();
+
+   if (rc != SQLITE_DONE) {
+      LOG_ERROR("memory_db: apply_pref_decay failed: %s", sqlite3_errmsg(s_db.db));
+      return -1;
+   }
+
+   return affected;
+}
+
+int memory_db_prune_low_confidence(int user_id, float threshold) {
+   AUTH_DB_LOCK_OR_RETURN(-1);
+
+   /* Wrap audit log + delete in a transaction for consistency */
+   sqlite3_exec(s_db.db, "BEGIN IMMEDIATE", NULL, NULL, NULL);
+
+   /* Log facts that will be pruned (audit trail for irreversible operation) */
+   sqlite3_stmt *log_stmt = NULL;
+   int rc = sqlite3_prepare_v2(s_db.db,
+                               "SELECT id, fact_text, confidence, source FROM memory_facts "
+                               "WHERE user_id = ? AND confidence < ? AND superseded_by IS NULL",
+                               -1, &log_stmt, NULL);
+   if (rc == SQLITE_OK) {
+      sqlite3_bind_int(log_stmt, 1, user_id);
+      sqlite3_bind_double(log_stmt, 2, (double)threshold);
+
+      while (sqlite3_step(log_stmt) == SQLITE_ROW) {
+         LOG_INFO("memory_decay: pruning fact %ld (%.2f, %s): %.60s",
+                  (long)sqlite3_column_int64(log_stmt, 0), sqlite3_column_double(log_stmt, 2),
+                  (const char *)sqlite3_column_text(log_stmt, 3),
+                  (const char *)sqlite3_column_text(log_stmt, 1));
+      }
+      sqlite3_finalize(log_stmt);
+   }
+
+   /* Delete low-confidence facts */
+   sqlite3_stmt *stmt = NULL;
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "DELETE FROM memory_facts WHERE user_id = ? AND confidence < ? AND superseded_by IS NULL",
+       -1, &stmt, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("memory_db: prune_low_confidence prepare failed: %s", sqlite3_errmsg(s_db.db));
+      sqlite3_exec(s_db.db, "ROLLBACK", NULL, NULL, NULL);
+      AUTH_DB_UNLOCK();
+      return -1;
+   }
+
+   sqlite3_bind_int(stmt, 1, user_id);
+   sqlite3_bind_double(stmt, 2, (double)threshold);
+
+   rc = sqlite3_step(stmt);
+   int deleted = sqlite3_changes(s_db.db);
+   sqlite3_finalize(stmt);
+
+   if (rc != SQLITE_DONE) {
+      LOG_ERROR("memory_db: prune_low_confidence failed: %s", sqlite3_errmsg(s_db.db));
+      sqlite3_exec(s_db.db, "ROLLBACK", NULL, NULL, NULL);
+      AUTH_DB_UNLOCK();
+      return -1;
+   }
+
+   sqlite3_exec(s_db.db, "COMMIT", NULL, NULL, NULL);
+   AUTH_DB_UNLOCK();
+
+   return deleted;
+}
+
+int memory_db_prune_old_summaries(int user_id, int retention_days) {
+   AUTH_DB_LOCK_OR_RETURN(-1);
+
+   time_t cutoff = time(NULL) - ((time_t)retention_days * 24 * 60 * 60);
+
+   sqlite3_stmt *stmt = NULL;
+   int rc = sqlite3_prepare_v2(s_db.db,
+                               "DELETE FROM memory_summaries WHERE user_id = ? AND created_at < ?",
+                               -1, &stmt, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("memory_db: prune_old_summaries prepare failed: %s", sqlite3_errmsg(s_db.db));
+      AUTH_DB_UNLOCK();
+      return -1;
+   }
+
+   sqlite3_bind_int(stmt, 1, user_id);
+   sqlite3_bind_int64(stmt, 2, (int64_t)cutoff);
+
+   rc = sqlite3_step(stmt);
+   int deleted = sqlite3_changes(s_db.db);
+   sqlite3_finalize(stmt);
+
+   AUTH_DB_UNLOCK();
+
+   if (rc != SQLITE_DONE) {
+      LOG_ERROR("memory_db: prune_old_summaries failed: %s", sqlite3_errmsg(s_db.db));
+      return -1;
+   }
+
+   if (deleted > 0) {
+      LOG_INFO("memory_db: pruned %d old summaries for user %d", deleted, user_id);
+   }
+   return deleted;
+}
+
+int memory_db_get_all_user_ids(int *out_ids, int max_ids) {
+   if (!out_ids || max_ids <= 0) {
+      return -1;
+   }
+
+   AUTH_DB_LOCK_OR_RETURN(-1);
+
+   sqlite3_stmt *stmt = NULL;
+   int rc = sqlite3_prepare_v2(s_db.db,
+                               "SELECT user_id FROM memory_facts "
+                               "UNION SELECT user_id FROM memory_preferences",
+                               -1, &stmt, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("memory_db: get_all_user_ids prepare failed: %s", sqlite3_errmsg(s_db.db));
+      AUTH_DB_UNLOCK();
+      return -1;
+   }
+
+   int count = 0;
+   while (count < max_ids && sqlite3_step(stmt) == SQLITE_ROW) {
+      out_ids[count++] = sqlite3_column_int(stmt, 0);
+   }
+
+   sqlite3_finalize(stmt);
+   AUTH_DB_UNLOCK();
+   return count;
 }

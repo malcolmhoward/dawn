@@ -33,6 +33,7 @@
 #include "core/session_manager.h"
 #include "image_store.h"
 #include "logging.h"
+#include "memory/memory_maintenance.h"
 
 /* Thread state */
 static pthread_t s_maintenance_thread;
@@ -91,6 +92,9 @@ static void *maintenance_thread_func(void *arg) {
       /* Clean up expired sessions (normally done by accept_thread, but that
        * only runs when [network] is enabled — WebUI satellites need this too) */
       session_cleanup_expired();
+
+      /* Nightly memory decay and pruning (no-ops if not time yet) */
+      memory_run_nightly_decay();
    }
 
    LOG_INFO("auth_maintenance: thread stopped");

@@ -364,6 +364,19 @@ typedef struct {
    /* Voice conversation idle timeout */
    int conversation_idle_timeout_min; /* Minutes before auto-save (default: 15, 0=disabled) */
    int default_voice_user_id;         /* User ID for local/DAP conversations (default: 1) */
+
+   /* Decay settings (Phase 5) */
+   bool decay_enabled;               /* Enable nightly confidence decay */
+   int decay_hour;                   /* Hour to run (0-23, default: 2) */
+   float decay_inferred_weekly;      /* Weekly multiplier for inferred facts (0.95) */
+   float decay_explicit_weekly;      /* Weekly multiplier for explicit facts (0.98) */
+   float decay_preference_weekly;    /* Weekly multiplier for preferences (0.97) */
+   float decay_inferred_floor;       /* Min confidence for inferred facts (0.0) */
+   float decay_explicit_floor;       /* Min confidence for explicit facts (0.50) */
+   float decay_preference_floor;     /* Min confidence for preferences (0.40) */
+   float decay_prune_threshold;      /* Delete facts below this (0.25) */
+   int summary_retention_days;       /* Delete summaries older than N days (30) */
+   float access_reinforcement_boost; /* Confidence boost on access (0.05) */
 } memory_config_t;
 
 /* =============================================================================

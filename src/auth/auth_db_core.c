@@ -34,6 +34,7 @@
 #include <fcntl.h>
 #include <libgen.h>
 #include <limits.h>
+#include <math.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1180,11 +1181,16 @@ static int prepare_statements(void) {
       return AUTH_DB_FAILURE;
    }
 
-   rc = sqlite3_prepare_v2(
-       s_db.db,
-       "UPDATE memory_facts SET last_accessed = ?, access_count = access_count + 1 "
-       "WHERE id = ?",
-       -1, &s_db.stmt_memory_fact_update_access, NULL);
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "UPDATE memory_facts SET last_accessed = ?,"
+                           "  access_count = access_count + 1,"
+                           "  confidence = CASE"
+                           "    WHEN (CAST(strftime('%s','now') AS REAL) - last_accessed) > 3600"
+                           "    THEN MIN(1.0, confidence + ?)"
+                           "    ELSE confidence"
+                           "  END "
+                           "WHERE id = ? AND user_id = ?",
+                           -1, &s_db.stmt_memory_fact_update_access, NULL);
    if (rc != SQLITE_OK) {
       LOG_ERROR("auth_db: prepare memory_fact_update_access failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
@@ -1663,6 +1669,29 @@ int auth_db_internal_verify_permissions(const char *path) {
 }
 
 /* =============================================================================
+ * Custom SQLite Functions
+ * ============================================================================= */
+
+/**
+ * @brief SQLite custom function: powf(base, exp)
+ *
+ * Enables atomic confidence decay in UPDATE statements without
+ * a SELECT-compute-UPDATE loop. Used by memory decay system.
+ */
+static void sqlite_powf(sqlite3_context *ctx, int argc, sqlite3_value **argv) {
+   (void)argc;
+   double base = sqlite3_value_double(argv[0]);
+   double exp = sqlite3_value_double(argv[1]);
+   double result = pow(base, exp);
+   /* Guard against NaN/Inf from edge cases (negative base, huge exponent) */
+   if (isnan(result) || isinf(result)) {
+      sqlite3_result_double(ctx, 0.0);
+   } else {
+      sqlite3_result_double(ctx, result);
+   }
+}
+
+/* =============================================================================
  * Lifecycle Functions
  * ============================================================================= */
 
@@ -1732,6 +1761,9 @@ int auth_db_init(const char *db_path) {
 
    /* Enable foreign keys */
    sqlite3_exec(s_db.db, "PRAGMA foreign_keys=ON", NULL, NULL, NULL);
+
+   /* Register custom SQL functions */
+   sqlite3_create_function(s_db.db, "powf", 2, SQLITE_UTF8, NULL, sqlite_powf, NULL, NULL);
 
    /* Create schema if needed */
    if (create_schema() != AUTH_DB_SUCCESS) {

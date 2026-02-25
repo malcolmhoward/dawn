@@ -878,6 +878,8 @@ static void parse_memory(toml_table_t *table, memory_config_t *config) {
                                              "prune_stale_min_confidence",
                                              "conversation_idle_timeout_min",
                                              "default_voice_user_id",
+                                             "pruning",
+                                             "decay",
                                              NULL };
    warn_unknown_keys(table, "memory", known_keys);
 
@@ -946,6 +948,88 @@ static void parse_memory(toml_table_t *table, memory_config_t *config) {
    if (config->default_voice_user_id < 1) {
       config->default_voice_user_id = 1;
    }
+
+   /* Parse [memory.decay] sub-table */
+   toml_table_t *decay = toml_table_in(table, "decay");
+   if (decay) {
+      static const char *const decay_keys[] = { "enabled",
+                                                "hour",
+                                                "inferred_weekly",
+                                                "explicit_weekly",
+                                                "preference_weekly",
+                                                "inferred_floor",
+                                                "explicit_floor",
+                                                "preference_floor",
+                                                "prune_threshold",
+                                                "summary_retention_days",
+                                                "access_reinforcement_boost",
+                                                NULL };
+      warn_unknown_keys(decay, "memory.decay", decay_keys);
+
+      PARSE_BOOL(decay, "enabled", config->decay_enabled);
+      PARSE_INT(decay, "hour", config->decay_hour);
+      PARSE_DOUBLE(decay, "inferred_weekly", config->decay_inferred_weekly);
+      PARSE_DOUBLE(decay, "explicit_weekly", config->decay_explicit_weekly);
+      PARSE_DOUBLE(decay, "preference_weekly", config->decay_preference_weekly);
+      PARSE_DOUBLE(decay, "inferred_floor", config->decay_inferred_floor);
+      PARSE_DOUBLE(decay, "explicit_floor", config->decay_explicit_floor);
+      PARSE_DOUBLE(decay, "preference_floor", config->decay_preference_floor);
+      PARSE_DOUBLE(decay, "prune_threshold", config->decay_prune_threshold);
+      PARSE_INT(decay, "summary_retention_days", config->summary_retention_days);
+      PARSE_DOUBLE(decay, "access_reinforcement_boost", config->access_reinforcement_boost);
+   }
+
+   /* Clamp decay values to sane ranges */
+   if (config->decay_hour < 0)
+      config->decay_hour = 0;
+   if (config->decay_hour > 23)
+      config->decay_hour = 23;
+
+   /* Weekly multipliers: 0.5-1.0 */
+   if (config->decay_inferred_weekly < 0.5f)
+      config->decay_inferred_weekly = 0.5f;
+   if (config->decay_inferred_weekly > 1.0f)
+      config->decay_inferred_weekly = 1.0f;
+   if (config->decay_explicit_weekly < 0.5f)
+      config->decay_explicit_weekly = 0.5f;
+   if (config->decay_explicit_weekly > 1.0f)
+      config->decay_explicit_weekly = 1.0f;
+   if (config->decay_preference_weekly < 0.5f)
+      config->decay_preference_weekly = 0.5f;
+   if (config->decay_preference_weekly > 1.0f)
+      config->decay_preference_weekly = 1.0f;
+
+   /* Floors: 0.0-1.0 */
+   if (config->decay_inferred_floor < 0.0f)
+      config->decay_inferred_floor = 0.0f;
+   if (config->decay_inferred_floor > 1.0f)
+      config->decay_inferred_floor = 1.0f;
+   if (config->decay_explicit_floor < 0.0f)
+      config->decay_explicit_floor = 0.0f;
+   if (config->decay_explicit_floor > 1.0f)
+      config->decay_explicit_floor = 1.0f;
+   if (config->decay_preference_floor < 0.0f)
+      config->decay_preference_floor = 0.0f;
+   if (config->decay_preference_floor > 1.0f)
+      config->decay_preference_floor = 1.0f;
+
+   /* Prune threshold: 0.0-0.5 */
+   if (config->decay_prune_threshold < 0.0f)
+      config->decay_prune_threshold = 0.0f;
+   if (config->decay_prune_threshold > 0.5f)
+      config->decay_prune_threshold = 0.5f;
+
+   /* Summary retention: 7-365 days */
+   if (config->summary_retention_days < 7)
+      config->summary_retention_days = 7;
+   if (config->summary_retention_days > 365)
+      config->summary_retention_days = 365;
+
+   /* Reinforcement boost: 0.0-0.5 */
+   if (config->access_reinforcement_boost < 0.0f)
+      config->access_reinforcement_boost = 0.0f;
+   if (config->access_reinforcement_boost > 0.5f)
+      config->access_reinforcement_boost = 0.5f;
 }
 
 static void parse_shutdown(toml_table_t *table, shutdown_config_t *config) {

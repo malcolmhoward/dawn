@@ -758,7 +758,9 @@ Memory extraction happens at session end, not during conversation. This adds zer
 - **memory_db.c/h**: SQLite CRUD operations
   - Prepared statements for all memory tables
   - Similarity detection for duplicate prevention
-  - Access counting for confidence reinforcement
+  - Access counting with time-gated confidence reinforcement
+  - Atomic decay via custom SQLite `powf()` function (no row iteration)
+  - Pruning with audit trail logging
 
 - **memory_context.c/h**: Session start context builder
   - `memory_build_context()` builds ~800 token block
@@ -776,6 +778,12 @@ Memory extraction happens at session end, not during conversation. This adds zer
   - `recent`: Time-based retrieval (e.g., "24h", "7d", "1w")
   - `remember`: Immediate fact storage with guardrails
   - `forget`: Delete matching facts
+
+- **memory_maintenance.c/h**: Nightly decay orchestration
+  - Called from auth maintenance thread (15-minute cycle)
+  - Hour-gated with 20-hour double-execution guard
+  - Per-user: decay facts → decay preferences → prune low-confidence → prune superseded → prune old summaries
+  - Configurable rates, floors, and thresholds via `[memory.decay]`
 
 #### Database Schema
 
@@ -830,6 +838,19 @@ session_timeout_minutes = 15
 [memory.extraction]
 provider = "local"        # "local", "openai", "claude", "ollama"
 model = "qwen2.5:7b"      # Model for extraction
+
+[memory.decay]
+enabled = true            # Enable nightly confidence decay
+hour = 2                  # Run at 2 AM local time (0-23)
+inferred_weekly = 0.95    # Inferred facts lose 5%/week
+explicit_weekly = 0.98    # Explicit facts lose 2%/week
+preference_weekly = 0.97  # Preferences lose 3%/week
+inferred_floor = 0.0      # Inferred facts can decay to zero
+explicit_floor = 0.50     # Explicit facts never below 50%
+preference_floor = 0.40   # Preferences never below 40%
+prune_threshold = 0.25    # Delete facts below this confidence
+summary_retention_days = 30
+access_reinforcement_boost = 0.05  # +5% on access (1-hour cooldown)
 ```
 
 #### Data Flow (Memory Lifecycle)
@@ -856,6 +877,16 @@ model = "qwen2.5:7b"      # Model for extraction
 9. Call extraction LLM, parse JSON response
    ↓
 10. Store new facts, update preferences, save summary
+
+--- Nightly Maintenance (runs at configured hour) ---
+
+11. memory_run_nightly_decay() called from auth maintenance thread
+   ↓
+12. For each user: apply confidence decay (atomic SQL with powf())
+   ↓
+13. Prune facts below threshold (audit logged), prune old summaries
+   ↓
+14. Accessed facts reinforced (+0.05, time-gated to 1-hour cooldown)
 ```
 
 ---

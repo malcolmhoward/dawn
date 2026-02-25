@@ -555,6 +555,66 @@ static void apply_config_from_json(dawn_config_t *config, struct json_object *pa
       if (config->memory.default_voice_user_id < 1) {
          config->memory.default_voice_user_id = 1;
       }
+      /* Decay settings */
+      JSON_TO_CONFIG_BOOL(section, "decay_enabled", config->memory.decay_enabled);
+      JSON_TO_CONFIG_INT(section, "decay_hour", config->memory.decay_hour);
+      JSON_TO_CONFIG_DOUBLE(section, "decay_inferred_weekly", config->memory.decay_inferred_weekly);
+      JSON_TO_CONFIG_DOUBLE(section, "decay_explicit_weekly", config->memory.decay_explicit_weekly);
+      JSON_TO_CONFIG_DOUBLE(section, "decay_preference_weekly",
+                            config->memory.decay_preference_weekly);
+      JSON_TO_CONFIG_DOUBLE(section, "decay_inferred_floor", config->memory.decay_inferred_floor);
+      JSON_TO_CONFIG_DOUBLE(section, "decay_explicit_floor", config->memory.decay_explicit_floor);
+      JSON_TO_CONFIG_DOUBLE(section, "decay_preference_floor",
+                            config->memory.decay_preference_floor);
+      JSON_TO_CONFIG_DOUBLE(section, "decay_prune_threshold", config->memory.decay_prune_threshold);
+      JSON_TO_CONFIG_INT(section, "summary_retention_days", config->memory.summary_retention_days);
+      JSON_TO_CONFIG_DOUBLE(section, "access_reinforcement_boost",
+                            config->memory.access_reinforcement_boost);
+      /* Clamp decay values to sane ranges */
+      if (config->memory.decay_hour < 0)
+         config->memory.decay_hour = 0;
+      if (config->memory.decay_hour > 23)
+         config->memory.decay_hour = 23;
+      /* Weekly multipliers: 0.5-1.0 */
+      if (config->memory.decay_inferred_weekly < 0.5f)
+         config->memory.decay_inferred_weekly = 0.5f;
+      if (config->memory.decay_inferred_weekly > 1.0f)
+         config->memory.decay_inferred_weekly = 1.0f;
+      if (config->memory.decay_explicit_weekly < 0.5f)
+         config->memory.decay_explicit_weekly = 0.5f;
+      if (config->memory.decay_explicit_weekly > 1.0f)
+         config->memory.decay_explicit_weekly = 1.0f;
+      if (config->memory.decay_preference_weekly < 0.5f)
+         config->memory.decay_preference_weekly = 0.5f;
+      if (config->memory.decay_preference_weekly > 1.0f)
+         config->memory.decay_preference_weekly = 1.0f;
+      /* Floors: 0.0-1.0 */
+      if (config->memory.decay_inferred_floor < 0.0f)
+         config->memory.decay_inferred_floor = 0.0f;
+      if (config->memory.decay_inferred_floor > 1.0f)
+         config->memory.decay_inferred_floor = 1.0f;
+      if (config->memory.decay_explicit_floor < 0.0f)
+         config->memory.decay_explicit_floor = 0.0f;
+      if (config->memory.decay_explicit_floor > 1.0f)
+         config->memory.decay_explicit_floor = 1.0f;
+      if (config->memory.decay_preference_floor < 0.0f)
+         config->memory.decay_preference_floor = 0.0f;
+      if (config->memory.decay_preference_floor > 1.0f)
+         config->memory.decay_preference_floor = 1.0f;
+      /* Prune threshold: 0.0-0.5 */
+      if (config->memory.decay_prune_threshold < 0.0f)
+         config->memory.decay_prune_threshold = 0.0f;
+      if (config->memory.decay_prune_threshold > 0.5f)
+         config->memory.decay_prune_threshold = 0.5f;
+      if (config->memory.summary_retention_days < 7)
+         config->memory.summary_retention_days = 7;
+      if (config->memory.summary_retention_days > 365)
+         config->memory.summary_retention_days = 365;
+      /* Reinforcement boost: 0.0-0.5 */
+      if (config->memory.access_reinforcement_boost < 0.0f)
+         config->memory.access_reinforcement_boost = 0.0f;
+      if (config->memory.access_reinforcement_boost > 0.5f)
+         config->memory.access_reinforcement_boost = 0.5f;
    }
 
    /* [shutdown] */

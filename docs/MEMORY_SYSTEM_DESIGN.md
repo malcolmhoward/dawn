@@ -291,21 +291,23 @@ Memory processing happens **after sessions end**, not during. Inspired by human 
 │                                                                      │
 │  1. Process any unconsolidated sessions (crash recovery)            │
 │                                                                      │
-│  2. Apply confidence decay:                                          │
-│     • Inferred facts: decay 5% per week unused                      │
-│     • Explicit facts: decay 2% per week (slower)                    │
-│     • Preferences: decay 3% per week                                │
+│  2. Apply confidence decay (atomic SQL UPDATE with powf()):          │
+│     • Inferred facts: decay 5% per week unused (floor configurable) │
+│     • Explicit facts: decay 2% per week (floor 0.50)               │
+│     • Preferences: decay 3% per week (floor 0.40)                  │
 │                                                                      │
 │  3. Prune low-confidence items:                                      │
-│     • confidence < 0.25 → delete                                    │
-│     • explicit facts floor at 0.5 (never fully forgotten)           │
+│     • confidence < 0.25 → log for audit trail, then delete          │
+│     • Explicit facts floor at 0.50 (never fully forgotten)          │
+│     • Inferred facts floor configurable (default 0.0)               │
 │                                                                      │
 │  4. Prune old summaries:                                             │
-│     • Keep last 30 days of summaries                                │
-│     • Older summaries → extract any remaining facts, then delete    │
+│     • Keep last N days of summaries (configurable, default 30)      │
 │                                                                      │
-│  5. Reinforce accessed items:                                        │
-│     • Facts used in last 24h: confidence += 0.05                    │
+│  5. Reinforce accessed items (time-gated):                           │
+│     • Facts loaded into context: confidence += 0.05                 │
+│     • Time-gated: only boosts if last_accessed > 1 hour ago         │
+│     • Prevents confidence pinning from automated queries            │
 │                                                                      │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -587,16 +589,19 @@ session_timeout_minutes = 15
 provider = "local"           # "local", "openai", "claude", "ollama"
 model = "qwen2.5:7b"         # Model name for that provider
 
-# Decay settings (applied by nightly job)
+# Decay settings (applied by nightly maintenance job)
 [memory.decay]
-nightly_hour = 2                         # Run at 2 AM
-inferred_fact_decay_weekly = 0.95        # 5% decay per week
-explicit_fact_decay_weekly = 0.98        # 2% decay per week
-preference_decay_weekly = 0.97           # 3% decay per week
-prune_threshold = 0.25                   # Delete below this confidence
+enabled = true                           # Enable nightly confidence decay
+hour = 2                                 # Run at 2 AM (local time, 0-23)
+inferred_weekly = 0.95                   # 5% decay per week for inferred facts
+explicit_weekly = 0.98                   # 2% decay per week for explicit facts
+preference_weekly = 0.97                 # 3% decay per week for preferences
+inferred_floor = 0.0                     # Inferred facts can decay to zero
 explicit_floor = 0.50                    # Explicit facts never go below this
-summary_retention_days = 30              # Keep summaries for 30 days
-access_reinforcement = 0.05              # Confidence boost when fact is used
+preference_floor = 0.40                  # Preferences never go below this
+prune_threshold = 0.25                   # Delete facts below this confidence
+summary_retention_days = 30              # Delete summaries older than this
+access_reinforcement_boost = 0.05        # Confidence boost when fact is accessed
 ```
 
 ### 7.2 dawn.toml RAG Section
@@ -1017,50 +1022,74 @@ RAG retrieval happens **during conversation** when the user's query might benefi
 
 ### 10.1 Decay Algorithm
 
-```c
-void apply_nightly_decay(memory_fact_t *fact) {
-    int days_since_access = days_between(fact->last_accessed, now());
-    int days_since_update = days_between(fact->updated_at, now());
+Decay uses a custom SQLite `powf()` function registered at DB init, enabling atomic
+UPDATE statements — no C-side row iteration needed. This eliminates TOCTOU races and
+minimizes mutex hold time.
 
-    // Get weekly decay rate based on source
-    double weekly_decay;
-    if (strcmp(fact->source, "explicit") == 0) {
-        weekly_decay = config.explicit_fact_decay_weekly;  // 0.98
-    } else {
-        weekly_decay = config.inferred_fact_decay_weekly;  // 0.95
-    }
+```sql
+-- Fact decay (single atomic UPDATE per user)
+UPDATE memory_facts SET confidence =
+  CASE WHEN source = 'explicit'
+    THEN MAX(:explicit_floor, confidence * powf(:explicit_rate,
+         (CAST(strftime('%s','now') AS REAL) - last_accessed) / 604800.0))
+    ELSE MAX(:inferred_floor, confidence * powf(:inferred_rate,
+         (CAST(strftime('%s','now') AS REAL) - last_accessed) / 604800.0))
+  END
+WHERE user_id = :uid AND superseded_by IS NULL AND last_accessed IS NOT NULL
 
-    // Calculate daily decay (weekly^(1/7))
-    double daily_decay = pow(weekly_decay, 1.0 / 7.0);
-
-    // Apply decay for days since last access
-    fact->confidence *= pow(daily_decay, days_since_access);
-
-    // Floor for explicit facts
-    if (strcmp(fact->source, "explicit") == 0) {
-        if (fact->confidence < config.explicit_floor) {
-            fact->confidence = config.explicit_floor;  // 0.5
-        }
-    }
-
-    // Prune if below threshold
-    if (fact->confidence < config.prune_threshold) {  // 0.25
-        mark_for_deletion(fact);
-    }
-}
+-- Preference decay (same pattern)
+UPDATE memory_preferences SET confidence =
+  MAX(:pref_floor, confidence * powf(:pref_rate,
+      (CAST(strftime('%s','now') AS REAL) - updated_at) / 604800.0))
+WHERE user_id = :uid
 ```
+
+**Key behaviors:**
+- Facts with NULL `last_accessed` are skipped (never been loaded into context)
+- Decay is proportional to time since last access, not fixed per-day
+- Explicit facts have a configurable floor (default 0.50) — never fully forgotten
+- Inferred facts have a separate configurable floor (default 0.0 — can decay to zero)
+- Preferences have their own floor (default 0.40)
+
+**Pruning** runs after decay:
+- Facts below `prune_threshold` (default 0.25) are logged for audit trail, then deleted
+- Audit log and delete are wrapped in a transaction for consistency
+- Old superseded facts are pruned per `prune_superseded_days`
+- Summaries older than `summary_retention_days` are deleted
 
 ### 10.2 Reinforcement
 
-When a fact is loaded into context and the user doesn't correct it:
+When a fact is loaded into context (via `memory_build_context()`), its access metadata
+is updated. Reinforcement is **time-gated** to prevent confidence pinning:
 
-```c
-void reinforce_fact(memory_fact_t *fact) {
-    fact->confidence = fmin(1.0, fact->confidence + config.access_reinforcement);
-    fact->access_count++;
-    fact->last_accessed = now();
-}
+```sql
+UPDATE memory_facts SET
+  last_accessed = ?,
+  access_count = access_count + 1,
+  confidence = CASE
+    WHEN (CAST(strftime('%s','now') AS REAL) - last_accessed) > 3600
+    THEN MIN(1.0, confidence + :boost)
+    ELSE confidence
+  END
+WHERE id = ? AND user_id = ?
 ```
+
+The 1-hour cooldown ensures that multiple accesses within the same conversation
+don't stack reinforcement. The `user_id` check enforces ownership isolation.
+
+### 10.3 Orchestration
+
+Decay runs from `memory_run_nightly_decay()` in `src/memory/memory_maintenance.c`,
+called by the auth maintenance thread (15-minute cycle). Guards:
+
+1. `g_config.memory.enabled && g_config.memory.decay_enabled` must both be true
+2. Current local hour must match `g_config.memory.decay_hour`
+3. At least 20 hours must have passed since last run (prevents double-execution)
+
+Per-user processing order: decay facts → decay preferences → prune low-confidence →
+prune superseded → prune old summaries → `usleep(1000)` courtesy yield.
+
+Aggregate totals are logged; no per-user logging (avoids user enumeration in logs).
 
 ---
 
@@ -1111,12 +1140,19 @@ Memory and RAG are independent features. Memory can be fully implemented and dep
 - [x] Can set before conversation starts (pending state applied on creation)
 - [x] Privacy badge in conversation history list
 
-### Phase 5: Decay and Maintenance (~1 week)
-- [ ] Nightly decay job (configurable hour)
-- [ ] Confidence reinforcement on access
-- [ ] Pruning low-confidence items
-- [ ] Summary retention management (30 days)
-- [ ] Crash recovery for unconsolidated sessions
+### Phase 5: Decay and Maintenance ✅ COMPLETE
+- [x] Nightly decay job (configurable hour, local time)
+- [x] Atomic SQL decay via custom SQLite `powf()` function
+- [x] Confidence reinforcement on access (time-gated, 1-hour cooldown)
+- [x] Configurable floors for explicit facts, inferred facts, and preferences
+- [x] Pruning low-confidence items with audit trail logging
+- [x] Summary retention management (configurable days)
+- [x] Superseded fact pruning
+- [x] Double-execution prevention (20-hour gap guard)
+- [x] User isolation fix (`AND user_id = ?` on access update)
+- [x] WebUI settings for all decay parameters
+- [x] NaN/Inf guard on `powf()` custom function
+- [ ] Crash recovery for unconsolidated sessions (deferred)
 
 ### Phase 6: Memory WebUI (~1 week)
 - [ ] Memory viewer in settings panel (see NEXT_STEPS.md Section 15)
@@ -1125,7 +1161,7 @@ Memory and RAG are independent features. Memory can be fully implemented and dep
 - [ ] Memory statistics display
 - [ ] "Forget everything" option
 
-**Memory System Status: Phases 1-4 Complete, Phases 5-6 Pending**
+**Memory System Status: Phases 1-5 Complete, Phase 6 Pending**
 
 ---
 
@@ -1207,10 +1243,9 @@ Memory and RAG can be developed in parallel by different contributors, or sequen
 
 ```
 include/memory/
-├── memory_manager.h       # Public API for memory operations
-├── memory_search.h        # Search tool interface
-├── memory_extraction.h    # Extraction job interface
-├── memory_decay.h         # Decay algorithm
+├── memory_db.h            # CRUD operations for facts, preferences, summaries
+├── memory_context.h       # Context building for LLM system prompt
+├── memory_maintenance.h   # Nightly decay orchestration API
 └── memory_types.h         # Data structures
 
 include/rag/
@@ -1220,12 +1255,12 @@ include/rag/
 └── document_parsers.h     # TXT/PDF/DOCX parsers
 
 src/memory/
-├── memory_manager.c       # Core memory operations
-├── memory_storage.c       # SQLite operations
-├── memory_search.c        # Keyword search across all memory tables
-├── memory_extraction.c    # LLM extraction
-├── memory_decay.c         # Nightly job
-└── memory_context.c       # Context building for LLM
+├── memory_db.c            # SQLite CRUD, decay, and pruning operations
+├── memory_context.c       # Context building for LLM system prompt
+├── memory_callback.c      # LLM tool callback (store/search/delete)
+├── memory_extraction.c    # LLM-based fact extraction from conversations
+├── memory_maintenance.c   # Nightly decay orchestration
+└── memory_similarity.c    # Duplicate detection (Jaccard, hashing)
 
 src/rag/
 ├── rag_indexer.c          # Document processing

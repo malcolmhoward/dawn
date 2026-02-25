@@ -1,0 +1,113 @@
+/*
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ * By contributing to this project, you agree to license your contributions
+ * under the GPLv3 (or any later version) or any future licenses chosen by
+ * the project author(s). Contributions include any modifications,
+ * enhancements, or additions to the project. These contributions become
+ * part of the project and are adopted by the project author(s).
+ *
+ * Memory Maintenance Implementation
+ *
+ * Orchestrates nightly confidence decay and pruning across all users.
+ * Called from auth_maintenance thread at configurable hour.
+ */
+
+#include "memory/memory_maintenance.h"
+
+#include <time.h>
+#include <unistd.h>
+
+#include "config/dawn_config.h"
+#include "logging.h"
+#include "memory/memory_db.h"
+
+/* Maximum users to process in one run */
+#define MAX_USERS 64
+
+/* Minimum gap between runs (20 hours) to prevent double-execution */
+#define MIN_RUN_GAP_SECONDS (20 * 3600)
+
+void memory_run_nightly_decay(void) {
+   /* Check if memory and decay are enabled */
+   if (!g_config.memory.enabled || !g_config.memory.decay_enabled) {
+      return;
+   }
+
+   /* Check if current hour matches configured decay hour */
+   time_t now = time(NULL);
+   struct tm local_time;
+   localtime_r(&now, &local_time);
+
+   if (local_time.tm_hour != g_config.memory.decay_hour) {
+      return;
+   }
+
+   /* Prevent double-execution within 20 hours.
+    * Note: single-caller assumption — only called from auth_maintenance thread. */
+   static time_t last_run = 0;
+   if (last_run > 0 && (now - last_run) < MIN_RUN_GAP_SECONDS) {
+      return;
+   }
+
+   /* Get all users with memory data */
+   int user_ids[MAX_USERS];
+   int user_count = memory_db_get_all_user_ids(user_ids, MAX_USERS);
+   if (user_count <= 0) {
+      last_run = now;
+      return;
+   }
+
+   int total_decayed = 0;
+   int total_pruned = 0;
+   int total_summaries = 0;
+
+   for (int i = 0; i < user_count; i++) {
+      int uid = user_ids[i];
+
+      /* Apply fact decay */
+      int decayed = memory_db_apply_fact_decay(uid, g_config.memory.decay_inferred_weekly,
+                                               g_config.memory.decay_explicit_weekly,
+                                               g_config.memory.decay_inferred_floor,
+                                               g_config.memory.decay_explicit_floor);
+      if (decayed > 0)
+         total_decayed += decayed;
+
+      /* Apply preference decay */
+      memory_db_apply_pref_decay(uid, g_config.memory.decay_preference_weekly,
+                                 g_config.memory.decay_preference_floor);
+
+      /* Prune low-confidence facts */
+      int pruned = memory_db_prune_low_confidence(uid, g_config.memory.decay_prune_threshold);
+      if (pruned > 0)
+         total_pruned += pruned;
+
+      /* Prune old superseded facts */
+      memory_db_fact_prune_superseded(uid, g_config.memory.prune_superseded_days);
+
+      /* Prune old summaries */
+      int summaries = memory_db_prune_old_summaries(uid, g_config.memory.summary_retention_days);
+      if (summaries > 0)
+         total_summaries += summaries;
+
+      /* Courtesy yield between users */
+      usleep(1000);
+   }
+
+   last_run = now;
+
+   LOG_INFO("memory_decay: completed — %d users, %d facts decayed, %d pruned, %d summaries "
+            "cleaned",
+            user_count, total_decayed, total_pruned, total_summaries);
+}

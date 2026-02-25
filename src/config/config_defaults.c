@@ -228,6 +228,19 @@ void config_set_defaults(dawn_config_t *config) {
        15;                                   /* Auto-save voice conversations after 15 min */
    config->memory.default_voice_user_id = 1; /* Assign to first user (admin) by default */
 
+   /* Memory decay (Phase 5) */
+   config->memory.decay_enabled = true;
+   config->memory.decay_hour = 2;                     /* Run at 2 AM */
+   config->memory.decay_inferred_weekly = 0.95f;      /* Inferred facts lose 5%/week */
+   config->memory.decay_explicit_weekly = 0.98f;      /* Explicit facts lose 2%/week */
+   config->memory.decay_preference_weekly = 0.97f;    /* Preferences lose 3%/week */
+   config->memory.decay_inferred_floor = 0.0f;        /* Inferred can decay to zero */
+   config->memory.decay_explicit_floor = 0.50f;       /* Explicit never below 50% */
+   config->memory.decay_preference_floor = 0.40f;     /* Preferences never below 40% */
+   config->memory.decay_prune_threshold = 0.25f;      /* Prune facts below 25% */
+   config->memory.summary_retention_days = 30;        /* Delete summaries after 30 days */
+   config->memory.access_reinforcement_boost = 0.05f; /* +5% on access */
+
    /* Shutdown - disabled by default for security */
    config->shutdown.enabled = false;
    config->shutdown.passphrase[0] = '\0';

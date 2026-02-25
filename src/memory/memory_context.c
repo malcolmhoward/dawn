@@ -130,7 +130,7 @@ int memory_build_context(int user_id, char *buffer, size_t buffer_size, int toke
          offset += snprintf(buffer + offset, buffer_size - offset, "- %s\n", facts[i].fact_text);
 
          /* Update access time for LRU tracking */
-         memory_db_fact_update_access(facts[i].id);
+         memory_db_fact_update_access(facts[i].id, user_id);
       }
    }
 

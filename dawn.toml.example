@@ -299,6 +299,73 @@
                                   # Env: DAWN_WEBUI_SSL_KEY_PATH
 
 # =============================================================================
+# Image Storage (vision uploads)
+# =============================================================================
+
+[images]
+# retention_days = 0              # Delete images older than N days (0 = never delete)
+# max_size_mb = 4                 # Maximum size per uploaded image in MB
+# max_per_user = 1000             # Maximum stored images per user
+
+# =============================================================================
+# Persistent Memory System
+# =============================================================================
+
+[memory]
+# enabled = true                  # Enable persistent user memory
+# context_budget_tokens = 800     # Max tokens for memory context in system prompt
+# extraction_provider = "local"   # LLM provider for fact extraction: "local", "openai", "claude"
+# extraction_model = "qwen2.5:7b" # Model for memory extraction
+# pruning_enabled = true          # Automatically remove old superseded and stale facts
+# prune_superseded_days = 30      # Keep superseded facts for N days before deletion
+# prune_stale_days = 180          # Delete low-confidence facts not accessed in N days
+# prune_stale_min_confidence = 0.50  # Only prune stale facts with confidence below this
+# conversation_idle_timeout_min = 15  # Auto-save voice conversations after N minutes idle
+                                  # (0 = disabled, minimum 10 if enabled)
+# default_voice_user_id = 1       # User account for local microphone and DAP conversations
+
+[memory.decay]
+# enabled = true                  # Enable nightly confidence decay
+# hour = 2                        # Hour to run decay (0-23, local time)
+# inferred_weekly = 0.95          # Weekly decay multiplier for inferred facts (5%/week)
+# explicit_weekly = 0.98          # Weekly decay multiplier for explicit facts (2%/week)
+# preference_weekly = 0.97        # Weekly decay multiplier for preferences (3%/week)
+# inferred_floor = 0.0            # Min confidence for inferred facts (0 = can decay to zero)
+# explicit_floor = 0.50           # Min confidence for explicit facts (never fully forgotten)
+# preference_floor = 0.40         # Min confidence for preferences
+# prune_threshold = 0.25          # Delete facts with confidence below this after decay
+# summary_retention_days = 30     # Delete conversation summaries older than N days
+# access_reinforcement_boost = 0.05  # Confidence boost when a fact is accessed (+5%)
+                                  # Time-gated: only boosts once per hour to prevent pinning
+
+# =============================================================================
+# Scheduler (timers, alarms, reminders)
+# =============================================================================
+
+[scheduler]
+# enabled = true                  # Enable scheduler system
+# default_snooze_minutes = 10     # Default snooze duration
+# max_snooze_count = 10           # Maximum snooze attempts per event
+# max_events_per_user = 50        # Maximum active events per user
+# max_events_total = 200          # Maximum active events system-wide
+# missed_event_recovery = true    # Fire missed events on startup
+# missed_task_policy = "skip"     # Missed scheduled tasks: "skip" or "execute"
+# missed_task_max_age_sec = 300   # Max age for executing missed tasks (5 minutes)
+# alarm_timeout_sec = 60          # Auto-dismiss alarms after N seconds
+# alarm_volume = 80               # Alarm chime volume (0-100)
+# event_retention_days = 30       # Keep completed events for N days
+
+# =============================================================================
+# Music Playback
+# =============================================================================
+
+[music]
+# scan_interval_minutes = 60      # Rescan music library for new files (minutes)
+# streaming_enabled = true        # Enable Opus streaming to WebUI and satellites
+# streaming_quality = "standard"  # Opus encoding quality
+# streaming_bitrate_mode = "vbr"  # Bitrate mode: "vbr" or "cbr"
+
+# =============================================================================
 # Shutdown Control
 # =============================================================================
 
@@ -335,6 +402,8 @@
 # =============================================================================
 
 [paths]
+# data_dir = "~/.local/share/dawn"  # Database storage directory
+                                  # Env: DAWN_PATHS_DATA_DIR
 # music_dir = "~/Music"           # Music library location for playback
                                   # Env: DAWN_PATHS_MUSIC_DIR
 # commands_config = "commands_config_nuevo.json"  # Device/command mappings for MQTT

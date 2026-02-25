@@ -93,14 +93,17 @@ int memory_db_fact_search(int user_id,
                           int max_facts);
 
 /**
- * @brief Update fact access time and count
+ * @brief Update fact access time, count, and reinforcement boost
  *
  * Called when a fact is retrieved for context injection.
+ * Includes time-gated confidence reinforcement (only boosts if
+ * last_accessed > 1 hour ago to prevent confidence pinning).
  *
  * @param fact_id Fact ID to update
+ * @param user_id User ID (for ownership isolation)
  * @return MEMORY_DB_SUCCESS or MEMORY_DB_FAILURE
  */
-int memory_db_fact_update_access(int64_t fact_id);
+int memory_db_fact_update_access(int64_t fact_id, int user_id);
 
 /**
  * @brief Update fact confidence
@@ -189,6 +192,68 @@ int memory_db_fact_prune_superseded(int user_id, int retention_days);
  * @return Number of facts deleted, -1 on error
  */
 int memory_db_fact_prune_stale(int user_id, int stale_days, float min_confidence);
+
+/* =============================================================================
+ * Decay and Maintenance Operations (Phase 5)
+ * ============================================================================= */
+
+/**
+ * @brief Apply confidence decay to all active facts for a user
+ *
+ * Uses atomic SQL UPDATE with powf() — no C-side row iteration needed.
+ * Decay is proportional to time since last_accessed.
+ *
+ * @param user_id User ID
+ * @param inferred_rate Weekly decay multiplier for inferred facts
+ * @param explicit_rate Weekly decay multiplier for explicit facts
+ * @param inferred_floor Minimum confidence for inferred facts
+ * @param explicit_floor Minimum confidence for explicit facts
+ * @return Number of rows affected, -1 on error
+ */
+int memory_db_apply_fact_decay(int user_id,
+                               float inferred_rate,
+                               float explicit_rate,
+                               float inferred_floor,
+                               float explicit_floor);
+
+/**
+ * @brief Apply confidence decay to all preferences for a user
+ *
+ * @param user_id User ID
+ * @param pref_rate Weekly decay multiplier for preferences
+ * @param pref_floor Minimum confidence for preferences
+ * @return Number of rows affected, -1 on error
+ */
+int memory_db_apply_pref_decay(int user_id, float pref_rate, float pref_floor);
+
+/**
+ * @brief Delete facts with confidence below threshold
+ *
+ * Logs pruned facts before deletion for audit trail.
+ *
+ * @param user_id User ID
+ * @param threshold Delete facts below this confidence
+ * @return Number of facts deleted, -1 on error
+ */
+int memory_db_prune_low_confidence(int user_id, float threshold);
+
+/**
+ * @brief Delete summaries older than retention period
+ *
+ * @param user_id User ID
+ * @param retention_days Delete summaries older than this
+ * @return Number of summaries deleted, -1 on error
+ */
+int memory_db_prune_old_summaries(int user_id, int retention_days);
+
+/**
+ * @brief Get all user IDs that have memory data
+ *
+ * @param out_ids Output: array of user IDs (caller allocates)
+ * @param max_ids Maximum IDs to return
+ * @return Number of user IDs found, -1 on error
+ */
+int memory_db_get_all_user_ids(int *out_ids, int max_ids);
 
 /* =============================================================================
  * Date-Filtered Queries

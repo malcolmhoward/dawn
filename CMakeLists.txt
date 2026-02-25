@@ -505,6 +505,7 @@ list(APPEND DAWN_SOURCES
     src/memory/memory_callback.c
     src/memory/memory_extraction.c
     src/memory/memory_similarity.c
+    src/memory/memory_maintenance.c
 )
 
 # Auth subsystem (admin socket, user management, crypto — requires WebUI)
@@ -579,7 +580,8 @@ target_link_libraries(dawn
                       ${FLAC_LIBRARIES}
                       ${SAMPLERATE_LIBRARIES}
                       OpenSSL::SSL
-                      OpenSSL::Crypto)
+                      OpenSSL::Crypto
+                      m)
 
 # Link both audio libraries for runtime backend selection
 # Both backends are statically linked; runtime selection via vtable

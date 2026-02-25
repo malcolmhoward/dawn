@@ -1194,6 +1194,27 @@ json_object *config_to_json(const dawn_config_t *config) {
                           json_object_new_int(config->memory.conversation_idle_timeout_min));
    json_object_object_add(memory, "default_voice_user_id",
                           json_object_new_int(config->memory.default_voice_user_id));
+   json_object_object_add(memory, "decay_enabled",
+                          json_object_new_boolean(config->memory.decay_enabled));
+   json_object_object_add(memory, "decay_hour", json_object_new_int(config->memory.decay_hour));
+   json_object_object_add(memory, "decay_inferred_weekly",
+                          json_object_new_double(config->memory.decay_inferred_weekly));
+   json_object_object_add(memory, "decay_explicit_weekly",
+                          json_object_new_double(config->memory.decay_explicit_weekly));
+   json_object_object_add(memory, "decay_preference_weekly",
+                          json_object_new_double(config->memory.decay_preference_weekly));
+   json_object_object_add(memory, "decay_inferred_floor",
+                          json_object_new_double(config->memory.decay_inferred_floor));
+   json_object_object_add(memory, "decay_explicit_floor",
+                          json_object_new_double(config->memory.decay_explicit_floor));
+   json_object_object_add(memory, "decay_preference_floor",
+                          json_object_new_double(config->memory.decay_preference_floor));
+   json_object_object_add(memory, "decay_prune_threshold",
+                          json_object_new_double(config->memory.decay_prune_threshold));
+   json_object_object_add(memory, "summary_retention_days",
+                          json_object_new_int(config->memory.summary_retention_days));
+   json_object_object_add(memory, "access_reinforcement_boost",
+                          json_object_new_double(config->memory.access_reinforcement_boost));
    json_object_object_add(root, "memory", memory);
 
    /* [shutdown] */
@@ -1620,6 +1641,19 @@ int config_write_toml(const dawn_config_t *config, const char *path) {
    fprintf(fp, "conversation_idle_timeout_min = %d\n",
            config->memory.conversation_idle_timeout_min);
    fprintf(fp, "default_voice_user_id = %d\n", config->memory.default_voice_user_id);
+
+   fprintf(fp, "\n[memory.decay]\n");
+   fprintf(fp, "enabled = %s\n", config->memory.decay_enabled ? "true" : "false");
+   fprintf(fp, "hour = %d\n", config->memory.decay_hour);
+   fprintf(fp, "inferred_weekly = %.2f\n", config->memory.decay_inferred_weekly);
+   fprintf(fp, "explicit_weekly = %.2f\n", config->memory.decay_explicit_weekly);
+   fprintf(fp, "preference_weekly = %.2f\n", config->memory.decay_preference_weekly);
+   fprintf(fp, "inferred_floor = %.2f\n", config->memory.decay_inferred_floor);
+   fprintf(fp, "explicit_floor = %.2f\n", config->memory.decay_explicit_floor);
+   fprintf(fp, "preference_floor = %.2f\n", config->memory.decay_preference_floor);
+   fprintf(fp, "prune_threshold = %.2f\n", config->memory.decay_prune_threshold);
+   fprintf(fp, "summary_retention_days = %d\n", config->memory.summary_retention_days);
+   fprintf(fp, "access_reinforcement_boost = %.2f\n", config->memory.access_reinforcement_boost);
 
    fprintf(fp, "\n[debug]\n");
    fprintf(fp, "mic_record = %s\n", config->debug.mic_record ? "true" : "false");
