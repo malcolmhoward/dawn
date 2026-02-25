@@ -8,6 +8,7 @@
 
    let container = null;
    let chimeCtx = null; // Web Audio context for alarm chime
+   const localDismissed = new Set(); // event IDs dismissed locally (suppress rebroadcast)
 
    /**
     * Ensure notification container exists
@@ -148,9 +149,9 @@
       const dismissBtn = banner.querySelector('.sched-btn-dismiss');
       if (dismissBtn) {
          dismissBtn.addEventListener('click', () => {
-            if (isRinging) {
-               sendAction('dismiss', eventId);
-            }
+            localDismissed.add(eventId);
+            setTimeout(() => localDismissed.delete(eventId), 5000);
+            sendAction('dismiss', eventId);
             banner.classList.add('sched-banner-out');
             setTimeout(() => banner.remove(), 300);
          });
@@ -204,6 +205,21 @@
     */
    function handleNotification(payload) {
       if (!payload) return;
+
+      /* Suppress rebroadcast of our own dismiss action */
+      if (payload.status !== 'ringing' && localDismissed.has(payload.event_id)) {
+         return;
+      }
+
+      /* Ignore timed_out / auto-dismiss if banner is already showing —
+       * keep it up until user explicitly dismisses */
+      if (payload.status === 'timed_out' || payload.message?.startsWith('Auto-')) {
+         const el = document.getElementById('scheduler-notifications');
+         if (el?.querySelector(`[data-event-id="${payload.event_id}"]`)) {
+            return;
+         }
+      }
+
       console.log('Scheduler notification:', payload);
       showNotification(payload);
       playChime(payload.event_type);

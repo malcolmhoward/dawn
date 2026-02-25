@@ -2888,8 +2888,11 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
             send_error_impl(conn->wsi, "FORBIDDEN", "Not your event");
          } else if (strcmp(action, "dismiss") == 0) {
             int rc = scheduler_dismiss(event_id);
-            if (rc != 0)
-               send_error_impl(conn->wsi, "NOT_FOUND", "No ringing event to dismiss");
+            if (rc != 0) {
+               /* Already dismissed (e.g. auto-dismiss for timers) — rebroadcast
+                * so other clients (satellites) can sync their UI. */
+               scheduler_broadcast_notification(&ev, "Dismissed");
+            }
          } else if (strcmp(action, "snooze") == 0) {
             json_object_object_get_ex(payload, "snooze_minutes", &snooze_obj);
             int snooze_min = snooze_obj ? json_object_get_int(snooze_obj) : 0;

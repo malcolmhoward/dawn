@@ -1973,10 +1973,11 @@ static void alarm_notify_cb(const ws_alarm_notify_t *alarm, void *user_data) {
     * just appeared and should stay up until the user taps dismiss.
     * Honor: explicit user dismiss (any type), alarm dismiss, timed_out. */
    if (alarm->status[0] && strcmp(alarm->status, "ringing") != 0) {
-      bool is_timeout = (strcmp(alarm->status, "timed_out") == 0);
       bool is_auto = (strncmp(alarm->label, "Auto-", 5) == 0);
-      bool is_alarm = (strcmp(alarm->type, "alarm") == 0);
-      if (is_timeout || is_alarm || !is_auto) {
+      bool is_timeout = (strcmp(alarm->status, "timed_out") == 0);
+      /* Ignore auto-dismiss and timed_out — satellite overlay stays up until
+       * user taps dismiss locally or dismisses from WebUI (rebroadcast). */
+      if (!is_auto && !is_timeout) {
          ui_alarm_dismiss(&ui->alarm);
       }
       return;
