@@ -1,8 +1,9 @@
 # Scheduled Events: Timers, Alarms, Reminders, Scheduled Tasks
 
-**Status**: ✅ Fully Implemented (2026-02-19)
+**Status**: ✅ Fully Implemented (2026-02-19) | Satellite + WebUI cross-client tested (2026-02-25)
 **Unit Tests**: 94 assertions across 16 tests (`tests/test_scheduler.c`)
-**Key Files**: `src/core/scheduler.c`, `src/core/scheduler_db.c`, `src/tools/scheduler_tool.c`, `include/core/scheduler.h`
+**Manual Tests**: Sections 1-6 verified (daemon, voice creation, sound, dismiss/snooze, satellite overlay, WebUI notifications, cross-client sync)
+**Key Files**: `src/core/scheduler.c`, `src/core/scheduler_db.c`, `src/tools/scheduler_tool.c`, `include/core/scheduler.h`, `common/src/audio/chime.c`
 
 ## Context
 
@@ -508,53 +509,89 @@ Uses an in-memory SQLite database via a stubbed `s_db` global — no auth_db mac
 
 ## Manual Verification
 
-### 1. Daemon Startup & DB Migration
-- Start daemon fresh — confirm no migration errors in log
-- Check log for `scheduler: initialized` message
-- Verify DB has new indexes: `sqlite3 dawn.db ".indexes scheduled_events"`
+**Last tested:** 2026-02-25
 
-### 2. Event Creation via Voice/LLM
-- **Timer**: "Set a 2-minute timer" — confirm event created, fires after 2 min
-- **Alarm**: "Set an alarm for [5 min from now]" — confirm it fires
-- **Reminder**: "Remind me to check the oven in 1 minute" — confirm it fires
-- **Invalid tool**: Ask LLM to schedule a non-schedulable tool — confirm error returned
-- **Bad recurrence**: Manually test with duplicate days ("mon,mon") — confirm rejection
-- **Limit check**: If max_events_per_user is set low, confirm creation is rejected at limit
+### 1. Daemon Startup & DB Migration ✅
 
-### 3. Alarm Sound & Auto-Dismiss
-- **Timer fires**: Confirm chime plays, then auto-dismisses (no user action needed)
-- **Reminder fires**: Same — auto-dismiss after chime
-- **Alarm fires**: Confirm chime plays and loops, does NOT auto-dismiss, stays ringing until user acts
+- [x] Start daemon fresh — confirm no migration errors in log
+- [x] Check log for `scheduler: initialized`, `generated chime PCM`, `generated alarm tone PCM`
+- [x] Verify DB indexes: `sqlite3 data/dawn.db ".indexes scheduled_events"` → 4 indexes
+- [x] Verify table structure: 21 columns matching schema
 
-### 4. Dismiss & Snooze
-- **Dismiss alarm**: Voice-dismiss while ringing — confirm sound stops, DB status = dismissed
-- **Snooze alarm**: Voice-snooze while ringing — confirm sound stops, alarm re-fires after snooze duration
+### 2. Event Creation via Voice/LLM ✅
 
-### 5. Satellite Overlay
-- Timer fires on satellite → alarm overlay appears with dismiss button
-- Alarm fires → overlay shows both dismiss and snooze buttons
-- Tap dismiss → overlay closes, sound stops
-- Tap snooze → overlay closes, alarm re-fires after delay
-- Overlay suppresses screensaver during ringing
+- [x] **Timer**: "Set a 2-minute timer" — event created, fires after 2 min
+- [x] **Named timer**: "Set a pasta timer for 12 minutes" — name column contains "pasta"
+- [x] **Alarm**: "Set an alarm for [5 min from now]" — event_type=alarm, fires at requested time
+- [x] **Reminder**: "Remind me to check the oven in 3 minutes" — event_type=reminder, message correct
+- [x] **Invalid tool**: "Schedule a system shutdown at midnight" — returns schedulability error
+- [ ] **Bad recurrence**: Duplicate days ("mon,mon") rejection — SKIPPED (hard to trigger via voice)
+- [ ] **Limit check**: max_events_per_user enforcement — SKIPPED
 
-### 6. WebUI Notifications
-- Timer fires → notification banner appears in browser with dismiss button
-- Alarm fires → banner shows dismiss + snooze buttons, amber border + glow
-- Click dismiss → banner closes
-- Browser audio chime plays on notification
+### 3. Alarm Sound & Auto-Dismiss ✅
+
+- [x] **Timer fires**: Chime plays (ascending C5-E5-G5), auto-dismisses after chime
+- [x] **Reminder fires**: Same behavior as timer — auto-dismiss after chime
+- [x] **Alarm fires**: Alarm tone loops (alternating A5/E5), stays ringing until user acts
+- [x] **Alarm timeout**: After alarm_timeout_sec (60s), sound stops, DB status → timed_out
+
+### 4. Dismiss & Snooze ✅
+
+- [x] **Voice dismiss during ringing**: Sound stops immediately, DB status = dismissed
+- [x] **Voice snooze during ringing**: Sound stops, alarm re-fires after snooze duration, snooze_count increments
+- [ ] **Max snooze enforcement**: Auto-dismiss after max_snooze_count — DEFERRED
+
+### 5. Satellite Overlay ✅
+
+- [x] Timer fires on satellite → solid card overlay appears with DISMISS button
+- [x] Alarm fires → overlay shows both DISMISS and SNOOZE buttons
+- [x] Tap dismiss → overlay closes, sound stops, satellite sends `scheduler_action` to daemon
+- [x] Tap snooze → overlay closes, alarm re-fires after delay
+- [x] Screensaver suppresses while overlay is visible
+- [x] Satellite chime plays through satellite speaker (common chime library)
+- [x] Alarm sound thread auto-dismisses overlay after 120s timeout
+- [x] Timer overlay persists through daemon auto-dismiss (satellite ignores "Auto-dismissed")
+- [x] WebUI dismiss propagates to satellite overlay (server rebroadcasts "Dismissed")
+
+### 6. WebUI Notifications ✅
+
+- [x] Timer fires → notification banner slides down with DISMISS button + browser chime
+- [x] Alarm fires → banner shows DISMISS + SNOOZE, amber border + glow animation
+- [x] Click dismiss → banner closes, action sent to server
+- [x] Keyboard: Escape dismisses banner
+- [x] Alarm timeout → banner stays visible until user explicitly dismisses
+- [x] WebUI dismiss of auto-dismissed timer → rebroadcast clears satellite overlay
+- [x] Local dismiss suppression (WebUI doesn't re-show its own rebroadcast)
+- [ ] Mobile responsive (<600px) — DEFERRED
 
 ### 7. Persistence & Recovery
-- Set 5-minute timer → restart daemon → verify timer fires after remaining time
-- Set alarm, kill daemon before it fires → restart → verify missed event handling
+
+- [ ] Timer survives restart — NOT TESTED
+- [ ] Alarm recovery after restart — NOT TESTED
+- [ ] Recurring alarm recovery — NOT TESTED
 
 ### 8. Recurring Events
-- Set daily alarm → verify it fires, then check DB for next occurrence with correct fire_at
+
+- [ ] Daily alarm fires, next occurrence scheduled — NOT TESTED
 
 ### 9. Scheduled Tasks
-- "Turn off [device] in 1 minute" → verify tool callback fires, announcement text includes result
+
+- [ ] Tool execution on timer fire — NOT TESTED (requires SmartThings or similar)
 
 ### 10. Multi-User Isolation
-- Two different users set timers → each only sees their own via "list my timers"
+
+- [ ] Separate event visibility per user — NOT TESTED
+- [ ] Cancel isolation — NOT TESTED
+- [ ] Dismiss authorization — NOT TESTED
+
+### Cross-Client Synchronization ✅ (NEW — tested 2026-02-25)
+
+- [x] Satellite receives `scheduler_notification` broadcasts (conn->authenticated set on registration)
+- [x] Satellite `scheduler_action` (dismiss/snooze) authorized via satellite session bypass
+- [x] NOT_FOUND response on dismiss race logged as warning (not error)
+- [x] WebUI dismiss of already-auto-dismissed event → server rebroadcasts → satellite clears overlay
+- [x] Satellite ignores daemon auto-dismiss and timed_out signals (overlay persists for user)
+- [x] Ping/pong log noise suppressed on satellite
 
 ## Agent Review Summary
 
