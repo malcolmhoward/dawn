@@ -116,6 +116,14 @@ static void *chime_sound_thread(void *arg) {
             break;
          usleep(ALARM_GAP_MS * 1000);
       }
+
+      /* If we exited due to timeout (not user dismiss), auto-dismiss overlay */
+      if (!atomic_load(&a->sound_stop)) {
+         LOG_INFO("alarm sound timed out after %ds — dismissing overlay", ALARM_TIMEOUT_S);
+         pthread_mutex_lock(&a->mutex);
+         a->state = ALARM_STATE_IDLE;
+         pthread_mutex_unlock(&a->mutex);
+      }
    } else {
       /* Single chime for timers/reminders */
       audio_playback_play(pb, scaled, src->samples, (unsigned int)src->sample_rate, &a->sound_stop,

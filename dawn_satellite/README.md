@@ -373,40 +373,34 @@ playback_device = "plughw:0,0" # Your speaker (run 'aplay -l')
 
 ### 9. Install as System Service
 
+A production-ready service package is provided in `services/dawn-satellite/`. It creates a dedicated `dawn` system user, installs models/fonts/config to standard paths, and includes logrotate.
+
 ```bash
-# Create systemd service
-sudo tee /etc/systemd/system/dawn-satellite.service << 'EOF'
-[Unit]
-Description=DAWN Voice Satellite
-After=network-online.target
-Wants=network-online.target
+# Automatic installation (recommended)
+sudo ./services/dawn-satellite/install.sh
 
-[Service]
-Type=simple
-User=pi
-Group=pi
-ExecStart=/usr/local/bin/dawn_satellite --config /etc/dawn/satellite.toml
-Restart=always
-RestartSec=5
-Environment=SDL_VIDEODRIVER=KMSDRM
+# Edit config (set server IP, identity, audio devices)
+sudo nano /usr/local/etc/dawn-satellite/satellite.toml
 
-[Install]
-WantedBy=multi-user.target
-EOF
+# Restart with new config
+sudo systemctl restart dawn-satellite
+```
 
-# Install binary
-sudo cp dawn_satellite /usr/local/bin/
+See `services/dawn-satellite/README.md` for full documentation, manual installation steps, and troubleshooting.
 
-# Enable and start
+#### Quick Manual Alternative
+
+If you prefer a minimal setup without the full service package:
+
+```bash
+sudo cp dawn_satellite/build/dawn_satellite /usr/local/bin/
+sudo cp services/dawn-satellite/dawn-satellite.service /etc/systemd/system/
+sudo mkdir -p /usr/local/etc/dawn-satellite /var/lib/dawn-satellite /var/log/dawn-satellite
+sudo cp dawn_satellite/config/satellite.toml /usr/local/etc/dawn-satellite/
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin dawn
+sudo chown -R dawn:dawn /var/lib/dawn-satellite /var/log/dawn-satellite
 sudo systemctl daemon-reload
-sudo systemctl enable dawn-satellite
-sudo systemctl start dawn-satellite
-
-# Check status
-sudo systemctl status dawn-satellite
-
-# View logs
-journalctl -u dawn-satellite -f
+sudo systemctl enable --now dawn-satellite
 ```
 
 ## Configuration Reference
