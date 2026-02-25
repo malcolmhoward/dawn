@@ -1967,9 +1967,17 @@ static void music_library_cb(const music_library_update_t *lib, void *user_data)
 static void alarm_notify_cb(const ws_alarm_notify_t *alarm, void *user_data) {
    sdl_ui_t *ui = (sdl_ui_t *)user_data;
 
-   /* Non-ringing statuses (dismissed, snoozed, timed_out) close the overlay */
+   /* Non-ringing statuses (dismissed, snoozed, timed_out) close the overlay.
+    * However, ignore server-side auto-dismiss for timers/reminders — the daemon
+    * auto-dismisses after its local chime (~750ms), but the satellite overlay
+    * just appeared and should stay up until the user taps dismiss. Only honor
+    * server dismiss for alarms (explicit user action) and timed_out. */
    if (alarm->status[0] && strcmp(alarm->status, "ringing") != 0) {
-      ui_alarm_dismiss(&ui->alarm);
+      bool is_timeout = (strcmp(alarm->status, "timed_out") == 0);
+      bool is_alarm = (strcmp(alarm->type, "alarm") == 0);
+      if (is_alarm || is_timeout) {
+         ui_alarm_dismiss(&ui->alarm);
+      }
       return;
    }
 
