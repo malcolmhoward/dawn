@@ -3149,6 +3149,13 @@ static int callback_websocket(struct lws *wsi,
                handle_satellite_register(conn, payload);
 
                /* If registration failed, session won't be set */
+               if (conn->session) {
+                  /* Mark authenticated so broadcasts (scheduler notifications, etc.)
+                   * include this satellite. Browser clients get this from cookie auth
+                   * at LWS_CALLBACK_ESTABLISHED; satellites authenticate via
+                   * registration key in handle_satellite_register instead. */
+                  conn->authenticated = true;
+               }
                if (!conn->session) {
                   LOG_ERROR("WebUI: Failed to create satellite session");
                   pthread_mutex_lock(&s_mutex);

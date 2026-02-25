@@ -20,7 +20,7 @@
  *
  * Alarm/Timer Overlay for DAWN Satellite SDL UI
  *
- * Full-screen modal overlay with fade-in animation, dismiss/snooze buttons.
+ * Simple solid card overlay for alarm/timer/reminder notifications.
  * Renders above screensaver. Touch targets are 56px tall for reliability.
  */
 
@@ -48,16 +48,23 @@
 #define FALLBACK_MONO_FONT "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"
 #define FALLBACK_BODY_FONT "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 
-/* Animation timing */
-#define FADE_IN_DURATION 0.2   /* seconds */
-#define FADE_OUT_DURATION 0.15 /* seconds */
+/* Card geometry */
+#define CARD_WIDTH 420
+#define CARD_PADDING 24
+#define CARD_RADIUS 16
 
 /* Button geometry */
 #define BTN_HEIGHT 56 /* Touch target height (design spec) */
-#define BTN_WIDTH 200
-#define BTN_GAP 24
+#define BTN_WIDTH 180
+#define BTN_GAP 16
 #define BTN_RADIUS 12
-#define SCRIM_ALPHA 0.75f   /* 75% opacity background */
+
+/* Card colors */
+#define CARD_BG_R 0x1E
+#define CARD_BG_G 0x1E
+#define CARD_BG_B 0x2E
+
+/* Chime playback */
 #define ALARM_GAP_MS 200    /* Gap between alarm tone repeats (ms) */
 #define ALARM_TIMEOUT_S 120 /* Max alarm sound duration (seconds) */
 
@@ -151,20 +158,6 @@ static void start_sound_thread(ui_alarm_t *a, bool is_alarm) {
 }
 
 /* =============================================================================
- * Helpers
- * ============================================================================= */
-
-static void draw_rounded_rect(SDL_Renderer *r,
-                              SDL_Rect *rect,
-                              uint8_t cr,
-                              uint8_t cg,
-                              uint8_t cb,
-                              uint8_t ca) {
-   roundedBoxRGBA(r, rect->x, rect->y, rect->x + rect->w - 1, rect->y + rect->h - 1, BTN_RADIUS, cr,
-                  cg, cb, ca);
-}
-
-/* =============================================================================
  * Lifecycle
  * ============================================================================= */
 
@@ -178,9 +171,9 @@ int ui_alarm_init(ui_alarm_t *a, SDL_Renderer *r, int w, int h, const char *font
    a->state = ALARM_STATE_IDLE;
 
    /* Load fonts */
-   a->title_font = ui_try_load_font(font_dir, "SourceSans3-Bold.ttf", FALLBACK_BODY_FONT, 42);
-   a->label_font = ui_try_load_font(font_dir, "SourceSans3-Medium.ttf", FALLBACK_BODY_FONT, 24);
-   a->btn_font = ui_try_load_font(font_dir, "SourceSans3-SemiBold.ttf", FALLBACK_BODY_FONT, 22);
+   a->title_font = ui_try_load_font(font_dir, "SourceSans3-Bold.ttf", FALLBACK_BODY_FONT, 36);
+   a->label_font = ui_try_load_font(font_dir, "SourceSans3-Medium.ttf", FALLBACK_BODY_FONT, 22);
+   a->btn_font = ui_try_load_font(font_dir, "SourceSans3-SemiBold.ttf", FALLBACK_BODY_FONT, 20);
 
    if (!a->title_font || !a->label_font || !a->btn_font) {
       LOG_WARNING("Failed to load alarm overlay fonts");
@@ -188,8 +181,8 @@ int ui_alarm_init(ui_alarm_t *a, SDL_Renderer *r, int w, int h, const char *font
    }
 
    /* Pre-cache button labels */
-   a->dismiss_tex = ui_build_white_tex(r, a->btn_font, "Dismiss", &a->dismiss_w, &a->dismiss_h);
-   a->snooze_tex = ui_build_white_tex(r, a->btn_font, "Snooze", &a->snooze_w, &a->snooze_h);
+   a->dismiss_tex = ui_build_white_tex(r, a->btn_font, "DISMISS", &a->dismiss_w, &a->dismiss_h);
+   a->snooze_tex = ui_build_white_tex(r, a->btn_font, "SNOOZE", &a->snooze_w, &a->snooze_h);
    a->static_cache_ready = (a->dismiss_tex != NULL && a->snooze_tex != NULL);
 
    /* Generate chime PCM buffers */
@@ -237,20 +230,15 @@ void ui_alarm_trigger(ui_alarm_t *a, int64_t event_id, const char *label, const 
    if (type)
       snprintf(a->type, sizeof(a->type), "%s", type);
 
-   bool started_fade = false;
-   if (a->state == ALARM_STATE_IDLE || a->state == ALARM_STATE_FADING_OUT) {
-      a->state = ALARM_STATE_FADING_IN;
-      a->fade_start = ui_get_time_sec();
-      a->fade_alpha = 0.0f;
-      started_fade = true;
-   }
+   bool was_idle = (a->state == ALARM_STATE_IDLE);
+   a->state = ALARM_STATE_ACTIVE;
 
    pthread_mutex_unlock(&a->mutex);
    LOG_INFO("triggered: [%s] %s (id=%lld)", type ? type : "?", label ? label : "?",
             (long long)event_id);
 
    /* Start chime sound if overlay just activated */
-   if (started_fade && a->audio_pb) {
+   if (was_idle && a->audio_pb) {
       bool is_alarm = (type && strcmp(type, "alarm") == 0);
       start_sound_thread(a, is_alarm);
    }
@@ -261,11 +249,9 @@ void ui_alarm_dismiss(ui_alarm_t *a) {
    atomic_store(&a->sound_stop, 1);
 
    pthread_mutex_lock(&a->mutex);
-   if (a->state == ALARM_STATE_FADING_IN || a->state == ALARM_STATE_ACTIVE) {
-      a->state = ALARM_STATE_FADING_OUT;
-      a->fade_start = ui_get_time_sec();
-   }
+   a->state = ALARM_STATE_IDLE;
    pthread_mutex_unlock(&a->mutex);
+   LOG_INFO("dismissed");
 }
 
 bool ui_alarm_is_active(const ui_alarm_t *a) {
@@ -273,44 +259,16 @@ bool ui_alarm_is_active(const ui_alarm_t *a) {
 }
 
 /* =============================================================================
- * Render
+ * Render — simple solid card, no animation
  * ============================================================================= */
 
 void ui_alarm_render(ui_alarm_t *a, SDL_Renderer *r, double time_sec) {
+   (void)time_sec;
+
    if (a->state == ALARM_STATE_IDLE)
       return;
 
    pthread_mutex_lock(&a->mutex);
-
-   /* Update fade animation */
-   double elapsed = time_sec - a->fade_start;
-   switch (a->state) {
-      case ALARM_STATE_FADING_IN:
-         a->fade_alpha = (float)(elapsed / FADE_IN_DURATION);
-         if (a->fade_alpha >= 1.0f) {
-            a->fade_alpha = 1.0f;
-            a->state = ALARM_STATE_ACTIVE;
-         }
-         break;
-      case ALARM_STATE_ACTIVE:
-         a->fade_alpha = 1.0f;
-         break;
-      case ALARM_STATE_FADING_OUT:
-         a->fade_alpha = 1.0f - (float)(elapsed / FADE_OUT_DURATION);
-         if (a->fade_alpha <= 0.0f) {
-            a->fade_alpha = 0.0f;
-            a->state = ALARM_STATE_IDLE;
-            pthread_mutex_unlock(&a->mutex);
-            return;
-         }
-         break;
-      default:
-         break;
-   }
-
-   float alpha = a->fade_alpha;
-   uint8_t scrim_a = (uint8_t)(alpha * SCRIM_ALPHA * 255.0f);
-   uint8_t text_a = (uint8_t)(alpha * 255.0f);
 
    /* Copy alarm data under mutex */
    char label[ALARM_LABEL_MAX];
@@ -319,38 +277,32 @@ void ui_alarm_render(ui_alarm_t *a, SDL_Renderer *r, double time_sec) {
    snprintf(type, sizeof(type), "%s", a->type);
    pthread_mutex_unlock(&a->mutex);
 
-   /* 1. Draw scrim */
-   SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
-   SDL_SetRenderDrawColor(r, 0, 0, 0, scrim_a);
-   SDL_Rect full = { 0, 0, a->screen_w, a->screen_h };
-   SDL_RenderFillRect(r, &full);
-
-   /* Determine colors by type */
-   uint8_t title_r, title_g, title_b;
+   /* Determine title text and accent color by type */
+   uint8_t accent_r, accent_g, accent_b;
    const char *title_text;
    if (strcmp(type, "alarm") == 0) {
-      title_r = COLOR_THINKING_R; /* Amber for alarms */
-      title_g = COLOR_THINKING_G;
-      title_b = COLOR_THINKING_B;
+      accent_r = COLOR_THINKING_R;
+      accent_g = COLOR_THINKING_G;
+      accent_b = COLOR_THINKING_B;
       title_text = "ALARM";
    } else if (strcmp(type, "reminder") == 0) {
-      title_r = 0x64; /* Teal-ish for reminders */
-      title_g = 0xB5;
-      title_b = 0xF6;
+      accent_r = 0x64;
+      accent_g = 0xB5;
+      accent_b = 0xF6;
       title_text = "REMINDER";
    } else if (strcmp(type, "task") == 0) {
-      title_r = 0x22; /* Green for tasks */
-      title_g = 0xC5;
-      title_b = 0x5E;
+      accent_r = 0x22;
+      accent_g = 0xC5;
+      accent_b = 0x5E;
       title_text = "TASK COMPLETE";
    } else {
-      title_r = 0x4C; /* Green for timers */
-      title_g = 0xAF;
-      title_b = 0x50;
+      accent_r = 0x4C;
+      accent_g = 0xAF;
+      accent_b = 0x50;
       title_text = "TIMER";
    }
 
-   /* 2. Rebuild cached textures if type/label changed */
+   /* Rebuild cached textures if type/label changed */
    if (strcmp(a->cached_type, type) != 0) {
       if (a->title_tex)
          SDL_DestroyTexture(a->title_tex);
@@ -364,84 +316,79 @@ void ui_alarm_render(ui_alarm_t *a, SDL_Renderer *r, double time_sec) {
       snprintf(a->cached_label, sizeof(a->cached_label), "%s", label);
    }
 
-   int cx = a->screen_w / 2;
-   int cy = a->screen_h / 2;
+   /* Calculate card dimensions based on content */
+   bool can_snooze = (strcmp(type, "alarm") == 0);
+   int btn_row_w = can_snooze ? (BTN_WIDTH * 2 + BTN_GAP) : BTN_WIDTH;
 
-   /* 3. Draw title */
+   int card_w = CARD_WIDTH;
+   if (card_w < btn_row_w + CARD_PADDING * 2)
+      card_w = btn_row_w + CARD_PADDING * 2;
+
+   /* Card height: padding + title + gap + label + gap + button + padding */
+   int card_h = CARD_PADDING + a->title_h + 16 + a->label_h + 24 + BTN_HEIGHT + CARD_PADDING;
+   int card_x = (a->screen_w - card_w) / 2;
+   int card_y = (a->screen_h - card_h) / 2;
+
+   /* Draw solid dark card background */
+   roundedBoxRGBA(r, card_x, card_y, card_x + card_w - 1, card_y + card_h - 1, CARD_RADIUS,
+                  CARD_BG_R, CARD_BG_G, CARD_BG_B, 255);
+
+   /* Draw accent-colored top border (3px) */
+   roundedBoxRGBA(r, card_x, card_y, card_x + card_w - 1, card_y + 3, CARD_RADIUS, accent_r,
+                  accent_g, accent_b, 255);
+
+   /* Draw title (centered, accent colored) */
+   int content_y = card_y + CARD_PADDING;
    if (a->title_tex) {
-      SDL_SetTextureColorMod(a->title_tex, title_r, title_g, title_b);
-      SDL_SetTextureAlphaMod(a->title_tex, text_a);
-      SDL_Rect dst = { cx - a->title_w / 2, cy - 80, a->title_w, a->title_h };
+      SDL_SetTextureColorMod(a->title_tex, accent_r, accent_g, accent_b);
+      SDL_SetTextureAlphaMod(a->title_tex, 255);
+      SDL_Rect dst = { card_x + (card_w - a->title_w) / 2, content_y, a->title_w, a->title_h };
       SDL_RenderCopy(r, a->title_tex, NULL, &dst);
    }
+   content_y += a->title_h + 16;
 
-   /* 4. Draw label */
+   /* Draw label (centered, white) */
    if (a->label_tex) {
       SDL_SetTextureColorMod(a->label_tex, 0xEE, 0xEE, 0xEE);
-      SDL_SetTextureAlphaMod(a->label_tex, text_a);
-      int max_w = a->screen_w - 40;
+      SDL_SetTextureAlphaMod(a->label_tex, 255);
+      int max_w = card_w - CARD_PADDING * 2;
       int draw_w = a->label_w > max_w ? max_w : a->label_w;
-      int draw_h = a->label_h;
-      SDL_Rect dst = { cx - draw_w / 2, cy - 20, draw_w, draw_h };
+      SDL_Rect dst = { card_x + (card_w - draw_w) / 2, content_y, draw_w, a->label_h };
       SDL_RenderCopy(r, a->label_tex, NULL, &dst);
    }
+   content_y += a->label_h + 24;
 
-   /* 5. Draw buttons — snooze only for alarms */
-   bool can_snooze = (strcmp(type, "alarm") == 0);
-   int btn_y = cy + 40;
+   /* Draw buttons */
+   int btn_area_x = card_x + (card_w - btn_row_w) / 2;
+
+   /* Dismiss button (red) */
+   int dismiss_x = can_snooze ? btn_area_x : (card_x + (card_w - BTN_WIDTH) / 2);
+   a->dismiss_btn = (SDL_Rect){ dismiss_x, content_y, BTN_WIDTH, BTN_HEIGHT };
+   roundedBoxRGBA(r, dismiss_x, content_y, dismiss_x + BTN_WIDTH - 1, content_y + BTN_HEIGHT - 1,
+                  BTN_RADIUS, COLOR_ERROR_R, COLOR_ERROR_G, COLOR_ERROR_B, 255);
+   if (a->dismiss_tex) {
+      SDL_SetTextureColorMod(a->dismiss_tex, 0xFF, 0xFF, 0xFF);
+      SDL_SetTextureAlphaMod(a->dismiss_tex, 255);
+      SDL_Rect tdst = { dismiss_x + (BTN_WIDTH - a->dismiss_w) / 2,
+                        content_y + (BTN_HEIGHT - a->dismiss_h) / 2, a->dismiss_w, a->dismiss_h };
+      SDL_RenderCopy(r, a->dismiss_tex, NULL, &tdst);
+   }
 
    if (can_snooze) {
-      int total_w = BTN_WIDTH * 2 + BTN_GAP;
-      int btn_x_dismiss = cx - total_w / 2;
-      int btn_x_snooze = btn_x_dismiss + BTN_WIDTH + BTN_GAP;
-
-      /* Dismiss button (red tinted) */
-      a->dismiss_btn = (SDL_Rect){ btn_x_dismiss, btn_y, BTN_WIDTH, BTN_HEIGHT };
-      draw_rounded_rect(r, &a->dismiss_btn, COLOR_ERROR_R, COLOR_ERROR_G, COLOR_ERROR_B,
-                        (uint8_t)(alpha * 200));
-      if (a->dismiss_tex) {
-         SDL_SetTextureColorMod(a->dismiss_tex, 0xFF, 0xFF, 0xFF);
-         SDL_SetTextureAlphaMod(a->dismiss_tex, text_a);
-         SDL_Rect tdst = { btn_x_dismiss + (BTN_WIDTH - a->dismiss_w) / 2,
-                           btn_y + (BTN_HEIGHT - a->dismiss_h) / 2, a->dismiss_w, a->dismiss_h };
-         SDL_RenderCopy(r, a->dismiss_tex, NULL, &tdst);
-      }
-
-      /* Snooze button (darker, subtle) */
-      a->snooze_btn = (SDL_Rect){ btn_x_snooze, btn_y, BTN_WIDTH, BTN_HEIGHT };
-      draw_rounded_rect(r, &a->snooze_btn, 0x40, 0x40, 0x50, (uint8_t)(alpha * 200));
+      /* Snooze button (dark grey) */
+      int snooze_x = btn_area_x + BTN_WIDTH + BTN_GAP;
+      a->snooze_btn = (SDL_Rect){ snooze_x, content_y, BTN_WIDTH, BTN_HEIGHT };
+      roundedBoxRGBA(r, snooze_x, content_y, snooze_x + BTN_WIDTH - 1, content_y + BTN_HEIGHT - 1,
+                     BTN_RADIUS, 0x40, 0x40, 0x50, 255);
       if (a->snooze_tex) {
          SDL_SetTextureColorMod(a->snooze_tex, 0xCC, 0xCC, 0xCC);
-         SDL_SetTextureAlphaMod(a->snooze_tex, text_a);
-         SDL_Rect tdst = { btn_x_snooze + (BTN_WIDTH - a->snooze_w) / 2,
-                           btn_y + (BTN_HEIGHT - a->snooze_h) / 2, a->snooze_w, a->snooze_h };
+         SDL_SetTextureAlphaMod(a->snooze_tex, 255);
+         SDL_Rect tdst = { snooze_x + (BTN_WIDTH - a->snooze_w) / 2,
+                           content_y + (BTN_HEIGHT - a->snooze_h) / 2, a->snooze_w, a->snooze_h };
          SDL_RenderCopy(r, a->snooze_tex, NULL, &tdst);
       }
    } else {
-      /* Single centered dismiss button for timers/reminders */
-      int btn_x_dismiss = cx - BTN_WIDTH / 2;
-      a->dismiss_btn = (SDL_Rect){ btn_x_dismiss, btn_y, BTN_WIDTH, BTN_HEIGHT };
-      draw_rounded_rect(r, &a->dismiss_btn, COLOR_ERROR_R, COLOR_ERROR_G, COLOR_ERROR_B,
-                        (uint8_t)(alpha * 200));
-      if (a->dismiss_tex) {
-         SDL_SetTextureColorMod(a->dismiss_tex, 0xFF, 0xFF, 0xFF);
-         SDL_SetTextureAlphaMod(a->dismiss_tex, text_a);
-         SDL_Rect tdst = { btn_x_dismiss + (BTN_WIDTH - a->dismiss_w) / 2,
-                           btn_y + (BTN_HEIGHT - a->dismiss_h) / 2, a->dismiss_w, a->dismiss_h };
-         SDL_RenderCopy(r, a->dismiss_tex, NULL, &tdst);
-      }
-      a->snooze_btn = (SDL_Rect){ 0, 0, 0, 0 }; /* No snooze hit area */
-   }
-
-   /* 6. Pulsing border for alarms */
-   if (strcmp(type, "alarm") == 0 && a->state == ALARM_STATE_ACTIVE) {
-      float pulse = 0.5f + 0.5f * sinf((float)time_sec * 6.2832f); /* 1Hz */
-      uint8_t border_a = (uint8_t)(pulse * 120.0f);
-      SDL_SetRenderDrawColor(r, title_r, title_g, title_b, border_a);
-      for (int i = 0; i < 3; i++) {
-         SDL_Rect border = { i, i, a->screen_w - 2 * i, a->screen_h - 2 * i };
-         SDL_RenderDrawRect(r, &border);
-      }
+      a->snooze_btn = (SDL_Rect){ 0, 0, 0, 0 };
    }
 }
 
@@ -450,7 +397,7 @@ void ui_alarm_render(ui_alarm_t *a, SDL_Renderer *r, double time_sec) {
  * ============================================================================= */
 
 bool ui_alarm_handle_tap(ui_alarm_t *a, int x, int y) {
-   if (a->state != ALARM_STATE_ACTIVE && a->state != ALARM_STATE_FADING_IN)
+   if (a->state != ALARM_STATE_ACTIVE)
       return false;
 
    SDL_Point p = { x, y };

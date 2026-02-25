@@ -20,7 +20,7 @@
  *
  * Alarm/Timer Overlay for DAWN Satellite SDL UI
  *
- * Full-screen overlay for alarm/timer/reminder notifications with
+ * Solid card overlay for alarm/timer/reminder notifications with
  * dismiss and snooze buttons. Renders above screensaver.
  */
 
@@ -42,9 +42,7 @@ struct audio_playback; /* forward declare */
 
 typedef enum {
    ALARM_STATE_IDLE,
-   ALARM_STATE_FADING_IN,
    ALARM_STATE_ACTIVE,
-   ALARM_STATE_FADING_OUT,
 } alarm_overlay_state_t;
 
 typedef struct {
@@ -83,10 +81,6 @@ typedef struct {
    /* Button hit areas (set during render) */
    SDL_Rect dismiss_btn;
    SDL_Rect snooze_btn;
-
-   /* Fade animation */
-   double fade_start;
-   float fade_alpha; /* 0.0–1.0 */
 
    /* Callbacks (set by sdl_ui.c) */
    void (*on_dismiss)(int64_t event_id, void *userdata);
