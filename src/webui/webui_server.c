@@ -2860,9 +2860,9 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
          handle_music_queue(conn, payload);
       }
    }
-   /* Scheduler dismiss/snooze from WebUI client */
+   /* Scheduler dismiss/snooze from WebUI or satellite client */
    else if (strcmp(type, "scheduler_action") == 0) {
-      if (!conn_require_auth(conn))
+      if (!conn_is_satellite_session(conn) && !conn_require_auth(conn))
          return;
       if (!payload)
          return;
@@ -2878,12 +2878,13 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
       } else if (event_id <= 0) {
          send_error_impl(conn->wsi, "INVALID_PARAM", "Missing or invalid event_id");
       } else {
-         /* Verify the event belongs to this user */
          sched_event_t ev;
          int get_rc = scheduler_db_get(event_id, &ev);
          if (get_rc != 0) {
             send_error_impl(conn->wsi, "NOT_FOUND", "Event not found");
-         } else if (ev.user_id != conn->auth_user_id) {
+         } else if (!conn->is_satellite && ev.user_id != conn->auth_user_id) {
+            /* Satellites can dismiss any announced event; WebUI users can only
+             * dismiss their own events. */
             send_error_impl(conn->wsi, "FORBIDDEN", "Not your event");
          } else if (strcmp(action, "dismiss") == 0) {
             int rc = scheduler_dismiss(event_id);

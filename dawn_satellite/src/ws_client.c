@@ -281,8 +281,6 @@ static int callback_ws(struct lws *wsi,
 
                if (n < 0) {
                   LOG_ERROR("Write failed");
-               } else {
-                  LOG_DEBUG("Sent %d bytes", n);
                }
             }
 
@@ -350,7 +348,8 @@ static void handle_message(ws_client_t *client, const char *msg, size_t len) {
    struct json_object *payload = NULL;
    json_object_object_get_ex(root, "payload", &payload);
 
-   LOG_DEBUG("Received message type: %s", type);
+   if (strcmp(type, "satellite_pong") != 0)
+      LOG_DEBUG("Received message type: %s", type);
 
    if (strcmp(type, "satellite_register_ack") == 0) {
       if (payload) {
@@ -406,7 +405,7 @@ static void handle_message(ws_client_t *client, const char *msg, size_t len) {
          }
       }
    } else if (strcmp(type, "satellite_pong") == 0) {
-      LOG_DEBUG("Pong received");
+      /* Pong received — no action needed */
    } else if (strcmp(type, "state") == 0) {
       if (payload) {
          struct json_object *state_obj, *detail_obj;
@@ -475,7 +474,13 @@ static void handle_message(ws_client_t *client, const char *msg, size_t len) {
             message = json_object_get_string(msg_obj);
          }
 
-         LOG_ERROR("Error [%s]: %s", code, message);
+         /* NOT_FOUND is typically a harmless race (e.g. dismiss for already-dismissed
+          * timer). Log as warning instead of error. */
+         if (code && strcmp(code, "NOT_FOUND") == 0) {
+            LOG_WARNING("Server: [%s]: %s", code, message);
+         } else {
+            LOG_ERROR("Error [%s]: %s", code, message);
+         }
          snprintf(client->error_msg, sizeof(client->error_msg), "[%s] %s", code, message);
       }
    } else if (strcmp(type, "transcript") == 0) {

@@ -1968,14 +1968,15 @@ static void alarm_notify_cb(const ws_alarm_notify_t *alarm, void *user_data) {
    sdl_ui_t *ui = (sdl_ui_t *)user_data;
 
    /* Non-ringing statuses (dismissed, snoozed, timed_out) close the overlay.
-    * However, ignore server-side auto-dismiss for timers/reminders — the daemon
+    * Ignore server-side auto-dismiss for timers/reminders — the daemon
     * auto-dismisses after its local chime (~750ms), but the satellite overlay
-    * just appeared and should stay up until the user taps dismiss. Only honor
-    * server dismiss for alarms (explicit user action) and timed_out. */
+    * just appeared and should stay up until the user taps dismiss.
+    * Honor: explicit user dismiss (any type), alarm dismiss, timed_out. */
    if (alarm->status[0] && strcmp(alarm->status, "ringing") != 0) {
       bool is_timeout = (strcmp(alarm->status, "timed_out") == 0);
+      bool is_auto = (strncmp(alarm->label, "Auto-", 5) == 0);
       bool is_alarm = (strcmp(alarm->type, "alarm") == 0);
-      if (is_alarm || is_timeout) {
+      if (is_timeout || is_alarm || !is_auto) {
          ui_alarm_dismiss(&ui->alarm);
       }
       return;
