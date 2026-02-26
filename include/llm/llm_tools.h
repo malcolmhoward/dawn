@@ -170,6 +170,7 @@ typedef struct {
    char result[LLM_TOOLS_RESULT_LEN];   /**< Execution result text */
    bool success;                        /**< true if execution succeeded */
    bool skip_followup;       /**< If true, return result directly without LLM follow-up */
+   bool should_respond;      /**< If false, tool handled its own output — suppress follow-up */
    char *vision_image;       /**< Base64 vision image (caller must free) */
    size_t vision_image_size; /**< Size of vision image data */
 } tool_result_t;
@@ -636,6 +637,7 @@ bool llm_tools_is_duplicate_call(struct json_object *history,
  */
 typedef struct {
    bool skip_followup;         /**< True if follow-up should be skipped */
+   bool all_silent;            /**< True if all tools set should_respond=false (history-safe) */
    bool has_pending_vision;    /**< True if viewing tool captured an image */
    const char *pending_vision; /**< Base64 vision data (if any) */
    size_t pending_vision_size; /**< Size of pending vision */

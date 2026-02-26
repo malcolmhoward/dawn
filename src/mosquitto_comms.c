@@ -86,8 +86,6 @@ char *switchLlmCallback(const char *actionName, char *value, int *should_respond
  * - All callbacks MUST return heap-allocated strings (via malloc/strdup) or NULL
  * - Caller is responsible for freeing the returned value
  * - This makes callbacks thread-safe (no static buffers)
- *
- * TODO: should_respond is not being used consistently. This needs review.
  */
 /* Forward declaration for memoryCallback (defined in memory_callback.c) */
 char *memoryCallback(const char *actionName, char *value, int *should_respond);

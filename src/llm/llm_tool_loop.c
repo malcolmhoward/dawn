@@ -413,6 +413,18 @@ char *llm_tool_iteration_loop(llm_tool_loop_params_t *params) {
          append_openai_tool_history(params->conversation_history, &result, results);
       }
 
+      /* Step 7b: All-silent check — tools handled their own output */
+      if (followup.all_silent) {
+         LOG_INFO("Tool loop: All tools silent (should_respond=false), skipping follow-up");
+         append_closing_message(params->conversation_history,
+                                "[Tool execution completed without follow-up response]",
+                                params->history_format);
+         free_tool_result_vision(results);
+         free(results);
+         llm_tool_response_free(&result);
+         return strdup(""); /* Empty = no TTS output */
+      }
+
       /* Step 8: Check iteration limit */
       if (iteration >= LLM_TOOLS_MAX_ITERATIONS) {
          LOG_WARNING("Tool loop: Max iterations (%d) reached", LLM_TOOLS_MAX_ITERATIONS);

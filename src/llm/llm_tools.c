@@ -1249,6 +1249,7 @@ static int llm_tools_execute_from_treg(const tool_call_t *call,
       }
 
       result->skip_followup = meta->skip_followup || exec_result.skip_followup;
+      result->should_respond = exec_result.should_respond;
       notify_tool_execution(call->name, call->arguments, result->result, result->success);
       cmd_exec_result_free(&exec_result);
       return result->success ? 0 : 1;
@@ -1268,6 +1269,7 @@ static int llm_tools_execute_from_treg(const tool_call_t *call,
       }
       result->success = true;
       result->skip_followup = meta->skip_followup;
+      result->should_respond = (should_respond != 0);
 
       notify_tool_execution(call->name, call->arguments, result->result, result->success);
       return 0;
@@ -1287,6 +1289,7 @@ static int llm_tools_execute_from_treg(const tool_call_t *call,
       }
       result->success = true;
       result->skip_followup = meta->skip_followup || exec_result.skip_followup;
+      result->should_respond = exec_result.should_respond;
    } else {
       if (exec_result.result) {
          safe_strncpy(result->result, exec_result.result, LLM_TOOLS_RESULT_LEN);
@@ -1308,6 +1311,7 @@ int llm_tools_execute(const tool_call_t *call, tool_result_t *result) {
 
    memset(result, 0, sizeof(*result));
    safe_strncpy(result->tool_call_id, call->id, LLM_TOOLS_ID_LEN);
+   result->should_respond = true; /* Default: respond unless callback says otherwise */
 
    /* Look up tool in tool_registry */
    const tool_metadata_t *treg_meta = tool_registry_find(call->name);
@@ -1473,15 +1477,26 @@ char *llm_tools_get_direct_response(const tool_result_list_t *results) {
       return NULL;
    }
 
-   /* For single result, just return it directly */
+   /* For single result, return it if should_respond is set */
    if (results->count == 1) {
+      if (!results->results[0].should_respond) {
+         return NULL; /* Tool handled its own output */
+      }
       return strdup(results->results[0].result);
    }
 
-   /* For multiple results, concatenate them */
+   /* For multiple results, concatenate only should_respond=true results */
    size_t total_len = 0;
+   int respondable = 0;
    for (int i = 0; i < results->count; i++) {
-      total_len += strlen(results->results[i].result) + 2; /* +2 for newline */
+      if (results->results[i].should_respond) {
+         total_len += strlen(results->results[i].result) + 2; /* +2 for newline */
+         respondable++;
+      }
+   }
+
+   if (respondable == 0) {
+      return NULL; /* All tools handled their own output */
    }
 
    char *response = malloc(total_len + 1);
@@ -1491,11 +1506,16 @@ char *llm_tools_get_direct_response(const tool_result_list_t *results) {
 
    /* Use pointer offset instead of strcat to avoid O(n²) */
    char *ptr = response;
+   int written = 0;
    for (int i = 0; i < results->count; i++) {
+      if (!results->results[i].should_respond) {
+         continue;
+      }
       size_t len = strlen(results->results[i].result);
       memcpy(ptr, results->results[i].result, len);
       ptr += len;
-      if (i < results->count - 1) {
+      written++;
+      if (written < respondable) {
          *ptr++ = '\n';
       }
    }
@@ -2067,6 +2087,21 @@ void llm_tools_prepare_followup(const tool_result_list_t *results, tool_followup
    if (ctx->skip_followup) {
       /* Get direct response for TTS output */
       ctx->direct_response = llm_tools_get_direct_response(results);
+   }
+
+   /* Check if all tools set should_respond=false (callback handled output).
+    * Unlike skip_followup, this is history-safe — results can be appended.
+    * Note: only evaluated when skip_followup is false, making the two paths
+    * mutually exclusive in llm_tool_iteration_loop(). */
+   if (!ctx->skip_followup && results && results->count > 0) {
+      bool all_silent = true;
+      for (int i = 0; i < results->count; i++) {
+         if (results->results[i].should_respond) {
+            all_silent = false;
+            break;
+         }
+      }
+      ctx->all_silent = all_silent;
    }
 
    /* Check for vision data in tool results (session-isolated) */
