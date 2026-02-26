@@ -2553,23 +2553,17 @@ int main(int argc, char *argv[]) {
                   float threshold = tts_is_active ? g_config.vad.speech_threshold_tts
                                                   : g_config.vad.speech_threshold;
 
-                  // ERLE-based VAD gating: when AEC is struggling, be more conservative
-                  float erle_db = 0.0f;
-                  bool erle_valid = false;
 #ifdef ENABLE_AEC
+                  // AEC echo metrics for barge-in diagnostics. ERLE is unreliable at 48kHz
+                  // (reads 0.2-2.8 dB regardless of actual performance). echo_likelihood may
+                  // be viable for future VAD gating — log both to evaluate signal quality.
+                  float erle_db = 0.0f;
+                  float echo_likelihood = 0.0f;
                   if (tts_is_active) {
-                     erle_valid = aec_get_erle(&erle_db);
-                     // TODO: ERLE gating disabled for debugging - AEC3 not converging
-                     // When ERLE works (>6dB), re-enable this block
-                     if (false && erle_valid && erle_db < 6.0f) {
-                        // Poor echo cancellation - reject VAD entirely during TTS
-                        // This prevents false triggers from residual echo
-                        if (vad_speech_prob >= threshold) {
-                           LOG_INFO("ERLE gating: rejecting VAD=%.3f (ERLE=%.1fdB < 6dB)",
-                                    vad_speech_prob, erle_db);
-                        }
-                        tts_vad_debounce = 0;
-                        continue;  // Skip this VAD frame
+                     aec_stats_t aec_metrics;
+                     if (aec_get_stats(&aec_metrics) == 0 && aec_metrics.metrics_valid) {
+                        erle_db = aec_metrics.erle_db;
+                        echo_likelihood = aec_metrics.residual_echo_likelihood;
                      }
                   }
 #endif
@@ -2586,9 +2580,11 @@ int main(int argc, char *argv[]) {
                         // During TTS (or cooldown): require consecutive detections (debounce)
                         tts_vad_debounce++;
 #ifdef ENABLE_AEC
-                        LOG_INFO("TTS_VAD: prob=%.3f debounce=%d/%d ERLE=%.1fdB tts_playing=%d",
-                                 vad_speech_prob, tts_vad_debounce, VAD_TTS_DEBOUNCE_COUNT, erle_db,
-                                 tts_playing_now);
+                        LOG_INFO(
+                            "TTS_VAD: prob=%.3f debounce=%d/%d ERLE=%.1fdB echo_likelihood=%.2f"
+                            " tts_playing=%d",
+                            vad_speech_prob, tts_vad_debounce, VAD_TTS_DEBOUNCE_COUNT, erle_db,
+                            echo_likelihood, tts_playing_now);
 #else
                         LOG_INFO("TTS_VAD: prob=%.3f debounce=%d/%d tts_playing=%d",
                                  vad_speech_prob, tts_vad_debounce, VAD_TTS_DEBOUNCE_COUNT,
@@ -2598,8 +2594,9 @@ int main(int argc, char *argv[]) {
                            speech_detected = 1;
 #ifdef ENABLE_AEC
                            LOG_INFO("SILENCE: TTS barge-in confirmed (debounce=%d, VAD=%.3f, "
-                                    "ERLE=%.1fdB, startup=%ldms)",
-                                    tts_vad_debounce, vad_speech_prob, erle_db, startup_elapsed_ms);
+                                    "ERLE=%.1fdB, echo_likelihood=%.2f, startup=%ldms)",
+                                    tts_vad_debounce, vad_speech_prob, erle_db, echo_likelihood,
+                                    startup_elapsed_ms);
 #else
                            LOG_INFO("SILENCE: TTS barge-in confirmed (debounce=%d, VAD=%.3f, "
                                     "startup=%ldms)",
