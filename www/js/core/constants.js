@@ -34,8 +34,8 @@
    const WS_BIN_MUSIC_SEGMENT_END = 0x21; // Server -> Client: End of buffered segment
 
    // Context/token limits
-   // Default context window size - used when model-specific limit is unknown
-   // TODO: Make this dynamic based on selected model (GPT-4o: 128k, Claude: 200k, Gemini: 1M+)
+   // Default context window size - used as ultimate fallback when server hasn't sent model info yet.
+   // Server sends dynamic context_max based on actual model via WebSocket 'context' messages.
    const DEFAULT_CONTEXT_MAX = 128000;
 
    // Expose globally

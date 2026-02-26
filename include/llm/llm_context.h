@@ -45,11 +45,12 @@ extern "C" {
  * Constants
  * ============================================================================= */
 
-#define LLM_CONTEXT_DEFAULT_LOCAL 8192    /* Default local context if query fails */
-#define LLM_CONTEXT_DEFAULT_OPENAI 128000 /* GPT-4o default */
-#define LLM_CONTEXT_DEFAULT_CLAUDE 200000 /* Claude 3/4 default */
-#define LLM_CONTEXT_SUMMARY_TARGET 500    /* Target tokens for summary */
-#define LLM_CONTEXT_KEEP_EXCHANGES 2      /* Keep last N user/assistant pairs */
+#define LLM_CONTEXT_DEFAULT_LOCAL 8192     /* Default local context if query fails */
+#define LLM_CONTEXT_DEFAULT_OPENAI 128000  /* GPT-4o default */
+#define LLM_CONTEXT_DEFAULT_CLAUDE 200000  /* Claude default */
+#define LLM_CONTEXT_DEFAULT_GEMINI 1048576 /* Gemini default (1M) */
+#define LLM_CONTEXT_SUMMARY_TARGET 500     /* Target tokens for summary */
+#define LLM_CONTEXT_KEEP_EXCHANGES 2       /* Keep last N user/assistant pairs */
 
 /* =============================================================================
  * Types

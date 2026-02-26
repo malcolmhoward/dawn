@@ -174,9 +174,9 @@ typedef struct {
 #define LLM_CLOUD_MODEL_NAME_MAX 64
 
 /* Default fallback models when no models are configured
- * Updated: 2026-01 - Update these when new model generations are released */
-#define LLM_DEFAULT_OPENAI_MODEL "gpt-5-mini"
-#define LLM_DEFAULT_CLAUDE_MODEL "claude-sonnet-4-5"
+ * Updated: 2026-02 - Update these when new model generations are released */
+#define LLM_DEFAULT_OPENAI_MODEL "gpt-5.2"
+#define LLM_DEFAULT_CLAUDE_MODEL "claude-sonnet-4-6"
 #define LLM_DEFAULT_GEMINI_MODEL "gemini-2.5-flash"
 
 typedef struct {

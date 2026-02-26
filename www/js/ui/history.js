@@ -46,6 +46,14 @@
    // Track scroll position for restore (M12)
    let savedScrollPosition = 0;
 
+   // Track the last known context_max from the server (dynamic, model-specific)
+   let knownContextMax = null;
+
+   // Guard: when a conversation is loaded with saved context, ignore the next
+   // context message's "current" value (it comes from set_session_llm before the
+   // backend session has been updated with the loaded conversation's token count).
+   let loadedContextGuard = null; // { current, max } from load_conversation_response
+
    /* =============================================================================
     * Constants
     * ============================================================================= */
@@ -467,12 +475,18 @@
                },
                typeof DawnMetrics !== 'undefined' ? DawnMetrics.updatePanel : null
             );
+            // Guard against the upcoming set_session_llm context message overwriting
+            loadedContextGuard = {
+               current: payload.context_tokens,
+               max: payload.context_max,
+            };
          } else {
-            // No saved context - reset to 0 with default max
-            const defaultMax =
-               typeof DawnConfig !== 'undefined' ? DawnConfig.DEFAULT_CONTEXT_MAX : 128000;
+            // No saved context - reset to 0 with best known max
+            const fallbackMax =
+               knownContextMax ||
+               (typeof DawnConfig !== 'undefined' ? DawnConfig.DEFAULT_CONTEXT_MAX : 128000);
             DawnContextGauge.updateDisplay(
-               { current: 0, max: defaultMax, usage: 0 },
+               { current: 0, max: fallbackMax, usage: 0 },
                typeof DawnMetrics !== 'undefined' ? DawnMetrics.updatePanel : null
             );
          }
@@ -1131,6 +1145,7 @@
       setActiveConversationId(null);
       historyState.pendingMessages = [];
       historyState.creatingConversation = false;
+      loadedContextGuard = null;
 
       setArchivedMode(false);
 
@@ -1146,10 +1161,11 @@
 
       // Reset context gauge to 0 (new conversation has no tokens)
       if (typeof DawnContextGauge !== 'undefined') {
-         const defaultMax =
-            typeof DawnConfig !== 'undefined' ? DawnConfig.DEFAULT_CONTEXT_MAX : 128000;
+         const fallbackMax =
+            knownContextMax ||
+            (typeof DawnConfig !== 'undefined' ? DawnConfig.DEFAULT_CONTEXT_MAX : 128000);
          DawnContextGauge.updateDisplay(
-            { current: 0, max: defaultMax, usage: 0 },
+            { current: 0, max: fallbackMax, usage: 0 },
             typeof DawnMetrics !== 'undefined' ? DawnMetrics.updatePanel : null
          );
       }
@@ -1477,6 +1493,36 @@
     * Export
     * ============================================================================= */
 
+   /**
+    * Update the known context max from server-provided data.
+    * Called when a 'context' message arrives with model-specific max.
+    * @param {number} max - Context max from server
+    */
+   function setKnownContextMax(max) {
+      if (max && max > 0) {
+         knownContextMax = max;
+      }
+   }
+
+   /**
+    * Get the loaded context guard (non-destructive).
+    * Returns { current, max } if a conversation was just loaded with saved context,
+    * or null if no guard is active. The guard stays active until a new conversation
+    * is loaded or a new chat is started (multiple set_session_llm responses can
+    * arrive after a single load). Called by dawn.js context handler.
+    */
+   function getContextGuard() {
+      return loadedContextGuard;
+   }
+
+   /**
+    * Clear the loaded context guard. Called when a real LLM response arrives
+    * with fresh context data, so subsequent context messages aren't overridden.
+    */
+   function clearContextGuard() {
+      loadedContextGuard = null;
+   }
+
    window.DawnHistory = {
       init: init,
       setCallbacks: setCallbacks,
@@ -1490,6 +1536,9 @@
       requestUpdateContext: requestUpdateContext,
       getActiveConversationId: getActiveConversationId,
       requestLoadMoreMessages: requestLoadMoreMessages,
+      setKnownContextMax: setKnownContextMax,
+      getContextGuard: getContextGuard,
+      clearContextGuard: clearContextGuard,
       // Response handlers
       handleListResponse: handleListConversationsResponse,
       handleNewResponse: handleNewConversationResponse,

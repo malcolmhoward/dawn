@@ -785,7 +785,7 @@ int callback_http(struct lws *wsi,
          bool is_public_path =
              (strcmp(path, "/login.html") == 0 || strcmp(path, "/health") == 0 ||
               strncmp(path, "/css/", 5) == 0 || strncmp(path, "/fonts/", 7) == 0 ||
-              strcmp(path, "/favicon.svg") == 0 ||
+              strcmp(path, "/favicon.svg") == 0 || strcmp(path, "/manifest.json") == 0 ||
               /* AudioWorklet.addModule() doesn't send cookies, so worklet must be public */
               strcmp(path, "/js/audio/capture-worklet.js") == 0);
 

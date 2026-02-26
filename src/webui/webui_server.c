@@ -1001,6 +1001,9 @@ static void send_force_logout_impl(struct lws *wsi, const char *reason) {
    send_json_message(wsi, json);
 }
 
+/* Forward declaration — defined later but called from scheduler dismiss handler */
+void scheduler_broadcast_notification(const sched_event_t *event, const char *text);
+
 static void send_session_token_impl(ws_connection_t *conn, const char *token) {
    char json[512];
 
@@ -2366,6 +2369,25 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
       json_object_object_add(response, "payload", resp_payload);
       send_json_response(conn->wsi, response);
       json_object_put(response);
+
+      /* Send context info via queue (after response) so gauge reflects new model's
+       * limit. Uses queued send to avoid multiple lws_write calls per callback.
+       * Actual session token count preserves saved context on conversation load. */
+      if (success && conn->session) {
+         session_llm_config_t cfg;
+         session_get_llm_config(conn->session, &cfg);
+         int ctx_max = llm_context_get_size(cfg.type, cfg.cloud_provider, cfg.model);
+         if (ctx_max > 0) {
+            int ctx_current = 0;
+            llm_context_usage_t ctx_usage;
+            if (llm_context_get_usage(conn->session->session_id, cfg.type, cfg.cloud_provider,
+                                      cfg.model, &ctx_usage) == 0) {
+               ctx_current = ctx_usage.current_tokens;
+            }
+            webui_send_context(conn->session, ctx_current, ctx_max,
+                               g_config.llm.summarize_threshold);
+         }
+      }
    } else if (strcmp(type, "reconnect") == 0) {
       /* Session reconnection with stored token */
       if (payload) {

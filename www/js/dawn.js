@@ -184,6 +184,10 @@
                if (msg.payload.config) {
                   DawnVision.checkVisionSupport(msg.payload.config);
                }
+               // Set known context_max from current model (for gauge fallback)
+               if (msg.payload.llm_runtime && msg.payload.llm_runtime.context_max) {
+                  DawnHistory.setKnownContextMax(msg.payload.llm_runtime.context_max);
+               }
                break;
             case 'set_config_response':
                DawnSettings.handleSetConfigResponse(msg.payload);
@@ -233,18 +237,36 @@
             case 'set_tools_config_response':
                DawnTools.handleSetConfigResponse(msg.payload);
                break;
-            case 'context':
-               DawnContextGauge.updateDisplay(msg.payload, DawnMetrics.updatePanel);
+            case 'context': {
+               // If a conversation was just loaded with saved context, set_session_llm
+               // context messages arrive with stale "current" values (multiple can arrive
+               // from cascading dropdown updates). Keep using the saved current until a
+               // real LLM response provides fresh data.
+               const guard = DawnHistory.getContextGuard();
+               let ctxPayload = msg.payload;
+               if (guard) {
+                  ctxPayload = {
+                     ...msg.payload,
+                     current: guard.current,
+                     usage: msg.payload.max ? (guard.current / msg.payload.max) * 100 : 0,
+                  };
+               }
+               DawnContextGauge.updateDisplay(ctxPayload, DawnMetrics.updatePanel);
+               // Track latest context_max so fallback values are model-accurate
+               if (ctxPayload.max) {
+                  DawnHistory.setKnownContextMax(ctxPayload.max);
+               }
                // Save context to active conversation for restore on reload
                const activeConvId = DawnHistory.getActiveConversationId();
-               if (activeConvId && msg.payload.current && msg.payload.max) {
+               if (activeConvId && ctxPayload.current && ctxPayload.max) {
                   DawnHistory.requestUpdateContext(
                      activeConvId,
-                     msg.payload.current,
-                     msg.payload.max
+                     ctxPayload.current,
+                     ctxPayload.max
                   );
                }
                break;
+            }
             case 'context_compacted':
                DawnHistory.handleContextCompacted(msg.payload);
                break;
@@ -259,6 +281,8 @@
                break;
             case 'stream_end':
                DawnStreaming.handleEnd(msg.payload);
+               // LLM response complete — next context message will have fresh data
+               DawnHistory.clearContextGuard();
                break;
             case 'thinking_start':
                DawnStreaming.handleThinkingStart(msg.payload);

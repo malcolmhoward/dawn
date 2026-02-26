@@ -62,7 +62,7 @@ typedef struct {
    int context_size;         /* Context size in tokens */
 } model_context_entry_t;
 
-/* OpenAI models (updated December 2025) */
+/* OpenAI models (verified February 2026 from developers.openai.com) */
 static const model_context_entry_t s_openai_models[] = {
    /* GPT-5.x family (400K context) */
    { "gpt-5.2", 400000 },
@@ -70,11 +70,12 @@ static const model_context_entry_t s_openai_models[] = {
    { "gpt-5-mini", 400000 },
    { "gpt-5-nano", 400000 },
    { "gpt-5", 400000 },
-   /* GPT-4.1 family (1M context) */
-   { "gpt-4.1", 1000000 },
-   { "gpt-4.1-mini", 1000000 },
-   { "gpt-4.1-nano", 1000000 },
+   /* GPT-4.1 family (1,047,576 context) */
+   { "gpt-4.1-mini", 1047576 },
+   { "gpt-4.1-nano", 1047576 },
+   { "gpt-4.1", 1047576 },
    /* O-series reasoning models */
+   { "o4-mini", 200000 },
    { "o3-pro", 200000 },
    { "o3-mini", 200000 },
    { "o3", 200000 },
@@ -98,8 +99,17 @@ static const model_context_entry_t s_openai_models[] = {
    { NULL, 0 } /* Sentinel */
 };
 
-/* Claude models (updated December 2025) */
+/* Claude models (verified February 2026 from platform.claude.com)
+ * All Claude models use 200K context (1M available via beta header, but
+ * we report the standard limit since DAWN doesn't use the beta header). */
 static const model_context_entry_t s_claude_models[] = {
+   /* Claude 4.6 family */
+   { "claude-opus-4-6", 200000 },
+   { "claude-sonnet-4-6", 200000 },
+   /* Claude 4.5 family */
+   { "claude-haiku-4-5", 200000 },
+   { "claude-opus-4-5", 200000 },
+   { "claude-sonnet-4-5", 200000 },
    /* Claude 4.x family */
    { "claude-opus-4.5", 200000 },
    { "claude-sonnet-4.5", 200000 },
@@ -111,10 +121,30 @@ static const model_context_entry_t s_claude_models[] = {
    { "claude-3-5-sonnet", 200000 },
    { "claude-3-5-haiku", 200000 },
    { "claude-3.5", 200000 },
-   /* Claude 3 family (some deprecated) */
+   /* Claude 3 family (haiku deprecated April 2026) */
    { "claude-3-opus", 200000 },
    { "claude-3-sonnet", 200000 },
    { "claude-3-haiku", 200000 },
+   { NULL, 0 } /* Sentinel */
+};
+
+/* Gemini models (verified February 2026 from firebase.google.com/docs/ai-logic/models)
+ * All current Gemini models use 1,048,576 (1M) input token limit. */
+static const model_context_entry_t s_gemini_models[] = {
+   /* Gemini 3.x family (preview) */
+   { "gemini-3.1-pro", 1048576 },
+   { "gemini-3-flash", 1048576 },
+   { "gemini-3-pro", 1048576 },
+   /* Gemini 2.5 family */
+   { "gemini-2.5-pro", 1048576 },
+   { "gemini-2.5-flash-lite", 1048576 },
+   { "gemini-2.5-flash", 1048576 },
+   /* Gemini 2.0 (retiring June 2026) */
+   { "gemini-2.0-flash-lite", 1048576 },
+   { "gemini-2.0-flash", 1048576 },
+   /* Legacy Gemini 1.5 */
+   { "gemini-1.5-pro", 1048576 },
+   { "gemini-1.5-flash", 1048576 },
    { NULL, 0 } /* Sentinel */
 };
 
@@ -338,8 +368,13 @@ int llm_context_get_size(llm_type_t type, cloud_provider_t provider, const char 
       if (size == 0) {
          size = LLM_CONTEXT_DEFAULT_CLAUDE;
       }
+   } else if (provider == CLOUD_PROVIDER_GEMINI) {
+      size = lookup_model_context(s_gemini_models, model);
+      if (size == 0) {
+         size = LLM_CONTEXT_DEFAULT_GEMINI;
+      }
    } else {
-      size = LLM_CONTEXT_DEFAULT_OPENAI; /* Fallback */
+      size = LLM_CONTEXT_DEFAULT_OPENAI; /* Fallback for unknown providers */
    }
 
    return size;

@@ -41,6 +41,7 @@
 #include "config/dawn_config.h"
 #include "dawn.h"
 #include "llm/llm_command_parser.h"
+#include "llm/llm_context.h"
 #include "llm/llm_interface.h"
 #include "llm/llm_local_provider.h"
 #include "logging.h"
@@ -181,6 +182,12 @@ void handle_get_config(ws_connection_t *conn) {
                           json_object_new_boolean(llm_has_claude_key()));
    json_object_object_add(llm_runtime, "gemini_available",
                           json_object_new_boolean(llm_has_gemini_key()));
+   /* Include model-specific context size so frontend gauge shows correct max early.
+    * Omit if 0 (unknown model) — frontend falls back to knownContextMax or default. */
+   int ctx_max = llm_context_get_size(resolved.type, resolved.cloud_provider, resolved.model);
+   if (ctx_max > 0) {
+      json_object_object_add(llm_runtime, "context_max", json_object_new_int(ctx_max));
+   }
    json_object_object_add(payload, "llm_runtime", llm_runtime);
 
    /* Add auth state for frontend UI visibility control */
