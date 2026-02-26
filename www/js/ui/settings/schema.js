@@ -44,6 +44,7 @@
                label: 'Log File Path',
                placeholder: 'Leave empty for stdout',
                hint: 'Path to log file, or empty for console output',
+               advanced: true,
             },
             room: {
                type: 'text',
@@ -153,6 +154,7 @@
             bargein: {
                type: 'group',
                label: 'Barge-In',
+               advanced: true,
                fields: {
                   enabled: {
                      type: 'checkbox',
@@ -178,6 +180,7 @@
       commands: {
          label: 'Commands',
          icon: '&#x2328;',
+         advanced: true,
          fields: {
             processing_mode: {
                type: 'select',
@@ -191,6 +194,7 @@
       vad: {
          label: 'Voice Activity Detection',
          icon: '&#x1F3A4;',
+         advanced: true,
          fields: {
             speech_threshold: {
                type: 'number',
@@ -247,6 +251,7 @@
                label: 'Models Path',
                restart: true,
                hint: 'Directory containing Whisper model files',
+               advanced: true,
             },
             model: {
                type: 'dynamic_select',
@@ -267,6 +272,7 @@
                label: 'Models Path',
                restart: true,
                hint: 'Directory containing Piper voice model files',
+               advanced: true,
             },
             voice_model: {
                type: 'dynamic_select',
@@ -283,6 +289,7 @@
                max: 2.0,
                step: 0.05,
                hint: 'Speaking rate: <1.0 = faster, >1.0 = slower',
+               advanced: true,
             },
          },
       },
@@ -301,10 +308,12 @@
                label: 'Max Tokens',
                min: 100,
                hint: 'Maximum tokens in LLM response',
+               advanced: true,
             },
             cloud: {
                type: 'group',
                label: 'Cloud Settings',
+               advanced: true,
                fields: {
                   provider: {
                      type: 'select',
@@ -367,6 +376,7 @@
             local: {
                type: 'group',
                label: 'Local Settings',
+               advanced: true,
                fields: {
                   endpoint: {
                      type: 'text',
@@ -389,6 +399,7 @@
             thinking: {
                type: 'group',
                label: 'Extended Thinking',
+               advanced: true,
                fields: {
                   mode: {
                      type: 'select',
@@ -449,6 +460,7 @@
          label: 'Web Search',
          icon: '&#x1F50D;',
          adminOnly: true,
+         advanced: true,
          fields: {
             engine: {
                type: 'select',
@@ -508,6 +520,7 @@
          label: 'URL Fetcher',
          icon: '&#x1F310;',
          adminOnly: true,
+         advanced: true,
          fields: {
             flaresolverr: {
                type: 'group',
@@ -558,6 +571,7 @@
                max: 4000,
                step: 100,
                hint: 'Max tokens for memory context injected into system prompt (~800 recommended)',
+               advanced: true,
             },
             extraction_provider: {
                type: 'select',
@@ -565,6 +579,7 @@
                options: ['local', 'openai', 'claude'],
                hint: 'LLM provider for extracting facts from conversations',
                id: 'memory-extraction-provider',
+               advanced: true,
             },
             extraction_model: {
                type: 'dynamic_select',
@@ -572,11 +587,13 @@
                hint: 'Model for memory extraction (populated based on provider)',
                dynamicKey: 'memory_extraction_models',
                id: 'memory-extraction-model',
+               advanced: true,
             },
             pruning_enabled: {
                type: 'checkbox',
                label: 'Enable Pruning',
                hint: 'Automatically remove old superseded and stale facts',
+               advanced: true,
             },
             prune_superseded_days: {
                type: 'number',
@@ -584,6 +601,7 @@
                min: 1,
                max: 365,
                hint: 'Keep superseded facts for this many days before deletion',
+               advanced: true,
             },
             prune_stale_days: {
                type: 'number',
@@ -591,6 +609,7 @@
                min: 7,
                max: 730,
                hint: 'Delete low-confidence facts not accessed in this many days',
+               advanced: true,
             },
             prune_stale_min_confidence: {
                type: 'number',
@@ -599,6 +618,7 @@
                max: 1,
                step: 0.1,
                hint: 'Only prune stale facts with confidence below this value (0-1)',
+               advanced: true,
             },
             conversation_idle_timeout_min: {
                type: 'range',
@@ -609,17 +629,20 @@
                hint: 'Minutes of idle time before auto-saving voice conversations (0 = disabled, 10+ to enable)',
                ariaLabel: 'Voice conversation idle timeout in minutes',
                displayValue: (val) => (val === 0 ? 'Disabled' : `${val} minutes`),
+               advanced: true,
             },
             default_voice_user_id: {
                type: 'dynamic_select',
                label: 'Default Voice User',
                dynamicKey: 'users',
                hint: 'User account for local microphone and DAP voice conversations',
+               advanced: true,
             },
             decay_enabled: {
                type: 'checkbox',
                label: 'Enable Confidence Decay',
                hint: 'Nightly decay reduces confidence of unused memories over time',
+               advanced: true,
             },
             decay_hour: {
                type: 'number',
@@ -627,6 +650,7 @@
                min: 0,
                max: 23,
                hint: 'Hour of day to run nightly decay (default: 2 AM)',
+               advanced: true,
             },
             decay_inferred_weekly: {
                type: 'number',
@@ -635,6 +659,7 @@
                max: 1,
                step: 0.01,
                hint: 'Weekly confidence multiplier for inferred facts (0.95 = 5% decay/week)',
+               advanced: true,
             },
             decay_explicit_weekly: {
                type: 'number',
@@ -643,6 +668,7 @@
                max: 1,
                step: 0.01,
                hint: 'Weekly confidence multiplier for explicit facts (0.98 = 2% decay/week)',
+               advanced: true,
             },
             decay_preference_weekly: {
                type: 'number',
@@ -651,6 +677,7 @@
                max: 1,
                step: 0.01,
                hint: 'Weekly confidence multiplier for preferences (0.97 = 3% decay/week)',
+               advanced: true,
             },
             decay_inferred_floor: {
                type: 'number',
@@ -659,6 +686,7 @@
                max: 1,
                step: 0.05,
                hint: 'Minimum confidence for inferred facts after decay (0 = can decay to zero)',
+               advanced: true,
             },
             decay_explicit_floor: {
                type: 'number',
@@ -667,6 +695,7 @@
                max: 1,
                step: 0.05,
                hint: 'Minimum confidence for explicit facts after decay',
+               advanced: true,
             },
             decay_preference_floor: {
                type: 'number',
@@ -675,6 +704,7 @@
                max: 1,
                step: 0.05,
                hint: 'Minimum confidence for preferences after decay',
+               advanced: true,
             },
             decay_prune_threshold: {
                type: 'number',
@@ -683,6 +713,7 @@
                max: 0.5,
                step: 0.05,
                hint: 'Delete facts with confidence below this value after decay',
+               advanced: true,
             },
             summary_retention_days: {
                type: 'number',
@@ -690,6 +721,7 @@
                min: 7,
                max: 365,
                hint: 'Delete conversation summaries older than this',
+               advanced: true,
             },
             access_reinforcement_boost: {
                type: 'number',
@@ -698,12 +730,14 @@
                max: 0.5,
                step: 0.01,
                hint: 'Confidence boost when a fact is accessed (time-gated to once per hour)',
+               advanced: true,
             },
          },
       },
       mqtt: {
          label: 'MQTT',
          icon: '&#x1F4E1;',
+         advanced: true,
          fields: {
             enabled: {
                type: 'checkbox',
@@ -728,6 +762,7 @@
          label: 'Network (DAP)',
          description: 'Dawn Audio Protocol server for ESP32 and other remote voice clients',
          icon: '&#x1F4F6;',
+         advanced: true,
          fields: {
             enabled: {
                type: 'checkbox',
@@ -783,6 +818,7 @@
                min: 1,
                restart: true,
                hint: 'Maximum concurrent browser connections',
+               advanced: true,
             },
             workers: {
                type: 'number',
@@ -791,6 +827,7 @@
                max: 8,
                restart: true,
                hint: 'Parallel speech recognition threads',
+               advanced: true,
             },
             bind_address: {
                type: 'dynamic_select',
@@ -798,18 +835,21 @@
                restart: true,
                hint: 'Network interface to listen on',
                dynamicKey: 'bind_addresses',
+               advanced: true,
             },
             https: {
                type: 'checkbox',
                label: 'Enable HTTPS',
                restart: true,
                hint: 'Required for microphone access on remote connections',
+               advanced: true,
             },
          },
       },
       shutdown: {
          label: 'Shutdown',
          icon: '&#x1F512;',
+         advanced: true,
          fields: {
             enabled: {
                type: 'checkbox',
@@ -826,6 +866,7 @@
       debug: {
          label: 'Debug',
          icon: '&#x1F41B;',
+         advanced: true,
          fields: {
             mic_record: { type: 'checkbox', label: 'Record Microphone' },
             asr_record: { type: 'checkbox', label: 'Record ASR Input' },
@@ -836,6 +877,7 @@
       tui: {
          label: 'Terminal UI',
          icon: '&#x1F5A5;',
+         advanced: true,
          fields: {
             enabled: {
                type: 'checkbox',
@@ -848,6 +890,7 @@
       paths: {
          label: 'Paths',
          icon: '&#x1F4C1;',
+         advanced: true,
          fields: {
             data_dir: {
                type: 'text',
@@ -866,6 +909,7 @@
          label: 'Image Storage',
          icon: '&#x1F5BC;',
          adminOnly: true,
+         advanced: true,
          description: 'Settings for uploaded images in vision conversations',
          fields: {
             retention_days: {
@@ -894,6 +938,7 @@
          label: 'Music Streaming',
          icon: '&#x1F3B5;',
          adminOnly: true,
+         advanced: true,
          description: 'Settings for WebUI music streaming to browsers',
          fields: {
             scan_interval_minutes: {
@@ -950,6 +995,7 @@
                min: 1,
                max: 60,
                hint: 'Default snooze duration when user says "snooze"',
+               advanced: true,
             },
             max_snooze_count: {
                type: 'number',
@@ -957,6 +1003,7 @@
                min: 1,
                max: 20,
                hint: 'Auto-cancel after this many snoozes',
+               advanced: true,
             },
             alarm_timeout_sec: {
                type: 'number',
@@ -964,6 +1011,7 @@
                min: 10,
                max: 300,
                hint: 'Stop ringing after this duration',
+               advanced: true,
             },
             alarm_volume: {
                type: 'number',
@@ -971,6 +1019,7 @@
                min: 0,
                max: 100,
                hint: 'Alarm sound volume (0-100)',
+               advanced: true,
             },
             max_events_per_user: {
                type: 'number',
@@ -978,6 +1027,7 @@
                min: 1,
                max: 1000,
                hint: 'Limit active events per user',
+               advanced: true,
             },
             max_events_total: {
                type: 'number',
@@ -985,17 +1035,20 @@
                min: 1,
                max: 10000,
                hint: 'Hard cap across all users',
+               advanced: true,
             },
             missed_event_recovery: {
                type: 'checkbox',
                label: 'Missed Event Recovery',
                hint: 'Handle missed events after daemon restart',
+               advanced: true,
             },
             missed_task_policy: {
                type: 'select',
                label: 'Missed Task Policy',
                options: ['skip', 'execute'],
                hint: 'What to do with missed scheduled tasks after restart',
+               advanced: true,
             },
             missed_task_max_age_sec: {
                type: 'number',
@@ -1003,6 +1056,7 @@
                min: 60,
                max: 86400,
                hint: 'Skip missed tasks older than this even if policy=execute',
+               advanced: true,
             },
             event_retention_days: {
                type: 'number',
@@ -1010,10 +1064,91 @@
                min: 1,
                max: 365,
                hint: 'Clean up completed/cancelled events after this many days',
+               advanced: true,
             },
          },
       },
    };
+
+   /**
+    * Section categories for visual grouping (render order)
+    * Sections not listed here will not be rendered.
+    */
+   const SECTION_CATEGORIES = [
+      {
+         id: 'identity',
+         label: 'Identity & Basics',
+         icon: '&#x2699;',
+         sections: ['general', 'persona', 'localization'],
+      },
+      {
+         id: 'voice',
+         label: 'Voice & Audio',
+         icon: '&#x1F50A;',
+         sections: ['audio', 'vad', 'asr', 'tts'],
+      },
+      {
+         id: 'ai',
+         label: 'AI Engine',
+         icon: '&#x1F916;',
+         sections: ['llm', 'commands'],
+      },
+      {
+         id: 'tools',
+         label: 'Tools & Extensions',
+         icon: '&#x1F527;',
+         sections: ['tool_calling', 'search', 'url_fetcher'],
+      },
+      {
+         id: 'memory',
+         label: 'Memory',
+         icon: '&#x1F9E0;',
+         sections: ['memory'],
+      },
+      {
+         id: 'media',
+         label: 'Music & Media',
+         icon: '&#x1F3B5;',
+         sections: ['music', 'images'],
+      },
+      {
+         id: 'scheduling',
+         label: 'Scheduling',
+         icon: '&#x23F0;',
+         sections: ['scheduler'],
+      },
+      {
+         id: 'network',
+         label: 'Network & Services',
+         icon: '&#x1F310;',
+         sections: ['network', 'webui', 'mqtt'],
+      },
+      {
+         id: 'system',
+         label: 'System',
+         icon: '&#x1F5A5;',
+         sections: ['paths', 'shutdown', 'debug', 'tui'],
+      },
+   ];
+
+   /**
+    * Create a category header element
+    * @param {Object} category - Category definition
+    * @returns {HTMLElement} Category header element
+    */
+   function createCategoryHeader(category) {
+      const header = document.createElement('div');
+      header.className = 'settings-category-header';
+      header.dataset.category = category.id;
+      header.innerHTML =
+         '<span class="category-icon">' +
+         category.icon +
+         '</span>' +
+         '<span class="category-label">' +
+         escapeHtml(category.label) +
+         '</span>';
+      return header;
+   }
 
    /**
     * Escape HTML for display
@@ -1026,7 +1161,7 @@
    }
 
    /**
-    * Render all settings sections into the container
+    * Render all settings sections into the container, grouped by category
     */
    function renderSettingsSections() {
       if (!sectionsContainer) return;
@@ -1058,10 +1193,38 @@
          virtualConfig.persona.description = Config.getDefaultPersona();
       }
 
-      for (const [sectionKey, sectionDef] of Object.entries(SETTINGS_SCHEMA)) {
-         const configSection = virtualConfig[sectionKey] || {};
-         const sectionEl = createSettingsSection(sectionKey, sectionDef, configSection);
-         sectionsContainer.appendChild(sectionEl);
+      // Render sections grouped by category
+      for (const category of SECTION_CATEGORIES) {
+         const headerEl = createCategoryHeader(category);
+         let allAdminOnly = true;
+         let allAdvanced = true;
+
+         const sectionEls = [];
+         for (const sectionKey of category.sections) {
+            const sectionDef = SETTINGS_SCHEMA[sectionKey];
+            if (!sectionDef) continue;
+
+            const configSection = virtualConfig[sectionKey] || {};
+            const sectionEl = createSettingsSection(sectionKey, sectionDef, configSection);
+            sectionEl.dataset.category = category.id;
+            sectionEls.push(sectionEl);
+
+            if (!sectionDef.adminOnly) allAdminOnly = false;
+            if (!sectionDef.advanced) allAdvanced = false;
+         }
+
+         // Mark category header if all its sections are admin-only or advanced
+         if (allAdminOnly && sectionEls.length > 0) {
+            headerEl.classList.add('admin-only');
+         }
+         if (allAdvanced && sectionEls.length > 0) {
+            headerEl.classList.add('all-advanced');
+         }
+
+         sectionsContainer.appendChild(headerEl);
+         for (const el of sectionEls) {
+            sectionsContainer.appendChild(el);
+         }
       }
    }
 
@@ -1080,6 +1243,11 @@
       // Add admin-only class if applicable
       if (def.adminOnly) {
          section.classList.add('admin-only');
+      }
+
+      // Add advanced-field class if section is marked advanced
+      if (def.advanced) {
+         section.classList.add('advanced-field');
       }
 
       // Header
@@ -1195,6 +1363,9 @@
       if (def.type === 'group') {
          const groupEl = document.createElement('div');
          groupEl.className = 'setting-group';
+         if (def.advanced) {
+            groupEl.classList.add('advanced-field');
+         }
          groupEl.innerHTML = `<div class="group-label">${escapeHtml(def.label || '')}</div>`;
 
          for (const [subKey, subDef] of Object.entries(def.fields)) {
@@ -1213,6 +1384,11 @@
 
       const item = document.createElement('div');
       item.className = def.type === 'checkbox' ? 'setting-item setting-item-row' : 'setting-item';
+
+      // Add advanced-field class if field is marked advanced
+      if (def.advanced) {
+         item.classList.add('advanced-field');
+      }
 
       // Add tooltip hint if defined
       if (def.hint) {

@@ -918,6 +918,10 @@
          item.addEventListener('click', (e) => {
             if (e.target.closest('.history-item-actions')) return;
             requestLoadConversation(convId);
+            // On mobile, dismiss the history panel after selecting a conversation
+            if (window.innerWidth <= 600) {
+               closeHistory();
+            }
          });
 
          const renameBtn = item.querySelector('[data-action="rename"]');
@@ -1191,6 +1195,10 @@
       if (historyElements.newBtn) {
          historyElements.newBtn.addEventListener('click', () => {
             startNewChat();
+            // On mobile, dismiss the history panel after starting a new chat
+            if (window.innerWidth <= 600) {
+               closeHistory();
+            }
          });
       }
 

@@ -921,6 +921,7 @@ json_object *config_to_json(const dawn_config_t *config) {
    json_object *general = json_object_new_object();
    json_object_object_add(general, "ai_name", json_object_new_string(config->general.ai_name));
    json_object_object_add(general, "log_file", json_object_new_string(config->general.log_file));
+   json_object_object_add(general, "room", json_object_new_string(config->general.room));
    json_object_object_add(root, "general", general);
 
    /* [persona] */
@@ -1408,6 +1409,8 @@ int config_write_toml(const dawn_config_t *config, const char *path) {
    write_toml_string(fp, "ai_name", config->general.ai_name);
    if (config->general.log_file[0])
       write_toml_string(fp, "log_file", config->general.log_file);
+   if (config->general.room[0])
+      write_toml_string(fp, "room", config->general.room);
 
    if (config->persona.description[0]) {
       fprintf(fp, "\n[persona]\n");

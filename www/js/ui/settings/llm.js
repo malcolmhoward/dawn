@@ -54,6 +54,23 @@
    const DETECT_TIMEOUT_MS = 10000; // 10 seconds
 
    /**
+    * Set or clear an inline hint for a disabled control (touch-friendly)
+    * @param {string} hintId - ID of the hint element
+    * @param {string|null} text - Hint text, or null to clear
+    */
+   function setControlHint(hintId, text) {
+      const el = document.getElementById(hintId);
+      if (!el) return;
+      if (text) {
+         el.textContent = text;
+         el.classList.remove('hidden');
+      } else {
+         el.textContent = '';
+         el.classList.add('hidden');
+      }
+   }
+
+   /**
     * Get current LLM runtime state
     * @returns {Object} Runtime state object
     */
@@ -99,6 +116,7 @@
                   // Rebuild cloud provider options
                   providerSelect.innerHTML = '';
                   providerSelect.disabled = false;
+                  setControlHint('provider-hint', null);
                   if (cloudModelLists.openai.length > 0) {
                      const opt = document.createElement('option');
                      opt.value = 'openai';
@@ -154,13 +172,13 @@
     */
    function setConversationLlmLocked(locked) {
       conversationLlmState.locked = locked;
-      const container = document.getElementById('llm-conversation-controls');
+      const grid = document.getElementById('llm-controls-grid');
       const indicator = document.getElementById('llm-lock-indicator');
       const reasoningSelect = document.getElementById('reasoning-mode-select');
       const toolsSelect = document.getElementById('tools-mode-select');
 
-      if (container) {
-         container.classList.toggle('locked', locked);
+      if (grid) {
+         grid.classList.toggle('locked', locked);
       }
       if (reasoningSelect) {
          reasoningSelect.disabled = locked;
@@ -184,7 +202,9 @@
       // Helper to update depth selector enabled state based on reasoning mode
       function updateDepthEnabled() {
          if (depthSelect) {
-            depthSelect.disabled = reasoningSelect && reasoningSelect.value === 'disabled';
+            const disabled = reasoningSelect && reasoningSelect.value === 'disabled';
+            depthSelect.disabled = disabled;
+            setControlHint('effort-hint', disabled ? 'Enable reasoning first' : null);
          }
       }
 
@@ -509,6 +529,10 @@
          depthSelect.value = globalDefaults.reasoning_effort;
          conversationLlmState.reasoning_effort = globalDefaults.reasoning_effort;
          depthSelect.disabled = globalDefaults.thinking_mode === 'disabled';
+         setControlHint(
+            'effort-hint',
+            globalDefaults.thinking_mode === 'disabled' ? 'Enable reasoning first' : null
+         );
       }
 
       // Reset tools dropdown
@@ -550,7 +574,9 @@
          }
          // Update depth enabled state based on thinking mode
          if (depthSelect && reasoningSelect) {
-            depthSelect.disabled = reasoningSelect.value === 'disabled';
+            const disabled = reasoningSelect.value === 'disabled';
+            depthSelect.disabled = disabled;
+            setControlHint('effort-hint', disabled ? 'Enable reasoning first' : null);
          }
 
          if (settings.tools_mode && toolsSelect) {
@@ -567,9 +593,9 @@
             if (settings.model) changes.model = settings.model;
 
             // Show loading state while syncing
-            const llmControls = document.getElementById('llm-controls');
-            if (llmControls) {
-               llmControls.classList.add('llm-syncing');
+            const llmGrid = document.getElementById('llm-controls-grid');
+            if (llmGrid) {
+               llmGrid.classList.add('llm-syncing');
             }
 
             // Request backend to confirm settings - response will update UI via updateLlmControls
@@ -650,6 +676,7 @@
                opt.textContent = 'Unknown';
                providerSelect.appendChild(opt);
                providerSelect.title = 'Could not detect local provider';
+               setControlHint('provider-hint', 'Could not detect provider');
                console.warn('Local provider detection timed out');
             }
          }, DETECT_TIMEOUT_MS);
@@ -682,6 +709,7 @@
          providerSelect.appendChild(opt);
          providerSelect.disabled = true;
          providerSelect.title = `Local provider: ${localProviderType}`;
+         setControlHint('provider-hint', `Provider: ${localProviderType}`);
       }
 
       const modelSelect = document.getElementById('llm-model-select');
@@ -700,10 +728,15 @@
          modelSelect.appendChild(opt);
          modelSelect.disabled = true;
          modelSelect.title = 'Model switching not supported with llama.cpp';
+         setControlHint('model-hint', 'Set by llama.cpp');
          // Update session with the loaded model (only if changed to avoid feedback loop)
          if (payload.current_model && llmRuntimeState.model !== payload.current_model) {
             llmRuntimeState.model = payload.current_model;
             setSessionLlm({ model: payload.current_model });
+         }
+         // Update collapsed mini bar summary
+         if (typeof DAWN !== 'undefined' && DAWN.updateLlmMiniSummary) {
+            DAWN.updateLlmMiniSummary();
          }
          return;
       }
@@ -715,6 +748,7 @@
          opt.textContent = 'No models available';
          modelSelect.appendChild(opt);
          modelSelect.disabled = true;
+         setControlHint('model-hint', null);
          return;
       }
 
@@ -722,6 +756,7 @@
          const opt = document.createElement('option');
          opt.value = model.name;
          opt.textContent = model.name + (model.loaded ? ' (loaded)' : '');
+         opt.title = opt.textContent;
          modelSelect.appendChild(opt);
       });
 
@@ -735,6 +770,12 @@
       }
       modelSelect.disabled = false;
       modelSelect.title = 'Select local model';
+      setControlHint('model-hint', null);
+
+      // Update collapsed mini bar summary if available
+      if (typeof DAWN !== 'undefined' && DAWN.updateLlmMiniSummary) {
+         DAWN.updateLlmMiniSummary();
+      }
    }
 
    /**
@@ -758,6 +799,7 @@
          modelSelect.appendChild(opt);
          modelSelect.disabled = true;
          modelSelect.title = 'Add models in Settings > LLM > Cloud Settings';
+         setControlHint('model-hint', 'Configure in Settings');
          return;
       }
 
@@ -765,6 +807,7 @@
          const opt = document.createElement('option');
          opt.value = model;
          opt.textContent = model;
+         opt.title = model;
          modelSelect.appendChild(opt);
       });
 
@@ -792,6 +835,7 @@
 
       modelSelect.disabled = false;
       modelSelect.title = 'Select cloud model';
+      setControlHint('model-hint', null);
 
       // Send selected model to session if requested (e.g., after provider switch)
       // Only send if model actually changed to avoid feedback loops
@@ -884,6 +928,10 @@
          depthSelect.value = globalDefaults.reasoning_effort;
          conversationLlmState.reasoning_effort = globalDefaults.reasoning_effort;
          depthSelect.disabled = globalDefaults.thinking_mode === 'disabled';
+         setControlHint(
+            'effort-hint',
+            globalDefaults.thinking_mode === 'disabled' ? 'Enable reasoning first' : null
+         );
       }
 
       if (toolsSelect) {
@@ -967,6 +1015,7 @@
             providerSelect.appendChild(opt);
             providerSelect.disabled = true;
             providerSelect.title = 'Auto-detecting local provider';
+            setControlHint('provider-hint', 'Detecting...');
          } else if (
             runtime.openai_available ||
             runtime.claude_available ||
@@ -974,6 +1023,7 @@
          ) {
             providerSelect.disabled = false;
             providerSelect.title = 'Switch cloud provider';
+            setControlHint('provider-hint', null);
          }
       }
 
@@ -984,6 +1034,11 @@
       } else {
          // Populate cloud models dropdown
          updateModelDropdownForCloud();
+      }
+
+      // Update collapsed mini bar summary if available
+      if (typeof DAWN !== 'undefined' && DAWN.updateLlmMiniSummary) {
+         DAWN.updateLlmMiniSummary();
       }
    }
 
@@ -1009,9 +1064,9 @@
     */
    function handleSetSessionLlmResponse(payload) {
       // Clear loading state
-      const llmControls = document.getElementById('llm-controls');
-      if (llmControls) {
-         llmControls.classList.remove('llm-syncing');
+      const llmGrid = document.getElementById('llm-controls-grid');
+      if (llmGrid) {
+         llmGrid.classList.remove('llm-syncing');
       }
 
       if (payload.success) {

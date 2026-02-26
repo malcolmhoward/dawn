@@ -860,6 +860,51 @@
    }
 
    // =============================================================================
+   // LLM Controls Collapse Toggle (mobile only)
+   // =============================================================================
+   let llmControlsCollapsed = false;
+
+   function updateLlmMiniSummary() {
+      const modeEl = document.getElementById('llm-mini-mode');
+      const modelEl = document.getElementById('llm-mini-model');
+      if (!modeEl || !modelEl) return;
+
+      const typeSelect = document.getElementById('llm-type-select');
+      const modelSelect = document.getElementById('llm-model-select');
+
+      modeEl.textContent = typeSelect
+         ? typeSelect.options[typeSelect.selectedIndex]?.text || 'Local'
+         : 'Local';
+      modelEl.textContent = modelSelect
+         ? modelSelect.options[modelSelect.selectedIndex]?.text || ''
+         : '';
+   }
+
+   function toggleLlmControlsCollapse() {
+      llmControlsCollapsed = !llmControlsCollapsed;
+      const grid = document.getElementById('llm-controls-grid');
+      const mini = document.getElementById('llm-controls-mini');
+      if (!grid || !mini) return;
+
+      const collapseToggle = document.getElementById('llm-controls-collapse');
+
+      if (llmControlsCollapsed) {
+         updateLlmMiniSummary();
+         grid.classList.add('collapsed');
+         mini.classList.remove('hidden');
+         mini.setAttribute('aria-expanded', 'false');
+         if (collapseToggle) collapseToggle.setAttribute('aria-expanded', 'false');
+      } else {
+         grid.classList.remove('collapsed');
+         mini.classList.add('hidden');
+         mini.setAttribute('aria-expanded', 'true');
+         if (collapseToggle) collapseToggle.setAttribute('aria-expanded', 'true');
+      }
+
+      localStorage.setItem('dawn_llm_controls_collapsed', llmControlsCollapsed ? 'true' : 'false');
+   }
+
+   // =============================================================================
    // Color Theme - Moved to /js/ui/theme.js (DawnTheme module)
    // TTS Toggle - Moved to /js/ui/tts.js (DawnTts module)
    // =============================================================================
@@ -989,6 +1034,48 @@
                toggleVisualizerCollapse();
             }
          });
+      }
+
+      // LLM controls collapse/expand setup (mobile only)
+      const llmMini = document.getElementById('llm-controls-mini');
+      const llmGrid = document.getElementById('llm-controls-grid');
+      if (llmMini && llmGrid) {
+         const savedLlmCollapsed = localStorage.getItem('dawn_llm_controls_collapsed');
+         if (savedLlmCollapsed === 'true' || (savedLlmCollapsed === null && isMobile)) {
+            llmControlsCollapsed = true;
+            llmGrid.classList.add('collapsed');
+            updateLlmMiniSummary();
+            llmMini.classList.remove('hidden');
+            llmMini.setAttribute('aria-expanded', 'false');
+            const llmCollapseInit = document.getElementById('llm-controls-collapse');
+            if (llmCollapseInit) llmCollapseInit.setAttribute('aria-expanded', 'false');
+         }
+
+         llmMini.addEventListener('click', toggleLlmControlsCollapse);
+         llmMini.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter' || e.key === ' ') {
+               e.preventDefault();
+               toggleLlmControlsCollapse();
+            }
+         });
+
+         // Update mini summary when selects change
+         ['llm-type-select', 'llm-model-select'].forEach((id) => {
+            const sel = document.getElementById(id);
+            if (sel) sel.addEventListener('change', updateLlmMiniSummary);
+         });
+
+         // Collapse toggle inside the grid (visible on mobile only)
+         const llmCollapseToggle = document.getElementById('llm-controls-collapse');
+         if (llmCollapseToggle) {
+            llmCollapseToggle.addEventListener('click', toggleLlmControlsCollapse);
+            llmCollapseToggle.addEventListener('keydown', function (e) {
+               if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  toggleLlmControlsCollapse();
+               }
+            });
+         }
       }
 
       // Event delegation for transcript (handles dynamically added elements)
@@ -1326,6 +1413,7 @@
    window.DAWN.toggleVisualization = DawnVisualization.toggleMode;
    window.DAWN.getVisualizationMode = DawnVisualization.getMode;
    window.DAWN.toggleFFTDebug = DawnVisualization.toggleFFTDebug;
+   window.DAWN.updateLlmMiniSummary = updateLlmMiniSummary;
 
    // Test helper for console access
    // Usage: DAWN.send({type: 'get_my_settings'})

@@ -507,34 +507,111 @@
             </div>
          </div>
 
-         <!-- LLM Quick Controls -->
-         <div id="llm-controls">
-            <div class="llm-control-group">
-               <label for="llm-type-select">Mode:</label>
+         <!-- LLM Controls mini bar (shown when collapsed on mobile) -->
+         <div
+            id="llm-controls-mini"
+            class="llm-controls-mini hidden"
+            role="button"
+            tabindex="0"
+            aria-expanded="false"
+            aria-label="Expand LLM controls"
+         >
+            <span class="llm-mini-summary">
+               <span id="llm-mini-mode"></span>
+               <span class="llm-mini-sep">/</span>
+               <span id="llm-mini-model"></span>
+            </span>
+            <span class="llm-mini-expand">&#9660;</span>
+         </div>
+
+         <!-- LLM Quick Controls (unified grid) -->
+         <div id="llm-controls-grid">
+            <!-- Collapse toggle (mobile only, first row) -->
+            <span
+               id="llm-controls-collapse"
+               class="llm-controls-collapse-toggle"
+               role="button"
+               tabindex="0"
+               aria-expanded="true"
+               aria-label="Collapse LLM controls"
+               >&#9650;</span
+            >
+            <div id="llm-controls">
+               <!-- Row 1: Mode / Provider / Model -->
+               <label for="llm-type-select" class="llm-label">Mode:</label>
                <select id="llm-type-select" title="Switch between local and cloud LLM">
                   <option value="local">Local</option>
                   <option value="cloud">Cloud</option>
                </select>
-            </div>
-            <div class="llm-control-group" id="provider-group">
-               <label for="llm-provider-select">Provider:</label>
+
+               <label for="llm-provider-select" class="llm-label" id="provider-label"
+                  >Provider:</label
+               >
                <select id="llm-provider-select" title="Switch cloud provider" disabled>
                   <option value="openai">OpenAI</option>
                   <option value="claude">Claude</option>
                </select>
-            </div>
-            <div class="llm-control-group" id="model-group">
-               <label for="llm-model-select">Model:</label>
+               <span class="control-hint hidden" id="provider-hint"></span>
+
+               <label for="llm-model-select" class="llm-label">Model:</label>
                <select id="llm-model-select" title="Select model" disabled>
                   <option value="">Loading...</option>
                </select>
-            </div>
-         </div>
+               <span class="control-hint hidden" id="model-hint"></span>
 
-         <!-- Per-Conversation LLM Settings (locked after first message) -->
-         <div id="llm-conversation-controls">
-            <div class="llm-control-group" id="reasoning-group">
-               <label for="reasoning-mode-select" id="reasoning-label">Reasoning:</label>
+               <div id="privacy-group">
+                  <button
+                     type="button"
+                     id="privacy-toggle"
+                     class="privacy-toggle"
+                     title="Toggle private mode (Ctrl+Shift+P) - Private conversations are not analyzed for memory extraction"
+                     aria-pressed="false"
+                  >
+                     <svg
+                        class="eye-icon"
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                     >
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                        <circle cx="12" cy="12" r="3" />
+                     </svg>
+                     <svg
+                        class="eye-off-icon hidden"
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                     >
+                        <path
+                           d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"
+                        />
+                        <path
+                           d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"
+                        />
+                        <line x1="1" y1="1" x2="23" y2="23" />
+                        <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
+                     </svg>
+                  </button>
+               </div>
+            </div>
+
+            <!-- Full-width separator between the two control rows -->
+            <div class="llm-grid-separator"></div>
+
+            <!-- Per-Conversation LLM Settings (locked after first message) -->
+            <div id="llm-conversation-controls">
+               <!-- Row 3: Reasoning / Effort / Tools -->
+               <label for="reasoning-mode-select" class="llm-label" id="reasoning-label"
+                  >Reasoning:</label
+               >
                <select
                   id="reasoning-mode-select"
                   title="Enable extended thinking for complex queries"
@@ -542,9 +619,10 @@
                   <option value="disabled" selected>Disabled</option>
                   <option value="enabled">Enabled</option>
                </select>
-            </div>
-            <div class="llm-control-group" id="effort-group">
-               <label for="reasoning-effort-select">Effort:</label>
+
+               <label for="reasoning-effort-select" class="llm-label" id="effort-label"
+                  >Effort:</label
+               >
                <select
                   id="reasoning-effort-select"
                   title="Reasoning depth: Low (quick), Medium (balanced), High (thorough)"
@@ -554,100 +632,62 @@
                   <option value="medium" selected>Medium</option>
                   <option value="high">High</option>
                </select>
-            </div>
-            <div class="llm-control-group" id="tools-group">
-               <label for="tools-mode-select">Tools:</label>
-               <select id="tools-mode-select" title="Tool calling mode for this conversation">
-                  <option value="native" selected>Native Tools</option>
-                  <option value="command_tags">Command Tags</option>
-                  <option value="disabled">Disabled</option>
-               </select>
-               <button
-                  type="button"
-                  id="tools-help-btn"
-                  class="help-icon-btn"
-                  aria-label="Tools mode help"
-               >
-                  ?
-               </button>
-               <div id="tools-help-popup" class="help-popup hidden">
-                  <div class="help-popup-content">
-                     <strong>Native Tools</strong>
-                     <p>
-                        Uses the LLM's built-in tool calling API. Most reliable for models that
-                        support it (GPT-4, Claude, etc.). The AI can call multiple tools in
-                        parallel.
-                     </p>
-                     <strong>Command Tags</strong>
-                     <p>
-                        Prompts the LLM to output commands in special XML tags. Works with any model
-                        but may be less reliable. Use this for models without native tool support.
-                     </p>
-                     <strong>Disabled</strong>
-                     <p>No tool calling. The AI will respond conversationally only.</p>
+               <span class="control-hint hidden" id="effort-hint"></span>
+
+               <label for="tools-mode-select" class="llm-label" id="tools-label">Tools:</label>
+               <div id="tools-group">
+                  <select id="tools-mode-select" title="Tool calling mode for this conversation">
+                     <option value="native" selected>Native Tools</option>
+                     <option value="command_tags">Command Tags</option>
+                     <option value="disabled">Disabled</option>
+                  </select>
+                  <button
+                     type="button"
+                     id="tools-help-btn"
+                     class="help-icon-btn"
+                     aria-label="Tools mode help"
+                  >
+                     ?
+                  </button>
+                  <div id="tools-help-popup" class="help-popup hidden">
+                     <div class="help-popup-content">
+                        <strong>Native Tools</strong>
+                        <p>
+                           Uses the LLM's built-in tool calling API. Most reliable for models that
+                           support it (GPT-4, Claude, etc.). The AI can call multiple tools in
+                           parallel.
+                        </p>
+                        <strong>Command Tags</strong>
+                        <p>
+                           Prompts the LLM to output commands in special XML tags. Works with any
+                           model but may be less reliable. Use this for models without native tool
+                           support.
+                        </p>
+                        <strong>Disabled</strong>
+                        <p>No tool calling. The AI will respond conversationally only.</p>
+                     </div>
                   </div>
                </div>
-            </div>
-            <div class="llm-control-group" id="privacy-group">
-               <button
-                  type="button"
-                  id="privacy-toggle"
-                  class="privacy-toggle"
-                  title="Toggle private mode (Ctrl+Shift+P) - Private conversations are not analyzed for memory extraction"
-                  aria-pressed="false"
+
+               <span
+                  id="llm-lock-indicator"
+                  class="hidden"
+                  title="Settings locked for this conversation"
                >
                   <svg
-                     class="eye-icon"
                      xmlns="http://www.w3.org/2000/svg"
-                     width="16"
-                     height="16"
+                     width="14"
+                     height="14"
                      viewBox="0 0 24 24"
                      fill="none"
                      stroke="currentColor"
                      stroke-width="2"
                   >
-                     <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                     <circle cx="12" cy="12" r="3" />
+                     <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                     <path d="M7 11V7a5 5 0 0 1 10 0v4" />
                   </svg>
-                  <svg
-                     class="eye-off-icon hidden"
-                     xmlns="http://www.w3.org/2000/svg"
-                     width="16"
-                     height="16"
-                     viewBox="0 0 24 24"
-                     fill="none"
-                     stroke="currentColor"
-                     stroke-width="2"
-                  >
-                     <path
-                        d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"
-                     />
-                     <path
-                        d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"
-                     />
-                     <line x1="1" y1="1" x2="23" y2="23" />
-                     <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
-                  </svg>
-               </button>
+               </span>
             </div>
-            <span
-               id="llm-lock-indicator"
-               class="hidden"
-               title="Settings locked for this conversation"
-            >
-               <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-               >
-                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-                  <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-               </svg>
-            </span>
          </div>
 
          <!-- Transcript display -->
@@ -883,32 +923,41 @@
             </div>
 
             <div class="settings-search admin-only">
-               <div class="settings-search-wrapper">
-                  <svg
-                     class="settings-search-icon"
-                     width="14"
-                     height="14"
-                     viewBox="0 0 24 24"
-                     fill="none"
-                     stroke="currentColor"
-                     stroke-width="2"
-                  >
-                     <circle cx="11" cy="11" r="8" />
-                     <line x1="21" y1="21" x2="16.65" y2="16.65" />
-                  </svg>
-                  <input
-                     type="text"
-                     id="settings-search-input"
-                     placeholder="Search settings..."
-                     autocomplete="off"
-                     spellcheck="false"
-                  />
+               <div class="settings-search-row">
+                  <div class="settings-search-wrapper">
+                     <svg
+                        class="settings-search-icon"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                     >
+                        <circle cx="11" cy="11" r="8" />
+                        <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                     </svg>
+                     <input
+                        type="text"
+                        id="settings-search-input"
+                        placeholder="Search settings..."
+                        autocomplete="off"
+                        spellcheck="false"
+                     />
+                     <button
+                        class="settings-search-clear hidden"
+                        id="settings-search-clear"
+                        aria-label="Clear search"
+                     >
+                        &times;
+                     </button>
+                  </div>
                   <button
-                     class="settings-search-clear hidden"
-                     id="settings-search-clear"
-                     aria-label="Clear search"
+                     id="settings-advanced-toggle"
+                     class="advanced-toggle"
+                     title="Show advanced settings"
                   >
-                     &times;
+                     Advanced
                   </button>
                </div>
             </div>

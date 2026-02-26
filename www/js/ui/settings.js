@@ -89,6 +89,18 @@
       settingsElements.panel.classList.remove('hidden');
       settingsElements.overlay.classList.remove('hidden');
 
+      // Restore advanced toggle state from localStorage
+      const showAdvanced = localStorage.getItem('dawn-settings-show-advanced') === 'true';
+      const advancedToggle = document.getElementById('settings-advanced-toggle');
+      const container = document.getElementById('settings-sections');
+      if (advancedToggle) {
+         advancedToggle.classList.toggle('active', showAdvanced);
+         advancedToggle.title = showAdvanced ? 'Hide advanced settings' : 'Show advanced settings';
+      }
+      if (container) {
+         container.classList.toggle('show-advanced', showAdvanced);
+      }
+
       // Request config, models, and interfaces from server
       Config.requestConfig();
       Config.requestModelsList();
@@ -521,6 +533,23 @@
             close();
          }
       });
+
+      // Advanced toggle button
+      const advancedToggle = document.getElementById('settings-advanced-toggle');
+      if (advancedToggle) {
+         advancedToggle.addEventListener('click', () => {
+            const container = document.getElementById('settings-sections');
+            if (!container) return;
+
+            const isActive = advancedToggle.classList.toggle('active');
+            container.classList.toggle('show-advanced', isActive);
+            advancedToggle.title = isActive ? 'Hide advanced settings' : 'Show advanced settings';
+            localStorage.setItem('dawn-settings-show-advanced', isActive ? 'true' : 'false');
+
+            // Rebuild search index so it reflects current visibility
+            if (Search) Search.buildIndex();
+         });
+      }
 
       // LLM quick controls event listeners
       Llm.initLlmControls();

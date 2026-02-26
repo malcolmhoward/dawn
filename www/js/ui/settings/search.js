@@ -137,6 +137,11 @@
       const q = query.toLowerCase();
       const matchedSections = new Set();
 
+      // Temporarily show advanced fields so search can find them
+      if (sectionsContainer) {
+         sectionsContainer.classList.add('show-advanced');
+      }
+
       // Walk index and toggle visibility
       index.forEach((entry) => {
          const matches = entry.searchText.includes(q);
@@ -171,6 +176,20 @@
             } else {
                sectionEl.classList.add('search-hidden');
             }
+         });
+
+         // Show/hide category headers based on whether their sections have matches
+         const categoryHeaders = sectionsContainer.querySelectorAll('.settings-category-header');
+         categoryHeaders.forEach((headerEl) => {
+            const categoryId = headerEl.dataset.category;
+            const categorySections = sectionsContainer.querySelectorAll(
+               '.settings-section[data-category="' + categoryId + '"]'
+            );
+            let hasVisible = false;
+            categorySections.forEach((s) => {
+               if (!s.classList.contains('search-hidden')) hasVisible = true;
+            });
+            headerEl.classList.toggle('search-hidden', !hasVisible);
          });
       }
 
@@ -214,6 +233,12 @@
 
       // Remove all highlights
       index.forEach((entry) => restoreLabel(entry));
+
+      // Restore advanced toggle to its persisted state
+      if (sectionsContainer) {
+         const showAdvanced = localStorage.getItem('dawn-settings-show-advanced') === 'true';
+         sectionsContainer.classList.toggle('show-advanced', showAdvanced);
+      }
 
       // Hide empty state
       if (emptyState) {

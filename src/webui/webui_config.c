@@ -37,9 +37,9 @@
 
 #include "auth/auth_db.h"
 #include "config/config_env.h"
-#include "dawn.h"
 #include "config/config_parser.h"
 #include "config/dawn_config.h"
+#include "dawn.h"
 #include "llm/llm_command_parser.h"
 #include "llm/llm_interface.h"
 #include "llm/llm_local_provider.h"
@@ -112,8 +112,8 @@ void handle_get_config(ws_connection_t *conn) {
 
    /* Add effective default persona (built-in fallback when config field is empty) */
    {
-      const char *ai_name =
-          g_config.general.ai_name[0] != '\0' ? g_config.general.ai_name : AI_NAME;
+      const char *ai_name = g_config.general.ai_name[0] != '\0' ? g_config.general.ai_name
+                                                                : AI_NAME;
       char capitalized_name[64];
       snprintf(capitalized_name, sizeof(capitalized_name), "%s", ai_name);
       if (capitalized_name[0] >= 'a' && capitalized_name[0] <= 'z') {
@@ -122,8 +122,7 @@ void handle_get_config(ws_connection_t *conn) {
       char default_persona[2048];
       snprintf(default_persona, sizeof(default_persona),
                AI_PERSONA_NAME_TEMPLATE " " AI_PERSONA_TRAITS, capitalized_name);
-      json_object_object_add(payload, "default_persona",
-                             json_object_new_string(default_persona));
+      json_object_object_add(payload, "default_persona", json_object_new_string(default_persona));
    }
 
    /* Add secrets status (only is_set flags, never actual values) */
