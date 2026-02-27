@@ -271,6 +271,60 @@
    }
 
    // =============================================================================
+   // Document Chip Rendering
+   // =============================================================================
+
+   /** SVG document icon (small, inline) */
+   const DOC_ICON_SVG =
+      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+      'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+      '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>' +
+      '<polyline points="14 2 14 8 20 8"/>' +
+      '<line x1="16" y1="13" x2="8" y2="13"/>' +
+      '<line x1="16" y1="17" x2="8" y2="17"/>' +
+      '<polyline points="10 9 9 9 8 9"/>' +
+      '</svg>';
+
+   /**
+    * Create a container of document chips for a transcript entry
+    * @param {Array<{filename: string, size: string, content: string}>} documents
+    * @returns {HTMLElement}
+    */
+   function createDocumentChips(documents) {
+      const container = document.createElement('div');
+      container.className = 'transcript-doc-container';
+
+      documents.forEach((doc) => {
+         const chip = document.createElement('button');
+         chip.className = 'transcript-doc-chip';
+         chip.title = `${doc.filename} \u2014 click to view`;
+         chip.setAttribute('aria-label', `View document: ${doc.filename}, ${doc.size}`);
+
+         const icon = document.createElement('span');
+         icon.className = 'transcript-doc-icon';
+         icon.innerHTML = DOC_ICON_SVG;
+
+         const name = document.createElement('span');
+         name.className = 'transcript-doc-name';
+         name.textContent = doc.filename;
+
+         const size = document.createElement('span');
+         size.className = 'transcript-doc-size';
+         size.textContent = doc.size;
+
+         chip.appendChild(icon);
+         chip.appendChild(name);
+         chip.appendChild(size);
+         chip.addEventListener('click', () =>
+            DawnDocuments.openDocumentViewer(doc.filename, doc.content)
+         );
+         container.appendChild(chip);
+      });
+
+      return container;
+   }
+
+   // =============================================================================
    // Entry Formatting
    // =============================================================================
 
@@ -329,16 +383,27 @@
     * @param {string} role - Message role (user, assistant, system)
     * @param {string} text - Message text
     */
-   async function addNormalEntry(role, text) {
+   async function addNormalEntry(role, text, extractedDocs) {
       const transcript = DawnElements.transcript;
       if (!transcript) return;
 
+      // Parse document markers (strip from display, extract for chips)
+      // If caller already extracted docs (addTranscriptEntry), use those directly
+      let docData;
+      if (extractedDocs && extractedDocs.length > 0) {
+         docData = { cleanText: text, documents: extractedDocs };
+      } else if (DawnDocuments && DawnDocuments.parseDocumentMarkers) {
+         docData = DawnDocuments.parseDocumentMarkers(text);
+      } else {
+         docData = { cleanText: text, documents: [] };
+      }
+
       // Parse image markers if present (user messages may have embedded images)
       let parsed = null;
-      let displayText = text;
+      let displayText = docData.cleanText;
 
       if (DawnVision && DawnVision.parseImageMarkers) {
-         parsed = DawnVision.parseImageMarkers(text);
+         parsed = DawnVision.parseImageMarkers(displayText);
          displayText = parsed.text;
       }
 
@@ -358,6 +423,12 @@
       const textEl = entry.querySelector('.text');
       if (textEl) {
          DawnFormat.addCopyButtons(textEl);
+      }
+
+      // Render document chips if any documents were attached
+      if (docData.documents.length > 0 && textEl) {
+         textEl.appendChild(createDocumentChips(docData.documents));
+         transcript.scrollTop = transcript.scrollHeight;
       }
 
       // Load and add images AFTER entry is visible (async, may involve network requests)
@@ -444,12 +515,18 @@
          if (!text) return;
       }
 
+      // Parse document markers (strip from display, extract for chips)
+      let docData = { cleanText: text, documents: [] };
+      if (DawnDocuments && DawnDocuments.parseDocumentMarkers) {
+         docData = DawnDocuments.parseDocumentMarkers(text);
+      }
+
       // Parse image markers if present (user messages may have embedded images)
       let parsed = null;
-      let displayText = text;
+      let displayText = docData.cleanText;
 
       if (DawnVision && DawnVision.parseImageMarkers) {
-         parsed = DawnVision.parseImageMarkers(text);
+         parsed = DawnVision.parseImageMarkers(displayText);
          displayText = parsed.text;
       }
 
@@ -465,6 +542,11 @@
       const textEl = entry.querySelector('.text');
       if (textEl) {
          DawnFormat.addCopyButtons(textEl);
+      }
+
+      // Render document chips if any documents were attached
+      if (docData.documents.length > 0 && textEl) {
+         textEl.appendChild(createDocumentChips(docData.documents));
       }
 
       // Insert thinking/reasoning block first if present
@@ -514,6 +596,17 @@
       const placeholder = transcript.querySelector('.transcript-placeholder');
       if (placeholder) {
          placeholder.remove();
+      }
+
+      // Strip document markers BEFORE any routing logic — document content may
+      // contain <command> tags or [Tool Result:] text that would cause misrouting
+      let extractedDocs = [];
+      if (DawnDocuments && DawnDocuments.parseDocumentMarkers) {
+         const docData = DawnDocuments.parseDocumentMarkers(text);
+         if (docData.documents.length > 0) {
+            extractedDocs = docData.documents;
+            text = docData.cleanText;
+         }
       }
 
       // Check for thinking content in assistant messages (from history)
@@ -609,10 +702,15 @@
 
       if (!hasDebugContent) {
          // Pure user-facing message - show normally
-         await addNormalEntry(role, text);
+         await addNormalEntry(role, text, extractedDocs);
       } else if (isOnlyDebugContent(text)) {
          // Pure debug message (only commands/tool results) - debug only
-         addDebugEntry(`debug (${role})`, text);
+         // Still render document chips if present
+         if (extractedDocs.length > 0) {
+            await addNormalEntry(role, '', extractedDocs);
+         } else {
+            addDebugEntry(`debug (${role})`, text);
+         }
       } else {
          // Mixed message - show user-facing text normally AND debug content separately
          const userText = extractUserFacingText(text);
@@ -628,9 +726,9 @@
             addDebugEntry('tool result', result);
          });
 
-         // Add user-facing text if any
-         if (userText.length > 0) {
-            await addNormalEntry(role, userText);
+         // Add user-facing text if any (or if documents are attached)
+         if (userText.length > 0 || extractedDocs.length > 0) {
+            await addNormalEntry(role, userText, extractedDocs);
          }
       }
 

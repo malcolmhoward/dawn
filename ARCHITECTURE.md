@@ -4,7 +4,7 @@ This document describes the architecture of the D.A.W.N. (Digital Assistant for 
 
 **D.A.W.N.** is the central intelligence layer of the OASIS ecosystem, responsible for interpreting user intent, fusing data from every subsystem, and routing commands. At its core, DAWN performs neural-inference to understand context and drive decision-making, acting as OASIS's orchestration hub for MIRAGE, AURA, SPARK, STAT, and any future modules.
 
-**Last Updated**: February 18, 2026 (Genre support, LLM playlist builder, music/TTS race fixes)
+**Last Updated**: February 27, 2026 (Document upload/attachment subsystem)
 
 ## Table of Contents
 
@@ -719,7 +719,101 @@ The system auto-detects vision capability based on model name:
 - **Authentication Required**: All image endpoints require valid session
 - **Per-User Limits**: Configurable maximum images per user
 
-### 9. Memory Subsystem (`src/memory/`, `include/memory/`)
+### 9. Document Upload Subsystem (`src/webui/webui_documents.c`, `www/js/ui/documents.js`)
+
+**Purpose**: Text document upload, extraction, and attachment for LLM context
+
+#### Architecture: **Client-Side Read + Server-Side Extraction + Transcript Chip Display**
+
+```
+┌───────────────────────────────────────────────────────────────────────┐
+│                        Browser (WebUI)                                 │
+│                                                                        │
+│  ┌─────────────────────────────────────────────────────────────────┐  │
+│  │                    Input Methods                                 │  │
+│  │  ┌──────────┐  ┌──────────┐  ┌──────────┐                       │  │
+│  │  │  File    │  │  Drag &  │  │  Paste   │                       │  │
+│  │  │  Button  │  │  Drop    │  │  (Ctrl+V)│                       │  │
+│  │  └────┬─────┘  └────┬─────┘  └────┬─────┘                       │  │
+│  │       └─────────────┴─────────────┘                              │  │
+│  │                     │                                             │  │
+│  │              ┌──────▼──────┐                                      │  │
+│  │              │ Client-side │ (FileReader API, UTF-8 text)         │  │
+│  │              │ text read   │                                      │  │
+│  │              └──────┬──────┘                                      │  │
+│  │                     │                                             │  │
+│  │              ┌──────▼──────┐                                      │  │
+│  │              │ Input chips │ (filename, size, remove button)      │  │
+│  │              └──────┬──────┘                                      │  │
+│  └─────────────────────┼─────────────────────────────────────────┘  │
+│                        │ on send                                     │
+│  ┌─────────────────────▼─────────────────────────────────────────┐  │
+│  │ WebSocket: [ATTACHED DOCUMENT: file (N bytes)]...text...       │  │
+│  │            [END DOCUMENT]                                      │  │
+│  └─────────────────────┬─────────────────────────────────────────┘  │
+│                        │                                             │
+│  ┌─────────────────────▼─────────────────────────────────────────┐  │
+│  │ Transcript: parseDocumentMarkers() strips markers → chips     │  │
+│  │  ┌──────────────┐                                             │  │
+│  │  │ [TXT] file ✕ │  ← clickable, opens viewer modal           │  │
+│  │  └──────────────┘                                             │  │
+│  └───────────────────────────────────────────────────────────────┘  │
+└───────────────────────────────────────────────────────────────────────┘
+                         │
+                         ▼
+┌───────────────────────────────────────────────────────────────────────┐
+│                        DAWN Server                                     │
+│                                                                        │
+│  ┌───────────────────────────────────────────────────────────────┐    │
+│  │ webui_documents.c - HTTP Endpoint Handler                     │    │
+│  │                                                               │    │
+│  │  POST /api/documents  → Validate ext → Read text → Return    │    │
+│  │  Supported: .txt, .md, .csv, .json, .xml, .yaml, .toml,     │    │
+│  │             .c, .h, .py, .js, .html, .css, .sh, .log, etc.  │    │
+│  │  Max size: 512 KB per file, up to 5 files per message        │    │
+│  └───────────────────────────────────────────────────────────────┘    │
+│                                                                        │
+│  Document text injected into LLM message as:                          │
+│  [ATTACHED DOCUMENT: filename (N bytes)]\n...content...\n             │
+│  [END DOCUMENT]                                                       │
+│  Markers preserved in DB and LLM context; stripped client-side only   │
+└───────────────────────────────────────────────────────────────────────┘
+```
+
+#### Key Components
+
+- **documents.js**: Client-side document handling
+  - Input methods: file picker button, drag-and-drop, cooperative with vision.js (images vs documents)
+  - Client-side text extraction via FileReader API (no server round-trip for text files)
+  - Input chip UI: filename, extension badge, size, remove button
+  - `parseDocumentMarkers(text)`: Regex extraction of document markers from transcript text
+  - `openDocumentViewer(filename, content)`: Modal viewer with focus trap, Escape/backdrop close
+  - Allowed extensions: `.txt`, `.md`, `.csv`, `.json`, `.xml`, `.yaml`, `.yml`, `.toml`, `.ini`, `.cfg`, `.conf`, `.log`, `.c`, `.h`, `.cpp`, `.py`, `.js`, `.ts`, `.html`, `.css`, `.sh`, `.sql`, `.env`
+  - Toast feedback for unsupported file types on drop
+
+- **webui_documents.c/h**: Server-side upload handling
+  - `POST /api/documents`: Multipart form upload, extension validation, UTF-8 text extraction
+  - Returns `{filename, content, size}` JSON response
+  - Authentication required (uses session validation)
+
+- **transcript.js** (document integration):
+  - Document markers stripped BEFORE routing logic in `addTranscriptEntry()` to prevent misrouting when document content contains `<command>` tags
+  - `createDocumentChips()`: Renders clickable chips in conversation entries
+  - History replay: `prependTranscriptEntry()` also parses markers for saved conversations
+
+- **documents.css**: Styling for input chips, transcript chips, and viewer modal
+  - Transcript chips: squarer (6px radius) document-like appearance
+  - Viewer modal: 700px panel, monospace `<pre>`, mobile full-screen at 480px
+
+#### Security Measures
+
+- **textContent only**: Document content rendered via `textContent`, never `innerHTML`
+- **DOMPurify**: Markdown-rendered message text sanitized before DOM insertion
+- **CSP header**: `script-src 'self'` blocks any inline scripts in document content
+- **Extension allowlist**: Only known text extensions accepted; binary files rejected
+- **Size limit**: 512 KB per file enforced at both client and server
+
+### 10. Memory Subsystem (`src/memory/`, `include/memory/`)
 
 **Purpose**: Persistent memory system for user facts, preferences, and conversation summaries
 

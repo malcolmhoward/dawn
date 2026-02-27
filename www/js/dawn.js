@@ -521,9 +521,24 @@
          return false;
       }
 
+      // Prepend any attached document content
+      let messageText = text;
+      if (typeof DawnDocuments !== 'undefined') {
+         const docs = DawnDocuments.getAndClearDocuments();
+         if (docs.length > 0) {
+            const docText = docs
+               .map(
+                  (d) =>
+                     `[ATTACHED DOCUMENT: ${d.filename} (${d.size} bytes)]\n${d.content}\n[END DOCUMENT]`
+               )
+               .join('\n\n');
+            messageText = docText + '\n\n' + messageText;
+         }
+      }
+
       const msg = {
          type: 'text',
-         payload: { text: text },
+         payload: { text: messageText },
       };
 
       // Add vision images if pending (supports multiple)
@@ -1231,6 +1246,11 @@
 
       // Initialize vision module (image upload/paste/drag-drop)
       DawnVision.init();
+
+      // Initialize document upload module (drag-drop, file picker)
+      if (typeof DawnDocuments !== 'undefined') {
+         DawnDocuments.init();
+      }
 
       // Initialize music player UI
       if (typeof DawnMusicUI !== 'undefined') {

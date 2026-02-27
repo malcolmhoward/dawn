@@ -782,16 +782,30 @@ int send_json_message(struct lws *wsi, const char *json) {
                   len);
    }
 
-   if (len >= WS_SEND_BUFFER_SIZE - LWS_PRE) {
-      LOG_ERROR("WebUI: JSON message too large (%zu bytes, max %d)", len,
-                (int)(WS_SEND_BUFFER_SIZE - LWS_PRE));
+   /* For messages that fit in the stack buffer, use the fast path */
+   if (len < WS_SEND_BUFFER_SIZE - LWS_PRE) {
+      unsigned char buf[LWS_PRE + WS_SEND_BUFFER_SIZE];
+      memcpy(&buf[LWS_PRE], json, len);
+
+      int written = lws_write(wsi, &buf[LWS_PRE], len, LWS_WRITE_TEXT);
+      if (written < (int)len) {
+         LOG_ERROR("WebUI: lws_write failed (wrote %d of %zu)", written, len);
+         return -1;
+      }
+      return 0;
+   }
+
+   /* Large messages (e.g. transcript with attached documents): heap-allocate */
+   unsigned char *buf = malloc(LWS_PRE + len);
+   if (!buf) {
+      LOG_ERROR("WebUI: Failed to allocate send buffer (%zu bytes)", LWS_PRE + len);
       return -1;
    }
 
-   unsigned char buf[LWS_PRE + WS_SEND_BUFFER_SIZE];
    memcpy(&buf[LWS_PRE], json, len);
-
    int written = lws_write(wsi, &buf[LWS_PRE], len, LWS_WRITE_TEXT);
+   free(buf);
+
    if (written < (int)len) {
       LOG_ERROR("WebUI: lws_write failed (wrote %d of %zu)", written, len);
       return -1;

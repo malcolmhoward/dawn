@@ -96,6 +96,13 @@ DAWN is designed for embedded Linux platforms (Jetson, Raspberry Pi) and support
     - SQLite BLOB storage for conversation history persistence
     - Auto-detects vision-capable models (GPT-4o, Claude 3, Gemini, LLaVA, etc.)
     - Security: SVG excluded to prevent XSS attacks
+  - **Document Attachment** - Attach text documents for LLM context:
+    - Drag-and-drop, file button, or paste to attach documents
+    - Supports plain text, Markdown, CSV, JSON, XML, YAML, source code, and more
+    - Up to 5 documents per message (512 KB each)
+    - Clickable document chips in conversation with viewer modal
+    - History replay renders saved document markers as chips
+    - Cooperative drag-and-drop: images route to vision, text files route to documents
 
 - **LLM Tools**
   - **Web Search** - Voice-activated search via SearXNG (self-hosted, privacy-focused)

@@ -28,6 +28,7 @@
  * Component Styles (alphabetical for easy reference)
  * ============================================================================= */
 @import url('components/context.css');
+@import url('components/documents.css');
 @import url('components/history.css');
 @import url('components/memory.css');
 @import url('components/input.css');

@@ -697,6 +697,7 @@
 
          <!-- Screen reader announcements for image actions -->
          <div id="vision-announcer" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+         <div id="document-announcer" class="sr-only" aria-live="polite" aria-atomic="true"></div>
 
          <!-- Image preview container (above input) - multi-image grid -->
          <div id="image-preview-wrapper">
@@ -712,6 +713,14 @@
                </div>
             </div>
          </div>
+
+         <!-- Document chips (dynamically populated by documents.js) -->
+         <div
+            id="document-chips"
+            class="hidden"
+            role="region"
+            aria-label="Attached documents"
+         ></div>
 
          <!-- Input area -->
          <div id="input-area" class="drop-target">
@@ -762,6 +771,39 @@
                autocomplete="off"
                rows="1"
             ></textarea>
+            <div class="document-btn-wrapper">
+               <button
+                  id="document-btn"
+                  class="input-button"
+                  title="Attach document"
+                  aria-label="Attach document"
+               >
+                  <svg
+                     width="20"
+                     height="20"
+                     viewBox="0 0 24 24"
+                     fill="none"
+                     stroke="currentColor"
+                     stroke-width="2"
+                     stroke-linecap="round"
+                     stroke-linejoin="round"
+                  >
+                     <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                     <polyline points="14 2 14 8 20 8" />
+                     <line x1="16" y1="13" x2="8" y2="13" />
+                     <line x1="16" y1="17" x2="8" y2="17" />
+                     <polyline points="10 9 9 9 8 9" />
+                  </svg>
+               </button>
+               <span id="document-counter" class="hidden">0/3</span>
+               <input
+                  type="file"
+                  id="document-file-input"
+                  multiple
+                  accept="text/*,.md,.csv,.json,.toml,.yaml,.yml,.xml,.log,.cfg,.ini,.conf,.rs,.go,.java,.rb,.cmake"
+                  style="display: none"
+               />
+            </div>
             <div class="image-btn-wrapper">
                <button
                   id="image-btn"
@@ -838,6 +880,9 @@
                </div>
                <span id="image-counter" class="image-counter hidden">0/5</span>
             </div>
+            <button id="mic-btn" title="Hold to speak" aria-label="Hold to speak" disabled>
+               Mic
+            </button>
             <button id="send-btn" title="Send message">Send</button>
             <button
                id="stop-btn"
@@ -846,9 +891,6 @@
                class="hidden"
             >
                Stop
-            </button>
-            <button id="mic-btn" title="Hold to speak" aria-label="Hold to speak" disabled>
-               Mic
             </button>
 
             <!-- Hidden file input for image selection -->
@@ -2043,6 +2085,31 @@ client_secret = "..."</pre
          </div>
       </div>
 
+      <!-- Document Viewer Modal -->
+      <div
+         id="document-viewer-modal"
+         class="hidden"
+         role="dialog"
+         aria-modal="true"
+         aria-labelledby="document-viewer-title"
+      >
+         <div class="document-viewer-content">
+            <div class="document-viewer-header">
+               <span id="document-viewer-title"></span>
+               <button
+                  id="document-viewer-close"
+                  class="modal-close"
+                  aria-label="Close document viewer"
+               >
+                  &times;
+               </button>
+            </div>
+            <div class="document-viewer-body" tabindex="0" aria-label="Document content">
+               <pre id="document-viewer-pre"></pre>
+            </div>
+         </div>
+      </div>
+
       <!-- Camera Capture Modal -->
       <div
          id="camera-modal"
@@ -2148,6 +2215,7 @@ client_secret = "..."</pre
       <script src="/js/ui/transcript.js"></script>
       <script src="/js/ui/streaming.js"></script>
       <script src="/js/ui/vision.js"></script>
+      <script src="/js/ui/documents.js"></script>
       <script src="/js/ui/metrics.js"></script>
       <script src="/js/admin/smartthings.js"></script>
       <script src="/js/admin/tools.js"></script>

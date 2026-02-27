@@ -97,6 +97,15 @@
    };
 
    /**
+    * Document state (for text document upload and attachment)
+    */
+   const documentState = {
+      pendingDocuments: [], // [{filename, content, size, type}]
+      maxDocuments: 5,
+      maxFileSize: 512 * 1024, // 512 KB
+   };
+
+   /**
     * Vision state (for image upload and preview)
     * Note: maxImages, maxSize, maxDimension are defaults that get overridden
     * by server-provided values in vision_limits config response.
@@ -142,5 +151,6 @@
       thinkingState: thinkingState,
       authState: authState,
       visionState: visionState,
+      documentState: documentState,
    };
 })(window);

@@ -129,15 +129,17 @@ typedef struct {
  * HTTP Session Data
  * ============================================================================= */
 
-/* Forward declaration for image session */
+/* Forward declarations for upload sessions */
 struct http_image_session;
+struct document_upload_session;
 
 struct http_session_data {
    char path[256]; /* Request path */
    char post_body[HTTP_MAX_POST_BODY];
    size_t post_body_len;
    bool is_post;
-   struct http_image_session *image_session; /* For image uploads (NULL if not image request) */
+   struct http_image_session *image_session;         /* For image uploads (NULL if not image) */
+   struct document_upload_session *document_session; /* For doc uploads (NULL if not doc) */
 };
 
 /* =============================================================================

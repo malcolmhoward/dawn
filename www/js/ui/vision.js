@@ -633,6 +633,7 @@
       // Only remove class if leaving the drop target entirely
       if (!dropTarget.contains(e.relatedTarget)) {
          dropTarget.classList.remove('drag-active');
+         dropTarget.classList.remove('drag-active-doc');
       }
    }
 
@@ -642,6 +643,7 @@
    function handleDrop(e) {
       e.preventDefault();
       dropTarget.classList.remove('drag-active');
+      dropTarget.classList.remove('drag-active-doc');
 
       if (!DawnState.visionState.visionEnabled) {
          DawnToast.show('Vision not available for current model', 'warning');

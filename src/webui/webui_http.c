@@ -47,6 +47,7 @@
 #include "auth/auth_crypto.h"
 #include "auth/auth_db.h"
 #include "image_store.h"
+#include "webui/webui_documents.h"
 #include "webui/webui_images.h"
 #endif
 
@@ -781,6 +782,18 @@ int callback_http(struct lws *wsi,
             /* Fall through to auth redirect */
          }
 
+         /* POST /api/documents - upload text document (defer to body completion) */
+         if (strcmp(path, "/api/documents") == 0 && pss && pss->is_post) {
+            if (is_request_authenticated(wsi, NULL)) {
+               pss->document_session = NULL;
+               int result = webui_documents_handle_upload_start(wsi, &pss->document_session);
+               if (result == 0) {
+                  return 0;
+               }
+               return result;
+            }
+         }
+
          /* Public paths that don't require auth */
          bool is_public_path =
              (strcmp(path, "/login.html") == 0 || strcmp(path, "/health") == 0 ||
@@ -963,6 +976,11 @@ int callback_http(struct lws *wsi,
             return webui_images_handle_upload_body(wsi, pss->image_session, in, len);
          }
 
+         /* Document upload - route to document handler */
+         if (pss->document_session) {
+            return webui_documents_handle_upload_body(wsi, pss->document_session, in, len);
+         }
+
          /* Regular POST body */
          size_t remaining = HTTP_MAX_POST_BODY - pss->post_body_len - 1;
          size_t to_copy = (len < remaining) ? len : remaining;
@@ -987,6 +1005,13 @@ int callback_http(struct lws *wsi,
             return result;
          }
 
+         /* Document upload complete */
+         if (pss->document_session) {
+            int result = webui_documents_handle_upload_complete(wsi, pss->document_session);
+            pss->document_session = NULL; /* Session freed by handler */
+            return result;
+         }
+
          /* Handle login endpoint */
          if (strcmp(pss->path, "/api/auth/login") == 0) {
             return handle_auth_login(wsi, pss);
@@ -998,10 +1023,14 @@ int callback_http(struct lws *wsi,
       }
 
       case LWS_CALLBACK_CLOSED_HTTP:
-         /* Connection closed - clean up image session if any */
+         /* Connection closed - clean up upload sessions if any */
          if (pss && pss->image_session) {
             webui_images_session_free(pss->image_session);
             pss->image_session = NULL;
+         }
+         if (pss && pss->document_session) {
+            webui_documents_session_free(pss->document_session);
+            pss->document_session = NULL;
          }
          break;
 #endif /* ENABLE_AUTH */
