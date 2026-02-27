@@ -176,9 +176,17 @@
                break;
             case 'get_config_response':
                DawnSettings.handleGetConfigResponse(msg.payload);
-               // Update vision limits from server (single source of truth)
-               if (msg.payload.vision_limits) {
-                  DawnVision.updateLimits(msg.payload.vision_limits);
+               // Update vision limits from server (prefer config.vision, fall back to vision_limits)
+               const visionCfg = msg.payload.config?.vision || msg.payload.vision_limits;
+               if (visionCfg) {
+                  DawnVision.updateLimits(visionCfg);
+               }
+               // Update document limits from server config
+               if (msg.payload.config?.documents) {
+                  const docs = msg.payload.config.documents;
+                  if (docs.max_documents) DawnState.documentState.maxDocuments = docs.max_documents;
+                  if (docs.max_file_size_kb)
+                     DawnState.documentState.maxFileSize = docs.max_file_size_kb * 1024;
                }
                // Update vision button state based on model capabilities
                if (msg.payload.config) {

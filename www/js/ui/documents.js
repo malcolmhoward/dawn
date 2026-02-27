@@ -1,10 +1,12 @@
 /**
  * DAWN WebUI - Document Upload Module
- * Handles drag-and-drop, file picker, and document chip UI for plain text files.
+ * Handles drag-and-drop, file picker, and document chip UI.
  * Documents are uploaded to the server for text extraction, then held in client
  * state until prepended to the user's next message.
  *
- * Phase 1: Plain text files (.txt, .md, .csv, .json, source code)
+ * Supports plain text, PDF, DOCX, and HTML files.
+ * Binary formats (PDF, DOCX) are extracted server-side.
+ * Includes token budget checking with auto-summarize for large documents.
  */
 (function (global) {
    'use strict';
@@ -35,11 +37,39 @@
       '.java',
       '.rb',
       '.html',
+      '.htm',
       '.css',
       '.sql',
       '.mk',
       '.cmake',
+      '.pdf',
+      '.docx',
    ]);
+
+   // Binary formats that need server-side extraction (can't FileReader.readAsText)
+   const BINARY_FORMATS = new Set(['.pdf', '.docx']);
+
+   // Code file extensions for chip color coding
+   const CODE_FORMATS = new Set([
+      '.c',
+      '.h',
+      '.cpp',
+      '.py',
+      '.js',
+      '.ts',
+      '.rs',
+      '.go',
+      '.java',
+      '.rb',
+      '.sh',
+      '.sql',
+   ]);
+
+   // Prose-heavy formats that look better in proportional font
+   const PROSE_FORMATS = new Set(['.pdf', '.docx']);
+
+   // Token budget reserve (room for LLM response)
+   const RESPONSE_RESERVE = 1024;
 
    // DOM element references
    let documentBtn = null;
@@ -117,6 +147,22 @@
       });
    }
 
+   /**
+    * Get the format category for chip color coding
+    */
+   function getFormatCategory(ext) {
+      if (BINARY_FORMATS.has(ext)) return 'document';
+      if (CODE_FORMATS.has(ext)) return 'code';
+      return 'text';
+   }
+
+   /**
+    * Format extension for display (strip dot, uppercase)
+    */
+   function formatExtension(ext) {
+      return (ext || '').replace(/^\./, '').toUpperCase();
+   }
+
    // --- Drag-and-drop handlers ---
 
    function handleDragEnter(e) {
@@ -148,7 +194,16 @@
       const rejected = nonImageFiles.filter((f) => !isAllowedExtension(f.name));
       if (rejected.length > 0) {
          const names = rejected.map((f) => f.name).join(', ');
-         DawnToast.show(`Unsupported file type: ${names}`, 'warning');
+         // Helpful message for legacy .doc format
+         const hasDoc = rejected.some((f) => getExtension(f.name) === '.doc');
+         if (hasDoc) {
+            DawnToast.show(
+               'Legacy .doc format not supported. Please convert to .docx or PDF.',
+               'warning'
+            );
+         } else {
+            DawnToast.show(`Unsupported file type: ${names}`, 'warning');
+         }
       }
 
       if (docFiles.length === 0) return;
@@ -200,6 +255,8 @@
     */
    async function uploadDocument(file) {
       const { maxFileSize } = DawnState.documentState;
+      const ext = getExtension(file.name);
+      const isBinary = BINARY_FORMATS.has(ext);
 
       // Client-side validation
       if (!isAllowedExtension(file.name)) {
@@ -208,12 +265,13 @@
       }
 
       if (file.size > maxFileSize) {
-         DawnToast.show('File too large (max 512 KB)', 'error');
+         const maxKB = Math.round(maxFileSize / 1024);
+         DawnToast.show(`File too large (max ${maxKB} KB)`, 'error');
          return;
       }
 
-      // Show skeleton chip
-      const chipIndex = addSkeletonChip(file.name);
+      // Show skeleton chip with extraction status for binary formats
+      const chipIndex = addSkeletonChip(file.name, isBinary);
 
       try {
          const formData = new FormData();
@@ -229,9 +287,14 @@
             removeChip(chipIndex, true);
             const status = response.status;
             if (status === 413) {
-               DawnToast.show('File too large (max 512 KB)', 'error');
+               const maxKB = Math.round(DawnState.documentState.maxFileSize / 1024);
+               DawnToast.show(`File too large (max ${maxKB} KB)`, 'error');
             } else if (status === 415) {
                DawnToast.show('Unsupported file type', 'error');
+            } else if (status === 422) {
+               const errData = await response.json().catch(() => null);
+               const msg = errData?.error || 'Could not extract text from file';
+               DawnToast.show(msg, 'error');
             } else {
                DawnToast.show('Could not read file', 'error');
             }
@@ -245,7 +308,10 @@
             filename: result.filename,
             content: result.content,
             size: result.size || file.size,
-            type: result.type || getExtension(file.name),
+            type: result.type || ext,
+            estimated_tokens: result.estimated_tokens || 0,
+            page_count: result.page_count || null,
+            summarized: false,
          };
 
          DawnState.documentState.pendingDocuments.push(docEntry);
@@ -254,14 +320,103 @@
          resolveChip(chipIndex, docEntry);
          updateCounter();
 
+         // Check token budget and offer summarization if needed
+         checkTokenBudget(docEntry);
+
          // Announce to screen readers
          const count = DawnState.documentState.pendingDocuments.length;
          const max = DawnState.documentState.maxDocuments;
-         announce(`Document added: ${docEntry.filename}. ${count} of ${max} documents attached.`);
+         const formatNote = isBinary ? ` (text extracted from ${formatExtension(ext)})` : '';
+         announce(
+            `Document added: ${docEntry.filename}${formatNote}. ${count} of ${max} documents attached.`
+         );
       } catch (err) {
          console.error('Document upload error:', err);
          removeChip(chipIndex, true);
          DawnToast.show('Document upload failed', 'error');
+      }
+   }
+
+   /**
+    * Check if document exceeds available token budget and offer summarization
+    */
+   function checkTokenBudget(docEntry) {
+      if (!docEntry.estimated_tokens || docEntry.estimated_tokens <= 0) return;
+
+      // Get current context state from the gauge
+      let contextMax = 0;
+      let contextCurrent = 0;
+
+      if (typeof DawnContextGauge !== 'undefined' && DawnContextGauge.getState) {
+         const state = DawnContextGauge.getState();
+         contextMax = state.max || 0;
+         contextCurrent = state.current || 0;
+      }
+
+      if (contextMax <= 0) return; // No context info available
+
+      const available = contextMax - contextCurrent - RESPONSE_RESERVE;
+      if (docEntry.estimated_tokens <= available) return; // Fits fine
+
+      // Document exceeds budget — show warning with summarize option
+      const docTokens = docEntry.estimated_tokens.toLocaleString();
+      const availTokens = Math.max(0, available).toLocaleString();
+
+      DawnToast.show(
+         `Document ~${docTokens} tokens. Only ~${availTokens} available.`,
+         'warning',
+         10000,
+         {
+            actions: [
+               {
+                  label: 'Summarize to fit',
+                  onClick: (e) => {
+                     summarizeDocument(docEntry, Math.max(available, 256));
+                     e.target.closest('.toast')?.remove();
+                  },
+               },
+            ],
+         }
+      );
+   }
+
+   /**
+    * Summarize a document to fit within a token budget via TF-IDF
+    */
+   async function summarizeDocument(docEntry, targetTokens) {
+      const docIndex = DawnState.documentState.pendingDocuments.indexOf(docEntry);
+      if (docIndex < 0) return;
+
+      try {
+         const response = await fetch('/api/documents/summarize', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+               content: docEntry.content,
+               target_tokens: targetTokens,
+            }),
+         });
+
+         if (!response.ok) {
+            DawnToast.show('Summarization failed', 'error');
+            return;
+         }
+
+         const result = await response.json();
+
+         // Update the document entry in place
+         docEntry.content = result.content;
+         docEntry.size = result.size;
+         docEntry.estimated_tokens = result.estimated_tokens;
+         docEntry.summarized = true;
+
+         // Rebuild chips to reflect the update
+         rebuildChips();
+         DawnToast.show('Document summarized to fit context', 'info');
+      } catch (err) {
+         console.error('Summarize error:', err);
+         DawnToast.show('Summarization failed', 'error');
       }
    }
 
@@ -271,7 +426,7 @@
     * Add a skeleton (loading) chip
     * Returns a temporary ID for later resolution
     */
-   function addSkeletonChip(filename) {
+   function addSkeletonChip(filename, isBinary) {
       if (!chipContainer) return -1;
 
       chipContainer.classList.remove('hidden');
@@ -289,6 +444,15 @@
       spinner.className = 'doc-chip-spinner';
 
       chip.appendChild(nameSpan);
+
+      // Show extraction status for binary formats
+      if (isBinary) {
+         const statusSpan = document.createElement('span');
+         statusSpan.className = 'doc-chip-status';
+         statusSpan.textContent = 'Extracting\u2026';
+         chip.appendChild(statusSpan);
+      }
+
       chip.appendChild(spinner);
       chipContainer.appendChild(chip);
 
@@ -315,9 +479,20 @@
       // Replace content
       chip.innerHTML = '';
 
+      buildChipContent(chip, docEntry, docIndex);
+   }
+
+   /**
+    * Build the inner content of a document chip
+    */
+   function buildChipContent(chip, docEntry, docIndex) {
+      const ext = docEntry.type || '';
+      const category = getFormatCategory(ext);
+
       const typeSpan = document.createElement('span');
       typeSpan.className = 'doc-chip-type';
-      typeSpan.textContent = docEntry.type || '';
+      typeSpan.dataset.category = category;
+      typeSpan.textContent = formatExtension(ext);
 
       const nameSpan = document.createElement('span');
       nameSpan.className = 'doc-chip-name';
@@ -326,7 +501,27 @@
 
       const sizeSpan = document.createElement('span');
       sizeSpan.className = 'doc-chip-size';
-      sizeSpan.textContent = formatSize(docEntry.size);
+      // Show page count for PDFs
+      const sizeText = docEntry.page_count
+         ? `${docEntry.page_count} pg  ${formatSize(docEntry.size)}`
+         : formatSize(docEntry.size);
+      sizeSpan.textContent = sizeText;
+
+      // Summarized indicator
+      if (docEntry.summarized) {
+         const sumSpan = document.createElement('span');
+         sumSpan.className = 'doc-chip-summarized';
+         sumSpan.textContent = '(summarized)';
+         sumSpan.title = 'Content was summarized to fit context window';
+         chip.appendChild(typeSpan);
+         chip.appendChild(nameSpan);
+         chip.appendChild(sizeSpan);
+         chip.appendChild(sumSpan);
+      } else {
+         chip.appendChild(typeSpan);
+         chip.appendChild(nameSpan);
+         chip.appendChild(sizeSpan);
+      }
 
       const removeBtn = document.createElement('button');
       removeBtn.className = 'doc-chip-remove';
@@ -337,10 +532,6 @@
          e.stopPropagation();
          removeDocument(docIndex);
       });
-
-      chip.appendChild(typeSpan);
-      chip.appendChild(nameSpan);
-      chip.appendChild(sizeSpan);
       chip.appendChild(removeBtn);
    }
 
@@ -405,33 +596,7 @@
          chip.setAttribute('role', 'group');
          chip.setAttribute('aria-label', `Attached document: ${doc.filename}`);
 
-         const typeSpan = document.createElement('span');
-         typeSpan.className = 'doc-chip-type';
-         typeSpan.textContent = doc.type || '';
-
-         const nameSpan = document.createElement('span');
-         nameSpan.className = 'doc-chip-name';
-         nameSpan.textContent = truncateFilename(doc.filename, 20);
-         nameSpan.title = doc.filename;
-
-         const sizeSpan = document.createElement('span');
-         sizeSpan.className = 'doc-chip-size';
-         sizeSpan.textContent = formatSize(doc.size);
-
-         const removeBtn = document.createElement('button');
-         removeBtn.className = 'doc-chip-remove';
-         removeBtn.innerHTML = '&times;';
-         removeBtn.title = `Remove ${doc.filename}`;
-         removeBtn.setAttribute('aria-label', `Remove document: ${doc.filename}`);
-         removeBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            removeDocument(idx);
-         });
-
-         chip.appendChild(typeSpan);
-         chip.appendChild(nameSpan);
-         chip.appendChild(sizeSpan);
-         chip.appendChild(removeBtn);
+         buildChipContent(chip, doc, idx);
          chipContainer.appendChild(chip);
       });
    }
@@ -527,6 +692,16 @@
 
       title.textContent = filename;
       pre.textContent = content;
+
+      // Format-aware rendering: use proportional font for prose formats
+      const ext = getExtension(filename);
+      const isProse = PROSE_FORMATS.has(ext);
+      if (isProse) {
+         pre.classList.add('doc-prose');
+      } else {
+         pre.classList.remove('doc-prose');
+      }
+
       modal.classList.remove('hidden');
 
       // Store the element that opened the modal for focus restoration

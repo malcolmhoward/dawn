@@ -1155,7 +1155,10 @@
       if (typeof limits.max_images === 'number' && limits.max_images > 0) {
          state.maxImages = limits.max_images;
       }
-      if (typeof limits.max_image_size === 'number' && limits.max_image_size > 0) {
+      // Support both config.vision (KB) and legacy vision_limits (bytes)
+      if (typeof limits.max_image_size_kb === 'number' && limits.max_image_size_kb > 0) {
+         state.maxSize = limits.max_image_size_kb * 1024;
+      } else if (typeof limits.max_image_size === 'number' && limits.max_image_size > 0) {
          state.maxSize = limits.max_image_size;
       }
       if (typeof limits.max_dimension === 'number' && limits.max_dimension > 0) {

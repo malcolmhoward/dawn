@@ -1247,6 +1247,26 @@ json_object *config_to_json(const dawn_config_t *config) {
    json_object_object_add(images, "max_per_user", json_object_new_int(config->images.max_per_user));
    json_object_object_add(root, "images", images);
 
+   /* [documents] */
+   json_object *documents = json_object_new_object();
+   json_object_object_add(documents, "max_file_size_kb",
+                          json_object_new_int(config->documents.max_file_size_kb));
+   json_object_object_add(documents, "max_documents",
+                          json_object_new_int(config->documents.max_documents));
+   json_object_object_add(documents, "max_pages", json_object_new_int(config->documents.max_pages));
+   json_object_object_add(documents, "max_extracted_size_kb",
+                          json_object_new_int(config->documents.max_extracted_size_kb));
+   json_object_object_add(root, "documents", documents);
+
+   /* [vision] - per-upload image size and dimension limits */
+   json_object *vision = json_object_new_object();
+   json_object_object_add(vision, "max_image_size_kb",
+                          json_object_new_int(config->vision.max_image_size_kb));
+   json_object_object_add(vision, "max_dimension",
+                          json_object_new_int(config->vision.max_dimension));
+   json_object_object_add(vision, "max_images", json_object_new_int(config->vision.max_images));
+   json_object_object_add(root, "vision", vision);
+
    /* [scheduler] */
    json_object *scheduler = json_object_new_object();
    json_object_object_add(scheduler, "enabled", json_object_new_boolean(config->scheduler.enabled));
@@ -1670,10 +1690,24 @@ int config_write_toml(const dawn_config_t *config, const char *path) {
    }
    fprintf(fp, "music_dir = \"%s\"\n", config->paths.music_dir);
 
+   /* [images] controls stored image retention and cleanup */
    fprintf(fp, "\n[images]\n");
    fprintf(fp, "retention_days = %d\n", config->images.retention_days);
    fprintf(fp, "max_size_mb = %d\n", config->images.max_size_mb);
    fprintf(fp, "max_per_user = %d\n", config->images.max_per_user);
+
+   /* [documents] controls document upload and extraction limits */
+   fprintf(fp, "\n[documents]\n");
+   fprintf(fp, "max_file_size_kb = %d\n", config->documents.max_file_size_kb);
+   fprintf(fp, "max_documents = %d\n", config->documents.max_documents);
+   fprintf(fp, "max_pages = %d\n", config->documents.max_pages);
+   fprintf(fp, "max_extracted_size_kb = %d\n", config->documents.max_extracted_size_kb);
+
+   /* [vision] controls per-upload image size and dimension limits */
+   fprintf(fp, "\n[vision]\n");
+   fprintf(fp, "max_image_size_kb = %d\n", config->vision.max_image_size_kb);
+   fprintf(fp, "max_dimension = %d\n", config->vision.max_dimension);
+   fprintf(fp, "max_images = %d\n", config->vision.max_images);
 
    fprintf(fp, "\n[music]\n");
    fprintf(fp, "scan_interval_minutes = %d\n", config->music.scan_interval_minutes);

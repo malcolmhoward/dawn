@@ -906,31 +906,104 @@
          },
       },
       images: {
-         label: 'Image Storage',
+         label: 'Images & Vision',
          icon: '&#x1F5BC;',
          adminOnly: true,
-         advanced: true,
-         description: 'Settings for uploaded images in vision conversations',
+         description: 'Image upload limits, vision settings, and stored image retention',
          fields: {
-            retention_days: {
+            max_image_size_kb: {
                type: 'number',
-               label: 'Retention Period (days)',
-               min: 0,
-               hint: 'Auto-delete images after this many days (0 = keep forever)',
+               label: 'Max Image Size (KB)',
+               min: 512,
+               max: 16384,
+               step: 512,
+               hint: 'Maximum image upload size in kilobytes (512-16384)',
+               configPath: 'vision.max_image_size_kb',
             },
-            max_size_mb: {
+            max_dimension: {
                type: 'number',
-               label: 'Max Size (MB)',
-               min: 1,
-               max: 50,
-               hint: 'Maximum allowed image upload size (1-50 MB)',
+               label: 'Max Image Dimension (px)',
+               min: 256,
+               max: 4096,
+               step: 256,
+               hint: 'Maximum image width/height in pixels (256-4096)',
+               configPath: 'vision.max_dimension',
             },
-            max_per_user: {
+            max_images: {
                type: 'number',
-               label: 'Max Images Per User',
+               label: 'Max Images Per Message',
                min: 1,
-               max: 10000,
-               hint: 'Maximum stored images per user account (1-10,000)',
+               max: 10,
+               hint: 'Maximum images per message (1-10)',
+               configPath: 'vision.max_images',
+            },
+            storage: {
+               type: 'group',
+               label: 'Storage',
+               advanced: true,
+               fields: {
+                  retention_days: {
+                     type: 'number',
+                     label: 'Retention Period (days)',
+                     min: 0,
+                     hint: 'Auto-delete images after this many days (0 = keep forever)',
+                     configPath: 'images.retention_days',
+                  },
+                  max_size_mb: {
+                     type: 'number',
+                     label: 'Max Stored Image Size (MB)',
+                     min: 1,
+                     max: 50,
+                     hint: 'Maximum size per stored image on disk (1-50 MB)',
+                     configPath: 'images.max_size_mb',
+                  },
+                  max_per_user: {
+                     type: 'number',
+                     label: 'Max Stored Per User',
+                     min: 1,
+                     max: 10000,
+                     hint: 'Maximum stored images per user account (1-10,000)',
+                     configPath: 'images.max_per_user',
+                  },
+               },
+            },
+         },
+      },
+      documents: {
+         label: 'Documents',
+         icon: '&#x1F4C4;',
+         adminOnly: true,
+         description: 'Document upload and text extraction limits',
+         fields: {
+            max_file_size_kb: {
+               type: 'number',
+               label: 'Max Upload Size (KB)',
+               min: 64,
+               max: 10240,
+               step: 64,
+               hint: 'Maximum document upload size in kilobytes (64-10240)',
+            },
+            max_documents: {
+               type: 'number',
+               label: 'Max Documents Per Message',
+               min: 1,
+               max: 20,
+               hint: 'Maximum documents that can be attached to a single message (1-20)',
+            },
+            max_pages: {
+               type: 'number',
+               label: 'Max PDF Pages',
+               min: 1,
+               max: 500,
+               hint: 'Maximum pages to extract from PDF documents (1-500)',
+            },
+            max_extracted_size_kb: {
+               type: 'number',
+               label: 'Max Extracted Text (KB)',
+               min: 128,
+               max: 4096,
+               advanced: true,
+               hint: 'Maximum size of extracted text content in kilobytes (128-4096)',
             },
          },
       },
@@ -1109,7 +1182,7 @@
          id: 'media',
          label: 'Music & Media',
          icon: '&#x1F3B5;',
-         sections: ['music', 'images'],
+         sections: ['music', 'images', 'documents'],
       },
       {
          id: 'scheduling',
@@ -1354,10 +1427,15 @@
     * @returns {HTMLElement} Field element
     */
    function createSettingField(sectionKey, fieldKey, def, value) {
-      const fullKey = `${sectionKey}.${fieldKey}`;
+      const fullKey = def.configPath || `${sectionKey}.${fieldKey}`;
       const currentConfig = getCurrentConfigFn ? getCurrentConfigFn() : {};
       const restartRequiredFields = getRestartRequiredFieldsFn ? getRestartRequiredFieldsFn() : [];
       const dynamicOptions = getDynamicOptionsFn ? getDynamicOptionsFn() : {};
+
+      // Resolve value from configPath if field maps to a different config section
+      if (def.configPath) {
+         value = Utils.getNestedValue(currentConfig, def.configPath);
+      }
 
       // Handle nested groups
       if (def.type === 'group') {

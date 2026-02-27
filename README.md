@@ -91,15 +91,15 @@ DAWN is designed for embedded Linux platforms (Jetson, Raspberry Pi) and support
   - **Vision/Image Support** - Send images for AI analysis:
     - Multiple input methods: file upload, paste, drag-and-drop, camera capture
     - Camera capture with front/rear camera switching (mobile-friendly)
-    - Multi-image support (up to 5 images per message)
-    - Client-side compression (max 1024px, JPEG 85%) for efficient uploads
+    - Multi-image support (configurable, default 5 images per message)
+    - Client-side compression (configurable max dimension, JPEG 85%) for efficient uploads
     - SQLite BLOB storage for conversation history persistence
     - Auto-detects vision-capable models (GPT-4o, Claude 3, Gemini, LLaVA, etc.)
     - Security: SVG excluded to prevent XSS attacks
   - **Document Attachment** - Attach text documents for LLM context:
     - Drag-and-drop, file button, or paste to attach documents
     - Supports plain text, Markdown, CSV, JSON, XML, YAML, source code, and more
-    - Up to 5 documents per message (512 KB each)
+    - Configurable limits (default: 5 documents, 512 KB each, up to 10 MB max)
     - Clickable document chips in conversation with viewer modal
     - History replay renders saved document markers as chips
     - Cooperative drag-and-drop: images route to vision, text files route to documents
@@ -545,8 +545,8 @@ export DAWN_LLM_TYPE="cloud"
 export DAWN_OPENAI_API_KEY="sk-..."
 ```
 
-#### commands_config_nuevo.json (MQTT devices)
-See the example in the repository. Configure your MQTT broker and device mappings.
+#### MQTT Devices
+Configure your MQTT broker and device mappings in `dawn.toml` under `[mqtt]`. LLM tools are now defined via compile-time `tool_metadata_t` structs in `src/tools/*.c` (see ARCHITECTURE.md for details).
 
 ### 7. (Optional) LLM Tools Setup
 

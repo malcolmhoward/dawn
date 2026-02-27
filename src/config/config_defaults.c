@@ -216,6 +216,17 @@ void config_set_defaults(dawn_config_t *config) {
    config->images.max_size_mb = 4;    /* 4MB max per image */
    config->images.max_per_user = 1000;
 
+   /* Documents - upload and extraction limits */
+   config->documents.max_file_size_kb = 512;
+   config->documents.max_documents = 5;
+   config->documents.max_pages = 100;
+   config->documents.max_extracted_size_kb = 1024;
+
+   /* Vision - per-upload image size and dimension limits */
+   config->vision.max_image_size_kb = 4096;
+   config->vision.max_dimension = 1024;
+   config->vision.max_images = 5;
+
    /* Memory - persistent user memory system */
    config->memory.enabled = true;
    config->memory.context_budget_tokens = 800; /* ~3200 chars for memory context */

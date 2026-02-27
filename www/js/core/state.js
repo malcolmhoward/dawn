@@ -98,23 +98,23 @@
 
    /**
     * Document state (for text document upload and attachment)
+    * Defaults are overridden by server config.documents on connect.
     */
    const documentState = {
       pendingDocuments: [], // [{filename, content, size, type}]
-      maxDocuments: 5,
-      maxFileSize: 512 * 1024, // 512 KB
+      maxDocuments: 5, // Overridden by config.documents.max_documents
+      maxFileSize: 512 * 1024, // Overridden by config.documents.max_file_size_kb * 1024
    };
 
    /**
     * Vision state (for image upload and preview)
-    * Note: maxImages, maxSize, maxDimension are defaults that get overridden
-    * by server-provided values in vision_limits config response.
+    * Defaults are overridden by server config.vision on connect.
     */
    const visionState = {
       pendingImages: [], // Array of { data: base64, mimeType: string, thumbnail: string }
-      maxImages: 5, // Default, overridden by server WEBUI_MAX_VISION_IMAGES
-      maxSize: 4 * 1024 * 1024, // Default, overridden by server WEBUI_MAX_IMAGE_SIZE
-      maxDimension: 1024, // Default, overridden by server WEBUI_MAX_IMAGE_DIMENSION
+      maxImages: 5, // Overridden by config.vision.max_images
+      maxSize: 4 * 1024 * 1024, // Overridden by config.vision.max_image_size_kb * 1024
+      maxDimension: 1024, // Overridden by config.vision.max_dimension
       isProcessing: false, // Loading indicator state
       visionEnabled: false, // Whether current model supports vision
    };

@@ -207,6 +207,27 @@
    background: rgba(59, 130, 246, 0.9);
 }
 
+.toast-warning {
+   background: rgba(245, 158, 11, 0.9);
+}
+
+.toast-action {
+   display: inline-block;
+   margin-left: 0.5rem;
+   padding: 0.2rem 0.5rem;
+   background: rgba(255, 255, 255, 0.25);
+   border: 1px solid rgba(255, 255, 255, 0.5);
+   border-radius: 4px;
+   color: #fff;
+   font-size: 0.8rem;
+   cursor: pointer;
+   font-family: inherit;
+}
+
+.toast-action:hover {
+   background: rgba(255, 255, 255, 0.4);
+}
+
 .toast-fade-out {
    animation: toast-out 0.3s ease forwards;
 }

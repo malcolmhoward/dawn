@@ -782,7 +782,25 @@ int callback_http(struct lws *wsi,
             /* Fall through to auth redirect */
          }
 
-         /* POST /api/documents - upload text document (defer to body completion) */
+         /* POST /api/documents/summarize - TF-IDF summarize document text */
+         if (strcmp(path, "/api/documents/summarize") == 0 && pss && pss->is_post) {
+            if (is_request_authenticated(wsi, NULL)) {
+               /* Allocate dynamic body buffer for large document content */
+               const size_t max_body = (size_t)g_config.documents.max_extracted_size_kb * 1024 +
+                                       1024;
+               pss->large_body = malloc(32 * 1024); /* Start with 32KB */
+               if (!pss->large_body) {
+                  lws_return_http_status(wsi, HTTP_STATUS_INTERNAL_SERVER_ERROR, NULL);
+                  return -1;
+               }
+               pss->large_body_len = 0;
+               pss->large_body_cap = 32 * 1024;
+               (void)max_body; /* Used during body accumulation */
+               return 0;       /* Defer to body completion */
+            }
+         }
+
+         /* POST /api/documents - upload document (defer to body completion) */
          if (strcmp(path, "/api/documents") == 0 && pss && pss->is_post) {
             if (is_request_authenticated(wsi, NULL)) {
                pss->document_session = NULL;
@@ -981,6 +999,35 @@ int callback_http(struct lws *wsi,
             return webui_documents_handle_upload_body(wsi, pss->document_session, in, len);
          }
 
+         /* Large POST body (dynamically allocated for summarize etc.) */
+         if (pss->large_body) {
+            const size_t max_body = (size_t)g_config.documents.max_extracted_size_kb * 1024 + 1024;
+            if (pss->large_body_len + len > max_body) {
+               LOG_WARNING("webui_http: large POST body exceeds limit (%zu + %zu > %zu)",
+                           pss->large_body_len, len, max_body);
+               return -1;
+            }
+            /* Grow buffer if needed */
+            if (pss->large_body_len + len >= pss->large_body_cap) {
+               size_t new_cap = pss->large_body_cap * 2;
+               if (new_cap < pss->large_body_len + len + 1)
+                  new_cap = pss->large_body_len + len + 1;
+               if (new_cap > max_body + 1)
+                  new_cap = max_body + 1;
+               char *new_buf = realloc(pss->large_body, new_cap);
+               if (!new_buf) {
+                  LOG_ERROR("webui_http: failed to grow large POST body buffer");
+                  return -1;
+               }
+               pss->large_body = new_buf;
+               pss->large_body_cap = new_cap;
+            }
+            memcpy(pss->large_body + pss->large_body_len, in, len);
+            pss->large_body_len += len;
+            pss->large_body[pss->large_body_len] = '\0';
+            return 0;
+         }
+
          /* Regular POST body */
          size_t remaining = HTTP_MAX_POST_BODY - pss->post_body_len - 1;
          size_t to_copy = (len < remaining) ? len : remaining;
@@ -1012,6 +1059,16 @@ int callback_http(struct lws *wsi,
             return result;
          }
 
+         /* Document summarize endpoint (uses large_body for big documents) */
+         if (strcmp(pss->path, "/api/documents/summarize") == 0) {
+            const char *body = pss->large_body ? pss->large_body : pss->post_body;
+            size_t body_len = pss->large_body ? pss->large_body_len : pss->post_body_len;
+            int result = webui_documents_handle_summarize(wsi, body, body_len);
+            free(pss->large_body);
+            pss->large_body = NULL;
+            return result;
+         }
+
          /* Handle login endpoint */
          if (strcmp(pss->path, "/api/auth/login") == 0) {
             return handle_auth_login(wsi, pss);
@@ -1031,6 +1088,10 @@ int callback_http(struct lws *wsi,
          if (pss && pss->document_session) {
             webui_documents_session_free(pss->document_session);
             pss->document_session = NULL;
+         }
+         if (pss && pss->large_body) {
+            free(pss->large_body);
+            pss->large_body = NULL;
          }
          break;
 #endif /* ENABLE_AUTH */

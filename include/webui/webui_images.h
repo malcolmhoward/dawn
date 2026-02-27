@@ -43,7 +43,8 @@ struct http_image_session;
  * Allocated separately due to size (up to 4MB for image data).
  * ============================================================================= */
 
-#define IMAGE_UPLOAD_MAX_SIZE (4 * 1024 * 1024) /* 4MB max upload */
+/* Image upload max size is now configurable via vision.max_image_size_kb in dawn_config.h.
+ * Use g_config.vision.max_image_size_kb * 1024 at runtime. */
 
 typedef struct http_image_session {
    int user_id;           /* Authenticated user */
@@ -56,6 +57,7 @@ typedef struct http_image_session {
    bool header_parsed;    /* Multipart header parsed */
    bool is_multipart;     /* Is multipart/form-data */
    size_t content_length; /* Expected total length */
+   size_t max_image_size; /* Config snapshot at upload_start (TOCTOU prevention) */
 } http_image_session_t;
 
 /* =============================================================================

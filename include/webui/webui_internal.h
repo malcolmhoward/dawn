@@ -140,6 +140,10 @@ struct http_session_data {
    bool is_post;
    struct http_image_session *image_session;         /* For image uploads (NULL if not image) */
    struct document_upload_session *document_session; /* For doc uploads (NULL if not doc) */
+   /* Dynamic body buffer for large POST endpoints (e.g., /api/documents/summarize) */
+   char *large_body;      /* Dynamically allocated body (NULL if using post_body) */
+   size_t large_body_len; /* Current length */
+   size_t large_body_cap; /* Allocated capacity */
 };
 
 /* =============================================================================

@@ -20,8 +20,9 @@
  *
  * DAWN Configuration System - Main configuration struct definitions
  *
- * Thread Safety: Configuration is loaded once at startup and read-only during
- * runtime. No mutex required for concurrent reads after initialization.
+ * Thread Safety: Configuration is loaded at startup and may be mutated at runtime
+ * via WebUI settings behind s_config_rwlock (in webui_server.c). Readers should
+ * snapshot values into local variables when consistency across multiple fields matters.
  */
 
 #ifndef DAWN_CONFIG_H
@@ -32,6 +33,19 @@
 
 #ifdef __cplusplus
 extern "C" {
+#endif
+
+/* =============================================================================
+ * Utility Macros
+ * ============================================================================= */
+#ifndef CONFIG_CLAMP
+#define CONFIG_CLAMP(val, lo, hi) \
+   do {                           \
+      if ((val) < (lo))           \
+         (val) = (lo);            \
+      if ((val) > (hi))           \
+         (val) = (hi);            \
+   } while (0)
 #endif
 
 /* =============================================================================
@@ -330,13 +344,32 @@ typedef struct {
 } webui_config_t;
 
 /* =============================================================================
- * Images Configuration
+ * Images Configuration (storage retention settings)
  * ============================================================================= */
 typedef struct {
    int retention_days; /* Auto-delete images after N days (0 = never, default: 0) */
    int max_size_mb;    /* Max image size in MB (default: 4) */
    int max_per_user;   /* Max images per user (default: 1000) */
 } images_config_t;
+
+/* =============================================================================
+ * Documents Configuration (upload and extraction limits)
+ * ============================================================================= */
+typedef struct {
+   int max_file_size_kb;      /* Max upload size in KB (default: 512, range: 64-10240) */
+   int max_documents;         /* Max concurrent attached docs (default: 5, range: 1-20) */
+   int max_pages;             /* Max PDF pages to extract (default: 100, range: 1-500) */
+   int max_extracted_size_kb; /* Max extracted text in KB (default: 1024, range: 128-4096) */
+} documents_config_t;
+
+/* =============================================================================
+ * Vision Configuration (per-upload image size and dimension limits)
+ * ============================================================================= */
+typedef struct {
+   int max_image_size_kb; /* Max image upload size in KB (default: 4096, range: 512-16384) */
+   int max_dimension;     /* Max image dimension in px (default: 1024, range: 256-4096) */
+   int max_images;        /* Max images per message (default: 5, range: 1-10) */
+} vision_config_t;
 
 /* =============================================================================
  * Shutdown Configuration
@@ -469,6 +502,8 @@ typedef struct {
    tui_config_t tui;
    webui_config_t webui;
    images_config_t images;
+   documents_config_t documents;
+   vision_config_t vision;
    memory_config_t memory;
    shutdown_config_t shutdown;
    debug_config_t debug;

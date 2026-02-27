@@ -1916,19 +1916,20 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
             const char *text = json_object_get_string(text_obj);
             if (text && strlen(text) > 0) {
                /* Extract optional images for vision (array format) */
-               const char *vision_images[WEBUI_MAX_VISION_IMAGES] = { 0 };
-               size_t vision_image_sizes[WEBUI_MAX_VISION_IMAGES] = { 0 };
-               const char *vision_mimes[WEBUI_MAX_VISION_IMAGES] = { 0 };
+               const char *vision_images[WEBUI_MAX_VISION_IMAGES_CAP] = { 0 };
+               size_t vision_image_sizes[WEBUI_MAX_VISION_IMAGES_CAP] = { 0 };
+               const char *vision_mimes[WEBUI_MAX_VISION_IMAGES_CAP] = { 0 };
                int vision_image_count = 0;
+               const int max_vision_images = g_config.vision.max_images;
 
                struct json_object *images_obj;
                if (json_object_object_get_ex(payload, "images", &images_obj) &&
                    json_object_is_type(images_obj, json_type_array)) {
                   int array_len = json_object_array_length(images_obj);
-                  if (array_len > WEBUI_MAX_VISION_IMAGES) {
+                  if (array_len > max_vision_images) {
                      LOG_WARNING("WebUI: Too many images (%d), limiting to %d", array_len,
-                                 WEBUI_MAX_VISION_IMAGES);
-                     array_len = WEBUI_MAX_VISION_IMAGES;
+                                 max_vision_images);
+                     array_len = max_vision_images;
                   }
 
                   for (int i = 0; i < array_len; i++) {
@@ -4606,10 +4607,10 @@ typedef struct {
    char *text;
    unsigned int request_gen; /* Captured request_generation to detect superseded requests */
    /* Vision support fields - supports multiple images per message */
-   char *vision_images[WEBUI_MAX_VISION_IMAGES];                      /* Base64 encoded images */
-   size_t vision_image_sizes[WEBUI_MAX_VISION_IMAGES];                /* Size of each image */
-   char vision_mimes[WEBUI_MAX_VISION_IMAGES][WEBUI_VISION_MIME_MAX]; /* MIME types */
-   int vision_image_count;                                            /* Number of images */
+   char *vision_images[WEBUI_MAX_VISION_IMAGES_CAP];       /* Base64 encoded images */
+   size_t vision_image_sizes[WEBUI_MAX_VISION_IMAGES_CAP]; /* Size of each image */
+   char vision_mimes[WEBUI_MAX_VISION_IMAGES_CAP][WEBUI_VISION_MIME_MAX]; /* MIME types */
+   int vision_image_count;                                                /* Number of images */
 } text_work_t;
 
 /**
@@ -5088,10 +5089,11 @@ int webui_process_text_input_with_vision(session_t *session,
    }
 
    /* Validate image count */
-   if (vision_image_count > WEBUI_MAX_VISION_IMAGES) {
+   const int max_vision_images = g_config.vision.max_images;
+   if (vision_image_count > max_vision_images) {
       LOG_WARNING("WebUI: Too many images (%d), limiting to %d", vision_image_count,
-                  WEBUI_MAX_VISION_IMAGES);
-      vision_image_count = WEBUI_MAX_VISION_IMAGES;
+                  max_vision_images);
+      vision_image_count = max_vision_images;
    }
 
    /* Increment request generation FIRST to invalidate any pending requests,
@@ -5101,12 +5103,11 @@ int webui_process_text_input_with_vision(session_t *session,
    session->disconnected = false;
 
    /* Create work item */
-   text_work_t *work = malloc(sizeof(text_work_t));
+   text_work_t *work = calloc(1, sizeof(text_work_t));
    if (!work) {
       LOG_ERROR("WebUI: Failed to allocate text work item");
       return 1;
    }
-   memset(work, 0, sizeof(text_work_t));
 
    work->session = session;
    work->text = strdup(text);

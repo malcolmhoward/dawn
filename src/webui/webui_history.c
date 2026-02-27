@@ -197,10 +197,10 @@ static bool validate_image_marker(const char *content) {
 
       marker_count++;
 
-      /* Limit total markers to prevent DoS (matches WEBUI_MAX_VISION_IMAGES) */
-      if (marker_count > WEBUI_MAX_VISION_IMAGES) {
+      /* Limit total markers to prevent DoS (matches vision.max_images cap) */
+      if (marker_count > WEBUI_MAX_VISION_IMAGES_CAP) {
          LOG_WARNING("WebUI: Rejected message with too many image markers (%d > %d)", marker_count,
-                     WEBUI_MAX_VISION_IMAGES);
+                     WEBUI_MAX_VISION_IMAGES_CAP);
          return false;
       }
 

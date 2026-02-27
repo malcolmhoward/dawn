@@ -46,7 +46,7 @@
 #include "llm/llm_local_provider.h"
 #include "logging.h"
 #include "webui/webui_internal.h"
-#include "webui/webui_server.h" /* For WEBUI_MAX_VISION_* constants */
+#include "webui/webui_server.h" /* For WEBUI_MAX_THUMBNAIL_SIZE */
 
 /* =============================================================================
  * Module State
@@ -197,14 +197,14 @@ void handle_get_config(ws_connection_t *conn) {
       json_object_object_add(payload, "username", json_object_new_string(conn->username));
    }
 
-   /* Add vision limits (server-authoritative values for client) */
+   /* Add vision limits (deprecated — clients should use config.vision instead) */
    json_object *vision_limits = json_object_new_object();
    json_object_object_add(vision_limits, "max_images",
-                          json_object_new_int(WEBUI_MAX_VISION_IMAGES));
+                          json_object_new_int(g_config.vision.max_images));
    json_object_object_add(vision_limits, "max_image_size",
-                          json_object_new_int(WEBUI_MAX_IMAGE_SIZE));
+                          json_object_new_int64((int64_t)g_config.vision.max_image_size_kb * 1024));
    json_object_object_add(vision_limits, "max_dimension",
-                          json_object_new_int(WEBUI_MAX_IMAGE_DIMENSION));
+                          json_object_new_int(g_config.vision.max_dimension));
    json_object_object_add(vision_limits, "max_thumbnail_size",
                           json_object_new_int(WEBUI_MAX_THUMBNAIL_SIZE));
    json_object_object_add(payload, "vision_limits", vision_limits);
@@ -665,6 +665,28 @@ static void apply_config_from_json(dawn_config_t *config, struct json_object *pa
       JSON_TO_CONFIG_INT(section, "retention_days", config->images.retention_days);
       JSON_TO_CONFIG_INT(section, "max_size_mb", config->images.max_size_mb);
       JSON_TO_CONFIG_INT(section, "max_per_user", config->images.max_per_user);
+   }
+
+   /* [documents] */
+   if (json_object_object_get_ex(payload, "documents", &section)) {
+      JSON_TO_CONFIG_INT(section, "max_file_size_kb", config->documents.max_file_size_kb);
+      JSON_TO_CONFIG_INT(section, "max_documents", config->documents.max_documents);
+      JSON_TO_CONFIG_INT(section, "max_pages", config->documents.max_pages);
+      JSON_TO_CONFIG_INT(section, "max_extracted_size_kb", config->documents.max_extracted_size_kb);
+      CONFIG_CLAMP(config->documents.max_file_size_kb, 64, 10240);
+      CONFIG_CLAMP(config->documents.max_documents, 1, 20);
+      CONFIG_CLAMP(config->documents.max_pages, 1, 500);
+      CONFIG_CLAMP(config->documents.max_extracted_size_kb, 128, 4096);
+   }
+
+   /* [vision] — per-upload image size and dimension limits */
+   if (json_object_object_get_ex(payload, "vision", &section)) {
+      JSON_TO_CONFIG_INT(section, "max_image_size_kb", config->vision.max_image_size_kb);
+      JSON_TO_CONFIG_INT(section, "max_dimension", config->vision.max_dimension);
+      JSON_TO_CONFIG_INT(section, "max_images", config->vision.max_images);
+      CONFIG_CLAMP(config->vision.max_image_size_kb, 512, 16384);
+      CONFIG_CLAMP(config->vision.max_dimension, 256, 4096);
+      CONFIG_CLAMP(config->vision.max_images, 1, 10);
    }
 
    /* [scheduler] */

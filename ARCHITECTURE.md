@@ -4,7 +4,7 @@ This document describes the architecture of the D.A.W.N. (Digital Assistant for 
 
 **D.A.W.N.** is the central intelligence layer of the OASIS ecosystem, responsible for interpreting user intent, fusing data from every subsystem, and routing commands. At its core, DAWN performs neural-inference to understand context and drive decision-making, acting as OASIS's orchestration hub for MIRAGE, AURA, SPARK, STAT, and any future modules.
 
-**Last Updated**: February 27, 2026 (Document upload/attachment subsystem)
+**Last Updated**: February 27, 2026 (Configurable document/vision limits, unified settings UI)
 
 ## Table of Contents
 
@@ -660,8 +660,8 @@ The WebUI uses Opus audio compression for efficient bidirectional audio streamin
 - **vision.js**: Client-side image handling (1,400+ lines)
   - Input methods: file picker, clipboard paste, drag-and-drop, camera capture
   - Camera API with front/rear switching (`navigator.mediaDevices.getUserMedia`)
-  - Client-side compression via Canvas API (max 1024px longest edge, JPEG 85%)
-  - Multi-image support (up to 5 images per message)
+  - Client-side compression via Canvas API (configurable max dimension, default 1024px, JPEG 85%)
+  - Multi-image support (configurable max per message, default 5)
   - LocalStorage caching of uploaded images by ID
   - Security: SVG explicitly excluded to prevent XSS attacks
   - Accessibility: ARIA announcements, keyboard navigation
@@ -721,7 +721,7 @@ The system auto-detects vision capability based on model name:
 
 ### 9. Document Upload Subsystem (`src/webui/webui_documents.c`, `www/js/ui/documents.js`)
 
-**Purpose**: Text document upload, extraction, and attachment for LLM context
+**Purpose**: Document upload, extraction, and attachment for LLM context — supports plain text, PDF (MuPDF), DOCX (libzip+libxml2), and HTML-to-markdown (html_parser.c)
 
 #### Architecture: **Client-Side Read + Server-Side Extraction + Transcript Chip Display**
 
@@ -767,10 +767,12 @@ The system auto-detects vision capability based on model name:
 │  ┌───────────────────────────────────────────────────────────────┐    │
 │  │ webui_documents.c - HTTP Endpoint Handler                     │    │
 │  │                                                               │    │
-│  │  POST /api/documents  → Validate ext → Read text → Return    │    │
+│  │  POST /api/documents  → Validate ext → Extract → Return      │    │
+│  │  POST /api/documents/summarize  → TF-IDF summarize           │    │
 │  │  Supported: .txt, .md, .csv, .json, .xml, .yaml, .toml,     │    │
 │  │             .c, .h, .py, .js, .html, .css, .sh, .log, etc.  │    │
-│  │  Max size: 512 KB per file, up to 5 files per message        │    │
+│  │             .pdf (MuPDF), .docx (libzip+libxml2)             │    │
+│  │  Configurable limits (default: 512 KB, up to 5 files)        │    │
 │  └───────────────────────────────────────────────────────────────┘    │
 │                                                                        │
 │  Document text injected into LLM message as:                          │
@@ -788,12 +790,18 @@ The system auto-detects vision capability based on model name:
   - Input chip UI: filename, extension badge, size, remove button
   - `parseDocumentMarkers(text)`: Regex extraction of document markers from transcript text
   - `openDocumentViewer(filename, content)`: Modal viewer with focus trap, Escape/backdrop close
-  - Allowed extensions: `.txt`, `.md`, `.csv`, `.json`, `.xml`, `.yaml`, `.yml`, `.toml`, `.ini`, `.cfg`, `.conf`, `.log`, `.c`, `.h`, `.cpp`, `.py`, `.js`, `.ts`, `.html`, `.css`, `.sh`, `.sql`, `.env`
+  - Allowed extensions: `.txt`, `.md`, `.csv`, `.json`, `.xml`, `.yaml`, `.yml`, `.toml`, `.ini`, `.cfg`, `.conf`, `.log`, `.c`, `.h`, `.cpp`, `.py`, `.js`, `.ts`, `.html`, `.css`, `.sh`, `.sql`, `.env`, `.pdf`, `.docx`
+  - PDF and DOCX sent to server for extraction (no client-side read); text files read client-side
   - Toast feedback for unsupported file types on drop
 
 - **webui_documents.c/h**: Server-side upload handling
-  - `POST /api/documents`: Multipart form upload, extension validation, UTF-8 text extraction
-  - Returns `{filename, content, size}` JSON response
+  - `POST /api/documents`: Multipart form upload, extension validation, text extraction
+    - Plain text/source files: UTF-8 read directly
+    - PDF: MuPDF extraction (`fz_try`/`fz_catch` for error safety, page count cap)
+    - DOCX: libzip + libxml2 parse of `word/document.xml` (XXE prevention, ZIP bomb limits)
+    - HTML: routed through `html_parser.c` to markdown
+  - `POST /api/documents/summarize`: TF-IDF auto-summarize for documents > 8,000 chars
+  - Returns `{filename, content, size, estimated_tokens}` JSON response; large docs include `auto_summary`
   - Authentication required (uses session validation)
 
 - **transcript.js** (document integration):
@@ -811,7 +819,10 @@ The system auto-detects vision capability based on model name:
 - **DOMPurify**: Markdown-rendered message text sanitized before DOM insertion
 - **CSP header**: `script-src 'self'` blocks any inline scripts in document content
 - **Extension allowlist**: Only known text extensions accepted; binary files rejected
-- **Size limit**: 512 KB per file enforced at both client and server
+- **Size limit**: Configurable per file (default 512 KB, max 10 MB) enforced at both client and server
+- **PDF safety**: `fz_try`/`fz_catch` wraps all MuPDF calls; page count capped to prevent DoS on large documents
+- **DOCX safety**: XXE prevention (no external entity resolution in libxml2); ZIP bomb protection via entry size limits
+- **Magic bytes validation**: PDF (`%PDF-`) and DOCX (ZIP `PK\x03\x04`) headers verified before extraction
 
 ### 10. Memory Subsystem (`src/memory/`, `include/memory/`)
 
@@ -1342,16 +1353,16 @@ static const tool_metadata_t my_tool_metadata = {
 
 ### Command Definition Sources
 
-Commands are defined in two places:
+Commands are defined via the **modular tool_registry** system:
 
-1. **JSON-Defined** (`commands_config_nuevo.json`)
-   - Device definitions with types, aliases, MQTT topics
-   - Optional `tool` blocks that become native LLM tools
-   - Action patterns for direct matching ("turn on %device_name%")
+1. **Tool Registry** (`src/tools/*.c`)
+   - Each tool is a self-contained module with `tool_metadata_t` struct
+   - Registered via `tool_registry_register()` during `tools_register_all()`
+   - O(1) lookup via FNV-1a hash tables for name, device_string, and aliases
 
-2. **C-Defined** (`mosquitto_comms.c`)
+2. **Legacy Device Callbacks** (`mosquitto_comms.c`)
    - `deviceCallbackArray[]` maps device types to C functions
-   - Execution callbacks: weather, music, search, smartthings, etc.
+   - Core system devices: weather, music, search, smartthings, etc.
 
 ### Native Tools vs Legacy `<command>` Tags
 
@@ -1765,25 +1776,23 @@ Fallback values when config files are missing:
 - `DEFAULT_PCM_CAPTURE_DEVICE`: ALSA capture device
 - `MQTT_IP` / `MQTT_PORT`: MQTT broker defaults
 
-#### commands_config_nuevo.json (Device/Tool Definitions)
+#### Tool Registry (`src/tools/*.c`)
 
-Device types, actions, and LLM tool definitions:
+Tools are defined as compile-time `tool_metadata_t` structs (JSON config file was removed):
 
-```json
-{
-  "devices": [
-    {
-      "type": "light",
-      "name": "living_room",
-      "actions": ["on", "off", "dim"],
-      "tool": {
-        "description": "Control living room light",
-        "parameters": [...]
-      }
-    }
-  ]
-}
+```c
+static const tool_metadata_t weather_metadata = {
+   .name = "get_weather",
+   .device_string = "weather",
+   .description = "Get current weather for a location",
+   .params = weather_params,
+   .param_count = 1,
+   .device_type = TOOL_DEVICE_TYPE_GETTER,
+   .callback = weather_callback,
+};
 ```
+
+Register in `src/tools/tools_init.c` via `tools_register_all()`.
 
 ### WebUI Settings Panel Mapping
 
@@ -1797,6 +1806,8 @@ The WebUI settings panel (`www/js/ui/settings.js`) defines a `SETTINGS_SCHEMA` t
 | Audio | `[audio]` | Backend, devices |
 | Tool Calling | `[llm.tools]` | Mode, per-tool toggles |
 | Network | `[webui]`, `[dap]`, `[mqtt]` | Ports, addresses |
+| Images & Vision | `[images]`, `[vision]` | Storage retention, upload size/dimension limits |
+| Documents | `[documents]` | Upload size, page limits, extraction limits |
 
 **Implementation Note**: When adding new settings to `dawn.toml`, also add corresponding entries to `SETTINGS_SCHEMA` to expose them in the WebUI, unless they fall under the exclusion criteria above.
 
@@ -1845,8 +1856,8 @@ The WebUI settings panel (`www/js/ui/settings.js`) defines a `SETTINGS_SCHEMA` t
 
 ---
 
-**Document Version**: 1.9
-**Last Updated**: February 18, 2026 (Genre support, LLM playlist builder, music/TTS race fixes)
+**Document Version**: 2.0
+**Last Updated**: February 27, 2026 (Configurable document/vision limits, tool registry updates)
 **Reorganization Commit**: [Git SHA to be added after commit]
 
 ### LLM Threading Architecture (Post-Interrupt Implementation)

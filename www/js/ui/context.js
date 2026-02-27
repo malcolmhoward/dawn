@@ -26,6 +26,9 @@
    const GAUGE_COLOR_LOW = { r: 34, g: 211, b: 238 }; // Cyan #22d3ee
    const GAUGE_COLOR_HIGH = { r: 245, g: 158, b: 11 }; // Amber #f59e0b
 
+   // Last known state (for getState queries)
+   let lastKnownState = { current: 0, max: 0, usage: 0 };
+
    // Callbacks
    let callbacks = {
       onUpdate: null, // (usage) => void - called when context updates
@@ -181,6 +184,9 @@
 
       const { current, max, usage } = payload;
 
+      // Track state for getState() queries
+      lastKnownState = { current: current || 0, max: max || 0, usage: usage || 0 };
+
       // Update the gauge arc
       render(usage);
 
@@ -251,10 +257,18 @@
    // Export Module
    // =============================================================================
 
+   /**
+    * Get current context state {current, max, usage}
+    */
+   function getState() {
+      return { ...lastKnownState };
+   }
+
    global.DawnContextGauge = {
       init: init,
       render: render,
       updateDisplay: updateDisplay,
       setCallbacks: setCallbacks,
+      getState: getState,
    };
 })(window);

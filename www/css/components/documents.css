@@ -125,6 +125,34 @@
    color: var(--error);
 }
 
+/* Format-category color coding for type badges */
+.doc-chip-type[data-category='document'] {
+   background: #e16b3a;
+}
+
+.doc-chip-type[data-category='code'] {
+   background: var(--accent);
+}
+
+.doc-chip-type[data-category='text'] {
+   background: var(--text-secondary);
+}
+
+/* Summarized indicator */
+.doc-chip-summarized {
+   color: var(--accent);
+   font-size: 0.65rem;
+   font-style: italic;
+   white-space: nowrap;
+}
+
+/* Extraction status text on skeleton chips */
+.doc-chip-status {
+   font-size: 0.65rem;
+   color: var(--text-secondary);
+   font-style: italic;
+}
+
 /* Skeleton/loading chip */
 .document-chip.skeleton {
    opacity: 0.7;
@@ -288,6 +316,14 @@
    word-break: break-word;
    margin: 0;
    color: var(--text-primary);
+}
+
+/* Prose-friendly rendering for PDF/DOCX extracted text */
+.document-viewer-body pre.doc-prose {
+   font-family: inherit;
+   font-size: 0.85rem;
+   line-height: 1.6;
+   white-space: pre-line;
 }
 
 /* Full-screen on mobile */

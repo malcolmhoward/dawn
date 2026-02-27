@@ -24,6 +24,8 @@
  *   POST /api/documents - Upload a text document, returns extracted content
  *
  * Phase 1: Plain text files (.txt, .md, .csv, .json, source code)
+ * Phase 2: PDF extraction (MuPDF), DOCX extraction (libzip + libxml2)
+ * Phase 3: HTML-to-markdown (html_parser.c), token budget + auto-summarize
  * Text is extracted server-side and returned in the JSON response.
  * No persistent storage — client holds content in JS state until sent.
  *
@@ -38,7 +40,9 @@
 /* Forward declaration */
 typedef struct document_upload_session document_upload_session_t;
 
-#define DOC_MAX_FILE_SIZE (512 * 1024) /* 512 KB max upload */
+/* Document upload limits are now configurable via documents_config_t (dawn_config.h).
+ * Use g_config.documents.max_file_size_kb * 1024 etc. at runtime. */
+#define DOC_MUPDF_MEM_LIMIT (32 * 1024 * 1024) /* 32 MB MuPDF allocation ceiling (security) */
 
 /* =============================================================================
  * HTTP Handlers
@@ -83,6 +87,19 @@ int webui_documents_handle_upload_body(struct lws *wsi,
  * @return -1 to close connection (response sent)
  */
 int webui_documents_handle_upload_complete(struct lws *wsi, document_upload_session_t *session);
+
+/**
+ * @brief Handle POST /api/documents/summarize
+ *
+ * TF-IDF summarizes document text to fit within a token budget.
+ * Expects JSON body: {"content": "...", "target_tokens": N}
+ *
+ * @param wsi WebSocket/HTTP connection
+ * @param body POST body (JSON)
+ * @param body_len Length of POST body
+ * @return -1 to close connection (response sent)
+ */
+int webui_documents_handle_summarize(struct lws *wsi, const char *body, size_t body_len);
 
 /**
  * @brief Free document session resources

@@ -31,6 +31,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "config/dawn_config.h"
 #include "image_store.h"
 #include "logging.h"
 
@@ -301,11 +302,14 @@ int webui_images_handle_upload_start(struct lws *wsi,
    char content_length_str[32];
    int cl_len = lws_hdr_copy(wsi, content_length_str, sizeof(content_length_str),
                              WSI_TOKEN_HTTP_CONTENT_LENGTH);
+   /* Snapshot config limit for this upload (avoids TOCTOU if config changes mid-upload) */
+   const size_t max_image_size = (size_t)g_config.vision.max_image_size_kb * 1024;
+
    size_t content_length = 0;
    if (cl_len > 0) {
       char *endptr;
       long long parsed = strtoll(content_length_str, &endptr, 10);
-      if (*endptr != '\0' || parsed < 0 || (size_t)parsed > IMAGE_UPLOAD_MAX_SIZE) {
+      if (*endptr != '\0' || parsed < 0 || (size_t)parsed > max_image_size) {
          return send_json_error(wsi, HTTP_STATUS_BAD_REQUEST, "Invalid Content-Length");
       }
       content_length = (size_t)parsed;
@@ -323,6 +327,7 @@ int webui_images_handle_upload_start(struct lws *wsi,
    session->user_id = user_id;
    session->is_multipart = is_multipart;
    session->content_length = content_length;
+   session->max_image_size = max_image_size;
    strncpy(session->mime_type, content_type, sizeof(session->mime_type) - 1);
 
    /* Extract boundary for multipart */
@@ -334,7 +339,7 @@ int webui_images_handle_upload_start(struct lws *wsi,
    }
 
    /* Allocate initial data buffer */
-   session->data_cap = (content_length > 0 && content_length <= IMAGE_UPLOAD_MAX_SIZE)
+   session->data_cap = (content_length > 0 && content_length <= max_image_size)
                            ? content_length
                            : 64 * 1024; /* Start with 64KB */
    session->data = malloc(session->data_cap);
@@ -356,10 +361,10 @@ int webui_images_handle_upload_body(struct lws *wsi,
    if (!session || !data || len == 0)
       return 0;
 
-   /* Check size limit */
-   if (session->data_len + len > IMAGE_UPLOAD_MAX_SIZE) {
-      LOG_WARNING("webui_images: upload exceeds size limit (%zu + %zu > %d)", session->data_len,
-                  len, IMAGE_UPLOAD_MAX_SIZE);
+   /* Check size limit (using snapshot from upload_start) */
+   if (session->data_len + len > session->max_image_size) {
+      LOG_WARNING("webui_images: upload exceeds size limit (%zu + %zu > %zu)", session->data_len,
+                  len, session->max_image_size);
       return -1;
    }
 
@@ -368,8 +373,8 @@ int webui_images_handle_upload_body(struct lws *wsi,
       size_t new_cap = session->data_cap * 2;
       if (new_cap < session->data_len + len)
          new_cap = session->data_len + len;
-      if (new_cap > IMAGE_UPLOAD_MAX_SIZE)
-         new_cap = IMAGE_UPLOAD_MAX_SIZE;
+      if (new_cap > session->max_image_size)
+         new_cap = session->max_image_size;
 
       unsigned char *new_data = realloc(session->data, new_cap);
       if (!new_data) {

@@ -864,6 +864,45 @@ static void parse_images(toml_table_t *table, images_config_t *config) {
    }
 }
 
+static void parse_documents(toml_table_t *table, documents_config_t *config) {
+   if (!table)
+      return;
+
+   static const char *const known_keys[] = { "max_file_size_kb", "max_documents", "max_pages",
+                                             "max_extracted_size_kb", NULL };
+   warn_unknown_keys(table, "documents", known_keys);
+
+   PARSE_INT(table, "max_file_size_kb", config->max_file_size_kb);
+   CONFIG_CLAMP(config->max_file_size_kb, 64, 10240);
+
+   PARSE_INT(table, "max_documents", config->max_documents);
+   CONFIG_CLAMP(config->max_documents, 1, 20);
+
+   PARSE_INT(table, "max_pages", config->max_pages);
+   CONFIG_CLAMP(config->max_pages, 1, 500);
+
+   PARSE_INT(table, "max_extracted_size_kb", config->max_extracted_size_kb);
+   CONFIG_CLAMP(config->max_extracted_size_kb, 128, 4096);
+}
+
+static void parse_vision(toml_table_t *table, vision_config_t *config) {
+   if (!table)
+      return;
+
+   static const char *const known_keys[] = { "max_image_size_kb", "max_dimension", "max_images",
+                                             NULL };
+   warn_unknown_keys(table, "vision", known_keys);
+
+   PARSE_INT(table, "max_image_size_kb", config->max_image_size_kb);
+   CONFIG_CLAMP(config->max_image_size_kb, 512, 16384);
+
+   PARSE_INT(table, "max_dimension", config->max_dimension);
+   CONFIG_CLAMP(config->max_dimension, 256, 4096);
+
+   PARSE_INT(table, "max_images", config->max_images);
+   CONFIG_CLAMP(config->max_images, 1, 10);
+}
+
 static void parse_memory(toml_table_t *table, memory_config_t *config) {
    if (!table)
       return;
@@ -1189,6 +1228,8 @@ int config_parse_file(const char *path, dawn_config_t *config) {
    parse_tui(toml_table_in(root, "tui"), &config->tui);
    parse_webui(toml_table_in(root, "webui"), &config->webui);
    parse_images(toml_table_in(root, "images"), &config->images);
+   parse_documents(toml_table_in(root, "documents"), &config->documents);
+   parse_vision(toml_table_in(root, "vision"), &config->vision);
    parse_memory(toml_table_in(root, "memory"), &config->memory);
    parse_shutdown(toml_table_in(root, "shutdown"), &config->shutdown);
    parse_debug(toml_table_in(root, "debug"), &config->debug);

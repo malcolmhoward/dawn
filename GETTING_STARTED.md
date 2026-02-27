@@ -28,7 +28,8 @@ sudo apt update && sudo apt install -y \
   libmosquitto-dev libjson-c-dev libcurl4-openssl-dev libssl-dev \
   libwebsockets-dev libopus-dev libsodium-dev libsqlite3-dev \
   libsamplerate0-dev libmpg123-dev libvorbis-dev libncurses-dev \
-  meson ninja-build libabseil-dev
+  meson ninja-build libabseil-dev \
+  libmupdf-dev libzip-dev libmujs-dev libgumbo-dev libopenjp2-7-dev libjbig2dec0-dev
 ```
 
 > **Jetson users**: CUDA runtime is pre-installed. For building GPU-accelerated components (ONNX Runtime, Whisper), you may need CUDA development headers. Check with `ls /usr/local/cuda/include/cuda.h`.
