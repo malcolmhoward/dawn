@@ -766,10 +766,10 @@
       const html = results
          .map(
             (track, i) => `
-         <li class="music-library-item" data-path="${escapeHtml(track.path)}" data-index="${i}"
-            data-title="${escapeHtml(track.title || track.display_name || '')}"
-            data-artist="${escapeHtml(track.artist || '')}"
-            data-album="${escapeHtml(track.album || '')}"
+         <li class="music-library-item" data-path="${escapeAttr(track.path)}" data-index="${i}"
+            data-title="${escapeAttr(track.title || track.display_name || '')}"
+            data-artist="${escapeAttr(track.artist || '')}"
+            data-album="${escapeAttr(track.album || '')}"
             data-duration="${track.duration_sec || 0}">
             <div class="music-library-item-info">
                <div class="music-library-item-title">${escapeHtml(track.title || track.display_name || 'Unknown')}</div>
@@ -989,10 +989,10 @@
       const html = tracks
          .map(
             (track) => `
-         <li class="music-library-item" data-path="${escapeHtml(track.path)}"
-            data-title="${escapeHtml(track.title || '')}"
-            data-artist="${escapeHtml(track.artist || '')}"
-            data-album="${escapeHtml(track.album || '')}"
+         <li class="music-library-item" data-path="${escapeAttr(track.path)}"
+            data-title="${escapeAttr(track.title || '')}"
+            data-artist="${escapeAttr(track.artist || '')}"
+            data-album="${escapeAttr(track.album || '')}"
             data-duration="${track.duration_sec || 0}">
             <div class="music-library-item-info">
                <div class="music-library-item-title">${escapeHtml(track.title || 'Unknown')}</div>
@@ -1033,7 +1033,7 @@
       const html = artists
          .map(
             (artist) => `
-         <li class="music-library-item" data-artist="${escapeHtml(artist.name)}" data-artist-key="${escapeHtml(artist.key || '')}">
+         <li class="music-library-item" data-artist="${escapeAttr(artist.name)}" data-artist-key="${escapeAttr(artist.key || '')}">
             <div class="music-library-item-info">
                <div class="music-library-item-title">${escapeHtml(artist.name)}</div>
                <div class="music-library-item-artist">${artist.album_count} album${artist.album_count !== 1 ? 's' : ''}, ${artist.track_count} track${artist.track_count !== 1 ? 's' : ''}</div>
@@ -1105,7 +1105,7 @@
       const html = albums
          .map(
             (album) => `
-         <li class="music-library-item" data-album="${escapeHtml(album.name)}" data-album-key="${escapeHtml(album.key || '')}">
+         <li class="music-library-item" data-album="${escapeAttr(album.name)}" data-album-key="${escapeAttr(album.key || '')}">
             <div class="music-library-item-info">
                <div class="music-library-item-title">${escapeHtml(album.name)}</div>
                <div class="music-library-item-artist">${escapeHtml(album.artist || 'Unknown')} \u2022 ${album.track_count} track${album.track_count !== 1 ? 's' : ''}</div>
@@ -1390,6 +1390,11 @@
       const div = document.createElement('div');
       div.textContent = str;
       return div.innerHTML;
+   }
+
+   /** Escape a string for use inside a double-quoted HTML attribute */
+   function escapeAttr(str) {
+      return escapeHtml(str).replace(/"/g, '&quot;');
    }
 
    /**

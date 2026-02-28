@@ -35,6 +35,7 @@
 #include <stdint.h>
 
 #include "audio/audio_decoder.h"
+#include "audio/music_db.h"
 #include "audio/resampler.h"
 #include "webui/webui_internal.h"
 #include "webui/webui_music.h"
@@ -188,6 +189,41 @@ void webui_music_stop_streaming(session_music_state_t *state);
  * @brief Check if path is within music library (security validation)
  */
 bool webui_music_is_path_valid(const char *path);
+
+/* =============================================================================
+ * Shared State and Helpers (defined in webui_music.c, used by handlers)
+ * ============================================================================= */
+
+/** Whether music source is Plex (cached at init) */
+extern atomic_bool g_music_use_plex;
+
+/**
+ * @brief Extract Plex track metadata from a JSON payload into a search result.
+ */
+void extract_plex_track_meta(json_object *payload, const char *path, music_search_result_t *out);
+
+/**
+ * @brief Populate a queue entry from a Plex JSON track object.
+ */
+void queue_entry_from_plex_json(music_queue_entry_t *entry, json_object *item);
+
+/**
+ * @brief Start the streaming thread for a session.
+ */
+int webui_music_start_streaming(session_music_state_t *state);
+
+/**
+ * @brief Wait for the decoder to become idle.
+ */
+bool wait_decoder_idle(session_music_state_t *state, int timeout_ms);
+
+/**
+ * @brief Pick a random queue index different from the current one.
+ *
+ * Returns current index if queue_length <= 1. Must be called with
+ * state->state_mutex held.
+ */
+int webui_music_pick_random_index(session_music_state_t *state);
 
 #ifdef __cplusplus
 }
