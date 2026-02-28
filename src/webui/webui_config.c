@@ -46,6 +46,7 @@
 #include "llm/llm_local_provider.h"
 #include "logging.h"
 #include "webui/webui_internal.h"
+#include "webui/webui_music.h"
 #include "webui/webui_server.h" /* For WEBUI_MAX_THUMBNAIL_SIZE */
 
 /* =============================================================================
@@ -719,7 +720,29 @@ static void apply_config_from_json(dawn_config_t *config, struct json_object *pa
 
    /* [music] */
    if (json_object_object_get_ex(payload, "music", &section)) {
+      JSON_TO_CONFIG_STR(section, "source", config->music.source);
       JSON_TO_CONFIG_INT(section, "scan_interval_minutes", config->music.scan_interval_minutes);
+
+      /* [music.plex] */
+      struct json_object *plex = NULL;
+      if (json_object_object_get_ex(section, "plex", &plex)) {
+         JSON_TO_CONFIG_STR(plex, "host", config->music.plex.host);
+         /* Validate hostname: only allow chars safe for URLs and TOML strings */
+         for (char *p = config->music.plex.host; *p; p++) {
+            if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+                  (*p >= '0' && *p <= '9') || *p == '.' || *p == '-' || *p == ':' || *p == '[' ||
+                  *p == ']')) {
+               LOG_WARNING("Config: invalid character '%c' in plex.host, clearing", *p);
+               config->music.plex.host[0] = '\0';
+               break;
+            }
+         }
+         JSON_TO_CONFIG_INT(plex, "port", config->music.plex.port);
+         CONFIG_CLAMP(config->music.plex.port, 1, 65535);
+         JSON_TO_CONFIG_INT(plex, "music_section_id", config->music.plex.music_section_id);
+         JSON_TO_CONFIG_BOOL(plex, "ssl", config->music.plex.ssl);
+         JSON_TO_CONFIG_BOOL(plex, "ssl_verify", config->music.plex.ssl_verify);
+      }
 
       /* [music.streaming] */
       struct json_object *streaming = NULL;
@@ -835,6 +858,9 @@ void handle_set_config(ws_connection_t *conn, struct json_object *payload) {
          LOG_INFO("WebUI: Local LLM endpoint changed, invalidated provider and models cache");
       }
 
+      /* If music source changed, update cached flag */
+      webui_music_update_source();
+
       /* If tool calling mode changed, rebuild system prompt for current session */
       if (tools_mode_changed) {
          invalidate_system_instructions();
@@ -922,6 +948,13 @@ void handle_set_secrets(ws_connection_t *conn, struct json_object *payload) {
       if (str) {
          strncpy(mutable_secrets->mqtt_password, str, sizeof(mutable_secrets->mqtt_password) - 1);
          mutable_secrets->mqtt_password[sizeof(mutable_secrets->mqtt_password) - 1] = '\0';
+      }
+   }
+   if (json_object_object_get_ex(payload, "plex_token", &val)) {
+      const char *str = json_object_get_string(val);
+      if (str) {
+         strncpy(mutable_secrets->plex_token, str, sizeof(mutable_secrets->plex_token) - 1);
+         mutable_secrets->plex_token[sizeof(mutable_secrets->plex_token) - 1] = '\0';
       }
    }
 

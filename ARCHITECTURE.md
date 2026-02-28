@@ -4,7 +4,7 @@ This document describes the architecture of the D.A.W.N. (Digital Assistant for 
 
 **D.A.W.N.** is the central intelligence layer of the OASIS ecosystem, responsible for interpreting user intent, fusing data from every subsystem, and routing commands. At its core, DAWN performs neural-inference to understand context and drive decision-making, acting as OASIS's orchestration hub for MIRAGE, AURA, SPARK, STAT, and any future modules.
 
-**Last Updated**: February 27, 2026 (Configurable document/vision limits, unified settings UI)
+**Last Updated**: February 28, 2026 (Plex music source integration, configurable limits)
 
 ## Table of Contents
 
@@ -338,7 +338,7 @@ DAP2 Tier 1 satellites handle speech recognition and text-to-speech locally and 
 ┌─────────────────────────────────────────────────────────────┐
 │                       DAWN Daemon                            │
 │  webui_satellite.c: register, query, streaming response      │
-│  webui_music.c: music control, library browse, Opus stream   │
+│  webui_music.c: music control, library browse, Plex/local routing, Opus stream   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -482,6 +482,17 @@ Swipe-up from the bottom edge is currently unassigned (reserved for future use).
   - Configurable scan interval (default: 60 minutes)
   - Manual rescan trigger via admin socket
   - Mutex/condvar synchronization for thread safety
+
+- **plex_client.c/h**: Plex Media Server REST API client
+  - Authentication via X-Plex-Token header
+  - Library browsing (artists, albums, tracks with pagination)
+  - Search and metadata enrichment with TTL-cached counts
+  - Stream URL construction for download-to-temp playback
+  - Scrobble reporting on track completion
+
+- **http_download.c/h**: HTTP download-to-temp utility
+  - libcurl-based download with 300s hard timeout
+  - Used by Plex client to fetch tracks for audio_decoder
 
 - **mic_passthrough.c/h**: Microphone passthrough
   - Direct microphone → speaker routing

@@ -1111,10 +1111,47 @@ static void parse_music(toml_table_t *table, music_config_t *config) {
    if (!table)
       return;
 
-   static const char *const known_keys[] = { "scan_interval_minutes", "streaming", NULL };
+   static const char *const known_keys[] = { "source", "scan_interval_minutes", "plex", "streaming",
+                                             NULL };
    warn_unknown_keys(table, "music", known_keys);
 
+   PARSE_STRING(table, "source", config->source);
    PARSE_INT(table, "scan_interval_minutes", config->scan_interval_minutes);
+
+   /* Parse music.plex subtable */
+   toml_table_t *plex = toml_table_in(table, "plex");
+   if (plex) {
+      static const char *const plex_keys[] = { "host", "port",       "music_section_id",
+                                               "ssl",  "ssl_verify", "client_identifier",
+                                               NULL };
+      warn_unknown_keys(plex, "music.plex", plex_keys);
+
+      PARSE_STRING(plex, "host", config->plex.host);
+      /* Validate hostname chars — prevent TOML injection on write-back */
+      for (char *p = config->plex.host; *p; p++) {
+         if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || (*p >= '0' && *p <= '9') ||
+               *p == '.' || *p == '-' || *p == ':' || *p == '[' || *p == ']')) {
+            LOG_WARNING("Config: invalid character in music.plex.host, clearing");
+            config->plex.host[0] = '\0';
+            break;
+         }
+      }
+      PARSE_INT(plex, "port", config->plex.port);
+      if (config->plex.port < 1)
+         config->plex.port = 1;
+      if (config->plex.port > 65535)
+         config->plex.port = 65535;
+      PARSE_INT(plex, "music_section_id", config->plex.music_section_id);
+      PARSE_BOOL(plex, "ssl", config->plex.ssl);
+      PARSE_BOOL(plex, "ssl_verify", config->plex.ssl_verify);
+      PARSE_STRING(plex, "client_identifier", config->plex.client_identifier);
+
+      if (!config->plex.ssl_verify && config->plex.ssl) {
+         LOG_WARNING("Plex: ssl_verify=false with ssl=true — TLS certificate "
+                     "verification is disabled. Consider adding the Plex server "
+                     "certificate to DAWN's trust store instead.");
+      }
+   }
 
    /* Parse music.streaming subtable */
    toml_table_t *streaming = toml_table_in(table, "streaming");
@@ -1277,6 +1314,7 @@ int config_parse_secrets(const char *path, secrets_config_t *secrets) {
       PARSE_STRING(secrets_section, "mqtt_password", secrets->mqtt_password);
       PARSE_STRING(secrets_section, "satellite_registration_key",
                    secrets->satellite_registration_key);
+      PARSE_STRING(secrets_section, "plex_token", secrets->plex_token);
 
       /* Parse [secrets.smartthings] sub-section for authentication
        * Supports two modes:

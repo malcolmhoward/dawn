@@ -438,6 +438,7 @@
       updateStatus(settingsElements.statusGemini, secrets.gemini_api_key);
       updateStatus(settingsElements.statusMqttUser, secrets.mqtt_username);
       updateStatus(settingsElements.statusMqttPass, secrets.mqtt_password);
+      updateStatus(settingsElements.statusPlexToken, secrets.plex_token);
    }
 
    /**
@@ -582,6 +583,9 @@
       if (settingsElements.secretMqttPass && settingsElements.secretMqttPass.value) {
          secrets.mqtt_password = settingsElements.secretMqttPass.value;
       }
+      if (settingsElements.secretPlexToken && settingsElements.secretPlexToken.value) {
+         secrets.plex_token = settingsElements.secretPlexToken.value;
+      }
 
       if (Object.keys(secrets).length === 0) {
          if (typeof DawnToast !== 'undefined') {
@@ -601,6 +605,7 @@
       if (settingsElements.secretGemini) settingsElements.secretGemini.value = '';
       if (settingsElements.secretMqttUser) settingsElements.secretMqttUser.value = '';
       if (settingsElements.secretMqttPass) settingsElements.secretMqttPass.value = '';
+      if (settingsElements.secretPlexToken) settingsElements.secretPlexToken.value = '';
    }
 
    /**

@@ -267,8 +267,17 @@ void config_set_defaults(dawn_config_t *config) {
    SAFE_COPY(config->paths.data_dir, "~/.local/share/dawn"); /* Database storage directory */
    SAFE_COPY(config->paths.music_dir, "~/Music");
 
-   /* Music - metadata indexing */
+   /* Music - source and metadata indexing */
+   SAFE_COPY(config->music.source, "local"); /* "local" or "plex" */
    config->music.scan_interval_minutes = 60; /* Rescan every hour */
+
+   /* Music - Plex Media Server defaults */
+   config->music.plex.host[0] = '\0';       /* Must be configured by user */
+   config->music.plex.port = 32400;         /* Standard Plex port */
+   config->music.plex.music_section_id = 0; /* 0 = auto-discover */
+   config->music.plex.ssl = false;
+   config->music.plex.ssl_verify = true;
+   config->music.plex.client_identifier[0] = '\0'; /* Auto-generated on first use */
 
    /* Scheduler */
    config->scheduler.enabled = true;

@@ -468,6 +468,8 @@ set(DAWN_SOURCES
     src/audio/audio_converter.c
     src/audio/music_db.c
     src/audio/music_scanner.c
+    src/audio/plex_client.c
+    src/audio/http_download.c
 
     # UI subsystem (TUI metrics)
     src/ui/metrics.c
@@ -626,6 +628,9 @@ target_link_libraries(dawn
                       OpenSSL::SSL
                       OpenSSL::Crypto
                       m)
+
+# Link uuid for Plex client identifier generation
+target_link_libraries(dawn uuid)
 
 # Link both audio libraries for runtime backend selection
 # Both backends are statically linked; runtime selection via vtable

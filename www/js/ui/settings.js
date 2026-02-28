@@ -57,6 +57,7 @@
       settingsElements.secretGemini = document.getElementById('secret-gemini');
       settingsElements.secretMqttUser = document.getElementById('secret-mqtt-user');
       settingsElements.secretMqttPass = document.getElementById('secret-mqtt-pass');
+      settingsElements.secretPlexToken = document.getElementById('secret-plex-token');
 
       // Secret status indicators
       settingsElements.statusOpenai = document.getElementById('status-openai');
@@ -64,6 +65,7 @@
       settingsElements.statusGemini = document.getElementById('status-gemini');
       settingsElements.statusMqttUser = document.getElementById('status-mqtt-user');
       settingsElements.statusMqttPass = document.getElementById('status-mqtt-pass');
+      settingsElements.statusPlexToken = document.getElementById('status-plex-token');
 
       // SmartThings elements
       settingsElements.stStatusIndicator = document.getElementById('st-status-indicator');

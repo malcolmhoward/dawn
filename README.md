@@ -48,6 +48,7 @@ DAWN is designed for embedded Linux platforms (Jetson, Raspberry Pi) and support
   - **Resume playback** - Pause saves position, resume continues from there
   - **Opus streaming** - Stream music to WebUI and DAP2 satellites via WebSocket
   - **Paginated library** - Browse artists/albums/tracks with 50-item pages
+  - **Plex Media Server** - Stream music from a Plex server as an alternative to local files
 
 - **DAP2 Satellite System**
   - **One server, one port, three client types**: The WebUI server on port 3000 is the single entry point for all remote access — browser clients (WebUI), Raspberry Pi satellites (Tier 1), and ESP32 satellites (Tier 2) all connect to the same WebSocket endpoint. The daemon inspects each client's capabilities at registration and routes accordingly: text for Tier 1, Opus audio for browsers, raw PCM for Tier 2. No separate servers, no extra ports.
@@ -517,6 +518,7 @@ The `dawn.toml.example` file contains all available settings with documentation.
 - `[tts]` — Voice model, speech speed
 - `[webui]` — Port, SSL settings
 - `[scheduler]` — Timer/alarm settings (snooze duration, timeout, volume, per-user limits)
+- `[music]` — Music source (local or Plex), streaming settings
 
 Most settings can also be changed via the Web UI settings panel.
 
@@ -529,6 +531,7 @@ The `secrets.toml.example` shows the required format:
 openai_api_key = "sk-your-openai-key-here"
 claude_api_key = "sk-ant-your-claude-key-here"
 gemini_api_key = "your-gemini-api-key-here"
+plex_token = "your-plex-token-here"          # Optional: for Plex music source
 ```
 
 **Security notes:**
@@ -971,6 +974,48 @@ When authentication is enabled (WebUI mode), you'll need to create user accounts
 ```
 
 See `docs/USER_AUTH_DESIGN.md` for complete authentication system documentation.
+
+### Plex Music Source (Optional)
+
+DAWN can stream music from a Plex Media Server instead of (or in addition to) a local music library. To set this up:
+
+**1. Get your Plex authentication token:**
+
+Sign into Plex Web, open any media item, click the `...` menu → "Get Info" → "View XML". The URL will contain `X-Plex-Token=xxxxxxxxxxxxxxxxxxxx`. Copy this token value.
+
+Alternatively, you can retrieve it via curl:
+```bash
+curl -s -X POST 'https://plex.tv/users/sign_in.json' \
+  -H 'X-Plex-Client-Identifier: dawn-assistant' \
+  -H 'X-Plex-Product: DAWN' \
+  -d 'user[login]=YOUR_EMAIL&user[password]=YOUR_PASSWORD' | \
+  python3 -c "import sys,json; print(json.load(sys.stdin)['user']['authToken'])"
+```
+
+**2. Add the token to secrets.toml:**
+```toml
+[secrets]
+plex_token = "xxxxxxxxxxxxxxxxxxxx"
+```
+
+Or enter it in the WebUI Settings → Secrets → Plex Token field.
+
+**3. Configure the Plex connection in dawn.toml:**
+```toml
+[music]
+source = "plex"
+
+[music.plex]
+host = "192.168.1.100"    # Your Plex server IP or hostname
+port = 32400              # Default Plex port
+ssl = false               # Set to true if your server uses HTTPS
+ssl_verify = true         # Set to false for self-signed certificates
+music_section_id = 0      # 0 = auto-discover, or specify your library section ID
+```
+
+Or configure everything in WebUI Settings → Music Streaming (source dropdown and Plex Connection fields appear when "Plex Media Server" is selected).
+
+**4. Verify:** Open the music panel in WebUI and browse your Plex library. Track counts should appear in the Library tab stats.
 
 ## Performance Optimization
 

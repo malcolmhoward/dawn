@@ -1514,6 +1514,41 @@
                            ></span>
                         </div>
                      </div>
+                     <div class="setting-item">
+                        <label for="secret-plex-token">Plex Token</label>
+                        <div class="secret-input-wrapper">
+                           <input
+                              type="password"
+                              id="secret-plex-token"
+                              class="secret-input"
+                              placeholder="Enter Plex token..."
+                           />
+                           <button
+                              class="secret-toggle"
+                              data-target="secret-plex-token"
+                              title="Show/hide"
+                              aria-label="Toggle Plex token visibility"
+                           >
+                              <svg
+                                 class="eye-icon"
+                                 width="16"
+                                 height="16"
+                                 viewBox="0 0 24 24"
+                                 fill="none"
+                                 stroke="currentColor"
+                                 stroke-width="2"
+                              >
+                                 <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                                 <circle cx="12" cy="12" r="3" />
+                              </svg>
+                           </button>
+                           <span
+                              class="secret-status"
+                              id="status-plex-token"
+                              aria-live="polite"
+                           ></span>
+                        </div>
+                     </div>
                      <button id="save-secrets-btn" class="save-btn">Save Secrets</button>
                   </div>
                </div>

@@ -1011,18 +1011,66 @@
          label: 'Music Streaming',
          icon: '&#x1F3B5;',
          adminOnly: true,
-         advanced: true,
          description: 'Settings for WebUI music streaming to browsers',
          fields: {
+            source: {
+               type: 'select',
+               label: 'Music Source',
+               options: [
+                  { value: 'local', label: 'Local Library' },
+                  { value: 'plex', label: 'Plex Media Server' },
+               ],
+               hint: 'Where to browse and stream music from',
+            },
             scan_interval_minutes: {
                type: 'number',
                label: 'Library Rescan Interval (minutes)',
                min: 0,
                hint: 'Minutes between automatic library rescans (0 = disabled)',
+               showWhen: { key: 'music.source', value: 'local' },
+            },
+            plex: {
+               type: 'group',
+               label: 'Plex Connection',
+               description:
+                  'Plex authentication token must also be set in the Secrets section below.',
+               showWhen: { key: 'music.source', value: 'plex' },
+               fields: {
+                  host: {
+                     type: 'text',
+                     label: 'Host',
+                     placeholder: 'e.g., 192.168.1.100',
+                     hint: 'Plex server hostname or IP address',
+                  },
+                  port: {
+                     type: 'number',
+                     label: 'Port',
+                     min: 1,
+                     max: 65535,
+                     hint: 'Plex server port (default: 32400)',
+                  },
+                  music_section_id: {
+                     type: 'number',
+                     label: 'Music Section ID',
+                     min: 0,
+                     hint: 'Library section ID for music (0 = auto-discover)',
+                  },
+                  ssl: {
+                     type: 'checkbox',
+                     label: 'Use HTTPS',
+                     hint: 'Connect to Plex over HTTPS',
+                  },
+                  ssl_verify: {
+                     type: 'checkbox',
+                     label: 'Verify SSL Certificate',
+                     hint: 'Verify Plex server SSL certificate (disable for self-signed)',
+                  },
+               },
             },
             streaming: {
                type: 'group',
                label: 'Streaming',
+               advanced: true,
                fields: {
                   enabled: {
                      type: 'checkbox',
@@ -1419,6 +1467,32 @@
    }
 
    /**
+    * Apply showWhen visibility to an element based on current config
+    * @param {HTMLElement} el - Element to show/hide
+    * @param {Object} condition - { key, value } condition
+    */
+   function applyShowWhen(el, condition) {
+      const currentConfig = getCurrentConfigFn ? getCurrentConfigFn() : {};
+      const currentValue = Utils.getNestedValue(currentConfig, condition.key);
+      el.style.display = currentValue === condition.value ? '' : 'none';
+   }
+
+   /**
+    * Update visibility of all showWhen elements when a config key changes
+    * @param {string} changedKey - The config key that changed
+    * @param {string} newValue - The new value
+    */
+   function updateShowWhenVisibility(changedKey, newValue) {
+      if (!sectionsContainer) return;
+      const elements = sectionsContainer.querySelectorAll('[data-show-when-key]');
+      elements.forEach((el) => {
+         if (el.dataset.showWhenKey === changedKey) {
+            el.style.display = newValue === el.dataset.showWhenValue ? '' : 'none';
+         }
+      });
+   }
+
+   /**
     * Create a setting field element
     * @param {string} sectionKey - Section key
     * @param {string} fieldKey - Field key
@@ -1444,7 +1518,23 @@
          if (def.advanced) {
             groupEl.classList.add('advanced-field');
          }
+         // Apply showWhen to groups
+         if (def.showWhen) {
+            groupEl.dataset.showWhenKey = def.showWhen.key;
+            groupEl.dataset.showWhenValue = def.showWhen.value;
+            applyShowWhen(groupEl, def.showWhen);
+         }
          groupEl.innerHTML = `<div class="group-label">${escapeHtml(def.label || '')}</div>`;
+
+         // Add group description hint if present
+         if (def.description) {
+            const desc = document.createElement('p');
+            desc.className = 'group-description';
+            desc.style.cssText =
+               'font-size: 0.8em; opacity: 0.7; margin: 0.25em 0 0.5em 0; padding: 0;';
+            desc.textContent = def.description;
+            groupEl.appendChild(desc);
+         }
 
          for (const [subKey, subDef] of Object.entries(def.fields)) {
             const subValue = value ? value[subKey] : undefined;
@@ -1466,6 +1556,13 @@
       // Add advanced-field class if field is marked advanced
       if (def.advanced) {
          item.classList.add('advanced-field');
+      }
+
+      // Apply showWhen conditional visibility
+      if (def.showWhen) {
+         item.dataset.showWhenKey = def.showWhen.key;
+         item.dataset.showWhenValue = def.showWhen.value;
+         applyShowWhen(item, def.showWhen);
       }
 
       // Add tooltip hint if defined
@@ -1605,8 +1702,17 @@
       // Add change listener
       const input = item.querySelector('input, select, textarea');
       if (input && handleSettingChangeCallback) {
-         input.addEventListener('change', () => handleSettingChangeCallback(fullKey, input));
-         input.addEventListener('input', () => handleSettingChangeCallback(fullKey, input));
+         input.addEventListener('change', () => {
+            handleSettingChangeCallback(fullKey, input);
+            // Update showWhen visibility for dependent fields
+            const newVal = input.type === 'checkbox' ? input.checked : input.value;
+            updateShowWhenVisibility(fullKey, newVal);
+         });
+         input.addEventListener('input', () => {
+            handleSettingChangeCallback(fullKey, input);
+            const newVal = input.type === 'checkbox' ? input.checked : input.value;
+            updateShowWhenVisibility(fullKey, newVal);
+         });
       }
 
       // Special handling for range inputs - update display value
@@ -1686,6 +1792,7 @@
       createSettingsSection,
       createSettingField,
       updateDependentModelSelects,
+      updateShowWhenVisibility,
       createToolsListContent,
    };
 })();

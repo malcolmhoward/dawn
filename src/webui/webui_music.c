@@ -39,6 +39,7 @@
 
 #include "audio/audio_decoder.h"
 #include "audio/music_db.h"
+#include "audio/plex_client.h"
 #include "audio/resampler.h"
 #include "config/dawn_config.h"
 #include "core/path_utils.h"
@@ -113,6 +114,7 @@ static webui_music_config_t s_config = {
    .bitrate_mode = MUSIC_BITRATE_VBR,
 };
 static atomic_int s_active_streams = 0;
+static bool s_use_plex = false; /* Cached at init from g_config.music.source */
 
 /* =============================================================================
  * Helper Functions
@@ -127,9 +129,67 @@ static uint64_t get_time_ms(void) {
    return (uint64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
+/**
+ * @brief Extract Plex track metadata from a JSON payload into a search result.
+ *
+ * Reads title, artist, album, and duration_sec from the payload JSON.
+ * Used by play, add_to_queue, and queue "add" handlers to avoid duplication.
+ *
+ * @param payload JSON object containing track metadata
+ * @param path    The plex: path string
+ * @param out     Output: populated search result
+ */
+static void extract_plex_track_meta(json_object *payload,
+                                    const char *path,
+                                    music_search_result_t *out) {
+   safe_strncpy(out->path, path, sizeof(out->path));
+
+   struct json_object *obj;
+   if (json_object_object_get_ex(payload, "title", &obj))
+      safe_strncpy(out->title, json_object_get_string(obj), sizeof(out->title));
+   else
+      safe_strncpy(out->title, "Unknown", sizeof(out->title));
+
+   if (json_object_object_get_ex(payload, "artist", &obj))
+      safe_strncpy(out->artist, json_object_get_string(obj), sizeof(out->artist));
+   else
+      out->artist[0] = '\0';
+
+   if (json_object_object_get_ex(payload, "album", &obj))
+      safe_strncpy(out->album, json_object_get_string(obj), sizeof(out->album));
+   else
+      out->album[0] = '\0';
+
+   if (json_object_object_get_ex(payload, "duration_sec", &obj))
+      out->duration_sec = json_object_get_int(obj);
+   else
+      out->duration_sec = 0;
+}
+
 /* Forward declarations */
 static int queue_music_data(ws_connection_t *conn, const uint8_t *data, size_t len);
 static int queue_music_direct(session_music_state_t *state, const uint8_t *data, size_t len);
+
+/**
+ * @brief Populate a queue entry from a Plex JSON track object.
+ *
+ * Extracts path, title, artist, album, duration_sec from a JSON object
+ * (as returned by plex_client_search/list_tracks) into a queue entry.
+ */
+static void queue_entry_from_plex_json(music_queue_entry_t *entry, json_object *item) {
+   json_object *jval;
+   memset(entry, 0, sizeof(*entry));
+   if (json_object_object_get_ex(item, "path", &jval))
+      safe_strncpy(entry->path, json_object_get_string(jval), sizeof(entry->path));
+   if (json_object_object_get_ex(item, "title", &jval))
+      safe_strncpy(entry->title, json_object_get_string(jval), sizeof(entry->title));
+   if (json_object_object_get_ex(item, "artist", &jval))
+      safe_strncpy(entry->artist, json_object_get_string(jval), sizeof(entry->artist));
+   if (json_object_object_get_ex(item, "album", &jval))
+      safe_strncpy(entry->album, json_object_get_string(jval), sizeof(entry->album));
+   if (json_object_object_get_ex(item, "duration_sec", &jval))
+      entry->duration_sec = json_object_get_int(jval);
+}
 
 /**
  * @brief Wait for decoder to become idle using condition variable
@@ -194,6 +254,39 @@ bool webui_music_is_path_valid(const char *path) {
    if (!path || path[0] == '\0') {
       return false;
    }
+
+   /* Plex paths: validate prefix, source config, and Part.key format */
+   if (strncmp(path, "plex:", 5) == 0) {
+      if (!s_use_plex) {
+         LOG_WARNING("WebUI music: Plex path rejected (source is not plex): %s", path);
+         return false;
+      }
+      const char *part_key = path + 5;
+      /* Validate Part.key starts with expected Plex API path */
+      if (strncmp(part_key, "/library/parts/", 15) != 0 &&
+          strncmp(part_key, "/library/metadata/", 18) != 0) {
+         LOG_WARNING("WebUI music: Invalid Plex part key: %s", part_key);
+         return false;
+      }
+      /* No authority injection */
+      if (strchr(part_key, '@') != NULL) {
+         LOG_WARNING("WebUI music: Authority injection in Plex path: %s", path);
+         return false;
+      }
+      /* No query string or fragment injection */
+      if (strchr(part_key, '?') != NULL || strchr(part_key, '#') != NULL) {
+         LOG_WARNING("WebUI music: Query/fragment injection in Plex path: %s", path);
+         return false;
+      }
+      /* No path traversal in the Part.key */
+      if (contains_path_traversal(part_key)) {
+         LOG_WARNING("WebUI music: Path traversal in Plex path: %s", path);
+         return false;
+      }
+      return true;
+   }
+
+   /* Local paths: existing realpath() validation */
 
    /* Quick check for obvious traversal patterns */
    if (contains_path_traversal(path)) {
@@ -819,12 +912,50 @@ int webui_music_start_playback(session_music_state_t *state, const char *path) {
       state->decoder = NULL;
    }
 
-   /* Open the file */
-   state->decoder = audio_decoder_open(path);
+   /* Clean up any previous temp file */
+   if (state->temp_file[0]) {
+      unlink(state->temp_file);
+      state->temp_file[0] = '\0';
+   }
+
+   /* Determine the local file path to open */
+   char local_path[PATH_MAX];
+
+   if (strncmp(path, "plex:", 5) == 0) {
+      /* Plex track: download to temp file first */
+      const char *part_key = path + 5;
+      if (plex_client_download_track(part_key, local_path, sizeof(local_path)) != 0) {
+         pthread_mutex_unlock(&state->state_mutex);
+         LOG_ERROR("WebUI music: Plex download failed for: %s", path);
+         return 1;
+      }
+      /* Remember temp file for cleanup */
+      strncpy(state->temp_file, local_path, sizeof(state->temp_file) - 1);
+      state->temp_file[sizeof(state->temp_file) - 1] = '\0';
+   } else {
+      strncpy(local_path, path, sizeof(local_path) - 1);
+      local_path[sizeof(local_path) - 1] = '\0';
+   }
+
+   /* Open the file (always a local path at this point) */
+   state->decoder = audio_decoder_open(local_path);
    if (!state->decoder) {
       pthread_mutex_unlock(&state->state_mutex);
       LOG_ERROR("WebUI music: Failed to open: %s", path);
+      /* Clean up temp file on failure */
+      if (state->temp_file[0]) {
+         unlink(state->temp_file);
+         state->temp_file[0] = '\0';
+      }
       return 1;
+   }
+
+   /* Unlink temp file now that decoder has it open (Unix fd trick —
+    * file stays accessible via fd until decoder closes, auto-cleaned on crash) */
+   if (state->temp_file[0]) {
+      unlink(state->temp_file);
+      /* Keep the path in temp_file as a flag that this is a Plex track,
+       * but the file is already unlinked */
    }
 
    /* Get audio info */
@@ -889,9 +1020,21 @@ int webui_music_init(void) {
       LOG_WARNING("WebUI music: Music database not initialized - library features unavailable");
    }
 
+   /* Cache source check and initialize Plex client if configured */
+   s_use_plex = (strcmp(g_config.music.source, "plex") == 0);
+   if (s_use_plex) {
+      if (plex_client_is_configured()) {
+         if (plex_client_init() != 0) {
+            LOG_WARNING("WebUI music: Plex client init failed — Plex features unavailable");
+         }
+      } else {
+         LOG_WARNING("WebUI music: source=plex but host/token not configured");
+      }
+   }
+
    s_initialized = true;
-   LOG_INFO("WebUI music streaming initialized (default quality: %s, bitrate: %s)",
-            QUALITY_NAMES[s_config.default_quality],
+   LOG_INFO("WebUI music streaming initialized (source: %s, default quality: %s, bitrate: %s)",
+            g_config.music.source, QUALITY_NAMES[s_config.default_quality],
             s_config.bitrate_mode == MUSIC_BITRATE_VBR ? "VBR" : "CBR");
 
    pthread_mutex_unlock(&s_music_mutex);
@@ -913,6 +1056,9 @@ void webui_music_cleanup(void) {
       pthread_mutex_lock(&s_music_mutex);
    }
 
+   /* Clean up Plex client */
+   plex_client_cleanup();
+
    s_initialized = false;
    LOG_INFO("WebUI music streaming cleaned up");
 
@@ -921,6 +1067,11 @@ void webui_music_cleanup(void) {
 
 bool webui_music_is_available(void) {
    return s_initialized && s_config.enabled;
+}
+
+void webui_music_update_source(void) {
+   s_use_plex = (strcmp(g_config.music.source, "plex") == 0);
+   LOG_INFO("WebUI music: Source updated to %s", s_use_plex ? "plex" : "local");
 }
 
 int webui_music_session_init(ws_connection_t *conn) {
@@ -1139,9 +1290,11 @@ void handle_music_control(ws_connection_t *conn, struct json_object *payload) {
             return;
          }
 
-         /* Get track metadata */
+         /* Get track metadata — skip DB lookup for Plex paths */
          music_search_result_t track_info;
-         if (music_db_get_by_path(path, &track_info) != 0) {
+         if (strncmp(path, "plex:", 5) == 0) {
+            extract_plex_track_meta(payload, path, &track_info);
+         } else if (music_db_get_by_path(path, &track_info) != 0) {
             /* Fallback: use path as title */
             safe_strncpy(track_info.path, path, sizeof(track_info.path));
             safe_strncpy(track_info.title, path, sizeof(track_info.title));
@@ -1192,21 +1345,7 @@ void handle_music_control(ws_connection_t *conn, struct json_object *payload) {
 
       } else if (json_object_object_get_ex(payload, "query", &query_obj)) {
          const char *query = json_object_get_string(query_obj);
-
-         /* Search for tracks */
-         music_search_result_t *results = malloc(WEBUI_MUSIC_MAX_QUEUE *
-                                                 sizeof(music_search_result_t));
-         if (!results) {
-            webui_music_send_error(conn, "MEMORY_ERROR", "Failed to allocate search buffer");
-            return;
-         }
-
-         int count = music_db_search(query, results, WEBUI_MUSIC_MAX_QUEUE);
-         if (count <= 0) {
-            free(results);
-            webui_music_send_error(conn, "NOT_FOUND", "No music found matching query");
-            return;
-         }
+         bool use_plex = s_use_plex;
 
          /* Stop any current playback */
          webui_music_stop_streaming(state);
@@ -1215,22 +1354,70 @@ void handle_music_control(ws_connection_t *conn, struct json_object *payload) {
             audio_decoder_close(state->decoder);
             state->decoder = NULL;
          }
-
-         /* Build queue from results */
          state->queue_length = 0;
-         for (int i = 0; i < count && state->queue_length < WEBUI_MUSIC_MAX_QUEUE; i++) {
-            music_queue_entry_t *entry = &state->queue[state->queue_length];
-            safe_strncpy(entry->path, results[i].path, sizeof(entry->path));
-            safe_strncpy(entry->title, results[i].title, sizeof(entry->title));
-            safe_strncpy(entry->artist, results[i].artist, sizeof(entry->artist));
-            safe_strncpy(entry->album, results[i].album, sizeof(entry->album));
-            entry->duration_sec = results[i].duration_sec;
-            state->queue_length++;
-         }
          state->queue_index = 0;
          pthread_mutex_unlock(&state->state_mutex);
 
-         free(results);
+         if (use_plex) {
+            /* Search Plex and build queue from JSON results */
+            if (!plex_client_is_configured()) {
+               webui_music_send_error(conn, "UNAVAILABLE", "Plex not configured");
+               return;
+            }
+            json_object *plex_result = plex_client_search(query, WEBUI_MUSIC_MAX_QUEUE);
+            if (!plex_result) {
+               webui_music_send_error(conn, "PLEX_ERROR", "Plex search failed");
+               return;
+            }
+            json_object *results_arr;
+            int count = 0;
+            if (json_object_object_get_ex(plex_result, "results", &results_arr)) {
+               count = (int)json_object_array_length(results_arr);
+            }
+            if (count <= 0) {
+               json_object_put(plex_result);
+               webui_music_send_error(conn, "NOT_FOUND", "No music found matching query");
+               return;
+            }
+
+            pthread_mutex_lock(&state->state_mutex);
+            for (int i = 0; i < count && state->queue_length < WEBUI_MUSIC_MAX_QUEUE; i++) {
+               json_object *item = json_object_array_get_idx(results_arr, i);
+               queue_entry_from_plex_json(&state->queue[state->queue_length], item);
+               state->queue_length++;
+            }
+            pthread_mutex_unlock(&state->state_mutex);
+            json_object_put(plex_result);
+
+         } else {
+            /* Search local database */
+            music_search_result_t *results = malloc(WEBUI_MUSIC_MAX_QUEUE *
+                                                    sizeof(music_search_result_t));
+            if (!results) {
+               webui_music_send_error(conn, "MEMORY_ERROR", "Failed to allocate search buffer");
+               return;
+            }
+
+            int count = music_db_search(query, results, WEBUI_MUSIC_MAX_QUEUE);
+            if (count <= 0) {
+               free(results);
+               webui_music_send_error(conn, "NOT_FOUND", "No music found matching query");
+               return;
+            }
+
+            pthread_mutex_lock(&state->state_mutex);
+            for (int i = 0; i < count && state->queue_length < WEBUI_MUSIC_MAX_QUEUE; i++) {
+               music_queue_entry_t *entry = &state->queue[state->queue_length];
+               safe_strncpy(entry->path, results[i].path, sizeof(entry->path));
+               safe_strncpy(entry->title, results[i].title, sizeof(entry->title));
+               safe_strncpy(entry->artist, results[i].artist, sizeof(entry->artist));
+               safe_strncpy(entry->album, results[i].album, sizeof(entry->album));
+               entry->duration_sec = results[i].duration_sec;
+               state->queue_length++;
+            }
+            pthread_mutex_unlock(&state->state_mutex);
+            free(results);
+         }
 
          /* Start playback */
          if (webui_music_start_playback(state, state->queue[0].path) != 0) {
@@ -1421,7 +1608,9 @@ void handle_music_control(ws_connection_t *conn, struct json_object *payload) {
 
       /* Get track metadata */
       music_search_result_t track_info;
-      if (music_db_get_by_path(path, &track_info) != 0) {
+      if (strncmp(path, "plex:", 5) == 0) {
+         extract_plex_track_meta(payload, path, &track_info);
+      } else if (music_db_get_by_path(path, &track_info) != 0) {
          safe_strncpy(track_info.path, path, sizeof(track_info.path));
          safe_strncpy(track_info.title, path, sizeof(track_info.title));
          track_info.artist[0] = '\0';
@@ -1527,31 +1716,63 @@ void handle_music_control(ws_connection_t *conn, struct json_object *payload) {
          return;
       }
       const char *artist_name = json_object_get_string(artist_obj);
+      bool use_plex = s_use_plex;
 
-      music_search_result_t *tracks = malloc(100 * sizeof(music_search_result_t));
-      if (!tracks) {
-         webui_music_send_error(conn, "MEMORY_ERROR", "Failed to allocate track list");
-         return;
+      if (use_plex) {
+         /* Plex: use artist_key to fetch all tracks via allLeaves */
+         struct json_object *key_obj;
+         if (!json_object_object_get_ex(payload, "artist_key", &key_obj)) {
+            webui_music_send_error(conn, "INVALID_REQUEST",
+                                   "Plex requires artist_key for add_artist");
+            return;
+         }
+         json_object *plex_tracks = plex_client_list_artist_tracks(json_object_get_string(key_obj));
+         if (!plex_tracks) {
+            webui_music_send_error(conn, "PLEX_ERROR", "Failed to fetch artist tracks");
+            return;
+         }
+         json_object *tracks_arr;
+         json_object_object_get_ex(plex_tracks, "tracks", &tracks_arr);
+         int count = tracks_arr ? (int)json_object_array_length(tracks_arr) : 0;
+
+         pthread_mutex_lock(&state->state_mutex);
+         int added = 0;
+         for (int i = 0; i < count && state->queue_length < WEBUI_MUSIC_MAX_QUEUE; i++) {
+            json_object *item = json_object_array_get_idx(tracks_arr, i);
+            queue_entry_from_plex_json(&state->queue[state->queue_length], item);
+            state->queue_length++;
+            added++;
+         }
+         webui_music_send_state(conn, state);
+         pthread_mutex_unlock(&state->state_mutex);
+         json_object_put(plex_tracks);
+         LOG_INFO("WebUI music: Added %d Plex tracks by '%s' to queue", added, artist_name);
+      } else {
+         music_search_result_t *tracks = malloc(100 * sizeof(music_search_result_t));
+         if (!tracks) {
+            webui_music_send_error(conn, "MEMORY_ERROR", "Failed to allocate track list");
+            return;
+         }
+         int count = music_db_get_by_artist(artist_name, tracks, 100);
+
+         pthread_mutex_lock(&state->state_mutex);
+         int added = 0;
+         for (int i = 0; i < count && state->queue_length < WEBUI_MUSIC_MAX_QUEUE; i++) {
+            music_queue_entry_t *entry = &state->queue[state->queue_length];
+            safe_strncpy(entry->path, tracks[i].path, sizeof(entry->path));
+            safe_strncpy(entry->title, tracks[i].title, sizeof(entry->title));
+            safe_strncpy(entry->artist, tracks[i].artist, sizeof(entry->artist));
+            safe_strncpy(entry->album, tracks[i].album, sizeof(entry->album));
+            entry->duration_sec = tracks[i].duration_sec;
+            state->queue_length++;
+            added++;
+         }
+         webui_music_send_state(conn, state);
+         pthread_mutex_unlock(&state->state_mutex);
+
+         free(tracks);
+         LOG_INFO("WebUI music: Added %d tracks by '%s' to queue", added, artist_name);
       }
-      int count = music_db_get_by_artist(artist_name, tracks, 100);
-
-      pthread_mutex_lock(&state->state_mutex);
-      int added = 0;
-      for (int i = 0; i < count && state->queue_length < WEBUI_MUSIC_MAX_QUEUE; i++) {
-         music_queue_entry_t *entry = &state->queue[state->queue_length];
-         safe_strncpy(entry->path, tracks[i].path, sizeof(entry->path));
-         safe_strncpy(entry->title, tracks[i].title, sizeof(entry->title));
-         safe_strncpy(entry->artist, tracks[i].artist, sizeof(entry->artist));
-         safe_strncpy(entry->album, tracks[i].album, sizeof(entry->album));
-         entry->duration_sec = tracks[i].duration_sec;
-         state->queue_length++;
-         added++;
-      }
-      webui_music_send_state(conn, state);
-      pthread_mutex_unlock(&state->state_mutex);
-
-      free(tracks);
-      LOG_INFO("WebUI music: Added %d tracks by '%s' to queue", added, artist_name);
 
    } else if (strcmp(action, "add_album") == 0) {
       /* Add all tracks from an album to queue */
@@ -1561,31 +1782,63 @@ void handle_music_control(ws_connection_t *conn, struct json_object *payload) {
          return;
       }
       const char *album_name = json_object_get_string(album_obj);
+      bool use_plex = s_use_plex;
 
-      music_search_result_t *tracks = malloc(50 * sizeof(music_search_result_t));
-      if (!tracks) {
-         webui_music_send_error(conn, "MEMORY_ERROR", "Failed to allocate track list");
-         return;
+      if (use_plex) {
+         /* Plex: use album_key to fetch tracks */
+         struct json_object *key_obj;
+         if (!json_object_object_get_ex(payload, "album_key", &key_obj)) {
+            webui_music_send_error(conn, "INVALID_REQUEST",
+                                   "Plex requires album_key for add_album");
+            return;
+         }
+         json_object *plex_tracks = plex_client_list_tracks(json_object_get_string(key_obj));
+         if (!plex_tracks) {
+            webui_music_send_error(conn, "PLEX_ERROR", "Failed to fetch album tracks");
+            return;
+         }
+         json_object *tracks_arr;
+         json_object_object_get_ex(plex_tracks, "tracks", &tracks_arr);
+         int count = tracks_arr ? (int)json_object_array_length(tracks_arr) : 0;
+
+         pthread_mutex_lock(&state->state_mutex);
+         int added = 0;
+         for (int i = 0; i < count && state->queue_length < WEBUI_MUSIC_MAX_QUEUE; i++) {
+            json_object *item = json_object_array_get_idx(tracks_arr, i);
+            queue_entry_from_plex_json(&state->queue[state->queue_length], item);
+            state->queue_length++;
+            added++;
+         }
+         webui_music_send_state(conn, state);
+         pthread_mutex_unlock(&state->state_mutex);
+         json_object_put(plex_tracks);
+         LOG_INFO("WebUI music: Added %d Plex tracks from album '%s' to queue", added, album_name);
+      } else {
+         music_search_result_t *tracks = malloc(50 * sizeof(music_search_result_t));
+         if (!tracks) {
+            webui_music_send_error(conn, "MEMORY_ERROR", "Failed to allocate track list");
+            return;
+         }
+         int count = music_db_get_by_album(album_name, tracks, 50);
+
+         pthread_mutex_lock(&state->state_mutex);
+         int added = 0;
+         for (int i = 0; i < count && state->queue_length < WEBUI_MUSIC_MAX_QUEUE; i++) {
+            music_queue_entry_t *entry = &state->queue[state->queue_length];
+            safe_strncpy(entry->path, tracks[i].path, sizeof(entry->path));
+            safe_strncpy(entry->title, tracks[i].title, sizeof(entry->title));
+            safe_strncpy(entry->artist, tracks[i].artist, sizeof(entry->artist));
+            safe_strncpy(entry->album, tracks[i].album, sizeof(entry->album));
+            entry->duration_sec = tracks[i].duration_sec;
+            state->queue_length++;
+            added++;
+         }
+         webui_music_send_state(conn, state);
+         pthread_mutex_unlock(&state->state_mutex);
+
+         free(tracks);
+         LOG_INFO("WebUI music: Added %d tracks from album '%s' to queue", added, album_name);
       }
-      int count = music_db_get_by_album(album_name, tracks, 50);
-
-      pthread_mutex_lock(&state->state_mutex);
-      int added = 0;
-      for (int i = 0; i < count && state->queue_length < WEBUI_MUSIC_MAX_QUEUE; i++) {
-         music_queue_entry_t *entry = &state->queue[state->queue_length];
-         safe_strncpy(entry->path, tracks[i].path, sizeof(entry->path));
-         safe_strncpy(entry->title, tracks[i].title, sizeof(entry->title));
-         safe_strncpy(entry->artist, tracks[i].artist, sizeof(entry->artist));
-         safe_strncpy(entry->album, tracks[i].album, sizeof(entry->album));
-         entry->duration_sec = tracks[i].duration_sec;
-         state->queue_length++;
-         added++;
-      }
-      webui_music_send_state(conn, state);
-      pthread_mutex_unlock(&state->state_mutex);
-
-      free(tracks);
-      LOG_INFO("WebUI music: Added %d tracks from album '%s' to queue", added, album_name);
 
    } else {
       webui_music_send_error(conn, "UNKNOWN_ACTION", "Unknown control action");
@@ -1594,11 +1847,6 @@ void handle_music_control(ws_connection_t *conn, struct json_object *payload) {
 
 void handle_music_search(ws_connection_t *conn, struct json_object *payload) {
    if (!conn_is_satellite_session(conn) && !conn_require_auth(conn)) {
-      return;
-   }
-
-   if (!music_db_is_initialized()) {
-      webui_music_send_error(conn, "UNAVAILABLE", "Music database not available");
       return;
    }
 
@@ -1619,6 +1867,53 @@ void handle_music_search(ws_connection_t *conn, struct json_object *payload) {
       }
    }
 
+   /* Route to Plex or local based on source config */
+   bool use_plex = s_use_plex;
+
+   if (use_plex) {
+      if (!plex_client_is_configured()) {
+         webui_music_send_error(conn, "UNAVAILABLE", "Plex not configured");
+         return;
+      }
+
+      json_object *plex_result = plex_client_search(query, limit);
+      if (!plex_result) {
+         webui_music_send_error(conn, "PLEX_ERROR", "Plex search failed");
+         return;
+      }
+
+      /* Wrap Plex response in standard music_search_response format */
+      struct json_object *response = json_object_new_object();
+      json_object_object_add(response, "type", json_object_new_string("music_search_response"));
+
+      struct json_object *resp_payload = json_object_new_object();
+      json_object_object_add(resp_payload, "query", json_object_new_string(query));
+      json_object_object_add(resp_payload, "source", json_object_new_string("plex"));
+
+      /* Transfer results array from Plex response */
+      json_object *results_arr;
+      if (json_object_object_get_ex(plex_result, "results", &results_arr)) {
+         json_object_object_add(resp_payload, "results", json_object_get(results_arr));
+         json_object_object_add(resp_payload, "count",
+                                json_object_new_int((int)json_object_array_length(results_arr)));
+      } else {
+         json_object_object_add(resp_payload, "results", json_object_new_array());
+         json_object_object_add(resp_payload, "count", json_object_new_int(0));
+      }
+
+      json_object_object_add(response, "payload", resp_payload);
+      send_json_response(conn->wsi, response);
+      json_object_put(response);
+      json_object_put(plex_result);
+      return;
+   }
+
+   /* Local source */
+   if (!music_db_is_initialized()) {
+      webui_music_send_error(conn, "UNAVAILABLE", "Music database not available");
+      return;
+   }
+
    /* Search database */
    music_search_result_t *results = malloc(limit * sizeof(music_search_result_t));
    if (!results) {
@@ -1635,6 +1930,7 @@ void handle_music_search(ws_connection_t *conn, struct json_object *payload) {
    struct json_object *resp_payload = json_object_new_object();
    json_object_object_add(resp_payload, "query", json_object_new_string(query));
    json_object_object_add(resp_payload, "count", json_object_new_int(count > 0 ? count : 0));
+   json_object_object_add(resp_payload, "source", json_object_new_string("local"));
 
    struct json_object *results_arr = json_object_new_array();
    for (int i = 0; i < count; i++) {
@@ -1683,11 +1979,6 @@ void handle_music_library(ws_connection_t *conn, struct json_object *payload) {
       return;
    }
 
-   if (!music_db_is_initialized()) {
-      webui_music_send_error(conn, "UNAVAILABLE", "Music database not available");
-      return;
-   }
-
    const char *browse_type = "stats"; /* Default */
 
    struct json_object *type_obj;
@@ -1695,11 +1986,119 @@ void handle_music_library(ws_connection_t *conn, struct json_object *payload) {
       browse_type = json_object_get_string(type_obj);
    }
 
+   /* Route to Plex for supported browse types */
+   bool use_plex = s_use_plex;
+
+   if (use_plex) {
+      if (!plex_client_is_configured()) {
+         webui_music_send_error(conn, "UNAVAILABLE", "Plex not configured");
+         return;
+      }
+
+      int limit, offset;
+      parse_pagination(payload, &limit, &offset);
+
+      json_object *plex_result = NULL;
+
+      if (strcmp(browse_type, "stats") == 0) {
+         /* Query Plex for actual library counts */
+         int artists = 0, albums = 0, tracks = 0;
+         plex_client_get_stats(&artists, &albums, &tracks);
+
+         struct json_object *response = json_object_new_object();
+         json_object_object_add(response, "type", json_object_new_string("music_library_response"));
+         struct json_object *resp_payload = json_object_new_object();
+         json_object_object_add(resp_payload, "browse_type", json_object_new_string("stats"));
+         json_object_object_add(resp_payload, "source", json_object_new_string("plex"));
+         json_object_object_add(resp_payload, "track_count", json_object_new_int(tracks));
+         json_object_object_add(resp_payload, "artist_count", json_object_new_int(artists));
+         json_object_object_add(resp_payload, "album_count", json_object_new_int(albums));
+         json_object_object_add(response, "payload", resp_payload);
+         send_json_response(conn->wsi, response);
+         json_object_put(response);
+         return;
+      } else if (strcmp(browse_type, "artists") == 0) {
+         plex_result = plex_client_list_artists(offset, limit);
+      } else if (strcmp(browse_type, "albums") == 0) {
+         /* Check for artist_key to drill into a specific artist's albums */
+         struct json_object *key_obj;
+         const char *artist_key = NULL;
+         if (payload && json_object_object_get_ex(payload, "artist_key", &key_obj)) {
+            artist_key = json_object_get_string(key_obj);
+         }
+         plex_result = plex_client_list_albums(artist_key, offset, limit);
+      } else if (strcmp(browse_type, "tracks") == 0) {
+         /* Check for album_key — if present, list album tracks; otherwise all tracks */
+         struct json_object *key_obj;
+         if (payload && json_object_object_get_ex(payload, "album_key", &key_obj)) {
+            plex_result = plex_client_list_tracks(json_object_get_string(key_obj));
+         } else {
+            plex_result = plex_client_list_all_tracks(offset, limit);
+         }
+      } else if (strcmp(browse_type, "tracks_by_album") == 0) {
+         /* Drill-down from album list — requires album_key */
+         struct json_object *key_obj;
+         if (payload && json_object_object_get_ex(payload, "album_key", &key_obj)) {
+            plex_result = plex_client_list_tracks(json_object_get_string(key_obj));
+            /* Override browse_type so JS renders as tracks_by_album */
+            if (plex_result) {
+               json_object_object_del(plex_result, "browse_type");
+               json_object_object_add(plex_result, "browse_type",
+                                      json_object_new_string("tracks_by_album"));
+               /* Include album name for header display */
+               struct json_object *album_obj;
+               if (payload && json_object_object_get_ex(payload, "album", &album_obj)) {
+                  json_object_object_add(plex_result, "album",
+                                         json_object_new_string(json_object_get_string(album_obj)));
+               }
+            }
+         } else {
+            webui_music_send_error(conn, "INVALID_REQUEST",
+                                   "Plex requires album_key for track listing");
+            return;
+         }
+      } else if (strcmp(browse_type, "tracks_by_artist") == 0) {
+         /* Drill-down from artist list — requires artist_key */
+         struct json_object *key_obj;
+         if (payload && json_object_object_get_ex(payload, "artist_key", &key_obj)) {
+            plex_result = plex_client_list_artist_tracks(json_object_get_string(key_obj));
+         } else {
+            webui_music_send_error(conn, "INVALID_REQUEST",
+                                   "Plex requires artist_key for artist track listing");
+            return;
+         }
+      }
+
+      if (!plex_result) {
+         webui_music_send_error(conn, "PLEX_ERROR", "Plex library request failed");
+         return;
+      }
+
+      /* Wrap Plex response as music_library_response */
+      struct json_object *response = json_object_new_object();
+      json_object_object_add(response, "type", json_object_new_string("music_library_response"));
+
+      /* The Plex client already returns properly formatted payload objects.
+       * Add source indicator and wrap as response payload. */
+      json_object_object_add(plex_result, "source", json_object_new_string("plex"));
+      json_object_object_add(response, "payload", plex_result);
+      send_json_response(conn->wsi, response);
+      json_object_put(response);
+      return;
+   }
+
+   /* Local source */
+   if (!music_db_is_initialized()) {
+      webui_music_send_error(conn, "UNAVAILABLE", "Music database not available");
+      return;
+   }
+
    struct json_object *response = json_object_new_object();
    json_object_object_add(response, "type", json_object_new_string("music_library_response"));
 
    struct json_object *resp_payload = json_object_new_object();
    json_object_object_add(resp_payload, "browse_type", json_object_new_string(browse_type));
+   json_object_object_add(resp_payload, "source", json_object_new_string("local"));
 
    if (strcmp(browse_type, "stats") == 0) {
       music_db_stats_t stats;
@@ -1954,9 +2353,11 @@ void handle_music_queue(ws_connection_t *conn, struct json_object *payload) {
          return;
       }
 
-      /* Get metadata from database */
+      /* Get track metadata */
       music_search_result_t result;
-      if (music_db_get_by_path(path, &result) != 0) {
+      if (strncmp(path, "plex:", 5) == 0) {
+         extract_plex_track_meta(payload, path, &result);
+      } else if (music_db_get_by_path(path, &result) != 0) {
          webui_music_send_error(conn, "NOT_FOUND", "Track not found in database");
          return;
       }
@@ -2118,33 +2519,8 @@ int webui_music_execute_tool(ws_connection_t *conn,
          return 1;
       }
 
-      /* Search and play */
-      if (!music_db_is_initialized()) {
-         if (result_out) {
-            *result_out = strdup("Music database not available");
-         }
-         return 1;
-      }
-
-      music_search_result_t *results = malloc(WEBUI_MUSIC_MAX_QUEUE *
-                                              sizeof(music_search_result_t));
-      if (!results) {
-         if (result_out) {
-            *result_out = strdup("Memory allocation failed");
-         }
-         return 1;
-      }
-
-      int count = music_db_search(query, results, WEBUI_MUSIC_MAX_QUEUE);
-      if (count <= 0) {
-         free(results);
-         if (result_out) {
-            char buf[256];
-            snprintf(buf, sizeof(buf), "No music found matching '%s'", query);
-            *result_out = strdup(buf);
-         }
-         return 1;
-      }
+      /* Search and play — route through Plex or local */
+      bool use_plex = s_use_plex;
 
       /* Stop any current playback */
       webui_music_stop_streaming(state);
@@ -2153,22 +2529,80 @@ int webui_music_execute_tool(ws_connection_t *conn,
          audio_decoder_close(state->decoder);
          state->decoder = NULL;
       }
-
-      /* Build queue from results */
       state->queue_length = 0;
-      for (int i = 0; i < count && state->queue_length < WEBUI_MUSIC_MAX_QUEUE; i++) {
-         music_queue_entry_t *entry = &state->queue[state->queue_length];
-         safe_strncpy(entry->path, results[i].path, sizeof(entry->path));
-         safe_strncpy(entry->title, results[i].title, sizeof(entry->title));
-         safe_strncpy(entry->artist, results[i].artist, sizeof(entry->artist));
-         safe_strncpy(entry->album, results[i].album, sizeof(entry->album));
-         entry->duration_sec = results[i].duration_sec;
-         state->queue_length++;
-      }
       state->queue_index = 0;
       pthread_mutex_unlock(&state->state_mutex);
 
-      free(results);
+      if (use_plex) {
+         if (!plex_client_is_configured()) {
+            if (result_out)
+               *result_out = strdup("Plex not configured");
+            return 1;
+         }
+         json_object *plex_result = plex_client_search(query, WEBUI_MUSIC_MAX_QUEUE);
+         if (!plex_result) {
+            if (result_out)
+               *result_out = strdup("Plex search failed");
+            return 1;
+         }
+         json_object *results_arr;
+         int count = 0;
+         if (json_object_object_get_ex(plex_result, "results", &results_arr))
+            count = (int)json_object_array_length(results_arr);
+         if (count <= 0) {
+            json_object_put(plex_result);
+            if (result_out) {
+               char buf[256];
+               snprintf(buf, sizeof(buf), "No music found matching '%s'", query);
+               *result_out = strdup(buf);
+            }
+            return 1;
+         }
+         pthread_mutex_lock(&state->state_mutex);
+         for (int i = 0; i < count && state->queue_length < WEBUI_MUSIC_MAX_QUEUE; i++) {
+            json_object *item = json_object_array_get_idx(results_arr, i);
+            queue_entry_from_plex_json(&state->queue[state->queue_length], item);
+            state->queue_length++;
+         }
+         pthread_mutex_unlock(&state->state_mutex);
+         json_object_put(plex_result);
+
+      } else {
+         if (!music_db_is_initialized()) {
+            if (result_out)
+               *result_out = strdup("Music database not available");
+            return 1;
+         }
+         music_search_result_t *results = malloc(WEBUI_MUSIC_MAX_QUEUE *
+                                                 sizeof(music_search_result_t));
+         if (!results) {
+            if (result_out)
+               *result_out = strdup("Memory allocation failed");
+            return 1;
+         }
+         int count = music_db_search(query, results, WEBUI_MUSIC_MAX_QUEUE);
+         if (count <= 0) {
+            free(results);
+            if (result_out) {
+               char buf[256];
+               snprintf(buf, sizeof(buf), "No music found matching '%s'", query);
+               *result_out = strdup(buf);
+            }
+            return 1;
+         }
+         pthread_mutex_lock(&state->state_mutex);
+         for (int i = 0; i < count && state->queue_length < WEBUI_MUSIC_MAX_QUEUE; i++) {
+            music_queue_entry_t *entry = &state->queue[state->queue_length];
+            safe_strncpy(entry->path, results[i].path, sizeof(entry->path));
+            safe_strncpy(entry->title, results[i].title, sizeof(entry->title));
+            safe_strncpy(entry->artist, results[i].artist, sizeof(entry->artist));
+            safe_strncpy(entry->album, results[i].album, sizeof(entry->album));
+            entry->duration_sec = results[i].duration_sec;
+            state->queue_length++;
+         }
+         pthread_mutex_unlock(&state->state_mutex);
+         free(results);
+      }
 
       /* Start playback of first track */
       if (webui_music_start_playback(state, state->queue[0].path) != 0) {
@@ -2187,7 +2621,8 @@ int webui_music_execute_tool(ws_connection_t *conn,
          char buf[512];
          snprintf(buf, sizeof(buf),
                   "Now playing: %s (track 1 of %d matching '%s') - streaming to WebUI",
-                  state->queue[0].title[0] ? state->queue[0].title : "Unknown", count, query);
+                  state->queue[0].title[0] ? state->queue[0].title : "Unknown", state->queue_length,
+                  query);
          *result_out = strdup(buf);
       }
       return 0;

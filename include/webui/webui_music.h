@@ -58,8 +58,8 @@ struct json_object;
 /** Maximum playlist size per session */
 #define WEBUI_MUSIC_MAX_QUEUE 100
 
-/** Maximum path length for music files (512 is sufficient for most paths) */
-#define WEBUI_MUSIC_PATH_MAX 512
+/** Maximum path length for music files (matches MUSIC_DB_PATH_MAX for consistency) */
+#define WEBUI_MUSIC_PATH_MAX 1024
 
 /** Maximum string length for title/artist/album (truncation acceptable for display) */
 #define WEBUI_MUSIC_STRING_MAX 128
@@ -135,6 +135,13 @@ void webui_music_cleanup(void);
  * @return true if initialized and ready
  */
 bool webui_music_is_available(void);
+
+/**
+ * @brief Refresh cached music source setting from g_config
+ *
+ * Call after changing g_config.music.source at runtime (e.g., from WebUI settings).
+ */
+void webui_music_update_source(void);
 
 /* =============================================================================
  * Session Music State Management

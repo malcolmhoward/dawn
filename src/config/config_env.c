@@ -1292,10 +1292,24 @@ json_object *config_to_json(const dawn_config_t *config) {
                           json_object_new_int(config->scheduler.event_retention_days));
    json_object_object_add(root, "scheduler", scheduler);
 
-   /* Music configuration (music.streaming) */
+   /* Music configuration */
    json_object *music = json_object_new_object();
+   json_object_object_add(music, "source", json_object_new_string(config->music.source));
    json_object_object_add(music, "scan_interval_minutes",
                           json_object_new_int(config->music.scan_interval_minutes));
+
+   /* music.plex */
+   json_object *music_plex = json_object_new_object();
+   json_object_object_add(music_plex, "host", json_object_new_string(config->music.plex.host));
+   json_object_object_add(music_plex, "port", json_object_new_int(config->music.plex.port));
+   json_object_object_add(music_plex, "music_section_id",
+                          json_object_new_int(config->music.plex.music_section_id));
+   json_object_object_add(music_plex, "ssl", json_object_new_boolean(config->music.plex.ssl));
+   json_object_object_add(music_plex, "ssl_verify",
+                          json_object_new_boolean(config->music.plex.ssl_verify));
+   json_object_object_add(music, "plex", music_plex);
+
+   /* music.streaming */
    json_object *music_streaming = json_object_new_object();
    json_object_object_add(music_streaming, "enabled",
                           json_object_new_boolean(config->music.streaming_enabled));
@@ -1333,6 +1347,8 @@ json_object *secrets_to_json_status(const secrets_config_t *secrets) {
    json_object_object_add(obj, "satellite_registration_key",
                           json_object_new_boolean(secrets &&
                                                   secrets->satellite_registration_key[0]));
+   json_object_object_add(obj, "plex_token",
+                          json_object_new_boolean(secrets && secrets->plex_token[0]));
 
    return obj;
 }
@@ -1710,7 +1726,19 @@ int config_write_toml(const dawn_config_t *config, const char *path) {
    fprintf(fp, "max_images = %d\n", config->vision.max_images);
 
    fprintf(fp, "\n[music]\n");
+   fprintf(fp, "source = \"%s\"\n", config->music.source);
    fprintf(fp, "scan_interval_minutes = %d\n", config->music.scan_interval_minutes);
+
+   /* [music.plex] — Plex Media Server connection settings */
+   fprintf(fp, "\n[music.plex]\n");
+   fprintf(fp, "host = \"%s\"\n", config->music.plex.host);
+   fprintf(fp, "port = %d\n", config->music.plex.port);
+   fprintf(fp, "music_section_id = %d\n", config->music.plex.music_section_id);
+   fprintf(fp, "ssl = %s\n", config->music.plex.ssl ? "true" : "false");
+   fprintf(fp, "ssl_verify = %s\n", config->music.plex.ssl_verify ? "true" : "false");
+   if (config->music.plex.client_identifier[0]) {
+      fprintf(fp, "client_identifier = \"%s\"\n", config->music.plex.client_identifier);
+   }
 
    fprintf(fp, "\n[music.streaming]\n");
    fprintf(fp, "enabled = %s\n", config->music.streaming_enabled ? "true" : "false");
@@ -1759,6 +1787,7 @@ int secrets_write_toml(const secrets_config_t *secrets, const char *path) {
    WRITE_SECRET("mqtt_username", secrets->mqtt_username);
    WRITE_SECRET("mqtt_password", secrets->mqtt_password);
    WRITE_SECRET("satellite_registration_key", secrets->satellite_registration_key);
+   WRITE_SECRET("plex_token", secrets->plex_token);
 
    /* SmartThings OAuth client credentials */
    if (secrets->smartthings_client_id[0] || secrets->smartthings_client_secret[0]) {

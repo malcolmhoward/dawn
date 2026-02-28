@@ -450,8 +450,23 @@ typedef struct {
 /* =============================================================================
  * Music Configuration
  * ============================================================================= */
+
+/** Plex Media Server connection settings ([music.plex] section) */
 typedef struct {
+   char host[CONFIG_PATH_MAX]; /* Plex server IP or hostname */
+   int port;                   /* Plex server port (default: 32400) */
+   int music_section_id;       /* 0 = auto-discover from /library/sections */
+   bool ssl;                   /* Use HTTPS for Plex API calls */
+   bool ssl_verify;            /* Verify TLS certificates (default: true) */
+   char client_identifier[64]; /* Auto-generated UUID on first run */
+} plex_config_t;
+
+typedef struct {
+   char source[16];           /* "local" or "plex" (default: "local") */
    int scan_interval_minutes; /* Minutes between rescans (0 = disabled, default: 60) */
+
+   /* Plex Media Server settings (music.plex section) */
+   plex_config_t plex;
 
    /* Streaming settings (music.streaming section) */
    bool streaming_enabled;         /* Enable WebUI music streaming (default: true) */
@@ -480,6 +495,9 @@ typedef struct {
    /* Pre-shared key for satellite registration (empty = open registration)
     * 32-byte hex = 64 chars + null = 65 bytes minimum */
    char satellite_registration_key[CONFIG_API_KEY_MAX];
+
+   /* Plex Media Server authentication token */
+   char plex_token[CONFIG_API_KEY_MAX];
 } secrets_config_t;
 
 /* =============================================================================

@@ -140,7 +140,10 @@ nano secrets.toml
 openai_api_key = "sk-your-openai-key"
 # claude_api_key = "sk-ant-your-claude-key"
 # gemini_api_key = "your-gemini-key"
+# plex_token = "your-plex-token"          # Optional: for Plex music source
 ```
+
+> **Plex users**: To get your Plex token, see the [Plex Music Source setup instructions](README.md#plex-music-source-optional) in the README.
 
 **Alternative**: Use environment variables instead of secrets.toml:
 ```bash

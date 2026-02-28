@@ -140,6 +140,9 @@ typedef struct {
    /* Position update tracking */
    uint64_t last_position_update_ms;
 
+   /* Plex temp file (downloaded track, unlinked after decoder opens) */
+   char temp_file[256]; /**< Path to Plex temp file (empty = none) */
+
    /* Dedicated music WebSocket (direct streaming) */
    struct lws *music_wsi;                    /**< Music server WebSocket (NULL if not connected) */
    pthread_mutex_t write_mutex;              /**< Protects write buffer */

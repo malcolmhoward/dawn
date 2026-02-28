@@ -79,6 +79,7 @@
       browseTotalCount: 0,
       browseCurrentType: null, // 'tracks', 'artists', 'albums'
       browseLoading: false,
+      libraryInitialized: false, // True after first stats fetch
    };
 
    /**
@@ -118,9 +119,15 @@
 
          console.log('Music UI: Restoring saved queue with', queueData.tracks.length, 'tracks');
 
-         // Add each track to the queue
+         // Add each track to the queue, including saved metadata
          queueData.tracks.forEach((track) => {
-            DawnMusicPlayback.queue('add', { path: track.path });
+            DawnMusicPlayback.queue('add', {
+               path: track.path,
+               title: track.title,
+               artist: track.artist,
+               album: track.album,
+               duration_sec: track.duration_sec,
+            });
          });
       } catch (e) {
          console.error('Music UI: Failed to restore queue:', e);
@@ -393,7 +400,11 @@
       if (tabName === 'queue') {
          DawnMusicPlayback.queue('list');
       } else if (tabName === 'library') {
-         DawnMusicPlayback.browseLibrary('stats');
+         // Only fetch stats on the first visit — preserve whatever the user
+         // was viewing (drill-down, search results, etc.) on subsequent switches
+         if (!localState.libraryInitialized) {
+            DawnMusicPlayback.browseLibrary('stats');
+         }
       }
    }
 
@@ -755,7 +766,11 @@
       const html = results
          .map(
             (track, i) => `
-         <li class="music-library-item" data-path="${escapeHtml(track.path)}" data-index="${i}">
+         <li class="music-library-item" data-path="${escapeHtml(track.path)}" data-index="${i}"
+            data-title="${escapeHtml(track.title || track.display_name || '')}"
+            data-artist="${escapeHtml(track.artist || '')}"
+            data-album="${escapeHtml(track.album || '')}"
+            data-duration="${track.duration_sec || 0}">
             <div class="music-library-item-info">
                <div class="music-library-item-title">${escapeHtml(track.title || track.display_name || 'Unknown')}</div>
                <div class="music-library-item-artist">${escapeHtml(track.artist || '')}</div>
@@ -774,12 +789,20 @@
          const path = item.dataset.path;
          if (!path) return;
 
+         const trackMeta = {
+            path: path,
+            title: item.dataset.title || '',
+            artist: item.dataset.artist || '',
+            album: item.dataset.album || '',
+            duration_sec: parseInt(item.dataset.duration) || 0,
+         };
+
          // Click on title/info area = play immediately
          const infoArea = item.querySelector('.music-library-item-info');
          if (infoArea) {
             infoArea.addEventListener('click', (e) => {
                e.stopPropagation();
-               DawnMusicPlayback.control('play', { path: path });
+               DawnMusicPlayback.control('play', trackMeta);
                switchTab('playing');
             });
          }
@@ -789,7 +812,7 @@
          if (addBtn) {
             addBtn.addEventListener('click', (e) => {
                e.stopPropagation();
-               DawnMusicPlayback.control('add_to_queue', { path: path });
+               DawnMusicPlayback.control('add_to_queue', trackMeta);
                // Visual feedback
                addBtn.textContent = '\u2713'; // Checkmark
                setTimeout(() => {
@@ -854,6 +877,8 @@
       const isAppend = (payload.offset || 0) > 0;
 
       if (payload.browse_type === 'stats' && elements.libraryStats) {
+         // Mark library as initialized after first stats fetch
+         localState.libraryInitialized = true;
          // Reset pagination state when returning to stats view
          localState.browseCurrentType = null;
          localState.browseOffset = 0;
@@ -964,7 +989,11 @@
       const html = tracks
          .map(
             (track) => `
-         <li class="music-library-item" data-path="${escapeHtml(track.path)}">
+         <li class="music-library-item" data-path="${escapeHtml(track.path)}"
+            data-title="${escapeHtml(track.title || '')}"
+            data-artist="${escapeHtml(track.artist || '')}"
+            data-album="${escapeHtml(track.album || '')}"
+            data-duration="${track.duration_sec || 0}">
             <div class="music-library-item-info">
                <div class="music-library-item-title">${escapeHtml(track.title || 'Unknown')}</div>
                <div class="music-library-item-artist">${escapeHtml(track.artist || '')}${track.album ? ' \u2022 ' + escapeHtml(track.album) : ''}</div>
@@ -1004,7 +1033,7 @@
       const html = artists
          .map(
             (artist) => `
-         <li class="music-library-item" data-artist="${escapeHtml(artist.name)}">
+         <li class="music-library-item" data-artist="${escapeHtml(artist.name)}" data-artist-key="${escapeHtml(artist.key || '')}">
             <div class="music-library-item-info">
                <div class="music-library-item-title">${escapeHtml(artist.name)}</div>
                <div class="music-library-item-artist">${artist.album_count} album${artist.album_count !== 1 ? 's' : ''}, ${artist.track_count} track${artist.track_count !== 1 ? 's' : ''}</div>
@@ -1033,14 +1062,14 @@
    function bindArtistListItemEvents(items) {
       items.forEach((item) => {
          const artistName = item.dataset.artist;
+         const artistKey = item.dataset.artistKey;
 
          // Double-click to show artist's tracks
          item.addEventListener('dblclick', (e) => {
             if (e.target.closest('.music-search-add-btn')) return;
-            DawnWS.send({
-               type: 'music_library',
-               payload: { type: 'tracks_by_artist', artist: artistName },
-            });
+            const payload = { type: 'tracks_by_artist', artist: artistName };
+            if (artistKey) payload.artist_key = artistKey;
+            DawnWS.send({ type: 'music_library', payload });
          });
 
          // + button to add all artist tracks
@@ -1048,7 +1077,9 @@
          if (addBtn) {
             addBtn.addEventListener('click', (e) => {
                e.stopPropagation();
-               DawnMusicPlayback.control('add_artist', { artist: artistName });
+               const addPayload = { artist: artistName };
+               if (artistKey) addPayload.artist_key = artistKey;
+               DawnMusicPlayback.control('add_artist', addPayload);
                addBtn.textContent = '\u2713';
                setTimeout(() => {
                   addBtn.textContent = '+';
@@ -1074,7 +1105,7 @@
       const html = albums
          .map(
             (album) => `
-         <li class="music-library-item" data-album="${escapeHtml(album.name)}">
+         <li class="music-library-item" data-album="${escapeHtml(album.name)}" data-album-key="${escapeHtml(album.key || '')}">
             <div class="music-library-item-info">
                <div class="music-library-item-title">${escapeHtml(album.name)}</div>
                <div class="music-library-item-artist">${escapeHtml(album.artist || 'Unknown')} \u2022 ${album.track_count} track${album.track_count !== 1 ? 's' : ''}</div>
@@ -1103,14 +1134,14 @@
    function bindAlbumListItemEvents(items) {
       items.forEach((item) => {
          const albumName = item.dataset.album;
+         const albumKey = item.dataset.albumKey;
 
          // Double-click to show album's tracks
          item.addEventListener('dblclick', (e) => {
             if (e.target.closest('.music-search-add-btn')) return;
-            DawnWS.send({
-               type: 'music_library',
-               payload: { type: 'tracks_by_album', album: albumName },
-            });
+            const payload = { type: 'tracks_by_album', album: albumName };
+            if (albumKey) payload.album_key = albumKey;
+            DawnWS.send({ type: 'music_library', payload });
          });
 
          // + button to add whole album
@@ -1118,7 +1149,9 @@
          if (addBtn) {
             addBtn.addEventListener('click', (e) => {
                e.stopPropagation();
-               DawnMusicPlayback.control('add_album', { album: albumName });
+               const addPayload = { album: albumName };
+               if (albumKey) addPayload.album_key = albumKey;
+               DawnMusicPlayback.control('add_album', addPayload);
                addBtn.textContent = '\u2713';
                setTimeout(() => {
                   addBtn.textContent = '+';
@@ -1144,12 +1177,20 @@
          const path = item.dataset.path;
          if (!path) return;
 
+         const trackMeta = {
+            path: path,
+            title: item.dataset.title || '',
+            artist: item.dataset.artist || '',
+            album: item.dataset.album || '',
+            duration_sec: parseInt(item.dataset.duration) || 0,
+         };
+
          // Click on info area = play immediately
          const infoArea = item.querySelector('.music-library-item-info');
          if (infoArea) {
             infoArea.addEventListener('click', (e) => {
                e.stopPropagation();
-               DawnMusicPlayback.control('play', { path: path });
+               DawnMusicPlayback.control('play', trackMeta);
                switchTab('playing');
             });
          }
@@ -1159,7 +1200,7 @@
          if (addBtn) {
             addBtn.addEventListener('click', (e) => {
                e.stopPropagation();
-               DawnMusicPlayback.control('add_to_queue', { path: path });
+               DawnMusicPlayback.control('add_to_queue', trackMeta);
                addBtn.textContent = '\u2713';
                setTimeout(() => {
                   addBtn.textContent = '+';
