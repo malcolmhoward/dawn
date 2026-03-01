@@ -31,4 +31,17 @@
  */
 int volume_tool_register(void);
 
+/**
+ * @brief Parse a volume level string to a float 0.0-1.0
+ *
+ * Handles numeric strings ("50", "0.5", "100") and word strings ("fifty").
+ * Values > 2.0 are treated as percentages and divided by 100.
+ * Result is clamped to 0.0-1.0 (no amplification beyond 100%).
+ * Rejects NaN, Infinity, and non-finite values.
+ *
+ * @param value  Volume string to parse
+ * @return float 0.0-1.0 on success, -1.0f on failure
+ */
+float parse_volume_level(const char *value);
+
 #endif /* VOLUME_TOOL_H */

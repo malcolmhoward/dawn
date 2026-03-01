@@ -672,9 +672,18 @@ A `plex:` path is typically ~60-80 chars (e.g., `plex:/library/parts/9877/123456
 14. Add persistent error banner for Plex auth/connection failures
 15. Add confirmation dialog on source switch during active playback
 
+### Phase 2.5: Plex Library Cache
+
+16. Add genre extraction to `build_track_json()` in `plex_client.c`
+17. Add `plex_client_get_library_updated_at()` for change detection
+18. Implement `plex_db.c` — SQLite cache layer (init, sync, search, browse)
+19. Extend `music_scanner.c` with Plex sync mode (reuse thread pattern)
+20. Replace Plex API search/browse calls in `webui_music_handlers.c` with `plex_db_*()` queries
+21. Wire init/cleanup in `dawn.c`
+
 ### Phase 3: Polish
 
-16. GDM server discovery — "Discover" button next to Plex Server field; results presented for user confirmation; run in detached thread with 3-second timeout
+22. GDM server discovery — "Discover" button next to Plex Server field; results presented for user confirmation; run in detached thread with 3-second timeout
 17. Scrobble reporting on track completion (from main thread, not streaming thread)
 18. Timeline updates during playback (for Plex "Now Playing" dashboard)
 19. Album art thumbnails — add `thumbnail` field to track JSON response (Plex: `/photo/:/transcode` URL; local: `null` for now). Daemon proxies art to WebUI (browser should not need direct Plex access).
@@ -880,6 +889,132 @@ This design was reviewed by all four DAWN review agents (architecture, security,
 - [python-plexapi audio.py (GitHub)](https://github.com/pkkid/python-plexapi/blob/master/plexapi/audio.py)
 - [Plex Pro Week '25: API Unlocked](https://www.plex.tv/blog/plex-pro-week-25-api-unlocked/)
 - [Plex Playlist API (Plexopedia)](https://www.plexopedia.com/plex-media-server/api/playlists/view-items/)
+
+---
+
+## Plex Library Cache (Local SQLite Index)
+
+**Added:** March 2026
+
+### Problem
+
+`plex_client_search()` uses `/library/sections/{id}/search?type=10&query=X` which searches **track titles only**. Queries by artist name ("Alan Silvestri"), album name, or genre ("epic music", "rock") return zero results even when the library contains matching tracks. This is a fundamental limitation of Plex's section-level search API with type filtering.
+
+Meanwhile, local music search works well because `music_db_search()` does SQL LIKE matching across title, artist, album, and path fields simultaneously in a local SQLite database.
+
+### Solution
+
+Cache the entire Plex library metadata into a local SQLite table (`plex_tracks`) in the same `music.db` database. Replace all Plex API search/browse calls with local SQLite queries using the same LIKE pattern matching as local music. The Plex API is then only used for:
+
+1. **Sync**: Periodic metadata sync (background thread, same pattern as `music_scanner.c`)
+2. **Download**: `plex_client_download_track()` at playback time (unchanged)
+
+This also adds **genre support** since Plex provides genre metadata in `Genre[].tag` arrays on track responses.
+
+### Schema
+
+New table in existing `music.db` (alongside `music_metadata`):
+
+```sql
+CREATE TABLE IF NOT EXISTS plex_tracks (
+   id INTEGER PRIMARY KEY,
+   rating_key TEXT UNIQUE NOT NULL,   -- Plex ratingKey (dedup + scrobble)
+   part_key TEXT NOT NULL,            -- /library/parts/... (for download URL)
+   title TEXT,
+   artist TEXT,
+   album TEXT,
+   genre TEXT,                        -- Comma-separated from Plex Genre array
+   duration_sec INTEGER,
+   updated_at INTEGER                 -- Track-level updatedAt for change detection
+);
+
+CREATE INDEX IF NOT EXISTS idx_plex_artist ON plex_tracks(artist);
+CREATE INDEX IF NOT EXISTS idx_plex_album ON plex_tracks(album);
+CREATE INDEX IF NOT EXISTS idx_plex_title ON plex_tracks(title);
+CREATE INDEX IF NOT EXISTS idx_plex_genre ON plex_tracks(genre);
+```
+
+**Why a separate table** (not extending `music_metadata`):
+- Different primary key semantics (rating_key vs file path)
+- Different change detection (Plex `scannedAt` vs filesystem mtime)
+- Different path format (`plex:/library/parts/...` vs local file path)
+- Clean switchable isolation — future hybrid mode can UNION both tables
+
+### Search Query
+
+Extends local search pattern with genre matching:
+
+```sql
+SELECT rating_key, part_key, title, artist, album, genre, duration_sec
+FROM plex_tracks
+WHERE title LIKE ? OR artist LIKE ? OR album LIKE ? OR genre LIKE ?
+ORDER BY artist COLLATE NOCASE, album COLLATE NOCASE, title COLLATE NOCASE
+LIMIT ?
+```
+
+Results map to the existing `music_search_result_t` struct:
+- `path` = `"plex:" + part_key` (token-free, same prefix convention)
+- `title`, `artist`, `album`, `duration_sec` = direct copy
+- `display_name` = `"Artist - Title"` (same format as local)
+
+### Sync Mechanism
+
+Reuses `music_scanner.c` background thread pattern (interval + `pthread_cond_timedwait`):
+
+1. **Change detection**: Call `GET /library/sections/{id}` → check `scannedAt` timestamp. If unchanged since last sync, skip (~50ms).
+2. **Full sync**: Paginate `plex_client_list_all_tracks(offset, 200)` through entire library. `INSERT OR REPLACE` each track. Mark-and-sweep to delete removed tracks.
+3. **Initial sync**: ~3-5 seconds for 3,000 tracks on LAN (16 pages × ~200ms each).
+4. **Mutex yielding**: Every 50 inserts, yield DB mutex for 1ms (same as local scan pattern).
+
+### Handler Convergence
+
+The key architectural benefit: Plex and local search code paths **merge** in the handlers.
+
+Before:
+```c
+if (use_plex) {
+   json_object *plex_result = plex_client_search(query, max);  // HTTP API
+   // ... JSON parsing, queue_entry_from_plex_json() ...
+} else {
+   music_search_result_t *results = malloc(...);
+   int count = music_db_search(query, results, max);            // SQLite
+   // ... copy to queue ...
+}
+```
+
+After:
+```c
+music_search_result_t *results = malloc(...);
+int count = use_plex ? plex_db_search(query, results, max)      // SQLite
+                     : music_db_search(query, results, max);    // SQLite
+// ... single copy-to-queue path ...
+```
+
+Same convergence applies to all browse operations (list artists/albums/tracks).
+
+### Files
+
+| File | Purpose |
+|------|---------|
+| `src/audio/plex_db.c` (new) | Plex cache DB layer: init, sync, search, browse |
+| `include/audio/plex_db.h` (new) | Public API |
+| `src/audio/plex_client.c` | Add genre extraction to `build_track_json()`, add `plex_client_get_library_updated_at()` |
+| `src/audio/music_scanner.c` | Add Plex sync mode (reuse thread pattern) |
+| `src/webui/webui_music_handlers.c` | Replace `plex_client_search/list_*()` with `plex_db_*()` |
+| `src/dawn.c` | Init plex_db when source=plex, route scanner mode |
+
+### API Functions Retired from Hot Path
+
+After this change, these Plex API functions are no longer called during search/browse (sync-only or unused):
+
+- `plex_client_search()` → replaced by `plex_db_search()`
+- `plex_client_list_artists()` → replaced by `plex_db_list_artists_with_stats()`
+- `plex_client_list_albums()` → replaced by `plex_db_list_albums_with_stats()`
+- `plex_client_list_tracks()` → replaced by `plex_db_get_by_album()`
+- `plex_client_list_artist_tracks()` → replaced by `plex_db_get_by_artist()`
+- `plex_client_get_stats()` → replaced by `plex_db_get_track_count()` + SQLite counts
+
+The enrich cache (5-min TTL artist/album counts) in plex_client.c becomes unnecessary.
 
 ---
 

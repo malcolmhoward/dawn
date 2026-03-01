@@ -523,6 +523,23 @@ int ws_client_send_alarm_action(ws_client_t *client,
                                 int64_t event_id,
                                 int snooze_minutes);
 
+/* =============================================================================
+ * Volume Control (daemon -> satellite)
+ * ============================================================================= */
+
+/**
+ * @brief Callback for volume_set messages from daemon.
+ *
+ * @param level Volume level 0-100
+ * @param user_data Opaque user data
+ */
+typedef void (*ws_volume_set_cb_t)(int level, void *user_data);
+
+/**
+ * @brief Set callback for volume_set messages from daemon
+ */
+void ws_client_set_volume_callback(ws_client_t *client, ws_volume_set_cb_t cb, void *user_data);
+
 #ifdef __cplusplus
 }
 #endif

@@ -32,6 +32,7 @@
 #include "audio/plex_client.h"
 #include "core/path_utils.h"
 #include "logging.h"
+#include "tools/volume_tool.h"
 #include "webui/webui_music_internal.h"
 #include "webui/webui_server.h"
 
@@ -759,6 +760,26 @@ void handle_music_control(ws_connection_t *conn, struct json_object *payload) {
          free(tracks);
          LOG_INFO("WebUI music: Added %d tracks from album '%s' to queue", added, album_name);
       }
+
+   } else if (strcmp(action, "volume") == 0) {
+      /* Set music volume for this session */
+      struct json_object *level_obj;
+      if (!json_object_object_get_ex(payload, "level", &level_obj)) {
+         webui_music_send_error(conn, "INVALID_REQUEST", "Missing level");
+         return;
+      }
+      double level = json_object_get_double(level_obj);
+      if (level < 0.0)
+         level = 0.0;
+      if (level > 1.0)
+         level = 1.0;
+      conn->volume = (float)level;
+
+      /* Send updated state so client confirms the value */
+      pthread_mutex_lock(&state->state_mutex);
+      webui_music_send_state(conn, state);
+      pthread_mutex_unlock(&state->state_mutex);
+      LOG_INFO("WebUI music: Volume set to %.0f%%", level * 100.0);
 
    } else {
       webui_music_send_error(conn, "UNKNOWN_ACTION", "Unknown control action");
@@ -1701,4 +1722,51 @@ int webui_music_execute_tool(ws_connection_t *conn,
       *result_out = strdup(buf);
    }
    return 1;
+}
+
+/* =============================================================================
+ * Volume Tool Integration (called from volume_tool.c via session routing)
+ * ============================================================================= */
+
+char *webui_volume_execute_tool(ws_connection_t *conn,
+                                const char *action,
+                                const char *value,
+                                int *should_respond) {
+   *should_respond = 1;
+
+   if (strcmp(action, "get") == 0) {
+      char *result = malloc(64);
+      if (result)
+         snprintf(result, 64, "Volume is at %.0f%%", conn->volume * 100.0f);
+      return result;
+   }
+
+   /* Action: set */
+   if (!value || !*value) {
+      return strdup("Error: 'level' parameter is required for 'set' action.");
+   }
+
+   float vol = parse_volume_level(value);
+   if (vol < 0.0f) {
+      char *result = malloc(128);
+      if (result)
+         snprintf(result, 128, "Invalid volume level '%s'. Use a number 0-100.", value);
+      return result;
+   }
+
+   conn->volume = vol;
+   LOG_INFO("WebUI volume tool: set to %.0f%% for session", vol * 100.0f);
+
+   /* Send state update to client so slider syncs */
+   session_music_state_t *state = (session_music_state_t *)conn->music_state;
+   if (state) {
+      pthread_mutex_lock(&state->state_mutex);
+      webui_music_send_state(conn, state);
+      pthread_mutex_unlock(&state->state_mutex);
+   }
+
+   char *result = malloc(64);
+   if (result)
+      snprintf(result, 64, "Volume set to %.0f%%", vol * 100.0f);
+   return result;
 }

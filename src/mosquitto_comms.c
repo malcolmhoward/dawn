@@ -1716,6 +1716,8 @@ char *base64_encode(const unsigned char *buffer, size_t length) {
    return b64text;
 }
 
+/* DEPRECATED: Legacy MQTT volume callback. Prefer the volume_tool (session-aware routing).
+ * Kept for backward compatibility with MQTT direct-mode commands. */
 char *volumeCallback(const char *actionName, char *value, int *should_respond) {
    char *result = NULL;
    float floatVol = -1.0f;

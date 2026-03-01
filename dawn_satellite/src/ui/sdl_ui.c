@@ -1998,6 +1998,16 @@ static void alarm_snooze_cb(int64_t event_id, int snooze_minutes, void *userdata
       ws_client_send_alarm_action(ui->ws_client, "snooze", event_id, snooze_minutes);
 }
 
+static void volume_set_cb(int level, void *user_data) {
+   sdl_ui_t *ui = (sdl_ui_t *)user_data;
+   set_master_volume(ui, level);
+
+   /* Update slider to reflect new volume (rendered on next frame) */
+   if (ui->sliders_initialized) {
+      ui->volume_slider.value = (float)level / 100.0f;
+   }
+}
+
 void sdl_ui_set_ws_client(sdl_ui_t *ui, struct ws_client *client) {
    if (!ui || !client)
       return;
@@ -2011,6 +2021,9 @@ void sdl_ui_set_ws_client(sdl_ui_t *ui, struct ws_client *client) {
 
    /* Register alarm callback */
    ws_client_set_alarm_callback(client, alarm_notify_cb, ui);
+
+   /* Register volume callback (daemon -> satellite) */
+   ws_client_set_volume_callback(client, volume_set_cb, ui);
 
    /* Wire alarm overlay dismiss/snooze to ws_client */
    ui->alarm.on_dismiss = alarm_dismiss_cb;

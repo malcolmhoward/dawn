@@ -21,6 +21,9 @@
  * WebUI Satellite Handler - DAP2 Tier 1 satellite support via WebSocket
  */
 
+#include "webui/webui_satellite.h"
+
+#include <json-c/json.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <string.h>
@@ -29,6 +32,7 @@
 #include "config/dawn_config.h"
 #include "core/session_manager.h"
 #include "logging.h"
+#include "tools/volume_tool.h"
 #include "webui/webui_internal.h"
 
 /* Maximum concurrent satellite worker threads (LLM calls).
@@ -695,4 +699,89 @@ void handle_satellite_ping(ws_connection_t *conn) {
    if (conn->session) {
       session_touch(conn->session);
    }
+}
+
+/* =============================================================================
+ * Volume Tool Integration (called from volume_tool.c via session routing)
+ * ============================================================================= */
+
+void handle_satellite_volume_state(ws_connection_t *conn, struct json_object *payload) {
+   if (!conn || !conn->is_satellite) {
+      LOG_WARNING("Satellite: volume_state rejected (not a satellite connection)");
+      return;
+   }
+
+   struct json_object *level_obj;
+   if (!json_object_object_get_ex(payload, "level", &level_obj)) {
+      LOG_WARNING("Satellite: volume_state missing 'level'");
+      return;
+   }
+
+   int level = json_object_get_int(level_obj);
+   if (level < 0)
+      level = 0;
+   if (level > 100)
+      level = 100;
+
+   conn->volume = (float)level / 100.0f;
+   LOG_INFO("Satellite: Volume state updated to %d%% for %s", level,
+            conn->session ? conn->session->identity.name : "(unknown)");
+}
+
+char *satellite_volume_execute_tool(ws_connection_t *conn,
+                                    const char *action,
+                                    const char *value,
+                                    int *should_respond) {
+   *should_respond = 1;
+
+   if (strcmp(action, "get") == 0) {
+      char *result = malloc(64);
+      if (result)
+         snprintf(result, 64, "Volume is at %.0f%%", conn->volume * 100.0f);
+      return result;
+   }
+
+   /* Action: set */
+   if (!value || !*value) {
+      return strdup("Error: 'level' parameter is required for 'set' action.");
+   }
+
+   float vol = parse_volume_level(value);
+   if (vol < 0.0f) {
+      char *result = malloc(128);
+      if (result)
+         snprintf(result, 128, "Invalid volume level '%s'. Use a number 0-100.", value);
+      return result;
+   }
+
+   conn->volume = vol;
+   int level_int = (int)(vol * 100.0f + 0.5f);
+
+   /* Send volume_set command to satellite via response queue */
+   struct json_object *msg = json_object_new_object();
+   json_object_object_add(msg, "type", json_object_new_string("volume_set"));
+   struct json_object *payload = json_object_new_object();
+   json_object_object_add(payload, "level", json_object_new_int(level_int));
+   json_object_object_add(msg, "payload", payload);
+
+   const char *json_str = json_object_to_json_string(msg);
+   char *json_copy = strdup(json_str);
+   json_object_put(msg);
+
+   if (json_copy && conn->session) {
+      ws_response_t resp = { .session = conn->session,
+                             .type = WS_RESP_MUSIC_STATE,
+                             .music_json = { .json = json_copy } };
+      queue_response(&resp);
+   } else {
+      free(json_copy);
+   }
+
+   LOG_INFO("Satellite: Volume set to %d%% for %s", level_int,
+            conn->session ? conn->session->identity.name : "(unknown)");
+
+   char *result = malloc(64);
+   if (result)
+      snprintf(result, 64, "Volume set to %d%%", level_int);
+   return result;
 }

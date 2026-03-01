@@ -36,6 +36,7 @@
 #include "audio/flac_playback.h"
 
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -61,7 +62,7 @@
  * amplification. Values above 1.0 may result in amplification and potentially
  * introduce distortion or clipping.
  */
-static float global_volume = 0.5f;
+static _Atomic float global_volume = 0.5f;
 
 /* Global variable to control music playback state.
  * When set to 0, music playback is stopped.
@@ -109,9 +110,10 @@ uint32_t audio_playback_get_sample_rate(void) {
  */
 static void apply_volume(int16_t *buffer, size_t frames, unsigned int channels) {
    size_t total_samples = frames * channels;
+   float vol = atomic_load_explicit(&global_volume, memory_order_relaxed);
 
    for (size_t i = 0; i < total_samples; i++) {
-      int32_t adjusted = (int32_t)(buffer[i] * global_volume);
+      int32_t adjusted = (int32_t)(buffer[i] * vol);
 
       /* Clipping protection */
       if (adjusted < INT16_MIN) {
@@ -332,9 +334,9 @@ cleanup:
 }
 
 void setMusicVolume(float val) {
-   global_volume = val;
+   atomic_store_explicit(&global_volume, val, memory_order_relaxed);
 }
 
 float getMusicVolume(void) {
-   return global_volume;
+   return atomic_load_explicit(&global_volume, memory_order_relaxed);
 }

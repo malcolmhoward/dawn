@@ -481,6 +481,9 @@ void webui_music_send_state(ws_connection_t *conn, session_music_state_t *state)
    json_object_object_add(payload, "shuffle", json_object_new_boolean(state->shuffle));
    json_object_object_add(payload, "repeat_mode", json_object_new_int(state->repeat_mode));
 
+   /* Per-session volume (from connection, not music state) */
+   json_object_object_add(payload, "volume", json_object_new_double(conn->volume));
+
    json_object_object_add(response, "payload", payload);
 
    /* Thread-safe: serialize to string and enqueue for the LWS service thread.

@@ -45,7 +45,7 @@
 #ifndef WEBUI_SATELLITE_H
 #define WEBUI_SATELLITE_H
 
-#include "core/session_manager.h"
+#include "webui/webui_internal.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -96,6 +96,23 @@ void satellite_send_error(session_t *session, const char *code, const char *mess
  * @param state State string ("idle", "thinking", "processing")
  */
 void satellite_send_state(session_t *session, const char *state);
+
+/**
+ * @brief Execute volume tool for a satellite session
+ *
+ * Called from volume_tool.c via session routing. Sends volume_set to
+ * the satellite and caches the volume on conn->volume.
+ *
+ * @param conn      Satellite connection
+ * @param action    "get" or "set"
+ * @param value     Volume level string (for "set")
+ * @param should_respond  Set to 1 on return
+ * @return Allocated result string for LLM
+ */
+char *satellite_volume_execute_tool(ws_connection_t *conn,
+                                    const char *action,
+                                    const char *value,
+                                    int *should_respond);
 
 #ifdef __cplusplus
 }

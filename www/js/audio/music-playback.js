@@ -692,6 +692,11 @@
       state.shuffle = payload.shuffle || false;
       state.repeatMode = payload.repeat_mode || 0;
 
+      // Sync volume from server if present
+      if (payload.volume !== undefined) {
+         state.volume = payload.volume;
+      }
+
       if (state.track) {
          state.durationSec = state.track.duration_sec || 0;
       }

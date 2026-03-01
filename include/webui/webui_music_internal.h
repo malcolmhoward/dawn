@@ -225,6 +225,17 @@ bool wait_decoder_idle(session_music_state_t *state, int timeout_ms);
  */
 int webui_music_pick_random_index(session_music_state_t *state);
 
+/**
+ * @brief Execute volume tool for a WebUI session
+ *
+ * Called from volume_tool.c via session routing. Handles get/set actions
+ * and syncs volume to the browser client via state update.
+ */
+char *webui_volume_execute_tool(ws_connection_t *conn,
+                                const char *action,
+                                const char *value,
+                                int *should_respond);
+
 #ifdef __cplusplus
 }
 #endif

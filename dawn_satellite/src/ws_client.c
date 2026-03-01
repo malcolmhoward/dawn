@@ -105,6 +105,10 @@ struct ws_client {
    ws_alarm_notify_cb_t alarm_notify_cb;
    void *alarm_notify_cb_data;
 
+   /* Volume control callback */
+   ws_volume_set_cb_t volume_set_cb;
+   void *volume_set_cb_data;
+
    /* Registration key for satellite authentication */
    char registration_key[65]; /* 32 bytes hex-encoded + null */
 
@@ -564,6 +568,39 @@ static void handle_message(ws_client_t *client, const char *msg, size_t len) {
          pthread_mutex_unlock(&client->mutex);
          cb(&notify, ud);
          pthread_mutex_lock(&client->mutex);
+      }
+   } else if (strcmp(type, "volume_set") == 0) {
+      if (payload) {
+         struct json_object *level_obj;
+         if (json_object_object_get_ex(payload, "level", &level_obj)) {
+            int level = json_object_get_int(level_obj);
+            if (level < 0)
+               level = 0;
+            if (level > 100)
+               level = 100;
+
+            LOG_INFO("Volume set from daemon: %d%%", level);
+
+            /* Invoke volume callback (sdl_ui sets this to set_master_volume) */
+            if (client->volume_set_cb) {
+               ws_volume_set_cb_t cb = client->volume_set_cb;
+               void *ud = client->volume_set_cb_data;
+               pthread_mutex_unlock(&client->mutex);
+               cb(level, ud);
+               pthread_mutex_lock(&client->mutex);
+            }
+
+            /* Build confirmation outside mutex, send_json takes its own lock */
+            struct json_object *resp = json_object_new_object();
+            json_object_object_add(resp, "type", json_object_new_string("volume_state"));
+            struct json_object *resp_payload = json_object_new_object();
+            json_object_object_add(resp_payload, "level", json_object_new_int(level));
+            json_object_object_add(resp, "payload", resp_payload);
+            pthread_mutex_unlock(&client->mutex);
+            send_json(client, resp);
+            json_object_put(resp);
+            pthread_mutex_lock(&client->mutex);
+         }
       }
    } else {
       LOG_DEBUG("Unknown message type: %s", type);
@@ -1541,4 +1578,13 @@ int ws_client_send_alarm_action(ws_client_t *client,
 
    LOG_INFO("Alarm action sent: %s (event_id=%lld)", action, (long long)event_id);
    return ret;
+}
+
+void ws_client_set_volume_callback(ws_client_t *client, ws_volume_set_cb_t cb, void *user_data) {
+   if (!client)
+      return;
+   pthread_mutex_lock(&client->mutex);
+   client->volume_set_cb = cb;
+   client->volume_set_cb_data = user_data;
+   pthread_mutex_unlock(&client->mutex);
 }

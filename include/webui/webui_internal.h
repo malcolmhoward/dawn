@@ -123,6 +123,12 @@ typedef struct {
 
    /* Music streaming state (per-session, owned by webui_music.c) */
    void *music_state; /* session_music_state_t*, NULL if not initialized */
+
+   /* Per-session music volume (0.0-1.0), synced with client.
+    * Stored on connection (not music_state) because volume must be available
+    * before music_subscribe and is an audio property of the connection.
+    * Atomic: written by LLM tool thread and LWS thread, read by music stream thread. */
+   _Atomic float volume;
 } ws_connection_t;
 
 /* =============================================================================
@@ -821,6 +827,11 @@ void handle_satellite_query(ws_connection_t *conn, struct json_object *payload);
  * @brief Handle satellite_ping message
  */
 void handle_satellite_ping(ws_connection_t *conn);
+
+/**
+ * @brief Handle volume_state message from satellite
+ */
+void handle_satellite_volume_state(ws_connection_t *conn, struct json_object *payload);
 
 /* =============================================================================
  * Audio Send Functions (defined in webui_server.c, used by webui_audio.c)

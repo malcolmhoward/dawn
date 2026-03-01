@@ -18,11 +18,18 @@
  * enhancements, or additions to the project. These contributions become
  * part of the project and are adopted by the project author(s).
  *
- * Volume Tool - Control audio volume level for TTS and music playback
+ * Volume Tool - Session-aware volume control with get/set actions
+ *
+ * Routes volume commands to the originating client:
+ *   - WebUI session: updates conn->volume and syncs to browser
+ *   - Satellite: forwards via DAP2 volume_set message
+ *   - Daemon local: updates global_volume for local playback
  */
 
 #include "tools/volume_tool.h"
 
+#include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -32,6 +39,14 @@
 #include "tools/tool_registry.h"
 #include "word_to_number.h"
 
+/* Session routing for WebUI/satellite */
+#ifdef ENABLE_WEBUI
+#include "core/session_manager.h"
+#include "webui/webui_internal.h"
+#include "webui/webui_music_internal.h"
+#include "webui/webui_satellite.h"
+#endif
+
 /* ========== Forward Declarations ========== */
 
 static char *volume_tool_callback(const char *action, char *value, int *should_respond);
@@ -40,10 +55,19 @@ static char *volume_tool_callback(const char *action, char *value, int *should_r
 
 static const treg_param_t volume_params[] = {
    {
-       .name = "level",
-       .description = "Volume level from 0 (silent) to 100 (maximum)",
-       .type = TOOL_PARAM_TYPE_INT,
+       .name = "action",
+       .description = "Action to perform: 'set' to change volume, 'get' to query current level",
+       .type = TOOL_PARAM_TYPE_ENUM,
        .required = true,
+       .maps_to = TOOL_MAPS_TO_ACTION,
+       .enum_values = { "set", "get" },
+       .enum_count = 2,
+   },
+   {
+       .name = "level",
+       .description = "Volume level 0-100. Required for 'set' action.",
+       .type = TOOL_PARAM_TYPE_INT,
+       .required = false,
        .maps_to = TOOL_MAPS_TO_VALUE,
    },
 };
@@ -57,9 +81,9 @@ static const tool_metadata_t volume_metadata = {
    .aliases = { NULL },
    .alias_count = 0,
 
-   .description = "Set the audio volume level for TTS and music playback.",
+   .description = "Get or set the music volume level.",
    .params = volume_params,
-   .param_count = 1,
+   .param_count = 2,
 
    .device_type = TOOL_DEVICE_TYPE_ANALOG,
    .capabilities = TOOL_CAP_SCHEDULABLE,
@@ -77,67 +101,124 @@ static const tool_metadata_t volume_metadata = {
    .callback = volume_tool_callback,
 };
 
+/* ========== Volume Parsing Helper ========== */
+
+float parse_volume_level(const char *value) {
+   if (!value || !*value)
+      return -1.0f;
+
+   float vol = -1.0f;
+
+   /* Try numeric parse first ("100", "50", "0.5") */
+   char *endptr;
+   double parsed = strtod(value, &endptr);
+   if (endptr != value && *endptr == '\0' && isfinite(parsed)) {
+      vol = (float)parsed;
+   } else {
+      /* wordToNumber tokenizes in-place via strtok_r, so copy input */
+      char buf[256];
+      snprintf(buf, sizeof(buf), "%s", value);
+      vol = (float)wordToNumber(buf);
+   }
+
+   /* Normalize: values > 2.0 are assumed to be percentages */
+   if (vol > 2.0f)
+      vol /= 100.0f;
+
+   /* Clamp to 0.0-1.0 (no amplification for remote clients) */
+   if (vol < 0.0f)
+      return -1.0f;
+   if (vol > 1.0f)
+      vol = 1.0f;
+
+   return vol;
+}
+
 /* ========== Callback Implementation ========== */
 
 static char *volume_tool_callback(const char *action, char *value, int *should_respond) {
-   (void)action;
+   bool is_get = (action && strcmp(action, "get") == 0);
+   bool is_set = !is_get; /* default to set for backward compat */
 
-   char *result = NULL;
-   float floatVol = -1.0f;
+#ifdef ENABLE_WEBUI
+   /* Route to originating client session (WebUI or satellite) */
+   session_t *session = session_get_command_context();
+   if (session && session->client_data) {
+      ws_connection_t *conn = (ws_connection_t *)session->client_data;
 
-   /* Try to parse as numeric string first (handles "100", "50", "0.5", etc) */
-   char *endptr;
-   double parsed = strtod(value, &endptr);
-   if (endptr != value && *endptr == '\0') {
-      /* Successfully parsed as number */
-      floatVol = (float)parsed;
-      /* If value > 2.0, assume it's a percentage (0-100) and convert to 0.0-1.0 */
-      if (floatVol > 2.0f) {
-         floatVol = floatVol / 100.0f;
-      }
-   } else {
-      /* Fall back to word parsing ("fifty", "one hundred", etc) */
-      floatVol = (float)wordToNumber(value);
-      /* wordToNumber returns 0-100 for percentages, convert to 0.0-1.0 */
-      if (floatVol > 2.0f) {
-         floatVol = floatVol / 100.0f;
-      }
-   }
-
-   LOG_INFO("Volume: %s -> %.2f", value, floatVol);
-
-   if (floatVol >= 0 && floatVol <= 2.0) {
-      setMusicVolume(floatVol);
-
-      if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
-         *should_respond = 0; /* No response in direct mode for volume */
-         return NULL;
+      if (conn->is_satellite) {
+         char *result = satellite_volume_execute_tool(conn, action, value, should_respond);
+         return result;
       } else {
-         /* AI modes: return confirmation */
-         result = malloc(64);
-         if (result) {
-            snprintf(result, 64, "Volume set to %.0f%%", floatVol * 100.0f);
-         }
-         *should_respond = 1;
+         char *result = webui_volume_execute_tool(conn, action, value, should_respond);
          return result;
       }
-   } else {
+   }
+#endif
+
+   /* Daemon-local fallback (no WebUI session, or ENABLE_WEBUI disabled) */
+   if (is_get) {
+      float vol = getMusicVolume();
+      char *result = malloc(64);
+      if (result)
+         snprintf(result, 64, "Volume is at %.0f%%", vol * 100.0f);
+      *should_respond = 1;
+      return result;
+   }
+
+   /* Action: set */
+   if (!value || !*value) {
+      *should_respond = 1;
+      return strdup("Error: 'level' parameter is required for 'set' action.");
+   }
+
+   float vol = parse_volume_level(value);
+   LOG_INFO("Volume: %s -> %.2f", value, vol);
+
+   if (vol < 0.0f) {
       if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
          int local_should_respond = 0;
          textToSpeechCallback(NULL, "Invalid volume level requested.", &local_should_respond);
          *should_respond = 0;
          return NULL;
-      } else {
-         result = malloc(128);
-         if (result) {
-            snprintf(result, 128,
-                     "Invalid volume level %.1f requested. Volume must be between 0 and 2.",
-                     floatVol);
-         }
-         *should_respond = 1;
-         return result;
       }
+      char *result = malloc(128);
+      if (result)
+         snprintf(result, 128, "Invalid volume level '%s'. Use a number 0-100.", value);
+      *should_respond = 1;
+      return result;
    }
+
+   /* Daemon-local allows amplification up to 2.0x */
+   if (is_set) {
+      /* Re-parse without clamping for daemon local (allows >1.0) */
+      float daemon_vol = vol;
+      char *endptr;
+      double raw = strtod(value, &endptr);
+      if (endptr != value && *endptr == '\0') {
+         daemon_vol = (float)raw;
+         if (daemon_vol > 2.0f)
+            daemon_vol /= 100.0f;
+         if (daemon_vol < 0.0f)
+            daemon_vol = 0.0f;
+         if (daemon_vol > 2.0f)
+            daemon_vol = 2.0f;
+      }
+      setMusicVolume(daemon_vol);
+
+      if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
+         *should_respond = 0;
+         return NULL;
+      }
+      char *result = malloc(64);
+      if (result)
+         snprintf(result, 64, "Volume set to %.0f%%", daemon_vol * 100.0f);
+      *should_respond = 1;
+      return result;
+   }
+
+   *should_respond = 0;
+   return NULL;
 }
 
 /* ========== Public API ========== */

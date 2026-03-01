@@ -2959,6 +2959,10 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
       if (conn->is_satellite) {
          handle_satellite_ping(conn);
       }
+   } else if (strcmp(type, "volume_state") == 0) {
+      if (conn->is_satellite && payload) {
+         handle_satellite_volume_state(conn, payload);
+      }
    } else {
       LOG_WARNING("WebUI: Unknown message type: %s", type);
    }
@@ -3001,6 +3005,7 @@ static int callback_websocket(struct lws *wsi,
          memset(conn, 0, sizeof(*conn));
          conn->wsi = wsi;
          conn->session = NULL; /* Will be created/assigned on init message */
+         conn->volume = 0.8f;  /* Default music volume (0.0-1.0) */
 
          /* Capture client IP at connection time for reliable logging later */
          lws_get_peer_simple(wsi, conn->client_ip, sizeof(conn->client_ip));

@@ -80,6 +80,9 @@
       browseCurrentType: null, // 'tracks', 'artists', 'albums'
       browseLoading: false,
       libraryInitialized: false, // True after first stats fetch
+      lastLocalVolumeChange: 0, // Timestamp of last local volume change
+      volumeDebounceTimer: null, // Debounce timer for server volume sync
+      volumeRestoredToServer: false, // True after saved volume sent to server on first state
    };
 
    /**
@@ -310,7 +313,7 @@
       }
       updateVolumeIcon();
       updateModeButtons();
-      // Apply saved volume to playback
+      // Apply saved volume to playback (client-side gainNode)
       DawnMusicPlayback.setVolume(localState.muted ? 0 : localState.volume);
    }
 
@@ -450,10 +453,17 @@
    function handleVolumeChange(e) {
       localState.volume = parseFloat(e.target.value);
       localState.muted = false;
+      localState.lastLocalVolumeChange = Date.now();
       localStorage.setItem('musicVolume', localState.volume);
       localStorage.setItem('musicMuted', 'false');
       updateVolumeIcon();
       DawnMusicPlayback.setVolume(localState.volume);
+
+      // Debounce server sync (50ms) to avoid flooding during slider drag
+      clearTimeout(localState.volumeDebounceTimer);
+      localState.volumeDebounceTimer = setTimeout(() => {
+         DawnMusicPlayback.control('volume', { level: localState.volume });
+      }, 50);
    }
 
    /**
@@ -669,6 +679,27 @@
       localStorage.setItem('musicShuffle', localState.shuffle);
       localStorage.setItem('musicRepeat', localState.repeat);
       updateModeButtons();
+
+      // Volume sync: on first state after page load, push saved volume TO server
+      // (conn->volume resets to default on reconnect). After that, accept server updates.
+      if (!localState.volumeRestoredToServer) {
+         localState.volumeRestoredToServer = true;
+         localState.lastLocalVolumeChange = Date.now();
+         DawnMusicPlayback.control('volume', { level: localState.volume });
+      } else if (
+         state.volume !== undefined &&
+         Date.now() - localState.lastLocalVolumeChange > 500
+      ) {
+         localState.volume = state.volume;
+         localState.muted = false;
+         localStorage.setItem('musicVolume', localState.volume);
+         localStorage.setItem('musicMuted', 'false');
+         if (elements.volumeSlider) {
+            elements.volumeSlider.value = localState.volume;
+         }
+         updateVolumeIcon();
+         DawnMusicPlayback.setVolume(localState.volume);
+      }
 
       // Start/stop visualizer
       if (state.playing && !state.paused && isOpen) {

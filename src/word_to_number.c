@@ -73,9 +73,10 @@ double wordToNumber(char *originalWord) {
       { "trillion", 1000000000000 }  // Extendable for more magnitudes.
    };
 
-   double result = 0.0;              // Accumulator for the result.
-   double tempValue = 0.0;           // Temporary accumulator for the current numeric segment.
-   char *token = strtok(word, " ");  // Tokenize the input string by spaces.
+   double result = 0.0;     // Accumulator for the result.
+   double tempValue = 0.0;  // Temporary accumulator for the current numeric segment.
+   char *saveptr = NULL;
+   char *token = strtok_r(word, " ", &saveptr);  // Tokenize the input string by spaces.
 
    while (token != NULL) {
       if (strcmp(token, "point") == 0) {
@@ -98,7 +99,7 @@ double wordToNumber(char *originalWord) {
          }
       }
 
-      token = strtok(NULL, " ");
+      token = strtok_r(NULL, " ", &saveptr);
    }
    result += tempValue;  // Add any remaining value to the result.
 
@@ -106,13 +107,14 @@ double wordToNumber(char *originalWord) {
    strncpy(word, originalWord, sizeof(word));
    char *decimalPart = strstr(word, "point");
    if (decimalPart) {
-      char *token = strtok(decimalPart + strlen("point"), " ");
+      char *dec_saveptr = NULL;
+      char *token = strtok_r(decimalPart + strlen("point"), " ", &dec_saveptr);
       double fractionalValue = 0.0;
       int decimalDigits = 0;
       while (token) {
          fractionalValue = fractionalValue * 10 + parseNumericalWord(token);
          decimalDigits++;
-         token = strtok(NULL, " ");
+         token = strtok_r(NULL, " ", &dec_saveptr);
       }
       for (int i = 0; i < decimalDigits; i++) {
          fractionalValue /= 10;
