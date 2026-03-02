@@ -1,0 +1,28 @@
+# Build artifacts
+build/
+build-debug/
+
+# Version control
+.git/
+.gitmodules
+
+# Downloaded models (large; managed at runtime via entrypoint.sh)
+whisper.cpp/models/*.bin
+vosk-model*/
+*.zip
+
+# Secrets (never include in image)
+secrets.toml
+ssl/
+.env
+
+# Development-only
+scratch/
+llm_testing/
+docs/claude/
+
+# Editor and OS artifacts
+.vscode/
+*.swp
+*~
+.DS_Store
