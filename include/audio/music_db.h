@@ -40,6 +40,7 @@
 #include <stddef.h>
 
 #include "audio/audio_decoder.h"
+#include "audio/music_source.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -69,8 +70,10 @@ typedef struct {
    char title[AUDIO_METADATA_STRING_MAX];            /**< Track title */
    char artist[AUDIO_METADATA_STRING_MAX];           /**< Artist name */
    char album[AUDIO_METADATA_STRING_MAX];            /**< Album name */
+   char genre[AUDIO_METADATA_STRING_MAX];            /**< Genre (comma-separated if multiple) */
    char display_name[AUDIO_METADATA_STRING_MAX * 2]; /**< "Artist - Title" or filename */
    uint32_t duration_sec;                            /**< Duration in seconds */
+   music_source_t source;                            /**< Which source this track came from */
 } music_search_result_t;
 
 /**

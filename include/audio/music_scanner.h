@@ -34,6 +34,8 @@
 
 #include <stdbool.h>
 
+#include "audio/music_source.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -53,17 +55,32 @@ extern "C" {
  * ============================================================================= */
 
 /**
+ * @brief Register a remote music source provider with the scanner
+ *
+ * Registered providers are initialized at scanner start and their sync()
+ * function is called each scan cycle. Multiple providers can be registered.
+ * Must be called before music_scanner_start().
+ *
+ * @param provider Provider struct (must have static lifetime)
+ * @return 0 on success, -1 if max providers reached
+ */
+int music_scanner_register_source(const music_source_provider_t *provider);
+
+/**
  * @brief Start the background music scanner
  *
  * Launches a background thread that periodically scans the music directory
  * and updates the metadata database. The first scan runs immediately after
  * starting.
  *
- * @param music_dir Directory to scan for music files
+ * Either music_dir or registered providers (or both) must be configured.
+ *
+ * @param music_dir Directory to scan for music files (NULL/empty to skip local)
  * @param scan_interval_min Interval between scans in minutes (0 to disable periodic scanning)
+ * @param db_path Path to music.db (passed to provider init functions)
  * @return 0 on success, non-zero on failure
  */
-int music_scanner_start(const char *music_dir, int scan_interval_min);
+int music_scanner_start(const char *music_dir, int scan_interval_min, const char *db_path);
 
 /**
  * @brief Stop the background music scanner

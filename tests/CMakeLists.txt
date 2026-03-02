@@ -165,6 +165,19 @@ target_link_libraries(test_scheduler
                       pthread
                       ${JSONC_LIBRARIES})
 
+# Test: Music DB Unit Test
+# Tests search, dedup, browse, source abstraction, and stale deletion
+add_executable(test_music_db
+               test_music_db.c
+               ${SRC_ROOT}/src/audio/music_db.c
+               ${SRC_ROOT}/src/audio/music_source.c
+               ${SRC_ROOT}/src/core/path_utils.c)
+
+target_link_libraries(test_music_db
+                      dawn_common
+                      sqlite3
+                      pthread)
+
 # =============================================================================
 # Aggregate "tests" target
 # =============================================================================
@@ -180,4 +193,5 @@ add_custom_target(tests
                           test_session_commands
                           test_summarizer_quality
                           test_scheduler
+                          test_music_db
                   COMMENT "Building all tests")

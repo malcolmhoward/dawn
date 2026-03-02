@@ -48,7 +48,7 @@ DAWN is designed for embedded Linux platforms (Jetson, Raspberry Pi) and support
   - **Resume playback** - Pause saves position, resume continues from there
   - **Opus streaming** - Stream music to WebUI and DAP2 satellites via WebSocket
   - **Paginated library** - Browse artists/albums/tracks with 50-item pages
-  - **Plex Media Server** - Stream music from a Plex server as an alternative to local files
+  - **Plex Media Server** - Unified library with local + Plex sources, priority-based deduplication (local wins), case-insensitive matching
 
 - **DAP2 Satellite System**
   - **One server, one port, three client types**: The WebUI server on port 3000 is the single entry point for all remote access — browser clients (WebUI), Raspberry Pi satellites (Tier 1), and ESP32 satellites (Tier 2) all connect to the same WebSocket endpoint. The daemon inspects each client's capabilities at registration and routes accordingly: text for Tier 1, Opus audio for browsers, raw PCM for Tier 2. No separate servers, no extra ports.
@@ -518,7 +518,7 @@ The `dawn.toml.example` file contains all available settings with documentation.
 - `[tts]` — Voice model, speech speed
 - `[webui]` — Port, SSL settings
 - `[scheduler]` — Timer/alarm settings (snooze duration, timeout, volume, per-user limits)
-- `[music]` — Music source (local or Plex), streaming settings
+- `[music]` — Music library scanning, Plex integration, streaming settings
 
 Most settings can also be changed via the Web UI settings panel.
 
@@ -977,7 +977,7 @@ See `docs/USER_AUTH_DESIGN.md` for complete authentication system documentation.
 
 ### Plex Music Source (Optional)
 
-DAWN can stream music from a Plex Media Server instead of (or in addition to) a local music library. To set this up:
+DAWN can index and stream music from a Plex Media Server alongside your local music library. When both sources are configured, DAWN builds a unified library with priority-based deduplication — if the same track exists locally and on Plex, the local copy is preferred. All search, browse, and playback operations work transparently across both sources.
 
 **1. Get your Plex authentication token:**
 
@@ -1002,9 +1002,6 @@ Or enter it in the WebUI Settings → Secrets → Plex Token field.
 
 **3. Configure the Plex connection in dawn.toml:**
 ```toml
-[music]
-source = "plex"
-
 [music.plex]
 host = "192.168.1.100"    # Your Plex server IP or hostname
 port = 32400              # Default Plex port
@@ -1013,9 +1010,9 @@ ssl_verify = true         # Set to false for self-signed certificates
 music_section_id = 0      # 0 = auto-discover, or specify your library section ID
 ```
 
-Or configure everything in WebUI Settings → Music Streaming (source dropdown and Plex Connection fields appear when "Plex Media Server" is selected).
+Or configure everything in WebUI Settings → Music & Media → Plex Connection fields.
 
-**4. Verify:** Open the music panel in WebUI and browse your Plex library. Track counts should appear in the Library tab stats.
+**4. Verify:** Restart DAWN. The Plex library will sync automatically on startup (typically 3-5 seconds for ~3,000 tracks on LAN). Open the music panel in WebUI — the Library tab stats should show combined track/artist/album counts from both sources with duplicates merged.
 
 ## Performance Optimization
 

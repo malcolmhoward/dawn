@@ -36,6 +36,7 @@
 #include <unistd.h>
 
 #include "audio/audio_decoder.h"
+#include "audio/music_source.h"
 #include "core/path_utils.h"
 #include "logging.h"
 
@@ -49,6 +50,28 @@
 /** Yield mutex every N files to allow searches during scan */
 #define SCAN_YIELD_INTERVAL 50
 
+/** Priority-based dedup clause: exclude rows where a higher-priority source
+ *  (lower enum value) has the same artist+album+title. Uses idx_music_dedup.
+ *  COLLATE NOCASE handles metadata case differences between sources. */
+#define DEDUP_CLAUSE                                            \
+   "AND NOT EXISTS ("                                           \
+   "   SELECT 1 FROM music_metadata m2 "                        \
+   "   WHERE m2.artist = music_metadata.artist COLLATE NOCASE " \
+   "   AND m2.album = music_metadata.album COLLATE NOCASE "     \
+   "   AND m2.title = music_metadata.title COLLATE NOCASE "     \
+   "   AND m2.source < music_metadata.source"                   \
+   ") "
+
+/** Dedup clause for queries that have no preceding WHERE condition */
+#define DEDUP_WHERE                                             \
+   "WHERE NOT EXISTS ("                                         \
+   "   SELECT 1 FROM music_metadata m2 "                        \
+   "   WHERE m2.artist = music_metadata.artist COLLATE NOCASE " \
+   "   AND m2.album = music_metadata.album COLLATE NOCASE "     \
+   "   AND m2.title = music_metadata.title COLLATE NOCASE "     \
+   "   AND m2.source < music_metadata.source"                   \
+   ") "
+
 /* SQL statements */
 static const char *SQL_CREATE_TABLE = "CREATE TABLE IF NOT EXISTS music_metadata ("
                                       "   id INTEGER PRIMARY KEY,"
@@ -60,8 +83,6 @@ static const char *SQL_CREATE_TABLE = "CREATE TABLE IF NOT EXISTS music_metadata
                                       "   duration_sec INTEGER"
                                       ")";
 
-static const char *SQL_CREATE_INDEX_ARTIST =
-    "CREATE INDEX IF NOT EXISTS idx_music_artist ON music_metadata(artist)";
 static const char *SQL_CREATE_INDEX_ALBUM =
     "CREATE INDEX IF NOT EXISTS idx_music_album ON music_metadata(album)";
 static const char *SQL_CREATE_INDEX_TITLE =
@@ -83,78 +104,78 @@ static const char *SQL_COUNT = "SELECT COUNT(*) FROM music_metadata";
 static const char *SQL_STATS = "SELECT COUNT(*), "
                                "COUNT(DISTINCT CASE WHEN artist != '' THEN artist END), "
                                "COUNT(DISTINCT CASE WHEN album != '' THEN album END) "
-                               "FROM music_metadata";
+                               "FROM music_metadata " DEDUP_WHERE;
 
 static const char *SQL_DELETE_NOT_IN_LIST = "DELETE FROM music_metadata WHERE path NOT IN (%s)";
 
-/* Search query: match pattern against title, artist, album, or filename */
-static const char *SQL_SEARCH = "SELECT path, title, artist, album, duration_sec "
+/* Search query: match pattern against title, artist, album, genre, or filename.
+ * Dedup: exclude rows where a higher-priority source has the same track. */
+static const char *SQL_SEARCH = "SELECT path, title, artist, album, genre, duration_sec, source "
                                 "FROM music_metadata "
-                                "WHERE title LIKE ? OR artist LIKE ? OR album LIKE ? "
-                                "   OR path LIKE ? "
+                                "WHERE (title LIKE ? ESCAPE '\\' OR artist LIKE ? ESCAPE '\\' "
+                                "   OR album LIKE ? ESCAPE '\\' OR genre LIKE ? ESCAPE '\\' "
+                                "   OR path LIKE ? ESCAPE '\\') " DEDUP_CLAUSE
                                 "ORDER BY artist COLLATE NOCASE, album COLLATE NOCASE, "
                                 "title COLLATE NOCASE "
                                 "LIMIT ?";
 
-/* List query: return all tracks ordered by artist/album/title */
-static const char *SQL_LIST = "SELECT path, title, artist, album, duration_sec "
-                              "FROM music_metadata "
+/* List query: return all tracks ordered by artist/album/title (deduped) */
+static const char *SQL_LIST = "SELECT path, title, artist, album, genre, duration_sec, source "
+                              "FROM music_metadata " DEDUP_WHERE
                               "ORDER BY artist COLLATE NOCASE, album COLLATE NOCASE, "
                               "title COLLATE NOCASE "
                               "LIMIT ?";
 
 static const char *SQL_LIST_PAGED =
-    "SELECT path, title, artist, album, duration_sec "
-    "FROM music_metadata "
+    "SELECT path, title, artist, album, genre, duration_sec, source "
+    "FROM music_metadata " DEDUP_WHERE
     "ORDER BY artist COLLATE NOCASE, album COLLATE NOCASE, title COLLATE NOCASE "
     "LIMIT ? OFFSET ?";
 
-/* List unique artists */
+/* List unique artists (deduped) */
 static const char *SQL_LIST_ARTISTS = "SELECT DISTINCT artist FROM music_metadata "
-                                      "WHERE artist != '' "
+                                      "WHERE artist != '' " DEDUP_CLAUSE
                                       "ORDER BY artist COLLATE NOCASE "
                                       "LIMIT ? OFFSET ?";
 
-/* List unique albums */
+/* List unique albums (deduped) */
 static const char *SQL_LIST_ALBUMS = "SELECT DISTINCT album FROM music_metadata "
-                                     "WHERE album != '' "
+                                     "WHERE album != '' " DEDUP_CLAUSE
                                      "ORDER BY album COLLATE NOCASE "
                                      "LIMIT ? OFFSET ?";
 
-/* List artists with stats (album count, track count) */
+/* List artists with stats (album count, track count) - dedup applied before GROUP BY */
 static const char *SQL_LIST_ARTISTS_WITH_STATS =
     "SELECT artist, "
     "       COUNT(DISTINCT CASE WHEN album != '' THEN album END) as album_count, "
     "       COUNT(*) as track_count "
     "FROM music_metadata "
-    "WHERE artist != '' "
-    "GROUP BY artist "
+    "WHERE artist != '' " DEDUP_CLAUSE "GROUP BY artist "
     "ORDER BY artist COLLATE NOCASE "
     "LIMIT ? OFFSET ?";
 
-/* List albums with stats (track count, artist) - uses MAX(artist) instead of correlated subquery */
+/* List albums with stats (track count, artist) - dedup applied before GROUP BY */
 static const char *SQL_LIST_ALBUMS_WITH_STATS = "SELECT album, "
                                                 "       COUNT(*) as track_count, "
                                                 "       MAX(artist) as artist "
                                                 "FROM music_metadata "
-                                                "WHERE album != '' "
-                                                "GROUP BY album "
+                                                "WHERE album != '' " DEDUP_CLAUSE "GROUP BY album "
                                                 "ORDER BY album COLLATE NOCASE "
                                                 "LIMIT ? OFFSET ?";
 
-/* Get tracks by artist */
-static const char *SQL_GET_BY_ARTIST = "SELECT path, title, artist, album, duration_sec "
-                                       "FROM music_metadata "
-                                       "WHERE artist = ? "
-                                       "ORDER BY album COLLATE NOCASE, title COLLATE NOCASE "
-                                       "LIMIT ?";
+/* Get tracks by artist (deduped) */
+static const char *SQL_GET_BY_ARTIST =
+    "SELECT path, title, artist, album, genre, duration_sec, source "
+    "FROM music_metadata "
+    "WHERE artist = ? " DEDUP_CLAUSE "ORDER BY album COLLATE NOCASE, title COLLATE NOCASE "
+    "LIMIT ?";
 
-/* Get tracks by album */
-static const char *SQL_GET_BY_ALBUM = "SELECT path, title, artist, album, duration_sec "
-                                      "FROM music_metadata "
-                                      "WHERE album = ? "
-                                      "ORDER BY path "
-                                      "LIMIT ?";
+/* Get tracks by album (deduped) */
+static const char *SQL_GET_BY_ALBUM =
+    "SELECT path, title, artist, album, genre, duration_sec, source "
+    "FROM music_metadata "
+    "WHERE album = ? " DEDUP_CLAUSE "ORDER BY path "
+    "LIMIT ?";
 
 /* =============================================================================
  * Module State
@@ -448,14 +469,51 @@ int music_db_init(const char *db_path) {
    }
 
    /* Create tables and indexes */
-   if (exec_sql(SQL_CREATE_TABLE) != 0 || exec_sql(SQL_CREATE_INDEX_ARTIST) != 0 ||
-       exec_sql(SQL_CREATE_INDEX_ALBUM) != 0 || exec_sql(SQL_CREATE_INDEX_TITLE) != 0) {
+   if (exec_sql(SQL_CREATE_TABLE) != 0 || exec_sql(SQL_CREATE_INDEX_ALBUM) != 0 ||
+       exec_sql(SQL_CREATE_INDEX_TITLE) != 0) {
       LOG_ERROR("Failed to create music database schema");
       sqlite3_close(g_db);
       g_db = NULL;
       pthread_mutex_unlock(&g_db_mutex);
       return -1;
    }
+
+   /* Schema migration: add columns for unified multi-source DB.
+    * Use sqlite3_exec() directly — NOT exec_sql() — because ALTER TABLE returns
+    * SQLITE_ERROR for duplicate columns on restart. We check the error message to
+    * differentiate expected "duplicate column" from real failures. */
+   {
+      static const char *migrations[] = {
+         "ALTER TABLE music_metadata ADD COLUMN source INTEGER DEFAULT 0",
+         "ALTER TABLE music_metadata ADD COLUMN genre TEXT",
+         "ALTER TABLE music_metadata ADD COLUMN rating_key TEXT",
+         "ALTER TABLE music_metadata ADD COLUMN sync_gen INTEGER DEFAULT 0",
+      };
+      for (int i = 0; i < (int)(sizeof(migrations) / sizeof(migrations[0])); i++) {
+         char *err = NULL;
+         sqlite3_exec(g_db, migrations[i], NULL, NULL, &err);
+         if (err) {
+            if (!strstr(err, "duplicate column"))
+               LOG_WARNING("Schema migration: %s", err);
+            sqlite3_free(err);
+         }
+      }
+   }
+
+   /* New indexes for multi-source queries */
+   exec_sql("CREATE INDEX IF NOT EXISTS idx_music_source ON music_metadata(source)");
+   exec_sql("CREATE INDEX IF NOT EXISTS idx_music_genre ON music_metadata(genre)");
+   exec_sql("CREATE INDEX IF NOT EXISTS idx_music_rating_key ON music_metadata(rating_key)");
+
+   /* Composite index for dedup subquery — single B-tree seek for NOT EXISTS check.
+    * COLLATE NOCASE must match the dedup clause collation for index to be used. */
+   exec_sql("DROP INDEX IF EXISTS idx_music_dedup");
+   exec_sql("CREATE INDEX IF NOT EXISTS idx_music_dedup "
+            "ON music_metadata(artist COLLATE NOCASE, album COLLATE NOCASE, "
+            "title COLLATE NOCASE, source)");
+
+   /* Drop redundant individual artist index (covered by composite idx_music_dedup) */
+   sqlite3_exec(g_db, "DROP INDEX IF EXISTS idx_music_artist", NULL, NULL, NULL);
 
    /* Enable WAL mode for better concurrent access */
    exec_sql("PRAGMA journal_mode=WAL");
@@ -547,19 +605,28 @@ int music_db_scan(const char *music_dir, music_db_scan_stats_t *stats) {
       }
       sqlite3_finalize(insert_stmt);
 
-      /* Count deletions */
+      /* Count stale local files (don't touch remote source rows) */
+      char count_sql[256];
+      snprintf(count_sql, sizeof(count_sql),
+               "SELECT COUNT(*) FROM music_metadata "
+               "WHERE source = %d "
+               "AND path NOT IN (SELECT path FROM seen_paths)",
+               MUSIC_SOURCE_LOCAL);
       sqlite3_stmt *count_stmt = NULL;
-      sqlite3_prepare_v2(g_db,
-                         "SELECT COUNT(*) FROM music_metadata "
-                         "WHERE path NOT IN (SELECT path FROM seen_paths)",
-                         -1, &count_stmt, NULL);
+      sqlite3_prepare_v2(g_db, count_sql, -1, &count_stmt, NULL);
       if (sqlite3_step(count_stmt) == SQLITE_ROW) {
          local_stats.files_removed = sqlite3_column_int(count_stmt, 0);
       }
       sqlite3_finalize(count_stmt);
 
-      /* Delete non-existent files */
-      exec_sql("DELETE FROM music_metadata WHERE path NOT IN (SELECT path FROM seen_paths)");
+      /* Delete stale local files (don't touch remote source rows) */
+      char delete_sql[256];
+      snprintf(delete_sql, sizeof(delete_sql),
+               "DELETE FROM music_metadata "
+               "WHERE source = %d "
+               "AND path NOT IN (SELECT path FROM seen_paths)",
+               MUSIC_SOURCE_LOCAL);
+      exec_sql(delete_sql);
       exec_sql("DROP TABLE seen_paths");
    }
 
@@ -668,30 +735,39 @@ int music_db_search(const char *pattern, music_search_result_t *results, int max
       return -1;
    }
 
-   /* Convert search pattern to SQL LIKE pattern (add % wildcards)
-    * Limit wildcards to prevent excessive pattern complexity */
+   /* Convert search pattern to SQL LIKE pattern (add % wildcards).
+    * Escape literal % and _ to prevent LIKE wildcard injection.
+    * Limit wildcards to prevent excessive pattern complexity. */
    char sql_pattern[AUDIO_METADATA_STRING_MAX * 2];
    size_t j = 0;
    int wildcard_count = 0;
-   const int max_wildcards = 10; /* Limit total wildcards to prevent query slowdown */
+   bool last_was_wildcard = false; /* Track actual wildcards, not escaped literals */
+   const int max_wildcards = 10;   /* Limit total wildcards to prevent query slowdown */
 
    sql_pattern[j++] = '%';
    wildcard_count++;
+   last_was_wildcard = true;
 
-   for (size_t i = 0; i < len && j < sizeof(sql_pattern) - 2; i++) {
+   for (size_t i = 0; i < len && j < sizeof(sql_pattern) - 4; i++) {
       if (pattern[i] == ' ' || pattern[i] == '*') {
          /* Skip consecutive wildcards and respect limit */
-         if (j > 0 && sql_pattern[j - 1] != '%' && wildcard_count < max_wildcards) {
+         if (!last_was_wildcard && wildcard_count < max_wildcards) {
             sql_pattern[j++] = '%';
             wildcard_count++;
+            last_was_wildcard = true;
          }
       } else {
+         /* Escape literal LIKE wildcards */
+         if (pattern[i] == '%' || pattern[i] == '_' || pattern[i] == '\\') {
+            sql_pattern[j++] = '\\';
+         }
          sql_pattern[j++] = pattern[i];
+         last_was_wildcard = false;
       }
    }
 
    /* Add trailing wildcard if not already present */
-   if (j > 0 && sql_pattern[j - 1] != '%' && wildcard_count < max_wildcards) {
+   if (!last_was_wildcard && wildcard_count < max_wildcards) {
       sql_pattern[j++] = '%';
    }
    sql_pattern[j] = '\0';
@@ -708,8 +784,9 @@ int music_db_search(const char *pattern, music_search_result_t *results, int max
    sqlite3_bind_text(stmt, 1, sql_pattern, -1, SQLITE_STATIC); /* title */
    sqlite3_bind_text(stmt, 2, sql_pattern, -1, SQLITE_STATIC); /* artist */
    sqlite3_bind_text(stmt, 3, sql_pattern, -1, SQLITE_STATIC); /* album */
-   sqlite3_bind_text(stmt, 4, sql_pattern, -1, SQLITE_STATIC); /* path */
-   sqlite3_bind_int(stmt, 5, max_results);
+   sqlite3_bind_text(stmt, 4, sql_pattern, -1, SQLITE_STATIC); /* genre */
+   sqlite3_bind_text(stmt, 5, sql_pattern, -1, SQLITE_STATIC); /* path */
+   sqlite3_bind_int(stmt, 6, max_results);
 
    int count = 0;
    while (sqlite3_step(stmt) == SQLITE_ROW && count < max_results) {
@@ -720,7 +797,9 @@ int music_db_search(const char *pattern, music_search_result_t *results, int max
       const char *title = (const char *)sqlite3_column_text(stmt, 1);
       const char *artist = (const char *)sqlite3_column_text(stmt, 2);
       const char *album = (const char *)sqlite3_column_text(stmt, 3);
-      int duration = sqlite3_column_int(stmt, 4);
+      const char *genre = (const char *)sqlite3_column_text(stmt, 4);
+      int duration = sqlite3_column_int(stmt, 5);
+      int source = sqlite3_column_int(stmt, 6);
 
       if (path)
          safe_strncpy(r->path, path, sizeof(r->path));
@@ -730,7 +809,10 @@ int music_db_search(const char *pattern, music_search_result_t *results, int max
          safe_strncpy(r->artist, artist, sizeof(r->artist));
       if (album)
          safe_strncpy(r->album, album, sizeof(r->album));
+      if (genre)
+         safe_strncpy(r->genre, genre, sizeof(r->genre));
       r->duration_sec = (uint32_t)duration;
+      r->source = (music_source_t)source;
 
       build_display_name(r);
       count++;
@@ -828,7 +910,9 @@ int music_db_list_paged(music_search_result_t *results, int max_results, int off
       const char *title = (const char *)sqlite3_column_text(stmt, 1);
       const char *artist = (const char *)sqlite3_column_text(stmt, 2);
       const char *album = (const char *)sqlite3_column_text(stmt, 3);
-      int duration = sqlite3_column_int(stmt, 4);
+      const char *genre = (const char *)sqlite3_column_text(stmt, 4);
+      int duration = sqlite3_column_int(stmt, 5);
+      int source = sqlite3_column_int(stmt, 6);
 
       if (path)
          safe_strncpy(r->path, path, sizeof(r->path));
@@ -838,7 +922,10 @@ int music_db_list_paged(music_search_result_t *results, int max_results, int off
          safe_strncpy(r->artist, artist, sizeof(r->artist));
       if (album)
          safe_strncpy(r->album, album, sizeof(r->album));
+      if (genre)
+         safe_strncpy(r->genre, genre, sizeof(r->genre));
       r->duration_sec = (uint32_t)duration;
+      r->source = (music_source_t)source;
 
       build_display_name(r);
       count++;
@@ -1051,7 +1138,9 @@ int music_db_get_by_artist(const char *artist, music_search_result_t *results, i
       const char *title = (const char *)sqlite3_column_text(stmt, 1);
       const char *art = (const char *)sqlite3_column_text(stmt, 2);
       const char *album = (const char *)sqlite3_column_text(stmt, 3);
-      int duration = sqlite3_column_int(stmt, 4);
+      const char *genre = (const char *)sqlite3_column_text(stmt, 4);
+      int duration = sqlite3_column_int(stmt, 5);
+      int source = sqlite3_column_int(stmt, 6);
 
       if (path)
          safe_strncpy(r->path, path, sizeof(r->path));
@@ -1061,7 +1150,10 @@ int music_db_get_by_artist(const char *artist, music_search_result_t *results, i
          safe_strncpy(r->artist, art, sizeof(r->artist));
       if (album)
          safe_strncpy(r->album, album, sizeof(r->album));
+      if (genre)
+         safe_strncpy(r->genre, genre, sizeof(r->genre));
       r->duration_sec = (uint32_t)duration;
+      r->source = (music_source_t)source;
 
       build_display_name(r);
       count++;
@@ -1105,7 +1197,9 @@ int music_db_get_by_album(const char *album, music_search_result_t *results, int
       const char *title = (const char *)sqlite3_column_text(stmt, 1);
       const char *artist = (const char *)sqlite3_column_text(stmt, 2);
       const char *alb = (const char *)sqlite3_column_text(stmt, 3);
-      int duration = sqlite3_column_int(stmt, 4);
+      const char *genre = (const char *)sqlite3_column_text(stmt, 4);
+      int duration = sqlite3_column_int(stmt, 5);
+      int source = sqlite3_column_int(stmt, 6);
 
       if (path)
          safe_strncpy(r->path, path, sizeof(r->path));
@@ -1115,7 +1209,10 @@ int music_db_get_by_album(const char *album, music_search_result_t *results, int
          safe_strncpy(r->artist, artist, sizeof(r->artist));
       if (alb)
          safe_strncpy(r->album, alb, sizeof(r->album));
+      if (genre)
+         safe_strncpy(r->genre, genre, sizeof(r->genre));
       r->duration_sec = (uint32_t)duration;
+      r->source = (music_source_t)source;
 
       build_display_name(r);
       count++;

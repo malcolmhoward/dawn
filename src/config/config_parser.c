@@ -1115,7 +1115,6 @@ static void parse_music(toml_table_t *table, music_config_t *config) {
                                              NULL };
    warn_unknown_keys(table, "music", known_keys);
 
-   PARSE_STRING(table, "source", config->source);
    PARSE_INT(table, "scan_interval_minutes", config->scan_interval_minutes);
 
    /* Parse music.plex subtable */

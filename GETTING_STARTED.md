@@ -140,10 +140,10 @@ nano secrets.toml
 openai_api_key = "sk-your-openai-key"
 # claude_api_key = "sk-ant-your-claude-key"
 # gemini_api_key = "your-gemini-key"
-# plex_token = "your-plex-token"          # Optional: for Plex music source
+# plex_token = "your-plex-token"          # Optional: adds Plex library to unified music DB
 ```
 
-> **Plex users**: To get your Plex token, see the [Plex Music Source setup instructions](README.md#plex-music-source-optional) in the README.
+> **Plex users**: To get your Plex token, see the [Plex Music Source setup instructions](README.md#plex-music-source-optional) in the README. When configured, Plex tracks are automatically synced into the unified music database alongside local files, with priority-based deduplication.
 
 **Alternative**: Use environment variables instead of secrets.toml:
 ```bash

@@ -1294,7 +1294,6 @@ json_object *config_to_json(const dawn_config_t *config) {
 
    /* Music configuration */
    json_object *music = json_object_new_object();
-   json_object_object_add(music, "source", json_object_new_string(config->music.source));
    json_object_object_add(music, "scan_interval_minutes",
                           json_object_new_int(config->music.scan_interval_minutes));
 
@@ -1726,7 +1725,6 @@ int config_write_toml(const dawn_config_t *config, const char *path) {
    fprintf(fp, "max_images = %d\n", config->vision.max_images);
 
    fprintf(fp, "\n[music]\n");
-   fprintf(fp, "source = \"%s\"\n", config->music.source);
    fprintf(fp, "scan_interval_minutes = %d\n", config->music.scan_interval_minutes);
 
    /* [music.plex] — Plex Media Server connection settings */

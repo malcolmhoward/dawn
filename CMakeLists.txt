@@ -468,7 +468,9 @@ set(DAWN_SOURCES
     src/audio/audio_converter.c
     src/audio/music_db.c
     src/audio/music_scanner.c
+    src/audio/music_source.c
     src/audio/plex_client.c
+    src/audio/plex_db.c
     src/audio/http_download.c
 
     # UI subsystem (TUI metrics)

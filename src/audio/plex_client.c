@@ -64,29 +64,6 @@ static struct curl_slist *s_cached_headers = NULL;
 static pthread_mutex_t s_headers_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /* =============================================================================
- * Enrich Counts Cache
- *
- * Caches per-artist and per-album track counts with a TTL to avoid
- * re-fetching the full 4.4MB track listing on every library browse.
- * ============================================================================= */
-
-#define ENRICH_CACHE_TTL_SEC 300 /* 5 minutes */
-#define ENRICH_CACHE_MAX_ENTRIES 512
-
-typedef struct {
-   char name[256];
-   int track_count;
-   int album_count; /* Only used for artist mode */
-} enrich_cache_entry_t;
-
-static struct {
-   enrich_cache_entry_t entries[ENRICH_CACHE_MAX_ENTRIES];
-   int count;
-   time_t timestamp;
-   char mode; /* 'a' for artist counts, 'b' for album counts, 0 = empty */
-} s_enrich_cache_artist, s_enrich_cache_album;
-
-/* =============================================================================
  * Internal Helpers
  * ============================================================================= */
 
@@ -336,6 +313,33 @@ static json_object *build_track_json(json_object *item) {
    json_object_object_add(track, "rating_key",
                           json_object_new_string(json_get_string(item, "ratingKey")));
 
+   /* Store updatedAt timestamp (used as mtime for change detection in sync) */
+   json_object_object_add(track, "updated_at",
+                          json_object_new_int(json_get_int(item, "updatedAt")));
+
+   /* Extract genres as comma-separated string */
+   json_object *genre_arr;
+   if (json_object_object_get_ex(item, "Genre", &genre_arr) &&
+       json_object_is_type(genre_arr, json_type_array)) {
+      char genre_buf[256] = "";
+      int glen = 0;
+      int gcount = (int)json_object_array_length(genre_arr);
+      for (int g = 0; g < gcount && glen < (int)sizeof(genre_buf) - 2; g++) {
+         json_object *genre_obj = json_object_array_get_idx(genre_arr, g);
+         const char *tag = json_get_string(genre_obj, "tag");
+         if (tag[0]) {
+            if (glen > 0)
+               genre_buf[glen++] = ',';
+            int written = snprintf(genre_buf + glen, sizeof(genre_buf) - glen, "%s", tag);
+            int remaining = (int)(sizeof(genre_buf) - glen);
+            glen += (written < remaining) ? written : (remaining - 1);
+         }
+      }
+      if (glen > 0) {
+         json_object_object_add(track, "genre", json_object_new_string(genre_buf));
+      }
+   }
+
    return track;
 }
 
@@ -372,6 +376,11 @@ static int ensure_section_id(void) {
  * ============================================================================= */
 
 int plex_client_init(void) {
+   /* Idempotent — safe to call from multiple init paths */
+   if (s_api_curl) {
+      return SUCCESS;
+   }
+
    s_api_curl = curl_easy_init();
    if (!s_api_curl) {
       LOG_ERROR("Plex: failed to create API CURL handle");
@@ -416,12 +425,6 @@ void plex_client_cleanup(void) {
    }
    invalidate_api_headers();
    s_section_id = 0;
-
-   /* Clear enrich caches */
-   s_enrich_cache_artist.count = 0;
-   s_enrich_cache_artist.mode = 0;
-   s_enrich_cache_album.count = 0;
-   s_enrich_cache_album.mode = 0;
 
    LOG_INFO("Plex client cleaned up");
 }
@@ -479,315 +482,9 @@ int plex_client_discover_section(int *section_id_out) {
    return FAILURE;
 }
 
-/**
- * Populate the enrich cache by fetching all tracks and counting by name.
- * Called when cache is empty or expired. Builds counts for one mode at a time.
- */
-static int populate_enrich_cache(char mode) {
-   if (ensure_section_id() != SUCCESS)
-      return FAILURE;
-
-   char endpoint[256];
-   snprintf(endpoint, sizeof(endpoint), "/library/sections/%d/all?type=10", s_section_id);
-   json_object *root = api_get(endpoint);
-   if (!root)
-      return FAILURE;
-
-   json_object *container;
-   if (!json_object_object_get_ex(root, "MediaContainer", &container)) {
-      json_object_put(root);
-      return FAILURE;
-   }
-
-   json_object *metadata;
-   if (!json_object_object_get_ex(container, "Metadata", &metadata) ||
-       !json_object_is_type(metadata, json_type_array)) {
-      json_object_put(root);
-      return FAILURE;
-   }
-
-   /* Select the appropriate cache */
-   typeof(s_enrich_cache_artist) *cache = (mode == 'a') ? &s_enrich_cache_artist
-                                                        : &s_enrich_cache_album;
-   cache->count = 0;
-   cache->mode = mode;
-
-   const char *field = (mode == 'a') ? "grandparentTitle" : "parentTitle";
-   int track_count = (int)json_object_array_length(metadata);
-
-   /* Track last-seen album name per entry for unique album counting */
-   char *last_album[ENRICH_CACHE_MAX_ENTRIES];
-   memset(last_album, 0, sizeof(last_album));
-
-   for (int t = 0; t < track_count; t++) {
-      json_object *track = json_object_array_get_idx(metadata, t);
-      const char *name = json_get_string(track, field);
-      if (!name[0])
-         continue;
-
-      /* Find or create cache entry */
-      int idx = -1;
-      for (int i = 0; i < cache->count; i++) {
-         if (strcmp(cache->entries[i].name, name) == 0) {
-            idx = i;
-            break;
-         }
-      }
-      if (idx < 0) {
-         if (cache->count >= ENRICH_CACHE_MAX_ENTRIES)
-            continue; /* Cache full, skip */
-         idx = cache->count++;
-         snprintf(cache->entries[idx].name, sizeof(cache->entries[idx].name), "%s", name);
-         cache->entries[idx].track_count = 0;
-         cache->entries[idx].album_count = 0;
-      }
-      cache->entries[idx].track_count++;
-
-      /* For artists: count unique albums */
-      if (mode == 'a') {
-         const char *album_name = json_get_string(track, "parentTitle");
-         if (!last_album[idx] || strcmp(last_album[idx], album_name) != 0) {
-            cache->entries[idx].album_count++;
-            last_album[idx] = (char *)album_name; /* Points into json_object (valid until put) */
-         }
-      }
-   }
-
-   cache->timestamp = time(NULL);
-   json_object_put(root);
-
-   LOG_INFO("Plex: cached %s counts: %d entries from %d tracks", mode == 'a' ? "artist" : "album",
-            cache->count, track_count);
-   return SUCCESS;
-}
-
-/**
- * Enrich artist or album arrays with track/album counts.
- * Uses a TTL cache to avoid re-fetching the full track listing on every browse.
- *
- * @param items_arr  JSON array of artist or album objects to enrich
- * @param mode       'a' for artists (count by grandparentTitle),
- *                   'b' for albums (count by parentTitle)
- */
-static void enrich_counts_from_tracks(json_object *items_arr, char mode) {
-   int item_count = (int)json_object_array_length(items_arr);
-   if (item_count == 0)
-      return;
-
-   /* Check if counts are already populated (first item has track_count > 0) */
-   json_object *first = json_object_array_get_idx(items_arr, 0);
-   json_object *tc_obj;
-   if (json_object_object_get_ex(first, "track_count", &tc_obj) &&
-       json_object_get_int(tc_obj) > 0) {
-      return; /* Already have counts — server provides leafCount */
-   }
-
-   /* Check/refresh cache */
-   typeof(s_enrich_cache_artist) *cache = (mode == 'a') ? &s_enrich_cache_artist
-                                                        : &s_enrich_cache_album;
-   time_t now = time(NULL);
-
-   if (cache->mode != mode || cache->count == 0 ||
-       (now - cache->timestamp) > ENRICH_CACHE_TTL_SEC) {
-      if (populate_enrich_cache(mode) != SUCCESS)
-         return;
-   }
-
-   /* Apply cached counts to items */
-   for (int i = 0; i < item_count; i++) {
-      json_object *item = json_object_array_get_idx(items_arr, i);
-      const char *item_name = json_get_string(item, "name");
-
-      for (int c = 0; c < cache->count; c++) {
-         if (strcmp(item_name, cache->entries[c].name) == 0) {
-            json_object_object_del(item, "track_count");
-            json_object_object_add(item, "track_count",
-                                   json_object_new_int(cache->entries[c].track_count));
-            if (mode == 'a') {
-               json_object_object_del(item, "album_count");
-               json_object_object_add(item, "album_count",
-                                      json_object_new_int(cache->entries[c].album_count));
-            }
-            break;
-         }
-      }
-   }
-}
-
 /* =============================================================================
  * Public API: Library Browsing
  * ============================================================================= */
-
-json_object *plex_client_list_artists(int offset, int limit) {
-   if (ensure_section_id() != SUCCESS)
-      return NULL;
-
-   char endpoint[256];
-   snprintf(endpoint, sizeof(endpoint),
-            "/library/sections/%d/all?type=8&X-Plex-Container-Start=%d"
-            "&X-Plex-Container-Size=%d",
-            s_section_id, offset, limit);
-
-   json_object *root = api_get(endpoint);
-   if (!root)
-      return NULL;
-
-   /* Build response in music_library_response format */
-   json_object *response = json_object_new_object();
-   json_object_object_add(response, "browse_type", json_object_new_string("artists"));
-
-   json_object *container;
-   json_object_object_get_ex(root, "MediaContainer", &container);
-
-   int total = container ? json_get_int(container, "totalSize") : 0;
-   json_object_object_add(response, "total_count", json_object_new_int(total));
-   json_object_object_add(response, "offset", json_object_new_int(offset));
-   json_object_object_add(response, "limit", json_object_new_int(limit));
-
-   json_object *artists_arr = json_object_new_array();
-   json_object *metadata;
-   if (container && json_object_object_get_ex(container, "Metadata", &metadata) &&
-       json_object_is_type(metadata, json_type_array)) {
-      int count = (int)json_object_array_length(metadata);
-      for (int i = 0; i < count; i++) {
-         json_object *item = json_object_array_get_idx(metadata, i);
-         json_object *artist = json_object_new_object();
-
-         json_object_object_add(artist, "name",
-                                json_object_new_string(json_get_string(item, "title")));
-
-         /* Store the ratingKey so UI can drill into albums */
-         json_object_object_add(artist, "key",
-                                json_object_new_string(json_get_string(item, "ratingKey")));
-
-         /* Plex type=8 (artist) provides leafCount (tracks) */
-         int leaf_count = json_get_int(item, "leafCount");
-         int child_count = json_get_int(item, "childCount");
-         json_object_object_add(artist, "track_count", json_object_new_int(leaf_count));
-         json_object_object_add(artist, "album_count", json_object_new_int(child_count));
-
-         json_object_array_add(artists_arr, artist);
-      }
-   }
-
-   /* Enrich with track/album counts if server doesn't provide leafCount */
-   enrich_counts_from_tracks(artists_arr, 'a');
-
-   json_object_object_add(response, "artists", artists_arr);
-   json_object_put(root);
-   return response;
-}
-
-json_object *plex_client_list_albums(const char *artist_key, int offset, int limit) {
-   if (ensure_section_id() != SUCCESS)
-      return NULL;
-
-   char endpoint[512];
-   if (artist_key && artist_key[0]) {
-      if (!is_valid_rating_key(artist_key)) {
-         LOG_WARNING("Plex: invalid artist_key (non-numeric): %s", artist_key);
-         return NULL;
-      }
-      /* Albums for a specific artist */
-      snprintf(endpoint, sizeof(endpoint),
-               "/library/metadata/%s/children?X-Plex-Container-Start=%d"
-               "&X-Plex-Container-Size=%d",
-               artist_key, offset, limit);
-   } else {
-      /* All albums */
-      snprintf(endpoint, sizeof(endpoint),
-               "/library/sections/%d/all?type=9&X-Plex-Container-Start=%d"
-               "&X-Plex-Container-Size=%d",
-               s_section_id, offset, limit);
-   }
-
-   json_object *root = api_get(endpoint);
-   if (!root)
-      return NULL;
-
-   json_object *response = json_object_new_object();
-   json_object_object_add(response, "browse_type", json_object_new_string("albums"));
-
-   json_object *container;
-   json_object_object_get_ex(root, "MediaContainer", &container);
-
-   int total = container ? json_get_int(container, "totalSize") : 0;
-   json_object_object_add(response, "total_count", json_object_new_int(total));
-   json_object_object_add(response, "offset", json_object_new_int(offset));
-   json_object_object_add(response, "limit", json_object_new_int(limit));
-
-   json_object *albums_arr = json_object_new_array();
-   json_object *metadata;
-   if (container && json_object_object_get_ex(container, "Metadata", &metadata) &&
-       json_object_is_type(metadata, json_type_array)) {
-      int count = (int)json_object_array_length(metadata);
-      for (int i = 0; i < count; i++) {
-         json_object *item = json_object_array_get_idx(metadata, i);
-         json_object *album = json_object_new_object();
-
-         json_object_object_add(album, "name",
-                                json_object_new_string(json_get_string(item, "title")));
-         json_object_object_add(album, "artist",
-                                json_object_new_string(json_get_string(item, "parentTitle")));
-         json_object_object_add(album, "year", json_object_new_int(json_get_int(item, "year")));
-         json_object_object_add(album, "track_count",
-                                json_object_new_int(json_get_int(item, "leafCount")));
-
-         /* Store ratingKey for drill-down to tracks */
-         json_object_object_add(album, "key",
-                                json_object_new_string(json_get_string(item, "ratingKey")));
-
-         json_object_array_add(albums_arr, album);
-      }
-   }
-
-   /* Enrich with track counts if server doesn't provide leafCount */
-   enrich_counts_from_tracks(albums_arr, 'b');
-
-   json_object_object_add(response, "albums", albums_arr);
-   json_object_put(root);
-   return response;
-}
-
-json_object *plex_client_list_tracks(const char *album_key) {
-   if (!album_key || !album_key[0])
-      return NULL;
-   if (!is_valid_rating_key(album_key)) {
-      LOG_WARNING("Plex: invalid album_key (non-numeric): %s", album_key);
-      return NULL;
-   }
-
-   char endpoint[256];
-   snprintf(endpoint, sizeof(endpoint), "/library/metadata/%s/children", album_key);
-
-   json_object *root = api_get(endpoint);
-   if (!root)
-      return NULL;
-
-   json_object *response = json_object_new_object();
-   json_object_object_add(response, "browse_type", json_object_new_string("tracks"));
-
-   json_object *results_arr = json_object_new_array();
-   json_object *container;
-   if (json_object_object_get_ex(root, "MediaContainer", &container)) {
-      json_object *metadata;
-      if (json_object_object_get_ex(container, "Metadata", &metadata) &&
-          json_object_is_type(metadata, json_type_array)) {
-         int count = (int)json_object_array_length(metadata);
-         for (int i = 0; i < count; i++) {
-            json_object *item = json_object_array_get_idx(metadata, i);
-            json_object *track = build_track_json(item);
-            json_object_array_add(results_arr, track);
-         }
-      }
-   }
-
-   int count_val = (int)json_object_array_length(results_arr);
-   json_object_object_add(response, "tracks", results_arr);
-   json_object_object_add(response, "count", json_object_new_int(count_val));
-   json_object_put(root);
-   return response;
-}
 
 json_object *plex_client_list_all_tracks(int offset, int limit) {
    if (ensure_section_id() != SUCCESS)
@@ -827,168 +524,6 @@ json_object *plex_client_list_all_tracks(int offset, int limit) {
    }
 
    json_object_object_add(response, "tracks", tracks_arr);
-   json_object_put(root);
-   return response;
-}
-
-json_object *plex_client_list_artist_tracks(const char *artist_key) {
-   if (!artist_key || !artist_key[0])
-      return NULL;
-   if (!is_valid_rating_key(artist_key)) {
-      LOG_WARNING("Plex: invalid artist_key (non-numeric): %s", artist_key);
-      return NULL;
-   }
-
-   /* /library/metadata/{artist_key}/allLeaves returns all tracks for an artist */
-   char endpoint[256];
-   snprintf(endpoint, sizeof(endpoint), "/library/metadata/%s/allLeaves", artist_key);
-
-   json_object *root = api_get(endpoint);
-   if (!root)
-      return NULL;
-
-   json_object *response = json_object_new_object();
-   json_object_object_add(response, "browse_type", json_object_new_string("tracks_by_artist"));
-
-   /* Extract artist name from container title1 */
-   json_object *container;
-   json_object_object_get_ex(root, "MediaContainer", &container);
-   if (container) {
-      const char *artist_name = json_get_string(container, "title1");
-      if (artist_name[0]) {
-         json_object_object_add(response, "artist", json_object_new_string(artist_name));
-      }
-   }
-
-   json_object *tracks_arr = json_object_new_array();
-   json_object *metadata;
-   if (container && json_object_object_get_ex(container, "Metadata", &metadata) &&
-       json_object_is_type(metadata, json_type_array)) {
-      int count = (int)json_object_array_length(metadata);
-      json_object_object_add(response, "count", json_object_new_int(count));
-      for (int i = 0; i < count; i++) {
-         json_object *item = json_object_array_get_idx(metadata, i);
-         json_object *track = build_track_json(item);
-         json_object_array_add(tracks_arr, track);
-      }
-   }
-
-   json_object_object_add(response, "tracks", tracks_arr);
-   json_object_put(root);
-   return response;
-}
-
-int plex_client_get_stats(int *artist_count, int *album_count, int *track_count) {
-   if (ensure_section_id() != SUCCESS)
-      return FAILURE;
-
-   /* Query each type with Container-Size=1 to get totalSize count.
-    * Some Plex versions omit totalSize when Container-Size=0.
-    * Fall back to "size" field if totalSize is absent. */
-   char endpoint[256];
-
-   /* Artists (type=8) */
-   snprintf(endpoint, sizeof(endpoint), "/library/sections/%d/all?type=8&X-Plex-Container-Size=1",
-            s_section_id);
-   json_object *root = api_get(endpoint);
-   if (root) {
-      json_object *container;
-      if (json_object_object_get_ex(root, "MediaContainer", &container)) {
-         int total = json_get_int(container, "totalSize");
-         if (total == 0)
-            total = json_get_int(container, "size");
-         if (artist_count)
-            *artist_count = total;
-      }
-      json_object_put(root);
-   }
-
-   /* Albums (type=9) */
-   snprintf(endpoint, sizeof(endpoint), "/library/sections/%d/all?type=9&X-Plex-Container-Size=1",
-            s_section_id);
-   root = api_get(endpoint);
-   if (root) {
-      json_object *container;
-      if (json_object_object_get_ex(root, "MediaContainer", &container)) {
-         int total = json_get_int(container, "totalSize");
-         if (total == 0)
-            total = json_get_int(container, "size");
-         if (album_count)
-            *album_count = total;
-      }
-      json_object_put(root);
-   }
-
-   /* Tracks (type=10) */
-   snprintf(endpoint, sizeof(endpoint), "/library/sections/%d/all?type=10&X-Plex-Container-Size=1",
-            s_section_id);
-   root = api_get(endpoint);
-   if (root) {
-      json_object *container;
-      if (json_object_object_get_ex(root, "MediaContainer", &container)) {
-         int total = json_get_int(container, "totalSize");
-         if (total == 0)
-            total = json_get_int(container, "size");
-         if (track_count)
-            *track_count = total;
-      }
-      json_object_put(root);
-   }
-
-   LOG_INFO("Plex stats: %d artists, %d albums, %d tracks", artist_count ? *artist_count : -1,
-            album_count ? *album_count : -1, track_count ? *track_count : -1);
-
-   return SUCCESS;
-}
-
-/* =============================================================================
- * Public API: Search
- * ============================================================================= */
-
-json_object *plex_client_search(const char *query, int limit) {
-   if (!query || !query[0])
-      return NULL;
-
-   if (ensure_section_id() != SUCCESS)
-      return NULL;
-
-   /* URL-encode the query (NULL handle is fine — basic percent-encoding
-    * doesn't need a CURL handle, and avoids using s_api_curl outside mutex) */
-   char *encoded = curl_easy_escape(NULL, query, 0);
-   if (!encoded) {
-      LOG_ERROR("Plex: failed to URL-encode query");
-      return NULL;
-   }
-
-   char endpoint[512];
-   snprintf(endpoint, sizeof(endpoint),
-            "/library/sections/%d/search?type=10&query=%s"
-            "&X-Plex-Container-Size=%d",
-            s_section_id, encoded, limit > 0 ? limit : 20);
-   curl_free(encoded);
-
-   json_object *root = api_get(endpoint);
-   if (!root)
-      return NULL;
-
-   json_object *response = json_object_new_object();
-   json_object *results_arr = json_object_new_array();
-
-   json_object *container;
-   if (json_object_object_get_ex(root, "MediaContainer", &container)) {
-      json_object *metadata;
-      if (json_object_object_get_ex(container, "Metadata", &metadata) &&
-          json_object_is_type(metadata, json_type_array)) {
-         int count = (int)json_object_array_length(metadata);
-         for (int i = 0; i < count; i++) {
-            json_object *item = json_object_array_get_idx(metadata, i);
-            json_object *track = build_track_json(item);
-            json_object_array_add(results_arr, track);
-         }
-      }
-   }
-
-   json_object_object_add(response, "results", results_arr);
    json_object_put(root);
    return response;
 }
@@ -1083,6 +618,45 @@ int plex_client_scrobble(const char *rating_key) {
       LOG_WARNING("Plex: scrobble failed for key %s", rating_key);
       return FAILURE;
    }
+   json_object_put(root);
+   return SUCCESS;
+}
+
+/* =============================================================================
+ * Public API: Library Change Detection
+ * ============================================================================= */
+
+int plex_client_get_library_updated_at(time_t *updated_at_out) {
+   if (!updated_at_out)
+      return FAILURE;
+
+   if (ensure_section_id() != SUCCESS)
+      return FAILURE;
+
+   char endpoint[256];
+   snprintf(endpoint, sizeof(endpoint), "/library/sections/%d", s_section_id);
+
+   json_object *root = api_get(endpoint);
+   if (!root)
+      return FAILURE;
+
+   json_object *container;
+   if (!json_object_object_get_ex(root, "MediaContainer", &container)) {
+      json_object_put(root);
+      return FAILURE;
+   }
+
+   /* Get scannedAt from the Directory array (first element) */
+   json_object *dirs;
+   if (json_object_object_get_ex(container, "Directory", &dirs) &&
+       json_object_is_type(dirs, json_type_array) && json_object_array_length(dirs) > 0) {
+      json_object *dir = json_object_array_get_idx(dirs, 0);
+      *updated_at_out = (time_t)json_get_int(dir, "scannedAt");
+   } else {
+      /* Fallback: try updatedAt on the container itself */
+      *updated_at_out = (time_t)json_get_int(container, "updatedAt");
+   }
+
    json_object_put(root);
    return SUCCESS;
 }

@@ -720,7 +720,6 @@ static void apply_config_from_json(dawn_config_t *config, struct json_object *pa
 
    /* [music] */
    if (json_object_object_get_ex(payload, "music", &section)) {
-      JSON_TO_CONFIG_STR(section, "source", config->music.source);
       JSON_TO_CONFIG_INT(section, "scan_interval_minutes", config->music.scan_interval_minutes);
 
       /* [music.plex] */
@@ -857,9 +856,6 @@ void handle_set_config(ws_connection_t *conn, struct json_object *payload) {
          llm_local_invalidate_models_cache();
          LOG_INFO("WebUI: Local LLM endpoint changed, invalidated provider and models cache");
       }
-
-      /* If music source changed, update cached flag */
-      webui_music_update_source();
 
       /* If tool calling mode changed, rebuild system prompt for current session */
       if (tools_mode_changed) {

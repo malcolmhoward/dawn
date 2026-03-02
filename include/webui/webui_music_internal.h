@@ -194,19 +194,6 @@ bool webui_music_is_path_valid(const char *path);
  * Shared State and Helpers (defined in webui_music.c, used by handlers)
  * ============================================================================= */
 
-/** Whether music source is Plex (cached at init) */
-extern atomic_bool g_music_use_plex;
-
-/**
- * @brief Extract Plex track metadata from a JSON payload into a search result.
- */
-void extract_plex_track_meta(json_object *payload, const char *path, music_search_result_t *out);
-
-/**
- * @brief Populate a queue entry from a Plex JSON track object.
- */
-void queue_entry_from_plex_json(music_queue_entry_t *entry, json_object *item);
-
 /**
  * @brief Start the streaming thread for a session.
  */

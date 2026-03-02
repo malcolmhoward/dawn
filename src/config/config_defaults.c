@@ -267,8 +267,7 @@ void config_set_defaults(dawn_config_t *config) {
    SAFE_COPY(config->paths.data_dir, "~/.local/share/dawn"); /* Database storage directory */
    SAFE_COPY(config->paths.music_dir, "~/Music");
 
-   /* Music - source and metadata indexing */
-   SAFE_COPY(config->music.source, "local"); /* "local" or "plex" */
+   /* Music - metadata indexing */
    config->music.scan_interval_minutes = 60; /* Rescan every hour */
 
    /* Music - Plex Media Server defaults */

@@ -2,32 +2,33 @@
 
 **Goal:** Allow DAWN to stream music from a local Plex Media Server as an alternative to the local filesystem music library, selectable via a settings toggle.
 
-**Last Updated:** February 2026
+**Last Updated:** March 2026
 
 ---
 
 ## Overview
 
-DAWN currently plays music from a local directory (`paths.music_dir`), scanned into a SQLite database by `music_scanner.c` / `music_db.c`. The audio pipeline is:
+DAWN plays music from a local directory (`paths.music_dir`) and optionally a Plex Media Server, both indexed into a unified SQLite database (`music.db`) by `music_scanner.c` / `music_db.c`. The audio pipeline is:
 
 ```
-local file → audio_decoder (FLAC/MP3/OGG) → resampler → Opus encoder → WebSocket broadcast
+local file (or Plex temp file) → audio_decoder (FLAC/MP3/OGG) → resampler → Opus encoder → WebSocket broadcast
 ```
 
-Plex integration adds an alternative **source** that replaces the first step:
+Plex integration adds an alternative **source** that replaces the first step for Plex tracks:
 
 ```
 HTTP download from Plex → temp file → audio_decoder (FLAC/MP3/OGG) → resampler → Opus encoder → WebSocket broadcast
 ```
 
-Everything downstream of `audio_decoder_open()` stays the same. The key changes are:
+Everything downstream of `audio_decoder_open()` stays the same. The key components are:
 
-1. A **`[music]` source selector** in config (`source = "local"` or `"plex"`)
-2. A **Plex API client** (`plex_client.c`) for auth, browsing, search, and stream URL construction
-3. An **HTTP download step** in `webui_music_start_playback()` that fetches Plex tracks to temp files before opening the decoder (the decoder layer stays unaware of HTTP)
-4. **Mapping** Plex library responses into the existing `music_library_response` / `music_search_response` JSON formats
+1. A **unified music database** (`music_db.c`) with a `source` column (LOCAL=0, PLEX=1) and priority-based deduplication (local wins over Plex, case-insensitive matching)
+2. A **music source abstraction** (`music_source.c`) defining source enum, path prefixes, and provider callbacks
+3. A **Plex API client** (`plex_client.c`) for auth, track listing, and stream download
+4. A **Plex DB sync layer** (`plex_db.c`) that periodically syncs Plex metadata into the unified DB via provider callbacks
+5. An **HTTP download step** in `webui_music_start_playback()` that fetches Plex tracks to temp files before opening the decoder
 
-The WebUI, satellite music panels, LLM music tool, and Opus streaming pipeline all remain unchanged — they operate on the same `webui_music.c` playback engine regardless of whether the audio comes from a local file or Plex HTTP stream.
+Sources are **auto-detected**: if `paths.music_dir` exists, local scanning runs; if `music.plex.host` and `plex_token` are configured, Plex sync runs. No manual source selector is needed. The WebUI, satellite music panels, LLM music tool, and Opus streaming pipeline all operate on the unified `music_db_*()` API regardless of track source.
 
 ---
 
@@ -37,8 +38,7 @@ The WebUI, satellite music panels, LLM music tool, and Opus streaming pipeline a
 
 ```toml
 [music]
-source = "local"              # "local" or "plex"
-scan_interval_minutes = 60    # Only used when source = "local"
+scan_interval_minutes = 60    # Rescan interval for all sources (0 = disabled)
 
 [music.plex]
 host = "192.168.1.100"        # Plex server IP or hostname
@@ -48,6 +48,8 @@ ssl = false                   # Use HTTPS for Plex API calls
 ssl_verify = true             # Verify TLS certificates (set false for self-signed)
 client_identifier = ""        # Auto-generated UUID on first run (persistent)
 ```
+
+> **Note:** The original design included a `source = "local"` / `"plex"` selector. This was removed in favor of auto-detection: sources are enabled based on whether they are configured (local path exists, Plex host + token set). The `music_config_t.source` field has been removed from the codebase.
 
 **Token storage:** The Plex token is stored in `secrets.toml` (NOT `dawn.toml`), following the same pattern as OpenAI/Claude/Gemini API keys:
 
@@ -61,54 +63,29 @@ This ensures the token is never serialized to `dawn.toml`, never sent in `get_co
 
 ### WebUI Settings Panel
 
-Add a "Music Source" dropdown in the existing Music & Media settings category:
+The Music & Media settings section shows all fields without conditional visibility:
 
-| Setting | Type | Visibility | Notes |
-|---------|------|-----------|-------|
-| Music Source | dropdown | Always | Local, Plex |
-| Library Rescan Interval | number | `source = "local"` | Existing field |
-| Plex Server | text | `source = "plex"` | IP or hostname |
-| Plex Port | number | `source = "plex"` | Default 32400 |
-| Plex Music Library | number | `source = "plex"` | 0 = auto-detect |
-| Use SSL | toggle | `source = "plex"` | HTTPS for API calls |
-| Plex Token | password | Secrets panel | Not in schema — add to existing Secrets section |
+| Setting | Type | Notes |
+|---------|------|-------|
+| Library Rescan Interval | number | Applies to all configured sources |
+| Plex Server | text | IP or hostname |
+| Plex Port | number | Default 32400 |
+| Plex Music Library | number | 0 = auto-detect |
+| Use SSL | toggle | HTTPS for API calls |
+| Verify SSL | toggle | TLS certificate verification |
+| Plex Token | password | In Secrets panel |
 
-**Conditional visibility:** The schema system needs a `showWhen` mechanism to hide Plex fields when `source = "local"` (and hide `scan_interval_minutes` when `source = "plex"`). This is a new general-purpose schema feature:
+> **Note:** The original design included a "Music Source" dropdown with `showWhen` conditional visibility. This was removed — sources are auto-detected based on configuration, so there is no selector. The `showWhen` schema feature was implemented but is no longer used by the music settings.
 
-```javascript
-host: {
-   type: 'text',
-   label: 'Plex Server',
-   hint: 'Plex server IP or hostname',
-   configPath: 'music.plex.host',
-   showWhen: { key: 'music.source', value: 'plex' },
-},
-```
-
-Implementation: ~15-20 lines in `createSettingField()` — add a CSS class and register a listener on the controlling field that toggles visibility. This mechanism will be reusable for future conditional settings (e.g., MQTT fields when MQTT enabled, FlareSolverr endpoint when enabled).
-
-**Token in Secrets panel:** Add a "Plex Token" row to the existing Secrets panel in `index.html` alongside OpenAI/Claude/Gemini keys. Route through `handle_set_secrets()` and `secrets_to_json_status()` (is_set flag only, never the actual value). The hint text should guide users: *"Find your token: open Plex Web, go to any media, click ... > Get Info > View XML, and copy the X-Plex-Token from the URL."*
-
-**Source switch behavior:** When the user switches from Local → Plex (or vice versa), the daemon:
-1. **If music is playing or queue is non-empty**: Send a confirmation prompt via WebSocket before switching (prevents accidental data loss)
-2. Stops any current playback
-3. Clears the queue
-4. Switches the library/search/browse backend
-5. Does NOT rescan or rebuild anything — both backends are stateless queries
-
-### Source Indicator in Music Player
-
-Add a small source badge in the music panel header showing "LOCAL" or "PLEX" as part of the `music_state` WebSocket message. This helps users understand which library they're browsing and aids debugging ("why is my library empty?" → because Plex is selected but not configured).
+**Token in Secrets panel:** A "Plex Token" row in the Secrets panel alongside OpenAI/Claude/Gemini keys. Routes through `handle_set_secrets()` and `secrets_to_json_status()` (is_set flag only, never the actual value).
 
 ### LLM Tool Integration
 
 The existing `music_tool.c` handles actions like `play`, `search`, `queue`, `stop`. These route through `webui_music.c` which calls `music_db_search()` for library queries and `audio_decoder_open()` for playback.
 
-With the source switch:
-- When `source = "local"`: library queries go to `music_db_search()` (SQLite), playback opens local files
-- When `source = "plex"`: library queries go to `plex_client_search()` (HTTP API), playback opens Plex stream URLs via temp-file download
+With the unified DB, all library queries go to `music_db_search()` (SQLite) regardless of track source. The dedup subquery ensures each unique track appears once, preferring local sources. At playback time, `plex:` prefixed paths trigger an HTTP download to a temp file before the decoder opens.
 
-The LLM tool itself doesn't change — it still says "play Dark Side of the Moon" and the backend resolves it through whichever source is active. The tool's parameter schema (`action`, `query`, `artist`, `album`) maps naturally to both backends.
+The LLM tool itself doesn't change — it still says "play Dark Side of the Moon" and the backend resolves it through the unified database. The tool's parameter schema (`action`, `query`, `artist`, `album`) maps naturally to the combined library.
 
 ---
 
@@ -468,6 +445,23 @@ This prefix is checked in `webui_music_start_playback()` to route to the Plex do
 
 ### Source Abstraction
 
+The `music_source.c` module defines source types and provider callbacks:
+
+```c
+typedef enum { MUSIC_SOURCE_LOCAL = 0, MUSIC_SOURCE_PLEX = 1 } music_source_t;
+
+typedef struct {
+   music_source_t source;
+   int (*init)(const char *db_path);
+   int (*sync)(sqlite3 *db);
+   void (*cleanup)(void);
+} music_source_provider_t;
+```
+
+The scanner thread iterates all registered providers, calling `init()` once and `sync()` on each scan interval. Local scanning reads filesystem metadata; Plex sync calls `plex_client_list_all_tracks()` in pages and inserts into the same `music_metadata` table with `source = MUSIC_SOURCE_PLEX`.
+
+Playback routing uses the `plex:` path prefix:
+
 ```
 ┌──────────────────────────────────────────────────────────┐
 │                   webui_music.c                           │
@@ -491,7 +485,7 @@ This prefix is checked in `webui_music_start_playback()` to route to the Plex do
 └──────────────────────────────────────────────────────────┘
 ```
 
-**Key difference from original design:** The decoder layer (`audio_decoder.c`) is never modified. It always receives a local file path. HTTP download is handled in `webui_music_start_playback()` before the decoder is invoked. This avoids the extension-detection bug where `get_extension()` on a URL like `file.flac?X-Plex-Token=abc` returns the wrong extension (the `?` query string confuses `strrchr(path, '.')`).
+**Key design decision:** The decoder layer (`audio_decoder.c`) is never modified. It always receives a local file path. HTTP download is handled in `webui_music_start_playback()` before the decoder is invoked.
 
 ### Library / Search / Browse Routing
 
@@ -501,54 +495,27 @@ This prefix is checked in `webui_music_start_playback()` to route to the Plex do
 │             handle_music_search()                         │
 │             handle_music_control("play", query)           │
 │                      │                                    │
-│              ┌───────┴───────┐                           │
-│              │ source check  │                           │
-│              └───┬───────┬───┘                           │
-│          local   │       │  plex                         │
-│                  ▼       ▼                                │
-│           music_db_*()  plex_client_*()                  │
-│           (SQLite)      (HTTP→JSON)                      │
-│                  │       │                                │
-│                  ▼       ▼                                │
-│         Same JSON response format to WebUI/satellite     │
+│                      ▼                                    │
+│             music_db_*() (unified SQLite)                 │
+│             (dedup: local wins over plex)                 │
+│                      │                                    │
+│                      ▼                                    │
+│         JSON response to WebUI/satellite                 │
 └─────────────────────────────────────────────────────────┘
 ```
 
-The routing happens inside `webui_music.c` handlers. Both backends produce the same `music_library_response` / `music_search_response` JSON payloads, so the WebUI and satellite UI code require zero changes.
+All library/search/browse operations go through the unified `music_db_*()` API. The dedup subquery (`NOT EXISTS ... WHERE source < m.source`) ensures each unique artist+album+title combination appears once, preferring the highest-priority source (local=0 wins over plex=1). Matching uses `COLLATE NOCASE` for cross-source dedup resilience.
 
-Keep the routing logic in `webui_music.c` thin — delegate immediately to `plex_client_*()` functions that return pre-formatted JSON objects. This avoids bloating `webui_music.c` (already 2,507 lines, at the CLAUDE.md warning threshold).
+The WebUI and satellite UI code require zero changes — they receive the same JSON payloads regardless of underlying source.
 
 ### Path Validation
 
-The existing `webui_music_is_path_valid()` (line 193 of `webui_music.c`) calls `realpath()` and verifies the resolved path is within `g_config.paths.music_dir`. This will reject all Plex paths.
+`webui_music_is_path_valid()` handles both local and Plex paths:
 
-**Updated validation logic:**
+- **Local paths**: `realpath()` and verify within `g_config.paths.music_dir`
+- **Plex paths**: validate `plex:` prefix, Part.key starts with `/library/parts/` or `/library/metadata/`, no path traversal, Plex must be configured (`plex_client_is_configured()`)
 
-```c
-bool webui_music_is_path_valid(const char *path) {
-   if (!path || path[0] == '\0') return false;
-
-   /* Plex paths: validate prefix and host match */
-   if (strncmp(path, "plex:", 5) == 0) {
-      if (strcmp(g_config.music.source, "plex") != 0) return false;
-      const char *part_key = path + 5;
-      /* Validate Part.key starts with expected Plex API path */
-      if (strncmp(part_key, "/library/parts/", 15) != 0 &&
-          strncmp(part_key, "/library/metadata/", 18) != 0) return false;
-      /* No path traversal in the Part.key */
-      if (contains_path_traversal(part_key)) return false;
-      return true;
-   }
-
-   /* Local paths: existing realpath() validation (unchanged) */
-   // ... existing code ...
-}
-```
-
-This prevents:
-- SSRF: only `plex:` prefix paths with known Plex API prefixes are accepted
-- Path traversal: `contains_path_traversal()` check on the Part.key
-- Source mismatch: Plex paths rejected when `source != "plex"`
+> **Note:** The original design checked `source != "plex"` to reject Plex paths when local was selected. Since the source selector was removed, Plex paths are accepted whenever Plex is configured.
 
 ### Metadata Handling
 
@@ -672,14 +639,20 @@ A `plex:` path is typically ~60-80 chars (e.g., `plex:/library/parts/9877/123456
 14. Add persistent error banner for Plex auth/connection failures
 15. Add confirmation dialog on source switch during active playback
 
-### Phase 2.5: Plex Library Cache
+### Phase 2.5: Unified Music DB (Completed March 2026)
 
-16. Add genre extraction to `build_track_json()` in `plex_client.c`
-17. Add `plex_client_get_library_updated_at()` for change detection
-18. Implement `plex_db.c` — SQLite cache layer (init, sync, search, browse)
-19. Extend `music_scanner.c` with Plex sync mode (reuse thread pattern)
-20. Replace Plex API search/browse calls in `webui_music_handlers.c` with `plex_db_*()` queries
-21. Wire init/cleanup in `dawn.c`
+16. ✅ Add genre extraction to `build_track_json()` in `plex_client.c`
+17. ✅ Add `plex_client_get_library_updated_at()` for change detection
+18. ✅ Implement `plex_db.c` — Plex sync provider using `music_source_provider_t` callbacks
+19. ✅ Implement `music_source.c` — source abstraction with enum, path prefixes, provider registry
+20. ✅ Extend `music_scanner.c` with multi-source provider iteration
+21. ✅ Add `source` column to `music_metadata` table with priority-based dedup
+22. ✅ Add `COLLATE NOCASE` to dedup index and queries
+23. ✅ Replace all Plex API browse/search calls with unified `music_db_*()` queries
+24. ✅ Remove deprecated `plex_client` browse/search functions and enrich cache
+25. ✅ Remove `config.music.source` field (auto-detection replaces selector)
+26. ✅ Update WebUI settings (remove source dropdown)
+27. ✅ Add `test_music_db.c` unit tests (22 tests, 60 assertions)
 
 ### Phase 3: Polish
 
@@ -805,7 +778,7 @@ Store in `secrets_config_t.plex_token` (loaded from `secrets.toml`, mode 0600). 
 - Part.key starts with `/library/parts/` or `/library/metadata/`
 - No `@` character (prevents authority injection)
 - No path traversal sequences (`../`)
-- Source config is actually `"plex"` (don't accept plex paths when source is local)
+- Plex must be configured (`plex_client_is_configured()` — host and token present)
 
 ### 4. URL Construction Safety
 
@@ -892,9 +865,9 @@ This design was reviewed by all four DAWN review agents (architecture, security,
 
 ---
 
-## Plex Library Cache (Local SQLite Index)
+## Plex Library Cache (Implemented)
 
-**Added:** March 2026
+**Implemented:** March 2026
 
 ### Problem
 
@@ -913,32 +886,36 @@ This also adds **genre support** since Plex provides genre metadata in `Genre[].
 
 ### Schema
 
-New table in existing `music.db` (alongside `music_metadata`):
+> **Design evolution:** The original design proposed a separate `plex_tracks` table. The actual implementation uses the **existing `music_metadata` table** with an added `source` column, enabling unified queries with priority-based deduplication via a single `NOT EXISTS` subquery. This proved simpler and more powerful than UNION-based approaches.
+
+Plex tracks are stored in `music_metadata` with `source = 1` (MUSIC_SOURCE_PLEX) and `path` prefixed with `plex:`:
 
 ```sql
-CREATE TABLE IF NOT EXISTS plex_tracks (
-   id INTEGER PRIMARY KEY,
-   rating_key TEXT UNIQUE NOT NULL,   -- Plex ratingKey (dedup + scrobble)
-   part_key TEXT NOT NULL,            -- /library/parts/... (for download URL)
-   title TEXT,
-   artist TEXT,
-   album TEXT,
-   genre TEXT,                        -- Comma-separated from Plex Genre array
-   duration_sec INTEGER,
-   updated_at INTEGER                 -- Track-level updatedAt for change detection
+-- Existing table, extended with source column
+CREATE TABLE IF NOT EXISTS music_metadata (
+   id INTEGER PRIMARY KEY AUTOINCREMENT,
+   path TEXT UNIQUE NOT NULL,     -- Local: /home/.../file.flac, Plex: plex:/library/parts/...
+   title TEXT, artist TEXT, album TEXT, genre TEXT,
+   duration_sec INTEGER, mtime INTEGER,
+   source INTEGER DEFAULT 0       -- 0=LOCAL, 1=PLEX
 );
 
-CREATE INDEX IF NOT EXISTS idx_plex_artist ON plex_tracks(artist);
-CREATE INDEX IF NOT EXISTS idx_plex_album ON plex_tracks(album);
-CREATE INDEX IF NOT EXISTS idx_plex_title ON plex_tracks(title);
-CREATE INDEX IF NOT EXISTS idx_plex_genre ON plex_tracks(genre);
+-- Case-insensitive dedup index (critical for query performance)
+CREATE INDEX IF NOT EXISTS idx_music_dedup
+   ON music_metadata(artist COLLATE NOCASE, album COLLATE NOCASE,
+                     title COLLATE NOCASE, source);
 ```
 
-**Why a separate table** (not extending `music_metadata`):
-- Different primary key semantics (rating_key vs file path)
-- Different change detection (Plex `scannedAt` vs filesystem mtime)
-- Different path format (`plex:/library/parts/...` vs local file path)
-- Clean switchable isolation — future hybrid mode can UNION both tables
+The dedup query pattern used throughout `music_db.c`:
+```sql
+WHERE NOT EXISTS (
+   SELECT 1 FROM music_metadata m2
+   WHERE m2.artist = m.artist COLLATE NOCASE
+     AND m2.album = m.album COLLATE NOCASE
+     AND m2.title = m.title COLLATE NOCASE
+     AND m2.source < m.source
+)
+```
 
 ### Search Query
 
@@ -966,31 +943,17 @@ Reuses `music_scanner.c` background thread pattern (interval + `pthread_cond_tim
 3. **Initial sync**: ~3-5 seconds for 3,000 tracks on LAN (16 pages × ~200ms each).
 4. **Mutex yielding**: Every 50 inserts, yield DB mutex for 1ms (same as local scan pattern).
 
-### Handler Convergence
+### Handler Convergence (Completed)
 
-The key architectural benefit: Plex and local search code paths **merge** in the handlers.
+The implementation went further than the original proposal — instead of two parallel SQLite query functions (`plex_db_search()` vs `music_db_search()`), there is a **single `music_db_*()` API** that queries the unified table with built-in dedup:
 
-Before:
 ```c
-if (use_plex) {
-   json_object *plex_result = plex_client_search(query, max);  // HTTP API
-   // ... JSON parsing, queue_entry_from_plex_json() ...
-} else {
-   music_search_result_t *results = malloc(...);
-   int count = music_db_search(query, results, max);            // SQLite
-   // ... copy to queue ...
-}
-```
-
-After:
-```c
+// All handlers use the same API regardless of source
 music_search_result_t *results = malloc(...);
-int count = use_plex ? plex_db_search(query, results, max)      // SQLite
-                     : music_db_search(query, results, max);    // SQLite
-// ... single copy-to-queue path ...
+int count = music_db_search(query, results, max);  // Searches both sources, deduped
 ```
 
-Same convergence applies to all browse operations (list artists/albums/tracks).
+The `source` column and dedup subquery are internal to `music_db.c`. Callers never need to know which sources are active. This eliminated ~400 lines of source-switching logic from `webui_music_handlers.c`.
 
 ### Files
 
@@ -1003,29 +966,40 @@ Same convergence applies to all browse operations (list artists/albums/tracks).
 | `src/webui/webui_music_handlers.c` | Replace `plex_client_search/list_*()` with `plex_db_*()` |
 | `src/dawn.c` | Init plex_db when source=plex, route scanner mode |
 
-### API Functions Retired from Hot Path
+### Deprecated API Functions (Removed)
 
-After this change, these Plex API functions are no longer called during search/browse (sync-only or unused):
+The following Plex API browse/search functions were removed from `plex_client.c` (March 2026) along with their enrich cache infrastructure, as all operations now go through the unified `music_db_*()` API:
 
-- `plex_client_search()` → replaced by `plex_db_search()`
-- `plex_client_list_artists()` → replaced by `plex_db_list_artists_with_stats()`
-- `plex_client_list_albums()` → replaced by `plex_db_list_albums_with_stats()`
-- `plex_client_list_tracks()` → replaced by `plex_db_get_by_album()`
-- `plex_client_list_artist_tracks()` → replaced by `plex_db_get_by_artist()`
-- `plex_client_get_stats()` → replaced by `plex_db_get_track_count()` + SQLite counts
+- `plex_client_search()` → replaced by `music_db_search()`
+- `plex_client_list_artists()` → replaced by `music_db_list_artists()`
+- `plex_client_list_albums()` → replaced by `music_db_list_albums()`
+- `plex_client_list_tracks()` → replaced by `music_db_search_by_album()`
+- `plex_client_list_artist_tracks()` → replaced by `music_db_search_by_artist()`
+- `plex_client_get_stats()` → replaced by `music_db_get_stats()`
+- `enrich_counts_from_tracks()` / `populate_enrich_cache()` / enrich cache structs — removed
 
-The enrich cache (5-min TTL artist/album counts) in plex_client.c becomes unnecessary.
+**Retained**: `plex_client_list_all_tracks()` (used by `plex_db.c` for sync), `plex_client_download_track()`, `plex_client_scrobble()`, `plex_client_test_connection()`, `plex_client_discover_section()`, `plex_client_get_library_updated_at()`.
 
 ---
 
-## Source Upgrade Path
+## Source Upgrade Path (Completed)
 
-This implementation uses **Option A: Either/Or** — the user selects either "local" or "plex" as their music source via the settings panel. All library/search/browse operations go to the selected source exclusively.
+The original design proposed a three-step upgrade path:
 
-**Planned upgrade path:**
+1. ~~**Option A: Either/Or** — user selects "local" or "plex" exclusively~~ (Phase 1, February 2026)
+2. ~~**Option C: Switchable with Mixed Queue** — queue can contain tracks from both sources~~ (skipped)
+3. **Option B: Joined Library** — unified view with deduplication (implemented March 2026)
 
-1. **Option A → Option C (Switchable with Mixed Queue):** Allow the queue to contain tracks from both sources simultaneously. A local track and a Plex track can coexist in the same playlist. The `plex:` prefix on paths already distinguishes the two at playback time, so the queue and decoder routing require minimal changes. The source selector becomes a "default for search/browse" rather than an exclusive gate.
+The implementation went directly from Option A to Option B by adding a `source` column to the existing `music_metadata` table and using a `NOT EXISTS` subquery for priority-based deduplication (local wins over Plex). Case-insensitive matching (`COLLATE NOCASE`) handles metadata differences between sources (e.g., "The Beatles" vs "the beatles").
 
-2. **Option C → Option B (Joined Library):** Merge local and Plex libraries into a unified view. Search queries fan out to both backends in parallel, results are interleaved by relevance. Browse shows combined artist/album listings with a source badge. This requires deduplication logic (same album from both sources) and is the most complex upgrade.
+The `source` config selector was removed entirely — sources are auto-detected based on configuration. The unified `music_db_*()` API transparently handles both sources with dedup, and the `plex:` path prefix routes playback to the appropriate download mechanism.
 
-Each step builds incrementally on the previous one with no architectural rewrites.
+### Unit Test Coverage
+
+`tests/test_music_db.c` provides 22 tests with 60 assertions covering:
+- Source abstraction (names, prefixes, path identification)
+- Init/cleanup lifecycle and schema migration idempotency
+- Search with dedup (local wins, plex-only, case-insensitive, LIKE escaping)
+- Browse with dedup (artists, albums, artist tracks, stats)
+- Path lookup (local, plex, missing)
+- Source-scoped stale deletion (plex rows survive local cleanup)

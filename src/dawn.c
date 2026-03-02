@@ -57,6 +57,7 @@
 #include "audio/flac_playback.h"
 #include "audio/music_db.h"
 #include "audio/music_scanner.h"
+#include "audio/plex_db.h"
 #include "core/command_executor.h"
 #include "core/command_router.h"
 #include "core/component_status.h"
@@ -1915,10 +1916,13 @@ int main(int argc, char *argv[]) {
    char music_db_path[CONFIG_PATH_MAX + 16];
    snprintf(music_db_path, sizeof(music_db_path), "%s/music.db", g_config.paths.data_dir);
    if (music_db_init(music_db_path) == 0) {
+      // Register available music source providers before starting scanner
+      music_scanner_register_source(plex_db_get_provider());
+
       // Start background scanner to index music library
       // Uses paths.music_dir with tilde expansion handled by scanner
-      if (music_scanner_start(g_config.paths.music_dir, g_config.music.scan_interval_minutes) !=
-          0) {
+      if (music_scanner_start(g_config.paths.music_dir, g_config.music.scan_interval_minutes,
+                              music_db_path) != 0) {
          LOG_WARNING("Music scanner failed to start");
       }
    } else {

@@ -113,7 +113,6 @@ static webui_music_config_t s_config = {
    .bitrate_mode = MUSIC_BITRATE_VBR,
 };
 static atomic_int s_active_streams = 0;
-atomic_bool g_music_use_plex = false; /* Cached at init from g_config.music.source */
 
 /* =============================================================================
  * Helper Functions
@@ -128,65 +127,9 @@ static uint64_t get_time_ms(void) {
    return (uint64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
-/**
- * @brief Extract Plex track metadata from a JSON payload into a search result.
- *
- * Reads title, artist, album, and duration_sec from the payload JSON.
- * Used by play, add_to_queue, and queue "add" handlers to avoid duplication.
- *
- * @param payload JSON object containing track metadata
- * @param path    The plex: path string
- * @param out     Output: populated search result
- */
-void extract_plex_track_meta(json_object *payload, const char *path, music_search_result_t *out) {
-   safe_strncpy(out->path, path, sizeof(out->path));
-
-   struct json_object *obj;
-   if (json_object_object_get_ex(payload, "title", &obj))
-      safe_strncpy(out->title, json_object_get_string(obj), sizeof(out->title));
-   else
-      safe_strncpy(out->title, "Unknown", sizeof(out->title));
-
-   if (json_object_object_get_ex(payload, "artist", &obj))
-      safe_strncpy(out->artist, json_object_get_string(obj), sizeof(out->artist));
-   else
-      out->artist[0] = '\0';
-
-   if (json_object_object_get_ex(payload, "album", &obj))
-      safe_strncpy(out->album, json_object_get_string(obj), sizeof(out->album));
-   else
-      out->album[0] = '\0';
-
-   if (json_object_object_get_ex(payload, "duration_sec", &obj))
-      out->duration_sec = json_object_get_int(obj);
-   else
-      out->duration_sec = 0;
-}
-
 /* Forward declarations */
 static int queue_music_data(ws_connection_t *conn, const uint8_t *data, size_t len);
 static int queue_music_direct(session_music_state_t *state, const uint8_t *data, size_t len);
-
-/**
- * @brief Populate a queue entry from a Plex JSON track object.
- *
- * Extracts path, title, artist, album, duration_sec from a JSON object
- * (as returned by plex_client_search/list_tracks) into a queue entry.
- */
-void queue_entry_from_plex_json(music_queue_entry_t *entry, json_object *item) {
-   json_object *jval;
-   memset(entry, 0, sizeof(*entry));
-   if (json_object_object_get_ex(item, "path", &jval))
-      safe_strncpy(entry->path, json_object_get_string(jval), sizeof(entry->path));
-   if (json_object_object_get_ex(item, "title", &jval))
-      safe_strncpy(entry->title, json_object_get_string(jval), sizeof(entry->title));
-   if (json_object_object_get_ex(item, "artist", &jval))
-      safe_strncpy(entry->artist, json_object_get_string(jval), sizeof(entry->artist));
-   if (json_object_object_get_ex(item, "album", &jval))
-      safe_strncpy(entry->album, json_object_get_string(jval), sizeof(entry->album));
-   if (json_object_object_get_ex(item, "duration_sec", &jval))
-      entry->duration_sec = json_object_get_int(jval);
-}
 
 /**
  * @brief Wait for decoder to become idle using condition variable
@@ -254,8 +197,8 @@ bool webui_music_is_path_valid(const char *path) {
 
    /* Plex paths: validate prefix, source config, and Part.key format */
    if (strncmp(path, "plex:", 5) == 0) {
-      if (!g_music_use_plex) {
-         LOG_WARNING("WebUI music: Plex path rejected (source is not plex): %s", path);
+      if (!plex_client_is_configured()) {
+         LOG_WARNING("WebUI music: Plex path rejected (Plex not configured): %s", path);
          return false;
       }
       const char *part_key = path + 5;
@@ -922,7 +865,9 @@ int webui_music_start_playback(session_music_state_t *state, const char *path) {
    char local_path[PATH_MAX];
 
    if (strncmp(path, "plex:", 5) == 0) {
-      /* Plex track: download to temp file first */
+      /* Plex track: download to temp file first.
+       * Note: this blocks the caller (WebSocket handler thread) during download.
+       * Acceptable for home LAN latency; move to worker thread if needed. */
       const char *part_key = path + 5;
       if (plex_client_download_track(part_key, local_path, sizeof(local_path)) != 0) {
          pthread_mutex_unlock(&state->state_mutex);
@@ -1020,21 +965,16 @@ int webui_music_init(void) {
       LOG_WARNING("WebUI music: Music database not initialized - library features unavailable");
    }
 
-   /* Cache source check and initialize Plex client if configured */
-   g_music_use_plex = (strcmp(g_config.music.source, "plex") == 0);
-   if (g_music_use_plex) {
-      if (plex_client_is_configured()) {
-         if (plex_client_init() != 0) {
-            LOG_WARNING("WebUI music: Plex client init failed — Plex features unavailable");
-         }
-      } else {
-         LOG_WARNING("WebUI music: source=plex but host/token not configured");
+   /* Initialize Plex client if configured (for download/scrobble support) */
+   if (plex_client_is_configured()) {
+      if (plex_client_init() != 0) {
+         LOG_WARNING("WebUI music: Plex client init failed — Plex features unavailable");
       }
    }
 
    s_initialized = true;
-   LOG_INFO("WebUI music streaming initialized (source: %s, default quality: %s, bitrate: %s)",
-            g_config.music.source, QUALITY_NAMES[s_config.default_quality],
+   LOG_INFO("WebUI music streaming initialized (default quality: %s, bitrate: %s)",
+            QUALITY_NAMES[s_config.default_quality],
             s_config.bitrate_mode == MUSIC_BITRATE_VBR ? "VBR" : "CBR");
 
    pthread_mutex_unlock(&s_music_mutex);
@@ -1067,28 +1007,6 @@ void webui_music_cleanup(void) {
 
 bool webui_music_is_available(void) {
    return s_initialized && s_config.enabled;
-}
-
-void webui_music_update_source(void) {
-   bool was_plex = atomic_load(&g_music_use_plex);
-   bool now_plex = (strcmp(g_config.music.source, "plex") == 0);
-   atomic_store(&g_music_use_plex, now_plex);
-
-   if (now_plex && !was_plex) {
-      /* Switching to Plex: initialize the client if configured */
-      if (plex_client_is_configured()) {
-         if (plex_client_init() != 0) {
-            LOG_WARNING("WebUI music: Plex client init failed after source switch");
-         }
-      } else {
-         LOG_WARNING("WebUI music: source=plex but host/token not configured");
-      }
-   } else if (!now_plex && was_plex) {
-      /* Switching away from Plex: clean up the client */
-      plex_client_cleanup();
-   }
-
-   LOG_INFO("WebUI music: Source updated to %s", now_plex ? "plex" : "local");
 }
 
 int webui_music_session_init(ws_connection_t *conn) {

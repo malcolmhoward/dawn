@@ -462,7 +462,6 @@ typedef struct {
 } plex_config_t;
 
 typedef struct {
-   char source[16];           /* "local" or "plex" (default: "local") */
    int scan_interval_minutes; /* Minutes between rescans (0 = disabled, default: 60) */
 
    /* Plex Media Server settings (music.plex section) */

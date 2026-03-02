@@ -1011,30 +1011,20 @@
          label: 'Music Streaming',
          icon: '&#x1F3B5;',
          adminOnly: true,
-         description: 'Settings for WebUI music streaming to browsers',
+         description:
+            'Music sources are auto-detected. Local library uses the Music Directory from Paths. Plex is active when host and token are configured.',
          fields: {
-            source: {
-               type: 'select',
-               label: 'Music Source',
-               options: [
-                  { value: 'local', label: 'Local Library' },
-                  { value: 'plex', label: 'Plex Media Server' },
-               ],
-               hint: 'Where to browse and stream music from',
-            },
             scan_interval_minutes: {
                type: 'number',
                label: 'Library Rescan Interval (minutes)',
                min: 0,
                hint: 'Minutes between automatic library rescans (0 = disabled)',
-               showWhen: { key: 'music.source', value: 'local' },
             },
             plex: {
                type: 'group',
                label: 'Plex Connection',
                description:
                   'Plex authentication token must also be set in the Secrets section below.',
-               showWhen: { key: 'music.source', value: 'plex' },
                fields: {
                   host: {
                      type: 'text',

@@ -95,37 +95,9 @@ int plex_client_discover_section(int *section_id_out);
  * ============================================================================= */
 
 /**
- * @brief List artists in the music library
- *
- * Returns a JSON object in the music_library_response format:
- * { "browse_type": "artists", "artists": [...], "total": N, "offset": O, "limit": L }
- *
- * @param offset Pagination offset
- * @param limit  Max results to return
- * @return JSON object (caller must json_object_put), or NULL on error
- */
-json_object *plex_client_list_artists(int offset, int limit);
-
-/**
- * @brief List albums for an artist (or all albums)
- *
- * @param artist_key Plex rating key for artist, or NULL for all albums
- * @param offset Pagination offset
- * @param limit  Max results to return
- * @return JSON object in music_library_response format, or NULL
- */
-json_object *plex_client_list_albums(const char *artist_key, int offset, int limit);
-
-/**
- * @brief List tracks for an album
- *
- * @param album_key Plex rating key for album
- * @return JSON object in music_library_response format, or NULL
- */
-json_object *plex_client_list_tracks(const char *album_key);
-
-/**
  * @brief List all tracks in the music library (paginated)
+ *
+ * Used by plex_db sync to fetch all tracks for indexing into the unified DB.
  *
  * @param offset Pagination offset
  * @param limit  Max results to return
@@ -133,36 +105,19 @@ json_object *plex_client_list_tracks(const char *album_key);
  */
 json_object *plex_client_list_all_tracks(int offset, int limit);
 
-/**
- * @brief List all tracks by an artist
- *
- * @param artist_key Plex rating key for artist
- * @return JSON object in music_library_response format, or NULL
- */
-json_object *plex_client_list_artist_tracks(const char *artist_key);
-
-/**
- * @brief Get library statistics (artist/album/track counts)
- *
- * @param artist_count Output: number of artists (may be NULL)
- * @param album_count  Output: number of albums (may be NULL)
- * @param track_count  Output: number of tracks (may be NULL)
- * @return 0 on success, non-zero on error
- */
-int plex_client_get_stats(int *artist_count, int *album_count, int *track_count);
-
 /* =============================================================================
- * Search
+ * Library Change Detection
  * ============================================================================= */
 
 /**
- * @brief Search the Plex music library
+ * @brief Get the library's last-scanned timestamp for change detection
  *
- * @param query Search query string
- * @param limit Max results to return
- * @return JSON object in music_search_response format, or NULL
+ * Cheap single API call to check if the library has changed since last sync.
+ *
+ * @param updated_at_out Output: scannedAt timestamp from Plex
+ * @return 0 on success, non-zero on error
  */
-json_object *plex_client_search(const char *query, int limit);
+int plex_client_get_library_updated_at(time_t *updated_at_out);
 
 /* =============================================================================
  * Streaming

@@ -4,7 +4,7 @@ This document describes the architecture of the D.A.W.N. (Digital Assistant for 
 
 **D.A.W.N.** is the central intelligence layer of the OASIS ecosystem, responsible for interpreting user intent, fusing data from every subsystem, and routing commands. At its core, DAWN performs neural-inference to understand context and drive decision-making, acting as OASIS's orchestration hub for MIRAGE, AURA, SPARK, STAT, and any future modules.
 
-**Last Updated**: February 28, 2026 (Plex music source integration, configurable limits)
+**Last Updated**: March 2, 2026 (Unified music database with multi-source support)
 
 ## Table of Contents
 
@@ -338,7 +338,7 @@ DAP2 Tier 1 satellites handle speech recognition and text-to-speech locally and 
 ┌─────────────────────────────────────────────────────────────┐
 │                       DAWN Daemon                            │
 │  webui_satellite.c: register, query, streaming response      │
-│  webui_music.c: music control, library browse, Plex/local routing, Opus stream   │
+│  webui_music.c: music control, unified library browse, Opus stream   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -471,24 +471,38 @@ Swipe-up from the bottom edge is currently unassigned (reserved for future use).
   - ALSA/PulseAudio output with automatic sample rate conversion
   - Used for notification sounds, music playback
 
-- **music_db.c/h**: Music metadata database
-  - SQLite-based cache for artist/title/album/genre tags
-  - Indexed search across metadata fields (including genre)
-  - Incremental scanning (only reparse changed files by mtime)
-  - Automatic cleanup of deleted files
+- **music_db.c/h**: Unified music metadata database
+  - SQLite-based cache for artist/title/album/genre tags with source tracking
+  - Multi-source support (local files + Plex) via `music_source_t` enum
+  - Priority-based deduplication (local wins over Plex for same artist+album+title)
+  - COLLATE NOCASE matching on dedup index for cross-source consistency
+  - Indexed search across metadata fields (including genre) with LIKE escaping
+  - Incremental scanning with source-scoped stale deletion
+  - Automatic cleanup of deleted files (per-source)
+
+- **music_source.c/h**: Music source abstraction layer
+  - `music_source_provider_t` callback interface for pluggable sources
+  - Source name/prefix helpers (`music_source_name()`, `music_source_path_prefix()`)
+  - Path-to-source detection (`music_source_from_path()`)
+
+- **plex_db.c/h**: Plex-to-unified-DB sync layer
+  - Fetches all Plex tracks via `plex_client_list_all_tracks()`
+  - Inserts into unified `music_metadata` table with `source = MUSIC_SOURCE_PLEX`
+  - Runs during music scanner cycle when Plex is configured
 
 - **music_scanner.c/h**: Background music library scanner
   - Dedicated thread for non-blocking scans
   - Configurable scan interval (default: 60 minutes)
+  - Scans local files and syncs Plex library in each cycle
   - Manual rescan trigger via admin socket
   - Mutex/condvar synchronization for thread safety
 
 - **plex_client.c/h**: Plex Media Server REST API client
   - Authentication via X-Plex-Token header
-  - Library browsing (artists, albums, tracks with pagination)
-  - Search and metadata enrichment with TTL-cached counts
+  - `plex_client_list_all_tracks()` for bulk sync into unified DB
   - Stream URL construction for download-to-temp playback
   - Scrobble reporting on track completion
+  - Server discovery and connection testing
 
 - **http_download.c/h**: HTTP download-to-temp utility
   - libcurl-based download with 300s hard timeout
@@ -1868,7 +1882,7 @@ The WebUI settings panel (`www/js/ui/settings.js`) defines a `SETTINGS_SCHEMA` t
 ---
 
 **Document Version**: 2.0
-**Last Updated**: February 27, 2026 (Configurable document/vision limits, tool registry updates)
+**Last Updated**: March 2, 2026 (Unified music database with multi-source dedup)
 **Reorganization Commit**: [Git SHA to be added after commit]
 
 ### LLM Threading Architecture (Post-Interrupt Implementation)
