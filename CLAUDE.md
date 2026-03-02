@@ -172,6 +172,37 @@ DAWN is part of the O.A.S.I.S. ecosystem. For ecosystem-level coordination, road
 
 *For contribution guidelines, see [CONTRIBUTING.md](CONTRIBUTING.md).*
 
+## Deployment
+
+DAWN ships three platform-specific Dockerfiles (ADR-0005: independent Dockerfiles per platform):
+
+| Dockerfile | Platform | Whisper |
+|-----------|----------|---------|
+| `Dockerfile.dev` | x86/x64 (ubuntu:22.04) | CPU, base.en |
+| `Dockerfile.jetson` | NVIDIA Jetson (l4t-base:r35.4.1) | CUDA-accelerated, base.en |
+| `Dockerfile.rpi` | Raspberry Pi (arm64v8/debian:bookworm-slim) | CPU, tiny.en |
+
+See **`docs/DOCKER.md`** for build commands, run examples, volume setup, and troubleshooting.
+
+### Model Download Flag
+
+`SKIP_MODEL_DOWNLOAD=true` (container default) skips Whisper download at startup so the container starts immediately. Set `SKIP_MODEL_DOWNLOAD=false` to download missing models on first run.
+
+This flag controls download behavior only — it does not mock or stub ASR/TTS functionality.
+
+Per-model override: `SKIP_WHISPER` inherits from `SKIP_MODEL_DOWNLOAD` unless explicitly set.
+
+See [ADR-0006](https://github.com/malcolmhoward/the-oasis-project-meta-repo/blob/main/coordination/decisions/adr/0006-container-model-availability-strategy.md) for full design rationale.
+
+### Volume Paths
+
+| Path | Contents |
+|------|----------|
+| `/opt/dawn/whisper.cpp/models/` | Whisper ASR model (download via `SKIP_MODEL_DOWNLOAD=false`) |
+| `/opt/dawn/models/` | Piper TTS + Silero VAD models (committed to git; in image) |
+
+---
+
 ## Branch Naming Convention
 
 **Critical**: Branch names must include the GitHub issue number being addressed.
