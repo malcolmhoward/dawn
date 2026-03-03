@@ -212,8 +212,13 @@
          DawnState.streamingState.textElement.innerHTML = DawnFormat.markdown(
             DawnState.streamingState.content
          );
-         // Add copy buttons to code blocks
+         // Add copy buttons to code blocks and message copy button
          DawnFormat.addCopyButtons(DawnState.streamingState.textElement);
+         DawnState.streamingState.textElement.setAttribute(
+            'data-raw-text',
+            DawnState.streamingState.content
+         );
+         DawnFormat.addMessageCopyButton(DawnState.streamingState.textElement);
       }
 
       // Remove streaming class

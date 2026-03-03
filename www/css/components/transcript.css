@@ -413,6 +413,7 @@ body.debug-mode .transcript-entry.debug {
       sans-serif;
    font-size: 0.9375rem;
    line-height: 1.6;
+   position: relative;
 }
 
 /* Markdown elements within transcript */
@@ -449,6 +450,7 @@ body.debug-mode .transcript-entry.debug {
    border-radius: 4px;
    overflow-x: auto;
    margin: 0.5em 0;
+   position: relative;
 }
 
 .transcript-entry .text pre code {
@@ -459,10 +461,9 @@ body.debug-mode .transcript-entry.debug {
 /* Code block copy button */
 .transcript-entry .text pre .copy-btn {
    position: absolute;
-   top: 0.5em;
-   right: 0.5em;
-   padding: 0.25em 0.6em;
-   font-size: 0.75em;
+   top: 0.4em;
+   right: 0.4em;
+   padding: 0.3em;
    background: rgba(255, 255, 255, 0.1);
    border: 1px solid rgba(255, 255, 255, 0.2);
    border-radius: 3px;
@@ -470,7 +471,15 @@ body.debug-mode .transcript-entry.debug {
    cursor: pointer;
    opacity: 0;
    transition: opacity 0.2s;
-   font-family: inherit;
+   line-height: 0;
+   display: flex;
+   align-items: center;
+   justify-content: center;
+}
+
+.transcript-entry .text pre .copy-btn svg {
+   width: 16px;
+   height: 16px;
 }
 
 .transcript-entry .text pre:hover .copy-btn,
@@ -482,6 +491,50 @@ body.debug-mode .transcript-entry.debug {
 .transcript-entry .text pre .copy-btn:focus-visible {
    background: rgba(255, 255, 255, 0.2);
    color: var(--text-primary);
+}
+
+.transcript-entry .text pre .copy-btn:focus-visible {
+   outline: 2px solid var(--accent);
+   outline-offset: 2px;
+}
+
+/* Message copy button */
+.transcript-entry .text .copy-msg-btn {
+   position: absolute;
+   bottom: 0;
+   right: 0;
+   padding: 0.4em;
+   background: transparent;
+   border: none;
+   color: var(--text-secondary);
+   cursor: pointer;
+   opacity: 0;
+   transition: opacity 0.2s;
+   line-height: 0;
+   display: flex;
+   align-items: center;
+   justify-content: center;
+}
+
+.transcript-entry .text .copy-msg-btn svg {
+   width: 18px;
+   height: 18px;
+}
+
+.transcript-entry:hover .text .copy-msg-btn,
+.transcript-entry .text .copy-msg-btn:focus-visible {
+   opacity: 0.5;
+}
+
+.transcript-entry .text .copy-msg-btn:hover,
+.transcript-entry .text .copy-msg-btn:focus-visible {
+   opacity: 1;
+   color: var(--text-primary);
+}
+
+.transcript-entry .text .copy-msg-btn:focus-visible {
+   outline: 2px solid var(--accent);
+   outline-offset: 2px;
 }
 
 .transcript-entry .text ul,

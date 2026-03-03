@@ -419,10 +419,12 @@
       // Scroll immediately after adding entry
       transcript.scrollTop = transcript.scrollHeight;
 
-      // Add copy buttons to code blocks in the new entry
+      // Store raw text and add copy buttons
       const textEl = entry.querySelector('.text');
       if (textEl) {
+         textEl.setAttribute('data-raw-text', displayText);
          DawnFormat.addCopyButtons(textEl);
+         DawnFormat.addMessageCopyButton(textEl);
       }
 
       // Render document chips if any documents were attached
@@ -538,10 +540,12 @@
       <div class="text">${DawnFormat.markdown(displayText)}</div>
     `;
 
-      // Add copy buttons to code blocks
+      // Store raw text and add copy buttons
       const textEl = entry.querySelector('.text');
       if (textEl) {
+         textEl.setAttribute('data-raw-text', displayText);
          DawnFormat.addCopyButtons(textEl);
+         DawnFormat.addMessageCopyButton(textEl);
       }
 
       // Render document chips if any documents were attached

@@ -9,6 +9,36 @@
 (function (global) {
    'use strict';
 
+   // Shared SVG icons for copy buttons (sized via CSS)
+   const ICON_CLIPBOARD =
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+      'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+      '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>' +
+      '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+   const ICON_CHECK =
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+      'stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">' +
+      '<polyline points="20 6 9 17 4 12"/></svg>';
+
+   /**
+    * Copy text to clipboard with fallback for non-secure (HTTP) contexts
+    * @param {string} text - Text to copy
+    * @returns {Promise<void>}
+    */
+   async function copyToClipboard(text) {
+      if (navigator.clipboard) {
+         return navigator.clipboard.writeText(text);
+      }
+      // Fallback for plain HTTP (e.g., http://192.168.x.x:3000)
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.style.cssText = 'position:fixed;opacity:0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+   }
+
    /**
     * Escape HTML to prevent XSS
     * @param {string} str - Raw string to escape
@@ -36,6 +66,34 @@
    }
 
    /**
+    * Add a copy-message button to a transcript entry's .text element
+    * Copies the raw text (markdown or plain) stored in data-raw-text
+    * @param {HTMLElement} textEl - The .text element inside a transcript entry
+    */
+   function addMessageCopyButton(textEl) {
+      if (!textEl || textEl.querySelector('.copy-msg-btn')) return;
+
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'copy-msg-btn';
+      btn.title = 'Copy message';
+      btn.setAttribute('aria-label', 'Copy message to clipboard');
+      btn.innerHTML = ICON_CLIPBOARD;
+      btn.onclick = async (e) => {
+         e.stopPropagation();
+         const raw = textEl.getAttribute('data-raw-text') || textEl.textContent;
+         try {
+            await copyToClipboard(raw);
+            btn.innerHTML = ICON_CHECK;
+            setTimeout(() => (btn.innerHTML = ICON_CLIPBOARD), 2000);
+         } catch (err) {
+            console.error('Failed to copy message:', err);
+         }
+      };
+      textEl.appendChild(btn);
+   }
+
+   /**
     * Add copy buttons to all code blocks in a container
     * @param {HTMLElement} container - Container to search for code blocks
     */
@@ -47,27 +105,24 @@
          if (pre.querySelector('.copy-btn')) return;
 
          const btn = document.createElement('button');
+         btn.type = 'button';
          btn.className = 'copy-btn';
-         btn.textContent = 'Copy';
          btn.title = 'Copy to clipboard';
          btn.setAttribute('aria-label', 'Copy code to clipboard');
+         btn.innerHTML = ICON_CLIPBOARD;
          btn.onclick = async (e) => {
             e.stopPropagation();
             const code = pre.querySelector('code');
             const text = code ? code.textContent : pre.textContent;
             try {
-               await navigator.clipboard.writeText(text);
-               btn.textContent = 'Copied!';
-               setTimeout(() => (btn.textContent = 'Copy'), 2000);
+               await copyToClipboard(text);
+               btn.innerHTML = ICON_CHECK;
+               setTimeout(() => (btn.innerHTML = ICON_CLIPBOARD), 2000);
             } catch (err) {
                console.error('Failed to copy:', err);
-               btn.textContent = 'Failed';
-               setTimeout(() => (btn.textContent = 'Copy'), 2000);
             }
          };
 
-         // Position relative to pre block
-         pre.style.position = 'relative';
          pre.appendChild(btn);
       });
    }
@@ -97,5 +152,6 @@
       markdown: formatMarkdown,
       relativeTime: formatRelativeTime,
       addCopyButtons: addCopyButtons,
+      addMessageCopyButton: addMessageCopyButton,
    };
 })(window);
