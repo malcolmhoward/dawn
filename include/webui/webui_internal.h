@@ -672,6 +672,16 @@ void handle_delete_memory_summary(ws_connection_t *conn, struct json_object *pay
 void handle_search_memory(ws_connection_t *conn, struct json_object *payload);
 
 /**
+ * @brief List memory entities with relations
+ */
+void handle_list_memory_entities(ws_connection_t *conn);
+
+/**
+ * @brief Delete a memory entity and its relations
+ */
+void handle_delete_memory_entity(ws_connection_t *conn, struct json_object *payload);
+
+/**
  * @brief Delete all memories for the current user
  */
 void handle_delete_all_memories(ws_connection_t *conn, struct json_object *payload);

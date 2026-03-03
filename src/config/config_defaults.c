@@ -253,6 +253,13 @@ void config_set_defaults(dawn_config_t *config) {
    config->memory.summary_retention_days = 30;        /* Delete summaries after 30 days */
    config->memory.access_reinforcement_boost = 0.05f; /* +5% on access */
 
+   /* Memory embeddings (semantic search) */
+   SAFE_COPY(config->memory.embedding_provider, "onnx");
+   /* embedding_model, embedding_endpoint: empty (memset zero) — ONNX needs neither */
+   config->memory.embedding_keyword_weight = 0.3f;
+   config->memory.embedding_vector_weight = 0.7f;
+   config->memory.embedding_backfill_on_startup = true;
+
    /* Shutdown - disabled by default for security */
    config->shutdown.enabled = false;
    config->shutdown.passphrase[0] = '\0';

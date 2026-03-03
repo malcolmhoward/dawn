@@ -639,6 +639,19 @@ static void apply_config_from_json(dawn_config_t *config, struct json_object *pa
          config->memory.access_reinforcement_boost = 0.0f;
       if (config->memory.access_reinforcement_boost > 0.5f)
          config->memory.access_reinforcement_boost = 0.5f;
+
+      /* Embedding settings */
+      JSON_TO_CONFIG_STR(section, "embedding_provider", config->memory.embedding_provider);
+      JSON_TO_CONFIG_STR(section, "embedding_model", config->memory.embedding_model);
+      JSON_TO_CONFIG_STR(section, "embedding_endpoint", config->memory.embedding_endpoint);
+      JSON_TO_CONFIG_DOUBLE(section, "embedding_keyword_weight",
+                            config->memory.embedding_keyword_weight);
+      JSON_TO_CONFIG_DOUBLE(section, "embedding_vector_weight",
+                            config->memory.embedding_vector_weight);
+      JSON_TO_CONFIG_BOOL(section, "embedding_backfill_on_startup",
+                          config->memory.embedding_backfill_on_startup);
+      CONFIG_CLAMP(config->memory.embedding_keyword_weight, 0.0f, 1.0f);
+      CONFIG_CLAMP(config->memory.embedding_vector_weight, 0.0f, 1.0f);
    }
 
    /* [shutdown] */
@@ -951,6 +964,14 @@ void handle_set_secrets(ws_connection_t *conn, struct json_object *payload) {
       if (str) {
          strncpy(mutable_secrets->plex_token, str, sizeof(mutable_secrets->plex_token) - 1);
          mutable_secrets->plex_token[sizeof(mutable_secrets->plex_token) - 1] = '\0';
+      }
+   }
+   if (json_object_object_get_ex(payload, "embedding_api_key", &val)) {
+      const char *str = json_object_get_string(val);
+      if (str) {
+         strncpy(mutable_secrets->embedding_api_key, str,
+                 sizeof(mutable_secrets->embedding_api_key) - 1);
+         mutable_secrets->embedding_api_key[sizeof(mutable_secrets->embedding_api_key) - 1] = '\0';
       }
    }
 

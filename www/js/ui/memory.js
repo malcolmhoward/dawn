@@ -21,6 +21,8 @@
       preferences: [],
       allPreferences: [], // Keep unfiltered copy for client-side search
       summaries: [],
+      entities: [],
+      allEntities: [], // Keep unfiltered copy for client-side search
       activeTab: 'facts',
       searchQuery: '',
       searchTimeout: null,
@@ -57,6 +59,7 @@
       statFacts: null,
       statPrefs: null,
       statSummaries: null,
+      statEntities: null,
    };
 
    /* =============================================================================
@@ -87,6 +90,20 @@
       if (typeof DawnWS === 'undefined' || !DawnWS.isConnected()) return;
       memoryState.loading = true;
       DawnWS.send({ type: 'list_memory_summaries' });
+   }
+
+   function requestEntities() {
+      if (typeof DawnWS === 'undefined' || !DawnWS.isConnected()) return;
+      memoryState.loading = true;
+      DawnWS.send({ type: 'list_memory_entities' });
+   }
+
+   function requestDeleteEntity(entityId) {
+      if (typeof DawnWS === 'undefined' || !DawnWS.isConnected()) return;
+      DawnWS.send({
+         type: 'delete_memory_entity',
+         payload: { entity_id: entityId },
+      });
    }
 
    function requestSearch(query) {
@@ -143,6 +160,39 @@
 
       memoryState.stats = payload;
       updateStatsDisplay();
+   }
+
+   function handleEntitiesResponse(payload) {
+      memoryState.loading = false;
+
+      if (!payload.success) {
+         console.error('Failed to list memory entities:', payload.error);
+         showEmptyState('Failed to load entities');
+         return;
+      }
+
+      memoryState.entities = payload.entities || [];
+      memoryState.allEntities = payload.entities || [];
+
+      if (memoryState.activeTab === 'entities' && !memoryState.searchQuery) {
+         renderEntitiesList();
+      }
+   }
+
+   function handleDeleteEntityResponse(payload) {
+      if (!payload.success) {
+         if (typeof DawnToast !== 'undefined') {
+            DawnToast.show(payload.error || 'Failed to delete entity', 'error');
+         }
+         return;
+      }
+
+      if (typeof DawnToast !== 'undefined') {
+         DawnToast.show('Entity deleted', 'success');
+      }
+
+      requestStats();
+      requestEntities();
    }
 
    function handleFactsResponse(payload) {
@@ -241,6 +291,13 @@
             (p.value && p.value.toLowerCase().includes(query))
       );
 
+      // Filter entities client-side
+      memoryState.entities = memoryState.allEntities.filter(
+         (e) =>
+            (e.name && e.name.toLowerCase().includes(query)) ||
+            (e.entity_type && e.entity_type.toLowerCase().includes(query))
+      );
+
       // Render search results based on active tab
       if (memoryState.activeTab === 'facts') {
          renderFactsList();
@@ -248,6 +305,8 @@
          renderPreferencesList();
       } else if (memoryState.activeTab === 'summaries') {
          renderSummariesList();
+      } else if (memoryState.activeTab === 'entities') {
+         renderEntitiesList();
       }
 
       // Disable load more button during search
@@ -324,6 +383,8 @@
       memoryState.facts = [];
       memoryState.preferences = [];
       memoryState.summaries = [];
+      memoryState.entities = [];
+      memoryState.allEntities = [];
       memoryState.factsOffset = 0;
       requestStats();
       showEmptyState('No memories yet');
@@ -344,6 +405,9 @@
       }
       if (memoryElements.statSummaries) {
          memoryElements.statSummaries.textContent = memoryState.stats.summary_count || 0;
+      }
+      if (memoryElements.statEntities) {
+         memoryElements.statEntities.textContent = memoryState.stats.entity_count || 0;
       }
    }
 
@@ -499,15 +563,144 @@
       `;
    }
 
+   /* =============================================================================
+    * Entity Rendering
+    * ============================================================================= */
+
+   const ENTITY_TYPE_CLASSES = {
+      person: 'entity-type-person',
+      pet: 'entity-type-pet',
+      project: 'entity-type-project',
+      device: 'entity-type-device',
+      place: 'entity-type-place',
+      organization: 'entity-type-organization',
+   };
+
+   function renderEntitiesList() {
+      if (!memoryElements.list) return;
+
+      if (memoryElements.loadMoreBtn) {
+         memoryElements.loadMoreBtn.disabled = true;
+      }
+
+      if (memoryState.entities.length === 0) {
+         showEmptyState(
+            memoryState.searchQuery ? 'No entities found' : 'No entities discovered yet'
+         );
+         return;
+      }
+
+      const html = memoryState.entities.map((entity) => renderEntityItem(entity)).join('');
+      memoryElements.list.innerHTML = html;
+   }
+
+   function renderEntityItem(entity) {
+      const typeClass = ENTITY_TYPE_CLASSES[entity.entity_type] || 'entity-type-default';
+      const dateStr = formatDate(entity.first_seen);
+      const relations = entity.relations || [];
+      const maxVisible = 3;
+      const hasMore = relations.length > maxVisible;
+      const visible = hasMore ? relations.slice(0, maxVisible) : relations;
+
+      const relationsHtml = visible.map((rel) => renderRelationLine(rel)).join('');
+
+      const moreHtml = hasMore
+         ? `<div class="entity-relations-more" data-expand-entity="${entity.id}" tabindex="0" role="button">` +
+           `+${relations.length - maxVisible} more</div>`
+         : '';
+
+      const hiddenHtml = hasMore
+         ? `<div class="entity-relations-hidden" data-entity-hidden="${entity.id}" style="display:none">` +
+           relations
+              .slice(maxVisible)
+              .map((rel) => renderRelationLine(rel))
+              .join('') +
+           '</div>'
+         : '';
+
+      return (
+         `<div class="memory-item entity" data-entity-id="${entity.id}">` +
+         `<div class="entity-header">` +
+         `<span class="entity-type-badge ${typeClass}">${escapeHtml(entity.entity_type || 'other')}</span>` +
+         `<span class="entity-name">${escapeHtml(entity.name)}</span>` +
+         `</div>` +
+         `<div class="memory-item-meta">` +
+         `<span class="entity-mentions">${entity.mention_count || 0} mentions</span>` +
+         (dateStr ? `<span class="memory-item-date">${dateStr}</span>` : '') +
+         `</div>` +
+         (relations.length > 0
+            ? `<div class="entity-relations">${relationsHtml}${hiddenHtml}${moreHtml}</div>`
+            : '') +
+         `<button class="memory-item-delete" data-entity-id="${entity.id}" ` +
+         `title="Delete this entity" aria-label="Delete entity">` +
+         `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">` +
+         `<path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>` +
+         `</svg></button></div>`
+      );
+   }
+
+   function renderRelationLine(rel) {
+      const isLinked = rel.object_entity_id && rel.object_entity_id > 0;
+      const targetClass = isLinked ? 'entity-relation-target' : 'entity-relation-value';
+      const targetAttr = isLinked
+         ? ` data-target-entity="${rel.object_entity_id}" tabindex="0" role="button"`
+         : '';
+      const targetName = escapeHtml(rel.object_name || '');
+      const dirIndicator =
+         rel.direction === 'in' ? '<span class="entity-relation-arrow">&larr;</span>' : '';
+
+      const arrow = rel.direction === 'in' ? '&larr;' : '&rarr;';
+
+      return (
+         `<div class="entity-relation">` +
+         `<span class="entity-relation-arrow">${arrow}</span>` +
+         `<span class="entity-relation-verb">${escapeHtml(rel.relation)}</span> ` +
+         `<span class="${targetClass}"${targetAttr}>${targetName}</span>` +
+         `</div>`
+      );
+   }
+
    /**
     * Set up event delegation for delete buttons (called once in init)
     */
    function setupDeleteDelegation() {
       if (!memoryElements.list) return;
       memoryElements.list.addEventListener('click', handleListClick);
+      memoryElements.list.addEventListener('keydown', handleListKeydown);
+   }
+
+   function handleListKeydown(e) {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const target = e.target.closest('.entity-relation-target, .entity-relations-more');
+      if (!target) return;
+      e.preventDefault();
+      target.click();
    }
 
    function handleListClick(e) {
+      // Handle relation target clicks (scroll to entity)
+      const relTarget = e.target.closest('.entity-relation-target');
+      if (relTarget) {
+         const targetId = relTarget.dataset.targetEntity;
+         if (targetId) {
+            scrollToEntity(parseInt(targetId, 10));
+         }
+         return;
+      }
+
+      // Handle "+N more" expand toggle
+      const moreToggle = e.target.closest('.entity-relations-more');
+      if (moreToggle) {
+         const entityId = moreToggle.dataset.expandEntity;
+         const hidden = memoryElements.list.querySelector(`[data-entity-hidden="${entityId}"]`);
+         if (hidden) {
+            const isVisible = hidden.style.display !== 'none';
+            hidden.style.display = isVisible ? 'none' : '';
+            moreToggle.textContent = isVisible ? `+${hidden.children.length} more` : 'show less';
+         }
+         return;
+      }
+
       const btn = e.target.closest('.memory-item-delete');
       if (!btn) return;
 
@@ -515,9 +708,9 @@
       const factId = btn.dataset.factId;
       const prefCategory = btn.dataset.prefCategory;
       const summaryId = btn.dataset.summaryId;
+      const entityId = btn.dataset.entityId;
 
       if (factId) {
-         // Find fact content for detail display
          const fact = memoryState.facts.find((f) => f.id === parseInt(factId, 10));
          const detail = fact ? fact.fact_text : null;
 
@@ -533,7 +726,6 @@
             requestDeleteFact(parseInt(factId, 10));
          }
       } else if (prefCategory) {
-         // Find preference content for detail display
          const pref = memoryState.preferences.find((p) => p.category === prefCategory);
          const detail = pref ? `${pref.category}: ${pref.value}` : null;
 
@@ -549,7 +741,6 @@
             requestDeletePreference(prefCategory);
          }
       } else if (summaryId) {
-         // Find summary content for detail display
          const summary = memoryState.summaries.find((s) => s.id === parseInt(summaryId, 10));
          const detail = summary ? summary.summary : null;
 
@@ -564,6 +755,35 @@
          } else {
             requestDeleteSummary(parseInt(summaryId, 10));
          }
+      } else if (entityId) {
+         const entity = memoryState.entities.find((e) => e.id === parseInt(entityId, 10));
+         const detail = entity ? `${entity.name} (${entity.entity_type})` : null;
+
+         if (callbacks.showConfirmModal) {
+            callbacks.showConfirmModal(
+               'Delete this entity and its relations?',
+               () => {
+                  requestDeleteEntity(parseInt(entityId, 10));
+               },
+               { detail: detail, danger: true }
+            );
+         } else {
+            requestDeleteEntity(parseInt(entityId, 10));
+         }
+      }
+   }
+
+   function scrollToEntity(entityId) {
+      if (!memoryElements.list) return;
+      const el = memoryElements.list.querySelector(
+         `.memory-item.entity[data-entity-id="${entityId}"]`
+      );
+      if (el) {
+         el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+         el.classList.remove('highlight-pulse');
+         // Force reflow to restart animation
+         void el.offsetWidth;
+         el.classList.add('highlight-pulse');
       }
    }
 
@@ -709,6 +929,9 @@
          case 'summaries':
             requestSummaries();
             break;
+         case 'entities':
+            requestEntities();
+            break;
       }
    }
 
@@ -849,6 +1072,7 @@
       memoryElements.statFacts = document.getElementById('memory-fact-count');
       memoryElements.statPrefs = document.getElementById('memory-pref-count');
       memoryElements.statSummaries = document.getElementById('memory-summary-count');
+      memoryElements.statEntities = document.getElementById('memory-entity-count');
 
       if (!memoryElements.btn || !memoryElements.popover) {
          console.warn('DawnMemory: Required elements not found');
@@ -909,10 +1133,12 @@
       handleFactsResponse,
       handlePreferencesResponse,
       handleSummariesResponse,
+      handleEntitiesResponse,
       handleSearchResponse,
       handleDeleteFactResponse,
       handleDeletePreferenceResponse,
       handleDeleteSummaryResponse,
+      handleDeleteEntityResponse,
       handleDeleteAllResponse,
    };
 })();

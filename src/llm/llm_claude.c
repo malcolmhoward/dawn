@@ -486,18 +486,17 @@ static char *llm_claude_streaming_internal(struct json_object *conversation_hist
    curl_easy_setopt(curl_handle, CURLOPT_XFERINFOFUNCTION, llm_curl_progress_callback);
    curl_easy_setopt(curl_handle, CURLOPT_XFERINFODATA, NULL);
 
-   // Set low-speed timeout: abort if transfer drops below 1 byte/sec for 30 seconds
-   // This catches hung/stalled streams from LLM servers
+   // For streaming: use inactivity timeout instead of hard wall timeout.
+   // Abort if transfer drops below 1 byte/sec for 60 seconds (no data flowing).
+   // This allows long responses to complete while still catching hung connections.
    curl_easy_setopt(curl_handle, CURLOPT_LOW_SPEED_LIMIT, 1L);
-   curl_easy_setopt(curl_handle, CURLOPT_LOW_SPEED_TIME, 30L);
+   curl_easy_setopt(curl_handle, CURLOPT_LOW_SPEED_TIME, 60L);
 
    // Set connect timeout: fail fast on unreachable hosts instead of waiting for overall timeout
    curl_easy_setopt(curl_handle, CURLOPT_CONNECTTIMEOUT_MS, LLM_CONNECT_TIMEOUT_MS);
 
-   // Set overall timeout from config (default 30000ms)
-   if (g_config.network.llm_timeout_ms > 0) {
-      curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT_MS, (long)g_config.network.llm_timeout_ms);
-   }
+   // No hard timeout for streaming - rely on low-speed detection instead.
+   // The llm_timeout_ms config is only used for non-streaming requests.
 
    res = curl_easy_perform(curl_handle);
    if (res != CURLE_OK) {
@@ -508,7 +507,7 @@ static char *llm_claude_streaming_internal(struct json_object *conversation_hist
          LOG_INFO("LLM transfer interrupted by user");
          /* User cancellation - don't send as error */
       } else if (res == CURLE_OPERATION_TIMEDOUT) {
-         LOG_ERROR("LLM stream timed out (limit: %dms)", g_config.network.llm_timeout_ms);
+         LOG_ERROR("LLM stream timed out (no data for 60 seconds)");
          error_code = "LLM_TIMEOUT";
          error_msg = "Request timed out - AI server may be overloaded";
       } else {
@@ -932,12 +931,15 @@ int llm_claude_streaming_single_shot(struct json_object *conversation_history,
       curl_easy_setopt(curl_handle, CURLOPT_NOPROGRESS, 0L);
       curl_easy_setopt(curl_handle, CURLOPT_XFERINFOFUNCTION, llm_curl_progress_callback);
       curl_easy_setopt(curl_handle, CURLOPT_XFERINFODATA, NULL);
+      // For streaming: use inactivity timeout instead of hard wall timeout.
+      // Abort if transfer drops below 1 byte/sec for 60 seconds (no data flowing).
+      // This allows long responses to complete while still catching hung connections.
       curl_easy_setopt(curl_handle, CURLOPT_LOW_SPEED_LIMIT, 1L);
-      curl_easy_setopt(curl_handle, CURLOPT_LOW_SPEED_TIME, 30L);
+      curl_easy_setopt(curl_handle, CURLOPT_LOW_SPEED_TIME, 60L);
       curl_easy_setopt(curl_handle, CURLOPT_CONNECTTIMEOUT_MS, LLM_CONNECT_TIMEOUT_MS);
-      if (g_config.network.llm_timeout_ms > 0) {
-         curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT_MS, (long)g_config.network.llm_timeout_ms);
-      }
+
+      // No hard timeout for streaming - rely on low-speed detection instead.
+      // The llm_timeout_ms config is only used for non-streaming requests.
 
       res = curl_easy_perform(curl_handle);
       if (res != CURLE_OK) {

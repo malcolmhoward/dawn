@@ -482,6 +482,245 @@ int memory_db_delete_user_memories(int user_id);
 int memory_db_get_stats(int user_id, memory_stats_t *out_stats);
 
 /* =============================================================================
+ * Embedding Operations (Semantic Search)
+ * ============================================================================= */
+
+/**
+ * @brief Store an embedding vector for a fact
+ *
+ * @param fact_id Fact ID
+ * @param embedding Float array of embedding values
+ * @param dims Number of dimensions
+ * @param norm Pre-computed L2 norm of the embedding
+ * @return MEMORY_DB_SUCCESS or MEMORY_DB_FAILURE
+ */
+int memory_db_fact_update_embedding(int user_id,
+                                    int64_t fact_id,
+                                    const float *embedding,
+                                    int dims,
+                                    float norm);
+
+/**
+ * @brief Load all embeddings for a user (for in-memory cache)
+ *
+ * Returns fact IDs, embedding BLOBs, and pre-computed norms.
+ * Skips rows where embedding dimensions don't match expected_dims.
+ *
+ * @param user_id User ID
+ * @param expected_dims Expected embedding dimensions (for validation)
+ * @param out_ids Output: array of fact IDs (caller allocates)
+ * @param out_embeddings Output: flat float array (caller allocates, count * dims)
+ * @param out_norms Output: array of norms (caller allocates)
+ * @param max_count Maximum entries to return
+ * @return Number of embeddings loaded, -1 on error
+ */
+int memory_db_fact_get_embeddings(int user_id,
+                                  int expected_dims,
+                                  int64_t *out_ids,
+                                  float *out_embeddings,
+                                  float *out_norms,
+                                  int max_count);
+
+/**
+ * @brief List facts that need embedding (backfill)
+ *
+ * Returns facts with NULL embedding or mismatched dimensions.
+ *
+ * @param user_id User ID
+ * @param expected_dims Expected embedding dimensions
+ * @param out_ids Output: array of fact IDs
+ * @param out_texts Output: array of fact text strings (caller allocates char[][512])
+ * @param max_count Maximum entries to return
+ * @return Number of facts found, -1 on error
+ */
+int memory_db_fact_list_without_embedding(int user_id,
+                                          int expected_dims,
+                                          int64_t *out_ids,
+                                          char out_texts[][512],
+                                          int max_count);
+
+/* =============================================================================
+ * Entity Graph Operations (Phase S4)
+ * ============================================================================= */
+
+/**
+ * @brief Build a canonical (lowercase ASCII) version of an entity name
+ *
+ * Lowercases ASCII characters, preserves multibyte UTF-8 as-is,
+ * and trims trailing spaces.
+ *
+ * @param name Input entity name
+ * @param out Output buffer
+ * @param size Size of output buffer
+ */
+void memory_make_canonical_name(const char *name, char *out, size_t size);
+
+/**
+ * @brief Upsert an entity (insert or increment mention_count)
+ *
+ * Uses INSERT ... ON CONFLICT ... RETURNING id, mention_count.
+ *
+ * @param user_id User who owns this entity
+ * @param name Display name
+ * @param entity_type Entity type (person, pet, place, org, thing)
+ * @param canonical_name Lowercased canonical name
+ * @param out_created Output: true if this was a new insert (mention_count == 1)
+ * @return Entity ID on success, -1 on failure
+ */
+int64_t memory_db_entity_upsert(int user_id,
+                                const char *name,
+                                const char *entity_type,
+                                const char *canonical_name,
+                                bool *out_created);
+
+/**
+ * @brief Get an entity by exact canonical name
+ *
+ * @param user_id User ID
+ * @param canonical_name Exact canonical name to look up
+ * @param out_entity Output: populated entity structure
+ * @return MEMORY_DB_SUCCESS, MEMORY_DB_NOT_FOUND, or MEMORY_DB_FAILURE
+ */
+int memory_db_entity_get_by_name(int user_id,
+                                 const char *canonical_name,
+                                 memory_entity_t *out_entity);
+
+/**
+ * @brief Update entity embedding vector
+ *
+ * @param entity_id Entity ID
+ * @param user_id User ID (for ownership check)
+ * @param embedding Float array of embedding values
+ * @param dims Number of dimensions
+ * @param norm Pre-computed L2 norm
+ * @return MEMORY_DB_SUCCESS or MEMORY_DB_FAILURE
+ */
+int memory_db_entity_update_embedding(int64_t entity_id,
+                                      int user_id,
+                                      const float *embedding,
+                                      int dims,
+                                      float norm);
+
+/**
+ * @brief Create a relation between entities
+ *
+ * @param user_id User ID
+ * @param subject_entity_id Subject entity ID
+ * @param relation Relation type (e.g., "is_a", "lives_in")
+ * @param object_entity_id Object entity ID (0 for literal)
+ * @param object_value Literal value if no object entity
+ * @param fact_id Associated fact ID (0 for none)
+ * @param confidence Confidence score (0.0-1.0)
+ * @return MEMORY_DB_SUCCESS or MEMORY_DB_FAILURE
+ */
+int memory_db_relation_create(int user_id,
+                              int64_t subject_entity_id,
+                              const char *relation,
+                              int64_t object_entity_id,
+                              const char *object_value,
+                              int64_t fact_id,
+                              float confidence);
+
+/**
+ * @brief List relations where entity is subject (outgoing)
+ *
+ * @param user_id User ID
+ * @param subject_entity_id Subject entity ID
+ * @param out Output array of relations
+ * @param max Maximum relations to return
+ * @return Number of relations found, -1 on error
+ */
+int memory_db_relation_list_by_subject(int user_id,
+                                       int64_t subject_entity_id,
+                                       memory_relation_t *out,
+                                       int max);
+
+/**
+ * @brief List incoming relations where entity is the object
+ *
+ * Returns relations where the given entity is the target/object.
+ * The object_name field contains the subject entity's resolved name.
+ *
+ * @param user_id User ID
+ * @param object_entity_id Entity ID to find incoming relations for
+ * @param out Output array
+ * @param max Maximum results
+ * @return Number of relations, or -1 on error
+ */
+int memory_db_relation_list_by_object(int user_id,
+                                      int64_t object_entity_id,
+                                      memory_relation_t *out,
+                                      int max);
+
+/**
+ * @brief Bulk-load all relations for a user in a single query
+ *
+ * Returns outgoing relations sorted by subject_entity_id. Used by WebUI
+ * to avoid N+1 queries when loading entities with their relations.
+ *
+ * @param user_id User ID
+ * @param out Output array of relations
+ * @param max Maximum relations to return
+ * @return Number of relations, or -1 on error
+ */
+int memory_db_relation_list_all_by_user(int user_id, memory_relation_t *out, int max);
+
+/**
+ * @brief List all entities for a user, ordered by mention count
+ *
+ * Used to feed existing entities into the extraction prompt so the
+ * LLM reuses canonical names instead of creating variants.
+ *
+ * @param user_id User ID
+ * @param out Output array of entities
+ * @param max Maximum entities to return
+ * @return Number of entities found, -1 on error
+ */
+int memory_db_entity_list(int user_id, memory_entity_t *out, int max);
+
+/**
+ * @brief Search entities by keyword (LIKE on canonical_name)
+ *
+ * @param user_id User ID
+ * @param keywords Search terms
+ * @param out Output array of entities
+ * @param max Maximum entities to return
+ * @return Number of entities found, -1 on error
+ */
+int memory_db_entity_search(int user_id, const char *keywords, memory_entity_t *out, int max);
+
+/**
+ * @brief Delete an entity and its relations
+ *
+ * @param entity_id Entity ID
+ * @param user_id User ID (ownership check)
+ * @return MEMORY_DB_SUCCESS, MEMORY_DB_NOT_FOUND, or MEMORY_DB_FAILURE
+ */
+int memory_db_entity_delete(int64_t entity_id, int user_id);
+
+/**
+ * @brief Load all entity embeddings for a user (for cache)
+ *
+ * @param user_id User ID
+ * @param expected_dims Expected embedding dimensions
+ * @param out_ids Output: entity IDs
+ * @param out_names Output: canonical names
+ * @param out_types Output: entity types
+ * @param out_embeddings Output: flat float array
+ * @param out_norms Output: norms
+ * @param max Maximum entries
+ * @return Number loaded, -1 on error
+ */
+int memory_db_entity_get_embeddings(int user_id,
+                                    int expected_dims,
+                                    int64_t *out_ids,
+                                    char out_names[][MEMORY_ENTITY_NAME_MAX],
+                                    char out_types[][MEMORY_ENTITY_TYPE_MAX],
+                                    float *out_embeddings,
+                                    float *out_norms,
+                                    int max);
+
+/* =============================================================================
  * Extraction Tracking
  * ============================================================================= */
 

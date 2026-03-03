@@ -555,6 +555,10 @@ list(APPEND DAWN_SOURCES
     src/memory/memory_extraction.c
     src/memory/memory_similarity.c
     src/memory/memory_maintenance.c
+    src/memory/memory_embeddings.c
+    src/memory/memory_embed_onnx.c
+    src/memory/memory_embed_ollama.c
+    src/memory/memory_embed_openai.c
 )
 
 # Auth subsystem (admin socket, user management, crypto — requires WebUI)

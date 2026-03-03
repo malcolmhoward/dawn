@@ -1,9 +1,9 @@
 # DAWN Memory System Design
 
-**Status:** Phases 1-4 Complete - Core Memory System Implemented
+**Status:** Phases 1-6, S4 Complete - Core Memory, Decay, WebUI Viewer, Entity Graph, Embeddings
 **Date:** January 2026
 **Authors:** Kris Kersey, with input from community proposals
-**Last Updated:** 2026-01-26
+**Last Updated:** 2026-03-03
 
 ---
 
@@ -12,10 +12,13 @@
 A comprehensive design for DAWN's persistent memory system with integrated RAG (Retrieval-Augmented Generation) for document search. All major design decisions have been finalized and documented here.
 
 **Implementation Status:**
+
 - **Phases 1-4 (Core Memory):** ✅ Complete - Storage, tool, context injection, and extraction
 - **Phase 4.5 (Privacy Toggle):** ✅ Complete - Per-conversation privacy flag
-- **Phase 5 (Decay/Maintenance):** Pending - Nightly decay job, pruning
-- **Phase 6 (Memory WebUI):** Pending - See `NEXT_STEPS.md` Section 15
+- **Phase 5 (Decay/Maintenance):** ✅ Complete - Nightly decay job, pruning, reinforcement
+- **Phase 6 (Memory WebUI):** ✅ Complete - Viewer with facts/preferences/summaries/graph tabs
+- **S4 (Entity Graph):** ✅ Complete - Entities, relations, embeddings, graph search, WebUI graph tab
+- **S4b (Entity Dedup):** ✅ Complete - Existing entities fed into extraction prompt
 - **Phases 7-11 (RAG):** Pending - Document search and retrieval
 
 ---
@@ -25,6 +28,7 @@ A comprehensive design for DAWN's persistent memory system with integrated RAG (
 DAWN currently has no memory between sessions. Every conversation starts fresh. Users must re-explain context, preferences, and history. This makes DAWN feel like a tool rather than an assistant that knows you.
 
 **What we want:**
+
 - DAWN remembers facts you've told it ("I'm allergic to shellfish")
 - DAWN adapts to your communication style over time
 - DAWN can reference past conversations ("Last week you asked about...")
@@ -32,6 +36,7 @@ DAWN currently has no memory between sessions. Every conversation starts fresh. 
 - DAWN does this without requiring explicit configuration
 
 **What we don't want:**
+
 - Massive storage requirements
 - Significant latency added to conversations
 - Privacy nightmares (storing full conversation logs indefinitely)
@@ -44,6 +49,7 @@ DAWN currently has no memory between sessions. Every conversation starts fresh. 
 ### 2.1 ChatGPT Memory ([OpenAI](https://openai.com/index/memory-and-new-controls-for-chatgpt/))
 
 **Two-tier system:**
+
 1. **Saved Memories** - Explicit facts ("Remember I'm vegetarian")
    - Injected directly into system prompt
    - User can view/edit/delete
@@ -54,6 +60,7 @@ DAWN currently has no memory between sessions. Every conversation starts fresh. 
    - Plus/Pro users: "longer-term understanding" (searches across all history)
 
 **Technical implementation** ([Analysis](https://embracethered.com/blog/posts/2025/chatgpt-how-does-chat-history-memory-preferences-work/)):
+
 - Saved memories appear to be direct context injection
 - Chat history may use RAG-style retrieval
 - Context budget not publicly documented, but saved memories are compact
@@ -61,11 +68,13 @@ DAWN currently has no memory between sessions. Every conversation starts fresh. 
 ### 2.2 Claude Memory ([Anthropic](https://www.anthropic.com/news/memory))
 
 **File-based, project-scoped:**
+
 - Memory stored in CLAUDE.md files (plain Markdown)
 - "Automatically loaded into context when launched"
 - **Project-scoped** - memories don't leak between projects
 
 **Best practices** ([Guide](https://support.claude.com/en/articles/11817273-using-claude-s-chat-search-and-memory-to-build-on-previous-context)):
+
 - Keep CLAUDE.md **minimal** - only essential information
 - Store detailed knowledge in separate docs, reference only when needed
 - Use `/clear` between tasks, `/compact` to summarize
@@ -73,6 +82,7 @@ DAWN currently has no memory between sessions. Every conversation starts fresh. 
 ### 2.3 Key Insights for DAWN
 
 From studying commercial implementations:
+
 - **Hybrid loading**: Small set of core facts always loaded, additional context retrieved on-demand
 - **Budget consciousness**: Neither loads everything into context
 - **User control**: Full transparency about what's remembered, easy deletion
@@ -80,11 +90,11 @@ From studying commercial implementations:
 
 ### 2.4 Other Systems
 
-| System | Insight | Why Not Use Directly |
-|--------|---------|---------------------|
-| MemGPT/Letta | Tiered memory with LLM-managed operations | Python, cloud-focused, adds latency |
-| LangChain | Multiple memory backend types | Python dependency |
-| Vector DBs (Pinecone, Chroma) | Good for large-scale search | Overkill for personal assistant |
+| System                        | Insight                                   | Why Not Use Directly                |
+| ----------------------------- | ----------------------------------------- | ----------------------------------- |
+| MemGPT/Letta                  | Tiered memory with LLM-managed operations | Python, cloud-focused, adds latency |
+| LangChain                     | Multiple memory backend types             | Python dependency                   |
+| Vector DBs (Pinecone, Chroma) | Good for large-scale search               | Overkill for personal assistant     |
 
 ---
 
@@ -92,17 +102,18 @@ From studying commercial implementations:
 
 ### 3.1 User Identification
 
-| Interface | Strategy | Memory Behavior |
-|-----------|----------|-----------------|
-| **WebUI** | Auth username | Full memory storage and retrieval |
-| **Local mic** | Configurable mapping | Default: no memory. Can map to user in config |
-| **DAP satellites** | Configurable mapping | Default: no memory. Can map to user in config |
-| **DAP2 satellites** | Configurable mapping | See `DAP2_DESIGN.md` for user mapping enhancement |
-| **Future** | Speaker identification | sherpa-onnx integration (Phase 5+) |
+| Interface           | Strategy               | Memory Behavior                                   |
+| ------------------- | ---------------------- | ------------------------------------------------- |
+| **WebUI**           | Auth username          | Full memory storage and retrieval                 |
+| **Local mic**       | Configurable mapping   | Default: no memory. Can map to user in config     |
+| **DAP satellites**  | Configurable mapping   | Default: no memory. Can map to user in config     |
+| **DAP2 satellites** | Configurable mapping   | See `DAP2_DESIGN.md` for user mapping enhancement |
+| **Future**          | Speaker identification | sherpa-onnx integration (Phase 5+)                |
 
 **Decision:** Voice interfaces (local mic, DAP) do NOT store memories by default. They operate as "guest" sessions. Users can optionally map these interfaces to authenticated users via configuration.
 
 **Configuration:**
+
 ```toml
 [memory.voice_mapping]
 # Map voice interfaces to authenticated users
@@ -113,6 +124,7 @@ local_mic = "krisk"              # Local mic → user "krisk"
 ```
 
 **Why guest by default?**
+
 - Multi-person households: Anyone can talk to DAWN without polluting the owner's memory
 - Privacy: Visitors don't accidentally store personal facts
 - Explicit opt-in: Users must consciously enable memory for voice interfaces
@@ -140,59 +152,60 @@ model = "qwen2.5:7b"         # Model name for that provider
 
 **800 tokens default**, configurable via `memory.context_budget_tokens`.
 
-| Type | Loading Strategy | Budget |
-|------|------------------|--------|
-| **Core facts/preferences** | Always injected | ~400 tokens |
-| **Recent summaries** | Last 3 sessions | ~400 tokens |
-| **RAG documents** | Retrieved on-demand | 0 base, ~500 when relevant |
+| Type                       | Loading Strategy    | Budget                     |
+| -------------------------- | ------------------- | -------------------------- |
+| **Core facts/preferences** | Always injected     | ~400 tokens                |
+| **Recent summaries**       | Last 3 sessions     | ~400 tokens                |
+| **RAG documents**          | Retrieved on-demand | 0 base, ~500 when relevant |
 
 **Decision:** Core facts always loaded. RAG adds context only when query needs it (hybrid approach matching commercial implementations).
 
 ### 3.4 Document Formats (RAG)
 
-| Phase | Format | Library | Notes |
-|-------|--------|---------|-------|
-| **Phase 1** | TXT, MD | stdlib | No dependencies |
-| **Phase 2** | PDF | poppler | `apt install poppler-utils` or libpoppler C API |
-| **Phase 3** | DOCX | libzip + libxml2 | DOCX is ZIP of XML files |
+| Phase       | Format  | Library          | Notes                                           |
+| ----------- | ------- | ---------------- | ----------------------------------------------- |
+| **Phase 1** | TXT, MD | stdlib           | No dependencies                                 |
+| **Phase 2** | PDF     | poppler          | `apt install poppler-utils` or libpoppler C API |
+| **Phase 3** | DOCX    | libzip + libxml2 | DOCX is ZIP of XML files                        |
 
 **Decision:** Implement all three phases. Skip legacy `.doc` format (binary nightmare).
 
 ### 3.5 Embedding Model
 
-**all-MiniLM-L6-v2** via ONNX Runtime (shared with Piper TTS).
+Multi-provider embedding support configured via `[memory.embeddings]`:
 
-| Property | Value |
-|----------|-------|
-| Dimensions | 384 |
-| Model size | ~80MB |
-| Speed | ~5ms per embedding on CPU |
-| Format | ONNX |
+| Provider             | Model                  | Dimensions | Speed  | Setup                              |
+| -------------------- | ---------------------- | ---------- | ------ | ---------------------------------- |
+| **Ollama** (default) | nomic-embed-text       | 768        | ~20ms  | `ollama pull nomic-embed-text`     |
+| **OpenAI**           | text-embedding-3-small | 1536       | ~100ms | Requires API key                   |
+| **ONNX**             | all-MiniLM-L6-v2       | 384        | ~5ms   | Shares ONNX Runtime with Piper TTS |
 
-**Decision:** Leverage existing ONNX Runtime dependency. 384 dimensions is efficient for storage and search.
+**Decision:** Support multiple embedding providers to match the LLM provider flexibility. Ollama is the default for local deployments. ONNX leverages existing runtime dependency. OpenAI provides cloud option for higher quality embeddings. Embeddings are used for both facts and entities.
 
 ### 3.6 Storage Architecture
 
-**Single SQLite database** (`dawn.db`) with prefixed tables:
+**Single SQLite database** (`auth.db`) with prefixed tables:
 
 ```
-dawn.db
+auth.db
 ├── users (existing auth)
 ├── sessions (existing auth)
-├── memory_facts
-├── memory_preferences
-├── memory_summaries
-├── rag_documents
-└── rag_chunks
+├── memory_facts           # Discrete facts with optional embeddings
+├── memory_preferences     # Communication style preferences
+├── memory_summaries       # Conversation digests
+├── memory_entities        # People, places, pets, projects (with embeddings)
+├── memory_relations       # Entity-to-entity relationships
+├── rag_documents          # (future)
+└── rag_chunks             # (future)
 ```
 
 **Decision:** Shared connection pool, single backup file, foreign keys to users table.
 
 ### 3.7 Consolidation Timing
 
-| Trigger | Purpose |
-|---------|---------|
-| **Session end** | Primary extraction (WebSocket disconnect/timeout) |
+| Trigger         | Purpose                                                  |
+| --------------- | -------------------------------------------------------- |
+| **Session end** | Primary extraction (WebSocket disconnect/timeout)        |
 | **Nightly job** | Decay, pruning, crash recovery (unconsolidated sessions) |
 
 **Decision:** Session-end extraction + nightly maintenance at configurable hour.
@@ -201,20 +214,22 @@ dawn.db
 
 A "session end" triggers memory extraction. Detection varies by interface:
 
-| Interface | Session End Signal | Implementation |
-|-----------|-------------------|----------------|
-| **WebUI** | WebSocket close | `onclose` event in `webui_server.c` |
-| **WebUI (timeout)** | No messages for N minutes | Server-side timer per connection |
-| **Local mic** | Silence timeout + no pending response | Existing VAD timeout mechanism |
-| **DAP satellites** | TCP disconnect | Connection close handler |
+| Interface           | Session End Signal                    | Implementation                      |
+| ------------------- | ------------------------------------- | ----------------------------------- |
+| **WebUI**           | WebSocket close                       | `onclose` event in `webui_server.c` |
+| **WebUI (timeout)** | No messages for N minutes             | Server-side timer per connection    |
+| **Local mic**       | Silence timeout + no pending response | Existing VAD timeout mechanism      |
+| **DAP satellites**  | TCP disconnect                        | Connection close handler            |
 
 **Configuration:**
+
 ```toml
 [memory]
 session_timeout_minutes = 15    # Inactivity timeout before session end
 ```
 
 **Implementation approach:**
+
 1. Track `last_activity_timestamp` per session
 2. Check on each message: if `now - last_activity > timeout`, trigger extraction first
 3. On WebSocket close: trigger extraction (if not already done)
@@ -223,6 +238,7 @@ session_timeout_minutes = 15    # Inactivity timeout before session end
 
 **Race Condition Handling:**
 If a user starts a new session while extraction from the previous session is still running:
+
 - Load existing (stale) memories immediately - don't block on extraction
 - Don't update memories during the new session until extraction completes
 - New session's extraction runs after the pending one completes
@@ -231,6 +247,7 @@ If a user starts a new session while extraction from the previous session is sti
 ### 3.8 Memory Disclosure
 
 **Full transparency:**
+
 - Voice: Summarize on request ("I remember these things about you...")
 - WebUI: Dedicated "Memory" section showing all stored facts/preferences
 - Delete capability: "Forget that I'm vegetarian" or WebUI delete button
@@ -275,11 +292,18 @@ Memory processing happens **after sessions end**, not during. Inspired by human 
 │  2. Extract PREFERENCES                                              │
 │     "User asked for shorter responses twice" → memory_preferences   │
 │                                                                      │
-│  3. Generate SUMMARY                                                 │
+│  3. Extract ENTITIES + RELATIONS                                     │
+│     "Kris" (person), "Bruno" (pet) → memory_entities                │
+│     "Kris" → owns → "Bruno" → memory_relations                     │
+│     Existing entity names fed into prompt to prevent duplicates     │
+│                                                                      │
+│  4. Generate SUMMARY                                                 │
 │     "Discussed home automation setup for garage lights"             │
 │     → memory_summaries                                               │
 │                                                                      │
-│  4. Mark transcript as "consolidated"                                │
+│  5. Generate embeddings for new facts and entities                   │
+│                                                                      │
+│  6. Mark transcript as "consolidated"                                │
 │                                                                      │
 └─────────────────────────────────────────────────────────────────────┘
                                 │
@@ -314,13 +338,13 @@ Memory processing happens **after sessions end**, not during. Inspired by human 
 
 ### 4.2 Why Batch Processing ("Sleep") Instead of Real-Time
 
-| Real-Time Extraction | Batch/Sleep Extraction |
-|---------------------|------------------------|
-| Adds latency to every Nth response | Zero conversation latency |
-| Must use fast model (quality tradeoff) | Can use slower, better model |
-| Interrupts conversation flow | Invisible to user |
-| Complex state management | Simple: process transcript, done |
-| Hard to handle long conversations | Natural boundary at session end |
+| Real-Time Extraction                   | Batch/Sleep Extraction           |
+| -------------------------------------- | -------------------------------- |
+| Adds latency to every Nth response     | Zero conversation latency        |
+| Must use fast model (quality tradeoff) | Can use slower, better model     |
+| Interrupts conversation flow           | Invisible to user                |
+| Complex state management               | Simple: process transcript, done |
+| Hard to handle long conversations      | Natural boundary at session end  |
 
 **Tradeoff:** Information isn't available until next session. User says "remember I hate cilantro" - DAWN won't "know" this until after consolidation runs. Acceptable for most use cases.
 
@@ -394,6 +418,7 @@ An **embedding** represents text as a list of numbers (a **vector**) where **sim
 ```
 
 **Cosine similarity** measures how "aligned" two vectors are:
+
 - 1.0 = identical meaning
 - 0.0 = unrelated
 - -1.0 = opposite meaning
@@ -401,6 +426,7 @@ An **embedding** represents text as a list of numbers (a **vector**) where **sim
 ### 5.3 Document Ingestion
 
 **Configuration:**
+
 ```toml
 [rag]
 enabled = true
@@ -419,6 +445,7 @@ max_results = 5
 | DOCX | libzip + libxml2 | Extract `word/document.xml`, parse `<w:t>` elements |
 
 **Chunking strategy:**
+
 - Chunk by paragraph with configurable overlap
 - ~256 tokens per chunk (tunable)
 - 50-token overlap for context continuity
@@ -427,14 +454,15 @@ max_results = 5
 
 Documents are indexed at multiple points to balance freshness with performance:
 
-| Trigger | When | Behavior |
-|---------|------|----------|
-| **Startup scan** | DAWN starts | Check configured directory for new/changed files |
-| **File watcher** | Runtime | inotify (Linux) watches documents_dir for changes |
-| **Manual trigger** | User request | WebUI "Re-index" button or voice command |
-| **Nightly job** | Configurable hour | Full directory scan, cleanup orphaned chunks |
+| Trigger            | When              | Behavior                                          |
+| ------------------ | ----------------- | ------------------------------------------------- |
+| **Startup scan**   | DAWN starts       | Check configured directory for new/changed files  |
+| **File watcher**   | Runtime           | inotify (Linux) watches documents_dir for changes |
+| **Manual trigger** | User request      | WebUI "Re-index" button or voice command          |
+| **Nightly job**    | Configurable hour | Full directory scan, cleanup orphaned chunks      |
 
 **Configuration:**
+
 ```toml
 [rag]
 enabled = true
@@ -446,22 +474,26 @@ max_document_size_mb = 10       # Skip files larger than this
 ```
 
 **Scaling Limits:**
+
 - `max_chunks = 5000`: Vector search is O(n), stays fast up to ~5000 chunks (~50-100 documents)
 - `max_document_size_mb = 10`: Prevents memory issues during PDF/DOCX parsing
 - Warnings logged when limits approached
 
 **Document Management (v1):**
+
 - Admin places files in `documents_dir` manually (SSH, SFTP, file manager)
 - All authenticated users can search all indexed documents (shared knowledge)
 - WebUI shows index status, allows re-indexing, but no file upload
 
 **Change detection:**
+
 - File hash (SHA256) stored in `rag_documents.file_hash`
 - On scan, compare current hash to stored hash
 - If different: delete old chunks, re-index entire file
 - If missing from disk: delete document and chunks from DB
 
 **Indexing priority:**
+
 1. Small files processed first (quick availability)
 2. Large files processed in background (non-blocking)
 3. New files prioritized over re-indexing changed files
@@ -538,7 +570,49 @@ CREATE TABLE memory_summaries (
 CREATE INDEX idx_memory_summaries_user ON memory_summaries(user_id, created_at DESC);
 ```
 
-### 6.4 RAG Documents Table
+### 6.4 Memory Entities Table
+
+```sql
+CREATE TABLE memory_entities (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    name TEXT NOT NULL,                 -- Display name (e.g., "Kris Kersey")
+    entity_type TEXT NOT NULL,          -- "person", "place", "pet", "project", "thing"
+    canonical_name TEXT NOT NULL,       -- Lowercase normalized (e.g., "kris kersey")
+    mention_count INTEGER DEFAULT 1,
+    first_seen INTEGER NOT NULL,        -- Unix timestamp
+    last_seen INTEGER NOT NULL,         -- Unix timestamp
+    embedding BLOB,                     -- Float array for semantic search
+    embedding_norm REAL,                -- Pre-computed L2 norm
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    UNIQUE(user_id, canonical_name)
+);
+```
+
+### 6.5 Memory Relations Table
+
+```sql
+CREATE TABLE memory_relations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    subject_entity_id INTEGER NOT NULL,
+    relation TEXT NOT NULL,             -- "lives_in", "owns", "works_on", etc.
+    object_entity_id INTEGER,           -- FK to entity (NULL if literal value)
+    object_value TEXT,                  -- Literal value (e.g., "golden retriever")
+    fact_id INTEGER,                    -- Optional FK to originating fact
+    confidence REAL DEFAULT 1.0,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (subject_entity_id) REFERENCES memory_entities(id),
+    FOREIGN KEY (object_entity_id) REFERENCES memory_entities(id),
+    FOREIGN KEY (fact_id) REFERENCES memory_facts(id)
+);
+
+CREATE INDEX idx_memory_relations_subject ON memory_relations(user_id, subject_entity_id);
+CREATE INDEX idx_memory_relations_object ON memory_relations(user_id, object_entity_id);
+```
+
+### 6.6 RAG Documents Table
 
 ```sql
 CREATE TABLE rag_documents (
@@ -552,7 +626,7 @@ CREATE TABLE rag_documents (
 );
 ```
 
-### 6.5 RAG Chunks Table
+### 6.7 RAG Chunks Table
 
 ```sql
 CREATE TABLE rag_chunks (
@@ -604,7 +678,29 @@ summary_retention_days = 30              # Delete summaries older than this
 access_reinforcement_boost = 0.05        # Confidence boost when fact is accessed
 ```
 
-### 7.2 dawn.toml RAG Section
+### 7.2 dawn.toml Embeddings Section
+
+```toml
+[memory.embeddings]
+provider = "ollama"                  # "ollama", "openai", "onnx"
+model = "nomic-embed-text"           # Embedding model name
+endpoint = "http://localhost:11434"  # Provider endpoint
+dimensions = 768                     # Embedding vector dimensions
+keyword_weight = 0.4                 # Hybrid search: keyword component (0.0-1.0)
+semantic_weight = 0.6                # Hybrid search: semantic component (0.0-1.0)
+```
+
+**Provider Details:**
+
+| Provider | Model                  | Dimensions | Speed  | Notes                               |
+| -------- | ---------------------- | ---------- | ------ | ----------------------------------- |
+| Ollama   | nomic-embed-text       | 768        | ~20ms  | Local, no API key needed            |
+| OpenAI   | text-embedding-3-small | 1536       | ~100ms | Cloud, requires API key             |
+| ONNX     | all-MiniLM-L6-v2       | 384        | ~5ms   | Local, shares ONNX Runtime with TTS |
+
+**Hybrid Search:** Memory search combines keyword matching (tokenized LIKE queries) with semantic similarity (cosine distance on embeddings). The `keyword_weight` and `semantic_weight` control the blend. Results are deduplicated and sorted by combined score.
+
+### 7.3 dawn.toml RAG Section
 
 ```toml
 [rag]
@@ -671,6 +767,15 @@ OUTPUT FORMAT (JSON):
   "corrections": [
     {"old_fact": "...", "new_fact": "...", "reason": "..."}
   ],
+  "entities": [
+    {"name": "Kris", "type": "person"},
+    {"name": "Bruno", "type": "pet"},
+    {"name": "Atlanta", "type": "place"}
+  ],
+  "relations": [
+    {"subject": "Kris", "relation": "lives_in", "object": "Atlanta"},
+    {"subject": "Bruno", "relation": "is_a", "object": "golden retriever"}
+  ],
   "summary": "...",
   "topics": ["...", "..."]
 }
@@ -686,11 +791,11 @@ RULES:
 
 ### 8.2 Handling Extraction Failures
 
-| Failure | Handling |
-|---------|----------|
-| Malformed JSON | Log warning, mark session as "extraction_failed", retry in nightly job |
-| Model timeout | Retry with exponential backoff (max 3 attempts) |
-| Empty extraction | Valid result - some sessions have no memorable content |
+| Failure          | Handling                                                               |
+| ---------------- | ---------------------------------------------------------------------- |
+| Malformed JSON   | Log warning, mark session as "extraction_failed", retry in nightly job |
+| Model timeout    | Retry with exponential backoff (max 3 attempts)                        |
+| Empty extraction | Valid result - some sessions have no memorable content                 |
 
 ---
 
@@ -749,6 +854,7 @@ Facts enter the memory system through two distinct paths:
 ```
 
 **Why two paths?**
+
 - **Remember tool**: For explicit requests ("Remember that...") - immediate, high confidence
 - **Extraction**: For implicit facts the user mentioned but didn't ask to remember - batch, inferred
 
@@ -759,6 +865,7 @@ The conversation LLM can actively search and store memories via tool calls.
 #### 9.1.1 Search Action
 
 Handles questions like:
+
 - "What did I tell you about my car?"
 - "Do you remember my daughter's name?"
 - "What did we talk about last Thursday?"
@@ -767,17 +874,23 @@ Handles questions like:
 **Tool Definition:**
 
 ```json
-{"device": "memory", "action": "search", "value": "daughter name"}
+{ "device": "memory", "action": "search", "value": "daughter name" }
 ```
 
 **With optional date filtering:**
 
 ```json
-{"device": "memory", "action": "search", "value": "garage", "date": "2026-01-16"}
+{ "device": "memory", "action": "search", "value": "garage", "date": "2026-01-16" }
 ```
 
 ```json
-{"device": "memory", "action": "search", "value": "", "date_from": "2026-01-13", "date_to": "2026-01-17"}
+{
+   "device": "memory",
+   "action": "search",
+   "value": "",
+   "date_from": "2026-01-13",
+   "date_to": "2026-01-17"
+}
 ```
 
 **Parameters:**
@@ -791,6 +904,7 @@ Handles questions like:
 The LLM translates natural language ("last Thursday") to date parameters.
 
 **Design Principles:**
+
 - **Unified search**: Single tool searches across facts, preferences, and summaries
 - **Keyword-based**: Search value should be small keywords, not full sentences
 - **Date-aware**: Can filter by date for "when did we discuss X?" queries
@@ -820,6 +934,7 @@ memory_search_result_t *memory_search(const char *user_id, const memory_search_p
 ```
 
 **Search Strategy:**
+
 1. Tokenize keywords (split on spaces) - skip if empty
 2. Search `memory_facts.fact_text` for keyword matches (LIKE '%keyword%')
 3. Search `memory_preferences.value` for keyword matches
@@ -832,14 +947,22 @@ memory_search_result_t *memory_search(const char *user_id, const memory_search_p
 
 ```json
 {
-  "facts": [
-    {"text": "User's daughter is named Emma", "confidence": 0.95, "created": "2026-01-10"},
-    {"text": "Decided to use Zigbee for garage automation", "confidence": 0.90, "created": "2026-01-16"}
-  ],
-  "preferences": [],
-  "summaries": [
-    {"summary": "Discussed garage automation. Decided Zigbee over Z-Wave for better range.", "date": "2026-01-16", "topics": ["home automation", "zigbee"]}
-  ]
+   "facts": [
+      { "text": "User's daughter is named Emma", "confidence": 0.95, "created": "2026-01-10" },
+      {
+         "text": "Decided to use Zigbee for garage automation",
+         "confidence": 0.9,
+         "created": "2026-01-16"
+      }
+   ],
+   "preferences": [],
+   "summaries": [
+      {
+         "summary": "Discussed garage automation. Decided Zigbee over Z-Wave for better range.",
+         "date": "2026-01-16",
+         "topics": ["home automation", "zigbee"]
+      }
+   ]
 }
 ```
 
@@ -850,10 +973,11 @@ Handles immediate storage when the user shares a fact or asks DAWN to remember s
 **Tool Definition:**
 
 ```json
-{"device": "memory", "action": "remember", "value": "User is vegetarian"}
+{ "device": "memory", "action": "remember", "value": "User is vegetarian" }
 ```
 
 **Design Principles:**
+
 - **Immediate storage**: Fact available in same session (no waiting for extraction)
 - **LLM decides**: LLM determines what's worth remembering and how to phrase it
 - **Self-describing text**: Fact text should include context ("User is vegetarian" not just "vegetarian")
@@ -868,6 +992,7 @@ int memory_remember(const char *user_id, const char *fact_text);
 ```
 
 **Storage Behavior:**
+
 - `source` set to `"explicit"` (user directly stated)
 - `confidence` set to `1.0` (explicit facts start at full confidence)
 - Duplicate detection: If similar fact exists, update confidence rather than create duplicate
@@ -876,7 +1001,7 @@ int memory_remember(const char *user_id, const char *fact_text);
 **Remember Response Format:**
 
 ```json
-{"status": "stored", "fact": "User is vegetarian"}
+{ "status": "stored", "fact": "User is vegetarian" }
 ```
 
 #### 9.1.3 Recent Action
@@ -886,16 +1011,18 @@ Handles time-based queries when the user wants to see what's been learned recent
 **Tool Definition:**
 
 ```json
-{"device": "memory", "action": "recent", "value": "24h"}
+{ "device": "memory", "action": "recent", "value": "24h" }
 ```
 
 **Supported Time Periods:**
+
 - Minutes: `30m`, `60m`
 - Hours: `1h`, `24h`, `48h`
 - Days: `1d`, `7d`, `30d`
 - Weeks: `1w`, `2w`
 
 **Design Principles:**
+
 - **No keywords required**: Returns all memories within the time window
 - **Discovery-oriented**: For "what have you learned about me lately?"
 - **Reusable parser**: `parse_time_period()` in `include/tools/time_utils.h` available to other tools
@@ -944,34 +1071,34 @@ For MEMORY:
 
 #### 9.1.5 When to Use Each
 
-| User Says | LLM Action |
-|-----------|------------|
-| "I'm vegetarian" | Call `remember` with "User is vegetarian" |
-| "Remember that I hate cilantro" | Call `remember` with "User hates cilantro" |
-| "What do you know about me?" | Call `search` with broad keywords or list injected facts |
-| "Do you remember my daughter's name?" | Call `search` with "daughter name" |
-| "What did we talk about last Thursday?" | Call `search` with date filter (convert to YYYY-MM-DD) |
-| "What did we decide about the garage?" | Call `search` with "garage decide" |
-| "What have you learned about me lately?" | Call `recent` with "7d" or "1w" |
-| "What's new in the past 24 hours?" | Call `recent` with "24h" |
-| "What were we working on last week?" | Call `recent` with "1w" |
-| "Catch me up on the past few days" | Call `recent` with "3d" |
+| User Says                                | LLM Action                                               |
+| ---------------------------------------- | -------------------------------------------------------- |
+| "I'm vegetarian"                         | Call `remember` with "User is vegetarian"                |
+| "Remember that I hate cilantro"          | Call `remember` with "User hates cilantro"               |
+| "What do you know about me?"             | Call `search` with broad keywords or list injected facts |
+| "Do you remember my daughter's name?"    | Call `search` with "daughter name"                       |
+| "What did we talk about last Thursday?"  | Call `search` with date filter (convert to YYYY-MM-DD)   |
+| "What did we decide about the garage?"   | Call `search` with "garage decide"                       |
+| "What have you learned about me lately?" | Call `recent` with "7d" or "1w"                          |
+| "What's new in the past 24 hours?"       | Call `recent` with "24h"                                 |
+| "What were we working on last week?"     | Call `recent` with "1w"                                  |
+| "Catch me up on the past few days"       | Call `recent` with "3d"                                  |
 
 #### 9.1.6 Three-Tier Retrieval
 
-| Tier | Mechanism | When | Budget |
-|------|-----------|------|--------|
-| **Always loaded** | Passive injection | Session start | ~800 tokens (400 facts + 400 summaries) |
-| **Memory search** | Tool call | LLM needs to recall something | ~500 tokens per search |
-| **Document search** | Tool call (RAG) | LLM needs info from files | ~500 tokens per search |
+| Tier                | Mechanism         | When                          | Budget                                  |
+| ------------------- | ----------------- | ----------------------------- | --------------------------------------- |
+| **Always loaded**   | Passive injection | Session start                 | ~800 tokens (400 facts + 400 summaries) |
+| **Memory search**   | Tool call         | LLM needs to recall something | ~500 tokens per search                  |
+| **Document search** | Tool call (RAG)   | LLM needs info from files     | ~500 tokens per search                  |
 
 #### 9.1.7 Active Store vs Session-End Extraction
 
 Both mechanisms work together:
 
-| Mechanism | What It Catches | When Stored |
-|-----------|-----------------|-------------|
-| **Active store (tool)** | Explicit statements, "remember that..." | Immediately |
+| Mechanism                  | What It Catches                                | When Stored   |
+| -------------------------- | ---------------------------------------------- | ------------- |
+| **Active store (tool)**    | Explicit statements, "remember that..."        | Immediately   |
 | **Session-end extraction** | Inferred facts, things LLM missed, preferences | After session |
 
 The extraction job can also detect if a fact was already stored via tool call (duplicate detection) and skip it or merge confidence scores.
@@ -1010,6 +1137,7 @@ The extraction job can also detect if a fact was already stored via tool call (d
 RAG retrieval happens **during conversation** when the user's query might benefit from document search.
 
 **Trigger heuristics:**
+
 - User asks a question (detected by "?" or question words)
 - Query contains keywords suggesting lookup ("what does", "how do I", "according to")
 - No confident answer from LLM's base knowledge
@@ -1045,6 +1173,7 @@ WHERE user_id = :uid
 ```
 
 **Key behaviors:**
+
 - Facts with NULL `last_accessed` are skipped (never been loaded into context)
 - Decay is proportional to time since last access, not fixed per-day
 - Explicit facts have a configurable floor (default 0.50) — never fully forgotten
@@ -1052,6 +1181,7 @@ WHERE user_id = :uid
 - Preferences have their own floor (default 0.40)
 
 **Pruning** runs after decay:
+
 - Facts below `prune_threshold` (default 0.25) are logged for audit trail, then deleted
 - Audit log and delete are wrapped in a transaction for consistency
 - Old superseded facts are pruned per `prune_superseded_days`
@@ -1102,29 +1232,33 @@ Memory and RAG are independent features. Memory can be fully implemented and dep
 ### MEMORY SYSTEM
 
 ### Phase 1: Memory Storage Foundation ✅ COMPLETE
+
 - [x] Add SQLite tables: memory_facts, memory_preferences, memory_summaries
 - [x] Create migration system (schema v14-v16)
 - [x] Basic CRUD operations in C (`memory_db.c`)
 - [x] Prepared statements for all operations
 
 ### Phase 2: Memory Tool ✅ COMPLETE
+
 - [x] Memory tool with four actions:
-  - [x] `search` - keyword search across facts/preferences/summaries
-  - [x] `recent` - time-based retrieval (e.g., "24h", "7d", "1w")
-  - [x] `remember` - immediate fact storage from LLM
-  - [x] `forget` - delete matching facts
+   - [x] `search` - keyword search across facts/preferences/summaries
+   - [x] `recent` - time-based retrieval (e.g., "24h", "7d", "1w")
+   - [x] `remember` - immediate fact storage from LLM
+   - [x] `forget` - delete matching facts
 - [x] Add `memory` device to commands_config_nuevo.json
 - [x] Register callback in mosquitto_comms.c (MEMORY device type)
 - [x] Duplicate detection via similarity matching
 - [x] Guardrails: blocked patterns prevent instruction injection
 
 ### Phase 3: Context Injection ✅ COMPLETE
+
 - [x] Load facts and preferences at session start
 - [x] Augment system prompt with user context (`memory_build_context()`)
 - [x] Context budget management (~800 tokens)
 - [x] Format: preferences, facts by confidence, recent summaries
 
 ### Phase 4: Automated Extraction ✅ COMPLETE
+
 - [x] Session-end consolidation trigger (WebSocket disconnect/timeout)
 - [x] Extraction prompt with JSON output format
 - [x] JSON parsing and validation
@@ -1133,6 +1267,7 @@ Memory and RAG are independent features. Memory can be fully implemented and dep
 - [x] Privacy toggle: conversations marked private skip extraction
 
 ### Phase 4.5: Privacy Toggle ✅ COMPLETE (Bonus Feature)
+
 - [x] Per-conversation `is_private` flag in database
 - [x] WebSocket handler (`set_private` / `set_private_response`)
 - [x] Frontend toggle in LLM controls bar (eye/eye-off icon)
@@ -1141,6 +1276,7 @@ Memory and RAG are independent features. Memory can be fully implemented and dep
 - [x] Privacy badge in conversation history list
 
 ### Phase 5: Decay and Maintenance ✅ COMPLETE
+
 - [x] Nightly decay job (configurable hour, local time)
 - [x] Atomic SQL decay via custom SQLite `powf()` function
 - [x] Confidence reinforcement on access (time-gated, 1-hour cooldown)
@@ -1154,20 +1290,46 @@ Memory and RAG are independent features. Memory can be fully implemented and dep
 - [x] NaN/Inf guard on `powf()` custom function
 - [ ] Crash recovery for unconsolidated sessions (deferred)
 
-### Phase 6: Memory WebUI (~1 week)
-- [ ] Memory viewer in settings panel (see NEXT_STEPS.md Section 15)
-- [ ] Fact/preference editing
-- [ ] Delete individual memories
-- [ ] Memory statistics display
-- [ ] "Forget everything" option
+### Phase 6: Memory WebUI ✅ COMPLETE
 
-**Memory System Status: Phases 1-5 Complete, Phase 6 Pending**
+- [x] Memory viewer panel in WebUI (expandable section, not settings)
+- [x] Four tabs: Facts, Preferences, Summaries, Graph (entities)
+- [x] Delete individual memories (per-item delete button with confirmation)
+- [x] Memory statistics display (facts, preferences, summaries, entities counts)
+- [x] "Forget Everything" option with typed DELETE confirmation modal
+- [x] Search across all memory types
+- [x] Graph tab: entity cards with type badges, expandable relations (→/← arrows)
+- [x] Keyboard accessibility (tabindex, ARIA roles, keydown handlers)
+- [x] WebUI endpoints: `/api/memory/{facts,preferences,summaries,entities,stats}`
+
+### S4: Entity Graph ✅ COMPLETE
+
+- [x] Entity types and relation types (`memory_entity_t`, `memory_relation_t`)
+- [x] SQLite schema: `memory_entities` and `memory_relations` tables
+- [x] 8 prepared statements for entity/relation CRUD
+- [x] Entity upsert with `RETURNING id` and canonical name normalization
+- [x] Relation storage with entity FK or literal value
+- [x] Extraction wiring: entities and relations parsed from LLM JSON output
+- [x] Semantic embeddings for entities (embed on creation only, not every mention)
+- [x] Multi-provider embedding support (Ollama, OpenAI, ONNX) via `[memory.embeddings]`
+- [x] In-memory embedding cache with mutex protection (fact cache: 1000, entity cache: 500)
+- [x] Hybrid search: keyword + cosine similarity with configurable weights
+- [x] Bidirectional graph search: outgoing + incoming relations for top entities
+- [x] Entity graph context appended to memory search results (ENTITIES section)
+- [x] Existing entities fed into extraction prompt to prevent duplicate names
+- [x] Entity dedup: canonical name matching prevents "Kris" vs "Kris Kersey" variants
+- [x] `_Static_assert` on prepared statement layout for safety
+- [x] Bulk relation loading (`memory_db_relation_list_all_by_user()`) — N+1 query fix
+- [x] Entity deletion with FK-ordered relation cleanup
+
+**Memory System Status: Phases 1-6 + S4 Complete, RAG Pending**
 
 ---
 
 ### RAG SYSTEM (Independent, can start after or during Memory)
 
 ### Phase 7: RAG Foundation (~1.5 weeks)
+
 - [ ] Add SQLite tables: rag_documents, rag_chunks
 - [ ] Integrate all-MiniLM-L6-v2 embedding model via ONNX Runtime
 - [ ] Embedding generation function
@@ -1175,6 +1337,7 @@ Memory and RAG are independent features. Memory can be fully implemented and dep
 - [ ] Unit tests for embedding and search
 
 ### Phase 8: Document Indexing - TXT/MD (~1 week)
+
 - [ ] Document parser for TXT and MD files
 - [ ] Chunking logic (256 tokens, 50 overlap)
 - [ ] File hash for change detection
@@ -1182,17 +1345,20 @@ Memory and RAG are independent features. Memory can be fully implemented and dep
 - [ ] Re-index on file changes
 
 ### Phase 9: Document Search Tool (~1 week)
+
 - [ ] Add `documents` device (or extend `memory` with `search_docs` action)
 - [ ] RAG retrieval during conversation
 - [ ] Add to commands_config_nuevo.json
 - [ ] Update AI_DESCRIPTION with document search instructions
 
 ### Phase 10: PDF and DOCX Support (~1 week)
+
 - [ ] PDF text extraction via poppler
 - [ ] DOCX text extraction via libzip + libxml2
 - [ ] Incremental re-indexing for changed files
 
 ### Phase 11: RAG WebUI (~0.5 weeks)
+
 - [ ] Document list in settings panel
 - [ ] Add/remove documents from index
 - [ ] Re-index button
@@ -1205,12 +1371,14 @@ Memory and RAG are independent features. Memory can be fully implemented and dep
 ### FUTURE ENHANCEMENTS
 
 ### Phase 12: Speaker Identification
+
 - [ ] sherpa-onnx integration
 - [ ] Voice enrollment
 - [ ] Per-utterance speaker identification
 - [ ] Memory loading by identified speaker
 
 ### Phase 13: Per-User Document Storage
+
 - [ ] WebUI file upload capability
 - [ ] Per-user document directories
 - [ ] Add `user_id` back to RAG tables
@@ -1218,6 +1386,7 @@ Memory and RAG are independent features. Memory can be fully implemented and dep
 - [ ] Storage quota management
 
 ### Phase 14: Advanced RAG
+
 - [ ] Reranking after initial retrieval (6-7% accuracy improvement)
 - [ ] Multimodal document indexing (images, diagrams from PDFs)
 - [ ] Lightweight safety classifier for edge cases
@@ -1226,14 +1395,14 @@ Memory and RAG are independent features. Memory can be fully implemented and dep
 
 **Summary:**
 
-| System | Phases | Effort |
-|--------|--------|--------|
-| Memory | 1-6 | ~7-8 weeks |
-| RAG | 7-11 | ~5 weeks |
-| Speaker ID | 12 | Future |
-| Per-User Docs | 13 | Future |
-| Advanced RAG | 14 | Future |
-| **Total (v1)** | | **~12-13 weeks** |
+| System         | Phases | Effort           |
+| -------------- | ------ | ---------------- |
+| Memory         | 1-6    | ~7-8 weeks       |
+| RAG            | 7-11   | ~5 weeks         |
+| Speaker ID     | 12     | Future           |
+| Per-User Docs  | 13     | Future           |
+| Advanced RAG   | 14     | Future           |
+| **Total (v1)** |        | **~12-13 weeks** |
 
 Memory and RAG can be developed in parallel by different contributors, or sequentially. Memory should be prioritized as it delivers core "assistant that knows you" value.
 
@@ -1243,32 +1412,49 @@ Memory and RAG can be developed in parallel by different contributors, or sequen
 
 ```
 include/memory/
-├── memory_db.h            # CRUD operations for facts, preferences, summaries
+├── memory_db.h            # CRUD for facts, prefs, summaries, entities, relations
+├── memory_embeddings.h    # Semantic embedding API (multi-provider)
 ├── memory_context.h       # Context building for LLM system prompt
 ├── memory_maintenance.h   # Nightly decay orchestration API
-└── memory_types.h         # Data structures
+└── memory_types.h         # Data structures (fact, pref, summary, entity, relation)
 
 include/rag/
-├── rag_indexer.h          # Document indexing
-├── rag_retriever.h        # Vector search
-├── rag_embeddings.h       # Embedding generation (ONNX)
-└── document_parsers.h     # TXT/PDF/DOCX parsers
+├── rag_indexer.h          # Document indexing (future)
+├── rag_retriever.h        # Vector search (future)
+├── rag_embeddings.h       # Embedding generation (ONNX) (future)
+└── document_parsers.h     # TXT/PDF/DOCX parsers (future)
 
 src/memory/
-├── memory_db.c            # SQLite CRUD, decay, and pruning operations
+├── memory_db.c            # SQLite CRUD, entity upsert, relation create, decay, pruning
+├── memory_embeddings.c    # Embedding cache, hybrid search, cache invalidation
+├── memory_embed_ollama.c  # Ollama embedding provider (/api/embed endpoint)
+├── memory_embed_openai.c  # OpenAI embedding provider (/v1/embeddings endpoint)
+├── memory_embed_onnx.c    # ONNX Runtime embedding provider (local inference)
 ├── memory_context.c       # Context building for LLM system prompt
-├── memory_callback.c      # LLM tool callback (store/search/delete)
-├── memory_extraction.c    # LLM-based fact extraction from conversations
+├── memory_callback.c      # LLM tool callback (search/remember/forget/recent + graph)
+├── memory_extraction.c    # LLM-based extraction: facts, prefs, entities, relations
 ├── memory_maintenance.c   # Nightly decay orchestration
 └── memory_similarity.c    # Duplicate detection (Jaccard, hashing)
 
-src/rag/
-├── rag_indexer.c          # Document processing
-├── rag_retriever.c        # Vector search
-├── rag_embeddings.c       # ONNX embedding model
-├── parser_txt.c           # Plain text parser
-├── parser_pdf.c           # PDF parser (poppler)
-└── parser_docx.c          # DOCX parser (libzip)
+src/webui/
+├── webui_memory.c         # WebUI memory endpoints (list, delete, stats, entities)
+└── ...
+
+www/js/ui/
+├── memory.js              # Memory viewer UI (tabs, search, entity graph, delete)
+└── ...
+
+www/css/components/
+├── memory.css             # Memory viewer styles (entity badges, relations, tabs)
+└── ...
+
+src/rag/                   # (future - RAG not yet implemented)
+├── rag_indexer.c
+├── rag_retriever.c
+├── rag_embeddings.c
+├── parser_txt.c
+├── parser_pdf.c
+└── parser_docx.c
 ```
 
 ---
@@ -1276,6 +1462,7 @@ src/rag/
 ## 13. Privacy and Security
 
 ### 13.1 Data Stored
+
 - Facts and preferences in plain text in SQLite
 - Full conversation transcripts NOT stored (only summaries)
 - Sensitive items excluded by extraction prompt
@@ -1284,28 +1471,31 @@ src/rag/
 ### 13.2 Mitigations
 
 **Prompt Injection via Memory:**
+
 - Sanitize loaded memories
 - Don't allow instruction-like content in facts
 - Validate extracted JSON structure
 
 **Memory Disclosure:**
+
 - Full transparency: User can always see what's stored
 - WebUI viewer for complete memory access
 - Voice command: "What do you know about me?"
 
 **Data Export/Deletion:**
+
 - User can delete individual facts
 - "Forget everything about me" command
 - Export all memories as JSON
 
 ### 13.3 Local vs Cloud Processing
 
-| Operation | Default | Privacy Note |
-|-----------|---------|--------------|
-| Conversation | User choice | Depends on LLM provider |
-| Extraction | Local | Can be configured for cloud if quality needed |
-| Embeddings | Local | Always local (ONNX Runtime) |
-| Storage | Local | SQLite on device |
+| Operation    | Default      | Privacy Note                                    |
+| ------------ | ------------ | ----------------------------------------------- |
+| Conversation | User choice  | Depends on LLM provider                         |
+| Extraction   | Local        | Can be configured for cloud if quality needed   |
+| Embeddings   | Configurable | Ollama (local), ONNX (local), or OpenAI (cloud) |
+| Storage      | Local        | SQLite on device                                |
 
 ### 13.4 Safety Guardrails
 
@@ -1367,6 +1557,7 @@ Memory content flows into future LLM prompts, creating a potential attack vector
 ```
 
 **Blocked Patterns (Hardcoded v1):**
+
 ```c
 const char *MEMORY_BLOCKED_PATTERNS[] = {
    "whenever", "always", "you should", "you must",
@@ -1378,12 +1569,14 @@ const char *MEMORY_BLOCKED_PATTERNS[] = {
 ```
 
 **Why not a dedicated safety model?**
+
 - Enterprise systems (NVIDIA Nemotron) use 8B+ parameter safety models
 - Overkill for personal home assistant on embedded hardware
 - Pattern matching catches obvious attacks with zero latency
 - Future enhancement: lightweight local safety classifier if needed
 
 **Future Enhancements (Phase 14+):**
+
 - Reranking for RAG retrieval (6-7% accuracy improvement)
 - Multimodal document indexing (images/diagrams)
 - Lightweight safety classifier for edge cases
@@ -1393,6 +1586,7 @@ const char *MEMORY_BLOCKED_PATTERNS[] = {
 ## 14. Testing Strategy
 
 ### 14.1 Unit Tests
+
 - Storage CRUD operations
 - Embedding generation
 - Vector similarity search
@@ -1400,12 +1594,14 @@ const char *MEMORY_BLOCKED_PATTERNS[] = {
 - JSON extraction parsing
 
 ### 14.2 Integration Tests
+
 - End-to-end extraction from transcript
 - Memory loading into context
 - RAG retrieval accuracy
 - Session lifecycle
 
 ### 14.3 Evaluation Metrics
+
 - Extraction precision (correct facts extracted)
 - Extraction recall (facts not missed)
 - RAG retrieval relevance
@@ -1416,11 +1612,13 @@ const char *MEMORY_BLOCKED_PATTERNS[] = {
 ## Appendix A: Comparison to Original Proposals
 
 ### From "Adaptive Preference Learning" Proposal
+
 - **Kept:** Preference categories, confidence scores, explicit override detection, decay
 - **Changed:** Batch extraction instead of real-time, broader scope (facts + summaries + RAG)
 - **Dropped:** 8% token overhead claim (now 0% runtime overhead)
 
 ### From "Building Your Own JARVIS" Presentation
+
 - **Kept:** Sleep consolidation metaphor, facts vs. summaries separation, vector DB concepts
 - **Added:** Concrete storage schema, RAG integration, configuration system
 - **Resolved:** Hard problems that were hand-waved (user ID, context budget, decay rates)
@@ -1431,18 +1629,17 @@ const char *MEMORY_BLOCKED_PATTERNS[] = {
 
 ## Appendix B: WebUI Wireframes
 
-### Memory Section (Phase 6)
+### Memory Section (Implemented)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │  ▼ My Memory                                                    [?] │
 ├─────────────────────────────────────────────────────────────────────┤
 │                                                                     │
-│  Stats: Facts: 23  |  Preferences: 5  |  Summaries: 12             │
-│         Context budget: ~680/800 tokens                             │
+│  Stats: Facts: 23  |  Prefs: 5  |  Sums: 12  |  Entities: 18      │
 │                                                                     │
 │  ┌─────────────────────────────────────────────────────────────┐   │
-│  │ [Facts]  [Preferences]  [Summaries]                         │   │
+│  │ [Facts]  [Preferences]  [Summaries]  [Graph]                │   │
 │  └─────────────────────────────────────────────────────────────┘   │
 │                                                                     │
 │  🔍 Search memories...                              [Filter ▼]     │
@@ -1548,6 +1745,36 @@ Legend:
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
+### Graph Tab (Entities)
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  [Facts]  [Preferences]  [Summaries]  [Graph]                       │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │  Kris                                          [person] [🗑️] │   │
+│  │  Mentions: 12  |  First: Jan 10  |  Last: Mar 3             │   │
+│  │  ▸ Show relations (3)                                       │   │
+│  │    → lives_in: Atlanta                                      │   │
+│  │    → works_on: The OASIS Project                            │   │
+│  │    → owns: Bruno                                            │   │
+│  ├─────────────────────────────────────────────────────────────┤   │
+│  │  Bruno                                           [pet] [🗑️]  │   │
+│  │  Mentions: 5  |  First: Jan 15  |  Last: Feb 28             │   │
+│  │  ▸ Show relations (2)                                       │   │
+│  │    → is_a: golden retriever                                 │   │
+│  │    ← owned_by: Kris                                         │   │
+│  ├─────────────────────────────────────────────────────────────┤   │
+│  │  Atlanta                                       [place] [🗑️]  │   │
+│  │  Mentions: 3  |  First: Jan 12  |  Last: Feb 20             │   │
+│  │  ▸ Show relations (1)                                       │   │
+│  │    → is_in: Georgia                                         │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
 ### "Forget Everything" Confirmation
 
 ```
@@ -1636,22 +1863,25 @@ Legend:
 **Placement:** Memory and Documents sections appear in the settings panel after "My Settings" and before "My Sessions", grouping all personal data together.
 
 **Confidence Indicators:**
+
 - Green dot (●): Confidence > 80%
 - Yellow/gray dot (○): Confidence 50-80%
 - Dim text: Confidence < 50% (rarely shown, usually pruned)
 
 **Mobile Considerations:**
+
 - Edit/delete buttons always visible on touch (no hover)
 - Touch targets minimum 44x44px
 - Stats stack vertically on narrow screens
 
 **Accessibility:**
+
 - All interactive elements have visible focus states
 - Confidence colors paired with text labels ("Confidence: 78%")
 - Progress bars have aria-live announcements
 - Delete confirmations keyboard-navigable
 
-*This document reflects finalized design decisions as of January 2026. Implementation should follow this specification.*
+_This document reflects finalized design decisions as of January 2026. Implementation should follow this specification._
 
 ---
 
@@ -1661,11 +1891,11 @@ Legend:
 
 The current memory system uses **keyword-based search** (SQL LIKE queries). This works well for exact matches but misses semantic relationships:
 
-| Query | Stored Fact | Keyword Search | Semantic Search |
-|-------|-------------|----------------|-----------------|
+| Query                   | Stored Fact                          | Keyword Search              | Semantic Search                        |
+| ----------------------- | ------------------------------------ | --------------------------- | -------------------------------------- |
 | "What's my dog's name?" | "My pet Bruno is a golden retriever" | ❌ No match (no word "dog") | ✅ Match (dog ≈ pet, golden retriever) |
-| "food allergies" | "User is allergic to shellfish" | ❌ No match | ✅ Match (allergies ≈ allergic) |
-| "daughter" | "Emma is the user's child" | ❌ No match | ✅ Match (daughter ≈ child) |
+| "food allergies"        | "User is allergic to shellfish"      | ❌ No match                 | ✅ Match (allergies ≈ allergic)        |
+| "daughter"              | "Emma is the user's child"           | ❌ No match                 | ✅ Match (daughter ≈ child)            |
 
 **Semantic search** uses **embeddings** (vector representations of meaning) to find conceptually similar content even when words differ.
 
@@ -1703,6 +1933,7 @@ User Query: "What's my dog's name?"
 ```
 
 **Benefits:**
+
 - **Keywords** catch exact matches ("Bruno" finds "Bruno")
 - **Vectors** catch semantic matches ("dog" finds "golden retriever")
 - Together they're more robust than either alone
@@ -1712,6 +1943,7 @@ User Query: "What's my dog's name?"
 Mirror the LLM provider pattern for consistency:
 
 **dawn.toml:**
+
 ```toml
 [embeddings]
 type = "local"                    # "local" or "cloud"
@@ -1728,13 +1960,14 @@ model = "text-embedding-3-small"  # 1536 dimensions
 
 **Provider Options:**
 
-| Provider | Endpoint | Model | Dimensions | Notes |
-|----------|----------|-------|------------|-------|
-| **Ollama** | `localhost:11434/api/embed` | nomic-embed-text | 768 | Recommended local |
-| **llama.cpp** | `localhost:8081/v1/embeddings` | nomic-embed-text | 768 | OpenAI-compatible API |
-| **OpenAI** | `api.openai.com/v1/embeddings` | text-embedding-3-small | 1536 | Cloud fallback |
+| Provider      | Endpoint                       | Model                  | Dimensions | Notes                 |
+| ------------- | ------------------------------ | ---------------------- | ---------- | --------------------- |
+| **Ollama**    | `localhost:11434/api/embed`    | nomic-embed-text       | 768        | Recommended local     |
+| **llama.cpp** | `localhost:8081/v1/embeddings` | nomic-embed-text       | 768        | OpenAI-compatible API |
+| **OpenAI**    | `api.openai.com/v1/embeddings` | text-embedding-3-small | 1536       | Cloud fallback        |
 
 **Local-First Philosophy:**
+
 - Default to Ollama if available (same service as local LLM)
 - Cloud embeddings as optional fallback
 - Embedding cache reduces API calls significantly
@@ -1758,12 +1991,14 @@ CREATE INDEX idx_embedding_cache_hash ON embedding_cache(content_hash);
 ```
 
 **Cache Strategy:**
+
 1. Hash incoming text (SHA256)
 2. Check cache: `SELECT embedding FROM embedding_cache WHERE content_hash = ?`
 3. If hit → return cached embedding (zero latency)
 4. If miss → call provider API, store result, return
 
 **Expected hit rates:**
+
 - Same fact accessed multiple times → 100% hit
 - File re-indexed without changes → 100% hit
 - Typical workload → 40-60% hit rate
@@ -1781,6 +2016,7 @@ ALTER TABLE memory_facts ADD COLUMN embedding BLOB;
 ```
 
 **Storage Cost:**
+
 - nomic-embed-text: 768 floats × 4 bytes = 3,072 bytes per embedding
 - 1,000 facts = ~3 MB of embeddings
 - text-embedding-3-small: 1,536 floats × 4 bytes = 6,144 bytes per embedding
@@ -1807,6 +2043,7 @@ For ~1,000 facts with 768-dim vectors, linear scan takes <1ms on modern hardware
 ### C.7 API Integration
 
 **Ollama:**
+
 ```bash
 curl http://localhost:11434/api/embed \
   -d '{"model": "nomic-embed-text", "input": "What is my dog named?"}'
@@ -1816,6 +2053,7 @@ curl http://localhost:11434/api/embed \
 ```
 
 **llama.cpp (OpenAI-compatible):**
+
 ```bash
 curl http://localhost:8081/v1/embeddings \
   -d '{"input": "What is my dog named?"}'
@@ -1825,6 +2063,7 @@ curl http://localhost:8081/v1/embeddings \
 ```
 
 **OpenAI:**
+
 ```bash
 curl https://api.openai.com/v1/embeddings \
   -H "Authorization: Bearer $OPENAI_API_KEY" \
@@ -1865,6 +2104,7 @@ Add embeddings section to settings panel (similar to LLM settings):
 ### C.9 Implementation Phases
 
 #### Phase S1: Embedding Infrastructure (~1 week)
+
 - [ ] Create `include/embeddings/embeddings.h` with provider abstraction
 - [ ] Create `src/embeddings/embeddings.c` with provider implementations
 - [ ] Implement Ollama provider (`/api/embed` endpoint)
@@ -1875,6 +2115,7 @@ Add embeddings section to settings panel (similar to LLM settings):
 - [ ] Unit tests for embedding generation and cache
 
 #### Phase S2: Memory Integration (~1 week)
+
 - [ ] Add `embedding BLOB` column to `memory_facts` table (migration)
 - [ ] Generate embeddings on fact insert (remember tool + extraction)
 - [ ] Implement `embedding_cosine_similarity()` function
@@ -1883,6 +2124,7 @@ Add embeddings section to settings panel (similar to LLM settings):
 - [ ] Integration tests for semantic search
 
 #### Phase S3: WebUI Configuration (~0.5 week)
+
 - [ ] Add embeddings section to settings schema
 - [ ] Provider/model dropdowns with dynamic population
 - [ ] Hybrid search weight sliders
@@ -1890,6 +2132,7 @@ Add embeddings section to settings panel (similar to LLM settings):
 - [ ] Clear cache button
 
 #### Phase S4: RAG Integration (~0.5 week)
+
 - [ ] Use same embedding infrastructure for RAG chunks
 - [ ] Unified provider configuration (memory + RAG share settings)
 - [ ] Test cross-system embedding consistency
@@ -1927,12 +2170,12 @@ max_entries = 10000               # Prune oldest when exceeded
 
 ### C.11 Model Recommendations
 
-| Use Case | Model | Provider | Dims | Size | Quality |
-|----------|-------|----------|------|------|---------|
-| **Default** | nomic-embed-text | Ollama | 768 | 275 MB | Excellent |
-| **RAM constrained** | all-minilm | Ollama | 384 | 46 MB | Good |
-| **Max quality** | mxbai-embed-large | Ollama | 1024 | 670 MB | Best |
-| **Cloud fallback** | text-embedding-3-small | OpenAI | 1536 | N/A | Excellent |
+| Use Case            | Model                  | Provider | Dims | Size   | Quality   |
+| ------------------- | ---------------------- | -------- | ---- | ------ | --------- |
+| **Default**         | nomic-embed-text       | Ollama   | 768  | 275 MB | Excellent |
+| **RAM constrained** | all-minilm             | Ollama   | 384  | 46 MB  | Good      |
+| **Max quality**     | mxbai-embed-large      | Ollama   | 1024 | 670 MB | Best      |
+| **Cloud fallback**  | text-embedding-3-small | OpenAI   | 1536 | N/A    | Excellent |
 
 `nomic-embed-text` outperforms OpenAI's text-embedding-ada-002 on most benchmarks while running locally.
 
@@ -1942,14 +2185,17 @@ max_entries = 10000               # Prune oldest when exceeded
 
 **With Ollama (Recommended):**
 Ollama manages model loading automatically. Both models can be pulled:
+
 ```bash
 ollama pull llama3.2:3b        # LLM
 ollama pull nomic-embed-text   # Embeddings
 ```
+
 Ollama keeps recently-used models in memory and swaps as needed. On Jetson with 8GB+ RAM, both typically fit simultaneously.
 
 **With llama.cpp:**
 Run two server instances on different ports:
+
 ```bash
 # Terminal 1: LLM
 llama-server --model llama-3.2-3b.gguf --port 8080

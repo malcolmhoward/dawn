@@ -2840,6 +2840,12 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
       if (payload) {
          handle_delete_memory_summary(conn, payload);
       }
+   } else if (strcmp(type, "list_memory_entities") == 0) {
+      handle_list_memory_entities(conn);
+   } else if (strcmp(type, "delete_memory_entity") == 0) {
+      if (payload) {
+         handle_delete_memory_entity(conn, payload);
+      }
    } else if (strcmp(type, "delete_all_memories") == 0) {
       if (payload) {
          handle_delete_all_memories(conn, payload);

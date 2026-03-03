@@ -92,6 +92,7 @@
 #include "webui/webui_server.h"
 #endif
 #include "auth/auth_db.h"
+#include "memory/memory_embeddings.h"
 #ifdef ENABLE_AUTH
 #include "auth/admin_socket.h"
 #include "auth/auth_crypto.h"
@@ -2213,6 +2214,15 @@ int main(int argc, char *argv[]) {
       LOG_ERROR("Failed to initialize database - memory system disabled");
    }
 
+   /* Initialize memory embeddings (non-fatal — falls back to keyword search) */
+   if (g_config.memory.enabled && g_config.memory.embedding_provider[0] != '\0') {
+      if (memory_embeddings_init() != 0) {
+         LOG_WARNING("Memory embeddings init failed - semantic search disabled");
+      } else if (g_config.memory.embedding_backfill_on_startup) {
+         memory_embeddings_start_backfill(g_config.memory.default_voice_user_id);
+      }
+   }
+
 #ifdef ENABLE_AUTH
    /* Initialize auth subsystem AFTER database is ready.
     * Order: crypto -> admin socket -> maintenance (per architecture review) */
@@ -3625,6 +3635,7 @@ int main(int argc, char *argv[]) {
    image_store_shutdown();
    auth_crypto_shutdown();
 #endif
+   memory_embeddings_cleanup();
    auth_db_shutdown();
 
    cleanup_text_to_speech();

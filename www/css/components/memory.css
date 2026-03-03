@@ -131,8 +131,9 @@
    padding: 0.625rem 1rem;
    background: rgba(0, 0, 0, 0.2);
    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-   font-size: 0.8rem;
+   font-size: 0.75rem;
    color: var(--text-secondary);
+   gap: 0.25rem;
 }
 
 .memory-stats span {
@@ -485,6 +486,161 @@
 }
 
 /* =============================================================================
+ * Entity Item (Graph Tab)
+ * ============================================================================= */
+.memory-item.entity {
+   padding: 0.75rem 1rem;
+}
+
+.entity-header {
+   display: flex;
+   align-items: center;
+   gap: 0.5rem;
+   margin-bottom: 0.25rem;
+}
+
+.entity-name {
+   font-size: 0.95rem;
+   font-weight: 600;
+   color: var(--text-primary);
+}
+
+/* Entity Type Badges */
+.entity-type-badge {
+   display: inline-block;
+   padding: 0.1rem 0.4rem;
+   border-radius: 3px;
+   font-size: 0.7rem;
+   font-weight: 600;
+   text-transform: uppercase;
+   letter-spacing: 0.05em;
+   font-family: 'IBM Plex Mono', monospace;
+   flex-shrink: 0;
+}
+
+.entity-type-person {
+   background: rgba(99, 102, 241, 0.15);
+   color: #818cf8;
+   border: 1px solid rgba(99, 102, 241, 0.25);
+}
+
+.entity-type-pet {
+   background: rgba(244, 114, 182, 0.15);
+   color: #f472b6;
+   border: 1px solid rgba(244, 114, 182, 0.25);
+}
+
+.entity-type-project {
+   background: rgba(232, 121, 249, 0.15);
+   color: #e879f9;
+   border: 1px solid rgba(232, 121, 249, 0.25);
+}
+
+.entity-type-device {
+   background: rgba(251, 191, 36, 0.15);
+   color: #fbbf24;
+   border: 1px solid rgba(251, 191, 36, 0.25);
+}
+
+.entity-type-place {
+   background: rgba(74, 222, 128, 0.15);
+   color: #4ade80;
+   border: 1px solid rgba(74, 222, 128, 0.25);
+}
+
+.entity-type-organization {
+   background: rgba(96, 165, 250, 0.15);
+   color: #60a5fa;
+   border: 1px solid rgba(96, 165, 250, 0.25);
+}
+
+.entity-type-default {
+   background: rgba(148, 163, 184, 0.15);
+   color: #94a3b8;
+   border: 1px solid rgba(148, 163, 184, 0.25);
+}
+
+.entity-mentions {
+   font-family: 'IBM Plex Mono', monospace;
+   font-size: 0.75rem;
+   color: var(--text-secondary);
+}
+
+/* Entity Relations */
+.entity-relations {
+   margin-top: 0.4rem;
+   padding-left: 0.25rem;
+}
+
+.entity-relation {
+   display: flex;
+   align-items: baseline;
+   gap: 0.35rem;
+   padding: 0.15rem 0;
+   font-size: 0.8rem;
+   line-height: 1.3;
+}
+
+.entity-relation-arrow {
+   color: var(--text-tertiary, var(--text-secondary));
+   font-family: 'IBM Plex Mono', monospace;
+   font-size: 0.7rem;
+   flex-shrink: 0;
+   opacity: 0.5;
+}
+
+.entity-relation-verb {
+   color: var(--text-secondary);
+   font-size: 0.75rem;
+   flex-shrink: 0;
+}
+
+.entity-relation-target {
+   color: var(--accent);
+   cursor: pointer;
+   transition: color var(--transition-fast);
+}
+
+.entity-relation-target:hover {
+   color: var(--text-primary);
+   text-decoration: underline;
+}
+
+.entity-relation-value {
+   color: var(--text-primary);
+   font-style: italic;
+}
+
+/* Collapsed relations toggle */
+.entity-relations-more {
+   color: var(--text-secondary);
+   font-size: 0.75rem;
+   cursor: pointer;
+   padding: 0.2rem 0;
+   text-decoration: underline dotted;
+   text-underline-offset: 2px;
+   transition: color var(--transition-fast);
+}
+
+.entity-relations-more:hover {
+   color: var(--accent);
+}
+
+/* Scroll-to highlight pulse */
+.memory-item.entity.highlight-pulse {
+   animation: entity-pulse 1s ease-out;
+}
+
+@keyframes entity-pulse {
+   0% {
+      background: rgba(45, 212, 191, 0.15);
+   }
+   100% {
+      background: transparent;
+   }
+}
+
+/* =============================================================================
  * Mobile Responsive - Bottom Sheet Style
  * ============================================================================= */
 @media (max-width: 480px) {
@@ -525,6 +681,11 @@
       opacity: 1;
       width: 44px;
       height: 44px;
+   }
+
+   /* Entity relations: allow wrapping on narrow screens */
+   .entity-relation {
+      flex-wrap: wrap;
    }
 
    #memory-search-input {

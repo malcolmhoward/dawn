@@ -410,6 +410,14 @@ typedef struct {
    float decay_prune_threshold;      /* Delete facts below this (0.25) */
    int summary_retention_days;       /* Delete summaries older than N days (30) */
    float access_reinforcement_boost; /* Confidence boost on access (0.05) */
+
+   /* Embeddings (semantic search) */
+   char embedding_provider[16];        /* "onnx", "ollama", "openai", "" (disabled) */
+   char embedding_model[64];           /* HTTP providers: model name */
+   char embedding_endpoint[256];       /* HTTP providers: base URL */
+   float embedding_keyword_weight;     /* hybrid search keyword weight (0.0-1.0) */
+   float embedding_vector_weight;      /* hybrid search vector weight (0.0-1.0) */
+   bool embedding_backfill_on_startup; /* backfill existing facts on startup */
 } memory_config_t;
 
 /* =============================================================================
@@ -497,6 +505,9 @@ typedef struct {
 
    /* Plex Media Server authentication token */
    char plex_token[CONFIG_API_KEY_MAX];
+
+   /* Embedding API key (OpenAI provider; falls back to openai_api_key if empty) */
+   char embedding_api_key[CONFIG_API_KEY_MAX];
 } secrets_config_t;
 
 /* =============================================================================

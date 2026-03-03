@@ -207,16 +207,16 @@ static void free_tool_result_vision(tool_result_list_t *results) {
  */
 static bool resolve_provider_switch(llm_tool_loop_params_t *params) {
    llm_resolved_config_t current_config;
-   char model_buf[LLM_MODEL_NAME_MAX] = "";
 
    if (llm_get_current_resolved_config(&current_config) != 0) {
       return false; /* Can't resolve config, stay on current provider */
    }
 
-   /* Copy model to local buffer (resolved ptr may dangle) */
+   /* Copy model to params-owned buffer (resolved ptr may dangle after return) */
    if (current_config.model && current_config.model[0] != '\0') {
-      strncpy(model_buf, current_config.model, sizeof(model_buf) - 1);
-      model_buf[sizeof(model_buf) - 1] = '\0';
+      strncpy(params->model_storage, current_config.model, LLM_MODEL_NAME_MAX - 1);
+      params->model_storage[LLM_MODEL_NAME_MAX - 1] = '\0';
+      params->model = params->model_storage;
    }
 
    /* Determine new provider type and format */
@@ -249,10 +249,6 @@ static bool resolve_provider_switch(llm_tool_loop_params_t *params) {
    params->api_key = current_config.api_key;
    params->llm_type = current_config.type;
    params->cloud_provider = current_config.cloud_provider;
-
-   if (model_buf[0] != '\0') {
-      params->model = model_buf;
-   }
 
    if (switched) {
       params->provider_fn = new_fn;

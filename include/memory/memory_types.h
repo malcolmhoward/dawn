@@ -136,6 +136,7 @@ typedef struct {
    int fact_count;
    int pref_count;
    int summary_count;
+   int entity_count;
    time_t oldest_fact;
    time_t newest_fact;
 } memory_stats_t;
@@ -177,6 +178,38 @@ typedef struct {
    char old_fact[MEMORY_FACT_TEXT_MAX];
    char new_fact[MEMORY_FACT_TEXT_MAX];
 } memory_extracted_correction_t;
+
+/* =============================================================================
+ * Entity Graph Structures (Phase S4)
+ *
+ * Entities represent named people, pets, places, organizations, and things
+ * mentioned by the user. Relations capture typed links between entities
+ * (e.g., "Bruno" is_a "golden retriever", "Kris" lives_in "Atlanta").
+ * ============================================================================= */
+
+#define MEMORY_ENTITY_NAME_MAX 64
+#define MEMORY_ENTITY_TYPE_MAX 32
+#define MEMORY_RELATION_MAX 64
+
+typedef struct {
+   int64_t id;
+   int user_id;
+   char name[MEMORY_ENTITY_NAME_MAX];
+   char entity_type[MEMORY_ENTITY_TYPE_MAX];
+   char canonical_name[MEMORY_ENTITY_NAME_MAX];
+   int mention_count;
+   time_t first_seen;
+   time_t last_seen;
+} memory_entity_t;
+
+typedef struct {
+   int64_t id;
+   int64_t subject_entity_id;
+   char relation[MEMORY_RELATION_MAX];
+   int64_t object_entity_id;                 /* 0 if literal value */
+   char object_name[MEMORY_ENTITY_NAME_MAX]; /* Resolved entity name or literal */
+   float confidence;
+} memory_relation_t;
 
 #ifdef __cplusplus
 }

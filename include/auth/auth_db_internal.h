@@ -48,7 +48,7 @@
  * ============================================================================= */
 
 /* Current schema version */
-#define AUTH_DB_SCHEMA_VERSION 18
+#define AUTH_DB_SCHEMA_VERSION 19
 
 /* Retention periods */
 #define LOGIN_ATTEMPT_RETENTION_SEC (7 * 24 * 60 * 60) /* 7 days */
@@ -174,7 +174,29 @@ typedef struct {
 
    /* Privacy flag */
    sqlite3_stmt *stmt_conv_set_private;
+
+   /* === Embedding module statements (memory_db.c) === */
+   sqlite3_stmt *stmt_memory_fact_update_embedding;
+   sqlite3_stmt *stmt_memory_fact_get_embeddings;
+   sqlite3_stmt *stmt_memory_fact_list_without_embedding;
+
+   /* === Entity graph statements (memory_db.c) === */
+   sqlite3_stmt *stmt_memory_entity_upsert;
+   sqlite3_stmt *stmt_memory_entity_get_by_name;
+   sqlite3_stmt *stmt_memory_entity_update_embedding;
+   sqlite3_stmt *stmt_memory_entity_get_embeddings;
+   sqlite3_stmt *stmt_memory_relation_create;
+   sqlite3_stmt *stmt_memory_relation_list_by_subject;
+   sqlite3_stmt *stmt_memory_relation_list_by_object;
+   sqlite3_stmt *stmt_memory_entity_search;
+   sqlite3_stmt *stmt_memory_entity_delete;
+   sqlite3_stmt *stmt_memory_relation_delete_by_entity;
 } auth_db_state_t;
+
+/* Ensure last_stmt_end covers all statement fields (catches reorder bugs) */
+_Static_assert(offsetof(auth_db_state_t, stmt_memory_relation_delete_by_entity) >
+                   offsetof(auth_db_state_t, stmt_create_user),
+               "last_stmt_end must be after first_stmt_offset");
 
 /* =============================================================================
  * Shared State (defined in auth_db_core.c)

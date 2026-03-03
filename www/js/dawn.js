@@ -388,6 +388,9 @@
             case 'list_memory_summaries_response':
                DawnMemory.handleSummariesResponse(msg.payload);
                break;
+            case 'list_memory_entities_response':
+               DawnMemory.handleEntitiesResponse(msg.payload);
+               break;
             case 'search_memory_response':
                DawnMemory.handleSearchResponse(msg.payload);
                break;
@@ -399,6 +402,9 @@
                break;
             case 'delete_memory_summary_response':
                DawnMemory.handleDeleteSummaryResponse(msg.payload);
+               break;
+            case 'delete_memory_entity_response':
+               DawnMemory.handleDeleteEntityResponse(msg.payload);
                break;
             case 'delete_all_memories_response':
                DawnMemory.handleDeleteAllResponse(msg.payload);
@@ -907,7 +913,7 @@
    }
 
    // =============================================================================
-   // LLM Controls Collapse Toggle (mobile only)
+   // LLM Controls Collapse Toggle
    // =============================================================================
    let llmControlsCollapsed = false;
 
@@ -1083,7 +1089,7 @@
          });
       }
 
-      // LLM controls collapse/expand setup (mobile only)
+      // LLM controls collapse/expand setup
       const llmMini = document.getElementById('llm-controls-mini');
       const llmGrid = document.getElementById('llm-controls-grid');
       if (llmMini && llmGrid) {
@@ -1112,7 +1118,7 @@
             if (sel) sel.addEventListener('change', updateLlmMiniSummary);
          });
 
-         // Collapse toggle inside the grid (visible on mobile only)
+         // Collapse toggle inside the grid
          const llmCollapseToggle = document.getElementById('llm-controls-collapse');
          if (llmCollapseToggle) {
             llmCollapseToggle.addEventListener('click', toggleLlmControlsCollapse);

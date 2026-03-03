@@ -1,0 +1,210 @@
+/*
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ * By contributing to this project, you agree to license your contributions
+ * under the GPLv3 (or any later version) or any future licenses chosen by
+ * the project author(s). Contributions include any modifications,
+ * enhancements, or additions to the project. These contributions become
+ * part of the project and are adopted by the project author(s).
+ *
+ * Memory Embeddings API
+ *
+ * Provider-agnostic embedding generation and semantic search for the
+ * memory system. Supports ONNX local inference (default), Ollama, and
+ * OpenAI-compatible HTTP endpoints.
+ */
+
+#ifndef MEMORY_EMBEDDINGS_H
+#define MEMORY_EMBEDDINGS_H
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#include "memory/memory_types.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* Maximum embedding dimensions (all-MiniLM = 384, OpenAI ada = 1536) */
+#define MAX_EMBEDDING_DIMS 2048
+
+/* Maximum facts to cache for vector search */
+#define EMBEDDING_SEARCH_CAP 2000
+
+_Static_assert(MAX_EMBEDDING_DIMS * sizeof(float) <= 8192, "Embedding stack buffer exceeds 8KB");
+
+/* Provider interface */
+typedef struct {
+   const char *name;
+   int (*init)(const char *endpoint, const char *model, const char *api_key);
+   void (*cleanup)(void);
+   int (*embed)(const char *text, float *out, int max_dims, int *out_dims);
+} embedding_provider_t;
+
+/* Hybrid search result */
+typedef struct {
+   int64_t fact_id;
+   float score; /* Combined hybrid score */
+} embedding_search_result_t;
+
+/**
+ * @brief Initialize the embedding system
+ *
+ * Selects and initializes the configured provider. Call once at startup.
+ *
+ * @return 0 on success, non-zero on failure (non-fatal — search falls back to keyword)
+ */
+int memory_embeddings_init(void);
+
+/**
+ * @brief Shut down the embedding system
+ *
+ * Joins the backfill thread and releases provider resources.
+ */
+void memory_embeddings_cleanup(void);
+
+/**
+ * @brief Check if embeddings are available
+ *
+ * @return true if a provider is initialized and ready
+ */
+bool memory_embeddings_available(void);
+
+/**
+ * @brief Get the embedding dimension for the current provider
+ *
+ * @return Number of dimensions, or 0 if not initialized
+ */
+int memory_embeddings_dims(void);
+
+/**
+ * @brief Generate an embedding for text
+ *
+ * @param text Input text to embed
+ * @param out Output float array (must hold at least MAX_EMBEDDING_DIMS)
+ * @param out_dims Output: actual dimensions written
+ * @return 0 on success, non-zero on failure
+ */
+int memory_embeddings_embed(const char *text, float *out, int *out_dims);
+
+/**
+ * @brief Generate embedding and store it for a fact
+ *
+ * Convenience function: embeds text and writes to DB in one call.
+ *
+ * @param user_id User who owns the fact (for ownership check)
+ * @param fact_id Fact ID to update
+ * @param text Fact text to embed
+ * @return 0 on success, non-zero on failure
+ */
+int memory_embeddings_embed_and_store(int user_id, int64_t fact_id, const char *text);
+
+/**
+ * @brief Perform hybrid keyword + vector search
+ *
+ * Combines keyword search scores with vector cosine similarity.
+ * Falls back to keyword-only if embeddings are unavailable.
+ *
+ * @param user_id User ID
+ * @param query Search query text
+ * @param keyword_facts Pre-searched keyword results (fact IDs)
+ * @param keyword_scores Keyword scores per fact (from multi_token_fact_search)
+ * @param keyword_count Number of keyword results
+ * @param token_count Number of search tokens (for score normalization)
+ * @param out_results Output: sorted hybrid results
+ * @param max_results Maximum results to return
+ * @return Number of results
+ */
+int memory_embeddings_hybrid_search(int user_id,
+                                    const char *query,
+                                    const int64_t *keyword_facts,
+                                    const int *keyword_scores,
+                                    int keyword_count,
+                                    int token_count,
+                                    embedding_search_result_t *out_results,
+                                    int max_results);
+
+/**
+ * @brief Invalidate the fact embedding cache (e.g., after store/delete)
+ */
+void memory_embeddings_invalidate_cache(void);
+
+/**
+ * @brief Generate embedding and store it for an entity
+ *
+ * @param entity_id Entity ID to update
+ * @param user_id User ID (for ownership check)
+ * @param text Entity name text to embed
+ * @return 0 on success, non-zero on failure
+ */
+int memory_embeddings_embed_and_store_entity(int64_t entity_id, int user_id, const char *text);
+
+/**
+ * @brief Invalidate the entity embedding cache
+ */
+void memory_embeddings_invalidate_entity_cache(void);
+
+/**
+ * @brief Search entities by semantic similarity
+ *
+ * @param user_id User ID
+ * @param query Search query
+ * @param type_filter Optional entity type filter (NULL for all)
+ * @param out_ids Output: entity IDs
+ * @param out_names Output: entity names
+ * @param out_types Output: entity types
+ * @param out_scores Output: cosine similarity scores
+ * @param max_results Maximum results
+ * @return Number of results
+ */
+int memory_embeddings_entity_search(int user_id,
+                                    const char *query,
+                                    const char *type_filter,
+                                    int64_t *out_ids,
+                                    char out_names[][MEMORY_ENTITY_NAME_MAX],
+                                    char out_types[][MEMORY_ENTITY_TYPE_MAX],
+                                    float *out_scores,
+                                    int max_results);
+
+/**
+ * @brief Start background backfill of un-embedded facts
+ *
+ * @param user_id User ID to backfill
+ */
+void memory_embeddings_start_backfill(int user_id);
+
+/* Compute L2 norm of a float vector */
+float memory_embeddings_l2_norm(const float *vec, int dims);
+
+/* Compute cosine similarity using pre-computed norms */
+float memory_embeddings_cosine_with_norms(const float *a,
+                                          const float *b,
+                                          int dims,
+                                          float norm_a,
+                                          float norm_b);
+
+/* Compute cosine similarity (computes norms internally) */
+float memory_embeddings_cosine(const float *a, const float *b, int dims);
+
+/* Provider registration (called by provider implementations) */
+extern const embedding_provider_t embedding_provider_onnx;
+extern const embedding_provider_t embedding_provider_ollama;
+extern const embedding_provider_t embedding_provider_openai;
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* MEMORY_EMBEDDINGS_H */

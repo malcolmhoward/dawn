@@ -1216,6 +1216,18 @@ json_object *config_to_json(const dawn_config_t *config) {
                           json_object_new_int(config->memory.summary_retention_days));
    json_object_object_add(memory, "access_reinforcement_boost",
                           json_object_new_double(config->memory.access_reinforcement_boost));
+   json_object_object_add(memory, "embedding_provider",
+                          json_object_new_string(config->memory.embedding_provider));
+   json_object_object_add(memory, "embedding_model",
+                          json_object_new_string(config->memory.embedding_model));
+   json_object_object_add(memory, "embedding_endpoint",
+                          json_object_new_string(config->memory.embedding_endpoint));
+   json_object_object_add(memory, "embedding_keyword_weight",
+                          json_object_new_double(config->memory.embedding_keyword_weight));
+   json_object_object_add(memory, "embedding_vector_weight",
+                          json_object_new_double(config->memory.embedding_vector_weight));
+   json_object_object_add(memory, "embedding_backfill_on_startup",
+                          json_object_new_boolean(config->memory.embedding_backfill_on_startup));
    json_object_object_add(root, "memory", memory);
 
    /* [shutdown] */
@@ -1348,6 +1360,8 @@ json_object *secrets_to_json_status(const secrets_config_t *secrets) {
                                                   secrets->satellite_registration_key[0]));
    json_object_object_add(obj, "plex_token",
                           json_object_new_boolean(secrets && secrets->plex_token[0]));
+   json_object_object_add(obj, "embedding_api_key",
+                          json_object_new_boolean(secrets && secrets->embedding_api_key[0]));
 
    return obj;
 }
@@ -1693,6 +1707,27 @@ int config_write_toml(const dawn_config_t *config, const char *path) {
    fprintf(fp, "summary_retention_days = %d\n", config->memory.summary_retention_days);
    fprintf(fp, "access_reinforcement_boost = %.2f\n", config->memory.access_reinforcement_boost);
 
+   fprintf(fp, "\n[memory.embeddings]\n");
+   {
+      char *escaped = toml_escape_string(config->memory.embedding_provider);
+      fprintf(fp, "provider = \"%s\"\n", escaped ? escaped : config->memory.embedding_provider);
+      free(escaped);
+   }
+   if (config->memory.embedding_model[0]) {
+      char *escaped = toml_escape_string(config->memory.embedding_model);
+      fprintf(fp, "model = \"%s\"\n", escaped ? escaped : config->memory.embedding_model);
+      free(escaped);
+   }
+   if (config->memory.embedding_endpoint[0]) {
+      char *escaped = toml_escape_string(config->memory.embedding_endpoint);
+      fprintf(fp, "endpoint = \"%s\"\n", escaped ? escaped : config->memory.embedding_endpoint);
+      free(escaped);
+   }
+   fprintf(fp, "keyword_weight = %.2f\n", config->memory.embedding_keyword_weight);
+   fprintf(fp, "vector_weight = %.2f\n", config->memory.embedding_vector_weight);
+   fprintf(fp, "backfill_on_startup = %s\n",
+           config->memory.embedding_backfill_on_startup ? "true" : "false");
+
    fprintf(fp, "\n[debug]\n");
    fprintf(fp, "mic_record = %s\n", config->debug.mic_record ? "true" : "false");
    fprintf(fp, "asr_record = %s\n", config->debug.asr_record ? "true" : "false");
@@ -1786,6 +1821,7 @@ int secrets_write_toml(const secrets_config_t *secrets, const char *path) {
    WRITE_SECRET("mqtt_password", secrets->mqtt_password);
    WRITE_SECRET("satellite_registration_key", secrets->satellite_registration_key);
    WRITE_SECRET("plex_token", secrets->plex_token);
+   WRITE_SECRET("embedding_api_key", secrets->embedding_api_key);
 
    /* SmartThings OAuth client credentials */
    if (secrets->smartthings_client_id[0] || secrets->smartthings_client_secret[0]) {

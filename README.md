@@ -11,142 +11,154 @@ DAWN is designed for embedded Linux platforms (Jetson, Raspberry Pi) and support
 ## Features
 
 ### Core Capabilities
+
 - **Dual ASR Engine Support**
-  - Whisper (base model) with GPU acceleration on Jetson (2.3x-5.5x speedup)
-  - Vosk (legacy support, optional, GPU-accelerated)
-  - Voice Activity Detection (VAD) using Silero model (included)
-  - Intelligent chunking for long utterances
+   - Whisper (base model) with GPU acceleration on Jetson (2.3x-5.5x speedup)
+   - Vosk (legacy support, optional, GPU-accelerated)
+   - Voice Activity Detection (VAD) using Silero model (included)
+   - Intelligent chunking for long utterances
 
 - **Multi-Provider LLM Integration**
-  - Cloud: OpenAI GPT-5 series, Anthropic Claude 4.5 (Sonnet/Opus/Haiku), Google Gemini 2.5/3
-  - Local: llama.cpp or Ollama (setup is beyond this guide — see [llama.cpp](https://github.com/ggerganov/llama.cpp) or [Ollama](https://ollama.ai))
-  - Runtime model switching via WebUI or voice commands
-  - Streaming responses with real-time TTS integration
-  - Real-time token streaming with generation speed metrics (tokens/sec)
-  - Sentence-boundary buffering for natural speech output
-  - **Extended Thinking/Reasoning** — Enable deep reasoning mode for complex queries:
-    - Claude: Thinking budget control (collapsible thinking blocks)
-    - OpenAI: Reasoning effort (low/medium/high) for o1/o3/o4 models
-    - Gemini: Thinking mode for Gemini 2.5 Flash/Pro
-    - Local: Qwen3 thinking mode with native template support
+   - Cloud: OpenAI GPT-5 series, Anthropic Claude 4.5 (Sonnet/Opus/Haiku), Google Gemini 2.5/3
+   - Local: llama.cpp or Ollama (setup is beyond this guide — see [llama.cpp](https://github.com/ggerganov/llama.cpp) or [Ollama](https://ollama.ai))
+   - Runtime model switching via WebUI or voice commands
+   - Streaming responses with real-time TTS integration
+   - Real-time token streaming with generation speed metrics (tokens/sec)
+   - Sentence-boundary buffering for natural speech output
+   - **Extended Thinking/Reasoning** — Enable deep reasoning mode for complex queries:
+      - Claude: Thinking budget control (collapsible thinking blocks)
+      - OpenAI: Reasoning effort (low/medium/high) for o1/o3/o4 models
+      - Gemini: Thinking mode for Gemini 2.5 Flash/Pro
+      - Local: Qwen3 thinking mode with native template support
 
 - **High-Quality Text-to-Speech**
-  - Piper TTS with ONNX Runtime
-  - Two voices included: en_GB-alba-medium (Friday) and en_GB-northern_english_male-medium (Jarvis)
-  - Text preprocessing for natural phrasing
-  - Streaming integration with LLM responses
+   - Piper TTS with ONNX Runtime
+   - Two voices included: en_GB-alba-medium (Friday) and en_GB-northern_english_male-medium (Jarvis)
+   - Text preprocessing for natural phrasing
+   - Streaming integration with LLM responses
 
 - **Multi-Format Music Playback**
-  - FLAC (always available via libFLAC)
-  - MP3 (optional, via libmpg123)
-  - Ogg Vorbis (optional, via libvorbis)
-  - Unified decoder abstraction with auto-format detection
-  - Mixed-format playlists supported
-  - **Metadata search** - Search by artist, title, album, or genre
-  - **Background indexing** - SQLite metadata cache with configurable scan interval
-  - **LLM playlist builder** - AI can search, add, remove, and clear queue tracks incrementally
-  - **Resume playback** - Pause saves position, resume continues from there
-  - **Opus streaming** - Stream music to WebUI and DAP2 satellites via WebSocket
-  - **Paginated library** - Browse artists/albums/tracks with 50-item pages
-  - **Plex Media Server** - Unified library with local + Plex sources, priority-based deduplication (local wins), case-insensitive matching
+   - FLAC (always available via libFLAC)
+   - MP3 (optional, via libmpg123)
+   - Ogg Vorbis (optional, via libvorbis)
+   - Unified decoder abstraction with auto-format detection
+   - Mixed-format playlists supported
+   - **Metadata search** - Search by artist, title, album, or genre
+   - **Background indexing** - SQLite metadata cache with configurable scan interval
+   - **LLM playlist builder** - AI can search, add, remove, and clear queue tracks incrementally
+   - **Resume playback** - Pause saves position, resume continues from there
+   - **Opus streaming** - Stream music to WebUI and DAP2 satellites via WebSocket
+   - **Paginated library** - Browse artists/albums/tracks with 50-item pages
+   - **Plex Media Server** - Unified library with local + Plex sources, priority-based deduplication (local wins), case-insensitive matching
 
 - **DAP2 Satellite System**
-  - **One server, one port, three client types**: The WebUI server on port 3000 is the single entry point for all remote access — browser clients (WebUI), Raspberry Pi satellites (Tier 1), and ESP32 satellites (Tier 2) all connect to the same WebSocket endpoint. The daemon inspects each client's capabilities at registration and routes accordingly: text for Tier 1, Opus audio for browsers, raw PCM for Tier 2. No separate servers, no extra ports.
-  - **Tier 1** (RPi): Text-first — local ASR/TTS, hands-free with wake word
-  - **Tier 2** (ESP32-S3): Audio path — streams raw PCM, server-side ASR/TTS, push-to-talk. See [dawn_satellite_arduino/README.md](dawn_satellite_arduino/README.md)
-  - Capability-based routing: daemon auto-selects text or audio path per satellite
-  - SDL2 touchscreen UI with KMSDRM backend (no X11 required)
-  - **5 color themes** — Cyan, Purple, Green, Blue, Terminal with dot picker and crossfade transitions
-  - Music streaming via Opus with lock-free ring buffer + LWS-thread drain (Tier 1)
-  - Goertzel FFT visualizer driven by live audio stream
-  - Screensaver/ambient mode: clock with Lissajous drift + fullscreen rainbow FFT visualizer
-  - Brightness and volume sliders with sysfs backlight + software dimming fallback
-  - See [dawn_satellite/README.md](dawn_satellite/README.md) for details
+   - **One server, one port, three client types**: The WebUI server on port 3000 is the single entry point for all remote access — browser clients (WebUI), Raspberry Pi satellites (Tier 1), and ESP32 satellites (Tier 2) all connect to the same WebSocket endpoint. The daemon inspects each client's capabilities at registration and routes accordingly: text for Tier 1, Opus audio for browsers, raw PCM for Tier 2. No separate servers, no extra ports.
+   - **Tier 1** (RPi): Text-first — local ASR/TTS, hands-free with wake word
+   - **Tier 2** (ESP32-S3): Audio path — streams raw PCM, server-side ASR/TTS, push-to-talk. See [dawn_satellite_arduino/README.md](dawn_satellite_arduino/README.md)
+   - Capability-based routing: daemon auto-selects text or audio path per satellite
+   - SDL2 touchscreen UI with KMSDRM backend (no X11 required)
+   - **5 color themes** — Cyan, Purple, Green, Blue, Terminal with dot picker and crossfade transitions
+   - Music streaming via Opus with lock-free ring buffer + LWS-thread drain (Tier 1)
+   - Goertzel FFT visualizer driven by live audio stream
+   - Screensaver/ambient mode: clock with Lissajous drift + fullscreen rainbow FFT visualizer
+   - Brightness and volume sliders with sysfs backlight + software dimming fallback
+   - See [dawn_satellite/README.md](dawn_satellite/README.md) for details
 
 - **MQTT Integration**
-  - Device command/control system
-  - Integration with other OASIS components or external systems
-  - Extensible device callback architecture
+   - Device command/control system
+   - Integration with other OASIS components or external systems
+   - Extensible device callback architecture
 
 - **Web UI**
-  - Browser-based interface on port 3000
-  - Push-to-talk voice input (requires HTTPS for remote access)
-  - **Opus audio streaming** - Low-latency bidirectional audio via WebCodecs API (48kHz native, server resamples to 16kHz for ASR)
-  - TTS audio playback through browser
-  - FFT waveform visualization with lightning trail effect
-  - Real-time WebSocket communication
-  - Session persistence across page refresh (30-minute timeout)
-  - Debug mode for viewing commands and tool results
-  - **Settings panel** for live configuration editing
-  - **Application restart** from browser when settings require it
-  - **User authentication** with cookie-based sessions
-  - **"Remember Me" login** - 30-day persistent sessions across browser restarts
-  - **Multi-user support** with separate conversation contexts
-  - **User Management** (admin-only) - create/delete users, reset passwords
-  - **My Settings** - per-user persona, location, timezone, units, TTS speed
-  - **Conversation history** - browse, search, continue, and delete past conversations
-  - **Per-conversation LLM settings** - Reasoning mode and Tools mode lock after first message, inherited by continuations
-  - **7 color themes** - cyan, purple, green, orange, red, blue, and terminal
-  - **Accessibility** - keyboard navigation, screen reader support (ARIA), reduced motion preferences, WCAG-compliant touch targets
-  - Mobile-friendly responsive design
-  - **Vision/Image Support** - Send images for AI analysis:
-    - Multiple input methods: file upload, paste, drag-and-drop, camera capture
-    - Camera capture with front/rear camera switching (mobile-friendly)
-    - Multi-image support (configurable, default 5 images per message)
-    - Client-side compression (configurable max dimension, JPEG 85%) for efficient uploads
-    - SQLite BLOB storage for conversation history persistence
-    - Auto-detects vision-capable models (GPT-4o, Claude 3, Gemini, LLaVA, etc.)
-    - Security: SVG excluded to prevent XSS attacks
-  - **Document Attachment** - Attach text documents for LLM context:
-    - Drag-and-drop, file button, or paste to attach documents
-    - Supports plain text, Markdown, CSV, JSON, XML, YAML, source code, and more
-    - Configurable limits (default: 5 documents, 512 KB each, up to 10 MB max)
-    - Clickable document chips in conversation with viewer modal
-    - History replay renders saved document markers as chips
-    - Cooperative drag-and-drop: images route to vision, text files route to documents
+   - Browser-based interface on port 3000
+   - Push-to-talk voice input (requires HTTPS for remote access)
+   - **Opus audio streaming** - Low-latency bidirectional audio via WebCodecs API (48kHz native, server resamples to 16kHz for ASR)
+   - TTS audio playback through browser
+   - FFT waveform visualization with lightning trail effect
+   - Real-time WebSocket communication
+   - Session persistence across page refresh (30-minute timeout)
+   - Debug mode for viewing commands and tool results
+   - **Settings panel** for live configuration editing
+   - **Application restart** from browser when settings require it
+   - **User authentication** with cookie-based sessions
+   - **"Remember Me" login** - 30-day persistent sessions across browser restarts
+   - **Multi-user support** with separate conversation contexts
+   - **User Management** (admin-only) - create/delete users, reset passwords
+   - **My Settings** - per-user persona, location, timezone, units, TTS speed
+   - **Conversation history** - browse, search, continue, and delete past conversations
+   - **Per-conversation LLM settings** - Reasoning mode and Tools mode lock after first message, inherited by continuations
+   - **7 color themes** - cyan, purple, green, orange, red, blue, and terminal
+   - **Accessibility** - keyboard navigation, screen reader support (ARIA), reduced motion preferences, WCAG-compliant touch targets
+   - Mobile-friendly responsive design
+   - **Vision/Image Support** - Send images for AI analysis:
+      - Multiple input methods: file upload, paste, drag-and-drop, camera capture
+      - Camera capture with front/rear camera switching (mobile-friendly)
+      - Multi-image support (configurable, default 5 images per message)
+      - Client-side compression (configurable max dimension, JPEG 85%) for efficient uploads
+      - SQLite BLOB storage for conversation history persistence
+      - Auto-detects vision-capable models (GPT-4o, Claude 3, Gemini, LLaVA, etc.)
+      - Security: SVG excluded to prevent XSS attacks
+   - **Document Attachment** - Attach text documents for LLM context:
+      - Drag-and-drop, file button, or paste to attach documents
+      - Supports plain text, Markdown, CSV, JSON, XML, YAML, source code, and more
+      - Configurable limits (default: 5 documents, 512 KB each, up to 10 MB max)
+      - Clickable document chips in conversation with viewer modal
+      - History replay renders saved document markers as chips
+      - Cooperative drag-and-drop: images route to vision, text files route to documents
 
 - **LLM Tools**
-  - **Web Search** - Voice-activated search via SearXNG (self-hosted, privacy-focused)
-    - Multiple search categories: web, news, social, science, IT, Q&A, dictionary, academic papers
-    - Host-based deduplication (max 2 results per domain)
-    - Relevance-based reranking with quality engine boosting
-  - **URL Fetcher** - Fetch and read web pages; large pages auto-summarized via TF-IDF
-  - **Weather** - Real-time weather and forecasts via Open-Meteo API (free, no API key)
-  - **Calculator** - Mathematical expression evaluation with tinyexpr engine
-  - **Memory Tool** - Search, remember, and forget facts across sessions
-  - **Scheduler** - Timers, alarms, reminders, and scheduled tool execution
-    - "Set a 10 minute timer", "Wake me up at 7 AM", "Remind me to call Mom at 3pm"
-    - Recurring events (daily, weekdays, weekends, weekly, custom days)
-    - Audible chimes with configurable volume, snooze, and dismiss via voice or WebUI
-    - Scheduled tasks: "Turn off the lights at midnight" (executes any registered tool)
-    - Per-user event limits, missed event recovery on restart, automatic cleanup
-    - WebUI notification banners with dismiss/snooze buttons
-  - **Parallel Tool Execution** - Multiple tool calls execute concurrently (e.g., weather + search in ~1s vs ~3s sequential)
-  - LLM automatically invokes tools and incorporates results into responses
+   - **Web Search** - Voice-activated search via SearXNG (self-hosted, privacy-focused)
+      - Multiple search categories: web, news, social, science, IT, Q&A, dictionary, academic papers
+      - Host-based deduplication (max 2 results per domain)
+      - Relevance-based reranking with quality engine boosting
+   - **URL Fetcher** - Fetch and read web pages; large pages auto-summarized via TF-IDF
+   - **Weather** - Real-time weather and forecasts via Open-Meteo API (free, no API key)
+   - **Calculator** - Mathematical expression evaluation with tinyexpr engine
+   - **Memory Tool** - Search, remember, and forget facts across sessions
+   - **Scheduler** - Timers, alarms, reminders, and scheduled tool execution
+      - "Set a 10 minute timer", "Wake me up at 7 AM", "Remind me to call Mom at 3pm"
+      - Recurring events (daily, weekdays, weekends, weekly, custom days)
+      - Audible chimes with configurable volume, snooze, and dismiss via voice or WebUI
+      - Scheduled tasks: "Turn off the lights at midnight" (executes any registered tool)
+      - Per-user event limits, missed event recovery on restart, automatic cleanup
+      - WebUI notification banners with dismiss/snooze buttons
+   - **Parallel Tool Execution** - Multiple tool calls execute concurrently (e.g., weather + search in ~1s vs ~3s sequential)
+   - LLM automatically invokes tools and incorporates results into responses
 
 - **Persistent Memory System**
-  - DAWN remembers facts and preferences about users across sessions
-  - **Memory Tool** - "Remember that I'm vegetarian", "What do you know about me?"
-  - **Tokenized Search** - Multi-word queries match per-word with dedup and rank-by-match-count
-  - **Recent Query** - Retrieve memories by time period (e.g., "24h", "7d", "1w")
-  - **Automated Extraction** - Facts automatically extracted at session end
-  - **Context Injection** - User facts loaded into system prompt at session start
-  - **Privacy Toggle** - Mark conversations as private to prevent memory extraction (Ctrl+Shift+P)
-  - **Confidence Decay** - Unused memories naturally fade; accessed memories are reinforced
-  - Per-user memory isolation for multi-user households
-  - Guardrails prevent instruction injection via memory content
-  - See `docs/MEMORY_SYSTEM_DESIGN.md` for full architecture
+   - DAWN remembers facts, preferences, and entity relationships about users across sessions
+   - **Memory Tool** - "Remember that I'm vegetarian", "What do you know about me?"
+   - **Tokenized Search** - Multi-word queries match per-word with dedup and rank-by-match-count
+   - **Semantic Embeddings** - Multi-provider embedding support (Ollama, OpenAI, ONNX) for vector similarity search
+   - **Hybrid Search** - Combines keyword matching and semantic similarity with configurable weights
+   - **Entity Graph** - Automatically extracts people, places, pets, projects, and their relationships
+      - Bidirectional graph traversal (outgoing + incoming relations)
+      - Cosine similarity entity matching with embedding cache
+      - Entity deduplication via existing-entity prompt injection
+   - **Recent Query** - Retrieve memories by time period (e.g., "24h", "7d", "1w")
+   - **Automated Extraction** - Facts, preferences, entities, and relations extracted at session end
+   - **Context Injection** - User facts and entity graph loaded into system prompt at session start
+   - **Privacy Toggle** - Mark conversations as private to prevent memory extraction (Ctrl+Shift+P)
+   - **Confidence Decay** - Unused memories naturally fade; accessed memories are reinforced
+   - **Memory Viewer** (WebUI) - Browse, search, and manage all memory types:
+      - Four tabs: Facts, Preferences, Summaries, Graph (entities with expandable relations)
+      - Delete individual items, "Forget Everything" with confirmation
+      - Real-time stats (facts, preferences, summaries, entities)
+   - Per-user memory isolation for multi-user households
+   - Guardrails prevent instruction injection via memory content
+   - See `docs/MEMORY_SYSTEM_DESIGN.md` for full architecture
 
 ### Performance Highlights
+
 - **ASR Performance** (Jetson GPU acceleration):
-  - Whisper tiny: RTF 0.079 (12.7x faster than realtime)
-  - Whisper base: RTF 0.109 (9.2x faster than realtime)
-  - Whisper small: RTF 0.225 (4.4x faster than realtime)
+   - Whisper tiny: RTF 0.079 (12.7x faster than realtime)
+   - Whisper base: RTF 0.109 (9.2x faster than realtime)
+   - Whisper small: RTF 0.225 (4.4x faster than realtime)
 
 - **LLM Performance**:
-  - Cloud providers: ~2-4s response latency depending on provider and model
-  - Local (llama.cpp): ~100-200ms time-to-first-token on Jetson with quantized models
-  - Streaming reduces perceived latency significantly (response starts as tokens arrive)
+   - Cloud providers: ~2-4s response latency depending on provider and model
+   - Local (llama.cpp): ~100-200ms time-to-first-token on Jetson with quantized models
+   - Streaming reduces perceived latency significantly (response starts as tokens arrive)
 
 ## Directory Structure
 
@@ -188,60 +200,61 @@ For detailed architecture, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ### Hardware Requirements Summary
 
-| Component | Minimum | Recommended | Optimal |
-|-----------|---------|-------------|---------|
-| **RAM** | 2 GB | 4 GB | 8 GB |
-| **Storage** | 4 GB | 8 GB | 16+ GB |
-| **CPU** | 4-core ARM64/x86-64 | 4-core 2.0+ GHz | Jetson GPU |
-| **GPU** | None (CPU-only) | RK3588 NPU / Coral TPU | NVIDIA CUDA |
+| Component   | Minimum             | Recommended            | Optimal     |
+| ----------- | ------------------- | ---------------------- | ----------- |
+| **RAM**     | 2 GB                | 4 GB                   | 8 GB        |
+| **Storage** | 4 GB                | 8 GB                   | 16+ GB      |
+| **CPU**     | 4-core ARM64/x86-64 | 4-core 2.0+ GHz        | Jetson GPU  |
+| **GPU**     | None (CPU-only)     | RK3588 NPU / Coral TPU | NVIDIA CUDA |
 
 ### Platform Recommendations
 
 #### Tier 1: Excellent (Production Ready)
 
-| Platform | Price | AI Performance | Notes |
-|----------|-------|----------------|-------|
-| **Jetson Orin Nano Super** | ~$249 | 67 TOPS | Primary target, GPU Whisper ~0.1s RTF |
-| **Jetson Orin NX** | ~$400 | 100 TOPS | Excellent headroom for all features |
-| **Jetson AGX Orin** | ~$999+ | 275 TOPS | Best for running large local LLMs alongside DAWN |
+| Platform                   | Price  | AI Performance | Notes                                            |
+| -------------------------- | ------ | -------------- | ------------------------------------------------ |
+| **Jetson Orin Nano Super** | ~$249  | 67 TOPS        | Primary target, GPU Whisper ~0.1s RTF            |
+| **Jetson Orin NX**         | ~$400  | 100 TOPS       | Excellent headroom for all features              |
+| **Jetson AGX Orin**        | ~$999+ | 275 TOPS       | Best for running large local LLMs alongside DAWN |
 
 #### Tier 2: Good (Usable with minor tradeoffs)
 
-| Platform | Price | AI Performance | Notes |
-|----------|-------|----------------|-------|
-| **Raspberry Pi 5 (8GB)** | ~$90 | CPU-only, ~1.0 RTF | Whisper base: ~6s for 10s audio |
-| **Raspberry Pi 5 + AI Kit** | ~$190 | 13 TOPS | Hailo-8L accelerator helps vision, not ASR |
-| **Orange Pi 5 (RK3588)** | ~$100-150 | 6 TOPS NPU | Requires RKNN conversion for NPU; ONNX runs on CPU |
-| **Intel N100 Mini PC** | ~$150 | CPU AVX2 | Whisper tiny: ~1.5s; base: ~5-8s |
+| Platform                    | Price     | AI Performance     | Notes                                              |
+| --------------------------- | --------- | ------------------ | -------------------------------------------------- |
+| **Raspberry Pi 5 (8GB)**    | ~$90      | CPU-only, ~1.0 RTF | Whisper base: ~6s for 10s audio                    |
+| **Raspberry Pi 5 + AI Kit** | ~$190     | 13 TOPS            | Hailo-8L accelerator helps vision, not ASR         |
+| **Orange Pi 5 (RK3588)**    | ~$100-150 | 6 TOPS NPU         | Requires RKNN conversion for NPU; ONNX runs on CPU |
+| **Intel N100 Mini PC**      | ~$150     | CPU AVX2           | Whisper tiny: ~1.5s; base: ~5-8s                   |
 
 #### Tier 3: Marginal (Works but slow)
 
-| Platform | Price | AI Performance | Notes |
-|----------|-------|----------------|-------|
-| **Raspberry Pi 4 (4GB)** | ~$55 | CPU-only | Whisper tiny: ~11s for 11s audio (barely real-time) |
-| **Raspberry Pi 4 (8GB)** | ~$75 | CPU-only | Same speed, more RAM headroom |
-| **Generic ARM64 SBC** | Varies | CPU-only | Performance depends on CPU speed |
+| Platform                 | Price  | AI Performance | Notes                                               |
+| ------------------------ | ------ | -------------- | --------------------------------------------------- |
+| **Raspberry Pi 4 (4GB)** | ~$55   | CPU-only       | Whisper tiny: ~11s for 11s audio (barely real-time) |
+| **Raspberry Pi 4 (8GB)** | ~$75   | CPU-only       | Same speed, more RAM headroom                       |
+| **Generic ARM64 SBC**    | Varies | CPU-only       | Performance depends on CPU speed                    |
 
 #### Tier 4: Not Recommended
 
-| Platform | Issue |
-|----------|-------|
-| **Raspberry Pi 3/Zero 2** | Too slow, insufficient RAM |
-| **32-bit ARM systems** | Limited memory, slow inference |
-| **Low-power x86 (Atom)** | Slower than ARM64 alternatives |
+| Platform                  | Issue                          |
+| ------------------------- | ------------------------------ |
+| **Raspberry Pi 3/Zero 2** | Too slow, insufficient RAM     |
+| **32-bit ARM systems**    | Limited memory, slow inference |
+| **Low-power x86 (Atom)**  | Slower than ARM64 alternatives |
 
 ### Recommendations by Use Case
 
-| Use Case | Recommended Platform | Why |
-|----------|---------------------|-----|
-| **Cost-conscious hobbyist** | Raspberry Pi 5 (4GB) ~$65 | Works with Whisper tiny/base, acceptable latency |
-| **Better performance on budget** | Orange Pi 5 (8GB) ~$100 | RK3588 CPU faster than RPi 5 |
-| **x86 preference** | Intel N100 Mini PC ~$150 | AVX2 support, can run small local LLMs |
-| **Production/commercial** | Jetson Orin Nano Super ~$249 | Best price/performance for real-time voice AI |
-| **Local LLM + DAWN** | Jetson AGX Orin ~$999+ | Run 7B-13B models alongside voice pipeline |
-| **Maximum capability** | Jetson Thor (future) | Designed for humanoid robotics and large models |
+| Use Case                         | Recommended Platform         | Why                                              |
+| -------------------------------- | ---------------------------- | ------------------------------------------------ |
+| **Cost-conscious hobbyist**      | Raspberry Pi 5 (4GB) ~$65    | Works with Whisper tiny/base, acceptable latency |
+| **Better performance on budget** | Orange Pi 5 (8GB) ~$100      | RK3588 CPU faster than RPi 5                     |
+| **x86 preference**               | Intel N100 Mini PC ~$150     | AVX2 support, can run small local LLMs           |
+| **Production/commercial**        | Jetson Orin Nano Super ~$249 | Best price/performance for real-time voice AI    |
+| **Local LLM + DAWN**             | Jetson AGX Orin ~$999+       | Run 7B-13B models alongside voice pipeline       |
+| **Maximum capability**           | Jetson Thor (future)         | Designed for humanoid robotics and large models  |
 
 ### Software Requirements
+
 - Debian/Ubuntu-based distribution (tested on Ubuntu 20.04+ and Jetson Linux)
 - CMake 3.10+
 - GCC/G++ with C++17 support
@@ -285,6 +298,7 @@ sudo apt install -y libsodium-dev libsqlite3-dev
 ### 2. Install Core Dependencies
 
 #### CMake 3.27.1 (if needed)
+
 ```bash
 wget https://github.com/Kitware/CMake/releases/download/v3.27.1/cmake-3.27.1.tar.gz
 tar xvf cmake-3.27.1.tar.gz
@@ -295,6 +309,7 @@ sudo make install
 ```
 
 #### spdlog
+
 ```bash
 git clone https://github.com/gabime/spdlog.git
 cd spdlog
@@ -304,6 +319,7 @@ sudo make install
 ```
 
 #### espeak-ng (required for TTS)
+
 ```bash
 # Remove conflicting packages
 sudo apt purge espeak-ng-data libespeak-ng1 speech-dispatcher-espeak-ng
@@ -319,6 +335,7 @@ sudo make LIBDIR=/usr/lib/aarch64-linux-gnu install
 ```
 
 #### ONNX Runtime (with CUDA support for Jetson)
+
 ```bash
 git clone --recursive https://github.com/microsoft/onnxruntime
 cd onnxruntime
@@ -334,6 +351,7 @@ sudo ldconfig
 ```
 
 #### piper-phonemize (required for TTS)
+
 ```bash
 git clone https://github.com/rhasspy/piper-phonemize.git
 cd piper-phonemize
@@ -363,6 +381,7 @@ git submodule update --init --recursive
 If you want legacy Vosk support:
 
 #### Install Kaldi (long build!)
+
 ```bash
 sudo apt-get install sox subversion
 sudo git clone -b vosk --single-branch --depth=1 https://github.com/alphacep/kaldi /opt/kaldi
@@ -381,6 +400,7 @@ make -j8 online2 lm rnnlm
 ```
 
 #### Install Vosk API
+
 ```bash
 git clone https://github.com/alphacep/vosk-api --depth=1
 cd vosk-api/src
@@ -397,6 +417,7 @@ sudo ldconfig
 ```
 
 #### Download Vosk Model
+
 ```bash
 cd /path/to/dawn
 wget https://alphacephei.com/vosk/models/vosk-model-en-us-0.22.zip
@@ -424,6 +445,7 @@ Use the setup script to download Whisper models and create required symlinks:
 ```
 
 The script will:
+
 - Download the Whisper ASR model to `whisper.cpp/models/` (if not present)
 - Create symlinks in `models/` directory
 - Create `build/models` symlink for runtime
@@ -434,6 +456,7 @@ Note: TTS (Piper) and VAD (Silero) models are already committed to git.
 #### Model Directory Structure
 
 After setup, the `models/` directory will look like:
+
 ```
 models/
 ├── en_GB-alba-medium.onnx       # Piper TTS voice (committed to git)
@@ -448,6 +471,7 @@ models/
 If you prefer to download models manually:
 
 **Whisper ASR:** (required download)
+
 ```bash
 # Download to whisper.cpp/models/
 cd whisper.cpp/models
@@ -465,10 +489,12 @@ ln -s ../models build/models
 **TTS and VAD:** (already committed to git - no download needed)
 
 The following models are already in the repository:
+
 - `models/en_GB-alba-medium.onnx` - Piper TTS voice
 - `models/silero_vad_16k_op15.onnx` - Silero VAD model
 
 **Additional TTS Voices:**
+
 ```bash
 # Browse available voices:
 # https://huggingface.co/rhasspy/piper-voices/tree/main/en
@@ -480,15 +506,15 @@ wget https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/me
 
 #### Model Size Reference
 
-| Model | Size | Notes |
-|-------|------|-------|
-| Whisper tiny | ~75MB | Fastest, lower accuracy |
-| Whisper base | ~142MB | Recommended for Jetson GPU |
-| Whisper small | ~466MB | Better accuracy, slower |
-| Whisper medium | ~1.5GB | Best accuracy, slowest |
-| Piper alba-medium | ~63MB | Default TTS voice |
-| Silero VAD | ~1.3MB | Voice activity detection |
-| Vosk en-us-0.22 | ~1.8GB | Optional legacy ASR |
+| Model             | Size   | Notes                      |
+| ----------------- | ------ | -------------------------- |
+| Whisper tiny      | ~75MB  | Fastest, lower accuracy    |
+| Whisper base      | ~142MB | Recommended for Jetson GPU |
+| Whisper small     | ~466MB | Better accuracy, slower    |
+| Whisper medium    | ~1.5GB | Best accuracy, slowest     |
+| Piper alba-medium | ~63MB  | Default TTS voice          |
+| Silero VAD        | ~1.3MB | Voice activity detection   |
+| Vosk en-us-0.22   | ~1.8GB | Optional legacy ASR        |
 
 ### 6. Create Configuration Files
 
@@ -500,6 +526,7 @@ cp secrets.toml.example secrets.toml # API keys
 ```
 
 #### Configuration File Locations (searched in order)
+
 1. Path specified via `--config` CLI option
 2. `./dawn.toml` (current directory)
 3. `~/.config/dawn/dawn.toml`
@@ -535,6 +562,7 @@ plex_token = "your-plex-token-here"          # Optional: for Plex music source
 ```
 
 **Security notes:**
+
 - `secrets.toml` is in `.gitignore` — never commit API keys
 - Set file permissions: `chmod 600 secrets.toml`
 - Alternative: use environment variables (`OPENAI_API_KEY`, `CLAUDE_API_KEY`, `GEMINI_API_KEY`)
@@ -542,6 +570,7 @@ plex_token = "your-plex-token-here"          # Optional: for Plex music source
 #### Environment Variables
 
 All config options can be overridden via environment variables:
+
 ```bash
 export DAWN_AUDIO_CAPTURE_DEVICE="hw:1,0"
 export DAWN_LLM_TYPE="cloud"
@@ -549,6 +578,7 @@ export DAWN_OPENAI_API_KEY="sk-..."
 ```
 
 #### MQTT Devices
+
 Configure your MQTT broker and device mappings in `dawn.toml` under `[mqtt]`. LLM tools are now defined via compile-time `tool_metadata_t` structs in `src/tools/*.c` (see ARCHITECTURE.md for details).
 
 ### 7. (Optional) LLM Tools Setup
@@ -558,21 +588,23 @@ DAWN includes several tools that the LLM can invoke automatically:
 - **Calculator** - Built-in, no setup required. Ask "What's 15% of 847?" or "Calculate the square root of 144"
 - **Weather** - Uses Open-Meteo API (free, no API key). Ask "What's the weather in Atlanta?" or "Will it rain tomorrow?"
 - **Web Search** - Requires SearXNG (below). Supports multiple search categories:
-  - `web` - General web search (default)
-  - `news` - Recent news articles
-  - `social` - Social media (Reddit, Twitter)
-  - `science` - Scientific content
-  - `it` - Tech/programming content
-  - `qa` - Q&A sites (StackOverflow, SuperUser)
-  - `facts` - Wikipedia infoboxes
-  - `papers` - Academic papers (arXiv, Google Scholar, Semantic Scholar)
+   - `web` - General web search (default)
+   - `news` - Recent news articles
+   - `social` - Social media (Reddit, Twitter)
+   - `science` - Scientific content
+   - `it` - Tech/programming content
+   - `qa` - Q&A sites (StackOverflow, SuperUser)
+   - `facts` - Wikipedia infoboxes
+   - `papers` - Academic papers (arXiv, Google Scholar, Semantic Scholar)
 
-  Example queries: "Search for the latest news about CES 2026", "What's Reddit saying about the new iPhone?", "Find scientific papers on quantum computing"
+   Example queries: "Search for the latest news about CES 2026", "What's Reddit saying about the new iPhone?", "Find scientific papers on quantum computing"
+
 - **URL Fetcher** - Built-in. Ask "Read the article at example.com/page" or "What does this URL say?"
 
 **How summarization works:** When search results or fetched pages exceed ~3KB, DAWN summarizes the content before passing it to the main LLM. This keeps context windows manageable and responses fast.
 
 Summarization backends (configured via `[search.summarizer]` in `dawn.toml`):
+
 - **`tfidf`** (default) - Fast local TF-IDF extractive summarization. Selects the most important sentences using term frequency analysis with MMR (Maximal Marginal Relevance) for diversity. Filters out chart descriptions, ad elements, and sentence fragments. No LLM required, processes in milliseconds.
 - **`local`** - Uses a dedicated llama-server for abstractive summarization
 - **`default`** - Uses the same LLM as the conversation
@@ -587,10 +619,12 @@ DAWN can perform web searches via voice commands using [SearXNG](https://docs.se
 #### Prerequisites
 
 Install Docker and Docker Compose first. Follow the official instructions:
+
 - [Docker Engine Install](https://docs.docker.com/engine/install/)
 - [Docker Compose Install](https://docs.docker.com/compose/install/)
 
 On Jetson/Ubuntu:
+
 ```bash
 # Add yourself to the docker group (avoids needing sudo)
 sudo usermod -aG docker $USER
@@ -698,6 +732,7 @@ If you see a search result title, SearXNG is ready. DAWN will automatically use 
 ## Building
 
 ### Standard Build (Whisper only, GPU on Jetson)
+
 ```bash
 mkdir build
 cd build
@@ -708,18 +743,21 @@ make -j8
 ### Build Options
 
 #### Enable Vosk (legacy ASR)
+
 ```bash
 cmake -DENABLE_VOSK=ON ..
 make -j8
 ```
 
 #### Use ALSA instead of PulseAudio
+
 ```bash
 cmake -DUSE_ALSA=ON ..
 make -j8
 ```
 
 #### Force platform (override auto-detection)
+
 ```bash
 cmake -DPLATFORM=JETSON ..  # or PLATFORM=RPI
 make -j8
@@ -729,10 +767,10 @@ make -j8
 
 DAWN supports 4 deployment modes with different feature sets:
 
-| Mode | Local Mic | WebUI + Satellites | Use Case |
-|------|-----------|-------------------|----------|
-| **1** | ✓ | ✗ | Embedded / armor suit - no network |
-| **2** | ✓ | ✓ | Full deployment - WebUI, Tier 1 + Tier 2 satellites |
+| Mode  | Local Mic | WebUI + Satellites | Use Case                                            |
+| ----- | --------- | ------------------ | --------------------------------------------------- |
+| **1** | ✓         | ✗                  | Embedded / armor suit - no network                  |
+| **2** | ✓         | ✓                  | Full deployment - WebUI, Tier 1 + Tier 2 satellites |
 
 #### Using CMake Presets (Recommended)
 
@@ -760,11 +798,13 @@ cmake -DENABLE_WEBUI=ON ..
 ```
 
 **Notes:**
+
 - `ENABLE_WEBUI`: Controls the WebUI server on port 3000 (also serves DAP2 satellites via WebSocket)
 - `ENABLE_AUTH`: Automatically enabled when WebUI is active
 - All satellite communication (Tier 1 RPi + Tier 2 ESP32) uses the WebUI WebSocket port — no separate DAP server needed
 
 #### Build tests
+
 ```bash
 cmake -DBUILD_TESTS=ON ..
 make -j8
@@ -789,6 +829,7 @@ npm install  # One-time setup for Prettier
 ```
 
 **Formatters used:**
+
 - **C/C++**: clang-format (3-space indent, 100-char lines, K&R style)
 - **JS/CSS/HTML**: Prettier (matching 3-space indent, 100-char lines)
 
@@ -821,12 +862,14 @@ See `dawn.toml.example` for all available options. The `[persona]` section allow
 ### LLM Configuration
 
 See `docs/LLM_INTEGRATION_GUIDE.md` for detailed setup instructions for:
+
 - OpenAI API (cloud) - GPT-5 series (gpt-5-mini default)
 - Anthropic Claude API (cloud) - Claude Sonnet 4.5 (default)
 - Google Gemini API (cloud) - Gemini 2.5 Flash (default), Gemini 3
 - llama.cpp local server (free, on-device)
 
 **Recommended local configuration**:
+
 - Model: Qwen3-4B-Instruct-2507-Q4_K_M.gguf
 - Batch size: 768 (critical for quality!)
 - Context: 8192 (Varies based on available memory.)
@@ -863,12 +906,14 @@ Then install `ssl/ca.crt` in your OS trust store — see [GETTING_STARTED.md](GE
 ### Optional Features
 
 **Terminal UI (TUI)**: An ncurses-based dashboard for monitoring DAWN status:
+
 ```toml
 [tui]
 enabled = true
 ```
 
 **Shutdown Control**: Allow voice commands to shut down the system (security consideration):
+
 ```toml
 [shutdown]
 enabled = true
@@ -876,6 +921,7 @@ passphrase = "optional-security-phrase"  # Recommended if enabled
 ```
 
 **SmartThings Integration**: For Samsung SmartThings home automation, add OAuth credentials to `secrets.toml`:
+
 ```toml
 [secrets.smartthings]
 client_id = "your-client-id"
@@ -885,6 +931,7 @@ client_secret = "your-client-secret"
 ## Running
 
 ### Local Mode (microphone input)
+
 ```bash
 # Run from project root (where dawn.toml is located)
 ./build/dawn
@@ -906,6 +953,7 @@ See [docs/DAP2_SATELLITE.md](docs/DAP2_SATELLITE.md) for deployment guide.
 The Web UI provides a browser-based interface for interacting with DAWN:
 
 1. Start DAWN (the Web UI server starts automatically if enabled):
+
    ```bash
    # Run from project root
    ./build/dawn
@@ -921,6 +969,7 @@ The Web UI provides a browser-based interface for interacting with DAWN:
    ```
 
 **Features**:
+
 - **Text input** - Type messages instead of speaking
 - **Voice input** - Hold the mic button to speak (requires HTTPS for remote access)
 - **Audio playback** - Hear DAWN's responses through your browser
@@ -944,6 +993,7 @@ Click the gear icon in the header to access the settings panel. This provides a 
 - **Role-based visibility** - admin-only sections hidden from regular users
 
 **How it works**:
+
 - HTTP serves static files from `www/` directory
 - WebSocket connection on the same port handles real-time communication
 - Sessions are tracked via token stored in browser localStorage
@@ -984,6 +1034,7 @@ DAWN can index and stream music from a Plex Media Server alongside your local mu
 Sign into Plex Web, open any media item, click the `...` menu → "Get Info" → "View XML". The URL will contain `X-Plex-Token=xxxxxxxxxxxxxxxxxxxx`. Copy this token value.
 
 Alternatively, you can retrieve it via curl:
+
 ```bash
 curl -s -X POST 'https://plex.tv/users/sign_in.json' \
   -H 'X-Plex-Client-Identifier: dawn-assistant' \
@@ -993,6 +1044,7 @@ curl -s -X POST 'https://plex.tv/users/sign_in.json' \
 ```
 
 **2. Add the token to secrets.toml:**
+
 ```toml
 [secrets]
 plex_token = "xxxxxxxxxxxxxxxxxxxx"
@@ -1001,6 +1053,7 @@ plex_token = "xxxxxxxxxxxxxxxxxxxx"
 Or enter it in the WebUI Settings → Secrets → Plex Token field.
 
 **3. Configure the Plex connection in dawn.toml:**
+
 ```toml
 [music.plex]
 host = "192.168.1.100"    # Your Plex server IP or hostname
@@ -1017,16 +1070,19 @@ Or configure everything in WebUI Settings → Music & Media → Plex Connection 
 ## Performance Optimization
 
 ### ASR Performance Tips
+
 - Use Whisper **base** model (best accuracy/speed on Jetson GPU)
 - Enable GPU acceleration (automatic on Jetson)
 - Adjust VAD sensitivity in `include/asr/vad_silero.h`
 
 ### LLM Performance Tips
+
 - For local LLM: Use batch size 768 and context 1024 (CRITICAL!)
 - Temperature, top-k, top-p have minimal effect on quality
 - See `llm_testing/scripts/model_configs.conf` for optimal settings
 
 ### Latency Reduction
+
 - Streaming LLM + TTS reduces perceived latency to ~1.3s
 - GPU acceleration provides 2-5x speedup on ASR
 - Use Whisper tiny for fastest response (slight accuracy tradeoff)
@@ -1034,11 +1090,13 @@ Or configure everything in WebUI Settings → Music & Media → Plex Connection 
 ## Troubleshooting
 
 ### Build Issues
+
 - **CUDA not found**: Check `/usr/local/cuda-12.6` symlink, adjust `CMakeLists.txt` if needed
 - **ONNX Runtime errors**: Verify library is in `/usr/local/lib`, run `sudo ldconfig`
 - **Missing headers**: Ensure all dependencies installed in correct paths
 
 ### Runtime Issues
+
 - **No audio capture**: Check ALSA device names with `arecord -L`
 - **No audio playback**: Check ALSA device names with `aplay -L`
 - **Wake word not detected**: Adjust microphone sensitivity, check `pactl` or `alsamixer` levels
@@ -1046,6 +1104,7 @@ Or configure everything in WebUI Settings → Music & Media → Plex Connection 
 - **Slow ASR**: Verify GPU acceleration enabled (check logs for CUDA messages)
 
 ### Satellite Connection Issues
+
 - **Satellite can't connect**: Check firewall, DAWN server IP/port (default 3000)
 - **WebSocket errors**: Check `libwebsockets` version, verify daemon is running
 - **Timeout errors**: Check network latency, verify satellite_ping/pong (10s interval)
@@ -1067,6 +1126,7 @@ Or configure everything in WebUI Settings → Music & Media → Plex Connection 
 ## Development
 
 ### Project Structure
+
 - Core application: `src/dawn.c` (main loop, state machine)
 - Subsystems: `src/{asr,llm,tts,network,audio}/`
 - Headers: `include/` (mirrors src/)
@@ -1074,6 +1134,7 @@ Or configure everything in WebUI Settings → Music & Media → Plex Connection 
 - Documentation: `*.md` files and `docs/`
 
 ### Adding New Features
+
 1. Follow coding standards in `CODING_STYLE_GUIDE.md`
 2. Format code with `./format_code.sh`
 3. Add unit tests in `tests/`
@@ -1081,7 +1142,9 @@ Or configure everything in WebUI Settings → Music & Media → Plex Connection 
 5. Test on target platform (Jetson/RPi)
 
 ### Contributing
+
 This is part of The OASIS Project. Contributions welcome!
+
 - Follow existing code style
 - Add tests for new features
 - Update documentation

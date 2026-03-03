@@ -732,6 +732,65 @@
                hint: 'Confidence boost when a fact is accessed (time-gated to once per hour)',
                advanced: true,
             },
+            embedding_settings: {
+               type: 'group',
+               label: 'Semantic Search',
+               description:
+                  'Embedding-based semantic memory search. ONNX runs locally with no external service needed.',
+               fields: {
+                  embedding_provider: {
+                     type: 'select',
+                     label: 'Embedding Provider',
+                     hint: 'ONNX runs locally (~23MB model). Ollama/OpenAI require a running service.',
+                     options: [
+                        { value: 'onnx', label: 'ONNX (Built-in)' },
+                        { value: 'ollama', label: 'Ollama' },
+                        { value: 'openai', label: 'OpenAI-compatible' },
+                        { value: '', label: 'Disabled' },
+                     ],
+                  },
+                  embedding_model: {
+                     type: 'text',
+                     label: 'Model',
+                     hint: 'Model name for the embedding provider (e.g., "all-minilm" for Ollama)',
+                     placeholder: 'all-minilm',
+                     advanced: true,
+                     showWhen: { key: 'memory.embedding_provider', notValue: ['onnx', ''] },
+                  },
+                  embedding_endpoint: {
+                     type: 'text',
+                     label: 'Endpoint URL',
+                     hint: 'Base URL for the embedding service',
+                     placeholder: 'http://localhost:11434',
+                     advanced: true,
+                     showWhen: { key: 'memory.embedding_provider', notValue: ['onnx', ''] },
+                  },
+                  embedding_keyword_weight: {
+                     type: 'range',
+                     label: 'Keyword Match Strength',
+                     hint: 'How much exact word matching influences search results (independent of semantic strength)',
+                     min: 0,
+                     max: 1,
+                     step: 0.05,
+                     displayValue: (v) => Math.round(v * 100) + '%',
+                  },
+                  embedding_vector_weight: {
+                     type: 'range',
+                     label: 'Semantic Match Strength',
+                     hint: 'How much meaning-based similarity influences search results (independent of keyword strength)',
+                     min: 0,
+                     max: 1,
+                     step: 0.05,
+                     displayValue: (v) => Math.round(v * 100) + '%',
+                  },
+                  embedding_backfill_on_startup: {
+                     type: 'checkbox',
+                     label: 'Index Existing Memories',
+                     hint: 'Generate search embeddings for memories stored before semantic search was enabled. Runs once at startup.',
+                     advanced: true,
+                  },
+               },
+            },
          },
       },
       mqtt: {
@@ -1464,7 +1523,14 @@
    function applyShowWhen(el, condition) {
       const currentConfig = getCurrentConfigFn ? getCurrentConfigFn() : {};
       const currentValue = Utils.getNestedValue(currentConfig, condition.key);
-      el.style.display = currentValue === condition.value ? '' : 'none';
+      if (condition.notValue) {
+         const blocked = Array.isArray(condition.notValue)
+            ? condition.notValue
+            : [condition.notValue];
+         el.style.display = blocked.includes(currentValue) ? 'none' : '';
+      } else {
+         el.style.display = currentValue === condition.value ? '' : 'none';
+      }
    }
 
    /**
@@ -1477,7 +1543,12 @@
       const elements = sectionsContainer.querySelectorAll('[data-show-when-key]');
       elements.forEach((el) => {
          if (el.dataset.showWhenKey === changedKey) {
-            el.style.display = newValue === el.dataset.showWhenValue ? '' : 'none';
+            if (el.dataset.showWhenNotValue) {
+               const blocked = JSON.parse(el.dataset.showWhenNotValue);
+               el.style.display = blocked.includes(newValue) ? 'none' : '';
+            } else {
+               el.style.display = newValue === el.dataset.showWhenValue ? '' : 'none';
+            }
          }
       });
    }
@@ -1511,7 +1582,15 @@
          // Apply showWhen to groups
          if (def.showWhen) {
             groupEl.dataset.showWhenKey = def.showWhen.key;
-            groupEl.dataset.showWhenValue = def.showWhen.value;
+            if (def.showWhen.notValue) {
+               groupEl.dataset.showWhenNotValue = JSON.stringify(
+                  Array.isArray(def.showWhen.notValue)
+                     ? def.showWhen.notValue
+                     : [def.showWhen.notValue]
+               );
+            } else {
+               groupEl.dataset.showWhenValue = def.showWhen.value;
+            }
             applyShowWhen(groupEl, def.showWhen);
          }
          groupEl.innerHTML = `<div class="group-label">${escapeHtml(def.label || '')}</div>`;
@@ -1551,7 +1630,15 @@
       // Apply showWhen conditional visibility
       if (def.showWhen) {
          item.dataset.showWhenKey = def.showWhen.key;
-         item.dataset.showWhenValue = def.showWhen.value;
+         if (def.showWhen.notValue) {
+            item.dataset.showWhenNotValue = JSON.stringify(
+               Array.isArray(def.showWhen.notValue)
+                  ? def.showWhen.notValue
+                  : [def.showWhen.notValue]
+            );
+         } else {
+            item.dataset.showWhenValue = def.showWhen.value;
+         }
          applyShowWhen(item, def.showWhen);
       }
 

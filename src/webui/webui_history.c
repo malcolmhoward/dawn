@@ -434,6 +434,26 @@ void handle_clear_session(ws_connection_t *conn) {
       return;
    }
 
+   /* Trigger memory extraction before clearing (captures conversation state) */
+   if (!should_skip_memory_extraction(conn)) {
+      struct json_object *old_history = session_get_history(conn->session);
+      if (old_history) {
+         int msg_count = json_object_array_length(old_history);
+         if (msg_count >= 2) {
+            LOG_INFO("WebUI: Triggering memory extraction for conversation %lld before clear",
+                     (long long)conn->active_conversation_id);
+            memory_trigger_extraction(conn->auth_user_id, conn->active_conversation_id, NULL,
+                                      old_history, msg_count, 0);
+         }
+         json_object_put(old_history);
+      }
+   }
+
+   /* Reset conversation tracking — prevents handle_new_conversation from
+    * re-triggering extraction on the same (now-cleared) conversation */
+   conn->active_conversation_id = 0;
+   conn->active_conversation_private = false;
+
    session_clear_history(conn->session);
 
    /* Re-add system prompt for the new conversation */

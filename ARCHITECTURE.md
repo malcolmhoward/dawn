@@ -4,7 +4,7 @@ This document describes the architecture of the D.A.W.N. (Digital Assistant for 
 
 **D.A.W.N.** is the central intelligence layer of the OASIS ecosystem, responsible for interpreting user intent, fusing data from every subsystem, and routing commands. At its core, DAWN performs neural-inference to understand context and drive decision-making, acting as OASIS's orchestration hub for MIRAGE, AURA, SPARK, STAT, and any future modules.
 
-**Last Updated**: March 2, 2026 (Unified music database with multi-source support)
+**Last Updated**: March 3, 2026 (Entity graph, semantic embeddings, memory viewer UI)
 
 ## Table of Contents
 
@@ -107,30 +107,30 @@ D.A.W.N. is a modular voice assistant system that processes voice commands throu
 #### Key Components
 
 - **dawn.c/h**: Main application entry point
-  - State machine for local audio processing
-  - Integration point for all subsystems
-  - Conversation history management
-  - Application lifecycle control
+   - State machine for local audio processing
+   - Integration point for all subsystems
+   - Conversation history management
+   - Application lifecycle control
 
 - **logging.c/h**: Centralized logging system
-  - Macros: `LOG_INFO()`, `LOG_WARNING()`, `LOG_ERROR()`
-  - Timestamp formatting
-  - Consistent log formatting across all subsystems
+   - Macros: `LOG_INFO()`, `LOG_WARNING()`, `LOG_ERROR()`
+   - Timestamp formatting
+   - Consistent log formatting across all subsystems
 
 - **mosquitto_comms.c/h**: MQTT integration
-  - MQTT client for pub/sub messaging
-  - Device callback registration system
-  - Command routing to device handlers
-  - Integration with other OASIS components or external systems
+   - MQTT client for pub/sub messaging
+   - Device callback registration system
+   - Command routing to device handlers
+   - Integration with other OASIS components or external systems
 
 - **text_to_command_nuevo.c/h**: Command parsing and execution
-  - Parses LLM responses for `<command>` JSON tags
-  - Routes commands to appropriate device callbacks
-  - Supports both direct pattern matching and LLM-based commands
+   - Parses LLM responses for `<command>` JSON tags
+   - Routes commands to appropriate device callbacks
+   - Supports both direct pattern matching and LLM-based commands
 
 - **word_to_number.c/h**: Natural language number parsing
-  - Converts text numbers to integers ("twenty-three" → 23)
-  - Used for command parsing
+   - Converts text numbers to integers ("twenty-three" → 23)
+   - Used for command parsing
 
 ### 2. ASR Subsystem (`src/asr/`, `include/asr/`)
 
@@ -143,36 +143,36 @@ The ASR subsystem uses an abstraction layer (`asr_interface`) to support multipl
 #### Key Components
 
 - **asr_interface.c/h**: ASR abstraction layer
-  - `ASRContext` struct: Engine-agnostic context
-  - `asr_init()`: Initialize selected ASR engine
-  - `asr_process_audio()`: Process audio through selected engine
-  - `asr_cleanup()`: Clean up resources
-  - Engine selection based on compile-time flags (`ENABLE_VOSK`)
+   - `ASRContext` struct: Engine-agnostic context
+   - `asr_init()`: Initialize selected ASR engine
+   - `asr_process_audio()`: Process audio through selected engine
+   - `asr_cleanup()`: Clean up resources
+   - Engine selection based on compile-time flags (`ENABLE_VOSK`)
 
 - **asr_whisper.c/h**: Whisper ASR implementation
-  - Uses whisper.cpp library
-  - GPU acceleration on Jetson (CUDA)
-  - Support for multiple model sizes (tiny, base, small)
-  - Recommended: **base.en** (best balance of speed/accuracy)
-  - VAD-driven pause detection for natural speech boundaries
+   - Uses whisper.cpp library
+   - GPU acceleration on Jetson (CUDA)
+   - Support for multiple model sizes (tiny, base, small)
+   - Recommended: **base.en** (best balance of speed/accuracy)
+   - VAD-driven pause detection for natural speech boundaries
 
 - **asr_vosk.c/h**: Vosk ASR implementation (optional, legacy)
-  - Uses Vosk API with Kaldi backend
-  - GPU-accelerated when available (via `vosk_gpu_init()`)
-  - Smaller memory footprint than Whisper
-  - Compiled only when `ENABLE_VOSK=ON`
+   - Uses Vosk API with Kaldi backend
+   - GPU-accelerated when available (via `vosk_gpu_init()`)
+   - Smaller memory footprint than Whisper
+   - Compiled only when `ENABLE_VOSK=ON`
 
 - **vad_silero.c/h**: Voice Activity Detection
-  - Uses Silero VAD ONNX model
-  - Real-time speech/silence classification
-  - Drives pause detection for chunking
-  - Configurable sensitivity threshold
+   - Uses Silero VAD ONNX model
+   - Real-time speech/silence classification
+   - Drives pause detection for chunking
+   - Configurable sensitivity threshold
 
 - **chunking_manager.c/h**: Long utterance handling
-  - Manages multi-chunk speech sequences
-  - VAD-driven pause detection
-  - Assembles partial results into complete transcriptions
-  - Prevents premature cutoff of long commands
+   - Manages multi-chunk speech sequences
+   - VAD-driven pause detection
+   - Assembles partial results into complete transcriptions
+   - Prevents premature cutoff of long commands
 
 #### Data Flow
 
@@ -185,12 +185,12 @@ Audio Input → VAD (Silero) → Chunking Manager → ASR Engine (Whisper/Vosk) 
 
 #### Performance
 
-| Model        | Platform   | RTF    | Speedup | Accuracy  |
-|--------------|------------|--------|---------|-----------|
-| Whisper tiny | Jetson GPU | 0.079  | 12.7x   | Good      |
-| Whisper base | Jetson GPU | 0.109  | 9.2x    | Excellent |
-| Whisper small| Jetson GPU | 0.225  | 4.4x    | Best      |
-| Vosk 0.22    | CPU/GPU    | ~0.15  | 6.7x    | Good      |
+| Model         | Platform   | RTF   | Speedup | Accuracy  |
+| ------------- | ---------- | ----- | ------- | --------- |
+| Whisper tiny  | Jetson GPU | 0.079 | 12.7x   | Good      |
+| Whisper base  | Jetson GPU | 0.109 | 9.2x    | Excellent |
+| Whisper small | Jetson GPU | 0.225 | 4.4x    | Best      |
+| Vosk 0.22     | CPU/GPU    | ~0.15 | 6.7x    | Good      |
 
 **RTF = Real-Time Factor** (lower is faster; 1.0 = realtime, <1.0 = faster than realtime)
 
@@ -206,48 +206,48 @@ Audio Input → VAD (Silero) → Chunking Manager → ASR Engine (Whisper/Vosk) 
 #### Key Components
 
 - **llm_interface.c/h**: LLM abstraction layer
-  - `LLMContext` struct: Provider-agnostic context
-  - `llm_init()`: Initialize selected provider
-  - `llm_send_message()`: Send message, get complete response (blocking)
-  - `llm_send_message_streaming()`: Send message, stream response chunks
-  - Provider selection based on configuration (`OPENAI_MODEL`, `ANTHROPIC_MODEL`)
+   - `LLMContext` struct: Provider-agnostic context
+   - `llm_init()`: Initialize selected provider
+   - `llm_send_message()`: Send message, get complete response (blocking)
+   - `llm_send_message_streaming()`: Send message, stream response chunks
+   - Provider selection based on configuration (`OPENAI_MODEL`, `ANTHROPIC_MODEL`)
 
 - **llm_openai.c/h**: OpenAI API implementation
-  - Supports GPT-4o, GPT-4, GPT-3.5
-  - Supports llama.cpp local server (OpenAI-compatible endpoint)
-  - Supports Ollama with runtime model switching
-  - Supports Google Gemini (via OpenAI-compatible endpoint)
-  - Both blocking and streaming modes
-  - Conversation history management
-  - Extended thinking support (reasoning_effort for OpenAI/Gemini models)
+   - Supports GPT-4o, GPT-4, GPT-3.5
+   - Supports llama.cpp local server (OpenAI-compatible endpoint)
+   - Supports Ollama with runtime model switching
+   - Supports Google Gemini (via OpenAI-compatible endpoint)
+   - Both blocking and streaming modes
+   - Conversation history management
+   - Extended thinking support (reasoning_effort for OpenAI/Gemini models)
 
 - **llm_claude.c/h**: Claude API implementation
-  - Supports Claude 4.5 Sonnet, Claude 3 Opus
-  - Streaming support
-  - Different API format than OpenAI (Messages API)
-  - Extended thinking support with configurable token budget
-  - Full thinking content visibility (unlike OpenAI/Gemini)
+   - Supports Claude 4.5 Sonnet, Claude 3 Opus
+   - Streaming support
+   - Different API format than OpenAI (Messages API)
+   - Extended thinking support with configurable token budget
+   - Full thinking content visibility (unlike OpenAI/Gemini)
 
 - **llm_streaming.c/h**: Streaming response handler
-  - Manages Server-Sent Events (SSE) connections
-  - Buffers and parses incoming chunks
-  - Notifies sentence buffer for TTS integration
+   - Manages Server-Sent Events (SSE) connections
+   - Buffers and parses incoming chunks
+   - Notifies sentence buffer for TTS integration
 
 - **sse_parser.c/h**: Server-Sent Events parser
-  - Parses SSE format: `data: {...}\n\n`
-  - Extracts JSON content from events
-  - Handles partial events across network chunks
+   - Parses SSE format: `data: {...}\n\n`
+   - Extracts JSON content from events
+   - Handles partial events across network chunks
 
 - **sentence_buffer.c/h**: Sentence boundary detection
-  - Buffers streaming text until complete sentence
-  - Detects sentence boundaries (`.`, `!`, `?`)
-  - Sends complete sentences to TTS for natural phrasing
-  - Reduces perceived latency (speak while generating)
+   - Buffers streaming text until complete sentence
+   - Detects sentence boundaries (`.`, `!`, `?`)
+   - Sends complete sentences to TTS for natural phrasing
+   - Reduces perceived latency (speak while generating)
 
 - **llm_command_parser.c/h**: JSON command extraction
-  - Extracts `<command>` JSON tags from LLM responses
-  - Validates JSON structure
-  - Handles malformed JSON gracefully
+   - Extracts `<command>` JSON tags from LLM responses
+   - Validates JSON structure
+   - Handles malformed JSON gracefully
 
 #### Data Flow (Streaming Mode)
 
@@ -264,7 +264,7 @@ User Query → LLM Provider (OpenAI/Claude/Local)
 #### Performance Comparison
 
 | Provider                | Quality | TTFT      | Latency | Cost          |
-|-------------------------|---------|-----------|---------|---------------|
+| ----------------------- | ------- | --------- | ------- | ------------- |
 | OpenAI GPT-4o           | 100%    | ~300ms    | ~3.1s   | ~$0.01/query  |
 | Claude 4.5 Sonnet       | 92.4%   | ~400ms    | ~3.5s   | ~$0.015/query |
 | Gemini 2.5 Flash        | ~90%    | ~250ms    | ~2.5s   | ~$0.002/query |
@@ -280,16 +280,16 @@ User Query → LLM Provider (OpenAI/Claude/Local)
 #### Key Components
 
 - **text_to_speech.cpp/h**: TTS engine wrapper
-  - Thread-safe interface with mutex protection (`tts_mutex`)
-  - Converts text to WAV audio
-  - Text preprocessing for natural phrasing (em-dash conversion, etc.)
-  - Supports streaming integration with LLM sentence buffer
+   - Thread-safe interface with mutex protection (`tts_mutex`)
+   - Converts text to WAV audio
+   - Text preprocessing for natural phrasing (em-dash conversion, etc.)
+   - Supports streaming integration with LLM sentence buffer
 
 - **piper.cpp**: Piper TTS integration
-  - Uses Piper library with ONNX Runtime
-  - Phoneme-based synthesis
-  - Multiple voice models supported
-  - Recommended: `en_GB-alba-medium` (good quality, reasonable speed)
+   - Uses Piper library with ONNX Runtime
+   - Phoneme-based synthesis
+   - Multiple voice models supported
+   - Recommended: `en_GB-alba-medium` (good quality, reasonable speed)
 
 #### Data Flow
 
@@ -300,6 +300,7 @@ Text → Preprocessing → Piper Phonemization → ONNX Inference → WAV Audio 
 #### Thread Safety
 
 TTS is protected by a global mutex (`tts_mutex`) to prevent concurrent access from:
+
 - Main loop (local audio)
 - Network server thread (remote audio)
 - Streaming LLM sentence buffer
@@ -347,42 +348,42 @@ DAP2 Tier 1 satellites handle speech recognition and text-to-speech locally and 
 **Satellite side** (`dawn_satellite/`):
 
 - **ws_client.c/h**: WebSocket client for daemon communication
-  - JSON message protocol over existing WebUI port
-  - Reconnection with exponential backoff
-  - App-level ping/pong keep-alive (10s interval)
-  - Music subscribe/control/library/queue messages
+   - JSON message protocol over existing WebUI port
+   - Reconnection with exponential backoff
+   - App-level ping/pong keep-alive (10s interval)
+   - Music subscribe/control/library/queue messages
 
 - **voice_processing.c/h**: Local voice pipeline
-  - VAD → wake word → ASR → send text query
-  - Receive streaming response → sentence buffer → TTS
-  - Producer-consumer TTS playback queue (synthesize N+1 while playing N)
+   - VAD → wake word → ASR → send text query
+   - Receive streaming response → sentence buffer → TTS
+   - Producer-consumer TTS playback queue (synthesize N+1 while playing N)
 
 - **music_stream.c/h**: Dedicated Opus audio WebSocket
-  - Separate connection for music audio streaming
-  - Opus decode → ALSA playback
-  - Goertzel FFT analysis on live audio for visualizer
+   - Separate connection for music audio streaming
+   - Opus decode → ALSA playback
+   - Goertzel FFT analysis on live audio for visualizer
 
 - **sdl_ui.c/h**: Touchscreen UI coordinator (SDL2 + KMSDRM)
-  - Animated orb visualizer with state-driven colors
-  - Scrollable markdown transcript with word-wrap
-  - Touch gesture system (swipe, tap, long-press)
-  - Status bar icon pattern for feature access (see below)
+   - Animated orb visualizer with state-driven colors
+   - Scrollable markdown transcript with word-wrap
+   - Touch gesture system (swipe, tap, long-press)
+   - Status bar icon pattern for feature access (see below)
 
 - **ui_music.c/h**: Music control panel
-  - Three-tab layout: Playing / Queue / Library
-  - Transport controls, seek bar, FFT visualizer
-  - Paginated library browsing with artist/album drill-down
+   - Three-tab layout: Playing / Queue / Library
+   - Transport controls, seek bar, FFT visualizer
+   - Paginated library browsing with artist/album drill-down
 
 - **backlight.c/h**: Display brightness control
-  - sysfs backlight control for DSI displays
-  - Software dimming fallback for HDMI displays
+   - sysfs backlight control for DSI displays
+   - Software dimming fallback for HDMI displays
 
 **Daemon side** (`src/webui/`):
 
 - **webui_satellite.c**: Satellite message handlers
-  - Registration, query routing, streaming response relay
-  - Session management with UUID-based identification
-  - Satellite auth whitelist for music WebSocket messages
+   - Registration, query routing, streaming response relay
+   - Session management with UUID-based identification
+   - Satellite auth whitelist for music WebSocket messages
 
 **Shared** (`common/`):
 
@@ -393,18 +394,18 @@ DAP2 Tier 1 satellites handle speech recognition and text-to-speech locally and 
 
 #### DAP2 Protocol Messages
 
-| Type | Direction | Purpose |
-|------|-----------|---------|
-| `satellite_register` | Satellite → Daemon | Registration with UUID, name, location |
-| `satellite_register_ack` | Daemon → Satellite | Session ID, memory enabled flag |
-| `satellite_query` | Satellite → Daemon | User's transcribed text |
-| `stream_start` | Daemon → Satellite | Streaming response begins |
-| `stream_delta` | Daemon → Satellite | Partial response text |
-| `stream_end` | Daemon → Satellite | Response complete |
-| `satellite_ping` | Satellite → Daemon | App-level keep-alive |
-| `music_control` | Satellite → Daemon | Play/pause/stop/next/prev/seek |
-| `music_library` | Satellite → Daemon | Browse artists/albums/tracks (paginated) |
-| `music_state` | Daemon → Satellite | Playback state update |
+| Type                     | Direction          | Purpose                                  |
+| ------------------------ | ------------------ | ---------------------------------------- |
+| `satellite_register`     | Satellite → Daemon | Registration with UUID, name, location   |
+| `satellite_register_ack` | Daemon → Satellite | Session ID, memory enabled flag          |
+| `satellite_query`        | Satellite → Daemon | User's transcribed text                  |
+| `stream_start`           | Daemon → Satellite | Streaming response begins                |
+| `stream_delta`           | Daemon → Satellite | Partial response text                    |
+| `stream_end`             | Daemon → Satellite | Response complete                        |
+| `satellite_ping`         | Satellite → Daemon | App-level keep-alive                     |
+| `music_control`          | Satellite → Daemon | Play/pause/stop/next/prev/seek           |
+| `music_library`          | Satellite → Daemon | Browse artists/albums/tracks (paginated) |
+| `music_state`            | Daemon → Satellite | Playback state update                    |
 
 #### Data Flow (Satellite Voice Command)
 
@@ -443,6 +444,7 @@ This mirrors the WebUI's icon-bar approach.
 **Current icons**: Music (note glyph, toggles music panel)
 
 **Panel system**: Two panel types remain:
+
 - Settings panel: swipe down from top edge (hamburger indicator)
 - Music panel: tap music icon in status bar (slides from right)
 
@@ -455,63 +457,63 @@ Swipe-up from the bottom edge is currently unassigned (reserved for future use).
 #### Key Components
 
 - **audio_capture_thread.c/h**: Dedicated audio capture thread
-  - Runs in separate thread to avoid blocking main loop
-  - Continuous capture from ALSA/PulseAudio device
-  - Writes to ring buffer for main loop consumption
-  - Handles capture errors gracefully
+   - Runs in separate thread to avoid blocking main loop
+   - Continuous capture from ALSA/PulseAudio device
+   - Writes to ring buffer for main loop consumption
+   - Handles capture errors gracefully
 
 - **ring_buffer.c/h**: Thread-safe circular buffer
-  - Lock-free or mutex-protected (implementation dependent)
-  - Fixed-size buffer for audio samples
-  - Overwrite policy when buffer full
-  - Used for smooth audio streaming between threads
+   - Lock-free or mutex-protected (implementation dependent)
+   - Fixed-size buffer for audio samples
+   - Overwrite policy when buffer full
+   - Used for smooth audio streaming between threads
 
 - **flac_playback.c/h**: Music/audio file playback
-  - Multi-format decoding (FLAC, MP3, Ogg Vorbis) via unified audio_decoder API
-  - ALSA/PulseAudio output with automatic sample rate conversion
-  - Used for notification sounds, music playback
+   - Multi-format decoding (FLAC, MP3, Ogg Vorbis) via unified audio_decoder API
+   - ALSA/PulseAudio output with automatic sample rate conversion
+   - Used for notification sounds, music playback
 
 - **music_db.c/h**: Unified music metadata database
-  - SQLite-based cache for artist/title/album/genre tags with source tracking
-  - Multi-source support (local files + Plex) via `music_source_t` enum
-  - Priority-based deduplication (local wins over Plex for same artist+album+title)
-  - COLLATE NOCASE matching on dedup index for cross-source consistency
-  - Indexed search across metadata fields (including genre) with LIKE escaping
-  - Incremental scanning with source-scoped stale deletion
-  - Automatic cleanup of deleted files (per-source)
+   - SQLite-based cache for artist/title/album/genre tags with source tracking
+   - Multi-source support (local files + Plex) via `music_source_t` enum
+   - Priority-based deduplication (local wins over Plex for same artist+album+title)
+   - COLLATE NOCASE matching on dedup index for cross-source consistency
+   - Indexed search across metadata fields (including genre) with LIKE escaping
+   - Incremental scanning with source-scoped stale deletion
+   - Automatic cleanup of deleted files (per-source)
 
 - **music_source.c/h**: Music source abstraction layer
-  - `music_source_provider_t` callback interface for pluggable sources
-  - Source name/prefix helpers (`music_source_name()`, `music_source_path_prefix()`)
-  - Path-to-source detection (`music_source_from_path()`)
+   - `music_source_provider_t` callback interface for pluggable sources
+   - Source name/prefix helpers (`music_source_name()`, `music_source_path_prefix()`)
+   - Path-to-source detection (`music_source_from_path()`)
 
 - **plex_db.c/h**: Plex-to-unified-DB sync layer
-  - Fetches all Plex tracks via `plex_client_list_all_tracks()`
-  - Inserts into unified `music_metadata` table with `source = MUSIC_SOURCE_PLEX`
-  - Runs during music scanner cycle when Plex is configured
+   - Fetches all Plex tracks via `plex_client_list_all_tracks()`
+   - Inserts into unified `music_metadata` table with `source = MUSIC_SOURCE_PLEX`
+   - Runs during music scanner cycle when Plex is configured
 
 - **music_scanner.c/h**: Background music library scanner
-  - Dedicated thread for non-blocking scans
-  - Configurable scan interval (default: 60 minutes)
-  - Scans local files and syncs Plex library in each cycle
-  - Manual rescan trigger via admin socket
-  - Mutex/condvar synchronization for thread safety
+   - Dedicated thread for non-blocking scans
+   - Configurable scan interval (default: 60 minutes)
+   - Scans local files and syncs Plex library in each cycle
+   - Manual rescan trigger via admin socket
+   - Mutex/condvar synchronization for thread safety
 
 - **plex_client.c/h**: Plex Media Server REST API client
-  - Authentication via X-Plex-Token header
-  - `plex_client_list_all_tracks()` for bulk sync into unified DB
-  - Stream URL construction for download-to-temp playback
-  - Scrobble reporting on track completion
-  - Server discovery and connection testing
+   - Authentication via X-Plex-Token header
+   - `plex_client_list_all_tracks()` for bulk sync into unified DB
+   - Stream URL construction for download-to-temp playback
+   - Scrobble reporting on track completion
+   - Server discovery and connection testing
 
 - **http_download.c/h**: HTTP download-to-temp utility
-  - libcurl-based download with 300s hard timeout
-  - Used by Plex client to fetch tracks for audio_decoder
+   - libcurl-based download with 300s hard timeout
+   - Used by Plex client to fetch tracks for audio_decoder
 
 - **mic_passthrough.c/h**: Microphone passthrough
-  - Direct microphone → speaker routing
-  - Used for testing, debugging
-  - Useful for verifying audio capture/playback setup
+   - Direct microphone → speaker routing
+   - Used for testing, debugging
+   - Useful for verifying audio capture/playback setup
 
 #### Threading Model
 
@@ -579,20 +581,20 @@ The WebUI uses Opus audio compression for efficient bidirectional audio streamin
 #### Key Components
 
 - **opus-worker.js**: Web Worker for encoding/decoding using WebCodecs API
-  - Encodes browser microphone input (48kHz) to Opus frames
-  - Decodes server TTS audio (Opus frames) to PCM for playback
-  - Falls back to raw PCM if WebCodecs unavailable
+   - Encodes browser microphone input (48kHz) to Opus frames
+   - Decodes server TTS audio (Opus frames) to PCM for playback
+   - Falls back to raw PCM if WebCodecs unavailable
 
 - **Codec Configuration**:
-  - Sample rate: 48kHz (Opus native rate)
-  - Channels: Mono
-  - Bitrate: Adaptive (typically 24-32 kbps for voice)
-  - Frame size: 20ms (960 samples at 48kHz)
+   - Sample rate: 48kHz (Opus native rate)
+   - Channels: Mono
+   - Bitrate: Adaptive (typically 24-32 kbps for voice)
+   - Frame size: 20ms (960 samples at 48kHz)
 
 - **Capability Negotiation**:
-  - Browser sends `audio_codecs: ["opus", "pcm"]` during WebSocket connect
-  - Server selects best available codec
-  - Graceful fallback to uncompressed PCM if Opus unavailable
+   - Browser sends `audio_codecs: ["opus", "pcm"]` during WebSocket connect
+   - Server selects best available codec
+   - Graceful fallback to uncompressed PCM if Opus unavailable
 
 #### Data Flow (Browser Voice Input)
 
@@ -616,12 +618,12 @@ The WebUI uses Opus audio compression for efficient bidirectional audio streamin
 
 #### Benefits of Opus Streaming
 
-| Metric | Raw PCM (16-bit) | Opus Compressed |
-|--------|------------------|-----------------|
-| Bandwidth (1s audio) | ~192 KB | ~3-4 KB |
-| Latency | Minimal | +2-5ms encoding |
-| Quality | Lossless | Near-lossless (voice optimized) |
-| Browser Support | Universal | WebCodecs (Chrome/Edge/Firefox 90+) |
+| Metric               | Raw PCM (16-bit) | Opus Compressed                     |
+| -------------------- | ---------------- | ----------------------------------- |
+| Bandwidth (1s audio) | ~192 KB          | ~3-4 KB                             |
+| Latency              | Minimal          | +2-5ms encoding                     |
+| Quality              | Lossless         | Near-lossless (voice optimized)     |
+| Browser Support      | Universal        | WebCodecs (Chrome/Edge/Firefox 90+) |
 
 ### 8. Vision/Image Subsystem (`src/image_store.c`, `src/webui/webui_images.c`, `www/js/ui/vision.js`)
 
@@ -683,24 +685,24 @@ The WebUI uses Opus audio compression for efficient bidirectional audio streamin
 #### Key Components
 
 - **vision.js**: Client-side image handling (1,400+ lines)
-  - Input methods: file picker, clipboard paste, drag-and-drop, camera capture
-  - Camera API with front/rear switching (`navigator.mediaDevices.getUserMedia`)
-  - Client-side compression via Canvas API (configurable max dimension, default 1024px, JPEG 85%)
-  - Multi-image support (configurable max per message, default 5)
-  - LocalStorage caching of uploaded images by ID
-  - Security: SVG explicitly excluded to prevent XSS attacks
-  - Accessibility: ARIA announcements, keyboard navigation
+   - Input methods: file picker, clipboard paste, drag-and-drop, camera capture
+   - Camera API with front/rear switching (`navigator.mediaDevices.getUserMedia`)
+   - Client-side compression via Canvas API (configurable max dimension, default 1024px, JPEG 85%)
+   - Multi-image support (configurable max per message, default 5)
+   - LocalStorage caching of uploaded images by ID
+   - Security: SVG explicitly excluded to prevent XSS attacks
+   - Accessibility: ARIA announcements, keyboard navigation
 
 - **image_store.c/h**: Server-side image storage
-  - SQLite BLOB storage (uses auth_db for thread safety)
-  - Image ID format: `img_` + 12 alphanumeric characters
-  - Configurable limits: max size, max per user, retention days
-  - Automatic cleanup of expired images
+   - SQLite BLOB storage (uses auth_db for thread safety)
+   - Image ID format: `img_` + 12 alphanumeric characters
+   - Configurable limits: max size, max per user, retention days
+   - Automatic cleanup of expired images
 
 - **webui_images.c/h**: HTTP endpoint handlers
-  - `POST /api/images`: Upload image, returns `{id, mime_type, size}`
-  - `GET /api/images/:id`: Retrieve image by ID
-  - Authentication required (uses session validation)
+   - `POST /api/images`: Upload image, returns `{id, mime_type, size}`
+   - `GET /api/images/:id`: Retrieve image by ID
+   - Authentication required (uses session validation)
 
 #### Data Flow (Image Upload)
 
@@ -728,13 +730,13 @@ The WebUI uses Opus audio compression for efficient bidirectional audio streamin
 
 The system auto-detects vision capability based on model name:
 
-| Model Pattern | Provider | Vision Support |
-|---------------|----------|----------------|
-| `gpt-4o`, `gpt-4-vision`, `gpt-4-turbo` | OpenAI | Yes |
-| `claude-3-*` | Anthropic | Yes |
-| `gemini-*` | Google | Yes |
-| `llava-*`, `qwen-vl-*`, `cogvlm-*` | Local | Yes |
-| Other models | Various | No (button disabled) |
+| Model Pattern                           | Provider  | Vision Support       |
+| --------------------------------------- | --------- | -------------------- |
+| `gpt-4o`, `gpt-4-vision`, `gpt-4-turbo` | OpenAI    | Yes                  |
+| `claude-3-*`                            | Anthropic | Yes                  |
+| `gemini-*`                              | Google    | Yes                  |
+| `llava-*`, `qwen-vl-*`, `cogvlm-*`      | Local     | Yes                  |
+| Other models                            | Various   | No (button disabled) |
 
 #### Security Measures
 
@@ -810,33 +812,33 @@ The system auto-detects vision capability based on model name:
 #### Key Components
 
 - **documents.js**: Client-side document handling
-  - Input methods: file picker button, drag-and-drop, cooperative with vision.js (images vs documents)
-  - Client-side text extraction via FileReader API (no server round-trip for text files)
-  - Input chip UI: filename, extension badge, size, remove button
-  - `parseDocumentMarkers(text)`: Regex extraction of document markers from transcript text
-  - `openDocumentViewer(filename, content)`: Modal viewer with focus trap, Escape/backdrop close
-  - Allowed extensions: `.txt`, `.md`, `.csv`, `.json`, `.xml`, `.yaml`, `.yml`, `.toml`, `.ini`, `.cfg`, `.conf`, `.log`, `.c`, `.h`, `.cpp`, `.py`, `.js`, `.ts`, `.html`, `.css`, `.sh`, `.sql`, `.env`, `.pdf`, `.docx`
-  - PDF and DOCX sent to server for extraction (no client-side read); text files read client-side
-  - Toast feedback for unsupported file types on drop
+   - Input methods: file picker button, drag-and-drop, cooperative with vision.js (images vs documents)
+   - Client-side text extraction via FileReader API (no server round-trip for text files)
+   - Input chip UI: filename, extension badge, size, remove button
+   - `parseDocumentMarkers(text)`: Regex extraction of document markers from transcript text
+   - `openDocumentViewer(filename, content)`: Modal viewer with focus trap, Escape/backdrop close
+   - Allowed extensions: `.txt`, `.md`, `.csv`, `.json`, `.xml`, `.yaml`, `.yml`, `.toml`, `.ini`, `.cfg`, `.conf`, `.log`, `.c`, `.h`, `.cpp`, `.py`, `.js`, `.ts`, `.html`, `.css`, `.sh`, `.sql`, `.env`, `.pdf`, `.docx`
+   - PDF and DOCX sent to server for extraction (no client-side read); text files read client-side
+   - Toast feedback for unsupported file types on drop
 
 - **webui_documents.c/h**: Server-side upload handling
-  - `POST /api/documents`: Multipart form upload, extension validation, text extraction
-    - Plain text/source files: UTF-8 read directly
-    - PDF: MuPDF extraction (`fz_try`/`fz_catch` for error safety, page count cap)
-    - DOCX: libzip + libxml2 parse of `word/document.xml` (XXE prevention, ZIP bomb limits)
-    - HTML: routed through `html_parser.c` to markdown
-  - `POST /api/documents/summarize`: TF-IDF auto-summarize for documents > 8,000 chars
-  - Returns `{filename, content, size, estimated_tokens}` JSON response; large docs include `auto_summary`
-  - Authentication required (uses session validation)
+   - `POST /api/documents`: Multipart form upload, extension validation, text extraction
+      - Plain text/source files: UTF-8 read directly
+      - PDF: MuPDF extraction (`fz_try`/`fz_catch` for error safety, page count cap)
+      - DOCX: libzip + libxml2 parse of `word/document.xml` (XXE prevention, ZIP bomb limits)
+      - HTML: routed through `html_parser.c` to markdown
+   - `POST /api/documents/summarize`: TF-IDF auto-summarize for documents > 8,000 chars
+   - Returns `{filename, content, size, estimated_tokens}` JSON response; large docs include `auto_summary`
+   - Authentication required (uses session validation)
 
 - **transcript.js** (document integration):
-  - Document markers stripped BEFORE routing logic in `addTranscriptEntry()` to prevent misrouting when document content contains `<command>` tags
-  - `createDocumentChips()`: Renders clickable chips in conversation entries
-  - History replay: `prependTranscriptEntry()` also parses markers for saved conversations
+   - Document markers stripped BEFORE routing logic in `addTranscriptEntry()` to prevent misrouting when document content contains `<command>` tags
+   - `createDocumentChips()`: Renders clickable chips in conversation entries
+   - History replay: `prependTranscriptEntry()` also parses markers for saved conversations
 
 - **documents.css**: Styling for input chips, transcript chips, and viewer modal
-  - Transcript chips: squarer (6px radius) document-like appearance
-  - Viewer modal: 700px panel, monospace `<pre>`, mobile full-screen at 480px
+   - Transcript chips: squarer (6px radius) document-like appearance
+   - Viewer modal: 700px panel, monospace `<pre>`, mobile full-screen at 480px
 
 #### Security Measures
 
@@ -851,19 +853,20 @@ The system auto-detects vision capability based on model name:
 
 ### 10. Memory Subsystem (`src/memory/`, `include/memory/`)
 
-**Purpose**: Persistent memory system for user facts, preferences, and conversation summaries
+**Purpose**: Persistent memory system for user facts, preferences, conversation summaries, entity graph, and semantic embeddings
 
-#### Architecture: **Sleep Consolidation Model**
+#### Architecture: **Sleep Consolidation Model + Entity Graph**
 
-Memory extraction happens at session end, not during conversation. This adds zero latency to conversations while building a persistent user profile.
+Memory extraction happens at session end, not during conversation. This adds zero latency to conversations while building a persistent user profile. The entity graph captures people, places, pets, projects, and their relationships.
 
 ```
 ┌───────────────────────────────────────────────────────────────────────┐
 │                    DURING CONVERSATION                                 │
 ├───────────────────────────────────────────────────────────────────────┤
 │  • Full conversation in LLM context window                            │
-│  • Core facts + preferences pre-loaded at session start               │
+│  • Core facts + preferences + entity graph pre-loaded at session start│
 │  • Memory tool available for explicit remember/search/forget          │
+│  • Hybrid search: keyword + semantic similarity via embeddings        │
 │  • Zero extraction overhead                                           │
 └───────────────────────────────────────────────────────────────────────┘
                                 │
@@ -874,55 +877,78 @@ Memory extraction happens at session end, not during conversation. This adds zer
 ├───────────────────────────────────────────────────────────────────────┤
 │  • Load conversation messages from database                           │
 │  • Build extraction prompt with transcript + existing profile         │
+│  • Existing entities fed into prompt to prevent duplicates            │
 │  • Call extraction LLM (can differ from conversation model)           │
-│  • Parse JSON: facts, preferences, corrections, summary               │
+│  • Parse JSON: facts, preferences, corrections, summary,             │
+│    entities, and relations                                            │
 │  • Store in SQLite (skip if conversation marked private)              │
+│  • Generate embeddings for new facts and entities                     │
 │  • Runs in background thread (non-blocking)                           │
 └───────────────────────────────────────────────────────────────────────┘
 ```
 
 #### Key Components
 
-- **memory_types.h**: Data structures (`memory_fact_t`, `memory_preference_t`, `memory_summary_t`)
+- **memory_types.h**: Data structures
+   - `memory_fact_t`, `memory_preference_t`, `memory_summary_t`
+   - `memory_entity_t` (name, type, canonical_name, mention_count, first/last_seen)
+   - `memory_relation_t` (subject→relation→object with optional literal values)
 
 - **memory_db.c/h**: SQLite CRUD operations
-  - Prepared statements for all memory tables
-  - Similarity detection for duplicate prevention
-  - Access counting with time-gated confidence reinforcement
-  - Atomic decay via custom SQLite `powf()` function (no row iteration)
-  - Pruning with audit trail logging
+   - Prepared statements for all memory tables (facts, preferences, summaries, entities, relations)
+   - Entity upsert with `RETURNING id` (SQLite 3.37.2+)
+   - Relation creation with entity FK or literal value
+   - Entity search by keyword (LIKE) and by ID
+   - Bulk relation loading (`memory_db_relation_list_all_by_user()`)
+   - Entity listing for extraction prompt dedup
+   - Similarity detection for duplicate prevention
+   - Access counting with time-gated confidence reinforcement
+   - Atomic decay via custom SQLite `powf()` function (no row iteration)
+   - Combined stats query (facts + preferences + summaries + entities in one SELECT)
+
+- **memory_embeddings.c/h**: Semantic embedding system
+   - Multi-provider support: Ollama, OpenAI, ONNX (configurable in `[memory.embeddings]`)
+   - In-memory cache with mutex protection (facts: 1000 cap, entities: 500 cap)
+   - Lazy cache loading on first search, invalidated after extraction
+   - Cosine similarity search against cached embeddings
+   - Hybrid search combining keyword and semantic results with configurable weights
+   - Provider implementations: `memory_embed_ollama.c`, `memory_embed_openai.c`, `memory_embed_onnx.c`
 
 - **memory_context.c/h**: Session start context builder
-  - `memory_build_context()` builds ~800 token block
-  - Loads preferences, top facts by confidence, recent summaries
-  - Injected into LLM system prompt
+   - `memory_build_context()` builds ~800 token block
+   - Loads preferences, top facts by confidence, recent summaries
+   - Injected into LLM system prompt
 
 - **memory_extraction.c/h**: Session end extraction
-  - Triggered via `memory_trigger_extraction()`
-  - Spawns background thread for non-blocking extraction
-  - Parses LLM JSON response, stores facts/preferences/summaries
-  - Respects conversation privacy flag
+   - Triggered via `memory_trigger_extraction()`
+   - Spawns background thread for non-blocking extraction
+   - Parses LLM JSON response: facts, preferences, summaries, **entities, and relations**
+   - Entity upsert with canonical name normalization
+   - Embedding generation for newly created entities (skipped for existing)
+   - Existing entity list fed into extraction prompt to prevent duplicate names
+   - Respects conversation privacy flag
 
 - **memory_callback.c**: Tool handler for `MEMORY` device type
-  - `search`: Keyword search across all memory tables
-  - `recent`: Time-based retrieval (e.g., "24h", "7d", "1w")
-  - `remember`: Immediate fact storage with guardrails
-  - `forget`: Delete matching facts
+   - `search`: Hybrid keyword + semantic search across all memory tables
+   - `recent`: Time-based retrieval (e.g., "24h", "7d", "1w")
+   - `remember`: Immediate fact storage with guardrails
+   - `forget`: Delete matching facts
+   - `append_graph_context()`: Entity graph results appended to search output
 
 - **memory_maintenance.c/h**: Nightly decay orchestration
-  - Called from auth maintenance thread (15-minute cycle)
-  - Hour-gated with 20-hour double-execution guard
-  - Per-user: decay facts → decay preferences → prune low-confidence → prune superseded → prune old summaries
-  - Configurable rates, floors, and thresholds via `[memory.decay]`
+   - Called from auth maintenance thread (15-minute cycle)
+   - Hour-gated with 20-hour double-execution guard
+   - Per-user: decay facts → decay preferences → prune low-confidence → prune superseded → prune old summaries
+   - Configurable rates, floors, and thresholds via `[memory.decay]`
 
 #### Database Schema
 
-Three tables in the auth database (`/var/lib/dawn/auth.db`):
+Five tables in the auth database (`/var/lib/dawn/auth.db`):
 
 ```sql
 -- Facts: discrete pieces of information
 memory_facts (id, user_id, fact_text, confidence, source, created_at,
-              last_accessed, access_count, superseded_by)
+              last_accessed, access_count, superseded_by, embedding, embedding_norm)
 
 -- Preferences: communication style preferences
 memory_preferences (id, user_id, category, value, confidence, source,
@@ -931,6 +957,17 @@ memory_preferences (id, user_id, category, value, confidence, source,
 -- Summaries: conversation digests
 memory_summaries (id, user_id, session_id, summary, topics, sentiment,
                   created_at, message_count, duration_seconds, consolidated)
+
+-- Entities: people, places, pets, projects, etc.
+memory_entities (id, user_id, name, entity_type, canonical_name, mention_count,
+                 first_seen, last_seen, embedding, embedding_norm)
+   UNIQUE(user_id, canonical_name)
+
+-- Relations: entity-to-entity or entity-to-literal relationships
+memory_relations (id, user_id, subject_entity_id, relation, object_entity_id,
+                  object_value, fact_id, confidence, created_at)
+   FK subject_entity_id → memory_entities(id)
+   FK object_entity_id → memory_entities(id) (nullable, literal if NULL)
 ```
 
 #### Privacy Toggle
@@ -969,6 +1006,14 @@ session_timeout_minutes = 15
 provider = "local"        # "local", "openai", "claude", "ollama"
 model = "qwen2.5:7b"      # Model for extraction
 
+[memory.embeddings]
+provider = "ollama"       # "ollama", "openai", "onnx"
+model = "nomic-embed-text"  # Embedding model name
+endpoint = "http://localhost:11434"  # Provider endpoint
+dimensions = 768          # Embedding dimensions
+keyword_weight = 0.4      # Hybrid search: keyword component weight (0.0-1.0)
+semantic_weight = 0.6     # Hybrid search: semantic component weight (0.0-1.0)
+
 [memory.decay]
 enabled = true            # Enable nightly confidence decay
 hour = 2                  # Run at 2 AM local time (0-23)
@@ -983,6 +1028,18 @@ summary_retention_days = 30
 access_reinforcement_boost = 0.05  # +5% on access (1-hour cooldown)
 ```
 
+#### WebUI Memory Viewer
+
+The memory viewer provides a browser-based interface for inspecting and managing all memory types:
+
+- **Tabs**: Facts, Preferences, Summaries, Graph (entities)
+- **Stats bar**: Real-time counts for each memory type
+- **Search**: Filter memories by keyword across all tabs
+- **Graph tab**: Entity cards with type badges, expandable relations (→ outgoing, ← incoming)
+- **Delete**: Per-item delete with confirmation, bulk "Forget Everything"
+- **Keyboard accessible**: tabindex, ARIA roles, Enter/Space activation
+- **Endpoints**: `GET /api/memory/{facts,preferences,summaries,entities,stats}`, `DELETE /api/memory/{facts,preferences,summaries,entities}/:id`
+
 #### Data Flow (Memory Lifecycle)
 
 ```
@@ -990,11 +1047,12 @@ access_reinforcement_boost = 0.05  # +5% on access (1-hour cooldown)
    ↓
 2. Load user profile: memory_build_context(user_id)
    ↓
-3. Inject facts/preferences into LLM system prompt
+3. Inject facts/preferences/entity names into LLM system prompt
    ↓
 4. During conversation:
    - User: "Remember I'm vegetarian" → memory_remember() → immediate storage
-   - User: "What do you know about me?" → memory_search() → return facts
+   - User: "What do you know about me?" → hybrid_search() → keyword + semantic
+   - Search also returns entity graph context (ENTITIES section)
    ↓
 5. Session End (WebSocket disconnect/timeout)
    ↓
@@ -1002,21 +1060,27 @@ access_reinforcement_boost = 0.05  # +5% on access (1-hour cooldown)
    ↓
 7. memory_trigger_extraction() → background thread
    ↓
-8. Load conversation, build extraction prompt
+8. Load conversation, build extraction prompt (includes existing entity names)
    ↓
 9. Call extraction LLM, parse JSON response
    ↓
 10. Store new facts, update preferences, save summary
+   ↓
+11. Upsert entities (canonical name dedup), create relations
+   ↓
+12. Generate embeddings for new facts and entities (provider-specific)
+   ↓
+13. Invalidate embedding caches (once, not per-item)
 
 --- Nightly Maintenance (runs at configured hour) ---
 
-11. memory_run_nightly_decay() called from auth maintenance thread
+14. memory_run_nightly_decay() called from auth maintenance thread
    ↓
-12. For each user: apply confidence decay (atomic SQL with powf())
+15. For each user: apply confidence decay (atomic SQL with powf())
    ↓
-13. Prune facts below threshold (audit logged), prune old summaries
+16. Prune facts below threshold (audit logged), prune old summaries
    ↓
-14. Accessed facts reinforced (+0.05, time-gated to 1-hour cooldown)
+17. Accessed facts reinforced (+0.05, time-gated to 1-hour cooldown)
 ```
 
 ---
@@ -1049,7 +1113,7 @@ Layer 2 (Services)
 ├── tts/                  - Text-to-speech (depends: Layer 0-1)
 ├── asr/                  - Speech recognition (depends: Layer 0-1)
 ├── mosquitto_comms.c     - MQTT integration (depends: Layer 0-1, tool_registry)
-└── memory/               - Persistent memory (depends: Layer 0-1)
+└── memory/               - Persistent memory + embeddings (depends: Layer 0-1)
 
 Layer 3 (Tools)
 ├── tools/weather_tool.c  - Weather API (depends: Layer 0-2)
@@ -1075,6 +1139,7 @@ Layer 4 (Application)
 ### Common Patterns to Avoid Cycles
 
 **Callback registration** (Layer 2 → Layer 3 without direct dependency):
+
 ```c
 // In tool_registry.h (Layer 1)
 typedef char *(*tool_callback_t)(const char *action, char *value, int *should_respond);
@@ -1084,6 +1149,7 @@ tool_registry_register(&weather_metadata);  // Passes function pointer up
 ```
 
 **Forward declarations** (when header inclusion would create cycle):
+
 ```c
 // In llm_tools.h - avoid including full tool_registry.h
 struct tool_metadata;  // Forward declaration
@@ -1231,13 +1297,13 @@ The main application (`src/dawn.c`) implements a state machine for local voice p
 
 ### State Transitions
 
-| From State        | Event                    | To State          |
-|-------------------|--------------------------|-------------------|
-| SILENCE           | VAD detects speech       | WAKEWORD_LISTEN   |
-| WAKEWORD_LISTEN   | Wake word detected       | COMMAND_RECORDING |
-| WAKEWORD_LISTEN   | Timeout / false alarm    | SILENCE           |
-| COMMAND_RECORDING | VAD detects silence      | PROCESSING        |
-| PROCESSING        | Pipeline complete        | SILENCE           |
+| From State        | Event                 | To State          |
+| ----------------- | --------------------- | ----------------- |
+| SILENCE           | VAD detects speech    | WAKEWORD_LISTEN   |
+| WAKEWORD_LISTEN   | Wake word detected    | COMMAND_RECORDING |
+| WAKEWORD_LISTEN   | Timeout / false alarm | SILENCE           |
+| COMMAND_RECORDING | VAD detects silence   | PROCESSING        |
+| PROCESSING        | Pipeline complete     | SILENCE           |
 
 ---
 
@@ -1247,11 +1313,11 @@ The main application (`src/dawn.c`) implements a state machine for local voice p
 
 DAP2 is the unified WebSocket protocol for all remote access to the DAWN daemon. **A single WebSocket server on port 3000 serves all three client types** — browser WebUI, Tier 1 satellites (Raspberry Pi), and Tier 2 satellites (ESP32). There are no separate servers or additional ports. Each client connects to the same endpoint, registers its capabilities, and the daemon routes messages accordingly:
 
-| Client | Hardware | Transport | Server does | Use Case |
-|--------|----------|-----------|-------------|----------|
-| **WebUI** | Browser | Opus audio (48kHz) + JSON | ASR + LLM + TTS | Browser voice/text interface |
-| **Tier 1** | RPi 4/5 | JSON text (`satellite_query`) | LLM only | Hands-free (local ASR/TTS) |
-| **Tier 2** | ESP32-S3 | Binary PCM audio (16kHz) | ASR + LLM + TTS | Push-to-talk (server ASR/TTS) |
+| Client     | Hardware | Transport                     | Server does     | Use Case                      |
+| ---------- | -------- | ----------------------------- | --------------- | ----------------------------- |
+| **WebUI**  | Browser  | Opus audio (48kHz) + JSON     | ASR + LLM + TTS | Browser voice/text interface  |
+| **Tier 1** | RPi 4/5  | JSON text (`satellite_query`) | LLM only        | Hands-free (local ASR/TTS)    |
+| **Tier 2** | ESP32-S3 | Binary PCM audio (16kHz)      | ASR + LLM + TTS | Push-to-talk (server ASR/TTS) |
 
 This unified architecture means the session manager, response queue, LLM pipeline, tool system, and conversation history are shared infrastructure — adding a new client type requires only a registration handler and a routing decision, not a new server.
 
@@ -1260,6 +1326,7 @@ This unified architecture means the session manager, response queue, LLM pipelin
 **Tier 2 implementation**: `dawn_satellite_arduino/` — Arduino sketch for Adafruit ESP32-S3 TFT Feather. Uses arduinoWebSockets (Links2004), power-of-two ring buffer in PSRAM with spinlock producer/consumer, NVS-persistent UUID and reconnect_secret, TFT status display, NeoPixel state feedback. Credentials in gitignored `arduino_secrets.h`.
 
 For connection lifecycle diagrams, message format details, and the complete protocol specification, see:
+
 - **[DAP2_DESIGN.md](docs/DAP2_DESIGN.md)** — Protocol spec (both tiers, audio framing, registration, codec details)
 - **[DAP2_SATELLITE.md](docs/DAP2_SATELLITE.md)** — Tier 1 build/config/deployment + Tier 2 quick reference
 - **[dawn_satellite_arduino/README.md](dawn_satellite_arduino/README.md)** — Tier 2 Arduino sketch setup and usage
@@ -1290,12 +1357,14 @@ static const tool_metadata_t my_tool_metadata = {
 ```
 
 **Key Features:**
+
 - **O(1) Lookup**: FNV-1a hash tables for name, device_string, and aliases
 - **Self-Registration**: Each tool calls `tool_registry_register()` during init
 - **LLM Schema Generation**: `tool_registry_generate_llm_tools()` builds provider-specific schemas
 - **Capability Flags**: `TOOL_CAP_NETWORK`, `TOOL_CAP_DANGEROUS`, etc. for safety classification
 
 **Registered Tools** (as of January 2026):
+
 - audio_tools, calculator_tool, datetime_tool, hud_tools, llm_status_tool
 - memory_tool, music_tool, reset_conversation_tool, search_tool, shutdown_tool
 - smartthings_tool, switch_llm_tool, url_tool, viewing_tool, volume_tool, weather_tool
@@ -1391,17 +1460,18 @@ Commands are defined via the **modular tool_registry** system:
 
 ### Native Tools vs Legacy `<command>` Tags
 
-| Aspect | Native Tools | Legacy `<command>` Tags |
-|--------|--------------|------------------------|
-| **Definition** | command_registry → llm_tools | Raw JSON in prompt |
-| **Prompt** | Minimal (tools sent as API params) | Full `<command>` instructions |
-| **Response** | Structured `tool_calls` array | Text with `<command>JSON</command>` |
-| **Filtering** | `enabled_local`/`enabled_remote` per tool | Same flags |
-| **Execution** | `command_execute()` | `command_execute()` |
+| Aspect         | Native Tools                              | Legacy `<command>` Tags             |
+| -------------- | ----------------------------------------- | ----------------------------------- |
+| **Definition** | command_registry → llm_tools              | Raw JSON in prompt                  |
+| **Prompt**     | Minimal (tools sent as API params)        | Full `<command>` instructions       |
+| **Response**   | Structured `tool_calls` array             | Text with `<command>JSON</command>` |
+| **Filtering**  | `enabled_local`/`enabled_remote` per tool | Same flags                          |
+| **Execution**  | `command_execute()`                       | `command_execute()`                 |
 
 ### Tool Enable/Disable
 
 Tools can be enabled/disabled per session type (local vs remote):
+
 - Settings UI provides per-tool toggles
 - Legacy `<command>` prompt is filtered by the same enabled flags
 - Disabled tools are omitted from both native tool schemas and legacy prompt
@@ -1486,6 +1556,7 @@ void on_llm_chunk_received(const char *chunk) {
 ### Memory Patterns
 
 #### Static Buffers (Preferred)
+
 ```c
 // Example: Audio buffer
 #define AUDIO_BUFFER_SIZE 16000
@@ -1493,6 +1564,7 @@ static int16_t audio_buffer[AUDIO_BUFFER_SIZE];
 ```
 
 #### Dynamic Allocation (When Necessary)
+
 ```c
 char *response = malloc(response_len);
 if (response == NULL) {
@@ -1505,6 +1577,7 @@ response = NULL;
 ```
 
 #### Ring Buffer (Lock-Free)
+
 ```c
 // Circular buffer with atomic read/write pointers
 typedef struct {
@@ -1517,14 +1590,14 @@ typedef struct {
 
 ### Memory Usage Estimates
 
-| Component       | Memory Usage       | Notes                          |
-|-----------------|--------------------|--------------------------------|
-| Whisper base    | ~140 MB            | Model weights + context        |
-| Vosk 0.22       | ~50 MB             | Smaller footprint              |
-| Silero VAD      | ~2 MB              | Tiny ONNX model                |
-| Piper TTS       | ~30 MB             | Voice model + ONNX runtime     |
-| Ring Buffer     | ~256 KB            | 16kHz × 16-bit × 8s buffer     |
-| Conversation    | ~10 KB             | History for LLM context        |
+| Component    | Memory Usage | Notes                      |
+| ------------ | ------------ | -------------------------- |
+| Whisper base | ~140 MB      | Model weights + context    |
+| Vosk 0.22    | ~50 MB       | Smaller footprint          |
+| Silero VAD   | ~2 MB        | Tiny ONNX model            |
+| Piper TTS    | ~30 MB       | Voice model + ONNX runtime |
+| Ring Buffer  | ~256 KB      | 16kHz × 16-bit × 8s buffer |
+| Conversation | ~10 KB       | History for LLM context    |
 
 **Total (Whisper)**: ~230 MB RAM minimum
 **Total (Vosk)**: ~140 MB RAM minimum
@@ -1549,6 +1622,7 @@ typedef struct {
 ### Error Handling Patterns
 
 #### Function Return Codes
+
 ```c
 int asr_process_audio(ASRContext *ctx, int16_t *audio, size_t samples) {
    if (ctx == NULL || audio == NULL) {
@@ -1568,6 +1642,7 @@ int asr_process_audio(ASRContext *ctx, int16_t *audio, size_t samples) {
 ```
 
 #### Network Protocol Errors
+
 ```c
 // Retry logic with exponential backoff
 int retry_count = 0;
@@ -1582,6 +1657,7 @@ while (retry_count < MAX_RETRIES) {
 ```
 
 #### Graceful Degradation
+
 ```c
 // Example: Fall back to simpler ASR if GPU unavailable
 if (gpu_available) {
@@ -1607,12 +1683,12 @@ if (gpu_available) {
 
 **Total Perceived Latency** = ASR Time + TTFT + TTS Time
 
-| Component         | Latency (Whisper base GPU) | Notes                    |
-|-------------------|----------------------------|--------------------------|
-| ASR (Whisper base)| ~110 ms                    | GPU accelerated          |
-| TTFT (Qwen3-4B)   | ~138 ms                    | Local LLM first token    |
-| TTS (Piper)       | ~200 ms                    | First sentence           |
-| **Total**         | **~448 ms**                | User hears first response|
+| Component          | Latency (Whisper base GPU) | Notes                     |
+| ------------------ | -------------------------- | ------------------------- |
+| ASR (Whisper base) | ~110 ms                    | GPU accelerated           |
+| TTFT (Qwen3-4B)    | ~138 ms                    | Local LLM first token     |
+| TTS (Piper)        | ~200 ms                    | First sentence            |
+| **Total**          | **~448 ms**                | User hears first response |
 
 **Streaming Advantage**: With streaming LLM + TTS, user hears response in <500ms instead of waiting for complete LLM response (~3s).
 
@@ -1663,11 +1739,11 @@ cmake -DPLATFORM=RPI ..     # Force RPi (disables CUDA)
 
 To prevent files from becoming unmaintainable monoliths, follow these limits:
 
-| File Type | Soft Limit | Hard Limit |
-|-----------|------------|------------|
-| C source | 1,500 lines | 2,500 lines |
+| File Type  | Soft Limit  | Hard Limit  |
+| ---------- | ----------- | ----------- |
+| C source   | 1,500 lines | 2,500 lines |
 | JavaScript | 1,000 lines | 1,500 lines |
-| CSS | 1,000 lines | 2,000 lines |
+| CSS        | 1,000 lines | 2,000 lines |
 
 ### Module Split Pattern (C)
 
@@ -1686,6 +1762,7 @@ include/subsystem/
 ```
 
 The internal header contains:
+
 - `extern` declarations for shared state (defined in `_core.c`)
 - Internal helper function declarations
 - Shared macros (e.g., locking patterns)
@@ -1823,16 +1900,16 @@ Register in `src/tools/tools_init.c` via `tools_register_all()`.
 
 The WebUI settings panel (`www/js/ui/settings.js`) defines a `SETTINGS_SCHEMA` that maps to `dawn.toml` sections:
 
-| WebUI Section | Config Section | Notes |
-|---------------|----------------|-------|
-| Language Model | `[llm]`, `[llm.cloud]`, `[llm.local]` | Provider, model selection |
-| Speech Recognition | `[asr]` | Model, language |
-| Text-to-Speech | `[tts]` | Voice model, rate |
-| Audio | `[audio]` | Backend, devices |
-| Tool Calling | `[llm.tools]` | Mode, per-tool toggles |
-| Network | `[webui]`, `[dap]`, `[mqtt]` | Ports, addresses |
-| Images & Vision | `[images]`, `[vision]` | Storage retention, upload size/dimension limits |
-| Documents | `[documents]` | Upload size, page limits, extraction limits |
+| WebUI Section      | Config Section                        | Notes                                           |
+| ------------------ | ------------------------------------- | ----------------------------------------------- |
+| Language Model     | `[llm]`, `[llm.cloud]`, `[llm.local]` | Provider, model selection                       |
+| Speech Recognition | `[asr]`                               | Model, language                                 |
+| Text-to-Speech     | `[tts]`                               | Voice model, rate                               |
+| Audio              | `[audio]`                             | Backend, devices                                |
+| Tool Calling       | `[llm.tools]`                         | Mode, per-tool toggles                          |
+| Network            | `[webui]`, `[dap]`, `[mqtt]`          | Ports, addresses                                |
+| Images & Vision    | `[images]`, `[vision]`                | Storage retention, upload size/dimension limits |
+| Documents          | `[documents]`                         | Upload size, page limits, extraction limits     |
 
 **Implementation Note**: When adding new settings to `dawn.toml`, also add corresponding entries to `SETTINGS_SCHEMA` to expose them in the WebUI, unless they fall under the exclusion criteria above.
 
@@ -1937,6 +2014,7 @@ llm_response_text = NULL;  // Ownership transferred back
 ```
 
 **Rules**:
+
 - Worker thread **owns** request buffer, frees after use
 - Main thread **owns** response buffer, frees after processing
 - Mutex held only during transfer, not during processing
@@ -1946,6 +2024,7 @@ llm_response_text = NULL;  // Ownership transferred back
 **Purpose**: Allow users to interrupt ongoing LLM requests by saying the wake word.
 
 **Implementation**:
+
 - CURL progress callback checks `llm_interrupt_requested` flag periodically
 - Wake word detection in main loop sets flag via `llm_request_interrupt()`
 - Returns non-zero from callback to abort CURL transfer
@@ -1997,6 +2076,7 @@ make
 ```
 
 ThreadSanitizer detects:
+
 - Data races (unsynchronized shared variable access)
 - Lock order inversions (potential deadlocks)
 - Use-after-free in threaded code
@@ -2024,7 +2104,7 @@ ThreadSanitizer detects:
 ### Performance Characteristics (Updated)
 
 | Component         | CPU Impact | Memory Impact | Notes                 |
-|-------------------|------------|---------------|-----------------------|
+| ----------------- | ---------- | ------------- | --------------------- |
 | Main audio loop   | 15-20%     | Varies        | VAD + ASR processing  |
 | LLM worker thread | 0.01%      | ~8KB          | CURL callback polling |
 | TTS worker thread | 5-10%      | ~8KB          | During synthesis      |
@@ -2032,4 +2112,3 @@ ThreadSanitizer detects:
 **LLM Threading Benefit**: Main audio loop **never blocks** during LLM processing, maintaining responsive wake word detection even during 10-15 second LLM calls.
 
 ---
-

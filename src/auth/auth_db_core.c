@@ -635,6 +635,63 @@ static int create_schema(void) {
       LOG_INFO("auth_db: added scheduled_events table (v18)");
    }
 
+   /* v19 migration: semantic memory embeddings + entity/relation tables */
+   if (current_version >= 1 && current_version < 19) {
+      const char *v19_sql =
+          /* Add embedding columns to existing memory_facts table */
+          "ALTER TABLE memory_facts ADD COLUMN embedding BLOB DEFAULT NULL;"
+          "ALTER TABLE memory_facts ADD COLUMN embedding_norm REAL DEFAULT NULL;"
+
+          /* Entity table (populated in Phase S4, created now for schema stability) */
+          "CREATE TABLE IF NOT EXISTS memory_entities ("
+          "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+          "  user_id INTEGER NOT NULL,"
+          "  name TEXT NOT NULL,"
+          "  entity_type TEXT NOT NULL,"
+          "  canonical_name TEXT NOT NULL,"
+          "  embedding BLOB DEFAULT NULL,"
+          "  embedding_norm REAL DEFAULT NULL,"
+          "  first_seen INTEGER NOT NULL DEFAULT (strftime('%s','now')),"
+          "  last_seen INTEGER,"
+          "  mention_count INTEGER DEFAULT 1,"
+          "  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,"
+          "  UNIQUE(user_id, canonical_name)"
+          ");"
+          "CREATE INDEX IF NOT EXISTS idx_memory_entities_user "
+          "  ON memory_entities(user_id);"
+
+          /* Relation triples (populated in Phase S4, created now) */
+          "CREATE TABLE IF NOT EXISTS memory_relations ("
+          "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+          "  user_id INTEGER NOT NULL,"
+          "  subject_entity_id INTEGER NOT NULL,"
+          "  relation TEXT NOT NULL,"
+          "  object_entity_id INTEGER,"
+          "  object_value TEXT,"
+          "  fact_id INTEGER,"
+          "  confidence REAL DEFAULT 0.8,"
+          "  created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),"
+          "  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,"
+          "  FOREIGN KEY (subject_entity_id) REFERENCES memory_entities(id) ON DELETE CASCADE,"
+          "  FOREIGN KEY (object_entity_id) REFERENCES memory_entities(id) ON DELETE SET NULL,"
+          "  FOREIGN KEY (fact_id) REFERENCES memory_facts(id) ON DELETE SET NULL"
+          ");"
+          "CREATE INDEX IF NOT EXISTS idx_memory_relations_subject "
+          "  ON memory_relations(subject_entity_id);"
+          "CREATE INDEX IF NOT EXISTS idx_memory_relations_object "
+          "  ON memory_relations(object_entity_id);"
+          "CREATE INDEX IF NOT EXISTS idx_memory_relations_user "
+          "  ON memory_relations(user_id);";
+
+      rc = sqlite3_exec(s_db.db, v19_sql, NULL, NULL, &errmsg);
+      if (rc != SQLITE_OK) {
+         LOG_ERROR("auth_db: v19 migration failed: %s", errmsg ? errmsg : "unknown");
+         sqlite3_free(errmsg);
+         return AUTH_DB_FAILURE;
+      }
+      LOG_INFO("auth_db: added embedding columns and entity/relation tables (v19)");
+   }
+
    /* Create continuation index (runs for both new databases and migrations) */
    rc = sqlite3_exec(s_db.db,
                      "CREATE INDEX IF NOT EXISTS idx_conversations_continued "
@@ -1430,6 +1487,145 @@ static int prepare_statements(void) {
       return AUTH_DB_FAILURE;
    }
 
+   /* Embedding statements */
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "UPDATE memory_facts SET embedding = ?, embedding_norm = ? "
+                           "WHERE id = ? AND user_id = ?",
+                           -1, &s_db.stmt_memory_fact_update_embedding, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare fact_update_embedding failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT id, embedding, embedding_norm FROM memory_facts "
+                           "WHERE user_id = ? AND superseded_by IS NULL AND embedding IS NOT NULL "
+                           "ORDER BY confidence DESC LIMIT ?",
+                           -1, &s_db.stmt_memory_fact_get_embeddings, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare fact_get_embeddings failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT id, fact_text FROM memory_facts "
+                           "WHERE user_id = ? AND superseded_by IS NULL "
+                           "AND (embedding IS NULL OR length(embedding)/4 != ?) "
+                           "ORDER BY created_at ASC LIMIT ?",
+                           -1, &s_db.stmt_memory_fact_list_without_embedding, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare fact_list_without_embedding failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   /* Entity graph statements */
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "INSERT INTO memory_entities (user_id, name, entity_type, canonical_name, "
+       "first_seen, last_seen, mention_count) "
+       "VALUES (?, ?, ?, ?, strftime('%s','now'), strftime('%s','now'), 1) "
+       "ON CONFLICT(user_id, canonical_name) DO UPDATE SET "
+       "last_seen = strftime('%s','now'), mention_count = mention_count + 1, "
+       "name = CASE WHEN length(excluded.name) > length(name) THEN excluded.name ELSE name END "
+       "RETURNING id, mention_count",
+       -1, &s_db.stmt_memory_entity_upsert, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare entity_upsert failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT id, user_id, name, entity_type, canonical_name, mention_count, "
+                           "first_seen, last_seen FROM memory_entities "
+                           "WHERE user_id = ? AND canonical_name = ?",
+                           -1, &s_db.stmt_memory_entity_get_by_name, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare entity_get_by_name failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "UPDATE memory_entities SET embedding = ?, embedding_norm = ? "
+                           "WHERE id = ? AND user_id = ?",
+                           -1, &s_db.stmt_memory_entity_update_embedding, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare entity_update_embedding failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT id, name, entity_type, embedding, embedding_norm "
+                           "FROM memory_entities "
+                           "WHERE user_id = ? AND embedding IS NOT NULL "
+                           "ORDER BY mention_count DESC LIMIT ?",
+                           -1, &s_db.stmt_memory_entity_get_embeddings, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare entity_get_embeddings failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "INSERT INTO memory_relations (user_id, subject_entity_id, relation, "
+                           "object_entity_id, object_value, fact_id, confidence, created_at) "
+                           "VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%s','now'))",
+                           -1, &s_db.stmt_memory_relation_create, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare relation_create failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT r.id, r.subject_entity_id, r.relation, r.object_entity_id, "
+                           "COALESCE(e.name, r.object_value) AS object_name, r.confidence "
+                           "FROM memory_relations r "
+                           "LEFT JOIN memory_entities e ON r.object_entity_id = e.id "
+                           "WHERE r.user_id = ? AND r.subject_entity_id = ? LIMIT ?",
+                           -1, &s_db.stmt_memory_relation_list_by_subject, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare relation_list_by_subject failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT r.id, r.subject_entity_id, r.relation, r.object_entity_id, "
+                           "COALESCE(e.name, r.object_value) AS object_name, r.confidence "
+                           "FROM memory_relations r "
+                           "LEFT JOIN memory_entities e ON r.subject_entity_id = e.id "
+                           "WHERE r.user_id = ? AND r.object_entity_id = ? LIMIT ?",
+                           -1, &s_db.stmt_memory_relation_list_by_object, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare relation_list_by_object failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT id, user_id, name, entity_type, canonical_name, "
+                           "mention_count, first_seen, last_seen "
+                           "FROM memory_entities "
+                           "WHERE user_id = ? AND canonical_name LIKE ? ESCAPE '\\' "
+                           "ORDER BY mention_count DESC LIMIT ?",
+                           -1, &s_db.stmt_memory_entity_search, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare entity_search failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM memory_entities WHERE id = ? AND user_id = ?", -1,
+                           &s_db.stmt_memory_entity_delete, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare entity_delete failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "DELETE FROM memory_relations "
+                           "WHERE user_id = ? AND (subject_entity_id = ? OR object_entity_id = ?)",
+                           -1, &s_db.stmt_memory_relation_delete_by_entity, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare relation_delete_by_entity failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
    return AUTH_DB_SUCCESS;
 }
 
@@ -1609,10 +1805,41 @@ static void finalize_statements(void) {
    if (s_db.stmt_conv_set_private)
       sqlite3_finalize(s_db.stmt_conv_set_private);
 
+   /* Embedding statements */
+   if (s_db.stmt_memory_fact_update_embedding)
+      sqlite3_finalize(s_db.stmt_memory_fact_update_embedding);
+   if (s_db.stmt_memory_fact_get_embeddings)
+      sqlite3_finalize(s_db.stmt_memory_fact_get_embeddings);
+   if (s_db.stmt_memory_fact_list_without_embedding)
+      sqlite3_finalize(s_db.stmt_memory_fact_list_without_embedding);
+
+   /* Entity graph statements */
+   if (s_db.stmt_memory_entity_upsert)
+      sqlite3_finalize(s_db.stmt_memory_entity_upsert);
+   if (s_db.stmt_memory_entity_get_by_name)
+      sqlite3_finalize(s_db.stmt_memory_entity_get_by_name);
+   if (s_db.stmt_memory_entity_update_embedding)
+      sqlite3_finalize(s_db.stmt_memory_entity_update_embedding);
+   if (s_db.stmt_memory_entity_get_embeddings)
+      sqlite3_finalize(s_db.stmt_memory_entity_get_embeddings);
+   if (s_db.stmt_memory_relation_create)
+      sqlite3_finalize(s_db.stmt_memory_relation_create);
+   if (s_db.stmt_memory_relation_list_by_subject)
+      sqlite3_finalize(s_db.stmt_memory_relation_list_by_subject);
+   if (s_db.stmt_memory_relation_list_by_object)
+      sqlite3_finalize(s_db.stmt_memory_relation_list_by_object);
+   if (s_db.stmt_memory_entity_search)
+      sqlite3_finalize(s_db.stmt_memory_entity_search);
+   if (s_db.stmt_memory_entity_delete)
+      sqlite3_finalize(s_db.stmt_memory_entity_delete);
+   if (s_db.stmt_memory_relation_delete_by_entity)
+      sqlite3_finalize(s_db.stmt_memory_relation_delete_by_entity);
+
    /* Clear all statement pointers using offsetof for safety
     * MAINTENANCE: If statements are reordered, update first/last_stmt names */
    size_t first_stmt_offset = offsetof(auth_db_state_t, stmt_create_user);
-   size_t last_stmt_end = offsetof(auth_db_state_t, stmt_conv_set_private) + sizeof(sqlite3_stmt *);
+   size_t last_stmt_end = offsetof(auth_db_state_t, stmt_memory_relation_delete_by_entity) +
+                          sizeof(sqlite3_stmt *);
    memset((char *)&s_db + first_stmt_offset, 0, last_stmt_end - first_stmt_offset);
 }
 

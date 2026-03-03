@@ -919,6 +919,7 @@ static void parse_memory(toml_table_t *table, memory_config_t *config) {
                                              "default_voice_user_id",
                                              "pruning",
                                              "decay",
+                                             "embeddings",
                                              NULL };
    warn_unknown_keys(table, "memory", known_keys);
 
@@ -1069,6 +1070,27 @@ static void parse_memory(toml_table_t *table, memory_config_t *config) {
       config->access_reinforcement_boost = 0.0f;
    if (config->access_reinforcement_boost > 0.5f)
       config->access_reinforcement_boost = 0.5f;
+
+   /* Parse [memory.embeddings] sub-table */
+   toml_table_t *embeddings = toml_table_in(table, "embeddings");
+   if (embeddings) {
+      static const char *const emb_keys[] = {
+         "provider", "model", "endpoint", "keyword_weight", "vector_weight", "backfill_on_startup",
+         NULL
+      };
+      warn_unknown_keys(embeddings, "memory.embeddings", emb_keys);
+
+      PARSE_STRING(embeddings, "provider", config->embedding_provider);
+      PARSE_STRING(embeddings, "model", config->embedding_model);
+      PARSE_STRING(embeddings, "endpoint", config->embedding_endpoint);
+      PARSE_DOUBLE(embeddings, "keyword_weight", config->embedding_keyword_weight);
+      PARSE_DOUBLE(embeddings, "vector_weight", config->embedding_vector_weight);
+      PARSE_BOOL(embeddings, "backfill_on_startup", config->embedding_backfill_on_startup);
+   }
+
+   /* Clamp embedding weights to 0.0-1.0 */
+   CONFIG_CLAMP(config->embedding_keyword_weight, 0.0f, 1.0f);
+   CONFIG_CLAMP(config->embedding_vector_weight, 0.0f, 1.0f);
 }
 
 static void parse_shutdown(toml_table_t *table, shutdown_config_t *config) {
@@ -1314,6 +1336,7 @@ int config_parse_secrets(const char *path, secrets_config_t *secrets) {
       PARSE_STRING(secrets_section, "satellite_registration_key",
                    secrets->satellite_registration_key);
       PARSE_STRING(secrets_section, "plex_token", secrets->plex_token);
+      PARSE_STRING(secrets_section, "embedding_api_key", secrets->embedding_api_key);
 
       /* Parse [secrets.smartthings] sub-section for authentication
        * Supports two modes:

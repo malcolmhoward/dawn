@@ -103,17 +103,17 @@
  *
  * Desktop layout (7 columns × 5 rows):
  *   col:  1(label)    2(select)  3(label)    4(select)   5(label)  6(select)  7(accessory)
- * row 1:  MODE:       [Local▾]   PROVIDER:   [llama▾]    MODEL:    [Qwen..▾]  [eye]
+ * row 1:  MODE:       [Local▾]   PROVIDER:   [llama▾]    MODEL:    [Qwen..▾]  [▲ collapse]
  * row 2:                                     (prov-hint)           (mod-hint)
  * row 3:  [----------------------- separator line -----------------------]
- * row 4:  REASONING:  [Dis▾]     EFFORT:     [Low▾]      TOOLS:    [Native▾?] [lock]
+ * row 4:  REASONING:  [Dis▾]     EFFORT:     [Low▾]      TOOLS:    [Native▾?] [eye/lock]
  * row 5:                                     (eff-hint)
  *
  * Mobile: collapses to 2-column (auto 1fr) vertical stack with mini bar.
  * ============================================================================= */
 #llm-controls-grid {
    display: grid;
-   grid-template-columns: auto 1fr auto 1fr auto 1fr auto;
+   grid-template-columns: auto 1fr auto 1fr auto minmax(auto, 14rem) auto;
    grid-template-rows: auto auto auto auto auto;
    column-gap: 0.5rem;
    row-gap: 0;
@@ -124,6 +124,9 @@
    border-radius: var(--border-radius);
    font-size: 0.875rem;
    position: relative;
+   transition:
+      opacity 0.2s ease,
+      padding 0.3s ease;
 }
 
 #llm-controls,
@@ -200,10 +203,9 @@
    width: 8.5rem;
 }
 
-/* Row 1 spacer (col 7) */
+/* Row 1, col 7 is reserved for the collapse toggle (positioned absolutely) */
 .llm-grid-spacer {
-   grid-row: 1;
-   grid-column: 7;
+   display: none;
 }
 
 /* === Hint rows === */
@@ -272,11 +274,6 @@
    gap: 0.5rem;
    position: relative;
 }
-#privacy-group {
-   grid-row: 1;
-   grid-column: 7;
-   align-self: center;
-}
 #llm-lock-indicator {
    grid-row: 4;
    grid-column: 7;
@@ -299,19 +296,107 @@
 }
 
 /* =============================================================================
- * LLM Controls Mini Bar (shown when collapsed on mobile)
+ * LLM Controls Mini Bar (shown when grid is collapsed)
  * ============================================================================= */
 .llm-controls-mini {
-   display: none;
+   display: flex;
+   align-items: center;
+   justify-content: space-between;
+   padding: 0.5rem 1rem;
+   margin-bottom: 0.25rem;
+   background: var(--accent-subtle);
+   border: 1px solid var(--accent-hover);
+   border-radius: var(--border-radius);
+   font-family: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
+   font-size: 0.8rem;
+   cursor: pointer;
+   user-select: none;
+   transition:
+      background-color var(--transition-fast),
+      transform var(--transition-fast);
 }
 
 .llm-controls-mini.hidden {
    display: none;
 }
 
-/* Collapse toggle — hidden on desktop */
-.llm-controls-collapse-toggle {
-   display: none;
+.llm-controls-mini:hover {
+   background: var(--accent-border);
+}
+
+.llm-controls-mini:active {
+   background: var(--accent-hover);
+   transform: scale(0.995);
+}
+
+.llm-controls-mini:focus-visible {
+   outline: 2px solid var(--accent);
+   outline-offset: 2px;
+}
+
+.llm-mini-summary {
+   color: var(--text-primary);
+   overflow: hidden;
+   text-overflow: ellipsis;
+   white-space: nowrap;
+}
+
+.llm-mini-sep {
+   color: var(--text-secondary);
+   margin: 0 0.4rem;
+}
+
+.llm-mini-expand {
+   color: var(--text-secondary);
+   font-size: 0.65rem;
+   flex-shrink: 0;
+   margin-left: 0.5rem;
+}
+
+/* Collapsed state — hides the full grid */
+#llm-controls-grid.collapsed {
+   max-height: 0;
+   opacity: 0;
+   padding: 0;
+   margin-bottom: 0;
+   overflow: hidden;
+   pointer-events: none;
+}
+
+/* Collapse toggle inside grid (▲ button) — matches visualizer-collapse-toggle style */
+#llm-controls-collapse {
+   display: block;
+   position: absolute;
+   top: 0.5rem;
+   right: 0.75rem;
+   color: var(--text-secondary);
+   font-size: 0.75rem;
+   cursor: pointer;
+   padding: 0.25rem 0.5rem;
+   border-radius: var(--border-radius-sm);
+   user-select: none;
+   line-height: 1;
+   z-index: 1;
+   transition:
+      color var(--transition-fast),
+      background-color var(--transition-fast),
+      transform var(--transition-fast);
+}
+
+#llm-controls-collapse:hover {
+   color: var(--accent);
+   background: var(--accent-border);
+}
+
+#llm-controls-collapse:active {
+   background: var(--accent-hover);
+   transform: scale(0.95);
+}
+
+#llm-controls-collapse:focus-visible {
+   outline: 2px solid var(--accent);
+   outline-offset: 2px;
+   box-shadow: 0 0 0 4px var(--accent-focus);
 }
 
 /* Loading state for LLM controls during sync */
@@ -535,68 +620,13 @@
 
 /* Responsive adjustments */
 @media (max-width: 600px) {
-   /* LLM controls mini bar — visible on mobile when grid is collapsed */
-   .llm-controls-mini {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 0.5rem 1rem;
-      margin-bottom: 0.25rem;
-      background: var(--accent-subtle);
-      border: 1px solid var(--accent-hover);
-      border-radius: var(--border-radius);
-      font-family: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
-      font-size: 0.8rem;
-      cursor: pointer;
-      user-select: none;
-      transition:
-         background-color var(--transition-fast),
-         transform var(--transition-fast);
-   }
-   .llm-controls-mini:hover {
-      background: var(--accent-border);
-   }
-   .llm-controls-mini:active {
-      background: var(--accent-hover);
-      transform: scale(0.995);
-   }
-   .llm-controls-mini:focus-visible {
-      outline: 2px solid var(--accent);
-      outline-offset: 2px;
-   }
-
-   .llm-mini-summary {
-      color: var(--text-primary);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-   }
-   .llm-mini-sep {
-      color: var(--text-secondary);
-      margin: 0 0.4rem;
-   }
-   .llm-mini-expand {
-      color: var(--text-secondary);
-      font-size: 0.65rem;
-      flex-shrink: 0;
-      margin-left: 0.5rem;
-   }
-
+   /* Switch to 2-column vertical stack on mobile */
    #llm-controls-grid {
       grid-template-columns: auto 1fr;
+      padding: 0.5rem 1rem; /* Reset — toggle is in-flow on mobile, no extra top needed */
       transition:
          opacity 0.2s ease,
          padding 0.3s ease;
-   }
-
-   /* Collapsed state — mobile only so desktop always shows controls */
-   #llm-controls-grid.collapsed {
-      max-height: 0;
-      opacity: 0;
-      padding: 0;
-      margin-bottom: 0;
-      overflow: hidden;
-      pointer-events: none;
    }
 
    /* Reset all explicit placements for vertical stacking */
@@ -607,26 +637,12 @@
       grid-column: auto;
    }
 
-   /* Collapse toggle — after wildcard reset so it wins */
+   /* Collapse toggle — relative flow on mobile (full-width row) */
    #llm-controls-collapse {
-      display: block;
+      position: static;
       grid-column: 1 / -1;
       justify-self: end;
-      color: var(--text-secondary);
-      font-size: 0.65rem;
-      cursor: pointer;
-      padding: 0.1rem 0.4rem;
-      border-radius: var(--border-radius-sm);
-      user-select: none;
-      line-height: 1;
-   }
-   #llm-controls-collapse:hover {
-      color: var(--accent);
-      background: var(--accent-border);
-   }
-   #llm-controls-collapse:focus-visible {
-      outline: 2px solid var(--accent);
-      outline-offset: 2px;
+      opacity: 1;
    }
 
    .llm-grid-spacer,
@@ -660,7 +676,6 @@
    #reasoning-effort-select,
    #tools-label,
    #tools-group,
-   #privacy-group,
    #llm-lock-indicator {
       grid-row: auto;
       grid-column: auto;
@@ -672,10 +687,9 @@
       margin-top: 0.4rem;
    }
 
-   #privacy-group,
    #llm-lock-indicator {
       grid-column: 1 / -1;
-      justify-self: start;
+      justify-self: end;
    }
 
    .help-popup {

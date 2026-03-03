@@ -178,6 +178,18 @@ target_link_libraries(test_music_db
                       sqlite3
                       pthread)
 
+# Test: Memory Embeddings Math Utilities
+# Tests cosine similarity, L2 norm, and hybrid score logic (no ONNX/DB needed)
+add_executable(test_memory_embeddings
+               test_memory_embeddings.c
+               test_memory_embeddings_stub.c
+               ${SRC_ROOT}/src/memory/memory_embeddings.c)
+
+target_link_libraries(test_memory_embeddings
+                      dawn_common
+                      pthread
+                      m)
+
 # =============================================================================
 # Aggregate "tests" target
 # =============================================================================
@@ -194,4 +206,5 @@ add_custom_target(tests
                           test_summarizer_quality
                           test_scheduler
                           test_music_db
+                          test_memory_embeddings
                   COMMENT "Building all tests")

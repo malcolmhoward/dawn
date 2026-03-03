@@ -31,6 +31,7 @@ NC='\033[0m' # No Color
 WHISPER_MODEL="base"
 INCLUDE_VOSK=false
 VOSK_VARIANT=""
+INCLUDE_EMBEDDINGS=false
 
 # Project root (where this script lives)
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -75,6 +76,7 @@ show_help() {
     echo "  --whisper-model SIZE Whisper model (default: base)"
     echo "                       Accepts: tiny, base, small, medium"
     echo "                       Quantized: tiny-q5_1, base-q5_1, etc."
+    echo "  --embeddings         Download embedding model for semantic memory search (~23MB)"
     echo "  --help               Show this help message"
     echo ""
     echo "Examples:"
@@ -108,6 +110,10 @@ parse_args() {
             --vosk)
                 INCLUDE_VOSK=true
                 VOSK_VARIANT="large"
+                shift
+                ;;
+            --embeddings)
+                INCLUDE_EMBEDDINGS=true
                 shift
                 ;;
             --whisper-model)
@@ -292,6 +298,47 @@ setup_vosk() {
     fi
 }
 
+setup_embeddings() {
+    if [ "$INCLUDE_EMBEDDINGS" != true ]; then
+        print_step "Skipping embedding model (use --embeddings to include)"
+        return
+    fi
+
+    local emb_dir="$MODELS_DIR/embeddings"
+    local model_file="$emb_dir/all-MiniLM-L6-v2-int8.onnx"
+    local vocab_file="$emb_dir/vocab.txt"
+
+    mkdir -p "$emb_dir"
+
+    if [ -f "$model_file" ] && [ -f "$vocab_file" ]; then
+        print_success "Embedding model already exists: all-MiniLM-L6-v2-int8.onnx"
+        return
+    fi
+
+    print_step "Downloading all-MiniLM-L6-v2 embedding model (int8 quantized, ~23MB)..."
+
+    local model_url="https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/onnx/model_qint8_arm64.onnx"
+    local vocab_url="https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/vocab.txt"
+
+    if [ ! -f "$model_file" ]; then
+        wget -q --show-progress -O "$model_file" "$model_url" || {
+            print_error "Failed to download embedding model"
+            rm -f "$model_file"
+            return 1
+        }
+    fi
+
+    if [ ! -f "$vocab_file" ]; then
+        wget -q --show-progress -O "$vocab_file" "$vocab_url" || {
+            print_error "Failed to download vocab file"
+            rm -f "$vocab_file"
+            return 1
+        }
+    fi
+
+    print_success "Embedding model downloaded: all-MiniLM-L6-v2-int8.onnx"
+}
+
 verify_committed_models() {
     print_step "Verifying committed models (TTS/VAD)..."
 
@@ -376,6 +423,7 @@ main() {
     setup_models_directory
     setup_whisper
     setup_vosk
+    setup_embeddings
     verify_committed_models
     setup_build_symlink
 

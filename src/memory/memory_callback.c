@@ -33,6 +33,7 @@
 #include "core/session_manager.h"
 #include "logging.h"
 #include "memory/memory_db.h"
+#include "memory/memory_embeddings.h"
 #include "memory/memory_similarity.h"
 #include "memory/memory_types.h"
 #include "mosquitto_comms.h"
@@ -297,7 +298,8 @@ static int multi_token_fact_search(int user_id,
                                    int per_token_limit,
                                    memory_fact_t *results,
                                    int max_results,
-                                   time_t since_ts) {
+                                   time_t since_ts,
+                                   int *out_scores) {
    int64_t seen_ids[MAX_DEDUP_RESULTS];
    int seen_scores[MAX_DEDUP_RESULTS];
    memory_fact_t seen_facts[MAX_DEDUP_RESULTS];
@@ -350,6 +352,8 @@ static int multi_token_fact_search(int user_id,
    int count = (seen_count > max_results) ? max_results : seen_count;
    for (int i = 0; i < count; i++) {
       results[i] = seen_facts[i];
+      if (out_scores)
+         out_scores[i] = seen_scores[i];
    }
    return count;
 }
@@ -381,6 +385,104 @@ static int tokenize_query(const char *keywords, char tokens[][64], int max_token
 }
 
 /* =============================================================================
+ * Helper: Append entity graph context to search results
+ * ============================================================================= */
+
+static size_t append_graph_context(int user_id,
+                                   const char *keywords,
+                                   char *buf,
+                                   size_t buf_size,
+                                   size_t offset) {
+   /* Try semantic entity search first */
+   int64_t entity_ids[5];
+   char entity_names[5][MEMORY_ENTITY_NAME_MAX];
+   char entity_types[5][MEMORY_ENTITY_TYPE_MAX];
+   float entity_scores[5];
+   int entity_count = 0;
+
+   entity_count = memory_embeddings_entity_search(user_id, keywords, NULL, entity_ids, entity_names,
+                                                  entity_types, entity_scores, 5);
+
+   /* Fallback to keyword search if vector search returned nothing */
+   if (entity_count == 0) {
+      /* Tokenize query and search per-token to avoid full-string LIKE mismatch */
+      char tokens[MAX_SEARCH_TOKENS][64];
+      int token_count = tokenize_query(keywords, tokens, MAX_SEARCH_TOKENS);
+      int64_t seen_ids[5];
+      int seen_count = 0;
+
+      for (int t = 0; t < token_count && entity_count < 5; t++) {
+         memory_entity_t kw_entities[5];
+         int kw_count = memory_db_entity_search(user_id, tokens[t], kw_entities, 5);
+         for (int i = 0; i < kw_count && entity_count < 5; i++) {
+            /* Dedup by entity ID */
+            bool dup = false;
+            for (int k = 0; k < seen_count; k++) {
+               if (seen_ids[k] == kw_entities[i].id) {
+                  dup = true;
+                  break;
+               }
+            }
+            if (dup)
+               continue;
+            if (seen_count < 5)
+               seen_ids[seen_count++] = kw_entities[i].id;
+            entity_ids[entity_count] = kw_entities[i].id;
+            strncpy(entity_names[entity_count], kw_entities[i].name, MEMORY_ENTITY_NAME_MAX - 1);
+            entity_names[entity_count][MEMORY_ENTITY_NAME_MAX - 1] = '\0';
+            strncpy(entity_types[entity_count], kw_entities[i].entity_type,
+                    MEMORY_ENTITY_TYPE_MAX - 1);
+            entity_types[entity_count][MEMORY_ENTITY_TYPE_MAX - 1] = '\0';
+            entity_count++;
+         }
+      }
+   }
+
+   if (entity_count == 0)
+      return offset;
+
+   /* Show top 3 entities with their relations (skip entities with no relations) */
+   int show_count = entity_count > 3 ? 3 : entity_count;
+   size_t header_offset = offset; /* Save position before writing header */
+   bool header_written = false;
+
+   for (int i = 0; i < show_count && offset < buf_size - 100; i++) {
+      /* Pre-fetch relations to check if entity has any */
+      memory_relation_t rels[8];
+      int rel_count = memory_db_relation_list_by_subject(user_id, entity_ids[i], rels, 8);
+      memory_relation_t in_rels[8];
+      int in_count = memory_db_relation_list_by_object(user_id, entity_ids[i], in_rels, 8);
+
+      if (rel_count == 0 && in_count == 0)
+         continue;
+
+      /* Write header on first entity that has relations */
+      if (!header_written) {
+         if (offset > 0 && offset < buf_size - 20) {
+            offset += snprintf(buf + offset, buf_size - offset, "\n");
+         }
+         offset += snprintf(buf + offset, buf_size - offset, "ENTITIES:\n");
+         header_written = true;
+      }
+
+      offset += snprintf(buf + offset, buf_size - offset, "- %s (%s):\n", entity_names[i],
+                         entity_types[i]);
+
+      for (int r = 0; r < rel_count && offset < buf_size - 80; r++) {
+         offset += snprintf(buf + offset, buf_size - offset, "  %s: %s\n", rels[r].relation,
+                            rels[r].object_name);
+      }
+
+      for (int r = 0; r < in_count && offset < buf_size - 80; r++) {
+         offset += snprintf(buf + offset, buf_size - offset, "  %s %s %s\n", in_rels[r].object_name,
+                            in_rels[r].relation, entity_names[i]);
+      }
+   }
+
+   return offset;
+}
+
+/* =============================================================================
  * Action: Search
  * ============================================================================= */
 
@@ -389,8 +491,8 @@ static char *memory_action_search(int user_id, const char *keywords, time_t sinc
       return strdup("Please provide search keywords.");
    }
 
-   /* Allocate result buffer */
-   size_t buf_size = 4096;
+   /* Allocate result buffer (8KB for entity graph output) */
+   size_t buf_size = 8192;
    char *result = malloc(buf_size);
    if (!result) {
       return strdup("Memory search failed: out of memory.");
@@ -402,8 +504,9 @@ static char *memory_action_search(int user_id, const char *keywords, time_t sinc
    char tokens[MAX_SEARCH_TOKENS][64];
    int token_count = tokenize_query(keywords, tokens, MAX_SEARCH_TOKENS);
 
-   /* Search facts */
+   /* Search facts — keyword search first, then hybrid if embeddings available */
    memory_fact_t facts[10];
+   int kw_scores[10];
    int fact_count = 0;
 
    if (token_count <= 1) {
@@ -411,9 +514,53 @@ static char *memory_action_search(int user_id, const char *keywords, time_t sinc
       fact_count = (since_ts > 0)
                        ? memory_db_fact_search_since(user_id, keywords, since_ts, facts, 10)
                        : memory_db_fact_search(user_id, keywords, facts, 10);
+      /* Single-token: all scores = 1 */
+      for (int i = 0; i < fact_count; i++)
+         kw_scores[i] = 1;
    } else {
       /* Multi-word: search per token, dedup by ID, rank by match count */
-      fact_count = multi_token_fact_search(user_id, tokens, token_count, 10, facts, 10, since_ts);
+      fact_count = multi_token_fact_search(user_id, tokens, token_count, 10, facts, 10, since_ts,
+                                           kw_scores);
+   }
+
+   /* Hybrid search: combine keyword results with vector similarity */
+   if (memory_embeddings_available() && fact_count >= 0) {
+      int64_t kw_ids[10];
+      for (int i = 0; i < fact_count; i++)
+         kw_ids[i] = facts[i].id;
+
+      embedding_search_result_t hybrid_results[10];
+      int hybrid_count = memory_embeddings_hybrid_search(user_id, keywords, kw_ids, kw_scores,
+                                                         fact_count,
+                                                         (token_count > 0) ? token_count : 1,
+                                                         hybrid_results, 10);
+
+      if (hybrid_count > 0) {
+         /* Re-order facts by hybrid score */
+         memory_fact_t reordered[10];
+         int reordered_count = 0;
+
+         for (int h = 0; h < hybrid_count && reordered_count < 10; h++) {
+            /* Find fact by ID in original results */
+            bool found = false;
+            for (int f = 0; f < fact_count; f++) {
+               if (facts[f].id == hybrid_results[h].fact_id) {
+                  reordered[reordered_count++] = facts[f];
+                  found = true;
+                  break;
+               }
+            }
+            /* Vector-only result: fetch from DB */
+            if (!found) {
+               memory_fact_t vec_fact;
+               if (memory_db_fact_get(hybrid_results[h].fact_id, &vec_fact) == MEMORY_DB_SUCCESS) {
+                  reordered[reordered_count++] = vec_fact;
+               }
+            }
+         }
+         memcpy(facts, reordered, reordered_count * sizeof(memory_fact_t));
+         fact_count = reordered_count;
+      }
    }
 
    if (fact_count > 0) {
@@ -493,6 +640,9 @@ static char *memory_action_search(int user_id, const char *keywords, time_t sinc
                             time_str, summaries[i].summary, summaries[i].topics);
       }
    }
+
+   /* Append entity graph context */
+   offset = append_graph_context(user_id, keywords, result, buf_size, offset);
 
    if (offset == 0) {
       snprintf(result, buf_size, "No memories found matching '%s'.", keywords);
@@ -574,6 +724,11 @@ static char *memory_action_remember(int user_id, const char *fact_text) {
       return strdup("Failed to store the fact. Please try again.");
    }
 
+   /* Generate and store embedding (non-blocking, ~5-10ms for ONNX) */
+   if (memory_embeddings_available()) {
+      memory_embeddings_embed_and_store(user_id, fact_id, fact_text);
+   }
+
    char *result = malloc(256);
    if (result) {
       snprintf(result, 256, "Remembered: \"%s\"", fact_text);
@@ -602,7 +757,7 @@ static char *memory_action_forget(int user_id, const char *fact_text) {
       count = memory_db_fact_search(user_id, fact_text, facts, 5);
    } else {
       /* Multi-word: search per token, dedup, pick best match */
-      count = multi_token_fact_search(user_id, tokens, token_count, 5, facts, 5, 0);
+      count = multi_token_fact_search(user_id, tokens, token_count, 5, facts, 5, 0, NULL);
    }
 
    if (count == 0) {

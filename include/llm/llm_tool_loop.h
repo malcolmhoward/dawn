@@ -89,7 +89,8 @@ typedef struct {
    int vision_image_count;                   /**< Number of vision images */
    const char *base_url;                     /**< Provider endpoint URL */
    const char *api_key;                      /**< API key (NULL for local) */
-   const char *model;                        /**< Model name */
+   const char *model;                        /**< Model name (ptr into model_storage or external) */
+   char model_storage[LLM_MODEL_NAME_MAX];   /**< Owned storage for model name across iterations */
    void *chunk_callback;                     /**< Text chunk callback (cast to provider type) */
    void *callback_userdata;                  /**< User context for callback */
    llm_single_shot_fn provider_fn;           /**< Current provider single-shot function */

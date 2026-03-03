@@ -35,6 +35,7 @@
 #include "llm/llm_interface.h"
 #include "logging.h"
 #include "memory/memory_db.h"
+#include "memory/memory_embeddings.h"
 #include "memory/memory_types.h"
 
 /* =============================================================================
@@ -58,6 +59,14 @@ static const char *EXTRACTION_PROMPT_TEMPLATE =
     "  \"corrections\": [\n"
     "    {\"old_fact\": \"outdated statement\", \"new_fact\": \"corrected statement\"}\n"
     "  ],\n"
+    "  \"entities\": [\n"
+    "    {\"name\": \"entity name\", \"type\": \"person|pet|place|org|thing\", "
+    "\"attributes\": {\"key\": \"value\"}}\n"
+    "  ],\n"
+    "  \"relations\": [\n"
+    "    {\"subject\": \"entity name\", \"relation\": \"has_pet|lives_in|works_at|likes|is_a\", "
+    "\"object\": \"entity name or value\"}\n"
+    "  ],\n"
     "  \"summary\": \"1-2 sentence conversation summary\",\n"
     "  \"topics\": [\"topic1\", \"topic2\"]\n"
     "}\n\n"
@@ -69,6 +78,11 @@ static const char *EXTRACTION_PROMPT_TEMPLATE =
     "- Only include facts that are specific to this user, not general knowledge\n"
     "- High confidence (0.8-1.0) for explicit statements, lower for inferences\n"
     "- List corrections if new information contradicts existing profile\n"
+    "- Extract named entities (people, pets, places, organizations) mentioned by the user\n"
+    "- Extract relationships between entities (e.g., user owns pet, person works at org)\n"
+    "- IMPORTANT: Reuse entity names from EXISTING USER PROFILE exactly as listed. "
+    "Do NOT create alternate names for the same entity (e.g., use \"Kris\" not \"Kris Kersey\" "
+    "if \"Kris\" is already known)\n"
     "- If nothing notable to extract, return empty arrays\n";
 
 /* =============================================================================
@@ -193,6 +207,21 @@ static char *build_existing_profile(int user_id) {
       }
    }
 
+   /* Load existing entities so LLM reuses canonical names */
+   memory_entity_t entities[20];
+   int entity_count = memory_db_entity_list(user_id, entities, 20);
+
+   if (entity_count > 0) {
+      if (offset > 0)
+         offset += snprintf(profile + offset, 4096 - offset, "\n");
+      offset += snprintf(profile + offset, 4096 - offset,
+                         "Known entities (reuse these exact names, do NOT create variants):\n");
+      for (int i = 0; i < entity_count && offset < 3900; i++) {
+         offset += snprintf(profile + offset, 4096 - offset, "- %s (%s)\n", entities[i].name,
+                            entities[i].entity_type);
+      }
+   }
+
    if (offset == 0) {
       strcpy(profile, "(none)");
    }
@@ -312,8 +341,12 @@ static void process_extraction_response(int user_id,
             int similar_count = memory_db_fact_find_similar(user_id, text, similar, 3);
 
             if (similar_count == 0) {
-               memory_db_fact_create(user_id, text, confidence, source);
+               int64_t fact_id = memory_db_fact_create(user_id, text, confidence, source);
                LOG_INFO("memory_extraction: stored fact: %s", text);
+               /* Embed the new fact for semantic search */
+               if (fact_id > 0 && memory_embeddings_available()) {
+                  memory_embeddings_embed_and_store(user_id, fact_id, text);
+               }
             } else {
                /* Update confidence of existing similar fact */
                float new_conf = similar[0].confidence + 0.1f;
@@ -372,10 +405,149 @@ static void process_extraction_response(int user_id,
                if (new_id > 0) {
                   memory_db_fact_supersede(similar[0].id, new_id);
                   LOG_INFO("memory_extraction: corrected fact: %s -> %s", old_fact, new_fact);
+                  /* Embed the corrected fact */
+                  if (memory_embeddings_available()) {
+                     memory_embeddings_embed_and_store(user_id, new_id, new_fact);
+                  }
                }
             }
          }
       }
+   }
+
+   /* Store extracted entities and build local name→ID map */
+#define ENTITY_MAP_MAX 32
+   struct {
+      char canonical[MEMORY_ENTITY_NAME_MAX];
+      int64_t id;
+   } entity_map[ENTITY_MAP_MAX];
+   int entity_map_count = 0;
+
+   struct json_object *entities_arr;
+   if (json_object_object_get_ex(root, "entities", &entities_arr)) {
+      int count = json_object_array_length(entities_arr);
+      for (int i = 0; i < count; i++) {
+         struct json_object *entity = json_object_array_get_idx(entities_arr, i);
+         struct json_object *name_obj, *type_obj;
+         if (!json_object_object_get_ex(entity, "name", &name_obj) ||
+             !json_object_object_get_ex(entity, "type", &type_obj)) {
+            continue;
+         }
+
+         const char *ent_name = json_object_get_string(name_obj);
+         const char *ent_type = json_object_get_string(type_obj);
+         if (!ent_name || !ent_type)
+            continue;
+
+         /* Validate entity type against known allowlist */
+         static const char *valid_types[] = { "person", "pet", "place", "org", "thing", NULL };
+         bool type_valid = false;
+         for (int t = 0; valid_types[t]; t++) {
+            if (strcmp(ent_type, valid_types[t]) == 0) {
+               type_valid = true;
+               break;
+            }
+         }
+         if (!type_valid)
+            ent_type = "thing";
+
+         char canonical[MEMORY_ENTITY_NAME_MAX];
+         memory_make_canonical_name(ent_name, canonical, sizeof(canonical));
+
+         bool was_created = false;
+         int64_t eid = memory_db_entity_upsert(user_id, ent_name, ent_type, canonical,
+                                               &was_created);
+         if (eid < 0)
+            continue;
+
+         LOG_INFO("memory_extraction: entity: %s (%s) id=%ld %s", ent_name, ent_type, (long)eid,
+                  was_created ? "[new]" : "[updated]");
+
+         /* Embed only newly created entities */
+         if (was_created && memory_embeddings_available()) {
+            memory_embeddings_embed_and_store_entity(eid, user_id, ent_name);
+         }
+
+         /* Add to local map */
+         if (entity_map_count < ENTITY_MAP_MAX) {
+            strncpy(entity_map[entity_map_count].canonical, canonical, MEMORY_ENTITY_NAME_MAX - 1);
+            entity_map[entity_map_count].canonical[MEMORY_ENTITY_NAME_MAX - 1] = '\0';
+            entity_map[entity_map_count].id = eid;
+            entity_map_count++;
+         } else {
+            LOG_WARNING("memory_extraction: entity map full (max %d), skipping '%s'",
+                        ENTITY_MAP_MAX, ent_name);
+         }
+      }
+   }
+
+   /* Store extracted relations */
+#define RELATION_MAX 32
+   struct json_object *relations_arr;
+   int relations_stored = 0;
+   if (json_object_object_get_ex(root, "relations", &relations_arr)) {
+      int count = json_object_array_length(relations_arr);
+      for (int i = 0; i < count && relations_stored < RELATION_MAX; i++) {
+         struct json_object *rel = json_object_array_get_idx(relations_arr, i);
+         struct json_object *subj_obj, *rel_obj, *obj_obj;
+         if (!json_object_object_get_ex(rel, "subject", &subj_obj) ||
+             !json_object_object_get_ex(rel, "relation", &rel_obj) ||
+             !json_object_object_get_ex(rel, "object", &obj_obj)) {
+            continue;
+         }
+
+         const char *subj_name = json_object_get_string(subj_obj);
+         const char *rel_type = json_object_get_string(rel_obj);
+         const char *obj_name = json_object_get_string(obj_obj);
+         if (!subj_name || !rel_type || !obj_name)
+            continue;
+
+         /* Resolve subject entity from local map, fallback to upsert */
+         char subj_canonical[MEMORY_ENTITY_NAME_MAX];
+         memory_make_canonical_name(subj_name, subj_canonical, sizeof(subj_canonical));
+         int64_t subj_id = -1;
+         for (int m = 0; m < entity_map_count; m++) {
+            if (strcmp(entity_map[m].canonical, subj_canonical) == 0) {
+               subj_id = entity_map[m].id;
+               break;
+            }
+         }
+         if (subj_id < 0) {
+            bool created = false;
+            subj_id = memory_db_entity_upsert(user_id, subj_name, "thing", subj_canonical,
+                                              &created);
+            if (subj_id < 0)
+               continue;
+         }
+
+         /* Resolve object: check local map first, then DB search */
+         char obj_canonical[MEMORY_ENTITY_NAME_MAX];
+         memory_make_canonical_name(obj_name, obj_canonical, sizeof(obj_canonical));
+         int64_t obj_entity_id = 0;
+         for (int m = 0; m < entity_map_count; m++) {
+            if (strcmp(entity_map[m].canonical, obj_canonical) == 0) {
+               obj_entity_id = entity_map[m].id;
+               break;
+            }
+         }
+         if (obj_entity_id == 0) {
+            /* Exact canonical name lookup (avoids LIKE substring false matches) */
+            memory_entity_t found;
+            if (memory_db_entity_get_by_name(user_id, obj_canonical, &found) == MEMORY_DB_SUCCESS) {
+               obj_entity_id = found.id;
+            }
+         }
+
+         memory_db_relation_create(user_id, subj_id, rel_type, obj_entity_id,
+                                   (obj_entity_id == 0) ? obj_name : NULL, 0, 0.8f);
+         relations_stored++;
+         LOG_INFO("memory_extraction: relation: (%s, %s, %s)", subj_name, rel_type, obj_name);
+      }
+   }
+
+   /* Invalidate entity embedding cache once after all extractions */
+   if (entity_map_count > 0) {
+      memory_embeddings_invalidate_entity_cache();
    }
 
    /* Process summary */

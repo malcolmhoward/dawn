@@ -26,6 +26,7 @@
 #define AUTH_DB_INTERNAL_ALLOWED
 #include "memory/memory_db.h"
 
+#include <ctype.h>
 #include <string.h>
 #include <time.h>
 
@@ -33,6 +34,9 @@
 #include "config/dawn_config.h"
 #include "logging.h"
 #include "memory/memory_similarity.h"
+
+/* Forward declarations for helpers used across sections */
+static void populate_entity_from_row(sqlite3_stmt *stmt, memory_entity_t *entity);
 
 /* =============================================================================
  * Helper: Build LIKE pattern with wildcards
@@ -895,7 +899,45 @@ int memory_db_delete_user_memories(int user_id) {
    sqlite3_stmt *stmt = NULL;
    int rc;
 
-   /* Delete facts using prepared statement */
+   /* Delete in FK-safe order: relations -> entities -> facts -> prefs -> summaries */
+
+   /* Delete relations first (FK references entities) */
+   rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM memory_relations WHERE user_id = ?", -1, &stmt,
+                           NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("memory_db: delete_user_memories (relations) prepare failed: %s",
+                sqlite3_errmsg(s_db.db));
+      AUTH_DB_UNLOCK();
+      return MEMORY_DB_FAILURE;
+   }
+   sqlite3_bind_int(stmt, 1, user_id);
+   rc = sqlite3_step(stmt);
+   sqlite3_finalize(stmt);
+   if (rc != SQLITE_DONE) {
+      LOG_ERROR("memory_db: delete_user_memories (relations) failed: %s", sqlite3_errmsg(s_db.db));
+      AUTH_DB_UNLOCK();
+      return MEMORY_DB_FAILURE;
+   }
+
+   /* Delete entities */
+   rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM memory_entities WHERE user_id = ?", -1, &stmt,
+                           NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("memory_db: delete_user_memories (entities) prepare failed: %s",
+                sqlite3_errmsg(s_db.db));
+      AUTH_DB_UNLOCK();
+      return MEMORY_DB_FAILURE;
+   }
+   sqlite3_bind_int(stmt, 1, user_id);
+   rc = sqlite3_step(stmt);
+   sqlite3_finalize(stmt);
+   if (rc != SQLITE_DONE) {
+      LOG_ERROR("memory_db: delete_user_memories (entities) failed: %s", sqlite3_errmsg(s_db.db));
+      AUTH_DB_UNLOCK();
+      return MEMORY_DB_FAILURE;
+   }
+
+   /* Delete facts */
    rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM memory_facts WHERE user_id = ?", -1, &stmt, NULL);
    if (rc != SQLITE_OK) {
       LOG_ERROR("memory_db: delete_user_memories (facts) prepare failed: %s",
@@ -912,7 +954,7 @@ int memory_db_delete_user_memories(int user_id) {
       return MEMORY_DB_FAILURE;
    }
 
-   /* Delete preferences using prepared statement */
+   /* Delete preferences */
    rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM memory_preferences WHERE user_id = ?", -1, &stmt,
                            NULL);
    if (rc != SQLITE_OK) {
@@ -930,7 +972,7 @@ int memory_db_delete_user_memories(int user_id) {
       return MEMORY_DB_FAILURE;
    }
 
-   /* Delete summaries using prepared statement */
+   /* Delete summaries */
    rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM memory_summaries WHERE user_id = ?", -1, &stmt,
                            NULL);
    if (rc != SQLITE_OK) {
@@ -962,42 +1004,28 @@ int memory_db_get_stats(int user_id, memory_stats_t *out_stats) {
 
    AUTH_DB_LOCK_OR_RETURN(MEMORY_DB_FAILURE);
 
+   /* Combined stats query — single round-trip for all counts + date range */
    sqlite3_stmt *stmt = NULL;
-   int rc;
+   int rc = sqlite3_prepare_v2(
+       s_db.db,
+       "SELECT "
+       "(SELECT COUNT(*) FROM memory_facts WHERE user_id = ?1 AND superseded_by IS NULL), "
+       "(SELECT MIN(created_at) FROM memory_facts WHERE user_id = ?1 AND superseded_by IS NULL), "
+       "(SELECT MAX(created_at) FROM memory_facts WHERE user_id = ?1 AND superseded_by IS NULL), "
+       "(SELECT COUNT(*) FROM memory_preferences WHERE user_id = ?1), "
+       "(SELECT COUNT(*) FROM memory_summaries WHERE user_id = ?1), "
+       "(SELECT COUNT(*) FROM memory_entities WHERE user_id = ?1)",
+       -1, &stmt, NULL);
 
-   /* Count facts */
-   rc = sqlite3_prepare_v2(s_db.db,
-                           "SELECT COUNT(*), MIN(created_at), MAX(created_at) "
-                           "FROM memory_facts WHERE user_id = ? AND superseded_by IS NULL",
-                           -1, &stmt, NULL);
    if (rc == SQLITE_OK) {
       sqlite3_bind_int(stmt, 1, user_id);
       if (sqlite3_step(stmt) == SQLITE_ROW) {
          out_stats->fact_count = sqlite3_column_int(stmt, 0);
          out_stats->oldest_fact = (time_t)sqlite3_column_int64(stmt, 1);
          out_stats->newest_fact = (time_t)sqlite3_column_int64(stmt, 2);
-      }
-      sqlite3_finalize(stmt);
-   }
-
-   /* Count preferences */
-   rc = sqlite3_prepare_v2(s_db.db, "SELECT COUNT(*) FROM memory_preferences WHERE user_id = ?", -1,
-                           &stmt, NULL);
-   if (rc == SQLITE_OK) {
-      sqlite3_bind_int(stmt, 1, user_id);
-      if (sqlite3_step(stmt) == SQLITE_ROW) {
-         out_stats->pref_count = sqlite3_column_int(stmt, 0);
-      }
-      sqlite3_finalize(stmt);
-   }
-
-   /* Count summaries */
-   rc = sqlite3_prepare_v2(s_db.db, "SELECT COUNT(*) FROM memory_summaries WHERE user_id = ?", -1,
-                           &stmt, NULL);
-   if (rc == SQLITE_OK) {
-      sqlite3_bind_int(stmt, 1, user_id);
-      if (sqlite3_step(stmt) == SQLITE_ROW) {
-         out_stats->summary_count = sqlite3_column_int(stmt, 0);
+         out_stats->pref_count = sqlite3_column_int(stmt, 3);
+         out_stats->summary_count = sqlite3_column_int(stmt, 4);
+         out_stats->entity_count = sqlite3_column_int(stmt, 5);
       }
       sqlite3_finalize(stmt);
    }
@@ -1245,6 +1273,547 @@ int memory_db_get_all_user_ids(int *out_ids, int max_ids) {
    }
 
    sqlite3_finalize(stmt);
+   AUTH_DB_UNLOCK();
+   return count;
+}
+
+/* =============================================================================
+ * Embedding Operations (Semantic Search)
+ * ============================================================================= */
+
+int memory_db_fact_update_embedding(int user_id,
+                                    int64_t fact_id,
+                                    const float *embedding,
+                                    int dims,
+                                    float norm) {
+   if (!embedding || dims <= 0)
+      return MEMORY_DB_FAILURE;
+
+   AUTH_DB_LOCK_OR_FAIL();
+
+   sqlite3_reset(s_db.stmt_memory_fact_update_embedding);
+   sqlite3_bind_blob(s_db.stmt_memory_fact_update_embedding, 1, embedding,
+                     dims * (int)sizeof(float), SQLITE_TRANSIENT);
+   sqlite3_bind_double(s_db.stmt_memory_fact_update_embedding, 2, (double)norm);
+   sqlite3_bind_int64(s_db.stmt_memory_fact_update_embedding, 3, fact_id);
+   sqlite3_bind_int(s_db.stmt_memory_fact_update_embedding, 4, user_id);
+
+   int rc = sqlite3_step(s_db.stmt_memory_fact_update_embedding);
+   sqlite3_reset(s_db.stmt_memory_fact_update_embedding);
+
+   AUTH_DB_UNLOCK();
+
+   if (rc != SQLITE_DONE) {
+      LOG_ERROR("memory_db: update_embedding failed for fact %ld: %s", (long)fact_id,
+                sqlite3_errmsg(s_db.db));
+      return MEMORY_DB_FAILURE;
+   }
+
+   return MEMORY_DB_SUCCESS;
+}
+
+int memory_db_fact_get_embeddings(int user_id,
+                                  int expected_dims,
+                                  int64_t *out_ids,
+                                  float *out_embeddings,
+                                  float *out_norms,
+                                  int max_count) {
+   if (!out_ids || !out_embeddings || !out_norms || max_count <= 0 || expected_dims <= 0)
+      return -1;
+
+   AUTH_DB_LOCK_OR_RETURN(-1);
+
+   sqlite3_reset(s_db.stmt_memory_fact_get_embeddings);
+   sqlite3_bind_int(s_db.stmt_memory_fact_get_embeddings, 1, user_id);
+   sqlite3_bind_int(s_db.stmt_memory_fact_get_embeddings, 2, max_count);
+
+   int count = 0;
+   int expected_bytes = expected_dims * (int)sizeof(float);
+
+   while (count < max_count && sqlite3_step(s_db.stmt_memory_fact_get_embeddings) == SQLITE_ROW) {
+      int blob_bytes = sqlite3_column_bytes(s_db.stmt_memory_fact_get_embeddings, 1);
+
+      /* Skip dimension mismatches (model changed) */
+      if (blob_bytes != expected_bytes)
+         continue;
+
+      out_ids[count] = sqlite3_column_int64(s_db.stmt_memory_fact_get_embeddings, 0);
+      const void *blob = sqlite3_column_blob(s_db.stmt_memory_fact_get_embeddings, 1);
+      if (blob) {
+         memcpy(out_embeddings + count * expected_dims, blob, (size_t)expected_bytes);
+      }
+      out_norms[count] = (float)sqlite3_column_double(s_db.stmt_memory_fact_get_embeddings, 2);
+      count++;
+   }
+
+   sqlite3_reset(s_db.stmt_memory_fact_get_embeddings);
+   AUTH_DB_UNLOCK();
+   return count;
+}
+
+int memory_db_fact_list_without_embedding(int user_id,
+                                          int expected_dims,
+                                          int64_t *out_ids,
+                                          char out_texts[][512],
+                                          int max_count) {
+   if (!out_ids || !out_texts || max_count <= 0 || expected_dims <= 0)
+      return -1;
+
+   AUTH_DB_LOCK_OR_RETURN(-1);
+
+   sqlite3_reset(s_db.stmt_memory_fact_list_without_embedding);
+   sqlite3_bind_int(s_db.stmt_memory_fact_list_without_embedding, 1, user_id);
+   sqlite3_bind_int(s_db.stmt_memory_fact_list_without_embedding, 2, expected_dims);
+   sqlite3_bind_int(s_db.stmt_memory_fact_list_without_embedding, 3, max_count);
+
+   int count = 0;
+   while (count < max_count &&
+          sqlite3_step(s_db.stmt_memory_fact_list_without_embedding) == SQLITE_ROW) {
+      out_ids[count] = sqlite3_column_int64(s_db.stmt_memory_fact_list_without_embedding, 0);
+      const char *text = (const char *)sqlite3_column_text(
+          s_db.stmt_memory_fact_list_without_embedding, 1);
+      if (text) {
+         strncpy(out_texts[count], text, 511);
+         out_texts[count][511] = '\0';
+      } else {
+         out_texts[count][0] = '\0';
+      }
+      count++;
+   }
+
+   sqlite3_reset(s_db.stmt_memory_fact_list_without_embedding);
+   AUTH_DB_UNLOCK();
+   return count;
+}
+
+/* =============================================================================
+ * Entity Graph Operations
+ * ============================================================================= */
+
+void memory_make_canonical_name(const char *name, char *out, size_t size) {
+   if (!name || !out || size == 0)
+      return;
+
+   size_t j = 0;
+   for (size_t i = 0; name[i] != '\0' && j < size - 1; i++) {
+      unsigned char c = (unsigned char)name[i];
+      if (c >= 0x80) {
+         /* Preserve multibyte UTF-8 as-is */
+         out[j++] = (char)c;
+      } else {
+         out[j++] = (char)tolower(c);
+      }
+   }
+
+   /* Trim trailing spaces */
+   while (j > 0 && out[j - 1] == ' ') {
+      j--;
+   }
+
+   out[j] = '\0';
+}
+
+int64_t memory_db_entity_upsert(int user_id,
+                                const char *name,
+                                const char *entity_type,
+                                const char *canonical_name,
+                                bool *out_created) {
+   if (!name || !entity_type || !canonical_name)
+      return -1;
+
+   AUTH_DB_LOCK_OR_RETURN(-1);
+
+   sqlite3_reset(s_db.stmt_memory_entity_upsert);
+   sqlite3_bind_int(s_db.stmt_memory_entity_upsert, 1, user_id);
+   sqlite3_bind_text(s_db.stmt_memory_entity_upsert, 2, name, -1, SQLITE_TRANSIENT);
+   sqlite3_bind_text(s_db.stmt_memory_entity_upsert, 3, entity_type, -1, SQLITE_TRANSIENT);
+   sqlite3_bind_text(s_db.stmt_memory_entity_upsert, 4, canonical_name, -1, SQLITE_TRANSIENT);
+
+   int64_t entity_id = -1;
+   int rc = sqlite3_step(s_db.stmt_memory_entity_upsert);
+   if (rc == SQLITE_ROW) {
+      entity_id = sqlite3_column_int64(s_db.stmt_memory_entity_upsert, 0);
+      int mention_count = sqlite3_column_int(s_db.stmt_memory_entity_upsert, 1);
+      if (out_created) {
+         *out_created = (mention_count == 1);
+      }
+   } else {
+      LOG_ERROR("memory_db: entity upsert failed: %s", sqlite3_errmsg(s_db.db));
+   }
+
+   sqlite3_reset(s_db.stmt_memory_entity_upsert);
+   AUTH_DB_UNLOCK();
+   return entity_id;
+}
+
+int memory_db_entity_get_by_name(int user_id,
+                                 const char *canonical_name,
+                                 memory_entity_t *out_entity) {
+   if (!canonical_name || !out_entity)
+      return MEMORY_DB_FAILURE;
+
+   AUTH_DB_LOCK_OR_FAIL();
+
+   sqlite3_reset(s_db.stmt_memory_entity_get_by_name);
+   sqlite3_bind_int(s_db.stmt_memory_entity_get_by_name, 1, user_id);
+   sqlite3_bind_text(s_db.stmt_memory_entity_get_by_name, 2, canonical_name, -1, SQLITE_TRANSIENT);
+
+   int rc = sqlite3_step(s_db.stmt_memory_entity_get_by_name);
+   int result;
+   if (rc == SQLITE_ROW) {
+      populate_entity_from_row(s_db.stmt_memory_entity_get_by_name, out_entity);
+      result = MEMORY_DB_SUCCESS;
+   } else if (rc == SQLITE_DONE) {
+      result = MEMORY_DB_NOT_FOUND;
+   } else {
+      LOG_ERROR("memory_db: entity_get_by_name failed: %s", sqlite3_errmsg(s_db.db));
+      result = MEMORY_DB_FAILURE;
+   }
+
+   sqlite3_reset(s_db.stmt_memory_entity_get_by_name);
+   AUTH_DB_UNLOCK();
+   return result;
+}
+
+int memory_db_entity_update_embedding(int64_t entity_id,
+                                      int user_id,
+                                      const float *embedding,
+                                      int dims,
+                                      float norm) {
+   if (!embedding || dims <= 0)
+      return MEMORY_DB_FAILURE;
+
+   AUTH_DB_LOCK_OR_FAIL();
+
+   sqlite3_reset(s_db.stmt_memory_entity_update_embedding);
+   sqlite3_bind_blob(s_db.stmt_memory_entity_update_embedding, 1, embedding,
+                     dims * (int)sizeof(float), SQLITE_TRANSIENT);
+   sqlite3_bind_double(s_db.stmt_memory_entity_update_embedding, 2, (double)norm);
+   sqlite3_bind_int64(s_db.stmt_memory_entity_update_embedding, 3, entity_id);
+   sqlite3_bind_int(s_db.stmt_memory_entity_update_embedding, 4, user_id);
+
+   int rc = sqlite3_step(s_db.stmt_memory_entity_update_embedding);
+   sqlite3_reset(s_db.stmt_memory_entity_update_embedding);
+   AUTH_DB_UNLOCK();
+
+   return (rc == SQLITE_DONE) ? MEMORY_DB_SUCCESS : MEMORY_DB_FAILURE;
+}
+
+int memory_db_relation_create(int user_id,
+                              int64_t subject_entity_id,
+                              const char *relation,
+                              int64_t object_entity_id,
+                              const char *object_value,
+                              int64_t fact_id,
+                              float confidence) {
+   if (!relation)
+      return MEMORY_DB_FAILURE;
+
+   AUTH_DB_LOCK_OR_FAIL();
+
+   sqlite3_reset(s_db.stmt_memory_relation_create);
+   sqlite3_bind_int(s_db.stmt_memory_relation_create, 1, user_id);
+   sqlite3_bind_int64(s_db.stmt_memory_relation_create, 2, subject_entity_id);
+   sqlite3_bind_text(s_db.stmt_memory_relation_create, 3, relation, -1, SQLITE_TRANSIENT);
+
+   if (object_entity_id > 0) {
+      sqlite3_bind_int64(s_db.stmt_memory_relation_create, 4, object_entity_id);
+   } else {
+      sqlite3_bind_null(s_db.stmt_memory_relation_create, 4);
+   }
+
+   if (object_value) {
+      sqlite3_bind_text(s_db.stmt_memory_relation_create, 5, object_value, -1, SQLITE_TRANSIENT);
+   } else {
+      sqlite3_bind_null(s_db.stmt_memory_relation_create, 5);
+   }
+
+   if (fact_id > 0) {
+      sqlite3_bind_int64(s_db.stmt_memory_relation_create, 6, fact_id);
+   } else {
+      sqlite3_bind_null(s_db.stmt_memory_relation_create, 6);
+   }
+
+   sqlite3_bind_double(s_db.stmt_memory_relation_create, 7, (double)confidence);
+
+   int rc = sqlite3_step(s_db.stmt_memory_relation_create);
+   sqlite3_reset(s_db.stmt_memory_relation_create);
+   AUTH_DB_UNLOCK();
+
+   return (rc == SQLITE_DONE) ? MEMORY_DB_SUCCESS : MEMORY_DB_FAILURE;
+}
+
+static void populate_relation_from_row(sqlite3_stmt *stmt, memory_relation_t *rel) {
+   rel->id = sqlite3_column_int64(stmt, 0);
+   rel->subject_entity_id = sqlite3_column_int64(stmt, 1);
+
+   const char *r = (const char *)sqlite3_column_text(stmt, 2);
+   if (r) {
+      strncpy(rel->relation, r, MEMORY_RELATION_MAX - 1);
+      rel->relation[MEMORY_RELATION_MAX - 1] = '\0';
+   }
+
+   rel->object_entity_id = sqlite3_column_int64(stmt, 3);
+
+   const char *obj_name = (const char *)sqlite3_column_text(stmt, 4);
+   if (obj_name) {
+      strncpy(rel->object_name, obj_name, MEMORY_ENTITY_NAME_MAX - 1);
+      rel->object_name[MEMORY_ENTITY_NAME_MAX - 1] = '\0';
+   }
+
+   rel->confidence = (float)sqlite3_column_double(stmt, 5);
+}
+
+int memory_db_relation_list_by_subject(int user_id,
+                                       int64_t subject_entity_id,
+                                       memory_relation_t *out,
+                                       int max) {
+   if (!out || max <= 0)
+      return -1;
+
+   AUTH_DB_LOCK_OR_RETURN(-1);
+
+   sqlite3_reset(s_db.stmt_memory_relation_list_by_subject);
+   sqlite3_bind_int(s_db.stmt_memory_relation_list_by_subject, 1, user_id);
+   sqlite3_bind_int64(s_db.stmt_memory_relation_list_by_subject, 2, subject_entity_id);
+   sqlite3_bind_int(s_db.stmt_memory_relation_list_by_subject, 3, max);
+
+   int count = 0;
+   while (count < max && sqlite3_step(s_db.stmt_memory_relation_list_by_subject) == SQLITE_ROW) {
+      populate_relation_from_row(s_db.stmt_memory_relation_list_by_subject, &out[count]);
+      count++;
+   }
+
+   sqlite3_reset(s_db.stmt_memory_relation_list_by_subject);
+   AUTH_DB_UNLOCK();
+   return count;
+}
+
+int memory_db_relation_list_by_object(int user_id,
+                                      int64_t object_entity_id,
+                                      memory_relation_t *out,
+                                      int max) {
+   if (!out || max <= 0)
+      return -1;
+
+   AUTH_DB_LOCK_OR_RETURN(-1);
+
+   sqlite3_reset(s_db.stmt_memory_relation_list_by_object);
+   sqlite3_bind_int(s_db.stmt_memory_relation_list_by_object, 1, user_id);
+   sqlite3_bind_int64(s_db.stmt_memory_relation_list_by_object, 2, object_entity_id);
+   sqlite3_bind_int(s_db.stmt_memory_relation_list_by_object, 3, max);
+
+   int count = 0;
+   while (count < max && sqlite3_step(s_db.stmt_memory_relation_list_by_object) == SQLITE_ROW) {
+      populate_relation_from_row(s_db.stmt_memory_relation_list_by_object, &out[count]);
+      count++;
+   }
+
+   sqlite3_reset(s_db.stmt_memory_relation_list_by_object);
+   AUTH_DB_UNLOCK();
+   return count;
+}
+
+int memory_db_relation_list_all_by_user(int user_id, memory_relation_t *out, int max) {
+   if (!out || max <= 0)
+      return -1;
+
+   AUTH_DB_LOCK_OR_RETURN(-1);
+
+   /* Single query: all relations for this user, ordered by subject for grouping */
+   sqlite3_stmt *stmt = NULL;
+   int rc = sqlite3_prepare_v2(s_db.db,
+                               "SELECT r.id, r.subject_entity_id, r.relation, r.object_entity_id, "
+                               "COALESCE(e.name, r.object_value) AS object_name, r.confidence "
+                               "FROM memory_relations r "
+                               "LEFT JOIN memory_entities e ON r.object_entity_id = e.id "
+                               "WHERE r.user_id = ? ORDER BY r.subject_entity_id LIMIT ?",
+                               -1, &stmt, NULL);
+   if (rc != SQLITE_OK) {
+      AUTH_DB_UNLOCK();
+      return -1;
+   }
+
+   sqlite3_bind_int(stmt, 1, user_id);
+   sqlite3_bind_int(stmt, 2, max);
+
+   int count = 0;
+   while (count < max && sqlite3_step(stmt) == SQLITE_ROW) {
+      populate_relation_from_row(stmt, &out[count]);
+      count++;
+   }
+
+   sqlite3_finalize(stmt);
+   AUTH_DB_UNLOCK();
+   return count;
+}
+
+static void populate_entity_from_row(sqlite3_stmt *stmt, memory_entity_t *entity) {
+   entity->id = sqlite3_column_int64(stmt, 0);
+   entity->user_id = sqlite3_column_int(stmt, 1);
+
+   const char *name = (const char *)sqlite3_column_text(stmt, 2);
+   if (name) {
+      strncpy(entity->name, name, MEMORY_ENTITY_NAME_MAX - 1);
+      entity->name[MEMORY_ENTITY_NAME_MAX - 1] = '\0';
+   }
+
+   const char *type = (const char *)sqlite3_column_text(stmt, 3);
+   if (type) {
+      strncpy(entity->entity_type, type, MEMORY_ENTITY_TYPE_MAX - 1);
+      entity->entity_type[MEMORY_ENTITY_TYPE_MAX - 1] = '\0';
+   }
+
+   const char *cname = (const char *)sqlite3_column_text(stmt, 4);
+   if (cname) {
+      strncpy(entity->canonical_name, cname, MEMORY_ENTITY_NAME_MAX - 1);
+      entity->canonical_name[MEMORY_ENTITY_NAME_MAX - 1] = '\0';
+   }
+
+   entity->mention_count = sqlite3_column_int(stmt, 5);
+   entity->first_seen = (time_t)sqlite3_column_int64(stmt, 6);
+   entity->last_seen = (time_t)sqlite3_column_int64(stmt, 7);
+}
+
+int memory_db_entity_list(int user_id, memory_entity_t *out, int max) {
+   if (!out || max <= 0)
+      return -1;
+
+   /* Reuse entity_search statement with "%" pattern to match all entities */
+   AUTH_DB_LOCK_OR_RETURN(-1);
+
+   sqlite3_reset(s_db.stmt_memory_entity_search);
+   sqlite3_bind_int(s_db.stmt_memory_entity_search, 1, user_id);
+   sqlite3_bind_text(s_db.stmt_memory_entity_search, 2, "%", -1, SQLITE_STATIC);
+   sqlite3_bind_int(s_db.stmt_memory_entity_search, 3, max);
+
+   int count = 0;
+   while (count < max && sqlite3_step(s_db.stmt_memory_entity_search) == SQLITE_ROW) {
+      populate_entity_from_row(s_db.stmt_memory_entity_search, &out[count]);
+      count++;
+   }
+
+   sqlite3_reset(s_db.stmt_memory_entity_search);
+   AUTH_DB_UNLOCK();
+   return count;
+}
+
+int memory_db_entity_search(int user_id, const char *keywords, memory_entity_t *out, int max) {
+   if (!keywords || !out || max <= 0)
+      return -1;
+
+   char pattern[256];
+   build_like_pattern(keywords, pattern, sizeof(pattern));
+
+   AUTH_DB_LOCK_OR_RETURN(-1);
+
+   sqlite3_reset(s_db.stmt_memory_entity_search);
+   sqlite3_bind_int(s_db.stmt_memory_entity_search, 1, user_id);
+   sqlite3_bind_text(s_db.stmt_memory_entity_search, 2, pattern, -1, SQLITE_TRANSIENT);
+   sqlite3_bind_int(s_db.stmt_memory_entity_search, 3, max);
+
+   int count = 0;
+   while (count < max && sqlite3_step(s_db.stmt_memory_entity_search) == SQLITE_ROW) {
+      populate_entity_from_row(s_db.stmt_memory_entity_search, &out[count]);
+      count++;
+   }
+
+   sqlite3_reset(s_db.stmt_memory_entity_search);
+   AUTH_DB_UNLOCK();
+   return count;
+}
+
+int memory_db_entity_delete(int64_t entity_id, int user_id) {
+   AUTH_DB_LOCK_OR_RETURN(MEMORY_DB_FAILURE);
+
+   /* Delete relations where this entity is subject or object */
+   sqlite3_stmt *rel_stmt = s_db.stmt_memory_relation_delete_by_entity;
+   sqlite3_reset(rel_stmt);
+   sqlite3_bind_int(rel_stmt, 1, user_id);
+   sqlite3_bind_int64(rel_stmt, 2, entity_id);
+   sqlite3_bind_int64(rel_stmt, 3, entity_id);
+   int rel_rc = sqlite3_step(rel_stmt);
+   sqlite3_reset(rel_stmt);
+   if (rel_rc != SQLITE_DONE) {
+      LOG_ERROR("memory_db: relation delete failed for entity %ld: %s", (long)entity_id,
+                sqlite3_errmsg(s_db.db));
+      AUTH_DB_UNLOCK();
+      return MEMORY_DB_FAILURE;
+   }
+
+   /* Delete the entity itself */
+   sqlite3_stmt *stmt = s_db.stmt_memory_entity_delete;
+   sqlite3_reset(stmt);
+   sqlite3_bind_int64(stmt, 1, entity_id);
+   sqlite3_bind_int(stmt, 2, user_id);
+
+   int rc = sqlite3_step(stmt);
+   int changes = sqlite3_changes(s_db.db);
+   sqlite3_reset(stmt);
+
+   AUTH_DB_UNLOCK();
+
+   if (rc != SQLITE_DONE) {
+      return MEMORY_DB_FAILURE;
+   }
+   return (changes > 0) ? MEMORY_DB_SUCCESS : MEMORY_DB_NOT_FOUND;
+}
+
+int memory_db_entity_get_embeddings(int user_id,
+                                    int expected_dims,
+                                    int64_t *out_ids,
+                                    char out_names[][MEMORY_ENTITY_NAME_MAX],
+                                    char out_types[][MEMORY_ENTITY_TYPE_MAX],
+                                    float *out_embeddings,
+                                    float *out_norms,
+                                    int max) {
+   if (!out_ids || !out_names || !out_types || !out_embeddings || !out_norms || max <= 0 ||
+       expected_dims <= 0)
+      return -1;
+
+   AUTH_DB_LOCK_OR_RETURN(-1);
+
+   sqlite3_reset(s_db.stmt_memory_entity_get_embeddings);
+   sqlite3_bind_int(s_db.stmt_memory_entity_get_embeddings, 1, user_id);
+   sqlite3_bind_int(s_db.stmt_memory_entity_get_embeddings, 2, max);
+
+   int count = 0;
+   int expected_bytes = expected_dims * (int)sizeof(float);
+
+   while (count < max && sqlite3_step(s_db.stmt_memory_entity_get_embeddings) == SQLITE_ROW) {
+      int blob_bytes = sqlite3_column_bytes(s_db.stmt_memory_entity_get_embeddings, 3);
+      if (blob_bytes != expected_bytes)
+         continue;
+
+      out_ids[count] = sqlite3_column_int64(s_db.stmt_memory_entity_get_embeddings, 0);
+
+      const char *cname = (const char *)sqlite3_column_text(s_db.stmt_memory_entity_get_embeddings,
+                                                            1);
+      if (cname) {
+         strncpy(out_names[count], cname, MEMORY_ENTITY_NAME_MAX - 1);
+         out_names[count][MEMORY_ENTITY_NAME_MAX - 1] = '\0';
+      } else {
+         out_names[count][0] = '\0';
+      }
+
+      const char *etype = (const char *)sqlite3_column_text(s_db.stmt_memory_entity_get_embeddings,
+                                                            2);
+      if (etype) {
+         strncpy(out_types[count], etype, MEMORY_ENTITY_TYPE_MAX - 1);
+         out_types[count][MEMORY_ENTITY_TYPE_MAX - 1] = '\0';
+      } else {
+         out_types[count][0] = '\0';
+      }
+
+      const void *blob = sqlite3_column_blob(s_db.stmt_memory_entity_get_embeddings, 3);
+      if (blob) {
+         memcpy(out_embeddings + count * expected_dims, blob, (size_t)expected_bytes);
+      }
+      out_norms[count] = (float)sqlite3_column_double(s_db.stmt_memory_entity_get_embeddings, 4);
+      count++;
+   }
+
+   sqlite3_reset(s_db.stmt_memory_entity_get_embeddings);
    AUTH_DB_UNLOCK();
    return count;
 }

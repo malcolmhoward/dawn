@@ -175,9 +175,16 @@ int memory_build_context(int user_id, char *buffer, size_t buffer_size, int toke
 
    /* Add footer */
    if (offset > 0 && offset < buffer_size - 50) {
-      offset += snprintf(buffer + offset, buffer_size - offset,
-                         "\nUse the memory tool to store new facts about the user when they "
-                         "share personal information.\n--- END USER MEMORY ---\n");
+      offset += snprintf(
+          buffer + offset, buffer_size - offset,
+          "\nIMPORTANT MEMORY INSTRUCTIONS:\n"
+          "- The above is only a summary. ALWAYS use the memory tool with action='search' "
+          "when the user asks about something not shown above.\n"
+          "- If your first search returns nothing relevant, try again with related terms, "
+          "entity names, or broader keywords. For example, if asked about 'OASIS timeline', "
+          "also try 'DAWN timeline' since projects are related.\n"
+          "- Use 'remember' to store new facts when the user shares personal information.\n"
+          "--- END USER MEMORY ---\n");
    }
 
    LOG_INFO("memory_context: built context for user %d (%zu chars, %d prefs, %d facts, %d "

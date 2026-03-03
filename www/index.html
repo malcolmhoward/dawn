@@ -230,7 +230,8 @@
             <div class="memory-stats">
                <span>Facts: <span id="memory-fact-count">0</span></span>
                <span>Prefs: <span id="memory-pref-count">0</span></span>
-               <span>Summaries: <span id="memory-summary-count">0</span></span>
+               <span>Sums: <span id="memory-summary-count">0</span></span>
+               <span>Entities: <span id="memory-entity-count">0</span></span>
             </div>
 
             <div class="memory-tabs" role="tablist">
@@ -263,6 +264,16 @@
                   aria-controls="memory-list"
                >
                   Summaries
+               </button>
+               <button
+                  id="memory-tab-entities"
+                  class="memory-tab"
+                  data-tab="entities"
+                  role="tab"
+                  aria-selected="false"
+                  aria-controls="memory-list"
+               >
+                  Graph
                </button>
             </div>
 
@@ -526,7 +537,7 @@
 
          <!-- LLM Quick Controls (unified grid) -->
          <div id="llm-controls-grid">
-            <!-- Collapse toggle (mobile only, first row) -->
+            <!-- Collapse toggle (▲ to minimize controls) -->
             <span
                id="llm-controls-collapse"
                class="llm-controls-collapse-toggle"
@@ -558,49 +569,6 @@
                   <option value="">Loading...</option>
                </select>
                <span class="control-hint hidden" id="model-hint"></span>
-
-               <div id="privacy-group">
-                  <button
-                     type="button"
-                     id="privacy-toggle"
-                     class="privacy-toggle"
-                     title="Toggle private mode (Ctrl+Shift+P) - Private conversations are not analyzed for memory extraction"
-                     aria-pressed="false"
-                  >
-                     <svg
-                        class="eye-icon"
-                        xmlns="http://www.w3.org/2000/svg"
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                     >
-                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                        <circle cx="12" cy="12" r="3" />
-                     </svg>
-                     <svg
-                        class="eye-off-icon hidden"
-                        xmlns="http://www.w3.org/2000/svg"
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                     >
-                        <path
-                           d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"
-                        />
-                        <path
-                           d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"
-                        />
-                        <line x1="1" y1="1" x2="23" y2="23" />
-                        <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
-                     </svg>
-                  </button>
-               </div>
             </div>
 
             <!-- Full-width separator between the two control rows -->
@@ -667,6 +635,47 @@
                         <p>No tool calling. The AI will respond conversationally only.</p>
                      </div>
                   </div>
+                  <!-- Privacy toggle (inside tools-group flex container) -->
+                  <button
+                     type="button"
+                     id="privacy-toggle"
+                     class="privacy-toggle"
+                     title="Toggle private mode (Ctrl+Shift+P) - Private conversations are not analyzed for memory extraction"
+                     aria-pressed="false"
+                  >
+                     <svg
+                        class="eye-icon"
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                     >
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                        <circle cx="12" cy="12" r="3" />
+                     </svg>
+                     <svg
+                        class="eye-off-icon hidden"
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                     >
+                        <path
+                           d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"
+                        />
+                        <path
+                           d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"
+                        />
+                        <line x1="1" y1="1" x2="23" y2="23" />
+                        <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
+                     </svg>
+                  </button>
                </div>
 
                <span
