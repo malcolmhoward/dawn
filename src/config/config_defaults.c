@@ -210,6 +210,8 @@ void config_set_defaults(dawn_config_t *config) {
    config->webui.https = false;
    config->webui.ssl_cert_path[0] = '\0';
    config->webui.ssl_key_path[0] = '\0';
+   config->webui.export_max_messages = 5000;
+   SAFE_COPY(config->webui.export_format, "json");
 
    /* Images - storage settings for vision uploads */
    config->images.retention_days = 0; /* 0 = never delete (user preference) */

@@ -800,10 +800,19 @@ static void parse_webui(toml_table_t *table, webui_config_t *config) {
    if (!table)
       return;
 
-   static const char *const known_keys[] = { "enabled",        "port",    "max_clients",
-                                             "audio_chunk_ms", "workers", "www_path",
-                                             "bind_address",   "https",   "ssl_cert_path",
-                                             "ssl_key_path",   NULL };
+   static const char *const known_keys[] = { "enabled",
+                                             "port",
+                                             "max_clients",
+                                             "audio_chunk_ms",
+                                             "workers",
+                                             "www_path",
+                                             "bind_address",
+                                             "https",
+                                             "ssl_cert_path",
+                                             "ssl_key_path",
+                                             "export_max_messages",
+                                             "export_format",
+                                             NULL };
    warn_unknown_keys(table, "webui", known_keys);
 
    PARSE_BOOL(table, "enabled", config->enabled);
@@ -816,6 +825,17 @@ static void parse_webui(toml_table_t *table, webui_config_t *config) {
    PARSE_BOOL(table, "https", config->https);
    PARSE_STRING(table, "ssl_cert_path", config->ssl_cert_path);
    PARSE_STRING(table, "ssl_key_path", config->ssl_key_path);
+   PARSE_INT(table, "export_max_messages", config->export_max_messages);
+   if (config->export_max_messages < 0)
+      config->export_max_messages = 0;
+   PARSE_STRING(table, "export_format", config->export_format);
+   /* Validate export format */
+   if (config->export_format[0] != '\0' && strcmp(config->export_format, "json") != 0 &&
+       strcmp(config->export_format, "html") != 0) {
+      LOG_WARNING("Config: Invalid webui.export_format '%s', defaulting to 'json'",
+                  config->export_format);
+      snprintf(config->export_format, sizeof(config->export_format), "json");
+   }
 
    /* Clamp audio_chunk_ms to valid range */
    if (config->audio_chunk_ms < 100) {

@@ -550,6 +550,16 @@ static void apply_config_from_json(dawn_config_t *config, struct json_object *pa
       JSON_TO_CONFIG_BOOL(section, "https", config->webui.https);
       JSON_TO_CONFIG_STR(section, "ssl_cert_path", config->webui.ssl_cert_path);
       JSON_TO_CONFIG_STR(section, "ssl_key_path", config->webui.ssl_key_path);
+      JSON_TO_CONFIG_INT(section, "export_max_messages", config->webui.export_max_messages);
+      if (config->webui.export_max_messages < 0)
+         config->webui.export_max_messages = 0;
+      JSON_TO_CONFIG_STR(section, "export_format", config->webui.export_format);
+      /* Validate export format */
+      if (config->webui.export_format[0] != '\0' &&
+          strcmp(config->webui.export_format, "json") != 0 &&
+          strcmp(config->webui.export_format, "html") != 0) {
+         snprintf(config->webui.export_format, sizeof(config->webui.export_format), "json");
+      }
    }
 
    /* [memory] */

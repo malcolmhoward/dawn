@@ -27,6 +27,7 @@
  */
 
 #include <string.h>
+#include <time.h>
 
 #include "auth/auth_db.h"
 #include "config/dawn_config.h"
@@ -35,6 +36,7 @@
 #include "llm/llm_command_parser.h"
 #include "logging.h"
 #include "memory/memory_extraction.h"
+#include "version.h"
 #include "webui/webui_internal.h"
 #include "webui/webui_server.h" /* For WEBUI_MAX_THUMBNAIL_BASE64 */
 
@@ -1437,4 +1439,198 @@ void handle_reassign_conversation(ws_connection_t *conn, struct json_object *pay
    json_object_object_add(response, "payload", resp_payload);
    send_json_response(conn->wsi, response);
    json_object_put(response);
+}
+
+/* =============================================================================
+ * Conversation Export
+ * ============================================================================ */
+
+/**
+ * @brief Format a time_t as ISO 8601 UTC string
+ */
+static void time_to_iso8601(time_t t, char *buf, size_t buf_size) {
+   struct tm utc;
+   gmtime_r(&t, &utc);
+   strftime(buf, buf_size, "%Y-%m-%dT%H:%M:%SZ", &utc);
+}
+
+/**
+ * @brief Message callback for export — builds messages with ISO 8601 timestamps
+ */
+static int export_msg_callback(const conversation_message_t *msg, void *context) {
+   json_object *msg_array = (json_object *)context;
+   json_object *msg_obj = json_object_new_object();
+
+   json_object_object_add(msg_obj, "role", json_object_new_string(msg->role));
+   json_object_object_add(msg_obj, "content",
+                          json_object_new_string(msg->content ? msg->content : ""));
+
+   char ts[32];
+   time_to_iso8601(msg->created_at, ts, sizeof(ts));
+   json_object_object_add(msg_obj, "timestamp", json_object_new_string(ts));
+
+   json_object_array_add(msg_array, msg_obj);
+   return 0;
+}
+
+/**
+ * @brief Export a conversation as a self-contained JSON document
+ *
+ * Returns the full conversation with metadata and all messages in a format
+ * suitable for backup, sharing, or analysis. Messages include ISO 8601
+ * timestamps. Image markers appear as text; base64 data is not included.
+ */
+/* Guard against concurrent exports to prevent memory spikes on Jetson shared memory */
+static volatile int s_export_in_progress = 0;
+
+void handle_export_conversation(ws_connection_t *conn, struct json_object *payload) {
+   if (!conn_require_auth(conn)) {
+      return;
+   }
+
+   /* Concurrency guard: only one export at a time to limit peak memory */
+   if (__atomic_exchange_n(&s_export_in_progress, 1, __ATOMIC_SEQ_CST)) {
+      json_object *busy = json_object_new_object();
+      json_object_object_add(busy, "type", json_object_new_string("export_conversation_response"));
+      json_object *bp = json_object_new_object();
+      json_object_object_add(bp, "success", json_object_new_boolean(0));
+      json_object_object_add(bp, "error",
+                             json_object_new_string("Another export is in progress, try again"));
+      json_object_object_add(busy, "payload", bp);
+      send_json_response(conn->wsi, busy);
+      json_object_put(busy);
+      return;
+   }
+
+   json_object *response = json_object_new_object();
+   json_object_object_add(response, "type", json_object_new_string("export_conversation_response"));
+   json_object *resp_payload = json_object_new_object();
+
+   /* Extract conversation ID */
+   json_object *id_obj;
+   if (!json_object_object_get_ex(payload, "conversation_id", &id_obj)) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Missing conversation_id"));
+      json_object_object_add(response, "payload", resp_payload);
+      send_json_response(conn->wsi, response);
+      json_object_put(response);
+      __atomic_store_n(&s_export_in_progress, 0, __ATOMIC_SEQ_CST);
+      return;
+   }
+
+   int64_t conv_id = json_object_get_int64(id_obj);
+
+   /* Fetch conversation metadata */
+   conversation_t conv;
+   int result = conv_db_get(conv_id, conn->auth_user_id, &conv);
+
+   if (result != AUTH_DB_SUCCESS) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      const char *err = (result == AUTH_DB_NOT_FOUND)   ? "Conversation not found"
+                        : (result == AUTH_DB_FORBIDDEN) ? "Access denied"
+                                                        : "Database error";
+      json_object_object_add(resp_payload, "error", json_object_new_string(err));
+      json_object_object_add(response, "payload", resp_payload);
+      send_json_response(conn->wsi, response);
+      json_object_put(response);
+      __atomic_store_n(&s_export_in_progress, 0, __ATOMIC_SEQ_CST);
+      return;
+   }
+
+   /* Check export message cap */
+   int max_msgs = g_config.webui.export_max_messages;
+   if (max_msgs > 0 && conv.message_count > max_msgs) {
+      char err_buf[128];
+      snprintf(err_buf, sizeof(err_buf),
+               "Conversation has %d messages, exceeding export limit of %d", conv.message_count,
+               max_msgs);
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error", json_object_new_string(err_buf));
+      json_object_object_add(response, "payload", resp_payload);
+      send_json_response(conn->wsi, response);
+      json_object_put(response);
+      conv_free(&conv);
+      __atomic_store_n(&s_export_in_progress, 0, __ATOMIC_SEQ_CST);
+      return;
+   }
+
+   /* Fetch all messages */
+   json_object *messages = json_object_new_array();
+   result = conv_db_get_messages(conv_id, conn->auth_user_id, export_msg_callback, messages);
+
+   if (result != AUTH_DB_SUCCESS) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Failed to load messages"));
+      json_object_object_add(response, "payload", resp_payload);
+      send_json_response(conn->wsi, response);
+      json_object_put(response);
+      json_object_put(messages);
+      conv_free(&conv);
+      __atomic_store_n(&s_export_in_progress, 0, __ATOMIC_SEQ_CST);
+      return;
+   }
+
+   /* Build export document */
+   json_object *export_doc = json_object_new_object();
+
+   /* Top-level metadata */
+   char now_str[32];
+   time_to_iso8601(time(NULL), now_str, sizeof(now_str));
+   json_object_object_add(export_doc, "exported_at", json_object_new_string(now_str));
+   json_object_object_add(export_doc, "dawn_version", json_object_new_string(VERSION_NUMBER));
+
+   /* Conversation metadata */
+   json_object *conv_obj = json_object_new_object();
+   json_object_object_add(conv_obj, "id", json_object_new_int64(conv.id));
+   json_object_object_add(conv_obj, "title", json_object_new_string(conv.title));
+
+   char ts_buf[32];
+   time_to_iso8601(conv.created_at, ts_buf, sizeof(ts_buf));
+   json_object_object_add(conv_obj, "created_at", json_object_new_string(ts_buf));
+   time_to_iso8601(conv.updated_at, ts_buf, sizeof(ts_buf));
+   json_object_object_add(conv_obj, "updated_at", json_object_new_string(ts_buf));
+
+   json_object_object_add(conv_obj, "message_count", json_object_new_int(conv.message_count));
+   json_object_object_add(conv_obj, "origin", json_object_new_string(conv.origin));
+   json_object_object_add(conv_obj, "is_private", json_object_new_boolean(conv.is_private));
+   json_object_object_add(conv_obj, "continued_from",
+                          conv.continued_from ? json_object_new_int64(conv.continued_from) : NULL);
+
+   /* LLM settings */
+   json_object *llm_obj = json_object_new_object();
+   json_object_object_add(llm_obj, "llm_type", json_object_new_string(conv.llm_type));
+   json_object_object_add(llm_obj, "cloud_provider", json_object_new_string(conv.cloud_provider));
+   json_object_object_add(llm_obj, "model", json_object_new_string(conv.model));
+   json_object_object_add(llm_obj, "tools_mode", json_object_new_string(conv.tools_mode));
+   json_object_object_add(llm_obj, "thinking_mode", json_object_new_string(conv.thinking_mode));
+   json_object_object_add(conv_obj, "llm_settings", llm_obj);
+
+   json_object_object_add(export_doc, "conversation", conv_obj);
+   json_object_object_add(export_doc, "messages", messages);
+
+   /* Echo requested format (client uses this to select JSON vs HTML download) */
+   json_object *fmt_obj;
+   const char *format = "json";
+   if (json_object_object_get_ex(payload, "format", &fmt_obj)) {
+      const char *req_fmt = json_object_get_string(fmt_obj);
+      if (req_fmt && (strcmp(req_fmt, "json") == 0 || strcmp(req_fmt, "html") == 0)) {
+         format = req_fmt;
+      }
+   }
+
+   /* Send response */
+   json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
+   json_object_object_add(resp_payload, "format", json_object_new_string(format));
+   json_object_object_add(resp_payload, "data", export_doc);
+   json_object_object_add(response, "payload", resp_payload);
+   send_json_response(conn->wsi, response);
+   json_object_put(response);
+
+   LOG_INFO("WebUI: Exported conversation %lld (%d messages) for user %s", (long long)conv_id,
+            conv.message_count, conn->username);
+
+   conv_free(&conv);
+   __atomic_store_n(&s_export_in_progress, 0, __ATOMIC_SEQ_CST);
 }

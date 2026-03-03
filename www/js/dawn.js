@@ -372,6 +372,9 @@
             case 'set_private_response':
                DawnSettings.handleSetPrivateResponse(msg.payload);
                break;
+            case 'export_conversation_response':
+               DawnHistory.handleExportResponse(msg.payload);
+               break;
             case 'reassign_conversation_response':
                DawnHistory.handleReassignResponse(msg.payload);
                break;

@@ -341,6 +341,9 @@ typedef struct {
    bool https;                          /* Enable HTTPS (required for mic on LAN) */
    char ssl_cert_path[CONFIG_PATH_MAX]; /* Path to SSL certificate (.pem) */
    char ssl_key_path[CONFIG_PATH_MAX];  /* Path to SSL private key (.pem) */
+   int export_max_messages;             /* Max messages per export (0 = unlimited, default: 5000) */
+   char
+       export_format[CONFIG_NAME_MAX]; /* Default export format: "json" or "html" (default: json) */
 } webui_config_t;
 
 /* =============================================================================

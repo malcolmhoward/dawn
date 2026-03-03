@@ -598,6 +598,11 @@ void handle_rename_conversation(ws_connection_t *conn, struct json_object *paylo
 void handle_set_private(ws_connection_t *conn, struct json_object *payload);
 
 /**
+ * @brief Export a conversation as a self-contained JSON document
+ */
+void handle_export_conversation(ws_connection_t *conn, struct json_object *payload);
+
+/**
  * @brief Search conversations by title or content
  */
 void handle_search_conversations(ws_connection_t *conn, struct json_object *payload);

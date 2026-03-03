@@ -903,6 +903,20 @@
                hint: 'Required for microphone access on remote connections',
                advanced: true,
             },
+            export_max_messages: {
+               type: 'number',
+               label: 'Export Message Limit',
+               min: 0,
+               hint: 'Max messages per conversation export (0 = unlimited)',
+               advanced: true,
+            },
+            export_format: {
+               type: 'select',
+               label: 'Export Format',
+               options: ['json', 'html'],
+               hint: 'Default format for conversation exports',
+               advanced: true,
+            },
          },
       },
       shutdown: {

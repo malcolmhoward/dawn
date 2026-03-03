@@ -687,7 +687,8 @@
       close: close,
       openSection: openSection,
 
-      // Config requests (delegated to Config module)
+      // Config access and requests (delegated to Config module)
+      getConfig: Config.getCurrentConfig,
       requestConfig: Config.requestConfig,
 
       // Response handlers (delegated to appropriate modules)

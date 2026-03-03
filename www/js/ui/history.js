@@ -815,6 +815,13 @@
               <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
             </svg>
           </button>
+          <button class="export" title="Export" aria-label="Export conversation" data-action="export">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+          </button>
         </div>
       </div>
     `;
@@ -967,6 +974,17 @@
                   },
                   { title: 'Delete Conversation', okText: 'Delete', danger: true }
                );
+            });
+         }
+
+         // Export button — uses format from settings config
+         const exportBtn = item.querySelector('[data-action="export"]');
+         if (exportBtn) {
+            exportBtn.addEventListener('click', (e) => {
+               e.stopPropagation();
+               exportBtn.disabled = true;
+               exportBtn.classList.add('exporting');
+               requestExportConversation(convId);
             });
          }
 
@@ -1314,6 +1332,110 @@
    }
 
    /* =============================================================================
+    * Conversation Export
+    * ============================================================================= */
+
+   /**
+    * Request export of a conversation
+    * @param {number} convId - Conversation ID to export
+    * @param {string} [format] - Export format ('json' or 'html'), uses config default if omitted
+    */
+   function requestExportConversation(convId, format) {
+      if (typeof DawnWS !== 'undefined' && DawnWS.isConnected()) {
+         // Use provided format, or fall back to config default
+         const fmt =
+            format ||
+            (typeof DawnSettings !== 'undefined'
+               ? DawnSettings.getConfig()?.webui?.export_format
+               : null) ||
+            'json';
+         DawnWS.send({
+            type: 'export_conversation',
+            payload: { conversation_id: convId, format: fmt },
+         });
+      }
+   }
+
+   /**
+    * Sanitize a string for use as a filename
+    * @param {string} str - Input string
+    * @param {number} maxLen - Maximum length
+    * @returns {string} Safe filename fragment
+    */
+   function sanitizeFilename(str, maxLen) {
+      return str
+         .replace(/[^a-zA-Z0-9_-]/g, '-')
+         .replace(/-+/g, '-')
+         .replace(/^-|-$/g, '')
+         .substring(0, maxLen || 50);
+   }
+
+   /**
+    * Build a date+time string for filenames from an ISO 8601 timestamp
+    * @param {string} iso - ISO 8601 timestamp
+    * @returns {string} "YYYY-MM-DD-HHmm" or date-only fallback
+    */
+   function filenameDatetime(iso) {
+      if (!iso) return new Date().toISOString().substring(0, 10);
+      const d = new Date(iso);
+      const pad = (n) => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
+   }
+
+   /**
+    * Handle export conversation response — trigger browser download
+    * @param {Object} payload - Response payload with data object
+    */
+   function handleExportConversationResponse(payload) {
+      // Re-enable all export buttons
+      document.querySelectorAll('.history-item-actions .export').forEach((btn) => {
+         btn.disabled = false;
+         btn.classList.remove('exporting');
+      });
+
+      if (!payload.success) {
+         if (typeof DawnToast !== 'undefined') {
+            DawnToast.show('Export failed: ' + (payload.error || 'Unknown error'), 'error');
+         }
+         return;
+      }
+
+      const data = payload.data;
+      const format = payload.format || 'json';
+      const title = sanitizeFilename(data.conversation?.title || 'conversation', 50);
+      const datetime = filenameDatetime(data.conversation?.updated_at);
+
+      let blob, ext;
+      if (format === 'html') {
+         const html =
+            typeof DawnExport !== 'undefined'
+               ? DawnExport.buildHtml(data)
+               : `<pre>${JSON.stringify(data, null, 2)}</pre>`;
+         blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+         ext = 'html';
+      } else {
+         blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+         ext = 'json';
+      }
+
+      const filename = `${title}-${datetime}.${ext}`;
+
+      // Trigger download
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      if (typeof DawnToast !== 'undefined') {
+         DawnToast.show(`Exported: ${filename}`, 'success');
+      }
+   }
+
+   /* =============================================================================
     * Reassign Modal (Admin Only)
     * ============================================================================= */
 
@@ -1550,6 +1672,8 @@
       handleContextCompacted: handleContextCompacted,
       handleContinueResponse: handleContinueConversationResponse,
       updateConversationPrivacy: updateConversationPrivacy,
+      // Export handler
+      handleExportResponse: handleExportConversationResponse,
       // Reassign modal handlers (admin only)
       handleUsersListForReassign: handleUsersListForReassign,
       handleReassignResponse: handleReassignResponse,

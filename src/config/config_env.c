@@ -1172,6 +1172,10 @@ json_object *config_to_json(const dawn_config_t *config) {
                           json_object_new_string(config->webui.ssl_cert_path));
    json_object_object_add(webui, "ssl_key_path",
                           json_object_new_string(config->webui.ssl_key_path));
+   json_object_object_add(webui, "export_max_messages",
+                          json_object_new_int(config->webui.export_max_messages));
+   json_object_object_add(webui, "export_format",
+                          json_object_new_string(config->webui.export_format));
    json_object_object_add(root, "webui", webui);
 
    /* [memory] */
@@ -1680,6 +1684,10 @@ int config_write_toml(const dawn_config_t *config, const char *path) {
       fprintf(fp, "ssl_cert_path = \"%s\"\n", config->webui.ssl_cert_path);
    if (config->webui.ssl_key_path[0])
       fprintf(fp, "ssl_key_path = \"%s\"\n", config->webui.ssl_key_path);
+   fprintf(fp, "export_max_messages = %d\n", config->webui.export_max_messages);
+   /* Validate at write time to prevent TOML injection */
+   const char *exp_fmt = (strcmp(config->webui.export_format, "html") == 0) ? "html" : "json";
+   fprintf(fp, "export_format = \"%s\"\n", exp_fmt);
 
    fprintf(fp, "\n[memory]\n");
    fprintf(fp, "enabled = %s\n", config->memory.enabled ? "true" : "false");

@@ -31,6 +31,7 @@
 #include <string.h>
 #include <time.h>
 
+#include "auth/auth_db.h"
 #include "config/dawn_config.h"
 #include "llm/llm_interface.h"
 #include "logging.h"

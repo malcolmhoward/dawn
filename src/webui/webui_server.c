@@ -2792,6 +2792,10 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
       if (payload) {
          handle_reassign_conversation(conn, payload);
       }
+   } else if (strcmp(type, "export_conversation") == 0) {
+      if (payload) {
+         handle_export_conversation(conn, payload);
+      }
    } else if (strcmp(type, "search_conversations") == 0) {
       if (payload) {
          handle_search_conversations(conn, payload);
