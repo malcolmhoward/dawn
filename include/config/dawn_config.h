@@ -260,6 +260,8 @@ typedef struct {
    llm_thinking_config_t thinking; /* Extended thinking/reasoning settings */
    float summarize_threshold;      /* Compact conversation at this % of context (default: 0.80) */
    bool conversation_logging;      /* Save chat history to log files (default: false) */
+   bool rate_limit_enabled;        /* Throttle cloud API calls (default: true) */
+   int rate_limit_rpm;             /* Max cloud API calls per minute (default: 40) */
 } llm_config_t;
 
 /* =============================================================================

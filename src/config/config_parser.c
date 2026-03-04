@@ -630,6 +630,8 @@ static void parse_llm(toml_table_t *table, llm_config_t *config) {
                                              "max_tokens",
                                              "summarize_threshold",
                                              "conversation_logging",
+                                             "rate_limit_enabled",
+                                             "rate_limit_rpm",
                                              "cloud",
                                              "local",
                                              "tools",
@@ -641,6 +643,8 @@ static void parse_llm(toml_table_t *table, llm_config_t *config) {
    PARSE_INT(table, "max_tokens", config->max_tokens);
    PARSE_DOUBLE(table, "summarize_threshold", config->summarize_threshold);
    PARSE_BOOL(table, "conversation_logging", config->conversation_logging);
+   PARSE_BOOL(table, "rate_limit_enabled", config->rate_limit_enabled);
+   PARSE_INT(table, "rate_limit_rpm", config->rate_limit_rpm);
 
    /* Parse [llm.cloud], [llm.local], [llm.tools], and [llm.thinking] sub-tables */
    toml_table_t *cloud = toml_table_in(table, "cloud");

@@ -44,6 +44,7 @@
 #include "llm/llm_context.h"
 #include "llm/llm_interface.h"
 #include "llm/llm_local_provider.h"
+#include "llm/llm_rate_limit.h"
 #include "logging.h"
 #include "tools/tool_registry.h"
 #include "webui/webui_internal.h"
@@ -494,6 +495,9 @@ static void apply_config_from_json(dawn_config_t *config, struct json_object *pa
       /* Context management settings */
       JSON_TO_CONFIG_DOUBLE(section, "summarize_threshold", config->llm.summarize_threshold);
       JSON_TO_CONFIG_BOOL(section, "conversation_logging", config->llm.conversation_logging);
+      JSON_TO_CONFIG_BOOL(section, "rate_limit_enabled", config->llm.rate_limit_enabled);
+      JSON_TO_CONFIG_INT(section, "rate_limit_rpm", config->llm.rate_limit_rpm);
+      llm_rate_limit_set_rpm(config->llm.rate_limit_enabled ? config->llm.rate_limit_rpm : 0);
    }
 
    /* [search] */

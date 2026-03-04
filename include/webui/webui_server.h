@@ -139,6 +139,9 @@ typedef enum {
 
    /* Scheduler notifications */
    WS_RESP_SCHEDULER_NOTIFICATION, /* Alarm/timer/reminder fired (JSON) */
+
+   /* Generic pre-serialized JSON (for init messages routed through queue) */
+   WS_RESP_JSON, /* Arbitrary JSON string (heap-allocated) */
 } ws_response_type_t;
 
 /* =============================================================================

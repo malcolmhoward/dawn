@@ -436,6 +436,18 @@
                   },
                },
             },
+            rate_limit_enabled: {
+               type: 'checkbox',
+               label: 'API Rate Limiting',
+               hint: 'Throttle outbound API calls to avoid provider rate limits (429 errors)',
+            },
+            rate_limit_rpm: {
+               type: 'number',
+               label: 'Max Requests/Min',
+               min: 1,
+               max: 128,
+               hint: 'Maximum cloud LLM API calls per minute (default: 40)',
+            },
          },
       },
       tool_calling: {

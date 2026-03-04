@@ -191,7 +191,10 @@ void handle_set_my_settings(ws_connection_t *conn, struct json_object *payload) 
             session_update_system_prompt(conn->session, new_prompt);
             LOG_INFO("WebUI: Refreshed system prompt for user %s", conn->username);
 
-            /* Send updated prompt to client so debug view refreshes */
+            /* Queue updated prompt to client so debug view refreshes.
+             * Must go through queue — the settings response below is already
+             * a direct write in this callback, so a second write would corrupt
+             * WebSocket framing. */
             json_object *prompt_msg = json_object_new_object();
             json_object_object_add(prompt_msg, "type",
                                    json_object_new_string("system_prompt_response"));
@@ -201,7 +204,12 @@ void handle_set_my_settings(ws_connection_t *conn, struct json_object *payload) 
             json_object_object_add(prompt_payload, "length",
                                    json_object_new_int((int)strlen(new_prompt)));
             json_object_object_add(prompt_msg, "payload", prompt_payload);
-            send_json_response(conn->wsi, prompt_msg);
+            const char *json_str = json_object_to_json_string(prompt_msg);
+            ws_response_t resp_q = { 0 };
+            resp_q.session = conn->session;
+            resp_q.type = WS_RESP_JSON;
+            resp_q.generic_json.json = strdup(json_str);
+            queue_response(&resp_q);
             json_object_put(prompt_msg);
 
             free(new_prompt);

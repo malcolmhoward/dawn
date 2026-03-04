@@ -211,6 +211,9 @@ typedef struct {
       struct {
          char *json; /* Pre-serialized scheduler notification JSON */
       } scheduler_json;
+      struct {
+         char *json; /* Pre-serialized generic JSON (heap-allocated) */
+      } generic_json;
    };
 } ws_response_t;
 

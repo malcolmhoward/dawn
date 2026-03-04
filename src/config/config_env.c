@@ -167,6 +167,8 @@ void config_apply_env(dawn_config_t *config, secrets_config_t *secrets) {
    /* [llm] */
    ENV_STRING("DAWN_LLM_TYPE", config->llm.type);
    ENV_INT("DAWN_LLM_MAX_TOKENS", config->llm.max_tokens);
+   ENV_BOOL("DAWN_LLM_RATE_LIMIT_ENABLED", config->llm.rate_limit_enabled);
+   ENV_INT("DAWN_LLM_RATE_LIMIT_RPM", config->llm.rate_limit_rpm);
 
    /* [llm.cloud] */
    ENV_STRING("DAWN_LLM_CLOUD_PROVIDER", config->llm.cloud.provider);
@@ -1089,6 +1091,9 @@ json_object *config_to_json(const dawn_config_t *config) {
                           json_object_new_double(config->llm.summarize_threshold));
    json_object_object_add(llm, "conversation_logging",
                           json_object_new_boolean(config->llm.conversation_logging));
+   json_object_object_add(llm, "rate_limit_enabled",
+                          json_object_new_boolean(config->llm.rate_limit_enabled));
+   json_object_object_add(llm, "rate_limit_rpm", json_object_new_int(config->llm.rate_limit_rpm));
    json_object_object_add(root, "llm", llm);
 
    /* [search] */

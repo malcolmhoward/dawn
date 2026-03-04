@@ -69,6 +69,7 @@
 #include "llm/llm_command_parser.h"
 #include "llm/llm_context.h"
 #include "llm/llm_interface.h"
+#include "llm/llm_rate_limit.h"
 #include "llm/llm_tools.h"
 #include "logging.h"
 /* logging_bridge is now built into init_logging() in common/src/logging.c */
@@ -3677,6 +3678,9 @@ int main(int argc, char *argv[]) {
 
    // Cleanup command router (after workers are stopped)
    command_router_shutdown();
+
+   // Cleanup LLM rate limiter
+   llm_rate_limit_cleanup();
 
    // Cleanup tool registry (before command registry)
    tool_registry_shutdown();

@@ -157,6 +157,8 @@ void config_set_defaults(dawn_config_t *config) {
    /* LLM Context Management */
    config->llm.summarize_threshold = 0.80f;  /* Compact at 80% of context limit */
    config->llm.conversation_logging = false; /* Disabled: WebUI saves to DB, set true for debug */
+   config->llm.rate_limit_enabled = true;    /* Throttle cloud API calls by default */
+   config->llm.rate_limit_rpm = 40;          /* 20% headroom under typical 50 RPM limit */
 
    /* Search */
    SAFE_COPY(config->search.engine, "searxng");

@@ -52,6 +52,7 @@
 // Note: The actual provider files (llm_openai.c, llm_claude.c) are always compiled
 #include "llm/llm_claude.h"
 #include "llm/llm_openai.h"
+#include "llm/llm_rate_limit.h"
 
 // LLM URLs - cloud endpoints (local endpoint comes from g_config.llm.local.endpoint)
 #define CLOUDAI_URL "https://api.openai.com"
@@ -278,6 +279,9 @@ void llm_init(const char *cloud_provider_override) {
    // Initialize tool calling system first - needed for both local and cloud LLMs
    // Must happen before any early returns so tools are available for local mode
    llm_tools_init();
+
+   // Initialize rate limiter (pass 0 to disable)
+   llm_rate_limit_init(g_config.llm.rate_limit_enabled ? g_config.llm.rate_limit_rpm : 0);
 
    // Apply per-tool enable config from TOML (do this early too)
    // Check if either list was explicitly configured (even if empty = all disabled)
@@ -796,6 +800,12 @@ char *llm_chat_completion(struct json_object *conversation_history,
       }
    }
 
+   /* Gate cloud API calls through rate limiter */
+   if (type != LLM_LOCAL) {
+      if (llm_rate_limit_wait())
+         return NULL; /* interrupted */
+   }
+
    if (type == LLM_LOCAL) {
       /* Local LLM uses OpenAI-compatible API (no API key needed) */
       response = llm_openai_chat_completion(conversation_history, input_text, vision_images,
@@ -1252,6 +1262,12 @@ char *llm_chat_completion_with_config(struct json_object *conversation_history,
 
    // Set thread-local config so llm_tools_enabled() can check session-specific tool_mode
    llm_tools_set_current_config(config);
+
+   /* Gate cloud API calls through rate limiter */
+   if (config->type != LLM_LOCAL) {
+      if (llm_rate_limit_wait())
+         return NULL; /* interrupted */
+   }
 
    if (config->type == LLM_LOCAL) {
       // Local LLM uses OpenAI-compatible API (no API key needed)

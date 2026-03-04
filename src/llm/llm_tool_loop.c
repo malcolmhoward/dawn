@@ -38,6 +38,7 @@
 #include "llm/llm_context.h"
 #include "llm/llm_interface.h"
 #include "llm/llm_openai.h"
+#include "llm/llm_rate_limit.h"
 #include "llm/llm_tools.h"
 #include "logging.h"
 #include "webui/webui_server.h"
@@ -285,7 +286,15 @@ char *llm_tool_iteration_loop(llm_tool_loop_params_t *params) {
       llm_context_auto_compact_with_config(params->conversation_history, params->session_id,
                                            params->llm_type, params->cloud_provider, params->model);
 
-      /* Step 2: Call provider single-shot */
+      /* Step 2: Gate cloud calls through rate limiter */
+      if (params->llm_type != LLM_LOCAL) {
+         if (llm_rate_limit_wait()) {
+            LOG_WARNING("Tool loop: rate limit wait interrupted at iteration %d", iteration);
+            return NULL;
+         }
+      }
+
+      /* Step 3: Call provider single-shot */
       llm_tool_response_t result;
       memset(&result, 0, sizeof(result));
 
@@ -301,7 +310,7 @@ char *llm_tool_iteration_loop(llm_tool_loop_params_t *params) {
          return NULL;
       }
 
-      /* Step 3: If no tool calls, return text response */
+      /* Step 4: If no tool calls, return text response */
       if (!result.has_tool_calls) {
          final_response = result.text;
          result.text = NULL; /* Transfer ownership to caller */
@@ -328,7 +337,7 @@ char *llm_tool_iteration_loop(llm_tool_loop_params_t *params) {
                   result.tool_calls.calls[i].name, result.tool_calls.calls[i].arguments);
       }
 
-      /* Step 4: Check for duplicate tool calls (prevents infinite loops) */
+      /* Step 5: Check for duplicate tool calls (prevents infinite loops) */
       if (result.tool_calls.count > 0 &&
           llm_tools_is_duplicate_call(params->conversation_history, result.tool_calls.calls[0].name,
                                       result.tool_calls.calls[0].arguments,
@@ -365,7 +374,7 @@ char *llm_tool_iteration_loop(llm_tool_loop_params_t *params) {
          return final_response;
       }
 
-      /* Step 5: Execute tools */
+      /* Step 6: Execute tools */
       tool_result_list_t *results = calloc(1, sizeof(tool_result_list_t));
       if (!results) {
          LOG_ERROR("Tool loop: Failed to allocate tool results");
@@ -381,7 +390,7 @@ char *llm_tool_iteration_loop(llm_tool_loop_params_t *params) {
                   strlen(results->results[i].result) > 200 ? "..." : "");
       }
 
-      /* Step 6: Check follow-up context BEFORE appending to history.
+      /* Step 7: Check follow-up context BEFORE appending to history.
        * Tools like reset_conversation invalidate the conversation history pointer,
        * so we must not append to it after they run. */
       tool_followup_context_t followup;
@@ -402,14 +411,14 @@ char *llm_tool_iteration_loop(llm_tool_loop_params_t *params) {
          return followup.direct_response; /* Caller must free */
       }
 
-      /* Step 7: Append assistant message + tool results to history */
+      /* Step 8: Append assistant message + tool results to history */
       if (params->history_format == LLM_HISTORY_CLAUDE) {
          append_claude_tool_history(params->conversation_history, &result, results);
       } else {
          append_openai_tool_history(params->conversation_history, &result, results);
       }
 
-      /* Step 7b: All-silent check — tools handled their own output */
+      /* Step 8b: All-silent check — tools handled their own output */
       if (followup.all_silent) {
          LOG_INFO("Tool loop: All tools silent (should_respond=false), skipping follow-up");
          append_closing_message(params->conversation_history,
@@ -421,7 +430,7 @@ char *llm_tool_iteration_loop(llm_tool_loop_params_t *params) {
          return strdup(""); /* Empty = no TTS output */
       }
 
-      /* Step 8: Check iteration limit */
+      /* Step 9: Check iteration limit */
       if (iteration >= LLM_TOOLS_MAX_ITERATIONS) {
          LOG_WARNING("Tool loop: Max iterations (%d) reached", LLM_TOOLS_MAX_ITERATIONS);
          const char *error_msg = "I apologize, but I wasn't able to complete that request after "
@@ -436,7 +445,7 @@ char *llm_tool_iteration_loop(llm_tool_loop_params_t *params) {
          return strdup(error_msg);
       }
 
-      /* Step 9: Extract vision data from tool results (take ownership) */
+      /* Step 10: Extract vision data from tool results (take ownership) */
       free(loop_vision_image); /* Free previous iteration's vision */
       loop_vision_image = NULL;
       loop_vision_size = 0;
@@ -465,7 +474,7 @@ char *llm_tool_iteration_loop(llm_tool_loop_params_t *params) {
          params->vision_image_count = 0;
       }
 
-      /* Step 10: Check interrupt */
+      /* Step 11: Check interrupt */
       if (llm_is_interrupt_requested()) {
          LOG_INFO("Tool loop: Interrupted by user");
          free_tool_result_vision(results);
@@ -475,7 +484,7 @@ char *llm_tool_iteration_loop(llm_tool_loop_params_t *params) {
          return NULL;
       }
 
-      /* Step 11: Handle provider switching (switch_llm tool) */
+      /* Step 12: Handle provider switching (switch_llm tool) */
       resolve_provider_switch(params);
 
       /* Clear input text for follow-up calls (history already contains the context) */

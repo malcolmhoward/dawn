@@ -746,6 +746,9 @@ void free_response(ws_response_t *resp) {
       case WS_RESP_SCHEDULER_NOTIFICATION:
          free(resp->scheduler_json.json);
          break;
+      case WS_RESP_JSON:
+         free(resp->generic_json.json);
+         break;
    }
 }
 
@@ -1069,6 +1072,58 @@ static const char s_server_features_json[] = "{\"type\":\"server_features\",\"pa
 
 static void send_server_features(struct lws *wsi) {
    send_json_message(wsi, s_server_features_json);
+}
+
+/**
+ * Queue the 4 init messages through the response queue instead of calling
+ * lws_write() directly. This ensures one write per writeable callback,
+ * preventing WebSocket frame corruption ("Invalid frame header").
+ *
+ * Messages queued: session token, config, server_features, state(idle).
+ */
+static void queue_init_messages(ws_connection_t *conn, const char *token) {
+   session_t *session = conn->session;
+
+   /* 1. Session token — build the same JSON as send_session_token_impl() */
+   {
+      ws_response_t resp = { 0 };
+      resp.session = session;
+      resp.type = WS_RESP_SESSION;
+      resp.session_token.token = strdup(token);
+      queue_response(&resp);
+   }
+
+   /* 2. Config — pre-serialize as JSON string */
+   {
+      char json[256];
+      snprintf(json, sizeof(json), "{\"type\":\"config\",\"payload\":{\"audio_chunk_ms\":%d}}",
+               g_config.webui.audio_chunk_ms);
+      ws_response_t resp = { 0 };
+      resp.session = session;
+      resp.type = WS_RESP_JSON;
+      resp.generic_json.json = strdup(json);
+      queue_response(&resp);
+   }
+
+   /* 3. Server features — compile-time constant string */
+   {
+      ws_response_t resp = { 0 };
+      resp.session = session;
+      resp.type = WS_RESP_JSON;
+      resp.generic_json.json = strdup(s_server_features_json);
+      queue_response(&resp);
+   }
+
+   /* 4. State: idle */
+   {
+      ws_response_t resp = { 0 };
+      resp.session = session;
+      resp.type = WS_RESP_STATE;
+      resp.state.state = strdup("idle");
+      resp.state.detail = NULL;
+      resp.state.tools_json = NULL;
+      queue_response(&resp);
+   }
 }
 
 static void send_context_impl(struct lws *wsi,
@@ -1487,6 +1542,14 @@ static void process_one_response(void) {
             send_json_message(conn->wsi, resp.scheduler_json.json);
             free(resp.scheduler_json.json);
             resp.scheduler_json.json = NULL;
+         }
+         break;
+      case WS_RESP_JSON:
+         /* Generic pre-serialized JSON (init messages, etc.) */
+         if (resp.generic_json.json) {
+            send_json_message(conn->wsi, resp.generic_json.json);
+            free(resp.generic_json.json);
+            resp.generic_json.json = NULL;
          }
          break;
    }
@@ -2727,11 +2790,8 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                   LOG_INFO("WebUI: Reconnected to session %u with token %.4s...",
                            existing->session_id, token);
 
-                  /* Send confirmation - history is loaded by client via load_conversation */
-                  send_session_token_impl(conn, token);
-                  send_config_impl(conn->wsi);
-                  send_server_features(conn->wsi);
-                  send_state_impl(conn->wsi, "idle", NULL);
+                  /* Queue init messages (one lws_write per callback) */
+                  queue_init_messages(conn, token);
                } else {
                   /* Token not found or session expired - create new session */
                   LOG_INFO("WebUI: Token %.4s... not found, creating new session", token);
@@ -2753,10 +2813,7 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                            return;
                         }
                         register_token(conn->session_token, conn->session->session_id);
-                        send_session_token_impl(conn, conn->session_token);
-                        send_config_impl(conn->wsi);
-                        send_server_features(conn->wsi);
-                        send_state_impl(conn->wsi, "idle", NULL);
+                        queue_init_messages(conn, conn->session_token);
                      }
                   }
                }
@@ -3230,11 +3287,8 @@ static int callback_websocket(struct lws *wsi,
                                  existing_session->session_id, token, s_client_count,
                                  conn->use_opus ? "yes" : "no", conn->tts_enabled ? "yes" : "no");
 
-                        /* Send confirmation - history is loaded by client via load_conversation */
-                        send_session_token_impl(conn, token);
-                        send_config_impl(conn->wsi);
-                        send_server_features(conn->wsi);
-                        send_state_impl(conn->wsi, "idle", NULL);
+                        /* Queue init messages (one lws_write per callback) */
+                        queue_init_messages(conn, token);
                      }
                   }
                }
@@ -3342,10 +3396,7 @@ static int callback_websocket(struct lws *wsi,
                         conn->session->session_id, conn->session_token, s_client_count,
                         conn->use_opus ? "yes" : "no", conn->tts_enabled ? "yes" : "no");
 
-               send_session_token_impl(conn, conn->session_token);
-               send_config_impl(conn->wsi);
-               send_server_features(conn->wsi);
-               send_state_impl(conn->wsi, "idle", NULL);
+               queue_init_messages(conn, conn->session_token);
             }
 
             json_object_put(root);

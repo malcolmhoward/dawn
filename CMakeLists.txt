@@ -450,6 +450,7 @@ set(DAWN_SOURCES
     src/llm/llm_context.c
     src/llm/llm_local_provider.c
     src/llm/sse_parser.c
+    src/llm/llm_rate_limit.c
 
     # TTS subsystem
     src/tts/text_to_speech.cpp
