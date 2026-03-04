@@ -667,9 +667,16 @@ static void *extraction_thread(void *arg) {
    LOG_INFO("memory_extraction: using provider=%s, model=%s", provider,
             model ? model : "(default)");
 
+   /* Temporarily increase timeout for extraction — processing long conversations
+    * can exceed the normal LLM timeout */
+   int saved_timeout = g_config.network.llm_timeout_ms;
+   g_config.network.llm_timeout_ms = g_config.memory.extraction_timeout_ms;
+
    /* Use the configured LLM for extraction */
    response = llm_chat_completion_with_config(extraction_history, prompt, NULL, NULL, 0,
                                               &extraction_config);
+
+   g_config.network.llm_timeout_ms = saved_timeout;
    json_object_put(extraction_history);
 
    if (response) {

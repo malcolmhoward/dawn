@@ -782,12 +782,13 @@ static void parse_network(toml_table_t *table, network_config_t *config) {
       return;
 
    static const char *const known_keys[] = { "workers", "session_timeout_sec", "llm_timeout_ms",
-                                             NULL };
+                                             "summarization_timeout_ms", NULL };
    warn_unknown_keys(table, "network", known_keys);
 
    PARSE_INT(table, "workers", config->workers);
    PARSE_INT(table, "session_timeout_sec", config->session_timeout_sec);
    PARSE_INT(table, "llm_timeout_ms", config->llm_timeout_ms);
+   PARSE_INT(table, "summarization_timeout_ms", config->summarization_timeout_ms);
 }
 
 static void parse_tui(toml_table_t *table, tui_config_t *config) {
@@ -935,6 +936,7 @@ static void parse_memory(toml_table_t *table, memory_config_t *config) {
                                              "context_budget_tokens",
                                              "extraction_provider",
                                              "extraction_model",
+                                             "extraction_timeout_ms",
                                              "pruning_enabled",
                                              "prune_superseded_days",
                                              "prune_stale_days",
@@ -951,6 +953,7 @@ static void parse_memory(toml_table_t *table, memory_config_t *config) {
    PARSE_INT(table, "context_budget_tokens", config->context_budget_tokens);
    PARSE_STRING(table, "extraction_provider", config->extraction_provider);
    PARSE_STRING(table, "extraction_model", config->extraction_model);
+   PARSE_INT(table, "extraction_timeout_ms", config->extraction_timeout_ms);
 
    /* Parse pruning settings - support both flat keys and [memory.pruning] sub-table */
    PARSE_BOOL(table, "pruning_enabled", config->pruning_enabled);

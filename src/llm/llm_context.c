@@ -859,7 +859,7 @@ int llm_context_compact(uint32_t session_id,
    /* Temporarily increase timeout for summarization - summarizing many messages
     * can take longer than normal requests (especially with local LLMs) */
    int saved_timeout = g_config.network.llm_timeout_ms;
-   g_config.network.llm_timeout_ms = 180000; /* 3 minutes for summarization */
+   g_config.network.llm_timeout_ms = g_config.network.summarization_timeout_ms;
 
    /* Make LLM call for summary (with fallback enabled) */
    char *summary = llm_chat_completion(summary_request, NULL, NULL, NULL, 0, true);

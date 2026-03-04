@@ -189,6 +189,10 @@ int config_validate(const dawn_config_t *config,
    if (config->network.llm_timeout_ms <= 0) {
       ADD_ERROR("network.llm_timeout_ms", "must be positive");
    }
+   VALIDATE_RANGE_INT("network.summarization_timeout_ms", config->network.summarization_timeout_ms,
+                      1, 600000);
+   VALIDATE_RANGE_INT("memory.extraction_timeout_ms", config->memory.extraction_timeout_ms, 1,
+                      600000);
 
    /* ===== FlareSolverr (if enabled) ===== */
    if (config->url_fetcher.flaresolverr.enabled) {

@@ -195,8 +195,9 @@ void config_set_defaults(dawn_config_t *config) {
 
    /* Network */
    config->network.workers = 4;
-   config->network.session_timeout_sec = 1800;  // 30 minutes
-   config->network.llm_timeout_ms = 60000;      // 60 seconds for LLM requests
+   config->network.session_timeout_sec = 1800;         // 30 minutes
+   config->network.llm_timeout_ms = 60000;             // 60 seconds for LLM requests
+   config->network.summarization_timeout_ms = 180000;  // 3 minutes for context summarization
 
    /* TUI */
    config->tui.enabled = false;
@@ -236,6 +237,7 @@ void config_set_defaults(dawn_config_t *config) {
    config->memory.context_budget_tokens = 800; /* ~3200 chars for memory context */
    SAFE_COPY(config->memory.extraction_provider, "local");
    SAFE_COPY(config->memory.extraction_model, "qwen2.5:7b");
+   config->memory.extraction_timeout_ms = 120000; /* 2 minutes for fact extraction */
    config->memory.pruning_enabled = true;
    config->memory.prune_superseded_days = 30; /* Delete old superseded facts after 30 days */
    config->memory.prune_stale_days = 180; /* Delete unused low-confidence facts after 6 months */

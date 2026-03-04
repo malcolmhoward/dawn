@@ -26,6 +26,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <json-c/json.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -64,13 +65,20 @@
       }                                                        \
    } while (0)
 
-#define ENV_INT(env_name, dest)                              \
-   do {                                                      \
-      const char *val = getenv(env_name);                    \
-      if (val) {                                             \
-         dest = atoi(val);                                   \
-         LOG_INFO("Config override: %s=%d", env_name, dest); \
-      }                                                      \
+#define ENV_INT(env_name, dest)                                                              \
+   do {                                                                                      \
+      const char *val = getenv(env_name);                                                    \
+      if (val) {                                                                             \
+         char *end_;                                                                         \
+         errno = 0;                                                                          \
+         long v_ = strtol(val, &end_, 10);                                                   \
+         if (*end_ != '\0' || errno != 0 || v_ < INT_MIN || v_ > INT_MAX) {                  \
+            LOG_WARNING("Config override: %s=%s (invalid integer, ignored)", env_name, val); \
+         } else {                                                                            \
+            dest = (int)v_;                                                                  \
+            LOG_INFO("Config override: %s=%d", env_name, dest);                              \
+         }                                                                                   \
+      }                                                                                      \
    } while (0)
 
 #define ENV_FLOAT(env_name, dest)                              \
@@ -226,6 +234,7 @@ void config_apply_env(dawn_config_t *config, secrets_config_t *secrets) {
    ENV_INT("DAWN_NETWORK_WORKERS", config->network.workers);
    ENV_INT("DAWN_NETWORK_SESSION_TIMEOUT_SEC", config->network.session_timeout_sec);
    ENV_INT("DAWN_NETWORK_LLM_TIMEOUT_MS", config->network.llm_timeout_ms);
+   ENV_INT("DAWN_NETWORK_SUMMARIZATION_TIMEOUT_MS", config->network.summarization_timeout_ms);
 
    /* [tui] */
    ENV_BOOL("DAWN_TUI_ENABLED", config->tui.enabled);
@@ -235,6 +244,9 @@ void config_apply_env(dawn_config_t *config, secrets_config_t *secrets) {
    ENV_BOOL("DAWN_DEBUG_ASR_RECORD", config->debug.asr_record);
    ENV_BOOL("DAWN_DEBUG_AEC_RECORD", config->debug.aec_record);
    ENV_STRING("DAWN_DEBUG_RECORD_PATH", config->debug.record_path);
+
+   /* [memory] */
+   ENV_INT("DAWN_MEMORY_EXTRACTION_TIMEOUT_MS", config->memory.extraction_timeout_ms);
 
    /* [paths] */
    ENV_STRING("DAWN_PATHS_MUSIC_DIR", config->paths.music_dir);
@@ -342,6 +354,7 @@ void config_dump(const dawn_config_t *config) {
    printf("  workers = %d\n", config->network.workers);
    printf("  session_timeout_sec = %d\n", config->network.session_timeout_sec);
    printf("  llm_timeout_ms = %d\n", config->network.llm_timeout_ms);
+   printf("  summarization_timeout_ms = %d\n", config->network.summarization_timeout_ms);
 
    printf("\n[tui]\n");
    printf("  enabled = %s\n", config->tui.enabled ? "true" : "false");
@@ -758,6 +771,11 @@ void config_dump_settings(const dawn_config_t *config,
                      detect_source_int(config->network.llm_timeout_ms,
                                        defaults.network.llm_timeout_ms,
                                        "DAWN_NETWORK_LLM_TIMEOUT_MS"));
+   PRINT_SETTING_INT("summarization_timeout_ms", config->network.summarization_timeout_ms,
+                     "DAWN_NETWORK_SUMMARIZATION_TIMEOUT_MS",
+                     detect_source_int(config->network.summarization_timeout_ms,
+                                       defaults.network.summarization_timeout_ms,
+                                       "DAWN_NETWORK_SUMMARIZATION_TIMEOUT_MS"));
 
    /* [tui] */
    printf("[tui]\n");
@@ -1162,6 +1180,8 @@ json_object *config_to_json(const dawn_config_t *config) {
                           json_object_new_int(config->network.session_timeout_sec));
    json_object_object_add(network, "llm_timeout_ms",
                           json_object_new_int(config->network.llm_timeout_ms));
+   json_object_object_add(network, "summarization_timeout_ms",
+                          json_object_new_int(config->network.summarization_timeout_ms));
    json_object_object_add(root, "network", network);
 
    /* [tui] */
@@ -1200,6 +1220,8 @@ json_object *config_to_json(const dawn_config_t *config) {
                           json_object_new_string(config->memory.extraction_provider));
    json_object_object_add(memory, "extraction_model",
                           json_object_new_string(config->memory.extraction_model));
+   json_object_object_add(memory, "extraction_timeout_ms",
+                          json_object_new_int(config->memory.extraction_timeout_ms));
    json_object_object_add(memory, "pruning_enabled",
                           json_object_new_boolean(config->memory.pruning_enabled));
    json_object_object_add(memory, "prune_superseded_days",
@@ -1682,6 +1704,7 @@ int config_write_toml(const dawn_config_t *config, const char *path) {
    fprintf(fp, "workers = %d\n", config->network.workers);
    fprintf(fp, "session_timeout_sec = %d\n", config->network.session_timeout_sec);
    fprintf(fp, "llm_timeout_ms = %d\n", config->network.llm_timeout_ms);
+   fprintf(fp, "summarization_timeout_ms = %d\n", config->network.summarization_timeout_ms);
 
    fprintf(fp, "\n[tui]\n");
    fprintf(fp, "enabled = %s\n", config->tui.enabled ? "true" : "false");
@@ -1709,6 +1732,7 @@ int config_write_toml(const dawn_config_t *config, const char *path) {
    fprintf(fp, "context_budget_tokens = %d\n", config->memory.context_budget_tokens);
    fprintf(fp, "extraction_provider = \"%s\"\n", config->memory.extraction_provider);
    fprintf(fp, "extraction_model = \"%s\"\n", config->memory.extraction_model);
+   fprintf(fp, "extraction_timeout_ms = %d\n", config->memory.extraction_timeout_ms);
    fprintf(fp, "pruning_enabled = %s\n", config->memory.pruning_enabled ? "true" : "false");
    fprintf(fp, "prune_superseded_days = %d\n", config->memory.prune_superseded_days);
    fprintf(fp, "prune_stale_days = %d\n", config->memory.prune_stale_days);

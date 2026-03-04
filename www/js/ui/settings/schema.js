@@ -601,6 +601,15 @@
                id: 'memory-extraction-model',
                advanced: true,
             },
+            extraction_timeout_ms: {
+               type: 'number',
+               label: 'Extraction Timeout (ms)',
+               min: 10000,
+               max: 600000,
+               step: 1000,
+               hint: 'LLM timeout for memory fact extraction (default 120s)',
+               advanced: true,
+            },
             pruning_enabled: {
                type: 'checkbox',
                label: 'Enable Pruning',

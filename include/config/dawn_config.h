@@ -317,9 +317,13 @@ typedef struct {
  * Network Configuration (shared settings for sessions, workers, LLM timeouts)
  * ============================================================================= */
 typedef struct {
-   int workers;             /* Concurrent processing threads */
-   int session_timeout_sec; /* Idle session expiry */
-   int llm_timeout_ms;      /* Per-request LLM timeout */
+   int workers;                  /* Concurrent processing threads */
+   int session_timeout_sec;      /* Idle session expiry */
+   int llm_timeout_ms;           /* Per-request LLM timeout */
+   int summarization_timeout_ms; /* LLM timeout for context summarization (default 180s)
+                                  * Not in WebUI schema — the "network" schema section maps to
+                                  * DAP settings, not network_config_t. Configurable via TOML,
+                                  * env var (DAWN_NETWORK_SUMMARIZATION_TIMEOUT_MS), or JSON API. */
 } network_config_t;
 
 /* =============================================================================
@@ -392,6 +396,7 @@ typedef struct {
    int context_budget_tokens;    /* Max tokens for memory context (~800) */
    char extraction_provider[16]; /* LLM provider for extraction */
    char extraction_model[64];    /* Model for extraction */
+   int extraction_timeout_ms;    /* LLM timeout for fact extraction (default 120s) */
 
    /* Pruning settings */
    bool pruning_enabled;             /* Enable automatic fact pruning */
