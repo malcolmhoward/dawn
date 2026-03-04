@@ -554,126 +554,87 @@ static int area_entry_compare(const void *a, const void *b) {
    return strcmp(ea->entity_id, eb->entity_id);
 }
 
+/* Jinja2 template that produces a JSON array of {entity_id, area} objects.
+ * Uses namespace() to accumulate results across nested loops, then to_json
+ * for safe serialization (handles entity IDs with special characters).
+ *
+ * Unescaped Jinja2 (what HA actually evaluates):
+ *
+ *   {% set ns = namespace(items=[]) %}
+ *   {% for a in areas() %}
+ *     {% set aname = area_name(a) %}
+ *     {% for e in area_entities(a) %}
+ *       {% set ns.items = ns.items + [{'entity_id': e, 'area': aname}] %}
+ *     {% endfor %}
+ *   {% endfor %}
+ *   {{ ns.items | to_json }}
+ */
+static const char HA_AREA_TEMPLATE[] =
+    "{\"template\": \"{% set ns = namespace(items=[]) %}"
+    "{% for a in areas() %}"
+    "{% set aname = area_name(a) %}"
+    "{% for e in area_entities(a) %}"
+    "{% set ns.items = ns.items + [{'entity_id': e, 'area': aname}] %}"
+    "{% endfor %}"
+    "{% endfor %}"
+    "{{ ns.items | to_json }}\"}";
+
 static void refresh_area_cache(void) {
    int64_t now = (int64_t)time(NULL);
    if (s_ha.area_cache.cached_at > 0 && (now - s_ha.area_cache.cached_at) < HA_AREA_CACHE_TTL_SEC) {
       return; /* Still valid */
    }
 
-   /* Fetch area registry */
-   curl_buffer_t area_response;
-   curl_buffer_init(&area_response);
+   /* The area/entity registries are WebSocket-only in HA — no REST endpoint.
+    * Use POST /api/template with Jinja2 to query areas() and area_entities()
+    * in a single call, returning entity→area mappings as JSON. */
+   curl_buffer_t response;
+   curl_buffer_init_with_max(&response, HA_MAX_RESPONSE_SIZE);
    long http_code = 0;
 
-   /* HA Core 2024.4+ exposes REST endpoints for area/entity registries.
-    * Older versions may return 404 — we fall back gracefully. */
-   ha_error_t err = do_api_request("GET", "/api/config/area_registry/list", NULL, &area_response,
+   ha_error_t err = do_api_request("POST", "/api/template", HA_AREA_TEMPLATE, &response,
                                    &http_code);
-   if (err != HA_OK || http_code == 404) {
-      curl_buffer_free(&area_response);
-      LOG_INFO("Home Assistant: Area registry not available (will continue without areas)");
-      s_ha.area_cache.cached_at = now; /* Don't retry immediately */
-      return;
-   }
-
-   /* Parse areas: [{area_id, name, ...}] */
-   json_object *areas_root = json_tokener_parse(area_response.data);
-   curl_buffer_free(&area_response);
-   if (!areas_root || !json_object_is_type(areas_root, json_type_array)) {
-      if (areas_root)
-         json_object_put(areas_root);
+   if (err != HA_OK) {
+      curl_buffer_free(&response);
+      LOG_INFO("Home Assistant: Area template query failed (will continue without areas)");
       s_ha.area_cache.cached_at = now;
       return;
    }
 
-   /* Build area_id → name lookup (temporary) */
-   typedef struct {
-      char id[64];
-      char name[64];
-   } area_lookup_t;
-
-   int area_count = json_object_array_length(areas_root);
-   if (area_count > HA_MAX_AREAS)
-      area_count = HA_MAX_AREAS;
-
-   area_lookup_t *area_lookup = calloc(area_count, sizeof(area_lookup_t));
-   if (!area_lookup) {
-      json_object_put(areas_root);
+   /* Parse response: [{entity_id, area}, ...] */
+   json_object *root = json_tokener_parse(response.data);
+   curl_buffer_free(&response);
+   if (!root || !json_object_is_type(root, json_type_array)) {
+      if (root)
+         json_object_put(root);
+      LOG_INFO("Home Assistant: Area template returned non-array (will continue without areas)");
       s_ha.area_cache.cached_at = now;
       return;
    }
 
-   for (int i = 0; i < area_count; i++) {
-      json_object *area = json_object_array_get_idx(areas_root, i);
-      json_object *id_obj, *name_obj;
-      if (json_object_object_get_ex(area, "area_id", &id_obj) &&
-          json_object_object_get_ex(area, "name", &name_obj)) {
-         strncpy(area_lookup[i].id, json_object_get_string(id_obj), sizeof(area_lookup[i].id) - 1);
-         strncpy(area_lookup[i].name, json_object_get_string(name_obj),
-                 sizeof(area_lookup[i].name) - 1);
-      }
-   }
-   json_object_put(areas_root);
-
-   /* Fetch entity registry for area assignments */
-   curl_buffer_t entity_reg_response;
-   curl_buffer_init_with_max(&entity_reg_response, HA_MAX_RESPONSE_SIZE);
-
-   err = do_api_request("GET", "/api/config/entity_registry/list", NULL, &entity_reg_response,
-                        &http_code);
-   if (err != HA_OK || http_code == 404) {
-      curl_buffer_free(&entity_reg_response);
-      free(area_lookup);
-      s_ha.area_cache.cached_at = now;
-      return;
-   }
-
-   json_object *entities_root = json_tokener_parse(entity_reg_response.data);
-   curl_buffer_free(&entity_reg_response);
-   if (!entities_root || !json_object_is_type(entities_root, json_type_array)) {
-      if (entities_root)
-         json_object_put(entities_root);
-      free(area_lookup);
-      s_ha.area_cache.cached_at = now;
-      return;
-   }
-
-   /* Build entity_id → area_name map */
    s_ha.area_cache.count = 0;
-   int entity_reg_count = json_object_array_length(entities_root);
-   for (int i = 0; i < entity_reg_count && s_ha.area_cache.count < HA_MAX_AREAS * 4; i++) {
-      json_object *ent = json_object_array_get_idx(entities_root, i);
-      json_object *eid_obj, *area_id_obj;
-      if (!json_object_object_get_ex(ent, "entity_id", &eid_obj))
-         continue;
-      if (!json_object_object_get_ex(ent, "area_id", &area_id_obj))
-         continue;
-      if (json_object_is_type(area_id_obj, json_type_null))
+   int n = json_object_array_length(root);
+   for (int i = 0; i < n && s_ha.area_cache.count < HA_MAX_AREAS * 4; i++) {
+      json_object *item = json_object_array_get_idx(root, i);
+      json_object *eid_obj, *area_obj;
+      if (!json_object_object_get_ex(item, "entity_id", &eid_obj) ||
+          !json_object_object_get_ex(item, "area", &area_obj))
          continue;
 
-      const char *area_id = json_object_get_string(area_id_obj);
-      if (!area_id || !area_id[0])
-         continue;
-
-      /* Find area name */
-      const char *area_name = NULL;
-      for (int j = 0; j < area_count; j++) {
-         if (strcmp(area_lookup[j].id, area_id) == 0) {
-            area_name = area_lookup[j].name;
-            break;
-         }
-      }
-      if (!area_name)
+      const char *eid = json_object_get_string(eid_obj);
+      const char *area = json_object_get_string(area_obj);
+      if (!eid || !eid[0] || !area || !area[0])
          continue;
 
       ha_area_entry_t *entry = &s_ha.area_cache.entries[s_ha.area_cache.count];
-      strncpy(entry->entity_id, json_object_get_string(eid_obj), sizeof(entry->entity_id) - 1);
-      strncpy(entry->area_name, area_name, sizeof(entry->area_name) - 1);
+      strncpy(entry->entity_id, eid, sizeof(entry->entity_id) - 1);
+      entry->entity_id[sizeof(entry->entity_id) - 1] = '\0';
+      strncpy(entry->area_name, area, sizeof(entry->area_name) - 1);
+      entry->area_name[sizeof(entry->area_name) - 1] = '\0';
       s_ha.area_cache.count++;
    }
 
-   json_object_put(entities_root);
-   free(area_lookup);
+   json_object_put(root);
 
    /* Sort area cache by entity_id for O(log n) lookup via bsearch */
    if (s_ha.area_cache.count > 1) {
@@ -682,7 +643,7 @@ static void refresh_area_cache(void) {
    }
 
    s_ha.area_cache.cached_at = now;
-   LOG_INFO("Home Assistant: Cached %d area assignments", s_ha.area_cache.count);
+   LOG_INFO("Home Assistant: Cached %d entity-area assignments", s_ha.area_cache.count);
 }
 
 /* Look up area name for entity via binary search */
