@@ -45,9 +45,14 @@
 #include "llm/llm_interface.h"
 #include "llm/llm_local_provider.h"
 #include "logging.h"
+#include "tools/tool_registry.h"
 #include "webui/webui_internal.h"
 #include "webui/webui_music.h"
 #include "webui/webui_server.h" /* For WEBUI_MAX_THUMBNAIL_SIZE */
+#ifdef DAWN_ENABLE_HOMEASSISTANT_TOOL
+#include "tools/homeassistant_service.h"
+#include "tools/homeassistant_tool.h"
+#endif
 
 /* =============================================================================
  * Module State
@@ -880,6 +885,39 @@ void handle_set_config(ws_connection_t *conn, struct json_object *payload) {
          LOG_INFO("WebUI: Local LLM endpoint changed, invalidated provider and models cache");
       }
 
+#ifdef DAWN_ENABLE_HOMEASSISTANT_TOOL
+      /* Apply Home Assistant tool config changes and reinit service */
+      {
+         struct json_object *ha_section = NULL;
+         if (json_object_object_get_ex(payload, "home_assistant", &ha_section)) {
+            struct json_object *val;
+            const char *new_url = NULL;
+            int new_enabled = -1;
+
+            if (json_object_object_get_ex(ha_section, "url", &val)) {
+               new_url = json_object_get_string(val);
+            }
+            if (json_object_object_get_ex(ha_section, "enabled", &val)) {
+               new_enabled = json_object_get_boolean(val) ? 1 : 0;
+            }
+
+            if (new_url || new_enabled >= 0) {
+               homeassistant_tool_update_config(new_url, new_enabled);
+
+               /* Re-save config to persist tool-owned changes.
+                * config_write_toml + tool_registry_write_configs handles it. */
+               pthread_rwlock_wrlock(&s_config_rwlock);
+               config_write_toml((const dawn_config_t *)config_get(), config_path);
+               pthread_rwlock_unlock(&s_config_rwlock);
+
+               /* Send updated HA status to requesting client */
+               handle_ha_status(conn);
+               LOG_INFO("WebUI: Home Assistant config updated");
+            }
+         }
+      }
+#endif
+
       /* If tool calling mode changed, rebuild system prompt for current session */
       if (tools_mode_changed) {
          invalidate_system_instructions();
@@ -984,6 +1022,17 @@ void handle_set_secrets(ws_connection_t *conn, struct json_object *payload) {
          mutable_secrets->embedding_api_key[sizeof(mutable_secrets->embedding_api_key) - 1] = '\0';
       }
    }
+#ifdef DAWN_ENABLE_HOMEASSISTANT_TOOL
+   if (json_object_object_get_ex(payload, "home_assistant_token", &val)) {
+      const char *str = json_object_get_string(val);
+      if (str) {
+         strncpy(mutable_secrets->home_assistant_token, str,
+                 sizeof(mutable_secrets->home_assistant_token) - 1);
+         mutable_secrets->home_assistant_token[sizeof(mutable_secrets->home_assistant_token) - 1] =
+             '\0';
+      }
+   }
+#endif
 
    /* Write to file */
    int result = secrets_write_toml(mutable_secrets, secrets_path);

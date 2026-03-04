@@ -165,6 +165,17 @@ typedef struct {
 typedef void (*tool_config_parser_fn)(toml_table_t *table, void *config);
 
 /**
+ * @brief Tool config writer function type
+ *
+ * Called during config save to let tool write its TOML section.
+ * The section header (e.g. "[home_assistant]\n") is written by the caller.
+ *
+ * @param fp     File pointer (FILE*) to write TOML key-value pairs to (void* to avoid stdio.h)
+ * @param config Pointer to tool's config struct
+ */
+typedef void (*tool_config_writer_fn)(void *fp, const void *config);
+
+/**
  * @brief Tool initialization function type
  *
  * Called after config parsing. Tool should initialize resources.
@@ -236,6 +247,7 @@ typedef struct {
    void *config;                        /**< Pointer to tool's config struct */
    size_t config_size;                  /**< sizeof() the config struct */
    tool_config_parser_fn config_parser; /**< Parser for TOML section */
+   tool_config_writer_fn config_writer; /**< Writer for TOML section (optional) */
    const char *config_section;          /**< TOML section name */
 
    /* Secret Requirements (security - NULL-terminated array or NULL) */
@@ -415,6 +427,17 @@ const treg_param_t *tool_registry_get_effective_param(const char *tool_name, int
  * @return 0 on success, non-zero on error
  */
 int tool_registry_parse_configs(const char *config_path);
+
+/**
+ * @brief Write tool-owned config sections to an open TOML file
+ *
+ * Iterates all registered tools that have config_writer and config_section,
+ * writing their sections at the current file position. Called by config_write_toml()
+ * to preserve tool config when rewriting the main config file.
+ *
+ * @param fp Open file pointer (FILE*, passed as void* to avoid stdio.h in header)
+ */
+void tool_registry_write_configs(void *fp);
 
 /**
  * @brief Get a secret value by name

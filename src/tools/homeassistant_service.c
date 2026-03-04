@@ -1,0 +1,1129 @@
+/*
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ * By contributing to this project, you agree to license your contributions
+ * under the GPLv3 (or any later version) or any future licenses chosen by
+ * the project author(s). Contributions include any modifications,
+ * enhancements, or additions to the project. These contributions become
+ * part of the project and are adopted by the project author(s).
+ *
+ * Home Assistant Service Implementation
+ *
+ * REST API client for Home Assistant with entity caching, area enrichment,
+ * and domain-aware fuzzy matching. Uses per-request CURL handles for
+ * thread safety.
+ */
+
+#include "tools/homeassistant_service.h"
+
+#include <ctype.h>
+#include <curl/curl.h>
+#include <json-c/json.h>
+#include <pthread.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+#include "logging.h"
+#include "tools/curl_buffer.h"
+
+/* =============================================================================
+ * Constants
+ * ============================================================================= */
+#define HA_MAX_RESPONSE_SIZE (2 * 1024 * 1024) /* 2MB for /api/states */
+#define HA_SMALL_RESPONSE_SIZE (128 * 1024)    /* 128KB for other endpoints */
+#define HA_API_RETRY_BASE_MS 500
+
+/* =============================================================================
+ * Domain Lookup Table (sorted for bsearch)
+ * ============================================================================= */
+typedef struct {
+   const char *name;
+   ha_domain_t domain;
+} domain_map_entry_t;
+
+static const domain_map_entry_t s_domain_map[] = {
+   { "alarm_control_panel", HA_DOMAIN_ALARM },
+   { "automation", HA_DOMAIN_AUTOMATION },
+   { "binary_sensor", HA_DOMAIN_BINARY_SENSOR },
+   { "climate", HA_DOMAIN_CLIMATE },
+   { "cover", HA_DOMAIN_COVER },
+   { "fan", HA_DOMAIN_FAN },
+   { "input_boolean", HA_DOMAIN_INPUT_BOOLEAN },
+   { "light", HA_DOMAIN_LIGHT },
+   { "lock", HA_DOMAIN_LOCK },
+   { "media_player", HA_DOMAIN_MEDIA_PLAYER },
+   { "scene", HA_DOMAIN_SCENE },
+   { "script", HA_DOMAIN_SCRIPT },
+   { "sensor", HA_DOMAIN_SENSOR },
+   { "switch", HA_DOMAIN_SWITCH },
+   { "vacuum", HA_DOMAIN_VACUUM },
+};
+static const int s_domain_map_count = (int)(sizeof(s_domain_map) / sizeof(s_domain_map[0]));
+
+/* =============================================================================
+ * Area Cache
+ * ============================================================================= */
+#define HA_MAX_AREAS 128
+
+typedef struct {
+   char entity_id[HA_MAX_ENTITY_ID];
+   char area_name[64];
+} ha_area_entry_t;
+
+typedef struct {
+   ha_area_entry_t entries[HA_MAX_AREAS * 4]; /* Generous: many entities per area */
+   int count;
+   int64_t cached_at;
+} ha_area_cache_t;
+
+/* =============================================================================
+ * Internal State
+ * ============================================================================= */
+static struct {
+   bool initialized;
+   bool connected;
+   char base_url[512];
+   char token[512];
+   ha_entity_list_t entity_cache;
+   ha_area_cache_t area_cache;
+   pthread_rwlock_t rwlock;
+   char version[32];
+} s_ha = { .rwlock = PTHREAD_RWLOCK_INITIALIZER };
+
+/* =============================================================================
+ * Secure Memory Operations
+ * ============================================================================= */
+static void secure_zero(void *ptr, size_t len) {
+#if defined(__linux__) || defined(__unix__)
+   explicit_bzero(ptr, len);
+#else
+   volatile unsigned char *p = ptr;
+   while (len--) {
+      *p++ = 0;
+   }
+#endif
+}
+
+/* =============================================================================
+ * String Helpers
+ * ============================================================================= */
+static void str_tolower(char *dst, const char *src, size_t max_len) {
+   size_t i;
+   for (i = 0; i < max_len - 1 && src[i]; i++) {
+      dst[i] = tolower((unsigned char)src[i]);
+   }
+   dst[i] = '\0';
+}
+
+/* =============================================================================
+ * Domain Lookup
+ * ============================================================================= */
+static int domain_compare(const void *a, const void *b) {
+   const char *key = (const char *)a;
+   const domain_map_entry_t *entry = (const domain_map_entry_t *)b;
+   return strcmp(key, entry->name);
+}
+
+ha_domain_t homeassistant_parse_domain(const char *entity_id) {
+   if (!entity_id)
+      return HA_DOMAIN_UNKNOWN;
+
+   const char *dot = strchr(entity_id, '.');
+   if (!dot || dot == entity_id)
+      return HA_DOMAIN_UNKNOWN;
+
+   size_t domain_len = (size_t)(dot - entity_id);
+   char domain_str[32];
+   if (domain_len >= sizeof(domain_str))
+      return HA_DOMAIN_UNKNOWN;
+
+   memcpy(domain_str, entity_id, domain_len);
+   domain_str[domain_len] = '\0';
+
+   domain_map_entry_t *found = bsearch(domain_str, s_domain_map, s_domain_map_count,
+                                       sizeof(domain_map_entry_t), domain_compare);
+   return found ? found->domain : HA_DOMAIN_UNKNOWN;
+}
+
+const char *homeassistant_domain_str(ha_domain_t domain) {
+   switch (domain) {
+      case HA_DOMAIN_LIGHT:
+         return "light";
+      case HA_DOMAIN_SWITCH:
+         return "switch";
+      case HA_DOMAIN_CLIMATE:
+         return "climate";
+      case HA_DOMAIN_LOCK:
+         return "lock";
+      case HA_DOMAIN_COVER:
+         return "cover";
+      case HA_DOMAIN_MEDIA_PLAYER:
+         return "media_player";
+      case HA_DOMAIN_FAN:
+         return "fan";
+      case HA_DOMAIN_SCENE:
+         return "scene";
+      case HA_DOMAIN_SCRIPT:
+         return "script";
+      case HA_DOMAIN_AUTOMATION:
+         return "automation";
+      case HA_DOMAIN_SENSOR:
+         return "sensor";
+      case HA_DOMAIN_BINARY_SENSOR:
+         return "binary_sensor";
+      case HA_DOMAIN_INPUT_BOOLEAN:
+         return "input_boolean";
+      case HA_DOMAIN_VACUUM:
+         return "vacuum";
+      case HA_DOMAIN_ALARM:
+         return "alarm_control_panel";
+      default:
+         return "unknown";
+   }
+}
+
+static const char *const s_error_strings[] = {
+   [HA_OK] = "OK",
+   [HA_ERR_NOT_CONFIGURED] = "Home Assistant not configured",
+   [HA_ERR_NOT_CONNECTED] = "Home Assistant not connected",
+   [HA_ERR_NETWORK] = "Network error",
+   [HA_ERR_API] = "API error",
+   [HA_ERR_ENTITY_NOT_FOUND] = "Entity not found",
+   [HA_ERR_INVALID_PARAM] = "Invalid parameter",
+   [HA_ERR_RATE_LIMITED] = "Rate limited",
+   [HA_ERR_MEMORY] = "Memory allocation failed",
+};
+
+const char *homeassistant_error_str(ha_error_t err) {
+   if (err >= 0 && (size_t)err < sizeof(s_error_strings) / sizeof(s_error_strings[0]) &&
+       s_error_strings[err]) {
+      return s_error_strings[err];
+   }
+   return "Unknown error";
+}
+
+/* =============================================================================
+ * Entity ID Validation (prevents path traversal in service calls)
+ * ============================================================================= */
+static bool is_valid_entity_id(const char *id) {
+   if (!id)
+      return false;
+   size_t len = strlen(id);
+   if (len == 0 || len >= HA_MAX_ENTITY_ID)
+      return false;
+
+   bool has_dot = false;
+   for (size_t i = 0; i < len; i++) {
+      char c = id[i];
+      if (c == '.') {
+         has_dot = true;
+      } else if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) {
+         return false;
+      }
+   }
+   return has_dot;
+}
+
+/* =============================================================================
+ * Service name validation (prevents path traversal)
+ * ============================================================================= */
+static bool is_valid_service_name(const char *name) {
+   if (!name)
+      return false;
+   size_t len = strlen(name);
+   if (len == 0 || len > 64)
+      return false;
+   for (size_t i = 0; i < len; i++) {
+      char c = name[i];
+      if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_'))
+         return false;
+   }
+   return true;
+}
+
+/* =============================================================================
+ * CURL Request Helper (per-request handle, security hardened)
+ * ============================================================================= */
+static ha_error_t do_api_request(const char *method,
+                                 const char *path,
+                                 const char *post_data,
+                                 curl_buffer_t *response,
+                                 long *http_code_out) {
+   /* Copy base_url and token under read lock to prevent races with cleanup */
+   char local_base_url[512];
+   char local_token[512];
+   pthread_rwlock_rdlock(&s_ha.rwlock);
+   if (!s_ha.initialized) {
+      pthread_rwlock_unlock(&s_ha.rwlock);
+      return HA_ERR_NOT_CONFIGURED;
+   }
+   strncpy(local_base_url, s_ha.base_url, sizeof(local_base_url) - 1);
+   local_base_url[sizeof(local_base_url) - 1] = '\0';
+   strncpy(local_token, s_ha.token, sizeof(local_token) - 1);
+   local_token[sizeof(local_token) - 1] = '\0';
+   pthread_rwlock_unlock(&s_ha.rwlock);
+
+   CURL *curl = curl_easy_init();
+   if (!curl) {
+      secure_zero(local_token, sizeof(local_token));
+      return HA_ERR_MEMORY;
+   }
+
+   /* Build URL */
+   char url[1024];
+   snprintf(url, sizeof(url), "%s%s", local_base_url, path);
+
+   /* Build auth header — zero after use */
+   char auth_header[600];
+   snprintf(auth_header, sizeof(auth_header), "Authorization: Bearer %s", local_token);
+   secure_zero(local_token, sizeof(local_token));
+
+   struct curl_slist *headers = NULL;
+   headers = curl_slist_append(headers, auth_header);
+   headers = curl_slist_append(headers, "Content-Type: application/json");
+
+   curl_easy_setopt(curl, CURLOPT_URL, url);
+   curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_buffer_write_callback);
+   curl_easy_setopt(curl, CURLOPT_WRITEDATA, response);
+   curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)HA_API_TIMEOUT_SEC);
+   curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
+   curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L); /* No redirects (SSRF prevention) */
+   curl_easy_setopt(curl, CURLOPT_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
+   curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+
+   if (post_data) {
+      curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_data);
+      if (strcmp(method, "POST") == 0) {
+         curl_easy_setopt(curl, CURLOPT_POST, 1L);
+      }
+   }
+
+   ha_error_t result = HA_OK;
+   CURLcode res = curl_easy_perform(curl);
+
+   /* Zero auth header immediately after use */
+   secure_zero(auth_header, sizeof(auth_header));
+
+   if (res != CURLE_OK) {
+      LOG_ERROR("Home Assistant: CURL error: %s (url: %s)", curl_easy_strerror(res), path);
+      result = HA_ERR_NETWORK;
+   } else {
+      long http_code = 0;
+      curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+      if (http_code_out)
+         *http_code_out = http_code;
+
+      if (http_code == 401) {
+         LOG_ERROR("Home Assistant: Authentication failed (401)");
+         result = HA_ERR_NOT_CONNECTED;
+         s_ha.connected = false;
+      } else if (http_code == 429) {
+         LOG_WARNING("Home Assistant: Rate limited (429)");
+         result = HA_ERR_RATE_LIMITED;
+      } else if (http_code >= 400) {
+         LOG_ERROR("Home Assistant: API error %ld for %s", http_code, path);
+         result = HA_ERR_API;
+      }
+   }
+
+   curl_slist_free_all(headers);
+   curl_easy_cleanup(curl);
+   return result;
+}
+
+/* Retry wrapper */
+static ha_error_t do_api_request_with_retry(const char *method,
+                                            const char *path,
+                                            const char *post_data,
+                                            curl_buffer_t *response,
+                                            long *http_code_out) {
+   ha_error_t err;
+   for (int attempt = 0; attempt < HA_API_MAX_RETRIES; attempt++) {
+      curl_buffer_reset(response);
+      err = do_api_request(method, path, post_data, response, http_code_out);
+
+      if (err == HA_OK || err == HA_ERR_NOT_CONFIGURED || err == HA_ERR_NOT_CONNECTED ||
+          err == HA_ERR_INVALID_PARAM) {
+         return err;
+      }
+
+      /* Exponential backoff before retry */
+      if (attempt < HA_API_MAX_RETRIES - 1) {
+         int delay_ms = HA_API_RETRY_BASE_MS * (1 << attempt);
+         struct timespec ts = { .tv_sec = delay_ms / 1000,
+                                .tv_nsec = (delay_ms % 1000) * 1000000L };
+         nanosleep(&ts, NULL);
+      }
+   }
+   return err;
+}
+
+/* =============================================================================
+ * Service Call Helper (validates inputs, builds JSON)
+ * ============================================================================= */
+static ha_error_t call_service_json(const char *domain,
+                                    const char *service,
+                                    const char *entity_id,
+                                    json_object *data) {
+   if (!is_valid_service_name(domain) || !is_valid_service_name(service)) {
+      LOG_ERROR("Home Assistant: Invalid domain/service name");
+      return HA_ERR_INVALID_PARAM;
+   }
+   if (entity_id && !is_valid_entity_id(entity_id)) {
+      LOG_ERROR("Home Assistant: Invalid entity_id format");
+      return HA_ERR_INVALID_PARAM;
+   }
+
+   /* Build service data JSON.
+    * Takes ownership of 'data' if non-NULL (will be freed by this function).
+    * If 'data' is NULL, an empty object is created internally. */
+   json_object *body = data ? data : json_object_new_object();
+   if (!body) {
+      return HA_ERR_MEMORY;
+   }
+
+   if (entity_id) {
+      json_object_object_add(body, "entity_id", json_object_new_string(entity_id));
+   }
+
+   const char *json_str = json_object_to_json_string(body);
+
+   char path[256];
+   snprintf(path, sizeof(path), "/api/services/%s/%s", domain, service);
+
+   curl_buffer_t response;
+   curl_buffer_init(&response);
+
+   long http_code = 0;
+   ha_error_t err = do_api_request_with_retry("POST", path, json_str, &response, &http_code);
+
+   curl_buffer_free(&response);
+   json_object_put(body);
+
+   if (err == HA_OK) {
+      LOG_INFO("Home Assistant: Called %s/%s on %s", domain, service,
+               entity_id ? entity_id : "(no entity)");
+   }
+
+   return err;
+}
+
+/* =============================================================================
+ * Lifecycle Functions
+ * ============================================================================= */
+ha_error_t homeassistant_init(const char *url, const char *token) {
+   if (!url || !token || !url[0] || !token[0]) {
+      return HA_ERR_INVALID_PARAM;
+   }
+
+   /* Validate URL scheme */
+   if (strncmp(url, "http://", 7) != 0 && strncmp(url, "https://", 8) != 0) {
+      LOG_ERROR("Home Assistant: URL must start with http:// or https://");
+      return HA_ERR_INVALID_PARAM;
+   }
+
+   pthread_rwlock_wrlock(&s_ha.rwlock);
+
+   strncpy(s_ha.base_url, url, sizeof(s_ha.base_url) - 1);
+   s_ha.base_url[sizeof(s_ha.base_url) - 1] = '\0';
+
+   /* Strip trailing slash */
+   size_t url_len = strlen(s_ha.base_url);
+   if (url_len > 0 && s_ha.base_url[url_len - 1] == '/') {
+      s_ha.base_url[url_len - 1] = '\0';
+   }
+
+   strncpy(s_ha.token, token, sizeof(s_ha.token) - 1);
+   s_ha.token[sizeof(s_ha.token) - 1] = '\0';
+
+   s_ha.initialized = true;
+   s_ha.connected = false;
+   s_ha.entity_cache.count = 0;
+   s_ha.entity_cache.cached_at = 0;
+   s_ha.area_cache.count = 0;
+   s_ha.area_cache.cached_at = 0;
+   s_ha.version[0] = '\0';
+
+   pthread_rwlock_unlock(&s_ha.rwlock);
+
+   /* Test connection */
+   ha_error_t err = homeassistant_test_connection();
+   if (err == HA_OK) {
+      LOG_INFO("Home Assistant: Initialized successfully (%s)", s_ha.base_url);
+   } else {
+      LOG_WARNING("Home Assistant: Init succeeded but connection test failed: %s",
+                  homeassistant_error_str(err));
+   }
+
+   return HA_OK; /* Init succeeded even if connection test failed */
+}
+
+void homeassistant_cleanup(void) {
+   pthread_rwlock_wrlock(&s_ha.rwlock);
+   s_ha.initialized = false;
+   s_ha.connected = false;
+   secure_zero(s_ha.token, sizeof(s_ha.token));
+   s_ha.entity_cache.count = 0;
+   s_ha.area_cache.count = 0;
+   pthread_rwlock_unlock(&s_ha.rwlock);
+   LOG_INFO("Home Assistant: Cleaned up");
+}
+
+bool homeassistant_is_configured(void) {
+   return s_ha.initialized;
+}
+
+bool homeassistant_is_connected(void) {
+   return s_ha.initialized && s_ha.connected;
+}
+
+ha_error_t homeassistant_test_connection(void) {
+   if (!s_ha.initialized)
+      return HA_ERR_NOT_CONFIGURED;
+
+   curl_buffer_t response;
+   curl_buffer_init(&response);
+
+   long http_code = 0;
+   ha_error_t err = do_api_request("GET", "/api/", NULL, &response, &http_code);
+
+   if (err == HA_OK && response.data) {
+      json_object *root = json_tokener_parse(response.data);
+      if (root) {
+         json_object *msg_obj;
+         if (json_object_object_get_ex(root, "message", &msg_obj)) {
+            const char *msg = json_object_get_string(msg_obj);
+            if (msg && strstr(msg, "API running")) {
+               s_ha.connected = true;
+            }
+         }
+         /* Try to extract version */
+         json_object *ver_obj;
+         if (json_object_object_get_ex(root, "version", &ver_obj)) {
+            const char *ver = json_object_get_string(ver_obj);
+            if (ver) {
+               strncpy(s_ha.version, ver, sizeof(s_ha.version) - 1);
+               s_ha.version[sizeof(s_ha.version) - 1] = '\0';
+            }
+         }
+         json_object_put(root);
+      }
+   }
+
+   curl_buffer_free(&response);
+   return s_ha.connected ? HA_OK : (err == HA_OK ? HA_ERR_API : err);
+}
+
+ha_error_t homeassistant_get_status(ha_status_t *status) {
+   if (!status)
+      return HA_ERR_INVALID_PARAM;
+
+   status->configured = s_ha.initialized;
+   status->connected = s_ha.connected;
+   status->entity_count = s_ha.entity_cache.count;
+   strncpy(status->version, s_ha.version, sizeof(status->version) - 1);
+   status->version[sizeof(status->version) - 1] = '\0';
+   strncpy(status->url, s_ha.base_url, sizeof(status->url) - 1);
+   status->url[sizeof(status->url) - 1] = '\0';
+
+   return HA_OK;
+}
+
+/* =============================================================================
+ * Area Registry Enrichment
+ * ============================================================================= */
+
+/* Comparator for area cache entries (sorted by entity_id) */
+static int area_entry_compare(const void *a, const void *b) {
+   const ha_area_entry_t *ea = (const ha_area_entry_t *)a;
+   const ha_area_entry_t *eb = (const ha_area_entry_t *)b;
+   return strcmp(ea->entity_id, eb->entity_id);
+}
+
+static void refresh_area_cache(void) {
+   int64_t now = (int64_t)time(NULL);
+   if (s_ha.area_cache.cached_at > 0 && (now - s_ha.area_cache.cached_at) < HA_AREA_CACHE_TTL_SEC) {
+      return; /* Still valid */
+   }
+
+   /* Fetch area registry */
+   curl_buffer_t area_response;
+   curl_buffer_init(&area_response);
+   long http_code = 0;
+
+   /* HA Core 2024.4+ exposes REST endpoints for area/entity registries.
+    * Older versions may return 404 — we fall back gracefully. */
+   ha_error_t err = do_api_request("GET", "/api/config/area_registry/list", NULL, &area_response,
+                                   &http_code);
+   if (err != HA_OK || http_code == 404) {
+      curl_buffer_free(&area_response);
+      LOG_INFO("Home Assistant: Area registry not available (will continue without areas)");
+      s_ha.area_cache.cached_at = now; /* Don't retry immediately */
+      return;
+   }
+
+   /* Parse areas: [{area_id, name, ...}] */
+   json_object *areas_root = json_tokener_parse(area_response.data);
+   curl_buffer_free(&area_response);
+   if (!areas_root || !json_object_is_type(areas_root, json_type_array)) {
+      if (areas_root)
+         json_object_put(areas_root);
+      s_ha.area_cache.cached_at = now;
+      return;
+   }
+
+   /* Build area_id → name lookup (temporary) */
+   typedef struct {
+      char id[64];
+      char name[64];
+   } area_lookup_t;
+
+   int area_count = json_object_array_length(areas_root);
+   if (area_count > HA_MAX_AREAS)
+      area_count = HA_MAX_AREAS;
+
+   area_lookup_t *area_lookup = calloc(area_count, sizeof(area_lookup_t));
+   if (!area_lookup) {
+      json_object_put(areas_root);
+      s_ha.area_cache.cached_at = now;
+      return;
+   }
+
+   for (int i = 0; i < area_count; i++) {
+      json_object *area = json_object_array_get_idx(areas_root, i);
+      json_object *id_obj, *name_obj;
+      if (json_object_object_get_ex(area, "area_id", &id_obj) &&
+          json_object_object_get_ex(area, "name", &name_obj)) {
+         strncpy(area_lookup[i].id, json_object_get_string(id_obj), sizeof(area_lookup[i].id) - 1);
+         strncpy(area_lookup[i].name, json_object_get_string(name_obj),
+                 sizeof(area_lookup[i].name) - 1);
+      }
+   }
+   json_object_put(areas_root);
+
+   /* Fetch entity registry for area assignments */
+   curl_buffer_t entity_reg_response;
+   curl_buffer_init_with_max(&entity_reg_response, HA_MAX_RESPONSE_SIZE);
+
+   err = do_api_request("GET", "/api/config/entity_registry/list", NULL, &entity_reg_response,
+                        &http_code);
+   if (err != HA_OK || http_code == 404) {
+      curl_buffer_free(&entity_reg_response);
+      free(area_lookup);
+      s_ha.area_cache.cached_at = now;
+      return;
+   }
+
+   json_object *entities_root = json_tokener_parse(entity_reg_response.data);
+   curl_buffer_free(&entity_reg_response);
+   if (!entities_root || !json_object_is_type(entities_root, json_type_array)) {
+      if (entities_root)
+         json_object_put(entities_root);
+      free(area_lookup);
+      s_ha.area_cache.cached_at = now;
+      return;
+   }
+
+   /* Build entity_id → area_name map */
+   s_ha.area_cache.count = 0;
+   int entity_reg_count = json_object_array_length(entities_root);
+   for (int i = 0; i < entity_reg_count && s_ha.area_cache.count < HA_MAX_AREAS * 4; i++) {
+      json_object *ent = json_object_array_get_idx(entities_root, i);
+      json_object *eid_obj, *area_id_obj;
+      if (!json_object_object_get_ex(ent, "entity_id", &eid_obj))
+         continue;
+      if (!json_object_object_get_ex(ent, "area_id", &area_id_obj))
+         continue;
+      if (json_object_is_type(area_id_obj, json_type_null))
+         continue;
+
+      const char *area_id = json_object_get_string(area_id_obj);
+      if (!area_id || !area_id[0])
+         continue;
+
+      /* Find area name */
+      const char *area_name = NULL;
+      for (int j = 0; j < area_count; j++) {
+         if (strcmp(area_lookup[j].id, area_id) == 0) {
+            area_name = area_lookup[j].name;
+            break;
+         }
+      }
+      if (!area_name)
+         continue;
+
+      ha_area_entry_t *entry = &s_ha.area_cache.entries[s_ha.area_cache.count];
+      strncpy(entry->entity_id, json_object_get_string(eid_obj), sizeof(entry->entity_id) - 1);
+      strncpy(entry->area_name, area_name, sizeof(entry->area_name) - 1);
+      s_ha.area_cache.count++;
+   }
+
+   json_object_put(entities_root);
+   free(area_lookup);
+
+   /* Sort area cache by entity_id for O(log n) lookup via bsearch */
+   if (s_ha.area_cache.count > 1) {
+      qsort(s_ha.area_cache.entries, s_ha.area_cache.count, sizeof(ha_area_entry_t),
+            area_entry_compare);
+   }
+
+   s_ha.area_cache.cached_at = now;
+   LOG_INFO("Home Assistant: Cached %d area assignments", s_ha.area_cache.count);
+}
+
+/* Look up area name for entity via binary search */
+static const char *find_area_for_entity(const char *entity_id) {
+   if (s_ha.area_cache.count == 0)
+      return NULL;
+
+   ha_area_entry_t key;
+   strncpy(key.entity_id, entity_id, sizeof(key.entity_id) - 1);
+   key.entity_id[sizeof(key.entity_id) - 1] = '\0';
+
+   ha_area_entry_t *found = bsearch(&key, s_ha.area_cache.entries, s_ha.area_cache.count,
+                                    sizeof(ha_area_entry_t), area_entry_compare);
+   return found ? found->area_name : NULL;
+}
+
+/* =============================================================================
+ * Entity Discovery
+ * ============================================================================= */
+static ha_error_t fetch_entities(void) {
+   curl_buffer_t response;
+   curl_buffer_init_with_max(&response, HA_MAX_RESPONSE_SIZE);
+
+   long http_code = 0;
+   ha_error_t err = do_api_request_with_retry("GET", "/api/states", NULL, &response, &http_code);
+   if (err != HA_OK) {
+      curl_buffer_free(&response);
+      return err;
+   }
+
+   json_object *root = json_tokener_parse(response.data);
+   curl_buffer_free(&response);
+   if (!root || !json_object_is_type(root, json_type_array)) {
+      if (root)
+         json_object_put(root);
+      return HA_ERR_API;
+   }
+
+   /* Refresh area cache if needed */
+   refresh_area_cache();
+
+   pthread_rwlock_wrlock(&s_ha.rwlock);
+   s_ha.entity_cache.count = 0;
+
+   int total = json_object_array_length(root);
+   for (int i = 0; i < total && s_ha.entity_cache.count < HA_MAX_ENTITIES; i++) {
+      json_object *entity_obj = json_object_array_get_idx(root, i);
+
+      json_object *eid_obj;
+      if (!json_object_object_get_ex(entity_obj, "entity_id", &eid_obj))
+         continue;
+      const char *eid = json_object_get_string(eid_obj);
+      if (!eid)
+         continue;
+
+      /* Extract domain and filter */
+      const char *dot = strchr(eid, '.');
+      if (!dot)
+         continue;
+      size_t domain_len = (size_t)(dot - eid);
+      char domain_str[32];
+      if (domain_len >= sizeof(domain_str))
+         continue;
+      memcpy(domain_str, eid, domain_len);
+      domain_str[domain_len] = '\0';
+
+      /* Filter: only keep known domains (bsearch on sorted list) */
+      if (!bsearch(domain_str, s_domain_map, s_domain_map_count, sizeof(domain_map_entry_t),
+                   domain_compare)) {
+         continue;
+      }
+
+      ha_entity_t *ent = &s_ha.entity_cache.entities[s_ha.entity_cache.count];
+      memset(ent, 0, sizeof(*ent));
+
+      strncpy(ent->entity_id, eid, sizeof(ent->entity_id) - 1);
+      strncpy(ent->domain_str, domain_str, sizeof(ent->domain_str) - 1);
+      ent->domain = homeassistant_parse_domain(eid);
+
+      /* State */
+      json_object *state_obj;
+      if (json_object_object_get_ex(entity_obj, "state", &state_obj)) {
+         const char *state = json_object_get_string(state_obj);
+         if (state)
+            strncpy(ent->state, state, sizeof(ent->state) - 1);
+      }
+
+      /* Attributes */
+      json_object *attrs;
+      if (json_object_object_get_ex(entity_obj, "attributes", &attrs)) {
+         json_object *fname_obj;
+         if (json_object_object_get_ex(attrs, "friendly_name", &fname_obj)) {
+            const char *fname = json_object_get_string(fname_obj);
+            if (fname) {
+               strncpy(ent->friendly_name, fname, sizeof(ent->friendly_name) - 1);
+               str_tolower(ent->friendly_name_lower, fname, sizeof(ent->friendly_name_lower));
+            }
+         }
+         if (!ent->friendly_name[0]) {
+            /* Use entity_id after dot as fallback */
+            strncpy(ent->friendly_name, dot + 1, sizeof(ent->friendly_name) - 1);
+            str_tolower(ent->friendly_name_lower, dot + 1, sizeof(ent->friendly_name_lower));
+         }
+
+         /* Domain-specific attributes */
+         json_object *val;
+         if (json_object_object_get_ex(attrs, "brightness", &val))
+            ent->brightness = json_object_get_int(val);
+         if (json_object_object_get_ex(attrs, "color_temp", &val))
+            ent->color_temp = json_object_get_int(val);
+         if (json_object_object_get_ex(attrs, "current_temperature", &val))
+            ent->temperature = json_object_get_double(val);
+         if (json_object_object_get_ex(attrs, "temperature", &val))
+            ent->target_temp = json_object_get_double(val);
+         if (json_object_object_get_ex(attrs, "hvac_mode", &val)) {
+            const char *hvac = json_object_get_string(val);
+            if (hvac)
+               strncpy(ent->hvac_mode, hvac, sizeof(ent->hvac_mode) - 1);
+         }
+         if (json_object_object_get_ex(attrs, "current_position", &val))
+            ent->cover_position = json_object_get_int(val);
+      }
+
+      /* Area enrichment */
+      const char *area = find_area_for_entity(eid);
+      if (area) {
+         strncpy(ent->area_name, area, sizeof(ent->area_name) - 1);
+      }
+
+      s_ha.entity_cache.count++;
+   }
+
+   s_ha.entity_cache.cached_at = (int64_t)time(NULL);
+   pthread_rwlock_unlock(&s_ha.rwlock);
+
+   json_object_put(root);
+
+   if (s_ha.entity_cache.count >= HA_MAX_ENTITIES) {
+      LOG_WARNING("Home Assistant: Entity cache full (%d entities, max %d)",
+                  s_ha.entity_cache.count, HA_MAX_ENTITIES);
+   } else {
+      LOG_INFO("Home Assistant: Cached %d entities", s_ha.entity_cache.count);
+   }
+
+   return HA_OK;
+}
+
+ha_error_t homeassistant_list_entities(const ha_entity_list_t **list) {
+   if (!list)
+      return HA_ERR_INVALID_PARAM;
+   if (!s_ha.initialized)
+      return HA_ERR_NOT_CONFIGURED;
+   if (!s_ha.connected)
+      return HA_ERR_NOT_CONNECTED;
+
+   int64_t now = (int64_t)time(NULL);
+   if (s_ha.entity_cache.cached_at > 0 &&
+       (now - s_ha.entity_cache.cached_at) < HA_ENTITY_CACHE_TTL_SEC) {
+      *list = &s_ha.entity_cache;
+      return HA_OK;
+   }
+
+   ha_error_t err = fetch_entities();
+   if (err == HA_OK) {
+      *list = &s_ha.entity_cache;
+   }
+   return err;
+}
+
+ha_error_t homeassistant_refresh_entities(const ha_entity_list_t **list) {
+   if (!list)
+      return HA_ERR_INVALID_PARAM;
+   if (!s_ha.initialized)
+      return HA_ERR_NOT_CONFIGURED;
+   if (!s_ha.connected)
+      return HA_ERR_NOT_CONNECTED;
+
+   /* Force area cache refresh too */
+   s_ha.area_cache.cached_at = 0;
+
+   ha_error_t err = fetch_entities();
+   if (err == HA_OK) {
+      *list = &s_ha.entity_cache;
+   }
+   return err;
+}
+
+/* =============================================================================
+ * Fuzzy Matching (domain-aware)
+ * ============================================================================= */
+static int fuzzy_match_score(const char *haystack_lower, const char *needle_lower) {
+   /* Exact match */
+   if (strcmp(haystack_lower, needle_lower) == 0)
+      return 100;
+
+   /* Contains match */
+   if (strstr(haystack_lower, needle_lower))
+      return 80;
+
+   /* Word-by-word match */
+   int score = 0;
+   char needle_copy[256];
+   strncpy(needle_copy, needle_lower, sizeof(needle_copy) - 1);
+   needle_copy[sizeof(needle_copy) - 1] = '\0';
+
+   char *saveptr;
+   char *token = strtok_r(needle_copy, " ", &saveptr);
+   while (token) {
+      if (strstr(haystack_lower, token))
+         score += 20;
+      token = strtok_r(NULL, " ", &saveptr);
+   }
+
+   return score;
+}
+
+ha_error_t homeassistant_find_entity(const char *name,
+                                     ha_domain_t domain_hint,
+                                     const ha_entity_t **entity) {
+   if (!name || !entity)
+      return HA_ERR_INVALID_PARAM;
+
+   /* Direct entity_id lookup if input contains '.' */
+   if (strchr(name, '.')) {
+      const ha_entity_list_t *list;
+      ha_error_t err = homeassistant_list_entities(&list);
+      if (err != HA_OK)
+         return err;
+
+      pthread_rwlock_rdlock(&s_ha.rwlock);
+      for (int i = 0; i < list->count; i++) {
+         if (strcasecmp(list->entities[i].entity_id, name) == 0) {
+            *entity = &list->entities[i];
+            pthread_rwlock_unlock(&s_ha.rwlock);
+            return HA_OK;
+         }
+      }
+      pthread_rwlock_unlock(&s_ha.rwlock);
+      return HA_ERR_ENTITY_NOT_FOUND;
+   }
+
+   const ha_entity_list_t *list;
+   ha_error_t err = homeassistant_list_entities(&list);
+   if (err != HA_OK)
+      return err;
+
+   char needle_lower[256];
+   str_tolower(needle_lower, name, sizeof(needle_lower));
+
+   int best_score = 0;
+   const ha_entity_t *best_match = NULL;
+
+   pthread_rwlock_rdlock(&s_ha.rwlock);
+   for (int i = 0; i < list->count; i++) {
+      const ha_entity_t *ent = &list->entities[i];
+
+      /* Domain filtering */
+      if (domain_hint != HA_DOMAIN_UNKNOWN && ent->domain != domain_hint)
+         continue;
+
+      /* Score against friendly_name (pre-lowered) and entity_id */
+      int score = fuzzy_match_score(ent->friendly_name_lower, needle_lower);
+
+      char eid_lower[HA_MAX_ENTITY_ID];
+      str_tolower(eid_lower, ent->entity_id, sizeof(eid_lower));
+      int eid_score = fuzzy_match_score(eid_lower, needle_lower);
+      if (eid_score > score)
+         score = eid_score;
+
+      if (score > best_score) {
+         best_score = score;
+         best_match = ent;
+      }
+   }
+   pthread_rwlock_unlock(&s_ha.rwlock);
+
+   if (best_score < 40 || !best_match) {
+      LOG_WARNING("Home Assistant: No entity matching '%s' (domain: %s, best score: %d)", name,
+                  homeassistant_domain_str(domain_hint), best_score);
+      return HA_ERR_ENTITY_NOT_FOUND;
+   }
+
+   LOG_INFO("Home Assistant: Matched '%s' → '%s' (%s, score: %d)", name, best_match->friendly_name,
+            best_match->entity_id, best_score);
+   *entity = best_match;
+   return HA_OK;
+}
+
+ha_error_t homeassistant_get_entity_state(const char *entity_id, ha_entity_t *out) {
+   if (!entity_id || !out)
+      return HA_ERR_INVALID_PARAM;
+   if (!is_valid_entity_id(entity_id))
+      return HA_ERR_INVALID_PARAM;
+   if (!s_ha.initialized)
+      return HA_ERR_NOT_CONFIGURED;
+
+   char path[256];
+   snprintf(path, sizeof(path), "/api/states/%s", entity_id);
+
+   curl_buffer_t response;
+   curl_buffer_init(&response);
+   long http_code = 0;
+
+   ha_error_t err = do_api_request_with_retry("GET", path, NULL, &response, &http_code);
+   if (err != HA_OK) {
+      curl_buffer_free(&response);
+      return err;
+   }
+
+   if (http_code == 404) {
+      curl_buffer_free(&response);
+      return HA_ERR_ENTITY_NOT_FOUND;
+   }
+
+   json_object *root = json_tokener_parse(response.data);
+   curl_buffer_free(&response);
+   if (!root) {
+      return HA_ERR_API;
+   }
+
+   memset(out, 0, sizeof(*out));
+   strncpy(out->entity_id, entity_id, sizeof(out->entity_id) - 1);
+   out->domain = homeassistant_parse_domain(entity_id);
+
+   json_object *state_obj;
+   if (json_object_object_get_ex(root, "state", &state_obj)) {
+      const char *state = json_object_get_string(state_obj);
+      if (state)
+         strncpy(out->state, state, sizeof(out->state) - 1);
+   }
+
+   json_object *attrs;
+   if (json_object_object_get_ex(root, "attributes", &attrs)) {
+      json_object *val;
+      if (json_object_object_get_ex(attrs, "friendly_name", &val)) {
+         const char *fname = json_object_get_string(val);
+         if (fname)
+            strncpy(out->friendly_name, fname, sizeof(out->friendly_name) - 1);
+      }
+      if (json_object_object_get_ex(attrs, "brightness", &val))
+         out->brightness = json_object_get_int(val);
+      if (json_object_object_get_ex(attrs, "color_temp", &val))
+         out->color_temp = json_object_get_int(val);
+      if (json_object_object_get_ex(attrs, "current_temperature", &val))
+         out->temperature = json_object_get_double(val);
+      if (json_object_object_get_ex(attrs, "temperature", &val))
+         out->target_temp = json_object_get_double(val);
+   }
+
+   json_object_put(root);
+   return HA_OK;
+}
+
+/* =============================================================================
+ * Device Control Functions
+ * ============================================================================= */
+ha_error_t homeassistant_turn_on(const char *entity_id) {
+   ha_domain_t domain = homeassistant_parse_domain(entity_id);
+   const char *domain_str = homeassistant_domain_str(domain);
+   return call_service_json(domain_str, "turn_on", entity_id, NULL);
+}
+
+ha_error_t homeassistant_turn_off(const char *entity_id) {
+   ha_domain_t domain = homeassistant_parse_domain(entity_id);
+   const char *domain_str = homeassistant_domain_str(domain);
+   return call_service_json(domain_str, "turn_off", entity_id, NULL);
+}
+
+ha_error_t homeassistant_toggle(const char *entity_id) {
+   ha_domain_t domain = homeassistant_parse_domain(entity_id);
+   const char *domain_str = homeassistant_domain_str(domain);
+   return call_service_json(domain_str, "toggle", entity_id, NULL);
+}
+
+ha_error_t homeassistant_set_brightness(const char *entity_id, int pct) {
+   if (pct < 0 || pct > 100)
+      return HA_ERR_INVALID_PARAM;
+
+   json_object *data = json_object_new_object();
+   /* HA brightness is 0-255, convert from percentage */
+   json_object_object_add(data, "brightness", json_object_new_int(pct * 255 / 100));
+   return call_service_json("light", "turn_on", entity_id, data);
+}
+
+ha_error_t homeassistant_set_color(const char *entity_id, int r, int g, int b) {
+   if (r < 0 || r > 255 || g < 0 || g > 255 || b < 0 || b > 255)
+      return HA_ERR_INVALID_PARAM;
+
+   json_object *data = json_object_new_object();
+   json_object *color = json_object_new_array();
+   json_object_array_add(color, json_object_new_int(r));
+   json_object_array_add(color, json_object_new_int(g));
+   json_object_array_add(color, json_object_new_int(b));
+   json_object_object_add(data, "rgb_color", color);
+   return call_service_json("light", "turn_on", entity_id, data);
+}
+
+ha_error_t homeassistant_set_color_temp(const char *entity_id, int kelvin) {
+   if (kelvin < 1000 || kelvin > 12000)
+      return HA_ERR_INVALID_PARAM;
+
+   json_object *data = json_object_new_object();
+   /* Convert kelvin to mireds: mireds = 1000000 / kelvin */
+   int mireds = 1000000 / kelvin;
+   json_object_object_add(data, "color_temp", json_object_new_int(mireds));
+   return call_service_json("light", "turn_on", entity_id, data);
+}
+
+ha_error_t homeassistant_set_temperature(const char *entity_id, double temp_f) {
+   if (temp_f < 40 || temp_f > 100)
+      return HA_ERR_INVALID_PARAM;
+
+   json_object *data = json_object_new_object();
+   json_object_object_add(data, "temperature", json_object_new_double(temp_f));
+   return call_service_json("climate", "set_temperature", entity_id, data);
+}
+
+ha_error_t homeassistant_lock(const char *entity_id) {
+   return call_service_json("lock", "lock", entity_id, NULL);
+}
+
+ha_error_t homeassistant_unlock(const char *entity_id) {
+   return call_service_json("lock", "unlock", entity_id, NULL);
+}
+
+ha_error_t homeassistant_open_cover(const char *entity_id) {
+   return call_service_json("cover", "open_cover", entity_id, NULL);
+}
+
+ha_error_t homeassistant_close_cover(const char *entity_id) {
+   return call_service_json("cover", "close_cover", entity_id, NULL);
+}
+
+ha_error_t homeassistant_activate_scene(const char *entity_id) {
+   return call_service_json("scene", "turn_on", entity_id, NULL);
+}
+
+ha_error_t homeassistant_run_script(const char *entity_id) {
+   return call_service_json("script", "turn_on", entity_id, NULL);
+}
+
+ha_error_t homeassistant_trigger_automation(const char *entity_id) {
+   return call_service_json("automation", "trigger", entity_id, NULL);
+}

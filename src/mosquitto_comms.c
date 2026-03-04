@@ -57,7 +57,9 @@
 #include "tools/calculator.h"
 #include "tools/hud_discovery.h"
 #include "tools/search_summarizer.h"
+#ifdef DAWN_ENABLE_SMARTTHINGS_TOOL
 #include "tools/smartthings_service.h"
+#endif
 #include "tools/tool_registry.h"
 #include "tools/url_fetcher.h"
 #include "tools/weather_service.h"
@@ -109,7 +111,9 @@ static deviceCallback deviceCallbackArray[] = {
    { URL_FETCH, urlFetchCallback },
    { LLM_STATUS, llmStatusCallback },
    { CLOUD_PROVIDER, cloudProviderCallback },
+#ifdef DAWN_ENABLE_SMARTTHINGS_TOOL
    { SMARTTHINGS, smartThingsCallback },
+#endif
    { SWITCH_LLM, switchLlmCallback },
    { MEMORY, memoryCallback },
 };
@@ -2386,6 +2390,7 @@ char *urlFetchCallback(const char *actionName, char *value, int *should_respond)
    return content;
 }
 
+#ifdef DAWN_ENABLE_SMARTTHINGS_TOOL
 /**
  * @brief SmartThings home automation callback
  *
@@ -2767,5 +2772,6 @@ char *smartThingsCallback(const char *actionName, char *value, int *should_respo
             actionName);
    return msg;
 }
+#endif /* DAWN_ENABLE_SMARTTHINGS_TOOL */
 
 /* End Mosquitto Stuff */

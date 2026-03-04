@@ -482,7 +482,6 @@ set(DAWN_SOURCES
     src/tools/hud_discovery.c
     src/tools/web_search.c
     src/tools/weather_service.c
-    src/tools/smartthings_service.c
     src/tools/calculator.c
     src/tools/tinyexpr.c
     src/tools/search_summarizer.c
@@ -522,6 +521,9 @@ if(ENABLE_WEBUI)
         src/webui/webui_documents.c
         src/webui/webui_satellite.c
     )
+    if(DAWN_ENABLE_HOMEASSISTANT_TOOL)
+        list(APPEND DAWN_SOURCES src/webui/webui_homeassistant.c)
+    endif()
     if(OPUS_FOUND)
         list(APPEND DAWN_SOURCES src/webui/webui_audio.c)
         list(APPEND DAWN_SOURCES src/webui/webui_music.c)

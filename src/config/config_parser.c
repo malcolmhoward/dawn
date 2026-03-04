@@ -1358,6 +1358,12 @@ int config_parse_secrets(const char *path, secrets_config_t *secrets) {
       PARSE_STRING(secrets_section, "plex_token", secrets->plex_token);
       PARSE_STRING(secrets_section, "embedding_api_key", secrets->embedding_api_key);
 
+      /* Parse [secrets.home_assistant] sub-section */
+      toml_table_t *home_assistant = toml_table_in(secrets_section, "home_assistant");
+      if (home_assistant) {
+         PARSE_STRING(home_assistant, "token", secrets->home_assistant_token);
+      }
+
       /* Parse [secrets.smartthings] sub-section for authentication
        * Supports two modes:
        * 1. PAT mode: access_token only (simpler, recommended)

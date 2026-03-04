@@ -1558,6 +1558,42 @@
                            ></span>
                         </div>
                      </div>
+                     <div class="setting-item" id="secret-ha-token-item">
+                        <label for="secret-ha-token">Home Assistant Token</label>
+                        <div class="secret-input-wrapper">
+                           <input
+                              type="password"
+                              id="secret-ha-token"
+                              class="secret-input"
+                              placeholder="Enter Long-Lived Access Token..."
+                              maxlength="256"
+                           />
+                           <button
+                              class="secret-toggle"
+                              data-target="secret-ha-token"
+                              title="Show/hide"
+                              aria-label="Toggle Home Assistant token visibility"
+                           >
+                              <svg
+                                 class="eye-icon"
+                                 width="16"
+                                 height="16"
+                                 viewBox="0 0 24 24"
+                                 fill="none"
+                                 stroke="currentColor"
+                                 stroke-width="2"
+                              >
+                                 <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                                 <circle cx="12" cy="12" r="3" />
+                              </svg>
+                           </button>
+                           <span
+                              class="secret-status"
+                              id="status-ha-token"
+                              aria-live="polite"
+                           ></span>
+                        </div>
+                     </div>
                      <button id="save-secrets-btn" class="save-btn">Save Secrets</button>
                   </div>
                </div>
@@ -1627,6 +1663,66 @@ access_token = "your-pat-here"</pre
 [secrets.smartthings]
 client_id = "..."
 client_secret = "..."</pre
+                        >
+                     </div>
+                  </div>
+               </div>
+
+               <!-- Home Assistant Integration Section (admin only) -->
+               <div class="settings-section admin-only" id="homeassistant-section">
+                  <h3 class="section-header" data-section="homeassistant">
+                     <span class="section-icon">&#x1F3E0;</span>
+                     Home Assistant
+                     <span class="section-toggle">&#x25B6;</span>
+                  </h3>
+                  <div class="section-content">
+                     <div class="ha-status-row" role="status" aria-live="polite">
+                        <span
+                           class="ha-status-dot ha-status-not-configured"
+                           id="ha-status-dot"
+                        ></span>
+                        <span class="ha-status-text" id="ha-status-text">Not Configured</span>
+                        <span class="ha-entity-count" id="ha-entity-count"></span>
+                        <span class="ha-entity-count ha-hidden" id="ha-last-updated"></span>
+                     </div>
+
+                     <div class="ha-config-row">
+                        <label class="ha-label" for="ha-url-input">URL</label>
+                        <input
+                           type="text"
+                           class="ha-url-input"
+                           id="ha-url-input"
+                           placeholder="http://homeassistant.local:8123"
+                           aria-label="Home Assistant URL"
+                        />
+                        <button class="ha-btn ha-save-btn" id="ha-save-url-btn">Save</button>
+                     </div>
+
+                     <div class="ha-actions">
+                        <button class="ha-btn" id="ha-test-connection-btn">Test Connection</button>
+                        <button class="ha-btn ha-hidden" id="ha-refresh-entities-btn">
+                           Refresh Entities
+                        </button>
+                     </div>
+
+                     <div class="ha-hidden" id="ha-entity-section">
+                        <input
+                           type="text"
+                           class="ha-filter-input"
+                           id="ha-filter-input"
+                           placeholder="Filter entities..."
+                           aria-label="Filter Home Assistant entities"
+                        />
+                        <div class="ha-entity-list" id="ha-entity-list"></div>
+                     </div>
+
+                     <div class="ha-info-box">
+                        <strong>Setup:</strong> Create a Long-Lived Access Token in Home Assistant
+                        (Profile &rarr; Security &rarr; Long-Lived Access Tokens), then add to
+                        <code>secrets.toml</code>:
+                        <pre>
+[secrets.home_assistant]
+token = "eyJ..."</pre
                         >
                      </div>
                   </div>
@@ -2262,6 +2358,7 @@ client_secret = "..."</pre
       <script src="/js/ui/documents.js"></script>
       <script src="/js/ui/metrics.js"></script>
       <script src="/js/admin/smartthings.js"></script>
+      <script src="/js/admin/homeassistant.js"></script>
       <script src="/js/admin/tools.js"></script>
       <script src="/js/admin/metrics-panel.js"></script>
       <script src="/js/admin/users.js"></script>

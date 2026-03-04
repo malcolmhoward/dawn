@@ -22,7 +22,8 @@ option(DAWN_ENABLE_CALCULATOR_TOOL "Enable calculator tool" ON)
 option(DAWN_ENABLE_WEATHER_TOOL "Enable weather service tool" ON)
 option(DAWN_ENABLE_SEARCH_TOOL "Enable web search tool" ON)
 option(DAWN_ENABLE_URL_TOOL "Enable URL fetcher tool" ON)
-option(DAWN_ENABLE_SMARTTHINGS_TOOL "Enable SmartThings integration" ON)
+option(DAWN_ENABLE_HOMEASSISTANT_TOOL "Enable Home Assistant integration" ON)
+option(DAWN_ENABLE_SMARTTHINGS_TOOL "Enable SmartThings integration" OFF)
 option(DAWN_ENABLE_MEMORY_TOOL "Enable memory/recall system" ON)
 option(DAWN_ENABLE_DATETIME_TOOL "Enable date/time tools" ON)
 option(DAWN_ENABLE_VOLUME_TOOL "Enable volume control tool" ON)
@@ -33,6 +34,13 @@ option(DAWN_ENABLE_VIEWING_TOOL "Enable viewing/vision tool (MQTT)" ON)
 option(DAWN_ENABLE_HUD_TOOLS "Enable HUD control tools (MQTT)" ON)
 option(DAWN_ENABLE_AUDIO_TOOLS "Enable voice amplifier and audio device tools" ON)
 option(DAWN_ENABLE_SCHEDULER_TOOL "Enable scheduler/timer/alarm/reminder tool" ON)
+
+# =============================================================================
+# Mutual Exclusion: Home Assistant and SmartThings
+# =============================================================================
+if(DAWN_ENABLE_HOMEASSISTANT_TOOL AND DAWN_ENABLE_SMARTTHINGS_TOOL)
+    message(FATAL_ERROR "Cannot enable both Home Assistant and SmartThings tools. They are mutually exclusive.")
+endif()
 
 # =============================================================================
 # Tool Registry (always included)
@@ -110,10 +118,19 @@ endif()
 if(DAWN_ENABLE_SMARTTHINGS_TOOL)
     add_definitions(-DDAWN_ENABLE_SMARTTHINGS_TOOL)
     # Note: smartthings_service.c already exists, we add a wrapper
-    list(APPEND TOOL_SOURCES src/tools/smartthings_tool.c)
+    list(APPEND TOOL_SOURCES src/tools/smartthings_tool.c src/tools/smartthings_service.c)
     message(STATUS "DAWN: SmartThings tool ENABLED")
 else()
     message(STATUS "DAWN: SmartThings tool DISABLED")
+endif()
+
+# Home Assistant Tool (mutually exclusive with SmartThings)
+if(DAWN_ENABLE_HOMEASSISTANT_TOOL)
+    add_definitions(-DDAWN_ENABLE_HOMEASSISTANT_TOOL)
+    list(APPEND TOOL_SOURCES src/tools/homeassistant_tool.c src/tools/homeassistant_service.c)
+    message(STATUS "DAWN: Home Assistant tool ENABLED")
+else()
+    message(STATUS "DAWN: Home Assistant tool DISABLED")
 endif()
 
 # Memory Tool

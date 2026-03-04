@@ -174,6 +174,14 @@
                   console.log('Audio chunk size set to:', msg.payload.audio_chunk_ms, 'ms');
                }
                break;
+            case 'server_features':
+               if (msg.payload.smartthings) {
+                  document.body.classList.add('feature-smartthings');
+               }
+               if (msg.payload.home_assistant) {
+                  document.body.classList.add('feature-homeassistant');
+               }
+               break;
             case 'get_config_response':
                DawnSettings.handleGetConfigResponse(msg.payload);
                // Update vision limits from server (prefer config.vision, fall back to vision_limits)
@@ -222,19 +230,44 @@
                DawnSettings.handleSetSessionLlmResponse(msg.payload);
                break;
             case 'smartthings_status_response':
-               DawnSmartThings.handleStatusResponse(msg.payload);
+               if (typeof DawnSmartThings !== 'undefined') {
+                  DawnSmartThings.handleStatusResponse(msg.payload);
+               }
                break;
             case 'smartthings_auth_url_response':
-               DawnSmartThings.handleAuthUrlResponse(msg.payload);
+               if (typeof DawnSmartThings !== 'undefined') {
+                  DawnSmartThings.handleAuthUrlResponse(msg.payload);
+               }
                break;
             case 'smartthings_exchange_code_response':
-               DawnSmartThings.handleExchangeCodeResponse(msg.payload);
+               if (typeof DawnSmartThings !== 'undefined') {
+                  DawnSmartThings.handleExchangeCodeResponse(msg.payload);
+               }
                break;
             case 'smartthings_disconnect_response':
-               DawnSmartThings.handleDisconnectResponse(msg.payload);
+               if (typeof DawnSmartThings !== 'undefined') {
+                  DawnSmartThings.handleDisconnectResponse(msg.payload);
+               }
                break;
             case 'smartthings_devices_response':
-               DawnSmartThings.handleDevicesResponse(msg.payload);
+               if (typeof DawnSmartThings !== 'undefined') {
+                  DawnSmartThings.handleDevicesResponse(msg.payload);
+               }
+               break;
+            case 'ha_status_response':
+               if (typeof DawnHomeAssistant !== 'undefined') {
+                  DawnHomeAssistant.handleStatusResponse(msg.payload);
+               }
+               break;
+            case 'ha_test_connection_response':
+               if (typeof DawnHomeAssistant !== 'undefined') {
+                  DawnHomeAssistant.handleTestConnectionResponse(msg.payload);
+               }
+               break;
+            case 'ha_entities_response':
+               if (typeof DawnHomeAssistant !== 'undefined') {
+                  DawnHomeAssistant.handleEntitiesResponse(msg.payload);
+               }
                break;
             case 'system_prompt_response':
                DawnSettings.handleSystemPromptResponse(msg.payload);

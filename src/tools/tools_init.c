@@ -48,6 +48,9 @@
 #ifdef DAWN_ENABLE_SMARTTHINGS_TOOL
 #include "tools/smartthings_tool.h"
 #endif
+#ifdef DAWN_ENABLE_HOMEASSISTANT_TOOL
+#include "tools/homeassistant_tool.h"
+#endif
 #ifdef DAWN_ENABLE_MEMORY_TOOL
 #include "tools/memory_tool.h"
 #endif
@@ -123,6 +126,12 @@ int tools_register_all(void) {
 #ifdef DAWN_ENABLE_SMARTTHINGS_TOOL
    if (smartthings_tool_register() != 0) {
       LOG_WARNING("Failed to register smartthings tool");
+   }
+#endif
+
+#ifdef DAWN_ENABLE_HOMEASSISTANT_TOOL
+   if (homeassistant_tool_register() != 0) {
+      LOG_WARNING("Failed to register home_assistant tool");
    }
 #endif
 

@@ -1,0 +1,247 @@
+/*
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ * By contributing to this project, you agree to license your contributions
+ * under the GPLv3 (or any later version) or any future licenses chosen by
+ * the project author(s). Contributions include any modifications,
+ * enhancements, or additions to the project. These contributions become
+ * part of the project and are adopted by the project author(s).
+ *
+ * Home Assistant Service - REST API integration for smart home control
+ *
+ * Thread Safety: All public functions are thread-safe via rwlock protection.
+ * Uses per-request CURL handles for safe concurrent access.
+ */
+
+#ifndef HOMEASSISTANT_SERVICE_H
+#define HOMEASSISTANT_SERVICE_H
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* =============================================================================
+ * Constants
+ * ============================================================================= */
+#define HA_MAX_ENTITIES 512
+#define HA_MAX_ENTITY_ID 128
+#define HA_MAX_FRIENDLY_NAME 128
+#define HA_ENTITY_CACHE_TTL_SEC 300 /* 5 minutes */
+#define HA_AREA_CACHE_TTL_SEC 3600  /* 1 hour — areas rarely change */
+#define HA_API_TIMEOUT_SEC 30
+#define HA_API_MAX_RETRIES 3
+
+/* =============================================================================
+ * Error Codes
+ * ============================================================================= */
+typedef enum {
+   HA_OK = 0,
+   HA_ERR_NOT_CONFIGURED,
+   HA_ERR_NOT_CONNECTED,
+   HA_ERR_NETWORK,
+   HA_ERR_API,
+   HA_ERR_ENTITY_NOT_FOUND,
+   HA_ERR_INVALID_PARAM,
+   HA_ERR_RATE_LIMITED,
+   HA_ERR_MEMORY
+} ha_error_t;
+
+/* =============================================================================
+ * Domain Types
+ * ============================================================================= */
+typedef enum {
+   HA_DOMAIN_LIGHT,
+   HA_DOMAIN_SWITCH,
+   HA_DOMAIN_CLIMATE,
+   HA_DOMAIN_LOCK,
+   HA_DOMAIN_COVER,
+   HA_DOMAIN_MEDIA_PLAYER,
+   HA_DOMAIN_FAN,
+   HA_DOMAIN_SCENE,
+   HA_DOMAIN_SCRIPT,
+   HA_DOMAIN_AUTOMATION,
+   HA_DOMAIN_SENSOR,
+   HA_DOMAIN_BINARY_SENSOR,
+   HA_DOMAIN_INPUT_BOOLEAN,
+   HA_DOMAIN_VACUUM,
+   HA_DOMAIN_ALARM,
+   HA_DOMAIN_UNKNOWN
+} ha_domain_t;
+
+/* =============================================================================
+ * Data Structures
+ * ============================================================================= */
+
+/**
+ * Entity information (cached from /api/states)
+ */
+typedef struct {
+   char entity_id[HA_MAX_ENTITY_ID];
+   char friendly_name[HA_MAX_FRIENDLY_NAME];
+   char friendly_name_lower[HA_MAX_FRIENDLY_NAME]; /* Pre-computed for fuzzy match */
+   char domain_str[32];
+   char state[64];
+   char area_name[64]; /* From area registry, may be empty */
+   ha_domain_t domain;
+   /* Domain-specific attributes */
+   int brightness;     /* 0-255 (lights) */
+   int color_temp;     /* mireds (lights) */
+   double temperature; /* current (climate/sensor) */
+   double target_temp; /* setpoint (climate) */
+   char hvac_mode[32];
+   int cover_position; /* 0-100 */
+} ha_entity_t;
+
+/**
+ * Entity list (cached)
+ */
+typedef struct {
+   ha_entity_t entities[HA_MAX_ENTITIES];
+   int count;
+   int64_t cached_at; /* Unix timestamp when cached */
+} ha_entity_list_t;
+
+/**
+ * Service status (for WebUI display)
+ */
+typedef struct {
+   bool configured;
+   bool connected;
+   int entity_count;
+   char version[32];
+   char url[512];
+} ha_status_t;
+
+/* =============================================================================
+ * Lifecycle Functions
+ * ============================================================================= */
+
+/**
+ * @brief Initialize Home Assistant service
+ *
+ * @param url Base URL (e.g., "http://192.168.1.100:8123")
+ * @param token Long-Lived Access Token
+ * @return HA_OK on success
+ */
+ha_error_t homeassistant_init(const char *url, const char *token);
+
+/**
+ * @brief Clean up Home Assistant service
+ *
+ * Zeroes token from memory for security.
+ */
+void homeassistant_cleanup(void);
+
+/**
+ * @brief Check if Home Assistant is configured
+ */
+bool homeassistant_is_configured(void);
+
+/**
+ * @brief Check if Home Assistant is connected
+ */
+bool homeassistant_is_connected(void);
+
+/**
+ * @brief Test connection to Home Assistant
+ *
+ * Calls GET /api/ and verifies response.
+ */
+ha_error_t homeassistant_test_connection(void);
+
+/**
+ * @brief Get current status for WebUI
+ */
+ha_error_t homeassistant_get_status(ha_status_t *status);
+
+/* =============================================================================
+ * Entity Discovery
+ * ============================================================================= */
+
+/**
+ * @brief Get list of entities (cached)
+ *
+ * Returns cached list if still valid (< 5 minutes old).
+ */
+ha_error_t homeassistant_list_entities(const ha_entity_list_t **list);
+
+/**
+ * @brief Force refresh entity list
+ */
+ha_error_t homeassistant_refresh_entities(const ha_entity_list_t **list);
+
+/**
+ * @brief Find entity by name with domain-aware fuzzy matching
+ *
+ * @param name Friendly name, entity_id, or partial match
+ * @param domain_hint Filter to specific domain (HA_DOMAIN_UNKNOWN for any)
+ * @param entity Output entity pointer (points into cache, do not free)
+ * @return HA_OK on success, HA_ERR_ENTITY_NOT_FOUND if no match
+ */
+ha_error_t homeassistant_find_entity(const char *name,
+                                     ha_domain_t domain_hint,
+                                     const ha_entity_t **entity);
+
+/**
+ * @brief Get fresh state for a specific entity
+ */
+ha_error_t homeassistant_get_entity_state(const char *entity_id, ha_entity_t *out);
+
+/* =============================================================================
+ * Device Control Functions
+ * ============================================================================= */
+
+ha_error_t homeassistant_turn_on(const char *entity_id);
+ha_error_t homeassistant_turn_off(const char *entity_id);
+ha_error_t homeassistant_toggle(const char *entity_id);
+ha_error_t homeassistant_set_brightness(const char *entity_id, int pct);
+ha_error_t homeassistant_set_color(const char *entity_id, int r, int g, int b);
+ha_error_t homeassistant_set_color_temp(const char *entity_id, int kelvin);
+ha_error_t homeassistant_set_temperature(const char *entity_id, double temp_f);
+ha_error_t homeassistant_lock(const char *entity_id);
+ha_error_t homeassistant_unlock(const char *entity_id);
+ha_error_t homeassistant_open_cover(const char *entity_id);
+ha_error_t homeassistant_close_cover(const char *entity_id);
+ha_error_t homeassistant_activate_scene(const char *entity_id);
+ha_error_t homeassistant_run_script(const char *entity_id);
+ha_error_t homeassistant_trigger_automation(const char *entity_id);
+
+/* =============================================================================
+ * Utility Functions
+ * ============================================================================= */
+
+/**
+ * @brief Get error message for error code
+ */
+const char *homeassistant_error_str(ha_error_t err);
+
+/**
+ * @brief Parse domain from entity_id string (e.g., "light.kitchen" → HA_DOMAIN_LIGHT)
+ */
+ha_domain_t homeassistant_parse_domain(const char *entity_id);
+
+/**
+ * @brief Get human-readable domain name
+ */
+const char *homeassistant_domain_str(ha_domain_t domain);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* HOMEASSISTANT_SERVICE_H */

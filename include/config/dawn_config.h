@@ -511,6 +511,9 @@ typedef struct {
 
    /* Embedding API key (OpenAI provider; falls back to openai_api_key if empty) */
    char embedding_api_key[CONFIG_API_KEY_MAX];
+
+   /* Home Assistant Long-Lived Access Token */
+   char home_assistant_token[CONFIG_API_KEY_MAX];
 } secrets_config_t;
 
 /* =============================================================================

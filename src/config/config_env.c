@@ -24,14 +24,17 @@
 #include "config/config_env.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <json-c/json.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include "config/config_parser.h"
 #include "logging.h"
+#include "tools/tool_registry.h"
 
 /* =============================================================================
  * Helper Macros
@@ -210,6 +213,9 @@ void config_apply_env(dawn_config_t *config, secrets_config_t *secrets) {
    ENV_STRING("SMARTTHINGS_ACCESS_TOKEN", secrets->smartthings_access_token);
    ENV_STRING("SMARTTHINGS_CLIENT_ID", secrets->smartthings_client_id);
    ENV_STRING("SMARTTHINGS_CLIENT_SECRET", secrets->smartthings_client_secret);
+
+   /* Home Assistant */
+   ENV_SECRET("HOME_ASSISTANT_TOKEN", secrets->home_assistant_token);
 
    /* Satellite registration key */
    ENV_SECRET("DAWN_SATELLITE_KEY", secrets->satellite_registration_key);
@@ -798,6 +804,8 @@ void config_dump_settings(const dawn_config_t *config,
           (secrets && secrets->smartthings_client_id[0]) ? "[set]" : "[not set]");
    printf("  SMARTTHINGS_CLIENT_SECRET                %s\n",
           (secrets && secrets->smartthings_client_secret[0]) ? "[set]" : "[not set]");
+   printf("  HOME_ASSISTANT_TOKEN                     %s\n",
+          (secrets && secrets->home_assistant_token[0]) ? "[set]" : "[not set]");
    printf("  DAWN_SATELLITE_KEY                       %s\n\n",
           (secrets && secrets->satellite_registration_key[0]) ? "[set]" : "[not set]");
 }
@@ -1366,6 +1374,8 @@ json_object *secrets_to_json_status(const secrets_config_t *secrets) {
                           json_object_new_boolean(secrets && secrets->plex_token[0]));
    json_object_object_add(obj, "embedding_api_key",
                           json_object_new_boolean(secrets && secrets->embedding_api_key[0]));
+   json_object_object_add(obj, "home_assistant_token",
+                          json_object_new_boolean(secrets && secrets->home_assistant_token[0]));
 
    return obj;
 }
@@ -1786,6 +1796,9 @@ int config_write_toml(const dawn_config_t *config, const char *path) {
    fprintf(fp, "default_quality = \"%s\"\n", config->music.streaming_quality);
    fprintf(fp, "bitrate_mode = \"%s\"\n", config->music.streaming_bitrate_mode);
 
+   /* Write tool-owned config sections (e.g. [home_assistant], [shutdown]) */
+   tool_registry_write_configs(fp);
+
    fclose(fp);
    LOG_INFO("Configuration written to %s", path);
    return 0;
@@ -1795,9 +1808,16 @@ int secrets_write_toml(const secrets_config_t *secrets, const char *path) {
    if (!secrets || !path)
       return 1;
 
-   FILE *fp = fopen(path, "w");
-   if (!fp) {
+   /* Open with restrictive permissions from the start (no TOCTOU window) */
+   int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+   if (fd < 0) {
       LOG_ERROR("Failed to open secrets file for writing: %s (%s)", path, strerror(errno));
+      return 1;
+   }
+   FILE *fp = fdopen(fd, "w");
+   if (!fp) {
+      LOG_ERROR("Failed to fdopen secrets file: %s (%s)", path, strerror(errno));
+      close(fd);
       return 1;
    }
 
@@ -1831,6 +1851,12 @@ int secrets_write_toml(const secrets_config_t *secrets, const char *path) {
    WRITE_SECRET("plex_token", secrets->plex_token);
    WRITE_SECRET("embedding_api_key", secrets->embedding_api_key);
 
+   /* Home Assistant */
+   if (secrets->home_assistant_token[0]) {
+      fprintf(fp, "\n[secrets.home_assistant]\n");
+      WRITE_SECRET("token", secrets->home_assistant_token);
+   }
+
    /* SmartThings OAuth client credentials */
    if (secrets->smartthings_client_id[0] || secrets->smartthings_client_secret[0]) {
       fprintf(fp, "\n[secrets.smartthings]\n");
@@ -1840,12 +1866,7 @@ int secrets_write_toml(const secrets_config_t *secrets, const char *path) {
 
 #undef WRITE_SECRET
 
-   fclose(fp);
-
-   /* Set restrictive permissions on secrets file */
-   if (chmod(path, 0600) != 0) {
-      LOG_WARNING("Failed to set permissions on secrets file: %s", strerror(errno));
-   }
+   fclose(fp); /* Also closes the underlying fd */
 
    LOG_INFO("Secrets written to %s", path);
    return 0;

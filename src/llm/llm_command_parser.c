@@ -36,7 +36,9 @@
 #include "logging.h"
 #include "mosquitto_comms.h"
 #include "text_to_command_nuevo.h"
+#ifdef DAWN_ENABLE_SMARTTHINGS_TOOL
 #include "tools/smartthings_service.h"
+#endif
 #include "tools/tool_registry.h"
 #include "ui/metrics.h"
 
@@ -440,6 +442,7 @@ static int build_system_instructions_to_buffer(const char *mode, char *buffer, s
       buffer[len] = '\0';
    }
 
+#ifdef DAWN_ENABLE_SMARTTHINGS_TOOL
    /* Special case: SmartThings device list if authenticated */
    if (smartthings_is_authenticated()) {
       const st_device_list_t *devices = NULL;
@@ -462,6 +465,7 @@ static int build_system_instructions_to_buffer(const char *mode, char *buffer, s
          len += snprintf(buffer + len, remaining - len, "\n");
       }
    }
+#endif
 
    return len;
 }

@@ -58,6 +58,7 @@
       settingsElements.secretMqttUser = document.getElementById('secret-mqtt-user');
       settingsElements.secretMqttPass = document.getElementById('secret-mqtt-pass');
       settingsElements.secretPlexToken = document.getElementById('secret-plex-token');
+      settingsElements.secretHaToken = document.getElementById('secret-ha-token');
 
       // Secret status indicators
       settingsElements.statusOpenai = document.getElementById('status-openai');
@@ -66,6 +67,7 @@
       settingsElements.statusMqttUser = document.getElementById('status-mqtt-user');
       settingsElements.statusMqttPass = document.getElementById('status-mqtt-pass');
       settingsElements.statusPlexToken = document.getElementById('status-plex-token');
+      settingsElements.statusHaToken = document.getElementById('status-ha-token');
 
       // SmartThings elements
       settingsElements.stStatusIndicator = document.getElementById('st-status-indicator');
@@ -113,6 +115,9 @@
       }
       if (typeof DawnSmartThings !== 'undefined') {
          DawnSmartThings.requestStatus();
+      }
+      if (typeof DawnHomeAssistant !== 'undefined') {
+         DawnHomeAssistant.requestStatus();
       }
    }
 
@@ -585,6 +590,23 @@
          if (settingsElements.stDisconnectBtn) {
             settingsElements.stDisconnectBtn.addEventListener('click', DawnSmartThings.disconnect);
          }
+      }
+
+      // Home Assistant initialization
+      if (typeof DawnHomeAssistant !== 'undefined') {
+         DawnHomeAssistant.setElements({
+            statusIndicator: document.getElementById('ha-status-dot'),
+            statusText: document.getElementById('ha-status-text'),
+            entityCount: document.getElementById('ha-entity-count'),
+            lastUpdated: document.getElementById('ha-last-updated'),
+            testConnectionBtn: document.getElementById('ha-test-connection-btn'),
+            refreshEntitiesBtn: document.getElementById('ha-refresh-entities-btn'),
+            entitySection: document.getElementById('ha-entity-section'),
+            entityList: document.getElementById('ha-entity-list'),
+            filterInput: document.getElementById('ha-filter-input'),
+            urlInput: document.getElementById('ha-url-input'),
+            saveUrlBtn: document.getElementById('ha-save-url-btn'),
+         });
       }
    }
 

@@ -632,6 +632,29 @@ int tool_registry_parse_configs(const char *config_path) {
    return 0;
 }
 
+void tool_registry_write_configs(void *fp) {
+   if (!fp || !s_initialized) {
+      return;
+   }
+
+   pthread_mutex_lock(&s_registry_mutex);
+
+   for (int i = 0; i < s_tool_count; i++) {
+      tool_entry_t *entry = &s_tools[i];
+      if (!entry->registered || !entry->metadata.config_writer || !entry->metadata.config_section ||
+          !entry->metadata.config) {
+         continue;
+      }
+
+      /* Write section header */
+      fprintf((FILE *)fp, "\n[%s]\n", entry->metadata.config_section);
+      /* Let the tool write its key-value pairs */
+      entry->metadata.config_writer(fp, entry->metadata.config);
+   }
+
+   pthread_mutex_unlock(&s_registry_mutex);
+}
+
 const char *tool_registry_get_secret(const char *tool_name, const char *secret_name) {
    if (!tool_name || !secret_name || !s_initialized) {
       return NULL;
@@ -673,6 +696,8 @@ const char *tool_registry_get_secret(const char *tool_name, const char *secret_n
       return secrets->mqtt_username[0] ? secrets->mqtt_username : NULL;
    } else if (strcmp(secret_name, "mqtt_password") == 0) {
       return secrets->mqtt_password[0] ? secrets->mqtt_password : NULL;
+   } else if (strcmp(secret_name, "home_assistant_token") == 0) {
+      return secrets->home_assistant_token[0] ? secrets->home_assistant_token : NULL;
    }
 
    LOG_WARNING("tool_registry: Unknown secret name '%s'", secret_name);

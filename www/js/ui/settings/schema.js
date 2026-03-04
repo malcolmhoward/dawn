@@ -1252,6 +1252,7 @@
             },
          },
       },
+      /* Home Assistant config is managed by its dedicated admin panel section */
    };
 
    /**

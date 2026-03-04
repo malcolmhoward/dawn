@@ -818,6 +818,32 @@ void handle_music_library(ws_connection_t *conn, struct json_object *payload);
 void handle_music_queue(ws_connection_t *conn, struct json_object *payload);
 
 /* =============================================================================
+ * Home Assistant Handler Functions (defined in webui_homeassistant.c)
+ * ============================================================================= */
+
+#ifdef DAWN_ENABLE_HOMEASSISTANT_TOOL
+/**
+ * @brief Get Home Assistant connection status
+ */
+void handle_ha_status(ws_connection_t *conn);
+
+/**
+ * @brief Test Home Assistant connection
+ */
+void handle_ha_test_connection(ws_connection_t *conn);
+
+/**
+ * @brief List Home Assistant entities
+ */
+void handle_ha_list_entities(ws_connection_t *conn);
+
+/**
+ * @brief Force refresh Home Assistant entity cache
+ */
+void handle_ha_refresh_entities(ws_connection_t *conn);
+#endif /* DAWN_ENABLE_HOMEASSISTANT_TOOL */
+
+/* =============================================================================
  * Satellite Handler Functions (defined in webui_satellite.c)
  * ============================================================================= */
 
