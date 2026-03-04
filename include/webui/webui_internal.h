@@ -655,9 +655,9 @@ void handle_list_memory_facts(ws_connection_t *conn, struct json_object *payload
 void handle_delete_memory_fact(ws_connection_t *conn, struct json_object *payload);
 
 /**
- * @brief List memory preferences for the current user
+ * @brief List memory preferences for the current user (paginated)
  */
-void handle_list_memory_preferences(ws_connection_t *conn);
+void handle_list_memory_preferences(ws_connection_t *conn, struct json_object *payload);
 
 /**
  * @brief Delete a memory preference by category
@@ -665,9 +665,9 @@ void handle_list_memory_preferences(ws_connection_t *conn);
 void handle_delete_memory_preference(ws_connection_t *conn, struct json_object *payload);
 
 /**
- * @brief List memory summaries for the current user
+ * @brief List memory summaries for the current user (paginated)
  */
-void handle_list_memory_summaries(ws_connection_t *conn);
+void handle_list_memory_summaries(ws_connection_t *conn, struct json_object *payload);
 
 /**
  * @brief Delete a memory summary
@@ -680,9 +680,9 @@ void handle_delete_memory_summary(ws_connection_t *conn, struct json_object *pay
 void handle_search_memory(ws_connection_t *conn, struct json_object *payload);
 
 /**
- * @brief List memory entities with relations
+ * @brief List memory entities with relations (paginated)
  */
-void handle_list_memory_entities(ws_connection_t *conn);
+void handle_list_memory_entities(ws_connection_t *conn, struct json_object *payload);
 
 /**
  * @brief Delete a memory entity and its relations

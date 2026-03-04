@@ -1023,7 +1023,7 @@
 
       historyElements.panel.classList.remove('hidden');
       historyElements.overlay.classList.remove('hidden');
-      document.body.classList.add('history-open');
+      /* Panel overlays without pushing content (like settings) */
 
       if (historyElements.openBtn) {
          historyElements.openBtn.classList.add('active');
@@ -1074,7 +1074,7 @@
 
       historyElements.panel.classList.add('hidden');
       historyElements.overlay.classList.add('hidden');
-      document.body.classList.remove('history-open');
+      /* Panel overlays without pushing content (like settings) */
 
       if (historyElements.openBtn) {
          historyElements.openBtn.classList.remove('active');

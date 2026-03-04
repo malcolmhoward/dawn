@@ -54,7 +54,7 @@ static const char *EXTRACTION_PROMPT_TEMPLATE =
     "\"confidence\": 0.0-1.0}\n"
     "  ],\n"
     "  \"preferences\": [\n"
-    "    {\"category\": \"normalized_category\", \"value\": \"preference_value\", "
+    "    {\"category\": \"verbosity\", \"value\": \"prefers concise responses\", "
     "\"confidence\": 0.0-1.0}\n"
     "  ],\n"
     "  \"corrections\": [\n"
@@ -74,8 +74,8 @@ static const char *EXTRACTION_PROMPT_TEMPLATE =
     "Guidelines:\n"
     "- \"explicit\" source: user directly stated it\n"
     "- \"inferred\" source: reasonably deduced from context\n"
-    "- Use normalized categories for preferences (e.g., \"theme\", \"units\", "
-    "\"communication_style\")\n"
+    "- Use short, simple categories for preferences (e.g., \"verbosity\", \"humor\", "
+    "\"formality\", \"detail_level\", \"units\", \"theme\")\n"
     "- Only include facts that are specific to this user, not general knowledge\n"
     "- High confidence (0.8-1.0) for explicit statements, lower for inferences\n"
     "- List corrections if new information contradicts existing profile\n"
@@ -185,7 +185,7 @@ static char *build_existing_profile(int user_id) {
 
    /* Load existing preferences */
    memory_preference_t prefs[10];
-   int pref_count = memory_db_pref_list(user_id, prefs, 10);
+   int pref_count = memory_db_pref_list(user_id, prefs, 10, 0);
 
    if (pref_count > 0) {
       offset += snprintf(profile + offset, 4096 - offset, "Preferences:\n");
@@ -210,7 +210,7 @@ static char *build_existing_profile(int user_id) {
 
    /* Load existing entities so LLM reuses canonical names */
    memory_entity_t entities[20];
-   int entity_count = memory_db_entity_list(user_id, entities, 20);
+   int entity_count = memory_db_entity_list(user_id, entities, 20, 0);
 
    if (entity_count > 0) {
       if (offset > 0)

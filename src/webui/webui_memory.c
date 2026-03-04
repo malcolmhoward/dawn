@@ -198,7 +198,7 @@ void handle_delete_memory_fact(ws_connection_t *conn, struct json_object *payloa
 /**
  * @brief List memory preferences for the current user
  */
-void handle_list_memory_preferences(ws_connection_t *conn) {
+void handle_list_memory_preferences(ws_connection_t *conn, struct json_object *payload) {
    if (!conn_require_auth(conn)) {
       return;
    }
@@ -208,10 +208,29 @@ void handle_list_memory_preferences(ws_connection_t *conn) {
                           json_object_new_string("list_memory_preferences_response"));
    json_object *resp_payload = json_object_new_object();
 
+   /* Parse pagination params */
+   int limit = DEFAULT_MEMORY_LIMIT;
+   int offset = 0;
+   if (payload) {
+      json_object *limit_obj, *offset_obj;
+      if (json_object_object_get_ex(payload, "limit", &limit_obj)) {
+         limit = json_object_get_int(limit_obj);
+         if (limit < 1 || limit > MAX_MEMORY_LIMIT) {
+            limit = DEFAULT_MEMORY_LIMIT;
+         }
+      }
+      if (json_object_object_get_ex(payload, "offset", &offset_obj)) {
+         offset = json_object_get_int(offset_obj);
+         if (offset < 0) {
+            offset = 0;
+         }
+      }
+   }
+
    /* Query database */
-   memory_preference_t prefs[MEMORY_MAX_PREFS];
+   memory_preference_t prefs[MAX_MEMORY_LIMIT];
    memset(prefs, 0, sizeof(prefs));
-   int count = memory_db_pref_list(conn->auth_user_id, prefs, MEMORY_MAX_PREFS);
+   int count = memory_db_pref_list(conn->auth_user_id, prefs, limit, offset);
 
    if (count >= 0) {
       json_object *prefs_array = json_object_new_array();
@@ -233,6 +252,7 @@ void handle_list_memory_preferences(ws_connection_t *conn) {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
       json_object_object_add(resp_payload, "preferences", prefs_array);
       json_object_object_add(resp_payload, "count", json_object_new_int(count));
+      json_object_object_add(resp_payload, "has_more", json_object_new_boolean(count == limit));
    } else {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
       json_object_object_add(resp_payload, "error",
@@ -296,7 +316,7 @@ void handle_delete_memory_preference(ws_connection_t *conn, struct json_object *
 /**
  * @brief List memory summaries for the current user
  */
-void handle_list_memory_summaries(ws_connection_t *conn) {
+void handle_list_memory_summaries(ws_connection_t *conn, struct json_object *payload) {
    if (!conn_require_auth(conn)) {
       return;
    }
@@ -306,10 +326,29 @@ void handle_list_memory_summaries(ws_connection_t *conn) {
                           json_object_new_string("list_memory_summaries_response"));
    json_object *resp_payload = json_object_new_object();
 
+   /* Parse pagination params */
+   int limit = DEFAULT_MEMORY_LIMIT;
+   int offset = 0;
+   if (payload) {
+      json_object *limit_obj, *offset_obj;
+      if (json_object_object_get_ex(payload, "limit", &limit_obj)) {
+         limit = json_object_get_int(limit_obj);
+         if (limit < 1 || limit > MAX_MEMORY_LIMIT) {
+            limit = DEFAULT_MEMORY_LIMIT;
+         }
+      }
+      if (json_object_object_get_ex(payload, "offset", &offset_obj)) {
+         offset = json_object_get_int(offset_obj);
+         if (offset < 0) {
+            offset = 0;
+         }
+      }
+   }
+
    /* Query database */
-   memory_summary_t summaries[MEMORY_MAX_SUMMARIES];
+   memory_summary_t summaries[MAX_MEMORY_LIMIT];
    memset(summaries, 0, sizeof(summaries));
-   int count = memory_db_summary_list(conn->auth_user_id, summaries, MEMORY_MAX_SUMMARIES);
+   int count = memory_db_summary_list(conn->auth_user_id, summaries, limit, offset);
 
    if (count >= 0) {
       json_object *summaries_array = json_object_new_array();
@@ -335,6 +374,7 @@ void handle_list_memory_summaries(ws_connection_t *conn) {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
       json_object_object_add(resp_payload, "summaries", summaries_array);
       json_object_object_add(resp_payload, "count", json_object_new_int(count));
+      json_object_object_add(resp_payload, "has_more", json_object_new_boolean(count == limit));
    } else {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
       json_object_object_add(resp_payload, "error",
@@ -399,7 +439,7 @@ void handle_delete_memory_summary(ws_connection_t *conn, struct json_object *pay
 /**
  * @brief List memory entities with their relations for the current user
  */
-void handle_list_memory_entities(ws_connection_t *conn) {
+void handle_list_memory_entities(ws_connection_t *conn, struct json_object *payload) {
    if (!conn_require_auth(conn)) {
       return;
    }
@@ -409,10 +449,29 @@ void handle_list_memory_entities(ws_connection_t *conn) {
                           json_object_new_string("list_memory_entities_response"));
    json_object *resp_payload = json_object_new_object();
 
-   /* Load all entities (sorted by mention_count desc) */
+   /* Parse pagination params */
+   int limit = DEFAULT_MEMORY_LIMIT;
+   int offset = 0;
+   if (payload) {
+      json_object *limit_obj, *offset_obj;
+      if (json_object_object_get_ex(payload, "limit", &limit_obj)) {
+         limit = json_object_get_int(limit_obj);
+         if (limit < 1 || limit > MAX_MEMORY_LIMIT) {
+            limit = DEFAULT_MEMORY_LIMIT;
+         }
+      }
+      if (json_object_object_get_ex(payload, "offset", &offset_obj)) {
+         offset = json_object_get_int(offset_obj);
+         if (offset < 0) {
+            offset = 0;
+         }
+      }
+   }
+
+   /* Load entities (sorted by mention_count desc) */
    memory_entity_t entities[MAX_MEMORY_LIMIT];
    memset(entities, 0, sizeof(entities));
-   int count = memory_db_entity_list(conn->auth_user_id, entities, MAX_MEMORY_LIMIT);
+   int count = memory_db_entity_list(conn->auth_user_id, entities, limit, offset);
 
 /* Bulk-load all relations in a single query (avoids N+1 per-entity queries) */
 #define MAX_RELATIONS_BULK 400
@@ -491,6 +550,7 @@ void handle_list_memory_entities(ws_connection_t *conn) {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
       json_object_object_add(resp_payload, "entities", entities_array);
       json_object_object_add(resp_payload, "count", json_object_new_int(count));
+      json_object_object_add(resp_payload, "has_more", json_object_new_boolean(count == limit));
    } else {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
       json_object_object_add(resp_payload, "error",

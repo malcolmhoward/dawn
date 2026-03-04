@@ -362,9 +362,10 @@ int memory_db_pref_get(int user_id, const char *category, memory_preference_t *o
  * @param user_id User ID
  * @param out_prefs Output: array of preferences
  * @param max_prefs Maximum to return
+ * @param offset Starting offset for pagination
  * @return Number of preferences, -1 on error
  */
-int memory_db_pref_list(int user_id, memory_preference_t *out_prefs, int max_prefs);
+int memory_db_pref_list(int user_id, memory_preference_t *out_prefs, int max_prefs, int offset);
 
 /**
  * @brief Search preferences by keyword (LIKE on category and value)
@@ -421,9 +422,13 @@ int64_t memory_db_summary_create(int user_id,
  * @param user_id User ID
  * @param out_summaries Output: array of summaries
  * @param max_summaries Maximum to return
+ * @param offset Starting offset for pagination
  * @return Number of summaries, -1 on error
  */
-int memory_db_summary_list(int user_id, memory_summary_t *out_summaries, int max_summaries);
+int memory_db_summary_list(int user_id,
+                           memory_summary_t *out_summaries,
+                           int max_summaries,
+                           int offset);
 
 /**
  * @brief Mark a summary as consolidated
@@ -674,9 +679,10 @@ int memory_db_relation_list_all_by_user(int user_id, memory_relation_t *out, int
  * @param user_id User ID
  * @param out Output array of entities
  * @param max Maximum entities to return
+ * @param offset Starting offset for pagination
  * @return Number of entities found, -1 on error
  */
-int memory_db_entity_list(int user_id, memory_entity_t *out, int max);
+int memory_db_entity_list(int user_id, memory_entity_t *out, int max, int offset);
 
 /**
  * @brief Search entities by keyword (LIKE on canonical_name)

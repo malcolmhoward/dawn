@@ -9,7 +9,7 @@
     * Constants
     * ============================================================================= */
 
-   const FACTS_PAGE_SIZE = 20;
+   const PAGE_SIZE = 20;
 
    /* =============================================================================
     * State
@@ -26,8 +26,8 @@
       activeTab: 'facts',
       searchQuery: '',
       searchTimeout: null,
-      factsOffset: 0,
-      factsHasMore: false,
+      tabOffset: { facts: 0, preferences: 0, summaries: 0, entities: 0 },
+      tabHasMore: { facts: false, preferences: false, summaries: false, entities: false },
       loading: false,
    };
 
@@ -76,26 +76,35 @@
       memoryState.loading = true;
       DawnWS.send({
          type: 'list_memory_facts',
-         payload: { limit: FACTS_PAGE_SIZE, offset: offset || 0 },
+         payload: { limit: PAGE_SIZE, offset: offset || 0 },
       });
    }
 
-   function requestPreferences() {
+   function requestPreferences(offset) {
       if (typeof DawnWS === 'undefined' || !DawnWS.isConnected()) return;
       memoryState.loading = true;
-      DawnWS.send({ type: 'list_memory_preferences' });
+      DawnWS.send({
+         type: 'list_memory_preferences',
+         payload: { limit: PAGE_SIZE, offset: offset || 0 },
+      });
    }
 
-   function requestSummaries() {
+   function requestSummaries(offset) {
       if (typeof DawnWS === 'undefined' || !DawnWS.isConnected()) return;
       memoryState.loading = true;
-      DawnWS.send({ type: 'list_memory_summaries' });
+      DawnWS.send({
+         type: 'list_memory_summaries',
+         payload: { limit: PAGE_SIZE, offset: offset || 0 },
+      });
    }
 
-   function requestEntities() {
+   function requestEntities(offset) {
       if (typeof DawnWS === 'undefined' || !DawnWS.isConnected()) return;
       memoryState.loading = true;
-      DawnWS.send({ type: 'list_memory_entities' });
+      DawnWS.send({
+         type: 'list_memory_entities',
+         payload: { limit: PAGE_SIZE, offset: offset || 0 },
+      });
    }
 
    function requestDeleteEntity(entityId) {
@@ -171,11 +180,21 @@
          return;
       }
 
-      memoryState.entities = payload.entities || [];
-      memoryState.allEntities = payload.entities || [];
+      const newEntities = payload.entities || [];
+      memoryState.tabHasMore.entities = payload.has_more || false;
 
-      if (memoryState.activeTab === 'entities' && !memoryState.searchQuery) {
-         renderEntitiesList();
+      if (memoryState.tabOffset.entities > 0 && newEntities.length > 0) {
+         memoryState.entities = memoryState.entities.concat(newEntities);
+         memoryState.allEntities = memoryState.allEntities.concat(newEntities);
+         if (memoryState.activeTab === 'entities' && !memoryState.searchQuery) {
+            appendEntitiesToList(newEntities);
+         }
+      } else {
+         memoryState.entities = newEntities;
+         memoryState.allEntities = newEntities;
+         if (memoryState.activeTab === 'entities' && !memoryState.searchQuery) {
+            renderEntitiesList();
+         }
       }
    }
 
@@ -192,7 +211,8 @@
       }
 
       requestStats();
-      requestEntities();
+      memoryState.tabOffset.entities = 0;
+      requestEntities(0);
    }
 
    function handleFactsResponse(payload) {
@@ -205,10 +225,10 @@
       }
 
       const newFacts = payload.facts || [];
-      memoryState.factsHasMore = payload.has_more || false;
+      memoryState.tabHasMore.facts = payload.has_more || false;
 
       // If offset > 0, append to DOM efficiently; otherwise full render
-      if (memoryState.factsOffset > 0 && newFacts.length > 0) {
+      if (memoryState.tabOffset.facts > 0 && newFacts.length > 0) {
          memoryState.facts = memoryState.facts.concat(newFacts);
          if (memoryState.activeTab === 'facts' && !memoryState.searchQuery) {
             appendFactsToList(newFacts);
@@ -233,7 +253,43 @@
       // Update load more button state
       if (memoryElements.loadMoreBtn) {
          memoryElements.loadMoreBtn.disabled =
-            !memoryState.factsHasMore || !!memoryState.searchQuery;
+            !memoryState.tabHasMore.facts || !!memoryState.searchQuery;
+      }
+   }
+
+   function appendPrefsToList(newPrefs) {
+      if (!memoryElements.list || newPrefs.length === 0) return;
+
+      const html = newPrefs.map((pref) => renderPreferenceItem(pref)).join('');
+      memoryElements.list.insertAdjacentHTML('beforeend', html);
+
+      if (memoryElements.loadMoreBtn) {
+         memoryElements.loadMoreBtn.disabled =
+            !memoryState.tabHasMore.preferences || !!memoryState.searchQuery;
+      }
+   }
+
+   function appendSummariesToList(newSummaries) {
+      if (!memoryElements.list || newSummaries.length === 0) return;
+
+      const html = newSummaries.map((summary) => renderSummaryItem(summary)).join('');
+      memoryElements.list.insertAdjacentHTML('beforeend', html);
+
+      if (memoryElements.loadMoreBtn) {
+         memoryElements.loadMoreBtn.disabled =
+            !memoryState.tabHasMore.summaries || !!memoryState.searchQuery;
+      }
+   }
+
+   function appendEntitiesToList(newEntities) {
+      if (!memoryElements.list || newEntities.length === 0) return;
+
+      const html = newEntities.map((entity) => renderEntityItem(entity)).join('');
+      memoryElements.list.insertAdjacentHTML('beforeend', html);
+
+      if (memoryElements.loadMoreBtn) {
+         memoryElements.loadMoreBtn.disabled =
+            !memoryState.tabHasMore.entities || !!memoryState.searchQuery;
       }
    }
 
@@ -246,11 +302,21 @@
          return;
       }
 
-      memoryState.preferences = payload.preferences || [];
-      memoryState.allPreferences = payload.preferences || [];
+      const newPrefs = payload.preferences || [];
+      memoryState.tabHasMore.preferences = payload.has_more || false;
 
-      if (memoryState.activeTab === 'preferences' && !memoryState.searchQuery) {
-         renderPreferencesList();
+      if (memoryState.tabOffset.preferences > 0 && newPrefs.length > 0) {
+         memoryState.preferences = memoryState.preferences.concat(newPrefs);
+         memoryState.allPreferences = memoryState.allPreferences.concat(newPrefs);
+         if (memoryState.activeTab === 'preferences' && !memoryState.searchQuery) {
+            appendPrefsToList(newPrefs);
+         }
+      } else {
+         memoryState.preferences = newPrefs;
+         memoryState.allPreferences = newPrefs;
+         if (memoryState.activeTab === 'preferences' && !memoryState.searchQuery) {
+            renderPreferencesList();
+         }
       }
    }
 
@@ -263,10 +329,19 @@
          return;
       }
 
-      memoryState.summaries = payload.summaries || [];
+      const newSummaries = payload.summaries || [];
+      memoryState.tabHasMore.summaries = payload.has_more || false;
 
-      if (memoryState.activeTab === 'summaries' && !memoryState.searchQuery) {
-         renderSummariesList();
+      if (memoryState.tabOffset.summaries > 0 && newSummaries.length > 0) {
+         memoryState.summaries = memoryState.summaries.concat(newSummaries);
+         if (memoryState.activeTab === 'summaries' && !memoryState.searchQuery) {
+            appendSummariesToList(newSummaries);
+         }
+      } else {
+         memoryState.summaries = newSummaries;
+         if (memoryState.activeTab === 'summaries' && !memoryState.searchQuery) {
+            renderSummariesList();
+         }
       }
    }
 
@@ -329,7 +404,7 @@
 
       // Refresh data
       requestStats();
-      memoryState.factsOffset = 0;
+      memoryState.tabOffset.facts = 0;
       requestFacts(0);
    }
 
@@ -347,7 +422,8 @@
 
       // Refresh data
       requestStats();
-      requestPreferences();
+      memoryState.tabOffset.preferences = 0;
+      requestPreferences(0);
    }
 
    function handleDeleteSummaryResponse(payload) {
@@ -364,7 +440,8 @@
 
       // Refresh data
       requestStats();
-      requestSummaries();
+      memoryState.tabOffset.summaries = 0;
+      requestSummaries(0);
    }
 
    function handleDeleteAllResponse(payload) {
@@ -385,7 +462,13 @@
       memoryState.summaries = [];
       memoryState.entities = [];
       memoryState.allEntities = [];
-      memoryState.factsOffset = 0;
+      memoryState.tabOffset = { facts: 0, preferences: 0, summaries: 0, entities: 0 };
+      memoryState.tabHasMore = {
+         facts: false,
+         preferences: false,
+         summaries: false,
+         entities: false,
+      };
       requestStats();
       showEmptyState('No memories yet');
    }
@@ -435,11 +518,11 @@
       const html = memoryState.facts.map((fact) => renderFactItem(fact)).join('');
       memoryElements.list.innerHTML = html;
 
-      // Update load more button - show on facts tab, enable if more available
+      // Update load more button - enable if more available
       if (memoryElements.loadMoreBtn) {
          memoryElements.loadMoreBtn.classList.remove('hidden');
          memoryElements.loadMoreBtn.disabled =
-            !memoryState.factsHasMore || !!memoryState.searchQuery;
+            !memoryState.tabHasMore.facts || !!memoryState.searchQuery;
       }
    }
 
@@ -472,11 +555,6 @@
    function renderPreferencesList() {
       if (!memoryElements.list) return;
 
-      // Keep Load More visible but disabled (no pagination for preferences)
-      if (memoryElements.loadMoreBtn) {
-         memoryElements.loadMoreBtn.disabled = true;
-      }
-
       if (memoryState.preferences.length === 0) {
          showEmptyState('No preferences stored yet');
          return;
@@ -484,6 +562,12 @@
 
       const html = memoryState.preferences.map((pref) => renderPreferenceItem(pref)).join('');
       memoryElements.list.innerHTML = html;
+
+      if (memoryElements.loadMoreBtn) {
+         memoryElements.loadMoreBtn.classList.remove('hidden');
+         memoryElements.loadMoreBtn.disabled =
+            !memoryState.tabHasMore.preferences || !!memoryState.searchQuery;
+      }
    }
 
    function renderPreferenceItem(pref) {
@@ -517,11 +601,6 @@
    function renderSummariesList() {
       if (!memoryElements.list) return;
 
-      // Keep Load More visible but disabled (no pagination for summaries)
-      if (memoryElements.loadMoreBtn) {
-         memoryElements.loadMoreBtn.disabled = true;
-      }
-
       if (memoryState.summaries.length === 0) {
          showEmptyState(
             memoryState.searchQuery ? 'No summaries found' : 'No conversation summaries yet'
@@ -531,6 +610,12 @@
 
       const html = memoryState.summaries.map((summary) => renderSummaryItem(summary)).join('');
       memoryElements.list.innerHTML = html;
+
+      if (memoryElements.loadMoreBtn) {
+         memoryElements.loadMoreBtn.classList.remove('hidden');
+         memoryElements.loadMoreBtn.disabled =
+            !memoryState.tabHasMore.summaries || !!memoryState.searchQuery;
+      }
    }
 
    function renderSummaryItem(summary) {
@@ -579,10 +664,6 @@
    function renderEntitiesList() {
       if (!memoryElements.list) return;
 
-      if (memoryElements.loadMoreBtn) {
-         memoryElements.loadMoreBtn.disabled = true;
-      }
-
       if (memoryState.entities.length === 0) {
          showEmptyState(
             memoryState.searchQuery ? 'No entities found' : 'No entities discovered yet'
@@ -592,6 +673,12 @@
 
       const html = memoryState.entities.map((entity) => renderEntityItem(entity)).join('');
       memoryElements.list.innerHTML = html;
+
+      if (memoryElements.loadMoreBtn) {
+         memoryElements.loadMoreBtn.classList.remove('hidden');
+         memoryElements.loadMoreBtn.disabled =
+            !memoryState.tabHasMore.entities || !!memoryState.searchQuery;
+      }
    }
 
    function renderEntityItem(entity) {
@@ -910,27 +997,27 @@
    function loadActiveTabData() {
       showLoading();
 
-      // Update Load More button state immediately based on tab
-      // Always visible, but disabled on non-Facts tabs (no pagination)
+      // Disable load more while loading
       if (memoryElements.loadMoreBtn) {
          memoryElements.loadMoreBtn.classList.remove('hidden');
-         // Disabled on Preferences/Summaries (no pagination) or while loading Facts
          memoryElements.loadMoreBtn.disabled = true;
       }
 
-      switch (memoryState.activeTab) {
+      const tab = memoryState.activeTab;
+      memoryState.tabOffset[tab] = 0;
+
+      switch (tab) {
          case 'facts':
-            memoryState.factsOffset = 0;
             requestFacts(0);
             break;
          case 'preferences':
-            requestPreferences();
+            requestPreferences(0);
             break;
          case 'summaries':
-            requestSummaries();
+            requestSummaries(0);
             break;
          case 'entities':
-            requestEntities();
+            requestEntities(0);
             break;
       }
    }
@@ -992,12 +1079,26 @@
     * ============================================================================= */
 
    function handleLoadMore() {
-      if (memoryState.activeTab !== 'facts') return;
-      if (!memoryState.factsHasMore) return;
+      const tab = memoryState.activeTab;
+      if (!memoryState.tabHasMore[tab]) return;
       if (memoryState.loading) return;
 
-      memoryState.factsOffset += FACTS_PAGE_SIZE;
-      requestFacts(memoryState.factsOffset);
+      memoryState.tabOffset[tab] += PAGE_SIZE;
+
+      switch (tab) {
+         case 'facts':
+            requestFacts(memoryState.tabOffset[tab]);
+            break;
+         case 'preferences':
+            requestPreferences(memoryState.tabOffset[tab]);
+            break;
+         case 'summaries':
+            requestSummaries(memoryState.tabOffset[tab]);
+            break;
+         case 'entities':
+            requestEntities(memoryState.tabOffset[tab]);
+            break;
+      }
    }
 
    /* =============================================================================

@@ -665,7 +665,7 @@ int memory_db_pref_get(int user_id, const char *category, memory_preference_t *o
    return result;
 }
 
-int memory_db_pref_list(int user_id, memory_preference_t *out_prefs, int max_prefs) {
+int memory_db_pref_list(int user_id, memory_preference_t *out_prefs, int max_prefs, int offset) {
    if (!out_prefs || max_prefs <= 0) {
       return -1;
    }
@@ -675,6 +675,8 @@ int memory_db_pref_list(int user_id, memory_preference_t *out_prefs, int max_pre
    sqlite3_stmt *stmt = s_db.stmt_memory_pref_list;
    sqlite3_reset(stmt);
    sqlite3_bind_int(stmt, 1, user_id);
+   sqlite3_bind_int(stmt, 2, max_prefs);
+   sqlite3_bind_int(stmt, 3, offset);
 
    int count = 0;
    while (count < max_prefs && sqlite3_step(stmt) == SQLITE_ROW) {
@@ -786,7 +788,10 @@ int64_t memory_db_summary_create(int user_id,
    return id;
 }
 
-int memory_db_summary_list(int user_id, memory_summary_t *out_summaries, int max_summaries) {
+int memory_db_summary_list(int user_id,
+                           memory_summary_t *out_summaries,
+                           int max_summaries,
+                           int offset) {
    if (!out_summaries || max_summaries <= 0) {
       return -1;
    }
@@ -797,6 +802,7 @@ int memory_db_summary_list(int user_id, memory_summary_t *out_summaries, int max
    sqlite3_reset(stmt);
    sqlite3_bind_int(stmt, 1, user_id);
    sqlite3_bind_int(stmt, 2, max_summaries);
+   sqlite3_bind_int(stmt, 3, offset);
 
    int count = 0;
    while (count < max_summaries && sqlite3_step(stmt) == SQLITE_ROW) {
@@ -1675,7 +1681,7 @@ static void populate_entity_from_row(sqlite3_stmt *stmt, memory_entity_t *entity
    entity->last_seen = (time_t)sqlite3_column_int64(stmt, 7);
 }
 
-int memory_db_entity_list(int user_id, memory_entity_t *out, int max) {
+int memory_db_entity_list(int user_id, memory_entity_t *out, int max, int offset) {
    if (!out || max <= 0)
       return -1;
 
@@ -1686,6 +1692,7 @@ int memory_db_entity_list(int user_id, memory_entity_t *out, int max) {
    sqlite3_bind_int(s_db.stmt_memory_entity_search, 1, user_id);
    sqlite3_bind_text(s_db.stmt_memory_entity_search, 2, "%", -1, SQLITE_STATIC);
    sqlite3_bind_int(s_db.stmt_memory_entity_search, 3, max);
+   sqlite3_bind_int(s_db.stmt_memory_entity_search, 4, offset);
 
    int count = 0;
    while (count < max && sqlite3_step(s_db.stmt_memory_entity_search) == SQLITE_ROW) {

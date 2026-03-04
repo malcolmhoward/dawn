@@ -82,16 +82,8 @@
    transform: translateX(-100%);
 }
 
-/* Desktop: main content shifts when sidebar is open */
+/* Desktop: overlay behavior (no content push) */
 @media (min-width: 769px) {
-   body {
-      transition: margin-left var(--transition-medium) ease-out;
-   }
-
-   body.history-open {
-      margin-left: 320px;
-   }
-
    /* Keep panel visible but allow pointer events through when "hidden" on desktop */
    #history-panel.hidden {
       pointer-events: none;

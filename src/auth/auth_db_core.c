@@ -1342,7 +1342,8 @@ static int prepare_statements(void) {
    rc = sqlite3_prepare_v2(
        s_db.db,
        "SELECT id, user_id, category, value, confidence, source, created_at, updated_at, "
-       "reinforcement_count FROM memory_preferences WHERE user_id = ? ORDER BY category",
+       "reinforcement_count FROM memory_preferences WHERE user_id = ? ORDER BY category "
+       "LIMIT ? OFFSET ?",
        -1, &s_db.stmt_memory_pref_list, NULL);
    if (rc != SQLITE_OK) {
       LOG_ERROR("auth_db: prepare memory_pref_list failed: %s", sqlite3_errmsg(s_db.db));
@@ -1384,7 +1385,7 @@ static int prepare_statements(void) {
        s_db.db,
        "SELECT id, user_id, session_id, summary, topics, sentiment, created_at, "
        "message_count, duration_seconds, consolidated FROM memory_summaries "
-       "WHERE user_id = ? AND consolidated = 0 ORDER BY created_at DESC LIMIT ?",
+       "WHERE user_id = ? AND consolidated = 0 ORDER BY created_at DESC LIMIT ? OFFSET ?",
        -1, &s_db.stmt_memory_summary_list, NULL);
    if (rc != SQLITE_OK) {
       LOG_ERROR("auth_db: prepare memory_summary_list failed: %s", sqlite3_errmsg(s_db.db));
@@ -1603,7 +1604,7 @@ static int prepare_statements(void) {
                            "mention_count, first_seen, last_seen "
                            "FROM memory_entities "
                            "WHERE user_id = ? AND canonical_name LIKE ? ESCAPE '\\' "
-                           "ORDER BY mention_count DESC LIMIT ?",
+                           "ORDER BY mention_count DESC LIMIT ? OFFSET ?",
                            -1, &s_db.stmt_memory_entity_search, NULL);
    if (rc != SQLITE_OK) {
       LOG_ERROR("auth_db: prepare entity_search failed: %s", sqlite3_errmsg(s_db.db));
