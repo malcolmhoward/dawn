@@ -19,7 +19,7 @@ DAWN is designed for embedded Linux platforms (Jetson, Raspberry Pi) and support
    - Intelligent chunking for long utterances
 
 - **Multi-Provider LLM Integration**
-   - Cloud: OpenAI GPT-5 series, Anthropic Claude 4.5 (Sonnet/Opus/Haiku), Google Gemini 2.5/3
+   - Cloud: OpenAI GPT-5 series, Anthropic Claude 4.6 (Opus/Sonnet/Haiku), Google Gemini 2.5/3
    - Local: llama.cpp or Ollama (setup is beyond this guide — see [llama.cpp](https://github.com/ggerganov/llama.cpp) or [Ollama](https://ollama.ai))
    - Runtime model switching via WebUI or voice commands
    - Streaming responses with real-time TTS integration
@@ -30,6 +30,7 @@ DAWN is designed for embedded Linux platforms (Jetson, Raspberry Pi) and support
       - OpenAI: Reasoning effort (low/medium/high) for o1/o3/o4 models
       - Gemini: Thinking mode for Gemini 2.5 Flash/Pro
       - Local: Qwen3 thinking mode with native template support
+   - **Cloud rate limiting** — Configurable requests-per-minute throttle (default 40 RPM) prevents API 429 errors
 
 - **High-Quality Text-to-Speech**
    - Piper TTS with ONNX Runtime
@@ -85,7 +86,8 @@ DAWN is designed for embedded Linux platforms (Jetson, Raspberry Pi) and support
    - **Multi-user support** with separate conversation contexts
    - **User Management** (admin-only) - create/delete users, reset passwords
    - **My Settings** - per-user persona, location, timezone, units, TTS speed
-   - **Conversation history** - browse, search, continue, and delete past conversations
+   - **Conversation history** - browse, search, continue, delete, and export (JSON/HTML) past conversations
+   - **Message copy** - one-click copy of any assistant response
    - **Per-conversation LLM settings** - Reasoning mode and Tools mode lock after first message, inherited by continuations
    - **7 color themes** - cyan, purple, green, orange, red, blue, and terminal
    - **Accessibility** - keyboard navigation, screen reader support (ARIA), reduced motion preferences, WCAG-compliant touch targets
@@ -122,6 +124,12 @@ DAWN is designed for embedded Linux platforms (Jetson, Raspberry Pi) and support
       - Scheduled tasks: "Turn off the lights at midnight" (executes any registered tool)
       - Per-user event limits, missed event recovery on restart, automatic cleanup
       - WebUI notification banners with dismiss/snooze buttons
+   - **Home Assistant** - Control smart home entities via HA REST API
+      - Lights (on/off/brightness/color/color_temp), climate, locks, covers, media players
+      - Scenes, scripts, automations (activate/trigger)
+      - Entity status queries with area-aware responses
+      - Fuzzy name matching (closest entity by Levenshtein distance)
+      - Compile-time feature guard (`DAWN_ENABLE_HOMEASSISTANT_TOOL`)
    - **Parallel Tool Execution** - Multiple tool calls execute concurrently (e.g., weather + search in ~1s vs ~3s sequential)
    - LLM automatically invokes tools and incorporates results into responses
 
@@ -559,6 +567,7 @@ openai_api_key = "sk-your-openai-key-here"
 claude_api_key = "sk-ant-your-claude-key-here"
 gemini_api_key = "your-gemini-api-key-here"
 plex_token = "your-plex-token-here"          # Optional: for Plex music source
+home_assistant_token = "your-ha-token-here"  # Optional: for Home Assistant integration
 ```
 
 **Security notes:**
@@ -863,8 +872,8 @@ See `dawn.toml.example` for all available options. The `[persona]` section allow
 
 See `docs/LLM_INTEGRATION_GUIDE.md` for detailed setup instructions for:
 
-- OpenAI API (cloud) - GPT-5 series (gpt-5-mini default)
-- Anthropic Claude API (cloud) - Claude Sonnet 4.5 (default)
+- OpenAI API (cloud) - GPT-5 series
+- Anthropic Claude API (cloud) - Claude 4.6 Sonnet (default)
 - Google Gemini API (cloud) - Gemini 2.5 Flash (default), Gemini 3
 - llama.cpp local server (free, on-device)
 
@@ -920,13 +929,14 @@ enabled = true
 passphrase = "optional-security-phrase"  # Recommended if enabled
 ```
 
-**SmartThings Integration**: For Samsung SmartThings home automation, add OAuth credentials to `secrets.toml`:
+**Home Assistant Integration**: For smart home control via Home Assistant, add your Long-Lived Access Token to `secrets.toml` and configure the connection URL in the WebUI admin panel (Settings → Home Assistant):
 
 ```toml
-[secrets.smartthings]
-client_id = "your-client-id"
-client_secret = "your-client-secret"
+[secrets]
+home_assistant_token = "your-long-lived-access-token"
 ```
+
+Generate a token in HA: Profile → Long-Lived Access Tokens → Create Token. See `docs/HOMEASSISTANT_SETUP.md` for full HA Core setup on Jetson.
 
 ## Running
 
@@ -1115,6 +1125,7 @@ Or configure everything in WebUI Settings → Music & Media → Plex Connection 
 - **CODING_STYLE_GUIDE.md** - Code formatting and standards
 - **docs/LLM_INTEGRATION_GUIDE.md** - LLM setup (cloud and local)
 - **docs/MEMORY_SYSTEM_DESIGN.md** - Memory system architecture and design
+- **docs/HOMEASSISTANT_SETUP.md** - Home Assistant bare metal setup on Jetson Orin
 - **services/llama-server/README.md** - Local LLM service setup
 - **llm_testing/docs/** - LLM optimization research
 - **docs/DAP2_SATELLITE.md** - DAP2 satellite architecture and deployment

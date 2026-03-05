@@ -141,6 +141,7 @@ openai_api_key = "sk-your-openai-key"
 # claude_api_key = "sk-ant-your-claude-key"
 # gemini_api_key = "your-gemini-key"
 # plex_token = "your-plex-token"          # Optional: adds Plex library to unified music DB
+# home_assistant_token = "your-ha-token"  # Optional: for Home Assistant smart home control
 ```
 
 > **Plex users**: To get your Plex token, see the [Plex Music Source setup instructions](README.md#plex-music-source-optional) in the README. When configured, Plex tracks are automatically synced into the unified music database alongside local files, with priority-based deduplication.
@@ -294,6 +295,17 @@ endpoint = "http://127.0.0.1:8080"  # llama.cpp default
 
 Enable voice-activated web search with [SearXNG](https://docs.searxng.org/), a self-hosted metasearch engine. See [README.md](README.md#searxng-setup-for-web-search) for Docker setup instructions.
 
+### Home Assistant (Smart Home)
+
+Control lights, switches, climate, locks, and more through voice commands. Requires a Home Assistant instance on your network. See [docs/HOMEASSISTANT_SETUP.md](docs/HOMEASSISTANT_SETUP.md) for bare metal setup on Jetson, or use any existing HA installation. Add your Long-Lived Access Token to `secrets.toml`:
+
+```toml
+[secrets]
+home_assistant_token = "your-long-lived-access-token"
+```
+
+Then configure the HA connection URL in the WebUI admin panel (Settings → Home Assistant).
+
 ### JavaScript-Heavy Sites (FlareSolverr)
 
 For fetching content from sites that block simple requests, DAWN supports [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr). See [README.md](README.md#7-optional-llm-tools-setup) for setup.
@@ -314,6 +326,7 @@ For fetching content from sites that block simple requests, DAWN supports [Flare
 - **Full configuration**: See [README.md](README.md#configuration)
 - **Local LLM setup**: [llama.cpp](https://github.com/ggerganov/llama.cpp) or [Ollama](https://ollama.ai)
 - **Satellite devices**: See [docs/DAP2_SATELLITE.md](docs/DAP2_SATELLITE.md) for Tier 1 (RPi) and [docs/DAP2_DESIGN.md](docs/DAP2_DESIGN.md) for Tier 2 (ESP32)
+- **Smart home**: See [docs/HOMEASSISTANT_SETUP.md](docs/HOMEASSISTANT_SETUP.md) for Home Assistant integration
 - **System architecture**: See [ARCHITECTURE.md](ARCHITECTURE.md)
 
 ---

@@ -4,7 +4,7 @@ This document describes the architecture of the D.A.W.N. (Digital Assistant for 
 
 **D.A.W.N.** is the central intelligence layer of the OASIS ecosystem, responsible for interpreting user intent, fusing data from every subsystem, and routing commands. At its core, DAWN performs neural-inference to understand context and drive decision-making, acting as OASIS's orchestration hub for MIRAGE, AURA, SPARK, STAT, and any future modules.
 
-**Last Updated**: March 3, 2026 (Entity graph, semantic embeddings, memory viewer UI)
+**Last Updated**: March 4, 2026 (Home Assistant integration, LLM rate limiter, configurable timeouts)
 
 ## Table of Contents
 
@@ -67,7 +67,7 @@ D.A.W.N. is a modular voice assistant system that processes voice commands throu
          │          │         │          │
     ┌────▼───┐ ┌───▼────┐ ┌──▼───┐ ┌───▼──────┐
     │ OpenAI │ │ Claude │ │Gemini│ │ llama.cpp│
-    │ GPT-4o │ │ 4.5    │ │ 2.5  │ │ (local)  │
+    │ GPT-5  │ │ 4.6    │ │ 2.5  │ │ (local)  │
     └────┬───┘ └───┬────┘ └──┬───┘ └───┬──────┘
          │         │         │         │
          └─────────┴────┬────┴─────────┘
@@ -213,7 +213,7 @@ Audio Input → VAD (Silero) → Chunking Manager → ASR Engine (Whisper/Vosk) 
    - Provider selection based on configuration (`OPENAI_MODEL`, `ANTHROPIC_MODEL`)
 
 - **llm_openai.c/h**: OpenAI API implementation
-   - Supports GPT-4o, GPT-4, GPT-3.5
+   - Supports GPT-5 series, GPT-4o, GPT-4
    - Supports llama.cpp local server (OpenAI-compatible endpoint)
    - Supports Ollama with runtime model switching
    - Supports Google Gemini (via OpenAI-compatible endpoint)
@@ -222,7 +222,7 @@ Audio Input → VAD (Silero) → Chunking Manager → ASR Engine (Whisper/Vosk) 
    - Extended thinking support (reasoning_effort for OpenAI/Gemini models)
 
 - **llm_claude.c/h**: Claude API implementation
-   - Supports Claude 4.5 Sonnet, Claude 3 Opus
+   - Supports Claude 4.6 Opus/Sonnet, Claude 4.5 Sonnet
    - Streaming support
    - Different API format than OpenAI (Messages API)
    - Extended thinking support with configurable token budget
@@ -249,6 +249,11 @@ Audio Input → VAD (Silero) → Chunking Manager → ASR Engine (Whisper/Vosk) 
    - Validates JSON structure
    - Handles malformed JSON gracefully
 
+- **llm_rate_limit.c/h**: Cloud API rate limiter
+   - Process-wide sliding window throttle (default 40 RPM, configurable)
+   - Gates all cloud LLM call paths; local providers bypass
+   - Interrupt-aware blocking (wakes on shutdown signal)
+
 #### Data Flow (Streaming Mode)
 
 ```
@@ -265,8 +270,8 @@ User Query → LLM Provider (OpenAI/Claude/Local)
 
 | Provider                | Quality | TTFT      | Latency | Cost          |
 | ----------------------- | ------- | --------- | ------- | ------------- |
-| OpenAI GPT-4o           | 100%    | ~300ms    | ~3.1s   | ~$0.01/query  |
-| Claude 4.5 Sonnet       | 92.4%   | ~400ms    | ~3.5s   | ~$0.015/query |
+| OpenAI GPT-5            | 100%    | ~300ms    | ~3.1s   | ~$0.01/query  |
+| Claude 4.6 Sonnet       | 92.4%   | ~400ms    | ~3.5s   | ~$0.015/query |
 | Gemini 2.5 Flash        | ~90%    | ~250ms    | ~2.5s   | ~$0.002/query |
 | llama.cpp (Qwen3-4B Q4) | 81.9%   | 116-138ms | ~1.5s   | FREE          |
 | Ollama (Qwen3-4B Q4)    | 81.9%   | ~150ms    | ~1.6s   | FREE          |
@@ -1178,7 +1183,7 @@ struct tool_metadata;  // Forward declaration
    ↓
 8. ASR Processing (Whisper/Vosk with GPU acceleration)
    ↓
-9. Transcript → LLM (OpenAI GPT-4o/Claude 4.5/local with streaming)
+9. Transcript → LLM (OpenAI GPT-5/Claude 4.6/local with streaming)
    ↓
 10. LLM Response Streaming
     ↓
@@ -1363,11 +1368,11 @@ static const tool_metadata_t my_tool_metadata = {
 - **LLM Schema Generation**: `tool_registry_generate_llm_tools()` builds provider-specific schemas
 - **Capability Flags**: `TOOL_CAP_NETWORK`, `TOOL_CAP_DANGEROUS`, etc. for safety classification
 
-**Registered Tools** (as of January 2026):
+**Registered Tools** (as of March 2026):
 
-- audio_tools, calculator_tool, datetime_tool, hud_tools, llm_status_tool
-- memory_tool, music_tool, reset_conversation_tool, search_tool, shutdown_tool
-- smartthings_tool, switch_llm_tool, url_tool, viewing_tool, volume_tool, weather_tool
+- audio_tools, calculator_tool, datetime_tool, homeassistant_tool, hud_tools, llm_status_tool
+- memory_tool, music_tool, reset_conversation_tool, scheduler_tool, search_tool, shutdown_tool
+- switch_llm_tool, url_tool, viewing_tool, volume_tool, weather_tool
 
 ### Command Flow
 
