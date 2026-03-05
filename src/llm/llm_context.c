@@ -154,15 +154,17 @@ static const model_context_entry_t s_gemini_models[] = {
 
 static struct {
    bool initialized;
-   int local_context_size;     /* Cached from /props query */
-   bool local_context_queried; /* True if we've queried local LLM */
-   int last_prompt_tokens;     /* Last known prompt tokens (for WebUI) */
-   int last_context_size;      /* Last known context size (for WebUI) */
-   pthread_mutex_t mutex;      /* Protects state */
+   int local_context_size;           /* Cached context size */
+   bool local_context_queried;       /* True if we've queried local LLM */
+   bool local_context_authoritative; /* True if from runtime source (not model max/default) */
+   int last_prompt_tokens;           /* Last known prompt tokens (for WebUI) */
+   int last_context_size;            /* Last known context size (for WebUI) */
+   pthread_mutex_t mutex;            /* Protects state */
 } s_state = {
    .initialized = false,
    .local_context_size = LLM_CONTEXT_DEFAULT_LOCAL,
    .local_context_queried = false,
+   .local_context_authoritative = false,
    .last_prompt_tokens = 0,
    .last_context_size = 0,
 };
@@ -333,6 +335,7 @@ int llm_context_query_local(const char *endpoint) {
 void llm_context_refresh_local(void) {
    pthread_mutex_lock(&s_state.mutex);
    s_state.local_context_queried = false;
+   s_state.local_context_authoritative = false;
    pthread_mutex_unlock(&s_state.mutex);
    LOG_INFO("llm_context: Local context cache invalidated");
 }
@@ -342,12 +345,14 @@ int llm_context_get_size(llm_type_t type, cloud_provider_t provider, const char 
       pthread_mutex_lock(&s_state.mutex);
 
       if (!s_state.local_context_queried) {
-         /* Query local LLM for context size using new provider-aware module */
+         /* Initial query — model may not be loaded yet for Ollama */
          const char *endpoint = g_config.llm.local.endpoint[0] != '\0' ? g_config.llm.local.endpoint
                                                                        : "http://127.0.0.1:8080";
          const char *local_model = g_config.llm.local.model;
          s_state.local_context_size = llm_local_query_context_size(endpoint, local_model);
          s_state.local_context_queried = true;
+         /* For non-Ollama providers (llama.cpp), /props is always authoritative */
+         s_state.local_context_authoritative = (llm_local_get_provider() != LOCAL_PROVIDER_OLLAMA);
       }
 
       int size = s_state.local_context_size;
@@ -419,7 +424,38 @@ void llm_context_update_usage(uint32_t session_id,
       tracking->total_completion_tokens += completion_tokens;
    }
 
+   /* Check if we need to re-query Ollama context. Set authoritative=true under
+    * mutex BEFORE releasing, so only one thread attempts the HTTP refresh (M1). */
+   bool need_ollama_refresh = !s_state.local_context_authoritative &&
+                              llm_local_get_provider() == LOCAL_PROVIDER_OLLAMA;
+   if (need_ollama_refresh) {
+      s_state.local_context_authoritative = true; /* Claim refresh slot */
+   }
+
    pthread_mutex_unlock(&s_state.mutex);
+
+   /* For Ollama: re-query context size once after first LLM response.
+    * The model is now guaranteed loaded, so /api/ps will return the runtime
+    * context_length from Ollama's settings (not the model's theoretical max).
+    * Done outside mutex to avoid blocking other threads during HTTP call. */
+   if (need_ollama_refresh) {
+      const char *endpoint = g_config.llm.local.endpoint[0] != '\0' ? g_config.llm.local.endpoint
+                                                                    : "http://127.0.0.1:8080";
+      const char *local_model = g_config.llm.local.model;
+      int refreshed = llm_local_query_context_size(endpoint, local_model);
+      if (refreshed != LLM_CONTEXT_DEFAULT_LOCAL) {
+         pthread_mutex_lock(&s_state.mutex);
+         s_state.local_context_size = refreshed;
+         pthread_mutex_unlock(&s_state.mutex);
+         LOG_INFO("llm_context: Refreshed Ollama runtime context: %d tokens", refreshed);
+      } else {
+         /* HTTP call failed — release the claim so a future call retries */
+         pthread_mutex_lock(&s_state.mutex);
+         s_state.local_context_authoritative = false;
+         pthread_mutex_unlock(&s_state.mutex);
+         LOG_WARNING("llm_context: Ollama context refresh failed, will retry");
+      }
+   }
 
    /* Log context usage with threshold check */
    llm_type_t type = llm_get_type();
@@ -429,9 +465,11 @@ void llm_context_update_usage(uint32_t session_id,
    float threshold = g_config.llm.summarize_threshold;
    float threshold_pct = threshold * 100.0f;
 
-   /* Store last values for WebUI retrieval */
+   /* Store last values for WebUI retrieval (under mutex for M2 consistency) */
+   pthread_mutex_lock(&s_state.mutex);
    s_state.last_prompt_tokens = prompt_tokens;
    s_state.last_context_size = context_size;
+   pthread_mutex_unlock(&s_state.mutex);
 
    LOG_INFO("Context: %d/%d tokens (%.1f%%), threshold: %.0f%%", prompt_tokens, context_size,
             usage_pct, threshold_pct);
@@ -474,12 +512,14 @@ void llm_context_update_usage(uint32_t session_id,
 }
 
 void llm_context_get_last_usage(int *current_tokens, int *max_tokens, float *threshold) {
+   pthread_mutex_lock(&s_state.mutex);
    if (current_tokens) {
       *current_tokens = s_state.last_prompt_tokens;
    }
    if (max_tokens) {
       *max_tokens = s_state.last_context_size;
    }
+   pthread_mutex_unlock(&s_state.mutex);
    if (threshold) {
       *threshold = g_config.llm.summarize_threshold;
    }

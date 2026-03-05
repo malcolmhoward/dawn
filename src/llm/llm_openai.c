@@ -34,6 +34,7 @@
 #include "llm/llm_command_parser.h"
 #include "llm/llm_context.h"
 #include "llm/llm_interface.h"
+#include "llm/llm_local_provider.h"
 #include "llm/llm_streaming.h"
 #include "llm/llm_tools.h"
 #include "llm/sse_parser.h"
@@ -1067,6 +1068,60 @@ static const char *parse_api_error_message(const char *response_body, long http_
 }
 
 /**
+ * @brief Add local LLM thinking/reasoning parameters to request JSON
+ *
+ * Branches by provider: Ollama uses native "think" boolean, llama.cpp uses
+ * thinking object + reasoning_budget + chat_template_kwargs.
+ */
+static void add_local_thinking_params(json_object *root) {
+   const char *thinking_mode = llm_get_current_thinking_mode();
+   local_provider_t provider = llm_local_get_provider();
+
+   if (provider == LOCAL_PROVIDER_OLLAMA) {
+      /* Ollama native: "think" boolean parameter */
+      if (strcmp(thinking_mode, "disabled") != 0 && !llm_tools_suppressed()) {
+         json_object_object_add(root, "think", json_object_new_boolean(1));
+         LOG_INFO("Local LLM (Ollama): Thinking enabled (think: true)");
+      } else {
+         json_object_object_add(root, "think", json_object_new_boolean(0));
+         LOG_INFO("Local LLM (Ollama): Thinking disabled (think: false)");
+      }
+   } else {
+      /* llama.cpp / generic: thinking object + reasoning_budget + template kwargs */
+      if (strcmp(thinking_mode, "disabled") != 0 && !llm_tools_suppressed()) {
+         json_object *thinking = json_object_new_object();
+         json_object_object_add(thinking, "type", json_object_new_string("enabled"));
+
+         int budget = llm_get_effective_budget_tokens();
+         json_object_object_add(thinking, "budget_tokens", json_object_new_int(budget));
+
+         json_object_object_add(root, "thinking", thinking);
+
+         /* Force reasoning output even when tools are present (llama.cpp specific) */
+         json_object_object_add(root, "thinking_forced_open", json_object_new_boolean(1));
+
+         /* Pass enable_thinking=true to the chat template (Qwen3 requirement) */
+         json_object *template_kwargs = json_object_new_object();
+         json_object_object_add(template_kwargs, "enable_thinking", json_object_new_boolean(1));
+         json_object_object_add(root, "chat_template_kwargs", template_kwargs);
+
+         LOG_INFO("Local LLM (llama.cpp): Extended thinking enabled (budget: %d tokens, "
+                  "forced_open: true, chat_template_kwargs.enable_thinking: true)",
+                  budget);
+      } else if (strcmp(thinking_mode, "disabled") == 0) {
+         /* Explicitly disable reasoning for llama.cpp reasoning models */
+         json_object_object_add(root, "reasoning_budget", json_object_new_int(0));
+
+         json_object *template_kwargs = json_object_new_object();
+         json_object_object_add(template_kwargs, "enable_thinking", json_object_new_boolean(0));
+         json_object_object_add(root, "chat_template_kwargs", template_kwargs);
+
+         LOG_INFO("Local LLM (llama.cpp): Reasoning explicitly disabled (reasoning_budget: 0)");
+      }
+   }
+}
+
+/**
  * @brief Internal streaming implementation with iteration tracking
  */
 static char *llm_openai_streaming_internal(struct json_object *conversation_history,
@@ -1127,50 +1182,10 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
    json_object_object_add(stream_opts, "include_usage", json_object_new_boolean(1));
    json_object_object_add(root, "stream_options", stream_opts);
 
-   // For local LLM (llama.cpp), request per-chunk timing metrics
-   // This enables real-time tokens/sec display during streaming
+   // For local LLM, request per-chunk timing metrics and thinking config
    if (api_key == NULL) {
       json_object_object_add(root, "timings_per_token", json_object_new_boolean(1));
-
-      // Add extended thinking for local LLM (llama.cpp with DeepSeek-R1, QwQ, etc.)
-      // Skip for internal utility calls (search summarization, context compaction)
-      // Use session-specific thinking mode if available, otherwise global config
-      const char *thinking_mode = llm_get_current_thinking_mode();
-      if (strcmp(thinking_mode, "disabled") != 0 && !llm_tools_suppressed()) {
-         json_object *thinking = json_object_new_object();
-         json_object_object_add(thinking, "type", json_object_new_string("enabled"));
-
-         int budget = llm_get_effective_budget_tokens();
-         json_object_object_add(thinking, "budget_tokens", json_object_new_int(budget));
-
-         json_object_object_add(root, "thinking", thinking);
-
-         // Force reasoning output even when tools are present (llama.cpp specific)
-         // Without this, models may skip reasoning and go straight to tool selection
-         json_object_object_add(root, "thinking_forced_open", json_object_new_boolean(1));
-
-         // Pass enable_thinking=true to the chat template (Qwen3 requirement)
-         // This sets the template variable that controls thinking behavior
-         json_object *template_kwargs = json_object_new_object();
-         json_object_object_add(template_kwargs, "enable_thinking", json_object_new_boolean(1));
-         json_object_object_add(root, "chat_template_kwargs", template_kwargs);
-
-         LOG_INFO("Local LLM: Extended thinking enabled (budget: %d tokens, forced_open: true, "
-                  "chat_template_kwargs.enable_thinking: true)",
-                  budget);
-      } else if (strcmp(thinking_mode, "disabled") == 0) {
-         // Explicitly disable reasoning for llama.cpp reasoning models.
-         // NOTE: reasoning_budget is a llama.cpp-specific parameter (not OpenAI API).
-         // Setting to 0 disables thinking output for models like DeepSeek-R1.
-         json_object_object_add(root, "reasoning_budget", json_object_new_int(0));
-
-         // Pass enable_thinking=false to the chat template (Qwen3 requirement)
-         json_object *template_kwargs = json_object_new_object();
-         json_object_object_add(template_kwargs, "enable_thinking", json_object_new_boolean(0));
-         json_object_object_add(root, "chat_template_kwargs", template_kwargs);
-
-         LOG_INFO("Local LLM: Reasoning explicitly disabled (reasoning_budget: 0)");
-      }
+      add_local_thinking_params(root);
    } else {
       // For cloud OpenAI reasoning models, add reasoning_effort parameter
       // Supported models: o1, o3 series and GPT-5 family
@@ -1910,23 +1925,7 @@ int llm_openai_streaming_single_shot(struct json_object *conversation_history,
    /* Local LLM thinking/reasoning config */
    if (api_key == NULL) {
       json_object_object_add(root, "timings_per_token", json_object_new_boolean(1));
-      const char *thinking_mode = llm_get_current_thinking_mode();
-      if (strcmp(thinking_mode, "disabled") != 0 && !llm_tools_suppressed()) {
-         json_object *thinking = json_object_new_object();
-         json_object_object_add(thinking, "type", json_object_new_string("enabled"));
-         int budget = llm_get_effective_budget_tokens();
-         json_object_object_add(thinking, "budget_tokens", json_object_new_int(budget));
-         json_object_object_add(root, "thinking", thinking);
-         json_object_object_add(root, "thinking_forced_open", json_object_new_boolean(1));
-         json_object *template_kwargs = json_object_new_object();
-         json_object_object_add(template_kwargs, "enable_thinking", json_object_new_boolean(1));
-         json_object_object_add(root, "chat_template_kwargs", template_kwargs);
-      } else if (strcmp(thinking_mode, "disabled") == 0) {
-         json_object_object_add(root, "reasoning_budget", json_object_new_int(0));
-         json_object *template_kwargs = json_object_new_object();
-         json_object_object_add(template_kwargs, "enable_thinking", json_object_new_boolean(0));
-         json_object_object_add(root, "chat_template_kwargs", template_kwargs);
-      }
+      add_local_thinking_params(root);
    } else {
       /* Cloud reasoning models */
       const char *thinking_mode = llm_get_current_thinking_mode();
@@ -2216,6 +2215,9 @@ int llm_openai_streaming_single_shot(struct json_object *conversation_history,
    if (!result->has_tool_calls) {
       result->text = llm_stream_get_response(stream_ctx);
    }
+
+   /* Copy thinking content if present (local LLM reasoning_content or inline <think> tags) */
+   result->thinking_content = llm_stream_get_thinking(stream_ctx);
 
    /* Copy finish reason */
    if (stream_ctx->finish_reason[0] != '\0') {

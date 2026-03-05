@@ -26,6 +26,7 @@
 #include <ctype.h>
 #include <curl/curl.h>
 #include <json-c/json.h>
+#include <limits.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -374,9 +375,71 @@ local_provider_t llm_local_detect_provider(const char *endpoint) {
  * ============================================================================= */
 
 /**
- * @brief Try to get context size from Ollama /api/show endpoint
+ * @brief Try to get runtime context size from Ollama /api/ps endpoint
+ *
+ * The /api/ps endpoint returns the actual runtime context_length for loaded models,
+ * reflecting the user's Ollama settings panel configuration. This is more accurate
+ * than /api/show which returns the model's theoretical maximum.
  */
-static int try_ollama_context(const char *base_url, const char *model, int *ctx_out) {
+static int try_ollama_ps_context(const char *base_url, const char *model, int *ctx_out) {
+   if (!model || model[0] == '\0') {
+      return -1;
+   }
+
+   char url[512];
+   snprintf(url, sizeof(url), "%s/api/ps", base_url);
+
+   curl_buffer_t response;
+   int result = http_get(url, 3000, &response);
+
+   if (result != 0 || !response.data) {
+      curl_buffer_free(&response);
+      return -1;
+   }
+
+   struct json_object *root = json_tokener_parse(response.data);
+   curl_buffer_free(&response);
+
+   if (!root) {
+      return -1;
+   }
+
+   /* Look for matching model in running models list */
+   struct json_object *models_arr = NULL;
+   if (json_object_object_get_ex(root, "models", &models_arr) &&
+       json_object_get_type(models_arr) == json_type_array) {
+      int len = json_object_array_length(models_arr);
+      for (int i = 0; i < len; i++) {
+         struct json_object *entry = json_object_array_get_idx(models_arr, i);
+         struct json_object *name_obj = NULL;
+         if (json_object_object_get_ex(entry, "name", &name_obj)) {
+            const char *name = json_object_get_string(name_obj);
+            if (name && strcmp(name, model) == 0) {
+               struct json_object *ctx_obj = NULL;
+               if (json_object_object_get_ex(entry, "context_length", &ctx_obj)) {
+                  int ctx = json_object_get_int(ctx_obj);
+                  if (ctx > 0) {
+                     json_object_put(root);
+                     *ctx_out = ctx;
+                     return 0;
+                  }
+               }
+            }
+         }
+      }
+   }
+
+   json_object_put(root);
+   return -1;
+}
+
+/**
+ * @brief Try to get context size from Ollama /api/show endpoint (model capability)
+ *
+ * Falls back to this when /api/ps doesn't have the model loaded. Returns the
+ * model's theoretical maximum context, or num_ctx from Modelfile parameters.
+ */
+static int try_ollama_show_context(const char *base_url, const char *model, int *ctx_out) {
    if (!model || model[0] == '\0') {
       return -1;
    }
@@ -408,34 +471,48 @@ static int try_ollama_context(const char *base_url, const char *model, int *ctx_
 
    int context_size = 0;
 
-   /* Try model_info.context_length (newer Ollama versions) */
-   struct json_object *model_info = NULL;
-   struct json_object *ctx_obj = NULL;
-
-   if (json_object_object_get_ex(root, "model_info", &model_info)) {
-      /* Try various field names */
-      if (json_object_object_get_ex(model_info, "context_length", &ctx_obj)) {
-         context_size = json_object_get_int(ctx_obj);
-      } else if (json_object_object_get_ex(model_info, "num_ctx", &ctx_obj)) {
-         context_size = json_object_get_int(ctx_obj);
+   /* First check parameters for num_ctx (user-configured in Modelfile, most authoritative) */
+   struct json_object *params_obj = NULL;
+   if (json_object_object_get_ex(root, "parameters", &params_obj)) {
+      const char *params = json_object_get_string(params_obj);
+      if (params) {
+         const char *num_ctx = strstr(params, "num_ctx");
+         if (num_ctx) {
+            /* Skip "num_ctx " and parse number */
+            const char *num_start = num_ctx + 7;
+            while (*num_start && (*num_start == ' ' || *num_start == '\t')) {
+               num_start++;
+            }
+            if (*num_start) {
+               char *endptr = NULL;
+               long val = strtol(num_start, &endptr, 10);
+               if (endptr != num_start && val > 0 && val <= INT_MAX) {
+                  context_size = (int)val;
+               }
+            }
+         }
       }
    }
 
-   /* Try parameters string (older format: "num_ctx 32768\n...") */
+   /* Fall back to model_info context_length (model's theoretical max) */
    if (context_size == 0) {
-      struct json_object *params_obj = NULL;
-      if (json_object_object_get_ex(root, "parameters", &params_obj)) {
-         const char *params = json_object_get_string(params_obj);
-         if (params) {
-            const char *num_ctx = strstr(params, "num_ctx");
-            if (num_ctx) {
-               /* Skip "num_ctx " and parse number */
-               const char *num_start = num_ctx + 7;
-               while (*num_start && (*num_start == ' ' || *num_start == '\t')) {
-                  num_start++;
-               }
-               if (*num_start) {
-                  context_size = atoi(num_start);
+      struct json_object *model_info = NULL;
+      struct json_object *ctx_obj = NULL;
+
+      if (json_object_object_get_ex(root, "model_info", &model_info)) {
+         if (json_object_object_get_ex(model_info, "context_length", &ctx_obj)) {
+            context_size = json_object_get_int(ctx_obj);
+         } else if (json_object_object_get_ex(model_info, "num_ctx", &ctx_obj)) {
+            context_size = json_object_get_int(ctx_obj);
+         } else {
+            /* Ollama uses architecture-prefixed keys: e.g. "qwen2.context_length",
+             * "llama.context_length". Iterate to find any key ending in ".context_length" */
+            static const char ctx_suffix[] = ".context_length";
+            json_object_object_foreach(model_info, key, val) {
+               const char *suffix = strstr(key, ctx_suffix);
+               if (suffix && suffix[sizeof(ctx_suffix) - 1] == '\0') {
+                  context_size = json_object_get_int(val);
+                  break;
                }
             }
          }
@@ -518,8 +595,15 @@ int llm_local_query_context_size(const char *endpoint, const char *model) {
 
    /* Try provider-specific query */
    if (provider == LOCAL_PROVIDER_OLLAMA && model && model[0] != '\0') {
-      if (try_ollama_context(base_url, model, &context_size) == 0) {
-         LOG_INFO("llm_local_provider: Ollama context size for %s: %d tokens", model, context_size);
+      /* Prefer /api/ps (runtime context from Ollama settings panel) over /api/show (model max) */
+      if (try_ollama_ps_context(base_url, model, &context_size) == 0) {
+         LOG_INFO("llm_local_provider: Ollama runtime context for %s: %d tokens (from /api/ps)",
+                  model, context_size);
+         return context_size;
+      }
+      if (try_ollama_show_context(base_url, model, &context_size) == 0) {
+         LOG_INFO("llm_local_provider: Ollama model context for %s: %d tokens (from /api/show)",
+                  model, context_size);
          return context_size;
       }
    }

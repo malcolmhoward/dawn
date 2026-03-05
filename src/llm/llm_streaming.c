@@ -167,6 +167,213 @@ static int append_to_thinking(llm_stream_context_t *ctx, const char *text) {
 }
 
 /**
+ * @brief Emit text as thinking content (accumulate + callbacks + WebUI)
+ */
+static void emit_thinking(llm_stream_context_t *ctx,
+                          const char *text,
+                          int has_ws_session,
+                          session_t *ws_session) {
+   append_to_thinking(ctx, text);
+   if (ctx->chunk_callback) {
+      ctx->chunk_callback(LLM_CHUNK_THINKING, text, ctx->chunk_callback_userdata);
+   }
+   if (has_ws_session) {
+      webui_send_thinking_delta(ws_session, text);
+   }
+}
+
+/**
+ * @brief Emit text as response content (accumulate + callbacks + TTFT)
+ */
+static void emit_response(llm_stream_context_t *ctx,
+                          const char *text,
+                          int has_ws_session,
+                          session_t *ws_session) {
+   (void)has_ws_session;
+   (void)ws_session;
+   record_ttft_if_first_token(ctx);
+   ctx->callback(text, ctx->callback_userdata);
+   if (ctx->chunk_callback) {
+      ctx->chunk_callback(LLM_CHUNK_TEXT, text, ctx->chunk_callback_userdata);
+   }
+   append_to_accumulated(ctx, text);
+}
+
+/**
+ * @brief Emit text routed by current think tag state
+ */
+static void emit_content(llm_stream_context_t *ctx,
+                         const char *text,
+                         int has_ws_session,
+                         session_t *ws_session) {
+   if (ctx->inside_think_tag) {
+      emit_thinking(ctx, text, has_ws_session, ws_session);
+   } else {
+      emit_response(ctx, text, has_ws_session, ws_session);
+   }
+}
+
+/**
+ * @brief Handle a matched <think> open tag
+ */
+static void handle_think_open(llm_stream_context_t *ctx,
+                              int has_ws_session,
+                              session_t *ws_session) {
+   if (ctx->inside_think_tag) {
+      LOG_WARNING("LLM: Nested <think> tag ignored (already inside think block)");
+      return;
+   }
+   ctx->thinking_active = 1;
+   ctx->has_thinking = 1;
+   ctx->inside_think_tag = 1;
+   LOG_INFO("LLM: Inline <think> tag detected");
+   if (has_ws_session) {
+      webui_send_thinking_start(ws_session, "local");
+   }
+}
+
+/**
+ * @brief Handle a matched </think> close tag
+ */
+static void handle_think_close(llm_stream_context_t *ctx,
+                               int has_ws_session,
+                               session_t *ws_session) {
+   if (!ctx->inside_think_tag) {
+      LOG_WARNING("LLM: Stray </think> tag ignored (not inside think block)");
+      return;
+   }
+   ctx->inside_think_tag = 0;
+   ctx->thinking_active = 0;
+   LOG_INFO("LLM: Inline </think> tag closed");
+   if (has_ws_session) {
+      webui_send_thinking_end(ws_session, ctx->thinking_size > 0);
+   }
+}
+
+#define THINK_OPEN_LEN 7  /* strlen("<think>") */
+#define THINK_CLOSE_LEN 8 /* strlen("</think>") */
+
+/**
+ * @brief Try to resolve partial tag buffer against <think> or </think>
+ *
+ * @return 1 if tag was resolved (matched or rejected), 0 if still partial
+ */
+static int try_resolve_partial(llm_stream_context_t *ctx,
+                               int has_ws_session,
+                               session_t *ws_session) {
+   int len = ctx->think_tag_partial_len;
+
+   /* Check for complete <think> match */
+   if (len >= THINK_OPEN_LEN && strncmp(ctx->think_tag_partial, "<think>", THINK_OPEN_LEN) == 0) {
+      handle_think_open(ctx, has_ws_session, ws_session);
+      /* Flush any trailing chars after the tag as content */
+      if (len > THINK_OPEN_LEN) {
+         ctx->think_tag_partial[len] = '\0';
+         emit_content(ctx, ctx->think_tag_partial + THINK_OPEN_LEN, has_ws_session, ws_session);
+      }
+      ctx->think_tag_partial_len = 0;
+      return 1;
+   }
+
+   /* Check for complete </think> match */
+   if (len >= THINK_CLOSE_LEN &&
+       strncmp(ctx->think_tag_partial, "</think>", THINK_CLOSE_LEN) == 0) {
+      handle_think_close(ctx, has_ws_session, ws_session);
+      ctx->think_tag_partial_len = 0;
+      return 1;
+   }
+
+   /* Check if partial buffer can still match either tag */
+   int could_match_open = (len <= THINK_OPEN_LEN &&
+                           strncmp(ctx->think_tag_partial, "<think>", len) == 0);
+   int could_match_close = (len <= THINK_CLOSE_LEN &&
+                            strncmp(ctx->think_tag_partial, "</think>", len) == 0);
+
+   if (!could_match_open && !could_match_close) {
+      /* Not a tag — flush partial buffer as content */
+      ctx->think_tag_partial[len] = '\0';
+      emit_content(ctx, ctx->think_tag_partial, has_ws_session, ws_session);
+      ctx->think_tag_partial_len = 0;
+      return 1;
+   }
+
+   return 0; /* Still partial, need more data */
+}
+
+/**
+ * @brief Filter inline <think>...</think> tags from streaming content
+ *
+ * Processes text character-by-character when a '<' is detected, otherwise
+ * operates on spans for efficiency. Text inside <think> tags is redirected
+ * to the thinking buffer; text outside goes to the normal response path.
+ *
+ * @param ctx Stream context (carries inside_think_tag state)
+ * @param text Input text chunk from the content delta
+ * @param has_ws_session Whether a WebUI session is active
+ * @param ws_session The WebUI session (may be NULL)
+ */
+static void filter_think_tags(llm_stream_context_t *ctx,
+                              const char *text,
+                              int has_ws_session,
+                              session_t *ws_session) {
+   if (!text || !*text) {
+      return;
+   }
+
+   const char *p = text;
+
+   /* If we have a partial tag from previous chunk, try to complete it */
+   if (ctx->think_tag_partial_len > 0) {
+      while (*p && ctx->think_tag_partial_len < (int)sizeof(ctx->think_tag_partial) - 1) {
+         ctx->think_tag_partial[ctx->think_tag_partial_len++] = *p++;
+         if (try_resolve_partial(ctx, has_ws_session, ws_session)) {
+            goto process_remaining;
+         }
+      }
+      /* Exhausted input while still in partial state — wait for more data */
+      if (ctx->think_tag_partial_len > 0) {
+         return;
+      }
+   }
+
+process_remaining:
+   while (*p) {
+      if (*p == '<') {
+         /* Start collecting a potential tag */
+         ctx->think_tag_partial[0] = '<';
+         ctx->think_tag_partial_len = 1;
+         p++;
+
+         /* Try to resolve from remaining input */
+         while (*p && ctx->think_tag_partial_len < (int)sizeof(ctx->think_tag_partial) - 1) {
+            ctx->think_tag_partial[ctx->think_tag_partial_len++] = *p++;
+            if (try_resolve_partial(ctx, has_ws_session, ws_session)) {
+               goto process_remaining;
+            }
+         }
+         /* Ran out of input while matching — partial stays buffered */
+         return;
+      }
+
+      /* Fast path: scan span of non-'<' characters */
+      const char *span_start = p;
+      while (*p && *p != '<') {
+         p++;
+      }
+
+      /* Emit the span (C1 fix: use strndup instead of const-cast null-termination) */
+      size_t span_len = (size_t)(p - span_start);
+      if (span_len > 0) {
+         char *span = strndup(span_start, span_len);
+         if (span) {
+            emit_content(ctx, span, has_ws_session, ws_session);
+            free(span);
+         }
+      }
+   }
+}
+
+/**
  * @brief Parse OpenAI/llama.cpp streaming chunk
  *
  * Format: {"choices":[{"delta":{"content":"text"}}]}
@@ -236,8 +443,8 @@ static void parse_openai_chunk(llm_stream_context_t *ctx, const char *event_data
          if (json_object_object_get_ex(delta, "content", &content)) {
             const char *text = json_object_get_string(content);
             if (text && text[0] != '\0') {
-               // If we were in thinking mode, we've transitioned to text
-               if (ctx->thinking_active) {
+               // If we were in thinking mode (from reasoning_content), transition
+               if (ctx->thinking_active && !ctx->inside_think_tag) {
                   ctx->thinking_active = 0;
                   LOG_INFO("LLM: Transitioned from reasoning to response");
 
@@ -247,19 +454,20 @@ static void parse_openai_chunk(llm_stream_context_t *ctx, const char *event_data
                   }
                }
 
-               // Record TTFT on first token
-               record_ttft_if_first_token(ctx);
-
-               // Call user callback with chunk
-               ctx->callback(text, ctx->callback_userdata);
-
-               // Call chunk callback with text type if available
-               if (ctx->chunk_callback) {
-                  ctx->chunk_callback(LLM_CHUNK_TEXT, text, ctx->chunk_callback_userdata);
+               // For local LLMs, filter inline <think> tags from content
+               // Some models (Qwen3 via Ollama) emit thinking in content with tags
+               if (ctx->llm_type == LLM_LOCAL || ctx->inside_think_tag ||
+                   ctx->think_tag_partial_len > 0) {
+                  filter_think_tags(ctx, text, has_ws_session, ws_session);
+               } else {
+                  // Cloud provider or no think tag state — pass through directly
+                  record_ttft_if_first_token(ctx);
+                  ctx->callback(text, ctx->callback_userdata);
+                  if (ctx->chunk_callback) {
+                     ctx->chunk_callback(LLM_CHUNK_TEXT, text, ctx->chunk_callback_userdata);
+                  }
+                  append_to_accumulated(ctx, text);
                }
-
-               // Append to accumulated response
-               append_to_accumulated(ctx, text);
             }
          }
 
@@ -863,7 +1071,14 @@ void llm_stream_handle_event(llm_stream_context_t *ctx, const char *event_data) 
 }
 
 char *llm_stream_get_response(llm_stream_context_t *ctx) {
-   if (!ctx || !ctx->accumulated_response) {
+   if (!ctx || !ctx->accumulated_response || ctx->accumulated_size == 0) {
+      // Fallback: if we have thinking content but no response, use thinking as response
+      // This handles models like Qwen3.5 that put all output in reasoning_content
+      if (ctx && ctx->accumulated_thinking && ctx->thinking_size > 0) {
+         LOG_WARNING("LLM: Empty response but has thinking content (%zu bytes), using as response",
+                     ctx->thinking_size);
+         return strdup(ctx->accumulated_thinking);
+      }
       return NULL;
    }
 

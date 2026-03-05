@@ -160,6 +160,11 @@ typedef struct {
    int has_thinking;           /**< 1 if any thinking content was received */
    int reasoning_tokens;       /**< OpenAI o-series reasoning tokens (from usage) */
 
+   /* Inline <think> tag filtering state (for models that emit think tags in content) */
+   int inside_think_tag;       /**< 1 if currently inside inline <think> block */
+   char think_tag_partial[16]; /**< Partial tag buffer for cross-chunk splits */
+   int think_tag_partial_len;  /**< Length of partial tag data */
+
    /* Stream completion tracking */
    int stream_complete;    /**< 1 when stream has ended */
    char finish_reason[32]; /**< Final finish/stop reason from stream */
