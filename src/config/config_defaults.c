@@ -166,7 +166,7 @@ void config_set_defaults(dawn_config_t *config) {
 
    /* Search Summarizer */
    SAFE_COPY(config->search.summarizer.backend, "tfidf"); /* Fast local extractive summarization */
-   config->search.summarizer.threshold_bytes = 3072;
+   config->search.summarizer.threshold_bytes = 4096;
    config->search.summarizer.target_words = 600;
    config->search.summarizer.target_ratio = 0.2f; /* Keep 20% of sentences for TF-IDF */
 

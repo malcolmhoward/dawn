@@ -30,14 +30,13 @@
 
 #include "config/dawn_config.h"
 #include "logging.h"
-#include "tools/search_summarizer.h"
 #include "tools/tool_registry.h"
 #include "tools/web_search.h"
 #include "utils/string_utils.h"
 
 /* ========== Constants ========== */
 
-#define SEARCH_RESULT_BUFFER_SIZE 4096
+#define SEARCH_RESULT_BUFFER_SIZE 12288
 
 /* ========== Forward Declarations ========== */
 
@@ -66,6 +65,19 @@ static const treg_param_t search_params[] = {
        .required = true,
        .maps_to = TOOL_MAPS_TO_VALUE,
    },
+   {
+       .name = "time_range",
+       .description = "Optional time filter to restrict results to a recent period. "
+                      "'day' = last 24h, 'week' = last 7 days, 'month' = last 30 days, "
+                      "'year' = last 12 months. Most useful with category='news'. "
+                      "Omit for no time filter.",
+       .type = TOOL_PARAM_TYPE_ENUM,
+       .required = false,
+       .maps_to = TOOL_MAPS_TO_CUSTOM,
+       .field_name = "time_range",
+       .enum_values = { "day", "week", "month", "year" },
+       .enum_count = 4,
+   },
 };
 
 /* ========== Tool Metadata ========== */
@@ -77,13 +89,14 @@ static const tool_metadata_t search_metadata = {
    .aliases = { NULL },
    .alias_count = 0,
 
-   .description = "Search the web for information. Choose the most appropriate category: "
-                  "'web' for general queries, 'news' for current events, "
-                  "'science' for scientific topics, 'it' for tech/programming, "
-                  "'social' for social media, 'dictionary' for definitions, "
-                  "'papers' for academic research.",
+   .description = "Search the web for information. ALWAYS use this tool for current events, "
+                  "recent news, prices, scores, or any time-sensitive question — do NOT guess "
+                  "from training data. Choose category: 'news' for events/headlines, 'web' for "
+                  "general queries, 'it' for programming/tech, 'science' for research, 'papers' "
+                  "for academic sources. Use time_range='day' or 'week' for breaking/recent news. "
+                  "Write specific queries.",
    .params = search_params,
-   .param_count = 2,
+   .param_count = 3,
 
    .device_type = TOOL_DEVICE_TYPE_GETTER,
    .capabilities = TOOL_CAP_NETWORK,
@@ -111,10 +124,14 @@ static bool search_tool_is_available(void) {
 
 /* ========== Helper Functions ========== */
 
-static char *perform_search(const char *value, search_type_t type, const char *type_name) {
-   LOG_INFO("search_tool: Performing %s search for '%s'", type_name, value);
+static char *perform_search(const char *query,
+                            search_type_t type,
+                            const char *type_name,
+                            const char *time_range) {
+   LOG_INFO("search_tool: Performing %s search for '%s'", type_name, query);
 
-   search_response_t *response = web_search_query_typed(value, SEARXNG_MAX_RESULTS, type);
+   search_response_t *response = web_search_query_typed(query, SEARXNG_MAX_RESULTS, type,
+                                                        time_range);
    if (!response) {
       return strdup("Search request failed.");
    }
@@ -129,24 +146,43 @@ static char *perform_search(const char *value, search_type_t type, const char *t
       return result ? result : strdup("Search failed.");
    }
 
+   /* Auto-fallback: if news returned 0 results, retry as web search */
+   bool fell_back = false;
+   if (response->count == 0 && type == SEARCH_TYPE_NEWS) {
+      web_search_free_response(response);
+      LOG_INFO("search_tool: News returned 0 results, falling back to web search");
+      response = web_search_query_typed(query, SEARXNG_MAX_RESULTS, SEARCH_TYPE_WEB, NULL);
+      if (!response) {
+         return strdup("Search request failed.");
+      }
+      if (response->error) {
+         LOG_ERROR("search_tool: Web fallback error: %s", response->error);
+         char *result = malloc(256);
+         if (result) {
+            snprintf(result, 256, "Search failed: %s", response->error);
+         }
+         web_search_free_response(response);
+         return result ? result : strdup("Search failed.");
+      }
+      fell_back = true;
+      type_name = "web (news fallback)";
+   }
+
    if (response->count > 0) {
       char *result = malloc(SEARCH_RESULT_BUFFER_SIZE);
       if (result) {
-         web_search_format_for_llm(response, result, SEARCH_RESULT_BUFFER_SIZE);
-         LOG_INFO("search_tool: Returning %d %s results", response->count, type_name);
-
-         /* Run through summarizer if enabled and over threshold */
-         char *summarized = NULL;
-         int sum_result = search_summarizer_process(result, value, &summarized);
-         if (sum_result == SUMMARIZER_SUCCESS && summarized) {
-            free(result);
-            result = summarized;
-         } else if (summarized) {
-            /* Summarizer returned something even on error (passthrough policy) */
-            free(result);
-            result = summarized;
+         size_t offset = 0;
+         /* If we fell back from news to web, tell the LLM */
+         if (fell_back) {
+            int n = snprintf(result, SEARCH_RESULT_BUFFER_SIZE,
+                             "Note: No news results found for this query; "
+                             "showing general web results instead.\n\n");
+            if (n > 0 && (size_t)n < SEARCH_RESULT_BUFFER_SIZE) {
+               offset = (size_t)n;
+            }
          }
-         /* If summarizer failed with no output, keep original result */
+         web_search_format_for_llm(response, result + offset, SEARCH_RESULT_BUFFER_SIZE - offset);
+         LOG_INFO("search_tool: Returning %d %s results", response->count, type_name);
       }
 
       /* Sanitize result to remove invalid UTF-8/control chars before sending to LLM */
@@ -161,7 +197,7 @@ static char *perform_search(const char *value, search_type_t type, const char *t
    web_search_free_response(response);
    char *msg = malloc(128);
    if (msg) {
-      snprintf(msg, 128, "No %s results found for '%s'.", type_name, value);
+      snprintf(msg, 128, "No %s results found for '%s'.", type_name, query);
    }
    return msg ? msg : strdup("No results found.");
 }
@@ -180,26 +216,33 @@ static char *search_tool_callback(const char *action, char *value, int *should_r
       }
    }
 
+   /* Extract base query and optional time_range from encoded value */
+   char query[512];
+   tool_param_extract_base(value, query, sizeof(query));
+
+   char time_range[16] = "";
+   tool_param_extract_custom(value, "time_range", time_range, sizeof(time_range));
+
    /* Determine search type from action (category) */
    if (action == NULL || action[0] == '\0' || strcmp(action, "web") == 0) {
-      return perform_search(value, SEARCH_TYPE_WEB, "web");
+      return perform_search(query, SEARCH_TYPE_WEB, "web", time_range);
    } else if (strcmp(action, "news") == 0) {
-      return perform_search(value, SEARCH_TYPE_NEWS, "news");
+      return perform_search(query, SEARCH_TYPE_NEWS, "news", time_range);
    } else if (strcmp(action, "science") == 0) {
-      return perform_search(value, SEARCH_TYPE_SCIENCE, "science");
+      return perform_search(query, SEARCH_TYPE_SCIENCE, "science", time_range);
    } else if (strcmp(action, "it") == 0 || strcmp(action, "tech") == 0) {
-      return perform_search(value, SEARCH_TYPE_IT, "tech");
+      return perform_search(query, SEARCH_TYPE_IT, "tech", time_range);
    } else if (strcmp(action, "social") == 0) {
-      return perform_search(value, SEARCH_TYPE_SOCIAL, "social");
+      return perform_search(query, SEARCH_TYPE_SOCIAL, "social", time_range);
    } else if (strcmp(action, "define") == 0 || strcmp(action, "dictionary") == 0) {
-      return perform_search(value, SEARCH_TYPE_DICTIONARY, "dictionary");
+      return perform_search(query, SEARCH_TYPE_DICTIONARY, "dictionary", time_range);
    } else if (strcmp(action, "papers") == 0 || strcmp(action, "academic") == 0) {
-      return perform_search(value, SEARCH_TYPE_PAPERS, "papers");
+      return perform_search(query, SEARCH_TYPE_PAPERS, "papers", time_range);
    }
 
    /* Fallback to web search for unknown categories */
    LOG_WARNING("search_tool: Unknown category '%s', defaulting to web search", action);
-   return perform_search(value, SEARCH_TYPE_WEB, "web");
+   return perform_search(query, SEARCH_TYPE_WEB, "web", time_range);
 }
 
 /* ========== Public API ========== */

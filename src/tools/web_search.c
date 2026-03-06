@@ -37,6 +37,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h> /* For strcasestr */
+#include <time.h>
 
 #include "config/dawn_config.h"
 #include "logging.h"
@@ -156,21 +157,71 @@ static char *get_json_string(struct json_object *obj, const char *key) {
 /* Note: Host extraction moved to string_utils.h as extract_url_host() */
 
 /**
+ * @brief Free all dynamically allocated fields in a search result
+ */
+static void free_result_fields(search_result_t *r) {
+   free(r->title);
+   free(r->url);
+   free(r->snippet);
+   free(r->engine);
+   free(r->published_date);
+}
+
+/**
+ * @brief Parse ISO 8601 date string and return epoch time
+ * @return epoch time, or 0 on parse failure
+ */
+static time_t parse_published_date(const char *date_str) {
+   if (!date_str || date_str[0] == '\0') {
+      return 0;
+   }
+
+   struct tm tm_val;
+   memset(&tm_val, 0, sizeof(tm_val));
+
+   /* Try ISO 8601 with time first, then date-only */
+   char *end = strptime(date_str, "%Y-%m-%dT%H:%M:%S", &tm_val);
+   if (!end) {
+      end = strptime(date_str, "%Y-%m-%d", &tm_val);
+   }
+   if (!end) {
+      return 0;
+   }
+
+   /* Use timegm() — SearXNG dates are UTC, mktime() would apply local timezone */
+   return timegm(&tm_val);
+}
+
+/**
  * @brief Score a search result for reranking
  *
  * Scoring factors:
+ * - SearXNG score × 4 (cross-engine confidence): 0-12+
  * - Has title: +2
  * - Has snippet: +2
- * - Known quality engine (wikipedia, github): +2
- * - Query keyword match in title: +5
- * - Query keyword match in snippet: +3
+ * - Wikipedia engine: +3
+ * - GitHub/SO engine: +2
+ * - Per-keyword title match (4+ char words): +3 each, cap +9
+ * - Per-keyword snippet match (4+ char words): +1 each, cap +5
+ * - Published < 24h ago: +4
+ * - Published < 7 days: +2
+ * - Published < 30 days: +1
  *
  * @param r Search result to score
  * @param query Original search query (for keyword matching)
+ * @param now Current time (call time(NULL) once before scoring loop)
  * @return Score (higher = better)
  */
-static int score_result(const search_result_t *r, const char *query) {
+static int score_result(const search_result_t *r, const char *query, time_t now) {
    int score = 0;
+
+   /* SearXNG cross-engine confidence score (clamp to prevent UB on float→int) */
+   float clamped_score = r->searxng_score;
+   if (clamped_score < 0.0f)
+      clamped_score = 0.0f;
+   if (clamped_score > 100.0f)
+      clamped_score = 100.0f;
+   score += (int)(clamped_score * 4.0f);
 
    if (r->title && r->title[0]) {
       score += 2;
@@ -179,7 +230,7 @@ static int score_result(const search_result_t *r, const char *query) {
       score += 2;
    }
 
-   // Boost known quality engines
+   /* Boost known quality engines */
    if (r->engine) {
       if (strcmp(r->engine, "wikipedia") == 0) {
          score += 3;
@@ -190,49 +241,64 @@ static int score_result(const search_result_t *r, const char *query) {
       }
    }
 
-   // Check for query keyword matches (5+ char tokens only)
-   // Note: Buffer sizes reduced for embedded stack efficiency (512KB threads).
-   // Matching first 128 chars is sufficient for relevance scoring.
+   /* Tokenized keyword matching — split query on spaces, skip words < 4 chars */
    if (query && (r->title || r->snippet)) {
-      // Simple case-insensitive substring check for the query
-      char query_lower[128];
-      size_t qlen = strlen(query);
-      if (qlen >= sizeof(query_lower)) {
-         qlen = sizeof(query_lower) - 1;
-      }
-      for (size_t i = 0; i < qlen; i++) {
-         query_lower[i] = (char)tolower((unsigned char)query[i]);
-      }
-      query_lower[qlen] = '\0';
+      int title_bonus = 0;
+      int snippet_bonus = 0;
+      const char *p = query;
 
-      // Only match if query is 5+ characters
-      if (qlen >= 5) {
-         if (r->title) {
-            char title_lower[128];
-            size_t tlen = strlen(r->title);
-            if (tlen >= sizeof(title_lower)) {
-               tlen = sizeof(title_lower) - 1;
-            }
-            for (size_t i = 0; i < tlen; i++) {
-               title_lower[i] = (char)tolower((unsigned char)r->title[i]);
-            }
-            title_lower[tlen] = '\0';
-            if (strstr(title_lower, query_lower)) {
-               score += 5;
-            }
+      while (*p) {
+         /* Skip leading spaces */
+         while (*p == ' ') {
+            p++;
          }
-         if (r->snippet) {
-            char snippet_lower[192];
-            size_t slen = strlen(r->snippet);
-            if (slen >= sizeof(snippet_lower)) {
-               slen = sizeof(snippet_lower) - 1;
-            }
-            for (size_t i = 0; i < slen; i++) {
-               snippet_lower[i] = (char)tolower((unsigned char)r->snippet[i]);
-            }
-            snippet_lower[slen] = '\0';
-            if (strstr(snippet_lower, query_lower)) {
-               score += 3;
+         if (*p == '\0') {
+            break;
+         }
+
+         /* Find end of word */
+         const char *word_start = p;
+         while (*p && *p != ' ') {
+            p++;
+         }
+         size_t word_len = (size_t)(p - word_start);
+
+         /* Skip short words (stopwords) */
+         if (word_len < 4) {
+            continue;
+         }
+
+         /* Null-terminate the token for strcasestr (no lowercasing needed —
+          * strcasestr handles case-insensitivity on both operands) */
+         char token[64];
+         size_t copy_len = (word_len < sizeof(token) - 1) ? word_len : sizeof(token) - 1;
+         memcpy(token, word_start, copy_len);
+         token[copy_len] = '\0';
+
+         if (r->title && title_bonus < 9 && strcasestr(r->title, token)) {
+            title_bonus += 3;
+         }
+         if (r->snippet && snippet_bonus < 5 && strcasestr(r->snippet, token)) {
+            snippet_bonus += 1;
+         }
+      }
+
+      score += title_bonus;
+      score += snippet_bonus;
+   }
+
+   /* Recency boost based on published date */
+   if (now > 0 && r->published_date) {
+      time_t pub_time = parse_published_date(r->published_date);
+      if (pub_time > 0) {
+         double age_sec = difftime(now, pub_time);
+         if (age_sec >= 0) {
+            if (age_sec < 86400) { /* < 24 hours */
+               score += 4;
+            } else if (age_sec < 604800) { /* < 7 days */
+               score += 2;
+            } else if (age_sec < 2592000) { /* < 30 days */
+               score += 1;
             }
          }
       }
@@ -293,7 +359,7 @@ static bool should_filter_title(const char *title) {
 /**
  * @brief Max results per host for deduplication
  */
-#define MAX_RESULTS_PER_HOST 2
+#define MAX_RESULTS_PER_HOST 3
 
 /**
  * @brief Max results to process from SearXNG response
@@ -419,9 +485,16 @@ static void parse_results_array(struct json_object *results_array,
          free(full_snippet);
       }
 
-      // Score the result for reranking
-      temp_results[accepted_count].score = score_result(&temp_results[accepted_count].result,
-                                                        query);
+      // Parse SearXNG score (cross-engine confidence)
+      struct json_object *score_obj = NULL;
+      if (json_object_object_get_ex(item, "score", &score_obj)) {
+         temp_results[accepted_count].result.searxng_score = (float)json_object_get_double(
+             score_obj);
+      }
+
+      // Parse published date (ISO 8601)
+      temp_results[accepted_count].result.published_date = get_json_string(item, "publishedDate");
+
       accepted_count++;
    }
 
@@ -432,6 +505,12 @@ static void parse_results_array(struct json_object *results_array,
       return;
    }
 
+   // Score all results (call time() once for recency calculations)
+   time_t now = time(NULL);
+   for (int i = 0; i < accepted_count; i++) {
+      temp_results[i].score = score_result(&temp_results[i].result, query, now);
+   }
+
    // Sort by score (descending)
    qsort(temp_results, accepted_count, sizeof(scored_result_t), compare_scored_results);
 
@@ -439,12 +518,8 @@ static void parse_results_array(struct json_object *results_array,
    int final_count = (accepted_count > max_results) ? max_results : accepted_count;
    response->results = calloc(final_count, sizeof(search_result_t));
    if (!response->results) {
-      // Free all allocated strings
       for (int i = 0; i < accepted_count; i++) {
-         free(temp_results[i].result.title);
-         free(temp_results[i].result.url);
-         free(temp_results[i].result.snippet);
-         free(temp_results[i].result.engine);
+         free_result_fields(&temp_results[i].result);
       }
       free(temp_results);
       LOG_ERROR("web_search: Failed to allocate final results array");
@@ -459,10 +534,7 @@ static void parse_results_array(struct json_object *results_array,
 
    // Free remaining results that weren't used
    for (int i = final_count; i < accepted_count; i++) {
-      free(temp_results[i].result.title);
-      free(temp_results[i].result.url);
-      free(temp_results[i].result.snippet);
-      free(temp_results[i].result.engine);
+      free_result_fields(&temp_results[i].result);
    }
 
    free(temp_results);
@@ -530,7 +602,10 @@ static void parse_infoboxes_array(struct json_object *infoboxes_array,
 // Search Query (public API)
 // =============================================================================
 
-search_response_t *web_search_query_typed(const char *query, int max_results, search_type_t type) {
+search_response_t *web_search_query_typed(const char *query,
+                                          int max_results,
+                                          search_type_t type,
+                                          const char *time_range) {
    if (!module_initialized) {
       LOG_ERROR("web_search: Module not initialized");
       return NULL;
@@ -569,80 +644,82 @@ search_response_t *web_search_query_typed(const char *query, int max_results, se
       return response;
    }
 
-   // Build URL based on search type
+   // Validate time_range up front
+   bool has_time_range = time_range && time_range[0] &&
+                         (strcmp(time_range, "day") == 0 || strcmp(time_range, "week") == 0 ||
+                          strcmp(time_range, "month") == 0 || strcmp(time_range, "year") == 0);
+
+   // Build URL based on search type — single path, no gotos
    char url[SEARCH_URL_MAX_LEN];
    const char *type_str = "web";
-
-   // Map search type to SearXNG category or engines parameter
-   // Note: Some search types use engines= instead of categories= because
-   // SearXNG category names are lowercase single words (e.g., "news", "science")
-   // while multi-word categories like "social media" are not valid.
    const char *category = NULL;
+   const char *engines = NULL;
+   bool supports_time_range = false;
+
    switch (type) {
       case SEARCH_TYPE_NEWS:
          category = "news";
          type_str = "news";
+         supports_time_range = true;
          break;
       case SEARCH_TYPE_FACTS:
-         // Wikipedia uses engines parameter, not categories
-         snprintf(url, sizeof(url), "%s/search?q=%s&format=json&engines=wikipedia",
-                  searxng_base_url, encoded_query);
+         engines = "wikipedia";
          type_str = "facts";
-         curl_free(encoded_query);
-         goto do_request;
+         break;
       case SEARCH_TYPE_SCIENCE:
          category = "science";
          type_str = "science";
+         supports_time_range = true;
          break;
       case SEARCH_TYPE_IT:
          category = "it";
          type_str = "it";
          break;
       case SEARCH_TYPE_SOCIAL:
-         // "social media" is not a valid SearXNG category - use engines
-         snprintf(url, sizeof(url), "%s/search?q=%s&format=json&engines=reddit,twitter",
-                  searxng_base_url, encoded_query);
+         engines = "reddit,twitter";
          type_str = "social";
-         curl_free(encoded_query);
-         goto do_request;
+         break;
       case SEARCH_TYPE_QA:
-         // "q&a" is not a valid SearXNG category - use specific engines
-         snprintf(url, sizeof(url), "%s/search?q=%s&format=json&engines=stackoverflow,superuser",
-                  searxng_base_url, encoded_query);
+         engines = "stackoverflow,superuser";
          type_str = "q&a";
-         curl_free(encoded_query);
-         goto do_request;
+         break;
       case SEARCH_TYPE_DICTIONARY:
-         // Note: "dictionaries" may not be a valid category on all instances
          category = "general";
          type_str = "dictionary";
+         supports_time_range = true;
          break;
       case SEARCH_TYPE_PAPERS:
-         // "scientific publications" is not valid - use academic engines
-         snprintf(url, sizeof(url),
-                  "%s/search?q=%s&format=json&engines=arxiv,google_scholar,semantic_scholar",
-                  searxng_base_url, encoded_query);
+         engines = "arxiv,google_scholar,semantic_scholar";
          type_str = "papers";
-         curl_free(encoded_query);
-         goto do_request;
+         break;
       case SEARCH_TYPE_WEB:
       default:
          type_str = "web";
+         supports_time_range = true;
          break;
    }
 
-   // Build URL with optional category
-   if (category) {
-      char *encoded_category = curl_easy_escape(curl, category, 0);
+   // Track whether we need a supplemental news query
+   bool needs_news_supplement = has_time_range && !supports_time_range;
+
+   // Build URL — single code path
+   if (engines) {
+      snprintf(url, sizeof(url), "%s/search?q=%s&format=json&engines=%s", searxng_base_url,
+               encoded_query, engines);
+   } else if (category) {
       snprintf(url, sizeof(url), "%s/search?q=%s&format=json&categories=%s", searxng_base_url,
-               encoded_query, encoded_category);
-      curl_free(encoded_category);
+               encoded_query, category);
    } else {
       snprintf(url, sizeof(url), "%s/search?q=%s&format=json", searxng_base_url, encoded_query);
    }
-   curl_free(encoded_query);
 
-do_request:
+   // Only append time_range for types that support it
+   if (has_time_range && supports_time_range) {
+      size_t len = strlen(url);
+      snprintf(url + len, sizeof(url) - len, "&time_range=%s", time_range);
+   }
+
+   curl_free(encoded_query);
    LOG_INFO("web_search: Querying [%s] %s", type_str, url);
 
    // Set up response buffer with web search max capacity (512KB)
@@ -735,12 +812,55 @@ do_request:
    parse_results_array(results_array, response, max_results, query);
 
    json_object_put(root);
+
+   // Supplemental news query: when time_range was requested but the primary type
+   // doesn't support it, merge in time-filtered news results to add recency context.
+   // Guard: only supplement from top-level calls (not from recursive supplement calls)
+   static _Thread_local int supplement_depth = 0;
+   if (needs_news_supplement && response->count < max_results && supplement_depth == 0) {
+      supplement_depth++;
+      int news_slots = max_results - response->count;
+      LOG_INFO("web_search: Supplementing %s results with %d news slots (time_range=%s)", type_str,
+               news_slots, time_range);
+
+      search_response_t *news = web_search_query_typed(query, news_slots, SEARCH_TYPE_NEWS,
+                                                       time_range);
+      if (news && !news->error && news->count > 0) {
+         // Grow the results array to hold both sets
+         int merged_count = response->count + news->count;
+         if (merged_count > max_results) {
+            merged_count = max_results;
+         }
+         int news_to_add = merged_count - response->count;
+
+         /* realloc(NULL, size) is valid C and acts like malloc */
+         search_result_t *merged = realloc(response->results,
+                                           merged_count * sizeof(search_result_t));
+         if (merged) {
+            response->results = merged;
+            // Move news results into the merged array (transfer ownership)
+            for (int i = 0; i < news_to_add; i++) {
+               response->results[response->count + i] = news->results[i];
+               // Clear source so free_response doesn't double-free
+               memset(&news->results[i], 0, sizeof(search_result_t));
+            }
+            response->count = merged_count;
+            LOG_INFO("web_search: Merged %d news results (total: %d)", news_to_add,
+                     response->count);
+         }
+      }
+      if (news) {
+         web_search_free_response(news);
+      }
+      supplement_depth--;
+   }
+
    LOG_INFO("web_search: Found %d results (deduplicated, reranked)", response->count);
    return response;
 }
 
 search_response_t *web_search_query(const char *query, int max_results) {
-   return web_search_query_typed(query, max_results, SEARCH_TYPE_WEB);
+   return web_search_query_typed(query, max_results, SEARCH_TYPE_WEB, NULL);
 }
 
 // =============================================================================
@@ -791,6 +911,11 @@ int web_search_format_for_llm(const search_response_t *response, char *buffer, s
          SAFE_SNPRINTF(" [%s]", r->engine);
       }
 
+      if (r->published_date && r->published_date[0]) {
+         /* Show date only (first 10 chars: YYYY-MM-DD) */
+         SAFE_SNPRINTF(" (%.10s)", r->published_date);
+      }
+
       SAFE_SNPRINTF("\n");
 
       if (r->snippet) {
@@ -821,18 +946,7 @@ void web_search_free_response(search_response_t *response) {
 
    if (response->results) {
       for (int i = 0; i < response->count; i++) {
-         if (response->results[i].title) {
-            free(response->results[i].title);
-         }
-         if (response->results[i].url) {
-            free(response->results[i].url);
-         }
-         if (response->results[i].snippet) {
-            free(response->results[i].snippet);
-         }
-         if (response->results[i].engine) {
-            free(response->results[i].engine);
-         }
+         free_result_fields(&response->results[i]);
       }
       free(response->results);
    }

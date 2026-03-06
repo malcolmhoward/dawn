@@ -29,9 +29,9 @@
 #include <stddef.h>
 
 #define SEARXNG_DEFAULT_URL "http://localhost:8384"
-#define SEARXNG_MAX_RESULTS 5
+#define SEARXNG_MAX_RESULTS 8
 #define SEARXNG_TIMEOUT_SEC 10
-#define SEARXNG_SNIPPET_LEN 450
+#define SEARXNG_SNIPPET_LEN 600
 #define SEARCH_URL_MAX_LEN 2048
 
 /**
@@ -57,6 +57,8 @@ typedef struct {
    char *url;
    char *snippet;
    char *engine;
+   char *published_date; /* ISO 8601 from SearXNG, or NULL */
+   float searxng_score;  /* SearXNG cross-engine confidence (0.0-3.0+) */
 } search_result_t;
 
 /**
@@ -85,13 +87,17 @@ int web_search_init(const char *searxng_url);
 search_response_t *web_search_query(const char *query, int max_results);
 
 /**
- * @brief Perform a typed search (web, news, or facts)
+ * @brief Perform a typed search with optional time filtering
  * @param query Search query string
  * @param max_results Maximum results to return (0 for default)
- * @param type Search type (SEARCH_TYPE_WEB, SEARCH_TYPE_NEWS, or SEARCH_TYPE_FACTS)
+ * @param type Search type (see search_type_t enum)
+ * @param time_range Time filter: "day", "week", "month", "year", or NULL
  * @return Search response (caller must free with web_search_free_response)
  */
-search_response_t *web_search_query_typed(const char *query, int max_results, search_type_t type);
+search_response_t *web_search_query_typed(const char *query,
+                                          int max_results,
+                                          search_type_t type,
+                                          const char *time_range);
 
 /**
  * @brief Format search results for LLM consumption

@@ -2098,7 +2098,7 @@ char *resetConversationCallback(const char *actionName, char *value, int *should
 static char *perform_search(const char *value, search_type_t type, const char *type_name) {
    LOG_INFO("searchCallback: Performing %s search for '%s'", type_name, value);
 
-   search_response_t *response = web_search_query_typed(value, SEARXNG_MAX_RESULTS, type);
+   search_response_t *response = web_search_query_typed(value, SEARXNG_MAX_RESULTS, type, NULL);
    if (!response) {
       return strdup("Search request failed.");
    }
