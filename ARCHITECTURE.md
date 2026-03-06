@@ -8,6 +8,7 @@ This document describes the architecture of the D.A.W.N. (Digital Assistant for 
 
 ## Table of Contents
 
+- [Directory Structure](#directory-structure)
 - [High-Level Overview](#high-level-overview)
 - [Subsystem Architecture](#subsystem-architecture)
 - [Data Flow](#data-flow)
@@ -19,6 +20,44 @@ This document describes the architecture of the D.A.W.N. (Digital Assistant for 
 - [Component Interactions](#component-interactions)
 - [Memory Management](#memory-management)
 - [Error Handling](#error-handling)
+- [Performance Optimization](#performance-optimization)
+- [Design Decisions](#design-decisions)
+
+---
+
+## Directory Structure
+
+```
+dawn/
+├── src/                    # C/C++ source files
+│   ├── asr/                # Speech recognition (Whisper, Vosk, VAD)
+│   ├── llm/                # LLM integration (OpenAI, Claude, Gemini, local)
+│   ├── memory/             # Persistent memory system
+│   ├── tts/                # Text-to-speech (Piper)
+│   ├── audio/              # Audio capture, playback, music
+│   ├── core/               # Session manager, scheduler
+│   ├── tools/              # Modular LLM tools (search, weather, calculator, scheduler, etc.)
+│   └── webui/              # Web UI server
+│
+├── include/                # Header files (mirrors src/)
+├── www/                    # Web UI static files (HTML, CSS, JS)
+├── models/                 # ML models (TTS voices, VAD)
+├── whisper.cpp/            # Whisper ASR engine (git submodule)
+├── common/                 # Shared library (VAD, ASR, TTS, logging) for daemon + satellite
+├── dawn_satellite/         # DAP2 Tier 1 satellite (Raspberry Pi, SDL2 UI)
+├── dawn_satellite_arduino/ # DAP2 Tier 2 satellite (ESP32-S3, Arduino sketch)
+├── services/               # Systemd service files
+├── tests/                  # Test programs
+├── llm_testing/            # LLM benchmarking tools
+├── docs/                   # Additional documentation
+│
+├── dawn.toml.example       # Configuration template
+├── secrets.toml.example    # API keys template
+├── setup_models.sh         # Model download script
+├── format_code.sh          # Code formatting script
+├── generate_ssl_cert.sh    # SSL certificate generator
+└── CMakeLists.txt          # Build configuration
+```
 
 ---
 
@@ -2115,5 +2154,51 @@ ThreadSanitizer detects:
 | TTS worker thread | 5-10%      | ~8KB          | During synthesis      |
 
 **LLM Threading Benefit**: Main audio loop **never blocks** during LLM processing, maintaining responsive wake word detection even during 10-15 second LLM calls.
+
+---
+
+## Performance Optimization
+
+### ASR Performance Tips
+
+- Use Whisper **base** model (best accuracy/speed tradeoff on Jetson GPU)
+- GPU acceleration is automatic on Jetson (CUDA)
+- Adjust VAD sensitivity in `include/asr/vad_silero.h`
+
+| Model | Jetson GPU RTF | Speed |
+|-------|---------------|-------|
+| Whisper tiny | 0.079 | 12.7x faster than real-time |
+| Whisper base | 0.109 | 9.2x faster than real-time |
+| Whisper small | 0.225 | 4.4x faster than real-time |
+
+### LLM Performance Tips
+
+- For local LLM: Use batch size 768 and context 1024 (critical for quality)
+- Temperature, top-k, top-p have minimal effect on quality
+- See `llm_testing/scripts/model_configs.conf` for optimal settings
+- Cloud providers: ~2–4s response latency depending on provider and model
+- Local (llama.cpp): ~100–200ms time-to-first-token on Jetson with quantized models
+
+### Latency Reduction
+
+- Streaming LLM + TTS reduces perceived latency to ~1.3s
+- GPU acceleration provides 2–5x speedup on ASR
+- Use Whisper tiny for fastest response (slight accuracy tradeoff)
+
+---
+
+## Design Decisions
+
+### MCP (Model Context Protocol) Not Supported
+
+DAWN does not implement MCP. While MCP has become an industry standard for connecting LLMs to external tools in composable applications, DAWN's architecture serves different goals:
+
+- **Native C/C++ implementation**: DAWN is implemented entirely in C/C++ — a deliberate choice for reliability, deterministic timing, and single-binary deployment. MCP's ecosystem (SDKs, servers, tooling) is built around TypeScript and Python. No C implementation exists, and integrating one would require either writing an MCP client from scratch or embedding a managed runtime, negating the architectural benefits.
+
+- **Voice-first responsiveness**: MCP's process-per-server model with JSON-RPC communication introduces latency and unpredictability. Voice assistants require sub-second response times with consistent behavior. DAWN's direct function calls and shared-memory architecture eliminate IPC overhead entirely.
+
+- **Integrated tool system**: DAWN's native tool execution provides parallel thread-pool execution, automatic schema generation for multiple LLM providers (OpenAI, Claude, llama.cpp), session-scoped filtering, and built-in iterative tool loops. MCP defines a transport protocol — these capabilities remain the host's responsibility.
+
+- **Self-contained design**: DAWN is a complete voice assistant, not a plugin framework. All tools are local (MQTT devices, system commands, media control, vision) with no architectural need for external server composition.
 
 ---

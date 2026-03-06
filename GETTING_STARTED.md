@@ -1,6 +1,6 @@
 # Getting Started with DAWN
 
-Quick guide to get DAWN running. For full documentation, see [README.md](README.md).
+Quick guide to get DAWN running. For a project overview, see [README.md](README.md).
 
 ## What You're Setting Up
 
@@ -8,7 +8,7 @@ DAWN provides two ways to interact:
 
 1. **Local Voice Interface** - Uses your device's microphone and speakers. Requires audio device configuration. Say a wake phrase (e.g., "Hey Friday", "Okay Friday") followed by your command.
 
-2. **Web UI** - Browser-based interface at `http://localhost:3000`. Supports both text and voice input. Voice requires HTTPS for remote access (see [SSL Setup](#ssl-setup-for-remote-voice)).
+2. **Web UI** - Browser-based interface at `http://localhost:3000`. Supports both text and voice input. Voice requires HTTPS for remote access (see [SSL Setup](#7-ssl-setup-for-remote-voice)).
 
 Both interfaces share the same AI backend (ASR, LLM, TTS).
 
@@ -38,7 +38,7 @@ sudo apt update && sudo apt install -y \
 
 ## 2. Install Core Libraries
 
-Four libraries are required. See [README.md](README.md#2-install-core-dependencies) for detailed instructions.
+Four libraries are required. Build instructions for each are below.
 
 | Library | apt available? | Notes |
 |---------|---------------|-------|
@@ -63,10 +63,16 @@ cd ..
 
 **Step 3: Install ONNX Runtime**
 
-ONNX Runtime build varies by platform. See [README.md](README.md#onnx-runtime-with-cuda-support-for-jetson) for:
-- Jetson with CUDA acceleration
-- Raspberry Pi / ARM64 CPU-only
-- x86-64 systems
+ONNX Runtime build varies by platform:
+- **Jetson with CUDA**: `./build.sh --use_cuda --cudnn_home /usr/local/cuda --cuda_home /usr/local/cuda --config MinSizeRel --update --build --parallel --build_shared_lib`
+- **CPU-only (RPi, x86)**: `./build.sh --config MinSizeRel --update --build --parallel --build_shared_lib`
+
+After building:
+```bash
+sudo cp -a build/Linux/MinSizeRel/libonnxruntime.so* /usr/local/lib/
+sudo cp include/onnxruntime/core/session/*.h /usr/local/include/
+sudo ldconfig
+```
 
 > **Tip**: Pre-built packages may be available at [ONNX Runtime releases](https://github.com/microsoft/onnxruntime/releases).
 
@@ -144,7 +150,7 @@ openai_api_key = "sk-your-openai-key"
 # home_assistant_token = "your-ha-token"  # Optional: for Home Assistant smart home control
 ```
 
-> **Plex users**: To get your Plex token, see the [Plex Music Source setup instructions](README.md#plex-music-source-optional) in the README. When configured, Plex tracks are automatically synced into the unified music database alongside local files, with priority-based deduplication.
+> **Plex users**: To get your Plex token, see the [Plex Music Source](#plex-music-source) section below. When configured, Plex tracks are automatically synced into the unified music database alongside local files, with priority-based deduplication.
 
 **Alternative**: Use environment variables instead of secrets.toml:
 ```bash
@@ -291,9 +297,166 @@ endpoint = "http://127.0.0.1:8080"  # llama.cpp default
 # endpoint = "http://127.0.0.1:11434"  # Ollama default
 ```
 
-### Web Search (SearXNG)
+### SearXNG Setup (for Web Search)
 
-Enable voice-activated web search with [SearXNG](https://docs.searxng.org/), a self-hosted metasearch engine. See [README.md](README.md#searxng-setup-for-web-search) for Docker setup instructions.
+DAWN can perform web searches via voice commands using [SearXNG](https://docs.searxng.org/), a self-hosted metasearch engine. Search categories include web, news, social, science, IT, Q&A, dictionary, and academic papers.
+
+#### Prerequisites
+
+Install Docker and Docker Compose:
+
+- [Docker Engine Install](https://docs.docker.com/engine/install/)
+- [Docker Compose Install](https://docs.docker.com/compose/install/)
+
+On Jetson/Ubuntu:
+
+```bash
+# Add yourself to the docker group (avoids needing sudo)
+sudo usermod -aG docker $USER
+# Log out and back in for group changes to take effect
+```
+
+#### Install SearXNG
+
+```bash
+# Create directory structure
+mkdir -p ~/docker/searxng/searxng
+cd ~/docker/searxng
+
+# Generate a secret key
+SECRET_KEY=$(openssl rand -hex 32)
+echo "Generated secret key: $SECRET_KEY"
+
+# Create docker-compose.yml
+cat > docker-compose.yml << 'EOF'
+services:
+  searxng:
+    image: searxng/searxng:latest
+    container_name: searxng
+    restart: unless-stopped
+    ports:
+      - "8384:8080"
+    volumes:
+      - ./searxng:/etc/searxng:rw
+    environment:
+      - SEARXNG_BASE_URL=http://localhost:8384/
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "1m"
+        max-file: "1"
+EOF
+
+# Create settings.yml (replace SECRET_KEY_HERE with your generated key)
+cat > searxng/settings.yml << EOF
+use_default_settings: true
+
+general:
+  instance_name: "DAWN Search"
+  debug: false
+
+server:
+  secret_key: "$SECRET_KEY"
+  bind_address: "0.0.0.0"
+  port: 8080
+  method: "GET"
+  image_proxy: false
+  limiter: false
+  public_instance: false
+
+search:
+  safe_search: 1
+  default_lang: "en"
+  autocomplete: ""
+  formats:
+    - json
+  max_page: 3
+
+ui:
+  static_use_hash: true
+
+engines:
+  # Web search engines
+  - name: google
+    disabled: false
+  - name: duckduckgo
+    disabled: false
+  - name: brave
+    disabled: false
+  - name: wikipedia
+    disabled: false
+  - name: bing
+    disabled: false
+  # News-specific engines
+  - name: bing news
+    disabled: false
+    weight: 2
+  - name: google news
+    disabled: false
+    weight: 2
+  - name: duckduckgo news
+    disabled: true
+  - name: yahoo news
+    disabled: false
+EOF
+
+# Start SearXNG
+docker compose up -d
+
+# Verify it's working (wait a few seconds for startup)
+sleep 5
+curl -s "http://localhost:8384/search?q=test&format=json" | jq '.results[0].title'
+```
+
+If you see a search result title, SearXNG is ready. DAWN will automatically use it when you ask to search for something.
+
+### Plex Music Source
+
+DAWN can index and stream music from a Plex Media Server alongside your local music library. When both sources are configured, DAWN builds a unified library with priority-based deduplication — if the same track exists locally and on Plex, the local copy is preferred.
+
+**1. Get your Plex authentication token:**
+
+Sign into Plex Web, open any media item, click the `...` menu → "Get Info" → "View XML". The URL will contain `X-Plex-Token=xxxxxxxxxxxxxxxxxxxx`. Copy this token value.
+
+Alternatively, retrieve it via curl:
+
+```bash
+curl -s -X POST 'https://plex.tv/users/sign_in.json' \
+  -H 'X-Plex-Client-Identifier: dawn-assistant' \
+  -H 'X-Plex-Product: DAWN' \
+  -d 'user[login]=YOUR_EMAIL&user[password]=YOUR_PASSWORD' | \
+  python3 -c "import sys,json; print(json.load(sys.stdin)['user']['authToken'])"
+```
+
+**2. Add the token to secrets.toml:**
+
+```toml
+[secrets]
+plex_token = "xxxxxxxxxxxxxxxxxxxx"
+```
+
+Or enter it in the WebUI Settings → Secrets → Plex Token field.
+
+**3. Configure the Plex connection in dawn.toml:**
+
+```toml
+[music.plex]
+host = "192.168.1.100"    # Your Plex server IP or hostname
+port = 32400              # Default Plex port
+ssl = false               # Set to true if your server uses HTTPS
+ssl_verify = true         # Set to false for self-signed certificates
+music_section_id = 0      # 0 = auto-discover, or specify your library section ID
+```
+
+Or configure everything in WebUI Settings → Music & Media → Plex Connection fields.
+
+**4. Verify:** Restart DAWN. The Plex library will sync automatically on startup (typically 3–5 seconds for ~3,000 tracks on LAN). Open the music panel in WebUI — the Library tab stats should show combined track/artist/album counts from both sources with duplicates merged.
 
 ### Home Assistant (Smart Home)
 
@@ -308,7 +471,19 @@ Then configure the HA connection URL in the WebUI admin panel (Settings → Home
 
 ### JavaScript-Heavy Sites (FlareSolverr)
 
-For fetching content from sites that block simple requests, DAWN supports [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr). See [README.md](README.md#7-optional-llm-tools-setup) for setup.
+For fetching content from sites that block simple requests, DAWN supports [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr) as a headless browser proxy.
+
+```bash
+# Run FlareSolverr via Docker
+docker run -d --name flaresolverr -p 8191:8191 ghcr.io/flaresolverr/flaresolverr:latest
+```
+
+Enable in `dawn.toml`:
+```toml
+[url_fetcher.flaresolverr]
+enabled = true
+endpoint = "http://localhost:8191"
+```
 
 ## Troubleshooting
 
@@ -323,7 +498,7 @@ For fetching content from sites that block simple requests, DAWN supports [Flare
 
 ## Next Steps
 
-- **Full configuration**: See [README.md](README.md#configuration)
+- **Feature overview**: See [README.md](README.md)
 - **Local LLM setup**: [llama.cpp](https://github.com/ggerganov/llama.cpp) or [Ollama](https://ollama.ai)
 - **Satellite devices**: See [docs/DAP2_SATELLITE.md](docs/DAP2_SATELLITE.md) for Tier 1 (RPi) and [docs/DAP2_DESIGN.md](docs/DAP2_DESIGN.md) for Tier 2 (ESP32)
 - **Smart home**: See [docs/HOMEASSISTANT_SETUP.md](docs/HOMEASSISTANT_SETUP.md) for Home Assistant integration
