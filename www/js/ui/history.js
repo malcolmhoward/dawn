@@ -80,6 +80,10 @@
       searchInput: null,
       searchContentCheckbox: null,
       list: null,
+      // Sidebar rail elements
+      sidebarRail: null,
+      sidebarToggle: null,
+      newBtnRail: null,
    };
 
    /* =============================================================================
@@ -1028,6 +1032,10 @@
       if (historyElements.openBtn) {
          historyElements.openBtn.classList.add('active');
       }
+      if (historyElements.sidebarToggle) {
+         historyElements.sidebarToggle.classList.add('active');
+         historyElements.sidebarToggle.setAttribute('aria-expanded', 'true');
+      }
 
       if (window.innerWidth > 768) {
          localStorage.setItem('dawn_history_open', 'true');
@@ -1079,6 +1087,10 @@
       if (historyElements.openBtn) {
          historyElements.openBtn.classList.remove('active');
       }
+      if (historyElements.sidebarToggle) {
+         historyElements.sidebarToggle.classList.remove('active');
+         historyElements.sidebarToggle.setAttribute('aria-expanded', 'false');
+      }
 
       if (window.innerWidth > 768) {
          localStorage.setItem('dawn_history_open', 'false');
@@ -1092,7 +1104,10 @@
       // Clear conversations array to free memory when panel closed (M6)
       historyState.conversations = [];
 
-      if (historyElements.openBtn) {
+      // Focus the appropriate toggle button
+      if (window.innerWidth > 600 && historyElements.sidebarToggle) {
+         historyElements.sidebarToggle.focus();
+      } else if (historyElements.openBtn) {
          historyElements.openBtn.focus();
       }
    }
@@ -1110,12 +1125,26 @@
    }
 
    function updateHistoryButtonVisibility() {
+      const authState = callbacks.getAuthState ? callbacks.getAuthState() : {};
+      const authenticated = authState.authenticated;
+
+      // Mobile header button
       if (historyElements.openBtn) {
-         const authState = callbacks.getAuthState ? callbacks.getAuthState() : {};
-         if (authState.authenticated) {
+         if (authenticated) {
             historyElements.openBtn.classList.remove('hidden');
          } else {
             historyElements.openBtn.classList.add('hidden');
+         }
+      }
+
+      // Sidebar rail (desktop/tablet)
+      if (historyElements.sidebarRail) {
+         if (authenticated) {
+            historyElements.sidebarRail.classList.remove('hidden');
+            document.body.classList.add('has-sidebar-rail');
+         } else {
+            historyElements.sidebarRail.classList.add('hidden');
+            document.body.classList.remove('has-sidebar-rail');
          }
       }
    }
@@ -1211,6 +1240,10 @@
       historyElements.searchInput = document.getElementById('history-search-input');
       historyElements.searchContentCheckbox = document.getElementById('history-search-content');
       historyElements.list = document.getElementById('history-list');
+      // Sidebar rail
+      historyElements.sidebarRail = document.getElementById('sidebar-rail');
+      historyElements.sidebarToggle = document.getElementById('sidebar-toggle');
+      historyElements.newBtnRail = document.getElementById('new-conversation-btn-rail');
    }
 
    function initHistoryListeners() {
@@ -1224,6 +1257,18 @@
 
       if (historyElements.overlay) {
          historyElements.overlay.addEventListener('click', closeHistory);
+      }
+
+      // Sidebar rail: toggle button
+      if (historyElements.sidebarToggle) {
+         historyElements.sidebarToggle.addEventListener('click', toggleHistory);
+      }
+
+      // Sidebar rail: new conversation button
+      if (historyElements.newBtnRail) {
+         historyElements.newBtnRail.addEventListener('click', () => {
+            startNewChat();
+         });
       }
 
       if (historyElements.newBtn) {

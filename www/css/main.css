@@ -43,6 +43,7 @@
 @import url('components/visualizer.css');
 @import url('components/music.css');
 @import url('components/scheduler.css');
+@import url('components/sidebar-rail.css');
 
 /* =============================================================================
  * Responsive Overrides (load last to override component styles)

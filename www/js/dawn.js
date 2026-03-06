@@ -1437,6 +1437,11 @@
             case 'my-sessions':
                DawnSettings.openSection('my-sessions-section');
                break;
+            case 'system-metrics':
+               if (typeof DawnMetricsPanel !== 'undefined') {
+                  DawnMetricsPanel.toggle();
+               }
+               break;
             case 'logout':
                handleLogout();
                break;

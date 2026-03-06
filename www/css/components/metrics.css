@@ -136,27 +136,6 @@
    opacity: 0.5;
 }
 
-#metrics-btn {
-   background: none;
-   border: none;
-   color: var(--text-secondary);
-   cursor: pointer;
-   padding: 0.25rem;
-   display: flex;
-   align-items: center;
-   justify-content: center;
-   flex-shrink: 0;
-   transition: color var(--transition-fast);
-}
-
-#metrics-btn:hover {
-   color: var(--accent);
-}
-
-#metrics-btn.active {
-   color: var(--accent);
-}
-
 /* Mobile adjustments for metrics */
 @media (max-width: 600px) {
    .metrics-content {

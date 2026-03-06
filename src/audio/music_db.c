@@ -52,24 +52,25 @@
 
 /** Priority-based dedup clause: exclude rows where a higher-priority source
  *  (lower enum value) has the same artist+album+title. Uses idx_music_dedup.
- *  COLLATE NOCASE handles metadata case differences between sources. */
-#define DEDUP_CLAUSE                                            \
-   "AND NOT EXISTS ("                                           \
-   "   SELECT 1 FROM music_metadata m2 "                        \
-   "   WHERE m2.artist = music_metadata.artist COLLATE NOCASE " \
-   "   AND m2.album = music_metadata.album COLLATE NOCASE "     \
-   "   AND m2.title = music_metadata.title COLLATE NOCASE "     \
-   "   AND m2.source < music_metadata.source"                   \
+ *  COLLATE NOCASE handles metadata case differences between sources.
+ *  Uses IS instead of = so that NULL IS NULL evaluates to TRUE (SQLite). */
+#define DEDUP_CLAUSE                                             \
+   "AND NOT EXISTS ("                                            \
+   "   SELECT 1 FROM music_metadata m2 "                         \
+   "   WHERE m2.artist IS music_metadata.artist COLLATE NOCASE " \
+   "   AND m2.album IS music_metadata.album COLLATE NOCASE "     \
+   "   AND m2.title IS music_metadata.title COLLATE NOCASE "     \
+   "   AND m2.source < music_metadata.source"                    \
    ") "
 
 /** Dedup clause for queries that have no preceding WHERE condition */
-#define DEDUP_WHERE                                             \
-   "WHERE NOT EXISTS ("                                         \
-   "   SELECT 1 FROM music_metadata m2 "                        \
-   "   WHERE m2.artist = music_metadata.artist COLLATE NOCASE " \
-   "   AND m2.album = music_metadata.album COLLATE NOCASE "     \
-   "   AND m2.title = music_metadata.title COLLATE NOCASE "     \
-   "   AND m2.source < music_metadata.source"                   \
+#define DEDUP_WHERE                                              \
+   "WHERE NOT EXISTS ("                                          \
+   "   SELECT 1 FROM music_metadata m2 "                         \
+   "   WHERE m2.artist IS music_metadata.artist COLLATE NOCASE " \
+   "   AND m2.album IS music_metadata.album COLLATE NOCASE "     \
+   "   AND m2.title IS music_metadata.title COLLATE NOCASE "     \
+   "   AND m2.source < music_metadata.source"                    \
    ") "
 
 /* SQL statements */

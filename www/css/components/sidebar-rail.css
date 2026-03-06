@@ -1,0 +1,131 @@
+/*
+ * DAWN WebUI - Sidebar Rail Component
+ * Persistent left-edge navigation strip for history toggle + new conversation
+ */
+
+/* =============================================================================
+ * Sidebar Rail Container
+ * ============================================================================= */
+#sidebar-rail {
+   position: fixed;
+   left: 0;
+   top: 0;
+   height: 100vh;
+   height: 100dvh;
+   width: 48px;
+   z-index: 997;
+   display: flex;
+   flex-direction: column;
+   align-items: center;
+   padding-top: 1rem;
+   gap: 0.5rem;
+   background: color-mix(in srgb, var(--bg-secondary) 50%, transparent);
+   border-right: 1px solid var(--border-color);
+   transition: background 150ms ease;
+}
+
+#sidebar-rail:hover {
+   background: var(--bg-secondary);
+}
+
+/* =============================================================================
+ * Rail Buttons
+ * ============================================================================= */
+#sidebar-rail button {
+   width: 36px;
+   height: 36px;
+   border-radius: 8px;
+   background: transparent;
+   border: none;
+   color: var(--text-secondary);
+   cursor: pointer;
+   display: flex;
+   align-items: center;
+   justify-content: center;
+   transition:
+      color 150ms ease,
+      background 150ms ease,
+      transform 100ms ease;
+   padding: 0;
+}
+
+#sidebar-rail button:hover {
+   color: var(--accent);
+   background: var(--accent-subtle);
+}
+
+#sidebar-rail button:active {
+   transform: scale(0.92);
+}
+
+#sidebar-rail button:focus-visible {
+   outline: 2px solid var(--accent);
+   outline-offset: 2px;
+}
+
+/* Active state when panel is open */
+#sidebar-toggle.active {
+   color: var(--accent);
+   background: var(--accent-hover);
+}
+
+#sidebar-rail button svg {
+   width: 20px;
+   height: 20px;
+}
+
+/* =============================================================================
+ * Auth-gated visibility: hidden until authenticated
+ * ============================================================================= */
+#sidebar-rail.hidden {
+   display: none;
+}
+
+/* =============================================================================
+ * Desktop: body padding to prevent content hiding behind rail
+ * ============================================================================= */
+@media (min-width: 769px) {
+   body.has-sidebar-rail {
+      padding-left: 48px;
+   }
+}
+
+/* =============================================================================
+ * Tablet: slim rail with toggle only
+ * ============================================================================= */
+@media (max-width: 768px) and (min-width: 601px) {
+   #sidebar-rail {
+      width: 40px;
+   }
+
+   #sidebar-rail button {
+      width: 32px;
+      height: 32px;
+   }
+
+   #sidebar-rail button svg {
+      width: 18px;
+      height: 18px;
+   }
+
+   #new-conversation-btn-rail {
+      display: none;
+   }
+
+   body.has-sidebar-rail {
+      padding-left: 40px;
+   }
+}
+
+/* =============================================================================
+ * Mobile: no rail, toggle moves to header
+ * ============================================================================= */
+@media (max-width: 600px) {
+   #sidebar-rail {
+      display: none !important;
+   }
+
+   body.has-sidebar-rail {
+      padding-left: 0;
+   }
+}

@@ -27,9 +27,7 @@
 
    function showMetricsPanel() {
       const panel = document.getElementById('metrics-panel');
-      const btn = document.getElementById('metrics-btn');
       panel.classList.remove('hidden');
-      btn.classList.add('active');
       metricsVisible = true;
       requestMetrics();
       // Refresh every 2 seconds while visible
@@ -38,9 +36,7 @@
 
    function hideMetricsPanel() {
       const panel = document.getElementById('metrics-panel');
-      const btn = document.getElementById('metrics-btn');
       panel.classList.add('hidden');
-      btn.classList.remove('active');
       metricsVisible = false;
       if (metricsInterval) {
          clearInterval(metricsInterval);
@@ -129,12 +125,7 @@
     * ============================================================================= */
 
    function init() {
-      const metricsBtn = document.getElementById('metrics-btn');
       const metricsClose = document.getElementById('metrics-close');
-
-      if (metricsBtn) {
-         metricsBtn.addEventListener('click', toggleMetricsPanel);
-      }
       if (metricsClose) {
          metricsClose.addEventListener('click', hideMetricsPanel);
       }
