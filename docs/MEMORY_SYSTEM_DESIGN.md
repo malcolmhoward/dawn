@@ -1,9 +1,9 @@
 # DAWN Memory System Design
 
-**Status:** Phases 1-6, S4 Complete - Core Memory, Decay, WebUI Viewer, Entity Graph, Embeddings
+**Status:** Phases 1-6.5, S4 Complete - Core Memory, Decay, WebUI Viewer, Import/Export, Entity Graph, Embeddings
 **Date:** January 2026
 **Authors:** Kris Kersey, with input from community proposals
-**Last Updated:** 2026-03-03
+**Last Updated:** 2026-03-06
 
 ---
 
@@ -17,6 +17,7 @@ A comprehensive design for DAWN's persistent memory system with integrated RAG (
 - **Phase 4.5 (Privacy Toggle):** ✅ Complete - Per-conversation privacy flag
 - **Phase 5 (Decay/Maintenance):** ✅ Complete - Nightly decay job, pruning, reinforcement
 - **Phase 6 (Memory WebUI):** ✅ Complete - Viewer with facts/preferences/summaries/graph tabs
+- **Phase 6.5 (Import/Export):** ✅ Complete - JSON and plain text export, multi-format import with duplicate detection
 - **S4 (Entity Graph):** ✅ Complete - Entities, relations, embeddings, graph search, WebUI graph tab
 - **S4b (Entity Dedup):** ✅ Complete - Existing entities fed into extraction prompt
 - **Phases 7-11 (RAG):** Pending - Document search and retrieval
@@ -107,7 +108,7 @@ From studying commercial implementations:
 | **WebUI**           | Auth username          | Full memory storage and retrieval                 |
 | **Local mic**       | Configurable mapping   | Default: no memory. Can map to user in config     |
 | **DAP satellites**  | Configurable mapping   | Default: no memory. Can map to user in config     |
-| **DAP2 satellites** | Configurable mapping   | See `DAP2_DESIGN.md` for user mapping enhancement |
+| **DAP2 satellites** | Configurable mapping   | See `DAP2_SATELLITE.md` for satellite configuration |
 | **Future**          | Speaker identification | sherpa-onnx integration (Phase 5+)                |
 
 **Decision:** Voice interfaces (local mic, DAP) do NOT store memories by default. They operate as "guest" sessions. Users can optionally map these interfaces to authenticated users via configuration.
@@ -1302,6 +1303,42 @@ Memory and RAG are independent features. Memory can be fully implemented and dep
 - [x] Keyboard accessibility (tabindex, ARIA roles, keydown handlers)
 - [x] WebUI endpoints: `/api/memory/{facts,preferences,summaries,entities,stats}`
 
+### Phase 6.5: Import / Export ✅ COMPLETE
+
+- [x] Export memories as JSON (facts, preferences, entities, relations with metadata)
+- [x] Export memories as plain text (human-readable, portable to other AIs)
+- [x] Import from DAWN JSON (lossless restore from export)
+- [x] Import from ChatGPT / Claude (plain text, one fact per line)
+- [x] Auto-detection: JSON vs plain text based on input content
+- [x] Two-phase workflow: preview (dry-run) → confirm → commit
+- [x] Duplicate detection: FNV-1a hash for exact matches, Jaccard similarity (0.7 threshold) as fallback
+- [x] Limits: 200 lines per import, 256KB max paste, 500 facts / 200 preferences / 200 entities export caps
+- [x] WebUI modal with paste, file upload, and help tabs
+- [x] WebSocket messages: `export_memories` / `import_memories` with response types
+
+**Import flow:**
+
+```
+Paste text or upload file
+         │
+         ▼
+Auto-detect format (JSON vs plain text)
+         │
+         ▼
+Preview (commit=false) → show new items, duplicates skipped
+         │
+         ▼
+User confirms → Commit (commit=true) → write to DB
+```
+
+**Duplicate detection:**
+
+1. Normalize text → FNV-1a hash → fast O(1) lookup against existing facts
+2. If no hash match → Jaccard similarity on word sets (threshold 0.7)
+3. Duplicates are counted and reported but silently skipped
+
+**Files:** `src/webui/webui_memory.c` (handlers), `include/memory/memory_similarity.h` (dedup), `www/js/ui/memory.js` (UI)
+
 ### S4: Entity Graph ✅ COMPLETE
 
 - [x] Entity types and relation types (`memory_entity_t`, `memory_relation_t`)
@@ -1322,7 +1359,7 @@ Memory and RAG are independent features. Memory can be fully implemented and dep
 - [x] Bulk relation loading (`memory_db_relation_list_all_by_user()`) — N+1 query fix
 - [x] Entity deletion with FK-ordered relation cleanup
 
-**Memory System Status: Phases 1-6 + S4 Complete, RAG Pending**
+**Memory System Status: Phases 1-6.5 + S4 Complete, RAG Pending**
 
 ---
 
@@ -1485,8 +1522,9 @@ src/rag/                   # (future - RAG not yet implemented)
 **Data Export/Deletion:**
 
 - User can delete individual facts
-- "Forget everything about me" command
-- Export all memories as JSON
+- "Forget everything about me" command (WebUI typed confirmation)
+- Export all memories as JSON (lossless) or plain text (portable)
+- Import from DAWN JSON, ChatGPT, Claude, or plain text with duplicate detection
 
 ### 13.3 Local vs Cloud Processing
 

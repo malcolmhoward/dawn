@@ -888,6 +888,6 @@ GPLv3 or later. See LICENSE file in repository root.
 
 ## See Also
 
-- [DAP2_DESIGN.md](../docs/DAP2_DESIGN.md) - Protocol specification
+- [WEBSOCKET_PROTOCOL.md](../docs/WEBSOCKET_PROTOCOL.md) - Wire protocol reference
 - [DAP2_SATELLITE.md](../docs/DAP2_SATELLITE.md) - Implementation details
 - [DAWN WebUI](../www/) - Web interface (shares visual design)

@@ -2,67 +2,137 @@
 
 ## Overview
 
-DAWN supports both **local LLM** (via llama.cpp) and **cloud LLM** (OpenAI GPT-4o, Claude) for voice command processing. After testing 31+ configurations across 5 models, we achieved **81.9% quality (B grade)** with local inference - production-ready for voice assistants.
+DAWN supports **three cloud providers** (OpenAI, Claude, Gemini) and **local LLM** (llama.cpp or Ollama) for voice command processing. All configuration is done at runtime via `dawn.toml` — no recompilation needed to switch providers or models.
+
+After testing 31+ configurations across 5 local models, we achieved **81.9% quality (B grade)** with local inference — production-ready for voice assistants.
 
 **Local LLM Winner:** Qwen3-4B-Instruct-2507-Q4_K_M @ batch 768
 - **Quality:** 81.9% (86/105 points, B grade)
 - **TTFT:** 116-138ms (excellent for streaming)
 - **Streaming Latency:** ~1.3s perceived (ASR + TTFT + TTS start)
 
-This guide shows you how to configure and use each option.
-
 ---
 
 ## Quick Start
 
-### Option 1: Cloud LLM (GPT-4o) - Recommended
+### Option 1: Cloud LLM — Recommended for Quality
 
-**Best for:** Highest accuracy (100%), fastest response (3.1s total latency)
+**Best for:** Highest accuracy, fastest response, extended thinking support
 
-1. Configure API key in `secrets.toml`:
+1. Add your API key to `secrets.toml`:
 ```toml
 openai_api_key = "sk-proj-..."
+# Or for other providers:
+# claude_api_key = "sk-ant-..."
+# gemini_api_key = "AIza..."
 ```
 
-2. Set model in `dawn.toml` (optional, defaults to gpt-4o):
+2. Set provider and model in `dawn.toml`:
 ```toml
+[llm]
+type = "cloud"
+
 [llm.cloud]
-openai_model = "gpt-4o"
+provider = "openai"    # "openai", "claude", or "gemini"
+
+# Model lists for quick switching via WebUI or voice command
+openai_models = ["gpt-5-mini", "gpt-5.2", "gpt-5-nano", "gpt-5"]
+claude_models = ["claude-sonnet-4-5", "claude-opus-4-5", "claude-haiku-4-5"]
+gemini_models = ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-3-flash-preview"]
 ```
 
-3. Build and run DAWN - it will automatically use GPT-4o
+3. Run DAWN — it uses the first model in the active provider's list.
 
-**Performance:**
-- Quality: 100% (A+ grade)
-- Latency: ~3.1s total (1.2s LLM + 0.5s ASR + 0.2s TTS + 1.2s silence)
-- Cost: ~$0.01-0.02 per interaction
+**Switch providers at runtime** via WebUI settings or voice command ("Switch to Claude").
 
 ---
 
-### Option 2: Local LLM (Qwen3-4B Q4) - Privacy/Offline ✅ Recommended
+### Option 2: Local LLM — Privacy / Offline
 
 **Best for:** Offline capability, privacy, no API costs, responsive streaming
 
-1. Start llama-server with optimized settings:
+1. Start llama-server:
 ```bash
 sudo systemctl start llama-server
 ```
 
-2. Configure DAWN to use local endpoint in `dawn.h`:
-```c
-#define OPENAI_API_ENDPOINT "http://127.0.0.1:8080/v1"
-#define OPENAI_MODEL "qwen3-4b"  // Or leave as gpt-4o, llama.cpp ignores it
+2. Configure in `dawn.toml`:
+```toml
+[llm]
+type = "local"
+
+[llm.local]
+endpoint = "http://127.0.0.1:8080"
+provider = "auto"    # Auto-detects llama.cpp vs Ollama
+# model = ""         # Optional — server may auto-select
 ```
 
-3. Build and run DAWN - it will connect to local llama-server
+3. Run DAWN — it connects to the local server.
 
 **Performance:**
 - Quality: 81.9% (B grade)
-- TTFT: 116-138ms (Time To First Token)
-- Streaming Latency: ~1.3s perceived (ASR + TTFT + TTS start)
-- Total Latency: ~4.9s (full response generation)
-- Speed: 13.5 tok/s
-- Cost: Free (runs locally)
+- TTFT: 116-138ms
+- Streaming Latency: ~1.3s perceived
+- Cost: Free
+
+---
+
+## Cloud Providers
+
+### OpenAI
+
+| Setting | Value |
+|---------|-------|
+| API Key | `secrets.toml`: `openai_api_key = "sk-proj-..."` |
+| Endpoint | Default: `https://api.openai.com/v1` (configurable) |
+| Models | gpt-5-mini, gpt-5.2, gpt-5-nano, gpt-5, o3-mini |
+| Vision | Supported (enabled by default for cloud) |
+| Tools | Native function calling |
+| Thinking | Supported via `reasoning_effort` parameter (o-series and GPT-5) |
+
+### Claude (Anthropic)
+
+| Setting | Value |
+|---------|-------|
+| API Key | `secrets.toml`: `claude_api_key = "sk-ant-..."` |
+| Endpoint | Default: `https://api.anthropic.com/v1` |
+| Models | claude-sonnet-4-5, claude-opus-4-5, claude-haiku-4-5 |
+| Vision | Supported |
+| Tools | Native function calling |
+| Thinking | Supported via `budget_tokens` parameter |
+
+### Gemini (Google)
+
+| Setting | Value |
+|---------|-------|
+| API Key | `secrets.toml`: `gemini_api_key = "AIza..."` |
+| Endpoint | OpenAI-compatible endpoint (auto-configured) |
+| Models | gemini-2.5-flash, gemini-2.5-pro, gemini-3-flash-preview, gemini-3-pro-preview |
+| Vision | Supported |
+| Tools | Native function calling |
+| Thinking | Supported via `reasoning_effort` (Gemini 2.5+; cannot fully disable) |
+
+### Model Lists and Runtime Switching
+
+Each provider has a configurable model list. The first model is the default; users can switch via the WebUI settings panel or by voice ("Use GPT-5" / "Switch to Claude Opus").
+
+```toml
+[llm.cloud]
+provider = "openai"
+
+# Each list's first entry is the default when switching to that provider
+openai_models = ["gpt-5-mini", "gpt-5.2", "gpt-5-nano", "gpt-5"]
+openai_default_model_idx = 0
+
+claude_models = ["claude-sonnet-4-5", "claude-opus-4-5", "claude-haiku-4-5"]
+claude_default_model_idx = 0
+
+gemini_models = ["gemini-2.5-flash", "gemini-2.5-pro"]
+gemini_default_model_idx = 0
+
+# Custom endpoint (empty = use provider's default URL)
+# endpoint = ""
+```
 
 ---
 
@@ -92,10 +162,10 @@ sudo ./install.sh
 ```
 
 This installs:
-- `/usr/local/bin/llama-server` - Binary
-- `/usr/local/etc/llama-cpp/llama-server.conf` - Configuration (optimized settings)
-- `/etc/systemd/system/llama-server.service` - Systemd unit
-- `/etc/logrotate.d/llama-server` - Log rotation
+- `/usr/local/bin/llama-server` — Binary
+- `/usr/local/etc/llama-cpp/llama-server.conf` — Configuration (optimized settings)
+- `/etc/systemd/system/llama-server.service` — Systemd unit
+- `/etc/logrotate.d/llama-server` — Log rotation
 
 ### Manual Start (for testing)
 
@@ -116,9 +186,91 @@ This installs:
     --port 8080
 ```
 
+### Local Provider Auto-Detection
+
+DAWN auto-detects whether the local endpoint is llama.cpp or Ollama by probing the server:
+
+```toml
+[llm.local]
+endpoint = "http://127.0.0.1:8080"    # llama.cpp default
+# endpoint = "http://127.0.0.1:11434"  # Ollama default
+provider = "auto"    # "auto", "ollama", "llama_cpp", or "generic"
+model = ""           # Optional — server may auto-select
+vision_enabled = false  # Enable for vision models (LLaVA, Qwen-VL)
+```
+
+Detection is cached with a 5-minute TTL (mutex-protected) to avoid repeated probes.
+
 ---
 
-## Optimal Settings (Tested)
+## Extended Thinking / Reasoning Mode
+
+DAWN supports extended thinking across all providers — the LLM "thinks through" complex queries before responding. Thinking content is captured and shown in the WebUI debug panel.
+
+### Configuration
+
+```toml
+[llm.thinking]
+mode = "disabled"           # "disabled" or "enabled"
+reasoning_effort = "medium" # "low", "medium", "high"
+
+# Token budgets for each effort level
+budget_low = 1024
+budget_medium = 8192
+budget_high = 16384
+# NOTE: Budgets are clamped to 50% of model context size
+```
+
+### Provider-Specific Behavior
+
+| Provider | Mechanism | Notes |
+|----------|-----------|-------|
+| OpenAI (o-series, GPT-5) | `reasoning_effort` parameter | Maps directly to low/medium/high |
+| Claude | `budget_tokens` parameter | Uses the token budget for the selected effort level |
+| Gemini (2.5+) | `reasoning_effort` parameter | Cannot fully disable thinking on 2.5+ models |
+| Local (llama.cpp) | `budget_tokens` parameter | Works with models that support thinking (Qwen3, DeepSeek-R1) |
+
+### Streaming with Thinking
+
+When thinking is enabled, streaming responses include both thinking and text chunks. The WebUI shows thinking content in a collapsible debug section. Thinking blocks include a cryptographic signature for Claude (required for multi-turn conversations).
+
+---
+
+## Rate Limiting
+
+DAWN includes a process-wide sliding window rate limiter to prevent 429 errors from cloud APIs.
+
+```toml
+[llm]
+rate_limit_enabled = true   # Enable/disable rate limiting
+rate_limit_rpm = 40         # Max cloud API requests per minute
+```
+
+- Gates all cloud call paths: chat completion, per-session config, and tool loop
+- Uses interrupt-aware blocking — cancelled requests release their slot
+- Local LLM calls bypass the rate limiter entirely
+- Configurable via WebUI settings panel
+
+---
+
+## Tool Calling
+
+DAWN uses native LLM tool calling (function calling) for all providers.
+
+```toml
+[llm.tools]
+mode = "native"             # "native" (recommended), "command_tags" (legacy), "disabled"
+local_enabled = []          # Tools for local voice (empty = all)
+remote_enabled = []         # Tools for WebUI/remote (empty = all)
+```
+
+Tools execute in parallel when the LLM requests multiple independent actions. Each tool has a safety classification that determines whether it can run without confirmation.
+
+See **[TOOL_DEVELOPMENT_GUIDE.md](TOOL_DEVELOPMENT_GUIDE.md)** for writing new tools.
+
+---
+
+## Optimal Local LLM Settings (Tested)
 
 ### Qwen3-4B Q4 Parameters
 
@@ -139,15 +291,13 @@ After testing **31+ configurations**, these settings achieve optimal quality:
 
 ### Model Comparison (All @ Batch 768)
 
-We tested 5 models with optimal settings (batch 768, context 1024):
-
 | Model | Quality | TTFT | Speed | Recommendation |
 |-------|---------|------|-------|----------------|
-| **Qwen3-4B Q4** | **81.9%** ✅ | 116-138ms | 13.5 tok/s | **Production** (balanced) |
-| Qwen2.5-7B Q4 | **85.7%** ✅ | 181-218ms | 9.8 tok/s | Quality-focused option |
-| Llama-3.2-3B | **71.4%** ✅ | 92-108ms | 18.0 tok/s | Speed-focused option |
-| Phi-3-mini | 41.9% ❌ | ? | ? | Poor instruction following |
-| Qwen3-4B Q6 | 36.2% ❌ | ? | ? | Template issues (`<think>` loops) |
+| **Qwen3-4B Q4** | **81.9%** | 116-138ms | 13.5 tok/s | **Production** (balanced) |
+| Qwen2.5-7B Q4 | **85.7%** | 181-218ms | 9.8 tok/s | Quality-focused option |
+| Llama-3.2-3B | **71.4%** | 92-108ms | 18.0 tok/s | Speed-focused option |
+| Phi-3-mini | 41.9% | ? | ? | Poor instruction following |
+| Qwen3-4B Q6 | 36.2% | ? | ? | Template issues (`<think>` loops) |
 
 **Three Viable Options:**
 1. **Qwen3-4B Q4 (Recommended):** Best balance of quality + TTFT
@@ -156,72 +306,70 @@ We tested 5 models with optimal settings (batch 768, context 1024):
 
 ---
 
-## Configuration Files
+## Performance Comparison
 
-### `llm_testing/scripts/model_configs.conf`
-
-Central configuration for all tested models. Use with test scripts:
-
-```bash
-cd llm_testing/scripts
-./test_single_model.sh Qwen3-4B-Instruct-2507-Q4_K_M.gguf
-```
-
-Automatically loads optimal settings from `model_configs.conf`.
-
-### `services/llama-server/llama-server.conf`
-
-Production configuration for systemd service. Updated with optimal Qwen3-4B Q4 settings.
+| Metric | Cloud | Local (Qwen3-4B) |
+|--------|-------|-------------------|
+| **Quality** | 92-100% | 81.9% |
+| **Speed** | ~1.2s LLM | ~3.4s LLM |
+| **Total Latency** | ~3.1s | ~5.2s |
+| **Offline?** | No | Yes |
+| **Privacy** | Data sent to API | Fully local |
+| **Cost** | ~$0.01-0.02 each | Free |
+| **Thinking** | All providers | llama.cpp (Qwen3, DeepSeek-R1) |
 
 ---
 
-## Testing & Validation
+## Complete Configuration Reference
 
-### Quality Test
+All LLM settings in `dawn.toml`:
 
-Run the quality test suite to verify command format compliance:
+```toml
+[llm]
+type = "cloud"                  # "cloud" or "local"
+max_tokens = 4096               # Maximum response tokens
+summarize_threshold = 0.80      # Compact conversation at this % of context limit
+conversation_logging = false    # Save chat history to log files
+rate_limit_enabled = true       # Throttle cloud API calls
+rate_limit_rpm = 40             # Max requests per minute
 
-```bash
-cd llm_testing/scripts
-python3 test_llm_quality.py
+[llm.cloud]
+provider = "openai"             # "openai", "claude", or "gemini"
+endpoint = ""                   # Custom endpoint (empty = provider default)
+vision_enabled = true           # Cloud models support vision by default
+
+openai_models = ["gpt-5-mini", "gpt-5.2", "gpt-5-nano", "gpt-5"]
+openai_default_model_idx = 0
+claude_models = ["claude-sonnet-4-5", "claude-opus-4-5", "claude-haiku-4-5"]
+claude_default_model_idx = 0
+gemini_models = ["gemini-2.5-flash", "gemini-2.5-pro"]
+gemini_default_model_idx = 0
+
+[llm.local]
+endpoint = "http://127.0.0.1:8080"
+model = ""
+provider = "auto"               # "auto", "ollama", "llama_cpp", "generic"
+vision_enabled = false
+
+[llm.tools]
+mode = "native"                 # "native", "command_tags", "disabled"
+
+[llm.thinking]
+mode = "disabled"               # "disabled" or "enabled"
+reasoning_effort = "medium"     # "low", "medium", "high"
+budget_low = 1024
+budget_medium = 8192
+budget_high = 16384
 ```
 
-**Expected Results:**
-- GPT-4o: 100% (105/105 points)
-- Claude 3.5 Sonnet: 92.4% (97/105 points)
-- Qwen3-4B Q4 (local): 81.9% (86/105 points)
-
-### Speed Test
-
-Built into `test_single_model.sh`:
-
-```bash
-cd llm_testing/scripts
-./test_single_model.sh Qwen3-4B-Instruct-2507-Q4_K_M.gguf
+API keys go in `secrets.toml` (separate file, mode 0600):
+```toml
+openai_api_key = "sk-proj-..."
+claude_api_key = "sk-ant-..."
+gemini_api_key = "AIza..."
 ```
 
-**Expected Results:**
-- TTFT: 116-138ms (Time To First Token)
-- Tokens/sec: ~13.5 tok/s
-- 50-token response: ~3.7s total
-
----
-
-## Cloud Baseline Results
-
-Cloud LLMs establish peak performance:
-
-### GPT-4o (OpenAI)
-- **Quality:** 105/105 (100%) - Perfect command formatting
-- **Speed:** 0.72-2.48s per test
-- **All categories:** 100%
-- **Cost:** ~$0.01-0.02 per interaction
-
-### Claude Sonnet 3.7 (Anthropic)
-- **Quality:** 97/105 (92.4%)
-- **Speed:** 2.60-7.29s per test
-- **One miss:** Conversational test (tried non-existent command)
-- **Cost:** Similar to GPT-4o
+Environment variable overrides are available for all settings. Pattern: `DAWN_<SECTION>_<KEY>` (e.g., `DAWN_LLM_TYPE`, `DAWN_LLM_CLOUD_PROVIDER`). API keys use: `OPENAI_API_KEY`, `CLAUDE_API_KEY`, `GEMINI_API_KEY`.
 
 ---
 
@@ -250,51 +398,38 @@ cudaMalloc failed: out of memory
 ### Cloud LLM Issues
 
 **Problem:** API errors (401 Unauthorized)
-- **Fix:** Check `openai_api_key` in `secrets.toml`
+- **Fix:** Check API key in `secrets.toml` matches the active provider
 
 **Problem:** Rate limiting (429 Too Many Requests)
-- **Fix:** Add retry logic or reduce request frequency
+- **Fix:** DAWN has a built-in rate limiter (`rate_limit_rpm`, default 40). Lower the value if still hitting limits, or check if multiple DAWN instances share the same API key.
+
+**Problem:** Unknown cloud provider error
+- **Fix:** `provider` must be `"openai"`, `"claude"`, or `"gemini"` (case-sensitive)
 
 ---
 
-## Performance Comparison
+## Testing & Validation
 
-| Metric | Cloud (GPT-4o) | Local (Qwen3-4B) |
-|--------|----------------|------------------|
-| **Quality** | 100% ✅ | 82.9% ✅ |
-| **Speed** | 1.2s LLM | 3.4s LLM |
-| **Total Latency** | 3.1s | 5.2s |
-| **Offline?** | ❌ No | ✅ Yes |
-| **Privacy** | ❌ Data sent to API | ✅ Fully local |
-| **Cost** | ~$0.01-0.02 each | Free |
-| **Reliability** | 99.9% uptime | Local control |
+### Quality Test
 
----
-
-## Hybrid Mode (Future)
-
-Future enhancement: Automatically choose based on context:
-
-```c
-if (is_simple_command(user_input)) {
-    // Use local LLM (fast, offline)
-    use_local_llm();
-} else if (is_complex_query(user_input)) {
-    // Use cloud LLM (highest accuracy)
-    use_cloud_llm();
-}
+```bash
+cd llm_testing/scripts
+python3 test_llm_quality.py
 ```
 
----
+### Speed Test
 
-## Test Results Archive
+```bash
+cd llm_testing/scripts
+./test_single_model.sh Qwen3-4B-Instruct-2507-Q4_K_M.gguf
+```
+
+### Test Results Archive
 
 Complete testing methodology and results:
 - **Location:** `llm_testing/results/`
-- **Final optimal:** 82.9% quality @ 14.9 tok/s
 - **Config search:** 7 batch sizes tested, found batch 1024→768 breakthrough
 - **Fine-tuning:** 19 parameters tested, only batch/context matter
-- **Cloud baseline:** GPT-4o 100%, Claude 92%
 
 ---
 
@@ -303,5 +438,8 @@ Complete testing methodology and results:
 - **llama.cpp:** https://github.com/ggerganov/llama.cpp
 - **Qwen3-4B Model:** https://huggingface.co/Qwen/Qwen3-4B-Instruct-GGUF
 - **OpenAI API:** https://platform.openai.com/docs/api-reference
+- **Claude API:** https://docs.anthropic.com/en/docs
+- **Gemini API:** https://ai.google.dev/docs
+- **Tool Development:** [TOOL_DEVELOPMENT_GUIDE.md](TOOL_DEVELOPMENT_GUIDE.md)
 - **Test Scripts:** `llm_testing/scripts/`
 - **Service Files:** `services/llama-server/`

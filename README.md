@@ -174,7 +174,7 @@ These features are not required but extend what DAWN can do. Each links to its s
 | **[docs/SCHEDULER_DESIGN.md](docs/SCHEDULER_DESIGN.md)** | Scheduler system (timers, alarms, reminders) |
 | **[docs/HOMEASSISTANT_SETUP.md](docs/HOMEASSISTANT_SETUP.md)** | Home Assistant integration setup |
 | **[docs/USER_AUTH_DESIGN.md](docs/USER_AUTH_DESIGN.md)** | Authentication and user management |
-| **[docs/DAP2_DESIGN.md](docs/DAP2_DESIGN.md)** | DAP2 protocol specification (Tier 1 + Tier 2) |
+| **[docs/WEBSOCKET_PROTOCOL.md](docs/WEBSOCKET_PROTOCOL.md)** | WebSocket protocol reference (all message types) |
 | **[docs/DAP2_SATELLITE.md](docs/DAP2_SATELLITE.md)** | Satellite architecture and deployment guide |
 | **[dawn_satellite/README.md](dawn_satellite/README.md)** | Tier 1 satellite (RPi) build, config, and usage |
 | **[dawn_satellite_arduino/README.md](dawn_satellite_arduino/README.md)** | Tier 2 satellite (ESP32-S3, Arduino) setup |

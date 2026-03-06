@@ -353,7 +353,7 @@ TTS is protected by a global mutex (`tts_mutex`) to prevent concurrent access fr
 
 **Purpose**: WebSocket protocol for satellite devices (Raspberry Pi Tier 1, ESP32 Tier 2)
 
-**Design Documents**: [DAP2_DESIGN.md](docs/DAP2_DESIGN.md) | [DAP2_SATELLITE.md](docs/DAP2_SATELLITE.md)
+**References**: [WEBSOCKET_PROTOCOL.md](docs/WEBSOCKET_PROTOCOL.md) | [DAP2_SATELLITE.md](docs/DAP2_SATELLITE.md)
 
 #### Architecture: **Local ASR/TTS + Remote LLM** (Tier 1)
 
@@ -583,7 +583,7 @@ Swipe-up from the bottom edge is currently unassigned (reserved for future use).
 
 **Purpose**: Bidirectional audio streaming for WebUI browsers and Tier 2 (ESP32) satellites
 
-This subsystem handles all server-side audio: decode incoming audio, run ASR, generate TTS, encode outgoing audio. The WebUI browser connects with **Opus** (48kHz); Tier 2 satellites connect with **raw PCM** (16kHz, skipping codec/resample). Both use the same binary WebSocket message types (0x01/0x02 audio in, 0x11/0x12 audio out) and the same worker thread pipeline in `webui_audio.c`. See [DAP2_DESIGN.md](docs/DAP2_DESIGN.md) Section 6.2 for the Tier 2 audio protocol details.
+This subsystem handles all server-side audio: decode incoming audio, run ASR, generate TTS, encode outgoing audio. The WebUI browser connects with **Opus** (48kHz); Tier 2 satellites connect with **raw PCM** (16kHz, skipping codec/resample). Both use the same binary WebSocket message types (0x01/0x02 audio in, 0x11/0x12 audio out) and the same worker thread pipeline in `webui_audio.c`. See [WEBSOCKET_PROTOCOL.md](docs/WEBSOCKET_PROTOCOL.md) for the binary message type reference.
 
 #### Architecture: **Opus Codec + WebCodecs API** (WebUI Browser Path)
 
@@ -1392,7 +1392,7 @@ This unified architecture means the session manager, response queue, LLM pipelin
 
 For connection lifecycle diagrams, message format details, and the complete protocol specification, see:
 
-- **[DAP2_DESIGN.md](docs/DAP2_DESIGN.md)** — Protocol spec (both tiers, audio framing, registration, codec details)
+- **[WEBSOCKET_PROTOCOL.md](docs/WEBSOCKET_PROTOCOL.md)** — Complete wire protocol reference (all message types and payloads)
 - **[DAP2_SATELLITE.md](docs/DAP2_SATELLITE.md)** — Tier 1 build/config/deployment + Tier 2 quick reference
 - **[dawn_satellite_arduino/README.md](dawn_satellite_arduino/README.md)** — Tier 2 Arduino sketch setup and usage
 

@@ -195,7 +195,7 @@ DAP2 is the unified WebSocket protocol for all satellite devices ("JARVIS in eve
 
 **Satellite binary**: `dawn_satellite/` - standalone C application using libwebsockets
 
-See `docs/DAP2_DESIGN.md` for the protocol specification and `docs/DAP2_SATELLITE.md` for Tier 1 build/config/deployment.
+See `docs/WEBSOCKET_PROTOCOL.md` for the wire protocol reference and `docs/DAP2_SATELLITE.md` for Tier 1 build/config/deployment.
 
 ## Development Guidelines
 
@@ -338,7 +338,7 @@ deviceCallback callbacks[] = {
 
 **Tier 1 (Raspberry Pi)**: Full satellite binary in `dawn_satellite/`. See `docs/DAP2_SATELLITE.md`.
 
-**Tier 2 (ESP32)**: Arduino-based satellite using arduinoWebSockets (Links2004) to connect via WebSocket. Streams raw PCM audio (16-bit, 16kHz, mono) using binary message types 0x01/0x02 (audio in) and receives TTS audio via 0x11/0x12 (audio out). See `docs/DAP2_DESIGN.md` for protocol details.
+**Tier 2 (ESP32)**: Arduino-based satellite using arduinoWebSockets (Links2004) to connect via WebSocket. Streams raw PCM audio (16-bit, 16kHz, mono) using binary message types 0x01/0x02 (audio in) and receives TTS audio via 0x11/0x12 (audio out). See `docs/WEBSOCKET_PROTOCOL.md` for protocol details.
 
 ## Testing
 

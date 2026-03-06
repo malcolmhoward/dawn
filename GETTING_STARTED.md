@@ -500,7 +500,7 @@ endpoint = "http://localhost:8191"
 
 - **Feature overview**: See [README.md](README.md)
 - **Local LLM setup**: [llama.cpp](https://github.com/ggerganov/llama.cpp) or [Ollama](https://ollama.ai)
-- **Satellite devices**: See [docs/DAP2_SATELLITE.md](docs/DAP2_SATELLITE.md) for Tier 1 (RPi) and [docs/DAP2_DESIGN.md](docs/DAP2_DESIGN.md) for Tier 2 (ESP32)
+- **Satellite devices**: See [docs/DAP2_SATELLITE.md](docs/DAP2_SATELLITE.md) for Tier 1 (RPi) and [dawn_satellite_arduino/README.md](dawn_satellite_arduino/README.md) for Tier 2 (ESP32)
 - **Smart home**: See [docs/HOMEASSISTANT_SETUP.md](docs/HOMEASSISTANT_SETUP.md) for Home Assistant integration
 - **System architecture**: See [ARCHITECTURE.md](ARCHITECTURE.md)
 

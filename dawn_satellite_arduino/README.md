@@ -107,7 +107,7 @@ pipeline is:
 5. ESP32 plays audio through I2S, calling `webSocket.loop()` between writes to
    keep receiving data
 
-See `docs/DAP2_DESIGN.md` in the main repository for the full protocol spec.
+See `docs/WEBSOCKET_PROTOCOL.md` in the main repository for the full protocol spec.
 
 ## Memory
 

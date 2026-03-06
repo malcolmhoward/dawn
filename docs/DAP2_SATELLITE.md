@@ -53,7 +53,7 @@ sudo systemctl start dawn-satellite
 
 ## Overview
 
-DAP2 enables satellite devices to extend DAWN's voice assistant capabilities to multiple rooms. All satellites use **WebSocket** on the same port as the WebUI (default 3000). This document covers **Tier 1** (Raspberry Pi) satellites, which handle ASR/TTS locally and send only text to the daemon. For the complete protocol spec (both tiers) and Tier 2 (ESP32 audio path), see [DAP2_DESIGN.md](DAP2_DESIGN.md).
+DAP2 enables satellite devices to extend DAWN's voice assistant capabilities to multiple rooms. All satellites use **WebSocket** on the same port as the WebUI (default 3000). This document covers **Tier 1** (Raspberry Pi) satellites, which handle ASR/TTS locally and send only text to the daemon. For the complete wire protocol reference (all message types, payloads, and binary framing), see [WEBSOCKET_PROTOCOL.md](WEBSOCKET_PROTOCOL.md).
 
 Tier 1 satellites are **fully hands-free** — wake word detection triggers listening, VAD detects end-of-speech, and responses are spoken via local TTS. No buttons or LEDs required.
 
@@ -121,97 +121,14 @@ Tier 1 satellites are **fully hands-free** — wake word detection triggers list
 
 ## Protocol Specification
 
-DAP2 uses JSON messages over WebSocket, connecting to the same port as the WebUI (default 3000).
+DAP2 uses JSON messages over WebSocket, connecting to the same port as the WebUI (default 3000). The satellite lifecycle is:
 
-### Message Types
+1. **Register** — `satellite_register` with UUID, name, location, tier, and capabilities
+2. **Query** — `satellite_query` with transcribed text
+3. **Receive** — `stream_start` / `stream_delta` / `stream_end` for streaming responses, `state` for status updates
+4. **Keepalive** — `satellite_ping` / `satellite_pong` every 10 seconds
 
-#### Satellite → Daemon
-
-**Registration** (required before queries):
-```json
-{
-  "type": "satellite_register",
-  "payload": {
-    "uuid": "550e8400-e29b-41d4-a716-446655440000",
-    "name": "Kitchen Assistant",
-    "location": "kitchen",
-    "tier": 1,
-    "capabilities": {
-      "local_asr": true,
-      "local_tts": true,
-      "wake_word": true
-    }
-  }
-}
-```
-
-**Query** (transcribed speech):
-```json
-{
-  "type": "satellite_query",
-  "payload": {
-    "text": "turn on the kitchen lights"
-  }
-}
-```
-
-**Ping** (keepalive):
-```json
-{
-  "type": "satellite_ping"
-}
-```
-
-#### Daemon → Satellite
-
-**Registration Acknowledgment**:
-```json
-{
-  "type": "satellite_register_ack",
-  "payload": {
-    "success": true,
-    "session_id": 12345,
-    "message": "Registered as Kitchen Assistant"
-  }
-}
-```
-
-**State Updates**:
-```json
-{
-  "type": "state",
-  "payload": {
-    "state": "thinking",
-    "detail": "Processing query..."
-  }
-}
-```
-
-**Streaming Response** (sentence-level TTS happens as deltas arrive):
-```json
-{"type": "stream_start", "payload": {"stream_id": 1}}
-{"type": "stream_delta", "payload": {"stream_id": 1, "text": "I'll turn on the lights. "}}
-{"type": "stream_delta", "payload": {"stream_id": 1, "text": "They should be on now."}}
-{"type": "stream_end", "payload": {"stream_id": 1, "reason": "complete"}}
-```
-
-**Pong**:
-```json
-{
-  "type": "satellite_pong"
-}
-```
-
-**Error**:
-```json
-{
-  "type": "error",
-  "payload": {
-    "code": "NOT_REGISTERED",
-    "message": "Must register before sending queries"
-  }
-}
-```
+For the complete message reference with payloads and examples, see [WEBSOCKET_PROTOCOL.md](WEBSOCKET_PROTOCOL.md#dap2-satellite-messages).
 
 ## Directory Structure
 
@@ -1028,11 +945,11 @@ ESP32: Ring buffer → 22050→48kHz resample → I2S stereo → Speaker
 - **I2S channel**: Created once in `setup()`, enable/disable per playback (avoids DMA descriptor fragmentation)
 - **NeoPixels**: Mode-change detection — static modes (recording/playing/waiting) only call `strip.show()` once on transition
 
-For full details, see `dawn_satellite_arduino/README.md` and `docs/DAP2_DESIGN.md` Phase 4.
+For full details, see `dawn_satellite_arduino/README.md`.
 
 ## Related Documentation
 
-- `docs/DAP2_DESIGN.md` - Protocol design specification (Tier 1 + Tier 2)
+- `docs/WEBSOCKET_PROTOCOL.md` - Complete wire protocol reference (all message types and payloads)
 - `dawn_satellite_arduino/README.md` - Tier 2 Arduino sketch setup and usage
 - `ARCHITECTURE.md` - System architecture with DAP2 protocol overview
 - `CODING_STYLE_GUIDE.md` - Code style requirements
