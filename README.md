@@ -90,6 +90,7 @@ DAWN remembers facts, preferences, and relationships about its users across sess
 - **Privacy Toggle** — Mark conversations as private to prevent memory extraction (Ctrl+Shift+P in WebUI).
 - **Confidence Decay** — Unused memories naturally fade; accessed memories are reinforced.
 - **Memory Viewer** — Browse, search, and manage all memory types in the WebUI. Four tabs: Facts, Preferences, Summaries, Graph.
+- **Import / Export** — Export memories as DAWN JSON (lossless backup) or human-readable text (portable). Import from Claude, ChatGPT, or other AIs — paste text or upload a file. Preview before committing with automatic duplicate detection.
 - **Per-User Isolation** — Each user's memory is separate in multi-user households.
 
 ### Music Playback

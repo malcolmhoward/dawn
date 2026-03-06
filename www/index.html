@@ -347,7 +347,156 @@
 
             <div class="memory-footer">
                <button id="memory-load-more" class="btn-link hidden">Load More</button>
-               <button id="memory-forget-all" class="btn-danger-small">Forget Everything</button>
+               <div class="memory-footer-actions">
+                  <button id="memory-export" class="btn-link" title="Export memories">
+                     Export
+                  </button>
+                  <button id="memory-import" class="btn-link" title="Import memories">
+                     Import
+                  </button>
+                  <button id="memory-forget-all" class="btn-danger-small">Forget Everything</button>
+               </div>
+            </div>
+         </div>
+
+         <!-- Memory Import Modal -->
+         <div
+            id="memory-import-modal"
+            class="modal-overlay hidden"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="memory-import-title"
+         >
+            <div class="modal-content memory-import-modal">
+               <div class="modal-header">
+                  <h3 id="memory-import-title">Import Memories</h3>
+                  <button id="memory-import-close" class="modal-close-btn">&times;</button>
+               </div>
+               <div class="memory-import-tabs" role="tablist">
+                  <button
+                     class="memory-import-tab active"
+                     data-source="paste"
+                     role="tab"
+                     aria-selected="true"
+                  >
+                     Paste Text
+                  </button>
+                  <button
+                     class="memory-import-tab"
+                     data-source="file"
+                     role="tab"
+                     aria-selected="false"
+                  >
+                     Upload File
+                  </button>
+               </div>
+               <div id="memory-import-paste" class="memory-import-source">
+                  <div class="memory-import-hint-row">
+                     <p class="memory-import-hint">
+                        Paste memories from Claude, ChatGPT, or a DAWN export.
+                     </p>
+                     <button
+                        id="memory-import-help-btn"
+                        class="memory-import-help-btn"
+                        title="How to export from another AI"
+                        aria-label="Help: how to export from another AI"
+                     >
+                        ?
+                     </button>
+                  </div>
+                  <textarea
+                     id="memory-import-text"
+                     placeholder="- I prefer dark mode&#10;- My dog's name is Max&#10;- I work as a software engineer"
+                     rows="10"
+                  ></textarea>
+               </div>
+               <!-- Import help popup (hidden by default) -->
+               <div id="memory-import-help" class="memory-import-help hidden">
+                  <div class="memory-import-help-header">
+                     <span>Get memories from another AI</span>
+                     <button id="memory-import-help-close" class="memory-import-help-close">
+                        &times;
+                     </button>
+                  </div>
+                  <p class="memory-import-help-desc">
+                     Copy this prompt into Claude, ChatGPT, or another AI to export what it knows
+                     about you. Paste the response into the text box.
+                  </p>
+                  <div class="memory-import-prompt-box">
+                     <!-- prettier-ignore -->
+                     <pre id="memory-import-prompt-text">List everything you remember about me — facts, preferences, personal details, work info, interests, and anything else you've learned from our conversations.
+
+Format rules:
+- Use "# Section Name" headers to organize by topic
+- One memory per line, each starting with "- "
+- Keep each line a single concise statement
+- Include specifics: names, tools, preferences, not vague summaries
+- Don't include things I told you to forget</pre>
+                     <button
+                        id="memory-import-copy-prompt"
+                        class="memory-import-copy-btn"
+                        title="Copy to clipboard"
+                        aria-label="Copy prompt to clipboard"
+                     >
+                        <svg
+                           viewBox="0 0 24 24"
+                           fill="none"
+                           stroke="currentColor"
+                           stroke-width="2"
+                           stroke-linecap="round"
+                           stroke-linejoin="round"
+                        >
+                           <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                           <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                        </svg>
+                     </button>
+                  </div>
+               </div>
+               <div id="memory-import-file" class="memory-import-source hidden">
+                  <label class="memory-import-dropzone" id="memory-import-dropzone">
+                     <input type="file" id="memory-import-file-input" accept=".json,.txt" />
+                     <span>Drop a .json or .txt file here, or click to browse</span>
+                  </label>
+                  <div id="memory-import-filename" class="hidden"></div>
+               </div>
+               <div id="memory-import-preview" class="hidden">
+                  <div class="memory-import-summary"></div>
+                  <div class="memory-import-list"></div>
+               </div>
+               <div class="memory-import-actions">
+                  <button id="memory-import-preview-btn" class="btn-primary" disabled>
+                     Preview
+                  </button>
+                  <button id="memory-import-commit-btn" class="btn-primary hidden">
+                     Import All
+                  </button>
+                  <button id="memory-import-cancel" class="btn-link">Cancel</button>
+               </div>
+            </div>
+         </div>
+
+         <!-- Memory Export Format Modal -->
+         <div id="memory-export-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+            <div class="modal-content memory-export-modal">
+               <h3 class="modal-header">Export Format</h3>
+               <p class="modal-description">Choose an export format for your memories.</p>
+               <div class="memory-export-options">
+                  <button id="memory-export-text-btn" class="memory-export-option">
+                     <span class="memory-export-option-title">Text</span>
+                     <span class="memory-export-option-desc"
+                        >Human-readable, portable. Works with any AI.</span
+                     >
+                  </button>
+                  <button id="memory-export-json-btn" class="memory-export-option">
+                     <span class="memory-export-option-title">DAWN JSON</span>
+                     <span class="memory-export-option-desc"
+                        >Full backup with metadata. Best for re-importing.</span
+                     >
+                  </button>
+               </div>
+               <div class="memory-export-actions">
+                  <button id="memory-export-cancel-btn" class="btn-link">Cancel</button>
+               </div>
             </div>
          </div>
 

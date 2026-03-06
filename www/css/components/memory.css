@@ -11,7 +11,7 @@
    border: none;
    color: var(--text-secondary);
    cursor: pointer;
-   padding: 0.4rem;
+   padding: 0.25rem;
    display: flex;
    align-items: center;
    justify-content: center;
@@ -426,6 +426,12 @@
    border-color: rgba(239, 68, 68, 0.5);
 }
 
+.memory-footer-actions {
+   display: flex;
+   align-items: center;
+   gap: 0.75rem;
+}
+
 /* Button link helper class */
 .btn-link {
    background: none;
@@ -641,6 +647,417 @@
 }
 
 /* =============================================================================
+ * Memory Import Modal
+ * ============================================================================= */
+.memory-import-modal {
+   max-width: 520px;
+   width: 90vw;
+}
+
+.memory-import-modal .modal-header {
+   display: flex;
+   justify-content: space-between;
+   align-items: flex-start;
+   margin: 0;
+   padding: 0.875rem 1rem;
+   border-bottom: 1px solid var(--accent-border);
+}
+
+.memory-import-modal .modal-close-btn {
+   width: 28px;
+   height: 28px;
+   padding: 0;
+   background: transparent;
+   border: 1px solid var(--text-secondary);
+   border-radius: 50%;
+   color: var(--text-secondary);
+   font-size: 1.1rem;
+   line-height: 1;
+   cursor: pointer;
+   transition: all var(--transition-fast);
+   display: flex;
+   align-items: center;
+   justify-content: center;
+   flex-shrink: 0;
+}
+
+.memory-import-modal .modal-close-btn:hover {
+   border-color: var(--accent);
+   color: var(--accent);
+}
+
+.memory-import-tabs {
+   display: flex;
+   gap: 0;
+   border-bottom: 1px solid var(--accent-border);
+}
+
+.memory-import-tab {
+   flex: 1;
+   padding: 0.625rem 1rem;
+   background: transparent;
+   border: none;
+   border-bottom: 2px solid transparent;
+   color: var(--text-secondary);
+   font-size: 0.85rem;
+   cursor: pointer;
+   transition: all var(--transition-fast);
+}
+
+.memory-import-tab:hover {
+   color: var(--text-primary);
+}
+
+.memory-import-tab.active {
+   color: var(--accent);
+   border-bottom-color: var(--accent);
+}
+
+.memory-import-source {
+   padding: 1rem;
+   height: 310px;
+   display: flex;
+   flex-direction: column;
+}
+
+.memory-import-source.hidden {
+   display: none;
+}
+
+.memory-import-hint {
+   font-size: 0.8rem;
+   color: var(--text-secondary);
+   margin: 0 0 0.75rem 0;
+   line-height: 1.4;
+}
+
+/* Import hint row with help button */
+.memory-import-hint-row {
+   display: flex;
+   align-items: center;
+   gap: 0.5rem;
+   margin-bottom: 0.75rem;
+}
+
+.memory-import-hint-row .memory-import-hint {
+   margin: 0;
+   flex: 1;
+}
+
+.memory-import-help-btn {
+   width: 22px;
+   height: 22px;
+   padding: 0;
+   background: transparent;
+   border: 1px solid var(--text-secondary);
+   border-radius: 50%;
+   color: var(--text-secondary);
+   font-size: 0.8rem;
+   font-weight: 600;
+   line-height: 1;
+   cursor: pointer;
+   transition: all var(--transition-fast);
+   display: flex;
+   align-items: center;
+   justify-content: center;
+   flex-shrink: 0;
+}
+
+.memory-import-help-btn:hover {
+   border-color: var(--accent);
+   color: var(--accent);
+}
+
+/* Help popup (replaces source panel content) */
+.memory-import-help {
+   padding: 1rem;
+}
+
+.memory-import-help.hidden {
+   display: none;
+}
+
+.memory-import-help-header {
+   display: flex;
+   justify-content: space-between;
+   align-items: center;
+   margin-bottom: 0.625rem;
+   font-size: 0.9rem;
+   font-weight: 600;
+   color: var(--accent);
+}
+
+.memory-import-help-close {
+   width: 24px;
+   height: 24px;
+   padding: 0;
+   background: transparent;
+   border: 1px solid var(--text-secondary);
+   border-radius: 50%;
+   color: var(--text-secondary);
+   font-size: 1rem;
+   line-height: 1;
+   cursor: pointer;
+   transition: all var(--transition-fast);
+   display: flex;
+   align-items: center;
+   justify-content: center;
+}
+
+.memory-import-help-close:hover {
+   border-color: var(--accent);
+   color: var(--accent);
+}
+
+.memory-import-help-desc {
+   font-size: 0.8rem;
+   color: var(--text-secondary);
+   margin: 0 0 0.75rem 0;
+   line-height: 1.4;
+}
+
+.memory-import-prompt-box {
+   position: relative;
+   background: rgba(0, 0, 0, 0.3);
+   border: 1px solid var(--accent-focus);
+   border-radius: 6px;
+   padding: 0.625rem 0.75rem;
+   padding-right: 2.5rem;
+}
+
+.memory-import-prompt-box pre {
+   font-size: 0.78rem;
+   font-family: 'IBM Plex Mono', monospace;
+   color: var(--text-primary);
+   white-space: pre-wrap;
+   word-break: break-word;
+   line-height: 1.45;
+   margin: 0;
+}
+
+.memory-import-copy-btn {
+   position: absolute;
+   top: 0.5rem;
+   right: 0.5rem;
+   width: 28px;
+   height: 28px;
+   padding: 0;
+   background: transparent;
+   border: 1px solid var(--text-secondary);
+   border-radius: 4px;
+   color: var(--text-secondary);
+   cursor: pointer;
+   transition: all var(--transition-fast);
+   display: flex;
+   align-items: center;
+   justify-content: center;
+}
+
+.memory-import-copy-btn svg {
+   width: 14px;
+   height: 14px;
+}
+
+.memory-import-copy-btn:hover {
+   border-color: var(--accent);
+   color: var(--accent);
+}
+
+#memory-import-text {
+   width: 100%;
+   height: 220px;
+   padding: 0.75rem;
+   background: rgba(0, 0, 0, 0.3);
+   border: 1px solid var(--accent-focus);
+   border-radius: 6px;
+   color: var(--text-primary);
+   font-size: 0.85rem;
+   font-family: 'IBM Plex Mono', monospace;
+   line-height: 1.5;
+   resize: none;
+   outline: none;
+}
+
+#memory-import-text:focus {
+   border-color: var(--accent);
+   box-shadow: 0 0 0 2px var(--accent-border);
+}
+
+.memory-import-dropzone {
+   display: flex;
+   align-items: center;
+   justify-content: center;
+   flex: 1;
+   min-height: 120px;
+   border: 2px dashed var(--accent-focus);
+   border-radius: 8px;
+   cursor: pointer;
+   color: var(--text-secondary);
+   font-size: 0.85rem;
+   transition: all var(--transition-fast);
+}
+
+.memory-import-dropzone:hover {
+   border-color: var(--accent);
+   background: rgba(45, 212, 191, 0.05);
+}
+
+.memory-import-dropzone input[type='file'] {
+   display: none;
+}
+
+#memory-import-filename {
+   padding: 0.5rem 0;
+   font-size: 0.8rem;
+   color: var(--accent);
+}
+
+#memory-import-filename.hidden {
+   display: none;
+}
+
+/* Import preview */
+#memory-import-preview {
+   max-height: 250px;
+   overflow-y: auto;
+   border-top: 1px solid var(--accent-border);
+}
+
+#memory-import-preview.hidden {
+   display: none;
+}
+
+.memory-import-summary {
+   padding: 0.75rem 1rem;
+   background: rgba(0, 0, 0, 0.2);
+   font-size: 0.8rem;
+   color: var(--text-secondary);
+   display: flex;
+   gap: 1rem;
+   flex-wrap: wrap;
+}
+
+.memory-import-summary .count {
+   color: var(--accent);
+   font-weight: 600;
+   font-family: 'IBM Plex Mono', monospace;
+}
+
+.memory-import-list {
+   padding: 0;
+}
+
+.memory-import-list .preview-item {
+   padding: 0.5rem 1rem;
+   border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+   font-size: 0.8rem;
+   color: var(--text-primary);
+   line-height: 1.4;
+}
+
+.memory-import-list .preview-item .preview-type {
+   font-size: 0.7rem;
+   color: var(--accent);
+   text-transform: uppercase;
+   margin-right: 0.5rem;
+}
+
+/* Import actions */
+.memory-import-actions {
+   display: flex;
+   align-items: center;
+   gap: 0.75rem;
+   padding: 0.75rem 1rem;
+   border-top: 1px solid var(--accent-border);
+}
+
+.memory-import-actions .btn-primary {
+   padding: 0.5rem 1.25rem;
+   background: var(--accent);
+   border: none;
+   border-radius: 6px;
+   color: var(--bg-primary);
+   font-size: 0.85rem;
+   font-weight: 600;
+   cursor: pointer;
+   transition: all var(--transition-fast);
+}
+
+.memory-import-actions .btn-primary:hover:not(:disabled) {
+   filter: brightness(1.1);
+}
+
+.memory-import-actions .btn-primary:disabled {
+   opacity: 0.4;
+   cursor: default;
+}
+
+.memory-import-actions .btn-primary.hidden {
+   display: none;
+}
+
+.memory-import-actions .btn-link {
+   font-size: 0.85rem;
+   padding: 0.5rem 0.75rem;
+}
+
+/* =============================================================================
+ * Memory Export Format Modal
+ * ============================================================================= */
+.memory-export-modal {
+   max-width: 400px;
+   width: 90vw;
+}
+
+.memory-export-options {
+   display: flex;
+   flex-direction: column;
+   gap: 0.5rem;
+   margin-bottom: 1rem;
+}
+
+.memory-export-option {
+   display: flex;
+   flex-direction: column;
+   align-items: flex-start;
+   gap: 0.25rem;
+   padding: 0.875rem 1rem;
+   background: rgba(0, 0, 0, 0.2);
+   border: 1px solid var(--accent-focus);
+   border-radius: 8px;
+   color: var(--text-primary);
+   cursor: pointer;
+   transition: all var(--transition-fast);
+   text-align: left;
+}
+
+.memory-export-option:hover {
+   border-color: var(--accent);
+   background: rgba(45, 212, 191, 0.05);
+}
+
+.memory-export-option-title {
+   font-size: 0.95rem;
+   font-weight: 600;
+}
+
+.memory-export-option-desc {
+   font-size: 0.8rem;
+   color: var(--text-secondary);
+   line-height: 1.3;
+}
+
+.memory-export-actions {
+   display: flex;
+   justify-content: flex-end;
+}
+
+.memory-export-actions .btn-link {
+   font-size: 0.85rem;
+   padding: 0.5rem 0.75rem;
+}
+
+/* =============================================================================
  * Mobile Responsive - Bottom Sheet Style
  * ============================================================================= */
 @media (max-width: 480px) {
@@ -690,6 +1107,25 @@
 
    #memory-search-input {
       font-size: 16px; /* Prevent iOS zoom */
+   }
+
+   /* Import modal mobile adjustments */
+   .memory-import-modal {
+      max-height: 85vh;
+      overflow-y: auto;
+   }
+
+   .memory-import-source {
+      min-height: 200px;
+   }
+
+   #memory-import-text {
+      height: 150px;
+      font-size: 16px; /* Prevent iOS zoom */
+   }
+
+   #memory-import-preview {
+      max-height: 150px;
    }
 }
 

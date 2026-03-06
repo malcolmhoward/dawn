@@ -1081,8 +1081,29 @@ The memory viewer provides a browser-based interface for inspecting and managing
 - **Search**: Filter memories by keyword across all tabs
 - **Graph tab**: Entity cards with type badges, expandable relations (→ outgoing, ← incoming)
 - **Delete**: Per-item delete with confirmation, bulk "Forget Everything"
+- **Import / Export**: Transfer memories between DAWN instances or other AI assistants
 - **Keyboard accessible**: tabindex, ARIA roles, Enter/Space activation
 - **Endpoints**: `GET /api/memory/{facts,preferences,summaries,entities,stats}`, `DELETE /api/memory/{facts,preferences,summaries,entities}/:id`
+
+#### Memory Import / Export
+
+Users can export their memories for backup or transfer, and import memories from other AI assistants (Claude, ChatGPT) or from a previous DAWN export.
+
+**Export formats:**
+- **DAWN JSON** (`dawn_memory` format, version 1): Lossless export including facts, preferences, entities with relations, confidence scores, sources, and timestamps. Suitable for backup/restore between DAWN instances.
+- **Human-readable text**: Markdown-formatted list of facts and preferences. Portable — can be pasted into any AI assistant.
+
+**Import sources:**
+- **DAWN JSON**: Direct restore from a previous export. Preserves metadata (confidence, source, timestamps).
+- **Plain text**: One fact per line (bullets and markdown headers auto-stripped). Each line becomes a fact with `confidence=0.7`, `source="import"`. Supports paste or file upload.
+
+**Deduplication**: Import uses a two-stage duplicate detection pipeline:
+1. **Hash check**: `memory_normalize_and_hash()` for O(1) exact duplicate detection via FNV-1a hash
+2. **Jaccard similarity**: Fuzzy matching (threshold 0.7) catches paraphrased duplicates
+
+**Preview mode**: Import runs in preview-then-commit workflow. The first request (`commit=false`) returns a preview of what will be imported (new items, duplicates skipped). The user reviews and confirms before the second request (`commit=true`) writes to the database.
+
+**WebSocket messages**: `export_memories` / `export_memories_response`, `import_memories` / `import_memories_response`
 
 #### Data Flow (Memory Lifecycle)
 

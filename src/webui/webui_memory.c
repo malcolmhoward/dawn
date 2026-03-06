@@ -30,6 +30,7 @@
 
 #include "logging.h"
 #include "memory/memory_db.h"
+#include "memory/memory_similarity.h"
 #include "webui/webui_internal.h"
 
 /* Default pagination limits */
@@ -754,4 +755,545 @@ void handle_delete_all_memories(ws_connection_t *conn, struct json_object *paylo
    json_object_object_add(response, "payload", resp_payload);
    send_json_response(conn->wsi, response);
    json_object_put(response);
+}
+
+/* =============================================================================
+ * Memory Export Handler
+ * ============================================================================= */
+
+/* Maximum items to export per type */
+#define EXPORT_MAX_FACTS 500
+#define EXPORT_MAX_PREFS 200
+#define EXPORT_MAX_ENTITIES 200
+#define EXPORT_MAX_RELATIONS 400
+
+/**
+ * @brief Export all memories for the current user
+ *
+ * Supports two formats:
+ * - "json": Full DAWN JSON with metadata (lossless, for backup/restore)
+ * - "text": Human-readable text (portable to other AIs)
+ */
+void handle_export_memories(ws_connection_t *conn, struct json_object *payload) {
+   if (!conn_require_auth(conn)) {
+      return;
+   }
+
+   json_object *response = json_object_new_object();
+   json_object_object_add(response, "type", json_object_new_string("export_memories_response"));
+   json_object *resp_payload = json_object_new_object();
+
+   /* Parse format (default: "json") */
+   const char *format = "json";
+   if (payload) {
+      json_object *fmt_obj;
+      if (json_object_object_get_ex(payload, "format", &fmt_obj)) {
+         format = json_object_get_string(fmt_obj);
+      }
+   }
+
+   /* Validate format */
+   if (strcmp(format, "json") != 0 && strcmp(format, "text") != 0) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Invalid format (use 'json' or 'text')"));
+      json_object_object_add(response, "payload", resp_payload);
+      send_json_response(conn->wsi, response);
+      json_object_put(response);
+      return;
+   }
+
+   if (strcmp(format, "text") == 0) {
+      /* --- Human-readable text export --- */
+      memory_fact_t *facts = calloc(EXPORT_MAX_FACTS, sizeof(memory_fact_t));
+      memory_preference_t *prefs = calloc(EXPORT_MAX_PREFS, sizeof(memory_preference_t));
+      if (!facts || !prefs) {
+         free(facts);
+         free(prefs);
+         json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+         json_object_object_add(resp_payload, "error",
+                                json_object_new_string("Memory allocation failed"));
+         json_object_object_add(response, "payload", resp_payload);
+         send_json_response(conn->wsi, response);
+         json_object_put(response);
+         return;
+      }
+
+      int fact_count = memory_db_fact_list(conn->auth_user_id, facts, EXPORT_MAX_FACTS, 0);
+      int pref_count = memory_db_pref_list(conn->auth_user_id, prefs, EXPORT_MAX_PREFS, 0);
+      if (fact_count < 0)
+         fact_count = 0;
+      if (pref_count < 0)
+         pref_count = 0;
+
+      /* Build text output: one line per memory */
+      size_t buf_size = (size_t)(fact_count + pref_count + 10) * 600;
+      char *text_buf = malloc(buf_size);
+      if (!text_buf) {
+         free(facts);
+         free(prefs);
+         json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+         json_object_object_add(resp_payload, "error",
+                                json_object_new_string("Memory allocation failed"));
+         json_object_object_add(response, "payload", resp_payload);
+         send_json_response(conn->wsi, response);
+         json_object_put(response);
+         return;
+      }
+
+      size_t off = 0;
+      off += snprintf(text_buf + off, buf_size - off, "# My Memories\n\n");
+
+      if (fact_count > 0) {
+         off += snprintf(text_buf + off, buf_size - off, "## Facts\n");
+         for (int i = 0; i < fact_count && off < buf_size - 128; i++) {
+            off += snprintf(text_buf + off, buf_size - off, "- %s\n", facts[i].fact_text);
+         }
+         off += snprintf(text_buf + off, buf_size - off, "\n");
+      }
+
+      if (pref_count > 0) {
+         off += snprintf(text_buf + off, buf_size - off, "## Preferences\n");
+         for (int i = 0; i < pref_count && off < buf_size - 128; i++) {
+            off += snprintf(text_buf + off, buf_size - off, "- %s: %s\n", prefs[i].category,
+                            prefs[i].value);
+         }
+      }
+
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
+      json_object_object_add(resp_payload, "format", json_object_new_string("text"));
+      json_object_object_add(resp_payload, "data", json_object_new_string(text_buf));
+      json_object_object_add(resp_payload, "fact_count", json_object_new_int(fact_count));
+      json_object_object_add(resp_payload, "pref_count", json_object_new_int(pref_count));
+
+      free(text_buf);
+      free(facts);
+      free(prefs);
+
+   } else {
+      /* --- DAWN JSON export (lossless with metadata) --- */
+      memory_fact_t *facts = calloc(EXPORT_MAX_FACTS, sizeof(memory_fact_t));
+      memory_preference_t *prefs = calloc(EXPORT_MAX_PREFS, sizeof(memory_preference_t));
+      memory_entity_t *entities = calloc(EXPORT_MAX_ENTITIES, sizeof(memory_entity_t));
+      memory_relation_t *relations = calloc(EXPORT_MAX_RELATIONS, sizeof(memory_relation_t));
+      if (!facts || !prefs || !entities || !relations) {
+         free(facts);
+         free(prefs);
+         free(entities);
+         free(relations);
+         json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+         json_object_object_add(resp_payload, "error",
+                                json_object_new_string("Memory allocation failed"));
+         json_object_object_add(response, "payload", resp_payload);
+         send_json_response(conn->wsi, response);
+         json_object_put(response);
+         return;
+      }
+
+      int fact_count = memory_db_fact_list(conn->auth_user_id, facts, EXPORT_MAX_FACTS, 0);
+      int pref_count = memory_db_pref_list(conn->auth_user_id, prefs, EXPORT_MAX_PREFS, 0);
+      int entity_count = memory_db_entity_list(conn->auth_user_id, entities, EXPORT_MAX_ENTITIES,
+                                               0);
+      int relation_count = memory_db_relation_list_all_by_user(conn->auth_user_id, relations,
+                                                               EXPORT_MAX_RELATIONS);
+      if (fact_count < 0)
+         fact_count = 0;
+      if (pref_count < 0)
+         pref_count = 0;
+      if (entity_count < 0)
+         entity_count = 0;
+      if (relation_count < 0)
+         relation_count = 0;
+
+      /* Build export JSON */
+      json_object *export_obj = json_object_new_object();
+      json_object_object_add(export_obj, "version", json_object_new_int(1));
+      json_object_object_add(export_obj, "format", json_object_new_string("dawn_memory"));
+      json_object_object_add(export_obj, "exported_at", json_object_new_int64((int64_t)time(NULL)));
+
+      /* Facts array */
+      json_object *facts_arr = json_object_new_array();
+      for (int i = 0; i < fact_count; i++) {
+         json_object *f = json_object_new_object();
+         json_object_object_add(f, "fact_text", json_object_new_string(facts[i].fact_text));
+         json_object_object_add(f, "confidence", json_object_new_double(facts[i].confidence));
+         json_object_object_add(f, "source", json_object_new_string(facts[i].source));
+         json_object_object_add(f, "created_at", json_object_new_int64(facts[i].created_at));
+         json_object_array_add(facts_arr, f);
+      }
+      json_object_object_add(export_obj, "facts", facts_arr);
+
+      /* Preferences array */
+      json_object *prefs_arr = json_object_new_array();
+      for (int i = 0; i < pref_count; i++) {
+         json_object *p = json_object_new_object();
+         json_object_object_add(p, "category", json_object_new_string(prefs[i].category));
+         json_object_object_add(p, "value", json_object_new_string(prefs[i].value));
+         json_object_object_add(p, "confidence", json_object_new_double(prefs[i].confidence));
+         json_object_object_add(p, "source", json_object_new_string(prefs[i].source));
+         json_object_object_add(p, "created_at", json_object_new_int64(prefs[i].created_at));
+         json_object_array_add(prefs_arr, p);
+      }
+      json_object_object_add(export_obj, "preferences", prefs_arr);
+
+      /* Entities array */
+      json_object *entities_arr = json_object_new_array();
+      for (int i = 0; i < entity_count; i++) {
+         json_object *e = json_object_new_object();
+         json_object_object_add(e, "name", json_object_new_string(entities[i].name));
+         json_object_object_add(e, "entity_type", json_object_new_string(entities[i].entity_type));
+         json_object_object_add(e, "mention_count", json_object_new_int(entities[i].mention_count));
+         json_object_object_add(e, "first_seen", json_object_new_int64(entities[i].first_seen));
+
+         /* Attach relations for this entity */
+         json_object *rels_arr = json_object_new_array();
+         for (int r = 0; r < relation_count; r++) {
+            if (relations[r].subject_entity_id != entities[i].id)
+               continue;
+            json_object *rel = json_object_new_object();
+            json_object_object_add(rel, "relation", json_object_new_string(relations[r].relation));
+            json_object_object_add(rel, "object_name",
+                                   json_object_new_string(relations[r].object_name));
+            json_object_object_add(rel, "confidence",
+                                   json_object_new_double(relations[r].confidence));
+            json_object_array_add(rels_arr, rel);
+         }
+         json_object_object_add(e, "relations", rels_arr);
+
+         json_object_array_add(entities_arr, e);
+      }
+      json_object_object_add(export_obj, "entities", entities_arr);
+
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
+      json_object_object_add(resp_payload, "format", json_object_new_string("json"));
+      json_object_object_add(resp_payload, "data", export_obj);
+      json_object_object_add(resp_payload, "fact_count", json_object_new_int(fact_count));
+      json_object_object_add(resp_payload, "pref_count", json_object_new_int(pref_count));
+      json_object_object_add(resp_payload, "entity_count", json_object_new_int(entity_count));
+
+      free(facts);
+      free(prefs);
+      free(entities);
+      free(relations);
+   }
+
+   /* Copy format before response is freed (format may point into payload JSON) */
+   bool is_text = (strcmp(format, "text") == 0);
+
+   json_object_object_add(response, "payload", resp_payload);
+   send_json_response(conn->wsi, response);
+   json_object_put(response);
+
+   LOG_INFO("WebUI: User %d exported memories (format=%s)", conn->auth_user_id,
+            is_text ? "text" : "json");
+}
+
+/* =============================================================================
+ * Memory Import Handler
+ * ============================================================================= */
+
+/* Maximum items per import (limits DB queries on LWS service thread) */
+#define IMPORT_MAX_LINES 200
+#define IMPORT_MAX_TEXT_LEN (256 * 1024) /* 256KB max paste */
+
+/**
+ * @brief Check if a fact is a duplicate of existing memories
+ *
+ * Uses hash lookup + Jaccard similarity fallback.
+ *
+ * @return true if duplicate found
+ */
+static bool is_fact_duplicate(int user_id, const char *fact_text) {
+   uint32_t hash = memory_normalize_and_hash(fact_text);
+   if (hash == 0)
+      return false;
+
+   memory_fact_t existing[5];
+   int found = memory_db_fact_find_by_hash(user_id, hash, existing, 5);
+   if (found > 0)
+      return true;
+
+   /* Fallback: Jaccard similarity against recent matches */
+   memory_fact_t similar[3];
+   int sim_count = memory_db_fact_find_similar(user_id, fact_text, similar, 3);
+   for (int i = 0; i < sim_count; i++) {
+      if (memory_is_duplicate(fact_text, similar[i].fact_text, MEMORY_SIMILARITY_THRESHOLD))
+         return true;
+   }
+   return false;
+}
+
+/**
+ * @brief Import memories from JSON or plain text
+ *
+ * Two import paths:
+ * - "json" format: DAWN JSON export (direct restore with metadata)
+ * - "text" format: Plain text paste (from Claude/ChatGPT, one fact per line)
+ *
+ * Supports preview mode (commit=false) that returns what would be imported
+ * without actually writing to the database.
+ */
+void handle_import_memories(ws_connection_t *conn, struct json_object *payload) {
+   if (!conn_require_auth(conn)) {
+      return;
+   }
+
+   json_object *response = json_object_new_object();
+   json_object_object_add(response, "type", json_object_new_string("import_memories_response"));
+   json_object *resp_payload = json_object_new_object();
+
+   if (!payload) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error", json_object_new_string("Missing payload"));
+      json_object_object_add(response, "payload", resp_payload);
+      send_json_response(conn->wsi, response);
+      json_object_put(response);
+      return;
+   }
+
+   /* Parse common fields */
+   json_object *format_obj, *commit_obj;
+   const char *format = "text";
+   bool commit = false;
+
+   if (json_object_object_get_ex(payload, "format", &format_obj))
+      format = json_object_get_string(format_obj);
+   if (json_object_object_get_ex(payload, "commit", &commit_obj))
+      commit = json_object_get_boolean(commit_obj);
+
+   /* Validate format */
+   if (strcmp(format, "json") != 0 && strcmp(format, "text") != 0) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Invalid format (use 'json' or 'text')"));
+      json_object_object_add(response, "payload", resp_payload);
+      send_json_response(conn->wsi, response);
+      json_object_put(response);
+      return;
+   }
+
+   int imported_facts = 0;
+   int imported_prefs = 0;
+   int skipped_dupes = 0;
+   int skipped_empty = 0;
+   json_object *preview_arr = json_object_new_array();
+
+   if (strcmp(format, "json") == 0) {
+      /* --- DAWN JSON import --- */
+      json_object *data_obj;
+      if (!json_object_object_get_ex(payload, "data", &data_obj)) {
+         json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+         json_object_object_add(resp_payload, "error", json_object_new_string("Missing data"));
+         json_object_put(preview_arr);
+         json_object_object_add(response, "payload", resp_payload);
+         send_json_response(conn->wsi, response);
+         json_object_put(response);
+         return;
+      }
+
+      /* Import facts */
+      json_object *facts_arr;
+      if (json_object_object_get_ex(data_obj, "facts", &facts_arr)) {
+         int len = json_object_array_length(facts_arr);
+         for (int i = 0; i < len && i < IMPORT_MAX_LINES; i++) {
+            json_object *f = json_object_array_get_idx(facts_arr, i);
+            json_object *text_obj, *conf_obj, *src_obj;
+
+            if (!json_object_object_get_ex(f, "fact_text", &text_obj))
+               continue;
+            const char *text = json_object_get_string(text_obj);
+            if (!text || strlen(text) == 0) {
+               skipped_empty++;
+               continue;
+            }
+
+            float confidence = 0.8f;
+            if (json_object_object_get_ex(f, "confidence", &conf_obj))
+               confidence = (float)json_object_get_double(conf_obj);
+
+            /* Truncate to max fact length (same as text path) */
+            char truncated[MEMORY_FACT_TEXT_MAX];
+            strncpy(truncated, text, sizeof(truncated) - 1);
+            truncated[sizeof(truncated) - 1] = '\0';
+
+            if (is_fact_duplicate(conn->auth_user_id, truncated)) {
+               skipped_dupes++;
+               continue;
+            }
+
+            /* Add to preview */
+            json_object *preview_item = json_object_new_object();
+            json_object_object_add(preview_item, "type", json_object_new_string("fact"));
+            json_object_object_add(preview_item, "text", json_object_new_string(truncated));
+            json_object_object_add(preview_item, "confidence", json_object_new_double(confidence));
+            json_object_array_add(preview_arr, preview_item);
+
+            if (commit) {
+               memory_db_fact_create(conn->auth_user_id, truncated, confidence, "import");
+            }
+            imported_facts++;
+         }
+      }
+
+      /* Import preferences */
+      json_object *prefs_arr;
+      if (json_object_object_get_ex(data_obj, "preferences", &prefs_arr)) {
+         int len = json_object_array_length(prefs_arr);
+         for (int i = 0; i < len && i < IMPORT_MAX_LINES; i++) {
+            json_object *p = json_object_array_get_idx(prefs_arr, i);
+            json_object *cat_obj, *val_obj, *conf_obj;
+
+            if (!json_object_object_get_ex(p, "category", &cat_obj) ||
+                !json_object_object_get_ex(p, "value", &val_obj))
+               continue;
+
+            const char *category = json_object_get_string(cat_obj);
+            const char *value = json_object_get_string(val_obj);
+            if (!category || !value || strlen(category) == 0 || strlen(value) == 0) {
+               skipped_empty++;
+               continue;
+            }
+
+            float confidence = 0.8f;
+            if (json_object_object_get_ex(p, "confidence", &conf_obj))
+               confidence = (float)json_object_get_double(conf_obj);
+
+            json_object *preview_item = json_object_new_object();
+            json_object_object_add(preview_item, "type", json_object_new_string("preference"));
+            json_object_object_add(preview_item, "category", json_object_new_string(category));
+            json_object_object_add(preview_item, "value", json_object_new_string(value));
+            json_object_array_add(preview_arr, preview_item);
+
+            if (commit) {
+               memory_db_pref_upsert(conn->auth_user_id, category, value, confidence, "import");
+            }
+            imported_prefs++;
+         }
+      }
+
+   } else {
+      /* --- Plain text import (from Claude/ChatGPT) --- */
+      json_object *text_obj;
+      if (!json_object_object_get_ex(payload, "text", &text_obj)) {
+         json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+         json_object_object_add(resp_payload, "error", json_object_new_string("Missing text"));
+         json_object_put(preview_arr);
+         json_object_object_add(response, "payload", resp_payload);
+         send_json_response(conn->wsi, response);
+         json_object_put(response);
+         return;
+      }
+
+      const char *text = json_object_get_string(text_obj);
+      if (!text || strlen(text) == 0) {
+         json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+         json_object_object_add(resp_payload, "error", json_object_new_string("Empty text"));
+         json_object_put(preview_arr);
+         json_object_object_add(response, "payload", resp_payload);
+         send_json_response(conn->wsi, response);
+         json_object_put(response);
+         return;
+      }
+
+      if (strlen(text) > IMPORT_MAX_TEXT_LEN) {
+         json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+         json_object_object_add(resp_payload, "error",
+                                json_object_new_string("Text too large (256KB max)"));
+         json_object_put(preview_arr);
+         json_object_object_add(response, "payload", resp_payload);
+         send_json_response(conn->wsi, response);
+         json_object_put(response);
+         return;
+      }
+
+      /* Parse line by line: strip "- " bullet prefix, skip headers/blank lines */
+      char *text_copy = strdup(text);
+      if (!text_copy) {
+         json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+         json_object_object_add(resp_payload, "error",
+                                json_object_new_string("Memory allocation failed"));
+         json_object_put(preview_arr);
+         json_object_object_add(response, "payload", resp_payload);
+         send_json_response(conn->wsi, response);
+         json_object_put(response);
+         return;
+      }
+
+      int line_count = 0;
+      char *saveptr = NULL;
+      char *line = strtok_r(text_copy, "\n", &saveptr);
+
+      while (line && line_count < IMPORT_MAX_LINES) {
+         line_count++;
+
+         /* Skip leading whitespace */
+         while (*line == ' ' || *line == '\t')
+            line++;
+
+         /* Skip headers (lines starting with #) */
+         if (*line == '#' || *line == '\0') {
+            line = strtok_r(NULL, "\n", &saveptr);
+            continue;
+         }
+
+         /* Strip bullet prefix "- " or "* " */
+         const char *fact_text = line;
+         if ((line[0] == '-' || line[0] == '*') && line[1] == ' ')
+            fact_text = line + 2;
+
+         /* Skip if too short (likely noise) */
+         if (strlen(fact_text) < 3) {
+            skipped_empty++;
+            line = strtok_r(NULL, "\n", &saveptr);
+            continue;
+         }
+
+         /* Truncate to max fact length */
+         char truncated[MEMORY_FACT_TEXT_MAX];
+         strncpy(truncated, fact_text, sizeof(truncated) - 1);
+         truncated[sizeof(truncated) - 1] = '\0';
+
+         if (is_fact_duplicate(conn->auth_user_id, truncated)) {
+            skipped_dupes++;
+            line = strtok_r(NULL, "\n", &saveptr);
+            continue;
+         }
+
+         json_object *preview_item = json_object_new_object();
+         json_object_object_add(preview_item, "type", json_object_new_string("fact"));
+         json_object_object_add(preview_item, "text", json_object_new_string(truncated));
+         json_object_object_add(preview_item, "confidence", json_object_new_double(0.7));
+         json_object_array_add(preview_arr, preview_item);
+
+         if (commit) {
+            memory_db_fact_create(conn->auth_user_id, truncated, 0.7f, "import");
+         }
+         imported_facts++;
+
+         line = strtok_r(NULL, "\n", &saveptr);
+      }
+
+      free(text_copy);
+   }
+
+   json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
+   json_object_object_add(resp_payload, "committed", json_object_new_boolean(commit));
+   json_object_object_add(resp_payload, "imported_facts", json_object_new_int(imported_facts));
+   json_object_object_add(resp_payload, "imported_prefs", json_object_new_int(imported_prefs));
+   json_object_object_add(resp_payload, "skipped_dupes", json_object_new_int(skipped_dupes));
+   json_object_object_add(resp_payload, "skipped_empty", json_object_new_int(skipped_empty));
+   if (!commit) {
+      json_object_object_add(resp_payload, "preview", preview_arr);
+   } else {
+      json_object_put(preview_arr);
+   }
+
+   json_object_object_add(response, "payload", resp_payload);
+   send_json_response(conn->wsi, response);
+   json_object_put(response);
+
+   if (commit) {
+      LOG_INFO("WebUI: User %d imported memories (format=%s, facts=%d, prefs=%d, dupes=%d)",
+               conn->auth_user_id, format, imported_facts, imported_prefs, skipped_dupes);
+   }
 }

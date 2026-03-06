@@ -2966,6 +2966,12 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
       if (payload) {
          handle_delete_all_memories(conn, payload);
       }
+   } else if (strcmp(type, "export_memories") == 0) {
+      handle_export_memories(conn, payload);
+   } else if (strcmp(type, "import_memories") == 0) {
+      if (payload) {
+         handle_import_memories(conn, payload);
+      }
    }
    /* TTS control (per-connection) */
    else if (strcmp(type, "set_tts_enabled") == 0) {

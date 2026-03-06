@@ -445,6 +445,12 @@
             case 'delete_all_memories_response':
                DawnMemory.handleDeleteAllResponse(msg.payload);
                break;
+            case 'export_memories_response':
+               DawnMemory.handleExportResponse(msg.payload);
+               break;
+            case 'import_memories_response':
+               DawnMemory.handleImportResponse(msg.payload);
+               break;
             case 'conversation_reset':
                // Tool triggered conversation reset - sync frontend
                console.log('Conversation reset by tool');

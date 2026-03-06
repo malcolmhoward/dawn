@@ -694,6 +694,20 @@ void handle_delete_memory_entity(ws_connection_t *conn, struct json_object *payl
  */
 void handle_delete_all_memories(ws_connection_t *conn, struct json_object *payload);
 
+/**
+ * @brief Export all memories for the current user
+ *
+ * Supports "json" (DAWN lossless) and "text" (human-readable) formats.
+ */
+void handle_export_memories(ws_connection_t *conn, struct json_object *payload);
+
+/**
+ * @brief Import memories from JSON or plain text
+ *
+ * Supports preview mode (commit=false) and deduplication.
+ */
+void handle_import_memories(ws_connection_t *conn, struct json_object *payload);
+
 /* =============================================================================
  * Config Handler Functions (defined in webui_config.c)
  * ============================================================================= */
