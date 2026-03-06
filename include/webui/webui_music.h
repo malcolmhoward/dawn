@@ -56,11 +56,11 @@ struct json_object;
 #define WEBUI_MUSIC_FRAME_MS 20
 
 /** Maximum playlist size per session */
-#define WEBUI_MUSIC_MAX_QUEUE 100
+#define WEBUI_MUSIC_MAX_QUEUE 250
 
 /**
  * Maximum path length for music files (matches MUSIC_DB_PATH_MAX for consistency).
- * Queue memory: 100 entries × ~1.4KB each ≈ 138KB per session — negligible vs model memory.
+ * Queue memory: 250 entries × ~1.4KB each ≈ 342KB per session — negligible vs model memory.
  */
 #define WEBUI_MUSIC_PATH_MAX 1024
 

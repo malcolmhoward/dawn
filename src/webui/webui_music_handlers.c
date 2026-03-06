@@ -34,11 +34,45 @@
 #include "logging.h"
 #include "tools/volume_tool.h"
 #include "webui/webui_music_internal.h"
+#include "webui/webui_music_queue_db.h"
 #include "webui/webui_server.h"
 
 /* =============================================================================
  * Helpers
  * ============================================================================= */
+
+/**
+ * @brief Callback context for adjusting sibling session queue_index on remove
+ */
+typedef struct {
+   int removed_index;
+   ws_connection_t *exclude;
+} remove_adjust_ctx_t;
+
+/**
+ * @brief Adjust queue_index for sibling sessions after a track removal
+ *
+ * Called via webui_for_each_conn_by_user for each sibling connection.
+ * Locks state_mutex individually per session to adjust queue_index.
+ */
+static void adjust_index_on_remove(ws_connection_t *conn, void *ctx) {
+   remove_adjust_ctx_t *rctx = (remove_adjust_ctx_t *)ctx;
+   if (conn == rctx->exclude) {
+      return;
+   }
+   session_music_state_t *s = (session_music_state_t *)conn->music_state;
+   if (!s) {
+      return;
+   }
+   pthread_mutex_lock(&s->state_mutex);
+   if (rctx->removed_index < s->queue_index) {
+      s->queue_index--;
+   } else if (s->queue_index >= s->shared_queue->queue_length &&
+              s->shared_queue->queue_length > 0) {
+      s->queue_index = s->shared_queue->queue_length - 1;
+   }
+   pthread_mutex_unlock(&s->state_mutex);
+}
 
 /* =============================================================================
  * Message Handlers
@@ -105,10 +139,8 @@ void handle_music_subscribe(ws_connection_t *conn, struct json_object *payload) 
       }
    }
 
-   /* Send current state */
-   pthread_mutex_lock(&state->state_mutex);
+   /* Send current state (send_state manages its own locking) */
    webui_music_send_state(conn, state);
-   pthread_mutex_unlock(&state->state_mutex);
 
    LOG_INFO("WebUI music: Client subscribed (quality: %s, bitrate: %s)",
             QUALITY_NAMES[state->quality],
@@ -193,25 +225,35 @@ void handle_music_control(ws_connection_t *conn, struct json_object *payload) {
             audio_decoder_close(state->decoder);
             state->decoder = NULL;
          }
+         pthread_mutex_unlock(&state->state_mutex);
+
+         /* Mutate shared queue */
+         user_music_queue_t *uq = state->shared_queue;
+         pthread_mutex_lock(&uq->queue_mutex);
 
          /* Shift queue down and insert at position 0 */
-         if (state->queue_length < WEBUI_MUSIC_MAX_QUEUE) {
-            memmove(&state->queue[1], &state->queue[0],
-                    state->queue_length * sizeof(music_queue_entry_t));
-            state->queue_length++;
+         if (uq->queue_length < WEBUI_MUSIC_MAX_QUEUE) {
+            memmove(&uq->queue[1], &uq->queue[0], uq->queue_length * sizeof(music_queue_entry_t));
+            uq->queue_length++;
          } else {
             /* Queue full - shift and lose last item */
-            memmove(&state->queue[1], &state->queue[0],
+            memmove(&uq->queue[1], &uq->queue[0],
                     (WEBUI_MUSIC_MAX_QUEUE - 1) * sizeof(music_queue_entry_t));
          }
 
          /* Insert track at top */
-         music_queue_entry_t *entry = &state->queue[0];
+         music_queue_entry_t *entry = &uq->queue[0];
          safe_strncpy(entry->path, track_info.path, sizeof(entry->path));
          safe_strncpy(entry->title, track_info.title, sizeof(entry->title));
          safe_strncpy(entry->artist, track_info.artist, sizeof(entry->artist));
          safe_strncpy(entry->album, track_info.album, sizeof(entry->album));
          entry->duration_sec = track_info.duration_sec;
+         uq->generation++;
+         music_queue_db_save(uq->user_id, uq);
+         pthread_mutex_unlock(&uq->queue_mutex);
+
+         /* Set per-session index */
+         pthread_mutex_lock(&state->state_mutex);
          state->queue_index = 0;
          pthread_mutex_unlock(&state->state_mutex);
 
@@ -221,10 +263,9 @@ void handle_music_control(ws_connection_t *conn, struct json_object *payload) {
             return;
          }
 
-         /* Send state update so client shows track info immediately */
-         pthread_mutex_lock(&state->state_mutex);
+         /* Send state to this tab, broadcast to others */
          webui_music_send_state(conn, state);
-         pthread_mutex_unlock(&state->state_mutex);
+         webui_music_broadcast_queue_state(uq, conn);
 
       } else if (json_object_object_get_ex(payload, "query", &query_obj)) {
          const char *query = json_object_get_string(query_obj);
@@ -236,8 +277,6 @@ void handle_music_control(ws_connection_t *conn, struct json_object *payload) {
             audio_decoder_close(state->decoder);
             state->decoder = NULL;
          }
-         state->queue_length = 0;
-         state->queue_index = 0;
          pthread_mutex_unlock(&state->state_mutex);
 
          /* Search unified database (all sources) */
@@ -255,52 +294,58 @@ void handle_music_control(ws_connection_t *conn, struct json_object *payload) {
             return;
          }
 
-         pthread_mutex_lock(&state->state_mutex);
-         for (int i = 0; i < count && state->queue_length < WEBUI_MUSIC_MAX_QUEUE; i++) {
-            music_queue_entry_t *entry = &state->queue[state->queue_length];
+         user_music_queue_t *uq = state->shared_queue;
+         pthread_mutex_lock(&uq->queue_mutex);
+         uq->queue_length = 0;
+         for (int i = 0; i < count && uq->queue_length < WEBUI_MUSIC_MAX_QUEUE; i++) {
+            music_queue_entry_t *entry = &uq->queue[uq->queue_length];
             safe_strncpy(entry->path, results[i].path, sizeof(entry->path));
             safe_strncpy(entry->title, results[i].title, sizeof(entry->title));
             safe_strncpy(entry->artist, results[i].artist, sizeof(entry->artist));
             safe_strncpy(entry->album, results[i].album, sizeof(entry->album));
             entry->duration_sec = results[i].duration_sec;
-            state->queue_length++;
+            uq->queue_length++;
          }
-         pthread_mutex_unlock(&state->state_mutex);
+         uq->generation++;
+         music_queue_db_save(uq->user_id, uq);
+         char first_path[WEBUI_MUSIC_PATH_MAX];
+         snprintf(first_path, sizeof(first_path), "%s", uq->queue[0].path);
+         pthread_mutex_unlock(&uq->queue_mutex);
          free(results);
 
+         pthread_mutex_lock(&state->state_mutex);
+         state->queue_index = 0;
+         pthread_mutex_unlock(&state->state_mutex);
+
          /* Start playback */
-         if (webui_music_start_playback(state, state->queue[0].path) != 0) {
+         if (webui_music_start_playback(state, first_path) != 0) {
             webui_music_send_error(conn, "PLAYBACK_ERROR", "Failed to start playback");
             return;
          }
 
-         /* Send state update so client shows track info immediately */
-         pthread_mutex_lock(&state->state_mutex);
+         /* Send state to this tab, broadcast to others */
          webui_music_send_state(conn, state);
-         pthread_mutex_unlock(&state->state_mutex);
+         webui_music_broadcast_queue_state(uq, conn);
 
       } else if (state->paused) {
          /* Resume from pause */
          pthread_mutex_lock(&state->state_mutex);
          state->paused = false;
-         webui_music_send_state(conn, state);
          pthread_mutex_unlock(&state->state_mutex);
+         webui_music_send_state(conn, state);
       } else {
          /* Already playing - just send state */
-         pthread_mutex_lock(&state->state_mutex);
          webui_music_send_state(conn, state);
-         pthread_mutex_unlock(&state->state_mutex);
       }
 
    } else if (strcmp(action, "pause") == 0) {
       pthread_mutex_lock(&state->state_mutex);
       state->paused = true;
-      webui_music_send_state(conn, state);
       pthread_mutex_unlock(&state->state_mutex);
+      webui_music_send_state(conn, state);
 
    } else if (strcmp(action, "stop") == 0) {
-      /* Stop streaming thread completely before closing decoder.
-       * This ensures no use-after-free - thread is fully stopped via pthread_join. */
+      /* Stop streaming thread completely before closing decoder. */
       webui_music_stop_streaming(state);
 
       pthread_mutex_lock(&state->state_mutex);
@@ -311,74 +356,102 @@ void handle_music_control(ws_connection_t *conn, struct json_object *payload) {
          state->decoder = NULL;
       }
       state->position_frames = 0;
-      webui_music_send_state(conn, state);
       pthread_mutex_unlock(&state->state_mutex);
+      webui_music_send_state(conn, state);
 
    } else if (strcmp(action, "next") == 0) {
-      pthread_mutex_lock(&state->state_mutex);
+      user_music_queue_t *uq = state->shared_queue;
       bool can_advance = false;
-      if (state->queue_length > 0) {
-         if (state->shuffle && state->queue_length > 1) {
-            state->queue_index = webui_music_pick_random_index(state);
+      char next_path[WEBUI_MUSIC_PATH_MAX] = { 0 };
+
+      /* Hold queue_mutex across the full computation (hierarchy: queue → state) */
+      pthread_mutex_lock(&uq->queue_mutex);
+      int q_len = uq->queue_length;
+      bool q_shuffle = uq->shuffle;
+      music_repeat_mode_t q_repeat = uq->repeat_mode;
+
+      pthread_mutex_lock(&state->state_mutex);
+      if (q_len > 0) {
+         if (q_shuffle && q_len > 1) {
+            state->queue_index = webui_music_pick_random_index(state->queue_index, q_len,
+                                                               &state->shuffle_seed);
             can_advance = true;
-         } else if (state->queue_index < state->queue_length - 1) {
+         } else if (state->queue_index < q_len - 1) {
             state->queue_index++;
             can_advance = true;
-         } else if (state->repeat_mode == MUSIC_REPEAT_ALL) {
+         } else if (q_repeat == MUSIC_REPEAT_ALL) {
             state->queue_index = 0;
             can_advance = true;
          }
       }
-      if (can_advance) {
-         const char *path = state->queue[state->queue_index].path;
-         pthread_mutex_unlock(&state->state_mutex);
-         webui_music_start_playback(state, path);
-      } else {
-         pthread_mutex_unlock(&state->state_mutex);
+      if (can_advance && state->queue_index < q_len) {
+         snprintf(next_path, sizeof(next_path), "%s", uq->queue[state->queue_index].path);
+      }
+      pthread_mutex_unlock(&state->state_mutex);
+      pthread_mutex_unlock(&uq->queue_mutex);
+
+      if (can_advance && next_path[0]) {
+         webui_music_start_playback(state, next_path);
       }
 
-      pthread_mutex_lock(&state->state_mutex);
       webui_music_send_state(conn, state);
-      pthread_mutex_unlock(&state->state_mutex);
 
    } else if (strcmp(action, "previous") == 0) {
-      pthread_mutex_lock(&state->state_mutex);
+      user_music_queue_t *uq = state->shared_queue;
       bool can_go_back = false;
-      if (state->queue_length > 0) {
-         if (state->shuffle && state->queue_length > 1) {
-            state->queue_index = webui_music_pick_random_index(state);
+      char prev_path[WEBUI_MUSIC_PATH_MAX] = { 0 };
+
+      /* Hold queue_mutex across the full computation (hierarchy: queue → state) */
+      pthread_mutex_lock(&uq->queue_mutex);
+      int q_len = uq->queue_length;
+      bool q_shuffle = uq->shuffle;
+      music_repeat_mode_t q_repeat = uq->repeat_mode;
+
+      pthread_mutex_lock(&state->state_mutex);
+      if (q_len > 0) {
+         if (q_shuffle && q_len > 1) {
+            state->queue_index = webui_music_pick_random_index(state->queue_index, q_len,
+                                                               &state->shuffle_seed);
             can_go_back = true;
          } else if (state->queue_index > 0) {
             state->queue_index--;
             can_go_back = true;
-         } else if (state->repeat_mode == MUSIC_REPEAT_ALL) {
-            state->queue_index = state->queue_length - 1;
+         } else if (q_repeat == MUSIC_REPEAT_ALL) {
+            state->queue_index = q_len - 1;
             can_go_back = true;
          }
       }
-      if (can_go_back) {
-         const char *path = state->queue[state->queue_index].path;
-         pthread_mutex_unlock(&state->state_mutex);
-         webui_music_start_playback(state, path);
-      } else {
-         pthread_mutex_unlock(&state->state_mutex);
+      if (can_go_back && state->queue_index < q_len) {
+         snprintf(prev_path, sizeof(prev_path), "%s", uq->queue[state->queue_index].path);
+      }
+      pthread_mutex_unlock(&state->state_mutex);
+      pthread_mutex_unlock(&uq->queue_mutex);
+
+      if (can_go_back && prev_path[0]) {
+         webui_music_start_playback(state, prev_path);
       }
 
-      pthread_mutex_lock(&state->state_mutex);
       webui_music_send_state(conn, state);
-      pthread_mutex_unlock(&state->state_mutex);
 
    } else if (strcmp(action, "toggle_shuffle") == 0) {
-      pthread_mutex_lock(&state->state_mutex);
-      state->shuffle = !state->shuffle;
+      user_music_queue_t *uq = state->shared_queue;
+      pthread_mutex_lock(&uq->queue_mutex);
+      uq->shuffle = !uq->shuffle;
+      uq->generation++;
+      music_queue_db_save_state(uq->user_id, uq);
+      pthread_mutex_unlock(&uq->queue_mutex);
       webui_music_send_state(conn, state);
-      pthread_mutex_unlock(&state->state_mutex);
+      webui_music_broadcast_queue_state(uq, conn);
 
    } else if (strcmp(action, "cycle_repeat") == 0) {
-      pthread_mutex_lock(&state->state_mutex);
-      state->repeat_mode = (music_repeat_mode_t)((state->repeat_mode + 1) % 3);
+      user_music_queue_t *uq = state->shared_queue;
+      pthread_mutex_lock(&uq->queue_mutex);
+      uq->repeat_mode = (music_repeat_mode_t)((uq->repeat_mode + 1) % 3);
+      uq->generation++;
+      music_queue_db_save_state(uq->user_id, uq);
+      pthread_mutex_unlock(&uq->queue_mutex);
       webui_music_send_state(conn, state);
-      pthread_mutex_unlock(&state->state_mutex);
+      webui_music_broadcast_queue_state(uq, conn);
 
    } else if (strcmp(action, "seek") == 0) {
       struct json_object *position_obj;
@@ -401,8 +474,8 @@ void handle_music_control(ws_connection_t *conn, struct json_object *payload) {
                state->resample_accum_count = 0;
             }
          }
-         webui_music_send_state(conn, state);
          pthread_mutex_unlock(&state->state_mutex);
+         webui_music_send_state(conn, state);
 
          /* Restart streaming if it was active */
          if (was_streaming && state->playing) {
@@ -419,26 +492,27 @@ void handle_music_control(ws_connection_t *conn, struct json_object *payload) {
       }
       int play_index = json_object_get_int(index_obj);
 
-      pthread_mutex_lock(&state->state_mutex);
-      if (play_index < 0 || play_index >= state->queue_length) {
-         pthread_mutex_unlock(&state->state_mutex);
+      user_music_queue_t *uq = state->shared_queue;
+      char play_path[WEBUI_MUSIC_PATH_MAX] = { 0 };
+      pthread_mutex_lock(&uq->queue_mutex);
+      if (play_index < 0 || play_index >= uq->queue_length) {
+         pthread_mutex_unlock(&uq->queue_mutex);
          webui_music_send_error(conn, "INVALID_INDEX", "Index out of range");
          return;
       }
+      snprintf(play_path, sizeof(play_path), "%s", uq->queue[play_index].path);
+      pthread_mutex_unlock(&uq->queue_mutex);
 
+      pthread_mutex_lock(&state->state_mutex);
       state->queue_index = play_index;
-      const char *path = state->queue[play_index].path;
       pthread_mutex_unlock(&state->state_mutex);
 
-      /* Start playback (handles closing existing decoder with proper wait) */
-      if (webui_music_start_playback(state, path) != 0) {
+      if (webui_music_start_playback(state, play_path) != 0) {
          webui_music_send_error(conn, "PLAYBACK_ERROR", "Failed to start playback");
          return;
       }
 
-      pthread_mutex_lock(&state->state_mutex);
       webui_music_send_state(conn, state);
-      pthread_mutex_unlock(&state->state_mutex);
 
    } else if (strcmp(action, "add_to_queue") == 0) {
       /* Add track to end of queue without starting playback */
@@ -449,13 +523,11 @@ void handle_music_control(ws_connection_t *conn, struct json_object *payload) {
       }
       const char *path = json_object_get_string(path_obj);
 
-      /* Security: validate path is within music library */
       if (!webui_music_is_path_valid(path)) {
          webui_music_send_error(conn, "INVALID_PATH", "Path not in music library");
          return;
       }
 
-      /* Get track metadata from unified DB */
       music_search_result_t track_info;
       if (music_db_get_by_path(path, &track_info) != 0) {
          safe_strncpy(track_info.path, path, sizeof(track_info.path));
@@ -465,18 +537,22 @@ void handle_music_control(ws_connection_t *conn, struct json_object *payload) {
          track_info.duration_sec = 0;
       }
 
-      pthread_mutex_lock(&state->state_mutex);
-      if (state->queue_length < WEBUI_MUSIC_MAX_QUEUE) {
-         music_queue_entry_t *entry = &state->queue[state->queue_length];
+      user_music_queue_t *uq = state->shared_queue;
+      pthread_mutex_lock(&uq->queue_mutex);
+      if (uq->queue_length < WEBUI_MUSIC_MAX_QUEUE) {
+         music_queue_entry_t *entry = &uq->queue[uq->queue_length];
          safe_strncpy(entry->path, track_info.path, sizeof(entry->path));
          safe_strncpy(entry->title, track_info.title, sizeof(entry->title));
          safe_strncpy(entry->artist, track_info.artist, sizeof(entry->artist));
          safe_strncpy(entry->album, track_info.album, sizeof(entry->album));
          entry->duration_sec = track_info.duration_sec;
-         state->queue_length++;
+         uq->queue_length++;
       }
+      uq->generation++;
+      music_queue_db_save(uq->user_id, uq);
+      pthread_mutex_unlock(&uq->queue_mutex);
       webui_music_send_state(conn, state);
-      pthread_mutex_unlock(&state->state_mutex);
+      webui_music_broadcast_queue_state(uq, conn);
 
    } else if (strcmp(action, "remove_from_queue") == 0) {
       /* Remove track from queue by index */
@@ -487,67 +563,88 @@ void handle_music_control(ws_connection_t *conn, struct json_object *payload) {
       }
       int remove_index = json_object_get_int(index_obj);
 
+      user_music_queue_t *uq = state->shared_queue;
+
+      /* Snapshot per-session state under state_mutex first (lock hierarchy) */
       pthread_mutex_lock(&state->state_mutex);
-      if (remove_index < 0 || remove_index >= state->queue_length) {
-         pthread_mutex_unlock(&state->state_mutex);
+      int my_index = state->queue_index;
+      bool was_playing = state->playing && !state->paused;
+      pthread_mutex_unlock(&state->state_mutex);
+
+      bool removing_current = (remove_index == my_index);
+
+      /* Stop streaming before modifying queue to prevent use-after-free */
+      if (removing_current) {
+         webui_music_stop_streaming(state);
+      }
+
+      pthread_mutex_lock(&uq->queue_mutex);
+      if (remove_index < 0 || remove_index >= uq->queue_length) {
+         pthread_mutex_unlock(&uq->queue_mutex);
          webui_music_send_error(conn, "INVALID_INDEX", "Index out of range");
          return;
       }
 
-      bool removing_current = (remove_index == state->queue_index);
-      bool was_playing = state->playing && !state->paused;
-
-      /* Stop streaming before closing decoder to prevent use-after-free */
-      if (removing_current) {
-         pthread_mutex_unlock(&state->state_mutex);
-         webui_music_stop_streaming(state);
-         pthread_mutex_lock(&state->state_mutex);
-      }
-
       /* Shift queue entries after the removed index */
-      if (remove_index < state->queue_length - 1) {
-         memmove(&state->queue[remove_index], &state->queue[remove_index + 1],
-                 (state->queue_length - remove_index - 1) * sizeof(music_queue_entry_t));
+      if (remove_index < uq->queue_length - 1) {
+         memmove(&uq->queue[remove_index], &uq->queue[remove_index + 1],
+                 (uq->queue_length - remove_index - 1) * sizeof(music_queue_entry_t));
       }
-      state->queue_length--;
+      uq->queue_length--;
+      uq->generation++;
 
-      /* Adjust current index if needed */
+      /* Adjust THIS session's index under state_mutex (hierarchy: queue → state) */
+      pthread_mutex_lock(&state->state_mutex);
       if (remove_index < state->queue_index) {
          state->queue_index--;
       } else if (removing_current) {
-         /* Removed current track - safe to close decoder (thread already stopped) */
          if (state->decoder) {
             audio_decoder_close(state->decoder);
             state->decoder = NULL;
          }
-
-         if (state->queue_length > 0) {
-            /* Adjust index if we were at end */
-            if (state->queue_index >= state->queue_length) {
-               state->queue_index = state->queue_length - 1;
-            }
-
-            if (was_playing) {
-               /* Start playing the next track */
-               const char *next_path = state->queue[state->queue_index].path;
-               pthread_mutex_unlock(&state->state_mutex);
-               webui_music_start_playback(state, next_path);
-               pthread_mutex_lock(&state->state_mutex);
+         if (uq->queue_length > 0) {
+            if (state->queue_index >= uq->queue_length) {
+               state->queue_index = uq->queue_length - 1;
             }
          } else {
-            /* Queue is now empty */
             state->playing = false;
             state->paused = false;
             state->queue_index = 0;
          }
       }
+      /* Re-read for auto-play path */
+      bool should_autoplay = removing_current && was_playing && uq->queue_length > 0;
+      char next_path[WEBUI_MUSIC_PATH_MAX] = { 0 };
+      if (should_autoplay && state->queue_index < uq->queue_length) {
+         snprintf(next_path, sizeof(next_path), "%s", uq->queue[state->queue_index].path);
+      }
+      pthread_mutex_unlock(&state->state_mutex);
+
+      music_queue_db_save(uq->user_id, uq);
+      pthread_mutex_unlock(&uq->queue_mutex);
+
+      /* Adjust sibling sessions' queue_index */
+      remove_adjust_ctx_t rctx = { .removed_index = remove_index, .exclude = conn };
+      webui_for_each_conn_by_user(uq->user_id, adjust_index_on_remove, &rctx);
+
+      /* Auto-play next track if we were playing the removed one */
+      if (should_autoplay && next_path[0]) {
+         webui_music_start_playback(state, next_path);
+      }
 
       webui_music_send_state(conn, state);
-      pthread_mutex_unlock(&state->state_mutex);
+      webui_music_broadcast_queue_state(uq, conn);
 
    } else if (strcmp(action, "clear_queue") == 0) {
       /* Clear entire queue and stop playback */
       webui_music_stop_streaming(state);
+
+      user_music_queue_t *uq = state->shared_queue;
+      pthread_mutex_lock(&uq->queue_mutex);
+      uq->queue_length = 0;
+      uq->generation++;
+      music_queue_db_save(uq->user_id, uq);
+      pthread_mutex_unlock(&uq->queue_mutex);
 
       pthread_mutex_lock(&state->state_mutex);
       if (state->decoder) {
@@ -556,11 +653,12 @@ void handle_music_control(ws_connection_t *conn, struct json_object *payload) {
       }
       state->playing = false;
       state->paused = false;
-      state->queue_length = 0;
       state->queue_index = 0;
       state->position_frames = 0;
-      webui_music_send_state(conn, state);
       pthread_mutex_unlock(&state->state_mutex);
+
+      webui_music_send_state(conn, state);
+      webui_music_broadcast_queue_state(uq, conn);
 
    } else if (strcmp(action, "add_artist") == 0) {
       /* Add all tracks by an artist to queue */
@@ -578,20 +676,25 @@ void handle_music_control(ws_connection_t *conn, struct json_object *payload) {
       }
       int count = music_db_get_by_artist(artist_name, tracks, 100);
 
-      pthread_mutex_lock(&state->state_mutex);
+      user_music_queue_t *uq = state->shared_queue;
+      pthread_mutex_lock(&uq->queue_mutex);
       int added = 0;
-      for (int i = 0; i < count && state->queue_length < WEBUI_MUSIC_MAX_QUEUE; i++) {
-         music_queue_entry_t *entry = &state->queue[state->queue_length];
+      for (int i = 0; i < count && uq->queue_length < WEBUI_MUSIC_MAX_QUEUE; i++) {
+         music_queue_entry_t *entry = &uq->queue[uq->queue_length];
          safe_strncpy(entry->path, tracks[i].path, sizeof(entry->path));
          safe_strncpy(entry->title, tracks[i].title, sizeof(entry->title));
          safe_strncpy(entry->artist, tracks[i].artist, sizeof(entry->artist));
          safe_strncpy(entry->album, tracks[i].album, sizeof(entry->album));
          entry->duration_sec = tracks[i].duration_sec;
-         state->queue_length++;
+         uq->queue_length++;
          added++;
       }
+      uq->generation++;
+      music_queue_db_save(uq->user_id, uq);
+      pthread_mutex_unlock(&uq->queue_mutex);
+
       webui_music_send_state(conn, state);
-      pthread_mutex_unlock(&state->state_mutex);
+      webui_music_broadcast_queue_state(uq, conn);
 
       free(tracks);
       LOG_INFO("WebUI music: Added %d tracks by '%s' to queue", added, artist_name);
@@ -612,20 +715,25 @@ void handle_music_control(ws_connection_t *conn, struct json_object *payload) {
       }
       int count = music_db_get_by_album(album_name, tracks, 50);
 
-      pthread_mutex_lock(&state->state_mutex);
+      user_music_queue_t *uq = state->shared_queue;
+      pthread_mutex_lock(&uq->queue_mutex);
       int added = 0;
-      for (int i = 0; i < count && state->queue_length < WEBUI_MUSIC_MAX_QUEUE; i++) {
-         music_queue_entry_t *entry = &state->queue[state->queue_length];
+      for (int i = 0; i < count && uq->queue_length < WEBUI_MUSIC_MAX_QUEUE; i++) {
+         music_queue_entry_t *entry = &uq->queue[uq->queue_length];
          safe_strncpy(entry->path, tracks[i].path, sizeof(entry->path));
          safe_strncpy(entry->title, tracks[i].title, sizeof(entry->title));
          safe_strncpy(entry->artist, tracks[i].artist, sizeof(entry->artist));
          safe_strncpy(entry->album, tracks[i].album, sizeof(entry->album));
          entry->duration_sec = tracks[i].duration_sec;
-         state->queue_length++;
+         uq->queue_length++;
          added++;
       }
+      uq->generation++;
+      music_queue_db_save(uq->user_id, uq);
+      pthread_mutex_unlock(&uq->queue_mutex);
+
       webui_music_send_state(conn, state);
-      pthread_mutex_unlock(&state->state_mutex);
+      webui_music_broadcast_queue_state(uq, conn);
 
       free(tracks);
       LOG_INFO("WebUI music: Added %d tracks from album '%s' to queue", added, album_name);
@@ -645,9 +753,7 @@ void handle_music_control(ws_connection_t *conn, struct json_object *payload) {
       conn->volume = (float)level;
 
       /* Send updated state so client confirms the value */
-      pthread_mutex_lock(&state->state_mutex);
       webui_music_send_state(conn, state);
-      pthread_mutex_unlock(&state->state_mutex);
       LOG_INFO("WebUI music: Volume set to %.0f%%", level * 100.0);
 
    } else {
@@ -964,12 +1070,13 @@ void handle_music_queue(ws_connection_t *conn, struct json_object *payload) {
       json_object_object_add(response, "type", json_object_new_string("music_queue_response"));
 
       struct json_object *resp_payload = json_object_new_object();
+      user_music_queue_t *uq = state->shared_queue;
 
-      pthread_mutex_lock(&state->state_mutex);
+      pthread_mutex_lock(&uq->queue_mutex);
 
       struct json_object *queue_arr = json_object_new_array();
-      for (int i = 0; i < state->queue_length; i++) {
-         music_queue_entry_t *entry = &state->queue[i];
+      for (int i = 0; i < uq->queue_length; i++) {
+         music_queue_entry_t *entry = &uq->queue[i];
          struct json_object *track = json_object_new_object();
          json_object_object_add(track, "path", json_object_new_string(entry->path));
          json_object_object_add(track, "title", json_object_new_string(entry->title));
@@ -982,20 +1089,25 @@ void handle_music_queue(ws_connection_t *conn, struct json_object *payload) {
       json_object_object_add(resp_payload, "queue", queue_arr);
       json_object_object_add(resp_payload, "current_index",
                              json_object_new_int(state->queue_index));
-      json_object_object_add(resp_payload, "length", json_object_new_int(state->queue_length));
+      json_object_object_add(resp_payload, "length", json_object_new_int(uq->queue_length));
 
-      pthread_mutex_unlock(&state->state_mutex);
+      pthread_mutex_unlock(&uq->queue_mutex);
 
       json_object_object_add(response, "payload", resp_payload);
       send_json_response(conn->wsi, response);
       json_object_put(response);
 
    } else if (strcmp(action, "clear") == 0) {
-      /* Stop streaming thread before closing decoder to prevent use-after-free */
       webui_music_stop_streaming(state);
 
+      user_music_queue_t *uq = state->shared_queue;
+      pthread_mutex_lock(&uq->queue_mutex);
+      uq->queue_length = 0;
+      uq->generation++;
+      music_queue_db_save(uq->user_id, uq);
+      pthread_mutex_unlock(&uq->queue_mutex);
+
       pthread_mutex_lock(&state->state_mutex);
-      state->queue_length = 0;
       state->queue_index = 0;
       state->playing = false;
       state->position_frames = 0;
@@ -1003,8 +1115,10 @@ void handle_music_queue(ws_connection_t *conn, struct json_object *payload) {
          audio_decoder_close(state->decoder);
          state->decoder = NULL;
       }
-      webui_music_send_state(conn, state);
       pthread_mutex_unlock(&state->state_mutex);
+
+      webui_music_send_state(conn, state);
+      webui_music_broadcast_queue_state(uq, conn);
 
    } else if (strcmp(action, "add") == 0) {
       struct json_object *path_obj;
@@ -1015,31 +1129,34 @@ void handle_music_queue(ws_connection_t *conn, struct json_object *payload) {
 
       const char *path = json_object_get_string(path_obj);
 
-      /* Security: validate path is within music library */
       if (!webui_music_is_path_valid(path)) {
          webui_music_send_error(conn, "INVALID_PATH", "Path not in music library");
          return;
       }
 
-      /* Get track metadata from unified DB */
       music_search_result_t result;
       if (music_db_get_by_path(path, &result) != 0) {
          webui_music_send_error(conn, "NOT_FOUND", "Track not found in database");
          return;
       }
 
-      pthread_mutex_lock(&state->state_mutex);
-      if (state->queue_length < WEBUI_MUSIC_MAX_QUEUE) {
-         music_queue_entry_t *entry = &state->queue[state->queue_length];
+      user_music_queue_t *uq = state->shared_queue;
+      pthread_mutex_lock(&uq->queue_mutex);
+      if (uq->queue_length < WEBUI_MUSIC_MAX_QUEUE) {
+         music_queue_entry_t *entry = &uq->queue[uq->queue_length];
          safe_strncpy(entry->path, result.path, sizeof(entry->path));
          safe_strncpy(entry->title, result.title, sizeof(entry->title));
          safe_strncpy(entry->artist, result.artist, sizeof(entry->artist));
          safe_strncpy(entry->album, result.album, sizeof(entry->album));
          entry->duration_sec = result.duration_sec;
-         state->queue_length++;
+         uq->queue_length++;
       }
+      uq->generation++;
+      music_queue_db_save(uq->user_id, uq);
+      pthread_mutex_unlock(&uq->queue_mutex);
+
       webui_music_send_state(conn, state);
-      pthread_mutex_unlock(&state->state_mutex);
+      webui_music_broadcast_queue_state(uq, conn);
 
    } else if (strcmp(action, "remove") == 0) {
       struct json_object *index_obj;
@@ -1049,24 +1166,36 @@ void handle_music_queue(ws_connection_t *conn, struct json_object *payload) {
       }
 
       int index = json_object_get_int(index_obj);
+      user_music_queue_t *uq = state->shared_queue;
 
-      pthread_mutex_lock(&state->state_mutex);
-      if (index >= 0 && index < state->queue_length) {
+      pthread_mutex_lock(&uq->queue_mutex);
+      if (index >= 0 && index < uq->queue_length) {
          /* Shift remaining entries */
-         for (int i = index; i < state->queue_length - 1; i++) {
-            state->queue[i] = state->queue[i + 1];
+         for (int i = index; i < uq->queue_length - 1; i++) {
+            uq->queue[i] = uq->queue[i + 1];
          }
-         state->queue_length--;
+         uq->queue_length--;
+         uq->generation++;
 
-         /* Adjust current index if needed */
+         /* Adjust current session index under state_mutex */
+         pthread_mutex_lock(&state->state_mutex);
          if (state->queue_index > index) {
             state->queue_index--;
-         } else if (state->queue_index >= state->queue_length) {
-            state->queue_index = state->queue_length > 0 ? state->queue_length - 1 : 0;
+         } else if (state->queue_index >= uq->queue_length) {
+            state->queue_index = uq->queue_length > 0 ? uq->queue_length - 1 : 0;
          }
+         pthread_mutex_unlock(&state->state_mutex);
+
+         music_queue_db_save(uq->user_id, uq);
       }
+      pthread_mutex_unlock(&uq->queue_mutex);
+
+      /* Adjust sibling sessions' queue_index */
+      remove_adjust_ctx_t rctx = { .removed_index = index, .exclude = conn };
+      webui_for_each_conn_by_user(uq->user_id, adjust_index_on_remove, &rctx);
+
       webui_music_send_state(conn, state);
-      pthread_mutex_unlock(&state->state_mutex);
+      webui_music_broadcast_queue_state(uq, conn);
 
    } else {
       webui_music_send_error(conn, "UNKNOWN_ACTION", "Unknown queue action");
@@ -1111,8 +1240,8 @@ int webui_music_execute_tool(ws_connection_t *conn,
          if (state->paused) {
             pthread_mutex_lock(&state->state_mutex);
             state->paused = false;
-            webui_music_send_state(conn, state);
             pthread_mutex_unlock(&state->state_mutex);
+            webui_music_send_state(conn, state);
             if (result_out) {
                *result_out = strdup("Resumed playback");
             }
@@ -1131,7 +1260,6 @@ int webui_music_execute_tool(ws_connection_t *conn,
          audio_decoder_close(state->decoder);
          state->decoder = NULL;
       }
-      state->queue_length = 0;
       state->queue_index = 0;
       pthread_mutex_unlock(&state->state_mutex);
 
@@ -1157,38 +1285,47 @@ int webui_music_execute_tool(ws_connection_t *conn,
          }
          return 1;
       }
-      pthread_mutex_lock(&state->state_mutex);
-      for (int i = 0; i < count && state->queue_length < WEBUI_MUSIC_MAX_QUEUE; i++) {
-         music_queue_entry_t *entry = &state->queue[state->queue_length];
+
+      user_music_queue_t *uq = state->shared_queue;
+      char first_title[WEBUI_MUSIC_STRING_MAX] = { 0 };
+      char first_path[WEBUI_MUSIC_PATH_MAX] = { 0 };
+      int total_queued = 0;
+
+      pthread_mutex_lock(&uq->queue_mutex);
+      uq->queue_length = 0;
+      for (int i = 0; i < count && uq->queue_length < WEBUI_MUSIC_MAX_QUEUE; i++) {
+         music_queue_entry_t *entry = &uq->queue[uq->queue_length];
          safe_strncpy(entry->path, results[i].path, sizeof(entry->path));
          safe_strncpy(entry->title, results[i].title, sizeof(entry->title));
          safe_strncpy(entry->artist, results[i].artist, sizeof(entry->artist));
          safe_strncpy(entry->album, results[i].album, sizeof(entry->album));
          entry->duration_sec = results[i].duration_sec;
-         state->queue_length++;
+         uq->queue_length++;
       }
-      pthread_mutex_unlock(&state->state_mutex);
+      uq->generation++;
+      music_queue_db_save(uq->user_id, uq);
+      total_queued = uq->queue_length;
+      snprintf(first_path, sizeof(first_path), "%s", uq->queue[0].path);
+      snprintf(first_title, sizeof(first_title), "%s", uq->queue[0].title);
+      pthread_mutex_unlock(&uq->queue_mutex);
       free(results);
 
       /* Start playback of first track */
-      if (webui_music_start_playback(state, state->queue[0].path) != 0) {
+      if (webui_music_start_playback(state, first_path) != 0) {
          if (result_out) {
             *result_out = strdup("Failed to start playback");
          }
          return 1;
       }
 
-      /* Send state update to client */
-      pthread_mutex_lock(&state->state_mutex);
       webui_music_send_state(conn, state);
-      pthread_mutex_unlock(&state->state_mutex);
+      webui_music_broadcast_queue_state(uq, conn);
 
       if (result_out) {
          char buf[512];
          snprintf(buf, sizeof(buf),
                   "Now playing: %s (track 1 of %d matching '%s') - streaming to WebUI",
-                  state->queue[0].title[0] ? state->queue[0].title : "Unknown", state->queue_length,
-                  query);
+                  first_title[0] ? first_title : "Unknown", total_queued, query);
          *result_out = strdup(buf);
       }
       return 0;
@@ -1203,8 +1340,8 @@ int webui_music_execute_tool(ws_connection_t *conn,
          state->decoder = NULL;
       }
       state->position_frames = 0;
-      webui_music_send_state(conn, state);
       pthread_mutex_unlock(&state->state_mutex);
+      webui_music_send_state(conn, state);
 
       if (result_out) {
          *result_out = strdup("Music playback stopped");
@@ -1214,8 +1351,8 @@ int webui_music_execute_tool(ws_connection_t *conn,
    } else if (strcmp(action, "pause") == 0) {
       pthread_mutex_lock(&state->state_mutex);
       state->paused = true;
-      webui_music_send_state(conn, state);
       pthread_mutex_unlock(&state->state_mutex);
+      webui_music_send_state(conn, state);
 
       if (result_out) {
          *result_out = strdup("Music paused");
@@ -1225,8 +1362,8 @@ int webui_music_execute_tool(ws_connection_t *conn,
    } else if (strcmp(action, "resume") == 0) {
       pthread_mutex_lock(&state->state_mutex);
       state->paused = false;
-      webui_music_send_state(conn, state);
       pthread_mutex_unlock(&state->state_mutex);
+      webui_music_send_state(conn, state);
 
       if (result_out) {
          *result_out = strdup("Music resumed");
@@ -1234,31 +1371,41 @@ int webui_music_execute_tool(ws_connection_t *conn,
       return 0;
 
    } else if (strcmp(action, "next") == 0) {
-      pthread_mutex_lock(&state->state_mutex);
+      user_music_queue_t *uq = state->shared_queue;
       bool can_advance = false;
-      const char *next_title = NULL;
-      if (state->queue_length > 0) {
-         if (state->shuffle && state->queue_length > 1) {
-            state->queue_index = webui_music_pick_random_index(state);
+      char next_path[WEBUI_MUSIC_PATH_MAX] = { 0 };
+      char next_title[WEBUI_MUSIC_STRING_MAX] = { 0 };
+
+      /* Hold queue_mutex across the full computation (hierarchy: queue → state) */
+      pthread_mutex_lock(&uq->queue_mutex);
+      int q_len = uq->queue_length;
+      bool q_shuffle = uq->shuffle;
+      music_repeat_mode_t q_repeat = uq->repeat_mode;
+
+      pthread_mutex_lock(&state->state_mutex);
+      if (q_len > 0) {
+         if (q_shuffle && q_len > 1) {
+            state->queue_index = webui_music_pick_random_index(state->queue_index, q_len,
+                                                               &state->shuffle_seed);
             can_advance = true;
-         } else if (state->queue_index < state->queue_length - 1) {
+         } else if (state->queue_index < q_len - 1) {
             state->queue_index++;
             can_advance = true;
-         } else if (state->repeat_mode == MUSIC_REPEAT_ALL) {
+         } else if (q_repeat == MUSIC_REPEAT_ALL) {
             state->queue_index = 0;
             can_advance = true;
          }
       }
-      if (can_advance) {
-         const char *next_path = state->queue[state->queue_index].path;
-         next_title = state->queue[state->queue_index].title;
-         pthread_mutex_unlock(&state->state_mutex);
+      if (can_advance && state->queue_index < q_len) {
+         snprintf(next_path, sizeof(next_path), "%s", uq->queue[state->queue_index].path);
+         snprintf(next_title, sizeof(next_title), "%s", uq->queue[state->queue_index].title);
+      }
+      pthread_mutex_unlock(&state->state_mutex);
+      pthread_mutex_unlock(&uq->queue_mutex);
 
+      if (can_advance && next_path[0]) {
          webui_music_start_playback(state, next_path);
-
-         pthread_mutex_lock(&state->state_mutex);
          webui_music_send_state(conn, state);
-         pthread_mutex_unlock(&state->state_mutex);
 
          if (result_out) {
             char buf[256];
@@ -1266,7 +1413,6 @@ int webui_music_execute_tool(ws_connection_t *conn,
             *result_out = strdup(buf);
          }
       } else {
-         pthread_mutex_unlock(&state->state_mutex);
          if (result_out) {
             *result_out = strdup("Already at end of queue");
          }
@@ -1274,31 +1420,41 @@ int webui_music_execute_tool(ws_connection_t *conn,
       return 0;
 
    } else if (strcmp(action, "previous") == 0) {
-      pthread_mutex_lock(&state->state_mutex);
+      user_music_queue_t *uq = state->shared_queue;
       bool can_go_back = false;
-      const char *prev_title = NULL;
-      if (state->queue_length > 0) {
-         if (state->shuffle && state->queue_length > 1) {
-            state->queue_index = webui_music_pick_random_index(state);
+      char prev_path[WEBUI_MUSIC_PATH_MAX] = { 0 };
+      char prev_title[WEBUI_MUSIC_STRING_MAX] = { 0 };
+
+      /* Hold queue_mutex across the full computation (hierarchy: queue → state) */
+      pthread_mutex_lock(&uq->queue_mutex);
+      int q_len = uq->queue_length;
+      bool q_shuffle = uq->shuffle;
+      music_repeat_mode_t q_repeat = uq->repeat_mode;
+
+      pthread_mutex_lock(&state->state_mutex);
+      if (q_len > 0) {
+         if (q_shuffle && q_len > 1) {
+            state->queue_index = webui_music_pick_random_index(state->queue_index, q_len,
+                                                               &state->shuffle_seed);
             can_go_back = true;
          } else if (state->queue_index > 0) {
             state->queue_index--;
             can_go_back = true;
-         } else if (state->repeat_mode == MUSIC_REPEAT_ALL) {
-            state->queue_index = state->queue_length - 1;
+         } else if (q_repeat == MUSIC_REPEAT_ALL) {
+            state->queue_index = q_len - 1;
             can_go_back = true;
          }
       }
-      if (can_go_back) {
-         const char *prev_path = state->queue[state->queue_index].path;
-         prev_title = state->queue[state->queue_index].title;
-         pthread_mutex_unlock(&state->state_mutex);
+      if (can_go_back && state->queue_index < q_len) {
+         snprintf(prev_path, sizeof(prev_path), "%s", uq->queue[state->queue_index].path);
+         snprintf(prev_title, sizeof(prev_title), "%s", uq->queue[state->queue_index].title);
+      }
+      pthread_mutex_unlock(&state->state_mutex);
+      pthread_mutex_unlock(&uq->queue_mutex);
 
+      if (can_go_back && prev_path[0]) {
          webui_music_start_playback(state, prev_path);
-
-         pthread_mutex_lock(&state->state_mutex);
          webui_music_send_state(conn, state);
-         pthread_mutex_unlock(&state->state_mutex);
 
          if (result_out) {
             char buf[256];
@@ -1307,7 +1463,6 @@ int webui_music_execute_tool(ws_connection_t *conn,
             *result_out = strdup(buf);
          }
       } else {
-         pthread_mutex_unlock(&state->state_mutex);
          if (result_out) {
             *result_out = strdup("Already at start of queue");
          }
@@ -1315,11 +1470,16 @@ int webui_music_execute_tool(ws_connection_t *conn,
       return 0;
 
    } else if (strcmp(action, "shuffle") == 0) {
-      pthread_mutex_lock(&state->state_mutex);
-      state->shuffle = !state->shuffle;
-      bool shuffle_on = state->shuffle;
+      user_music_queue_t *uq = state->shared_queue;
+      pthread_mutex_lock(&uq->queue_mutex);
+      uq->shuffle = !uq->shuffle;
+      bool shuffle_on = uq->shuffle;
+      uq->generation++;
+      music_queue_db_save_state(uq->user_id, uq);
+      pthread_mutex_unlock(&uq->queue_mutex);
+
       webui_music_send_state(conn, state);
-      pthread_mutex_unlock(&state->state_mutex);
+      webui_music_broadcast_queue_state(uq, conn);
 
       if (result_out) {
          *result_out = strdup(shuffle_on ? "Shuffle enabled" : "Shuffle disabled");
@@ -1327,12 +1487,17 @@ int webui_music_execute_tool(ws_connection_t *conn,
       return 0;
 
    } else if (strcmp(action, "repeat") == 0) {
-      pthread_mutex_lock(&state->state_mutex);
-      state->repeat_mode = (music_repeat_mode_t)((state->repeat_mode + 1) % 3);
+      user_music_queue_t *uq = state->shared_queue;
+      pthread_mutex_lock(&uq->queue_mutex);
+      uq->repeat_mode = (music_repeat_mode_t)((uq->repeat_mode + 1) % 3);
       const char *modes[] = { "Repeat off", "Repeat all", "Repeat one" };
-      const char *mode_str = modes[state->repeat_mode];
+      const char *mode_str = modes[uq->repeat_mode];
+      uq->generation++;
+      music_queue_db_save_state(uq->user_id, uq);
+      pthread_mutex_unlock(&uq->queue_mutex);
+
       webui_music_send_state(conn, state);
-      pthread_mutex_unlock(&state->state_mutex);
+      webui_music_broadcast_queue_state(uq, conn);
 
       if (result_out) {
          *result_out = strdup(mode_str);
@@ -1340,9 +1505,10 @@ int webui_music_execute_tool(ws_connection_t *conn,
       return 0;
 
    } else if (strcmp(action, "list") == 0) {
-      pthread_mutex_lock(&state->state_mutex);
-      if (state->queue_length == 0) {
-         pthread_mutex_unlock(&state->state_mutex);
+      user_music_queue_t *uq = state->shared_queue;
+      pthread_mutex_lock(&uq->queue_mutex);
+      if (uq->queue_length == 0) {
+         pthread_mutex_unlock(&uq->queue_mutex);
          if (result_out) {
             *result_out = strdup("No music in queue");
          }
@@ -1350,16 +1516,16 @@ int webui_music_execute_tool(ws_connection_t *conn,
       }
 
       /* Build queue list */
-      size_t buf_size = 1024 + (state->queue_length * 128);
+      size_t buf_size = 1024 + (uq->queue_length * 128);
       char *buf = malloc(buf_size);
       if (buf) {
          int offset = snprintf(buf, buf_size, "Queue (%d tracks, currently #%d):\n",
-                               state->queue_length, state->queue_index + 1);
-         for (int i = 0; i < state->queue_length && offset < (int)buf_size - 128; i++) {
+                               uq->queue_length, state->queue_index + 1);
+         for (int i = 0; i < uq->queue_length && offset < (int)buf_size - 128; i++) {
             const char *marker = (i == state->queue_index) ? "▶ " : "  ";
             offset += snprintf(buf + offset, buf_size - offset, "%s%d. %s - %s\n", marker, i + 1,
-                               state->queue[i].artist[0] ? state->queue[i].artist : "Unknown",
-                               state->queue[i].title[0] ? state->queue[i].title : "Unknown");
+                               uq->queue[i].artist[0] ? uq->queue[i].artist : "Unknown",
+                               uq->queue[i].title[0] ? uq->queue[i].title : "Unknown");
          }
          if (result_out) {
             *result_out = buf;
@@ -1367,7 +1533,7 @@ int webui_music_execute_tool(ws_connection_t *conn,
             free(buf);
          }
       }
-      pthread_mutex_unlock(&state->state_mutex);
+      pthread_mutex_unlock(&uq->queue_mutex);
       return 0;
 
    } else if (strcmp(action, "search") == 0 || strcmp(action, "library") == 0) {
@@ -1423,9 +1589,7 @@ char *webui_volume_execute_tool(ws_connection_t *conn,
    /* Send state update to client so slider syncs */
    session_music_state_t *state = (session_music_state_t *)conn->music_state;
    if (state) {
-      pthread_mutex_lock(&state->state_mutex);
       webui_music_send_state(conn, state);
-      pthread_mutex_unlock(&state->state_mutex);
    }
 
    char *result = malloc(64);

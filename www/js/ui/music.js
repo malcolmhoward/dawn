@@ -109,36 +109,6 @@
    }
 
    /**
-    * Restore saved queue from localStorage
-    * Called after subscription is established
-    */
-   function restoreSavedQueue() {
-      const savedQueue = localStorage.getItem('dawn_music_queue');
-      if (!savedQueue) return;
-
-      try {
-         const queueData = JSON.parse(savedQueue);
-         if (!queueData.tracks || queueData.tracks.length === 0) return;
-
-         console.log('Music UI: Restoring saved queue with', queueData.tracks.length, 'tracks');
-
-         // Add each track to the queue, including saved metadata
-         queueData.tracks.forEach((track) => {
-            DawnMusicPlayback.queue('add', {
-               path: track.path,
-               title: track.title,
-               artist: track.artist,
-               album: track.album,
-               duration_sec: track.duration_sec,
-            });
-         });
-      } catch (e) {
-         console.error('Music UI: Failed to restore queue:', e);
-         localStorage.removeItem('dawn_music_queue');
-      }
-   }
-
-   /**
     * Cache DOM elements
     */
    function cacheElements() {
@@ -660,17 +630,12 @@
       localState.lastQueueLength = state.queueLength;
       localState.lastQueueIndex = state.queueIndex;
 
-      if (queueChanged && activeTab === 'queue') {
+      if (queueChanged) {
          DawnMusicPlayback.queue('list');
       }
 
-      // Restore saved queue on first state update if queue is empty
-      if (!localState.queueRestored && state.queueLength === 0) {
-         localState.queueRestored = true;
-         restoreSavedQueue();
-      } else if (state.queueLength > 0) {
-         localState.queueRestored = true; // Mark as restored if server already has queue
-      }
+      // Queue is now persisted server-side in SQLite — no localStorage restore needed
+      localState.queueRestored = true;
 
       // Sync shuffle/repeat from server state (persist as display hint for next page load)
       localState.shuffle = state.shuffle || false;

@@ -79,10 +79,32 @@ typedef struct {
 } music_queue_entry_t;
 
 /**
+ * @brief Shared per-user music queue
+ *
+ * Contains the queue entries and playback modes (shuffle/repeat) that
+ * are shared across all browser tabs for the same authenticated user.
+ * Protected by queue_mutex. For unauthenticated/satellite sessions,
+ * each connection gets its own instance (not shared).
+ */
+typedef struct user_music_queue user_music_queue_t;
+struct user_music_queue {
+   int user_id;
+   pthread_mutex_t queue_mutex;
+   int ref_count;
+   uint32_t generation; /**< Monotonic counter, incremented on every queue mutation */
+   music_queue_entry_t queue[WEBUI_MUSIC_MAX_QUEUE];
+   int queue_length;
+   bool shuffle;
+   music_repeat_mode_t repeat_mode;
+};
+
+/**
  * @brief Per-connection music streaming state
  *
- * Each WebSocket connection has its own music state, allowing
- * independent playback for each browser tab.
+ * Each WebSocket connection has its own playback state (position, decoder,
+ * encoder, streaming thread). The queue itself is shared per-user via
+ * shared_queue, allowing multiple tabs to see the same queue while
+ * playing independently.
  */
 typedef struct {
    /* Streaming state */
@@ -115,16 +137,12 @@ typedef struct {
    uint32_t source_rate;              /**< Source file sample rate */
    uint8_t source_channels;           /**< Source file channels */
    audio_format_type_t source_format; /**< Source file format (FLAC, MP3, etc.) */
+   uint32_t cached_duration_sec;      /**< Cached duration of current track (avoids queue_mutex) */
 
-   /* Queue */
-   music_queue_entry_t queue[WEBUI_MUSIC_MAX_QUEUE];
-   int queue_length;
-   int queue_index; /**< Current track in queue */
-
-   /* Playback modes */
-   bool shuffle;
-   music_repeat_mode_t repeat_mode;
-   unsigned int shuffle_seed; /**< Per-session PRNG seed for rand_r() */
+   /* Shared queue (per-user, or per-connection for unauthenticated) */
+   user_music_queue_t *shared_queue; /**< Shared queue reference */
+   int queue_index;                  /**< Current track in queue (per-session) */
+   unsigned int shuffle_seed;        /**< Per-session PRNG seed for rand_r() */
 
    /* Settings */
    music_quality_t quality;
@@ -207,10 +225,20 @@ bool wait_decoder_idle(session_music_state_t *state, int timeout_ms);
 /**
  * @brief Pick a random queue index different from the current one.
  *
- * Returns current index if queue_length <= 1. Must be called with
- * state->state_mutex held.
+ * Returns current_index if queue_length <= 1.
  */
-int webui_music_pick_random_index(session_music_state_t *state);
+int webui_music_pick_random_index(int current_index, int queue_length, unsigned int *shuffle_seed);
+
+/**
+ * @brief Broadcast queue state to all tabs for the same user
+ *
+ * Sends music_state update to all connections belonging to the same user,
+ * except the excluded connection (which already got its update directly).
+ *
+ * @param uq Shared user queue (must NOT hold queue_mutex when calling)
+ * @param exclude Connection to exclude from broadcast (may be NULL)
+ */
+void webui_music_broadcast_queue_state(user_music_queue_t *uq, ws_connection_t *exclude);
 
 /**
  * @brief Execute volume tool for a WebUI session
