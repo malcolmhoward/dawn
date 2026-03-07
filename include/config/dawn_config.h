@@ -311,6 +311,10 @@ typedef struct {
    bool enabled;
    char broker[CONFIG_PATH_MAX];
    int port;
+   bool tls;
+   char tls_ca_cert[CONFIG_PATH_MAX];
+   char tls_cert_path[CONFIG_PATH_MAX];
+   char tls_key_path[CONFIG_PATH_MAX];
 } mqtt_config_t;
 
 /* =============================================================================

@@ -216,6 +216,10 @@ void config_apply_env(dawn_config_t *config, secrets_config_t *secrets) {
    ENV_BOOL("DAWN_MQTT_ENABLED", config->mqtt.enabled);
    ENV_STRING("DAWN_MQTT_BROKER", config->mqtt.broker);
    ENV_INT("DAWN_MQTT_PORT", config->mqtt.port);
+   ENV_BOOL("DAWN_MQTT_TLS", config->mqtt.tls);
+   ENV_STRING("DAWN_MQTT_TLS_CA_CERT", config->mqtt.tls_ca_cert);
+   ENV_STRING("DAWN_MQTT_TLS_CERT_PATH", config->mqtt.tls_cert_path);
+   ENV_STRING("DAWN_MQTT_TLS_KEY_PATH", config->mqtt.tls_key_path);
    ENV_STRING("MQTT_USERNAME", secrets->mqtt_username);
    ENV_STRING("MQTT_PASSWORD", secrets->mqtt_password);
 
@@ -349,6 +353,13 @@ void config_dump(const dawn_config_t *config) {
    printf("  enabled = %s\n", config->mqtt.enabled ? "true" : "false");
    printf("  broker = \"%s\"\n", config->mqtt.broker);
    printf("  port = %d\n", config->mqtt.port);
+   printf("  tls = %s\n", config->mqtt.tls ? "true" : "false");
+   if (config->mqtt.tls_ca_cert[0])
+      printf("  tls_ca_cert = \"%s\"\n", config->mqtt.tls_ca_cert);
+   if (config->mqtt.tls_cert_path[0])
+      printf("  tls_cert_path = \"%s\"\n", config->mqtt.tls_cert_path);
+   if (config->mqtt.tls_key_path[0])
+      printf("  tls_key_path = \"%s\"\n", config->mqtt.tls_key_path);
 
    printf("\n[network]\n");
    printf("  workers = %d\n", config->network.workers);
@@ -755,6 +766,17 @@ void config_dump_settings(const dawn_config_t *config,
                                        "DAWN_MQTT_BROKER"));
    PRINT_SETTING_INT("port", config->mqtt.port, "DAWN_MQTT_PORT",
                      detect_source_int(config->mqtt.port, defaults.mqtt.port, "DAWN_MQTT_PORT"));
+   PRINT_SETTING_BOOL("tls", config->mqtt.tls, "DAWN_MQTT_TLS",
+                      detect_source_bool(config->mqtt.tls, defaults.mqtt.tls, "DAWN_MQTT_TLS"));
+   PRINT_SETTING_STR("tls_ca_cert", config->mqtt.tls_ca_cert, "DAWN_MQTT_TLS_CA_CERT",
+                     detect_source_str(config->mqtt.tls_ca_cert, defaults.mqtt.tls_ca_cert,
+                                       "DAWN_MQTT_TLS_CA_CERT"));
+   PRINT_SETTING_STR("tls_cert_path", config->mqtt.tls_cert_path, "DAWN_MQTT_TLS_CERT_PATH",
+                     detect_source_str(config->mqtt.tls_cert_path, defaults.mqtt.tls_cert_path,
+                                       "DAWN_MQTT_TLS_CERT_PATH"));
+   PRINT_SETTING_STR("tls_key_path", config->mqtt.tls_key_path, "DAWN_MQTT_TLS_KEY_PATH",
+                     detect_source_str(config->mqtt.tls_key_path, defaults.mqtt.tls_key_path,
+                                       "DAWN_MQTT_TLS_KEY_PATH"));
 
    /* [network] */
    printf("[network]\n");
@@ -916,6 +938,13 @@ void config_dump_toml(const dawn_config_t *config) {
    printf("enabled = %s\n", config->mqtt.enabled ? "true" : "false");
    printf("broker = \"%s\"\n", config->mqtt.broker);
    printf("port = %d\n", config->mqtt.port);
+   printf("tls = %s\n", config->mqtt.tls ? "true" : "false");
+   if (config->mqtt.tls_ca_cert[0])
+      printf("tls_ca_cert = \"%s\"\n", config->mqtt.tls_ca_cert);
+   if (config->mqtt.tls_cert_path[0])
+      printf("tls_cert_path = \"%s\"\n", config->mqtt.tls_cert_path);
+   if (config->mqtt.tls_key_path[0])
+      printf("tls_key_path = \"%s\"\n", config->mqtt.tls_key_path);
 
    printf("\n[network]\n");
    printf("workers = %d\n", config->network.workers);
@@ -1171,6 +1200,11 @@ json_object *config_to_json(const dawn_config_t *config) {
    json_object_object_add(mqtt, "enabled", json_object_new_boolean(config->mqtt.enabled));
    json_object_object_add(mqtt, "broker", json_object_new_string(config->mqtt.broker));
    json_object_object_add(mqtt, "port", json_object_new_int(config->mqtt.port));
+   json_object_object_add(mqtt, "tls", json_object_new_boolean(config->mqtt.tls));
+   json_object_object_add(mqtt, "tls_ca_cert", json_object_new_string(config->mqtt.tls_ca_cert));
+   json_object_object_add(mqtt, "tls_cert_path",
+                          json_object_new_string(config->mqtt.tls_cert_path));
+   json_object_object_add(mqtt, "tls_key_path", json_object_new_string(config->mqtt.tls_key_path));
    json_object_object_add(root, "mqtt", mqtt);
 
    /* [network] */
@@ -1699,6 +1733,13 @@ int config_write_toml(const dawn_config_t *config, const char *path) {
    fprintf(fp, "enabled = %s\n", config->mqtt.enabled ? "true" : "false");
    fprintf(fp, "broker = \"%s\"\n", config->mqtt.broker);
    fprintf(fp, "port = %d\n", config->mqtt.port);
+   fprintf(fp, "tls = %s\n", config->mqtt.tls ? "true" : "false");
+   if (config->mqtt.tls_ca_cert[0])
+      fprintf(fp, "tls_ca_cert = \"%s\"\n", config->mqtt.tls_ca_cert);
+   if (config->mqtt.tls_cert_path[0])
+      fprintf(fp, "tls_cert_path = \"%s\"\n", config->mqtt.tls_cert_path);
+   if (config->mqtt.tls_key_path[0])
+      fprintf(fp, "tls_key_path = \"%s\"\n", config->mqtt.tls_key_path);
 
    fprintf(fp, "\n[network]\n");
    fprintf(fp, "workers = %d\n", config->network.workers);

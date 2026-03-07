@@ -25,6 +25,7 @@
 
 #include <json-c/json.h>
 #include <pthread.h>
+#include <sodium.h>
 #include <stdatomic.h>
 #include <string.h>
 #include <time.h>
@@ -440,7 +441,9 @@ void handle_satellite_register(ws_connection_t *conn, struct json_object *payloa
             return;
          }
 
-         if (strcmp(provided_key, secrets->satellite_registration_key) != 0) {
+         size_t key_len = strlen(secrets->satellite_registration_key);
+         if (strlen(provided_key) != key_len ||
+             sodium_memcmp(provided_key, secrets->satellite_registration_key, key_len) != 0) {
             LOG_WARNING("Satellite: Registration rejected — invalid key (uuid=%s)", uuid);
             send_error_impl(conn->wsi, "invalid_registration_key",
                             "Registration key does not match. "

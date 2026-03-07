@@ -257,8 +257,16 @@
                                   # Env: DAWN_MQTT_ENABLED
 # broker = "127.0.0.1"            # MQTT broker hostname/IP
                                   # Env: DAWN_MQTT_BROKER
-# port = 1883                     # MQTT broker port
+# port = 1883                     # MQTT broker port (8883 for TLS)
                                   # Env: DAWN_MQTT_PORT
+# tls = false                     # Enable TLS encryption
+                                  # Env: DAWN_MQTT_TLS
+# tls_ca_cert = ""                # CA certificate path (empty = system default)
+                                  # Env: DAWN_MQTT_TLS_CA_CERT
+# tls_cert_path = ""              # Client certificate for mutual TLS (optional)
+                                  # Env: DAWN_MQTT_TLS_CERT_PATH
+# tls_key_path = ""               # Client private key for mutual TLS (optional)
+                                  # Env: DAWN_MQTT_TLS_KEY_PATH
 # Note: Credentials go in secrets.toml under [mqtt]
 #       or use env vars: MQTT_USERNAME, MQTT_PASSWORD
 

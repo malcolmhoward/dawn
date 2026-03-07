@@ -834,7 +834,36 @@
                label: 'Port',
                min: 1,
                max: 65535,
-               hint: 'MQTT broker port (default: 1883)',
+               hint: 'MQTT broker port (default: 1883, TLS: 8883)',
+            },
+         },
+         groups: {
+            tls: {
+               label: 'TLS Encryption',
+               collapsed: true,
+               fields: {
+                  tls: {
+                     type: 'checkbox',
+                     label: 'Enable TLS',
+                     restart: true,
+                     hint: 'Encrypt MQTT connection with TLS/SSL',
+                  },
+                  tls_ca_cert: {
+                     type: 'text',
+                     label: 'CA Certificate Path',
+                     hint: 'Path to CA certificate file (leave empty for system default)',
+                  },
+                  tls_cert_path: {
+                     type: 'text',
+                     label: 'Client Certificate Path',
+                     hint: 'Path to client certificate for mutual TLS (optional)',
+                  },
+                  tls_key_path: {
+                     type: 'text',
+                     label: 'Client Key Path',
+                     hint: 'Path to client private key for mutual TLS (optional)',
+                  },
+               },
             },
          },
       },

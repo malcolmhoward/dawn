@@ -566,8 +566,7 @@ static void executeJsonCommand(struct json_object *parsedJson, struct mosquitto 
          size_t src_len = strlen(callback_result);
 
          // Resize memory to fit both strings plus space and null terminator
-         char *temp = pending_command_result = realloc(pending_command_result,
-                                                       dest_len + src_len + 2);
+         char *temp = realloc(pending_command_result, dest_len + src_len + 2);
          if (temp == NULL) {
             free(pending_command_result);
             pending_command_result = NULL;

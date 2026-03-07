@@ -87,6 +87,9 @@ static const char *s_restart_required_fields[] = {
 };
 
 void handle_get_config(ws_connection_t *conn) {
+   if (!conn_require_auth(conn))
+      return;
+
    /* Build response with config, secrets status, and metadata */
    json_object *response = json_object_new_object();
    json_object_object_add(response, "type", json_object_new_string("get_config_response"));
@@ -115,6 +118,21 @@ void handle_get_config(ws_connection_t *conn) {
    /* Add full config as JSON */
    json_object *config_json = config_to_json(config_get());
    if (config_json) {
+      /* Redact sensitive filesystem paths for non-admin users */
+      if (!is_admin) {
+         struct json_object *mqtt_obj;
+         if (json_object_object_get_ex(config_json, "mqtt", &mqtt_obj)) {
+            json_object_object_del(mqtt_obj, "tls_key_path");
+            json_object_object_add(mqtt_obj, "tls_key_path",
+                                   json_object_new_string("(configured)"));
+         }
+         struct json_object *webui_obj;
+         if (json_object_object_get_ex(config_json, "webui", &webui_obj)) {
+            json_object_object_del(webui_obj, "ssl_key_path");
+            json_object_object_add(webui_obj, "ssl_key_path",
+                                   json_object_new_string("(configured)"));
+         }
+      }
       json_object_object_add(payload, "config", config_json);
    }
 
@@ -533,6 +551,10 @@ static void apply_config_from_json(dawn_config_t *config, struct json_object *pa
       JSON_TO_CONFIG_BOOL(section, "enabled", config->mqtt.enabled);
       JSON_TO_CONFIG_STR(section, "broker", config->mqtt.broker);
       JSON_TO_CONFIG_INT(section, "port", config->mqtt.port);
+      JSON_TO_CONFIG_BOOL(section, "tls", config->mqtt.tls);
+      JSON_TO_CONFIG_STR(section, "tls_ca_cert", config->mqtt.tls_ca_cert);
+      JSON_TO_CONFIG_STR(section, "tls_cert_path", config->mqtt.tls_cert_path);
+      JSON_TO_CONFIG_STR(section, "tls_key_path", config->mqtt.tls_key_path);
    }
 
    /* [network] */
@@ -1250,6 +1272,9 @@ static struct {
    char pulse_playback[AUDIO_DEVICE_BUFFER_SIZE];
 } s_device_cache = { 0 };
 void handle_get_audio_devices(ws_connection_t *conn, struct json_object *payload) {
+   if (!conn_require_auth(conn))
+      return;
+
    json_object *response = json_object_new_object();
    json_object_object_add(response, "type", json_object_new_string("get_audio_devices_response"));
    json_object *resp_payload = json_object_new_object();
@@ -1504,6 +1529,9 @@ static json_object *scan_models_directory(void) {
  * Results are cached for MODEL_CACHE_TTL seconds to avoid repeated filesystem scans.
  */
 void handle_list_models(ws_connection_t *conn) {
+   if (!conn_require_auth(conn))
+      return;
+
    time_t now = time(NULL);
 
    pthread_mutex_lock(&s_discovery_cache.cache_mutex);
@@ -1617,6 +1645,9 @@ static json_object *scan_network_interfaces(void) {
  * Results are cached for MODEL_CACHE_TTL seconds to avoid repeated system calls.
  */
 void handle_list_interfaces(ws_connection_t *conn) {
+   if (!conn_require_auth(conn))
+      return;
+
    time_t now = time(NULL);
 
    pthread_mutex_lock(&s_discovery_cache.cache_mutex);

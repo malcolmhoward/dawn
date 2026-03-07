@@ -2045,6 +2045,40 @@ int main(int argc, char *argv[]) {
          LOG_WARNING("========================================");
       }
 
+      /* Configure MQTT TLS if enabled */
+      if (g_config.mqtt.tls) {
+         const char *ca = g_config.mqtt.tls_ca_cert[0] ? g_config.mqtt.tls_ca_cert : NULL;
+         const char *cert = g_config.mqtt.tls_cert_path[0] ? g_config.mqtt.tls_cert_path : NULL;
+         const char *key = g_config.mqtt.tls_key_path[0] ? g_config.mqtt.tls_key_path : NULL;
+
+         /* Validate cert files are readable before passing to mosquitto */
+         const char *paths[] = { ca, cert, key };
+         const char *labels[] = { "CA cert", "client cert", "client key" };
+         bool tls_ok = true;
+         for (int i = 0; i < 3; i++) {
+            if (paths[i] && access(paths[i], R_OK) != 0) {
+               LOG_ERROR("MQTT TLS %s not readable: %s (%s)", labels[i], paths[i], strerror(errno));
+               tls_ok = false;
+            }
+         }
+
+         if (!tls_ok) {
+            LOG_ERROR("MQTT disabled — TLS certificate files not accessible");
+            mosquitto_destroy(mosq);
+            mosq = NULL;
+            goto mqtt_disabled;
+         }
+
+         rc = mosquitto_tls_set(mosq, ca, NULL, cert, key, NULL);
+         if (rc != MOSQ_ERR_SUCCESS) {
+            LOG_ERROR("MQTT disabled — TLS setup failed: %s", mosquitto_strerror(rc));
+            mosquitto_destroy(mosq);
+            mosq = NULL;
+            goto mqtt_disabled;
+         }
+         LOG_INFO("MQTT TLS enabled (CA: %s)", ca ? ca : "system default");
+      }
+
       /* Set Last Will and Testament for immediate disconnect detection */
       if (component_status_set_lwt(mosq) != 0) {
          LOG_WARNING("Failed to set LWT - status notifications may be delayed");
@@ -2068,6 +2102,7 @@ int main(int argc, char *argv[]) {
    } else {
       LOG_INFO("MQTT disabled by config");
    }
+mqtt_disabled:
 
    LOG_INFO("Init text to speech.");
    /* Initialize text to speech processing. */

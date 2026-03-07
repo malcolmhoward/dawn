@@ -769,12 +769,17 @@ static void parse_mqtt(toml_table_t *table, mqtt_config_t *config) {
    if (!table)
       return;
 
-   static const char *const known_keys[] = { "enabled", "broker", "port", NULL };
+   static const char *const known_keys[] = { "enabled",     "broker",        "port",         "tls",
+                                             "tls_ca_cert", "tls_cert_path", "tls_key_path", NULL };
    warn_unknown_keys(table, "mqtt", known_keys);
 
    PARSE_BOOL(table, "enabled", config->enabled);
    PARSE_STRING(table, "broker", config->broker);
    PARSE_INT(table, "port", config->port);
+   PARSE_BOOL(table, "tls", config->tls);
+   PARSE_STRING(table, "tls_ca_cert", config->tls_ca_cert);
+   PARSE_STRING(table, "tls_cert_path", config->tls_cert_path);
+   PARSE_STRING(table, "tls_key_path", config->tls_key_path);
 }
 
 static void parse_network(toml_table_t *table, network_config_t *config) {

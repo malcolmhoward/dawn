@@ -36,6 +36,7 @@
 #include <net/if.h>
 #include <pthread.h>
 #include <signal.h>
+#include <sodium.h>
 #include <stdatomic.h>
 #include <string.h>
 #include <sys/random.h>
@@ -164,24 +165,7 @@ static void unregister_connection(ws_connection_t *conn) {
    pthread_mutex_unlock(&s_conn_registry_mutex);
 }
 
-/**
- * @brief Constant-time string comparison to prevent timing attacks
- *
- * Unlike strcmp(), this always compares all bytes regardless of where
- * differences occur, making it safe for comparing secrets like session tokens.
- *
- * @param a First string
- * @param b Second string
- * @param len Length to compare
- * @return true if strings match, false otherwise
- */
-static bool secure_token_compare(const char *a, const char *b, size_t len) {
-   volatile unsigned char result = 0;
-   for (size_t i = 0; i < len; i++) {
-      result |= (unsigned char)a[i] ^ (unsigned char)b[i];
-   }
-   return result == 0;
-}
+/* Constant-time comparison via libsodium (replaces hand-rolled secure_token_compare) */
 
 /**
  * @brief Expire stale token mappings (must be called with s_token_mutex held)
@@ -208,7 +192,7 @@ void register_token(const char *token, uint32_t session_id) {
    int empty_slot = -1;
    for (int i = 0; i < MAX_TOKEN_MAPPINGS; i++) {
       if (s_token_map[i].in_use &&
-          secure_token_compare(s_token_map[i].token, token, WEBUI_SESSION_TOKEN_LEN - 1)) {
+          sodium_memcmp(s_token_map[i].token, token, WEBUI_SESSION_TOKEN_LEN - 1) == 0) {
          /* Update existing */
          s_token_map[i].session_id = session_id;
          s_token_map[i].created = time(NULL);
@@ -283,7 +267,7 @@ session_t *lookup_session_by_token(const char *token) {
    for (int i = 0; i < MAX_TOKEN_MAPPINGS; i++) {
       /* Use constant-time comparison to prevent timing attacks */
       if (s_token_map[i].in_use &&
-          secure_token_compare(s_token_map[i].token, token, WEBUI_SESSION_TOKEN_LEN - 1)) {
+          sodium_memcmp(s_token_map[i].token, token, WEBUI_SESSION_TOKEN_LEN - 1) == 0) {
          /* Check token age against AUTH_COOKIE_MAX_AGE */
          if ((time(NULL) - s_token_map[i].created) > AUTH_COOKIE_MAX_AGE) {
             LOG_INFO("WebUI: Token %.4s... expired (session %u)", token, s_token_map[i].session_id);

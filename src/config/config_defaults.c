@@ -192,6 +192,10 @@ void config_set_defaults(dawn_config_t *config) {
    config->mqtt.enabled = true;
    SAFE_COPY(config->mqtt.broker, "127.0.0.1"); /* MQTT_IP */
    config->mqtt.port = 1883;                    /* MQTT_PORT */
+   config->mqtt.tls = false;
+   config->mqtt.tls_ca_cert[0] = '\0';
+   config->mqtt.tls_cert_path[0] = '\0';
+   config->mqtt.tls_key_path[0] = '\0';
 
    /* Network */
    config->network.workers = 4;

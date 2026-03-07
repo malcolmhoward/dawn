@@ -485,6 +485,74 @@ enabled = true
 endpoint = "http://localhost:8191"
 ```
 
+### MQTT TLS (Encrypted Smart Home Commands)
+
+By default, MQTT traffic (smart home commands, device status) is sent in plaintext on port 1883. If your MQTT broker supports TLS, you can encrypt this traffic.
+
+**1. Configure your MQTT broker for TLS.** The specifics depend on your broker. For Mosquitto, add to `mosquitto.conf`:
+
+```
+listener 8883
+certfile /etc/mosquitto/certs/server.crt
+keyfile /etc/mosquitto/certs/server.key
+cafile /etc/mosquitto/ca_certificates/ca.crt
+require_certificate false
+```
+
+> **Tip**: You can reuse the same private CA from [SSL Setup](#7-ssl-setup-for-remote-voice) to sign your MQTT broker's certificate. This way all DAWN services share one trust root.
+
+**2. Generate or reuse certificates.** If you already ran `./generate_ssl_cert.sh`, you have a CA at `ssl/ca.crt`. You can sign a broker certificate with it:
+
+```bash
+# Generate broker key and CSR
+openssl genrsa -out mqtt-broker.key 2048
+openssl req -new -key mqtt-broker.key -out mqtt-broker.csr -subj "/CN=mqtt-broker"
+
+# Sign with your DAWN CA (requires CA passphrase)
+openssl x509 -req -in mqtt-broker.csr -CA ssl/ca.crt -CAkey ssl/ca.key \
+  -CAcreateserial -out mqtt-broker.crt -days 825 -sha256
+
+# Copy to your broker's cert directory
+sudo cp mqtt-broker.crt mqtt-broker.key /etc/mosquitto/certs/
+sudo cp ssl/ca.crt /etc/mosquitto/ca_certificates/
+sudo systemctl restart mosquitto
+```
+
+If your broker already has TLS with a public CA or separate PKI, just note the CA certificate path for step 3.
+
+**3. Configure DAWN to connect via TLS.** Edit `dawn.toml`:
+
+```toml
+[mqtt]
+broker = "127.0.0.1"
+port = 8883           # Standard MQTTS port
+tls = true
+tls_ca_cert = "ssl/ca.crt"   # CA that signed the broker's certificate
+# tls_cert_path = ""          # Client cert (only if broker requires mutual TLS)
+# tls_key_path = ""           # Client key  (only if broker requires mutual TLS)
+```
+
+Or use environment variables:
+```bash
+export DAWN_MQTT_TLS=true
+export DAWN_MQTT_PORT=8883
+export DAWN_MQTT_TLS_CA_CERT="/path/to/ca.crt"
+```
+
+**4. Verify.** Restart DAWN and look for:
+```
+[INFO] MQTT TLS enabled (CA: ssl/ca.crt)
+[INFO] Connected to local MQTT server.
+```
+
+If the CA cert path is wrong or the file is unreadable, DAWN will refuse to connect (it will not fall back to plaintext):
+```
+[ERROR] MQTT TLS CA cert not readable: ssl/ca.crt (No such file or directory)
+[ERROR] MQTT disabled — TLS certificate files not accessible
+```
+
+**Mutual TLS** (optional): If your broker is configured with `require_certificate true`, generate a client certificate signed by the same CA and set `tls_cert_path` and `tls_key_path`.
+
 ## Troubleshooting
 
 | Issue | Solution |
