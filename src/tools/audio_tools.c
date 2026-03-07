@@ -23,20 +23,25 @@
 
 #include "tools/audio_tools.h"
 
+#include <pthread.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "audio/mic_passthrough.h"
+#include "dawn.h"
 #include "logging.h"
 #include "tools/tool_registry.h"
 
 /* ========== Forward Declarations for Existing Callbacks ========== */
 
-/* From mosquitto_comms.c */
-char *voiceAmplifierCallback(const char *actionName, char *value, int *should_respond);
-
 /* From dawn.c */
 char *setPcmPlaybackDevice(const char *actionName, char *value, int *should_respond);
 char *setPcmCaptureDevice(const char *actionName, char *value, int *should_respond);
+
+/* ========== Voice Amplifier State ========== */
+
+static pthread_t voice_thread = -1;
 
 /* ========== Internal Callbacks ========== */
 
@@ -69,6 +74,54 @@ static char *audio_device_callback(const char *action, char *value, int *should_
 /* =============================================================================
  * Voice Amplifier Tool
  * ============================================================================= */
+
+static char *voice_amplifier_callback(const char *actionName, char *value, int *should_respond) {
+   (void)value;
+   *should_respond = 1;
+
+   if (strcmp(actionName, "enable") == 0) {
+      if ((voice_thread != (pthread_t)-1) && (pthread_kill(voice_thread, 0) == 0)) {
+         LOG_WARNING("Voice amplification thread already running.");
+         if (command_processing_mode != CMD_MODE_DIRECT_ONLY) {
+            return strdup("Voice amplifier is already enabled");
+         }
+         *should_respond = 0;
+         return NULL;
+      }
+
+      if (pthread_create(&voice_thread, NULL, voiceAmplificationThread, NULL)) {
+         LOG_ERROR("Error creating voice thread");
+         if (command_processing_mode != CMD_MODE_DIRECT_ONLY) {
+            return strdup("Failed to enable voice amplifier");
+         }
+         *should_respond = 0;
+         return NULL;
+      }
+
+      if (command_processing_mode != CMD_MODE_DIRECT_ONLY) {
+         return strdup("Voice amplifier enabled");
+      }
+      *should_respond = 0;
+      return NULL;
+
+   } else if (strcmp(actionName, "disable") == 0) {
+      if ((voice_thread != (pthread_t)-1) && (pthread_kill(voice_thread, 0) == 0)) {
+         setStopVA();
+         if (command_processing_mode != CMD_MODE_DIRECT_ONLY) {
+            return strdup("Voice amplifier disabled");
+         }
+      } else {
+         LOG_WARNING("Voice amplification thread not running.");
+         if (command_processing_mode != CMD_MODE_DIRECT_ONLY) {
+            return strdup("Voice amplifier was not running");
+         }
+      }
+      *should_respond = 0;
+      return NULL;
+   }
+
+   return NULL;
+}
 
 static const treg_param_t voice_amplifier_params[] = {
    {
@@ -109,7 +162,7 @@ static const tool_metadata_t voice_amplifier_metadata = {
 
    .init = NULL,
    .cleanup = NULL,
-   .callback = voiceAmplifierCallback,
+   .callback = voice_amplifier_callback,
 };
 
 int voice_amplifier_tool_register(void) {

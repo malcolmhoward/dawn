@@ -21,103 +21,18 @@
 
 /**
  * @file mosquitto_comms.h
- * @brief Defines device types, associated strings, and callback functions for handling device
- * actions.
+ * @brief MQTT communication layer and device callback routing.
  *
- * This header contains the definitions for device types supported by the application,
- * their string representations for MQTT messages, and the callback functions that process
- * actions for each device type.
+ * Provides MQTT connection callbacks and the device callback lookup
+ * interface used by the command router. Device callbacks are registered
+ * via the tool_registry system; this header exposes the lookup function
+ * and MQTT event handlers.
  */
 
 #ifndef MOSQUITTO_COMMS_H
 #define MOSQUITTO_COMMS_H
 
 #include <mosquitto.h>
-
-/**
- * @brief Enumerates the types of devices or actions supported by the application.
- */
-typedef enum {
-   AUDIO_PLAYBACK_DEVICE, /**< Set an audio playback device. */
-   AUDIO_CAPTURE_DEVICE,  /**< Set an audio capture device. */
-   TEXT_TO_SPEECH,        /**< A text-to-speech action. */
-   DATE,                  /**< Request for the current date. */
-   TIME,                  /**< Request for the current time. */
-   MUSIC,                 /**< Music playback control. */
-   VOICE_AMPLIFIER,       /**< Voice amplifier control. */
-   SHUTDOWN,              /**< System shutdown action. */
-   VIEWING,               /**< Viewing or display actions. */
-   VOLUME,                /**< Music playback volume, */
-   LOCAL_LLM_SWITCH,      /**< Local LLM switch. */
-   CLOUD_LLM_SWITCH,      /**< Cloud LLM switch. */
-   RESET_CONVERSATION,    /**< Reset conversation context. */
-   SEARCH,                /**< Web search action. */
-   WEATHER,               /**< Weather information service. */
-   CALCULATOR,            /**< Calculator for math expressions. */
-   URL_FETCH,             /**< Fetch and extract content from a URL. */
-   LLM_STATUS,            /**< Query current LLM status (local/cloud, model). */
-   CLOUD_PROVIDER,        /**< Switch cloud provider (openai/claude). */
-   SMARTTHINGS,           /**< SmartThings home automation control. */
-   SWITCH_LLM,            /**< Switch LLM mode/provider (local/cloud/openai/claude). */
-   MEMORY,                /**< Memory system for storing/retrieving user facts. */
-   MAX_DEVICE_TYPES       /**< Used to determine the number of device types. */
-} deviceType;
-
-/**
- * @brief String representations for each deviceType enumeration member.
- *
- * These strings correspond to the device types and are used in MQTT JSON messages.
- * They should match the order of the `deviceType` enumeration.
- */
-static const char *deviceTypeStrings[] = { "audio playback device",
-                                           "audio capture device",
-                                           "text to speech",
-                                           "date",
-                                           "time",
-                                           "music",
-                                           "voice amplifier",
-                                           "shutdown",
-                                           "viewing",
-                                           "volume",
-                                           "local llm",
-                                           "cloud llm",
-                                           "reset conversation",
-                                           "search",
-                                           "weather",
-                                           "calculator",
-                                           "url",
-                                           "llm",
-                                           "cloud provider",
-                                           "smartthings",
-                                           "switch_llm",
-                                           "memory" };
-
-/* Compile-time check: deviceTypeStrings must have one entry per deviceType enum value */
-_Static_assert(sizeof(deviceTypeStrings) / sizeof(deviceTypeStrings[0]) == MAX_DEVICE_TYPES,
-               "deviceTypeStrings array size must match deviceType enum count (MAX_DEVICE_TYPES)");
-
-/**
- * @brief Associates a device type with a callback function that processes actions for that device.
- *
- * This structure maps a `deviceType` to its corresponding callback function,
- * allowing dynamic handling of device actions. The callback can optionally return
- * data instead of directly using text-to-speech when in AI modes.
- *
- * CALLBACK RETURN VALUE CONTRACT:
- * - Return NULL if no data to report (command executed silently)
- * - Return heap-allocated string (malloc/strdup) if returning data
- * - Caller is responsible for freeing non-NULL return values
- * - Set *should_respond = 1 to send return value to LLM, 0 otherwise
- *
- * NOTE: Some legacy callbacks still use static buffers. These should be migrated
- * to heap allocation for consistency. See mosquitto_comms.c for details.
- */
-typedef struct {
-   deviceType device; /**< The device type. */
-   char *(*callback)(const char *actionName,
-                     char *value,
-                     int *should_respond); /**< Callback returns heap-allocated string or NULL. */
-} deviceCallback;
 
 /* MQTT callbacks */
 
@@ -154,29 +69,7 @@ void on_subscribe(struct mosquitto *mosq,
  */
 void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_message *msg);
 
-/* Device callbacks */
-
-/**
- * @brief Callback function to handle date requests.
- *
- * Processes actions related to date requests, such as providing the current date.
- *
- * @param actionName The name of the action triggering this callback.
- * @param value      Additional value or parameters for the action (may be unused).
- * @param should_respond Should the callback return data to the AI or just handle it.
- */
-char *dateCallback(const char *actionName, char *value, int *should_respond);
-
-/**
- * @brief Callback function to handle time requests.
- *
- * Processes actions related to time requests, such as providing the current time.
- *
- * @param actionName The name of the action triggering this callback.
- * @param value      Additional value or parameters for the action (may be unused).
- * @param should_respond Should the callback return data to the AI or just handle it.
- */
-char *timeCallback(const char *actionName, char *value, int *should_respond);
+/* Device callbacks still referenced externally */
 
 /**
  * @brief Callback function to handle music playback control.
@@ -204,186 +97,5 @@ char *musicCallback(const char *actionName, char *value, int *should_respond);
 #ifndef DAWN_ENABLE_MUSIC_TOOL
 void set_music_directory(const char *path);
 #endif
-
-/**
- * @brief Callback function to control the voice amplifier.
- *
- * Processes actions to enable or disable the voice amplifier functionality.
- *
- * @param actionName The name of the action triggering this callback.
- * @param value      Additional value or parameters for the action (e.g., "on" or "off").
- * @param should_respond Should the callback return data to the AI or just handle it.
- */
-char *voiceAmplifierCallback(const char *actionName, char *value, int *should_respond);
-
-/**
- * @brief Callback function to handle system shutdown requests.
- *
- * Processes actions to initiate a system shutdown.
- *
- * @param actionName The name of the action triggering this callback.
- * @param value      Additional value or parameters for the action (may be unused).
- * @param should_respond Should the callback return data to the AI or just handle it.
- */
-char *shutdownCallback(const char *actionName, char *value, int *should_respond);
-
-/**
- * @brief Adjusts music volume based on user input.
- *
- * Sets the music playback volume to a value between 0.0 (silence) and 2.0 (maximum).
- *
- * @param actionName Unused but included for callback signature consistency.
- * @param value      String representing the desired volume level, converted to a float and
- * validated.
- * @param should_respond Should the callback return data to the AI or just handle it.
- */
-char *volumeCallback(const char *actionName, char *value, int *should_respond);
-
-/**
- * @brief Callback function for setting the AI to use the local LLM.
- *
- * This function is triggered by an action to switch the AI to the local LLM (Large Language Model).
- *
- * @param actionName The name of the action triggering the callback.
- * @param value The value associated with the action (unused in this implementation).
- * @param should_respond Should the callback return data to the AI or just handle it.
- */
-char *localLLMCallback(const char *actionName, char *value, int *should_respond);
-
-/**
- * @brief Callback function for setting the AI to use the cloud LLM.
- *
- * This function is triggered by an action to switch the AI to the cloud LLM (Large Language Model).
- *
- * @param actionName The name of the action triggering the callback.
- * @param value The value associated with the action (unused in this implementation).
- * @param should_respond Should the callback return data to the AI or just handle it.
- */
-char *cloudLLMCallback(const char *actionName, char *value, int *should_respond);
-
-/**
- * @brief Callback function to reset the conversation context.
- *
- * Saves the current conversation to JSON, clears the LLM context,
- * and resets session statistics.
- *
- * @param actionName The name of the action triggering this callback.
- * @param value      Additional value or parameters for the action (may be unused).
- * @param should_respond Should the callback return data to the AI or just handle it.
- */
-char *resetConversationCallback(const char *actionName, char *value, int *should_respond);
-
-/**
- * @brief Callback function to perform web searches via SearXNG.
- *
- * Performs a web search using the local SearXNG instance and returns
- * formatted results for the LLM to summarize.
- *
- * @param actionName The name of the action triggering this callback (e.g., "web").
- * @param value      The search query string.
- * @param should_respond Should the callback return data to the AI or just handle it.
- */
-char *searchCallback(const char *actionName, char *value, int *should_respond);
-
-/**
- * @brief Callback function to get weather information.
- *
- * Fetches weather data from Open-Meteo API for the specified location
- * and returns formatted results for the LLM to present.
- *
- * @param actionName The name of the action triggering this callback (e.g., "get").
- * @param value      The location string (e.g., "Atlanta, Georgia").
- * @param should_respond Should the callback return data to the AI or just handle it.
- */
-char *weatherCallback(const char *actionName, char *value, int *should_respond);
-
-/**
- * @brief Callback function to evaluate mathematical expressions.
- *
- * Evaluates the given mathematical expression using TinyExpr and returns
- * the result for the LLM to present to the user.
- *
- * @param actionName The name of the action triggering this callback (e.g., "evaluate").
- * @param value      The mathematical expression to evaluate (e.g., "sqrt(144) + 2^8").
- * @param should_respond Should the callback return data to the AI or just handle it.
- */
-char *calculatorCallback(const char *actionName, char *value, int *should_respond);
-
-/**
- * @brief Callback function to fetch and extract content from a URL.
- *
- * Fetches the specified URL, extracts readable text content (stripping HTML),
- * and optionally summarizes if content is large. Returns the content for the
- * LLM to process.
- *
- * @param actionName The name of the action triggering this callback (e.g., "fetch").
- * @param value      The URL to fetch (e.g., "https://example.com/article").
- * @param should_respond Should the callback return data to the AI or just handle it.
- */
-char *urlFetchCallback(const char *actionName, char *value, int *should_respond);
-
-/**
- * @brief Callback function to query current LLM status.
- *
- * Returns information about the currently active LLM (local or cloud),
- * including the model name and provider (for cloud).
- *
- * @param actionName The name of the action triggering this callback (e.g., "get").
- * @param value      Unused for this callback.
- * @param should_respond Should the callback return data to the AI or just handle it.
- */
-char *llmStatusCallback(const char *actionName, char *value, int *should_respond);
-
-/**
- * @brief Callback for handling cloud provider switching.
- *
- * Switches between cloud providers (OpenAI/Claude). Only works if
- * the target provider's API key is configured in secrets.toml.
- *
- * @param actionName The action (e.g., "set").
- * @param value      The provider name ("openai" or "claude").
- * @param should_respond Should the callback return data to the AI.
- * @return Response string (caller must free), or NULL on error.
- */
-char *cloudProviderCallback(const char *actionName, char *value, int *should_respond);
-
-/**
- * @brief Callback function for SmartThings home automation control.
- *
- * Controls SmartThings devices including lights, switches, locks, thermostats,
- * and more. Supports actions: list, status, on, off, brightness, color,
- * temperature, lock, unlock.
- *
- * @param actionName The action (e.g., "on", "off", "list", "status", "brightness").
- * @param value      The device name or "device value" for actions with parameters.
- * @param should_respond Should the callback return data to the AI.
- * @return Response string (caller must free), or NULL on error.
- */
-char *smartThingsCallback(const char *actionName, char *value, int *should_respond);
-
-/**
- * @brief Callback function for memory system operations.
- *
- * Handles memory actions: search (recall facts/preferences/summaries),
- * remember (store new facts), forget (delete facts).
- *
- * @param actionName The action ("search", "remember", "forget").
- * @param value      Keywords (search), fact text (remember), or text to forget.
- * @param should_respond Should the callback return data to the AI.
- * @return Response string (caller must free), or NULL on error.
- */
-char *memoryCallback(const char *actionName, char *value, int *should_respond);
-
-/**
- * @brief Look up a callback function by device name string
- *
- * Searches deviceCallbackArray for a matching device name and returns
- * the associated callback function pointer.
- *
- * @param device_name The device name string (e.g., "weather", "date", "search")
- * @return Callback function pointer, or NULL if not found
- */
-typedef char *(*device_callback_fn)(const char *actionName, char *value, int *should_respond);
-device_callback_fn get_device_callback(const char *device_name);
 
 #endif  // MOSQUITTO_COMMS_H

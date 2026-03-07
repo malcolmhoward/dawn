@@ -34,6 +34,7 @@ option(DAWN_ENABLE_VIEWING_TOOL "Enable viewing/vision tool (MQTT)" ON)
 option(DAWN_ENABLE_HUD_TOOLS "Enable HUD control tools (MQTT)" ON)
 option(DAWN_ENABLE_AUDIO_TOOLS "Enable voice amplifier and audio device tools" ON)
 option(DAWN_ENABLE_SCHEDULER_TOOL "Enable scheduler/timer/alarm/reminder tool" ON)
+option(DAWN_ENABLE_TTS_TOOL "Enable text-to-speech command tool" ON)
 
 # =============================================================================
 # Mutual Exclusion: Home Assistant and SmartThings
@@ -221,6 +222,15 @@ if(DAWN_ENABLE_SCHEDULER_TOOL)
     message(STATUS "DAWN: Scheduler tool ENABLED")
 else()
     message(STATUS "DAWN: Scheduler tool DISABLED")
+endif()
+
+# TTS Tool
+if(DAWN_ENABLE_TTS_TOOL)
+    add_definitions(-DDAWN_ENABLE_TTS_TOOL)
+    list(APPEND TOOL_SOURCES src/tools/tts_tool.c)
+    message(STATUS "DAWN: TTS tool ENABLED")
+else()
+    message(STATUS "DAWN: TTS tool DISABLED")
 endif()
 
 # =============================================================================

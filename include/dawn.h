@@ -192,16 +192,4 @@ char *setPcmCaptureDevice(const char *actioName, char *value, int *should_respon
  */
 const char *findAudioPlaybackDevice(const char *name);
 
-/**
- * Callback function for text-to-speech commands.
- *
- * @param actionName The name of the action triggered this callback (unused in the current
- * implementation).
- * @param value The text that needs to be converted to speech.
- *
- * This function prints the received text command and then calls the text_to_speech function
- * to play it through the PCM playback device.
- */
-char *textToSpeechCallback(const char *actionName, char *value, int *should_respond);
-
 #endif  // DAWN_H

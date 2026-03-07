@@ -33,6 +33,7 @@
 #include "llm/llm_local_provider.h"
 #include "logging.h"
 #include "tools/tool_registry.h"
+#include "tts/text_to_speech.h"
 
 /* ========== Forward Declarations ========== */
 
@@ -145,8 +146,7 @@ static char *llm_status_tool_callback(const char *action, char *value, int *shou
             snprintf(result, 256, "Currently using %s LLM, model %s.", type_str,
                      model ? model : "unknown");
          }
-         int local_should_respond = 0;
-         textToSpeechCallback(NULL, result, &local_should_respond);
+         text_to_speech(result);
          free(result);
       }
       *should_respond = 0;

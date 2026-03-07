@@ -2536,7 +2536,7 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                   config.type = LLM_LOCAL;
                } else if (strcmp(new_type, "cloud") == 0) {
                   config.type = LLM_CLOUD;
-                  /* If no provider is set, default to OpenAI (same as cloudLLMCallback) */
+                  /* If no provider is set, default to OpenAI */
                   if (config.cloud_provider == CLOUD_PROVIDER_NONE) {
                      config.cloud_provider = CLOUD_PROVIDER_OPENAI;
                      LOG_INFO("WebUI: No cloud provider set, defaulting to OpenAI");

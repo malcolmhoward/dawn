@@ -504,17 +504,6 @@ void signal_handler(int signal) {
    }
 }
 
-char *textToSpeechCallback(const char *actionName, char *value, int *should_respond) {
-   LOG_INFO("TTS: \"%s\"", value);
-
-   // TTS commands always execute directly, regardless of mode
-   if (should_respond != NULL) {
-      *should_respond = 0;  // No need to respond about TTS
-   }
-   text_to_speech(value);
-   return NULL;
-}
-
 const char *getPcmPlaybackDevice(void) {
    return (const char *)pcm_playback_device;
 }

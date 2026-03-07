@@ -454,20 +454,10 @@ static void parse_openai_chunk(llm_stream_context_t *ctx, const char *event_data
                   }
                }
 
-               // For local LLMs, filter inline <think> tags from content
-               // Some models (Qwen3 via Ollama) emit thinking in content with tags
-               if (ctx->llm_type == LLM_LOCAL || ctx->inside_think_tag ||
-                   ctx->think_tag_partial_len > 0) {
-                  filter_think_tags(ctx, text, has_ws_session, ws_session);
-               } else {
-                  // Cloud provider or no think tag state — pass through directly
-                  record_ttft_if_first_token(ctx);
-                  ctx->callback(text, ctx->callback_userdata);
-                  if (ctx->chunk_callback) {
-                     ctx->chunk_callback(LLM_CHUNK_TEXT, text, ctx->chunk_callback_userdata);
-                  }
-                  append_to_accumulated(ctx, text);
-               }
+               // Filter inline <think>...</think> tags from content.
+               // Local models (Qwen3) use these for reasoning; cloud models
+               // occasionally leak stray </think> tags in responses.
+               filter_think_tags(ctx, text, has_ws_session, ws_session);
             }
          }
 

@@ -818,7 +818,7 @@ void session_set_command_context(session_t *session);
 /**
  * @brief Get the current command context session for this thread
  *
- * Used by device callbacks (e.g., localLLMCallback) to get the session
+ * Used by device callbacks (e.g., switch_llm_tool) to get the session
  * whose LLM config should be modified by the command.
  *
  * @return Current command context session, or NULL if not set

@@ -27,7 +27,7 @@
  * 3. Native tool calling (llm_tools.c)
  *
  * Execution logic:
- * - If command has a callback in deviceCallbackArray, invoke it directly
+ * - If command has a callback in tool_registry, invoke it directly
  * - If command is MQTT-only (hardware), publish to configured topic
  * - If command requires sync_wait (viewing), use command_router for response
  */
@@ -73,7 +73,7 @@ typedef struct {
  *
  * This is the unified entry point for all command execution. It:
  * 1. Looks up the command in the registry
- * 2. If has_callback: invokes via deviceCallbackArray
+ * 2. If has_callback: invokes via tool_registry
  * 3. If mqtt_only: publishes to configured topic
  * 4. If sync_wait: uses command_router for synchronous response
  *

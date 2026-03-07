@@ -37,6 +37,7 @@
 #include "dawn.h"
 #include "logging.h"
 #include "tools/tool_registry.h"
+#include "tts/text_to_speech.h"
 #include "word_to_number.h"
 
 /* Session routing for WebUI/satellite */
@@ -177,8 +178,7 @@ static char *volume_tool_callback(const char *action, char *value, int *should_r
 
    if (vol < 0.0f) {
       if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
-         int local_should_respond = 0;
-         textToSpeechCallback(NULL, "Invalid volume level requested.", &local_should_respond);
+         text_to_speech("Invalid volume level requested.");
          *should_respond = 0;
          return NULL;
       }

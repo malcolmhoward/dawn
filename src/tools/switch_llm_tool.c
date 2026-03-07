@@ -28,6 +28,7 @@
 #include <strings.h>
 
 #include "core/session_manager.h"
+#include "llm/llm_context.h"
 #include "llm/llm_interface.h"
 #include "logging.h"
 #include "tools/tool_registry.h"
@@ -35,6 +36,38 @@
 /* ========== Forward Declarations ========== */
 
 static char *switch_llm_tool_callback(const char *action, char *value, int *should_respond);
+
+/* ========== Target Dispatch Table ========== */
+
+typedef struct {
+   const char *name;          /* Name to match (case-insensitive) */
+   llm_type_t type;           /* LLM type to set */
+   cloud_provider_t provider; /* Cloud provider (NONE for local) */
+   const char *label;         /* Human-readable label for messages */
+   const char *fail_hint;     /* Extra hint on failure (NULL for none) */
+} llm_target_entry_t;
+
+static const llm_target_entry_t llm_targets[] = {
+   /* Local targets */
+   { "local", LLM_LOCAL, CLOUD_PROVIDER_NONE, "local LLM", NULL },
+   { "llama", LLM_LOCAL, CLOUD_PROVIDER_NONE, "local LLM", NULL },
+   /* Cloud (keep current provider) */
+   { "cloud", LLM_CLOUD, CLOUD_PROVIDER_NONE, "cloud LLM", "API key not configured." },
+   /* OpenAI variants */
+   { "openai", LLM_CLOUD, CLOUD_PROVIDER_OPENAI, "OpenAI", "API key not configured." },
+   { "gpt", LLM_CLOUD, CLOUD_PROVIDER_OPENAI, "OpenAI", "API key not configured." },
+   { "chatgpt", LLM_CLOUD, CLOUD_PROVIDER_OPENAI, "OpenAI", "API key not configured." },
+   { "chat gpt", LLM_CLOUD, CLOUD_PROVIDER_OPENAI, "OpenAI", "API key not configured." },
+   { "open ai", LLM_CLOUD, CLOUD_PROVIDER_OPENAI, "OpenAI", "API key not configured." },
+   /* Claude variants */
+   { "claude", LLM_CLOUD, CLOUD_PROVIDER_CLAUDE, "Claude", "API key not configured." },
+   { "clawed", LLM_CLOUD, CLOUD_PROVIDER_CLAUDE, "Claude", "API key not configured." },
+   { "claud", LLM_CLOUD, CLOUD_PROVIDER_CLAUDE, "Claude", "API key not configured." },
+   { "cloud ai", LLM_CLOUD, CLOUD_PROVIDER_CLAUDE, "Claude", "API key not configured." },
+   /* Gemini variants */
+   { "gemini", LLM_CLOUD, CLOUD_PROVIDER_GEMINI, "Gemini", "API key not configured." },
+   { "jiminy", LLM_CLOUD, CLOUD_PROVIDER_GEMINI, "Gemini", "API key not configured." },
+};
 
 /* ========== Parameter Definitions ========== */
 
@@ -56,8 +89,8 @@ static const tool_metadata_t switch_llm_metadata = {
    .name = "switch_llm",
    .device_string = "switch_llm",
    .topic = "dawn",
-   .aliases = { "llm", "ai", "model", "provider" },
-   .alias_count = 4,
+   .aliases = { "llm", "ai", "model", "provider", "cloud provider", "local llm", "cloud llm" },
+   .alias_count = 7,
 
    .description =
        "Switch between local and cloud LLM, or change the cloud provider. Use 'local' to "
@@ -84,6 +117,52 @@ static const tool_metadata_t switch_llm_metadata = {
 
 /* ========== Callback Implementation ========== */
 
+static const llm_target_entry_t *find_target(const char *name) {
+   size_t count = sizeof(llm_targets) / sizeof(llm_targets[0]);
+   for (size_t i = 0; i < count; i++) {
+      if (strcasecmp(name, llm_targets[i].name) == 0) {
+         return &llm_targets[i];
+      }
+   }
+   return NULL;
+}
+
+/**
+ * @brief Compact conversation history before switching to a provider with smaller context
+ *
+ * Uses the current (larger-context) provider to summarize before switching.
+ */
+static void compact_before_switch(session_t *session,
+                                  const session_llm_config_t *current,
+                                  const llm_target_entry_t *entry) {
+   extern struct json_object *conversation_history;
+   if (!conversation_history) {
+      return;
+   }
+
+   /* Determine target provider: for "cloud" with no explicit provider, keep current */
+   cloud_provider_t target_provider = entry->provider;
+   if (entry->type == LLM_CLOUD && target_provider == CLOUD_PROVIDER_NONE) {
+      target_provider = current->cloud_provider;
+   }
+
+   if (!llm_context_needs_compaction_for_switch(session->session_id, conversation_history,
+                                                entry->type, target_provider, NULL)) {
+      return;
+   }
+
+   llm_compaction_result_t compact_result = { 0 };
+   int rc = llm_context_compact_for_switch(session->session_id, conversation_history, current->type,
+                                           current->cloud_provider, current->model, entry->type,
+                                           target_provider, NULL, &compact_result);
+   if (rc == 0 && compact_result.performed) {
+      LOG_INFO("Pre-switch compaction: %d messages summarized, %d -> %d tokens",
+               compact_result.messages_summarized, compact_result.tokens_before,
+               compact_result.tokens_after);
+   }
+   llm_compaction_result_free(&compact_result);
+}
+
 static char *switch_llm_tool_callback(const char *action, char *value, int *should_respond) {
    *should_respond = 1;
 
@@ -99,72 +178,55 @@ static char *switch_llm_tool_callback(const char *action, char *value, int *shou
                     "'gemini'.");
    }
 
+   const llm_target_entry_t *entry = find_target(target);
+   if (!entry) {
+      char *result = malloc(128);
+      if (result) {
+         snprintf(result, 128,
+                  "Unknown LLM target '%.32s'. Use 'local', 'cloud', 'openai', 'claude', "
+                  "or 'gemini'.",
+                  target);
+      }
+      return result;
+   }
+
    /* Get session from command context, fall back to local session for external MQTT */
    session_t *session = session_get_command_context();
    if (!session) {
       session = session_get_local();
    }
 
+   if (!session) {
+      return strdup("No active session available for LLM switch.");
+   }
+
    session_llm_config_t config;
    session_get_llm_config(session, &config);
 
-   if (strcasecmp(target, "local") == 0 || strcasecmp(target, "llama") == 0) {
-      LOG_INFO("Setting AI to local LLM via switch_llm tool.");
-      config.type = LLM_LOCAL;
-      config.cloud_provider = CLOUD_PROVIDER_NONE;
-      config.model[0] = '\0'; /* Clear model to use provider default */
-      if (session_set_llm_config(session, &config) != 0) {
-         return strdup("Failed to switch to local LLM");
-      }
-      return strdup("AI switched to local LLM");
-   } else if (strcasecmp(target, "cloud") == 0) {
-      LOG_INFO("Setting AI to cloud LLM via switch_llm tool.");
-      config.type = LLM_CLOUD;
-      config.model[0] = '\0'; /* Clear model to use provider default */
-      if (session_set_llm_config(session, &config) != 0) {
-         return strdup("Failed to switch to cloud LLM. API key not configured.");
-      }
-      return strdup("AI switched to cloud LLM");
-   } else if (strcasecmp(target, "openai") == 0 || strcasecmp(target, "gpt") == 0 ||
-              strcasecmp(target, "chatgpt") == 0 || strcasecmp(target, "chat gpt") == 0 ||
-              strcasecmp(target, "open ai") == 0) {
-      LOG_INFO("Setting AI to OpenAI via switch_llm tool.");
-      config.type = LLM_CLOUD;
-      config.cloud_provider = CLOUD_PROVIDER_OPENAI;
-      config.model[0] = '\0'; /* Clear model to use provider default */
-      if (session_set_llm_config(session, &config) != 0) {
-         return strdup("Failed to switch to OpenAI. API key not configured.");
-      }
-      return strdup("AI switched to OpenAI");
-   } else if (strcasecmp(target, "claude") == 0 || strcasecmp(target, "clawed") == 0 ||
-              strcasecmp(target, "claud") == 0 || strcasecmp(target, "cloud ai") == 0) {
-      LOG_INFO("Setting AI to Claude via switch_llm tool.");
-      config.type = LLM_CLOUD;
-      config.cloud_provider = CLOUD_PROVIDER_CLAUDE;
-      config.model[0] = '\0'; /* Clear model to use provider default */
-      if (session_set_llm_config(session, &config) != 0) {
-         return strdup("Failed to switch to Claude. API key not configured.");
-      }
-      return strdup("AI switched to Claude");
-   } else if (strcasecmp(target, "gemini") == 0 || strcasecmp(target, "jiminy") == 0) {
-      LOG_INFO("Setting AI to Gemini via switch_llm tool.");
-      config.type = LLM_CLOUD;
-      config.cloud_provider = CLOUD_PROVIDER_GEMINI;
-      config.model[0] = '\0'; /* Clear model to use provider default */
-      if (session_set_llm_config(session, &config) != 0) {
-         return strdup("Failed to switch to Gemini. API key not configured.");
-      }
-      return strdup("AI switched to Gemini");
-   } else {
+   /* Compact conversation if switching to a provider with smaller context window */
+   compact_before_switch(session, &config, entry);
+
+   LOG_INFO("Setting AI to %s via switch_llm tool.", entry->label);
+   config.type = entry->type;
+   if (entry->provider != CLOUD_PROVIDER_NONE) {
+      config.cloud_provider = entry->provider;
+   }
+   config.model[0] = '\0'; /* Clear model to use provider default */
+
+   if (session_set_llm_config(session, &config) != 0) {
       char *result = malloc(128);
       if (result) {
-         snprintf(result, 128,
-                  "Unknown LLM target '%s'. Use 'local', 'cloud', 'openai', 'claude', "
-                  "or 'gemini'.",
-                  target);
+         snprintf(result, 128, "Failed to switch to %s.%s%s", entry->label,
+                  entry->fail_hint ? " " : "", entry->fail_hint ? entry->fail_hint : "");
       }
       return result;
    }
+
+   char *result = malloc(64);
+   if (result) {
+      snprintf(result, 64, "AI switched to %s", entry->label);
+   }
+   return result;
 }
 
 /* ========== Public API ========== */

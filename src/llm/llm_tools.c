@@ -32,6 +32,8 @@
 
 #include <limits.h>
 #include <mosquitto.h>
+#include <openssl/buffer.h>
+#include <openssl/evp.h>
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
@@ -53,9 +55,115 @@
 #include "utils/string_utils.h"
 #include "webui/webui_server.h"
 
-/* Forward declarations for utility functions from mosquitto_comms.c */
-extern unsigned char *read_file(const char *filename, size_t *length);
-extern char *base64_encode(const unsigned char *buffer, size_t length);
+/* =============================================================================
+ * File I/O and Base64 Utilities (used by vision image handling)
+ * ============================================================================= */
+
+static unsigned char *read_file(const char *filename, size_t *length) {
+   *length = 0;
+   FILE *file = fopen(filename, "rb");
+   if (!file) {
+      LOG_ERROR("File opening failed: %s", filename);
+      return NULL;
+   }
+
+   fseek(file, 0, SEEK_END);
+   long size = ftell(file);
+   if (size == -1) {
+      LOG_ERROR("Failed to determine file size: %s", filename);
+      fclose(file);
+      return NULL;
+   }
+   *length = (size_t)size;
+
+   /* Reject files over 20 MB to prevent OOM on embedded targets */
+#define MAX_IMAGE_FILE_SIZE (20 * 1024 * 1024)
+   if (*length > MAX_IMAGE_FILE_SIZE) {
+      LOG_ERROR("File too large (%zu bytes, max %d): %s", *length, MAX_IMAGE_FILE_SIZE, filename);
+      fclose(file);
+      *length = 0;
+      return NULL;
+   }
+
+   LOG_INFO("Reading file: %zu bytes", *length);
+   fseek(file, 0, SEEK_SET);
+
+   unsigned char *content = malloc(*length);
+   if (!content) {
+      LOG_ERROR("Memory allocation failed");
+      fclose(file);
+      return NULL;
+   }
+
+   size_t read_length = fread(content, 1, *length, file);
+   if (*length != read_length) {
+      LOG_ERROR("Failed to read the total size. Expected: %zu, Read: %zu", *length, read_length);
+      free(content);
+      fclose(file);
+      return NULL;
+   }
+
+   fclose(file);
+   return content;
+}
+
+static char *base64_encode(const unsigned char *buffer, size_t length) {
+   if (buffer == NULL || length == 0) {
+      LOG_ERROR("Invalid input to base64_encode.");
+      return NULL;
+   }
+
+   BIO *bio = NULL, *b64 = NULL;
+   BUF_MEM *bufferPtr = NULL;
+
+   b64 = BIO_new(BIO_f_base64());
+   if (b64 == NULL) {
+      LOG_ERROR("Failed to create Base64 BIO.");
+      return NULL;
+   }
+
+   bio = BIO_new(BIO_s_mem());
+   if (bio == NULL) {
+      LOG_ERROR("Failed to create memory BIO.");
+      BIO_free_all(b64);
+      return NULL;
+   }
+
+   bio = BIO_push(b64, bio);
+   BIO_set_flags(bio, BIO_FLAGS_BASE64_NO_NL);
+
+   if (BIO_write(bio, buffer, length) <= 0) {
+      LOG_ERROR("Failed to write data to BIO.");
+      BIO_free_all(bio);
+      return NULL;
+   }
+
+   if (BIO_flush(bio) <= 0) {
+      LOG_ERROR("Failed to flush BIO.");
+      BIO_free_all(bio);
+      return NULL;
+   }
+
+   BIO_get_mem_ptr(bio, &bufferPtr);
+   if (bufferPtr == NULL || bufferPtr->data == NULL) {
+      LOG_ERROR("Failed to get pointer to BIO memory.");
+      BIO_free_all(bio);
+      return NULL;
+   }
+
+   char *b64text = malloc(bufferPtr->length + 1);
+   if (b64text == NULL) {
+      LOG_ERROR("Memory allocation failed for Base64 text.");
+      BIO_free_all(bio);
+      return NULL;
+   }
+
+   memcpy(b64text, bufferPtr->data, bufferPtr->length);
+   b64text[bufferPtr->length] = '\0';
+
+   BIO_free_all(bio);
+   return b64text;
+}
 
 /* Timeout for viewing MQTT responses (10 seconds) */
 #define VIEWING_MQTT_TIMEOUT_MS 10000

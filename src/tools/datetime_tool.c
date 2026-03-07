@@ -30,6 +30,7 @@
 #include "dawn.h"
 #include "logging.h"
 #include "tools/tool_registry.h"
+#include "tts/text_to_speech.h"
 
 /* ========== Forward Declarations ========== */
 
@@ -135,8 +136,7 @@ static char *date_tool_callback(const char *action, char *value, int *should_res
             break;
       }
 
-      int local_should_respond = 0;
-      textToSpeechCallback(NULL, result, &local_should_respond);
+      text_to_speech(result);
       free(result);
       *should_respond = 0;
       return NULL;
@@ -199,8 +199,7 @@ static char *time_tool_callback(const char *action, char *value, int *should_res
             break;
       }
 
-      int local_should_respond = 0;
-      textToSpeechCallback(NULL, result, &local_should_respond);
+      text_to_speech(result);
       free(result);
       *should_respond = 0;
       return NULL;
