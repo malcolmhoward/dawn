@@ -2306,10 +2306,16 @@ void ui_music_on_state(ui_music_t *m, const music_state_update_t *state) {
    snprintf(m->bitrate_mode, sizeof(m->bitrate_mode), "%s", state->bitrate_mode);
 
    /* Sync queue metadata so play button works without fetching full queue */
+   int prev_queue_count = m->queue_count;
+   int prev_queue_index = m->queue_index;
    if (state->queue_length >= 0)
       m->queue_count = state->queue_length;
    if (state->queue_index >= 0)
       m->queue_index = state->queue_index;
+
+   /* Re-fetch full queue list when count or index changes (e.g. after remove) */
+   bool queue_changed =
+       (m->queue_count != prev_queue_count || m->queue_index != prev_queue_index);
 
    /* Sync shuffle/repeat from server (server is source of truth) */
    m->shuffle = state->shuffle;
@@ -2344,6 +2350,11 @@ void ui_music_on_state(ui_music_t *m, const music_state_update_t *state) {
       }
    }
 #endif
+
+   /* Request updated queue list after mutex release (avoids holding lock during I/O) */
+   if (queue_changed && m->ws) {
+      ws_client_send_music_queue(m->ws, "list", NULL, -1);
+   }
 }
 
 void ui_music_on_position(ui_music_t *m, float position_sec) {
