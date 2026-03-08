@@ -137,7 +137,7 @@ struct ui_music {
    SDL_Texture *repeat_one_icon_tex; /* White repeat-one loop + "1" */
 
    /* Static label caches (white text, tinted at render time) */
-#define MUSIC_SLABEL_COUNT 9
+#define MUSIC_SLABEL_COUNT 10
    SDL_Texture *slabel_tex[MUSIC_SLABEL_COUNT];
    int slabel_w[MUSIC_SLABEL_COUNT], slabel_h[MUSIC_SLABEL_COUNT];
 
@@ -170,6 +170,10 @@ struct ui_music {
    /* Add-to-queue flash feedback */
    int add_flash_row;     /* Row index that was just added (-1 = none) */
    uint32_t add_flash_ms; /* SDL_GetTicks() when flash started */
+
+   /* Remove-from-queue flash feedback */
+   int remove_flash_row;     /* Row index being removed (-1 = none) */
+   uint32_t remove_flash_ms; /* SDL_GetTicks() when flash started */
 
    /* WS client for sending commands */
    struct ws_client *ws;

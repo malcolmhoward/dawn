@@ -3083,6 +3083,9 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
       if (conn->is_satellite && payload) {
          handle_satellite_volume_state(conn, payload);
       }
+   } else if (strncmp(type, "smartthings_", sizeof("smartthings_") - 1) == 0 ||
+              strncmp(type, "ha_", sizeof("ha_") - 1) == 0) {
+      LOG_DEBUG("WebUI: Ignoring %s message (feature not compiled in)", type);
    } else {
       LOG_WARNING("WebUI: Unknown message type: %s", type);
    }

@@ -333,10 +333,14 @@ static void fill_arrow_left(SDL_Renderer *r, int tip_x, int tip_y, int sz) {
 }
 
 /**
- * Build shuffle icon: two crossing arrows (SVG-style X-pattern).
- * Matches web UI: two diagonal lines crossing in center with arrowheads
- * at top-right and bottom-right corners.
- * Rendered white on transparent RGBA texture for later color-modding.
+ * Build shuffle icon matching the Lucide SVG used in the web UI.
+ * Two crossing paths with L-shaped arrowheads at top-right and bottom-right.
+ * SVG reference (viewBox 0 0 24 24):
+ *   line (4,20) → (21,3)           full diagonal bottom-left to top-right
+ *   line (4,4)  → (9,9)            top-left half of second diagonal
+ *   line (15,15) → (21,21)         bottom-right half (gap at crossing)
+ *   polyline 16,3 → 21,3 → 21,8   L-bracket arrowhead at top-right
+ *   polyline 21,16 → 21,21 → 16,21 L-bracket arrowhead at bottom-right
  */
 static SDL_Texture *build_shuffle_icon(SDL_Renderer *r) {
    const int sz = TOGGLE_ICON_DIM;
@@ -351,27 +355,28 @@ static SDL_Texture *build_shuffle_icon(SDL_Renderer *r) {
    SDL_RenderClear(r);
    SDL_SetRenderDrawColor(r, 255, 255, 255, 255);
 
-   int mg = 2;            /* margin */
-   int ah = 3;            /* arrowhead size */
-   int top = mg + 2;      /* top path y */
-   int bot = sz - mg - 3; /* bottom path y */
-   int left = mg;
-   int right = sz - mg - 1;
+/* Map SVG viewBox (0-24) coordinates to pixel space (0 to sz-1) */
+/* Using fixed-point: multiply by sz, divide by 24 */
+#define SX(v) ((v)*sz / 24)
+#define SY(v) ((v)*sz / 24)
 
-   /* Path 1: bottom-left → top-right (full diagonal) */
-   draw_thick_line(r, left, bot, right - ah, top);
+   /* Path 1: full diagonal bottom-left (4,20) → top-right (21,3) */
+   draw_thick_line(r, SX(4), SY(20), SX(21), SY(3));
 
-   /* Path 2: top-left → bottom-right, split into two halves with gap at cross */
-   int mid_x = sz / 2;
-   int mid_y = (top + bot) / 2;
-   draw_thick_line(r, left, top, mid_x - 2, mid_y - 1);
-   draw_thick_line(r, mid_x + 2, mid_y + 1, right - ah, bot);
+   /* Path 2: top-left (4,4) → mid (9,9), gap at crossing, (15,15) → bottom-right (21,21) */
+   draw_thick_line(r, SX(4), SY(4), SX(9), SY(9));
+   draw_thick_line(r, SX(15), SY(15), SX(21), SY(21));
 
-   /* Top-right arrowhead (L-shaped polyline: down-left to tip, tip to left) */
-   fill_arrow_right(r, right, top, ah);
+   /* Top-right L-bracket arrowhead: horizontal (16,3)→(21,3) then vertical (21,3)→(21,8) */
+   draw_thick_line(r, SX(16), SY(3), SX(21), SY(3));
+   draw_thick_line(r, SX(21), SY(3), SX(21), SY(8));
 
-   /* Bottom-right arrowhead */
-   fill_arrow_right(r, right, bot, ah);
+   /* Bottom-right L-bracket arrowhead: vertical (21,16)→(21,21) then horizontal (21,21)→(16,21) */
+   draw_thick_line(r, SX(21), SY(16), SX(21), SY(21));
+   draw_thick_line(r, SX(21), SY(21), SX(16), SY(21));
+
+#undef SX
+#undef SY
 
    SDL_SetRenderTarget(r, NULL);
    return tex;
@@ -453,6 +458,7 @@ enum {
    SLABEL_BROWSE_HINT,  /* "Tap a category to browse" */
    SLABEL_BACK,         /* "\xe2\x86\x90 Back" */
    SLABEL_PLUS,         /* "+" */
+   SLABEL_MINUS,        /* "\xe2\x88\x92" (minus sign) */
    SLABEL_QUEUE_EMPTY,  /* "Queue is empty" */
    SLABEL_CONFIRM_MSG,  /* "Clear queue?" */
    SLABEL_CONFIRM_YES,  /* "Yes" */
@@ -501,6 +507,9 @@ static void build_static_caches(ui_music_t *m) {
    m->slabel_tex[SLABEL_PLUS] = ui_build_white_tex(m->renderer, m->label_font, "+",
                                                    &m->slabel_w[SLABEL_PLUS],
                                                    &m->slabel_h[SLABEL_PLUS]);
+   m->slabel_tex[SLABEL_MINUS] = ui_build_white_tex(m->renderer, m->label_font, "\xe2\x88\x92",
+                                                    &m->slabel_w[SLABEL_MINUS],
+                                                    &m->slabel_h[SLABEL_MINUS]);
    m->slabel_tex[SLABEL_QUEUE_EMPTY] = ui_build_white_tex(m->renderer, m->label_font,
                                                           "Queue is empty",
                                                           &m->slabel_w[SLABEL_QUEUE_EMPTY],
@@ -1250,9 +1259,36 @@ static void render_queue(ui_music_t *m, SDL_Renderer *r) {
             SDL_RenderCopy(r, rc->tex[0], NULL, &idst);
          }
 
-         /* Draw duration (slot 1) */
+         /* Remove button "-" (right edge) */
+         int rem_x = m->panel_x + m->panel_w - 16 - ADD_BTN_SIZE;
+         int rem_y = row_y + (LIST_ROW_HEIGHT - ADD_BTN_SIZE) / 2;
+
+         bool rem_flash = (m->remove_flash_row == i && SDL_GetTicks() - m->remove_flash_ms < 300);
+         if (rem_flash) {
+            SDL_SetRenderDrawColor(r, COLOR_ERROR_R, COLOR_ERROR_G, COLOR_ERROR_B, 200);
+         } else {
+            SDL_SetRenderDrawColor(r, bg2.r + 0x10, bg2.g + 0x10, bg2.b + 0x10, 255);
+         }
+         SDL_Rect rbtn = { rem_x, rem_y, ADD_BTN_SIZE, ADD_BTN_SIZE };
+         SDL_RenderFillRect(r, &rbtn);
+
+         if (m->slabel_tex[SLABEL_MINUS]) {
+            if (rem_flash) {
+               SDL_SetTextureColorMod(m->slabel_tex[SLABEL_MINUS], 255, 255, 255);
+            } else {
+               SDL_SetTextureColorMod(m->slabel_tex[SLABEL_MINUS], COLOR_ERROR_R, COLOR_ERROR_G,
+                                      COLOR_ERROR_B);
+            }
+            int mw = m->slabel_w[SLABEL_MINUS];
+            int mh = m->slabel_h[SLABEL_MINUS];
+            SDL_Rect mdst = { rem_x + (ADD_BTN_SIZE - mw) / 2, rem_y + (ADD_BTN_SIZE - mh) / 2, mw,
+                              mh };
+            SDL_RenderCopy(r, m->slabel_tex[SLABEL_MINUS], NULL, &mdst);
+         }
+
+         /* Draw duration (slot 1), left of remove button */
          int dur_w = rc->tex[1] ? rc->w[1] : 50;
-         int dur_right = m->panel_x + m->panel_w - 16;
+         int dur_right = rem_x - 8;
          if (rc->tex[1]) {
             SDL_SetTextureColorMod(rc->tex[1], txt2.r, txt2.g, txt2.b);
             SDL_Rect ddst = { dur_right - rc->w[1], row_y + (LIST_ROW_HEIGHT - rc->h[1]) / 2,
@@ -1673,6 +1709,7 @@ int ui_music_init(ui_music_t *m,
    m->panel_h = h;
    m->active_tab = MUSIC_TAB_PLAYING;
    m->add_flash_row = -1;
+   m->remove_flash_row = -1;
 
    /* Allocate browse buffers (supports pagination) */
    m->browse_tracks_cap = 500;
@@ -2082,18 +2119,28 @@ bool ui_music_handle_tap(ui_music_t *m, int x, int y) {
          handled = true;
       }
 
-      /* Queue item tap - play that track */
+      /* Queue item tap */
       if (y >= list_y && !handled) {
          int row_idx = (y - list_y + m->scroll_offset) / LIST_ROW_HEIGHT;
          if (row_idx >= 0 && row_idx < m->queue_count && m->ws) {
+            int rem_x = m->panel_x + m->panel_w - 16 - ADD_BTN_SIZE;
+            if (x >= rem_x) {
+               /* "-" tapped — remove track from queue */
+               char idx_str[16];
+               snprintf(idx_str, sizeof(idx_str), "%d", row_idx);
+               ws_client_send_music_control(m->ws, "remove_from_queue", idx_str);
+               m->remove_flash_row = row_idx;
+               m->remove_flash_ms = SDL_GetTicks();
+            } else {
+               /* Row tapped — play that track */
 #ifdef HAVE_OPUS
-            if (m->music_pb)
-               music_playback_flush(m->music_pb);
+               if (m->music_pb)
+                  music_playback_flush(m->music_pb);
 #endif
-            /* Send play_index command */
-            char idx_str[16];
-            snprintf(idx_str, sizeof(idx_str), "%d", row_idx);
-            ws_client_send_music_control(m->ws, "play_index", idx_str);
+               char idx_str[16];
+               snprintf(idx_str, sizeof(idx_str), "%d", row_idx);
+               ws_client_send_music_control(m->ws, "play_index", idx_str);
+            }
          }
          handled = true;
       }

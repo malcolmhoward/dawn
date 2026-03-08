@@ -762,6 +762,29 @@ template<PassMode mode> static size_t process_text_impl(const char *src, size_t 
    size_t i = 0;
    size_t out_pos = 0;
 
+   // Skip leading whitespace
+   while (i < len && (src[i] == ' ' || src[i] == '\t' || src[i] == '\n' || src[i] == '\r')) {
+      i++;
+   }
+
+   // Skip leading markdown bullet marker ("- ", "* ", "1. ", "2. ", etc.)
+   if (i < len) {
+      if (src[i] == '-' && i + 1 < len && src[i + 1] == ' ') {
+         i += 2;
+      } else if (src[i] == '*' && i + 1 < len && src[i + 1] == ' ') {
+         i += 2;
+      } else if (src[i] >= '0' && src[i] <= '9') {
+         // Numbered list: "1. ", "12. ", etc.
+         size_t j = i;
+         while (j < len && src[j] >= '0' && src[j] <= '9') {
+            j++;
+         }
+         if (j < len && src[j] == '.' && j + 1 < len && src[j + 1] == ' ') {
+            i = j + 2;
+         }
+      }
+   }
+
    while (i < len) {
       unsigned char byte = src[i];
 
@@ -874,6 +897,18 @@ template<PassMode mode> static size_t process_text_impl(const char *src, size_t 
                i += 1 + scan.num_len + (scan.magnitude != '\0' ? 1 : 0);
                continue;
             }
+         }
+
+         // Tilde before number: ~100 -> "approximately 100"
+         if (byte == '~' && i + 1 < len && src[i + 1] >= '0' && src[i + 1] <= '9') {
+            static const char APPROX[] = "approximately ";
+            static const uint8_t APPROX_LEN = 14;
+            if constexpr (mode == PassMode::GenerateOutput) {
+               std::memcpy(out + out_pos, APPROX, APPROX_LEN);
+            }
+            out_pos += APPROX_LEN;
+            i++;  // skip '~', digits will be copied normally
+            continue;
          }
 
          // Regular ASCII character - copy

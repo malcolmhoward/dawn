@@ -448,6 +448,24 @@
                max: 128,
                hint: 'Maximum cloud LLM API calls per minute (default: 40)',
             },
+            llm_timeout_ms: {
+               type: 'number',
+               label: 'LLM Request Timeout',
+               min: 5000,
+               hint: 'Per-request timeout in seconds (default: 60)',
+               advanced: true,
+               configPath: 'network.llm_timeout_ms',
+               multiplier: 1000,
+            },
+            summarization_timeout_ms: {
+               type: 'number',
+               label: 'Summarization Timeout',
+               min: 10000,
+               hint: 'Context compaction timeout in seconds (default: 180)',
+               advanced: true,
+               configPath: 'network.summarization_timeout_ms',
+               multiplier: 1000,
+            },
          },
       },
       tool_calling: {
@@ -867,51 +885,14 @@
             },
          },
       },
-      network: {
-         label: 'Network (DAP)',
-         description: 'Dawn Audio Protocol server for ESP32 and other remote voice clients',
-         icon: '&#x1F4F6;',
-         advanced: true,
-         fields: {
-            enabled: {
-               type: 'checkbox',
-               label: 'Enable DAP Server',
-               restart: true,
-               hint: 'Accept connections from remote voice clients',
-            },
-            host: {
-               type: 'dynamic_select',
-               label: 'Bind Address',
-               restart: true,
-               hint: 'Network interface to listen on',
-               dynamicKey: 'bind_addresses',
-            },
-            port: {
-               type: 'number',
-               label: 'Port',
-               min: 1,
-               max: 65535,
-               restart: true,
-               hint: 'TCP port for DAP connections (default: 5000)',
-            },
-            workers: {
-               type: 'number',
-               label: 'Workers',
-               min: 1,
-               max: 8,
-               restart: true,
-               hint: 'Concurrent client processing threads',
-            },
-         },
-      },
       webui: {
-         label: 'WebUI',
+         label: 'Server',
          icon: '&#x1F310;',
          fields: {
             enabled: {
                type: 'checkbox',
-               label: 'Enable WebUI',
-               hint: 'Browser-based interface for voice interaction',
+               label: 'Enable Server',
+               hint: 'HTTP/WebSocket server for browser and satellite clients',
             },
             port: {
                type: 'number',
@@ -927,15 +908,6 @@
                min: 1,
                restart: true,
                hint: 'Maximum concurrent browser connections',
-               advanced: true,
-            },
-            workers: {
-               type: 'number',
-               label: 'ASR Workers',
-               min: 1,
-               max: 8,
-               restart: true,
-               hint: 'Parallel speech recognition threads',
                advanced: true,
             },
             bind_address: {
@@ -966,6 +938,24 @@
                options: ['json', 'html'],
                hint: 'Default format for conversation exports',
                advanced: true,
+            },
+            workers: {
+               type: 'number',
+               label: 'ASR Workers',
+               min: 1,
+               max: 8,
+               restart: true,
+               hint: 'Concurrent voice processing threads — each loads an ASR model copy (default: 2)',
+               advanced: true,
+               configPath: 'network.workers',
+            },
+            session_timeout_sec: {
+               type: 'number',
+               label: 'Session Timeout',
+               min: 60,
+               hint: 'Seconds of inactivity before session context is cleared (default: 1800 / 30 min)',
+               advanced: true,
+               configPath: 'network.session_timeout_sec',
             },
          },
       },
@@ -1354,9 +1344,9 @@
       },
       {
          id: 'network',
-         label: 'Network & Services',
+         label: 'Network',
          icon: '&#x1F310;',
-         sections: ['network', 'webui', 'mqtt'],
+         sections: ['webui', 'mqtt'],
       },
       {
          id: 'system',
@@ -1723,14 +1713,22 @@
             inputHtml = `<input type="text" id="${inputId}" value="${Utils.escapeAttr(value || '')}" placeholder="${def.placeholder || ''}" data-key="${fullKey}">`;
             break;
          case 'number':
-            const numAttrs = [
-               def.min !== undefined ? `min="${def.min}"` : '',
-               def.max !== undefined ? `max="${def.max}"` : '',
-               def.step !== undefined ? `step="${def.step}"` : '',
-            ]
-               .filter(Boolean)
-               .join(' ');
-            inputHtml = `<input type="number" id="${inputId}" value="${Utils.formatNumber(value)}" ${numAttrs} data-key="${fullKey}">`;
+            {
+               const m = def.multiplier || 1;
+               const displayMin = def.min !== undefined ? def.min / m : undefined;
+               const displayMax = def.max !== undefined ? def.max / m : undefined;
+               const displayStep = def.step !== undefined ? def.step / m : undefined;
+               const displayValue = value != null ? value / m : value;
+               const numAttrs = [
+                  displayMin !== undefined ? `min="${displayMin}"` : '',
+                  displayMax !== undefined ? `max="${displayMax}"` : '',
+                  displayStep !== undefined ? `step="${displayStep}"` : '',
+                  m !== 1 ? `data-multiplier="${m}"` : '',
+               ]
+                  .filter(Boolean)
+                  .join(' ');
+               inputHtml = `<input type="number" id="${inputId}" value="${Utils.formatNumber(displayValue)}" ${numAttrs} data-key="${fullKey}">`;
+            }
             break;
          case 'checkbox':
             inputHtml = `<input type="checkbox" id="${inputId}" ${value ? 'checked' : ''} data-key="${fullKey}">`;

@@ -198,7 +198,7 @@ void config_set_defaults(dawn_config_t *config) {
    config->mqtt.tls_key_path[0] = '\0';
 
    /* Network */
-   config->network.workers = 4;
+   config->network.workers = 2;
    config->network.session_timeout_sec = 1800;         // 30 minutes
    config->network.llm_timeout_ms = 60000;             // 60 seconds for LLM requests
    config->network.summarization_timeout_ms = 180000;  // 3 minutes for context summarization
@@ -211,7 +211,6 @@ void config_set_defaults(dawn_config_t *config) {
    config->webui.port = 3000; /* "I love you 3000" */
    config->webui.max_clients = 4;
    config->webui.audio_chunk_ms = 200; /* 200ms chunks for streaming audio */
-   config->webui.workers = 1;          /* ASR workers for voice input (1 = minimal) */
    SAFE_COPY(config->webui.www_path, "www");
    SAFE_COPY(config->webui.bind_address, "0.0.0.0");
    config->webui.https = false;

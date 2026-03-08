@@ -461,7 +461,8 @@
          if (input.type === 'checkbox') {
             value = input.checked;
          } else if (input.type === 'number' || input.type === 'range') {
-            value = input.value !== '' ? parseFloat(input.value) : null;
+            const multiplier = parseFloat(input.dataset.multiplier) || 1;
+            value = input.value !== '' ? parseFloat(input.value) * multiplier : null;
          } else if (input.dataset.type === 'model_list' || input.dataset.type === 'string_list') {
             // Convert newline-separated text to array, filtering empty lines
             value = input.value

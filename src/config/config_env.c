@@ -1230,7 +1230,6 @@ json_object *config_to_json(const dawn_config_t *config) {
    json_object_object_add(webui, "max_clients", json_object_new_int(config->webui.max_clients));
    json_object_object_add(webui, "audio_chunk_ms",
                           json_object_new_int(config->webui.audio_chunk_ms));
-   json_object_object_add(webui, "workers", json_object_new_int(config->webui.workers));
    json_object_object_add(webui, "www_path", json_object_new_string(config->webui.www_path));
    json_object_object_add(webui, "bind_address",
                           json_object_new_string(config->webui.bind_address));
@@ -1755,7 +1754,6 @@ int config_write_toml(const dawn_config_t *config, const char *path) {
    fprintf(fp, "port = %d\n", config->webui.port);
    fprintf(fp, "max_clients = %d\n", config->webui.max_clients);
    fprintf(fp, "audio_chunk_ms = %d\n", config->webui.audio_chunk_ms);
-   fprintf(fp, "workers = %d\n", config->webui.workers);
    fprintf(fp, "www_path = \"%s\"\n", config->webui.www_path);
    fprintf(fp, "bind_address = \"%s\"\n", config->webui.bind_address);
    fprintf(fp, "https = %s\n", config->webui.https ? "true" : "false");

@@ -2196,20 +2196,13 @@ mqtt_disabled:
       llm_set_type(LLM_LOCAL);
    }
 
-   /* Initialize worker pool for WebUI satellite audio processing */
+   /* Initialize worker pool for WebUI/satellite audio processing */
 #ifdef ENABLE_WEBUI
    if (g_config.webui.enabled) {
-      int effective_workers = g_config.webui.workers;
-      /* worker_pool_init reads from g_config.network.workers */
-      int saved_workers = g_config.network.workers;
-      g_config.network.workers = effective_workers;
-
-      LOG_INFO("Initializing worker pool for WebUI audio (%d workers)...", effective_workers);
+      LOG_INFO("Initializing worker pool (%d workers)...", g_config.network.workers);
       if (worker_pool_init(asr_engine, asr_model_path) != 0) {
-         LOG_WARNING("Failed to init worker pool - WebUI voice input disabled");
+         LOG_WARNING("Failed to init worker pool - voice input disabled");
       }
-
-      g_config.network.workers = saved_workers;
    }
 #endif
 
@@ -3622,10 +3615,15 @@ mqtt_disabled:
 
    LOG_INFO("Quit.\n");
 
+   // Stop heartbeat immediately — no dependencies on other subsystems
+   LOG_INFO("Shutdown: stopping heartbeat");
+   component_status_publish_offline(mosq);
+   component_status_shutdown();
+
    // Ensure LLM thread is stopped before cleanup
    // This prevents resource leaks if restart was requested during LLM processing
    if (llm_processing) {
-      LOG_INFO("Waiting for LLM thread to complete...");
+      LOG_INFO("Shutdown: waiting for LLM thread...");
       llm_request_interrupt();
 
       // Wait for thread with timeout (5 seconds max for responsive restart)
@@ -3635,13 +3633,13 @@ mqtt_disabled:
 
       int join_result = pthread_timedjoin_np(llm_thread, NULL, &timeout);
       if (join_result == 0) {
-         LOG_INFO("LLM thread completed");
+         LOG_INFO("Shutdown: LLM thread completed");
       } else if (join_result == ETIMEDOUT) {
-         LOG_WARNING("LLM thread did not complete within timeout, cancelling");
+         LOG_WARNING("Shutdown: LLM thread timed out, cancelling");
          pthread_cancel(llm_thread);
          pthread_join(llm_thread, NULL);
       } else {
-         LOG_ERROR("Error joining LLM thread: %d", join_result);
+         LOG_ERROR("Shutdown: error joining LLM thread: %d", join_result);
       }
       llm_processing = 0;
    }
@@ -3649,37 +3647,41 @@ mqtt_disabled:
 #ifdef ENABLE_MULTI_CLIENT
    /* Save any non-empty voice conversation before shutdown */
    if (local_session && session_has_messages(local_session)) {
-      LOG_INFO("Shutdown: Saving Session 0 voice conversation");
+      LOG_INFO("Shutdown: saving Session 0 voice conversation");
       int64_t conv_id = session_save_voice_conversation(local_session);
       if (conv_id > 0) {
-         LOG_INFO("Shutdown: Saved as conversation %lld", (long long)conv_id);
+         LOG_INFO("Shutdown: saved as conversation %lld", (long long)conv_id);
       }
    }
 #endif
 
 #ifdef ENABLE_AUTH
    /* Shutdown auth subsystem in reverse initialization order */
+   LOG_INFO("Shutdown: auth_maintenance_stop");
    auth_maintenance_stop();
+   LOG_INFO("Shutdown: admin_socket_shutdown");
    admin_socket_shutdown();
+   LOG_INFO("Shutdown: image_store_shutdown");
    image_store_shutdown();
+   LOG_INFO("Shutdown: auth_crypto_shutdown");
    auth_crypto_shutdown();
 #endif
+   LOG_INFO("Shutdown: memory_embeddings_cleanup");
    memory_embeddings_cleanup();
+   LOG_INFO("Shutdown: auth_db_shutdown");
    auth_db_shutdown();
 
+   LOG_INFO("Shutdown: cleanup_text_to_speech");
    cleanup_text_to_speech();
 
    // Cleanup Silero VAD
    if (vad_ctx) {
-      LOG_INFO("Cleaning up Silero VAD");
+      LOG_INFO("Shutdown: cleaning up Silero VAD");
       vad_silero_cleanup(vad_ctx);
       vad_ctx = NULL;
    }
 
-   // Publish offline status and shutdown status system before disconnecting MQTT
-   component_status_publish_offline(mosq);
-   component_status_shutdown();
-
+   LOG_INFO("Shutdown: disconnecting MQTT");
    mosquitto_disconnect(mosq);
    mosquitto_loop_stop(mosq, false);
    mosquitto_lib_cleanup();
@@ -3700,43 +3702,46 @@ mqtt_disabled:
    // NOTE: session_manager_cleanup() moved to after webui_server_shutdown()
    // WebSocket sessions hold references that are only released when WebUI shuts down
 
-   // Cleanup command router (after workers are stopped)
+   LOG_INFO("Shutdown: command_router");
    command_router_shutdown();
 
-   // Cleanup LLM rate limiter
+   LOG_INFO("Shutdown: llm_rate_limit");
    llm_rate_limit_cleanup();
 
-   // Cleanup tool registry (before command registry)
+   LOG_INFO("Shutdown: tool_registry");
    tool_registry_shutdown();
 
    // Cleanup chunking manager (if initialized)
    if (chunk_mgr) {
+      LOG_INFO("Shutdown: chunking_manager");
       chunking_manager_cleanup(chunk_mgr);
    }
 
    // Stop ASR recording if active and cleanup ASR
+   LOG_INFO("Shutdown: ASR");
    asr_stop_recording();
    asr_cleanup(asr_ctx);
 
 #ifdef ENABLE_AEC
-   // Cleanup AEC before stopping audio capture
+   LOG_INFO("Shutdown: AEC");
    aec_cleanup();
 #endif
 
    // Stop audio capture thread and clean up resources
    if (audio_capture_ctx) {
+      LOG_INFO("Shutdown: audio_capture");
       audio_capture_stop(audio_capture_ctx);
       audio_capture_ctx = NULL;
    }
 
-   // Stop music scanner and close database
+   LOG_INFO("Shutdown: music_scanner");
    music_scanner_stop();
    music_db_cleanup();
 
-   // Clean up audio decoder subsystem
+   LOG_INFO("Shutdown: audio_decoder");
    audio_decoder_cleanup();
 
-   // Clean up audio backend (after all audio handles are closed)
+   LOG_INFO("Shutdown: audio_backend");
    audio_backend_cleanup();
 
    free(max_buff);
@@ -3750,16 +3755,16 @@ mqtt_disabled:
     * File-based dawn_stats_*.json export has been removed. */
 
 #ifdef ENABLE_WEBUI
-   /* Shutdown music streaming server first */
    if (webui_music_server_is_running()) {
+      LOG_INFO("Shutdown: webui_music_server");
       webui_music_server_shutdown();
    }
-   /* Shutdown WebUI server before session cleanup - WebSocket sessions hold references */
    if (webui_server_is_running()) {
+      LOG_INFO("Shutdown: webui_server");
       webui_server_shutdown();
    }
-   /* Shutdown worker pool */
    if (worker_pool_is_initialized()) {
+      LOG_INFO("Shutdown: worker_pool");
       worker_pool_shutdown();
    }
 #endif

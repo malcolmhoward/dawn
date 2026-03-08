@@ -80,10 +80,11 @@ static const char *s_allowed_path_prefixes[] = {
 
 /* Settings that require restart when changed */
 static const char *s_restart_required_fields[] = {
-   "audio.backend",       "audio.capture_device", "audio.playback_device", "asr.model",
-   "asr.models_path",     "tts.models_path",      "tts.voice_model",       "network.workers",
-   "webui.port",          "webui.max_clients",    "webui.workers",         "webui.https",
-   "webui.ssl_cert_path", "webui.ssl_key_path",   "webui.bind_address",    NULL
+   "audio.backend",      "audio.capture_device", "audio.playback_device",
+   "asr.model",          "asr.models_path",      "tts.models_path",
+   "tts.voice_model",    "network.workers",      "webui.port",
+   "webui.max_clients",  "webui.https",          "webui.ssl_cert_path",
+   "webui.ssl_key_path", "webui.bind_address",   NULL
 };
 
 void handle_get_config(ws_connection_t *conn) {
@@ -577,7 +578,6 @@ static void apply_config_from_json(dawn_config_t *config, struct json_object *pa
       JSON_TO_CONFIG_INT(section, "port", config->webui.port);
       JSON_TO_CONFIG_INT(section, "max_clients", config->webui.max_clients);
       JSON_TO_CONFIG_INT(section, "audio_chunk_ms", config->webui.audio_chunk_ms);
-      JSON_TO_CONFIG_INT(section, "workers", config->webui.workers);
       JSON_TO_CONFIG_STR(section, "www_path", config->webui.www_path);
       JSON_TO_CONFIG_STR(section, "bind_address", config->webui.bind_address);
       JSON_TO_CONFIG_BOOL(section, "https", config->webui.https);

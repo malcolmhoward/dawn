@@ -70,23 +70,17 @@
       audioChunks = []; // Clear for next audio stream
 
       if (isPlayingAudio) {
-         // Queue this audio to play after current finishes
-         // Bound queue to prevent memory exhaustion on rapid TTS
-         const MAX_QUEUE_SIZE = 10;
-         if (audioPlaybackQueue.length >= MAX_QUEUE_SIZE) {
-            // Drop oldest segment - this is expected during rapid TTS streaming
-            // and doesn't affect playback quality since we're dropping already-stale audio
-            console.debug('Audio playback queue full, dropping oldest segment');
-            audioPlaybackQueue.shift();
-         }
+         // Queue this audio to play after current finishes.
+         // No cap needed — each LLM response produces a finite number of sentences
+         // and TTS generates faster than real-time, so the queue drains naturally.
+         audioPlaybackQueue.push(combinedBuffer);
          console.log(
             'Audio playing, queuing',
             alignedLength,
             'bytes for later (queue size:',
-            audioPlaybackQueue.length + 1,
+            audioPlaybackQueue.length,
             ')'
          );
-         audioPlaybackQueue.push(combinedBuffer);
          return;
       }
 

@@ -324,10 +324,7 @@ typedef struct {
    int workers;                  /* Concurrent processing threads */
    int session_timeout_sec;      /* Idle session expiry */
    int llm_timeout_ms;           /* Per-request LLM timeout */
-   int summarization_timeout_ms; /* LLM timeout for context summarization (default 180s)
-                                  * Not in WebUI schema — the "network" schema section maps to
-                                  * DAP settings, not network_config_t. Configurable via TOML,
-                                  * env var (DAWN_NETWORK_SUMMARIZATION_TIMEOUT_MS), or JSON API. */
+   int summarization_timeout_ms; /* LLM timeout for context summarization (default 180s) */
 } network_config_t;
 
 /* =============================================================================
@@ -345,7 +342,6 @@ typedef struct {
    int port;                            /* HTTP/WebSocket port (default: 3000) */
    int max_clients;                     /* Max concurrent WebSocket clients */
    int audio_chunk_ms;                  /* Audio chunk size in ms (100-500, default: 200) */
-   int workers;                         /* ASR worker threads for voice input (default: 1) */
    char www_path[CONFIG_PATH_MAX];      /* Path to static files */
    char bind_address[CONFIG_NAME_MAX];  /* Bind address (default: 127.0.0.1) */
    bool https;                          /* Enable HTTPS (required for mic on LAN) */

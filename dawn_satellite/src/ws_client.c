@@ -1371,8 +1371,8 @@ int ws_client_send_music_control(ws_client_t *client, const char *action, const 
    struct json_object *payload = json_object_new_object();
    json_object_object_add(payload, "action", json_object_new_string(action));
    if (path) {
-      if (strcmp(action, "play_index") == 0) {
-         /* play_index expects "index" as integer */
+      if (strcmp(action, "play_index") == 0 || strcmp(action, "remove_from_queue") == 0) {
+         /* play_index and remove_from_queue expect "index" as integer */
          json_object_object_add(payload, "index", json_object_new_int(atoi(path)));
       } else {
          json_object_object_add(payload, "path", json_object_new_string(path));

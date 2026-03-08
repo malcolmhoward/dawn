@@ -181,8 +181,8 @@ int config_validate(const dawn_config_t *config,
       ADD_ERROR("llm.max_tokens", "must be positive (got %d)", config->llm.max_tokens);
    }
 
-   /* ===== Network Workers (1-64) ===== */
-   VALIDATE_RANGE_INT("network.workers", config->network.workers, 1, 64);
+   /* ===== Network Workers (1-8, matches WORKER_POOL_MAX_SIZE) ===== */
+   VALIDATE_RANGE_INT("network.workers", config->network.workers, 1, 8);
    if (config->network.session_timeout_sec <= 0) {
       ADD_ERROR("network.session_timeout_sec", "must be positive");
    }
