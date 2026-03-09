@@ -1,0 +1,238 @@
+/*
+ * DAWN WebUI - Satellite Management Component
+ * Satellite cards, status indicators, tier badges
+ */
+
+/* =============================================================================
+ * Satellite List
+ * ============================================================================= */
+
+.satellite-list {
+   display: flex;
+   flex-direction: column;
+   gap: 0.75rem;
+   margin-bottom: 1rem;
+}
+
+.satellite-list-empty {
+   color: var(--text-secondary);
+   font-style: italic;
+   padding: 1rem;
+   text-align: center;
+}
+
+.satellite-management-actions {
+   display: flex;
+   gap: 0.5rem;
+   padding-top: 0.5rem;
+}
+
+/* =============================================================================
+ * Satellite Card (Three-Row Layout: header, controls, footer)
+ * ============================================================================= */
+
+.satellite-card {
+   background: var(--bg-tertiary);
+   border: 1px solid var(--border-color);
+   border-radius: 6px;
+   padding: 0.75rem;
+   transition: border-color var(--transition-fast);
+}
+
+.satellite-card:hover {
+   border-color: var(--accent-dim);
+}
+
+/* Header row: status dot, name, tier badge, location, status text */
+.satellite-header {
+   display: flex;
+   align-items: center;
+   gap: 0.5rem;
+   margin-bottom: 0.5rem;
+   flex-wrap: wrap;
+}
+
+.satellite-status {
+   width: 10px;
+   height: 10px;
+   border-radius: 50%;
+   flex-shrink: 0;
+}
+
+.satellite-status.online {
+   background: var(--success);
+   box-shadow: 0 0 4px rgba(34, 197, 94, 0.5);
+}
+
+.satellite-status.offline {
+   background: var(--text-secondary);
+}
+
+.satellite-name {
+   font-weight: 600;
+   color: var(--text-primary);
+}
+
+.satellite-tier {
+   font-size: 0.75rem;
+   font-weight: 600;
+   padding: 1px 6px;
+   border-radius: 3px;
+   text-transform: uppercase;
+   letter-spacing: 0.5px;
+}
+
+.satellite-tier.tier-1 {
+   background: rgba(33, 150, 243, 0.2);
+   color: #42a5f5;
+   border: 1px solid rgba(33, 150, 243, 0.3);
+}
+
+.satellite-tier.tier-2 {
+   background: rgba(156, 39, 176, 0.2);
+   color: #ba68c8;
+   border: 1px solid rgba(156, 39, 176, 0.3);
+}
+
+.satellite-location {
+   color: var(--text-secondary);
+   font-size: 0.85rem;
+}
+
+.satellite-status-text {
+   font-size: 0.8rem;
+   margin-left: auto;
+}
+
+.satellite-status-text.online {
+   color: var(--success);
+}
+
+.satellite-status-text.offline {
+   color: var(--error);
+}
+
+.satellite-last-seen {
+   font-size: 0.8rem;
+   color: var(--text-secondary);
+   text-align: right;
+   margin-bottom: 0.5rem;
+}
+
+/* Controls row: user dropdown, HA area, enable checkbox */
+.satellite-controls {
+   display: flex;
+   align-items: center;
+   gap: 1rem;
+   flex-wrap: wrap;
+}
+
+.satellite-control-group {
+   display: flex;
+   align-items: center;
+   gap: 0.35rem;
+}
+
+.satellite-control-group .control-label {
+   font-size: 0.8rem;
+   color: var(--text-secondary);
+   white-space: nowrap;
+}
+
+.satellite-user-select,
+.satellite-ha-area {
+   padding: 4px 8px;
+   font-size: 0.85rem;
+   background: var(--bg-primary);
+   color: var(--text-primary);
+   border: 1px solid var(--border-color);
+   border-radius: 4px;
+   min-height: 32px;
+}
+
+.satellite-user-select {
+   min-width: 120px;
+}
+
+.satellite-ha-area {
+   width: 160px;
+}
+
+/* Disabled controls during save */
+.satellite-user-select:disabled,
+.satellite-ha-area:disabled {
+   opacity: 0.5;
+   cursor: wait;
+}
+
+/* Footer row: delete button */
+.satellite-footer {
+   margin-top: 0.5rem;
+   padding-top: 0.5rem;
+   border-top: 1px solid var(--border-color);
+   display: flex;
+   justify-content: flex-end;
+}
+
+.satellite-delete-btn {
+   flex-shrink: 0;
+   background: transparent;
+   border: 1px solid var(--error);
+   color: var(--error);
+   padding: 0.25rem 0.75rem;
+   font-size: 0.8rem;
+   border-radius: 4px;
+   cursor: pointer;
+   transition: all var(--transition-fast);
+}
+
+.satellite-delete-btn:hover {
+   background: rgba(239, 68, 68, 0.15);
+}
+
+/* =============================================================================
+ * Focus & Accessibility
+ * ============================================================================= */
+
+.satellite-user-select:focus-visible,
+.satellite-ha-area:focus-visible {
+   outline: 2px solid var(--accent);
+   outline-offset: 2px;
+}
+
+.satellite-delete-btn:focus-visible {
+   outline: 2px solid var(--error);
+   outline-offset: 2px;
+}
+
+/* =============================================================================
+ * Mobile Responsive
+ * ============================================================================= */
+
+@media (max-width: 600px) {
+   .satellite-header {
+      gap: 0.35rem;
+   }
+
+   .satellite-status-text {
+      width: 100%;
+      margin-left: 0;
+   }
+
+   .satellite-controls {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.5rem;
+   }
+
+   .satellite-user-select,
+   .satellite-ha-area {
+      width: 100%;
+      min-height: 44px;
+   }
+
+   .satellite-delete-btn {
+      min-height: 44px;
+      padding: 0.5rem 1rem;
+   }
+}

@@ -646,6 +646,34 @@ static void refresh_area_cache(void) {
    LOG_INFO("Home Assistant: Cached %d entity-area assignments", s_ha.area_cache.count);
 }
 
+int homeassistant_list_areas(char areas[][64], int max_areas) {
+   if (!areas || max_areas <= 0)
+      return 0;
+
+   int count = 0;
+   pthread_rwlock_rdlock(&s_ha.rwlock);
+
+   for (int i = 0; i < s_ha.area_cache.count && count < max_areas; i++) {
+      const char *name = s_ha.area_cache.entries[i].area_name;
+      /* Deduplicate: check if we already have this area */
+      bool dup = false;
+      for (int j = 0; j < count; j++) {
+         if (strcmp(areas[j], name) == 0) {
+            dup = true;
+            break;
+         }
+      }
+      if (!dup) {
+         strncpy(areas[count], name, 63);
+         areas[count][63] = '\0';
+         count++;
+      }
+   }
+
+   pthread_rwlock_unlock(&s_ha.rwlock);
+   return count;
+}
+
 /* Look up area name for entity via binary search */
 static const char *find_area_for_entity(const char *entity_id) {
    if (s_ha.area_cache.count == 0)

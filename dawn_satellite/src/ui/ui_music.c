@@ -2314,8 +2314,7 @@ void ui_music_on_state(ui_music_t *m, const music_state_update_t *state) {
       m->queue_index = state->queue_index;
 
    /* Re-fetch full queue list when count or index changes (e.g. after remove) */
-   bool queue_changed =
-       (m->queue_count != prev_queue_count || m->queue_index != prev_queue_index);
+   bool queue_changed = (m->queue_count != prev_queue_count || m->queue_index != prev_queue_index);
 
    /* Sync shuffle/repeat from server (server is source of truth) */
    m->shuffle = state->shuffle;

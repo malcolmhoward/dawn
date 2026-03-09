@@ -4,7 +4,7 @@
 **Date**: 2025-12-18
 **Last Updated**: 2026-02-19
 
-**Note**: DAP2 satellite authentication is now handled via pre-shared registration key in `secrets.toml`, validated in `handle_satellite_register()`. The `dawn-admin` CLI tool described in this document was never implemented — all administration is done via the WebUI. DAP1 has been removed entirely.
+**Note**: DAP2 satellite authentication is now handled via pre-shared registration key in `secrets.toml`, validated in `handle_satellite_register()`. Satellite-to-user assignment is managed via the `satellite_mappings` DB table (schema v21) and the WebUI Satellite Management admin panel (`webui_admin_satellite.c`). Mapped satellites inherit their assigned user's music queue, memory extraction, and personalized prompt on connect. The `dawn-admin` CLI tool described in this document was never implemented — all administration is done via the WebUI. DAP1 has been removed entirely.
 **Note**: Phase 3 reviewed by architecture, efficiency, security, and UI agents (2026-01-04).
 
 ## Overview

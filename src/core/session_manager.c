@@ -493,6 +493,59 @@ void session_append_room_context(session_t *session, const char *room) {
    free(base);
 }
 
+void session_append_satellite_context(session_t *session, const char *room, const char *ha_area) {
+   if (!session) {
+      return;
+   }
+
+   char *base = session_get_system_prompt(session);
+   if (!base) {
+      return;
+   }
+
+   /* Guard against double-append */
+   if (strstr(base, "\nRoom=")) {
+      free(base);
+      return;
+   }
+
+   /* Build context in stack buffer: Room + optional HA area */
+   char ctx[192];
+   ctx[0] = '\0';
+   int len = 0;
+
+   if (room && room[0]) {
+      len = snprintf(ctx, sizeof(ctx), "\nRoom=%s.", room);
+   }
+
+   if (ha_area && ha_area[0] && len < (int)sizeof(ctx) - 1) {
+      /* Sanitize ha_area: allowlist alphanumeric, spaces, hyphens, underscores */
+      char safe_area[64];
+      strncpy(safe_area, ha_area, sizeof(safe_area) - 1);
+      safe_area[sizeof(safe_area) - 1] = '\0';
+      for (char *p = safe_area; *p; p++) {
+         if (!((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z') || (*p >= '0' && *p <= '9') ||
+               *p == ' ' || *p == '-' || *p == '_'))
+            *p = '_';
+      }
+      snprintf(ctx + len, sizeof(ctx) - len, "\nHomeAssistant_Area=[%s].", safe_area);
+   }
+
+   if (ctx[0] == '\0') {
+      free(base);
+      return;
+   }
+
+   size_t total = strlen(base) + strlen(ctx) + 1;
+   char *with_ctx = malloc(total);
+   if (with_ctx) {
+      snprintf(with_ctx, total, "%s%s", base, ctx);
+      session_update_system_prompt(session, with_ctx);
+      free(with_ctx);
+   }
+   free(base);
+}
+
 session_t *session_create_dap2(int client_fd,
                                dap2_tier_t tier,
                                const dap2_identity_t *identity,
@@ -622,11 +675,10 @@ session_t *session_create_dap2(int client_fd,
 
    pthread_rwlock_unlock(&session_manager_rwlock);
 
-   /* Initialize with remote command prompt (excludes HUD/helmet commands) */
+   /* Initialize with remote command prompt (excludes HUD/helmet commands).
+    * Room/HA context is appended later by handle_satellite_register() after
+    * the DB mapping lookup determines the HA area. */
    session_init_system_prompt(session, get_remote_command_prompt());
-
-   /* Append satellite room to system prompt so LLM knows the room context */
-   session_append_room_context(session, identity->location);
 
    LOG_INFO("Created DAP2 session %u (tier=%d, uuid=%s, name=%s, location=%s)", session->session_id,
             tier, identity->uuid, identity->name, identity->location);
@@ -924,9 +976,10 @@ void session_destroy(uint32_t session_id) {
    }
    pthread_mutex_unlock(&session->metrics_mutex);
 
-   /* Trigger memory extraction for authenticated WebSocket sessions with queries */
-   if (session->type == SESSION_TYPE_WEBUI && session->metrics.user_id > 0 &&
-       session->metrics.queries_total > 0 && g_config.memory.enabled) {
+   /* Trigger memory extraction for authenticated sessions (WebUI + DAP2) with queries */
+   if ((session->type == SESSION_TYPE_WEBUI || session->type == SESSION_TYPE_DAP2) &&
+       session->metrics.user_id > 0 && session->metrics.queries_total > 0 &&
+       g_config.memory.enabled) {
       /* Copy conversation history reference while we still have it */
       pthread_mutex_lock(&session->history_mutex);
       struct json_object *history = session->conversation_history;
@@ -1219,8 +1272,11 @@ int64_t session_save_voice_conversation(session_t *session) {
       return -1;
    }
 
-   /* Get user ID from config */
-   int user_id = g_config.memory.default_voice_user_id;
+   /* Get user ID: prefer session's mapped user, fall back to config default */
+   int user_id = session->metrics.user_id;
+   if (user_id <= 0) {
+      user_id = g_config.memory.default_voice_user_id;
+   }
    if (user_id <= 0) {
       user_id = 1; /* Fallback to admin */
    }

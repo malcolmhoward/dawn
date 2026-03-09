@@ -521,6 +521,7 @@ if(ENABLE_WEBUI)
         src/webui/webui_images.c
         src/webui/webui_documents.c
         src/webui/webui_satellite.c
+        src/webui/webui_admin_satellite.c
     )
     if(DAWN_ENABLE_HOMEASSISTANT_TOOL)
         list(APPEND DAWN_SOURCES src/webui/webui_homeassistant.c)
@@ -577,6 +578,7 @@ if(ENABLE_AUTH)
         src/auth/auth_db_maint.c
         src/auth/auth_db_conv.c
         src/auth/auth_db_metrics.c
+        src/auth/auth_db_satellite.c
         src/auth/auth_crypto.c
         src/auth/auth_maintenance.c
         src/image_store.c

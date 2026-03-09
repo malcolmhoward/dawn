@@ -229,7 +229,22 @@ static const char *SCHEMA_SQL =
     "   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE"
     ");"
     "CREATE INDEX IF NOT EXISTS idx_images_user ON images(user_id);"
-    "CREATE INDEX IF NOT EXISTS idx_images_created ON images(created_at);";
+    "CREATE INDEX IF NOT EXISTS idx_images_created ON images(created_at);"
+
+    /* Satellite mappings table (added in schema v20) */
+    "CREATE TABLE IF NOT EXISTS satellite_mappings ("
+    "   uuid TEXT PRIMARY KEY,"
+    "   name TEXT NOT NULL DEFAULT '',"
+    "   location TEXT NOT NULL DEFAULT '',"
+    "   ha_area TEXT DEFAULT '',"
+    "   user_id INTEGER DEFAULT NULL,"
+    "   tier INTEGER DEFAULT 1,"
+    "   last_seen INTEGER DEFAULT 0,"
+    "   created_at INTEGER NOT NULL,"
+    "   enabled INTEGER DEFAULT 1,"
+    "   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL"
+    ");"
+    "CREATE INDEX IF NOT EXISTS idx_satellite_user ON satellite_mappings(user_id);";
 
 /* =============================================================================
  * Schema Version and Migration
@@ -690,6 +705,65 @@ static int create_schema(void) {
          return AUTH_DB_FAILURE;
       }
       LOG_INFO("auth_db: added embedding columns and entity/relation tables (v19)");
+   }
+
+   /* v20 migration: satellite_mappings table for persistent satellite-to-user mappings */
+   if (current_version >= 1 && current_version < 20) {
+      const char *v20_sql =
+          "CREATE TABLE IF NOT EXISTS satellite_mappings ("
+          "  uuid TEXT PRIMARY KEY,"
+          "  name TEXT NOT NULL DEFAULT '',"
+          "  location TEXT NOT NULL DEFAULT '',"
+          "  ha_area TEXT DEFAULT '',"
+          "  user_id INTEGER DEFAULT NULL,"
+          "  tier INTEGER DEFAULT 1,"
+          "  last_seen INTEGER DEFAULT 0,"
+          "  created_at INTEGER NOT NULL,"
+          "  enabled INTEGER DEFAULT 1,"
+          "  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL"
+          ");"
+          "CREATE INDEX IF NOT EXISTS idx_satellite_user ON satellite_mappings(user_id);";
+
+      rc = sqlite3_exec(s_db.db, v20_sql, NULL, NULL, &errmsg);
+      if (rc != SQLITE_OK) {
+         LOG_ERROR("auth_db: v20 migration failed: %s", errmsg ? errmsg : "unknown");
+         sqlite3_free(errmsg);
+         return AUTH_DB_FAILURE;
+      }
+      LOG_INFO("auth_db: added satellite_mappings table (v20)");
+   }
+
+   /* v21 migration: fix satellite_mappings FK (DEFAULT 0 -> DEFAULT NULL, SET NULL) */
+   if (current_version >= 20 && current_version < 21) {
+      const char *v21_sql =
+          "BEGIN TRANSACTION;"
+          "CREATE TABLE IF NOT EXISTS satellite_mappings_new ("
+          "  uuid TEXT PRIMARY KEY,"
+          "  name TEXT NOT NULL DEFAULT '',"
+          "  location TEXT NOT NULL DEFAULT '',"
+          "  ha_area TEXT DEFAULT '',"
+          "  user_id INTEGER DEFAULT NULL,"
+          "  tier INTEGER DEFAULT 1,"
+          "  last_seen INTEGER DEFAULT 0,"
+          "  created_at INTEGER NOT NULL,"
+          "  enabled INTEGER DEFAULT 1,"
+          "  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL"
+          ");"
+          "INSERT INTO satellite_mappings_new SELECT uuid, name, location, ha_area,"
+          "  CASE WHEN user_id = 0 THEN NULL ELSE user_id END,"
+          "  tier, last_seen, created_at, enabled FROM satellite_mappings;"
+          "DROP TABLE satellite_mappings;"
+          "ALTER TABLE satellite_mappings_new RENAME TO satellite_mappings;"
+          "CREATE INDEX IF NOT EXISTS idx_satellite_user ON satellite_mappings(user_id);"
+          "COMMIT;";
+
+      rc = sqlite3_exec(s_db.db, v21_sql, NULL, NULL, &errmsg);
+      if (rc != SQLITE_OK) {
+         LOG_ERROR("auth_db: v21 migration failed: %s", errmsg ? errmsg : "unknown");
+         sqlite3_free(errmsg);
+         return AUTH_DB_FAILURE;
+      }
+      LOG_INFO("auth_db: fixed satellite_mappings FK constraints (v21)");
    }
 
    /* Create continuation index (runs for both new databases and migrations) */
@@ -1627,6 +1701,75 @@ static int prepare_statements(void) {
       return AUTH_DB_FAILURE;
    }
 
+   /* Satellite mapping statements */
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "INSERT INTO satellite_mappings (uuid, name, location, ha_area, user_id, tier, "
+       "last_seen, created_at, enabled) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+       "ON CONFLICT(uuid) DO UPDATE SET name=excluded.name, location=excluded.location, "
+       "tier=excluded.tier, last_seen=excluded.last_seen",
+       -1, &s_db.stmt_satellite_upsert, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare satellite_upsert failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "SELECT uuid, name, location, ha_area, user_id, tier, last_seen, created_at, enabled "
+       "FROM satellite_mappings WHERE uuid = ?",
+       -1, &s_db.stmt_satellite_get, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare satellite_get failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM satellite_mappings WHERE uuid = ?", -1,
+                           &s_db.stmt_satellite_delete, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare satellite_delete failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db, "UPDATE satellite_mappings SET user_id = ? WHERE uuid = ?", -1,
+                           &s_db.stmt_satellite_update_user, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare satellite_update_user failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "UPDATE satellite_mappings SET location = ?, ha_area = ? WHERE uuid = ?",
+                           -1, &s_db.stmt_satellite_update_location, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare satellite_update_location failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db, "UPDATE satellite_mappings SET enabled = ? WHERE uuid = ?", -1,
+                           &s_db.stmt_satellite_set_enabled, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare satellite_set_enabled failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db, "UPDATE satellite_mappings SET last_seen = ? WHERE uuid = ?",
+                           -1, &s_db.stmt_satellite_update_last_seen, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare satellite_update_last_seen failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "SELECT uuid, name, location, ha_area, user_id, tier, last_seen, created_at, enabled "
+       "FROM satellite_mappings ORDER BY name ASC",
+       -1, &s_db.stmt_satellite_list, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare satellite_list failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
    return AUTH_DB_SUCCESS;
 }
 
@@ -1835,6 +1978,24 @@ static void finalize_statements(void) {
       sqlite3_finalize(s_db.stmt_memory_entity_delete);
    if (s_db.stmt_memory_relation_delete_by_entity)
       sqlite3_finalize(s_db.stmt_memory_relation_delete_by_entity);
+
+   /* Satellite mapping statements */
+   if (s_db.stmt_satellite_upsert)
+      sqlite3_finalize(s_db.stmt_satellite_upsert);
+   if (s_db.stmt_satellite_get)
+      sqlite3_finalize(s_db.stmt_satellite_get);
+   if (s_db.stmt_satellite_delete)
+      sqlite3_finalize(s_db.stmt_satellite_delete);
+   if (s_db.stmt_satellite_update_user)
+      sqlite3_finalize(s_db.stmt_satellite_update_user);
+   if (s_db.stmt_satellite_update_location)
+      sqlite3_finalize(s_db.stmt_satellite_update_location);
+   if (s_db.stmt_satellite_set_enabled)
+      sqlite3_finalize(s_db.stmt_satellite_set_enabled);
+   if (s_db.stmt_satellite_update_last_seen)
+      sqlite3_finalize(s_db.stmt_satellite_update_last_seen);
+   if (s_db.stmt_satellite_list)
+      sqlite3_finalize(s_db.stmt_satellite_list);
 
    /* Clear all statement pointers using offsetof for safety
     * MAINTENANCE: If statements are reordered, update first/last_stmt names */

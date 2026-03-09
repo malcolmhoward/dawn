@@ -422,12 +422,23 @@ DAP2 Tier 1 satellites handle speech recognition and text-to-speech locally and 
    - sysfs backlight control for DSI displays
    - Software dimming fallback for HDMI displays
 
-**Daemon side** (`src/webui/`):
+**Daemon side** (`src/webui/`, `src/auth/`):
 
 - **webui_satellite.c**: Satellite message handlers
-   - Registration, query routing, streaming response relay
+   - Registration with DB lookup for persistent user mapping
+   - Query routing, streaming response relay
    - Session management with UUID-based identification
+   - HA area + room context injection into LLM system prompt
    - Satellite auth whitelist for music WebSocket messages
+
+- **webui_admin_satellite.c**: Admin satellite management (CRUD)
+   - List/update/delete satellite-to-user mappings (admin-only)
+   - HA area assignment (dropdown from entity cache when HA enabled)
+   - Force-disconnect on config change (satellite picks up new config on reconnect)
+
+- **auth_db_satellite.c**: Satellite mapping persistence (`satellite_mappings` table)
+   - Upsert, get, delete, update user/location, list with callback
+   - Auto-registration on first connect (user_id=NULL, populated via admin panel)
 
 **Shared** (`common/`):
 
@@ -447,6 +458,9 @@ DAP2 Tier 1 satellites handle speech recognition and text-to-speech locally and 
 | `stream_delta`           | Daemon → Satellite | Partial response text                    |
 | `stream_end`             | Daemon → Satellite | Response complete                        |
 | `satellite_ping`         | Satellite → Daemon | App-level keep-alive                     |
+| `list_satellites`        | Admin → Daemon     | Request all satellite mappings + status  |
+| `update_satellite`       | Admin → Daemon     | Update user assignment or HA area        |
+| `delete_satellite`       | Admin → Daemon     | Remove satellite mapping from DB         |
 | `music_control`          | Satellite → Daemon | Play/pause/stop/next/prev/seek           |
 | `music_library`          | Satellite → Daemon | Browse artists/albums/tracks (paginated) |
 | `music_state`            | Daemon → Satellite | Playback state update                    |

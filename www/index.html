@@ -1244,6 +1244,23 @@ Format rules:
                   </div>
                </div>
 
+               <!-- Satellite Management Section (admin only) -->
+               <div class="settings-section admin-only collapsed" id="satellite-management-section">
+                  <h3 class="section-header">
+                     <span class="section-icon">&#x1F4E1;</span>
+                     Satellite Management
+                     <span class="section-toggle">&#9660;</span>
+                  </h3>
+                  <div class="section-content">
+                     <div id="satellite-list" class="satellite-list" aria-live="polite"></div>
+                     <div class="satellite-management-actions">
+                        <button id="refresh-satellites-btn" class="btn btn-secondary">
+                           Refresh
+                        </button>
+                     </div>
+                  </div>
+               </div>
+
                <!-- My Settings Section (all authenticated users) -->
                <div class="settings-section collapsed" id="my-settings-section">
                   <h3 class="section-header">
@@ -2561,6 +2578,7 @@ token = "eyJ..."</pre
       <script src="/js/admin/tools.js"></script>
       <script src="/js/admin/metrics-panel.js"></script>
       <script src="/js/admin/users.js"></script>
+      <script src="/js/admin/satellites.js"></script>
       <script src="/js/admin/my-settings.js"></script>
       <script src="/js/admin/my-sessions.js"></script>
       <script src="/js/ui/export.js"></script>

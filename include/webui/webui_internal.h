@@ -861,6 +861,50 @@ void handle_ha_refresh_entities(ws_connection_t *conn);
 #endif /* DAWN_ENABLE_HOMEASSISTANT_TOOL */
 
 /* =============================================================================
+ * Satellite Connection Helpers (defined in webui_server.c)
+ * ============================================================================= */
+
+/**
+ * @brief Check if a satellite with the given UUID is currently connected
+ *
+ * Thread-safe. Scans the connection registry for an active satellite connection
+ * whose session identity UUID matches.
+ *
+ * @param uuid Satellite UUID string (36 chars)
+ * @return true if online, false if not found or offline
+ */
+bool webui_is_satellite_online(const char *uuid);
+
+/**
+ * @brief Force-disconnect a satellite by UUID
+ *
+ * Thread-safe. Finds the satellite connection and closes it with a policy
+ * violation reason. Used when an admin disables a satellite.
+ *
+ * @param uuid Satellite UUID string (36 chars)
+ */
+void webui_force_disconnect_satellite(const char *uuid);
+
+/* =============================================================================
+ * Satellite Admin Handler Functions (defined in webui_admin_satellite.c)
+ * ============================================================================= */
+
+/**
+ * @brief List all satellite mappings with online status (admin only)
+ */
+void handle_list_satellites(ws_connection_t *conn);
+
+/**
+ * @brief Update satellite mapping (user, ha_area, enabled) (admin only)
+ */
+void handle_update_satellite(ws_connection_t *conn, struct json_object *payload);
+
+/**
+ * @brief Delete a satellite mapping (admin only)
+ */
+void handle_delete_satellite(ws_connection_t *conn, struct json_object *payload);
+
+/* =============================================================================
  * Satellite Handler Functions (defined in webui_satellite.c)
  * ============================================================================= */
 

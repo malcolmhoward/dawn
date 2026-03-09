@@ -226,6 +226,17 @@ ha_error_t homeassistant_trigger_automation(const char *entity_id);
  * ============================================================================= */
 
 /**
+ * @brief Get list of unique area names from the area cache
+ *
+ * Copies area name strings into caller-provided buffers (safe after return).
+ *
+ * @param areas Output array of area name buffers (each 64 bytes)
+ * @param max_areas Maximum number of areas to return
+ * @return Number of unique areas written, or 0 if unavailable
+ */
+int homeassistant_list_areas(char areas[][64], int max_areas);
+
+/**
  * @brief Get error message for error code
  */
 const char *homeassistant_error_str(ha_error_t err);

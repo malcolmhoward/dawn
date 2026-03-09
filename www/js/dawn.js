@@ -360,6 +360,19 @@
             case 'unlock_user_response':
                DawnUsers.handleUnlockResponse(msg.payload);
                break;
+            // Satellite management responses
+            case 'list_satellites_response':
+               if (typeof DawnSatellites !== 'undefined')
+                  DawnSatellites.handleListResponse(msg.payload);
+               break;
+            case 'update_satellite_response':
+               if (typeof DawnSatellites !== 'undefined')
+                  DawnSatellites.handleUpdateResponse(msg.payload);
+               break;
+            case 'delete_satellite_response':
+               if (typeof DawnSatellites !== 'undefined')
+                  DawnSatellites.handleDeleteResponse(msg.payload);
+               break;
             case 'get_my_settings_response':
                DawnMySettings.handleGetResponse(msg.payload);
                break;
@@ -628,6 +641,9 @@
       DawnElements.connectionStatus.title = ''; // Clear any previous tooltip
       if (status === 'connected') {
          DawnElements.connectionStatus.textContent = 'Connected';
+         if (typeof DawnSatellites !== 'undefined') {
+            DawnSatellites.handleReconnect();
+         }
       } else if (status === 'connecting') {
          DawnElements.connectionStatus.textContent = 'Connecting...';
       } else {
@@ -1273,6 +1289,9 @@
          getAuthState: () => DawnState.authState,
       });
       DawnUsers.init();
+      DawnSatellites.setCallbacks({
+         showConfirmModal: DawnSettings.showConfirmModal,
+      });
       DawnMySettings.setCallbacks({
          showConfirmModal: DawnSettings.showConfirmModal,
          setTheme: DawnTheme.set,

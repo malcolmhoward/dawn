@@ -48,7 +48,7 @@
  * ============================================================================= */
 
 /* Current schema version */
-#define AUTH_DB_SCHEMA_VERSION 19
+#define AUTH_DB_SCHEMA_VERSION 21
 
 /* Retention periods */
 #define LOGIN_ATTEMPT_RETENTION_SEC (7 * 24 * 60 * 60) /* 7 days */
@@ -179,6 +179,16 @@ typedef struct {
    sqlite3_stmt *stmt_memory_fact_update_embedding;
    sqlite3_stmt *stmt_memory_fact_get_embeddings;
    sqlite3_stmt *stmt_memory_fact_list_without_embedding;
+
+   /* === Satellite mapping statements (auth_db_satellite.c) === */
+   sqlite3_stmt *stmt_satellite_upsert;
+   sqlite3_stmt *stmt_satellite_get;
+   sqlite3_stmt *stmt_satellite_delete;
+   sqlite3_stmt *stmt_satellite_update_user;
+   sqlite3_stmt *stmt_satellite_update_location;
+   sqlite3_stmt *stmt_satellite_set_enabled;
+   sqlite3_stmt *stmt_satellite_update_last_seen;
+   sqlite3_stmt *stmt_satellite_list;
 
    /* === Entity graph statements (memory_db.c) === */
    sqlite3_stmt *stmt_memory_entity_upsert;

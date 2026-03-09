@@ -30,6 +30,7 @@
 #include <string.h>
 #include <time.h>
 
+#include "auth/auth_db.h"
 #include "config/dawn_config.h"
 #include "core/session_manager.h"
 #include "logging.h"
@@ -554,11 +555,81 @@ void handle_satellite_register(ws_connection_t *conn, struct json_object *payloa
       conn->tts_enabled = true;
    }
 
+   /* Look up persistent satellite mapping and apply user assignment */
+   if (auth_db_is_ready()) {
+      satellite_mapping_t mapping;
+      int db_rc = satellite_db_get(uuid, &mapping);
+
+      if (db_rc == AUTH_DB_SUCCESS) {
+         /* Existing mapping found */
+         if (!mapping.enabled) {
+            LOG_WARNING("Satellite: Disabled satellite rejected (uuid=%s)", uuid);
+            send_error_impl(conn->wsi, "SATELLITE_DISABLED",
+                            "This satellite has been disabled by an administrator.");
+            session_destroy(session->session_id);
+            conn->session = NULL;
+            return;
+         }
+
+         /* Apply user mapping if assigned */
+         if (mapping.user_id > 0) {
+#ifdef ENABLE_MULTI_CLIENT
+            session_set_metrics_user(session, mapping.user_id);
+#endif
+            conn->auth_user_id = mapping.user_id;
+
+            /* Build personalized system prompt with user memories */
+            char *user_prompt = build_user_prompt(mapping.user_id);
+            if (user_prompt) {
+               session_update_system_prompt(session, user_prompt);
+               free(user_prompt);
+            }
+
+            LOG_INFO("Satellite: Applied user mapping user_id=%d for %s (%s)", mapping.user_id,
+                     identity.name, uuid);
+         }
+
+         /* Append satellite context (room + HA area) */
+         session_append_satellite_context(session, identity.location, mapping.ha_area);
+
+         /* Sync name/location if changed on satellite side (already sanitized above) */
+         if (strcmp(mapping.name, identity.name) != 0 ||
+             strcmp(mapping.location, identity.location) != 0) {
+            satellite_mapping_t updated = mapping;
+            strncpy(updated.name, identity.name, sizeof(updated.name) - 1);
+            strncpy(updated.location, identity.location, sizeof(updated.location) - 1);
+            updated.last_seen = time(NULL);
+            satellite_db_upsert(&updated);
+         } else {
+            satellite_db_update_last_seen(uuid);
+         }
+      } else if (db_rc == AUTH_DB_NOT_FOUND) {
+         /* First-time registration — create mapping with user_id=0 */
+         satellite_mapping_t new_mapping;
+         memset(&new_mapping, 0, sizeof(new_mapping));
+         strncpy(new_mapping.uuid, uuid, sizeof(new_mapping.uuid) - 1);
+         strncpy(new_mapping.name, identity.name, sizeof(new_mapping.name) - 1);
+         strncpy(new_mapping.location, identity.location, sizeof(new_mapping.location) - 1);
+         new_mapping.tier = tier;
+         new_mapping.enabled = true;
+         new_mapping.created_at = time(NULL);
+         new_mapping.last_seen = new_mapping.created_at;
+
+         satellite_db_upsert(&new_mapping);
+
+         /* No user mapping yet — use default room context */
+         session_append_satellite_context(session, identity.location, NULL);
+
+         LOG_INFO("Satellite: Auto-registered new satellite %s (%s)", identity.name, uuid);
+      }
+   }
+
    /* Get reconnect secret for client to save */
    char *session_secret = session_get_reconnect_secret(session);
 
-   LOG_INFO("Satellite: Registered '%s' (%s) tier=%d location='%s' session=%u", identity.name,
-            identity.uuid, tier, identity.location, session->session_id);
+   LOG_INFO("Satellite: Registered '%s' (%s) tier=%d location='%s' session=%u user=%d",
+            identity.name, identity.uuid, tier, identity.location, session->session_id,
+            conn->auth_user_id);
 
    /* Send registration acknowledgment with reconnect secret
     * SECURITY: Client MUST save this secret and provide it on reconnection.

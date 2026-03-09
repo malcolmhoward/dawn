@@ -723,6 +723,120 @@ int auth_db_checkpoint(void);
 int auth_db_checkpoint_passive(void);
 
 /* ============================================================================
+ * Satellite Mappings
+ * ============================================================================ */
+
+/**
+ * @brief Maximum satellite UUID length (including null terminator)
+ */
+#define SATELLITE_UUID_MAX 37
+
+/**
+ * @brief Maximum satellite name length
+ */
+#define SATELLITE_NAME_MAX 64
+
+/**
+ * @brief Maximum satellite location/HA area length
+ */
+#define SATELLITE_LOCATION_MAX 64
+
+/**
+ * @brief Persistent satellite-to-user mapping
+ *
+ * Stored in satellite_mappings table. Created on first registration,
+ * updated by admin via WebUI. User mapping takes effect on next reconnect.
+ */
+typedef struct {
+   char uuid[SATELLITE_UUID_MAX];
+   char name[SATELLITE_NAME_MAX];
+   char location[SATELLITE_LOCATION_MAX];
+   char ha_area[SATELLITE_LOCATION_MAX];
+   int user_id;
+   int tier;
+   bool enabled;
+   time_t last_seen;
+   time_t created_at;
+} satellite_mapping_t;
+
+/**
+ * @brief Insert or update a satellite mapping
+ *
+ * On conflict (UUID exists), updates name, location, tier, last_seen.
+ * Does NOT overwrite user_id, ha_area, or enabled (admin-managed fields).
+ *
+ * @param mapping Satellite mapping data
+ * @return AUTH_DB_SUCCESS, AUTH_DB_INVALID, or AUTH_DB_FAILURE
+ */
+int satellite_db_upsert(const satellite_mapping_t *mapping);
+
+/**
+ * @brief Get satellite mapping by UUID
+ *
+ * @param uuid Satellite UUID (36 chars)
+ * @param out Buffer to receive mapping data
+ * @return AUTH_DB_SUCCESS, AUTH_DB_NOT_FOUND, or AUTH_DB_FAILURE
+ */
+int satellite_db_get(const char *uuid, satellite_mapping_t *out);
+
+/**
+ * @brief Delete a satellite mapping
+ *
+ * @param uuid Satellite UUID
+ * @return AUTH_DB_SUCCESS, AUTH_DB_NOT_FOUND, or AUTH_DB_FAILURE
+ */
+int satellite_db_delete(const char *uuid);
+
+/**
+ * @brief Update satellite user assignment
+ *
+ * @param uuid Satellite UUID
+ * @param user_id New user ID (0 = unassociated)
+ * @return AUTH_DB_SUCCESS, AUTH_DB_NOT_FOUND, or AUTH_DB_FAILURE
+ */
+int satellite_db_update_user(const char *uuid, int user_id);
+
+/**
+ * @brief Update satellite location and HA area
+ *
+ * @param uuid Satellite UUID
+ * @param location Room/location name
+ * @param ha_area Home Assistant area (can be NULL/empty)
+ * @return AUTH_DB_SUCCESS, AUTH_DB_NOT_FOUND, or AUTH_DB_FAILURE
+ */
+int satellite_db_update_location(const char *uuid, const char *location, const char *ha_area);
+
+/**
+ * @brief Enable or disable a satellite
+ *
+ * Disabled satellites are rejected on registration.
+ *
+ * @param uuid Satellite UUID
+ * @param enabled true to enable, false to disable
+ * @return AUTH_DB_SUCCESS, AUTH_DB_NOT_FOUND, or AUTH_DB_FAILURE
+ */
+int satellite_db_set_enabled(const char *uuid, bool enabled);
+
+/**
+ * @brief Update satellite last_seen timestamp to now
+ *
+ * Called only on registration events (not pings) to avoid write wear.
+ *
+ * @param uuid Satellite UUID
+ * @return AUTH_DB_SUCCESS or AUTH_DB_FAILURE
+ */
+int satellite_db_update_last_seen(const char *uuid);
+
+/**
+ * @brief List all satellite mappings (callback-based)
+ *
+ * @param callback Function called for each satellite
+ * @param ctx User-provided context passed to callback
+ * @return AUTH_DB_SUCCESS or AUTH_DB_FAILURE
+ */
+int satellite_db_list(int (*callback)(const satellite_mapping_t *, void *), void *ctx);
+
+/* ============================================================================
  * Statistics and Database Management
  * ============================================================================ */
 

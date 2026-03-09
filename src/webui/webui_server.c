@@ -2855,6 +2855,18 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
          handle_unlock_user(conn, payload);
       }
    }
+   /* Satellite management (admin only) */
+   else if (strcmp(type, "list_satellites") == 0) {
+      handle_list_satellites(conn);
+   } else if (strcmp(type, "update_satellite") == 0) {
+      if (payload) {
+         handle_update_satellite(conn, payload);
+      }
+   } else if (strcmp(type, "delete_satellite") == 0) {
+      if (payload) {
+         handle_delete_satellite(conn, payload);
+      }
+   }
    /* Personal settings (authenticated users) */
    else if (strcmp(type, "get_my_settings") == 0) {
       handle_get_my_settings(conn);
@@ -5371,12 +5383,25 @@ void scheduler_broadcast_notification(const sched_event_t *event, const char *te
    json_object_object_add(root, "payload", payload);
    const char *json_str = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN);
 
-   /* Queue a response for each authenticated client (WebUI + satellites) */
+   /* Queue a response for matching clients.
+    * If event has a user_id > 0, only notify that user's connections.
+    * If user_id == 0 (system event), broadcast to all authenticated connections. */
    int sent = 0;
+   int target_user = event->user_id;
    pthread_mutex_lock(&s_conn_registry_mutex);
    for (int i = 0; i < MAX_ACTIVE_CONNECTIONS; i++) {
       ws_connection_t *conn = s_active_connections[i];
-      if (!conn || !conn->authenticated || !conn->session)
+      if (!conn || !conn->session)
+         continue;
+
+      /* Skip unauthenticated non-satellite connections.
+       * Note: unassigned satellites (user_id=0) receive system-wide events (target_user=0)
+       * intentionally, so all devices get broadcast alerts like alarms. */
+      if (!conn->authenticated && !conn->is_satellite)
+         continue;
+
+      /* Filter by user if event is user-specific */
+      if (target_user > 0 && conn->auth_user_id != target_user)
          continue;
 
       char *json_copy = strdup(json_str);
@@ -5437,6 +5462,49 @@ int webui_collect_conns_by_user(int user_id, ws_connection_t **out, int max_out)
    }
    pthread_mutex_unlock(&s_conn_registry_mutex);
    return count;
+}
+
+/* =============================================================================
+ * Satellite Connection Helpers
+ * ============================================================================= */
+
+bool webui_is_satellite_online(const char *uuid) {
+   if (!uuid)
+      return false;
+
+   bool online = false;
+   pthread_mutex_lock(&s_conn_registry_mutex);
+   for (int i = 0; i < MAX_ACTIVE_CONNECTIONS; i++) {
+      ws_connection_t *conn = s_active_connections[i];
+      if (conn && conn->is_satellite && conn->session &&
+          strcmp(conn->session->identity.uuid, uuid) == 0) {
+         online = true;
+         break;
+      }
+   }
+   pthread_mutex_unlock(&s_conn_registry_mutex);
+   return online;
+}
+
+/* NOTE: Must be called from the LWS service thread (admin handlers run within
+ * LWS callbacks, so current callers are safe). Do NOT call from worker threads. */
+void webui_force_disconnect_satellite(const char *uuid) {
+   if (!uuid)
+      return;
+
+   pthread_mutex_lock(&s_conn_registry_mutex);
+   for (int i = 0; i < MAX_ACTIVE_CONNECTIONS; i++) {
+      ws_connection_t *conn = s_active_connections[i];
+      if (conn && conn->is_satellite && conn->session && conn->wsi &&
+          strcmp(conn->session->identity.uuid, uuid) == 0) {
+         LOG_INFO("WebUI: Force-disconnecting satellite %s (disabled by admin)", uuid);
+         lws_close_reason(conn->wsi, LWS_CLOSE_STATUS_POLICY_VIOLATION, (unsigned char *)"disabled",
+                          8);
+         lws_set_timeout(conn->wsi, PENDING_TIMEOUT_CLOSE_SEND, 3);
+         break;
+      }
+   }
+   pthread_mutex_unlock(&s_conn_registry_mutex);
 }
 
 /* =============================================================================

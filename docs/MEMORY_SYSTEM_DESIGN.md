@@ -107,21 +107,20 @@ From studying commercial implementations:
 | ------------------- | ---------------------- | ------------------------------------------------- |
 | **WebUI**           | Auth username          | Full memory storage and retrieval                 |
 | **Local mic**       | Configurable mapping   | Default: no memory. Can map to user in config     |
-| **DAP satellites**  | Configurable mapping   | Default: no memory. Can map to user in config     |
-| **DAP2 satellites** | Configurable mapping   | See `DAP2_SATELLITE.md` for satellite configuration |
+| **DAP2 satellites** | Admin-managed DB mapping | Default: no memory. Assign user via WebUI Satellite Management panel |
 | **Future**          | Speaker identification | sherpa-onnx integration (Phase 5+)                |
 
-**Decision:** Voice interfaces (local mic, DAP) do NOT store memories by default. They operate as "guest" sessions. Users can optionally map these interfaces to authenticated users via configuration.
+**Decision:** Voice interfaces (local mic, satellites) do NOT store memories by default. They operate as "guest" sessions. Users can optionally map these interfaces to authenticated users.
 
 **Configuration:**
 
 ```toml
 [memory.voice_mapping]
-# Map voice interfaces to authenticated users
+# Map local mic to authenticated user
 # If not mapped, voice sessions don't store memories (guest mode)
 local_mic = "krisk"              # Local mic → user "krisk"
-# dap_kitchen = "krisk"          # DAP device → user (DAP1 legacy)
-# DAP2 mappings configured in [dap2.satellites] section
+# DAP2 satellites: assign user via WebUI Satellite Management admin panel
+# (stored in satellite_mappings DB table, not TOML config)
 ```
 
 **Why guest by default?**

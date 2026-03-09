@@ -538,6 +538,20 @@ void session_init_system_prompt(session_t *session, const char *system_prompt);
 void session_append_room_context(session_t *session, const char *room);
 
 /**
+ * @brief Append satellite room and HA area context to system prompt
+ *
+ * Builds both Room and HomeAssistant_Area in a single stack buffer.
+ * Sanitizes ha_area for non-printable characters.
+ *
+ * @param session Session to update
+ * @param room Room name from satellite identity
+ * @param ha_area Home Assistant area (can be NULL or empty)
+ *
+ * @locks session->history_mutex (via session_get/update_system_prompt)
+ */
+void session_append_satellite_context(session_t *session, const char *room, const char *ha_area);
+
+/**
  * @brief Update the system prompt without clearing conversation history
  *
  * Finds the existing system message in the conversation history and updates
