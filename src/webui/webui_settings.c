@@ -83,10 +83,6 @@ void handle_get_my_settings(ws_connection_t *conn) {
       json_object_object_add(resp_payload, "location", json_object_new_string(settings.location));
       json_object_object_add(resp_payload, "timezone", json_object_new_string(settings.timezone));
       json_object_object_add(resp_payload, "units", json_object_new_string(settings.units));
-      json_object_object_add(resp_payload, "tts_voice_model",
-                             json_object_new_string(settings.tts_voice_model));
-      json_object_object_add(resp_payload, "tts_length_scale",
-                             json_object_new_double((double)settings.tts_length_scale));
       json_object_object_add(resp_payload, "theme", json_object_new_string(settings.theme));
    } else {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
@@ -149,19 +145,6 @@ void handle_set_my_settings(ws_connection_t *conn, struct json_object *payload) 
       if (strcmp(units, "metric") == 0 || strcmp(units, "imperial") == 0) {
          strncpy(settings.units, units, AUTH_UNITS_MAX - 1);
          settings.units[AUTH_UNITS_MAX - 1] = '\0';
-      }
-   }
-
-   if (json_object_object_get_ex(payload, "tts_voice_model", &field_obj)) {
-      strncpy(settings.tts_voice_model, json_object_get_string(field_obj), AUTH_TTS_VOICE_MAX - 1);
-      settings.tts_voice_model[AUTH_TTS_VOICE_MAX - 1] = '\0';
-   }
-
-   if (json_object_object_get_ex(payload, "tts_length_scale", &field_obj)) {
-      double scale = json_object_get_double(field_obj);
-      /* Validate range (0.5 to 2.0 is reasonable for speech rate) */
-      if (scale >= 0.5 && scale <= 2.0) {
-         settings.tts_length_scale = (float)scale;
       }
    }
 

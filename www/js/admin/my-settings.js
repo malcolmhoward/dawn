@@ -1,6 +1,6 @@
 /**
  * DAWN My Settings Module
- * Personal user settings (persona, location, TTS speed, theme)
+ * Personal user settings (persona, location, theme)
  */
 (function () {
    'use strict';
@@ -62,9 +62,6 @@
       const persona = document.getElementById('my-persona');
       const location = document.getElementById('my-location');
       const timezone = document.getElementById('my-timezone');
-      const ttsSpeed = document.getElementById('my-tts-speed');
-      const ttsSpeedValue = document.getElementById('my-tts-speed-value');
-
       if (persona) {
          persona.value = payload.persona_description || '';
          updatePersonaCharCount();
@@ -89,12 +86,6 @@
          `input[name="units"][value="${payload.units || 'metric'}"]`
       );
       if (unitsRadio) unitsRadio.checked = true;
-
-      // Set TTS speed
-      if (ttsSpeed) {
-         ttsSpeed.value = payload.tts_length_scale || 1.0;
-         if (ttsSpeedValue) ttsSpeedValue.textContent = ttsSpeed.value + 'x';
-      }
 
       // Set theme
       if (payload.theme && callbacks.setTheme) {
@@ -199,8 +190,6 @@
 
    function init() {
       const form = document.getElementById('my-settings-form');
-      const ttsSpeed = document.getElementById('my-tts-speed');
-      const ttsSpeedValue = document.getElementById('my-tts-speed-value');
       const resetBtn = document.getElementById('reset-my-settings-btn');
       const section = document.getElementById('my-settings-section');
       const persona = document.getElementById('my-persona');
@@ -244,13 +233,6 @@
          });
       }
 
-      // Update speed display on range change
-      if (ttsSpeed && ttsSpeedValue) {
-         ttsSpeed.addEventListener('input', () => {
-            ttsSpeedValue.textContent = parseFloat(ttsSpeed.value).toFixed(1) + 'x';
-         });
-      }
-
       // Form submission
       if (form) {
          form.addEventListener('submit', (e) => {
@@ -263,7 +245,6 @@
                location: document.getElementById('my-location')?.value || '',
                timezone: document.getElementById('my-timezone')?.value || 'UTC',
                units: document.querySelector('input[name="units"]:checked')?.value || 'metric',
-               tts_length_scale: parseFloat(document.getElementById('my-tts-speed')?.value || 1.0),
                theme: document.querySelector('.theme-btn.active')?.dataset.theme || 'cyan',
             };
             requestSetMySettings(settings);
@@ -282,7 +263,6 @@
                      location: '',
                      timezone: 'UTC',
                      units: 'metric',
-                     tts_length_scale: 1.0,
                      theme: 'cyan',
                   });
                   // Apply theme immediately

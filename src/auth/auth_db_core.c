@@ -960,11 +960,10 @@ static int prepare_statements(void) {
    }
 
    /* User settings statements */
-   rc = sqlite3_prepare_v2(
-       s_db.db,
-       "SELECT persona_description, persona_mode, location, timezone, units, tts_voice_model, "
-       "tts_length_scale, theme FROM user_settings WHERE user_id = ?",
-       -1, &s_db.stmt_get_user_settings, NULL);
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT persona_description, persona_mode, location, timezone, units, "
+                           "theme FROM user_settings WHERE user_id = ?",
+                           -1, &s_db.stmt_get_user_settings, NULL);
    if (rc != SQLITE_OK) {
       LOG_ERROR("auth_db: prepare get_user_settings failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
@@ -973,12 +972,11 @@ static int prepare_statements(void) {
    rc = sqlite3_prepare_v2(
        s_db.db,
        "INSERT INTO user_settings (user_id, persona_description, persona_mode, location, timezone, "
-       "units, tts_voice_model, tts_length_scale, theme, updated_at) "
-       "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+       "units, theme, updated_at) "
+       "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
        "ON CONFLICT(user_id) DO UPDATE SET "
        "persona_description=excluded.persona_description, persona_mode=excluded.persona_mode, "
        "location=excluded.location, timezone=excluded.timezone, units=excluded.units, "
-       "tts_voice_model=excluded.tts_voice_model, tts_length_scale=excluded.tts_length_scale, "
        "theme=excluded.theme, updated_at=excluded.updated_at",
        -1, &s_db.stmt_set_user_settings, NULL);
    if (rc != SQLITE_OK) {

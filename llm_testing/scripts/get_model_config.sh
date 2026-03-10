@@ -24,7 +24,7 @@ get_model_config() {
 
         # Default configuration (safe for most models)
         export GPU_LAYERS=99
-        export CONTEXT=1024
+        export CONTEXT=16384
         export BATCH=512
         export UBATCH=512
         export THREADS=4

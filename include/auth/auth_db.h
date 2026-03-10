@@ -367,20 +367,6 @@ int auth_db_unlock_user(const char *username);
 #define AUTH_UNITS_MAX 16
 
 /**
- * @brief Maximum TTS voice model path length
- */
-#define AUTH_TTS_VOICE_MAX 128
-
-/**
- * @brief TTS length scale bounds (speech rate multiplier)
- *
- * Values outside this range are clamped to prevent unusable speech.
- * 1.0 = normal speed, <1.0 = faster, >1.0 = slower
- */
-#define AUTH_TTS_LENGTH_SCALE_MIN 0.25f
-#define AUTH_TTS_LENGTH_SCALE_MAX 4.0f
-
-/**
  * @brief Maximum persona mode length
  */
 #define AUTH_PERSONA_MODE_MAX 16
@@ -402,8 +388,6 @@ typedef struct {
    char location[AUTH_LOCATION_MAX];                /**< User's location */
    char timezone[AUTH_TIMEZONE_MAX];                /**< Timezone (e.g., "America/New_York") */
    char units[AUTH_UNITS_MAX];                      /**< "metric" or "imperial" */
-   char tts_voice_model[AUTH_TTS_VOICE_MAX];        /**< TTS voice model path */
-   float tts_length_scale;                          /**< TTS speech rate (1.0 = normal) */
    char theme[AUTH_THEME_MAX];                      /**< UI color theme */
 } auth_user_settings_t;
 
@@ -411,7 +395,7 @@ typedef struct {
  * @brief Get user settings
  *
  * Returns user-specific settings. If the user has no settings record,
- * returns default values (empty strings, 1.0 scale).
+ * returns default values (empty strings).
  *
  * @param user_id User ID
  * @param settings_out Buffer to receive settings data
