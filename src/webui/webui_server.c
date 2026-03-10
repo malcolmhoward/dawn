@@ -3943,8 +3943,12 @@ int webui_server_init(int port, const char *www_path) {
    info.ws_ping_pong_interval = 0;     /* Disabled: satellites use app-level pings instead */
    /* Note: Not using LWS_SERVER_OPTION_HTTP_HEADERS_SECURITY_BEST_PRACTICES_ENFORCE
     * because it sets CSP: default-src 'none' which blocks WebAssembly for Opus codec.
-    * Security headers are added via index.html meta tags instead. */
+    * Security headers are added manually via webui_add_security_headers() and
+    * webui_get_static_security_headers() for lws_serve_http_file(). */
    info.options = 0;
+
+   /* Initialize security headers string (uses g_config.webui.https) */
+   webui_security_headers_init();
 
    /* Configure HTTPS if enabled */
    bool use_https = g_config.webui.https;

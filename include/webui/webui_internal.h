@@ -392,6 +392,44 @@ bool contains_path_traversal(const char *path);
 bool is_path_within_www(const char *filepath, const char *www_path);
 
 /* =============================================================================
+ * HTTP Security Headers (defined in webui_http.c)
+ * ============================================================================= */
+
+/**
+ * @brief Add security headers to an HTTP response being constructed
+ *
+ * Adds CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy,
+ * Permissions-Policy, and HSTS (when HTTPS is enabled).
+ *
+ * Must be called AFTER content-type/content-length headers but BEFORE
+ * lws_finalize_http_header().
+ *
+ * @param wsi HTTP connection
+ * @param p Pointer to current write position in header buffer
+ * @param end Pointer to end of header buffer
+ * @return 0 on success, -1 on failure (buffer overflow)
+ */
+int webui_add_security_headers(struct lws *wsi, unsigned char **p, unsigned char *end);
+
+/**
+ * @brief Get pre-formatted security headers string for lws_serve_http_file()
+ *
+ * Returns a pointer to a static CRLF-separated header string built at init.
+ * Used as the other_headers parameter for lws_serve_http_file().
+ *
+ * @param out_len If not NULL, receives the string length
+ * @return Pointer to static header string (valid for lifetime of process)
+ */
+const char *webui_get_static_security_headers(int *out_len);
+
+/**
+ * @brief Initialize pre-formatted security headers string
+ *
+ * Must be called once during webui_server_init(), after g_config is loaded.
+ */
+void webui_security_headers_init(void);
+
+/* =============================================================================
  * HTTP Protocol Handler (defined in webui_http.c)
  * ============================================================================= */
 

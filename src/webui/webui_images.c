@@ -34,6 +34,7 @@
 #include "config/dawn_config.h"
 #include "image_store.h"
 #include "logging.h"
+#include "webui/webui_internal.h"
 
 /* =============================================================================
  * Internal Helpers
@@ -46,7 +47,7 @@ static int send_json_error(struct lws *wsi, int status, const char *error) {
    char body[256];
    int body_len = snprintf(body, sizeof(body), "{\"error\":\"%s\"}", error);
 
-   unsigned char buffer[LWS_PRE + 512];
+   unsigned char buffer[LWS_PRE + 1024];
    unsigned char *start = &buffer[LWS_PRE];
    unsigned char *p = start;
    unsigned char *end = &buffer[sizeof(buffer) - 1];
@@ -57,6 +58,8 @@ static int send_json_error(struct lws *wsi, int status, const char *error) {
                                     (unsigned char *)"application/json", 16, &p, end))
       return -1;
    if (lws_add_http_header_content_length(wsi, (unsigned long)body_len, &p, end))
+      return -1;
+   if (webui_add_security_headers(wsi, &p, end))
       return -1;
    if (lws_finalize_http_header(wsi, &p, end))
       return -1;
@@ -83,7 +86,7 @@ static int send_upload_success(struct lws *wsi,
    int body_len = snprintf(body, sizeof(body), "{\"id\":\"%s\",\"mime_type\":\"%s\",\"size\":%zu}",
                            id, mime_type, size);
 
-   unsigned char buffer[LWS_PRE + 512];
+   unsigned char buffer[LWS_PRE + 1024];
    unsigned char *start = &buffer[LWS_PRE];
    unsigned char *p = start;
    unsigned char *end = &buffer[sizeof(buffer) - 1];
@@ -94,6 +97,8 @@ static int send_upload_success(struct lws *wsi,
                                     (unsigned char *)"application/json", 16, &p, end))
       return -1;
    if (lws_add_http_header_content_length(wsi, (unsigned long)body_len, &p, end))
+      return -1;
+   if (webui_add_security_headers(wsi, &p, end))
       return -1;
    if (lws_finalize_http_header(wsi, &p, end))
       return -1;
@@ -487,7 +492,7 @@ int webui_images_handle_download(struct lws *wsi, const char *image_id, int user
     * our images are limited to 4MB (compressed thumbnails are ~100-150KB). */
 
    /* Header buffer only - body is written from separate data pointer */
-   unsigned char *buffer = malloc(LWS_PRE + 512);
+   unsigned char *buffer = malloc(LWS_PRE + 1024);
    if (!buffer) {
       free(data);
       return send_json_error(wsi, HTTP_STATUS_INTERNAL_SERVER_ERROR, "Memory allocation failed");
@@ -495,7 +500,7 @@ int webui_images_handle_download(struct lws *wsi, const char *image_id, int user
 
    unsigned char *start = &buffer[LWS_PRE];
    unsigned char *p = start;
-   unsigned char *end = &buffer[LWS_PRE + 512];
+   unsigned char *end = &buffer[LWS_PRE + 1024];
 
    if (lws_add_http_header_status(wsi, HTTP_STATUS_OK, &p, end)) {
       free(buffer);
@@ -521,6 +526,12 @@ int webui_images_handle_download(struct lws *wsi, const char *image_id, int user
    if (lws_add_http_header_by_name(wsi, (unsigned char *)"Cache-Control:",
                                    (unsigned char *)cache_control, (int)strlen(cache_control), &p,
                                    end)) {
+      free(buffer);
+      free(data);
+      return -1;
+   }
+
+   if (webui_add_security_headers(wsi, &p, end)) {
       free(buffer);
       free(data);
       return -1;

@@ -41,6 +41,7 @@
 #include "tools/html_parser.h"
 #include "tools/tfidf_summarizer.h"
 #include "utils/string_utils.h"
+#include "webui/webui_internal.h"
 
 #ifdef HAVE_MUPDF
 #include <mupdf/fitz.h>
@@ -111,7 +112,7 @@ static int send_doc_error(struct lws *wsi, int status, const char *error) {
    const char *json_str = json_object_to_json_string_ext(err_obj, JSON_C_TO_STRING_PLAIN);
    size_t json_len = strlen(json_str);
 
-   unsigned char buffer[LWS_PRE + 512];
+   unsigned char buffer[LWS_PRE + 1024];
    unsigned char *start = &buffer[LWS_PRE];
    unsigned char *p = start;
    unsigned char *end = &buffer[sizeof(buffer) - 1];
@@ -120,7 +121,7 @@ static int send_doc_error(struct lws *wsi, int status, const char *error) {
        lws_add_http_header_by_token(wsi, WSI_TOKEN_HTTP_CONTENT_TYPE,
                                     (unsigned char *)"application/json", 16, &p, end) ||
        lws_add_http_header_content_length(wsi, (unsigned long)json_len, &p, end) ||
-       lws_finalize_http_header(wsi, &p, end)) {
+       webui_add_security_headers(wsi, &p, end) || lws_finalize_http_header(wsi, &p, end)) {
       json_object_put(err_obj);
       return -1;
    }
@@ -638,7 +639,7 @@ static int send_doc_success(struct lws *wsi, document_upload_session_t *session,
    size_t json_len = strlen(json_str);
 
    /* Allocate response buffer for headers only (body written from json_str directly) */
-   size_t buf_size = LWS_PRE + 512;
+   size_t buf_size = LWS_PRE + 1024;
    unsigned char *buffer = malloc(buf_size);
    if (!buffer) {
       json_object_put(resp);
@@ -661,6 +662,11 @@ static int send_doc_success(struct lws *wsi, document_upload_session_t *session,
       return -1;
    }
    if (lws_add_http_header_content_length(wsi, (unsigned long)json_len, &p, end)) {
+      free(buffer);
+      json_object_put(resp);
+      return -1;
+   }
+   if (webui_add_security_headers(wsi, &p, end)) {
       free(buffer);
       json_object_put(resp);
       return -1;
@@ -694,11 +700,11 @@ static int send_doc_success(struct lws *wsi, document_upload_session_t *session,
 /**
  * @brief Send a JSON response for the summarize endpoint
  */
-static int send_json_response(struct lws *wsi, int status, json_object *resp) {
+static int send_doc_json_response(struct lws *wsi, int status, json_object *resp) {
    const char *json_str = json_object_to_json_string_ext(resp, JSON_C_TO_STRING_PLAIN);
    size_t json_len = strlen(json_str);
 
-   size_t buf_size = LWS_PRE + 512;
+   size_t buf_size = LWS_PRE + 1024;
    unsigned char *buffer = malloc(buf_size);
    if (!buffer) {
       json_object_put(resp);
@@ -713,7 +719,7 @@ static int send_json_response(struct lws *wsi, int status, json_object *resp) {
        lws_add_http_header_by_token(wsi, WSI_TOKEN_HTTP_CONTENT_TYPE,
                                     (unsigned char *)"application/json", 16, &p, end) ||
        lws_add_http_header_content_length(wsi, (unsigned long)json_len, &p, end) ||
-       lws_finalize_http_header(wsi, &p, end)) {
+       webui_add_security_headers(wsi, &p, end) || lws_finalize_http_header(wsi, &p, end)) {
       free(buffer);
       json_object_put(resp);
       return -1;
@@ -1051,5 +1057,5 @@ int webui_documents_handle_summarize(struct lws *wsi, const char *body, size_t b
    json_object_object_add(resp, "estimated_tokens", json_object_new_int(new_estimated_tokens));
 
    free(summary);
-   return send_json_response(wsi, HTTP_STATUS_OK, resp);
+   return send_doc_json_response(wsi, HTTP_STATUS_OK, resp);
 }

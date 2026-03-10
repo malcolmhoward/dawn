@@ -118,6 +118,86 @@ static rate_limiter_t s_login_rate = RATE_LIMITER_STATIC_INIT(s_login_rate_entri
 #endif /* ENABLE_AUTH */
 
 /* =============================================================================
+ * HTTP Security Headers
+ * ============================================================================= */
+
+/* Pre-formatted security headers for lws_serve_http_file() */
+static char s_static_security_headers[1024];
+static int s_static_security_headers_len = 0;
+
+/* CSP policy shared between add_security_headers() and the static string */
+static const char s_csp_policy[] =
+    "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; "
+    "style-src 'self' 'unsafe-inline'; connect-src 'self' wss: ws:; "
+    "img-src 'self' data: blob:; manifest-src 'self'; worker-src 'self'";
+
+int webui_add_security_headers(struct lws *wsi, unsigned char **p, unsigned char *end) {
+   if (lws_add_http_header_by_name(wsi, (const unsigned char *)"Content-Security-Policy:",
+                                   (const unsigned char *)s_csp_policy, (int)strlen(s_csp_policy),
+                                   p, end))
+      return -1;
+
+   if (lws_add_http_header_by_name(wsi, (const unsigned char *)"X-Frame-Options:",
+                                   (const unsigned char *)"DENY", 4, p, end))
+      return -1;
+
+   if (lws_add_http_header_by_name(wsi, (const unsigned char *)"X-Content-Type-Options:",
+                                   (const unsigned char *)"nosniff", 7, p, end))
+      return -1;
+
+   if (lws_add_http_header_by_name(wsi, (const unsigned char *)"Referrer-Policy:",
+                                   (const unsigned char *)"strict-origin-when-cross-origin", 31, p,
+                                   end))
+      return -1;
+
+   static const char permissions[] = "camera=(), geolocation=(), payment=()";
+   if (lws_add_http_header_by_name(wsi, (const unsigned char *)"Permissions-Policy:",
+                                   (const unsigned char *)permissions, (int)strlen(permissions), p,
+                                   end))
+      return -1;
+
+   /* HSTS only when HTTPS is enabled (RFC 6797: MUST ignore on non-secure) */
+   if (g_config.webui.https) {
+      static const char hsts[] = "max-age=31536000; includeSubDomains";
+      if (lws_add_http_header_by_name(wsi, (const unsigned char *)"Strict-Transport-Security:",
+                                      (const unsigned char *)hsts, (int)strlen(hsts), p, end))
+         return -1;
+   }
+
+   return 0;
+}
+
+const char *webui_get_static_security_headers(int *out_len) {
+   if (out_len)
+      *out_len = s_static_security_headers_len;
+   return s_static_security_headers;
+}
+
+void webui_security_headers_init(void) {
+   int n = snprintf(s_static_security_headers, sizeof(s_static_security_headers),
+                    "Content-Security-Policy: %s\x0d\x0a"
+                    "X-Frame-Options: DENY\x0d\x0a"
+                    "X-Content-Type-Options: nosniff\x0d\x0a"
+                    "Referrer-Policy: strict-origin-when-cross-origin\x0d\x0a"
+                    "Permissions-Policy: camera=(), geolocation=(), payment=()\x0d\x0a"
+                    "%s",
+                    s_csp_policy,
+                    g_config.webui.https
+                        ? "Strict-Transport-Security: max-age=31536000; includeSubDomains\x0d\x0a"
+                        : "");
+
+   if (n >= (int)sizeof(s_static_security_headers)) {
+      LOG_ERROR("WebUI: Security headers string truncated (%d >= %zu)", n,
+                sizeof(s_static_security_headers));
+      n = (int)sizeof(s_static_security_headers) - 1;
+   }
+   s_static_security_headers_len = n;
+
+   LOG_INFO("WebUI: Security headers initialized (%d bytes, HSTS=%s)",
+            s_static_security_headers_len, g_config.webui.https ? "on" : "off");
+}
+
+/* =============================================================================
  * Auth Helper Functions
  * ============================================================================= */
 
@@ -234,6 +314,8 @@ static int send_auth_response(struct lws *wsi,
          return -1;
    }
 
+   if (webui_add_security_headers(wsi, &p, end))
+      return -1;
    if (lws_finalize_http_header(wsi, &p, end))
       return -1;
 
@@ -285,6 +367,8 @@ static int send_nocache_json_response(struct lws *wsi, int status, const char *j
                                    &p, end))
       return -1;
 
+   if (webui_add_security_headers(wsi, &p, end))
+      return -1;
    if (lws_finalize_http_header(wsi, &p, end))
       return -1;
 
@@ -825,7 +909,7 @@ int callback_http(struct lws *wsi,
          /* Check authentication for protected paths */
          if (!is_public_path && !is_request_authenticated(wsi, NULL)) {
             /* Redirect to login page */
-            unsigned char buffer[LWS_PRE + 256];
+            unsigned char buffer[LWS_PRE + 768];
             unsigned char *start = &buffer[LWS_PRE];
             unsigned char *p = start;
             unsigned char *end = &buffer[sizeof(buffer) - 1];
@@ -836,6 +920,8 @@ int callback_http(struct lws *wsi,
                                             (unsigned char *)"/login.html", 11, &p, end))
                return -1;
             if (lws_add_http_header_content_length(wsi, 0, &p, end))
+               return -1;
+            if (webui_add_security_headers(wsi, &p, end))
                return -1;
             if (lws_finalize_http_header(wsi, &p, end))
                return -1;
@@ -872,7 +958,7 @@ int callback_http(struct lws *wsi,
                 "}"
                 "</script><p>Processing authorization...</p></body></html>";
 
-            unsigned char buffer[LWS_PRE + sizeof(oauth_callback_html)];
+            unsigned char buffer[LWS_PRE + 1024];
             unsigned char *start = &buffer[LWS_PRE];
             unsigned char *p = start;
             unsigned char *end = &buffer[sizeof(buffer) - 1];
@@ -883,6 +969,8 @@ int callback_http(struct lws *wsi,
                                              (unsigned char *)"text/html", 9, &p, end))
                return -1;
             if (lws_add_http_header_content_length(wsi, sizeof(oauth_callback_html) - 1, &p, end))
+               return -1;
+            if (webui_add_security_headers(wsi, &p, end))
                return -1;
             if (lws_finalize_http_header(wsi, &p, end))
                return -1;
@@ -915,7 +1003,7 @@ int callback_http(struct lws *wsi,
                      s_client_count);
 
             size_t body_len = strlen(json_body);
-            unsigned char buffer[LWS_PRE + 512];
+            unsigned char buffer[LWS_PRE + 1024];
             unsigned char *start = &buffer[LWS_PRE];
             unsigned char *p = start;
             unsigned char *end = &buffer[sizeof(buffer) - 1];
@@ -926,6 +1014,8 @@ int callback_http(struct lws *wsi,
                                              (unsigned char *)"application/json", 16, &p, end))
                return -1;
             if (lws_add_http_header_content_length(wsi, body_len, &p, end))
+               return -1;
+            if (webui_add_security_headers(wsi, &p, end))
                return -1;
             if (lws_finalize_http_header(wsi, &p, end))
                return -1;
@@ -966,8 +1056,10 @@ int callback_http(struct lws *wsi,
          /* Get MIME type */
          mime_type = get_mime_type(filepath);
 
-         /* Serve the file (no extra headers - CSP set via meta tag) */
-         n = lws_serve_http_file(wsi, filepath, mime_type, NULL, 0);
+         /* Serve file with security headers */
+         int sec_hdr_len;
+         const char *sec_hdrs = webui_get_static_security_headers(&sec_hdr_len);
+         n = lws_serve_http_file(wsi, filepath, mime_type, sec_hdrs, sec_hdr_len);
          if (n < 0) {
             /* File not found or error */
             LOG_WARNING("WebUI: File not found: %s", filepath);
