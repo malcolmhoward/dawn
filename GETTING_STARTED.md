@@ -180,9 +180,15 @@ Use the `dawn-admin` utility to create your admin account:
 # Set your password
 ```
 
-## 7. SSL Setup (for Remote Voice)
+## 7. SSL Setup (Recommended)
 
-Browsers require HTTPS to access the microphone from non-localhost origins. DAWN uses a private Certificate Authority (CA) so all clients (browsers, RPi satellites, ESP32 devices) can validate the server certificate without security warnings.
+> **Security notice**: Without HTTPS, all traffic between your browser and DAWN — including authentication cookies, session tokens, API keys entered in the settings panel, and voice audio — is transmitted in plaintext. Anyone on your local network can intercept it. HTTPS is strongly recommended for all deployments, not just remote access.
+
+HTTPS is also required by browsers to access the microphone from non-localhost origins (WebUI voice input won't work over plain HTTP from another device).
+
+> **Do not expose DAWN directly to the public internet.** DAWN is designed for private LAN use. If you need remote access, use a VPN (WireGuard or Tailscale) so DAWN stays behind your firewall. See [docs/SECURITY_HARDENING_GUIDE.md — Internet Exposure](docs/SECURITY_HARDENING_GUIDE.md#internet-exposure) for a detailed assessment of what's safe and what's not.
+
+DAWN uses a private Certificate Authority (CA) so all clients (browsers, RPi satellites, ESP32 devices) can validate the server certificate without security warnings.
 
 ```bash
 # Generate CA + server certificate (prompts for CA passphrase)
