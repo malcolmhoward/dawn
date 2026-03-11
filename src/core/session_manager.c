@@ -23,6 +23,7 @@
 
 #include "core/session_manager.h"
 
+#include <errno.h>
 #include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
@@ -933,11 +934,21 @@ void session_destroy(uint32_t session_id) {
 
    pthread_rwlock_unlock(&session_manager_rwlock);
 
-   // Phase 2: Wait for ref_count to reach 0
+   // Phase 2: Wait for ref_count to reach 0 (with timeout to prevent shutdown hang)
    pthread_mutex_lock(&session->ref_mutex);
    while (session->ref_count > 0) {
       LOG_INFO("Waiting for session %u ref_count (current=%d)", session_id, session->ref_count);
-      pthread_cond_wait(&session->ref_zero_cond, &session->ref_mutex);
+
+      struct timespec timeout;
+      clock_gettime(CLOCK_REALTIME, &timeout);
+      timeout.tv_sec += 3;
+
+      int rc = pthread_cond_timedwait(&session->ref_zero_cond, &session->ref_mutex, &timeout);
+      if (rc == ETIMEDOUT) {
+         LOG_WARNING("Session %u: ref_count wait timed out (ref_count=%d), proceeding with destroy",
+                     session_id, session->ref_count);
+         break;
+      }
    }
    pthread_mutex_unlock(&session->ref_mutex);
 
