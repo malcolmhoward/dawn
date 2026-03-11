@@ -764,19 +764,24 @@ int send_json_message(struct lws *wsi, const char *json) {
 
    /* Log messages that may be too large for HTTP/2 frames (default 16KB) */
    if (len > 12000) {
-      /* Try to extract message type for better logging */
-      const char *type_start = strstr(json, "\"type\":\"");
+      /* Try to extract message type for better logging.
+       * Handle both "type":"value" and "type": "value" (with optional space). */
+      const char *type_start = strstr(json, "\"type\":");
       char type_buf[32] = "unknown";
       if (type_start) {
-         type_start += 8;
+         type_start += 7; /* skip past "type": */
+         while (*type_start == ' ')
+            type_start++; /* skip optional whitespace */
+         if (*type_start == '"')
+            type_start++; /* skip opening quote */
          const char *type_end = strchr(type_start, '"');
          if (type_end && (size_t)(type_end - type_start) < sizeof(type_buf) - 1) {
             strncpy(type_buf, type_start, (size_t)(type_end - type_start));
             type_buf[type_end - type_start] = '\0';
          }
       }
-      LOG_WARNING("WebUI: Large message via send_json_message: type=%s, size=%zu bytes", type_buf,
-                  len);
+      LOG_INFO("WebUI: Large message via send_json_message: type=%s, size=%zu bytes", type_buf,
+               len);
    }
 
    /* For messages that fit in the stack buffer, use the fast path */

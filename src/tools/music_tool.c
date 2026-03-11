@@ -41,7 +41,6 @@
 #include "core/session_manager.h"
 #include "dawn.h"
 #include "logging.h"
-#include "mosquitto_comms.h"
 #include "tools/tool_registry.h"
 
 /* WebUI music integration - route commands to browser when originating from WebUI */
@@ -178,6 +177,12 @@ static const char *extract_filename(const char *path) {
 
 /**
  * @brief Stop current playback and wait for thread to finish
+ *
+ * Note: When called from the playback thread itself (auto-advance via
+ * music_tool_auto_advance), pthread_join returns EDEADLK (self-join).
+ * The join fails, s_music_thread is NOT reset, and start_playback()
+ * overwrites it with the new thread handle. The old thread exits
+ * naturally after music_tool_auto_advance() returns.
  */
 static void stop_current_playback(void) {
    if (s_music_thread != (pthread_t)-1) {
@@ -884,6 +889,14 @@ static char *music_tool_callback(const char *action, char *value, int *should_re
    }
 
    return NULL;
+}
+
+/* ========== Auto-Advance (called from playback thread) ========== */
+
+void music_tool_auto_advance(void) {
+   int should_respond = 0;
+   char *result = music_tool_callback("next", NULL, &should_respond);
+   free(result);
 }
 
 /* ========== Lifecycle Functions ========== */

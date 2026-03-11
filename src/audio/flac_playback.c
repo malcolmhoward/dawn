@@ -45,7 +45,9 @@
 #include "audio/audio_converter.h"
 #include "audio/audio_decoder.h"
 #include "logging.h"
-#include "mosquitto_comms.h"
+#ifdef DAWN_ENABLE_MUSIC_TOOL
+#include "tools/music_tool.h"
+#endif
 
 /* Maximum channels supported for playback (stereo) */
 #define PLAYBACK_MAX_CHANNELS 2
@@ -127,7 +129,6 @@ static void apply_volume(int16_t *buffer, size_t frames, unsigned int channels) 
 }
 
 void *playFlacAudio(void *arg) {
-   int should_respond = 0;
    PlaybackArgs *args = (PlaybackArgs *)arg;
 
    /* Buffers and handles */
@@ -325,7 +326,9 @@ cleanup:
 
    /* Auto-play next track only if song finished naturally (not manually stopped or error) */
    if (song_finished_naturally) {
-      musicCallback("next", NULL, &should_respond);
+#ifdef DAWN_ENABLE_MUSIC_TOOL
+      music_tool_auto_advance();
+#endif
    }
 
    /* Free the heap-allocated args (caller allocated, thread frees) */

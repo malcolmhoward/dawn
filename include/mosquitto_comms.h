@@ -69,33 +69,4 @@ void on_subscribe(struct mosquitto *mosq,
  */
 void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_message *msg);
 
-/* Device callbacks still referenced externally */
-
-/**
- * @brief Callback function to handle music playback control.
- *
- * Processes actions related to music playback, such as play, pause, or stop.
- *
- * @param actionName The name of the action triggering this callback.
- * @param value      Additional value or parameters for the action (e.g., song name or control
- * command).
- * @param should_respond Should the callback return data to the AI or just handle it.
- */
-char *musicCallback(const char *actionName, char *value, int *should_respond);
-
-/**
- * @brief Sets custom music directory path.
- *
- * Sets an absolute path to the music directory. If set, this overrides
- * the default MUSIC_DIR from dawn.h. Pass NULL to use the default.
- *
- * @param path Absolute path to music directory, or NULL for default
- *
- * @note When DAWN_ENABLE_MUSIC_TOOL is defined, this function is provided
- *       by music_tool.h instead.
- */
-#ifndef DAWN_ENABLE_MUSIC_TOOL
-void set_music_directory(const char *path);
-#endif
-
 #endif  // MOSQUITTO_COMMS_H

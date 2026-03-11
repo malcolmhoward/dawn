@@ -76,7 +76,9 @@
 #include "mosquitto_comms.h"
 #include "state_machine.h"
 #include "text_to_command_nuevo.h"
+#ifdef DAWN_ENABLE_MUSIC_TOOL
 #include "tools/music_tool.h"
+#endif
 #include "tools/search_summarizer.h"
 #ifdef DAWN_ENABLE_SMARTTHINGS_TOOL
 #include "tools/smartthings_service.h"
@@ -1465,8 +1467,12 @@ int main(int argc, char *argv[]) {
             }
             break;
          case 'M':
+#ifdef DAWN_ENABLE_MUSIC_TOOL
             set_music_directory(optarg);
             LOG_INFO("Music directory set to: %s", optarg);
+#else
+            LOG_WARNING("Music tool not compiled in, -M ignored");
+#endif
             break;
 #ifdef ENABLE_TUI
          case 'T':

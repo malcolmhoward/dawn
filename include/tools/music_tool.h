@@ -35,6 +35,17 @@
 int music_tool_register(void);
 
 /**
+ * @brief Auto-advance to next track after natural playback completion
+ *
+ * Called by the playback thread (playFlacAudio) when a track finishes
+ * naturally (not stopped by user). Advances to the next track in the
+ * playlist, wrapping around at the end.
+ *
+ * Thread-safe: called from the playback thread context.
+ */
+void music_tool_auto_advance(void);
+
+/**
  * @brief Set custom music directory path
  *
  * Sets an override directory for music file searches. If not set,
