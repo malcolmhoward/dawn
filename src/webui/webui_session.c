@@ -83,7 +83,7 @@ void handle_list_my_sessions(ws_connection_t *conn) {
    }
 
    json_object_object_add(response, "payload", resp_payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }
 
@@ -108,7 +108,7 @@ void handle_revoke_session(ws_connection_t *conn, struct json_object *payload) {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
       json_object_object_add(resp_payload, "error", json_object_new_string("Missing token_prefix"));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return;
    }
@@ -120,7 +120,7 @@ void handle_revoke_session(ws_connection_t *conn, struct json_object *payload) {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
       json_object_object_add(resp_payload, "error", json_object_new_string("Invalid token prefix"));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return;
    }
@@ -131,7 +131,7 @@ void handle_revoke_session(ws_connection_t *conn, struct json_object *payload) {
       json_object_object_add(resp_payload, "error",
                              json_object_new_string("Cannot revoke current session - use logout"));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return;
    }
@@ -152,7 +152,7 @@ void handle_revoke_session(ws_connection_t *conn, struct json_object *payload) {
          json_object_object_add(resp_payload, "error",
                                 json_object_new_string("Session not found or access denied"));
          json_object_object_add(response, "payload", resp_payload);
-         send_json_response(conn->wsi, response);
+         send_json_response(conn, response);
          json_object_put(response);
          return;
       }
@@ -182,6 +182,6 @@ void handle_revoke_session(ws_connection_t *conn, struct json_object *payload) {
    }
 
    json_object_object_add(response, "payload", resp_payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }

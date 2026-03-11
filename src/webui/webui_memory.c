@@ -72,7 +72,7 @@ void handle_get_memory_stats(ws_connection_t *conn) {
    }
 
    json_object_object_add(response, "payload", resp_payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }
 
@@ -144,7 +144,7 @@ void handle_list_memory_facts(ws_connection_t *conn, struct json_object *payload
    }
 
    json_object_object_add(response, "payload", resp_payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }
 
@@ -166,7 +166,7 @@ void handle_delete_memory_fact(ws_connection_t *conn, struct json_object *payloa
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
       json_object_object_add(resp_payload, "error", json_object_new_string("Missing fact_id"));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return;
    }
@@ -188,7 +188,7 @@ void handle_delete_memory_fact(ws_connection_t *conn, struct json_object *payloa
    }
 
    json_object_object_add(response, "payload", resp_payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }
 
@@ -261,7 +261,7 @@ void handle_list_memory_preferences(ws_connection_t *conn, struct json_object *p
    }
 
    json_object_object_add(response, "payload", resp_payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }
 
@@ -284,7 +284,7 @@ void handle_delete_memory_preference(ws_connection_t *conn, struct json_object *
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
       json_object_object_add(resp_payload, "error", json_object_new_string("Missing category"));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return;
    }
@@ -306,7 +306,7 @@ void handle_delete_memory_preference(ws_connection_t *conn, struct json_object *
    }
 
    json_object_object_add(response, "payload", resp_payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }
 
@@ -383,7 +383,7 @@ void handle_list_memory_summaries(ws_connection_t *conn, struct json_object *pay
    }
 
    json_object_object_add(response, "payload", resp_payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }
 
@@ -406,7 +406,7 @@ void handle_delete_memory_summary(ws_connection_t *conn, struct json_object *pay
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
       json_object_object_add(resp_payload, "error", json_object_new_string("Missing summary_id"));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return;
    }
@@ -429,7 +429,7 @@ void handle_delete_memory_summary(ws_connection_t *conn, struct json_object *pay
    }
 
    json_object_object_add(response, "payload", resp_payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }
 
@@ -559,7 +559,7 @@ void handle_list_memory_entities(ws_connection_t *conn, struct json_object *payl
    }
 
    json_object_object_add(response, "payload", resp_payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }
 
@@ -581,7 +581,7 @@ void handle_delete_memory_entity(ws_connection_t *conn, struct json_object *payl
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
       json_object_object_add(resp_payload, "error", json_object_new_string("Missing entity_id"));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return;
    }
@@ -604,7 +604,7 @@ void handle_delete_memory_entity(ws_connection_t *conn, struct json_object *payl
    }
 
    json_object_object_add(response, "payload", resp_payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }
 
@@ -630,7 +630,7 @@ void handle_search_memory(ws_connection_t *conn, struct json_object *payload) {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
       json_object_object_add(resp_payload, "error", json_object_new_string("Missing query"));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return;
    }
@@ -640,7 +640,7 @@ void handle_search_memory(ws_connection_t *conn, struct json_object *payload) {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
       json_object_object_add(resp_payload, "error", json_object_new_string("Empty query"));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return;
    }
@@ -650,7 +650,7 @@ void handle_search_memory(ws_connection_t *conn, struct json_object *payload) {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
       json_object_object_add(resp_payload, "error", json_object_new_string("Query too long"));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return;
    }
@@ -704,7 +704,7 @@ void handle_search_memory(ws_connection_t *conn, struct json_object *payload) {
    }
 
    json_object_object_add(response, "payload", resp_payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }
 
@@ -734,7 +734,7 @@ void handle_delete_all_memories(ws_connection_t *conn, struct json_object *paylo
       json_object_object_add(resp_payload, "error",
                              json_object_new_string("Must confirm by setting confirm=\"DELETE\""));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return;
    }
@@ -753,7 +753,7 @@ void handle_delete_all_memories(ws_connection_t *conn, struct json_object *paylo
    }
 
    json_object_object_add(response, "payload", resp_payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }
 
@@ -798,7 +798,7 @@ void handle_export_memories(ws_connection_t *conn, struct json_object *payload) 
       json_object_object_add(resp_payload, "error",
                              json_object_new_string("Invalid format (use 'json' or 'text')"));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return;
    }
@@ -814,7 +814,7 @@ void handle_export_memories(ws_connection_t *conn, struct json_object *payload) 
          json_object_object_add(resp_payload, "error",
                                 json_object_new_string("Memory allocation failed"));
          json_object_object_add(response, "payload", resp_payload);
-         send_json_response(conn->wsi, response);
+         send_json_response(conn, response);
          json_object_put(response);
          return;
       }
@@ -836,7 +836,7 @@ void handle_export_memories(ws_connection_t *conn, struct json_object *payload) 
          json_object_object_add(resp_payload, "error",
                                 json_object_new_string("Memory allocation failed"));
          json_object_object_add(response, "payload", resp_payload);
-         send_json_response(conn->wsi, response);
+         send_json_response(conn, response);
          json_object_put(response);
          return;
       }
@@ -885,7 +885,7 @@ void handle_export_memories(ws_connection_t *conn, struct json_object *payload) 
          json_object_object_add(resp_payload, "error",
                                 json_object_new_string("Memory allocation failed"));
          json_object_object_add(response, "payload", resp_payload);
-         send_json_response(conn->wsi, response);
+         send_json_response(conn, response);
          json_object_put(response);
          return;
       }
@@ -981,7 +981,7 @@ void handle_export_memories(ws_connection_t *conn, struct json_object *payload) 
    bool is_text = (strcmp(format, "text") == 0);
 
    json_object_object_add(response, "payload", resp_payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 
    LOG_INFO("WebUI: User %d exported memories (format=%s)", conn->auth_user_id,
@@ -1046,7 +1046,7 @@ void handle_import_memories(ws_connection_t *conn, struct json_object *payload) 
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
       json_object_object_add(resp_payload, "error", json_object_new_string("Missing payload"));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return;
    }
@@ -1067,7 +1067,7 @@ void handle_import_memories(ws_connection_t *conn, struct json_object *payload) 
       json_object_object_add(resp_payload, "error",
                              json_object_new_string("Invalid format (use 'json' or 'text')"));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return;
    }
@@ -1086,7 +1086,7 @@ void handle_import_memories(ws_connection_t *conn, struct json_object *payload) 
          json_object_object_add(resp_payload, "error", json_object_new_string("Missing data"));
          json_object_put(preview_arr);
          json_object_object_add(response, "payload", resp_payload);
-         send_json_response(conn->wsi, response);
+         send_json_response(conn, response);
          json_object_put(response);
          return;
       }
@@ -1179,7 +1179,7 @@ void handle_import_memories(ws_connection_t *conn, struct json_object *payload) 
          json_object_object_add(resp_payload, "error", json_object_new_string("Missing text"));
          json_object_put(preview_arr);
          json_object_object_add(response, "payload", resp_payload);
-         send_json_response(conn->wsi, response);
+         send_json_response(conn, response);
          json_object_put(response);
          return;
       }
@@ -1190,7 +1190,7 @@ void handle_import_memories(ws_connection_t *conn, struct json_object *payload) 
          json_object_object_add(resp_payload, "error", json_object_new_string("Empty text"));
          json_object_put(preview_arr);
          json_object_object_add(response, "payload", resp_payload);
-         send_json_response(conn->wsi, response);
+         send_json_response(conn, response);
          json_object_put(response);
          return;
       }
@@ -1201,7 +1201,7 @@ void handle_import_memories(ws_connection_t *conn, struct json_object *payload) 
                                 json_object_new_string("Text too large (256KB max)"));
          json_object_put(preview_arr);
          json_object_object_add(response, "payload", resp_payload);
-         send_json_response(conn->wsi, response);
+         send_json_response(conn, response);
          json_object_put(response);
          return;
       }
@@ -1214,7 +1214,7 @@ void handle_import_memories(ws_connection_t *conn, struct json_object *payload) 
                                 json_object_new_string("Memory allocation failed"));
          json_object_put(preview_arr);
          json_object_object_add(response, "payload", resp_payload);
-         send_json_response(conn->wsi, response);
+         send_json_response(conn, response);
          json_object_put(response);
          return;
       }
@@ -1289,7 +1289,7 @@ void handle_import_memories(ws_connection_t *conn, struct json_object *payload) 
    }
 
    json_object_object_add(response, "payload", resp_payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 
    if (commit) {

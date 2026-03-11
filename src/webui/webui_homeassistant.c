@@ -76,7 +76,7 @@ void handle_ha_status(ws_connection_t *conn) {
    }
 
    json_object_object_add(response, "payload", payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }
 
@@ -103,7 +103,7 @@ void handle_ha_test_connection(ws_connection_t *conn) {
    }
 
    json_object_object_add(response, "payload", payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }
 
@@ -134,7 +134,7 @@ void handle_ha_list_entities(ws_connection_t *conn) {
    }
 
    json_object_object_add(response, "payload", payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }
 
@@ -165,6 +165,6 @@ void handle_ha_refresh_entities(ws_connection_t *conn) {
    }
 
    json_object_object_add(response, "payload", payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }

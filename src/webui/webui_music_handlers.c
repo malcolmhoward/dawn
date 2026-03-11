@@ -819,7 +819,7 @@ void handle_music_search(ws_connection_t *conn, struct json_object *payload) {
    json_object_object_add(resp_payload, "results", results_arr);
 
    json_object_object_add(response, "payload", resp_payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 
    free(results);
@@ -1041,7 +1041,7 @@ void handle_music_library(ws_connection_t *conn, struct json_object *payload) {
    }
 
    json_object_object_add(response, "payload", resp_payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }
 
@@ -1094,7 +1094,7 @@ void handle_music_queue(ws_connection_t *conn, struct json_object *payload) {
       pthread_mutex_unlock(&uq->queue_mutex);
 
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
 
    } else if (strcmp(action, "clear") == 0) {

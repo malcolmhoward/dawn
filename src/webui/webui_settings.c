@@ -91,7 +91,7 @@ void handle_get_my_settings(ws_connection_t *conn) {
    }
 
    json_object_object_add(response, "payload", resp_payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }
 
@@ -208,6 +208,6 @@ void handle_set_my_settings(ws_connection_t *conn, struct json_object *payload) 
    }
 
    json_object_object_add(response, "payload", resp_payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }

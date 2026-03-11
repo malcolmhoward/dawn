@@ -285,7 +285,7 @@ void handle_list_conversations(ws_connection_t *conn, struct json_object *payloa
    }
 
    json_object_object_add(response, "payload", resp_payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }
 
@@ -409,7 +409,7 @@ void handle_new_conversation(ws_connection_t *conn, struct json_object *payload)
    }
 
    json_object_object_add(response, "payload", resp_payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }
 
@@ -430,7 +430,7 @@ void handle_clear_session(ws_connection_t *conn) {
       json_object_object_add(resp_payload, "error", json_object_new_string("No active session"));
       json_object_object_add(response, "payload", resp_payload);
       if (conn) {
-         send_json_response(conn->wsi, response);
+         send_json_response(conn, response);
       }
       json_object_put(response);
       return;
@@ -465,7 +465,7 @@ void handle_clear_session(ws_connection_t *conn) {
 
    json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
    json_object_object_add(response, "payload", resp_payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 
    LOG_INFO("WebUI: Session history cleared for user '%s'",
@@ -495,7 +495,7 @@ void handle_continue_conversation(ws_connection_t *conn, struct json_object *pay
       json_object_object_add(resp_payload, "error",
                              json_object_new_string("Missing conversation_id"));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return;
    }
@@ -540,7 +540,7 @@ void handle_continue_conversation(ws_connection_t *conn, struct json_object *pay
    }
 
    json_object_object_add(response, "payload", resp_payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }
 
@@ -610,7 +610,7 @@ void handle_load_conversation(ws_connection_t *conn, struct json_object *payload
       json_object_object_add(resp_payload, "error",
                              json_object_new_string("Missing conversation_id"));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return;
    }
@@ -924,7 +924,7 @@ void handle_load_conversation(ws_connection_t *conn, struct json_object *payload
          }
 
          json_object_object_add(response, "payload", resp_payload);
-         send_json_response(conn->wsi, response);
+         send_json_response(conn, response);
          json_object_put(response);
          conv_free(&conv);
          return;
@@ -950,7 +950,7 @@ void handle_load_conversation(ws_connection_t *conn, struct json_object *payload
    }
 
    json_object_object_add(response, "payload", resp_payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }
 
@@ -973,7 +973,7 @@ void handle_delete_conversation(ws_connection_t *conn, struct json_object *paylo
       json_object_object_add(resp_payload, "error",
                              json_object_new_string("Missing conversation_id"));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return;
    }
@@ -1000,7 +1000,7 @@ void handle_delete_conversation(ws_connection_t *conn, struct json_object *paylo
    }
 
    json_object_object_add(response, "payload", resp_payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }
 
@@ -1024,7 +1024,7 @@ void handle_rename_conversation(ws_connection_t *conn, struct json_object *paylo
       json_object_object_add(resp_payload, "error",
                              json_object_new_string("Missing conversation_id or title"));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return;
    }
@@ -1037,7 +1037,7 @@ void handle_rename_conversation(ws_connection_t *conn, struct json_object *paylo
       json_object_object_add(resp_payload, "error",
                              json_object_new_string("Title cannot be empty"));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return;
    }
@@ -1059,7 +1059,7 @@ void handle_rename_conversation(ws_connection_t *conn, struct json_object *paylo
    }
 
    json_object_object_add(response, "payload", resp_payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }
 
@@ -1085,7 +1085,7 @@ void handle_set_private(ws_connection_t *conn, struct json_object *payload) {
       json_object_object_add(resp_payload, "error",
                              json_object_new_string("Missing conversation_id or is_private"));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return;
    }
@@ -1118,7 +1118,7 @@ void handle_set_private(ws_connection_t *conn, struct json_object *payload) {
    }
 
    json_object_object_add(response, "payload", resp_payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }
 
@@ -1141,7 +1141,7 @@ void handle_search_conversations(ws_connection_t *conn, struct json_object *payl
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
       json_object_object_add(resp_payload, "error", json_object_new_string("Missing query"));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return;
    }
@@ -1186,7 +1186,7 @@ void handle_search_conversations(ws_connection_t *conn, struct json_object *payl
    }
 
    json_object_object_add(response, "payload", resp_payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }
 
@@ -1211,7 +1211,7 @@ void handle_save_message(ws_connection_t *conn, struct json_object *payload) {
       json_object_object_add(resp_payload, "error",
                              json_object_new_string("Missing conversation_id, role, or content"));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return;
    }
@@ -1226,7 +1226,7 @@ void handle_save_message(ws_connection_t *conn, struct json_object *payload) {
       json_object_object_add(resp_payload, "error",
                              json_object_new_string("Invalid or oversized image data"));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return;
    }
@@ -1246,7 +1246,7 @@ void handle_save_message(ws_connection_t *conn, struct json_object *payload) {
    }
 
    json_object_object_add(response, "payload", resp_payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }
 
@@ -1298,7 +1298,7 @@ void handle_lock_conversation_llm(ws_connection_t *conn, struct json_object *pay
       json_object_object_add(resp_payload, "error",
                              json_object_new_string("Missing conversation_id"));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return;
    }
@@ -1310,7 +1310,7 @@ void handle_lock_conversation_llm(ws_connection_t *conn, struct json_object *pay
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
       json_object_object_add(resp_payload, "error", json_object_new_string("Missing llm_settings"));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return;
    }
@@ -1346,7 +1346,7 @@ void handle_lock_conversation_llm(ws_connection_t *conn, struct json_object *pay
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
       json_object_object_add(resp_payload, "error", json_object_new_string("Field value too long"));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return;
    }
@@ -1372,7 +1372,7 @@ void handle_lock_conversation_llm(ws_connection_t *conn, struct json_object *pay
    }
 
    json_object_object_add(response, "payload", resp_payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }
 
@@ -1397,7 +1397,7 @@ void handle_reassign_conversation(ws_connection_t *conn, struct json_object *pay
       json_object_object_add(resp_payload, "error",
                              json_object_new_string("Missing conversation_id or new_user_id"));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return;
    }
@@ -1410,7 +1410,7 @@ void handle_reassign_conversation(ws_connection_t *conn, struct json_object *pay
       json_object_object_add(resp_payload, "error",
                              json_object_new_string("Invalid conversation_id or user_id"));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return;
    }
@@ -1437,7 +1437,7 @@ void handle_reassign_conversation(ws_connection_t *conn, struct json_object *pay
    }
 
    json_object_object_add(response, "payload", resp_payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }
 
@@ -1497,7 +1497,7 @@ void handle_export_conversation(ws_connection_t *conn, struct json_object *paylo
       json_object_object_add(bp, "error",
                              json_object_new_string("Another export is in progress, try again"));
       json_object_object_add(busy, "payload", bp);
-      send_json_response(conn->wsi, busy);
+      send_json_response(conn, busy);
       json_object_put(busy);
       return;
    }
@@ -1513,7 +1513,7 @@ void handle_export_conversation(ws_connection_t *conn, struct json_object *paylo
       json_object_object_add(resp_payload, "error",
                              json_object_new_string("Missing conversation_id"));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       __atomic_store_n(&s_export_in_progress, 0, __ATOMIC_SEQ_CST);
       return;
@@ -1532,7 +1532,7 @@ void handle_export_conversation(ws_connection_t *conn, struct json_object *paylo
                                                         : "Database error";
       json_object_object_add(resp_payload, "error", json_object_new_string(err));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       __atomic_store_n(&s_export_in_progress, 0, __ATOMIC_SEQ_CST);
       return;
@@ -1548,7 +1548,7 @@ void handle_export_conversation(ws_connection_t *conn, struct json_object *paylo
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
       json_object_object_add(resp_payload, "error", json_object_new_string(err_buf));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       conv_free(&conv);
       __atomic_store_n(&s_export_in_progress, 0, __ATOMIC_SEQ_CST);
@@ -1564,7 +1564,7 @@ void handle_export_conversation(ws_connection_t *conn, struct json_object *paylo
       json_object_object_add(resp_payload, "error",
                              json_object_new_string("Failed to load messages"));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       json_object_put(messages);
       conv_free(&conv);
@@ -1625,7 +1625,7 @@ void handle_export_conversation(ws_connection_t *conn, struct json_object *paylo
    json_object_object_add(resp_payload, "format", json_object_new_string(format));
    json_object_object_add(resp_payload, "data", export_doc);
    json_object_object_add(response, "payload", resp_payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 
    LOG_INFO("WebUI: Exported conversation %lld (%d messages) for user %s", (long long)conv_id,

@@ -77,7 +77,7 @@ void handle_list_users(ws_connection_t *conn) {
    }
 
    json_object_object_add(response, "payload", resp_payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }
 
@@ -101,7 +101,7 @@ void handle_create_user(ws_connection_t *conn, struct json_object *payload) {
       json_object_object_add(resp_payload, "error",
                              json_object_new_string("Missing username or password"));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return;
    }
@@ -118,7 +118,7 @@ void handle_create_user(ws_connection_t *conn, struct json_object *payload) {
       json_object_object_add(resp_payload, "error",
                              json_object_new_string("Invalid username format"));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return;
    }
@@ -129,7 +129,7 @@ void handle_create_user(ws_connection_t *conn, struct json_object *payload) {
       json_object_object_add(resp_payload, "error",
                              json_object_new_string("Password must be at least 8 characters"));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return;
    }
@@ -141,7 +141,7 @@ void handle_create_user(ws_connection_t *conn, struct json_object *payload) {
       json_object_object_add(resp_payload, "error",
                              json_object_new_string("Failed to hash password"));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return;
    }
@@ -170,7 +170,7 @@ void handle_create_user(ws_connection_t *conn, struct json_object *payload) {
    }
 
    json_object_object_add(response, "payload", resp_payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }
 
@@ -191,7 +191,7 @@ void handle_delete_user(ws_connection_t *conn, struct json_object *payload) {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
       json_object_object_add(resp_payload, "error", json_object_new_string("Missing username"));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return;
    }
@@ -204,7 +204,7 @@ void handle_delete_user(ws_connection_t *conn, struct json_object *payload) {
       json_object_object_add(resp_payload, "error",
                              json_object_new_string("Cannot delete your own account"));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return;
    }
@@ -234,7 +234,7 @@ void handle_delete_user(ws_connection_t *conn, struct json_object *payload) {
    }
 
    json_object_object_add(response, "payload", resp_payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }
 
@@ -257,7 +257,7 @@ void handle_change_password(ws_connection_t *conn, struct json_object *payload) 
       json_object_object_add(resp_payload, "error",
                              json_object_new_string("Missing username or new_password"));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return;
    }
@@ -279,7 +279,7 @@ void handle_change_password(ws_connection_t *conn, struct json_object *payload) 
       json_object_object_add(resp_payload, "error",
                              json_object_new_string("Cannot change another user's password"));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return;
    }
@@ -291,7 +291,7 @@ void handle_change_password(ws_connection_t *conn, struct json_object *payload) 
          json_object_object_add(resp_payload, "error",
                                 json_object_new_string("Current password required"));
          json_object_object_add(response, "payload", resp_payload);
-         send_json_response(conn->wsi, response);
+         send_json_response(conn, response);
          json_object_put(response);
          return;
       }
@@ -304,7 +304,7 @@ void handle_change_password(ws_connection_t *conn, struct json_object *payload) 
          json_object_object_add(resp_payload, "error",
                                 json_object_new_string("Current password incorrect"));
          json_object_object_add(response, "payload", resp_payload);
-         send_json_response(conn->wsi, response);
+         send_json_response(conn, response);
          json_object_put(response);
          return;
       }
@@ -316,7 +316,7 @@ void handle_change_password(ws_connection_t *conn, struct json_object *payload) 
       json_object_object_add(resp_payload, "error",
                              json_object_new_string("New password must be at least 8 characters"));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return;
    }
@@ -328,7 +328,7 @@ void handle_change_password(ws_connection_t *conn, struct json_object *payload) 
       json_object_object_add(resp_payload, "error",
                              json_object_new_string("Failed to hash password"));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return;
    }
@@ -355,7 +355,7 @@ void handle_change_password(ws_connection_t *conn, struct json_object *payload) 
    }
 
    json_object_object_add(response, "payload", resp_payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }
 
@@ -376,7 +376,7 @@ void handle_unlock_user(ws_connection_t *conn, struct json_object *payload) {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
       json_object_object_add(resp_payload, "error", json_object_new_string("Missing username"));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return;
    }
@@ -408,6 +408,6 @@ void handle_unlock_user(ws_connection_t *conn, struct json_object *payload) {
    }
 
    json_object_object_add(response, "payload", resp_payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }

@@ -27,18 +27,11 @@
    const IMAGE_CACHE_PREFIX = 'dawn_img_';
 
    // DOM element references
-   let imageBtn = null;
-   let imageInput = null;
    let previewContainer = null;
    let loadingOverlay = null;
    let dropTarget = null;
    let textInput = null;
-   let imageCounter = null;
    let announcer = null;
-
-   // Dropdown elements
-   let dropdownBtn = null;
-   let dropdownMenu = null;
 
    // Camera elements
    let cameraModal = null;
@@ -59,18 +52,11 @@
     * Initialize the vision module
     */
    function init() {
-      imageBtn = document.getElementById('image-btn');
-      imageInput = document.getElementById('image-input');
       previewContainer = document.getElementById('image-preview');
       loadingOverlay = document.querySelector('.preview-loading');
       dropTarget = document.getElementById('input-area');
       textInput = document.getElementById('text-input');
-      imageCounter = document.getElementById('image-counter');
       announcer = document.getElementById('vision-announcer');
-
-      // Dropdown elements
-      dropdownBtn = document.getElementById('image-dropdown-btn');
-      dropdownMenu = document.getElementById('image-dropdown');
 
       // Camera elements
       cameraModal = document.getElementById('camera-modal');
@@ -81,16 +67,7 @@
       cameraLiveControls = document.getElementById('camera-live-controls');
       cameraReviewControls = document.getElementById('camera-review-controls');
 
-      if (!imageBtn || !imageInput) {
-         console.warn('Vision: Required elements not found');
-         return;
-      }
-
-      // Enable multiple file selection
-      imageInput.setAttribute('multiple', 'multiple');
-
       bindEvents();
-      bindDropdownEvents();
       bindCameraEvents();
       // Vision support check will happen when config is received
    }
@@ -99,129 +76,12 @@
     * Bind event handlers
     */
    function bindEvents() {
-      // File input change
-      imageInput.addEventListener('change', handleFileSelect);
-
-      // Upload button click - opens file picker directly (quick action)
-      imageBtn.addEventListener('click', () => imageInput.click());
-
-      // Paste handler on text input
+      // Paste handler on text input (images from clipboard)
       if (textInput) {
          textInput.addEventListener('paste', handlePaste);
       }
 
-      // Drag-and-drop handlers
-      if (dropTarget) {
-         dropTarget.addEventListener('dragenter', handleDragEnter);
-         dropTarget.addEventListener('dragover', handleDragOver);
-         dropTarget.addEventListener('dragleave', handleDragLeave);
-         dropTarget.addEventListener('drop', handleDrop);
-      }
-   }
-
-   /**
-    * Bind dropdown menu events
-    */
-   function bindDropdownEvents() {
-      if (!dropdownBtn || !dropdownMenu) return;
-
-      // Toggle dropdown on chevron click
-      dropdownBtn.addEventListener('click', (e) => {
-         e.stopPropagation();
-         toggleDropdown();
-      });
-
-      // Handle dropdown item clicks
-      dropdownMenu.addEventListener('click', (e) => {
-         const item = e.target.closest('.dropdown-item');
-         if (!item) return;
-
-         const action = item.dataset.action;
-         closeDropdown();
-
-         if (action === 'upload') {
-            imageInput.click();
-         } else if (action === 'camera') {
-            openCamera();
-         }
-      });
-
-      // Close dropdown when clicking outside
-      document.addEventListener('click', (e) => {
-         if (!dropdownBtn.contains(e.target) && !dropdownMenu.contains(e.target)) {
-            closeDropdown();
-         }
-      });
-
-      // Keyboard navigation
-      dropdownBtn.addEventListener('keydown', (e) => {
-         if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            toggleDropdown();
-         } else if (e.key === 'Escape') {
-            closeDropdown();
-         }
-      });
-
-      dropdownMenu.addEventListener('keydown', (e) => {
-         const items = dropdownMenu.querySelectorAll('.dropdown-item');
-         const currentIndex = Array.from(items).indexOf(document.activeElement);
-
-         if (e.key === 'Escape') {
-            closeDropdown();
-            dropdownBtn.focus();
-         } else if (e.key === 'ArrowDown') {
-            e.preventDefault();
-            const nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % items.length;
-            items[nextIndex].focus();
-         } else if (e.key === 'ArrowUp') {
-            e.preventDefault();
-            const prevIndex =
-               currentIndex < 0
-                  ? items.length - 1
-                  : (currentIndex - 1 + items.length) % items.length;
-            items[prevIndex].focus();
-         } else if (e.key === 'Home') {
-            e.preventDefault();
-            items[0].focus();
-         } else if (e.key === 'End') {
-            e.preventDefault();
-            items[items.length - 1].focus();
-         }
-      });
-   }
-
-   /**
-    * Toggle dropdown visibility
-    */
-   function toggleDropdown() {
-      const isOpen = !dropdownMenu.classList.contains('hidden');
-      if (isOpen) {
-         closeDropdown();
-      } else {
-         openDropdown();
-      }
-   }
-
-   /**
-    * Open dropdown menu
-    */
-   function openDropdown() {
-      dropdownMenu.classList.remove('hidden');
-      dropdownBtn.setAttribute('aria-expanded', 'true');
-      // Focus first item for discoverability and keyboard navigation
-      const firstItem = dropdownMenu.querySelector('.dropdown-item');
-      if (firstItem) {
-         firstItem.focus();
-      }
-   }
-
-   /**
-    * Close dropdown menu
-    */
-   function closeDropdown() {
-      dropdownMenu.classList.add('hidden');
-      dropdownBtn.setAttribute('aria-expanded', 'false');
+      // Note: drag-and-drop and file input are handled by DawnAttach (attach.js)
    }
 
    /**
@@ -265,7 +125,9 @@
       if (fallbackBtn) {
          fallbackBtn.addEventListener('click', () => {
             closeCamera();
-            imageInput.click();
+            // Trigger the unified attach file input
+            const attachInput = document.getElementById('attach-file-input');
+            if (attachInput) attachInput.click();
          });
       }
 
@@ -598,86 +460,6 @@
    }
 
    /**
-    * Check if drag event contains image files
-    */
-   function hasImageFile(e) {
-      const items = e.dataTransfer?.items;
-      if (!items) return false;
-      return Array.from(items).some(
-         (item) => item.kind === 'file' && item.type.startsWith('image/')
-      );
-   }
-
-   /**
-    * Handle drag enter event
-    */
-   function handleDragEnter(e) {
-      e.preventDefault();
-      if (hasImageFile(e) && DawnState.visionState.visionEnabled) {
-         dropTarget.classList.add('drag-active');
-      }
-   }
-
-   /**
-    * Handle drag over event (required for drop to work)
-    */
-   function handleDragOver(e) {
-      e.preventDefault();
-   }
-
-   /**
-    * Handle drag leave event
-    */
-   function handleDragLeave(e) {
-      e.preventDefault();
-      // Only remove class if leaving the drop target entirely
-      if (!dropTarget.contains(e.relatedTarget)) {
-         dropTarget.classList.remove('drag-active');
-         dropTarget.classList.remove('drag-active-doc');
-      }
-   }
-
-   /**
-    * Handle drop event - supports multiple files
-    */
-   function handleDrop(e) {
-      e.preventDefault();
-      dropTarget.classList.remove('drag-active');
-      dropTarget.classList.remove('drag-active-doc');
-
-      if (!DawnState.visionState.visionEnabled) {
-         DawnToast.show('Vision not available for current model', 'warning');
-         return;
-      }
-
-      const files = Array.from(e.dataTransfer?.files || []);
-      const imageFiles = files.filter(
-         (f) => f.type.startsWith('image/') && VALID_TYPES.includes(f.type)
-      );
-
-      if (imageFiles.length === 0) return;
-
-      // Sort alphabetically by filename when multiple files dropped together
-      imageFiles.sort((a, b) => a.name.localeCompare(b.name));
-
-      processMultipleImages(imageFiles);
-   }
-
-   /**
-    * Handle file input selection - supports multiple files
-    */
-   async function handleFileSelect(event) {
-      const files = Array.from(event.target.files || []);
-      if (files.length > 0) {
-         // Sort alphabetically
-         files.sort((a, b) => a.name.localeCompare(b.name));
-         await processMultipleImages(files);
-      }
-      // Reset input so same file can be selected again
-      event.target.value = '';
-   }
-
-   /**
     * Handle paste event - capture images from clipboard
     */
    async function handlePaste(event) {
@@ -995,8 +777,9 @@
     */
    function setLoading(loading) {
       DawnState.visionState.isProcessing = loading;
-      if (imageBtn) {
-         imageBtn.classList.toggle('loading', loading);
+      const attachBtn = document.getElementById('attach-btn');
+      if (attachBtn) {
+         attachBtn.classList.toggle('loading', loading);
       }
       if (loadingOverlay) {
          loadingOverlay.classList.toggle('hidden', !loading);
@@ -1039,30 +822,11 @@
    }
 
    /**
-    * Update the image counter display
+    * Update the unified attachment counter
     */
    function updateCounter() {
-      const count = DawnState.visionState.pendingImages.length;
-      const max = DawnState.visionState.maxImages;
-
-      if (imageCounter) {
-         if (count > 0) {
-            imageCounter.textContent = `${count}/${max}`;
-            imageCounter.classList.remove('hidden');
-         } else {
-            imageCounter.classList.add('hidden');
-         }
-      }
-
-      // Disable button if at max
-      if (imageBtn) {
-         const atLimit = count >= max;
-         imageBtn.classList.toggle('at-limit', atLimit);
-         imageBtn.title = atLimit
-            ? `Maximum ${max} images reached`
-            : DawnState.visionState.visionEnabled
-              ? 'Attach image'
-              : 'Vision not available for current model';
+      if (typeof DawnAttach !== 'undefined') {
+         DawnAttach.updateCounter();
       }
    }
 
@@ -1126,9 +890,6 @@
       if (previewContainer) {
          previewContainer.innerHTML = '';
          previewContainer.classList.add('hidden');
-      }
-      if (imageInput) {
-         imageInput.value = '';
       }
       updateCounter();
 
@@ -1208,14 +969,13 @@
 
       DawnState.visionState.visionEnabled = visionEnabled;
 
-      if (imageBtn) {
-         imageBtn.disabled = !visionEnabled;
-         imageBtn.title = visionEnabled ? 'Attach image' : 'Vision not available for current model';
-      }
-
-      // Also update dropdown button state
+      // Update dropdown chevron state (camera access via split-button)
+      const dropdownBtn = document.getElementById('attach-dropdown-btn');
       if (dropdownBtn) {
          dropdownBtn.disabled = !visionEnabled;
+         dropdownBtn.title = visionEnabled
+            ? 'More attach options'
+            : 'Camera requires a vision-capable model';
       }
 
       updateCounter();
@@ -1430,6 +1190,7 @@
       checkVisionSupport,
       updateLimits,
       // Multi-image API
+      processMultipleImages,
       getPendingImages,
       getPendingImageIds,
       hasPendingImages,

@@ -1319,12 +1319,17 @@
          getAuthState: () => DawnState.authState,
       });
 
-      // Initialize vision module (image upload/paste/drag-drop)
+      // Initialize vision module (paste, camera, image processing)
       DawnVision.init();
 
-      // Initialize document upload module (drag-drop, file picker)
+      // Initialize document upload module (chip UI, upload)
       if (typeof DawnDocuments !== 'undefined') {
          DawnDocuments.init();
+      }
+
+      // Initialize unified attach module (file picker, drag-drop, counter)
+      if (typeof DawnAttach !== 'undefined') {
+         DawnAttach.init();
       }
 
       // Initialize music player UI

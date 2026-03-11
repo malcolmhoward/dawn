@@ -16,6 +16,16 @@
    flex-shrink: 0;
 }
 
+/* Normalize all input row controls to same height and suppress base hover lift */
+#input-area > button,
+#input-area > .attach-btn-wrapper {
+   min-height: 46px;
+}
+
+#input-area > button:hover:not(:disabled) {
+   transform: none;
+}
+
 #text-input {
    flex: 1;
    padding: 0.75rem 1rem;
@@ -61,6 +71,11 @@
    outline: 2px solid white;
    outline-offset: 2px;
    box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.4);
+}
+
+/* Match bordered siblings' box model (mic, stop, attach all have 1px border) */
+#send-btn {
+   border: 1px solid transparent;
 }
 
 /* Hidden state for send/stop button toggle */
@@ -147,9 +162,9 @@
 }
 
 /* =============================================================================
- * Image Button (Vision)
+ * Attach Button (unified files + images)
  * ============================================================================= */
-#image-btn {
+#attach-btn {
    background-color: var(--bg-tertiary);
    color: var(--text-secondary);
    border: 1px solid var(--text-secondary);
@@ -160,21 +175,26 @@
    justify-content: center;
 }
 
-#image-btn:not(:disabled):hover {
+#attach-btn:hover {
    border-color: var(--accent);
    color: var(--accent);
 }
 
-#image-btn:disabled {
-   opacity: 0.5;
-   cursor: not-allowed;
+/* Highlight both halves when either is hovered */
+.attach-btn-wrapper:hover #attach-btn:not(:disabled),
+.attach-btn-wrapper:hover #attach-dropdown-btn:not(:disabled) {
+   border-color: var(--accent);
 }
 
-#image-btn.loading {
+#attach-btn.at-limit {
+   opacity: 0.5;
+}
+
+#attach-btn.loading {
    pointer-events: none;
 }
 
-#image-btn.loading svg {
+#attach-btn.loading svg {
    animation: spin 1s linear infinite;
 }
 
@@ -185,6 +205,157 @@
    to {
       transform: rotate(360deg);
    }
+}
+
+/* Attach button wrapper (for counter badge positioning) */
+.attach-btn-wrapper {
+   position: relative;
+   display: inline-flex;
+   align-items: stretch; /* Chevron matches attach button height */
+}
+
+/* Neutralize base button hover lift so split-button moves as one unit */
+.attach-btn-wrapper button:hover:not(:disabled) {
+   transform: none;
+}
+
+/* Attach counter badge */
+.attach-counter {
+   position: absolute;
+   top: -6px;
+   right: -6px;
+   background: var(--accent);
+   color: var(--bg-primary);
+   font-size: 0.65rem;
+   font-weight: 600;
+   padding: 1px 4px;
+   border-radius: 8px;
+   pointer-events: none;
+}
+
+.attach-counter.hidden {
+   display: none;
+}
+
+/* =============================================================================
+ * Attach Dropdown (split-button chevron for "Take Photo")
+ * ============================================================================= */
+/* Join attach button + chevron visually */
+.attach-btn-wrapper #attach-btn {
+   border-top-right-radius: 0;
+   border-bottom-right-radius: 0;
+   border-right: none;
+}
+
+#attach-dropdown-btn {
+   background-color: var(--bg-tertiary);
+   color: var(--text-secondary);
+   border: 1px solid var(--text-secondary);
+   border-left: 1px solid var(--border-color);
+   border-top-left-radius: 0;
+   border-bottom-left-radius: 0;
+   min-width: 24px;
+   padding: 0.5rem 0.35rem;
+   display: flex;
+   align-items: center;
+   justify-content: center;
+   cursor: pointer;
+   transition: all var(--transition-fast);
+}
+
+#attach-dropdown-btn:not(:disabled):hover {
+   border-color: var(--accent);
+   color: var(--accent);
+}
+
+#attach-dropdown-btn:disabled {
+   opacity: 0.5;
+   cursor: not-allowed;
+}
+
+#attach-dropdown-btn[aria-expanded='true'] {
+   background-color: var(--bg-tertiary);
+   border-color: var(--accent);
+   color: var(--accent);
+}
+
+#attach-dropdown-btn svg {
+   transition: transform var(--transition-fast);
+   transform: rotate(180deg); /* Point up by default (menu opens upward) */
+}
+
+#attach-dropdown-btn[aria-expanded='true'] svg {
+   transform: rotate(0deg); /* Point down when menu is open */
+}
+
+#attach-dropdown-btn:focus-visible {
+   outline: 2px solid var(--accent);
+   outline-offset: 2px;
+}
+
+/* Dropdown menu */
+.attach-dropdown {
+   position: absolute;
+   bottom: 100%;
+   left: 0;
+   margin-bottom: 4px;
+   background: var(--bg-secondary);
+   border: 1px solid var(--border-color);
+   border-radius: var(--border-radius);
+   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+   min-width: 150px;
+   z-index: 100;
+   overflow: hidden;
+   /* Animation properties */
+   opacity: 1;
+   transform: translateY(0) scale(1);
+   transform-origin: bottom left;
+   transition:
+      opacity 0.15s ease-out,
+      transform 0.15s ease-out,
+      visibility 0.15s;
+   visibility: visible;
+}
+
+.attach-dropdown.hidden {
+   opacity: 0;
+   transform: translateY(4px) scale(0.95);
+   visibility: hidden;
+   pointer-events: none;
+}
+
+/* Dropdown menu item */
+.dropdown-item {
+   display: flex;
+   align-items: center;
+   gap: 0.5rem;
+   width: 100%;
+   padding: 0.75rem 1rem;
+   background: transparent;
+   border: none;
+   color: var(--text-primary);
+   font-size: 0.9rem;
+   cursor: pointer;
+   transition: background-color var(--transition-fast);
+   text-align: left;
+}
+
+.dropdown-item:hover {
+   background-color: var(--bg-tertiary);
+}
+
+.dropdown-item:focus-visible {
+   outline: 2px solid var(--accent);
+   outline-offset: -2px;
+}
+
+.dropdown-item svg {
+   flex-shrink: 0;
+   color: var(--text-secondary);
+}
+
+.dropdown-item:hover svg {
+   color: var(--accent);
 }
 
 /* =============================================================================
@@ -326,155 +497,6 @@
    border-top-color: var(--accent);
    border-radius: 50%;
    animation: spin 0.8s linear infinite;
-}
-
-/* Image button wrapper (for counter badge positioning) */
-.image-btn-wrapper {
-   position: relative;
-   display: inline-flex;
-}
-
-/* Image counter badge */
-.image-counter {
-   position: absolute;
-   top: -6px;
-   right: -6px;
-   background: var(--accent);
-   color: var(--bg-primary);
-   font-size: 0.65rem;
-   font-weight: 600;
-   padding: 1px 4px;
-   border-radius: 8px;
-   pointer-events: none;
-}
-
-.image-counter.hidden {
-   display: none;
-}
-
-/* Button at limit styling */
-#image-btn.at-limit {
-   opacity: 0.5;
-}
-
-/* =============================================================================
- * Split Button Dropdown for Image Options
- * ============================================================================= */
-.image-btn-wrapper {
-   position: relative;
-   display: inline-flex;
-   align-items: stretch;
-}
-
-#image-btn {
-   border-top-right-radius: 0;
-   border-bottom-right-radius: 0;
-   border-right: none;
-}
-
-#image-dropdown-btn {
-   background-color: var(--bg-tertiary);
-   color: var(--text-secondary);
-   border: 1px solid var(--text-secondary);
-   border-left: 1px solid var(--border-color);
-   border-top-left-radius: 0;
-   border-bottom-left-radius: 0;
-   padding: 0.5rem 0.35rem;
-   min-width: 24px;
-   display: flex;
-   align-items: center;
-   justify-content: center;
-   cursor: pointer;
-   transition: all var(--transition-fast);
-}
-
-#image-dropdown-btn:not(:disabled):hover {
-   border-color: var(--accent);
-   color: var(--accent);
-}
-
-#image-dropdown-btn:disabled {
-   opacity: 0.5;
-   cursor: not-allowed;
-}
-
-#image-dropdown-btn[aria-expanded='true'] {
-   background-color: var(--bg-tertiary);
-   border-color: var(--accent);
-   color: var(--accent);
-}
-
-#image-dropdown-btn svg {
-   transition: transform var(--transition-fast);
-   transform: rotate(180deg); /* Point up by default (menu opens upward) */
-}
-
-#image-dropdown-btn[aria-expanded='true'] svg {
-   transform: rotate(0deg); /* Point down when menu is open */
-}
-
-/* Dropdown menu */
-.image-dropdown {
-   position: absolute;
-   bottom: 100%;
-   left: 0;
-   margin-bottom: 4px;
-   background: var(--bg-secondary);
-   border: 1px solid var(--border-color);
-   border-radius: var(--border-radius);
-   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-   min-width: 150px;
-   z-index: 100;
-   overflow: hidden;
-   /* Animation properties */
-   opacity: 1;
-   transform: translateY(0) scale(1);
-   transform-origin: bottom left;
-   transition:
-      opacity 0.15s ease-out,
-      transform 0.15s ease-out,
-      visibility 0.15s;
-   visibility: visible;
-}
-
-.image-dropdown.hidden {
-   opacity: 0;
-   transform: translateY(4px) scale(0.95);
-   visibility: hidden;
-   pointer-events: none;
-}
-
-.dropdown-item {
-   display: flex;
-   align-items: center;
-   gap: 0.5rem;
-   width: 100%;
-   padding: 0.75rem 1rem;
-   background: transparent;
-   border: none;
-   color: var(--text-primary);
-   font-size: 0.9rem;
-   cursor: pointer;
-   transition: background-color var(--transition-fast);
-   text-align: left;
-}
-
-.dropdown-item:hover {
-   background-color: var(--bg-tertiary);
-}
-
-.dropdown-item:focus-visible {
-   outline: 2px solid var(--accent);
-   outline-offset: -2px;
-}
-
-.dropdown-item svg {
-   flex-shrink: 0;
-   color: var(--text-secondary);
-}
-
-.dropdown-item:hover svg {
-   color: var(--accent);
 }
 
 /* =============================================================================
@@ -715,11 +737,6 @@
       width: 48px;
       height: 48px;
    }
-
-   /* Dropdown opens upward on mobile too */
-   .image-dropdown {
-      min-width: 140px;
-   }
 }
 
 /* =============================================================================
@@ -734,7 +751,7 @@
 }
 
 .drop-target.drag-active::after {
-   content: 'Drop image here';
+   content: 'Drop files here';
    position: absolute;
    inset: 0;
    display: flex;
@@ -793,10 +810,6 @@
  * Mobile Responsive
  * ============================================================================= */
 @media (max-width: 600px) {
-   #image-btn {
-      min-width: 44px;
-   }
-
    #tts-toggle {
       flex: 0;
       order: -1; /* Stay at left of button row when textarea wraps */

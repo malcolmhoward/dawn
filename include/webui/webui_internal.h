@@ -313,15 +313,14 @@ void unregister_tokens_for_session(uint32_t session_id);
 session_t *lookup_session_by_token(const char *token);
 
 /* =============================================================================
- * WebSocket Send Helpers — LWS SERVICE THREAD ONLY
+ * WebSocket Send Helpers
  *
- * IMPORTANT: These functions call lws_write() directly, which is NOT thread-safe.
- * libwebsockets requires that lws_write() is only called from the LWS service
- * thread (i.e., within an LWS callback or from process_one_response()).
+ * send_json_response() — safe from any context, routes through the response
+ * queue ensuring one lws_write() per WRITEABLE callback.
  *
- * If you need to send a WebSocket message from a worker thread, the LLM tool
- * thread, or the music streaming thread, you MUST use queue_response() instead.
- * See send_position_update() in webui_music.c for a correct example.
+ * send_json_message() — LWS SERVICE THREAD ONLY, calls lws_write() directly.
+ * Only safe from within process_one_response() or similar WRITEABLE-driven
+ * code paths. For handler code, prefer send_json_response().
  * ============================================================================= */
 
 /**
@@ -514,15 +513,18 @@ bool conn_require_auth(ws_connection_t *conn);
 bool conn_require_admin(ws_connection_t *conn);
 
 /**
- * @brief Send JSON response to WebSocket client
+ * @brief Send JSON response to WebSocket client via the response queue
  *
- * Handles both small (stack) and large (heap) responses.
+ * Serializes the JSON object to a string and queues it as WS_RESP_JSON.
+ * Safe to call from any context (RECEIVE callbacks, WRITEABLE callbacks,
+ * or worker threads). The response is sent asynchronously via the
+ * process_one_response() drain loop, ensuring one lws_write() per
+ * WRITEABLE callback.
  *
- * WARNING: LWS service thread only. Do NOT call from worker threads,
- * LLM tool threads, or the music streaming thread. Use queue_response()
- * with a WS_RESP_* type to send from non-LWS threads.
+ * The caller retains ownership of the json_object and must free it
+ * after this call returns (the JSON string is copied internally).
  */
-void send_json_response(struct lws *wsi, json_object *response);
+void send_json_response(ws_connection_t *conn, json_object *response);
 
 /**
  * @brief Send error message implementation

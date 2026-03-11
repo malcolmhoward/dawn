@@ -72,49 +72,17 @@
    const RESPONSE_RESERVE = 1024;
 
    // DOM element references
-   let documentBtn = null;
-   let documentInput = null;
    let chipContainer = null;
-   let documentCounter = null;
    let announcer = null;
-   let dropTarget = null;
 
    /**
     * Initialize the documents module
     */
    function init() {
-      documentBtn = document.getElementById('document-btn');
-      documentInput = document.getElementById('document-file-input');
       chipContainer = document.getElementById('document-chips');
-      documentCounter = document.getElementById('document-counter');
       announcer = document.getElementById('document-announcer');
-      dropTarget = document.getElementById('input-area');
 
-      if (!documentBtn || !documentInput) {
-         console.warn('Documents: Required elements not found');
-         return;
-      }
-
-      bindEvents();
-   }
-
-   /**
-    * Bind event handlers
-    */
-   function bindEvents() {
-      // File picker button
-      documentBtn.addEventListener('click', () => documentInput.click());
-
-      // File input change
-      documentInput.addEventListener('change', handleFileSelect);
-
-      // Drag-and-drop handlers (cooperative with vision.js)
-      if (dropTarget) {
-         dropTarget.addEventListener('dragenter', handleDragEnter);
-         dropTarget.addEventListener('dragover', handleDragOver);
-         dropTarget.addEventListener('dragleave', handleDragLeave);
-         dropTarget.addEventListener('drop', handleDrop);
-      }
+      // Note: file input and drag-and-drop are handled by DawnAttach (attach.js)
    }
 
    /**
@@ -134,20 +102,6 @@
    }
 
    /**
-    * Check if a drag event contains non-image files with allowed extensions
-    */
-   function hasDocumentFile(e) {
-      const items = e.dataTransfer?.items;
-      if (!items) return false;
-      return Array.from(items).some((item) => {
-         if (item.kind !== 'file') return false;
-         // Skip images (handled by vision.js)
-         if (item.type.startsWith('image/')) return false;
-         return true;
-      });
-   }
-
-   /**
     * Get the format category for chip color coding
     */
    function getFormatCategory(ext) {
@@ -161,68 +115,6 @@
     */
    function formatExtension(ext) {
       return (ext || '').replace(/^\./, '').toUpperCase();
-   }
-
-   // --- Drag-and-drop handlers ---
-
-   function handleDragEnter(e) {
-      e.preventDefault();
-      if (hasDocumentFile(e)) {
-         dropTarget.classList.add('drag-active-doc');
-      }
-   }
-
-   function handleDragOver(e) {
-      e.preventDefault();
-   }
-
-   function handleDragLeave(e) {
-      e.preventDefault();
-      if (!dropTarget.contains(e.relatedTarget)) {
-         dropTarget.classList.remove('drag-active-doc');
-      }
-   }
-
-   function handleDrop(e) {
-      dropTarget.classList.remove('drag-active-doc');
-
-      const files = Array.from(e.dataTransfer?.files || []);
-      const nonImageFiles = files.filter((f) => !f.type.startsWith('image/'));
-      const docFiles = nonImageFiles.filter((f) => isAllowedExtension(f.name));
-
-      // Show toast for rejected non-image files
-      const rejected = nonImageFiles.filter((f) => !isAllowedExtension(f.name));
-      if (rejected.length > 0) {
-         const names = rejected.map((f) => f.name).join(', ');
-         // Helpful message for legacy .doc format
-         const hasDoc = rejected.some((f) => getExtension(f.name) === '.doc');
-         if (hasDoc) {
-            DawnToast.show(
-               'Legacy .doc format not supported. Please convert to .docx or PDF.',
-               'warning'
-            );
-         } else {
-            DawnToast.show(`Unsupported file type: ${names}`, 'warning');
-         }
-      }
-
-      if (docFiles.length === 0) return;
-
-      // preventDefault is also called by vision.js for images — both are safe
-      e.preventDefault();
-
-      processMultipleDocuments(docFiles);
-   }
-
-   /**
-    * Handle file input selection
-    */
-   function handleFileSelect(event) {
-      const files = Array.from(event.target.files || []);
-      if (files.length > 0) {
-         processMultipleDocuments(files);
-      }
-      event.target.value = '';
    }
 
    /**
@@ -602,25 +494,11 @@
    }
 
    /**
-    * Update the document counter badge
+    * Update the unified attachment counter
     */
    function updateCounter() {
-      const count = DawnState.documentState.pendingDocuments.length;
-      const max = DawnState.documentState.maxDocuments;
-
-      if (documentCounter) {
-         if (count > 0) {
-            documentCounter.textContent = `${count}/${max}`;
-            documentCounter.classList.remove('hidden');
-         } else {
-            documentCounter.classList.add('hidden');
-         }
-      }
-
-      if (documentBtn) {
-         const atLimit = count >= max;
-         documentBtn.classList.toggle('at-limit', atLimit);
-         documentBtn.title = atLimit ? `Maximum ${max} documents reached` : 'Attach document';
+      if (typeof DawnAttach !== 'undefined') {
+         DawnAttach.updateCounter();
       }
    }
 
@@ -634,9 +512,6 @@
       if (chipContainer) {
          chipContainer.innerHTML = '';
          chipContainer.classList.add('hidden');
-      }
-      if (documentInput) {
-         documentInput.value = '';
       }
       updateCounter();
 
@@ -786,6 +661,7 @@
    // Export module
    global.DawnDocuments = {
       init,
+      processMultipleDocuments,
       getAndClearDocuments,
       hasPendingDocuments,
       isAllowedExtension,

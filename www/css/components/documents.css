@@ -3,34 +3,6 @@
  * ============================================================================= */
 
 /* =============================================================================
- * Document Button (mirrors #image-btn from input.css)
- * ============================================================================= */
-#document-btn {
-   background-color: var(--bg-tertiary);
-   color: var(--text-secondary);
-   border: 1px solid var(--text-secondary);
-   min-width: 44px;
-   padding: 0.75rem;
-   display: flex;
-   align-items: center;
-   justify-content: center;
-}
-
-#document-btn:hover {
-   border-color: var(--accent);
-   color: var(--accent);
-}
-
-#document-btn.at-limit {
-   opacity: 0.5;
-}
-
-#document-btn:focus-visible {
-   outline: 2px solid var(--accent);
-   outline-offset: 2px;
-}
-
-/* =============================================================================
  * Document Chip Container
  * ============================================================================= */
 #document-chips {
@@ -176,37 +148,6 @@
 }
 
 /* =============================================================================
- * Counter Badge
- * ============================================================================= */
-#document-counter {
-   position: absolute;
-   top: -4px;
-   right: -4px;
-   font-size: 0.65rem;
-   background: var(--accent);
-   color: var(--bg-primary);
-   padding: 1px 4px;
-   border-radius: 8px;
-   line-height: 1.2;
-   font-weight: 600;
-   pointer-events: none;
-}
-
-#document-counter.hidden {
-   display: none;
-}
-
-/* Document button wrapper (for counter positioning) */
-.document-btn-wrapper {
-   position: relative;
-   display: inline-flex;
-   align-items: center;
-}
-
-/* =============================================================================
- * Drag Overlay (cooperative with .drag-active in input.css)
- * ============================================================================= */
-/* =============================================================================
  * Transcript Document Chips (in conversation entries)
  * ============================================================================= */
 .transcript-doc-container {
@@ -335,24 +276,4 @@
       max-height: 100dvh;
       border-radius: 0;
    }
-}
-
-/* =============================================================================
- * Drag Overlay (cooperative with .drag-active in input.css)
- * ============================================================================= */
-.drop-target.drag-active-doc::after {
-   content: 'Drop document here';
-   position: absolute;
-   inset: 0;
-   display: flex;
-   align-items: center;
-   justify-content: center;
-   background: rgba(0, 0, 0, 0.55);
-   border: 2px dashed var(--accent);
-   border-radius: var(--border-radius);
-   color: var(--accent);
-   font-size: 0.9rem;
-   font-weight: 500;
-   z-index: 10;
-   pointer-events: none;
 }

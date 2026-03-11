@@ -150,7 +150,7 @@ int webui_add_security_headers(struct lws *wsi, unsigned char **p, unsigned char
                                    end))
       return -1;
 
-   static const char permissions[] = "camera=(), geolocation=(), payment=()";
+   static const char permissions[] = "camera=(self), geolocation=(), payment=()";
    if (lws_add_http_header_by_name(wsi, (const unsigned char *)"Permissions-Policy:",
                                    (const unsigned char *)permissions, (int)strlen(permissions), p,
                                    end))
@@ -179,7 +179,7 @@ void webui_security_headers_init(void) {
                     "X-Frame-Options: DENY\x0d\x0a"
                     "X-Content-Type-Options: nosniff\x0d\x0a"
                     "Referrer-Policy: strict-origin-when-cross-origin\x0d\x0a"
-                    "Permissions-Policy: camera=(), geolocation=(), payment=()\x0d\x0a"
+                    "Permissions-Policy: camera=(self), geolocation=(), payment=()\x0d\x0a"
                     "%s",
                     s_csp_policy,
                     g_config.webui.https

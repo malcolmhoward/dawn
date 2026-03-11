@@ -110,9 +110,16 @@
     * Vision state (for image upload and preview)
     * Defaults are overridden by server config.vision on connect.
     */
+   /**
+    * Unified attachment limits (images + documents combined)
+    */
+   const attachmentState = {
+      maxAttachments: 8, // Unified limit, overridden by server config
+   };
+
    const visionState = {
       pendingImages: [], // Array of { data: base64, mimeType: string, thumbnail: string }
-      maxImages: 5, // Overridden by config.vision.max_images
+      maxImages: 5, // Per-type sub-limit for images (LLM vision API cap)
       maxSize: 4 * 1024 * 1024, // Overridden by config.vision.max_image_size_kb * 1024
       maxDimension: 1024, // Overridden by config.vision.max_dimension
       isProcessing: false, // Loading indicator state
@@ -152,5 +159,6 @@
       authState: authState,
       visionState: visionState,
       documentState: documentState,
+      attachmentState: attachmentState,
    };
 })(window);

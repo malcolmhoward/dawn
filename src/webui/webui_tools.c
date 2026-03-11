@@ -70,7 +70,7 @@ void handle_get_tools_config(ws_connection_t *conn) {
    json_object_object_add(payload, "token_estimate", estimates);
 
    json_object_object_add(response, "payload", payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 
    LOG_INFO("WebUI: Sent tools config (%d tools)", count);
@@ -122,7 +122,7 @@ void handle_set_tools_config(ws_connection_t *conn, struct json_object *payload)
       json_object_object_add(resp_payload, "error",
                              json_object_new_string("Missing 'tools' array"));
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return;
    }
@@ -218,7 +218,7 @@ void handle_set_tools_config(ws_connection_t *conn, struct json_object *payload)
    json_object_object_add(resp_payload, "token_estimate", estimates);
 
    json_object_object_add(response, "payload", resp_payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 
    LOG_INFO("WebUI: Updated %d tool enable states", updated);

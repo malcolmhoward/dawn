@@ -662,7 +662,7 @@ void handle_satellite_register(ws_connection_t *conn, struct json_object *payloa
                           json_object_new_string("Satellite registered successfully"));
 
    json_object_object_add(response, "payload", resp_payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }
 
@@ -766,7 +766,7 @@ void handle_satellite_ping(ws_connection_t *conn) {
 
    struct json_object *response = json_object_new_object();
    json_object_object_add(response, "type", json_object_new_string("satellite_pong"));
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 
    /* Touch session if exists */

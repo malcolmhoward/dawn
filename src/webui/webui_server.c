@@ -1271,79 +1271,6 @@ static void send_reasoning_summary_impl(struct lws *wsi, uint32_t stream_id, int
    json_object_put(obj);
 }
 
-/**
- * @brief Send conversation history to client on reconnect
- *
- * Iterates through the session's conversation history and sends each
- * user/assistant message as a transcript. Skips system messages.
- *
- * @param wsi WebSocket instance
- * @param session Session with conversation history
- */
-static void send_history_impl(struct lws *wsi, session_t *session) {
-   if (!wsi || !session) {
-      return;
-   }
-
-   struct json_object *history = session_get_history(session);
-   if (!history) {
-      LOG_WARNING("WebUI: Failed to get history for session %u", session->session_id);
-      return;
-   }
-
-   int len = json_object_array_length(history);
-   int sent_count = 0;
-
-   /*
-    * Limit history sent on reconnect to prevent overwhelming WebSocket buffer.
-    * libwebsockets can only do ONE lws_write() per writable callback, so sending
-    * hundreds of messages in a loop causes buffer overflow and connection failure.
-    *
-    * Clients with persistent conversation history can load full history via
-    * load_conversation_response instead.
-    */
-   const int MAX_RECONNECT_HISTORY = 50;
-   int start_idx = (len > MAX_RECONNECT_HISTORY) ? (len - MAX_RECONNECT_HISTORY) : 0;
-
-   if (len > MAX_RECONNECT_HISTORY) {
-      LOG_INFO("WebUI: Limiting reconnect history from %d to last %d entries", len,
-               MAX_RECONNECT_HISTORY);
-   } else {
-      LOG_INFO("WebUI: Sending %d history entries to reconnected client", len);
-   }
-
-   for (int i = start_idx; i < len; i++) {
-      struct json_object *msg = json_object_array_get_idx(history, i);
-      if (!msg)
-         continue;
-
-      struct json_object *role_obj = NULL;
-      struct json_object *content_obj = NULL;
-
-      if (!json_object_object_get_ex(msg, "role", &role_obj) ||
-          !json_object_object_get_ex(msg, "content", &content_obj)) {
-         continue;
-      }
-
-      const char *role = json_object_get_string(role_obj);
-      const char *content = json_object_get_string(content_obj);
-
-      /* Skip system messages (prompts) - only send user/assistant */
-      if (!role || !content || strcmp(role, "system") == 0) {
-         continue;
-      }
-
-      /* Mark as replay so client doesn't re-save to database */
-      send_transcript_impl_ex(wsi, role, content, true);
-      sent_count++;
-   }
-
-   /* Release the reference we got from session_get_history */
-   json_object_put(history);
-
-   LOG_INFO("WebUI: Sent %d transcript entries to reconnected client", sent_count);
-}
-
 /* =============================================================================
  * Response Queue Processing (called from WebUI thread)
  *
@@ -1810,36 +1737,24 @@ static void handle_cancel_message(ws_connection_t *conn);
 static void handle_get_metrics(ws_connection_t *conn);
 
 
-/**
- * @brief Send a JSON response efficiently using stack buffer when possible
- *
- * Uses stack allocation for small responses (<2KB) to avoid heap fragmentation.
- * Falls back to heap allocation for larger responses.
- */
-#define MAX_STACK_RESPONSE 2048
-
-/* WARNING: LWS service thread only. Calls lws_write() directly.
- * For thread-safe sending, serialize to string and use queue_response(). */
-void send_json_response(struct lws *wsi, json_object *response) {
+/* Queue a JSON response for delivery via the response queue.
+ * Safe to call from any context — the JSON is serialized and copied. */
+void send_json_response(ws_connection_t *conn, json_object *response) {
    const char *json_str = json_object_to_json_string(response);
-   size_t json_len = strlen(json_str);
-
-   if (json_len < MAX_STACK_RESPONSE - LWS_PRE) {
-      /* Use stack buffer for small responses */
-      unsigned char buf[LWS_PRE + MAX_STACK_RESPONSE];
-      memcpy(buf + LWS_PRE, json_str, json_len);
-      lws_write(wsi, buf + LWS_PRE, json_len, LWS_WRITE_TEXT);
-   } else {
-      /* Fall back to heap for large responses */
-      unsigned char *buf = malloc(LWS_PRE + json_len);
-      if (buf) {
-         memcpy(buf + LWS_PRE, json_str, json_len);
-         lws_write(wsi, buf + LWS_PRE, json_len, LWS_WRITE_TEXT);
-         free(buf);
-      } else {
-         LOG_ERROR("WebUI: Failed to allocate buffer for JSON response (%zu bytes)", json_len);
-      }
+   if (!json_str) {
+      LOG_ERROR("WebUI: Failed to serialize JSON response");
+      return;
    }
+
+   ws_response_t resp = { 0 };
+   resp.session = conn->session;
+   resp.type = WS_RESP_JSON;
+   resp.generic_json.json = strdup(json_str);
+   if (!resp.generic_json.json) {
+      LOG_ERROR("WebUI: Failed to allocate JSON response string");
+      return;
+   }
+   queue_response(&resp);
 }
 
 
@@ -1938,7 +1853,7 @@ static void handle_get_metrics(ws_connection_t *conn) {
    json_object_object_add(payload, "summarizer", summarizer);
 
    json_object_object_add(response, "payload", payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }
 
@@ -1996,7 +1911,7 @@ static bool handle_smart_home_message(ws_connection_t *conn,
       }
 
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return true;
    }
@@ -2041,7 +1956,7 @@ static bool handle_smart_home_message(ws_connection_t *conn,
       }
 
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return true;
    }
@@ -2080,7 +1995,7 @@ static bool handle_smart_home_message(ws_connection_t *conn,
       }
 
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return true;
    }
@@ -2097,7 +2012,7 @@ static bool handle_smart_home_message(ws_connection_t *conn,
       LOG_INFO("WebUI: SmartThings disconnected");
 
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return true;
    }
@@ -2149,7 +2064,7 @@ static bool handle_smart_home_message(ws_connection_t *conn,
       }
 
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return true;
    }
@@ -2201,7 +2116,7 @@ static bool handle_smart_home_message(ws_connection_t *conn,
       }
 
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
       return true;
    }
@@ -2365,7 +2280,7 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
       }
 
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
    } else if (strcmp(type, "set_config") == 0) {
       /* Update configuration settings */
@@ -2500,7 +2415,7 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                              json_object_new_boolean(llm_has_gemini_key()));
 
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
    } else if (strcmp(type, "set_session_llm") == 0) {
       /* Per-session LLM configuration (does NOT affect other clients) */
@@ -2732,7 +2647,7 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                              json_object_new_boolean(llm_has_gemini_key()));
 
       json_object_object_add(response, "payload", resp_payload);
-      send_json_response(conn->wsi, response);
+      send_json_response(conn, response);
       json_object_put(response);
 
       /* Send context info via queue (after response) so gauge reflects new model's

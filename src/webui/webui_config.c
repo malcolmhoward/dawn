@@ -972,7 +972,7 @@ void handle_set_config(ws_connection_t *conn, struct json_object *payload) {
 
    json_object_object_add(response, "payload", resp_payload);
 
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }
 
@@ -1090,7 +1090,7 @@ void handle_set_secrets(ws_connection_t *conn, struct json_object *payload) {
 
    json_object_object_add(response, "payload", resp_payload);
 
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }
 
@@ -1540,7 +1540,7 @@ void handle_list_models(ws_connection_t *conn) {
    if (s_discovery_cache.models_response &&
        (now - s_discovery_cache.models_cache_time) < MODEL_CACHE_TTL) {
       /* Return cached response */
-      send_json_response(conn->wsi, s_discovery_cache.models_response);
+      send_json_response(conn, s_discovery_cache.models_response);
       LOG_INFO("WebUI: Sent cached model list");
       pthread_mutex_unlock(&s_discovery_cache.cache_mutex);
       return;
@@ -1564,7 +1564,7 @@ void handle_list_models(ws_connection_t *conn) {
    pthread_mutex_unlock(&s_discovery_cache.cache_mutex);
 
    /* Send response */
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }
 
@@ -1656,7 +1656,7 @@ void handle_list_interfaces(ws_connection_t *conn) {
    if (s_discovery_cache.interfaces_response &&
        (now - s_discovery_cache.interfaces_cache_time) < MODEL_CACHE_TTL) {
       /* Return cached response */
-      send_json_response(conn->wsi, s_discovery_cache.interfaces_response);
+      send_json_response(conn, s_discovery_cache.interfaces_response);
       LOG_INFO("WebUI: Sent cached interface list");
       pthread_mutex_unlock(&s_discovery_cache.cache_mutex);
       return;
@@ -1680,7 +1680,7 @@ void handle_list_interfaces(ws_connection_t *conn) {
    pthread_mutex_unlock(&s_discovery_cache.cache_mutex);
 
    /* Send response */
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }
 
@@ -1769,7 +1769,7 @@ void handle_list_llm_models(ws_connection_t *conn) {
 
    json_object_object_add(response, "payload", payload);
 
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 
    LOG_INFO("WebUI: Sent local LLM models list (%zu models from %s)", count,

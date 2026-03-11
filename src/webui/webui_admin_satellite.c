@@ -144,7 +144,7 @@ void handle_list_satellites(ws_connection_t *conn) {
 #endif
 
    json_object_object_add(response, "payload", payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 }
 
@@ -212,7 +212,7 @@ void handle_update_satellite(ws_connection_t *conn, struct json_object *payload)
    json_object_object_add(resp_payload, "satellite", satellite_mapping_to_json(&mapping, false));
 
    json_object_object_add(response, "payload", resp_payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 
    LOG_INFO("Admin: Updated satellite %s (%s) user_id=%d ha_area='%s'", mapping.name, uuid,
@@ -255,7 +255,7 @@ void handle_delete_satellite(ws_connection_t *conn, struct json_object *payload)
    json_object_object_add(resp_payload, "uuid", json_object_new_string(uuid));
 
    json_object_object_add(response, "payload", resp_payload);
-   send_json_response(conn->wsi, response);
+   send_json_response(conn, response);
    json_object_put(response);
 
    LOG_INFO("Admin: Deleted satellite mapping %s", uuid);
