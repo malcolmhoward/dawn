@@ -1249,6 +1249,33 @@ static void parse_scheduler(toml_table_t *table, scheduler_config_t *config) {
       config->alarm_volume = 100;
 }
 
+static void parse_calendar(toml_table_t *table, calendar_config_t *config) {
+   if (!table)
+      return;
+
+   static const char *const known_keys[] = {
+      "enabled",           "sync_interval_sec",          "cache_past_days",
+      "cache_future_days", "default_event_duration_min", NULL
+   };
+   warn_unknown_keys(table, "calendar", known_keys);
+
+   PARSE_BOOL(table, "enabled", config->enabled);
+   PARSE_INT(table, "sync_interval_sec", config->sync_interval_sec);
+   PARSE_INT(table, "cache_past_days", config->cache_past_days);
+   PARSE_INT(table, "cache_future_days", config->cache_future_days);
+   PARSE_INT(table, "default_event_duration_min", config->default_event_duration_min);
+
+   /* Clamp values */
+   if (config->sync_interval_sec < 60)
+      config->sync_interval_sec = 60;
+   if (config->cache_past_days < 0)
+      config->cache_past_days = 0;
+   if (config->cache_future_days < 1)
+      config->cache_future_days = 1;
+   if (config->default_event_duration_min < 1)
+      config->default_event_duration_min = 1;
+}
+
 /* =============================================================================
  * Public API
  * ============================================================================= */
@@ -1317,6 +1344,7 @@ int config_parse_file(const char *path, dawn_config_t *config) {
    parse_paths(toml_table_in(root, "paths"), &config->paths);
    parse_music(toml_table_in(root, "music"), &config->music);
    parse_scheduler(toml_table_in(root, "scheduler"), &config->scheduler);
+   parse_calendar(toml_table_in(root, "calendar"), &config->calendar);
 
    toml_free(root);
 

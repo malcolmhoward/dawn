@@ -494,6 +494,17 @@ typedef struct {
 } music_config_t;
 
 /* =============================================================================
+ * Calendar Configuration
+ * ============================================================================= */
+typedef struct {
+   bool enabled;                   /* Master enable/disable (default: true) */
+   int sync_interval_sec;          /* Background sync interval (default: 900 = 15 min) */
+   int cache_past_days;            /* Days of past events to cache (default: 30) */
+   int cache_future_days;          /* Days of future events to cache (default: 365) */
+   int default_event_duration_min; /* Default event duration in minutes (default: 60) */
+} calendar_config_t;
+
+/* =============================================================================
  * Secrets Configuration (loaded separately from secrets.toml)
  * ============================================================================= */
 typedef struct {
@@ -553,6 +564,7 @@ typedef struct {
    paths_config_t paths;
    music_config_t music;
    scheduler_config_t scheduler;
+   calendar_config_t calendar;
 } dawn_config_t;
 
 /* =============================================================================

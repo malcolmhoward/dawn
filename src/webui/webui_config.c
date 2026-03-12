@@ -731,10 +731,14 @@ static void apply_config_from_json(dawn_config_t *config, struct json_object *pa
       JSON_TO_CONFIG_INT(section, "max_documents", config->documents.max_documents);
       JSON_TO_CONFIG_INT(section, "max_pages", config->documents.max_pages);
       JSON_TO_CONFIG_INT(section, "max_extracted_size_kb", config->documents.max_extracted_size_kb);
+      JSON_TO_CONFIG_INT(section, "max_index_size_kb", config->documents.max_index_size_kb);
+      JSON_TO_CONFIG_INT(section, "max_indexed_documents", config->documents.max_indexed_documents);
       CONFIG_CLAMP(config->documents.max_file_size_kb, 64, 10240);
       CONFIG_CLAMP(config->documents.max_documents, 1, 20);
       CONFIG_CLAMP(config->documents.max_pages, 1, 500);
       CONFIG_CLAMP(config->documents.max_extracted_size_kb, 128, 4096);
+      CONFIG_CLAMP(config->documents.max_index_size_kb, 128, 10240);
+      CONFIG_CLAMP(config->documents.max_indexed_documents, 1, 500);
    }
 
    /* [vision] — per-upload image size and dimension limits */
@@ -773,6 +777,20 @@ static void apply_config_from_json(dawn_config_t *config, struct json_object *pa
       if (config->scheduler.alarm_volume > 100)
          config->scheduler.alarm_volume = 100;
       JSON_TO_CONFIG_INT(section, "event_retention_days", config->scheduler.event_retention_days);
+   }
+
+   /* [calendar] */
+   if (json_object_object_get_ex(payload, "calendar", &section)) {
+      JSON_TO_CONFIG_BOOL(section, "enabled", config->calendar.enabled);
+      JSON_TO_CONFIG_INT(section, "sync_interval_sec", config->calendar.sync_interval_sec);
+      CONFIG_CLAMP(config->calendar.sync_interval_sec, 60, 86400);
+      JSON_TO_CONFIG_INT(section, "cache_past_days", config->calendar.cache_past_days);
+      CONFIG_CLAMP(config->calendar.cache_past_days, 0, 365);
+      JSON_TO_CONFIG_INT(section, "cache_future_days", config->calendar.cache_future_days);
+      CONFIG_CLAMP(config->calendar.cache_future_days, 7, 730);
+      JSON_TO_CONFIG_INT(section, "default_event_duration_min",
+                         config->calendar.default_event_duration_min);
+      CONFIG_CLAMP(config->calendar.default_event_duration_min, 5, 480);
    }
 
    /* [music] */

@@ -412,6 +412,17 @@ Manual testing covers:
 - `www/css/components/doc-library.css`: Document Library styles
 - `docs/RAG_DESIGN.md`: Full design document with implementation notes
 
+**Calendar (CalDAV):**
+- `include/tools/caldav_client.h`: CalDAV protocol types and API
+- `src/tools/caldav_client.c`: RFC 4791 protocol (discovery, REPORT, PUT/DELETE)
+- `include/tools/calendar_db.h`: Calendar DB types (accounts, calendars, events, occurrences)
+- `src/tools/calendar_db.c`: SQLite CRUD (uses auth_db shared handle, Pattern A)
+- `include/tools/calendar_service.h`: Service API (lifecycle, queries, mutations)
+- `src/tools/calendar_service.c`: Business logic (multi-account, background sync, RRULE expansion)
+- `include/tools/calendar_tool.h`: Tool registration header
+- `src/tools/calendar_tool.c`: LLM tool interface (today/range/next/search/add/update/delete)
+- `docs/CALDAV_DESIGN.md`: Full design document
+
 **Satellite (DAP2):**
 - `dawn_satellite/`: Standalone satellite binary for Raspberry Pi
 - `dawn_satellite/config/satellite.toml`: Default satellite configuration
@@ -425,6 +436,7 @@ Manual testing covers:
 1. SmartThings OAuth blocked at AWS WAF level (403 Forbidden)
 
 **Recently Completed:**
+- CalDAV calendar integration (multi-account, RFC 4791 discovery, RRULE expansion, background sync, LLM tool)
 - Document search/RAG system with semantic search, paginated document reader, WebUI Document Library, shared embedding engine, admin document management (global toggle, all-users view, username resolution)
 - Scheduler system (timers, alarms, reminders, scheduled tool execution) with audible chimes, WebUI notifications, recurrence, snooze/dismiss
 - Satellite registration key (pre-shared key authentication for satellite registration)

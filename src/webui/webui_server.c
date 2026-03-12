@@ -81,6 +81,9 @@
 #include "auth/auth_db.h"
 #include "memory/memory_context.h"
 #include "webui/webui_doc_library.h"
+#ifdef DAWN_ENABLE_CALENDAR_TOOL
+#include "webui/webui_calendar.h"
+#endif
 /* HTTP rate limiting and CSRF constants moved to webui_http.c */
 #endif /* ENABLE_AUTH */
 
@@ -2914,6 +2917,44 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
          handle_doc_library_toggle_global(conn, payload);
       }
    }
+   /* Calendar account management (per-user) */
+#ifdef DAWN_ENABLE_CALENDAR_TOOL
+   else if (strcmp(type, "calendar_list_accounts") == 0) {
+      handle_calendar_list_accounts(conn);
+   } else if (strcmp(type, "calendar_add_account") == 0) {
+      if (payload) {
+         handle_calendar_add_account(conn, payload);
+      }
+   } else if (strcmp(type, "calendar_edit_account") == 0) {
+      if (payload) {
+         handle_calendar_edit_account(conn, payload);
+      }
+   } else if (strcmp(type, "calendar_remove_account") == 0) {
+      if (payload) {
+         handle_calendar_remove_account(conn, payload);
+      }
+   } else if (strcmp(type, "calendar_test_account") == 0) {
+      if (payload) {
+         handle_calendar_test_account(conn, payload);
+      }
+   } else if (strcmp(type, "calendar_sync_account") == 0) {
+      if (payload) {
+         handle_calendar_sync_account(conn, payload);
+      }
+   } else if (strcmp(type, "calendar_list_calendars") == 0) {
+      if (payload) {
+         handle_calendar_list_calendars(conn, payload);
+      }
+   } else if (strcmp(type, "calendar_toggle_calendar") == 0) {
+      if (payload) {
+         handle_calendar_toggle_calendar(conn, payload);
+      }
+   } else if (strcmp(type, "calendar_toggle_read_only") == 0) {
+      if (payload) {
+         handle_calendar_toggle_read_only(conn, payload);
+      }
+   }
+#endif /* DAWN_ENABLE_CALENDAR_TOOL */
    /* TTS control (per-connection) */
    else if (strcmp(type, "set_tts_enabled") == 0) {
       if (!conn_require_auth(conn)) {

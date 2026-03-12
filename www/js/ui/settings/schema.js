@@ -1309,6 +1309,53 @@
             },
          },
       },
+      calendar: {
+         label: 'Calendar',
+         icon: '&#x1F4C5;',
+         fields: {
+            enabled: {
+               type: 'checkbox',
+               label: 'Enable Calendar',
+               hint: 'Enable CalDAV calendar integration',
+               default: false,
+            },
+            sync_interval_sec: {
+               type: 'number',
+               label: 'Sync Interval (seconds)',
+               min: 60,
+               max: 86400,
+               default: 900,
+               hint: 'Background sync interval (default: 900 = 15 min)',
+            },
+            cache_past_days: {
+               type: 'number',
+               label: 'Cache Past Days',
+               min: 0,
+               max: 365,
+               default: 30,
+               hint: 'Days of past events to keep cached',
+               advanced: true,
+            },
+            cache_future_days: {
+               type: 'number',
+               label: 'Cache Future Days',
+               min: 7,
+               max: 730,
+               default: 365,
+               hint: 'Days of future events to cache',
+               advanced: true,
+            },
+            default_event_duration_min: {
+               type: 'number',
+               label: 'Default Event Duration (minutes)',
+               min: 5,
+               max: 480,
+               default: 60,
+               hint: 'Duration when no end time is specified',
+               advanced: true,
+            },
+         },
+      },
       /* Home Assistant config is managed by its dedicated admin panel section */
    };
 
@@ -1357,7 +1404,7 @@
          id: 'scheduling',
          label: 'Scheduling',
          icon: '&#x23F0;',
-         sections: ['scheduler'],
+         sections: ['scheduler', 'calendar'],
       },
       {
          id: 'network',

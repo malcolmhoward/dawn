@@ -322,6 +322,30 @@
 # max_per_user = 1000             # Maximum stored images per user
 
 # =============================================================================
+# Document Library (RAG)
+# =============================================================================
+
+[documents]
+# max_file_size_kb = 512          # Maximum upload file size in KB
+                                  # Range: 64-10240
+                                  # Env: DAWN_DOCUMENTS_MAX_FILE_SIZE_KB
+# max_documents = 5               # Maximum documents per upload batch
+                                  # Range: 1-20
+                                  # Env: DAWN_DOCUMENTS_MAX_DOCUMENTS
+# max_pages = 100                 # Maximum pages to extract from PDFs
+                                  # Range: 1-500
+                                  # Env: DAWN_DOCUMENTS_MAX_PAGES
+# max_extracted_size_kb = 1024    # Maximum extracted text size in KB
+                                  # Range: 128-4096
+                                  # Env: DAWN_DOCUMENTS_MAX_EXTRACTED_SIZE_KB
+# max_index_size_kb = 2048        # Maximum text size to index for search in KB
+                                  # Range: 128-10240
+                                  # Env: DAWN_DOCUMENTS_MAX_INDEX_SIZE_KB
+# max_indexed_documents = 50      # Maximum documents with search indexes
+                                  # Range: 1-500
+                                  # Env: DAWN_DOCUMENTS_MAX_INDEXED_DOCUMENTS
+
+# =============================================================================
 # Persistent Memory System
 # =============================================================================
 
@@ -354,6 +378,21 @@
 # access_reinforcement_boost = 0.05  # Confidence boost when a fact is accessed (+5%)
                                   # Time-gated: only boosts once per hour to prevent pinning
 
+[memory.embeddings]
+# provider = "onnx"               # Embedding provider: "onnx" (local), "ollama", or "openai"
+                                  # "onnx" runs on-device with no external dependency
+                                  # Env: DAWN_MEMORY_EMBEDDINGS_PROVIDER
+# model = ""                      # Model name (provider-specific, empty = provider default)
+                                  # Env: DAWN_MEMORY_EMBEDDINGS_MODEL
+# endpoint = ""                   # API endpoint (for "ollama" or "openai" providers)
+                                  # Env: DAWN_MEMORY_EMBEDDINGS_ENDPOINT
+# keyword_weight = 0.30           # Weight for keyword matching in hybrid search (0.0-1.0)
+                                  # Env: DAWN_MEMORY_EMBEDDINGS_KEYWORD_WEIGHT
+# vector_weight = 0.70            # Weight for vector similarity in hybrid search (0.0-1.0)
+                                  # Env: DAWN_MEMORY_EMBEDDINGS_VECTOR_WEIGHT
+# backfill_on_startup = true      # Generate missing embeddings on startup
+                                  # Env: DAWN_MEMORY_EMBEDDINGS_BACKFILL_ON_STARTUP
+
 # =============================================================================
 # Scheduler (timers, alarms, reminders)
 # =============================================================================
@@ -380,6 +419,28 @@
 # streaming_enabled = true        # Enable Opus streaming to WebUI and satellites
 # streaming_quality = "standard"  # Opus encoding quality
 # streaming_bitrate_mode = "vbr"  # Bitrate mode: "vbr" or "cbr"
+
+# =============================================================================
+# Calendar (CalDAV)
+# =============================================================================
+
+[calendar]
+# enabled = false                 # Enable CalDAV calendar integration
+                                  # Env: DAWN_CALENDAR_ENABLED
+# sync_interval_sec = 900         # Background sync interval in seconds (15 min)
+                                  # Range: 60-86400
+                                  # Env: DAWN_CALENDAR_SYNC_INTERVAL_SEC
+# cache_past_days = 30            # Cache events this many days in the past
+                                  # Range: 0-365
+                                  # Env: DAWN_CALENDAR_CACHE_PAST_DAYS
+# cache_future_days = 365         # Cache events this many days in the future
+                                  # Range: 7-730
+                                  # Env: DAWN_CALENDAR_CACHE_FUTURE_DAYS
+# default_event_duration_min = 60 # Default event duration in minutes (when not specified)
+                                  # Range: 5-480
+                                  # Env: DAWN_CALENDAR_DEFAULT_EVENT_DURATION_MIN
+# Note: Calendar accounts are managed in the WebUI Settings panel.
+#       Account credentials are stored encrypted in the database.
 
 # =============================================================================
 # Shutdown Control

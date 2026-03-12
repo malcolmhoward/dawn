@@ -88,6 +88,9 @@
 #include "tools/document_read.h"
 #include "tools/document_search.h"
 #endif
+#ifdef DAWN_ENABLE_CALENDAR_TOOL
+#include "tools/calendar_tool.h"
+#endif
 
 /* ========== Registration ========== */
 
@@ -232,6 +235,12 @@ int tools_register_all(void) {
    }
    if (document_read_tool_register() != 0) {
       LOG_WARNING("Failed to register document_read tool");
+   }
+#endif
+
+#ifdef DAWN_ENABLE_CALENDAR_TOOL
+   if (calendar_tool_register() != 0) {
+      LOG_WARNING("Failed to register calendar tool");
    }
 #endif
 

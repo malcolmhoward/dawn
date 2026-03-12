@@ -1340,6 +1340,10 @@ json_object *config_to_json(const dawn_config_t *config) {
    json_object_object_add(documents, "max_pages", json_object_new_int(config->documents.max_pages));
    json_object_object_add(documents, "max_extracted_size_kb",
                           json_object_new_int(config->documents.max_extracted_size_kb));
+   json_object_object_add(documents, "max_index_size_kb",
+                          json_object_new_int(config->documents.max_index_size_kb));
+   json_object_object_add(documents, "max_indexed_documents",
+                          json_object_new_int(config->documents.max_indexed_documents));
    json_object_object_add(root, "documents", documents);
 
    /* [vision] - per-upload image size and dimension limits */
@@ -1375,6 +1379,19 @@ json_object *config_to_json(const dawn_config_t *config) {
    json_object_object_add(scheduler, "event_retention_days",
                           json_object_new_int(config->scheduler.event_retention_days));
    json_object_object_add(root, "scheduler", scheduler);
+
+   /* [calendar] */
+   json_object *calendar = json_object_new_object();
+   json_object_object_add(calendar, "enabled", json_object_new_boolean(config->calendar.enabled));
+   json_object_object_add(calendar, "sync_interval_sec",
+                          json_object_new_int(config->calendar.sync_interval_sec));
+   json_object_object_add(calendar, "cache_past_days",
+                          json_object_new_int(config->calendar.cache_past_days));
+   json_object_object_add(calendar, "cache_future_days",
+                          json_object_new_int(config->calendar.cache_future_days));
+   json_object_object_add(calendar, "default_event_duration_min",
+                          json_object_new_int(config->calendar.default_event_duration_min));
+   json_object_object_add(root, "calendar", calendar);
 
    /* Music configuration */
    json_object *music = json_object_new_object();
@@ -1838,6 +1855,8 @@ int config_write_toml(const dawn_config_t *config, const char *path) {
    fprintf(fp, "max_documents = %d\n", config->documents.max_documents);
    fprintf(fp, "max_pages = %d\n", config->documents.max_pages);
    fprintf(fp, "max_extracted_size_kb = %d\n", config->documents.max_extracted_size_kb);
+   fprintf(fp, "max_index_size_kb = %d\n", config->documents.max_index_size_kb);
+   fprintf(fp, "max_indexed_documents = %d\n", config->documents.max_indexed_documents);
 
    /* [vision] controls per-upload image size and dimension limits */
    fprintf(fp, "\n[vision]\n");
@@ -1863,6 +1882,14 @@ int config_write_toml(const dawn_config_t *config, const char *path) {
    fprintf(fp, "enabled = %s\n", config->music.streaming_enabled ? "true" : "false");
    fprintf(fp, "default_quality = \"%s\"\n", config->music.streaming_quality);
    fprintf(fp, "bitrate_mode = \"%s\"\n", config->music.streaming_bitrate_mode);
+
+   /* [calendar] CalDAV integration settings */
+   fprintf(fp, "\n[calendar]\n");
+   fprintf(fp, "enabled = %s\n", config->calendar.enabled ? "true" : "false");
+   fprintf(fp, "sync_interval_sec = %d\n", config->calendar.sync_interval_sec);
+   fprintf(fp, "cache_past_days = %d\n", config->calendar.cache_past_days);
+   fprintf(fp, "cache_future_days = %d\n", config->calendar.cache_future_days);
+   fprintf(fp, "default_event_duration_min = %d\n", config->calendar.default_event_duration_min);
 
    /* Write tool-owned config sections (e.g. [home_assistant], [shutdown]) */
    tool_registry_write_configs(fp);

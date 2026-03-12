@@ -481,6 +481,43 @@
                if (typeof DawnDocLibrary !== 'undefined')
                   DawnDocLibrary.handleToggleGlobalResponse(msg.payload);
                break;
+            // Calendar account management
+            case 'calendar_list_accounts_response':
+               if (typeof DawnCalendarAccounts !== 'undefined')
+                  DawnCalendarAccounts.handleListAccountsResponse(msg.payload);
+               break;
+            case 'calendar_add_account_response':
+               if (typeof DawnCalendarAccounts !== 'undefined')
+                  DawnCalendarAccounts.handleAddAccountResponse(msg.payload);
+               break;
+            case 'calendar_edit_account_response':
+               if (typeof DawnCalendarAccounts !== 'undefined')
+                  DawnCalendarAccounts.handleEditAccountResponse(msg.payload);
+               break;
+            case 'calendar_remove_account_response':
+               if (typeof DawnCalendarAccounts !== 'undefined')
+                  DawnCalendarAccounts.handleRemoveAccountResponse(msg.payload);
+               break;
+            case 'calendar_test_account_response':
+               if (typeof DawnCalendarAccounts !== 'undefined')
+                  DawnCalendarAccounts.handleTestAccountResponse(msg.payload);
+               break;
+            case 'calendar_sync_account_response':
+               if (typeof DawnCalendarAccounts !== 'undefined')
+                  DawnCalendarAccounts.handleSyncAccountResponse(msg.payload);
+               break;
+            case 'calendar_list_calendars_response':
+               if (typeof DawnCalendarAccounts !== 'undefined')
+                  DawnCalendarAccounts.handleListCalendarsResponse(msg.payload);
+               break;
+            case 'calendar_toggle_calendar_response':
+               if (typeof DawnCalendarAccounts !== 'undefined')
+                  DawnCalendarAccounts.handleToggleCalendarResponse(msg.payload);
+               break;
+            case 'calendar_toggle_read_only_response':
+               if (typeof DawnCalendarAccounts !== 'undefined')
+                  DawnCalendarAccounts.handleToggleReadOnlyResponse(msg.payload);
+               break;
             case 'conversation_reset':
                // Tool triggered conversation reset - sync frontend
                console.log('Conversation reset by tool');
@@ -1320,6 +1357,13 @@
          getAuthState: () => DawnState.authState,
       });
       DawnMySessions.init();
+      if (typeof DawnCalendarAccounts !== 'undefined') {
+         DawnCalendarAccounts.setCallbacks({
+            showConfirmModal: DawnSettings.showConfirmModal,
+            getAuthState: () => DawnState.authState,
+         });
+         DawnCalendarAccounts.init();
+      }
       DawnHistory.setCallbacks({
          trapFocus: DawnSettings.trapFocus,
          showConfirmModal: DawnSettings.showConfirmModal,

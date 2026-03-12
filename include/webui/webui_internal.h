@@ -756,6 +756,22 @@ void handle_doc_library_delete(ws_connection_t *conn, struct json_object *payloa
 void handle_doc_library_index(ws_connection_t *conn, struct json_object *payload);
 
 /* =============================================================================
+ * Calendar Handler Functions (defined in webui_calendar.c)
+ * ============================================================================= */
+
+#ifdef DAWN_ENABLE_CALENDAR_TOOL
+void handle_calendar_list_accounts(ws_connection_t *conn);
+void handle_calendar_add_account(ws_connection_t *conn, struct json_object *payload);
+void handle_calendar_edit_account(ws_connection_t *conn, struct json_object *payload);
+void handle_calendar_remove_account(ws_connection_t *conn, struct json_object *payload);
+void handle_calendar_test_account(ws_connection_t *conn, struct json_object *payload);
+void handle_calendar_sync_account(ws_connection_t *conn, struct json_object *payload);
+void handle_calendar_list_calendars(ws_connection_t *conn, struct json_object *payload);
+void handle_calendar_toggle_calendar(ws_connection_t *conn, struct json_object *payload);
+void handle_calendar_toggle_read_only(ws_connection_t *conn, struct json_object *payload);
+#endif /* DAWN_ENABLE_CALENDAR_TOOL */
+
+/* =============================================================================
  * Config Handler Functions (defined in webui_config.c)
  * ============================================================================= */
 

@@ -803,6 +803,99 @@ static int create_schema(void) {
       LOG_INFO("auth_db: added documents and document_chunks tables (v22)");
    }
 
+   /* v23 migration: calendar tables for CalDAV integration */
+   if (current_version >= 1 && current_version < 23) {
+      const char *v23_sql =
+          "CREATE TABLE IF NOT EXISTS calendar_accounts ("
+          "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+          "  user_id INTEGER NOT NULL,"
+          "  name TEXT NOT NULL,"
+          "  caldav_url TEXT NOT NULL,"
+          "  username TEXT NOT NULL,"
+          "  encrypted_password BLOB NOT NULL,"
+          "  auth_type TEXT DEFAULT 'basic',"
+          "  principal_url TEXT DEFAULT '',"
+          "  calendar_home_url TEXT DEFAULT '',"
+          "  enabled INTEGER DEFAULT 1,"
+          "  read_only INTEGER DEFAULT 0,"
+          "  last_sync INTEGER DEFAULT 0,"
+          "  sync_interval_sec INTEGER DEFAULT 900,"
+          "  created_at INTEGER NOT NULL,"
+          "  FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE"
+          ");"
+          "CREATE TABLE IF NOT EXISTS calendar_calendars ("
+          "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+          "  account_id INTEGER NOT NULL,"
+          "  caldav_path TEXT NOT NULL,"
+          "  display_name TEXT DEFAULT '',"
+          "  color TEXT DEFAULT '',"
+          "  is_active INTEGER DEFAULT 1,"
+          "  ctag TEXT DEFAULT '',"
+          "  created_at INTEGER NOT NULL,"
+          "  FOREIGN KEY(account_id) REFERENCES calendar_accounts(id) ON DELETE CASCADE"
+          ");"
+          "CREATE TABLE IF NOT EXISTS calendar_events ("
+          "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+          "  calendar_id INTEGER NOT NULL,"
+          "  uid TEXT NOT NULL,"
+          "  etag TEXT DEFAULT '',"
+          "  summary TEXT DEFAULT '',"
+          "  description TEXT DEFAULT '',"
+          "  location TEXT DEFAULT '',"
+          "  dtstart INTEGER DEFAULT 0,"
+          "  dtend INTEGER DEFAULT 0,"
+          "  duration_sec INTEGER DEFAULT 0,"
+          "  all_day INTEGER DEFAULT 0,"
+          "  dtstart_date TEXT DEFAULT '',"
+          "  dtend_date TEXT DEFAULT '',"
+          "  rrule TEXT DEFAULT '',"
+          "  raw_ical TEXT,"
+          "  last_synced INTEGER DEFAULT 0,"
+          "  FOREIGN KEY(calendar_id) REFERENCES calendar_calendars(id) ON DELETE CASCADE"
+          ");"
+          "CREATE UNIQUE INDEX IF NOT EXISTS idx_cal_events_uid "
+          "  ON calendar_events(calendar_id, uid);"
+          "CREATE TABLE IF NOT EXISTS calendar_occurrences ("
+          "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+          "  event_id INTEGER NOT NULL,"
+          "  dtstart INTEGER DEFAULT 0,"
+          "  dtend INTEGER DEFAULT 0,"
+          "  all_day INTEGER DEFAULT 0,"
+          "  dtstart_date TEXT DEFAULT '',"
+          "  dtend_date TEXT DEFAULT '',"
+          "  summary TEXT DEFAULT '',"
+          "  location TEXT DEFAULT '',"
+          "  is_override INTEGER DEFAULT 0,"
+          "  is_cancelled INTEGER DEFAULT 0,"
+          "  recurrence_id TEXT DEFAULT '',"
+          "  FOREIGN KEY(event_id) REFERENCES calendar_events(id) ON DELETE CASCADE"
+          ");"
+          "CREATE INDEX IF NOT EXISTS idx_cal_occ_event ON calendar_occurrences(event_id);"
+          "CREATE INDEX IF NOT EXISTS idx_cal_occ_time ON calendar_occurrences(dtstart, dtend);"
+          "CREATE INDEX IF NOT EXISTS idx_cal_occ_date ON calendar_occurrences(dtstart_date);"
+          "CREATE INDEX IF NOT EXISTS idx_cal_acct_user ON calendar_accounts(user_id);";
+
+      rc = sqlite3_exec(s_db.db, v23_sql, NULL, NULL, &errmsg);
+      if (rc != SQLITE_OK) {
+         LOG_ERROR("auth_db: v23 migration failed: %s", errmsg ? errmsg : "unknown");
+         sqlite3_free(errmsg);
+         return AUTH_DB_FAILURE;
+      }
+      LOG_INFO("auth_db: added calendar tables (v23)");
+   }
+
+   /* v24 migration: add read_only flag to calendar_accounts */
+   if (current_version >= 23 && current_version < 24) {
+      const char *v24_sql = "ALTER TABLE calendar_accounts ADD COLUMN read_only INTEGER DEFAULT 0;";
+      rc = sqlite3_exec(s_db.db, v24_sql, NULL, NULL, &errmsg);
+      if (rc != SQLITE_OK) {
+         LOG_ERROR("auth_db: v24 migration failed: %s", errmsg ? errmsg : "unknown");
+         sqlite3_free(errmsg);
+         return AUTH_DB_FAILURE;
+      }
+      LOG_INFO("auth_db: added calendar read_only column (v24)");
+   }
+
    /* Create continuation index (runs for both new databases and migrations) */
    rc = sqlite3_exec(s_db.db,
                      "CREATE INDEX IF NOT EXISTS idx_conversations_continued "
@@ -1923,6 +2016,280 @@ static int prepare_statements(void) {
       return AUTH_DB_FAILURE;
    }
 
+   /* === Calendar statements === */
+
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "INSERT INTO calendar_accounts (user_id, name, caldav_url, username, "
+       "encrypted_password, auth_type, principal_url, calendar_home_url, enabled, "
+       "last_sync, sync_interval_sec, created_at, read_only) "
+       "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+       -1, &s_db.stmt_cal_acct_create, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare cal_acct_create failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT id, user_id, name, caldav_url, username, encrypted_password, "
+                           "auth_type, principal_url, calendar_home_url, enabled, last_sync, "
+                           "sync_interval_sec, created_at, read_only "
+                           "FROM calendar_accounts WHERE id = ?",
+                           -1, &s_db.stmt_cal_acct_get, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare cal_acct_get failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT id, user_id, name, caldav_url, username, encrypted_password, "
+                           "auth_type, principal_url, calendar_home_url, enabled, last_sync, "
+                           "sync_interval_sec, created_at, read_only "
+                           "FROM calendar_accounts "
+                           "WHERE user_id = ? ORDER BY name",
+                           -1, &s_db.stmt_cal_acct_list, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare cal_acct_list failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT id, user_id, name, caldav_url, username, encrypted_password, "
+                           "auth_type, principal_url, calendar_home_url, enabled, last_sync, "
+                           "sync_interval_sec, created_at, read_only "
+                           "FROM calendar_accounts "
+                           "WHERE enabled = 1 ORDER BY last_sync ASC",
+                           -1, &s_db.stmt_cal_acct_list_enabled, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare cal_acct_list_enabled failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "UPDATE calendar_accounts SET name=?, caldav_url=?, username=?, "
+                           "encrypted_password=?, auth_type=?, enabled=?, sync_interval_sec=? "
+                           "WHERE id=?",
+                           -1, &s_db.stmt_cal_acct_update, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare cal_acct_update failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM calendar_accounts WHERE id = ?", -1,
+                           &s_db.stmt_cal_acct_delete, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare cal_acct_delete failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db, "UPDATE calendar_accounts SET last_sync = ? WHERE id = ?", -1,
+                           &s_db.stmt_cal_acct_update_sync, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare cal_acct_update_sync failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "UPDATE calendar_accounts SET principal_url = ?, "
+                           "calendar_home_url = ? WHERE id = ?",
+                           -1, &s_db.stmt_cal_acct_update_discovery, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare cal_acct_update_discovery failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db, "UPDATE calendar_accounts SET read_only = ? WHERE id = ?", -1,
+                           &s_db.stmt_cal_acct_set_read_only, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare cal_acct_set_read_only failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "INSERT INTO calendar_calendars (account_id, caldav_path, display_name, "
+                           "color, is_active, ctag, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                           -1, &s_db.stmt_cal_cal_create, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare cal_cal_create failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT id, account_id, caldav_path, display_name, color, "
+                           "is_active, ctag, created_at FROM calendar_calendars WHERE id = ?",
+                           -1, &s_db.stmt_cal_cal_get, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare cal_cal_get failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT id, account_id, caldav_path, display_name, color, "
+                           "is_active, ctag, created_at FROM calendar_calendars "
+                           "WHERE account_id = ? ORDER BY display_name",
+                           -1, &s_db.stmt_cal_cal_list, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare cal_cal_list failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db, "UPDATE calendar_calendars SET ctag = ? WHERE id = ?", -1,
+                           &s_db.stmt_cal_cal_update_ctag, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare cal_cal_update_ctag failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db, "UPDATE calendar_calendars SET is_active = ? WHERE id = ?", -1,
+                           &s_db.stmt_cal_cal_set_active, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare cal_cal_set_active failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM calendar_calendars WHERE id = ?", -1,
+                           &s_db.stmt_cal_cal_delete, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare cal_cal_delete failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT c.id, c.account_id, c.caldav_path, c.display_name, c.color, "
+                           "c.is_active, c.ctag, c.created_at, a.read_only "
+                           "FROM calendar_calendars c "
+                           "JOIN calendar_accounts a ON c.account_id = a.id "
+                           "WHERE a.user_id = ? AND a.enabled = 1 AND c.is_active = 1 "
+                           "ORDER BY c.display_name",
+                           -1, &s_db.stmt_cal_cal_active_for_user, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare cal_cal_active_for_user failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "INSERT OR REPLACE INTO calendar_events (calendar_id, uid, etag, summary, "
+       "description, location, dtstart, dtend, duration_sec, all_day, "
+       "dtstart_date, dtend_date, rrule, raw_ical, last_synced) "
+       "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+       -1, &s_db.stmt_cal_evt_upsert, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare cal_evt_upsert failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT e.id, e.calendar_id, e.uid, e.etag, e.summary, e.description, "
+                           "e.location, e.dtstart, e.dtend, e.duration_sec, e.all_day, "
+                           "e.dtstart_date, e.dtend_date, e.rrule, e.raw_ical, e.last_synced "
+                           "FROM calendar_events e "
+                           "JOIN calendar_calendars c ON e.calendar_id = c.id "
+                           "JOIN calendar_accounts a ON c.account_id = a.id "
+                           "WHERE e.uid = ? AND a.user_id = ? LIMIT 1",
+                           -1, &s_db.stmt_cal_evt_get_by_uid, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare cal_evt_get_by_uid failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM calendar_events WHERE id = ?", -1,
+                           &s_db.stmt_cal_evt_delete, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare cal_evt_delete failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM calendar_events WHERE calendar_id = ?", -1,
+                           &s_db.stmt_cal_evt_delete_by_cal, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare cal_evt_delete_by_cal failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "INSERT INTO calendar_occurrences (event_id, dtstart, dtend, all_day, "
+       "dtstart_date, dtend_date, summary, location, is_override, is_cancelled, "
+       "recurrence_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+       -1, &s_db.stmt_cal_occ_insert, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare cal_occ_insert failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM calendar_occurrences WHERE event_id = ?", -1,
+                           &s_db.stmt_cal_occ_delete_for_event, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare cal_occ_delete_for_event failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT o.id, o.event_id, o.dtstart, o.dtend, o.all_day, "
+                           "o.dtstart_date, o.dtend_date, o.summary, o.location, "
+                           "o.is_override, o.is_cancelled, o.recurrence_id, e.uid "
+                           "FROM calendar_occurrences o "
+                           "JOIN calendar_events e ON o.event_id = e.id "
+                           "WHERE e.calendar_id IN (SELECT value FROM json_each(?)) "
+                           "AND o.all_day = 0 AND o.is_cancelled = 0 "
+                           "AND o.dtstart < ? AND o.dtend > ? "
+                           "ORDER BY o.dtstart",
+                           -1, &s_db.stmt_cal_occ_in_range, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare cal_occ_in_range failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT o.id, o.event_id, o.dtstart, o.dtend, o.all_day, "
+                           "o.dtstart_date, o.dtend_date, o.summary, o.location, "
+                           "o.is_override, o.is_cancelled, o.recurrence_id, e.uid "
+                           "FROM calendar_occurrences o "
+                           "JOIN calendar_events e ON o.event_id = e.id "
+                           "WHERE e.calendar_id IN (SELECT value FROM json_each(?)) "
+                           "AND o.all_day = 1 AND o.is_cancelled = 0 "
+                           "AND o.dtstart_date < ? AND o.dtend_date > ? "
+                           "ORDER BY o.dtstart_date",
+                           -1, &s_db.stmt_cal_occ_allday_in_range, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare cal_occ_allday_in_range failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "SELECT o.id, o.event_id, o.dtstart, o.dtend, o.all_day, "
+       "o.dtstart_date, o.dtend_date, o.summary, o.location, "
+       "o.is_override, o.is_cancelled, o.recurrence_id, e.uid "
+       "FROM calendar_occurrences o "
+       "JOIN calendar_events e ON o.event_id = e.id "
+       "WHERE e.calendar_id IN (SELECT value FROM json_each(?)) "
+       "AND o.is_cancelled = 0 "
+       "AND (o.summary LIKE ? COLLATE NOCASE OR o.location LIKE ? COLLATE NOCASE) "
+       "ORDER BY o.dtstart LIMIT ?",
+       -1, &s_db.stmt_cal_occ_search, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare cal_occ_search failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT o.id, o.event_id, o.dtstart, o.dtend, o.all_day, "
+                           "o.dtstart_date, o.dtend_date, o.summary, o.location, "
+                           "o.is_override, o.is_cancelled, o.recurrence_id, e.uid "
+                           "FROM calendar_occurrences o "
+                           "JOIN calendar_events e ON o.event_id = e.id "
+                           "WHERE e.calendar_id IN (SELECT value FROM json_each(?)) "
+                           "AND o.all_day = 0 AND o.is_cancelled = 0 "
+                           "AND o.dtstart >= ? "
+                           "ORDER BY o.dtstart LIMIT 1",
+                           -1, &s_db.stmt_cal_occ_next, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare cal_occ_next failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
    return AUTH_DB_SUCCESS;
 }
 
@@ -2176,10 +2543,64 @@ static void finalize_statements(void) {
    if (s_db.stmt_doc_update_global)
       sqlite3_finalize(s_db.stmt_doc_update_global);
 
+   /* Calendar statements */
+   if (s_db.stmt_cal_acct_create)
+      sqlite3_finalize(s_db.stmt_cal_acct_create);
+   if (s_db.stmt_cal_acct_get)
+      sqlite3_finalize(s_db.stmt_cal_acct_get);
+   if (s_db.stmt_cal_acct_list)
+      sqlite3_finalize(s_db.stmt_cal_acct_list);
+   if (s_db.stmt_cal_acct_list_enabled)
+      sqlite3_finalize(s_db.stmt_cal_acct_list_enabled);
+   if (s_db.stmt_cal_acct_set_read_only)
+      sqlite3_finalize(s_db.stmt_cal_acct_set_read_only);
+   if (s_db.stmt_cal_acct_update)
+      sqlite3_finalize(s_db.stmt_cal_acct_update);
+   if (s_db.stmt_cal_acct_delete)
+      sqlite3_finalize(s_db.stmt_cal_acct_delete);
+   if (s_db.stmt_cal_acct_update_sync)
+      sqlite3_finalize(s_db.stmt_cal_acct_update_sync);
+   if (s_db.stmt_cal_acct_update_discovery)
+      sqlite3_finalize(s_db.stmt_cal_acct_update_discovery);
+   if (s_db.stmt_cal_cal_create)
+      sqlite3_finalize(s_db.stmt_cal_cal_create);
+   if (s_db.stmt_cal_cal_get)
+      sqlite3_finalize(s_db.stmt_cal_cal_get);
+   if (s_db.stmt_cal_cal_list)
+      sqlite3_finalize(s_db.stmt_cal_cal_list);
+   if (s_db.stmt_cal_cal_update_ctag)
+      sqlite3_finalize(s_db.stmt_cal_cal_update_ctag);
+   if (s_db.stmt_cal_cal_set_active)
+      sqlite3_finalize(s_db.stmt_cal_cal_set_active);
+   if (s_db.stmt_cal_cal_delete)
+      sqlite3_finalize(s_db.stmt_cal_cal_delete);
+   if (s_db.stmt_cal_cal_active_for_user)
+      sqlite3_finalize(s_db.stmt_cal_cal_active_for_user);
+   if (s_db.stmt_cal_evt_upsert)
+      sqlite3_finalize(s_db.stmt_cal_evt_upsert);
+   if (s_db.stmt_cal_evt_get_by_uid)
+      sqlite3_finalize(s_db.stmt_cal_evt_get_by_uid);
+   if (s_db.stmt_cal_evt_delete)
+      sqlite3_finalize(s_db.stmt_cal_evt_delete);
+   if (s_db.stmt_cal_evt_delete_by_cal)
+      sqlite3_finalize(s_db.stmt_cal_evt_delete_by_cal);
+   if (s_db.stmt_cal_occ_insert)
+      sqlite3_finalize(s_db.stmt_cal_occ_insert);
+   if (s_db.stmt_cal_occ_delete_for_event)
+      sqlite3_finalize(s_db.stmt_cal_occ_delete_for_event);
+   if (s_db.stmt_cal_occ_in_range)
+      sqlite3_finalize(s_db.stmt_cal_occ_in_range);
+   if (s_db.stmt_cal_occ_allday_in_range)
+      sqlite3_finalize(s_db.stmt_cal_occ_allday_in_range);
+   if (s_db.stmt_cal_occ_search)
+      sqlite3_finalize(s_db.stmt_cal_occ_search);
+   if (s_db.stmt_cal_occ_next)
+      sqlite3_finalize(s_db.stmt_cal_occ_next);
+
    /* Clear all statement pointers using offsetof for safety
     * MAINTENANCE: If statements are reordered, update first/last_stmt names */
    size_t first_stmt_offset = offsetof(auth_db_state_t, stmt_create_user);
-   size_t last_stmt_end = offsetof(auth_db_state_t, stmt_doc_update_global) +
+   size_t last_stmt_end = offsetof(auth_db_state_t, stmt_cal_acct_set_read_only) +
                           sizeof(sqlite3_stmt *);
    memset((char *)&s_db + first_stmt_offset, 0, last_stmt_end - first_stmt_offset);
 }

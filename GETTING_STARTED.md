@@ -29,7 +29,8 @@ sudo apt update && sudo apt install -y \
   libwebsockets-dev libopus-dev libsodium-dev libsqlite3-dev \
   libsamplerate0-dev libmpg123-dev libvorbis-dev libncurses-dev \
   meson ninja-build libabseil-dev \
-  libmupdf-dev libzip-dev libmujs-dev libgumbo-dev libopenjp2-7-dev libjbig2dec0-dev
+  libmupdf-dev libzip-dev libmujs-dev libgumbo-dev libopenjp2-7-dev libjbig2dec0-dev \
+  libical-dev
 ```
 
 > **Jetson users**: CUDA runtime is pre-installed. For building GPU-accelerated components (ONNX Runtime, Whisper), you may need CUDA development headers. Check with `ls /usr/local/cuda/include/cuda.h`.
@@ -558,6 +559,36 @@ If the CA cert path is wrong or the file is unreadable, DAWN will refuse to conn
 ```
 
 **Mutual TLS** (optional): If your broker is configured with `require_certificate true`, generate a client certificate signed by the same CA and set `tls_cert_path` and `tls_key_path`.
+
+### CalDAV Calendar
+
+DAWN can query, create, and manage calendar events via the CalDAV protocol. It works with Google Calendar, Apple iCloud, Nextcloud, Radicale, and any other RFC 4791-compliant server. The calendar tool is enabled by default in the CMake build.
+
+**1. Add CalDAV credentials to `secrets.toml`:**
+
+```toml
+[secrets]
+caldav_password = "your-app-password"
+```
+
+**2. Configure the CalDAV account in `dawn.toml`:**
+
+```toml
+[calendar.caldav]
+url = "https://caldav.example.com/dav/"
+username = "you@example.com"
+```
+
+**3. Provider-specific notes:**
+
+| Provider | URL | Password |
+|----------|-----|----------|
+| **Google Calendar** | `https://apidata.googleusercontent.com/caldav/v2/` | App-specific password (Google Account → Security → 2-Step Verification → App passwords) |
+| **Apple iCloud** | `https://caldav.icloud.com/` | App-specific password from [appleid.apple.com](https://appleid.apple.com) (Sign-In and Security → App-Specific Passwords) |
+| **Nextcloud** | `https://your-server.com/remote.php/dav/` | Your Nextcloud password (or app password) |
+| **Radicale** | `http://localhost:5232/` | Your Radicale password |
+
+**4. Test it:** Ask DAWN: *"What's on my calendar today?"*
 
 ## Troubleshooting
 

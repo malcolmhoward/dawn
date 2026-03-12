@@ -250,6 +250,17 @@ else()
     message(WARNING "Install with: sudo apt install libxml2-dev")
 endif()
 
+# libical: CalDAV calendar event parsing (RFC 5545 iCalendar)
+pkg_check_modules(LIBICAL libical)
+if(LIBICAL_FOUND)
+    include_directories(${LIBICAL_INCLUDE_DIRS})
+    add_definitions(-DHAVE_LIBICAL)
+    message(STATUS "libical: Found (${LIBICAL_VERSION})")
+else()
+    message(WARNING "libical not found - CalDAV calendar integration disabled")
+    message(WARNING "Install with: sudo apt install libical-dev")
+endif()
+
 # Tool subsystem - compile-time tool configuration
 # Provides options to enable/disable individual tools
 include(cmake/DawnTools.cmake)
@@ -524,6 +535,9 @@ if(ENABLE_WEBUI)
         src/webui/webui_satellite.c
         src/webui/webui_admin_satellite.c
     )
+    if(DAWN_ENABLE_CALENDAR_TOOL)
+        list(APPEND DAWN_SOURCES src/webui/webui_calendar.c)
+    endif()
     if(DAWN_ENABLE_HOMEASSISTANT_TOOL)
         list(APPEND DAWN_SOURCES src/webui/webui_homeassistant.c)
     endif()
@@ -703,6 +717,12 @@ endif()
 if(LIBZIP_FOUND AND LIBXML2_FOUND)
     target_link_libraries(dawn ${LIBZIP_LIBRARIES} ${LIBXML2_LIBRARIES})
     message(STATUS "Linking libzip + libxml2 (DOCX extraction)")
+endif()
+
+# Conditionally link libical (CalDAV calendar)
+if(LIBICAL_FOUND AND DAWN_ENABLE_CALENDAR_TOOL)
+    target_link_libraries(dawn ${LIBICAL_LIBRARIES})
+    message(STATUS "Linking libical (CalDAV calendar)")
 endif()
 
 # Always link SQLite3 (music metadata database)

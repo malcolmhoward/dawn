@@ -309,6 +309,13 @@ void config_set_defaults(dawn_config_t *config) {
    config->scheduler.alarm_volume = 80;
    config->scheduler.event_retention_days = 30;
 
+   /* Calendar */
+   config->calendar.enabled = true;
+   config->calendar.sync_interval_sec = 900;
+   config->calendar.cache_past_days = 30;
+   config->calendar.cache_future_days = 365;
+   config->calendar.default_event_duration_min = 60;
+
    /* Music - streaming settings */
    config->music.streaming_enabled = true;
    strncpy(config->music.streaming_quality, "standard",

@@ -1,0 +1,819 @@
+/**
+ * DAWN Calendar Accounts Module
+ * Per-user CalDAV account management in Settings panel.
+ */
+(function () {
+   'use strict';
+
+   let callbacks = {
+      showConfirmModal: null,
+      getAuthState: null,
+   };
+
+   let accounts = [];
+
+   /* =============================================================================
+    * API Requests
+    * ============================================================================= */
+
+   function requestListAccounts() {
+      if (typeof DawnWS !== 'undefined' && DawnWS.isConnected()) {
+         DawnWS.send({ type: 'calendar_list_accounts' });
+      }
+   }
+
+   function requestAddAccount(name, caldavUrl, username, password, readOnly) {
+      if (typeof DawnWS !== 'undefined' && DawnWS.isConnected()) {
+         DawnWS.send({
+            type: 'calendar_add_account',
+            payload: {
+               name: name,
+               caldav_url: caldavUrl,
+               username: username,
+               password: password,
+               read_only: readOnly || false,
+            },
+         });
+      }
+   }
+
+   function requestRemoveAccount(id) {
+      if (typeof DawnWS !== 'undefined' && DawnWS.isConnected()) {
+         DawnWS.send({
+            type: 'calendar_remove_account',
+            payload: { id: id },
+         });
+      }
+   }
+
+   function requestTestAccount(id) {
+      if (typeof DawnWS !== 'undefined' && DawnWS.isConnected()) {
+         DawnWS.send({
+            type: 'calendar_test_account',
+            payload: { id: id },
+         });
+      }
+   }
+
+   function requestSyncAccount(id) {
+      if (typeof DawnWS !== 'undefined' && DawnWS.isConnected()) {
+         DawnWS.send({
+            type: 'calendar_sync_account',
+            payload: { id: id },
+         });
+      }
+   }
+
+   function requestListCalendars(accountId) {
+      if (typeof DawnWS !== 'undefined' && DawnWS.isConnected()) {
+         DawnWS.send({
+            type: 'calendar_list_calendars',
+            payload: { account_id: accountId },
+         });
+      }
+   }
+
+   function requestToggleCalendar(id, isActive) {
+      if (typeof DawnWS !== 'undefined' && DawnWS.isConnected()) {
+         DawnWS.send({
+            type: 'calendar_toggle_calendar',
+            payload: { id: id, is_active: isActive },
+         });
+      }
+   }
+
+   function requestEditAccount(id, name, caldavUrl, username, password) {
+      if (typeof DawnWS !== 'undefined' && DawnWS.isConnected()) {
+         const payload = { id: id, name: name, caldav_url: caldavUrl, username: username };
+         if (password) payload.password = password;
+         DawnWS.send({ type: 'calendar_edit_account', payload: payload });
+      }
+   }
+
+   function requestToggleReadOnly(id, readOnly) {
+      if (typeof DawnWS !== 'undefined' && DawnWS.isConnected()) {
+         DawnWS.send({
+            type: 'calendar_toggle_read_only',
+            payload: { id: id, read_only: readOnly },
+         });
+      }
+   }
+
+   /* =============================================================================
+    * Response Handlers
+    * ============================================================================= */
+
+   function handleListAccountsResponse(payload) {
+      if (!payload.success) {
+         showToast('Failed to load calendar accounts: ' + (payload.error || 'Unknown'), 'error');
+         return;
+      }
+      accounts = payload.accounts || [];
+      renderAccounts();
+   }
+
+   function handleAddAccountResponse(payload) {
+      resetSubmitButton();
+      if (!payload.success) {
+         showToast('Failed to add account: ' + (payload.error || 'Unknown'), 'error');
+         return;
+      }
+      showToast('Calendar account added', 'success');
+      hideAddAccountModal();
+      requestListAccounts();
+   }
+
+   function handleEditAccountResponse(payload) {
+      const submitBtn = document.getElementById('cal-edit-modal-submit');
+      if (submitBtn) {
+         submitBtn.disabled = false;
+         submitBtn.textContent = 'Save';
+      }
+      if (!payload.success) {
+         showToast('Failed to update account: ' + (payload.error || 'Unknown'), 'error');
+         return;
+      }
+      showToast('Calendar account updated', 'success');
+      hideEditAccountModal();
+      requestListAccounts();
+   }
+
+   function handleRemoveAccountResponse(payload) {
+      if (!payload.success) {
+         showToast('Failed to remove account: ' + (payload.error || 'Unknown'), 'error');
+         return;
+      }
+      showToast('Calendar account removed', 'success');
+      requestListAccounts();
+   }
+
+   function handleTestAccountResponse(payload) {
+      clearLoadingButtons();
+      if (!payload.success) {
+         showToast('Connection test failed: ' + (payload.error || 'Unknown'), 'error');
+         return;
+      }
+      showToast(payload.message || 'Connection successful', 'success');
+      requestListAccounts();
+   }
+
+   function handleSyncAccountResponse(payload) {
+      clearLoadingButtons();
+      if (!payload.success) {
+         showToast('Sync failed: ' + (payload.error || 'Unknown'), 'error');
+         return;
+      }
+      showToast('Calendar synced successfully', 'success');
+      requestListAccounts();
+   }
+
+   function handleListCalendarsResponse(payload) {
+      if (!payload.success) {
+         showToast('Failed to load calendars: ' + (payload.error || 'Unknown'), 'error');
+         return;
+      }
+      renderCalendars(payload.calendars || []);
+   }
+
+   function handleToggleCalendarResponse(payload) {
+      if (!payload.success) {
+         showToast('Failed to toggle calendar: ' + (payload.error || 'Unknown'), 'error');
+      }
+   }
+
+   function handleToggleReadOnlyResponse(payload) {
+      if (!payload.success) {
+         showToast('Failed to update access: ' + (payload.error || 'Unknown'), 'error');
+      }
+      requestListAccounts();
+   }
+
+   /* =============================================================================
+    * Rendering
+    * ============================================================================= */
+
+   function escapeHtml(str) {
+      const div = document.createElement('div');
+      div.textContent = str || '';
+      return div.innerHTML;
+   }
+
+   function formatSyncTime(timestamp) {
+      if (!timestamp || timestamp === 0) return 'Never';
+      const date = new Date(timestamp * 1000);
+      const now = new Date();
+      const diff = Math.floor((now - date) / 1000);
+      if (diff < 0) return date.toLocaleDateString();
+      if (diff < 60) return 'Just now';
+      if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+      if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+      return date.toLocaleDateString();
+   }
+
+   function renderAccounts() {
+      const list = document.getElementById('calendar-accounts-list');
+      if (!list) return;
+
+      if (accounts.length === 0) {
+         list.innerHTML =
+            '<div class="calendar-accounts-empty">No calendar accounts configured. Click "Add Account" to connect.</div>';
+         return;
+      }
+
+      list.innerHTML = accounts
+         .map(
+            (acct) => `
+         <div class="calendar-account-card${acct.read_only ? ' read-only' : ''}" data-account-id="${acct.id}">
+            <div class="calendar-account-header">
+               <span class="calendar-account-name">${escapeHtml(acct.name)}</span>
+               <div class="calendar-account-actions">
+                  <button data-action="edit" data-id="${acct.id}" title="Edit account">Edit</button>
+                  <button data-action="test" data-id="${acct.id}" title="Test connection">Test</button>
+                  <button data-action="sync" data-id="${acct.id}" title="Sync now">Sync</button>
+                  <button data-action="calendars" data-id="${acct.id}" title="Show calendars">Calendars</button>
+                  <button class="btn-danger" data-action="remove" data-id="${acct.id}" data-name="${escapeHtml(acct.name)}" title="Remove account">Remove</button>
+               </div>
+            </div>
+            <div class="calendar-account-details">
+               <div class="detail-row">
+                  <span class="detail-label">URL</span>
+                  <span>${escapeHtml(acct.caldav_url)}</span>
+               </div>
+               <div class="detail-row">
+                  <span class="detail-label">User</span>
+                  <span>${escapeHtml(acct.username)}</span>
+               </div>
+            </div>
+            <div class="calendar-account-access">
+               <input type="checkbox" class="calendar-access-toggle"
+                  ${acct.read_only ? 'checked' : ''}
+                  data-action="toggle-read-only" data-id="${acct.id}"
+                  title="${acct.read_only ? 'AI cannot modify this account' : 'AI can create/edit/delete events'}"
+                  aria-label="Read only for ${escapeHtml(acct.name)}"
+               />
+               <span class="calendar-access-label">Read only</span>
+            </div>
+            <div class="calendar-account-status">
+               <span class="status-dot ${acct.last_sync > 0 ? 'synced' : 'never'}" title="${acct.last_sync > 0 ? 'Synced' : 'Never synced'}"></span>
+               <span>Last sync: ${formatSyncTime(acct.last_sync)}</span>
+            </div>
+            <div class="calendar-sub-list" id="cal-list-${acct.id}" style="display:none;"></div>
+         </div>
+      `
+         )
+         .join('');
+   }
+
+   function renderCalendars(calendars) {
+      const accountId = currentExpandedAccount;
+      const subList = document.getElementById('cal-list-' + accountId);
+      if (!subList) return;
+
+      subList.style.display = 'flex';
+
+      if (calendars.length === 0) {
+         subList.innerHTML =
+            '<div class="calendar-sub-empty">No calendars found. Try "Test" to discover calendars.</div>';
+         return;
+      }
+
+      subList.innerHTML = calendars
+         .map(
+            (cal) => `
+         <div class="calendar-sub-item">
+            <span class="calendar-sub-name">
+               <span class="calendar-color-dot" style="background:${escapeHtml(cal.color || '#888')}"></span>
+               ${escapeHtml(cal.display_name)}
+            </span>
+            <input type="checkbox" class="calendar-sub-toggle"
+               ${cal.is_active ? 'checked' : ''}
+               data-cal-id="${cal.id}"
+               title="${cal.is_active ? 'Disable' : 'Enable'} this calendar"
+               aria-label="${cal.is_active ? 'Disable' : 'Enable'} ${escapeHtml(cal.display_name)}"
+            />
+         </div>
+      `
+         )
+         .join('');
+   }
+
+   let currentExpandedAccount = null;
+
+   /* =============================================================================
+    * Event Delegation
+    * ============================================================================= */
+
+   function handleAccountListClick(e) {
+      const btn = e.target.closest('[data-action]');
+      if (!btn) return;
+
+      const action = btn.dataset.action;
+      const id = parseInt(btn.dataset.id, 10);
+
+      switch (action) {
+         case 'edit':
+            editAccount(id);
+            break;
+         case 'test':
+            testAccount(id);
+            break;
+         case 'sync':
+            syncAccount(id);
+            break;
+         case 'calendars':
+            expandCalendars(id);
+            break;
+         case 'remove':
+            removeAccount(id, btn.dataset.name || '');
+            break;
+      }
+   }
+
+   function handleAccountListChange(e) {
+      const accessToggle = e.target.closest('.calendar-access-toggle');
+      if (accessToggle) {
+         const id = parseInt(accessToggle.dataset.id, 10);
+         const readOnly = accessToggle.checked; /* checked = read-only */
+         requestToggleReadOnly(id, readOnly);
+         return;
+      }
+
+      const toggle = e.target.closest('.calendar-sub-toggle');
+      if (!toggle) return;
+
+      const calId = parseInt(toggle.dataset.calId, 10);
+      const isActive = toggle.checked;
+      const label = isActive ? 'Disable' : 'Enable';
+      const name =
+         toggle
+            .closest('.calendar-sub-item')
+            ?.querySelector('.calendar-sub-name')
+            ?.textContent?.trim() || '';
+      toggle.title = label + ' this calendar';
+      toggle.setAttribute('aria-label', label + ' ' + name);
+      toggleCalendar(calId, isActive);
+   }
+
+   /* =============================================================================
+    * Actions
+    * ============================================================================= */
+
+   function testAccount(id) {
+      setButtonLoading(id, 'Test');
+      requestTestAccount(id);
+   }
+
+   function syncAccount(id) {
+      setButtonLoading(id, 'Sync');
+      requestSyncAccount(id);
+   }
+
+   function expandCalendars(accountId) {
+      const subList = document.getElementById('cal-list-' + accountId);
+      if (subList && subList.style.display !== 'none') {
+         subList.style.display = 'none';
+         currentExpandedAccount = null;
+         return;
+      }
+      currentExpandedAccount = accountId;
+      requestListCalendars(accountId);
+   }
+
+   function removeAccount(id, name) {
+      if (callbacks.showConfirmModal) {
+         callbacks.showConfirmModal(
+            'Remove calendar account "' + name + '"? All cached events will be deleted.',
+            function () {
+               requestRemoveAccount(id);
+            },
+            { title: 'Remove Calendar Account', okText: 'Remove', danger: true }
+         );
+      } else if (confirm('Remove calendar account "' + name + '"?')) {
+         requestRemoveAccount(id);
+      }
+   }
+
+   function editAccount(id) {
+      /* Find account data from the current list */
+      const acct = accounts.find((a) => a.id === id);
+      if (!acct) return;
+      showEditAccountModal(acct);
+   }
+
+   function toggleCalendar(id, isActive) {
+      requestToggleCalendar(id, isActive);
+   }
+
+   /* =============================================================================
+    * Edit Account Modal
+    * ============================================================================= */
+
+   let editModalTriggerElement = null;
+
+   function showEditAccountModal(acct) {
+      editModalTriggerElement = document.activeElement;
+
+      let modal = document.getElementById('calendar-edit-modal');
+      if (!modal) {
+         modal = document.createElement('div');
+         modal.id = 'calendar-edit-modal';
+         modal.className = 'modal hidden';
+         modal.setAttribute('role', 'dialog');
+         modal.setAttribute('aria-modal', 'true');
+         modal.setAttribute('aria-labelledby', 'cal-edit-modal-title');
+         modal.innerHTML = `
+            <div class="modal-content">
+               <h3 id="cal-edit-modal-title">Edit Calendar Account</h3>
+               <form class="calendar-add-form" id="calendar-edit-form" novalidate>
+                  <input type="hidden" id="cal-edit-id" />
+                  <div class="form-group">
+                     <label for="cal-edit-name">Account Name</label>
+                     <input type="text" id="cal-edit-name" required />
+                  </div>
+                  <div class="form-group">
+                     <label for="cal-edit-url">CalDAV URL</label>
+                     <input type="url" id="cal-edit-url" required />
+                  </div>
+                  <div class="form-group">
+                     <label for="cal-edit-username">Username</label>
+                     <input type="text" id="cal-edit-username" required />
+                  </div>
+                  <div class="form-group">
+                     <label for="cal-edit-password">New Password (leave blank to keep current)</label>
+                     <div class="password-input-wrapper">
+                        <input type="password" id="cal-edit-password" placeholder="Leave blank to keep current" />
+                        <button type="button" class="password-toggle" data-target="cal-edit-password" title="Show/hide">
+                           <svg class="eye-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                              <circle cx="12" cy="12" r="3"/>
+                           </svg>
+                        </button>
+                     </div>
+                  </div>
+                  <div class="form-actions">
+                     <button type="button" class="btn btn-secondary" id="cal-edit-modal-cancel">Cancel</button>
+                     <button type="submit" class="btn btn-primary" id="cal-edit-modal-submit">Save</button>
+                  </div>
+               </form>
+            </div>`;
+         document.body.appendChild(modal);
+
+         /* Wire up events */
+         document
+            .getElementById('cal-edit-modal-cancel')
+            .addEventListener('click', hideEditAccountModal);
+         modal.addEventListener('click', (e) => {
+            if (e.target === modal) hideEditAccountModal();
+         });
+         modal.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') hideEditAccountModal();
+         });
+         document
+            .getElementById('calendar-edit-form')
+            .addEventListener('submit', handleEditFormSubmit);
+
+         /* Password toggle */
+         modal.querySelector('.password-toggle').addEventListener('click', function () {
+            const targetId = this.dataset.target;
+            if (targetId) {
+               const input = document.getElementById(targetId);
+               if (input) input.type = input.type === 'password' ? 'text' : 'password';
+            }
+         });
+      }
+
+      /* Populate fields */
+      document.getElementById('cal-edit-id').value = acct.id;
+      document.getElementById('cal-edit-name').value = acct.name || '';
+      document.getElementById('cal-edit-url').value = acct.caldav_url || '';
+      document.getElementById('cal-edit-username').value = acct.username || '';
+      document.getElementById('cal-edit-password').value = '';
+
+      modal.classList.remove('hidden');
+      document.getElementById('cal-edit-name').focus();
+   }
+
+   function hideEditAccountModal() {
+      const modal = document.getElementById('calendar-edit-modal');
+      if (modal) modal.classList.add('hidden');
+      if (editModalTriggerElement) {
+         editModalTriggerElement.focus();
+         editModalTriggerElement = null;
+      }
+   }
+
+   function handleEditFormSubmit(e) {
+      e.preventDefault();
+      const id = parseInt(document.getElementById('cal-edit-id').value, 10);
+      const name = document.getElementById('cal-edit-name').value.trim();
+      const url = document.getElementById('cal-edit-url').value.trim();
+      const username = document.getElementById('cal-edit-username').value.trim();
+      const password = document.getElementById('cal-edit-password').value;
+
+      if (!name || !url || !username) {
+         showToast('Name, URL, and username are required', 'error');
+         return;
+      }
+
+      const submitBtn = document.getElementById('cal-edit-modal-submit');
+      if (submitBtn) {
+         submitBtn.disabled = true;
+         submitBtn.textContent = 'Saving...';
+      }
+      requestEditAccount(id, name, url, username, password || '');
+   }
+
+   /* =============================================================================
+    * Button Loading State
+    * ============================================================================= */
+
+   function setButtonLoading(accountId, label) {
+      const card = document.querySelector('[data-account-id="' + accountId + '"]');
+      if (!card) return;
+      const buttons = card.querySelectorAll('.calendar-account-actions button');
+      buttons.forEach((btn) => {
+         if (btn.textContent.trim() === label) {
+            btn.classList.add('loading');
+            btn.textContent = label + '...';
+         }
+      });
+   }
+
+   function clearLoadingButtons() {
+      document.querySelectorAll('.calendar-account-actions button.loading').forEach((btn) => {
+         btn.classList.remove('loading');
+         btn.textContent = btn.textContent.replace('...', '');
+      });
+   }
+
+   /* =============================================================================
+    * Add Account Modal
+    * ============================================================================= */
+
+   let modalTriggerElement = null;
+
+   function showAddAccountModal() {
+      modalTriggerElement = document.activeElement;
+
+      let modal = document.getElementById('calendar-add-modal');
+      if (!modal) {
+         modal = document.createElement('div');
+         modal.id = 'calendar-add-modal';
+         modal.className = 'modal';
+         modal.setAttribute('role', 'dialog');
+         modal.setAttribute('aria-modal', 'true');
+         modal.setAttribute('aria-labelledby', 'cal-modal-title');
+         modal.innerHTML = `
+            <div class="modal-content">
+               <h3 id="cal-modal-title">Add Calendar Account</h3>
+               <form class="calendar-add-form" id="calendar-add-form" novalidate>
+                  <div class="form-group">
+                     <label for="cal-add-name">Account Name</label>
+                     <input type="text" id="cal-add-name" placeholder="e.g., Work, Personal" required />
+                  </div>
+                  <div class="form-group">
+                     <label for="cal-add-url">CalDAV URL</label>
+                     <input type="url" id="cal-add-url" placeholder="https://caldav.example.com/dav/" required />
+                     <span class="form-hint">The base CalDAV URL for your provider</span>
+                  </div>
+                  <div class="form-group">
+                     <label for="cal-add-username">Username</label>
+                     <input type="text" id="cal-add-username" placeholder="user@example.com" required />
+                  </div>
+                  <div class="form-group">
+                     <label for="cal-add-password">Password / App Password</label>
+                     <div class="password-input-wrapper">
+                        <input type="password" id="cal-add-password" placeholder="App password or account password" required />
+                        <button type="button" class="password-toggle" data-target="cal-add-password" title="Show/hide">
+                           <svg class="eye-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                              <circle cx="12" cy="12" r="3"/>
+                           </svg>
+                        </button>
+                     </div>
+                     <span class="form-hint">Stored encrypted in the database</span>
+                  </div>
+                  <div class="form-group">
+                     <label class="calendar-checkbox-label">
+                        <input type="checkbox" id="cal-add-view-only" />
+                        Read only (prevent AI from modifying events)
+                     </label>
+                     <span class="form-hint">You can change this later</span>
+                  </div>
+                  <div class="form-actions">
+                     <button type="button" class="btn btn-secondary" id="cal-modal-cancel">Cancel</button>
+                     <button type="submit" class="btn btn-primary" id="cal-modal-submit">Add Account</button>
+                  </div>
+               </form>
+            </div>
+         `;
+         document.body.appendChild(modal);
+
+         /* Form submit */
+         document.getElementById('calendar-add-form').addEventListener('submit', function (e) {
+            e.preventDefault();
+            handleFormSubmit();
+         });
+
+         /* Cancel button */
+         document.getElementById('cal-modal-cancel').addEventListener('click', hideAddAccountModal);
+
+         /* Password toggle */
+         modal.querySelector('.password-toggle').addEventListener('click', function () {
+            const targetId = this.dataset.target;
+            if (targetId) {
+               const input = document.getElementById(targetId);
+               if (input) input.type = input.type === 'password' ? 'text' : 'password';
+            }
+         });
+
+         /* Escape to close */
+         modal.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape') {
+               hideAddAccountModal();
+               return;
+            }
+            /* Focus trap */
+            if (e.key === 'Tab') {
+               const focusable = modal.querySelectorAll(
+                  'input, button, [tabindex]:not([tabindex="-1"])'
+               );
+               const first = focusable[0];
+               const last = focusable[focusable.length - 1];
+               if (e.shiftKey && document.activeElement === first) {
+                  e.preventDefault();
+                  last.focus();
+               } else if (!e.shiftKey && document.activeElement === last) {
+                  e.preventDefault();
+                  first.focus();
+               }
+            }
+         });
+
+         /* Click outside to close */
+         modal.addEventListener('click', function (e) {
+            if (e.target === modal) {
+               hideAddAccountModal();
+            }
+         });
+      }
+
+      /* Reset form */
+      const form = document.getElementById('calendar-add-form');
+      if (form) form.reset();
+      clearFormErrors();
+      resetSubmitButton();
+      modal.classList.remove('hidden');
+
+      /* Focus first input */
+      setTimeout(function () {
+         const first = document.getElementById('cal-add-name');
+         if (first) first.focus();
+      }, 50);
+   }
+
+   function hideAddAccountModal() {
+      const modal = document.getElementById('calendar-add-modal');
+      if (modal) modal.classList.add('hidden');
+      resetSubmitButton();
+      if (modalTriggerElement) {
+         modalTriggerElement.focus();
+         modalTriggerElement = null;
+      }
+   }
+
+   function handleFormSubmit() {
+      clearFormErrors();
+      const name = document.getElementById('cal-add-name').value.trim();
+      const url = document.getElementById('cal-add-url').value.trim();
+      const username = document.getElementById('cal-add-username').value.trim();
+      const password = document.getElementById('cal-add-password').value;
+
+      let valid = true;
+      if (!name) {
+         showFieldError('cal-add-name', 'Account name is required');
+         valid = false;
+      }
+      if (!url) {
+         showFieldError('cal-add-url', 'CalDAV URL is required');
+         valid = false;
+      }
+      if (!username) {
+         showFieldError('cal-add-username', 'Username is required');
+         valid = false;
+      }
+      if (!password) {
+         showFieldError('cal-add-password', 'Password is required');
+         valid = false;
+      }
+
+      if (valid) {
+         const submitBtn = document.getElementById('cal-modal-submit');
+         if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Adding...';
+         }
+         const viewOnly = document.getElementById('cal-add-view-only');
+         const readOnly = viewOnly ? viewOnly.checked : false;
+         requestAddAccount(name, url, username, password, readOnly);
+      }
+   }
+
+   function showFieldError(inputId, message) {
+      const input = document.getElementById(inputId);
+      if (input) {
+         input.classList.add('input-error');
+         input.setAttribute('aria-invalid', 'true');
+      }
+   }
+
+   function clearFormErrors() {
+      const form = document.getElementById('calendar-add-form');
+      if (!form) return;
+      form.querySelectorAll('.input-error').forEach((el) => {
+         el.classList.remove('input-error');
+         el.removeAttribute('aria-invalid');
+      });
+   }
+
+   function resetSubmitButton() {
+      const submitBtn = document.getElementById('cal-modal-submit');
+      if (submitBtn) {
+         submitBtn.disabled = false;
+         submitBtn.textContent = 'Add Account';
+      }
+   }
+
+   /* =============================================================================
+    * Helpers
+    * ============================================================================= */
+
+   function showToast(msg, type) {
+      if (typeof DawnToast !== 'undefined') {
+         DawnToast.show(msg, type);
+      }
+   }
+
+   /* =============================================================================
+    * Initialization
+    * ============================================================================= */
+
+   function init() {
+      const section = document.getElementById('calendar-accounts-section');
+      if (!section) return;
+
+      const header = section.querySelector('.section-header');
+      if (header) {
+         header.addEventListener('click', () => {
+            setTimeout(() => {
+               const authState = callbacks.getAuthState ? callbacks.getAuthState() : {};
+               if (!section.classList.contains('collapsed') && authState.authenticated) {
+                  requestListAccounts();
+               }
+            }, 50);
+         });
+      }
+
+      const addBtn = document.getElementById('calendar-add-account-btn');
+      if (addBtn) {
+         addBtn.addEventListener('click', showAddAccountModal);
+      }
+
+      const refreshBtn = document.getElementById('calendar-refresh-accounts-btn');
+      if (refreshBtn) {
+         refreshBtn.addEventListener('click', requestListAccounts);
+      }
+
+      /* Event delegation on account list */
+      const list = document.getElementById('calendar-accounts-list');
+      if (list) {
+         list.addEventListener('click', handleAccountListClick);
+         list.addEventListener('change', handleAccountListChange);
+      }
+   }
+
+   function setCallbacks(cbs) {
+      if (cbs.showConfirmModal) callbacks.showConfirmModal = cbs.showConfirmModal;
+      if (cbs.getAuthState) callbacks.getAuthState = cbs.getAuthState;
+   }
+
+   /* =============================================================================
+    * Export
+    * ============================================================================= */
+
+   window.DawnCalendarAccounts = {
+      init: init,
+      setCallbacks: setCallbacks,
+      handleListAccountsResponse: handleListAccountsResponse,
+      handleAddAccountResponse: handleAddAccountResponse,
+      handleEditAccountResponse: handleEditAccountResponse,
+      handleRemoveAccountResponse: handleRemoveAccountResponse,
+      handleTestAccountResponse: handleTestAccountResponse,
+      handleSyncAccountResponse: handleSyncAccountResponse,
+      handleListCalendarsResponse: handleListCalendarsResponse,
+      handleToggleCalendarResponse: handleToggleCalendarResponse,
+      handleToggleReadOnlyResponse: handleToggleReadOnlyResponse,
+      showAddAccountModal: showAddAccountModal,
+      hideAddAccountModal: hideAddAccountModal,
+   };
+})();

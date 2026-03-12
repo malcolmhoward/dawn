@@ -36,6 +36,7 @@ option(DAWN_ENABLE_AUDIO_TOOLS "Enable voice amplifier and audio device tools" O
 option(DAWN_ENABLE_SCHEDULER_TOOL "Enable scheduler/timer/alarm/reminder tool" ON)
 option(DAWN_ENABLE_TTS_TOOL "Enable text-to-speech command tool" ON)
 option(DAWN_ENABLE_DOCUMENT_SEARCH_TOOL "Enable RAG document search tool" ON)
+option(DAWN_ENABLE_CALENDAR_TOOL "Enable CalDAV calendar integration" ON)
 
 # =============================================================================
 # Mutual Exclusion: Home Assistant and SmartThings
@@ -241,6 +242,19 @@ if(DAWN_ENABLE_DOCUMENT_SEARCH_TOOL)
     message(STATUS "DAWN: Document Search tool ENABLED")
 else()
     message(STATUS "DAWN: Document Search tool DISABLED")
+endif()
+
+# Calendar Tool (CalDAV)
+if(DAWN_ENABLE_CALENDAR_TOOL)
+    add_definitions(-DDAWN_ENABLE_CALENDAR_TOOL)
+    list(APPEND TOOL_SOURCES
+        src/tools/calendar_tool.c
+        src/tools/calendar_service.c
+        src/tools/calendar_db.c
+        src/tools/caldav_client.c)
+    message(STATUS "DAWN: Calendar tool ENABLED")
+else()
+    message(STATUS "DAWN: Calendar tool DISABLED")
 endif()
 
 # =============================================================================

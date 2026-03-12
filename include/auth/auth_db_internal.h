@@ -48,7 +48,7 @@
  * ============================================================================= */
 
 /* Current schema version */
-#define AUTH_DB_SCHEMA_VERSION 22
+#define AUTH_DB_SCHEMA_VERSION 24
 
 /* Retention periods */
 #define LOGIN_ATTEMPT_RETENTION_SEC (7 * 24 * 60 * 60) /* 7 days */
@@ -215,10 +215,38 @@ typedef struct {
    sqlite3_stmt *stmt_doc_chunk_read;
    sqlite3_stmt *stmt_doc_list_all;
    sqlite3_stmt *stmt_doc_update_global;
+
+   /* === Calendar module statements (calendar_db.c) === */
+   sqlite3_stmt *stmt_cal_acct_create;
+   sqlite3_stmt *stmt_cal_acct_get;
+   sqlite3_stmt *stmt_cal_acct_list;
+   sqlite3_stmt *stmt_cal_acct_update;
+   sqlite3_stmt *stmt_cal_acct_delete;
+   sqlite3_stmt *stmt_cal_acct_update_sync;
+   sqlite3_stmt *stmt_cal_acct_update_discovery;
+   sqlite3_stmt *stmt_cal_cal_create;
+   sqlite3_stmt *stmt_cal_cal_get;
+   sqlite3_stmt *stmt_cal_cal_list;
+   sqlite3_stmt *stmt_cal_cal_update_ctag;
+   sqlite3_stmt *stmt_cal_cal_set_active;
+   sqlite3_stmt *stmt_cal_cal_delete;
+   sqlite3_stmt *stmt_cal_cal_active_for_user;
+   sqlite3_stmt *stmt_cal_evt_upsert;
+   sqlite3_stmt *stmt_cal_evt_get_by_uid;
+   sqlite3_stmt *stmt_cal_evt_delete;
+   sqlite3_stmt *stmt_cal_evt_delete_by_cal;
+   sqlite3_stmt *stmt_cal_occ_insert;
+   sqlite3_stmt *stmt_cal_occ_delete_for_event;
+   sqlite3_stmt *stmt_cal_occ_in_range;
+   sqlite3_stmt *stmt_cal_occ_allday_in_range;
+   sqlite3_stmt *stmt_cal_occ_search;
+   sqlite3_stmt *stmt_cal_occ_next;
+   sqlite3_stmt *stmt_cal_acct_list_enabled;
+   sqlite3_stmt *stmt_cal_acct_set_read_only;
 } auth_db_state_t;
 
 /* Ensure last_stmt_end covers all statement fields (catches reorder bugs) */
-_Static_assert(offsetof(auth_db_state_t, stmt_doc_update_global) >
+_Static_assert(offsetof(auth_db_state_t, stmt_cal_acct_set_read_only) >
                    offsetof(auth_db_state_t, stmt_create_user),
                "last_stmt_end must be after first_stmt_offset");
 
