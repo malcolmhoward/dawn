@@ -1595,6 +1595,9 @@
    function applyShowWhen(el, condition) {
       const currentConfig = getCurrentConfigFn ? getCurrentConfigFn() : {};
       const currentValue = Utils.getNestedValue(currentConfig, condition.key);
+      if (currentValue === undefined && condition.key) {
+         console.warn('showWhen: config key not found:', condition.key);
+      }
       if (condition.notValue) {
          const blocked = Array.isArray(condition.notValue)
             ? condition.notValue

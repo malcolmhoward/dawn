@@ -1035,6 +1035,7 @@
                <div class="music-library-item-artist">${artist.album_count} album${artist.album_count !== 1 ? 's' : ''}, ${artist.track_count} track${artist.track_count !== 1 ? 's' : ''}</div>
             </div>
             <button class="music-search-add-btn" data-action="add-artist" title="Add all tracks">+</button>
+            <button class="music-library-drill-btn" title="Show tracks">\u203A</button>
          </li>
       `
          )
@@ -1060,13 +1061,25 @@
          const artistName = item.dataset.artist;
          const artistKey = item.dataset.artistKey;
 
-         // Double-click to show artist's tracks
-         item.addEventListener('dblclick', (e) => {
-            if (e.target.closest('.music-search-add-btn')) return;
+         // Drill-down to show artist's tracks
+         function drillIntoArtist() {
             const payload = { type: 'tracks_by_artist', artist: artistName };
             if (artistKey) payload.artist_key = artistKey;
             DawnWS.send({ type: 'music_library', payload });
+         }
+
+         item.addEventListener('dblclick', (e) => {
+            if (e.target.closest('.music-search-add-btn')) return;
+            drillIntoArtist();
          });
+
+         const drillBtn = item.querySelector('.music-library-drill-btn');
+         if (drillBtn) {
+            drillBtn.addEventListener('click', (e) => {
+               e.stopPropagation();
+               drillIntoArtist();
+            });
+         }
 
          // + button to add all artist tracks
          const addBtn = item.querySelector('.music-search-add-btn');
@@ -1107,6 +1120,7 @@
                <div class="music-library-item-artist">${escapeHtml(album.artist || 'Unknown')} \u2022 ${album.track_count} track${album.track_count !== 1 ? 's' : ''}</div>
             </div>
             <button class="music-search-add-btn" data-action="add-album" title="Add all tracks">+</button>
+            <button class="music-library-drill-btn" title="Show tracks">\u203A</button>
          </li>
       `
          )
@@ -1132,13 +1146,25 @@
          const albumName = item.dataset.album;
          const albumKey = item.dataset.albumKey;
 
-         // Double-click to show album's tracks
-         item.addEventListener('dblclick', (e) => {
-            if (e.target.closest('.music-search-add-btn')) return;
+         // Drill-down to show album's tracks
+         function drillIntoAlbum() {
             const payload = { type: 'tracks_by_album', album: albumName };
             if (albumKey) payload.album_key = albumKey;
             DawnWS.send({ type: 'music_library', payload });
+         }
+
+         item.addEventListener('dblclick', (e) => {
+            if (e.target.closest('.music-search-add-btn')) return;
+            drillIntoAlbum();
          });
+
+         const drillBtn = item.querySelector('.music-library-drill-btn');
+         if (drillBtn) {
+            drillBtn.addEventListener('click', (e) => {
+               e.stopPropagation();
+               drillIntoAlbum();
+            });
+         }
 
          // + button to add whole album
          const addBtn = item.querySelector('.music-search-add-btn');
