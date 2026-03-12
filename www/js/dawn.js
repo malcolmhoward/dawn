@@ -464,6 +464,23 @@
             case 'import_memories_response':
                DawnMemory.handleImportResponse(msg.payload);
                break;
+            // Document library (RAG) responses
+            case 'doc_library_list_response':
+               if (typeof DawnDocLibrary !== 'undefined')
+                  DawnDocLibrary.handleListResponse(msg.payload);
+               break;
+            case 'doc_library_delete_response':
+               if (typeof DawnDocLibrary !== 'undefined')
+                  DawnDocLibrary.handleDeleteResponse(msg.payload);
+               break;
+            case 'doc_library_index_response':
+               if (typeof DawnDocLibrary !== 'undefined')
+                  DawnDocLibrary.handleIndexResponse(msg.payload);
+               break;
+            case 'doc_library_toggle_global_response':
+               if (typeof DawnDocLibrary !== 'undefined')
+                  DawnDocLibrary.handleToggleGlobalResponse(msg.payload);
+               break;
             case 'conversation_reset':
                // Tool triggered conversation reset - sync frontend
                console.log('Conversation reset by tool');
@@ -1330,6 +1347,14 @@
       // Initialize unified attach module (file picker, drag-drop, counter)
       if (typeof DawnAttach !== 'undefined') {
          DawnAttach.init();
+      }
+
+      // Initialize document library (RAG)
+      if (typeof DawnDocLibrary !== 'undefined') {
+         DawnDocLibrary.init({
+            trapFocus: DawnSettings.trapFocus,
+            showConfirmModal: DawnSettings.showConfirmModal,
+         });
       }
 
       // Initialize music player UI

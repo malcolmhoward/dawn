@@ -766,6 +766,43 @@ static int create_schema(void) {
       LOG_INFO("auth_db: fixed satellite_mappings FK constraints (v21)");
    }
 
+   /* v22 migration: documents and document_chunks tables for RAG search */
+   if (current_version >= 1 && current_version < 22) {
+      const char *v22_sql =
+          "CREATE TABLE IF NOT EXISTS documents ("
+          "  id INTEGER PRIMARY KEY,"
+          "  user_id INTEGER,"
+          "  filename TEXT NOT NULL,"
+          "  filepath TEXT NOT NULL,"
+          "  filetype TEXT NOT NULL,"
+          "  file_hash TEXT NOT NULL,"
+          "  num_chunks INTEGER NOT NULL,"
+          "  is_global INTEGER DEFAULT 0,"
+          "  created_at INTEGER NOT NULL,"
+          "  FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE"
+          ");"
+          "CREATE TABLE IF NOT EXISTS document_chunks ("
+          "  id INTEGER PRIMARY KEY,"
+          "  document_id INTEGER NOT NULL,"
+          "  chunk_index INTEGER NOT NULL,"
+          "  text TEXT NOT NULL,"
+          "  embedding BLOB NOT NULL,"
+          "  embedding_norm REAL NOT NULL,"
+          "  FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE"
+          ");"
+          "CREATE INDEX IF NOT EXISTS idx_doc_chunks_doc ON document_chunks(document_id);"
+          "CREATE INDEX IF NOT EXISTS idx_documents_user ON documents(user_id);"
+          "CREATE INDEX IF NOT EXISTS idx_documents_hash ON documents(file_hash);";
+
+      rc = sqlite3_exec(s_db.db, v22_sql, NULL, NULL, &errmsg);
+      if (rc != SQLITE_OK) {
+         LOG_ERROR("auth_db: v22 migration failed: %s", errmsg ? errmsg : "unknown");
+         sqlite3_free(errmsg);
+         return AUTH_DB_FAILURE;
+      }
+      LOG_INFO("auth_db: added documents and document_chunks tables (v22)");
+   }
+
    /* Create continuation index (runs for both new databases and migrations) */
    rc = sqlite3_exec(s_db.db,
                      "CREATE INDEX IF NOT EXISTS idx_conversations_continued "
@@ -1768,6 +1805,124 @@ static int prepare_statements(void) {
       return AUTH_DB_FAILURE;
    }
 
+   /* Document search statements */
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "INSERT INTO documents (user_id, filename, filepath, filetype, file_hash, "
+       "num_chunks, is_global, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+       -1, &s_db.stmt_doc_create, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare doc_create failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT id, user_id, filename, filepath, filetype, file_hash, "
+                           "num_chunks, is_global, created_at FROM documents WHERE id = ?",
+                           -1, &s_db.stmt_doc_get, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare doc_get failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT id FROM documents WHERE file_hash = ? "
+                           "AND (user_id = ? OR is_global = 1)",
+                           -1, &s_db.stmt_doc_get_by_hash, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare doc_get_by_hash failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT id, user_id, filename, filepath, filetype, file_hash, "
+                           "num_chunks, is_global, created_at FROM documents "
+                           "WHERE user_id = ? OR is_global = 1 ORDER BY created_at DESC "
+                           "LIMIT ? OFFSET ?",
+                           -1, &s_db.stmt_doc_list, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare doc_list failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT d.id, d.user_id, d.filename, d.filepath, d.filetype, "
+                           "d.file_hash, d.num_chunks, d.is_global, d.created_at, "
+                           "COALESCE(u.username, '') FROM documents d "
+                           "LEFT JOIN users u ON d.user_id = u.id "
+                           "ORDER BY d.created_at DESC LIMIT ? OFFSET ?",
+                           -1, &s_db.stmt_doc_list_all, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare doc_list_all failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db, "UPDATE documents SET is_global = ? WHERE id = ?", -1,
+                           &s_db.stmt_doc_update_global, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare doc_update_global failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM documents WHERE id = ?", -1, &s_db.stmt_doc_delete,
+                           NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare doc_delete failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db, "SELECT COUNT(*) FROM documents WHERE user_id = ?", -1,
+                           &s_db.stmt_doc_count_user, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare doc_count_user failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "INSERT INTO document_chunks (document_id, chunk_index, text, embedding, "
+       "embedding_norm) VALUES (?, ?, ?, ?, ?)",
+       -1, &s_db.stmt_doc_chunk_create, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare doc_chunk_create failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT c.id, c.chunk_index, c.text, c.embedding, c.embedding_norm, "
+                           "d.id, d.filename, d.filetype "
+                           "FROM document_chunks c JOIN documents d ON c.document_id = d.id "
+                           "WHERE d.user_id = ? OR d.is_global = 1 "
+                           "LIMIT ?",
+                           -1, &s_db.stmt_doc_chunk_search, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare doc_chunk_search failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT id, user_id, filename, filepath, filetype, file_hash, "
+                           "num_chunks, is_global, created_at "
+                           "FROM documents "
+                           "WHERE (user_id = ? OR is_global = 1) "
+                           "AND filename LIKE ? ESCAPE '\\' COLLATE NOCASE "
+                           "ORDER BY CASE WHEN LOWER(filename) = LOWER(?) "
+                           "THEN 0 ELSE 1 END, created_at DESC LIMIT 1",
+                           -1, &s_db.stmt_doc_find_by_name, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare doc_find_by_name failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT chunk_index, text FROM document_chunks "
+                           "WHERE document_id = ? ORDER BY chunk_index LIMIT ? OFFSET ?",
+                           -1, &s_db.stmt_doc_chunk_read, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare doc_chunk_read failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
    return AUTH_DB_SUCCESS;
 }
 
@@ -1995,10 +2150,36 @@ static void finalize_statements(void) {
    if (s_db.stmt_satellite_list)
       sqlite3_finalize(s_db.stmt_satellite_list);
 
+   /* Document search statements */
+   if (s_db.stmt_doc_create)
+      sqlite3_finalize(s_db.stmt_doc_create);
+   if (s_db.stmt_doc_get)
+      sqlite3_finalize(s_db.stmt_doc_get);
+   if (s_db.stmt_doc_get_by_hash)
+      sqlite3_finalize(s_db.stmt_doc_get_by_hash);
+   if (s_db.stmt_doc_list)
+      sqlite3_finalize(s_db.stmt_doc_list);
+   if (s_db.stmt_doc_list_all)
+      sqlite3_finalize(s_db.stmt_doc_list_all);
+   if (s_db.stmt_doc_delete)
+      sqlite3_finalize(s_db.stmt_doc_delete);
+   if (s_db.stmt_doc_count_user)
+      sqlite3_finalize(s_db.stmt_doc_count_user);
+   if (s_db.stmt_doc_chunk_create)
+      sqlite3_finalize(s_db.stmt_doc_chunk_create);
+   if (s_db.stmt_doc_chunk_search)
+      sqlite3_finalize(s_db.stmt_doc_chunk_search);
+   if (s_db.stmt_doc_find_by_name)
+      sqlite3_finalize(s_db.stmt_doc_find_by_name);
+   if (s_db.stmt_doc_chunk_read)
+      sqlite3_finalize(s_db.stmt_doc_chunk_read);
+   if (s_db.stmt_doc_update_global)
+      sqlite3_finalize(s_db.stmt_doc_update_global);
+
    /* Clear all statement pointers using offsetof for safety
     * MAINTENANCE: If statements are reordered, update first/last_stmt names */
    size_t first_stmt_offset = offsetof(auth_db_state_t, stmt_create_user);
-   size_t last_stmt_end = offsetof(auth_db_state_t, stmt_memory_relation_delete_by_entity) +
+   size_t last_stmt_end = offsetof(auth_db_state_t, stmt_doc_update_global) +
                           sizeof(sqlite3_stmt *);
    memset((char *)&s_db + first_stmt_offset, 0, last_stmt_end - first_stmt_offset);
 }

@@ -234,6 +234,11 @@
          callbacks.updateMemoryButtonVisibility();
       }
 
+      // Update document library button visibility
+      if (typeof DawnDocLibrary !== 'undefined') {
+         DawnDocLibrary.updateVisibility();
+      }
+
       // Restore history sidebar state on desktop (only when authenticated)
       if (callbacks.restoreHistorySidebarState) {
          callbacks.restoreHistorySidebarState();

@@ -80,6 +80,7 @@
 #include "auth/auth_crypto.h"
 #include "auth/auth_db.h"
 #include "memory/memory_context.h"
+#include "webui/webui_doc_library.h"
 /* HTTP rate limiting and CSRF constants moved to webui_http.c */
 #endif /* ENABLE_AUTH */
 
@@ -2895,6 +2896,22 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
    } else if (strcmp(type, "import_memories") == 0) {
       if (payload) {
          handle_import_memories(conn, payload);
+      }
+   }
+   /* Document library (RAG) */
+   else if (strcmp(type, "doc_library_list") == 0) {
+      handle_doc_library_list(conn, payload);
+   } else if (strcmp(type, "doc_library_delete") == 0) {
+      if (payload) {
+         handle_doc_library_delete(conn, payload);
+      }
+   } else if (strcmp(type, "doc_library_index") == 0) {
+      if (payload) {
+         handle_doc_library_index(conn, payload);
+      }
+   } else if (strcmp(type, "doc_library_toggle_global") == 0) {
+      if (payload) {
+         handle_doc_library_toggle_global(conn, payload);
       }
    }
    /* TTS control (per-connection) */

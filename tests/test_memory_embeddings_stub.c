@@ -78,3 +78,37 @@ int memory_db_fact_list_without_embedding(int user_id,
    (void)max_count;
    return 0;
 }
+
+#include "memory/memory_types.h"
+
+int memory_db_entity_get_embeddings(int user_id,
+                                    int expected_dims,
+                                    int64_t *out_ids,
+                                    char out_names[][MEMORY_ENTITY_NAME_MAX],
+                                    char out_types[][MEMORY_ENTITY_TYPE_MAX],
+                                    float *out_embeddings,
+                                    float *out_norms,
+                                    int max_count) {
+   (void)user_id;
+   (void)expected_dims;
+   (void)out_ids;
+   (void)out_names;
+   (void)out_types;
+   (void)out_embeddings;
+   (void)out_norms;
+   (void)max_count;
+   return 0;
+}
+
+int memory_db_entity_update_embedding(int64_t entity_id,
+                                      int user_id,
+                                      const float *embedding,
+                                      int dims,
+                                      float norm) {
+   (void)entity_id;
+   (void)user_id;
+   (void)embedding;
+   (void)dims;
+   (void)norm;
+   return 0;
+}

@@ -34,15 +34,9 @@
 #include <unistd.h>
 
 #include "config/dawn_config.h"
+#include "core/embedding_engine.h"
 #include "logging.h"
 #include "memory/memory_db.h"
-
-/* =============================================================================
- * State
- * ============================================================================= */
-
-static const embedding_provider_t *s_provider = NULL;
-static int s_dims = 0;
 
 /* In-memory embedding cache for fast cosine search */
 static struct {
@@ -89,18 +83,11 @@ static atomic_bool s_backfill_shutdown;
 static int s_backfill_user_id;
 
 /* =============================================================================
- * Math Utilities
+ * Math Utilities — delegate to shared embedding engine
  * ============================================================================= */
 
 float memory_embeddings_l2_norm(const float *vec, int dims) {
-   if (!vec || dims <= 0)
-      return 0.0f;
-
-   float sum = 0.0f;
-   for (int i = 0; i < dims; i++) {
-      sum += vec[i] * vec[i];
-   }
-   return sqrtf(sum);
+   return embedding_engine_l2_norm(vec, dims);
 }
 
 float memory_embeddings_cosine_with_norms(const float *a,
@@ -108,29 +95,11 @@ float memory_embeddings_cosine_with_norms(const float *a,
                                           int dims,
                                           float norm_a,
                                           float norm_b) {
-   if (!a || !b || dims <= 0 || norm_a <= 0.0f || norm_b <= 0.0f)
-      return 0.0f;
-
-   float dot = 0.0f;
-   for (int i = 0; i < dims; i++) {
-      dot += a[i] * b[i];
-   }
-
-   float sim = dot / (norm_a * norm_b);
-
-   /* Clamp to [0, 1] — negative similarity treated as irrelevant */
-   if (sim < 0.0f)
-      sim = 0.0f;
-   if (sim > 1.0f)
-      sim = 1.0f;
-
-   return sim;
+   return embedding_engine_cosine_with_norms(a, b, dims, norm_a, norm_b);
 }
 
 float memory_embeddings_cosine(const float *a, const float *b, int dims) {
-   float norm_a = memory_embeddings_l2_norm(a, dims);
-   float norm_b = memory_embeddings_l2_norm(b, dims);
-   return memory_embeddings_cosine_with_norms(a, b, dims, norm_a, norm_b);
+   return embedding_engine_cosine(a, b, dims);
 }
 
 /* =============================================================================
@@ -156,7 +125,7 @@ static int cache_load(int user_id) {
 
    cache_free_data();
 
-   int dims = s_dims;
+   int dims = embedding_engine_dims();
    if (dims <= 0)
       return -1;
 
@@ -194,61 +163,11 @@ void memory_embeddings_invalidate_cache(void) {
 }
 
 /* =============================================================================
- * Provider Selection and Init
+ * Init / Cleanup — delegate provider management to shared embedding engine
  * ============================================================================= */
 
 int memory_embeddings_init(void) {
-   const char *provider_name = g_config.memory.embedding_provider;
-
-   /* Empty or disabled */
-   if (!provider_name || provider_name[0] == '\0') {
-      LOG_INFO("memory_embeddings: disabled (no provider configured)");
-      return 0;
-   }
-
-   /* Select provider */
-   if (strcmp(provider_name, "onnx") == 0) {
-      s_provider = &embedding_provider_onnx;
-   } else if (strcmp(provider_name, "ollama") == 0) {
-      s_provider = &embedding_provider_ollama;
-   } else if (strcmp(provider_name, "openai") == 0) {
-      s_provider = &embedding_provider_openai;
-   } else {
-      LOG_WARNING("memory_embeddings: unknown provider '%s', disabling", provider_name);
-      return 0;
-   }
-
-   /* Determine API key — fall back to openai_api_key for openai provider */
-   const char *api_key = g_secrets.embedding_api_key;
-   if ((!api_key || api_key[0] == '\0') && strcmp(provider_name, "openai") == 0) {
-      api_key = g_secrets.openai_api_key;
-   }
-
-   /* Init the provider */
-   int rc = s_provider->init(g_config.memory.embedding_endpoint, g_config.memory.embedding_model,
-                             api_key);
-   if (rc != 0) {
-      LOG_WARNING("memory_embeddings: provider '%s' init failed, falling back to keyword search",
-                  provider_name);
-      s_provider = NULL;
-      return rc;
-   }
-
-   /* Probe dimensions by embedding a test string */
-   float test_buf[MAX_EMBEDDING_DIMS];
-   int dims = 0;
-   rc = s_provider->embed("test", test_buf, MAX_EMBEDDING_DIMS, &dims);
-   if (rc != 0 || dims <= 0) {
-      LOG_WARNING("memory_embeddings: dimension probe failed, disabling");
-      s_provider->cleanup();
-      s_provider = NULL;
-      return -1;
-   }
-
-   s_dims = dims;
-   LOG_INFO("memory_embeddings: initialized provider '%s' (%d dimensions)", provider_name, dims);
-
-   return 0;
+   return embedding_engine_init();
 }
 
 void memory_embeddings_cleanup(void) {
@@ -268,20 +187,15 @@ void memory_embeddings_cleanup(void) {
    entity_cache_free();
    pthread_mutex_unlock(&s_entity_cache.mutex);
 
-   /* Cleanup provider */
-   if (s_provider) {
-      s_provider->cleanup();
-      s_provider = NULL;
-   }
-   s_dims = 0;
+   /* Provider cleanup handled by embedding_engine_cleanup() in dawn.c shutdown */
 }
 
 bool memory_embeddings_available(void) {
-   return s_provider != NULL && s_dims > 0;
+   return embedding_engine_available();
 }
 
 int memory_embeddings_dims(void) {
-   return s_dims;
+   return embedding_engine_dims();
 }
 
 /* =============================================================================
@@ -289,20 +203,20 @@ int memory_embeddings_dims(void) {
  * ============================================================================= */
 
 int memory_embeddings_embed(const char *text, float *out, int *out_dims) {
-   if (!s_provider || !text || !out || !out_dims)
+   if (!text || !out || !out_dims)
       return -1;
 
-   return s_provider->embed(text, out, MAX_EMBEDDING_DIMS, out_dims);
+   return embedding_engine_embed(text, out, MAX_EMBEDDING_DIMS, out_dims);
 }
 
 int memory_embeddings_embed_and_store(int user_id, int64_t fact_id, const char *text) {
-   if (!s_provider || !text)
+   if (!embedding_engine_available() || !text)
       return -1;
 
    float embedding[MAX_EMBEDDING_DIMS];
    int dims = 0;
 
-   int rc = s_provider->embed(text, embedding, MAX_EMBEDDING_DIMS, &dims);
+   int rc = embedding_engine_embed(text, embedding, MAX_EMBEDDING_DIMS, &dims);
    if (rc != 0 || dims <= 0)
       return rc;
 
@@ -341,7 +255,7 @@ static int entity_cache_load(int user_id) {
 
    entity_cache_free();
 
-   int dims = s_dims;
+   int dims = embedding_engine_dims();
    if (dims <= 0)
       return -1;
 
@@ -378,13 +292,13 @@ static int entity_cache_load(int user_id) {
 }
 
 int memory_embeddings_embed_and_store_entity(int64_t entity_id, int user_id, const char *text) {
-   if (!s_provider || !text)
+   if (!embedding_engine_available() || !text)
       return -1;
 
    float embedding[MAX_EMBEDDING_DIMS];
    int dims = 0;
 
-   int rc = s_provider->embed(text, embedding, MAX_EMBEDDING_DIMS, &dims);
+   int rc = embedding_engine_embed(text, embedding, MAX_EMBEDDING_DIMS, &dims);
    if (rc != 0 || dims <= 0)
       return rc;
 
@@ -411,7 +325,7 @@ int memory_embeddings_entity_search(int user_id,
    /* Embed the query */
    float query_emb[MAX_EMBEDDING_DIMS];
    int dims = 0;
-   if (memory_embeddings_embed(query, query_emb, &dims) != 0 || dims != s_dims)
+   if (memory_embeddings_embed(query, query_emb, &dims) != 0 || dims != embedding_engine_dims())
       return 0;
 
    float query_norm = memory_embeddings_l2_norm(query_emb, dims);
@@ -512,7 +426,7 @@ int memory_embeddings_hybrid_search(int user_id,
    /* Embed the query */
    float query_emb[MAX_EMBEDDING_DIMS];
    int dims = 0;
-   if (memory_embeddings_embed(query, query_emb, &dims) != 0 || dims != s_dims) {
+   if (memory_embeddings_embed(query, query_emb, &dims) != 0 || dims != embedding_engine_dims()) {
       /* Embedding failed — fall back to keyword only */
       int count = keyword_count > max_results ? max_results : keyword_count;
       for (int i = 0; i < count; i++) {
@@ -615,7 +529,7 @@ int memory_embeddings_hybrid_search(int user_id,
 static void *backfill_thread_fn(void *arg) {
    (void)arg;
    int user_id = s_backfill_user_id;
-   int dims = s_dims;
+   int dims = embedding_engine_dims();
 
    LOG_INFO("memory_embeddings: backfill started for user %d", user_id);
 

@@ -1,0 +1,625 @@
+/*
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ * By contributing to this project, you agree to license your contributions
+ * under the GPLv3 (or any later version) or any future licenses chosen by
+ * the project author(s). Contributions include any modifications,
+ * enhancements, or additions to the project. These contributions become
+ * part of the project and are adopted by the project author(s).
+ *
+ * Unit tests for document_db.c — CRUD for documents and chunks.
+ * Uses an in-memory SQLite database via the stubbed s_db global.
+ */
+
+#define AUTH_DB_INTERNAL_ALLOWED
+
+#include <sqlite3.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "auth/auth_db_internal.h"
+#include "tools/document_db.h"
+
+/* ============================================================================
+ * Test Harness
+ * ============================================================================ */
+
+static int tests_passed = 0;
+static int tests_failed = 0;
+
+#define TEST_ASSERT(condition, msg)    \
+   do {                                \
+      if (condition) {                 \
+         printf("  [PASS] %s\n", msg); \
+         tests_passed++;               \
+      } else {                         \
+         printf("  [FAIL] %s\n", msg); \
+         tests_failed++;               \
+      }                                \
+   } while (0)
+
+/* ============================================================================
+ * Setup / Teardown
+ * ============================================================================ */
+
+/* clang-format off */
+static const char *DDL =
+   "CREATE TABLE IF NOT EXISTS users ("
+   "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+   "  username TEXT UNIQUE NOT NULL"
+   ");"
+   "INSERT INTO users (id, username) VALUES (1, 'alice');"
+   "INSERT INTO users (id, username) VALUES (2, 'bob');"
+   "CREATE TABLE IF NOT EXISTS documents ("
+   "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+   "  user_id INTEGER,"
+   "  filename TEXT NOT NULL,"
+   "  filepath TEXT NOT NULL,"
+   "  filetype TEXT NOT NULL,"
+   "  file_hash TEXT NOT NULL,"
+   "  num_chunks INTEGER NOT NULL,"
+   "  is_global INTEGER DEFAULT 0,"
+   "  created_at INTEGER NOT NULL,"
+   "  FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE"
+   ");"
+   "CREATE TABLE IF NOT EXISTS document_chunks ("
+   "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+   "  document_id INTEGER NOT NULL,"
+   "  chunk_index INTEGER NOT NULL,"
+   "  text TEXT NOT NULL,"
+   "  embedding BLOB NOT NULL,"
+   "  embedding_norm REAL NOT NULL,"
+   "  FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE"
+   ");";
+/* clang-format on */
+
+/* SQL must match auth_db_core.c exactly */
+static int prepare_statements(void) {
+   int rc;
+
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "INSERT INTO documents (user_id, filename, filepath, filetype, file_hash, "
+       "num_chunks, is_global, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+       -1, &s_db.stmt_doc_create, NULL);
+   if (rc != SQLITE_OK)
+      return -1;
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT id, user_id, filename, filepath, filetype, file_hash, "
+                           "num_chunks, is_global, created_at FROM documents WHERE id = ?",
+                           -1, &s_db.stmt_doc_get, NULL);
+   if (rc != SQLITE_OK)
+      return -1;
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT id FROM documents WHERE file_hash = ? "
+                           "AND (user_id = ? OR is_global = 1)",
+                           -1, &s_db.stmt_doc_get_by_hash, NULL);
+   if (rc != SQLITE_OK)
+      return -1;
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT id, user_id, filename, filepath, filetype, file_hash, "
+                           "num_chunks, is_global, created_at FROM documents "
+                           "WHERE user_id = ? OR is_global = 1 ORDER BY created_at DESC "
+                           "LIMIT ? OFFSET ?",
+                           -1, &s_db.stmt_doc_list, NULL);
+   if (rc != SQLITE_OK)
+      return -1;
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT d.id, d.user_id, d.filename, d.filepath, d.filetype, "
+                           "d.file_hash, d.num_chunks, d.is_global, d.created_at, "
+                           "COALESCE(u.username, '') FROM documents d "
+                           "LEFT JOIN users u ON d.user_id = u.id "
+                           "ORDER BY d.created_at DESC LIMIT ? OFFSET ?",
+                           -1, &s_db.stmt_doc_list_all, NULL);
+   if (rc != SQLITE_OK)
+      return -1;
+
+   rc = sqlite3_prepare_v2(s_db.db, "UPDATE documents SET is_global = ? WHERE id = ?", -1,
+                           &s_db.stmt_doc_update_global, NULL);
+   if (rc != SQLITE_OK)
+      return -1;
+
+   rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM documents WHERE id = ?", -1, &s_db.stmt_doc_delete,
+                           NULL);
+   if (rc != SQLITE_OK)
+      return -1;
+
+   rc = sqlite3_prepare_v2(s_db.db, "SELECT COUNT(*) FROM documents WHERE user_id = ?", -1,
+                           &s_db.stmt_doc_count_user, NULL);
+   if (rc != SQLITE_OK)
+      return -1;
+
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "INSERT INTO document_chunks (document_id, chunk_index, text, embedding, "
+       "embedding_norm) VALUES (?, ?, ?, ?, ?)",
+       -1, &s_db.stmt_doc_chunk_create, NULL);
+   if (rc != SQLITE_OK)
+      return -1;
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT c.id, c.chunk_index, c.text, c.embedding, c.embedding_norm, "
+                           "d.id, d.filename, d.filetype "
+                           "FROM document_chunks c JOIN documents d ON c.document_id = d.id "
+                           "WHERE d.user_id = ? OR d.is_global = 1 "
+                           "LIMIT ?",
+                           -1, &s_db.stmt_doc_chunk_search, NULL);
+   if (rc != SQLITE_OK)
+      return -1;
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT id, user_id, filename, filepath, filetype, file_hash, "
+                           "num_chunks, is_global, created_at "
+                           "FROM documents "
+                           "WHERE (user_id = ? OR is_global = 1) "
+                           "AND filename LIKE ? ESCAPE '\\' COLLATE NOCASE "
+                           "ORDER BY CASE WHEN LOWER(filename) = LOWER(?) "
+                           "THEN 0 ELSE 1 END, created_at DESC LIMIT 1",
+                           -1, &s_db.stmt_doc_find_by_name, NULL);
+   if (rc != SQLITE_OK)
+      return -1;
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT chunk_index, text FROM document_chunks "
+                           "WHERE document_id = ? ORDER BY chunk_index LIMIT ? OFFSET ?",
+                           -1, &s_db.stmt_doc_chunk_read, NULL);
+   if (rc != SQLITE_OK)
+      return -1;
+
+   return 0;
+}
+
+static void setup_db(void) {
+   int rc = sqlite3_open(":memory:", &s_db.db);
+   if (rc != SQLITE_OK) {
+      fprintf(stderr, "Failed to open in-memory DB: %s\n", sqlite3_errmsg(s_db.db));
+      exit(1);
+   }
+
+   /* Enable foreign keys */
+   sqlite3_exec(s_db.db, "PRAGMA foreign_keys = ON", NULL, NULL, NULL);
+
+   char *errmsg = NULL;
+   rc = sqlite3_exec(s_db.db, DDL, NULL, NULL, &errmsg);
+   if (rc != SQLITE_OK) {
+      fprintf(stderr, "DDL failed: %s\n", errmsg);
+      sqlite3_free(errmsg);
+      exit(1);
+   }
+
+   if (prepare_statements() != 0) {
+      fprintf(stderr, "Prepare statements failed: %s\n", sqlite3_errmsg(s_db.db));
+      exit(1);
+   }
+
+   s_db.initialized = true;
+}
+
+static void teardown_db(void) {
+   s_db.initialized = false;
+
+   /* Finalize all document statements */
+   if (s_db.stmt_doc_create)
+      sqlite3_finalize(s_db.stmt_doc_create);
+   if (s_db.stmt_doc_get)
+      sqlite3_finalize(s_db.stmt_doc_get);
+   if (s_db.stmt_doc_get_by_hash)
+      sqlite3_finalize(s_db.stmt_doc_get_by_hash);
+   if (s_db.stmt_doc_list)
+      sqlite3_finalize(s_db.stmt_doc_list);
+   if (s_db.stmt_doc_list_all)
+      sqlite3_finalize(s_db.stmt_doc_list_all);
+   if (s_db.stmt_doc_update_global)
+      sqlite3_finalize(s_db.stmt_doc_update_global);
+   if (s_db.stmt_doc_delete)
+      sqlite3_finalize(s_db.stmt_doc_delete);
+   if (s_db.stmt_doc_count_user)
+      sqlite3_finalize(s_db.stmt_doc_count_user);
+   if (s_db.stmt_doc_chunk_create)
+      sqlite3_finalize(s_db.stmt_doc_chunk_create);
+   if (s_db.stmt_doc_chunk_search)
+      sqlite3_finalize(s_db.stmt_doc_chunk_search);
+   if (s_db.stmt_doc_find_by_name)
+      sqlite3_finalize(s_db.stmt_doc_find_by_name);
+   if (s_db.stmt_doc_chunk_read)
+      sqlite3_finalize(s_db.stmt_doc_chunk_read);
+
+   if (s_db.db) {
+      sqlite3_close(s_db.db);
+      s_db.db = NULL;
+   }
+}
+
+/* ============================================================================
+ * Test: Create and Get
+ * ============================================================================ */
+
+static void test_create_and_get(void) {
+   printf("\n--- test_create_and_get ---\n");
+
+   int64_t id = document_db_create(1, "report.pdf", "/docs/report.pdf", "pdf",
+                                   "aabbccdd11223344aabbccdd11223344"
+                                   "aabbccdd11223344aabbccdd11223344",
+                                   5, false);
+   TEST_ASSERT(id > 0, "create returns positive ID");
+
+   document_t doc;
+   int rc = document_db_get(id, &doc);
+   TEST_ASSERT(rc == 0, "get returns success");
+   TEST_ASSERT(doc.id == id, "ID matches");
+   TEST_ASSERT(doc.user_id == 1, "user_id matches");
+   TEST_ASSERT(strcmp(doc.filename, "report.pdf") == 0, "filename matches");
+   TEST_ASSERT(strcmp(doc.filetype, "pdf") == 0, "filetype matches");
+   TEST_ASSERT(doc.num_chunks == 5, "num_chunks matches");
+   TEST_ASSERT(doc.is_global == false, "is_global is false");
+   TEST_ASSERT(doc.created_at > 0, "created_at is set");
+}
+
+/* ============================================================================
+ * Test: Get Non-existent
+ * ============================================================================ */
+
+static void test_get_nonexistent(void) {
+   printf("\n--- test_get_nonexistent ---\n");
+
+   document_t doc;
+   int rc = document_db_get(99999, &doc);
+   TEST_ASSERT(rc == -1, "get non-existent returns -1");
+}
+
+/* ============================================================================
+ * Test: Delete
+ * ============================================================================ */
+
+static void test_delete(void) {
+   printf("\n--- test_delete ---\n");
+
+   int64_t id = document_db_create(
+       1, "temp.txt", "/docs/temp.txt", "txt",
+       "1111111111111111111111111111111111111111111111111111111111111111", 1, false);
+   TEST_ASSERT(id > 0, "create for delete test");
+
+   int rc = document_db_delete(id);
+   TEST_ASSERT(rc == 0, "delete returns success");
+
+   document_t doc;
+   rc = document_db_get(id, &doc);
+   TEST_ASSERT(rc == -1, "get after delete returns -1");
+}
+
+/* ============================================================================
+ * Test: Count User
+ * ============================================================================ */
+
+static void test_count_user(void) {
+   printf("\n--- test_count_user ---\n");
+
+   /* User 2 starts with 0 docs */
+   int count = document_db_count_user(2);
+   TEST_ASSERT(count == 0, "user 2 starts with 0 docs");
+
+   /* Create two docs for user 2 */
+   document_db_create(2, "a.txt", "a.txt", "txt",
+                      "2222222222222222222222222222222222222222222222222222222222222222", 1, false);
+   document_db_create(2, "b.txt", "b.txt", "txt",
+                      "3333333333333333333333333333333333333333333333333333333333333333", 2, false);
+
+   count = document_db_count_user(2);
+   TEST_ASSERT(count == 2, "user 2 has 2 docs after creating two");
+}
+
+/* ============================================================================
+ * Test: Find by Hash
+ * ============================================================================ */
+
+static void test_find_by_hash(void) {
+   printf("\n--- test_find_by_hash ---\n");
+
+   const char *hash = "4444444444444444444444444444444444444444444444444444444444444444";
+   int64_t id = document_db_create(1, "hashed.md", "hashed.md", "md", hash, 3, false);
+   TEST_ASSERT(id > 0, "create doc with known hash");
+
+   int64_t found = document_db_find_by_hash(hash, 1);
+   TEST_ASSERT(found == id, "find_by_hash returns correct ID");
+
+   int64_t not_found = document_db_find_by_hash("0000000000000000000000000000000000000000000"
+                                                "000000000000000000000000",
+                                                1);
+   TEST_ASSERT(not_found == 0, "find_by_hash returns 0 for unknown hash");
+}
+
+/* ============================================================================
+ * Test: List (user-scoped)
+ * ============================================================================ */
+
+static void test_list(void) {
+   printf("\n--- test_list ---\n");
+
+   document_t docs[10];
+   int count = document_db_list(1, docs, 10, 0);
+   TEST_ASSERT(count >= 0, "list returns non-negative count");
+
+   /* All returned docs should belong to user 1 or be global */
+   int all_accessible = 1;
+   for (int i = 0; i < count; i++) {
+      if (docs[i].user_id != 1 && !docs[i].is_global)
+         all_accessible = 0;
+   }
+   TEST_ASSERT(all_accessible, "list only returns user's own or global docs");
+}
+
+/* ============================================================================
+ * Test: List All (admin view)
+ * ============================================================================ */
+
+static void test_list_all(void) {
+   printf("\n--- test_list_all ---\n");
+
+   document_t docs[20];
+   int count = document_db_list_all(docs, 20, 0);
+   TEST_ASSERT(count >= 0, "list_all returns non-negative count");
+
+   /* Should include docs from both users */
+   int has_user1 = 0, has_user2 = 0;
+   for (int i = 0; i < count; i++) {
+      if (docs[i].user_id == 1)
+         has_user1 = 1;
+      if (docs[i].user_id == 2)
+         has_user2 = 1;
+   }
+   TEST_ASSERT(has_user1, "list_all includes user 1 docs");
+   TEST_ASSERT(has_user2, "list_all includes user 2 docs");
+
+   /* Verify owner_name populated via JOIN */
+   int has_owner_name = 0;
+   for (int i = 0; i < count; i++) {
+      if (strlen(docs[i].owner_name) > 0)
+         has_owner_name = 1;
+   }
+   TEST_ASSERT(has_owner_name, "list_all populates owner_name from users JOIN");
+}
+
+/* ============================================================================
+ * Test: List Pagination
+ * ============================================================================ */
+
+static void test_list_pagination(void) {
+   printf("\n--- test_list_pagination ---\n");
+
+   document_t docs[5];
+
+   /* Get first page (limit 2) */
+   int page1 = document_db_list_all(docs, 2, 0);
+   TEST_ASSERT(page1 >= 0, "page 1 returns non-negative count");
+
+   /* Get second page */
+   int page2 = document_db_list_all(docs, 2, 2);
+   TEST_ASSERT(page2 >= 0, "page 2 returns non-negative count");
+
+   /* Total should equal list_all with high limit */
+   int total = document_db_list_all(docs, 20, 0);
+   TEST_ASSERT(page1 + page2 <= total, "pages don't exceed total");
+}
+
+/* ============================================================================
+ * Test: Update Global
+ * ============================================================================ */
+
+static void test_update_global(void) {
+   printf("\n--- test_update_global ---\n");
+
+   int64_t id = document_db_create(
+       1, "private.txt", "private.txt", "txt",
+       "5555555555555555555555555555555555555555555555555555555555555555", 1, false);
+   TEST_ASSERT(id > 0, "create private doc");
+
+   document_t doc;
+   document_db_get(id, &doc);
+   TEST_ASSERT(doc.is_global == false, "starts as private");
+
+   int rc = document_db_update_global(id, true);
+   TEST_ASSERT(rc == 0, "update_global returns success");
+
+   document_db_get(id, &doc);
+   TEST_ASSERT(doc.is_global == true, "now global after update");
+
+   rc = document_db_update_global(id, false);
+   TEST_ASSERT(rc == 0, "update_global back to private");
+
+   document_db_get(id, &doc);
+   TEST_ASSERT(doc.is_global == false, "private again after second update");
+}
+
+/* ============================================================================
+ * Test: Global Doc Visible to Other Users
+ * ============================================================================ */
+
+static void test_global_visibility(void) {
+   printf("\n--- test_global_visibility ---\n");
+
+   int64_t id = document_db_create(
+       1, "shared.pdf", "shared.pdf", "pdf",
+       "6666666666666666666666666666666666666666666666666666666666666666", 2, true);
+   TEST_ASSERT(id > 0, "create global doc owned by user 1");
+
+   /* User 2 should see it in their list */
+   document_t docs[10];
+   int count = document_db_list(2, docs, 10, 0);
+   int found = 0;
+   for (int i = 0; i < count; i++) {
+      if (docs[i].id == id)
+         found = 1;
+   }
+   TEST_ASSERT(found, "global doc visible to user 2 via list");
+}
+
+/* ============================================================================
+ * Test: Find by Name
+ * ============================================================================ */
+
+static void test_find_by_name(void) {
+   printf("\n--- test_find_by_name ---\n");
+
+   int64_t id = document_db_create(
+       1, "MyReport2024.pdf", "MyReport2024.pdf", "pdf",
+       "7777777777777777777777777777777777777777777777777777777777777777", 4, false);
+   TEST_ASSERT(id > 0, "create doc for name search");
+
+   document_t doc;
+   int rc = document_db_find_by_name(1, "MyReport2024.pdf", &doc);
+   TEST_ASSERT(rc == 0, "exact name match found");
+   TEST_ASSERT(doc.id == id, "exact match returns correct doc");
+
+   rc = document_db_find_by_name(1, "Report2024", &doc);
+   TEST_ASSERT(rc == 0, "partial name match found");
+   TEST_ASSERT(doc.id == id, "partial match returns correct doc");
+
+   rc = document_db_find_by_name(1, "nonexistent_document", &doc);
+   TEST_ASSERT(rc == -1, "non-existent name returns -1");
+
+   /* User 2 should NOT find user 1's private doc */
+   rc = document_db_find_by_name(2, "MyReport2024.pdf", &doc);
+   TEST_ASSERT(rc == -1, "other user cannot find private doc by name");
+}
+
+/* ============================================================================
+ * Test: Chunk Create and Read
+ * ============================================================================ */
+
+static void test_chunk_create_and_read(void) {
+   printf("\n--- test_chunk_create_and_read ---\n");
+
+   int64_t doc_id = document_db_create(1, "chunked.txt", "chunked.txt", "txt",
+                                       "888888888888888888888888888888888888888888888888888888"
+                                       "8888888888",
+                                       3, false);
+   TEST_ASSERT(doc_id > 0, "create doc for chunk test");
+
+   /* Create 3 chunks with dummy embeddings */
+   float emb[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
+   int64_t c0 = document_db_chunk_create(doc_id, 0, "First chunk text.", emb, 4, 1.0f);
+   int64_t c1 = document_db_chunk_create(doc_id, 1, "Second chunk text.", emb, 4, 1.0f);
+   int64_t c2 = document_db_chunk_create(doc_id, 2, "Third chunk text.", emb, 4, 1.0f);
+   TEST_ASSERT(c0 > 0, "chunk 0 created");
+   TEST_ASSERT(c1 > 0, "chunk 1 created");
+   TEST_ASSERT(c2 > 0, "chunk 2 created");
+
+   /* Read all chunks */
+   document_chunk_t chunks[5];
+   int count = document_db_chunk_read(doc_id, chunks, 5, 0);
+   TEST_ASSERT(count == 3, "read returns 3 chunks");
+   TEST_ASSERT(chunks[0].chunk_index == 0, "chunk 0 index correct");
+   TEST_ASSERT(chunks[1].chunk_index == 1, "chunk 1 index correct");
+   TEST_ASSERT(chunks[2].chunk_index == 2, "chunk 2 index correct");
+   TEST_ASSERT(strcmp(chunks[0].text, "First chunk text.") == 0, "chunk 0 text matches");
+   TEST_ASSERT(strcmp(chunks[2].text, "Third chunk text.") == 0, "chunk 2 text matches");
+
+   /* Paginated read: start at chunk 1, limit 2 */
+   count = document_db_chunk_read(doc_id, chunks, 2, 1);
+   TEST_ASSERT(count == 2, "paginated read returns 2 chunks");
+   TEST_ASSERT(chunks[0].chunk_index == 1, "first paginated chunk is index 1");
+   TEST_ASSERT(chunks[1].chunk_index == 2, "second paginated chunk is index 2");
+}
+
+/* ============================================================================
+ * Test: NULL / Invalid Parameters
+ * ============================================================================ */
+
+static void test_invalid_params(void) {
+   printf("\n--- test_invalid_params ---\n");
+
+   /* NULL output */
+   TEST_ASSERT(document_db_list(1, NULL, 10, 0) == -1, "list with NULL out returns -1");
+   TEST_ASSERT(document_db_list_all(NULL, 10, 0) == -1, "list_all with NULL out returns -1");
+
+   /* Zero/negative limit */
+   document_t docs[5];
+   TEST_ASSERT(document_db_list(1, docs, 0, 0) == -1, "list with limit 0 returns -1");
+   TEST_ASSERT(document_db_list(1, docs, -1, 0) == -1, "list with negative limit returns -1");
+
+   /* Delete non-existent */
+   TEST_ASSERT(document_db_delete(99999) == -1, "delete non-existent returns -1");
+
+   /* Update global non-existent */
+   TEST_ASSERT(document_db_update_global(99999, true) == -1,
+               "update_global non-existent returns -1");
+}
+
+/* ============================================================================
+ * Test: Cascade Delete (chunks removed with document)
+ * ============================================================================ */
+
+static void test_cascade_delete(void) {
+   printf("\n--- test_cascade_delete ---\n");
+
+   int64_t doc_id = document_db_create(1, "cascade.txt", "cascade.txt", "txt",
+                                       "999999999999999999999999999999999999999999999999999999"
+                                       "9999999999",
+                                       2, false);
+   TEST_ASSERT(doc_id > 0, "create doc for cascade test");
+
+   float emb[4] = { 0.5f, 0.5f, 0.5f, 0.5f };
+   document_db_chunk_create(doc_id, 0, "Chunk A", emb, 4, 1.0f);
+   document_db_chunk_create(doc_id, 1, "Chunk B", emb, 4, 1.0f);
+
+   /* Verify chunks exist */
+   document_chunk_t chunks[5];
+   int count = document_db_chunk_read(doc_id, chunks, 5, 0);
+   TEST_ASSERT(count == 2, "chunks exist before delete");
+
+   /* Delete document — chunks should cascade */
+   int rc = document_db_delete(doc_id);
+   TEST_ASSERT(rc == 0, "delete returns success");
+
+   count = document_db_chunk_read(doc_id, chunks, 5, 0);
+   TEST_ASSERT(count == 0, "chunks removed after cascade delete");
+}
+
+/* ============================================================================
+ * Main
+ * ============================================================================ */
+
+int main(void) {
+   printf("=== Document DB Unit Tests ===\n");
+
+   setup_db();
+
+   test_create_and_get();
+   test_get_nonexistent();
+   test_delete();
+   test_count_user();
+   test_find_by_hash();
+   test_list();
+   test_list_all();
+   test_list_pagination();
+   test_update_global();
+   test_global_visibility();
+   test_find_by_name();
+   test_chunk_create_and_read();
+   test_invalid_params();
+   test_cascade_delete();
+
+   teardown_db();
+
+   printf("\n========================================\n");
+   printf("Results: %d passed, %d failed\n", tests_passed, tests_failed);
+   printf("========================================\n");
+
+   return tests_failed > 0 ? 1 : 0;
+}

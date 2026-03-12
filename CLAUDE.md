@@ -344,6 +344,11 @@ deviceCallback callbacks[] = {
 
 Unit tests in `tests/` (standalone binaries, no framework):
 - `test_scheduler` — Scheduler DB layer (94 assertions across 16 tests)
+- `test_music_db` — Music DB search, dedup, browse, source abstraction (60 assertions)
+- `test_document_chunker` — Text chunking for RAG (34 assertions, 10 tests)
+- `test_document_db` — Document DB CRUD, isolation, global flag, chunks (65 assertions, 14 tests)
+- `test_embedding_engine` — L2 norm, cosine similarity, edge cases (24 assertions, 9 tests)
+- `test_memory_embeddings` — Memory embedding math utilities
 - `test_sse_parser` — SSE stream parser
 - `test_sentence_buffer` — Sentence boundary detection
 - `test_session_commands` — Thread-local session context
@@ -394,6 +399,19 @@ Manual testing covers:
 - `www/css/components/scheduler.css`: Notification banner styles
 - `docs/SCHEDULER_DESIGN.md`: Full design document with automated test coverage
 
+**Document Search / RAG:**
+- `include/core/embedding_engine.h`: Shared embedding API (embed, cosine, norms)
+- `src/core/embedding_engine.c`: Embedding engine (ONNX/Ollama/OpenAI, NEON vectorized)
+- `include/tools/document_db.h`: Document DB types and CRUD declarations
+- `src/tools/document_db.c`: SQLite operations for documents and chunks
+- `src/tools/document_search.c`: Semantic search tool (hybrid cosine + keyword)
+- `src/tools/document_read.c`: Paginated document reader tool
+- `src/tools/document_chunker.c`: Text chunking for embedding
+- `src/webui/webui_doc_library.c`: WebUI Document Library endpoints
+- `www/js/ui/doc-library.js`: Document Library frontend
+- `www/css/components/doc-library.css`: Document Library styles
+- `docs/RAG_DESIGN.md`: Full design document with implementation notes
+
 **Satellite (DAP2):**
 - `dawn_satellite/`: Standalone satellite binary for Raspberry Pi
 - `dawn_satellite/config/satellite.toml`: Default satellite configuration
@@ -407,6 +425,7 @@ Manual testing covers:
 1. SmartThings OAuth blocked at AWS WAF level (403 Forbidden)
 
 **Recently Completed:**
+- Document search/RAG system with semantic search, paginated document reader, WebUI Document Library, shared embedding engine, admin document management (global toggle, all-users view, username resolution)
 - Scheduler system (timers, alarms, reminders, scheduled tool execution) with audible chimes, WebUI notifications, recurrence, snooze/dismiss
 - Satellite registration key (pre-shared key authentication for satellite registration)
 - Private CA for TLS validation (all client types: ESP32, RPi, browser)

@@ -1086,7 +1086,7 @@
          label: 'Documents',
          icon: '&#x1F4C4;',
          adminOnly: true,
-         description: 'Document upload and text extraction limits',
+         description: 'Document upload, extraction, and RAG indexing limits',
          fields: {
             max_file_size_kb: {
                type: 'number',
@@ -1117,6 +1117,23 @@
                max: 4096,
                advanced: true,
                hint: 'Maximum size of extracted text content in kilobytes (128-4096)',
+            },
+            max_index_size_kb: {
+               type: 'number',
+               label: 'Max Document Size for Indexing (KB)',
+               min: 128,
+               max: 10240,
+               step: 128,
+               advanced: true,
+               hint: 'Maximum document text size for RAG indexing in kilobytes (128-10240)',
+            },
+            max_indexed_documents: {
+               type: 'number',
+               label: 'Max Indexed Documents Per User',
+               min: 1,
+               max: 500,
+               advanced: true,
+               hint: 'Maximum documents a user can index for RAG search (1-500)',
             },
          },
       },

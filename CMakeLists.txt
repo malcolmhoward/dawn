@@ -520,6 +520,7 @@ if(ENABLE_WEBUI)
         src/webui/webui_tools.c
         src/webui/webui_images.c
         src/webui/webui_documents.c
+        src/webui/webui_doc_library.c
         src/webui/webui_satellite.c
         src/webui/webui_admin_satellite.c
     )
@@ -542,6 +543,7 @@ if(ENABLE_WEBUI)
         src/core/worker_pool.c
         src/core/text_filter.c
         src/core/rate_limiter.c
+        src/core/embedding_engine.c
     )
 endif()
 
@@ -549,6 +551,12 @@ endif()
 list(APPEND DAWN_SOURCES
     src/core/scheduler_db.c
     src/core/scheduler.c
+)
+
+# Document DB and chunker (RAG document search)
+list(APPEND DAWN_SOURCES
+    src/tools/document_db.c
+    src/tools/document_chunker.c
 )
 
 # Database core + memory subsystem (always compiled — memory works in all modes)

@@ -4,7 +4,7 @@ This document describes the architecture of the D.A.W.N. (Digital Assistant for 
 
 **D.A.W.N.** is the central intelligence layer of the OASIS ecosystem, responsible for interpreting user intent, fusing data from every subsystem, and routing commands. At its core, DAWN performs neural-inference to understand context and drive decision-making, acting as OASIS's orchestration hub for MIRAGE, AURA, SPARK, STAT, and any future modules.
 
-**Last Updated**: March 4, 2026 (Home Assistant integration, LLM rate limiter, configurable timeouts)
+**Last Updated**: March 12, 2026 (Document search/RAG system, embedding engine extraction, document_read tool, admin document management)
 
 ## Table of Contents
 
@@ -35,7 +35,7 @@ dawn/
 │   ├── memory/             # Persistent memory system
 │   ├── tts/                # Text-to-speech (Piper)
 │   ├── audio/              # Audio capture, playback, music
-│   ├── core/               # Session manager, scheduler
+│   ├── core/               # Session manager, scheduler, embedding engine
 │   ├── tools/              # Modular LLM tools (search, weather, calculator, scheduler, etc.)
 │   └── webui/              # Web UI server
 │
@@ -965,6 +965,7 @@ Memory extraction happens at session end, not during conversation. This adds zer
    - Combined stats query (facts + preferences + summaries + entities in one SELECT)
 
 - **memory_embeddings.c/h**: Semantic embedding system
+   - Calls shared `embedding_engine` (see Section 11) for embed/cosine operations
    - Multi-provider support: Ollama, OpenAI, ONNX (configurable in `[memory.embeddings]`)
    - In-memory cache with mutex protection (facts: 1000 cap, entities: 500 cap)
    - Lazy cache loading on first search, invalidated after extraction
@@ -1164,6 +1165,117 @@ Users can export their memories for backup or transfer, and import memories from
 
 ---
 
+### 11. Document Search / RAG Subsystem (`src/tools/document_*.c`, `src/core/embedding_engine.c`)
+
+**Purpose**: Retrieval-Augmented Generation — upload documents, chunk and embed them, then search or read them via LLM tools
+
+#### Architecture: **Shared Embedding Engine + Per-Document Chunking + Dual Tool Interface**
+
+```
+┌───────────────────────────────────────────────────────────────────────┐
+│                     DOCUMENT INGESTION                                 │
+├───────────────────────────────────────────────────────────────────────┤
+│  WebUI upload (drag-and-drop / file picker)                           │
+│  → webui_doc_library.c receives file                                  │
+│  → document_chunker.c: paragraph split → sentence split → overlap     │
+│  → embedding_engine_embed() per chunk (ONNX/Ollama/OpenAI)           │
+│  → document_db.c: store document + chunks + embeddings in SQLite      │
+│  → SHA-256 dedup prevents re-indexing identical files                  │
+└───────────────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌───────────────────────────────────────────────────────────────────────┐
+│                     LLM TOOL ACCESS                                    │
+├───────────────────────────────────────────────────────────────────────┤
+│                                                                        │
+│  document_search(query)        document_read(document, start, count)  │
+│  ├─ Embed query                ├─ Find document by name/ID            │
+│  ├─ Load all user chunks       ├─ Load chunks in order (paginated)    │
+│  ├─ Cosine similarity rank     ├─ Return text with pagination hint    │
+│  ├─ Keyword boost (top 50)     └─ LLM calls again for next page      │
+│  └─ Return top 5 with scores                                          │
+│                                                                        │
+└───────────────────────────────────────────────────────────────────────┘
+```
+
+#### Key Components
+
+- **embedding_engine.c/h** (`src/core/`): Shared embedding infrastructure
+   - Extracted from `memory_embeddings.c` — used by both memory and document systems
+   - Multi-provider: ONNX local (`all-MiniLM-L6-v2`), Ollama, OpenAI-compatible
+   - Thread-safe embed() with mutex protection
+   - ARM NEON vectorized dot product for cosine similarity
+   - `embedding_engine_init()`, `embedding_engine_embed()`, `embedding_engine_cosine()`
+
+- **document_db.c/h** (`src/tools/`): SQLite CRUD for documents and chunks
+   - Uses shared `auth.db` handle with prepared statements
+   - `document_db_create()`, `document_db_delete()`, `document_db_list()`
+   - `document_db_find_by_name()`: fuzzy name lookup with LIKE + exact-match priority
+   - `document_db_chunk_create()`, `document_db_chunk_read()`, `document_db_chunk_search_load()`
+   - Access control: queries filter by `user_id = ? OR is_global = 1`
+
+- **document_chunker.c/h** (`src/tools/`): Text chunking for embedding
+   - Paragraph-aware splitting (double newline boundaries)
+   - Sentence boundary splitting for oversized paragraphs
+   - Configurable target/max token sizes and overlap
+
+- **document_search.c/h** (`src/tools/`): Semantic search tool
+   - Two-pass scoring: cosine similarity first, keyword boost on top 50 only
+   - Results formatted with source citations and relevance scores
+   - Uses `result_extended` for results exceeding the 8KB fixed buffer
+
+- **document_read.c/h** (`src/tools/`): Paginated document reader
+   - Parameters: `document` (name), `start_chunk` (offset), `count` (page size, max 20)
+   - Returns ordered chunk text with pagination hint for next page
+   - Enables full-document summarization via iterative reading
+
+- **webui_doc_library.c** (`src/webui/`): WebUI Document Library panel
+   - Upload with file type validation (PDF, DOCX, TXT, MD)
+   - Per-user document count limits (configurable)
+   - List, delete, index, and toggle-global WebSocket endpoints
+   - Admin "All Users" view with username resolution (JOIN on users table)
+   - Global visibility toggle: owner or admin can share/unshare documents
+   - Audit logging for admin cross-user operations
+   - `conn_check_admin_quiet()` for soft-fallback admin checks (no error response)
+
+- **doc-library.js / doc-library.css** (`www/`): WebUI frontend
+   - Drag-and-drop upload with progress indicator
+   - Document list with type badges, chunk counts, delete confirmation
+   - Admin controls: "All Users" toggle, global upload checkbox, per-document globe toggle
+   - Owner badge (username) on documents in admin "All Users" view
+   - SVG globe icon with filled/stroke states for global visibility
+   - Focus trap and keyboard focus-visible styles for accessibility
+   - Mobile-friendly: bottom-sheet layout, 44px+ touch targets
+
+#### Database Schema
+
+Two tables in `auth.db`:
+
+```sql
+documents (id, user_id, filename, filepath, filetype, file_hash,
+           num_chunks, is_global, created_at)
+
+document_chunks (id, document_id, chunk_index, text, embedding, embedding_norm)
+```
+
+Indexes: `idx_doc_chunks_doc`, `idx_documents_user`, `idx_documents_hash`
+
+#### Configuration
+
+```toml
+[documents]
+chunk_target_tokens = 500
+chunk_max_tokens = 1000
+chunk_overlap_tokens = 50
+max_search_results = 5
+max_context_tokens = 2000
+max_file_size_mb = 10
+max_index_size_kb = 2048       # Per-document index size limit
+max_indexed_documents = 50     # Per-user document count limit
+```
+
+---
+
 ## Module Dependency Hierarchy
 
 To prevent circular dependencies and maintain clean architecture, modules are organized into layers. **Modules may only depend on modules in lower layers.**
@@ -1189,17 +1301,21 @@ Layer 2 (Services)
 │   ├── llm_openai.c      - OpenAI/Ollama/llama.cpp (depends: llm_interface)
 │   ├── llm_claude.c      - Anthropic Claude (depends: llm_interface)
 │   └── llm_tools.c       - Tool execution (depends: tool_registry)
+├── core/embedding_engine.c - Shared embedding infrastructure (depends: Layer 0-1)
 ├── tts/                  - Text-to-speech (depends: Layer 0-1)
 ├── asr/                  - Speech recognition (depends: Layer 0-1)
 ├── mosquitto_comms.c     - MQTT integration (depends: Layer 0-1, tool_registry)
-└── memory/               - Persistent memory + embeddings (depends: Layer 0-1)
+└── memory/               - Persistent memory (depends: Layer 0-1, embedding_engine)
 
 Layer 3 (Tools)
-├── tools/weather_tool.c  - Weather API (depends: Layer 0-2)
-├── tools/music_tool.c    - Music playback (depends: Layer 0-2)
-├── tools/search_tool.c   - Web search (depends: Layer 0-2)
-├── tools/memory_tool.c   - Memory commands (depends: Layer 0-2, memory/)
-└── tools/*.c             - All other tools (depends: Layer 0-2)
+├── tools/weather_tool.c      - Weather API (depends: Layer 0-2)
+├── tools/music_tool.c        - Music playback (depends: Layer 0-2)
+├── tools/search_tool.c       - Web search (depends: Layer 0-2)
+├── tools/memory_tool.c       - Memory commands (depends: Layer 0-2, memory/)
+├── tools/document_search.c   - RAG semantic search (depends: Layer 0-2, embedding_engine)
+├── tools/document_read.c     - Paginated doc reader (depends: Layer 0-2, document_db)
+├── tools/document_db.c       - Document SQLite CRUD (depends: Layer 0-1, auth_db)
+└── tools/*.c                 - All other tools (depends: Layer 0-2)
 
 Layer 4 (Application)
 ├── dawn.c                - Main entry point (depends: all layers)
@@ -1444,8 +1560,9 @@ static const tool_metadata_t my_tool_metadata = {
 
 **Registered Tools** (as of March 2026):
 
-- audio_tools, calculator_tool, datetime_tool, homeassistant_tool, hud_tools, llm_status_tool
-- memory_tool, music_tool, reset_conversation_tool, scheduler_tool, search_tool, shutdown_tool
+- audio_tools, calculator_tool, datetime_tool, document_read_tool, document_search_tool
+- homeassistant_tool, hud_tools, llm_status_tool, memory_tool, music_tool
+- reset_conversation_tool, scheduler_tool, search_tool, shutdown_tool
 - switch_llm_tool, url_tool, viewing_tool, volume_tool, weather_tool
 
 ### Command Flow
@@ -1988,7 +2105,7 @@ The WebUI settings panel (`www/js/ui/settings.js`) defines a `SETTINGS_SCHEMA` t
 | Tool Calling       | `[llm.tools]`                         | Mode, per-tool toggles                          |
 | Network            | `[webui]`, `[dap]`, `[mqtt]`          | Ports, addresses                                |
 | Images & Vision    | `[images]`, `[vision]`                | Storage retention, upload size/dimension limits |
-| Documents          | `[documents]`                         | Upload size, page limits, extraction limits     |
+| Documents          | `[documents]`                         | Upload size, page limits, index limits, chunking |
 
 **Implementation Note**: When adding new settings to `dawn.toml`, also add corresponding entries to `SETTINGS_SCHEMA` to expose them in the WebUI, unless they fall under the exclusion criteria above.
 
@@ -2002,6 +2119,7 @@ The WebUI settings panel (`www/js/ui/settings.js`) defines a `SETTINGS_SCHEMA` t
 2. ✅ **Conversation Persistence** — SQLite-backed conversation history with search/rename/delete
 3. ✅ **DAP2 Satellite System** — Text-first WebSocket protocol, Tier 1 RPi satellite with SDL2 UI
 4. ✅ **Music Streaming to Satellites** — Opus audio over dedicated WebSocket, Goertzel FFT visualizer
+5. ✅ **Document Search (RAG)** — Upload documents, semantic search + paginated reading via LLM tools, shared embedding engine, admin document management with global toggle
 
 ### Planned Features
 

@@ -167,13 +167,25 @@ typedef struct {
  */
 typedef struct {
    char tool_call_id[LLM_TOOLS_ID_LEN]; /**< ID from original tool_call_t */
-   char result[LLM_TOOLS_RESULT_LEN];   /**< Execution result text */
-   bool success;                        /**< true if execution succeeded */
-   bool skip_followup;       /**< If true, return result directly without LLM follow-up */
-   bool should_respond;      /**< If false, tool handled its own output — suppress follow-up */
-   char *vision_image;       /**< Base64 vision image (caller must free) */
+   char result[LLM_TOOLS_RESULT_LEN];   /**< Execution result text (fixed buffer) */
+   char *result_extended; /**< Heap-allocated large result (preferred over result[] if non-NULL) */
+   bool success;          /**< true if execution succeeded */
+   bool skip_followup;    /**< If true, return result directly without LLM follow-up */
+   bool should_respond;   /**< If false, tool handled its own output — suppress follow-up */
+   char *vision_image;    /**< Base64 vision image (caller must free) */
    size_t vision_image_size; /**< Size of vision image data */
 } tool_result_t;
+
+/**
+ * @brief Get the effective result content from a tool result
+ *
+ * Returns result_extended if set, otherwise the fixed result[] buffer.
+ * Use this whenever reading a tool result to ensure large results are
+ * not silently truncated.
+ */
+static inline const char *tool_result_content(const tool_result_t *r) {
+   return (r && r->result_extended) ? r->result_extended : (r ? r->result : "");
+}
 
 /**
  * @brief List of tool results (for parallel execution)

@@ -369,6 +369,8 @@ typedef struct {
    int max_documents;         /* Max concurrent attached docs (default: 5, range: 1-20) */
    int max_pages;             /* Max PDF pages to extract (default: 100, range: 1-500) */
    int max_extracted_size_kb; /* Max extracted text in KB (default: 1024, range: 128-4096) */
+   int max_index_size_kb;     /* Max document text for RAG indexing in KB (default: 2048) */
+   int max_indexed_documents; /* Max indexed documents per user (default: 50, range: 1-500) */
 } documents_config_t;
 
 /* =============================================================================

@@ -1,0 +1,498 @@
+/* =============================================================================
+ * Document Library Button (in header)
+ * ============================================================================= */
+#doc-library-btn {
+   background: none;
+   border: none;
+   color: var(--text-secondary);
+   cursor: pointer;
+   padding: 0.25rem;
+   display: flex;
+   align-items: center;
+   justify-content: center;
+   transition: color var(--transition-fast);
+   position: relative;
+}
+
+#doc-library-btn:hover {
+   color: var(--accent);
+}
+
+#doc-library-btn.active {
+   color: var(--accent);
+}
+
+#doc-library-btn svg {
+   width: 20px;
+   height: 20px;
+}
+
+#doc-library-btn.hidden {
+   display: none;
+}
+
+/* =============================================================================
+ * Document Library Panel
+ * ============================================================================= */
+
+#doc-library-popover {
+   position: fixed;
+   top: 50px;
+   right: 60px;
+   width: 360px;
+   max-height: 70vh;
+   background: rgba(18, 18, 26, 0.98);
+   backdrop-filter: blur(20px);
+   -webkit-backdrop-filter: blur(20px);
+   border: 1px solid var(--accent-border);
+   border-radius: 12px;
+   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+   z-index: 1000;
+   display: flex;
+   flex-direction: column;
+   opacity: 1;
+   transform: translateY(0);
+   transition:
+      opacity 0.15s ease,
+      transform 0.15s ease;
+}
+
+#doc-library-popover.hidden {
+   opacity: 0;
+   transform: translateY(-8px);
+   pointer-events: none;
+}
+
+/* =============================================================================
+ * Header
+ * ============================================================================= */
+
+.doc-library-header {
+   display: flex;
+   justify-content: space-between;
+   align-items: center;
+   padding: 0.875rem 1rem;
+   border-bottom: 1px solid var(--accent-border);
+   background: rgba(10, 10, 15, 0.5);
+   border-radius: 12px 12px 0 0;
+}
+
+.doc-library-header h3 {
+   font-size: 1rem;
+   font-weight: 600;
+   color: var(--accent);
+   letter-spacing: 0.03em;
+   margin: 0;
+   display: flex;
+   align-items: center;
+   gap: 0.5rem;
+}
+
+#doc-library-close {
+   width: 28px;
+   height: 28px;
+   padding: 0;
+   background: transparent;
+   border: 1px solid var(--text-secondary);
+   border-radius: 50%;
+   color: var(--text-secondary);
+   font-size: 1.1rem;
+   line-height: 1;
+   cursor: pointer;
+   transition: all var(--transition-fast);
+   display: flex;
+   align-items: center;
+   justify-content: center;
+}
+
+#doc-library-close:hover {
+   border-color: var(--accent);
+   color: var(--accent);
+}
+
+/* =============================================================================
+ * Stats Bar
+ * ============================================================================= */
+
+.doc-library-stats {
+   display: flex;
+   justify-content: space-around;
+   padding: 0.625rem 1rem;
+   background: rgba(0, 0, 0, 0.2);
+   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+   font-size: 0.75rem;
+   color: var(--text-secondary);
+   gap: 0.25rem;
+}
+
+.doc-library-stats span {
+   display: flex;
+   align-items: center;
+   gap: 0.25rem;
+}
+
+/* =============================================================================
+ * Admin Controls
+ * ============================================================================= */
+
+.doc-library-toggle {
+   display: flex;
+   align-items: center;
+   gap: 4px;
+   font-size: 0.75rem;
+   color: var(--text-secondary);
+   cursor: pointer;
+   margin-left: auto;
+   white-space: nowrap;
+}
+
+.doc-library-toggle.hidden {
+   display: none;
+}
+
+.doc-library-toggle input[type='checkbox'] {
+   accent-color: var(--accent);
+   width: 14px;
+   height: 14px;
+   cursor: pointer;
+}
+
+.doc-library-global-toggle {
+   display: flex;
+   align-items: center;
+   gap: 6px;
+   font-size: 0.75rem;
+   color: var(--text-secondary);
+   cursor: pointer;
+   margin-top: 0.5rem;
+}
+
+.doc-library-global-toggle.hidden {
+   display: none;
+}
+
+.doc-library-global-toggle input[type='checkbox'] {
+   accent-color: var(--accent);
+   width: 14px;
+   height: 14px;
+   cursor: pointer;
+}
+
+/* =============================================================================
+ * Upload Dropzone
+ * ============================================================================= */
+
+.doc-library-upload {
+   padding: 0.75rem 1rem;
+   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.doc-library-dropzone {
+   border: 2px dashed var(--accent-border);
+   border-radius: 8px;
+   padding: 1rem;
+   text-align: center;
+   cursor: pointer;
+   transition:
+      border-color 0.2s,
+      background 0.2s;
+   color: var(--text-secondary);
+   font-size: 0.8rem;
+}
+
+.doc-library-dropzone:hover,
+.doc-library-dropzone.dragover {
+   border-color: var(--accent);
+   background: var(--accent-subtle);
+}
+
+.doc-library-dropzone input[type='file'] {
+   display: none;
+}
+
+.doc-library-dropzone .upload-icon {
+   font-size: 1.5rem;
+   margin-bottom: 4px;
+}
+
+.doc-library-dropzone-hint {
+   font-size: 0.7rem;
+   margin-top: 4px;
+   opacity: 0.7;
+}
+
+/* =============================================================================
+ * Document List
+ * ============================================================================= */
+
+.doc-library-list {
+   flex: 1;
+   overflow-y: auto;
+   padding: 4px 0;
+   min-height: 60px;
+   max-height: 300px;
+}
+
+.doc-library-empty {
+   padding: 1.5rem 1rem;
+   text-align: center;
+   color: var(--text-secondary);
+   font-size: 0.85rem;
+}
+
+.doc-library-item {
+   display: flex;
+   align-items: center;
+   gap: 10px;
+   padding: 0.5rem 1rem;
+   cursor: default;
+   transition: background 0.15s;
+}
+
+.doc-library-item:hover {
+   background: rgba(255, 255, 255, 0.03);
+}
+
+.doc-library-item-icon {
+   width: 32px;
+   height: 32px;
+   display: flex;
+   align-items: center;
+   justify-content: center;
+   border-radius: 6px;
+   font-size: 0.7rem;
+   font-weight: 700;
+   text-transform: uppercase;
+   flex-shrink: 0;
+}
+
+.doc-library-item-icon.pdf {
+   background: rgba(239, 68, 68, 0.15);
+   color: #ef4444;
+}
+.doc-library-item-icon.docx {
+   background: rgba(59, 130, 246, 0.15);
+   color: #3b82f6;
+}
+.doc-library-item-icon.txt,
+.doc-library-item-icon.md {
+   background: rgba(156, 163, 175, 0.15);
+   color: var(--text-secondary);
+}
+
+.doc-library-item-info {
+   flex: 1;
+   min-width: 0;
+}
+
+.doc-library-item-name {
+   font-size: 0.85rem;
+   font-weight: 500;
+   color: var(--text-primary);
+   white-space: nowrap;
+   overflow: hidden;
+   text-overflow: ellipsis;
+}
+
+.doc-library-item-meta {
+   font-size: 0.7rem;
+   color: var(--text-secondary);
+   margin-top: 2px;
+}
+
+.doc-library-item-meta .global-badge {
+   background: var(--accent);
+   color: #fff;
+   padding: 0 4px;
+   border-radius: 3px;
+   font-size: 0.65rem;
+   font-weight: 600;
+   margin-left: 4px;
+}
+
+.doc-library-item-meta .owner-badge {
+   background: rgba(156, 163, 175, 0.25);
+   color: var(--text-secondary);
+   padding: 0 4px;
+   border-radius: 3px;
+   font-size: 0.65rem;
+   margin-left: 4px;
+}
+
+.doc-library-item-global,
+.doc-library-item-delete {
+   background: none;
+   border: none;
+   color: var(--text-secondary);
+   cursor: pointer;
+   padding: 4px;
+   border-radius: 4px;
+   opacity: 0;
+   transition:
+      opacity 0.15s,
+      color 0.15s;
+   font-size: 0.85rem;
+   flex-shrink: 0;
+   line-height: 1;
+   display: flex;
+   align-items: center;
+   justify-content: center;
+}
+
+.doc-library-item:hover .doc-library-item-global,
+.doc-library-item:hover .doc-library-item-delete {
+   opacity: 1;
+}
+
+.doc-library-item-global:focus-visible,
+.doc-library-item-delete:focus-visible {
+   opacity: 1;
+   outline: 2px solid var(--accent);
+   outline-offset: 2px;
+}
+
+.doc-library-item-global svg {
+   width: 16px;
+   height: 16px;
+   display: block;
+}
+
+.doc-library-item-global[data-global='1'] {
+   opacity: 0.7;
+   color: var(--accent);
+}
+
+.doc-library-item-global[data-global='1'] svg {
+   fill: rgba(45, 212, 191, 0.2);
+}
+
+.doc-library-item-global[data-global='0'] svg {
+   fill: none;
+}
+
+.doc-library-item-global:hover {
+   color: var(--accent);
+   background: rgba(45, 212, 191, 0.1);
+}
+
+.doc-library-item-delete:hover {
+   color: #ef4444;
+   background: rgba(239, 68, 68, 0.1);
+}
+
+/* =============================================================================
+ * Footer
+ * ============================================================================= */
+
+.doc-library-footer {
+   display: flex;
+   justify-content: center;
+   align-items: center;
+   padding: 0.5rem 1rem;
+   border-top: 1px solid var(--accent-border);
+   background: rgba(10, 10, 15, 0.5);
+   border-radius: 0 0 12px 12px;
+}
+
+#doc-library-load-more {
+   color: var(--accent);
+   background: none;
+   border: none;
+   padding: 0.25rem 0.5rem;
+   cursor: pointer;
+   font-size: 0.85rem;
+   transition:
+      opacity var(--transition-fast),
+      color var(--transition-fast);
+}
+
+#doc-library-load-more:hover:not(:disabled) {
+   text-decoration: underline;
+}
+
+#doc-library-load-more:disabled {
+   color: var(--text-secondary);
+   opacity: 0.5;
+   cursor: default;
+}
+
+#doc-library-load-more.hidden {
+   display: none;
+}
+
+/* =============================================================================
+ * Indexing Status Bar
+ * ============================================================================= */
+
+.doc-library-indexing {
+   display: flex;
+   align-items: center;
+   gap: 8px;
+   padding: 0.5rem 1rem;
+   font-size: 0.8rem;
+   color: var(--text-secondary);
+   border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.doc-library-indexing.hidden {
+   display: none;
+}
+
+.doc-library-indexing .spinner {
+   width: 14px;
+   height: 14px;
+   border: 2px solid var(--accent-border);
+   border-top-color: var(--accent);
+   border-radius: 50%;
+   animation: doc-lib-spin 0.8s linear infinite;
+}
+
+@keyframes doc-lib-spin {
+   to {
+      transform: rotate(360deg);
+   }
+}
+
+/* =============================================================================
+ * Responsive - Mobile Bottom Sheet
+ * ============================================================================= */
+@media (max-width: 480px) {
+   #doc-library-popover {
+      position: fixed;
+      top: auto;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      width: 100%;
+      max-height: 80vh;
+      border-radius: 16px 16px 0 0;
+      transform: translateY(0);
+   }
+
+   #doc-library-popover.hidden {
+      transform: translateY(100%);
+   }
+
+   .doc-library-header {
+      border-radius: 16px 16px 0 0;
+   }
+
+   .doc-library-footer {
+      border-radius: 0;
+      padding-bottom: 1.25rem; /* Extra padding for bottom safe area */
+   }
+
+   .doc-library-item-global,
+   .doc-library-item-delete {
+      opacity: 1;
+      padding: 10px;
+   }
+}
+
+/* Small screens - slightly narrower popover */
+@media (min-width: 481px) and (max-width: 768px) {
+   #doc-library-popover {
+      width: 320px;
+      right: 10px;
+   }
+}

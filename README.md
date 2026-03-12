@@ -78,6 +78,12 @@ DAWN's LLM automatically invokes tools and incorporates results into responses. 
    - Recurring events (daily, weekdays, weekends, weekly, custom days)
    - Audible chimes with configurable volume, snooze, and dismiss via voice or WebUI
    - Scheduled tasks: "Turn off the lights at midnight" (executes any registered tool)
+- **Document Search (RAG)** — Upload documents and ask questions about their content.
+   - Semantic search across uploaded PDFs, DOCX, TXT, and Markdown files
+   - Paginated document reading for full-document summaries
+   - Hybrid scoring: vector cosine similarity + keyword boosting
+   - Per-user document isolation with admin-controlled global sharing
+   - WebUI Document Library panel with drag-and-drop upload and admin document management
 
 ### Persistent Memory
 

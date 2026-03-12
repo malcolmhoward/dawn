@@ -183,9 +183,43 @@ target_link_libraries(test_music_db
 add_executable(test_memory_embeddings
                test_memory_embeddings.c
                test_memory_embeddings_stub.c
-               ${SRC_ROOT}/src/memory/memory_embeddings.c)
+               ${SRC_ROOT}/src/memory/memory_embeddings.c
+               ${SRC_ROOT}/src/core/embedding_engine.c)
 
 target_link_libraries(test_memory_embeddings
+                      dawn_common
+                      pthread
+                      m)
+
+# Test: Document Chunker
+# Tests paragraph splitting, sentence splitting, overlap, merging, edge cases
+add_executable(test_document_chunker
+               test_document_chunker.c
+               ${SRC_ROOT}/src/tools/document_chunker.c)
+
+target_link_libraries(test_document_chunker m)
+
+# Test: Document DB CRUD
+# Tests create, get, list, delete, global toggle, find_by_name, chunk ops
+add_executable(test_document_db
+               test_document_db.c
+               test_document_db_stub.c
+               ${SRC_ROOT}/src/tools/document_db.c)
+
+target_link_libraries(test_document_db
+                      dawn_common
+                      sqlite3
+                      pthread
+                      ${JSONC_LIBRARIES})
+
+# Test: Embedding Engine Math
+# Tests L2 norm, cosine similarity (no model/provider needed)
+add_executable(test_embedding_engine
+               test_embedding_engine.c
+               test_embedding_engine_stub.c
+               ${SRC_ROOT}/src/core/embedding_engine.c)
+
+target_link_libraries(test_embedding_engine
                       dawn_common
                       pthread
                       m)
@@ -207,4 +241,7 @@ add_custom_target(tests
                           test_scheduler
                           test_music_db
                           test_memory_embeddings
+                          test_document_chunker
+                          test_document_db
+                          test_embedding_engine
                   COMMENT "Building all tests")

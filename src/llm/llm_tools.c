@@ -1370,8 +1370,16 @@ static int llm_tools_execute_from_treg(const tool_call_t *call,
                                        value_buf[0] ? value_buf : NULL, &should_respond);
 
       if (cb_result) {
-         safe_strncpy(result->result, cb_result, LLM_TOOLS_RESULT_LEN);
-         free(cb_result);
+         size_t cb_len = strlen(cb_result);
+         if (cb_len >= LLM_TOOLS_RESULT_LEN) {
+            /* Large result — store in result_extended, copy truncated preview to result[] */
+            result->result_extended = cb_result; /* Transfer ownership */
+            safe_strncpy(result->result, cb_result, LLM_TOOLS_RESULT_LEN);
+            LOG_INFO("Tool '%s' result stored in result_extended (%zu bytes)", call->name, cb_len);
+         } else {
+            safe_strncpy(result->result, cb_result, LLM_TOOLS_RESULT_LEN);
+            free(cb_result);
+         }
       } else {
          snprintf(result->result, LLM_TOOLS_RESULT_LEN, "Tool '%s' completed", call->name);
       }
@@ -1379,7 +1387,8 @@ static int llm_tools_execute_from_treg(const tool_call_t *call,
       result->skip_followup = meta->skip_followup;
       result->should_respond = (should_respond != 0);
 
-      notify_tool_execution(call->name, call->arguments, result->result, result->success);
+      notify_tool_execution(call->name, call->arguments, tool_result_content(result),
+                            result->success);
       return 0;
    }
 
@@ -1590,7 +1599,7 @@ char *llm_tools_get_direct_response(const tool_result_list_t *results) {
       if (!results->results[0].should_respond) {
          return NULL; /* Tool handled its own output */
       }
-      return strdup(results->results[0].result);
+      return strdup(tool_result_content(&results->results[0]));
    }
 
    /* For multiple results, concatenate only should_respond=true results */
@@ -1598,7 +1607,7 @@ char *llm_tools_get_direct_response(const tool_result_list_t *results) {
    int respondable = 0;
    for (int i = 0; i < results->count; i++) {
       if (results->results[i].should_respond) {
-         total_len += strlen(results->results[i].result) + 2; /* +2 for newline */
+         total_len += strlen(tool_result_content(&results->results[i])) + 2; /* +2 for newline */
          respondable++;
       }
    }
@@ -1619,8 +1628,9 @@ char *llm_tools_get_direct_response(const tool_result_list_t *results) {
       if (!results->results[i].should_respond) {
          continue;
       }
-      size_t len = strlen(results->results[i].result);
-      memcpy(ptr, results->results[i].result, len);
+      const char *content = tool_result_content(&results->results[i]);
+      size_t len = strlen(content);
+      memcpy(ptr, content, len);
       ptr += len;
       written++;
       if (written < respondable) {
@@ -1655,7 +1665,7 @@ int llm_tools_add_results_openai(struct json_object *history, const tool_result_
       struct json_object *msg = json_object_new_object();
       json_object_object_add(msg, "role", json_object_new_string("tool"));
       json_object_object_add(msg, "tool_call_id", json_object_new_string(r->tool_call_id));
-      json_object_object_add(msg, "content", json_object_new_string(r->result));
+      json_object_object_add(msg, "content", json_object_new_string(tool_result_content(r)));
 
       json_object_array_add(history, msg);
    }
@@ -1689,7 +1699,7 @@ int llm_tools_add_results_claude(struct json_object *history, const tool_result_
       struct json_object *block = json_object_new_object();
       json_object_object_add(block, "type", json_object_new_string("tool_result"));
       json_object_object_add(block, "tool_use_id", json_object_new_string(r->tool_call_id));
-      json_object_object_add(block, "content", json_object_new_string(r->result));
+      json_object_object_add(block, "content", json_object_new_string(tool_result_content(r)));
 
       json_object_array_add(content_array, block);
    }

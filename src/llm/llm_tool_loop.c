@@ -184,9 +184,9 @@ static void append_closing_message(struct json_object *history,
 }
 
 /**
- * @brief Free vision data from tool results
+ * @brief Free heap-allocated data from tool results (vision images, extended results)
  */
-static void free_tool_result_vision(tool_result_list_t *results) {
+static void free_tool_result_resources(tool_result_list_t *results) {
    if (!results) {
       return;
    }
@@ -194,6 +194,10 @@ static void free_tool_result_vision(tool_result_list_t *results) {
       if (results->results[i].vision_image) {
          free(results->results[i].vision_image);
          results->results[i].vision_image = NULL;
+      }
+      if (results->results[i].result_extended) {
+         free(results->results[i].result_extended);
+         results->results[i].result_extended = NULL;
       }
    }
 }
@@ -385,9 +389,9 @@ char *llm_tool_iteration_loop(llm_tool_loop_params_t *params) {
 
       /* Log tool results */
       for (int i = 0; i < results->count; i++) {
+         const char *content = tool_result_content(&results->results[i]);
          LOG_INFO("  Tool result [%d] id=%s result=%.200s%s", i, results->results[i].tool_call_id,
-                  results->results[i].result,
-                  strlen(results->results[i].result) > 200 ? "..." : "");
+                  content, strlen(content) > 200 ? "..." : "");
       }
 
       /* Step 7: Check follow-up context BEFORE appending to history.
@@ -405,7 +409,7 @@ char *llm_tool_iteration_loop(llm_tool_loop_params_t *params) {
             cb(followup.direct_response, params->callback_userdata);
          }
 
-         free_tool_result_vision(results);
+         free_tool_result_resources(results);
          free(results);
          llm_tool_response_free(&result);
          return followup.direct_response; /* Caller must free */
@@ -424,7 +428,7 @@ char *llm_tool_iteration_loop(llm_tool_loop_params_t *params) {
          append_closing_message(params->conversation_history,
                                 "[Tool execution completed without follow-up response]",
                                 params->history_format);
-         free_tool_result_vision(results);
+         free_tool_result_resources(results);
          free(results);
          llm_tool_response_free(&result);
          return strdup(""); /* Empty = no TTS output */
@@ -439,7 +443,7 @@ char *llm_tool_iteration_loop(llm_tool_loop_params_t *params) {
             void (*cb)(const char *, void *) = params->chunk_callback;
             cb(error_msg, params->callback_userdata);
          }
-         free_tool_result_vision(results);
+         free_tool_result_resources(results);
          free(results);
          llm_tool_response_free(&result);
          return strdup(error_msg);
@@ -477,7 +481,7 @@ char *llm_tool_iteration_loop(llm_tool_loop_params_t *params) {
       /* Step 11: Check interrupt */
       if (llm_is_interrupt_requested()) {
          LOG_INFO("Tool loop: Interrupted by user");
-         free_tool_result_vision(results);
+         free_tool_result_resources(results);
          free(results);
          llm_tool_response_free(&result);
          free(loop_vision_image);
@@ -491,7 +495,7 @@ char *llm_tool_iteration_loop(llm_tool_loop_params_t *params) {
       params->input_text = "";
 
       /* Cleanup for next iteration */
-      free_tool_result_vision(results);
+      free_tool_result_resources(results);
       free(results);
       llm_tool_response_free(&result);
    }

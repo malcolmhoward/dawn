@@ -35,6 +35,7 @@ option(DAWN_ENABLE_HUD_TOOLS "Enable HUD control tools (MQTT)" ON)
 option(DAWN_ENABLE_AUDIO_TOOLS "Enable voice amplifier and audio device tools" ON)
 option(DAWN_ENABLE_SCHEDULER_TOOL "Enable scheduler/timer/alarm/reminder tool" ON)
 option(DAWN_ENABLE_TTS_TOOL "Enable text-to-speech command tool" ON)
+option(DAWN_ENABLE_DOCUMENT_SEARCH_TOOL "Enable RAG document search tool" ON)
 
 # =============================================================================
 # Mutual Exclusion: Home Assistant and SmartThings
@@ -231,6 +232,15 @@ if(DAWN_ENABLE_TTS_TOOL)
     message(STATUS "DAWN: TTS tool ENABLED")
 else()
     message(STATUS "DAWN: TTS tool DISABLED")
+endif()
+
+# Document Search Tool (RAG)
+if(DAWN_ENABLE_DOCUMENT_SEARCH_TOOL)
+    add_definitions(-DDAWN_ENABLE_DOCUMENT_SEARCH_TOOL)
+    list(APPEND TOOL_SOURCES src/tools/document_search.c src/tools/document_read.c)
+    message(STATUS "DAWN: Document Search tool ENABLED")
+else()
+    message(STATUS "DAWN: Document Search tool DISABLED")
 endif()
 
 # =============================================================================

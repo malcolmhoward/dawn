@@ -229,6 +229,8 @@ void config_set_defaults(dawn_config_t *config) {
    config->documents.max_documents = 5;
    config->documents.max_pages = 100;
    config->documents.max_extracted_size_kb = 1024;
+   config->documents.max_index_size_kb = 2048;
+   config->documents.max_indexed_documents = 50;
 
    /* Vision - per-upload image size and dimension limits */
    config->vision.max_image_size_kb = 4096;

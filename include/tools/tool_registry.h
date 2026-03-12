@@ -645,6 +645,8 @@ int tool_registry_count_tool_variations(const char *name);
 #include <stdio.h>
 #include <string.h>
 
+#include "core/session_manager.h"
+
 /**
  * @brief Extract a custom parameter value from an encoded value string
  *
@@ -699,6 +701,13 @@ static inline void tool_param_extract_base(const char *value, char *out_base, si
 
    memcpy(out_base, value, base_len);
    out_base[base_len] = '\0';
+}
+
+static inline int tool_get_current_user_id(void) {
+   session_t *session = session_get_command_context();
+   if (session && session->metrics.user_id > 0)
+      return session->metrics.user_id;
+   return 1;
 }
 
 #ifdef __cplusplus

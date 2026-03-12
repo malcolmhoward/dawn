@@ -224,6 +224,29 @@
                      <path d="M9 22h6" />
                   </svg>
                </button>
+               <button
+                  id="doc-library-btn"
+                  class="hidden"
+                  title="Document Library"
+                  aria-label="Open document library"
+               >
+                  <svg
+                     width="20"
+                     height="20"
+                     viewBox="0 0 24 24"
+                     fill="none"
+                     stroke="currentColor"
+                     stroke-width="2"
+                     stroke-linecap="round"
+                     stroke-linejoin="round"
+                  >
+                     <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                     <polyline points="14 2 14 8 20 8" />
+                     <line x1="16" y1="13" x2="8" y2="13" />
+                     <line x1="16" y1="17" x2="8" y2="17" />
+                     <polyline points="10 9 9 9 8 9" />
+                  </svg>
+               </button>
                <button id="music-btn" title="Music" aria-label="Open music player">
                   <svg
                      width="20"
@@ -495,6 +518,74 @@ Format rules:
                   <button id="memory-export-cancel-btn" class="btn-link">Cancel</button>
                </div>
             </div>
+         </div>
+
+         <!-- Document Library Popover -->
+         <div
+            id="doc-library-popover"
+            class="popover hidden"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="doc-library-title"
+         >
+            <div class="doc-library-header">
+               <h3 id="doc-library-title">Document Library</h3>
+               <button id="doc-library-close" aria-label="Close document library">&times;</button>
+            </div>
+            <div class="doc-library-stats">
+               <span>Documents: <span id="doc-library-count">0</span></span>
+               <span>Chunks: <span id="doc-library-chunks">0</span></span>
+               <label
+                  id="doc-library-show-all-label"
+                  class="doc-library-toggle hidden"
+                  title="Show all users' documents"
+               >
+                  <input
+                     type="checkbox"
+                     id="doc-library-show-all"
+                     aria-label="Show all users' documents"
+                  />
+                  All Users
+               </label>
+            </div>
+            <div class="doc-library-upload">
+               <div id="doc-library-dropzone" class="doc-library-dropzone">
+                  <input type="file" id="doc-library-file-input" accept=".pdf,.docx,.txt,.md" />
+                  <div class="upload-icon">
+                     <svg
+                        width="24"
+                        height="24"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                     >
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                        <polyline points="17 8 12 3 7 8" />
+                        <line x1="12" y1="3" x2="12" y2="15" />
+                     </svg>
+                  </div>
+                  <div>Drop a file here or click to upload</div>
+                  <div class="doc-library-dropzone-hint">PDF, DOCX, TXT, MD (max 10 MB)</div>
+               </div>
+               <label id="doc-library-global-label" class="doc-library-global-toggle hidden">
+                  <input
+                     type="checkbox"
+                     id="doc-library-global-check"
+                     aria-label="Share this document globally with all users"
+                  />
+                  Share globally (all users)
+               </label>
+            </div>
+            <div id="doc-library-list" class="doc-library-list">
+               <div class="doc-library-empty">No documents indexed yet</div>
+            </div>
+            <div class="doc-library-footer">
+               <button id="doc-library-load-more" class="btn-link hidden">Load More</button>
+            </div>
+            <div id="doc-library-indexing" class="doc-library-indexing hidden"></div>
          </div>
 
          <!-- Mini status bar (shown when visualizer is collapsed) - clickable to expand -->
@@ -2524,6 +2615,7 @@ token = "eyJ..."</pre
       <script src="/js/ui/export.js"></script>
       <script src="/js/ui/history.js"></script>
       <script src="/js/ui/memory.js"></script>
+      <script src="/js/ui/doc-library.js"></script>
       <!-- Settings sub-modules (order matters) -->
       <script src="/js/ui/settings/utils.js"></script>
       <script src="/js/ui/settings/modals.js"></script>

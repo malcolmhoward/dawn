@@ -61,6 +61,7 @@
 #include "core/command_executor.h"
 #include "core/command_router.h"
 #include "core/component_status.h"
+#include "core/embedding_engine.h"
 #include "core/path_utils.h"
 #include "core/session_manager.h"
 #include "core/worker_pool.h"
@@ -3674,6 +3675,8 @@ mqtt_disabled:
 #endif
    LOG_INFO("Shutdown: memory_embeddings_cleanup");
    memory_embeddings_cleanup();
+   LOG_INFO("Shutdown: embedding_engine_cleanup");
+   embedding_engine_cleanup();
    LOG_INFO("Shutdown: auth_db_shutdown");
    auth_db_shutdown();
 

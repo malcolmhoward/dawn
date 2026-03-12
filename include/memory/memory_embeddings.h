@@ -31,6 +31,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "core/embedding_engine.h"
 #include "memory/memory_types.h"
 
 #ifdef __cplusplus
@@ -44,14 +45,6 @@ extern "C" {
 #define EMBEDDING_SEARCH_CAP 2000
 
 _Static_assert(MAX_EMBEDDING_DIMS * sizeof(float) <= 8192, "Embedding stack buffer exceeds 8KB");
-
-/* Provider interface */
-typedef struct {
-   const char *name;
-   int (*init)(const char *endpoint, const char *model, const char *api_key);
-   void (*cleanup)(void);
-   int (*embed)(const char *text, float *out, int max_dims, int *out_dims);
-} embedding_provider_t;
 
 /* Hybrid search result */
 typedef struct {
@@ -197,11 +190,6 @@ float memory_embeddings_cosine_with_norms(const float *a,
 
 /* Compute cosine similarity (computes norms internally) */
 float memory_embeddings_cosine(const float *a, const float *b, int dims);
-
-/* Provider registration (called by provider implementations) */
-extern const embedding_provider_t embedding_provider_onnx;
-extern const embedding_provider_t embedding_provider_ollama;
-extern const embedding_provider_t embedding_provider_openai;
 
 #ifdef __cplusplus
 }

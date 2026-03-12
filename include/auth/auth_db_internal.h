@@ -48,7 +48,7 @@
  * ============================================================================= */
 
 /* Current schema version */
-#define AUTH_DB_SCHEMA_VERSION 21
+#define AUTH_DB_SCHEMA_VERSION 22
 
 /* Retention periods */
 #define LOGIN_ATTEMPT_RETENTION_SEC (7 * 24 * 60 * 60) /* 7 days */
@@ -201,10 +201,24 @@ typedef struct {
    sqlite3_stmt *stmt_memory_entity_search;
    sqlite3_stmt *stmt_memory_entity_delete;
    sqlite3_stmt *stmt_memory_relation_delete_by_entity;
+
+   /* === Document search statements (document_db.c) === */
+   sqlite3_stmt *stmt_doc_create;
+   sqlite3_stmt *stmt_doc_get;
+   sqlite3_stmt *stmt_doc_get_by_hash;
+   sqlite3_stmt *stmt_doc_list;
+   sqlite3_stmt *stmt_doc_delete;
+   sqlite3_stmt *stmt_doc_count_user;
+   sqlite3_stmt *stmt_doc_chunk_create;
+   sqlite3_stmt *stmt_doc_chunk_search;
+   sqlite3_stmt *stmt_doc_find_by_name;
+   sqlite3_stmt *stmt_doc_chunk_read;
+   sqlite3_stmt *stmt_doc_list_all;
+   sqlite3_stmt *stmt_doc_update_global;
 } auth_db_state_t;
 
 /* Ensure last_stmt_end covers all statement fields (catches reorder bugs) */
-_Static_assert(offsetof(auth_db_state_t, stmt_memory_relation_delete_by_entity) >
+_Static_assert(offsetof(auth_db_state_t, stmt_doc_update_global) >
                    offsetof(auth_db_state_t, stmt_create_user),
                "last_stmt_end must be after first_stmt_offset");
 

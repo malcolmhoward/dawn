@@ -749,6 +749,13 @@ void handle_export_memories(ws_connection_t *conn, struct json_object *payload);
 void handle_import_memories(ws_connection_t *conn, struct json_object *payload);
 
 /* =============================================================================
+ * Document Library Handler Functions (defined in webui_doc_library.c)
+ * ============================================================================= */
+void handle_doc_library_list(ws_connection_t *conn, struct json_object *payload);
+void handle_doc_library_delete(ws_connection_t *conn, struct json_object *payload);
+void handle_doc_library_index(ws_connection_t *conn, struct json_object *payload);
+
+/* =============================================================================
  * Config Handler Functions (defined in webui_config.c)
  * ============================================================================= */
 

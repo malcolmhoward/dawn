@@ -881,8 +881,10 @@ static void parse_documents(toml_table_t *table, documents_config_t *config) {
    if (!table)
       return;
 
-   static const char *const known_keys[] = { "max_file_size_kb", "max_documents", "max_pages",
-                                             "max_extracted_size_kb", NULL };
+   static const char *const known_keys[] = {
+      "max_file_size_kb",  "max_documents",         "max_pages", "max_extracted_size_kb",
+      "max_index_size_kb", "max_indexed_documents", NULL
+   };
    warn_unknown_keys(table, "documents", known_keys);
 
    PARSE_INT(table, "max_file_size_kb", config->max_file_size_kb);
@@ -896,6 +898,12 @@ static void parse_documents(toml_table_t *table, documents_config_t *config) {
 
    PARSE_INT(table, "max_extracted_size_kb", config->max_extracted_size_kb);
    CONFIG_CLAMP(config->max_extracted_size_kb, 128, 4096);
+
+   PARSE_INT(table, "max_index_size_kb", config->max_index_size_kb);
+   CONFIG_CLAMP(config->max_index_size_kb, 128, 10240);
+
+   PARSE_INT(table, "max_indexed_documents", config->max_indexed_documents);
+   CONFIG_CLAMP(config->max_indexed_documents, 1, 500);
 }
 
 static void parse_vision(toml_table_t *table, vision_config_t *config) {
