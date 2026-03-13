@@ -562,33 +562,32 @@ If the CA cert path is wrong or the file is unreadable, DAWN will refuse to conn
 
 ### CalDAV Calendar
 
-DAWN can query, create, and manage calendar events via the CalDAV protocol. It works with Google Calendar, Apple iCloud, Nextcloud, Radicale, and any other RFC 4791-compliant server. The calendar tool is enabled by default in the CMake build.
+DAWN can query, create, and manage calendar events via the CalDAV protocol. It works with Google Calendar (OAuth 2.0), Apple iCloud, Nextcloud, Radicale, and any other RFC 4791-compliant server. The calendar tool is enabled by default in the CMake build.
 
-**1. Add CalDAV credentials to `secrets.toml`:**
+All calendar accounts are managed through the **WebUI Settings > Calendar Accounts** panel — no manual TOML editing required for account setup.
 
-```toml
-[secrets]
-caldav_password = "your-app-password"
-```
+#### Google Calendar (OAuth 2.0 — Recommended)
 
-**2. Configure the CalDAV account in `dawn.toml`:**
+Google Calendar uses OAuth 2.0 for authentication. See **[docs/GOOGLE_OAUTH_SETUP.md](docs/GOOGLE_OAUTH_SETUP.md)** for the full setup guide (Google Cloud Console project, API enablement, credentials, and WebUI connection flow).
 
-```toml
-[calendar.caldav]
-url = "https://caldav.example.com/dav/"
-username = "you@example.com"
-```
+#### Other Providers (App Password)
 
-**3. Provider-specific notes:**
+For iCloud, Nextcloud, Radicale, and other CalDAV servers:
+
+1. Open the WebUI → **Settings > Calendar Accounts**
+2. Click **Add Account**
+3. Select **App Password** (default tab)
+4. Fill in the account details:
 
 | Provider | URL | Password |
 |----------|-----|----------|
-| **Google Calendar** | `https://apidata.googleusercontent.com/caldav/v2/` | App-specific password (Google Account → Security → 2-Step Verification → App passwords) |
 | **Apple iCloud** | `https://caldav.icloud.com/` | App-specific password from [appleid.apple.com](https://appleid.apple.com) (Sign-In and Security → App-Specific Passwords) |
 | **Nextcloud** | `https://your-server.com/remote.php/dav/` | Your Nextcloud password (or app password) |
 | **Radicale** | `http://localhost:5232/` | Your Radicale password |
 
-**4. Test it:** Ask DAWN: *"What's on my calendar today?"*
+5. Click **Save**, then **Test Connection** to verify
+
+**Test it:** Ask DAWN: *"What's on my calendar today?"*
 
 ## Troubleshooting
 

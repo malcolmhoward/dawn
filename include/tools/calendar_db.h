@@ -41,7 +41,8 @@ typedef struct {
    char username[128];
    uint8_t encrypted_password[384]; /**< nonce + ciphertext (libsodium secretbox) */
    int encrypted_password_len;      /**< Length of encrypted_password data */
-   char auth_type[16];              /**< "basic" or "app_password" */
+   char auth_type[16];              /**< "basic", "app_password", or "oauth" */
+   char oauth_account_key[128];     /**< Links to oauth_tokens when auth_type="oauth" */
    char principal_url[512];
    char calendar_home_url[512];
    bool enabled;

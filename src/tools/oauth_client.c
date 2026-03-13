@@ -1,0 +1,900 @@
+/*
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ * By contributing to this project, you agree to license your contributions
+ * under the GPLv3 (or any later version) or any future licenses chosen by
+ * the project author(s). Contributions include any modifications,
+ * enhancements, or additions to the project. These contributions become
+ * part of the project and are adopted by the project author(s).
+ *
+ * OAuth 2.0 client — PKCE S256, token exchange, encrypted storage, auto-refresh.
+ * Shared module for Google Calendar, Gmail, and future OAuth providers.
+ */
+
+#define AUTH_DB_INTERNAL_ALLOWED
+#include "tools/oauth_client.h"
+
+#include <curl/curl.h>
+#include <json-c/json.h>
+#include <pthread.h>
+#include <sodium.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+#include "auth/auth_db_internal.h"
+#include "config/dawn_config.h"
+#include "core/crypto_store.h"
+#include "logging.h"
+
+/* =============================================================================
+ * Constants
+ * ============================================================================= */
+
+#define OAUTH_STATE_LEN 32           /* Random state token bytes */
+#define OAUTH_VERIFIER_LEN 32        /* PKCE code_verifier random bytes */
+#define OAUTH_MAX_PENDING 8          /* Max pending auth flows globally */
+#define OAUTH_MAX_PER_USER 2         /* Max pending flows per user */
+#define OAUTH_PENDING_EXPIRY_SEC 300 /* 5 minute expiry for pending states */
+#define OAUTH_REFRESH_MARGIN_SEC 300 /* Refresh tokens 5 min before expiry */
+#define OAUTH_CURL_TIMEOUT 30        /* HTTP timeout for token requests */
+#define OAUTH_ACCOUNT_MUTEX_SLOTS 16 /* Per-account mutex hash table size */
+
+/* Base64url character set (no padding) */
+static const char BASE64URL_CHARS[] =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+/* =============================================================================
+ * Pending State Tracking
+ * ============================================================================= */
+
+typedef struct {
+   bool active;
+   int user_id;
+   char state[64];         /* Base64url-encoded state token */
+   char code_verifier[64]; /* Base64url-encoded PKCE verifier */
+   char redirect_uri[256];
+   time_t created_at;
+} pending_oauth_state_t;
+
+static pending_oauth_state_t s_pending[OAUTH_MAX_PENDING];
+static pthread_mutex_t s_pending_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+/* =============================================================================
+ * Per-Account Refresh Mutex
+ * ============================================================================= */
+
+static pthread_mutex_t s_acct_mutexes[OAUTH_ACCOUNT_MUTEX_SLOTS] = {
+   PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
+   PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
+   PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
+   PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
+   PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
+   PTHREAD_MUTEX_INITIALIZER,
+};
+
+/** FNV-1a hash to pick a per-account mutex */
+static unsigned int acct_mutex_index(const char *account_key) {
+   unsigned int hash = 2166136261u;
+   for (const char *p = account_key; *p; p++) {
+      hash ^= (unsigned char)*p;
+      hash *= 16777619u;
+   }
+   return hash % OAUTH_ACCOUNT_MUTEX_SLOTS;
+}
+
+/* =============================================================================
+ * Base64url Encoding (no padding)
+ * ============================================================================= */
+
+static size_t base64url_encode(const unsigned char *data, size_t len, char *out, size_t out_len) {
+   size_t needed = ((len * 4) / 3) + 4; /* Conservative estimate */
+   if (out_len < needed)
+      return 0;
+
+   size_t pos = 0;
+   size_t i = 0;
+   while (i < len) {
+      size_t start = i;
+      uint32_t octet_a = data[i++];
+      uint32_t octet_b = i < len ? data[i++] : 0;
+      uint32_t octet_c = i < len ? data[i++] : 0;
+      uint32_t triple = (octet_a << 16) | (octet_b << 8) | octet_c;
+
+      size_t remaining = len - start;
+      out[pos++] = BASE64URL_CHARS[(triple >> 18) & 0x3F];
+      out[pos++] = BASE64URL_CHARS[(triple >> 12) & 0x3F];
+      if (remaining > 1)
+         out[pos++] = BASE64URL_CHARS[(triple >> 6) & 0x3F];
+      if (remaining > 2)
+         out[pos++] = BASE64URL_CHARS[triple & 0x3F];
+   }
+   out[pos] = '\0';
+   return pos;
+}
+
+/* =============================================================================
+ * URL Encoding
+ * ============================================================================= */
+
+static size_t url_encode(const char *str, char *out, size_t out_len) {
+   static const char hex[] = "0123456789ABCDEF";
+   size_t pos = 0;
+   for (const char *p = str; *p && pos + 3 < out_len; p++) {
+      unsigned char c = (unsigned char)*p;
+      if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' ||
+          c == '_' || c == '.' || c == '~') {
+         out[pos++] = c;
+      } else {
+         out[pos++] = '%';
+         out[pos++] = hex[c >> 4];
+         out[pos++] = hex[c & 0x0F];
+      }
+   }
+   out[pos] = '\0';
+   return pos;
+}
+
+/* =============================================================================
+ * curl Write Callback
+ * ============================================================================= */
+
+typedef struct {
+   char *data;
+   size_t size;
+} curl_response_t;
+
+#define OAUTH_MAX_RESPONSE_SIZE (1024 * 1024) /* 1 MB cap on token endpoint responses */
+
+static size_t curl_write_cb(void *contents, size_t size, size_t nmemb, void *userp) {
+   curl_response_t *resp = (curl_response_t *)userp;
+   size_t total = size * nmemb;
+   if (total > OAUTH_MAX_RESPONSE_SIZE - resp->size)
+      return 0; /* reject oversized response */
+   char *ptr = realloc(resp->data, resp->size + total + 1);
+   if (!ptr)
+      return 0;
+   resp->data = ptr;
+   memcpy(resp->data + resp->size, contents, total);
+   resp->size += total;
+   resp->data[resp->size] = '\0';
+   return total;
+}
+
+/* =============================================================================
+ * Provider Setup
+ * ============================================================================= */
+
+int oauth_google_provider(const char *client_id,
+                          const char *client_secret,
+                          const char *redirect_uri,
+                          const char *scopes,
+                          oauth_provider_config_t *out) {
+   if (!client_id || !client_id[0] || !client_secret || !client_secret[0] || !out)
+      return 1;
+
+   memset(out, 0, sizeof(*out));
+   snprintf(out->provider, sizeof(out->provider), "google");
+   snprintf(out->client_id, sizeof(out->client_id), "%s", client_id);
+   snprintf(out->client_secret, sizeof(out->client_secret), "%s", client_secret);
+   snprintf(out->auth_endpoint, sizeof(out->auth_endpoint),
+            "https://accounts.google.com/o/oauth2/v2/auth");
+   snprintf(out->token_endpoint, sizeof(out->token_endpoint),
+            "https://oauth2.googleapis.com/token");
+   snprintf(out->revoke_endpoint, sizeof(out->revoke_endpoint),
+            "https://oauth2.googleapis.com/revoke");
+   snprintf(out->redirect_uri, sizeof(out->redirect_uri), "%s", redirect_uri ? redirect_uri : "");
+   snprintf(out->scopes, sizeof(out->scopes), "%s",
+            scopes ? scopes : "https://www.googleapis.com/auth/calendar");
+   return 0;
+}
+
+int oauth_build_google_provider(const char *scopes, oauth_provider_config_t *out) {
+   extern secrets_config_t g_secrets;
+   extern dawn_config_t g_config;
+
+   if (g_secrets.google_client_id[0] == '\0' || g_secrets.google_client_secret[0] == '\0') {
+      LOG_ERROR("Google OAuth not configured — set google_client_id/secret in secrets.toml");
+      return 1;
+   }
+
+   char redirect_uri[256];
+   if (g_secrets.google_redirect_url[0] != '\0') {
+      snprintf(redirect_uri, sizeof(redirect_uri), "%s", g_secrets.google_redirect_url);
+   } else {
+      int port = g_config.webui.port > 0 ? g_config.webui.port : 3000;
+      snprintf(redirect_uri, sizeof(redirect_uri), "https://localhost:%d/oauth/callback", port);
+   }
+
+   return oauth_google_provider(g_secrets.google_client_id, g_secrets.google_client_secret,
+                                redirect_uri, scopes, out);
+}
+
+/* =============================================================================
+ * Pending State Management
+ * ============================================================================= */
+
+static void cleanup_expired_states(void) {
+   time_t now = time(NULL);
+   for (int i = 0; i < OAUTH_MAX_PENDING; i++) {
+      if (s_pending[i].active && (now - s_pending[i].created_at) > OAUTH_PENDING_EXPIRY_SEC) {
+         sodium_memzero(&s_pending[i], sizeof(s_pending[i]));
+      }
+   }
+}
+
+static int count_user_pending(int user_id) {
+   int count = 0;
+   for (int i = 0; i < OAUTH_MAX_PENDING; i++) {
+      if (s_pending[i].active && s_pending[i].user_id == user_id)
+         count++;
+   }
+   return count;
+}
+
+/* =============================================================================
+ * OAuth Flow: Auth URL Generation
+ * ============================================================================= */
+
+int oauth_get_auth_url(const oauth_provider_config_t *provider,
+                       int user_id,
+                       char *url_buf,
+                       size_t url_len,
+                       char *state_buf,
+                       size_t state_len) {
+   if (!provider || !url_buf || !state_buf)
+      return 1;
+
+   if (crypto_store_init() != 0)
+      return 1;
+
+   pthread_mutex_lock(&s_pending_mutex);
+   cleanup_expired_states();
+
+   /* Check per-user limit */
+   if (count_user_pending(user_id) >= OAUTH_MAX_PER_USER) {
+      pthread_mutex_unlock(&s_pending_mutex);
+      LOG_WARNING("oauth: user %d already has %d pending flows", user_id, OAUTH_MAX_PER_USER);
+      return 1;
+   }
+
+   /* Find free slot */
+   int slot = -1;
+   for (int i = 0; i < OAUTH_MAX_PENDING; i++) {
+      if (!s_pending[i].active) {
+         slot = i;
+         break;
+      }
+   }
+   if (slot < 0) {
+      pthread_mutex_unlock(&s_pending_mutex);
+      LOG_WARNING("oauth: all %d pending slots full", OAUTH_MAX_PENDING);
+      return 1;
+   }
+
+   /* Generate PKCE code_verifier (32 random bytes → base64url) */
+   unsigned char verifier_raw[OAUTH_VERIFIER_LEN];
+   randombytes_buf(verifier_raw, sizeof(verifier_raw));
+   char code_verifier[64];
+   base64url_encode(verifier_raw, sizeof(verifier_raw), code_verifier, sizeof(code_verifier));
+
+   /* SHA-256 hash → base64url = code_challenge */
+   unsigned char hash[crypto_hash_sha256_BYTES];
+   crypto_hash_sha256(hash, (const unsigned char *)code_verifier, strlen(code_verifier));
+   char code_challenge[64];
+   base64url_encode(hash, sizeof(hash), code_challenge, sizeof(code_challenge));
+
+   /* Generate state token (32 random bytes → base64url) */
+   unsigned char state_raw[OAUTH_STATE_LEN];
+   randombytes_buf(state_raw, sizeof(state_raw));
+   char state[64];
+   base64url_encode(state_raw, sizeof(state_raw), state, sizeof(state));
+
+   /* Store pending state */
+   s_pending[slot].active = true;
+   s_pending[slot].user_id = user_id;
+   snprintf(s_pending[slot].state, sizeof(s_pending[slot].state), "%s", state);
+   snprintf(s_pending[slot].code_verifier, sizeof(s_pending[slot].code_verifier), "%s",
+            code_verifier);
+   snprintf(s_pending[slot].redirect_uri, sizeof(s_pending[slot].redirect_uri), "%s",
+            provider->redirect_uri);
+   s_pending[slot].created_at = time(NULL);
+
+   pthread_mutex_unlock(&s_pending_mutex);
+
+   /* URL-encode components */
+   char enc_client_id[256], enc_redirect[512], enc_scopes[1024], enc_challenge[128];
+   url_encode(provider->client_id, enc_client_id, sizeof(enc_client_id));
+   url_encode(provider->redirect_uri, enc_redirect, sizeof(enc_redirect));
+   url_encode(provider->scopes, enc_scopes, sizeof(enc_scopes));
+   url_encode(code_challenge, enc_challenge, sizeof(enc_challenge));
+
+   /* Build authorization URL */
+   int written = snprintf(url_buf, url_len,
+                          "%s?client_id=%s&redirect_uri=%s&response_type=code"
+                          "&scope=%s&state=%s&access_type=offline&prompt=consent"
+                          "&code_challenge=%s&code_challenge_method=S256",
+                          provider->auth_endpoint, enc_client_id, enc_redirect, enc_scopes, state,
+                          enc_challenge);
+   if (written < 0 || (size_t)written >= url_len) {
+      LOG_ERROR("oauth: auth URL truncated");
+      return 1;
+   }
+
+   snprintf(state_buf, state_len, "%s", state);
+
+   /* Zero sensitive buffers */
+   sodium_memzero(verifier_raw, sizeof(verifier_raw));
+   sodium_memzero(code_verifier, sizeof(code_verifier)); /* Only copy is in s_pending */
+
+   return 0;
+}
+
+/* =============================================================================
+ * Google Userinfo: Fetch email after token exchange
+ * ============================================================================= */
+
+static void oauth_fetch_google_email(const char *access_token, char *email_out, size_t email_len) {
+   email_out[0] = '\0';
+
+   CURL *curl = curl_easy_init();
+   if (!curl)
+      return;
+
+   curl_response_t resp = { 0 };
+   curl_easy_setopt(curl, CURLOPT_URL, "https://www.googleapis.com/oauth2/v2/userinfo");
+   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
+   curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp);
+   curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)OAUTH_CURL_TIMEOUT);
+   curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+   curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+   curl_easy_setopt(curl, CURLOPT_PROTOCOLS, CURLPROTO_HTTPS);
+
+   /* Set Authorization: Bearer header */
+   char auth_header[2200];
+   snprintf(auth_header, sizeof(auth_header), "Authorization: Bearer %s", access_token);
+   struct curl_slist *headers = curl_slist_append(NULL, auth_header);
+   curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+
+   CURLcode cres = curl_easy_perform(curl);
+   long http_code = 0;
+   curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+   curl_slist_free_all(headers);
+   curl_easy_cleanup(curl);
+   sodium_memzero(auth_header, sizeof(auth_header));
+
+   if (cres != CURLE_OK || http_code != 200) {
+      LOG_WARNING("oauth: failed to fetch Google userinfo (HTTP %ld)", http_code);
+      if (resp.data) {
+         sodium_memzero(resp.data, resp.size);
+         free(resp.data);
+      }
+      return;
+   }
+
+   json_object *root = json_tokener_parse(resp.data);
+   sodium_memzero(resp.data, resp.size);
+   free(resp.data);
+   if (!root)
+      return;
+
+   json_object *j_email;
+   if (json_object_object_get_ex(root, "email", &j_email)) {
+      snprintf(email_out, email_len, "%s", json_object_get_string(j_email));
+   }
+   json_object_put(root);
+}
+
+/* =============================================================================
+ * OAuth Flow: Code Exchange
+ * ============================================================================= */
+
+int oauth_exchange_code(const oauth_provider_config_t *provider,
+                        const char *code,
+                        const char *state,
+                        int user_id,
+                        oauth_token_set_t *out_tokens) {
+   if (!provider || !code || !state || !out_tokens)
+      return 1;
+
+   memset(out_tokens, 0, sizeof(*out_tokens));
+
+   /* Look up and validate pending state */
+   char code_verifier[64] = { 0 };
+
+   pthread_mutex_lock(&s_pending_mutex);
+   cleanup_expired_states();
+
+   int found = -1;
+   for (int i = 0; i < OAUTH_MAX_PENDING; i++) {
+      if (s_pending[i].active && s_pending[i].user_id == user_id &&
+          strlen(s_pending[i].state) == strlen(state) &&
+          sodium_memcmp(s_pending[i].state, state, strlen(state)) == 0) {
+         found = i;
+         break;
+      }
+   }
+
+   if (found < 0) {
+      pthread_mutex_unlock(&s_pending_mutex);
+      LOG_ERROR("oauth: invalid or expired state token");
+      return 1;
+   }
+
+   /* Copy verifier and clear the pending slot */
+   snprintf(code_verifier, sizeof(code_verifier), "%s", s_pending[found].code_verifier);
+   sodium_memzero(&s_pending[found], sizeof(s_pending[found]));
+   pthread_mutex_unlock(&s_pending_mutex);
+
+   /* Build POST body (all values URL-encoded) */
+   char post_body[2048];
+   char enc_code[512], enc_redirect[512], enc_verifier[128];
+   char enc_client_id[256], enc_client_secret[512];
+   url_encode(code, enc_code, sizeof(enc_code));
+   url_encode(provider->redirect_uri, enc_redirect, sizeof(enc_redirect));
+   url_encode(code_verifier, enc_verifier, sizeof(enc_verifier));
+   url_encode(provider->client_id, enc_client_id, sizeof(enc_client_id));
+   url_encode(provider->client_secret, enc_client_secret, sizeof(enc_client_secret));
+
+   int written = snprintf(post_body, sizeof(post_body),
+                          "grant_type=authorization_code&code=%s&redirect_uri=%s"
+                          "&client_id=%s&client_secret=%s&code_verifier=%s",
+                          enc_code, enc_redirect, enc_client_id, enc_client_secret, enc_verifier);
+   if (written < 0 || (size_t)written >= sizeof(post_body)) {
+      LOG_ERROR("oauth: POST body truncated");
+      sodium_memzero(code_verifier, sizeof(code_verifier));
+      return 1;
+   }
+
+   sodium_memzero(code_verifier, sizeof(code_verifier));
+
+   /* HTTP POST to token endpoint */
+   CURL *curl = curl_easy_init();
+   if (!curl) {
+      LOG_ERROR("oauth: curl_easy_init failed");
+      return 1;
+   }
+
+   curl_response_t resp = { 0 };
+   curl_easy_setopt(curl, CURLOPT_URL, provider->token_endpoint);
+   curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_body);
+   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
+   curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp);
+   curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)OAUTH_CURL_TIMEOUT);
+   curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+   curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+   curl_easy_setopt(curl, CURLOPT_PROTOCOLS, CURLPROTO_HTTPS);
+
+   CURLcode cres = curl_easy_perform(curl);
+   long http_code = 0;
+   curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+   curl_easy_cleanup(curl);
+
+   sodium_memzero(post_body, sizeof(post_body));
+   sodium_memzero(enc_client_secret, sizeof(enc_client_secret));
+   sodium_memzero(enc_code, sizeof(enc_code));
+   sodium_memzero(enc_verifier, sizeof(enc_verifier));
+
+   if (cres != CURLE_OK || http_code != 200) {
+      LOG_ERROR("oauth: token exchange failed (HTTP %ld, curl %d)", http_code, cres);
+      if (resp.data) {
+         sodium_memzero(resp.data, resp.size);
+         free(resp.data);
+      }
+      return 1;
+   }
+
+   /* Parse JSON response */
+   json_object *root = json_tokener_parse(resp.data);
+   sodium_memzero(resp.data, resp.size);
+   free(resp.data);
+   if (!root) {
+      LOG_ERROR("oauth: failed to parse token response JSON");
+      return 1;
+   }
+
+   json_object *j_access, *j_refresh, *j_expires, *j_scope;
+   if (json_object_object_get_ex(root, "access_token", &j_access))
+      snprintf(out_tokens->access_token, sizeof(out_tokens->access_token), "%s",
+               json_object_get_string(j_access));
+   if (json_object_object_get_ex(root, "refresh_token", &j_refresh))
+      snprintf(out_tokens->refresh_token, sizeof(out_tokens->refresh_token), "%s",
+               json_object_get_string(j_refresh));
+   if (json_object_object_get_ex(root, "expires_in", &j_expires))
+      out_tokens->expires_at = time(NULL) + json_object_get_int64(j_expires);
+   if (json_object_object_get_ex(root, "scope", &j_scope))
+      snprintf(out_tokens->scopes, sizeof(out_tokens->scopes), "%s",
+               json_object_get_string(j_scope));
+
+   json_object_put(root);
+
+   if (!out_tokens->access_token[0]) {
+      LOG_ERROR("oauth: no access_token in response");
+      return 1;
+   }
+
+   /* Fetch user email from provider userinfo endpoint (Google-specific) */
+   if (strcmp(provider->provider, "google") == 0) {
+      oauth_fetch_google_email(out_tokens->access_token, out_tokens->email,
+                               sizeof(out_tokens->email));
+   }
+
+   LOG_INFO("oauth: token exchange successful for provider '%s'%s%s%s", provider->provider,
+            out_tokens->email[0] ? " (" : "", out_tokens->email[0] ? out_tokens->email : "",
+            out_tokens->email[0] ? ")" : "");
+   return 0;
+}
+
+/* =============================================================================
+ * Token Refresh
+ * ============================================================================= */
+
+int oauth_refresh(const oauth_provider_config_t *provider, oauth_token_set_t *tokens) {
+   if (!provider || !tokens || !tokens->refresh_token[0])
+      return 1;
+
+   char post_body[1024];
+   char enc_refresh[768], enc_client_id[256], enc_client_secret[512];
+   url_encode(tokens->refresh_token, enc_refresh, sizeof(enc_refresh));
+   url_encode(provider->client_id, enc_client_id, sizeof(enc_client_id));
+   url_encode(provider->client_secret, enc_client_secret, sizeof(enc_client_secret));
+   int written = snprintf(post_body, sizeof(post_body),
+                          "grant_type=refresh_token&refresh_token=%s"
+                          "&client_id=%s&client_secret=%s",
+                          enc_refresh, enc_client_id, enc_client_secret);
+   if (written < 0 || (size_t)written >= sizeof(post_body))
+      return 1;
+
+   CURL *curl = curl_easy_init();
+   if (!curl)
+      return 1;
+
+   curl_response_t resp = { 0 };
+   curl_easy_setopt(curl, CURLOPT_URL, provider->token_endpoint);
+   curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_body);
+   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
+   curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp);
+   curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)OAUTH_CURL_TIMEOUT);
+   curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+   curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+   curl_easy_setopt(curl, CURLOPT_PROTOCOLS, CURLPROTO_HTTPS);
+
+   CURLcode cres = curl_easy_perform(curl);
+   long http_code = 0;
+   curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+   curl_easy_cleanup(curl);
+
+   sodium_memzero(post_body, sizeof(post_body));
+   sodium_memzero(enc_client_secret, sizeof(enc_client_secret));
+   sodium_memzero(enc_refresh, sizeof(enc_refresh));
+
+   if (cres != CURLE_OK || http_code != 200) {
+      LOG_ERROR("oauth: refresh failed (HTTP %ld, curl %d)", http_code, cres);
+      if (resp.data) {
+         sodium_memzero(resp.data, resp.size);
+         free(resp.data);
+      }
+      return 1;
+   }
+
+   json_object *root = json_tokener_parse(resp.data);
+   sodium_memzero(resp.data, resp.size);
+   free(resp.data);
+   if (!root) {
+      LOG_ERROR("oauth: failed to parse refresh response");
+      return 1;
+   }
+
+   json_object *j_access, *j_expires, *j_refresh;
+   if (json_object_object_get_ex(root, "access_token", &j_access))
+      snprintf(tokens->access_token, sizeof(tokens->access_token), "%s",
+               json_object_get_string(j_access));
+   if (json_object_object_get_ex(root, "expires_in", &j_expires))
+      tokens->expires_at = time(NULL) + json_object_get_int64(j_expires);
+   /* Google may return a new refresh token */
+   if (json_object_object_get_ex(root, "refresh_token", &j_refresh))
+      snprintf(tokens->refresh_token, sizeof(tokens->refresh_token), "%s",
+               json_object_get_string(j_refresh));
+
+   json_object_put(root);
+   return 0;
+}
+
+/* =============================================================================
+ * Token Serialization (JSON for encryption)
+ * ============================================================================= */
+
+static int tokens_to_json(const oauth_token_set_t *tokens, char *buf, size_t buf_len) {
+   json_object *obj = json_object_new_object();
+   json_object_object_add(obj, "access_token", json_object_new_string(tokens->access_token));
+   json_object_object_add(obj, "refresh_token", json_object_new_string(tokens->refresh_token));
+   json_object_object_add(obj, "expires_at", json_object_new_int64(tokens->expires_at));
+   json_object_object_add(obj, "scopes", json_object_new_string(tokens->scopes));
+   json_object_object_add(obj, "email", json_object_new_string(tokens->email));
+
+   const char *json_str = json_object_to_json_string(obj);
+   int written = snprintf(buf, buf_len, "%s", json_str);
+   json_object_put(obj);
+
+   return (written >= 0 && (size_t)written < buf_len) ? 0 : 1;
+}
+
+static int json_to_tokens(const char *json_str, size_t len, oauth_token_set_t *tokens) {
+   /* Parse with explicit length since decrypted buffer may not be NUL-terminated */
+   json_tokener *tok = json_tokener_new();
+   json_object *root = json_tokener_parse_ex(tok, json_str, (int)len);
+   json_tokener_free(tok);
+   if (!root)
+      return 1;
+
+   memset(tokens, 0, sizeof(*tokens));
+
+   json_object *j;
+   if (json_object_object_get_ex(root, "access_token", &j))
+      snprintf(tokens->access_token, sizeof(tokens->access_token), "%s", json_object_get_string(j));
+   if (json_object_object_get_ex(root, "refresh_token", &j))
+      snprintf(tokens->refresh_token, sizeof(tokens->refresh_token), "%s",
+               json_object_get_string(j));
+   if (json_object_object_get_ex(root, "expires_at", &j))
+      tokens->expires_at = json_object_get_int64(j);
+   if (json_object_object_get_ex(root, "scopes", &j))
+      snprintf(tokens->scopes, sizeof(tokens->scopes), "%s", json_object_get_string(j));
+   if (json_object_object_get_ex(root, "email", &j))
+      snprintf(tokens->email, sizeof(tokens->email), "%s", json_object_get_string(j));
+
+   json_object_put(root);
+   return 0;
+}
+
+/* =============================================================================
+ * Encrypted DB Persistence
+ * ============================================================================= */
+
+int oauth_store_tokens(int user_id,
+                       const char *provider,
+                       const char *account_key,
+                       const oauth_token_set_t *tokens) {
+   if (!provider || !account_key || !tokens)
+      return 1;
+
+   /* Serialize to JSON */
+   char json_buf[4096];
+   if (tokens_to_json(tokens, json_buf, sizeof(json_buf)) != 0)
+      return 1;
+
+   /* Encrypt */
+   size_t pt_len = strlen(json_buf);
+   size_t enc_max = pt_len + 64; /* nonce + MAC overhead */
+   unsigned char *encrypted = malloc(enc_max);
+   if (!encrypted)
+      return 1;
+
+   size_t enc_len = 0;
+   if (crypto_store_encrypt(json_buf, pt_len, encrypted, enc_max, &enc_len) != 0) {
+      free(encrypted);
+      sodium_memzero(json_buf, sizeof(json_buf));
+      return 1;
+   }
+   sodium_memzero(json_buf, sizeof(json_buf));
+
+   /* Store in DB */
+   AUTH_DB_LOCK_OR_RETURN(1);
+
+   sqlite3_stmt *st = s_db.stmt_oauth_store;
+   sqlite3_reset(st);
+   sqlite3_bind_int(st, 1, user_id);
+   sqlite3_bind_text(st, 2, provider, -1, SQLITE_STATIC);
+   sqlite3_bind_text(st, 3, account_key, -1, SQLITE_STATIC);
+   sqlite3_bind_blob(st, 4, encrypted, (int)enc_len, SQLITE_STATIC);
+   sqlite3_bind_int(st, 5, (int)enc_len);
+   sqlite3_bind_text(st, 6, tokens->scopes, -1, SQLITE_STATIC);
+   sqlite3_bind_int64(st, 7, (int64_t)time(NULL));
+   sqlite3_bind_int64(st, 8, (int64_t)time(NULL));
+
+   int result = (sqlite3_step(st) == SQLITE_DONE) ? 0 : 1;
+   if (result != 0)
+      LOG_ERROR("oauth: failed to store tokens: %s", sqlite3_errmsg(s_db.db));
+   sqlite3_reset(st);
+
+   AUTH_DB_UNLOCK();
+   free(encrypted);
+   return result;
+}
+
+int oauth_load_tokens(int user_id,
+                      const char *provider,
+                      const char *account_key,
+                      oauth_token_set_t *out) {
+   if (!provider || !account_key || !out)
+      return 1;
+
+   memset(out, 0, sizeof(*out));
+
+   AUTH_DB_LOCK_OR_RETURN(1);
+
+   sqlite3_stmt *st = s_db.stmt_oauth_load;
+   sqlite3_reset(st);
+   sqlite3_bind_int(st, 1, user_id);
+   sqlite3_bind_text(st, 2, provider, -1, SQLITE_STATIC);
+   sqlite3_bind_text(st, 3, account_key, -1, SQLITE_STATIC);
+
+   int result = 1;
+   if (sqlite3_step(st) == SQLITE_ROW) {
+      const void *blob = sqlite3_column_blob(st, 0);
+      int blob_len = sqlite3_column_bytes(st, 0);
+
+      if (blob && blob_len > 0) {
+         /* Decrypt */
+         char decrypted[4096];
+         size_t dec_len = 0;
+         if (crypto_store_decrypt((const unsigned char *)blob, (size_t)blob_len, decrypted,
+                                  sizeof(decrypted) - 1, &dec_len) == 0) {
+            decrypted[dec_len] = '\0';
+            if (json_to_tokens(decrypted, dec_len, out) == 0)
+               result = 0;
+            sodium_memzero(decrypted, sizeof(decrypted));
+         }
+      }
+   }
+   sqlite3_reset(st);
+
+   AUTH_DB_UNLOCK();
+   return result;
+}
+
+int oauth_delete_tokens(int user_id, const char *provider, const char *account_key) {
+   if (!provider || !account_key)
+      return 1;
+
+   AUTH_DB_LOCK_OR_RETURN(1);
+
+   sqlite3_stmt *st = s_db.stmt_oauth_delete;
+   sqlite3_reset(st);
+   sqlite3_bind_int(st, 1, user_id);
+   sqlite3_bind_text(st, 2, provider, -1, SQLITE_STATIC);
+   sqlite3_bind_text(st, 3, account_key, -1, SQLITE_STATIC);
+
+   int result = (sqlite3_step(st) == SQLITE_DONE) ? 0 : 1;
+   sqlite3_reset(st);
+
+   AUTH_DB_UNLOCK();
+   return result;
+}
+
+bool oauth_has_tokens(int user_id, const char *provider, const char *account_key) {
+   if (!provider || !account_key)
+      return false;
+
+   AUTH_DB_LOCK_OR_RETURN(false);
+
+   sqlite3_stmt *st = s_db.stmt_oauth_exists;
+   sqlite3_reset(st);
+   sqlite3_bind_int(st, 1, user_id);
+   sqlite3_bind_text(st, 2, provider, -1, SQLITE_STATIC);
+   sqlite3_bind_text(st, 3, account_key, -1, SQLITE_STATIC);
+
+   bool exists = false;
+   if (sqlite3_step(st) == SQLITE_ROW)
+      exists = sqlite3_column_int(st, 0) > 0;
+   sqlite3_reset(st);
+
+   AUTH_DB_UNLOCK();
+   return exists;
+}
+
+/* =============================================================================
+ * Get Valid Access Token (auto-refresh)
+ * ============================================================================= */
+
+int oauth_get_access_token(const oauth_provider_config_t *provider,
+                           int user_id,
+                           const char *account_key,
+                           char *token_buf,
+                           size_t token_len) {
+   if (!provider || !account_key || !token_buf)
+      return 1;
+
+   /* Per-account lock to avoid thundering herd */
+   unsigned int midx = acct_mutex_index(account_key);
+   pthread_mutex_lock(&s_acct_mutexes[midx]);
+
+   /* Load tokens from DB (another thread may have refreshed) */
+   oauth_token_set_t tokens;
+   if (oauth_load_tokens(user_id, provider->provider, account_key, &tokens) != 0) {
+      pthread_mutex_unlock(&s_acct_mutexes[midx]);
+      return 1;
+   }
+
+   /* Check if refresh needed (per-account mutex prevents concurrent refresh) */
+   time_t now = time(NULL);
+   if (tokens.expires_at > 0 && (tokens.expires_at - now) < OAUTH_REFRESH_MARGIN_SEC) {
+      if (oauth_refresh(provider, &tokens) != 0) {
+         LOG_ERROR("oauth: refresh failed for account '%s'", account_key);
+         sodium_memzero(&tokens, sizeof(tokens));
+         pthread_mutex_unlock(&s_acct_mutexes[midx]);
+         return 1;
+      }
+
+      /* Store refreshed tokens */
+      oauth_store_tokens(user_id, provider->provider, account_key, &tokens);
+      LOG_INFO("oauth: refreshed token for '%s'", account_key);
+   }
+
+   snprintf(token_buf, token_len, "%s", tokens.access_token);
+   sodium_memzero(&tokens, sizeof(tokens));
+   pthread_mutex_unlock(&s_acct_mutexes[midx]);
+   return 0;
+}
+
+/* =============================================================================
+ * Revoke and Delete
+ * ============================================================================= */
+
+int oauth_revoke_and_delete(const oauth_provider_config_t *provider,
+                            int user_id,
+                            const char *account_key) {
+   if (!provider || !account_key)
+      return 1;
+
+   /* Load tokens for revocation */
+   oauth_token_set_t tokens;
+   if (oauth_load_tokens(user_id, provider->provider, account_key, &tokens) == 0 &&
+       (tokens.refresh_token[0] || tokens.access_token[0])) {
+      /* Revoke refresh token (invalidates both); fall back to access token */
+      char post_body[2560];
+      const char *revoke_token = tokens.refresh_token[0] ? tokens.refresh_token
+                                                         : tokens.access_token;
+      char enc_revoke[2048];
+      url_encode(revoke_token, enc_revoke, sizeof(enc_revoke));
+      snprintf(post_body, sizeof(post_body), "token=%s", enc_revoke);
+      sodium_memzero(enc_revoke, sizeof(enc_revoke));
+
+      CURL *curl = curl_easy_init();
+      if (curl) {
+         curl_response_t resp = { 0 };
+         curl_easy_setopt(curl, CURLOPT_URL, provider->revoke_endpoint);
+         curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_body);
+         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
+         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp);
+         curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)OAUTH_CURL_TIMEOUT);
+         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+         curl_easy_setopt(curl, CURLOPT_PROTOCOLS, CURLPROTO_HTTPS);
+
+         CURLcode cres = curl_easy_perform(curl);
+         long http_code = 0;
+         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+         curl_easy_cleanup(curl);
+         if (resp.data) {
+            sodium_memzero(resp.data, resp.size);
+            free(resp.data);
+         }
+
+         if (cres != CURLE_OK || http_code != 200) {
+            LOG_WARNING("oauth: revocation failed (HTTP %ld) — delete locally anyway. "
+                        "User can revoke manually at myaccount.google.com/permissions",
+                        http_code);
+         } else {
+            LOG_INFO("oauth: revoked token at provider for '%s'", account_key);
+         }
+      }
+
+      sodium_memzero(post_body, sizeof(post_body));
+      sodium_memzero(&tokens, sizeof(tokens));
+   }
+
+   /* Always delete locally */
+   return oauth_delete_tokens(user_id, provider->provider, account_key);
+}

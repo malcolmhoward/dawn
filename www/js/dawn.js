@@ -518,6 +518,20 @@
                if (typeof DawnCalendarAccounts !== 'undefined')
                   DawnCalendarAccounts.handleToggleReadOnlyResponse(msg.payload);
                break;
+            // OAuth
+            case 'oauth_get_auth_url_response':
+               if (typeof DawnOAuth !== 'undefined') DawnOAuth.handleAuthUrlResponse(msg.payload);
+               break;
+            case 'oauth_exchange_code_response':
+               if (typeof DawnOAuth !== 'undefined')
+                  DawnOAuth.handleExchangeCodeResponse(msg.payload);
+               if (typeof DawnCalendarAccounts !== 'undefined')
+                  DawnCalendarAccounts.handleOAuthExchangeResponse(msg.payload);
+               break;
+            case 'oauth_disconnect_response':
+               if (typeof DawnCalendarAccounts !== 'undefined')
+                  DawnCalendarAccounts.handleOAuthDisconnectResponse(msg.payload);
+               break;
             case 'conversation_reset':
                // Tool triggered conversation reset - sync frontend
                console.log('Conversation reset by tool');

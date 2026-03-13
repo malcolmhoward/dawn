@@ -151,7 +151,10 @@ static CURL *caldav_curl_init(const caldav_auth_t *auth, curl_buf_t *resp) {
    /* SSRF protection: restrict to HTTP/HTTPS only (blocks file://, gopher://, etc.) */
    curl_easy_setopt(curl, CURLOPT_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
 
-   if (auth && auth->username && auth->password) {
+   if (auth && auth->bearer_token) {
+      curl_easy_setopt(curl, CURLOPT_HTTPAUTH, CURLAUTH_BEARER);
+      curl_easy_setopt(curl, CURLOPT_XOAUTH2_BEARER, auth->bearer_token);
+   } else if (auth && auth->username && auth->password) {
       curl_easy_setopt(curl, CURLOPT_HTTPAUTH, CURLAUTH_BASIC);
       curl_easy_setopt(curl, CURLOPT_USERNAME, auth->username);
       curl_easy_setopt(curl, CURLOPT_PASSWORD, auth->password);
@@ -211,6 +214,16 @@ static caldav_error_t do_propfind(CURL *curl,
 
    long status = 0;
    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+   if (status >= 300) {
+      LOG_WARNING("caldav: PROPFIND %s Depth:%s -> HTTP %ld", url, depth, status);
+      if (resp->data && resp->size > 0) {
+         char snippet[201];
+         size_t n = resp->size < 200 ? resp->size : 200;
+         memcpy(snippet, resp->data, n);
+         snippet[n] = '\0';
+         LOG_WARNING("caldav: response: %.200s", snippet);
+      }
+   }
    return http_status_to_error(status);
 }
 

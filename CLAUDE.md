@@ -184,6 +184,11 @@ This ensures code is formatted before every commit.
 ```toml
 openai_api_key = "sk-..."
 claude_api_key = "sk-ant-..."
+
+[secrets.google]
+client_id = "123456789-abc.apps.googleusercontent.com"
+client_secret = "GOCSPX-..."
+redirect_url = "https://jetson.yourdomain.com:3000/oauth/callback"
 ```
 
 ### DAP2 Satellite System
@@ -418,10 +423,19 @@ Manual testing covers:
 - `include/tools/calendar_db.h`: Calendar DB types (accounts, calendars, events, occurrences)
 - `src/tools/calendar_db.c`: SQLite CRUD (uses auth_db shared handle, Pattern A)
 - `include/tools/calendar_service.h`: Service API (lifecycle, queries, mutations)
-- `src/tools/calendar_service.c`: Business logic (multi-account, background sync, RRULE expansion)
+- `src/tools/calendar_service.c`: Business logic (multi-account, background sync, RRULE expansion, Google-specific discovery)
 - `include/tools/calendar_tool.h`: Tool registration header
 - `src/tools/calendar_tool.c`: LLM tool interface (today/range/next/search/add/update/delete)
 - `docs/CALDAV_DESIGN.md`: Full design document
+
+**OAuth 2.0 / Crypto:**
+- `include/tools/oauth_client.h`: OAuth client API (auth URL, code exchange, token refresh, storage)
+- `src/tools/oauth_client.c`: OAuth implementation (PKCE S256, Google provider, encrypted token DB)
+- `include/core/crypto_store.h`: Shared libsodium encryption API
+- `src/core/crypto_store.c`: Shared encryption module (crypto_secretbox, dawn.key)
+- `www/js/ui/oauth.js`: OAuth popup handler (blocker mitigation, origin validation)
+- `www/js/oauth-callback.js`: OAuth callback page script (postMessage to opener)
+- `docs/GOOGLE_OAUTH_SETUP.md`: Google OAuth setup guide
 
 **Satellite (DAP2):**
 - `dawn_satellite/`: Standalone satellite binary for Raspberry Pi
@@ -436,7 +450,8 @@ Manual testing covers:
 1. SmartThings OAuth blocked at AWS WAF level (403 Forbidden)
 
 **Recently Completed:**
-- CalDAV calendar integration (multi-account, RFC 4791 discovery, RRULE expansion, background sync, LLM tool)
+- Google OAuth 2.0 for CalDAV (shared oauth_client + crypto_store modules, PKCE S256, WebUI popup flow)
+- CalDAV calendar integration (multi-account, RFC 4791 discovery, Google OAuth, RRULE expansion, background sync, LLM tool)
 - Document search/RAG system with semantic search, paginated document reader, WebUI Document Library, shared embedding engine, admin document management (global toggle, all-users view, username resolution)
 - Scheduler system (timers, alarms, reminders, scheduled tool execution) with audible chimes, WebUI notifications, recurrence, snooze/dismiss
 - Satellite registration key (pre-shared key authentication for satellite registration)

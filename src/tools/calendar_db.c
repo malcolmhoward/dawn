@@ -78,6 +78,12 @@ static void row_to_account(sqlite3_stmt *stmt, calendar_account_t *a) {
    a->sync_interval_sec = sqlite3_column_int(stmt, 11);
    a->created_at = (time_t)sqlite3_column_int64(stmt, 12);
    a->read_only = sqlite3_column_int(stmt, 13) != 0;
+   /* Column 14: oauth_account_key (may not exist in older schemas) */
+   int col_count = sqlite3_column_count(stmt);
+   if (col_count >= 15)
+      col_str(a->oauth_account_key, sizeof(a->oauth_account_key), stmt, 14);
+   else
+      a->oauth_account_key[0] = '\0';
 }
 
 static void row_to_calendar(sqlite3_stmt *stmt, calendar_calendar_t *c) {
@@ -177,6 +183,7 @@ int64_t calendar_db_account_create(const calendar_account_t *acct) {
    sqlite3_bind_int(st, 11, acct->sync_interval_sec > 0 ? acct->sync_interval_sec : 900);
    sqlite3_bind_int64(st, 12, (int64_t)time(NULL));
    sqlite3_bind_int(st, 13, acct->read_only ? 1 : 0);
+   sqlite3_bind_text(st, 14, acct->oauth_account_key, -1, SQLITE_STATIC);
 
    int64_t result = -1;
    if (sqlite3_step(st) == SQLITE_DONE) {

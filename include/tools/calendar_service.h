@@ -55,7 +55,9 @@ int calendar_service_add_account(int user_id,
                                  const char *caldav_url,
                                  const char *username,
                                  const char *password,
-                                 bool read_only);
+                                 bool read_only,
+                                 const char *auth_type,
+                                 const char *oauth_account_key);
 
 /** Encrypt a plaintext password into acct->encrypted_password */
 int calendar_encrypt_password(const char *plaintext, calendar_account_t *acct);

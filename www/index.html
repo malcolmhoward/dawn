@@ -1625,7 +1625,7 @@ Format rules:
                </div>
 
                <!-- Secrets Section (admin only) -->
-               <div class="settings-section admin-only" id="secrets-section">
+               <div class="settings-section admin-only collapsed" id="secrets-section">
                   <h3 class="section-header" data-section="secrets">
                      <span class="section-icon">&#x1F511;</span>
                      API Keys & Secrets
@@ -1865,6 +1865,95 @@ Format rules:
                            <span
                               class="secret-status"
                               id="status-ha-token"
+                              aria-live="polite"
+                           ></span>
+                        </div>
+                     </div>
+                     <div class="setting-item">
+                        <label for="secret-google-client-id">Google OAuth Client ID</label>
+                        <div class="secret-input-wrapper">
+                           <input
+                              type="password"
+                              id="secret-google-client-id"
+                              class="secret-input"
+                              placeholder="Enter Google client ID..."
+                              maxlength="256"
+                           />
+                           <button
+                              class="secret-toggle"
+                              data-target="secret-google-client-id"
+                              title="Show/hide"
+                              aria-label="Toggle Google client ID visibility"
+                           >
+                              <svg
+                                 class="eye-icon"
+                                 width="16"
+                                 height="16"
+                                 viewBox="0 0 24 24"
+                                 fill="none"
+                                 stroke="currentColor"
+                                 stroke-width="2"
+                              >
+                                 <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                                 <circle cx="12" cy="12" r="3" />
+                              </svg>
+                           </button>
+                           <span
+                              class="secret-status"
+                              id="status-google-client-id"
+                              aria-live="polite"
+                           ></span>
+                        </div>
+                     </div>
+                     <div class="setting-item">
+                        <label for="secret-google-client-secret">Google OAuth Client Secret</label>
+                        <div class="secret-input-wrapper">
+                           <input
+                              type="password"
+                              id="secret-google-client-secret"
+                              class="secret-input"
+                              placeholder="Enter Google client secret..."
+                              maxlength="256"
+                           />
+                           <button
+                              class="secret-toggle"
+                              data-target="secret-google-client-secret"
+                              title="Show/hide"
+                              aria-label="Toggle Google client secret visibility"
+                           >
+                              <svg
+                                 class="eye-icon"
+                                 width="16"
+                                 height="16"
+                                 viewBox="0 0 24 24"
+                                 fill="none"
+                                 stroke="currentColor"
+                                 stroke-width="2"
+                              >
+                                 <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                                 <circle cx="12" cy="12" r="3" />
+                              </svg>
+                           </button>
+                           <span
+                              class="secret-status"
+                              id="status-google-client-secret"
+                              aria-live="polite"
+                           ></span>
+                        </div>
+                     </div>
+                     <div class="setting-item">
+                        <label for="secret-google-redirect-url">Google OAuth Redirect URL</label>
+                        <div class="secret-input-wrapper">
+                           <input
+                              type="text"
+                              id="secret-google-redirect-url"
+                              class="secret-input"
+                              placeholder="https://jetson.example.com:3000/oauth/callback"
+                              maxlength="256"
+                           />
+                           <span
+                              class="secret-status"
+                              id="status-google-redirect-url"
                               aria-live="polite"
                            ></span>
                         </div>
@@ -2646,6 +2735,7 @@ token = "eyJ..."</pre
       <script src="/js/ui/history.js"></script>
       <script src="/js/ui/memory.js"></script>
       <script src="/js/ui/doc-library.js"></script>
+      <script src="/js/ui/oauth.js"></script>
       <script src="/js/ui/calendar-accounts.js"></script>
       <!-- Settings sub-modules (order matters) -->
       <script src="/js/ui/settings/utils.js"></script>

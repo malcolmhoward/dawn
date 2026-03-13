@@ -34,6 +34,9 @@ This document tracks all third-party dependencies used by the DAWN project.
 | pthread | LGPL | Threading |
 | MuPDF | AGPL-3.0 (dual-licensed AGPL/commercial) | PDF text extraction for document upload |
 | libzip | BSD-3-Clause | DOCX ZIP archive reading |
+| libsodium | ISC | Encrypted credential/token storage (crypto_secretbox) |
+| libical | LGPL 2.1 / MPL 2.0 | iCalendar parsing, RRULE expansion, timezone handling |
+| libxml2 | MIT | XML parsing (CalDAV PROPFIND/REPORT responses) |
 | libmujs-dev, libgumbo-dev, libopenjp2-7-dev, libjbig2dec0-dev | Various (MIT/LGPL/BSD) | MuPDF static link dependencies |
 
 ### Audio Processing
@@ -96,6 +99,7 @@ All dependencies are compatible with GPLv3:
 - EPL (Mosquitto) - Compatible via explicit dual-license (EDL)
 - espeak-ng GPL 3.0 - Same license as project
 - AGPL-3.0 (MuPDF) — Compatible, project is GPLv3
+- ISC (libsodium) — Permissive, GPL-compatible
 
 ## Updating Dependencies
 

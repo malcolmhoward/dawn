@@ -440,6 +440,9 @@
       updateStatus(settingsElements.statusMqttPass, secrets.mqtt_password);
       updateStatus(settingsElements.statusPlexToken, secrets.plex_token);
       updateStatus(settingsElements.statusHaToken, secrets.home_assistant_token);
+      updateStatus(settingsElements.statusGoogleClientId, secrets.google_client_id);
+      updateStatus(settingsElements.statusGoogleClientSecret, secrets.google_client_secret);
+      updateStatus(settingsElements.statusGoogleRedirectUrl, secrets.google_redirect_url);
    }
 
    /**
@@ -591,6 +594,21 @@
       if (settingsElements.secretHaToken && settingsElements.secretHaToken.value) {
          secrets.home_assistant_token = settingsElements.secretHaToken.value;
       }
+      if (settingsElements.secretGoogleClientId && settingsElements.secretGoogleClientId.value) {
+         secrets.google_client_id = settingsElements.secretGoogleClientId.value;
+      }
+      if (
+         settingsElements.secretGoogleClientSecret &&
+         settingsElements.secretGoogleClientSecret.value
+      ) {
+         secrets.google_client_secret = settingsElements.secretGoogleClientSecret.value;
+      }
+      if (
+         settingsElements.secretGoogleRedirectUrl &&
+         settingsElements.secretGoogleRedirectUrl.value
+      ) {
+         secrets.google_redirect_url = settingsElements.secretGoogleRedirectUrl.value;
+      }
 
       if (Object.keys(secrets).length === 0) {
          if (typeof DawnToast !== 'undefined') {
@@ -612,6 +630,11 @@
       if (settingsElements.secretMqttPass) settingsElements.secretMqttPass.value = '';
       if (settingsElements.secretPlexToken) settingsElements.secretPlexToken.value = '';
       if (settingsElements.secretHaToken) settingsElements.secretHaToken.value = '';
+      if (settingsElements.secretGoogleClientId) settingsElements.secretGoogleClientId.value = '';
+      if (settingsElements.secretGoogleClientSecret)
+         settingsElements.secretGoogleClientSecret.value = '';
+      if (settingsElements.secretGoogleRedirectUrl)
+         settingsElements.secretGoogleRedirectUrl.value = '';
    }
 
    /**

@@ -48,7 +48,7 @@
  * ============================================================================= */
 
 /* Current schema version */
-#define AUTH_DB_SCHEMA_VERSION 24
+#define AUTH_DB_SCHEMA_VERSION 25
 
 /* Retention periods */
 #define LOGIN_ATTEMPT_RETENTION_SEC (7 * 24 * 60 * 60) /* 7 days */
@@ -243,10 +243,16 @@ typedef struct {
    sqlite3_stmt *stmt_cal_occ_next;
    sqlite3_stmt *stmt_cal_acct_list_enabled;
    sqlite3_stmt *stmt_cal_acct_set_read_only;
+
+   /* === OAuth module statements (oauth_client.c) === */
+   sqlite3_stmt *stmt_oauth_store;
+   sqlite3_stmt *stmt_oauth_load;
+   sqlite3_stmt *stmt_oauth_delete;
+   sqlite3_stmt *stmt_oauth_exists;
 } auth_db_state_t;
 
 /* Ensure last_stmt_end covers all statement fields (catches reorder bugs) */
-_Static_assert(offsetof(auth_db_state_t, stmt_cal_acct_set_read_only) >
+_Static_assert(offsetof(auth_db_state_t, stmt_oauth_exists) >
                    offsetof(auth_db_state_t, stmt_create_user),
                "last_stmt_end must be after first_stmt_offset");
 

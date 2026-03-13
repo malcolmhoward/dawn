@@ -2917,6 +2917,20 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
          handle_doc_library_toggle_global(conn, payload);
       }
    }
+   /* OAuth flow */
+#ifdef DAWN_ENABLE_CALENDAR_TOOL
+   else if (strcmp(type, "oauth_get_auth_url") == 0) {
+      if (payload)
+         handle_oauth_get_auth_url(conn, payload);
+   } else if (strcmp(type, "oauth_exchange_code") == 0) {
+      if (payload)
+         handle_oauth_exchange_code(conn, payload);
+   } else if (strcmp(type, "oauth_disconnect") == 0) {
+      if (payload)
+         handle_oauth_disconnect(conn, payload);
+   }
+#endif
+
    /* Calendar account management (per-user) */
 #ifdef DAWN_ENABLE_CALENDAR_TOOL
    else if (strcmp(type, "calendar_list_accounts") == 0) {

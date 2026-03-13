@@ -1,7 +1,7 @@
 # CalDAV Calendar Integration — Design Document
 
 **Created**: March 9, 2026
-**Status**: Implemented (2026-03-12), read_only flag added (2026-03-12)
+**Status**: Implemented (2026-03-12), read_only flag added (2026-03-12), Google OAuth 2.0 added (2026-03-13)
 **Dependencies**: libical-dev (apt), libcurl (already linked), libxml2 (already linked), libsodium (already linked)
 
 ---
@@ -104,7 +104,8 @@ CREATE TABLE calendar_accounts (
     username TEXT NOT NULL,
     encrypted_password BLOB NOT NULL,     -- Encrypted via libsodium secretbox (nonce + ciphertext)
     encrypted_password_len INTEGER,       -- Length of encrypted_password data
-    auth_type TEXT DEFAULT 'basic',        -- 'basic', 'app_password', or 'oauth' (future)
+    auth_type TEXT DEFAULT 'basic',        -- 'basic', 'app_password', or 'oauth'
+    oauth_account_key TEXT DEFAULT '',     -- Links to oauth_tokens when auth_type='oauth'
     principal_url TEXT,                    -- Cached from RFC 5397 discovery step 1
     calendar_home_url TEXT,               -- Cached from RFC 4791 discovery step 2
     enabled INTEGER DEFAULT 1,
@@ -337,11 +338,13 @@ If-Match: "etag-from-server"
 | Provider | Auth Type | How |
 |----------|----------|-----|
 | Self-hosted (Radicale, Baikal) | HTTP Basic | Username + password |
-| Google Calendar | App-specific password | Username + app password (OAuth planned, see Future Considerations) |
+| Google Calendar | OAuth 2.0 | Browser consent flow via shared `oauth_client.c` module (PKCE S256) |
 | iCloud | App-specific password | Apple ID + app-specific password |
 | Fastmail, Zoho, etc. | HTTP Basic or app password | Provider-dependent |
 
-Passwords are encrypted at rest in the database using libsodium's `crypto_secretbox` (XSalsa20-Poly1305). Each password is stored as `nonce + ciphertext` in the `encrypted_password` BLOB column. The encryption key is derived from the daemon's secret key in `secrets.toml`. Passwords are entered via the WebUI add-account form and never stored in plaintext.
+**App-password accounts**: Passwords are encrypted at rest using libsodium's `crypto_secretbox` (XSalsa20-Poly1305) via the shared `crypto_store` module. Each password is stored as `nonce + ciphertext` in the `encrypted_password` BLOB column. The encryption key is stored in `<data_dir>/dawn.key`.
+
+**OAuth accounts**: Access and refresh tokens are stored in the `oauth_tokens` table, encrypted via the same `crypto_store` module. Token refresh is automatic — `oauth_get_access_token()` checks expiry (300s margin) and refreshes transparently. CalDAV requests use `Authorization: Bearer` via `CURLOPT_XOAUTH2_BEARER`. See `docs/GOOGLE_OAUTH_SETUP.md` for Google Cloud Console setup.
 
 ### Error Handling
 
@@ -675,11 +678,12 @@ After add/update/delete, the affected calendar is re-synced immediately (ctag wi
 
 ## Implementation Status
 
-All phases implemented as of 2026-03-12. Key implementation notes:
+All phases implemented as of 2026-03-12. Google OAuth 2.0 added 2026-03-13. Key implementation notes:
 
-- **Schema**: v23 (initial tables), v24 (read_only column migration)
-- **Password storage**: Changed from secrets.toml references to encrypted-in-DB (libsodium secretbox) — simpler UX, no manual TOML editing required
-- **WebUI**: WebSocket-based (not REST) — consistent with all other DAWN admin panels
+- **Schema**: v23 (initial tables), v24 (read_only column migration), v25 (oauth_tokens table + oauth_account_key column)
+- **Password storage**: Changed from secrets.toml references to encrypted-in-DB via shared `crypto_store` module (libsodium secretbox, `dawn.key`)
+- **OAuth 2.0**: Google CalDAV via OAuth with PKCE S256. Shared `oauth_client.c` + `crypto_store.c` modules. WebUI popup consent flow. Google-specific discovery (no RFC 4791 PROPFIND — uses known URL patterns).
+- **WebUI**: WebSocket-based (not REST) — consistent with all other DAWN admin panels. Auth type selector (App Password / Google OAuth) in add-account modal.
 - **Read-only flag**: Added post-implementation after 4-agent review cycle
 - **Access summary**: LLM query results include writable/read-only calendar footer when mixed access exists
 
@@ -703,8 +707,16 @@ All phases implemented as of 2026-03-12. Key implementation notes:
 | `src/webui/webui_calendar.c` | WebUI WebSocket handlers (accounts, calendars, sync, test, read-only toggle) | 446 |
 | `www/js/ui/calendar-accounts.js` | Calendar accounts settings panel (CRUD, toggles, modal) | 663 |
 | `www/css/components/calendar-accounts.css` | Calendar accounts styles (cards, toggles, modal, responsive) | 392 |
+| `include/tools/oauth_client.h` | OAuth 2.0 client API (auth URL, code exchange, token refresh, storage) | ~100 |
+| `src/tools/oauth_client.c` | OAuth implementation (PKCE S256, Google provider, encrypted token DB) | ~600 |
+| `include/core/crypto_store.h` | Shared libsodium encryption API (init, encrypt, decrypt) | ~30 |
+| `src/core/crypto_store.c` | Shared encryption module (crypto_secretbox, dawn.key) | ~200 |
+| `www/js/ui/oauth.js` | OAuth popup handler (blocker mitigation, origin validation) | ~180 |
+| `www/js/oauth-callback.js` | OAuth callback page script (postMessage to opener) | ~20 |
+| `www/css/components/oauth.css` | OAuth styles (auth type selector, connect button, status dots) | ~50 |
+| `docs/GOOGLE_OAUTH_SETUP.md` | Google OAuth setup guide (Cloud Console, secrets.toml, WebUI) | ~125 |
 
-**Total**: ~5,630 lines across 12 files.
+**Total**: ~7,565 lines across 21 files.
 
 ### Modified Files
 
@@ -716,11 +728,16 @@ All phases implemented as of 2026-03-12. Key implementation notes:
 | `www/index.html` | Add calendar settings panel container, CSS/JS imports |
 | `www/js/dawn.js` | Route calendar WebSocket response messages to handlers |
 | `www/js/ui/settings/schema.js` | Calendar settings schema entries |
-| `src/webui/webui_server.c` | Route calendar WebSocket message types to handlers |
-| `include/webui/webui_internal.h` | Calendar handler declarations |
-| `include/auth/auth_db_internal.h` | Calendar prepared statements, schema v23-v24 |
-| `src/auth/auth_db_core.c` | Schema migrations, prepared statements, finalize |
+| `src/webui/webui_server.c` | Route calendar + OAuth WebSocket message types to handlers |
+| `src/webui/webui_http.c` | `/oauth/callback` endpoint, `is_public_path` allowlist |
+| `include/webui/webui_internal.h` | Calendar + OAuth handler declarations |
+| `include/auth/auth_db_internal.h` | Calendar + OAuth prepared statements, schema v23-v25 |
+| `src/auth/auth_db_core.c` | Schema migrations (v23-v25), prepared statements, finalize |
+| `src/config/config_parser.c` | Parse `[secrets.google]` client_id, client_secret |
+| `src/config/config_env.c` | `DAWN_GOOGLE_*` env overrides, Google fields in secrets write/status |
+| `src/webui/webui_config.c` | Google OAuth fields in `handle_set_secrets` |
 | `dawn.toml.example` | Add `[calendar]` section |
+| `secrets.toml.example` | Add `[secrets.google]` section |
 
 ### New Dependency
 
@@ -744,7 +761,7 @@ apt install libical-dev   # libical 3.0.14 on Ubuntu 22.04 (Jammy)
 | Backend | Test |
 |---------|------|
 | **Radicale** (Docker) | Full CRUD cycle. Offline cache. Reconnect after server restart. |
-| **Google Calendar** | Discovery, fetch, create, delete. App-specific password auth. |
+| **Google Calendar** | Discovery (Google-specific), fetch, create, delete. OAuth 2.0 auth. |
 | **iCloud** | Discovery, fetch, create, delete. App-specific password auth. |
 
 ### Voice Command Tests
@@ -766,10 +783,11 @@ apt install libical-dev   # libical 3.0.14 on Ubuntu 22.04 (Jammy)
 
 ### Google Calendar
 
-- **CalDAV URL**: `https://apidata.googleusercontent.com/caldav/v2/`
-- **Auth**: Google account email + app-specific password (generate at myaccount.google.com → Security → 2-Step Verification → App Passwords)
-- **Note**: Google considers app passwords "less secure" and recommends OAuth 2.0. App passwords work but require 2FA enabled on the Google account. OAuth 2.0 support is planned (see Future Considerations).
-- **Quirk**: Discovery returns all calendars including "other" calendars (subscriptions, holidays). Filter by `resourcetype` to find user-owned calendars.
+- **CalDAV URL**: `https://apidata.googleusercontent.com/caldav/v2/{email}/events/` (per-user, auto-populated from OAuth email)
+- **Auth**: OAuth 2.0 via shared `oauth_client.c` module. Browser consent flow with PKCE S256. See `docs/GOOGLE_OAUTH_SETUP.md`.
+- **API**: Enable the **CalDAV API** (not "Google Calendar API") in Google Cloud Console.
+- **Discovery**: Google does not support standard RFC 4791 PROPFIND discovery. DAWN uses known URL patterns: `/caldav/v2/{email}/events/` for the calendar collection and `/caldav/v2/{email}/user` for the principal. The `google_caldav_test()` function in `calendar_service.c` handles this.
+- **Redirect URI**: Google requires a fully qualified domain name (FQDN) — bare IPs are rejected. Set up a DNS A record pointing to your server's LAN IP (e.g., `jetson.yourdomain.com → 192.168.1.159`).
 - **Quirk**: Google may return `VTIMEZONE` components with non-standard timezone IDs. libical handles this.
 
 ### iCloud
@@ -793,9 +811,9 @@ apt install libical-dev   # libical 3.0.14 on Ubuntu 22.04 (Jammy)
 
 ---
 
-## Future Considerations (Not in v1)
+## Future Considerations
 
-- **OAuth 2.0 authentication** — Google deprecates app passwords in favor of OAuth 2.0. Implementation requires: OAuth callback endpoint on WebUI HTTP server, token exchange (libcurl POST to Google's token endpoint), refresh token storage (encrypted in DB, same pattern as passwords), auto-refresh before expired access tokens, `Authorization: Bearer` header in caldav_client.c. The `auth_type` field already supports extensibility (`"oauth"` as third value). Also opens the door to Microsoft (Outlook/365) and other OAuth-only providers. Main complexity: Google Cloud Console project setup per user, app verification for Calendar scope, browser-based consent flow. See also EMAIL_DESIGN.md which shares the same OAuth need.
+- ~~**OAuth 2.0 authentication**~~ — **Done** (2026-03-13). Shared `oauth_client.c` module with PKCE S256, `crypto_store.c` for encrypted token storage, Google CalDAV working via Bearer auth. WebUI popup consent flow with blocker mitigation. See `docs/GOOGLE_OAUTH_SETUP.md`. Infrastructure ready for Microsoft 365, Outlook, and email (IMAP XOAUTH2).
 - **Per-calendar read-only** — current granularity is account-level. A single CalDAV account may have both writable and read-only calendars on the server. Per-calendar `read_only` column on `calendar_calendars` table would allow finer control. No schema conflict with current design.
 - **VTODO support** — task lists via CalDAV (same protocol, different component)
 - **VFREEBUSY** — structured free/busy queries (most servers support this)

@@ -1080,6 +1080,32 @@ void handle_set_secrets(ws_connection_t *conn, struct json_object *payload) {
       }
    }
 #endif
+   if (json_object_object_get_ex(payload, "google_client_id", &val)) {
+      const char *str = json_object_get_string(val);
+      if (str) {
+         strncpy(mutable_secrets->google_client_id, str,
+                 sizeof(mutable_secrets->google_client_id) - 1);
+         mutable_secrets->google_client_id[sizeof(mutable_secrets->google_client_id) - 1] = '\0';
+      }
+   }
+   if (json_object_object_get_ex(payload, "google_client_secret", &val)) {
+      const char *str = json_object_get_string(val);
+      if (str) {
+         strncpy(mutable_secrets->google_client_secret, str,
+                 sizeof(mutable_secrets->google_client_secret) - 1);
+         mutable_secrets->google_client_secret[sizeof(mutable_secrets->google_client_secret) - 1] =
+             '\0';
+      }
+   }
+   if (json_object_object_get_ex(payload, "google_redirect_url", &val)) {
+      const char *str = json_object_get_string(val);
+      if (str) {
+         strncpy(mutable_secrets->google_redirect_url, str,
+                 sizeof(mutable_secrets->google_redirect_url) - 1);
+         mutable_secrets->google_redirect_url[sizeof(mutable_secrets->google_redirect_url) - 1] =
+             '\0';
+      }
+   }
 
    /* Write to file */
    int result = secrets_write_toml(mutable_secrets, secrets_path);

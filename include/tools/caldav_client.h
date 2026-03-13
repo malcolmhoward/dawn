@@ -101,7 +101,8 @@ typedef struct {
 
 typedef struct {
    const char *username;
-   const char *password;
+   const char *password;     /**< NULL when using OAuth */
+   const char *bearer_token; /**< OAuth access token, NULL for basic auth */
 } caldav_auth_t;
 
 /* ============================================================================

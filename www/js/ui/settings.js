@@ -59,6 +59,13 @@
       settingsElements.secretMqttPass = document.getElementById('secret-mqtt-pass');
       settingsElements.secretPlexToken = document.getElementById('secret-plex-token');
       settingsElements.secretHaToken = document.getElementById('secret-ha-token');
+      settingsElements.secretGoogleClientId = document.getElementById('secret-google-client-id');
+      settingsElements.secretGoogleClientSecret = document.getElementById(
+         'secret-google-client-secret'
+      );
+      settingsElements.secretGoogleRedirectUrl = document.getElementById(
+         'secret-google-redirect-url'
+      );
 
       // Secret status indicators
       settingsElements.statusOpenai = document.getElementById('status-openai');
@@ -68,6 +75,13 @@
       settingsElements.statusMqttPass = document.getElementById('status-mqtt-pass');
       settingsElements.statusPlexToken = document.getElementById('status-plex-token');
       settingsElements.statusHaToken = document.getElementById('status-ha-token');
+      settingsElements.statusGoogleClientId = document.getElementById('status-google-client-id');
+      settingsElements.statusGoogleClientSecret = document.getElementById(
+         'status-google-client-secret'
+      );
+      settingsElements.statusGoogleRedirectUrl = document.getElementById(
+         'status-google-redirect-url'
+      );
 
       // SmartThings elements
       settingsElements.stStatusIndicator = document.getElementById('st-status-indicator');

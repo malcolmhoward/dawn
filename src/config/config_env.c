@@ -231,6 +231,11 @@ void config_apply_env(dawn_config_t *config, secrets_config_t *secrets) {
    /* Home Assistant */
    ENV_SECRET("HOME_ASSISTANT_TOKEN", secrets->home_assistant_token);
 
+   /* Google OAuth 2.0 */
+   ENV_SECRET("DAWN_GOOGLE_CLIENT_ID", secrets->google_client_id);
+   ENV_SECRET("DAWN_GOOGLE_CLIENT_SECRET", secrets->google_client_secret);
+   ENV_SECRET("DAWN_GOOGLE_REDIRECT_URL", secrets->google_redirect_url);
+
    /* Satellite registration key */
    ENV_SECRET("DAWN_SATELLITE_KEY", secrets->satellite_registration_key);
 
@@ -848,6 +853,10 @@ void config_dump_settings(const dawn_config_t *config,
           (secrets && secrets->smartthings_client_secret[0]) ? "[set]" : "[not set]");
    printf("  HOME_ASSISTANT_TOKEN                     %s\n",
           (secrets && secrets->home_assistant_token[0]) ? "[set]" : "[not set]");
+   printf("  DAWN_GOOGLE_CLIENT_ID                    %s\n",
+          (secrets && secrets->google_client_id[0]) ? "[set]" : "[not set]");
+   printf("  DAWN_GOOGLE_CLIENT_SECRET                %s\n",
+          (secrets && secrets->google_client_secret[0]) ? "[set]" : "[not set]");
    printf("  DAWN_SATELLITE_KEY                       %s\n\n",
           (secrets && secrets->satellite_registration_key[0]) ? "[set]" : "[not set]");
 }
@@ -1453,6 +1462,12 @@ json_object *secrets_to_json_status(const secrets_config_t *secrets) {
                           json_object_new_boolean(secrets && secrets->embedding_api_key[0]));
    json_object_object_add(obj, "home_assistant_token",
                           json_object_new_boolean(secrets && secrets->home_assistant_token[0]));
+   json_object_object_add(obj, "google_client_id",
+                          json_object_new_boolean(secrets && secrets->google_client_id[0]));
+   json_object_object_add(obj, "google_client_secret",
+                          json_object_new_boolean(secrets && secrets->google_client_secret[0]));
+   json_object_object_add(obj, "google_redirect_url",
+                          json_object_new_boolean(secrets && secrets->google_redirect_url[0]));
 
    return obj;
 }
@@ -1957,6 +1972,15 @@ int secrets_write_toml(const secrets_config_t *secrets, const char *path) {
       fprintf(fp, "\n[secrets.smartthings]\n");
       WRITE_SECRET("client_id", secrets->smartthings_client_id);
       WRITE_SECRET("client_secret", secrets->smartthings_client_secret);
+   }
+
+   /* Google OAuth 2.0 (Calendar and Email) */
+   if (secrets->google_client_id[0] || secrets->google_client_secret[0] ||
+       secrets->google_redirect_url[0]) {
+      fprintf(fp, "\n[secrets.google]\n");
+      WRITE_SECRET("client_id", secrets->google_client_id);
+      WRITE_SECRET("client_secret", secrets->google_client_secret);
+      WRITE_SECRET("redirect_url", secrets->google_redirect_url);
    }
 
 #undef WRITE_SECRET

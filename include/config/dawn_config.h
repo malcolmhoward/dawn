@@ -534,6 +534,11 @@ typedef struct {
 
    /* Home Assistant Long-Lived Access Token */
    char home_assistant_token[CONFIG_API_KEY_MAX];
+
+   /* Google OAuth 2.0 (Calendar and Email) */
+   char google_client_id[CONFIG_API_KEY_MAX];
+   char google_client_secret[CONFIG_API_KEY_MAX];
+   char google_redirect_url[CONFIG_PATH_MAX]; /* e.g. https://myhost:3000/oauth/callback */
 } secrets_config_t;
 
 /* =============================================================================

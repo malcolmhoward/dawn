@@ -19,7 +19,7 @@
  * part of the project and are adopted by the project author(s).
  *
  * Calendar LLM tool — voice-controlled CalDAV calendar access.
- * Actions: today, range, next, search, add, update, delete
+ * Actions: calendars, today, range, next, search, add, update, delete
  */
 
 #include "tools/calendar_tool.h"
@@ -243,6 +243,44 @@ static int append_access_summary(char *buf, int pos, size_t buf_len, int user_id
 /* =============================================================================
  * Action Handlers
  * ============================================================================= */
+
+static char *handle_calendars(int user_id) {
+   calendar_account_t accounts[16];
+   int acct_count = calendar_db_account_list(user_id, accounts, 16);
+
+   char *buf = malloc(RESULT_BUF_SIZE);
+   if (!buf)
+      return strdup("Error: memory allocation failed");
+
+   int pos = 0;
+   if (acct_count <= 0) {
+      pos += snprintf(buf + pos, RESULT_BUF_SIZE - pos, "No calendar accounts configured.");
+      return buf;
+   }
+
+   pos += snprintf(buf + pos, RESULT_BUF_SIZE - pos, "Calendar accounts (%d):\n", acct_count);
+
+   for (int a = 0; a < acct_count && pos < RESULT_BUF_SIZE - 256; a++) {
+      const char *status = accounts[a].enabled ? "" : " [DISABLED]";
+      const char *ro = accounts[a].read_only ? " [READ-ONLY]" : "";
+      pos += snprintf(buf + pos, RESULT_BUF_SIZE - pos, "\n%s%s%s:\n", accounts[a].name, ro,
+                      status);
+
+      calendar_calendar_t cals[16];
+      int cal_count = calendar_db_calendar_list(accounts[a].id, cals, 16);
+      if (cal_count <= 0) {
+         pos += snprintf(buf + pos, RESULT_BUF_SIZE - pos, "  (no calendars synced yet)\n");
+      } else {
+         for (int c = 0; c < cal_count && pos < RESULT_BUF_SIZE - 128; c++) {
+            const char *active = cals[c].is_active ? "" : " [disabled]";
+            pos += snprintf(buf + pos, RESULT_BUF_SIZE - pos, "  - %s%s\n", cals[c].display_name,
+                            active);
+         }
+      }
+   }
+
+   return buf;
+}
 
 static char *handle_today(int user_id) {
    const char *tz = g_config.localization.timezone;
@@ -479,7 +517,9 @@ static char *calendar_tool_callback(const char *action, char *value, int *should
 
    char *result = NULL;
 
-   if (strcmp(action, "today") == 0) {
+   if (strcmp(action, "calendars") == 0) {
+      result = handle_calendars(user_id);
+   } else if (strcmp(action, "today") == 0) {
       result = handle_today(user_id);
    } else if (strcmp(action, "range") == 0) {
       result = handle_range(details, user_id);
@@ -496,7 +536,8 @@ static char *calendar_tool_callback(const char *action, char *value, int *should
    } else {
       char buf[256];
       snprintf(buf, sizeof(buf),
-               "Error: unknown action '%s'. Valid: today, range, next, search, add, update, delete",
+               "Error: unknown action '%s'. Valid: calendars, today, range, next, search, add, "
+               "update, delete",
                action);
       result = strdup(buf);
    }
@@ -528,20 +569,22 @@ static bool calendar_tool_available(void) {
 static const treg_param_t calendar_params[] = {
    {
        .name = "action",
-       .description = "The calendar action: 'today' (today's events), 'range' (events in "
-                      "date range), 'next' (next upcoming event), 'search' (find events by "
-                      "text), 'add' (create new event), 'update' (modify event), 'delete' "
-                      "(remove event)",
+       .description = "The calendar action: 'calendars' (list all calendar accounts and their "
+                      "calendars), 'today' (today's events), 'range' (events in date range), "
+                      "'next' (next upcoming event), 'search' (find events by text), "
+                      "'add' (create new event), 'update' (modify event), 'delete' (remove event)",
        .type = TOOL_PARAM_TYPE_ENUM,
        .required = true,
        .maps_to = TOOL_MAPS_TO_ACTION,
-       .enum_values = { "today", "range", "next", "search", "add", "update", "delete" },
-       .enum_count = 7,
+       .enum_values = { "calendars", "today", "range", "next", "search", "add", "update",
+                        "delete" },
+       .enum_count = 8,
    },
    {
        .name = "details",
        .description =
            "JSON object with action-specific fields. "
+           "For 'calendars': no fields needed. "
            "For 'today': no fields needed. "
            "For 'range': {start (ISO 8601, required), end (ISO 8601, optional, default +24h)}. "
            "For 'next': no fields needed. "
@@ -570,7 +613,8 @@ static const tool_metadata_t calendar_metadata = {
    .alias_count = 4,
 
    .description = "Access and manage calendar events via CalDAV. "
-                  "Check today's schedule ('what's on my calendar today'), "
+                  "List available calendars ('which calendars are available'), "
+                  "check today's schedule ('what's on my calendar today'), "
                   "find upcoming events ('when is my next meeting'), "
                   "search events ('do I have anything with dentist'), "
                   "create events ('add a meeting tomorrow at 2pm'), "

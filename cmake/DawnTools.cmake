@@ -251,7 +251,8 @@ if(DAWN_ENABLE_CALENDAR_TOOL)
         src/tools/calendar_tool.c
         src/tools/calendar_service.c
         src/tools/calendar_db.c
-        src/tools/caldav_client.c)
+        src/tools/caldav_client.c
+        src/tools/oauth_client.c)
     message(STATUS "DAWN: Calendar tool ENABLED")
 else()
     message(STATUS "DAWN: Calendar tool DISABLED")

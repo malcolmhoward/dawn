@@ -1405,6 +1405,15 @@ int config_parse_secrets(const char *path, secrets_config_t *secrets) {
          PARSE_STRING(smartthings, "client_id", secrets->smartthings_client_id);
          PARSE_STRING(smartthings, "client_secret", secrets->smartthings_client_secret);
       }
+
+      /* Parse [secrets.google] sub-section for OAuth 2.0
+       * Used for Google Calendar and Gmail integration */
+      toml_table_t *google = toml_table_in(secrets_section, "google");
+      if (google) {
+         PARSE_STRING(google, "client_id", secrets->google_client_id);
+         PARSE_STRING(google, "client_secret", secrets->google_client_secret);
+         PARSE_STRING(google, "redirect_url", secrets->google_redirect_url);
+      }
    }
 
    /* Legacy: Parse [api_keys] section (old format) */

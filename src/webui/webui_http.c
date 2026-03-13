@@ -819,6 +819,42 @@ int callback_http(struct lws *wsi,
             pss->is_post = (lws_hdr_total_length(wsi, WSI_TOKEN_POST_URI) > 0);
          }
 
+         /* OAuth callback — serve a minimal HTML page that posts code back to opener */
+         if (strcmp(path, "/oauth/callback") == 0) {
+            static const char OAUTH_CALLBACK_HTML[] =
+                "<!DOCTYPE html>"
+                "<html><head><meta charset=\"utf-8\"><title>Authorization</title>"
+                "<style>body{background:#121417;color:#e6e6e6;font-family:sans-serif;"
+                "display:flex;align-items:center;justify-content:center;height:100vh;margin:0}"
+                "</style></head><body>"
+                "<p id=\"msg\">Processing authorization...</p>"
+                "<script src=\"/js/oauth-callback.js\"></script>"
+                "</body></html>";
+            unsigned char buffer[LWS_PRE + 4096];
+            unsigned char *start = &buffer[LWS_PRE];
+            unsigned char *p = start;
+            unsigned char *end = &buffer[sizeof(buffer) - 1];
+            if (lws_add_http_header_status(wsi, HTTP_STATUS_OK, &p, end))
+               return 1;
+            if (lws_add_http_header_by_token(wsi, WSI_TOKEN_HTTP_CONTENT_TYPE,
+                                             (unsigned char *)"text/html", 9, &p, end))
+               return 1;
+            if (lws_add_http_header_content_length(wsi, strlen(OAUTH_CALLBACK_HTML), &p, end))
+               return 1;
+            if (webui_add_security_headers(wsi, &p, end))
+               return 1;
+            if (lws_finalize_http_header(wsi, &p, end))
+               return 1;
+            int n = lws_write(wsi, start, (size_t)(p - start), LWS_WRITE_HTTP_HEADERS);
+            if (n < 0)
+               return 1;
+            lws_write(wsi, (unsigned char *)OAUTH_CALLBACK_HTML, strlen(OAUTH_CALLBACK_HTML),
+                      LWS_WRITE_HTTP_FINAL);
+            if (lws_http_transaction_completed(wsi))
+               return -1;
+            return 0;
+         }
+
 #ifdef ENABLE_AUTH
          /* Auth API endpoints - no auth required for these */
          if (strcmp(path, "/api/auth/status") == 0) {
@@ -904,7 +940,11 @@ int callback_http(struct lws *wsi,
               /* Login page JS/CSS extracted from inline by CSP hardening */
               strcmp(path, "/js/login.js") == 0 ||
               /* AudioWorklet.addModule() doesn't send cookies, so worklet must be public */
-              strcmp(path, "/js/audio/capture-worklet.js") == 0);
+              strcmp(path, "/js/audio/capture-worklet.js") == 0 ||
+              /* OAuth callback — popup may not have session cookie */
+              strcmp(path, "/oauth/callback") == 0 ||
+              /* OAuth callback JS (loaded by callback page) */
+              strcmp(path, "/js/oauth-callback.js") == 0);
 
          /* Check authentication for protected paths */
          if (!is_public_path && !is_request_authenticated(wsi, NULL)) {

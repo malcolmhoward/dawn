@@ -561,6 +561,11 @@ if(ENABLE_WEBUI)
     )
 endif()
 
+# Shared crypto store (libsodium encryption, used by calendar + OAuth)
+list(APPEND DAWN_SOURCES
+    src/core/crypto_store.c
+)
+
 # Scheduler (depends on auth_db for storage, always compiled when DB is available)
 list(APPEND DAWN_SOURCES
     src/core/scheduler_db.c

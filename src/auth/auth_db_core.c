@@ -896,6 +896,44 @@ static int create_schema(void) {
       LOG_INFO("auth_db: added calendar read_only column (v24)");
    }
 
+   /* v25 migration: OAuth token storage + calendar account OAuth support */
+   if (current_version >= 1 && current_version < 25) {
+      const char *v25_sql = "CREATE TABLE IF NOT EXISTS oauth_tokens ("
+                            "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                            "  user_id INTEGER NOT NULL,"
+                            "  provider TEXT NOT NULL,"
+                            "  account_key TEXT NOT NULL,"
+                            "  encrypted_data BLOB NOT NULL,"
+                            "  encrypted_data_len INTEGER NOT NULL,"
+                            "  scopes TEXT DEFAULT '',"
+                            "  created_at INTEGER NOT NULL,"
+                            "  updated_at INTEGER NOT NULL,"
+                            "  FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,"
+                            "  UNIQUE(user_id, provider, account_key)"
+                            ");"
+                            "CREATE INDEX IF NOT EXISTS idx_oauth_user_provider "
+                            "  ON oauth_tokens(user_id, provider);";
+
+      rc = sqlite3_exec(s_db.db, v25_sql, NULL, NULL, &errmsg);
+      if (rc != SQLITE_OK) {
+         LOG_ERROR("auth_db: v25 migration (oauth_tokens) failed: %s", errmsg ? errmsg : "unknown");
+         sqlite3_free(errmsg);
+         return AUTH_DB_FAILURE;
+      }
+
+      /* Add oauth_account_key column to calendar_accounts */
+      rc = sqlite3_exec(
+          s_db.db, "ALTER TABLE calendar_accounts ADD COLUMN oauth_account_key TEXT DEFAULT ''",
+          NULL, NULL, &errmsg);
+      if (rc != SQLITE_OK) {
+         LOG_INFO("auth_db: v25 migration note (oauth_account_key): %s", errmsg ? errmsg : "ok");
+         sqlite3_free(errmsg);
+         errmsg = NULL;
+      }
+
+      LOG_INFO("auth_db: added oauth_tokens table and calendar OAuth support (v25)");
+   }
+
    /* Create continuation index (runs for both new databases and migrations) */
    rc = sqlite3_exec(s_db.db,
                      "CREATE INDEX IF NOT EXISTS idx_conversations_continued "
@@ -2022,8 +2060,8 @@ static int prepare_statements(void) {
        s_db.db,
        "INSERT INTO calendar_accounts (user_id, name, caldav_url, username, "
        "encrypted_password, auth_type, principal_url, calendar_home_url, enabled, "
-       "last_sync, sync_interval_sec, created_at, read_only) "
-       "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+       "last_sync, sync_interval_sec, created_at, read_only, oauth_account_key) "
+       "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
        -1, &s_db.stmt_cal_acct_create, NULL);
    if (rc != SQLITE_OK) {
       LOG_ERROR("auth_db: prepare cal_acct_create failed: %s", sqlite3_errmsg(s_db.db));
@@ -2033,7 +2071,7 @@ static int prepare_statements(void) {
    rc = sqlite3_prepare_v2(s_db.db,
                            "SELECT id, user_id, name, caldav_url, username, encrypted_password, "
                            "auth_type, principal_url, calendar_home_url, enabled, last_sync, "
-                           "sync_interval_sec, created_at, read_only "
+                           "sync_interval_sec, created_at, read_only, oauth_account_key "
                            "FROM calendar_accounts WHERE id = ?",
                            -1, &s_db.stmt_cal_acct_get, NULL);
    if (rc != SQLITE_OK) {
@@ -2044,7 +2082,7 @@ static int prepare_statements(void) {
    rc = sqlite3_prepare_v2(s_db.db,
                            "SELECT id, user_id, name, caldav_url, username, encrypted_password, "
                            "auth_type, principal_url, calendar_home_url, enabled, last_sync, "
-                           "sync_interval_sec, created_at, read_only "
+                           "sync_interval_sec, created_at, read_only, oauth_account_key "
                            "FROM calendar_accounts "
                            "WHERE user_id = ? ORDER BY name",
                            -1, &s_db.stmt_cal_acct_list, NULL);
@@ -2056,7 +2094,7 @@ static int prepare_statements(void) {
    rc = sqlite3_prepare_v2(s_db.db,
                            "SELECT id, user_id, name, caldav_url, username, encrypted_password, "
                            "auth_type, principal_url, calendar_home_url, enabled, last_sync, "
-                           "sync_interval_sec, created_at, read_only "
+                           "sync_interval_sec, created_at, read_only, oauth_account_key "
                            "FROM calendar_accounts "
                            "WHERE enabled = 1 ORDER BY last_sync ASC",
                            -1, &s_db.stmt_cal_acct_list_enabled, NULL);
@@ -2287,6 +2325,44 @@ static int prepare_statements(void) {
                            -1, &s_db.stmt_cal_occ_next, NULL);
    if (rc != SQLITE_OK) {
       LOG_ERROR("auth_db: prepare cal_occ_next failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   /* OAuth token statements */
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "INSERT OR REPLACE INTO oauth_tokens "
+                           "(user_id, provider, account_key, encrypted_data, encrypted_data_len, "
+                           "scopes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                           -1, &s_db.stmt_oauth_store, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare oauth_store failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT encrypted_data FROM oauth_tokens "
+                           "WHERE user_id = ? AND provider = ? AND account_key = ?",
+                           -1, &s_db.stmt_oauth_load, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare oauth_load failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "DELETE FROM oauth_tokens "
+                           "WHERE user_id = ? AND provider = ? AND account_key = ?",
+                           -1, &s_db.stmt_oauth_delete, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare oauth_delete failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT COUNT(*) FROM oauth_tokens "
+                           "WHERE user_id = ? AND provider = ? AND account_key = ?",
+                           -1, &s_db.stmt_oauth_exists, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare oauth_exists failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2597,11 +2673,20 @@ static void finalize_statements(void) {
    if (s_db.stmt_cal_occ_next)
       sqlite3_finalize(s_db.stmt_cal_occ_next);
 
+   /* OAuth statements */
+   if (s_db.stmt_oauth_store)
+      sqlite3_finalize(s_db.stmt_oauth_store);
+   if (s_db.stmt_oauth_load)
+      sqlite3_finalize(s_db.stmt_oauth_load);
+   if (s_db.stmt_oauth_delete)
+      sqlite3_finalize(s_db.stmt_oauth_delete);
+   if (s_db.stmt_oauth_exists)
+      sqlite3_finalize(s_db.stmt_oauth_exists);
+
    /* Clear all statement pointers using offsetof for safety
     * MAINTENANCE: If statements are reordered, update first/last_stmt names */
    size_t first_stmt_offset = offsetof(auth_db_state_t, stmt_create_user);
-   size_t last_stmt_end = offsetof(auth_db_state_t, stmt_cal_acct_set_read_only) +
-                          sizeof(sqlite3_stmt *);
+   size_t last_stmt_end = offsetof(auth_db_state_t, stmt_oauth_exists) + sizeof(sqlite3_stmt *);
    memset((char *)&s_db + first_stmt_offset, 0, last_stmt_end - first_stmt_offset);
 }
 

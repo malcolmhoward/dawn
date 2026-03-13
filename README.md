@@ -73,7 +73,7 @@ DAWN's LLM automatically invokes tools and incorporates results into responses. 
 - **URL Fetcher** — Fetch and read web pages. Large pages auto-summarized. Optional FlareSolverr for JavaScript-heavy sites.
 - **Weather** — Real-time weather and forecasts via Open-Meteo API (free, no API key required).
 - **Calculator** — Mathematical expression evaluation.
-- **CalDAV Calendar** — CalDAV calendar integration (Google Calendar, iCloud, Nextcloud, Radicale). Query today's events, search by keyword, add/update/delete events across multiple accounts.
+- **CalDAV Calendar** — CalDAV calendar integration (Google Calendar via OAuth 2.0, iCloud, Nextcloud, Radicale). Query today's events, search by keyword, add/update/delete events across multiple accounts.
 - **Scheduler** — Timers, alarms, reminders, and scheduled tool execution.
    - "Set a 10 minute timer", "Wake me up at 7 AM", "Remind me to call Mom at 3pm"
    - Recurring events (daily, weekdays, weekends, weekly, custom days)
@@ -162,6 +162,7 @@ These features are not required but extend what DAWN can do. Each links to its s
 | Feature | What it does | Setup guide |
 |---------|-------------|-------------|
 | **CalDAV Calendar** | Query and manage calendar events by voice | [GETTING_STARTED.md — CalDAV](GETTING_STARTED.md#caldav-calendar) |
+| **Google Calendar (OAuth)** | Connect Google Calendar via OAuth 2.0 (no app password needed) | [docs/GOOGLE_OAUTH_SETUP.md](docs/GOOGLE_OAUTH_SETUP.md) |
 | **Home Assistant** | Control smart home devices by voice | [docs/HOMEASSISTANT_SETUP.md](docs/HOMEASSISTANT_SETUP.md) |
 | **SearXNG Web Search** | Privacy-focused voice-activated web search | [GETTING_STARTED.md — SearXNG](GETTING_STARTED.md#searxng-setup-for-web-search) |
 | **Plex Music Source** | Unified music library with local + Plex tracks | [GETTING_STARTED.md — Plex](GETTING_STARTED.md#plex-music-source) |
@@ -186,6 +187,7 @@ These features are not required but extend what DAWN can do. Each links to its s
 | **[docs/DAP2_SATELLITE.md](docs/DAP2_SATELLITE.md)** | Satellite architecture and deployment guide |
 | **[dawn_satellite/README.md](dawn_satellite/README.md)** | Tier 1 satellite (RPi) build, config, and usage |
 | **[dawn_satellite_arduino/README.md](dawn_satellite_arduino/README.md)** | Tier 2 satellite (ESP32-S3, Arduino) setup |
+| **[docs/GOOGLE_OAUTH_SETUP.md](docs/GOOGLE_OAUTH_SETUP.md)** | Google OAuth 2.0 setup for Calendar (and future Email) |
 | **[docs/TOOL_DEVELOPMENT_GUIDE.md](docs/TOOL_DEVELOPMENT_GUIDE.md)** | Guide for adding new LLM tools |
 | **[services/llama-server/README.md](services/llama-server/README.md)** | Local LLM service setup |
 | **[test_recordings/BENCHMARK_RESULTS.md](test_recordings/BENCHMARK_RESULTS.md)** | ASR performance benchmarks |

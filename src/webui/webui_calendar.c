@@ -30,6 +30,7 @@
 #include "logging.h"
 #include "tools/calendar_db.h"
 #include "tools/calendar_service.h"
+#include "tools/oauth_client.h"
 #include "webui/webui_internal.h"
 
 /* =============================================================================
@@ -77,6 +78,9 @@ void handle_calendar_list_accounts(ws_connection_t *conn) {
          json_object_object_add(obj, "username", json_object_new_string(accounts[i].username));
          json_object_object_add(obj, "has_password",
                                 json_object_new_boolean(accounts[i].encrypted_password_len > 0));
+         json_object_object_add(obj, "auth_type", json_object_new_string(accounts[i].auth_type));
+         json_object_object_add(obj, "oauth_account_key",
+                                json_object_new_string(accounts[i].oauth_account_key));
          json_object_object_add(obj, "enabled", json_object_new_boolean(accounts[i].enabled));
          json_object_object_add(obj, "read_only", json_object_new_boolean(accounts[i].read_only));
          json_object_object_add(obj, "last_sync",
@@ -110,26 +114,40 @@ void handle_calendar_add_account(ws_connection_t *conn, json_object *payload) {
    json_object *resp_payload = json_object_new_object();
 
    json_object *name_obj, *url_obj, *user_obj, *pass_obj;
+   json_object *auth_type_obj = NULL, *oauth_key_obj = NULL;
    bool has_name = json_object_object_get_ex(payload, "name", &name_obj);
    bool has_url = json_object_object_get_ex(payload, "caldav_url", &url_obj);
    bool has_user = json_object_object_get_ex(payload, "username", &user_obj);
    bool has_pass = json_object_object_get_ex(payload, "password", &pass_obj);
+   json_object_object_get_ex(payload, "auth_type", &auth_type_obj);
+   json_object_object_get_ex(payload, "oauth_account_key", &oauth_key_obj);
 
-   if (!has_name || !has_url || !has_user || !has_pass) {
+   const char *auth_type = auth_type_obj ? json_object_get_string(auth_type_obj) : "basic";
+   bool is_oauth = strcmp(auth_type, "oauth") == 0;
+
+   /* OAuth accounts need name + url; basic accounts need all four fields */
+   bool valid = has_name && has_url && (is_oauth || (has_user && has_pass));
+
+   if (!valid) {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
       json_object_object_add(resp_payload, "error",
                              json_object_new_string(
-                                 "Missing required fields: name, caldav_url, username, password"));
+                                 is_oauth ? "Missing required fields: name, caldav_url"
+                                          : "Missing required fields: name, caldav_url, "
+                                            "username, password"));
    } else {
       json_object *ro_obj;
       bool read_only = false;
       if (json_object_object_get_ex(payload, "read_only", &ro_obj))
          read_only = json_object_get_boolean(ro_obj);
 
+      const char *oauth_key = oauth_key_obj ? json_object_get_string(oauth_key_obj) : "";
+
       int rc = calendar_service_add_account(conn->auth_user_id, json_object_get_string(name_obj),
                                             json_object_get_string(url_obj),
-                                            json_object_get_string(user_obj),
-                                            json_object_get_string(pass_obj), read_only);
+                                            has_user ? json_object_get_string(user_obj) : "",
+                                            has_pass ? json_object_get_string(pass_obj) : "",
+                                            read_only, auth_type, oauth_key);
       if (rc != 0) {
          json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
          json_object_object_add(resp_payload, "error",
@@ -508,6 +526,144 @@ void handle_calendar_toggle_read_only(ws_connection_t *conn, json_object *payloa
             json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
          }
       }
+   }
+
+   json_object_object_add(response, "payload", resp_payload);
+   send_json_response(conn, response);
+   json_object_put(response);
+}
+
+/* =============================================================================
+ * OAuth Handlers
+ * ============================================================================= */
+
+void handle_oauth_get_auth_url(ws_connection_t *conn, json_object *payload) {
+   if (!conn_require_auth(conn))
+      return;
+
+   (void)payload;
+
+   json_object *response = json_object_new_object();
+   json_object_object_add(response, "type", json_object_new_string("oauth_get_auth_url_response"));
+   json_object *resp_payload = json_object_new_object();
+
+   oauth_provider_config_t google;
+   if (oauth_build_google_provider(GOOGLE_CALENDAR_SCOPE, &google) != 0) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Google OAuth not configured"));
+   } else {
+      char url[2048];
+      char state[128];
+      if (oauth_get_auth_url(&google, conn->auth_user_id, url, sizeof(url), state, sizeof(state)) !=
+          0) {
+         json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+         json_object_object_add(resp_payload, "error",
+                                json_object_new_string("Failed to generate auth URL"));
+      } else {
+         json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
+         json_object_object_add(resp_payload, "url", json_object_new_string(url));
+         json_object_object_add(resp_payload, "state", json_object_new_string(state));
+      }
+   }
+
+   sodium_memzero(&google, sizeof(google));
+   json_object_object_add(response, "payload", resp_payload);
+   send_json_response(conn, response);
+   json_object_put(response);
+}
+
+void handle_oauth_exchange_code(ws_connection_t *conn, json_object *payload) {
+   if (!conn_require_auth(conn))
+      return;
+
+   json_object *response = json_object_new_object();
+   json_object_object_add(response, "type", json_object_new_string("oauth_exchange_code_response"));
+   json_object *resp_payload = json_object_new_object();
+
+   json_object *code_obj, *state_obj;
+   if (!json_object_object_get_ex(payload, "code", &code_obj) ||
+       !json_object_object_get_ex(payload, "state", &state_obj)) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Missing code or state"));
+   } else {
+      oauth_provider_config_t google;
+      if (oauth_build_google_provider(GOOGLE_CALENDAR_SCOPE, &google) != 0) {
+         json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+         json_object_object_add(resp_payload, "error",
+                                json_object_new_string("Google OAuth not configured"));
+      } else {
+         oauth_token_set_t tokens;
+         const char *code = json_object_get_string(code_obj);
+         const char *state = json_object_get_string(state_obj);
+
+         if (oauth_exchange_code(&google, code, state, conn->auth_user_id, &tokens) != 0) {
+            json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+            json_object_object_add(resp_payload, "error",
+                                   json_object_new_string("Token exchange failed"));
+         } else {
+            /* Use email from token exchange, fall back to generic key */
+            char account_key[256];
+            if (tokens.email[0]) {
+               snprintf(account_key, sizeof(account_key), "%s", tokens.email);
+            } else {
+               snprintf(account_key, sizeof(account_key), "google_%d", conn->auth_user_id);
+               LOG_WARNING("oauth: no email in token response, using fallback key '%s'",
+                           account_key);
+            }
+
+            /* Store tokens — account creation is separate (frontend does it) */
+            if (oauth_store_tokens(conn->auth_user_id, "google", account_key, &tokens) != 0) {
+               json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+               json_object_object_add(resp_payload, "error",
+                                      json_object_new_string("Failed to store tokens"));
+            } else {
+               json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
+               json_object_object_add(resp_payload, "account_key",
+                                      json_object_new_string(account_key));
+               json_object_object_add(resp_payload, "scopes",
+                                      json_object_new_string(tokens.scopes));
+            }
+            sodium_memzero(&tokens, sizeof(tokens));
+         }
+      }
+      sodium_memzero(&google, sizeof(google));
+   }
+
+   json_object_object_add(response, "payload", resp_payload);
+   send_json_response(conn, response);
+   json_object_put(response);
+}
+
+void handle_oauth_disconnect(ws_connection_t *conn, json_object *payload) {
+   if (!conn_require_auth(conn))
+      return;
+
+   json_object *response = json_object_new_object();
+   json_object_object_add(response, "type", json_object_new_string("oauth_disconnect_response"));
+   json_object *resp_payload = json_object_new_object();
+
+   json_object *key_obj;
+   if (!json_object_object_get_ex(payload, "account_key", &key_obj)) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error", json_object_new_string("Missing account_key"));
+   } else {
+      oauth_provider_config_t google;
+      if (oauth_build_google_provider(GOOGLE_CALENDAR_SCOPE, &google) != 0) {
+         json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+         json_object_object_add(resp_payload, "error",
+                                json_object_new_string("Google OAuth not configured"));
+      } else {
+         const char *account_key = json_object_get_string(key_obj);
+         int rc = oauth_revoke_and_delete(&google, conn->auth_user_id, account_key);
+         if (rc != 0) {
+            LOG_WARNING("OAuth revocation failed for user %d key %s (tokens deleted locally)",
+                        conn->auth_user_id, account_key);
+         }
+         json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
+      }
+      sodium_memzero(&google, sizeof(google));
    }
 
    json_object_object_add(response, "payload", resp_payload);

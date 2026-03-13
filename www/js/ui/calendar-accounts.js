@@ -22,18 +22,20 @@
       }
    }
 
-   function requestAddAccount(name, caldavUrl, username, password, readOnly) {
+   function requestAddAccount(name, caldavUrl, username, password, readOnly, authType, oauthKey) {
       if (typeof DawnWS !== 'undefined' && DawnWS.isConnected()) {
-         DawnWS.send({
-            type: 'calendar_add_account',
-            payload: {
-               name: name,
-               caldav_url: caldavUrl,
-               username: username,
-               password: password,
-               read_only: readOnly || false,
-            },
-         });
+         const payload = {
+            name: name,
+            caldav_url: caldavUrl,
+            username: username,
+            password: password,
+            read_only: readOnly || false,
+         };
+         if (authType === 'oauth') {
+            payload.auth_type = 'oauth';
+            payload.oauth_account_key = oauthKey || '';
+         }
+         DawnWS.send({ type: 'calendar_add_account', payload: payload });
       }
    }
 
@@ -225,16 +227,24 @@
             (acct) => `
          <div class="calendar-account-card${acct.read_only ? ' read-only' : ''}" data-account-id="${acct.id}">
             <div class="calendar-account-header">
-               <span class="calendar-account-name">${escapeHtml(acct.name)}</span>
+               <span class="calendar-account-name">${escapeHtml(acct.name)}${acct.auth_type === 'oauth' ? '<span class="oauth-badge">OAuth</span>' : ''}</span>
                <div class="calendar-account-actions">
-                  <button data-action="edit" data-id="${acct.id}" title="Edit account">Edit</button>
+                  ${acct.auth_type !== 'oauth' ? `<button data-action="edit" data-id="${acct.id}" title="Edit account">Edit</button>` : ''}
                   <button data-action="test" data-id="${acct.id}" title="Test connection">Test</button>
                   <button data-action="sync" data-id="${acct.id}" title="Sync now">Sync</button>
                   <button data-action="calendars" data-id="${acct.id}" title="Show calendars">Calendars</button>
-                  <button class="btn-danger" data-action="remove" data-id="${acct.id}" data-name="${escapeHtml(acct.name)}" title="Remove account">Remove</button>
+                  <button class="btn-danger" data-action="remove" data-id="${acct.id}" data-name="${escapeHtml(acct.name)}" data-auth-type="${acct.auth_type || 'password'}" data-oauth-key="${escapeHtml(acct.oauth_account_key || '')}" title="Remove account">Remove</button>
                </div>
             </div>
             <div class="calendar-account-details">
+               ${
+                  acct.auth_type === 'oauth'
+                     ? `
+               <div class="detail-row">
+                  <span class="detail-label">Type</span>
+                  <span><span class="oauth-status-dot connected"></span>Google OAuth</span>
+               </div>`
+                     : `
                <div class="detail-row">
                   <span class="detail-label">URL</span>
                   <span>${escapeHtml(acct.caldav_url)}</span>
@@ -242,7 +252,8 @@
                <div class="detail-row">
                   <span class="detail-label">User</span>
                   <span>${escapeHtml(acct.username)}</span>
-               </div>
+               </div>`
+               }
             </div>
             <div class="calendar-account-access">
                <input type="checkbox" class="calendar-access-toggle"
@@ -324,7 +335,7 @@
             expandCalendars(id);
             break;
          case 'remove':
-            removeAccount(id, btn.dataset.name || '');
+            removeAccount(id, btn.dataset.name || '', btn.dataset.authType, btn.dataset.oauthKey);
             break;
       }
    }
@@ -379,16 +390,26 @@
       requestListCalendars(accountId);
    }
 
-   function removeAccount(id, name) {
+   function removeAccount(id, name, authType, oauthKey) {
+      var msg = 'Remove calendar account "' + name + '"? All cached events will be deleted.';
+      if (authType === 'oauth') {
+         msg += ' OAuth tokens will be revoked.';
+      }
       if (callbacks.showConfirmModal) {
          callbacks.showConfirmModal(
-            'Remove calendar account "' + name + '"? All cached events will be deleted.',
+            msg,
             function () {
+               if (authType === 'oauth' && oauthKey && typeof DawnOAuth !== 'undefined') {
+                  DawnOAuth.disconnect('google', oauthKey);
+               }
                requestRemoveAccount(id);
             },
             { title: 'Remove Calendar Account', okText: 'Remove', danger: true }
          );
-      } else if (confirm('Remove calendar account "' + name + '"?')) {
+      } else if (confirm(msg)) {
+         if (authType === 'oauth' && oauthKey && typeof DawnOAuth !== 'undefined') {
+            DawnOAuth.disconnect('google', oauthKey);
+         }
          requestRemoveAccount(id);
       }
    }
@@ -567,56 +588,84 @@
             <div class="modal-content">
                <h3 id="cal-modal-title">Add Calendar Account</h3>
                <form class="calendar-add-form" id="calendar-add-form" novalidate>
-                  <div class="form-group">
-                     <label for="cal-add-name">Account Name</label>
-                     <input type="text" id="cal-add-name" placeholder="e.g., Work, Personal" required />
+                  <div class="auth-type-selector" role="tablist" aria-label="Authentication type">
+                     <button type="button" class="auth-type-option active" data-auth-type="password" role="tab" aria-selected="true">App Password</button>
+                     <button type="button" class="auth-type-option" data-auth-type="oauth" role="tab" aria-selected="false">Google OAuth</button>
                   </div>
-                  <div class="form-group">
-                     <label for="cal-add-url">CalDAV URL</label>
-                     <input type="url" id="cal-add-url" placeholder="https://caldav.example.com/dav/" required />
-                     <span class="form-hint">The base CalDAV URL for your provider</span>
-                  </div>
-                  <div class="form-group">
-                     <label for="cal-add-username">Username</label>
-                     <input type="text" id="cal-add-username" placeholder="user@example.com" required />
-                  </div>
-                  <div class="form-group">
-                     <label for="cal-add-password">Password / App Password</label>
-                     <div class="password-input-wrapper">
-                        <input type="password" id="cal-add-password" placeholder="App password or account password" required />
-                        <button type="button" class="password-toggle" data-target="cal-add-password" title="Show/hide">
-                           <svg class="eye-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                              <circle cx="12" cy="12" r="3"/>
-                           </svg>
-                        </button>
+                  <div id="cal-add-password-fields">
+                     <div class="form-group">
+                        <label for="cal-add-name">Account Name</label>
+                        <input type="text" id="cal-add-name" placeholder="e.g., Work, Personal" required />
                      </div>
-                     <span class="form-hint">Stored encrypted in the database</span>
+                     <div class="form-group">
+                        <label for="cal-add-url">CalDAV URL</label>
+                        <input type="url" id="cal-add-url" placeholder="https://caldav.example.com/dav/" required />
+                        <span class="form-hint">The base CalDAV URL for your provider</span>
+                     </div>
+                     <div class="form-group">
+                        <label for="cal-add-username">Username</label>
+                        <input type="text" id="cal-add-username" placeholder="user@example.com" required />
+                     </div>
+                     <div class="form-group">
+                        <label for="cal-add-password">Password / App Password</label>
+                        <div class="password-input-wrapper">
+                           <input type="password" id="cal-add-password" placeholder="App password or account password" required />
+                           <button type="button" class="password-toggle" data-target="cal-add-password" title="Show/hide">
+                              <svg class="eye-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                 <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                                 <circle cx="12" cy="12" r="3"/>
+                              </svg>
+                           </button>
+                        </div>
+                        <span class="form-hint">Stored encrypted in the database</span>
+                     </div>
+                     <div class="form-group">
+                        <label class="calendar-checkbox-label">
+                           <input type="checkbox" id="cal-add-view-only" />
+                           Read only (prevent AI from modifying events)
+                        </label>
+                        <span class="form-hint">You can change this later</span>
+                     </div>
+                     <div class="form-actions">
+                        <button type="button" class="btn btn-secondary" id="cal-modal-cancel">Cancel</button>
+                        <button type="submit" class="btn btn-primary" id="cal-modal-submit">Add Account</button>
+                     </div>
                   </div>
-                  <div class="form-group">
-                     <label class="calendar-checkbox-label">
-                        <input type="checkbox" id="cal-add-view-only" />
-                        Read only (prevent AI from modifying events)
-                     </label>
-                     <span class="form-hint">You can change this later</span>
-                  </div>
-                  <div class="form-actions">
-                     <button type="button" class="btn btn-secondary" id="cal-modal-cancel">Cancel</button>
-                     <button type="submit" class="btn btn-primary" id="cal-modal-submit">Add Account</button>
+                  <div id="cal-add-oauth-fields" class="oauth-field-hidden">
+                     <div class="form-group">
+                        <label for="cal-add-oauth-name">Account Name</label>
+                        <input type="text" id="cal-add-oauth-name" placeholder="e.g., Google Calendar" />
+                     </div>
+                     <div id="oauth-flow-container" class="form-group">
+                        <button type="button" class="oauth-connect-btn" id="cal-oauth-connect-btn">Connect with Google</button>
+                        <div id="oauth-flow-status" class="oauth-flow-status" style="display:none;" aria-live="polite"></div>
+                     </div>
+                     <div class="form-group">
+                        <label class="calendar-checkbox-label">
+                           <input type="checkbox" id="cal-add-oauth-view-only" />
+                           Read only (prevent AI from modifying events)
+                        </label>
+                        <span class="form-hint">You can change this later</span>
+                     </div>
+                     <div class="form-actions">
+                        <button type="button" class="btn btn-secondary" id="cal-oauth-cancel">Cancel</button>
+                        <button type="button" class="btn btn-primary" id="cal-oauth-save" disabled>Save Account</button>
+                     </div>
                   </div>
                </form>
             </div>
          `;
          document.body.appendChild(modal);
 
-         /* Form submit */
+         /* Form submit (app password mode) */
          document.getElementById('calendar-add-form').addEventListener('submit', function (e) {
             e.preventDefault();
             handleFormSubmit();
          });
 
-         /* Cancel button */
+         /* Cancel buttons */
          document.getElementById('cal-modal-cancel').addEventListener('click', hideAddAccountModal);
+         document.getElementById('cal-oauth-cancel').addEventListener('click', hideAddAccountModal);
 
          /* Password toggle */
          modal.querySelector('.password-toggle').addEventListener('click', function () {
@@ -627,17 +676,47 @@
             }
          });
 
+         /* Auth type selector */
+         modal.querySelectorAll('.auth-type-option').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+               modal.querySelectorAll('.auth-type-option').forEach(function (b) {
+                  b.classList.remove('active');
+                  b.setAttribute('aria-selected', 'false');
+               });
+               btn.classList.add('active');
+               btn.setAttribute('aria-selected', 'true');
+               var authType = btn.dataset.authType;
+               var pwFields = document.getElementById('cal-add-password-fields');
+               var oauthFields = document.getElementById('cal-add-oauth-fields');
+               if (authType === 'oauth') {
+                  pwFields.classList.add('oauth-field-hidden');
+                  oauthFields.classList.remove('oauth-field-hidden');
+               } else {
+                  pwFields.classList.remove('oauth-field-hidden');
+                  oauthFields.classList.add('oauth-field-hidden');
+               }
+            });
+         });
+
+         /* Google OAuth connect button */
+         document
+            .getElementById('cal-oauth-connect-btn')
+            .addEventListener('click', handleOAuthConnect);
+
+         /* OAuth save button */
+         document.getElementById('cal-oauth-save').addEventListener('click', handleOAuthSave);
+
          /* Escape to close */
          modal.addEventListener('keydown', function (e) {
             if (e.key === 'Escape') {
                hideAddAccountModal();
                return;
             }
-            /* Focus trap */
+            /* Focus trap (exclude hidden OAuth/password fields) */
             if (e.key === 'Tab') {
-               const focusable = modal.querySelectorAll(
-                  'input, button, [tabindex]:not([tabindex="-1"])'
-               );
+               const focusable = [
+                  ...modal.querySelectorAll('input, button, [tabindex]:not([tabindex="-1"])'),
+               ].filter((el) => !el.closest('.oauth-field-hidden') && el.offsetParent !== null);
                const first = focusable[0];
                const last = focusable[focusable.length - 1];
                if (e.shiftKey && document.activeElement === first) {
@@ -676,6 +755,17 @@
       const modal = document.getElementById('calendar-add-modal');
       if (modal) modal.classList.add('hidden');
       resetSubmitButton();
+      resetOAuthState();
+      /* Reset auth type selector to password */
+      if (modal) {
+         var pwFields = document.getElementById('cal-add-password-fields');
+         var oauthFields = document.getElementById('cal-add-oauth-fields');
+         if (pwFields) pwFields.classList.remove('oauth-field-hidden');
+         if (oauthFields) oauthFields.classList.add('oauth-field-hidden');
+         modal.querySelectorAll('.auth-type-option').forEach(function (btn) {
+            btn.classList.toggle('active', btn.dataset.authType === 'password');
+         });
+      }
       if (modalTriggerElement) {
          modalTriggerElement.focus();
          modalTriggerElement = null;
@@ -741,6 +831,132 @@
       if (submitBtn) {
          submitBtn.disabled = false;
          submitBtn.textContent = 'Add Account';
+      }
+   }
+
+   /* =============================================================================
+    * OAuth Flow
+    * ============================================================================= */
+
+   let pendingOAuthAccountKey = null;
+
+   function handleOAuthConnect() {
+      var connectBtn = document.getElementById('cal-oauth-connect-btn');
+      var statusEl = document.getElementById('oauth-flow-status');
+
+      if (connectBtn) connectBtn.disabled = true;
+      if (statusEl) {
+         statusEl.style.display = 'block';
+         statusEl.className = 'oauth-flow-status';
+         statusEl.innerHTML =
+            '<span class="oauth-flow-spinner"></span>Waiting for authorization...';
+      }
+
+      if (typeof DawnOAuth === 'undefined') {
+         setOAuthError('OAuth module not loaded');
+         return;
+      }
+
+      DawnOAuth.startFlow('google', 'https://www.googleapis.com/auth/calendar')
+         .then(function () {
+            /* Code was sent to server; wait for exchange response */
+            if (statusEl) {
+               statusEl.innerHTML =
+                  '<span class="oauth-flow-spinner"></span>Exchanging authorization code...';
+            }
+         })
+         .catch(function (err) {
+            if (err.message === 'popup_blocked') {
+               setOAuthError('Popup was blocked. Please allow popups for this site and try again.');
+            } else {
+               setOAuthError(err.message || 'Authorization failed');
+            }
+         });
+   }
+
+   function handleOAuthExchangeResponse(payload) {
+      var statusEl = document.getElementById('oauth-flow-status');
+      var saveBtn = document.getElementById('cal-oauth-save');
+
+      if (!payload.success) {
+         setOAuthError(payload.error || 'Token exchange failed');
+         return;
+      }
+
+      pendingOAuthAccountKey = payload.account_key;
+
+      if (statusEl) {
+         statusEl.className = 'oauth-flow-status success';
+         statusEl.textContent = 'Connected successfully';
+      }
+      if (saveBtn) saveBtn.disabled = false;
+   }
+
+   function handleOAuthDisconnectResponse(payload) {
+      if (!payload.success) {
+         showToast('Failed to disconnect OAuth: ' + (payload.error || 'Unknown'), 'error');
+         return;
+      }
+      showToast('OAuth tokens revoked', 'success');
+   }
+
+   function handleOAuthSave() {
+      if (!pendingOAuthAccountKey) {
+         showToast('Connect with Google first', 'error');
+         return;
+      }
+
+      var name =
+         (document.getElementById('cal-add-oauth-name')?.value || '').trim() || 'Google Calendar';
+      var readOnly = document.getElementById('cal-add-oauth-view-only')?.checked || false;
+
+      var saveBtn = document.getElementById('cal-oauth-save');
+      if (saveBtn) {
+         saveBtn.disabled = true;
+         saveBtn.textContent = 'Saving...';
+      }
+
+      /* Google CalDAV requires the email in the URL path for discovery */
+      var googleCalDavUrl =
+         'https://apidata.googleusercontent.com/caldav/v2/' +
+         encodeURIComponent(pendingOAuthAccountKey) +
+         '/';
+
+      requestAddAccount(name, googleCalDavUrl, '', '', readOnly, 'oauth', pendingOAuthAccountKey);
+   }
+
+   function setOAuthError(msg) {
+      var connectBtn = document.getElementById('cal-oauth-connect-btn');
+      var statusEl = document.getElementById('oauth-flow-status');
+
+      if (connectBtn) {
+         connectBtn.disabled = false;
+         connectBtn.textContent = 'Try Again';
+      }
+      if (statusEl) {
+         statusEl.style.display = 'block';
+         statusEl.className = 'oauth-flow-status error';
+         statusEl.textContent = msg;
+      }
+   }
+
+   function resetOAuthState() {
+      pendingOAuthAccountKey = null;
+      var connectBtn = document.getElementById('cal-oauth-connect-btn');
+      var statusEl = document.getElementById('oauth-flow-status');
+      var saveBtn = document.getElementById('cal-oauth-save');
+
+      if (connectBtn) {
+         connectBtn.disabled = false;
+         connectBtn.textContent = 'Connect with Google';
+      }
+      if (statusEl) {
+         statusEl.style.display = 'none';
+         statusEl.textContent = '';
+      }
+      if (saveBtn) {
+         saveBtn.disabled = true;
+         saveBtn.textContent = 'Save Account';
       }
    }
 
@@ -813,6 +1029,8 @@
       handleListCalendarsResponse: handleListCalendarsResponse,
       handleToggleCalendarResponse: handleToggleCalendarResponse,
       handleToggleReadOnlyResponse: handleToggleReadOnlyResponse,
+      handleOAuthExchangeResponse: handleOAuthExchangeResponse,
+      handleOAuthDisconnectResponse: handleOAuthDisconnectResponse,
       showAddAccountModal: showAddAccountModal,
       hideAddAccountModal: hideAddAccountModal,
    };

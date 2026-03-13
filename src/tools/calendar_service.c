@@ -42,9 +42,11 @@
 
 #include "config/config_parser.h"
 #include "config/dawn_config.h"
+#include "core/crypto_store.h"
 #include "core/path_utils.h"
 #include "logging.h"
 #include "tools/caldav_client.h"
+#include "tools/oauth_client.h"
 
 /* =============================================================================
  * State
@@ -69,76 +71,8 @@ static struct {
 static void *sync_thread_func(void *arg);
 
 /* =============================================================================
- * Password encryption — libsodium crypto_secretbox with key file
+ * Password encryption — delegates to shared crypto_store module
  * ============================================================================= */
-
-static unsigned char s_crypto_key[crypto_secretbox_KEYBYTES];
-static bool s_crypto_ready = false;
-static pthread_once_t s_crypto_once = PTHREAD_ONCE_INIT;
-static int s_crypto_error = 0;
-
-/** Build path to caldav.key in the data directory */
-static void get_key_path(char *out, size_t out_len) {
-   char expanded[512];
-   if (g_config.paths.data_dir[0]) {
-      path_expand_tilde(g_config.paths.data_dir, expanded, sizeof(expanded));
-   } else {
-      snprintf(expanded, sizeof(expanded), "/var/lib/dawn");
-   }
-   snprintf(out, out_len, "%s/caldav.key", expanded);
-}
-
-/** Load or generate the encryption key (called via pthread_once) */
-static void crypto_init_once(void) {
-   if (sodium_init() < 0) {
-      LOG_ERROR("calendar: sodium_init failed");
-      s_crypto_error = 1;
-      return;
-   }
-
-   char key_path[512];
-   get_key_path(key_path, sizeof(key_path));
-
-   FILE *fp = fopen(key_path, "rb");
-   if (fp) {
-      size_t n = fread(s_crypto_key, 1, sizeof(s_crypto_key), fp);
-      fclose(fp);
-      if (n == sizeof(s_crypto_key)) {
-         sodium_mlock(s_crypto_key, sizeof(s_crypto_key));
-         s_crypto_ready = true;
-         return;
-      }
-      LOG_WARNING("calendar: key file truncated, regenerating");
-   }
-
-   /* Generate new key */
-   randombytes_buf(s_crypto_key, sizeof(s_crypto_key));
-
-   mode_t old_umask = umask(0077);
-   fp = fopen(key_path, "wb");
-   umask(old_umask);
-   if (!fp) {
-      LOG_ERROR("calendar: cannot write key file: %s", strerror(errno));
-      s_crypto_error = 1;
-      return;
-   }
-   if (fwrite(s_crypto_key, 1, sizeof(s_crypto_key), fp) != sizeof(s_crypto_key)) {
-      LOG_ERROR("calendar: short write to key file");
-      fclose(fp);
-      s_crypto_error = 1;
-      return;
-   }
-   fclose(fp);
-   sodium_mlock(s_crypto_key, sizeof(s_crypto_key));
-   LOG_INFO("calendar: generated new encryption key");
-   s_crypto_ready = true;
-}
-
-/** Thread-safe crypto initialization */
-static int crypto_init(void) {
-   pthread_once(&s_crypto_once, crypto_init_once);
-   return s_crypto_error;
-}
 
 /**
  * Encrypt a plaintext password into acct->encrypted_password.
@@ -148,27 +82,16 @@ static int crypto_init(void) {
 int calendar_encrypt_password(const char *plaintext, calendar_account_t *acct) {
    if (!plaintext || !acct)
       return 1;
-   if (crypto_init() != 0)
-      return 1;
 
    size_t pt_len = strlen(plaintext);
-   size_t needed = crypto_secretbox_NONCEBYTES + crypto_secretbox_MACBYTES + pt_len;
-   if (needed > sizeof(acct->encrypted_password)) {
-      LOG_ERROR("calendar: password too long to encrypt (%zu bytes)", pt_len);
+   size_t out_written = 0;
+   if (crypto_store_encrypt(plaintext, pt_len, acct->encrypted_password,
+                            sizeof(acct->encrypted_password), &out_written) != 0) {
+      LOG_ERROR("calendar: failed to encrypt password");
       return 1;
    }
 
-   unsigned char *nonce = acct->encrypted_password;
-   unsigned char *ct = acct->encrypted_password + crypto_secretbox_NONCEBYTES;
-
-   randombytes_buf(nonce, crypto_secretbox_NONCEBYTES);
-   if (crypto_secretbox_easy(ct, (const unsigned char *)plaintext, pt_len, nonce, s_crypto_key) !=
-       0) {
-      LOG_ERROR("calendar: encryption failed");
-      return 1;
-   }
-
-   acct->encrypted_password_len = (int)needed;
+   acct->encrypted_password_len = (int)out_written;
    return 0;
 }
 
@@ -179,37 +102,71 @@ int calendar_encrypt_password(const char *plaintext, calendar_account_t *acct) {
 int calendar_decrypt_password(const calendar_account_t *acct, char *out, size_t out_len) {
    if (!acct || !out || out_len == 0)
       return 1;
-   if (crypto_init() != 0)
+   if (acct->encrypted_password_len <= 0)
       return 1;
 
-   int total = acct->encrypted_password_len;
-   if (total <= (int)(crypto_secretbox_NONCEBYTES + crypto_secretbox_MACBYTES)) {
-      LOG_ERROR("calendar: encrypted_password too short");
-      return 1;
-   }
-
-   const unsigned char *nonce = acct->encrypted_password;
-   const unsigned char *ct = acct->encrypted_password + crypto_secretbox_NONCEBYTES;
-   size_t ct_len = total - crypto_secretbox_NONCEBYTES;
-   size_t pt_len = ct_len - crypto_secretbox_MACBYTES;
-
-   if (pt_len >= out_len) {
-      LOG_ERROR("calendar: output buffer too small for decrypted password");
-      return 1;
-   }
-
-   if (crypto_secretbox_open_easy((unsigned char *)out, ct, ct_len, nonce, s_crypto_key) != 0) {
+   /* Decrypt into buffer, leaving room for NUL */
+   size_t dec_written = 0;
+   if (crypto_store_decrypt(acct->encrypted_password, (size_t)acct->encrypted_password_len, out,
+                            out_len - 1, &dec_written) != 0) {
       LOG_ERROR("calendar: decryption failed (wrong key or corrupt data)");
       return 1;
    }
 
-   out[pt_len] = '\0';
+   out[dec_written] = '\0';
    return 0;
 }
 
 /** Convenience: decrypt password from an account into a stack buffer */
 static int get_account_password(const calendar_account_t *acct, char *buf, size_t buf_len) {
    return calendar_decrypt_password(acct, buf, buf_len);
+}
+
+/* =============================================================================
+ * OAuth Auth Helper
+ * ============================================================================= */
+
+/**
+ * Build a caldav_auth_t for an account, handling both basic auth and OAuth.
+ *
+ * @param acct     Account to authenticate
+ * @param auth     Output auth struct (pointers reference pw_buf or tok_buf)
+ * @param pw_buf   Buffer for decrypted password (basic auth)
+ * @param pw_len   Size of pw_buf
+ * @param tok_buf  Buffer for OAuth access token
+ * @param tok_len  Size of tok_buf
+ * @return 0 on success, 1 on failure
+ */
+static int build_auth_for_account(const calendar_account_t *acct,
+                                  caldav_auth_t *auth,
+                                  char *pw_buf,
+                                  size_t pw_len,
+                                  char *tok_buf,
+                                  size_t tok_len) {
+   memset(auth, 0, sizeof(*auth));
+
+   if (strcmp(acct->auth_type, "oauth") == 0) {
+      /* OAuth: get access token (auto-refreshes if needed) */
+      oauth_provider_config_t google;
+      if (oauth_build_google_provider(GOOGLE_CALENDAR_SCOPE, &google) != 0)
+         return 1;
+
+      if (oauth_get_access_token(&google, acct->user_id, acct->oauth_account_key, tok_buf,
+                                 tok_len) != 0) {
+         LOG_ERROR("calendar: failed to get OAuth token for '%s'", acct->name);
+         return 1;
+      }
+      auth->bearer_token = tok_buf;
+   } else {
+      /* Basic auth: decrypt password */
+      if (get_account_password(acct, pw_buf, pw_len) != 0) {
+         LOG_ERROR("calendar: failed to decrypt password for '%s'", acct->name);
+         return 1;
+      }
+      auth->username = acct->username;
+      auth->password = pw_buf;
+   }
+   return 0;
 }
 
 /* =============================================================================
@@ -260,10 +217,6 @@ void calendar_service_shutdown(void) {
    /* Wait for sync thread to exit (max ~sync_interval seconds) */
    pthread_join(thread, NULL);
 
-   /* Zero crypto key from memory */
-   sodium_memzero(s_crypto_key, sizeof(s_crypto_key));
-   s_crypto_ready = false;
-
    LOG_INFO("calendar: service shut down");
 }
 
@@ -280,9 +233,13 @@ int calendar_service_add_account(int user_id,
                                  const char *caldav_url,
                                  const char *username,
                                  const char *password,
-                                 bool read_only) {
-   if (!password || !password[0]) {
-      LOG_ERROR("calendar: password is required for account creation");
+                                 bool read_only,
+                                 const char *auth_type,
+                                 const char *oauth_account_key) {
+   bool is_oauth = auth_type && strcmp(auth_type, "oauth") == 0;
+
+   if (!is_oauth && (!password || !password[0])) {
+      LOG_ERROR("calendar: password is required for basic auth account creation");
       return 1;
    }
 
@@ -294,11 +251,17 @@ int calendar_service_add_account(int user_id,
    snprintf(acct.name, sizeof(acct.name), "%s", name ? name : "Calendar");
    snprintf(acct.caldav_url, sizeof(acct.caldav_url), "%s", caldav_url ? caldav_url : "");
    snprintf(acct.username, sizeof(acct.username), "%s", username ? username : "");
-   snprintf(acct.auth_type, sizeof(acct.auth_type), "basic");
 
-   if (calendar_encrypt_password(password, &acct) != 0) {
-      LOG_ERROR("calendar: failed to encrypt password for account '%s'", name);
-      return 1;
+   if (is_oauth) {
+      snprintf(acct.auth_type, sizeof(acct.auth_type), "oauth");
+      snprintf(acct.oauth_account_key, sizeof(acct.oauth_account_key), "%s",
+               oauth_account_key ? oauth_account_key : "");
+   } else {
+      snprintf(acct.auth_type, sizeof(acct.auth_type), "basic");
+      if (calendar_encrypt_password(password, &acct) != 0) {
+         LOG_ERROR("calendar: failed to encrypt password for account '%s'", name);
+         return 1;
+      }
    }
 
    int64_t id = calendar_db_account_create(&acct);
@@ -307,17 +270,83 @@ int calendar_service_add_account(int user_id,
       return 1;
    }
 
-   LOG_INFO("calendar: added account '%s' (id=%lld)", name, (long long)id);
+   LOG_INFO("calendar: added %s account '%s' (id=%lld)", is_oauth ? "OAuth" : "basic", name,
+            (long long)id);
    return 0;
 }
 
 int calendar_service_remove_account(int64_t account_id) {
+   /* Revoke and delete OAuth tokens if this is an OAuth account */
+   calendar_account_t acct;
+   if (calendar_db_account_get(account_id, &acct) == 0 && strcmp(acct.auth_type, "oauth") == 0 &&
+       acct.oauth_account_key[0]) {
+      oauth_provider_config_t google;
+      if (oauth_build_google_provider(GOOGLE_CALENDAR_SCOPE, &google) == 0) {
+         int revoke_rc = oauth_revoke_and_delete(&google, acct.user_id, acct.oauth_account_key);
+         if (revoke_rc != 0) {
+            LOG_WARNING(
+                "calendar: OAuth token cleanup failed for account %lld (continuing removal)",
+                (long long)account_id);
+         }
+         sodium_memzero(&google, sizeof(google));
+      } else {
+         /* Config missing — just delete tokens locally without revoking */
+         oauth_delete_tokens(acct.user_id, "google", acct.oauth_account_key);
+      }
+   }
+
    int rc = calendar_db_account_delete(account_id);
    if (rc != 0) {
       LOG_ERROR("calendar: failed to remove account %lld", (long long)account_id);
       return 1;
    }
    LOG_INFO("calendar: removed account %lld", (long long)account_id);
+   return 0;
+}
+
+/**
+ * Google CalDAV uses fixed URL patterns instead of RFC 4791 PROPFIND discovery.
+ * Principal: https://apidata.googleusercontent.com/caldav/v2/{email}/user
+ * Events:    https://apidata.googleusercontent.com/caldav/v2/{email}/events
+ *
+ * We verify the connection with a simple PROPFIND on the events URL and
+ * synthesize the discovery result.
+ */
+static int google_caldav_test(const calendar_account_t *acct,
+                              const caldav_auth_t *auth,
+                              caldav_discovery_result_t *disc) {
+   memset(disc, 0, sizeof(*disc));
+
+   /* Build events URL from account key (email) — trailing slash required for href construction */
+   char events_url[512];
+   snprintf(events_url, sizeof(events_url),
+            "https://apidata.googleusercontent.com/caldav/v2/%s/events/", acct->oauth_account_key);
+
+   /* Verify access with a lightweight PROPFIND */
+   char ctag[128] = { 0 };
+   caldav_error_t err = caldav_get_ctag(events_url, auth, ctag, sizeof(ctag));
+   if (err != CALDAV_OK) {
+      LOG_ERROR("calendar: Google CalDAV access failed for '%s': %s", acct->oauth_account_key,
+                caldav_strerror(err));
+      return 1;
+   }
+
+   /* Synthesize discovery result with the primary calendar */
+   snprintf(disc->principal_url, sizeof(disc->principal_url),
+            "https://apidata.googleusercontent.com/caldav/v2/%s/user", acct->oauth_account_key);
+   snprintf(disc->calendar_home_url, sizeof(disc->calendar_home_url),
+            "https://apidata.googleusercontent.com/caldav/v2/%s/", acct->oauth_account_key);
+
+   disc->calendars = calloc(1, sizeof(caldav_calendar_info_t));
+   if (disc->calendars) {
+      disc->calendar_count = 1;
+      snprintf(disc->calendars[0].path, sizeof(disc->calendars[0].path), "%s", events_url);
+      snprintf(disc->calendars[0].display_name, sizeof(disc->calendars[0].display_name), "%s",
+               acct->oauth_account_key);
+      snprintf(disc->calendars[0].ctag, sizeof(disc->calendars[0].ctag), "%s", ctag);
+   }
+
+   LOG_INFO("calendar: Google CalDAV connected for '%s'", acct->oauth_account_key);
    return 0;
 }
 
@@ -329,18 +358,31 @@ int calendar_service_test_connection(int64_t account_id) {
    }
 
    char password[384];
-   if (get_account_password(&acct, password, sizeof(password)) != 0) {
-      LOG_ERROR("calendar: failed to decrypt password for account '%s'", acct.name);
+   char token[2048];
+   caldav_auth_t auth;
+   if (build_auth_for_account(&acct, &auth, password, sizeof(password), token, sizeof(token)) !=
+       0) {
       return 1;
    }
 
-   caldav_auth_t auth = { .username = acct.username, .password = password };
    caldav_discovery_result_t disc = { 0 };
+   int rc;
 
-   caldav_error_t err = caldav_discover(acct.caldav_url, &auth, &disc);
+   if (strcmp(acct.auth_type, "oauth") == 0 && acct.oauth_account_key[0]) {
+      /* Google CalDAV — skip RFC 4791 discovery, use known URL patterns */
+      rc = google_caldav_test(&acct, &auth, &disc);
+   } else {
+      /* Standard CalDAV discovery (iCloud, Fastmail, Radicale, etc.) */
+      caldav_error_t err = caldav_discover(acct.caldav_url, &auth, &disc);
+      rc = (err != CALDAV_OK) ? 1 : 0;
+      if (rc != 0)
+         LOG_ERROR("calendar: discovery failed for '%s': %s", acct.name, caldav_strerror(err));
+   }
+
    sodium_memzero(password, sizeof(password));
-   if (err != CALDAV_OK) {
-      LOG_ERROR("calendar: discovery failed for '%s': %s", acct.name, caldav_strerror(err));
+   sodium_memzero(token, sizeof(token));
+   if (rc != 0) {
+      caldav_discovery_free(&disc);
       return 1;
    }
 
@@ -503,16 +545,18 @@ int calendar_service_sync_now(int64_t account_id) {
       return 1;
 
    char password[384];
-   if (get_account_password(&acct, password, sizeof(password)) != 0)
+   char token[2048];
+   caldav_auth_t auth;
+   if (build_auth_for_account(&acct, &auth, password, sizeof(password), token, sizeof(token)) != 0)
       return 1;
-
-   caldav_auth_t auth = { .username = acct.username, .password = password };
 
    /* Get calendars for this account */
    calendar_calendar_t cals[32];
    int cal_count = calendar_db_calendar_list(account_id, cals, 32);
    if (cal_count <= 0) {
       LOG_WARNING("calendar: no calendars for account '%s'", acct.name);
+      sodium_memzero(password, sizeof(password));
+      sodium_memzero(token, sizeof(token));
       return 1;
    }
 
@@ -595,6 +639,7 @@ int calendar_service_sync_now(int64_t account_id) {
    }
 
    sodium_memzero(password, sizeof(password));
+   sodium_memzero(token, sizeof(token));
    calendar_db_account_update_sync(account_id, now);
    LOG_INFO("calendar: synced %d calendars for '%s'", synced, acct.name);
    return 0;
@@ -810,7 +855,9 @@ int calendar_service_add(int user_id,
       return 1;
 
    char password[384];
-   if (get_account_password(&acct, password, sizeof(password)) != 0)
+   char token[2048];
+   caldav_auth_t auth;
+   if (build_auth_for_account(&acct, &auth, password, sizeof(password), token, sizeof(token)) != 0)
       return 1;
 
    /* Generate UID with random component for unpredictability */
@@ -884,11 +931,11 @@ int calendar_service_add(int user_id,
             "END:VCALENDAR\r\n");
 
    /* PUT to server */
-   caldav_auth_t auth = { .username = acct.username, .password = password };
    char etag[128] = { 0 };
    caldav_error_t err = caldav_create_event(cals[target].caldav_path, &auth, uid, ical, etag,
                                             sizeof(etag));
    sodium_memzero(password, sizeof(password));
+   sodium_memzero(token, sizeof(token));
    if (err != CALDAV_OK) {
       LOG_ERROR("calendar: create event failed: %s", caldav_strerror(err));
       return 1;
@@ -968,7 +1015,10 @@ int calendar_service_update(int user_id,
    }
 
    char password[384];
-   if (get_account_password(&acct, password, sizeof(password)) != 0) {
+   char token_buf[2048];
+   caldav_auth_t auth;
+   if (build_auth_for_account(&acct, &auth, password, sizeof(password), token_buf,
+                              sizeof(token_buf)) != 0) {
       free(evt.raw_ical);
       return 1;
    }
@@ -1027,11 +1077,11 @@ int calendar_service_update(int user_id,
    /* Build href from calendar path + uid */
    char href[1024];
    snprintf(href, sizeof(href), "%s%s.ics", cal.caldav_path, evt.uid);
-   caldav_auth_t auth = { .username = acct.username, .password = password };
    char new_etag[128] = { 0 };
    caldav_error_t err = caldav_update_event(href, &auth, evt.etag, ical, new_etag,
                                             sizeof(new_etag));
    sodium_memzero(password, sizeof(password));
+   sodium_memzero(token_buf, sizeof(token_buf));
    if (err != CALDAV_OK) {
       LOG_ERROR("calendar: update event failed: %s", caldav_strerror(err));
       if (evt.raw_ical)
@@ -1090,7 +1140,10 @@ int calendar_service_delete(int user_id, const char *uid) {
    }
 
    char password[384];
-   if (get_account_password(&acct, password, sizeof(password)) != 0) {
+   char token_buf[2048];
+   caldav_auth_t auth;
+   if (build_auth_for_account(&acct, &auth, password, sizeof(password), token_buf,
+                              sizeof(token_buf)) != 0) {
       free(evt.raw_ical);
       return 1;
    }
@@ -1098,9 +1151,9 @@ int calendar_service_delete(int user_id, const char *uid) {
    char href[1024];
    snprintf(href, sizeof(href), "%s%s.ics", cal.caldav_path, evt.uid);
 
-   caldav_auth_t auth = { .username = acct.username, .password = password };
    caldav_error_t err = caldav_delete_event(href, &auth, evt.etag);
    sodium_memzero(password, sizeof(password));
+   sodium_memzero(token_buf, sizeof(token_buf));
    if (err != CALDAV_OK && err != CALDAV_ERR_NOT_FOUND) {
       LOG_ERROR("calendar: delete event failed: %s", caldav_strerror(err));
       free(evt.raw_ical);
