@@ -141,22 +141,14 @@ void log_message(log_level_t level,
    vsnprintf(log_message_buf, sizeof(log_message_buf), fmt, args);
    remove_newlines(log_message_buf);
 
-   // Output to stream if available
+   // Output to stream if available — single fprintf for thread safety
    if (output_stream) {
       if (log_file) {
-         // Log to file without colors
-         fprintf(output_stream, "%s", preamble);
+         fprintf(output_stream, "%s%s\n", preamble, log_message_buf);
       } else {
-         // Log to console with colors
-         fprintf(output_stream, "%s%s", color_code, preamble);
+         fprintf(output_stream, "%s%s%s%s\n", color_code, preamble, log_message_buf,
+                 ANSI_COLOR_RESET);
       }
-
-      // Print the log message
-      fprintf(output_stream, "%s", log_message_buf);
-      if (!log_file) {
-         fprintf(output_stream, "%s", ANSI_COLOR_RESET);
-      }
-      fprintf(output_stream, "\n");
    }
 
    va_end(args);

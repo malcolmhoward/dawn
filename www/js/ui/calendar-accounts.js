@@ -101,6 +101,15 @@
       }
    }
 
+   function requestSetEnabled(id, enabled) {
+      if (typeof DawnWS !== 'undefined' && DawnWS.isConnected()) {
+         DawnWS.send({
+            type: 'calendar_set_enabled',
+            payload: { id: id, enabled: enabled },
+         });
+      }
+   }
+
    /* =============================================================================
     * Response Handlers
     * ============================================================================= */
@@ -117,7 +126,12 @@
    function handleAddAccountResponse(payload) {
       resetSubmitButton();
       if (!payload.success) {
-         showToast('Failed to add account: ' + (payload.error || 'Unknown'), 'error');
+         if (payload.error === 'Account already exists') {
+            /* Silently ignore — likely a cross-service add for an existing account */
+            requestListAccounts();
+         } else {
+            showToast('Failed to add account: ' + (payload.error || 'Unknown'), 'error');
+         }
          return;
       }
       showToast('Calendar account added', 'success');
@@ -190,6 +204,13 @@
       requestListAccounts();
    }
 
+   function handleSetEnabledResponse(payload) {
+      if (!payload.success) {
+         showToast('Failed to update enabled state: ' + (payload.error || 'Unknown'), 'error');
+      }
+      requestListAccounts();
+   }
+
    /* =============================================================================
     * Rendering
     * ============================================================================= */
@@ -225,15 +246,17 @@
       list.innerHTML = accounts
          .map(
             (acct) => `
-         <div class="calendar-account-card${acct.read_only ? ' read-only' : ''}" data-account-id="${acct.id}">
+         <div class="calendar-account-card${acct.read_only ? ' read-only' : ''}${!acct.enabled ? ' disabled-account' : ''}" data-account-id="${acct.id}">
             <div class="calendar-account-header">
-               <span class="calendar-account-name">${escapeHtml(acct.name)}${acct.auth_type === 'oauth' ? '<span class="oauth-badge">OAuth</span>' : ''}</span>
+               <div class="calendar-account-title">
+                  <span class="calendar-account-name">${escapeHtml(acct.name)}</span>${acct.auth_type === 'oauth' ? '<span class="dawn-badge accent">OAuth</span>' : ''}${acct.read_only ? '<span class="dawn-badge warning">Read-only</span>' : ''}
+               </div>
                <div class="calendar-account-actions">
-                  ${acct.auth_type !== 'oauth' ? `<button data-action="edit" data-id="${acct.id}" title="Edit account">Edit</button>` : ''}
-                  <button data-action="test" data-id="${acct.id}" title="Test connection">Test</button>
-                  <button data-action="sync" data-id="${acct.id}" title="Sync now">Sync</button>
-                  <button data-action="calendars" data-id="${acct.id}" title="Show calendars">Calendars</button>
-                  <button class="btn-danger" data-action="remove" data-id="${acct.id}" data-name="${escapeHtml(acct.name)}" data-auth-type="${acct.auth_type || 'password'}" data-oauth-key="${escapeHtml(acct.oauth_account_key || '')}" title="Remove account">Remove</button>
+                  ${acct.auth_type !== 'oauth' ? `<button class="btn btn-secondary btn-small" data-action="edit" data-id="${acct.id}" title="Edit account">Edit</button>` : ''}
+                  <button class="btn btn-secondary btn-small" data-action="test" data-id="${acct.id}" title="Test connection">Test</button>
+                  <button class="btn btn-secondary btn-small" data-action="sync" data-id="${acct.id}" title="Sync now">Sync</button>
+                  <button class="btn btn-secondary btn-small" data-action="calendars" data-id="${acct.id}" title="Show calendars">Calendars</button>
+                  <button class="btn btn-danger btn-small" data-action="remove" data-id="${acct.id}" data-name="${escapeHtml(acct.name)}" data-auth-type="${acct.auth_type || 'password'}" data-oauth-key="${escapeHtml(acct.oauth_account_key || '')}" title="Remove account">Remove</button>
                </div>
             </div>
             <div class="calendar-account-details">
@@ -242,8 +265,9 @@
                      ? `
                <div class="detail-row">
                   <span class="detail-label">Type</span>
-                  <span><span class="oauth-status-dot connected"></span>Google OAuth</span>
-               </div>`
+                  <span><span class="dawn-status-dot success"></span>Google OAuth</span>
+               </div>
+               ${acct.oauth_account_key ? `<div class="detail-row oauth-shared-info"><span class="detail-label"></span><span class="detail-secondary">${escapeHtml(acct.oauth_account_key)}${getSharedServicesText(acct.oauth_account_key)}</span></div>` : ''}`
                      : `
                <div class="detail-row">
                   <span class="detail-label">URL</span>
@@ -256,16 +280,23 @@
                }
             </div>
             <div class="calendar-account-access">
-               <input type="checkbox" class="calendar-access-toggle"
+               <input type="checkbox" class="dawn-toggle"
+                  ${acct.enabled ? 'checked' : ''}
+                  data-action="toggle-enabled" data-id="${acct.id}"
+                  title="${acct.enabled ? 'Account is active' : 'Account is disabled'}"
+                  aria-label="Enable ${escapeHtml(acct.name)}"
+               />
+               <span class="dawn-toggle-label">Enabled</span>
+               <input type="checkbox" class="dawn-toggle"
                   ${acct.read_only ? 'checked' : ''}
                   data-action="toggle-read-only" data-id="${acct.id}"
                   title="${acct.read_only ? 'AI cannot modify this account' : 'AI can create/edit/delete events'}"
                   aria-label="Read only for ${escapeHtml(acct.name)}"
                />
-               <span class="calendar-access-label">Read only</span>
+               <span class="dawn-toggle-label">Read only</span>
             </div>
             <div class="calendar-account-status">
-               <span class="status-dot ${acct.last_sync > 0 ? 'synced' : 'never'}" title="${acct.last_sync > 0 ? 'Synced' : 'Never synced'}"></span>
+               <span class="dawn-status-dot ${acct.last_sync > 0 ? 'success' : 'warning'}" title="${acct.last_sync > 0 ? 'Synced' : 'Never synced'}"></span>
                <span>Last sync: ${formatSyncTime(acct.last_sync)}</span>
             </div>
             <div class="calendar-sub-list" id="cal-list-${acct.id}" style="display:none;"></div>
@@ -296,7 +327,7 @@
                <span class="calendar-color-dot" style="background:${escapeHtml(cal.color || '#888')}"></span>
                ${escapeHtml(cal.display_name)}
             </span>
-            <input type="checkbox" class="calendar-sub-toggle"
+            <input type="checkbox" class="dawn-toggle"
                ${cal.is_active ? 'checked' : ''}
                data-cal-id="${cal.id}"
                title="${cal.is_active ? 'Disable' : 'Enable'} this calendar"
@@ -341,7 +372,7 @@
    }
 
    function handleAccountListChange(e) {
-      const accessToggle = e.target.closest('.calendar-access-toggle');
+      const accessToggle = e.target.closest('[data-action="toggle-read-only"]');
       if (accessToggle) {
          const id = parseInt(accessToggle.dataset.id, 10);
          const readOnly = accessToggle.checked; /* checked = read-only */
@@ -349,7 +380,14 @@
          return;
       }
 
-      const toggle = e.target.closest('.calendar-sub-toggle');
+      const enabledToggle = e.target.closest('[data-action="toggle-enabled"]');
+      if (enabledToggle) {
+         const id = parseInt(enabledToggle.dataset.id, 10);
+         requestSetEnabled(id, enabledToggle.checked);
+         return;
+      }
+
+      const toggle = e.target.closest('[data-cal-id]');
       if (!toggle) return;
 
       const calId = parseInt(toggle.dataset.calId, 10);
@@ -391,15 +429,40 @@
    }
 
    function removeAccount(id, name, authType, oauthKey) {
+      /* Check if the other service shares this OAuth connection */
+      var emailShares = false;
+      if (
+         authType === 'oauth' &&
+         oauthKey &&
+         typeof DawnEmailAccounts !== 'undefined' &&
+         DawnEmailAccounts.getAccounts
+      ) {
+         var emailAccounts = DawnEmailAccounts.getAccounts();
+         emailShares = emailAccounts.some(function (a) {
+            return a.auth_type === 'oauth' && a.oauth_account_key === oauthKey;
+         });
+      }
+
       var msg = 'Remove calendar account "' + name + '"? All cached events will be deleted.';
-      if (authType === 'oauth') {
+      if (authType === 'oauth' && emailShares) {
+         msg +=
+            '\n\nThis Google account is also connected for Email. ' +
+            'Removing will only disconnect Calendar — Email will continue working.';
+      } else if (authType === 'oauth') {
          msg += ' OAuth tokens will be revoked.';
       }
+
       if (callbacks.showConfirmModal) {
          callbacks.showConfirmModal(
             msg,
             function () {
-               if (authType === 'oauth' && oauthKey && typeof DawnOAuth !== 'undefined') {
+               /* Only revoke OAuth if no other service uses it */
+               if (
+                  authType === 'oauth' &&
+                  oauthKey &&
+                  !emailShares &&
+                  typeof DawnOAuth !== 'undefined'
+               ) {
                   DawnOAuth.disconnect('google', oauthKey);
                }
                requestRemoveAccount(id);
@@ -407,7 +470,7 @@
             { title: 'Remove Calendar Account', okText: 'Remove', danger: true }
          );
       } else if (confirm(msg)) {
-         if (authType === 'oauth' && oauthKey && typeof DawnOAuth !== 'undefined') {
+         if (authType === 'oauth' && oauthKey && !emailShares && typeof DawnOAuth !== 'undefined') {
             DawnOAuth.disconnect('google', oauthKey);
          }
          requestRemoveAccount(id);
@@ -445,7 +508,7 @@
          modal.innerHTML = `
             <div class="modal-content">
                <h3 id="cal-edit-modal-title">Edit Calendar Account</h3>
-               <form class="calendar-add-form" id="calendar-edit-form" novalidate>
+               <form class="dawn-form" id="calendar-edit-form" novalidate>
                   <input type="hidden" id="cal-edit-id" />
                   <div class="form-group">
                      <label for="cal-edit-name">Account Name</label>
@@ -487,7 +550,24 @@
             if (e.target === modal) hideEditAccountModal();
          });
          modal.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') hideEditAccountModal();
+            if (e.key === 'Escape') {
+               hideEditAccountModal();
+               return;
+            }
+            if (e.key === 'Tab') {
+               const focusable = [
+                  ...modal.querySelectorAll('input, button, [tabindex]:not([tabindex="-1"])'),
+               ].filter((el) => el.offsetParent !== null);
+               const first = focusable[0];
+               const last = focusable[focusable.length - 1];
+               if (e.shiftKey && document.activeElement === first) {
+                  e.preventDefault();
+                  last.focus();
+               } else if (!e.shiftKey && document.activeElement === last) {
+                  e.preventDefault();
+                  first.focus();
+               }
+            }
          });
          document
             .getElementById('calendar-edit-form')
@@ -587,7 +667,7 @@
          modal.innerHTML = `
             <div class="modal-content">
                <h3 id="cal-modal-title">Add Calendar Account</h3>
-               <form class="calendar-add-form" id="calendar-add-form" novalidate>
+               <form class="dawn-form" id="calendar-add-form" novalidate>
                   <div class="auth-type-selector" role="tablist" aria-label="Authentication type">
                      <button type="button" class="auth-type-option active" data-auth-type="password" role="tab" aria-selected="true">App Password</button>
                      <button type="button" class="auth-type-option" data-auth-type="oauth" role="tab" aria-selected="false">Google OAuth</button>
@@ -640,6 +720,10 @@
                         <button type="button" class="oauth-connect-btn" id="cal-oauth-connect-btn">Connect with Google</button>
                         <div id="oauth-flow-status" class="oauth-flow-status" style="display:none;" aria-live="polite"></div>
                      </div>
+                     <label class="oauth-service-option">
+                        <input type="checkbox" id="cal-oauth-also-email" checked />
+                        Also enable for Email
+                     </label>
                      <div class="form-group">
                         <label class="calendar-checkbox-label">
                            <input type="checkbox" id="cal-add-oauth-view-only" />
@@ -838,6 +922,10 @@
     * OAuth Flow
     * ============================================================================= */
 
+   var GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar';
+   var GOOGLE_EMAIL_SCOPE =
+      'https://mail.google.com/ https://www.googleapis.com/auth/userinfo.email';
+
    let pendingOAuthAccountKey = null;
 
    function handleOAuthConnect() {
@@ -849,7 +937,7 @@
          statusEl.style.display = 'block';
          statusEl.className = 'oauth-flow-status';
          statusEl.innerHTML =
-            '<span class="oauth-flow-spinner"></span>Waiting for authorization...';
+            '<span class="oauth-flow-spinner"></span>Checking existing connections...';
       }
 
       if (typeof DawnOAuth === 'undefined') {
@@ -857,13 +945,45 @@
          return;
       }
 
-      DawnOAuth.startFlow('google', 'https://www.googleapis.com/auth/calendar')
-         .then(function () {
-            /* Code was sent to server; wait for exchange response */
+      var calendarScopes = GOOGLE_CALENDAR_SCOPE;
+      var emailCheckbox = document.getElementById('cal-oauth-also-email');
+      var requestScopes =
+         emailCheckbox && emailCheckbox.checked
+            ? calendarScopes + ' ' + GOOGLE_EMAIL_SCOPE
+            : calendarScopes;
+
+      /* Check if existing token already has the scopes we need */
+      DawnOAuth.checkScopes('google', requestScopes)
+         .then(function (result) {
+            if (result.success && result.has_scopes && result.account_key) {
+               /* Scopes already sufficient — no popup needed */
+               pendingOAuthAccountKey = result.account_key;
+               if (statusEl) {
+                  statusEl.className = 'oauth-flow-status success';
+                  statusEl.textContent =
+                     result.account_key + ' is already connected. No additional sign-in needed.';
+               }
+               var saveBtn = document.getElementById('cal-oauth-save');
+               if (saveBtn) saveBtn.disabled = false;
+               if (connectBtn) {
+                  connectBtn.disabled = false;
+                  connectBtn.textContent = 'Re-authorize';
+               }
+               return;
+            }
+
+            /* Need OAuth flow (new or scope upgrade) */
             if (statusEl) {
                statusEl.innerHTML =
-                  '<span class="oauth-flow-spinner"></span>Exchanging authorization code...';
+                  '<span class="oauth-flow-spinner"></span>Waiting for authorization...';
             }
+
+            return DawnOAuth.startFlow('google', requestScopes).then(function () {
+               if (statusEl) {
+                  statusEl.innerHTML =
+                     '<span class="oauth-flow-spinner"></span>Exchanging authorization code...';
+               }
+            });
          })
          .catch(function (err) {
             if (err.message === 'popup_blocked') {
@@ -923,6 +1043,34 @@
          '/';
 
       requestAddAccount(name, googleCalDavUrl, '', '', readOnly, 'oauth', pendingOAuthAccountKey);
+
+      /* Cross-service: also create email account if checkbox checked */
+      var emailCheckbox = document.getElementById('cal-oauth-also-email');
+      if (
+         emailCheckbox &&
+         emailCheckbox.checked &&
+         typeof DawnWS !== 'undefined' &&
+         DawnWS.isConnected()
+      ) {
+         DawnWS.send({
+            type: 'email_add_account',
+            payload: {
+               name: 'Gmail',
+               imap_server: 'imap.gmail.com',
+               imap_port: 993,
+               imap_ssl: true,
+               smtp_server: 'smtp.gmail.com',
+               smtp_port: 587,
+               smtp_ssl: true,
+               username: pendingOAuthAccountKey,
+               display_name: '',
+               read_only: readOnly,
+               auth_type: 'oauth',
+               oauth_account_key: pendingOAuthAccountKey,
+            },
+         });
+         showToast('Google account connected for Calendar and Email', 'success');
+      }
    }
 
    function setOAuthError(msg) {
@@ -963,6 +1111,21 @@
    /* =============================================================================
     * Helpers
     * ============================================================================= */
+
+   function getSharedServicesText(oauthKey) {
+      var services = ['Calendar'];
+      if (typeof DawnEmailAccounts !== 'undefined' && DawnEmailAccounts.getAccounts) {
+         var emailAccounts = DawnEmailAccounts.getAccounts();
+         if (
+            emailAccounts.some(function (a) {
+               return a.auth_type === 'oauth' && a.oauth_account_key === oauthKey;
+            })
+         ) {
+            services.push('Email');
+         }
+      }
+      return services.length > 1 ? ' \u00b7 ' + services.join(', ') : '';
+   }
 
    function showToast(msg, type) {
       if (typeof DawnToast !== 'undefined') {
@@ -1017,9 +1180,14 @@
     * Export
     * ============================================================================= */
 
+   function getAccounts() {
+      return accounts;
+   }
+
    window.DawnCalendarAccounts = {
       init: init,
       setCallbacks: setCallbacks,
+      getAccounts: getAccounts,
       handleListAccountsResponse: handleListAccountsResponse,
       handleAddAccountResponse: handleAddAccountResponse,
       handleEditAccountResponse: handleEditAccountResponse,
@@ -1029,6 +1197,7 @@
       handleListCalendarsResponse: handleListCalendarsResponse,
       handleToggleCalendarResponse: handleToggleCalendarResponse,
       handleToggleReadOnlyResponse: handleToggleReadOnlyResponse,
+      handleSetEnabledResponse: handleSetEnabledResponse,
       handleOAuthExchangeResponse: handleOAuthExchangeResponse,
       handleOAuthDisconnectResponse: handleOAuthDisconnectResponse,
       showAddAccountModal: showAddAccountModal,

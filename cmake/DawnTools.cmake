@@ -37,6 +37,7 @@ option(DAWN_ENABLE_SCHEDULER_TOOL "Enable scheduler/timer/alarm/reminder tool" O
 option(DAWN_ENABLE_TTS_TOOL "Enable text-to-speech command tool" ON)
 option(DAWN_ENABLE_DOCUMENT_SEARCH_TOOL "Enable RAG document search tool" ON)
 option(DAWN_ENABLE_CALENDAR_TOOL "Enable CalDAV calendar integration" ON)
+option(DAWN_ENABLE_EMAIL_TOOL "Enable IMAP/SMTP email integration" ON)
 
 # =============================================================================
 # Mutual Exclusion: Home Assistant and SmartThings
@@ -139,7 +140,9 @@ endif()
 # Memory Tool
 if(DAWN_ENABLE_MEMORY_TOOL)
     add_definitions(-DDAWN_ENABLE_MEMORY_TOOL)
-    list(APPEND TOOL_SOURCES src/tools/memory_tool.c)
+    list(APPEND TOOL_SOURCES
+        src/tools/memory_tool.c
+        src/memory/contacts_db.c)
     message(STATUS "DAWN: Memory tool ENABLED")
 else()
     message(STATUS "DAWN: Memory tool DISABLED")
@@ -256,6 +259,30 @@ if(DAWN_ENABLE_CALENDAR_TOOL)
     message(STATUS "DAWN: Calendar tool ENABLED")
 else()
     message(STATUS "DAWN: Calendar tool DISABLED")
+endif()
+
+# Email Tool (IMAP/SMTP)
+if(DAWN_ENABLE_EMAIL_TOOL)
+    add_definitions(-DDAWN_ENABLE_EMAIL_TOOL)
+    list(APPEND TOOL_SOURCES
+        src/tools/email_tool.c
+        src/tools/email_service.c
+        src/tools/email_db.c
+        src/tools/email_client.c
+        src/tools/gmail_client.c
+        src/webui/webui_email.c)
+    # oauth_client.c may already be included by calendar tool
+    if(NOT DAWN_ENABLE_CALENDAR_TOOL)
+        list(APPEND TOOL_SOURCES src/tools/oauth_client.c)
+    endif()
+    message(STATUS "DAWN: Email tool ENABLED")
+else()
+    message(STATUS "DAWN: Email tool DISABLED")
+endif()
+
+# Shared OAuth WebUI (needed by calendar or email for Google OAuth)
+if(DAWN_ENABLE_CALENDAR_TOOL OR DAWN_ENABLE_EMAIL_TOOL)
+    list(APPEND TOOL_SOURCES src/webui/webui_oauth.c)
 endif()
 
 # =============================================================================

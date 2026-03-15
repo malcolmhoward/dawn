@@ -24,6 +24,7 @@
 
 #include "tools/calendar_service.h"
 
+#include <ctype.h>
 #include <errno.h>
 #include <pthread.h>
 #include <stdatomic.h>
@@ -46,6 +47,7 @@
 #include "core/path_utils.h"
 #include "logging.h"
 #include "tools/caldav_client.h"
+#include "tools/email_db.h"
 #include "tools/oauth_client.h"
 
 /* =============================================================================
@@ -243,6 +245,23 @@ int calendar_service_add_account(int user_id,
       return 1;
    }
 
+   /* Duplicate check: same user + (OAuth key or username+URL) */
+   calendar_account_t existing[16];
+   int count = calendar_db_account_list(user_id, existing, 16);
+   for (int i = 0; i < count; i++) {
+      if (is_oauth && oauth_account_key && oauth_account_key[0] &&
+          strcmp(existing[i].oauth_account_key, oauth_account_key) == 0) {
+         LOG_INFO("calendar: account with OAuth key '%s' already exists, skipping",
+                  oauth_account_key);
+         return 2; /* Duplicate */
+      }
+      if (!is_oauth && username && caldav_url && strcmp(existing[i].username, username) == 0 &&
+          strcmp(existing[i].caldav_url, caldav_url) == 0) {
+         LOG_INFO("calendar: account '%s@%s' already exists, skipping", username, caldav_url);
+         return 2; /* Duplicate */
+      }
+   }
+
    calendar_account_t acct = { 0 };
    acct.user_id = user_id;
    acct.enabled = true;
@@ -272,6 +291,16 @@ int calendar_service_add_account(int user_id,
 
    LOG_INFO("calendar: added %s account '%s' (id=%lld)", is_oauth ? "OAuth" : "basic", name,
             (long long)id);
+
+   /* Discover calendars and run initial sync */
+   if (calendar_service_test_connection(id) == 0) {
+      calendar_service_sync_now(id);
+   } else {
+      LOG_WARNING("calendar: initial discovery failed for '%s', calendars will be discovered on "
+                  "next test",
+                  name);
+   }
+
    return 0;
 }
 
@@ -280,18 +309,36 @@ int calendar_service_remove_account(int64_t account_id) {
    calendar_account_t acct;
    if (calendar_db_account_get(account_id, &acct) == 0 && strcmp(acct.auth_type, "oauth") == 0 &&
        acct.oauth_account_key[0]) {
-      oauth_provider_config_t google;
-      if (oauth_build_google_provider(GOOGLE_CALENDAR_SCOPE, &google) == 0) {
-         int revoke_rc = oauth_revoke_and_delete(&google, acct.user_id, acct.oauth_account_key);
-         if (revoke_rc != 0) {
-            LOG_WARNING(
-                "calendar: OAuth token cleanup failed for account %lld (continuing removal)",
-                (long long)account_id);
+      /* Check if email service still uses this OAuth account before revoking */
+      bool email_uses_account = false;
+      email_account_t email_accts[EMAIL_MAX_ACCOUNTS];
+      int email_count = email_db_account_list(acct.user_id, email_accts, EMAIL_MAX_ACCOUNTS);
+      for (int i = 0; i < email_count; i++) {
+         if (strcmp(email_accts[i].auth_type, "oauth") == 0 &&
+             strcmp(email_accts[i].oauth_account_key, acct.oauth_account_key) == 0) {
+            email_uses_account = true;
+            break;
          }
-         sodium_memzero(&google, sizeof(google));
+      }
+      sodium_memzero(email_accts, sizeof(email_accts));
+
+      if (email_uses_account) {
+         LOG_INFO("calendar: keeping OAuth token for '%s' (still used by email)",
+                  acct.oauth_account_key);
       } else {
-         /* Config missing — just delete tokens locally without revoking */
-         oauth_delete_tokens(acct.user_id, "google", acct.oauth_account_key);
+         oauth_provider_config_t google;
+         if (oauth_build_google_provider(GOOGLE_CALENDAR_SCOPE, &google) == 0) {
+            int revoke_rc = oauth_revoke_and_delete(&google, acct.user_id, acct.oauth_account_key);
+            if (revoke_rc != 0) {
+               LOG_WARNING(
+                   "calendar: OAuth token cleanup failed for account %lld (continuing removal)",
+                   (long long)account_id);
+            }
+            sodium_memzero(&google, sizeof(google));
+         } else {
+            /* Config missing — just delete tokens locally without revoking */
+            oauth_delete_tokens(acct.user_id, "google", acct.oauth_account_key);
+         }
       }
    }
 
@@ -305,48 +352,54 @@ int calendar_service_remove_account(int64_t account_id) {
 }
 
 /**
- * Google CalDAV uses fixed URL patterns instead of RFC 4791 PROPFIND discovery.
- * Principal: https://apidata.googleusercontent.com/caldav/v2/{email}/user
- * Events:    https://apidata.googleusercontent.com/caldav/v2/{email}/events
+ * Google CalDAV uses known URL patterns for the calendar-home-set:
+ *   https://apidata.googleusercontent.com/caldav/v2/{email}/
  *
- * We verify the connection with a simple PROPFIND on the events URL and
- * synthesize the discovery result.
+ * We skip principal discovery (steps 1-2) and go straight to collection
+ * enumeration on the known calendar-home URL, which discovers all calendars
+ * the user has access to (primary, secondary, shared, etc.).
  */
 static int google_caldav_test(const calendar_account_t *acct,
                               const caldav_auth_t *auth,
                               caldav_discovery_result_t *disc) {
    memset(disc, 0, sizeof(*disc));
 
-   /* Build events URL from account key (email) — trailing slash required for href construction */
-   char events_url[512];
-   snprintf(events_url, sizeof(events_url),
-            "https://apidata.googleusercontent.com/caldav/v2/%s/events/", acct->oauth_account_key);
+   /* Validate oauth_account_key looks like an email (reject path traversal, injection) */
+   const char *key = acct->oauth_account_key;
+   if (!key || !key[0] || strlen(key) > 254) {
+      LOG_ERROR("calendar: invalid OAuth account key");
+      return 1;
+   }
+   for (const char *p = key; *p; p++) {
+      /* Allow alphanumeric, @, ., -, _, + (valid email chars) */
+      if (!isalnum((unsigned char)*p) && *p != '@' && *p != '.' && *p != '-' && *p != '_' &&
+          *p != '+') {
+         LOG_ERROR("calendar: OAuth account key contains invalid character: 0x%02x", *p);
+         return 1;
+      }
+   }
 
-   /* Verify access with a lightweight PROPFIND */
-   char ctag[128] = { 0 };
-   caldav_error_t err = caldav_get_ctag(events_url, auth, ctag, sizeof(ctag));
+   /* Use known Google calendar-home URL and run standard collection discovery */
+   char home_url[512];
+   snprintf(home_url, sizeof(home_url), "https://apidata.googleusercontent.com/caldav/v2/%s/", key);
+
+   caldav_error_t err = caldav_discover(home_url, auth, disc);
    if (err != CALDAV_OK) {
-      LOG_ERROR("calendar: Google CalDAV access failed for '%s': %s", acct->oauth_account_key,
-                caldav_strerror(err));
+      LOG_ERROR("calendar: Google CalDAV discovery failed for '%s': %s", key, caldav_strerror(err));
       return 1;
    }
 
-   /* Synthesize discovery result with the primary calendar */
-   snprintf(disc->principal_url, sizeof(disc->principal_url),
-            "https://apidata.googleusercontent.com/caldav/v2/%s/user", acct->oauth_account_key);
-   snprintf(disc->calendar_home_url, sizeof(disc->calendar_home_url),
-            "https://apidata.googleusercontent.com/caldav/v2/%s/", acct->oauth_account_key);
-
-   disc->calendars = calloc(1, sizeof(caldav_calendar_info_t));
-   if (disc->calendars) {
-      disc->calendar_count = 1;
-      snprintf(disc->calendars[0].path, sizeof(disc->calendars[0].path), "%s", events_url);
-      snprintf(disc->calendars[0].display_name, sizeof(disc->calendars[0].display_name), "%s",
-               acct->oauth_account_key);
-      snprintf(disc->calendars[0].ctag, sizeof(disc->calendars[0].ctag), "%s", ctag);
+   /* Fill in principal if discovery didn't set it */
+   if (!disc->principal_url[0]) {
+      snprintf(disc->principal_url, sizeof(disc->principal_url),
+               "https://apidata.googleusercontent.com/caldav/v2/%s/user", key);
+   }
+   if (!disc->calendar_home_url[0]) {
+      snprintf(disc->calendar_home_url, sizeof(disc->calendar_home_url), "%s", home_url);
    }
 
-   LOG_INFO("calendar: Google CalDAV connected for '%s'", acct->oauth_account_key);
+   LOG_INFO("calendar: Google CalDAV connected for '%s', found %d calendars", key,
+            disc->calendar_count);
    return 0;
 }
 
@@ -358,7 +411,7 @@ int calendar_service_test_connection(int64_t account_id) {
    }
 
    char password[384];
-   char token[2048];
+   char token[OAUTH_TOKEN_BUF_SIZE];
    caldav_auth_t auth;
    if (build_auth_for_account(&acct, &auth, password, sizeof(password), token, sizeof(token)) !=
        0) {
@@ -401,9 +454,6 @@ int calendar_service_test_connection(int64_t account_id) {
       bool found = false;
       for (int j = 0; j < existing_count; j++) {
          if (strcmp(existing_cals[j].caldav_path, ci->path) == 0) {
-            /* Update ctag if changed */
-            if (ci->ctag[0] && strcmp(existing_cals[j].ctag, ci->ctag) != 0)
-               calendar_db_calendar_update_ctag(existing_cals[j].id, ci->ctag);
             found = true;
             break;
          }
@@ -411,6 +461,8 @@ int calendar_service_test_connection(int64_t account_id) {
       if (found)
          continue;
 
+      /* Don't store ctag at discovery time — leave it empty so the first
+       * sync_now() sees a mismatch and actually fetches events. */
       calendar_calendar_t cal = { 0 };
       cal.account_id = account_id;
       snprintf(cal.caldav_path, sizeof(cal.caldav_path), "%s", ci->path);
@@ -418,7 +470,6 @@ int calendar_service_test_connection(int64_t account_id) {
                ci->display_name[0] ? ci->display_name : "Calendar");
       snprintf(cal.color, sizeof(cal.color), "%s", ci->color);
       cal.is_active = !ci->read_only;
-      snprintf(cal.ctag, sizeof(cal.ctag), "%s", ci->ctag);
       cal.created_at = now;
 
       int64_t cal_id = calendar_db_calendar_create(&cal);
@@ -545,7 +596,7 @@ int calendar_service_sync_now(int64_t account_id) {
       return 1;
 
    char password[384];
-   char token[2048];
+   char token[OAUTH_TOKEN_BUF_SIZE];
    caldav_auth_t auth;
    if (build_auth_for_account(&acct, &auth, password, sizeof(password), token, sizeof(token)) != 0)
       return 1;
@@ -649,22 +700,37 @@ int calendar_service_sync_now(int64_t account_id) {
  * Query Operations
  * ============================================================================= */
 
-/** Get user's active calendar IDs (helper) */
-static int get_user_calendar_ids(int user_id, int64_t *ids, int max_count) {
+/** Get user's active calendar IDs (helper).
+ *  When calendar_name is non-NULL, only return IDs for calendars matching that name
+ *  (case-insensitive exact match). When NULL, return all active calendars. */
+static int get_user_calendar_ids(int user_id,
+                                 const char *calendar_name,
+                                 int64_t *ids,
+                                 int max_count) {
    calendar_calendar_t cals[32];
    int count = calendar_db_active_calendars_for_user(user_id, cals,
                                                      max_count < 32 ? max_count : 32);
-   for (int i = 0; i < count; i++)
-      ids[i] = cals[i].id;
-   return count;
+   if (!calendar_name) {
+      for (int i = 0; i < count; i++)
+         ids[i] = cals[i].id;
+      return count;
+   }
+
+   int matched = 0;
+   for (int i = 0; i < count; i++) {
+      if (strcasecmp(cals[i].display_name, calendar_name) == 0)
+         ids[matched++] = cals[i].id;
+   }
+   return matched;
 }
 
 int calendar_service_today(int user_id,
                            const char *tz_name,
+                           const char *calendar_name,
                            calendar_occurrence_t *out,
                            int max_count) {
    int64_t cal_ids[32];
-   int cal_count = get_user_calendar_ids(user_id, cal_ids, 32);
+   int cal_count = get_user_calendar_ids(user_id, calendar_name, cal_ids, 32);
    if (cal_count <= 0)
       return 0;
 
@@ -688,8 +754,11 @@ int calendar_service_today(int user_id,
    time_t day_end = day_start + 86399;
 
    /* Query timed events */
+   LOG_INFO("calendar: today query user=%d cal_count=%d day_start=%lld day_end=%lld", user_id,
+            cal_count, (long long)day_start, (long long)day_end);
    int count = calendar_db_occurrences_in_range(cal_ids, cal_count, day_start, day_end, out,
                                                 max_count);
+   LOG_INFO("calendar: today timed results=%d", count);
 
    /* Query all-day events for today's date */
    char date_str[16];
@@ -717,19 +786,20 @@ int calendar_service_today(int user_id,
 int calendar_service_range(int user_id,
                            time_t start,
                            time_t end,
+                           const char *calendar_name,
                            calendar_occurrence_t *out,
                            int max_count) {
    int64_t cal_ids[32];
-   int cal_count = get_user_calendar_ids(user_id, cal_ids, 32);
+   int cal_count = get_user_calendar_ids(user_id, calendar_name, cal_ids, 32);
    if (cal_count <= 0)
       return 0;
 
    return calendar_db_occurrences_in_range(cal_ids, cal_count, start, end, out, max_count);
 }
 
-int calendar_service_next(int user_id, calendar_occurrence_t *out) {
+int calendar_service_next(int user_id, const char *calendar_name, calendar_occurrence_t *out) {
    int64_t cal_ids[32];
-   int cal_count = get_user_calendar_ids(user_id, cal_ids, 32);
+   int cal_count = get_user_calendar_ids(user_id, calendar_name, cal_ids, 32);
    if (cal_count <= 0)
       return 1;
 
@@ -738,10 +808,11 @@ int calendar_service_next(int user_id, calendar_occurrence_t *out) {
 
 int calendar_service_search(int user_id,
                             const char *query,
+                            const char *calendar_name,
                             calendar_occurrence_t *out,
                             int max_count) {
    int64_t cal_ids[32];
-   int cal_count = get_user_calendar_ids(user_id, cal_ids, 32);
+   int cal_count = get_user_calendar_ids(user_id, calendar_name, cal_ids, 32);
    if (cal_count <= 0)
       return 0;
 
@@ -855,7 +926,7 @@ int calendar_service_add(int user_id,
       return 1;
 
    char password[384];
-   char token[2048];
+   char token[OAUTH_TOKEN_BUF_SIZE];
    caldav_auth_t auth;
    if (build_auth_for_account(&acct, &auth, password, sizeof(password), token, sizeof(token)) != 0)
       return 1;
@@ -954,6 +1025,16 @@ int calendar_service_add(int user_id,
    evt.dtstart = start;
    evt.dtend = end;
    evt.all_day = all_day;
+   if (all_day) {
+      struct tm ds;
+      gmtime_r(&start, &ds);
+      snprintf(evt.dtstart_date, sizeof(evt.dtstart_date), "%04d-%02d-%02d", ds.tm_year + 1900,
+               ds.tm_mon + 1, ds.tm_mday);
+      struct tm de;
+      gmtime_r(&end, &de);
+      snprintf(evt.dtend_date, sizeof(evt.dtend_date), "%04d-%02d-%02d", de.tm_year + 1900,
+               de.tm_mon + 1, de.tm_mday);
+   }
    if (rrule)
       snprintf(evt.rrule, sizeof(evt.rrule), "%s", rrule);
    evt.raw_ical = (char *)ical; /* temp pointer, copied by upsert */
@@ -966,10 +1047,18 @@ int calendar_service_add(int user_id,
       occ.dtstart = start;
       occ.dtend = end;
       occ.all_day = all_day;
+      snprintf(occ.dtstart_date, sizeof(occ.dtstart_date), "%s", evt.dtstart_date);
+      snprintf(occ.dtend_date, sizeof(occ.dtend_date), "%s", evt.dtend_date);
       snprintf(occ.summary, sizeof(occ.summary), "%s", summary);
       if (location)
          snprintf(occ.location, sizeof(occ.location), "%s", location);
-      calendar_db_occurrence_insert(&occ);
+      int64_t occ_id = calendar_db_occurrence_insert(&occ);
+      LOG_INFO("calendar: cached event_id=%lld occ_id=%lld cal_id=%lld all_day=%d "
+               "dtstart=%lld dtend=%lld dtstart_date='%s' dtend_date='%s'",
+               (long long)event_id, (long long)occ_id, (long long)evt.calendar_id, all_day,
+               (long long)start, (long long)end, evt.dtstart_date, evt.dtend_date);
+   } else {
+      LOG_ERROR("calendar: event upsert failed, no occurrence cached");
    }
 
    if (uid_out && uid_out_len > 0)
@@ -1034,6 +1123,17 @@ int calendar_service_update(int user_id,
       snprintf(evt.location, sizeof(evt.location), "%s", location);
    if (description)
       snprintf(evt.description, sizeof(evt.description), "%s", description);
+   /* Update date strings for all-day events */
+   if (evt.all_day) {
+      struct tm ds;
+      gmtime_r(&evt.dtstart, &ds);
+      snprintf(evt.dtstart_date, sizeof(evt.dtstart_date), "%04d-%02d-%02d", ds.tm_year + 1900,
+               ds.tm_mon + 1, ds.tm_mday);
+      struct tm de;
+      gmtime_r(&evt.dtend, &de);
+      snprintf(evt.dtend_date, sizeof(evt.dtend_date), "%04d-%02d-%02d", de.tm_year + 1900,
+               de.tm_mon + 1, de.tm_mday);
+   }
    sanitize_ical_value(evt.summary);
    sanitize_ical_value(evt.location);
    sanitize_ical_value(evt.description);
@@ -1051,12 +1151,24 @@ int calendar_service_update(int user_id,
 
    struct tm st;
    gmtime_r(&evt.dtstart, &st);
-   pos += snprintf(ical + pos, sizeof(ical) - pos, "DTSTART:%04d%02d%02dT%02d%02d%02dZ\r\n",
-                   st.tm_year + 1900, st.tm_mon + 1, st.tm_mday, st.tm_hour, st.tm_min, st.tm_sec);
+   if (evt.all_day) {
+      pos += snprintf(ical + pos, sizeof(ical) - pos, "DTSTART;VALUE=DATE:%04d%02d%02d\r\n",
+                      st.tm_year + 1900, st.tm_mon + 1, st.tm_mday);
+   } else {
+      pos += snprintf(ical + pos, sizeof(ical) - pos, "DTSTART:%04d%02d%02dT%02d%02d%02dZ\r\n",
+                      st.tm_year + 1900, st.tm_mon + 1, st.tm_mday, st.tm_hour, st.tm_min,
+                      st.tm_sec);
+   }
    struct tm et;
    gmtime_r(&evt.dtend, &et);
-   pos += snprintf(ical + pos, sizeof(ical) - pos, "DTEND:%04d%02d%02dT%02d%02d%02dZ\r\n",
-                   et.tm_year + 1900, et.tm_mon + 1, et.tm_mday, et.tm_hour, et.tm_min, et.tm_sec);
+   if (evt.all_day) {
+      pos += snprintf(ical + pos, sizeof(ical) - pos, "DTEND;VALUE=DATE:%04d%02d%02d\r\n",
+                      et.tm_year + 1900, et.tm_mon + 1, et.tm_mday);
+   } else {
+      pos += snprintf(ical + pos, sizeof(ical) - pos, "DTEND:%04d%02d%02dT%02d%02d%02dZ\r\n",
+                      et.tm_year + 1900, et.tm_mon + 1, et.tm_mday, et.tm_hour, et.tm_min,
+                      et.tm_sec);
+   }
 
    pos += snprintf(ical + pos, sizeof(ical) - pos, "SUMMARY:%s\r\n", evt.summary);
    if (evt.location[0])
@@ -1104,6 +1216,8 @@ int calendar_service_update(int user_id,
       occ.dtstart = evt.dtstart;
       occ.dtend = evt.dtend;
       occ.all_day = evt.all_day;
+      snprintf(occ.dtstart_date, sizeof(occ.dtstart_date), "%s", evt.dtstart_date);
+      snprintf(occ.dtend_date, sizeof(occ.dtend_date), "%s", evt.dtend_date);
       snprintf(occ.summary, sizeof(occ.summary), "%s", evt.summary);
       snprintf(occ.location, sizeof(occ.location), "%s", evt.location);
       calendar_db_occurrence_insert(&occ);
@@ -1226,8 +1340,8 @@ static void *sync_thread_func(void *arg) {
       first_run = false;
 
       /* Sync all enabled accounts that are due */
-      calendar_account_t accounts[16];
-      int acct_count = calendar_db_account_list_enabled(accounts, 16);
+      calendar_account_t accounts[CALENDAR_MAX_ACCOUNTS];
+      int acct_count = calendar_db_account_list_enabled(accounts, CALENDAR_MAX_ACCOUNTS);
 
       time_t now = time(NULL);
       int synced = 0;

@@ -82,6 +82,8 @@ typedef struct {
    int in_link;
    size_t link_text_pos;
 
+   int plain_text;  // Plain text mode: skip markdown formatting (tables, links, headings)
+
    // Base URL for resolving relative links
    char base_url[512];
    char base_scheme[16];
@@ -92,6 +94,27 @@ typedef struct {
 // =============================================================================
 // Helper Functions
 // =============================================================================
+
+/**
+ * @brief Find closing '>' of an HTML tag, skipping '>' inside quoted attributes
+ *
+ * Simple strchr(p, '>') breaks on tags like:
+ *   <a href="url?x=1&gt;2">  or  <!--[if gt mso 9]>
+ * This scanner respects single and double-quoted attribute values.
+ */
+static const char *find_tag_end(const char *start, const char *end) {
+   int in_single = 0;
+   int in_double = 0;
+   for (const char *p = start; p < end; p++) {
+      if (*p == '"' && !in_single)
+         in_double = !in_double;
+      else if (*p == '\'' && !in_double)
+         in_single = !in_single;
+      else if (*p == '>' && !in_single && !in_double)
+         return p;
+   }
+   return NULL;
+}
 
 static const char *find_closing_tag(const char *html, const char *tag_name) {
    char close_tag[72];  // tag_name(64) + "</>" + null = 68 bytes, round up
@@ -951,17 +974,21 @@ static void handle_tag_open(html_parser_state_t *state,
       state->link_text_pos = 0;
       state->link_text[0] = '\0';
       state->link_href[0] = '\0';
-      extract_attr(tag_content, "href", state->link_href, sizeof(state->link_href));
+      if (!state->plain_text)
+         extract_attr(tag_content, "href", state->link_href, sizeof(state->link_href));
       return;
    }
 
-   // Table elements - simplified
+   // Table elements - simplified (plain_text: treat as block containers)
    if (strcasecmp(tag_name, "tr") == 0) {
       ensure_newline(state);
       return;
    }
    if (strcasecmp(tag_name, "td") == 0 || strcasecmp(tag_name, "th") == 0) {
-      emit_str(state, "| ");
+      if (!state->plain_text)
+         emit_str(state, "| ");
+      else
+         emit_char(state, ' ');
       return;
    }
 }
@@ -1033,8 +1060,10 @@ static void handle_tag_close(html_parser_state_t *state, const char *tag_name) {
    // Links
    if (strcasecmp(tag_name, "a") == 0) {
       if (state->in_link && state->link_text[0]) {
-         // Only emit link if we have both text and href
-         if (state->link_href[0] && strncmp(state->link_href, "javascript:", 11) != 0) {
+         if (state->plain_text) {
+            // Plain text mode: emit link text only, no URL
+            emit_str(state, state->link_text);
+         } else if (state->link_href[0] && strncmp(state->link_href, "javascript:", 11) != 0) {
             // Resolve relative URLs if we have a base URL
             char resolved_href[2048];
             if (state->base_host[0]) {
@@ -1061,7 +1090,8 @@ static void handle_tag_close(html_parser_state_t *state, const char *tag_name) {
 
    // Table row end
    if (strcasecmp(tag_name, "tr") == 0) {
-      emit_str(state, " |");
+      if (!state->plain_text)
+         emit_str(state, " |");
       ensure_newline(state);
       return;
    }
@@ -1268,16 +1298,18 @@ static size_t strip_css_artifacts(char *text) {
 // Public API
 // =============================================================================
 
-int html_extract_text_with_base(const char *html,
-                                size_t html_len,
-                                char **out_text,
-                                const char *base_url) {
+static int html_extract_internal(const char *html,
+                                 size_t html_len,
+                                 char **out_text,
+                                 const char *base_url,
+                                 int plain_text) {
    if (!html || !out_text) {
       return HTML_PARSE_ERROR_INVALID_INPUT;
    }
 
    // Initialize parser state
    html_parser_state_t state = { 0 };
+   state.plain_text = plain_text;
 
    // Heuristic: Markdown output is typically much smaller than HTML
    // (we strip scripts, styles, navigation, comments, tags themselves, etc.)
@@ -1311,7 +1343,7 @@ int html_extract_text_with_base(const char *html,
    const char *body = strcasestr_portable(html, "<body");
    if (body) {
       // Skip to after the opening body tag
-      const char *body_end = strchr(body, '>');
+      const char *body_end = find_tag_end(body + 1, end);
       if (body_end)
          p = body_end + 1;
    }
@@ -1330,11 +1362,12 @@ int html_extract_text_with_base(const char *html,
       if (*p == '<') {
          const char *tag_start = p + 1;
 
-         // Find end of tag
-         const char *tag_end = strchr(tag_start, '>');
+         // Find end of tag (quote-aware to handle '>' inside attributes)
+         const char *tag_end = find_tag_end(tag_start, end);
          if (!tag_end) {
-            p++;
-            continue;
+            // No closing '>' found — input is truncated mid-tag.
+            // Stop parsing to avoid emitting raw tag content as text.
+            break;
          }
 
          // Extract tag name
@@ -1485,8 +1518,19 @@ int html_extract_text_with_base(const char *html,
    return HTML_PARSE_SUCCESS;
 }
 
+int html_extract_text_with_base(const char *html,
+                                size_t html_len,
+                                char **out_text,
+                                const char *base_url) {
+   return html_extract_internal(html, html_len, out_text, base_url, 0);
+}
+
 int html_extract_text(const char *html, size_t html_len, char **out_text) {
-   return html_extract_text_with_base(html, html_len, out_text, NULL);
+   return html_extract_internal(html, html_len, out_text, NULL, 0);
+}
+
+int html_extract_text_plain(const char *html, size_t html_len, char **out_text) {
+   return html_extract_internal(html, html_len, out_text, NULL, 1);
 }
 
 #undef EMIT_LIT

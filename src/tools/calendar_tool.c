@@ -245,7 +245,7 @@ static int append_access_summary(char *buf, int pos, size_t buf_len, int user_id
  * ============================================================================= */
 
 static char *handle_calendars(int user_id) {
-   calendar_account_t accounts[16];
+   calendar_account_t accounts[CALENDAR_MAX_ACCOUNTS];
    int acct_count = calendar_db_account_list(user_id, accounts, 16);
 
    char *buf = malloc(RESULT_BUF_SIZE);
@@ -282,10 +282,12 @@ static char *handle_calendars(int user_id) {
    return buf;
 }
 
-static char *handle_today(int user_id) {
+static char *handle_today(struct json_object *details, int user_id) {
    const char *tz = g_config.localization.timezone;
+   const char *calendar_name = json_get_str(details, "calendar");
+
    calendar_occurrence_t events[MAX_EVENTS];
-   int count = calendar_service_today(user_id, tz, events, MAX_EVENTS);
+   int count = calendar_service_today(user_id, tz, calendar_name, events, MAX_EVENTS);
 
    char *buf = malloc(RESULT_BUF_SIZE);
    if (!buf)
@@ -293,7 +295,13 @@ static char *handle_today(int user_id) {
 
    int pos = 0;
    if (count <= 0) {
-      pos += snprintf(buf + pos, RESULT_BUF_SIZE - pos, "No events scheduled for today.");
+      if (calendar_name)
+         pos += snprintf(buf + pos, RESULT_BUF_SIZE - pos,
+                         "No events scheduled for today on calendar '%s'. "
+                         "Use the 'calendars' action to list available calendars.",
+                         calendar_name);
+      else
+         pos += snprintf(buf + pos, RESULT_BUF_SIZE - pos, "No events scheduled for today.");
    } else {
       pos += snprintf(buf + pos, RESULT_BUF_SIZE - pos, "Today's events (%d):\n", count);
       for (int i = 0; i < count && pos < RESULT_BUF_SIZE - 256; i++) {
@@ -308,6 +316,7 @@ static char *handle_today(int user_id) {
 static char *handle_range(struct json_object *details, int user_id) {
    const char *start_str = json_get_str(details, "start");
    const char *end_str = json_get_str(details, "end");
+   const char *calendar_name = json_get_str(details, "calendar");
 
    if (!start_str) {
       return strdup("Error: 'start' is required for range query (ISO 8601 datetime)");
@@ -327,7 +336,7 @@ static char *handle_range(struct json_object *details, int user_id) {
    }
 
    calendar_occurrence_t events[MAX_EVENTS];
-   int count = calendar_service_range(user_id, start, end, events, MAX_EVENTS);
+   int count = calendar_service_range(user_id, start, end, calendar_name, events, MAX_EVENTS);
 
    char *buf = malloc(RESULT_BUF_SIZE);
    if (!buf)
@@ -335,7 +344,13 @@ static char *handle_range(struct json_object *details, int user_id) {
 
    int pos = 0;
    if (count <= 0) {
-      pos += snprintf(buf + pos, RESULT_BUF_SIZE - pos, "No events in the specified range.");
+      if (calendar_name)
+         pos += snprintf(buf + pos, RESULT_BUF_SIZE - pos,
+                         "No events in the specified range on calendar '%s'. "
+                         "Use the 'calendars' action to list available calendars.",
+                         calendar_name);
+      else
+         pos += snprintf(buf + pos, RESULT_BUF_SIZE - pos, "No events in the specified range.");
    } else {
       pos += snprintf(buf + pos, RESULT_BUF_SIZE - pos, "Events in range (%d):\n", count);
       for (int i = 0; i < count && pos < RESULT_BUF_SIZE - 256; i++) {
@@ -347,12 +362,23 @@ static char *handle_range(struct json_object *details, int user_id) {
    return buf;
 }
 
-static char *handle_next(int user_id) {
-   calendar_occurrence_t occ;
-   int rc = calendar_service_next(user_id, &occ);
+static char *handle_next(struct json_object *details, int user_id) {
+   const char *calendar_name = json_get_str(details, "calendar");
 
-   if (rc != 0)
+   calendar_occurrence_t occ;
+   int rc = calendar_service_next(user_id, calendar_name, &occ);
+
+   if (rc != 0) {
+      if (calendar_name) {
+         char msg[256];
+         snprintf(msg, sizeof(msg),
+                  "No upcoming events found on calendar '%s'. "
+                  "Use the 'calendars' action to list available calendars.",
+                  calendar_name);
+         return strdup(msg);
+      }
       return strdup("No upcoming events found.");
+   }
 
    char *buf = malloc(RESULT_BUF_SIZE);
    if (!buf)
@@ -370,8 +396,10 @@ static char *handle_search(struct json_object *details, int user_id) {
    if (!query || !query[0])
       return strdup("Error: 'query' text is required for search");
 
+   const char *calendar_name = json_get_str(details, "calendar");
+
    calendar_occurrence_t events[MAX_EVENTS];
-   int count = calendar_service_search(user_id, query, events, 20);
+   int count = calendar_service_search(user_id, query, calendar_name, events, 20);
 
    char *buf = malloc(RESULT_BUF_SIZE);
    if (!buf)
@@ -379,7 +407,13 @@ static char *handle_search(struct json_object *details, int user_id) {
 
    int pos = 0;
    if (count <= 0) {
-      pos += snprintf(buf + pos, RESULT_BUF_SIZE - pos, "No events matching '%s'.", query);
+      if (calendar_name)
+         pos += snprintf(buf + pos, RESULT_BUF_SIZE - pos,
+                         "No events matching '%s' on calendar '%s'. "
+                         "Use the 'calendars' action to list available calendars.",
+                         query, calendar_name);
+      else
+         pos += snprintf(buf + pos, RESULT_BUF_SIZE - pos, "No events matching '%s'.", query);
    } else {
       pos += snprintf(buf + pos, RESULT_BUF_SIZE - pos, "Search results for '%s' (%d):\n", query,
                       count);
@@ -520,11 +554,11 @@ static char *calendar_tool_callback(const char *action, char *value, int *should
    if (strcmp(action, "calendars") == 0) {
       result = handle_calendars(user_id);
    } else if (strcmp(action, "today") == 0) {
-      result = handle_today(user_id);
+      result = handle_today(details, user_id);
    } else if (strcmp(action, "range") == 0) {
       result = handle_range(details, user_id);
    } else if (strcmp(action, "next") == 0) {
-      result = handle_next(user_id);
+      result = handle_next(details, user_id);
    } else if (strcmp(action, "search") == 0) {
       result = handle_search(details, user_id);
    } else if (strcmp(action, "add") == 0) {
@@ -585,10 +619,12 @@ static const treg_param_t calendar_params[] = {
        .description =
            "JSON object with action-specific fields. "
            "For 'calendars': no fields needed. "
-           "For 'today': no fields needed. "
-           "For 'range': {start (ISO 8601, required), end (ISO 8601, optional, default +24h)}. "
-           "For 'next': no fields needed. "
-           "For 'search': {query (text to search in event titles/locations)}. "
+           "For 'today': {calendar (filter by calendar name, optional)}. "
+           "For 'range': {start (ISO 8601, required), end (ISO 8601, optional, default +24h), "
+           "calendar (filter by calendar name, optional)}. "
+           "For 'next': {calendar (filter by calendar name, optional)}. "
+           "For 'search': {query (text to search in event titles/locations), "
+           "calendar (filter by calendar name, optional)}. "
            "For 'add': {summary (required), start (ISO 8601, required), end (ISO 8601, optional), "
            "location (optional), description (optional), all_day (bool, optional), "
            "calendar (target calendar name, optional), rrule (recurrence rule, optional)}. "

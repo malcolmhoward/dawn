@@ -83,32 +83,39 @@ int calendar_service_sync_now(int64_t account_id);
 
 /**
  * Get events for today in the user's timezone.
- * @param user_id   Authenticated user
- * @param tz_name   IANA timezone name (e.g., "America/New_York")
- * @param out       Output array
- * @param max_count Array capacity
+ * @param user_id        Authenticated user
+ * @param tz_name        IANA timezone name (e.g., "America/New_York")
+ * @param calendar_name  Filter by calendar name (case-insensitive), NULL for all
+ * @param out            Output array
+ * @param max_count      Array capacity
  * @return count, or -1 on error
  */
 int calendar_service_today(int user_id,
                            const char *tz_name,
+                           const char *calendar_name,
                            calendar_occurrence_t *out,
                            int max_count);
 
 /**
  * Get events in a date/time range.
+ * @param calendar_name  Filter by calendar name (case-insensitive), NULL for all
  */
 int calendar_service_range(int user_id,
                            time_t start,
                            time_t end,
+                           const char *calendar_name,
                            calendar_occurrence_t *out,
                            int max_count);
 
-/** Get the next upcoming event */
-int calendar_service_next(int user_id, calendar_occurrence_t *out);
+/** Get the next upcoming event.
+ *  @param calendar_name  Filter by calendar name (case-insensitive), NULL for all */
+int calendar_service_next(int user_id, const char *calendar_name, calendar_occurrence_t *out);
 
-/** Search events by text */
+/** Search events by text.
+ *  @param calendar_name  Filter by calendar name (case-insensitive), NULL for all */
 int calendar_service_search(int user_id,
                             const char *query,
+                            const char *calendar_name,
                             calendar_occurrence_t *out,
                             int max_count);
 

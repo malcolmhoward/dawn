@@ -35,25 +35,29 @@
 .calendar-account-header {
    display: flex;
    flex-direction: column;
-   align-items: flex-start;
-   gap: 0.5rem;
+   gap: 0.35rem;
+}
+
+.calendar-account-title {
+   display: flex;
+   align-items: center;
+   gap: 0.4rem;
+   flex: 1;
+   min-width: 0;
 }
 
 .calendar-account-name {
    font-weight: 500;
    color: var(--text-primary);
-   flex: 1;
-   min-width: 0;
    overflow: hidden;
    text-overflow: ellipsis;
    white-space: nowrap;
+   min-width: 0;
 }
 
 .calendar-account-actions {
    display: flex;
    gap: 0.25rem;
-   flex-shrink: 0;
-   flex-wrap: wrap;
 }
 
 .calendar-account-actions button {
@@ -106,6 +110,11 @@
    min-width: 4rem;
 }
 
+.calendar-account-details .detail-secondary {
+   color: var(--text-tertiary);
+   font-size: 0.8rem;
+}
+
 .calendar-account-status {
    display: flex;
    align-items: center;
@@ -113,25 +122,14 @@
    font-size: 0.8rem;
 }
 
-.calendar-account-status .status-dot {
-   width: 6px;
-   height: 6px;
-   border-radius: 50%;
-   background: var(--text-tertiary);
-   flex-shrink: 0;
-}
-
-.calendar-account-status .status-dot.synced {
-   background: var(--success);
-}
-
-.calendar-account-status .status-dot.never {
-   background: var(--warning);
-}
-
 /* Read-only card indicator */
 .calendar-account-card.read-only {
    border-left: 3px solid var(--warning);
+}
+
+/* Disabled account card */
+.calendar-account-card.disabled-account {
+   opacity: 0.5;
 }
 
 /* AI access toggle row */
@@ -140,50 +138,6 @@
    align-items: center;
    gap: 0.5rem;
    padding: 0.25rem 0;
-}
-
-.calendar-access-label {
-   font-size: 0.85rem;
-   color: var(--text-secondary);
-}
-
-.calendar-access-toggle {
-   appearance: none;
-   width: 32px;
-   height: 18px;
-   background: var(--bg-secondary);
-   border: 1px solid var(--border-color);
-   border-radius: 9px;
-   position: relative;
-   cursor: pointer;
-   transition: background var(--transition-fast);
-}
-
-.calendar-access-toggle::before {
-   content: '';
-   position: absolute;
-   width: 12px;
-   height: 12px;
-   border-radius: 50%;
-   top: 2px;
-   left: 2px;
-   background: var(--text-secondary);
-   transition: transform var(--transition-fast);
-}
-
-.calendar-access-toggle:checked {
-   background: var(--accent);
-   border-color: var(--accent);
-}
-
-.calendar-access-toggle:checked::before {
-   transform: translateX(16px);
-   background: #fff;
-}
-
-.calendar-access-toggle:focus-visible {
-   outline: 2px solid var(--accent);
-   outline-offset: 2px;
 }
 
 /* Checkbox label in modal */
@@ -235,45 +189,6 @@
    flex-shrink: 0;
 }
 
-.calendar-sub-toggle {
-   appearance: none;
-   width: 32px;
-   height: 18px;
-   background: var(--bg-secondary);
-   border: 1px solid var(--border-color);
-   border-radius: 9px;
-   position: relative;
-   cursor: pointer;
-   transition: background var(--transition-fast);
-}
-
-.calendar-sub-toggle::before {
-   content: '';
-   position: absolute;
-   width: 12px;
-   height: 12px;
-   border-radius: 50%;
-   top: 2px;
-   left: 2px;
-   background: var(--text-secondary);
-   transition: transform var(--transition-fast);
-}
-
-.calendar-sub-toggle:checked {
-   background: var(--accent);
-   border-color: var(--accent);
-}
-
-.calendar-sub-toggle:checked::before {
-   transform: translateX(16px);
-   background: #fff;
-}
-
-.calendar-sub-toggle:focus-visible {
-   outline: 2px solid var(--accent);
-   outline-offset: 2px;
-}
-
 .calendar-account-actions button:focus-visible {
    outline: 2px solid var(--accent);
    outline-offset: 1px;
@@ -281,64 +196,6 @@
 
 .calendar-account-card:hover {
    background: var(--bg-hover, var(--bg-tertiary));
-}
-
-/* Add Account Modal (reuses existing modal styles) */
-.calendar-add-form {
-   display: flex;
-   flex-direction: column;
-   gap: 0.75rem;
-}
-
-.calendar-add-form .form-group {
-   display: flex;
-   flex-direction: column;
-   gap: 0.25rem;
-}
-
-.calendar-add-form label {
-   font-size: 0.85rem;
-   color: var(--text-secondary);
-}
-
-.calendar-add-form input {
-   background: var(--bg-tertiary);
-   border: 1px solid var(--border-color);
-   border-radius: 6px;
-   padding: 0.625rem 0.875rem;
-   color: var(--text-primary);
-   font-size: 0.875rem;
-}
-
-.calendar-add-form input:focus {
-   outline: none;
-   border-color: var(--accent);
-}
-
-.calendar-add-form input.input-error {
-   border-color: var(--error);
-}
-
-.calendar-add-form .form-error {
-   font-size: 0.75rem;
-   color: var(--error);
-   display: none;
-}
-
-.calendar-add-form .form-error.visible {
-   display: block;
-}
-
-.calendar-add-form .form-hint {
-   font-size: 0.75rem;
-   color: var(--text-tertiary);
-}
-
-.calendar-add-form .form-actions {
-   display: flex;
-   justify-content: flex-end;
-   gap: 0.5rem;
-   margin-top: 0.25rem;
 }
 
 /* Loading spinner on buttons */
@@ -351,6 +208,25 @@
    font-size: 0.85rem;
    color: var(--text-secondary);
    padding: 0.25rem;
+}
+
+/* Cross-service checkbox in OAuth modals */
+.oauth-service-option {
+   display: flex;
+   align-items: center;
+   gap: 0.5rem;
+   padding: 0.5rem 0.75rem;
+   border-radius: 6px;
+   background: rgba(255, 255, 255, 0.04);
+   font-size: 0.85rem;
+   color: var(--text-secondary);
+   cursor: pointer;
+}
+
+.oauth-service-option input[type='checkbox'] {
+   width: 16px;
+   height: 16px;
+   accent-color: var(--accent);
 }
 
 /* Responsive: larger touch targets on narrow screens */

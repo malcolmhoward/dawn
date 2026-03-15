@@ -17,10 +17,14 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Build presets to test
+# Format: "preset_name[:extra_cmake_args]"
+#   preset_name    - CMake preset (local, full, debug)
+#   extra_args     - Additional -D flags (optional, colon-separated from preset)
 PRESETS=(
     "local"
     "full"
     "debug"
+    "debug:-DDAWN_ENABLE_EMAIL_TOOL=ON"
 )
 
 # Track results
@@ -47,33 +51,78 @@ log_header() {
     echo "=============================================="
 }
 
+# Parse a preset entry into its components
+# "debug:-DFOO=ON" -> preset=debug, extra_args="-DFOO=ON", label="debug+FOO"
+parse_preset_entry() {
+    local entry=$1
+    PRESET_NAME="${entry%%:*}"
+    if [[ "$entry" == *:* ]]; then
+        PRESET_EXTRA="${entry#*:}"
+    else
+        PRESET_EXTRA=""
+    fi
+}
+
+# Get a human-readable label for a preset entry
+get_label() {
+    local entry=$1
+    parse_preset_entry "$entry"
+    if [[ -n "$PRESET_EXTRA" ]]; then
+        # Extract option names: "-DDAWN_ENABLE_EMAIL_TOOL=ON" -> "email"
+        local suffix=$(echo "$PRESET_EXTRA" | sed 's/-DDAWN_ENABLE_//g; s/_TOOL=ON//g' | tr '[:upper:]' '[:lower:]' | tr ' ' '+')
+        echo "${PRESET_NAME}+${suffix}"
+    else
+        echo "$PRESET_NAME"
+    fi
+}
+
 # Map preset name to build directory
 get_build_dir() {
-    local preset=$1
-    case "$preset" in
+    local entry=$1
+    local label=$(get_label "$entry")
+    parse_preset_entry "$entry"
+    case "$PRESET_NAME" in
         local) echo "build-local" ;;
         full)  echo "build-full" ;;
-        debug) echo "build-debug" ;;
-        *)           echo "build-${preset}" ;;
+        debug)
+            if [[ -n "$PRESET_EXTRA" ]]; then
+                echo "build-debug-${label#debug+}"
+            else
+                echo "build-debug"
+            fi
+            ;;
+        *)     echo "build-${label}" ;;
     esac
 }
 
 # Build a preset
 build_preset() {
-    local preset=$1
-    local build_dir=$(get_build_dir "$preset")
+    local entry=$1
+    local label=$(get_label "$entry")
+    parse_preset_entry "$entry"
+    local build_dir=$(get_build_dir "$entry")
 
-    log_info "Configuring $preset..."
-    if ! cmake --preset "$preset" > /tmp/cmake_${preset}.log 2>&1; then
-        log_error "CMake configure failed for $preset"
-        cat /tmp/cmake_${preset}.log
-        return 1
+    log_info "Configuring $label..."
+    if [[ -n "$PRESET_EXTRA" ]]; then
+        # Variant build: use -B to place in a separate build dir so we don't
+        # clobber the base preset's build directory
+        if ! cmake --preset "$PRESET_NAME" -B "$build_dir" $PRESET_EXTRA > /tmp/cmake_${label}.log 2>&1; then
+            log_error "CMake configure failed for $label"
+            cat /tmp/cmake_${label}.log
+            return 1
+        fi
+    else
+        if ! cmake --preset "$PRESET_NAME" > /tmp/cmake_${label}.log 2>&1; then
+            log_error "CMake configure failed for $label"
+            cat /tmp/cmake_${label}.log
+            return 1
+        fi
     fi
 
-    log_info "Building $preset..."
-    if ! make -C "$build_dir" -j$(nproc) > /tmp/make_${preset}.log 2>&1; then
-        log_error "Build failed for $preset"
-        tail -50 /tmp/make_${preset}.log
+    log_info "Building $label..."
+    if ! make -C "$build_dir" -j$(nproc) > /tmp/make_${label}.log 2>&1; then
+        log_error "Build failed for $label"
+        tail -50 /tmp/make_${label}.log
         return 1
     fi
 
@@ -83,17 +132,18 @@ build_preset() {
 
 # Test if binary starts and reaches "Listening..."
 test_run() {
-    local preset=$1
-    local build_dir=$(get_build_dir "$preset")
+    local entry=$1
+    local label=$(get_label "$entry")
+    local build_dir=$(get_build_dir "$entry")
     local binary="$build_dir/dawn"
-    local log_file="/tmp/dawn_${preset}_run.log"
+    local log_file="/tmp/dawn_${label}_run.log"
 
     if [[ ! -x "$binary" ]]; then
         log_error "Binary not found: $binary"
         return 1
     fi
 
-    log_info "Testing $preset startup..."
+    log_info "Testing $label startup..."
 
     # Run with timeout, capture output
     export LD_LIBRARY_PATH=/usr/local/lib
@@ -101,14 +151,14 @@ test_run() {
 
     # Check for successful startup indicators
     if grep -q "Listening\.\.\." "$log_file"; then
-        log_info "$preset: Reached 'Listening...' state"
+        log_info "$label: Reached 'Listening...' state"
         return 0
     elif grep -q "ERR.*Failed" "$log_file"; then
-        log_error "$preset: Startup failed"
+        log_error "$label: Startup failed"
         grep "ERR" "$log_file" | head -5
         return 1
     else
-        log_warn "$preset: Did not reach 'Listening...' state"
+        log_warn "$label: Did not reach 'Listening...' state"
         tail -10 "$log_file"
         return 1
     fi
@@ -126,15 +176,22 @@ if [[ "$1" == "--skip-build" ]]; then
     log_info "Skipping builds (--skip-build)"
 fi
 
+# Collect labels for results tracking
+LABELS=()
+for entry in "${PRESETS[@]}"; do
+    LABELS+=("$(get_label "$entry")")
+done
+
 # Build phase
 if [[ $SKIP_BUILD -eq 0 ]]; then
     log_header "Build Phase"
-    for preset in "${PRESETS[@]}"; do
+    for i in "${!PRESETS[@]}"; do
         echo ""
-        if build_preset "$preset"; then
-            BUILD_RESULTS[$preset]="PASS"
+        local_label="${LABELS[$i]}"
+        if build_preset "${PRESETS[$i]}"; then
+            BUILD_RESULTS[$local_label]="PASS"
         else
-            BUILD_RESULTS[$preset]="FAIL"
+            BUILD_RESULTS[$local_label]="FAIL"
             FAILED=1
         fi
     done
@@ -142,23 +199,24 @@ fi
 
 # Run phase
 log_header "Run Phase"
-for preset in "${PRESETS[@]}"; do
+for i in "${!PRESETS[@]}"; do
     echo ""
-    if test_run "$preset"; then
-        RUN_RESULTS[$preset]="PASS"
+    local_label="${LABELS[$i]}"
+    if test_run "${PRESETS[$i]}"; then
+        RUN_RESULTS[$local_label]="PASS"
     else
-        RUN_RESULTS[$preset]="FAIL"
+        RUN_RESULTS[$local_label]="FAIL"
         FAILED=1
     fi
 done
 
 # Summary
 log_header "Results Summary"
-printf "%-15s %-10s %-10s\n" "Preset" "Build" "Run"
-printf "%-15s %-10s %-10s\n" "-------" "-----" "---"
-for preset in "${PRESETS[@]}"; do
-    build_status="${BUILD_RESULTS[$preset]:-SKIP}"
-    run_status="${RUN_RESULTS[$preset]:-SKIP}"
+printf "%-20s %-10s %-10s\n" "Preset" "Build" "Run"
+printf "%-20s %-10s %-10s\n" "-------" "-----" "---"
+for label in "${LABELS[@]}"; do
+    build_status="${BUILD_RESULTS[$label]:-SKIP}"
+    run_status="${RUN_RESULTS[$label]:-SKIP}"
 
     # Color the results
     if [[ "$build_status" == "PASS" ]]; then
@@ -177,7 +235,7 @@ for preset in "${PRESETS[@]}"; do
         run_colored="${YELLOW}SKIP${NC}"
     fi
 
-    printf "%-15s " "$preset"
+    printf "%-20s " "$label"
     echo -e "$build_colored       $run_colored"
 done
 

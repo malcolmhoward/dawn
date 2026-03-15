@@ -32,6 +32,7 @@
 #include "config/dawn_config.h"
 #include "core/session_manager.h"
 #include "logging.h"
+#include "memory/contacts_db.h"
 #include "memory/memory_db.h"
 #include "memory/memory_embeddings.h"
 #include "memory/memory_similarity.h"
@@ -906,6 +907,106 @@ char *memoryCallback(const char *actionName, char *value, int *should_respond) {
       return memory_action_forget(user_id, value);
    } else if (strcmp(actionName, "recent") == 0) {
       return memory_action_recent(user_id, value);
+   } else if (strcmp(actionName, "save_contact") == 0) {
+      /* value format: "entity_name::field_type::type::value::val::label::lbl" */
+      if (!value || !value[0])
+         return strdup("Error: save_contact requires entity name, field_type, and value");
+
+      char entity_name[128] = "";
+      tool_param_extract_base(value, entity_name, sizeof(entity_name));
+
+      char field_type[32] = "";
+      tool_param_extract_custom(value, "field_type", field_type, sizeof(field_type));
+
+      char contact_value[256] = "";
+      tool_param_extract_custom(value, "value", contact_value, sizeof(contact_value));
+
+      char label[32] = "";
+      tool_param_extract_custom(value, "label", label, sizeof(label));
+
+      if (!entity_name[0] || !field_type[0] || !contact_value[0])
+         return strdup("Error: save_contact requires entity name, field_type, and value");
+
+      /* Find or create entity */
+      char canonical[64];
+      memory_make_canonical_name(entity_name, canonical, sizeof(canonical));
+      bool created = false;
+      int64_t entity_id = memory_db_entity_upsert(user_id, entity_name, "person", canonical,
+                                                  &created);
+      if (entity_id < 0)
+         return strdup("Error: failed to find or create entity");
+
+      if (contacts_add(user_id, entity_id, field_type, contact_value, label) != 0)
+         return strdup("Error: failed to save contact information");
+
+      char *result = malloc(512);
+      if (result)
+         snprintf(result, 512, "Saved %s %s for %s%s%s%s", field_type, contact_value, entity_name,
+                  label[0] ? " (" : "", label, label[0] ? ")" : "");
+      return result ? result : strdup("Contact saved.");
+   } else if (strcmp(actionName, "find_contact") == 0) {
+      if (!value || !value[0])
+         return strdup("Error: find_contact requires a name to search for");
+
+      char name[128] = "";
+      tool_param_extract_base(value, name, sizeof(name));
+
+      char field_type[32] = "";
+      tool_param_extract_custom(value, "field_type", field_type, sizeof(field_type));
+
+      contact_result_t results[10];
+      int count = contacts_find(user_id, name[0] ? name : value, field_type[0] ? field_type : NULL,
+                                results, 10);
+
+      if (count <= 0)
+         return strdup("No contacts found matching that name.");
+
+      char *buf = malloc(2048);
+      if (!buf)
+         return strdup("Error: memory allocation failed");
+      int pos = snprintf(buf, 2048, "Contact results (%d):\n", count);
+      for (int i = 0; i < count && pos < 1900; i++) {
+         pos += snprintf(buf + pos, 2048 - pos, "- %s: %s = %s%s%s%s [id:%lld]\n",
+                         results[i].entity_name, results[i].field_type, results[i].value,
+                         results[i].label[0] ? " (" : "", results[i].label,
+                         results[i].label[0] ? ")" : "", (long long)results[i].contact_id);
+      }
+      return buf;
+   } else if (strcmp(actionName, "list_contacts") == 0) {
+      char field_type[32] = "";
+      if (value)
+         tool_param_extract_base(value, field_type, sizeof(field_type));
+
+      contact_result_t results[20];
+      int count = contacts_list(user_id, field_type[0] ? field_type : NULL, results, 20);
+
+      if (count <= 0)
+         return strdup("No contacts stored.");
+
+      char *buf = malloc(4096);
+      if (!buf)
+         return strdup("Error: memory allocation failed");
+      int pos = snprintf(buf, 4096, "All contacts (%d):\n", count);
+      for (int i = 0; i < count && pos < 3900; i++) {
+         pos += snprintf(buf + pos, 4096 - pos, "- %s: %s = %s%s%s%s\n", results[i].entity_name,
+                         results[i].field_type, results[i].value, results[i].label[0] ? " (" : "",
+                         results[i].label, results[i].label[0] ? ")" : "");
+      }
+      return buf;
+   } else if (strcmp(actionName, "delete_contact") == 0) {
+      if (!value || !value[0])
+         return strdup("Error: delete_contact requires a contact ID");
+
+      char id_str[32] = "";
+      tool_param_extract_base(value, id_str, sizeof(id_str));
+      int64_t contact_id = strtoll(id_str[0] ? id_str : value, NULL, 10);
+      if (contact_id <= 0)
+         return strdup("Error: invalid contact ID");
+
+      if (contacts_delete(user_id, contact_id) != 0)
+         return strdup("Error: contact not found or already deleted");
+
+      return strdup("Contact deleted.");
    } else {
       char *msg = malloc(128);
       if (msg) {

@@ -1,0 +1,233 @@
+/* Email Account Management Styles */
+
+.email-accounts-list {
+   display: flex;
+   flex-direction: column;
+   gap: 0.5rem;
+}
+
+.email-accounts-empty {
+   color: var(--text-secondary);
+   font-style: italic;
+   padding: 1rem;
+   text-align: center;
+}
+
+.email-accounts-actions {
+   display: flex;
+   gap: 0.5rem;
+   margin-bottom: 1rem;
+}
+
+/* Account Card — matches calendar-account-card pattern */
+.email-account-card {
+   background: var(--bg-tertiary);
+   border-radius: 6px;
+   padding: 0.75rem;
+   display: flex;
+   flex-direction: column;
+   gap: 0.5rem;
+   transition: background var(--transition-fast);
+}
+
+.email-account-card:hover {
+   background: var(--bg-hover, var(--bg-tertiary));
+}
+
+.email-account-card.read-only {
+   border-left: 3px solid var(--warning);
+}
+
+.email-account-card.disabled-account {
+   opacity: 0.5;
+}
+
+.email-account-header {
+   display: flex;
+   flex-direction: column;
+   gap: 0.35rem;
+}
+
+.email-account-title {
+   display: flex;
+   align-items: center;
+   gap: 0.4rem;
+   flex: 1;
+   min-width: 0;
+}
+
+.email-account-name {
+   font-weight: 500;
+   color: var(--text-primary);
+   overflow: hidden;
+   text-overflow: ellipsis;
+   white-space: nowrap;
+   min-width: 0;
+}
+
+.email-account-actions {
+   display: flex;
+   gap: 0.25rem;
+}
+
+.email-account-actions button {
+   background: none;
+   border: 1px solid var(--border-color);
+   color: var(--text-secondary);
+   border-radius: 4px;
+   padding: 0.35rem 0.6rem;
+   font-size: 0.75rem;
+   cursor: pointer;
+   min-height: 28px;
+   transition:
+      color var(--transition-fast),
+      border-color var(--transition-fast);
+}
+
+.email-account-actions button:hover {
+   color: var(--accent);
+   border-color: var(--accent);
+}
+
+.email-account-actions button.btn-danger:hover {
+   color: var(--error);
+   border-color: var(--error);
+}
+
+.email-account-actions button:focus-visible {
+   outline: 2px solid var(--accent);
+   outline-offset: 1px;
+}
+
+.email-account-details {
+   font-size: 0.85rem;
+   color: var(--text-secondary);
+   display: flex;
+   flex-direction: column;
+   gap: 0.15rem;
+}
+
+.email-account-details .detail-row {
+   display: flex;
+   gap: 0.5rem;
+   min-width: 0;
+}
+
+.email-account-details .detail-label {
+   color: var(--text-tertiary);
+   min-width: 4rem;
+}
+
+.email-account-details .detail-secondary {
+   color: var(--text-tertiary);
+   font-size: 0.8rem;
+}
+
+.email-account-access {
+   display: flex;
+   align-items: center;
+   gap: 0.5rem;
+   padding: 0.25rem 0;
+}
+
+.email-account-status {
+   display: flex;
+   align-items: center;
+   gap: 0.25rem;
+   font-size: 0.8rem;
+   color: var(--text-tertiary);
+}
+
+/* Email modal sizing — matches calendar modal pattern */
+.email-modal-content {
+   max-width: 480px;
+   max-height: calc(100vh - 4rem);
+   overflow-y: auto;
+}
+
+/* Add/Edit Account Modal — layout-specific overrides for dawn-form */
+.email-add-form .setting-group {
+   margin-bottom: 0.75rem;
+   padding: 0.5rem;
+   background: var(--bg-secondary);
+   border-radius: 6px;
+}
+
+.email-add-form .setting-group-title {
+   font-size: 0.8rem;
+   font-weight: 600;
+   color: var(--text-secondary);
+   margin-bottom: 0.5rem;
+   text-transform: uppercase;
+   letter-spacing: 0.05em;
+}
+
+.email-add-form .server-row {
+   display: flex;
+   gap: 0.5rem;
+   align-items: center;
+}
+
+.email-add-form .server-row input[name*='server'] {
+   flex: 1;
+}
+
+.email-add-form .server-row input[name*='port'] {
+   width: 5rem;
+}
+
+.email-add-form .ssl-toggle-row {
+   display: flex;
+   align-items: center;
+   gap: 0.5rem;
+   margin-top: 0.25rem;
+}
+
+/* auth-type-selector is defined in oauth.css */
+
+/* Password toggle */
+.password-input-wrapper {
+   display: flex;
+   gap: 0.5rem;
+   align-items: center;
+}
+
+.password-input-wrapper input {
+   flex: 1;
+}
+
+/* Advanced settings collapsible */
+.email-add-form .advanced-settings {
+   margin-top: 0.5rem;
+}
+
+.email-add-form .advanced-settings > summary {
+   cursor: pointer;
+   user-select: none;
+}
+
+.email-add-form .advanced-settings > summary:hover {
+   color: var(--accent);
+}
+
+/* Loading spinner on buttons */
+.email-account-actions button.loading {
+   pointer-events: none;
+   opacity: 0.6;
+}
+
+@media (max-width: 480px) {
+   .email-add-form .server-row {
+      flex-direction: column;
+   }
+
+   .email-add-form .server-row input[name*='port'] {
+      width: 100%;
+   }
+
+   .email-account-actions button {
+      flex: 1;
+      min-height: 36px;
+      font-size: 0.8rem;
+   }
+}

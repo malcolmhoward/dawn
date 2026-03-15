@@ -53,17 +53,7 @@ void handle_calendar_toggle_calendar(ws_connection_t *conn, json_object *payload
 /** Toggle an account's read-only flag */
 void handle_calendar_toggle_read_only(ws_connection_t *conn, json_object *payload);
 
-/* =============================================================================
- * OAuth Handlers
- * ============================================================================= */
-
-/** Generate OAuth authorization URL */
-void handle_oauth_get_auth_url(ws_connection_t *conn, json_object *payload);
-
-/** Exchange OAuth authorization code for tokens */
-void handle_oauth_exchange_code(ws_connection_t *conn, json_object *payload);
-
-/** Disconnect (revoke + delete) OAuth tokens */
-void handle_oauth_disconnect(ws_connection_t *conn, json_object *payload);
+/** Set an account's enabled flag */
+void handle_calendar_set_enabled(ws_connection_t *conn, json_object *payload);
 
 #endif /* WEBUI_CALENDAR_H */

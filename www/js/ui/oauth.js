@@ -84,7 +84,13 @@
             if (popup && popup.closed) {
                clearTimeout(timeout);
                cleanup();
-               reject(new Error('Authorization window was closed'));
+               reject(
+                  new Error(
+                     'Authorization window was closed without completing. ' +
+                        'If you approved access but still see this error, check that ' +
+                        'the WebUI URL matches the redirect_url in secrets.toml (origin mismatch).'
+                  )
+               );
             }
          }, 500);
 
@@ -150,10 +156,56 @@
       }
    }
 
+   /**
+    * Check if existing OAuth tokens already cover the required scopes.
+    * @param {string} provider - e.g. "google"
+    * @param {string} scopes - space-separated required scopes
+    * @returns {Promise} resolves with {has_scopes, account_key} or rejects
+    */
+   function checkScopes(provider, scopes) {
+      return new Promise(function (resolve, reject) {
+         if (typeof DawnWS === 'undefined' || !DawnWS.isConnected()) {
+            reject(new Error('WebSocket not connected'));
+            return;
+         }
+
+         /* Listen for the response via custom event */
+         function handler(e) {
+            window.removeEventListener('dawn-oauth-check-scopes', handler);
+            clearTimeout(timer);
+            resolve(e.detail);
+         }
+         window.addEventListener('dawn-oauth-check-scopes', handler);
+
+         var timer = setTimeout(function () {
+            window.removeEventListener('dawn-oauth-check-scopes', handler);
+            reject(new Error('Scope check timed out'));
+         }, 10000);
+
+         DawnWS.send({
+            type: 'oauth_check_scopes',
+            payload: { provider: provider, scopes: scopes || '' },
+         });
+      });
+   }
+
+   /**
+    * Handle the check_scopes response from the server.
+    */
+   function handleCheckScopesResponse(payload) {
+      window.dispatchEvent(
+         new CustomEvent('dawn-oauth-check-scopes', {
+            detail: payload,
+         })
+      );
+   }
+
    window.DawnOAuth = {
       startFlow: startFlow,
       handleAuthUrlResponse: handleAuthUrlResponse,
       handleExchangeCodeResponse: handleExchangeCodeResponse,
+      handleCheckScopesResponse: handleCheckScopesResponse,
+      checkScopes: checkScopes,
       disconnect: disconnect,
    };
 })();

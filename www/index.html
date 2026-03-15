@@ -1614,6 +1614,33 @@ Format rules:
                   </div>
                </div>
 
+               <!-- Email Accounts Section (all authenticated users) -->
+               <div class="settings-section collapsed" id="email-accounts-section">
+                  <h3 class="section-header">
+                     <span class="section-icon">&#x2709;</span>
+                     Email Accounts
+                     <span class="section-toggle">&#9660;</span>
+                  </h3>
+                  <div class="section-content">
+                     <p class="section-description">
+                        Connect IMAP/SMTP email accounts (Gmail, iCloud, Outlook, etc.)
+                     </p>
+                     <div class="email-accounts-actions">
+                        <button id="email-add-account-btn" class="btn btn-primary btn-small">
+                           Add Account
+                        </button>
+                        <button id="email-refresh-accounts-btn" class="btn btn-secondary btn-small">
+                           Refresh
+                        </button>
+                     </div>
+                     <div id="email-accounts-list" class="email-accounts-list">
+                        <div class="email-accounts-empty">
+                           No email accounts configured. Click "Add Account" to connect.
+                        </div>
+                     </div>
+                  </div>
+               </div>
+
                <!-- System Config Sections (admin only) -->
                <div class="settings-sections admin-only" id="settings-sections">
                   <!-- Settings sections will be dynamically generated -->
@@ -2737,6 +2764,7 @@ token = "eyJ..."</pre
       <script src="/js/ui/doc-library.js"></script>
       <script src="/js/ui/oauth.js"></script>
       <script src="/js/ui/calendar-accounts.js"></script>
+      <script src="/js/ui/email-accounts.js"></script>
       <!-- Settings sub-modules (order matters) -->
       <script src="/js/ui/settings/utils.js"></script>
       <script src="/js/ui/settings/modals.js"></script>

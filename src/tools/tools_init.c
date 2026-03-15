@@ -91,6 +91,9 @@
 #ifdef DAWN_ENABLE_CALENDAR_TOOL
 #include "tools/calendar_tool.h"
 #endif
+#ifdef DAWN_ENABLE_EMAIL_TOOL
+#include "tools/email_tool.h"
+#endif
 
 /* ========== Registration ========== */
 
@@ -241,6 +244,12 @@ int tools_register_all(void) {
 #ifdef DAWN_ENABLE_CALENDAR_TOOL
    if (calendar_tool_register() != 0) {
       LOG_WARNING("Failed to register calendar tool");
+   }
+#endif
+
+#ifdef DAWN_ENABLE_EMAIL_TOOL
+   if (email_tool_register() != 0) {
+      LOG_WARNING("Failed to register email tool");
    }
 #endif
 

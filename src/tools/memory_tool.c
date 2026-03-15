@@ -42,19 +42,28 @@ static const treg_param_t memory_params[] = {
    {
        .name = "action",
        .description = "Memory action: 'remember' (store a fact), 'search' (find memories), "
-                      "'forget' (delete a memory by ID), 'recent' (list recent memories)",
+                      "'forget' (delete a memory by ID), 'recent' (list recent memories), "
+                      "'save_contact' (store email/phone for a person), "
+                      "'find_contact' (look up contact info), "
+                      "'list_contacts' (list all contacts), "
+                      "'delete_contact' (remove contact by ID)",
        .type = TOOL_PARAM_TYPE_ENUM,
        .required = true,
        .maps_to = TOOL_MAPS_TO_ACTION,
-       .enum_values = { "remember", "search", "forget", "recent" },
-       .enum_count = 4,
+       .enum_values = { "remember", "search", "forget", "recent", "save_contact", "find_contact",
+                        "list_contacts", "delete_contact" },
+       .enum_count = 8,
    },
    {
        .name = "query",
        .description = "For 'remember': the fact to store (e.g., 'User prefers dark mode'). "
                       "For 'search': keywords to find relevant memories. "
                       "For 'forget': memory ID to delete. "
-                      "For 'recent': optional limit number (default 10).",
+                      "For 'recent': optional limit number (default 10). "
+                      "For 'save_contact': the person's name. "
+                      "For 'find_contact': name to search for. "
+                      "For 'list_contacts': optional field_type filter (email/phone). "
+                      "For 'delete_contact': contact ID to remove.",
        .type = TOOL_PARAM_TYPE_STRING,
        .required = false,
        .maps_to = TOOL_MAPS_TO_VALUE,
@@ -85,6 +94,13 @@ static const tool_metadata_t memory_metadata = {
                   "time_range like '24h', '7d', '2w'). "
                   "Use 'forget' to delete a specific memory by ID. "
                   "Use 'recent' to list recently stored memories. "
+                  "Use 'save_contact' to store contact info (email, phone) for a person "
+                  "(query: person name, field_type: email/phone, value: the address/number, "
+                  "label: work/personal). "
+                  "Use 'find_contact' to look up contact info by name "
+                  "(query: name, optional field_type). "
+                  "Use 'list_contacts' to list all stored contacts (query: optional field_type). "
+                  "Use 'delete_contact' to remove a contact record by ID. "
                   "Memories persist across sessions and are private to each user.",
    .params = memory_params,
    .param_count = 3,

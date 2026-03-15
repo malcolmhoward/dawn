@@ -144,12 +144,12 @@ static CURL *caldav_curl_init(const caldav_auth_t *auth, curl_buf_t *resp) {
    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
    curl_easy_setopt(curl, CURLOPT_WRITEDATA, resp);
    curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)CALDAV_TIMEOUT_SEC);
-   curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-   curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 5L);
+   /* Disable redirects to prevent credential leakage to third-party hosts */
+   curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);
    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
-   /* SSRF protection: restrict to HTTP/HTTPS only (blocks file://, gopher://, etc.) */
-   curl_easy_setopt(curl, CURLOPT_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
+   /* SSRF protection: restrict to HTTPS only (CalDAV servers must use TLS) */
+   curl_easy_setopt(curl, CURLOPT_PROTOCOLS, CURLPROTO_HTTPS);
 
    if (auth && auth->bearer_token) {
       curl_easy_setopt(curl, CURLOPT_HTTPAUTH, CURLAUTH_BEARER);
@@ -237,7 +237,7 @@ static caldav_error_t do_propfind(CURL *curl,
 static int resolve_href(const char *base_url, const char *href, char *out, size_t out_len) {
    if (!href || !href[0]) {
       out[0] = '\0';
-      return -1;
+      return 1;
    }
 
    /* Case 1: Full URL (starts with http:// or https://) */
@@ -250,7 +250,7 @@ static int resolve_href(const char *base_url, const char *href, char *out, size_
    const char *scheme_end = strstr(base_url, "://");
    if (!scheme_end) {
       snprintf(out, out_len, "%s", href);
-      return -1;
+      return 1;
    }
    const char *host_start = scheme_end + 3;
    const char *host_end = strchr(host_start, '/');
@@ -303,7 +303,7 @@ static int xpath_text(xmlXPathContextPtr ctx,
    ctx->node = saved;
 
    if (!result)
-      return -1;
+      return 1;
 
    if (result->nodesetval && result->nodesetval->nodeNr > 0) {
       xmlNodePtr n = result->nodesetval->nodeTab[0];
@@ -316,7 +316,7 @@ static int xpath_text(xmlXPathContextPtr ctx,
       }
    }
    xmlXPathFreeObject(result);
-   return -1;
+   return 1;
 }
 
 /* ============================================================================
@@ -342,7 +342,8 @@ static caldav_error_t discover_principal(CURL *curl,
    if (err != CALDAV_OK)
       return err;
 
-   xmlDocPtr doc = xmlParseMemory(resp->data, (int)resp->size);
+   xmlDocPtr doc = xmlReadMemory(resp->data, (int)resp->size, NULL, NULL,
+                                 XML_PARSE_NONET | XML_PARSE_NOBLANKS);
    if (!doc)
       return CALDAV_ERR_PARSE;
 
@@ -387,7 +388,8 @@ static caldav_error_t discover_calendar_home(CURL *curl,
    if (err != CALDAV_OK)
       return err;
 
-   xmlDocPtr doc = xmlParseMemory(resp->data, (int)resp->size);
+   xmlDocPtr doc = xmlReadMemory(resp->data, (int)resp->size, NULL, NULL,
+                                 XML_PARSE_NONET | XML_PARSE_NOBLANKS);
    if (!doc)
       return CALDAV_ERR_PARSE;
 
@@ -439,7 +441,8 @@ static caldav_error_t discover_collections(CURL *curl,
    if (err != CALDAV_OK)
       return err;
 
-   xmlDocPtr doc = xmlParseMemory(resp->data, (int)resp->size);
+   xmlDocPtr doc = xmlReadMemory(resp->data, (int)resp->size, NULL, NULL,
+                                 XML_PARSE_NONET | XML_PARSE_NOBLANKS);
    if (!doc)
       return CALDAV_ERR_PARSE;
 
@@ -624,7 +627,8 @@ caldav_error_t caldav_get_ctag(const char *calendar_url,
       return err;
    }
 
-   xmlDocPtr doc = xmlParseMemory(resp.data, (int)resp.size);
+   xmlDocPtr doc = xmlReadMemory(resp.data, (int)resp.size, NULL, NULL,
+                                 XML_PARSE_NONET | XML_PARSE_NOBLANKS);
    curl_buf_free(&resp);
    if (!doc)
       return CALDAV_ERR_PARSE;
@@ -712,7 +716,8 @@ caldav_error_t caldav_fetch_events(const char *calendar_url,
    }
 
    /* Parse multistatus response */
-   xmlDocPtr doc = xmlParseMemory(resp.data, (int)resp.size);
+   xmlDocPtr doc = xmlReadMemory(resp.data, (int)resp.size, NULL, NULL,
+                                 XML_PARSE_NONET | XML_PARSE_NOBLANKS);
    curl_buf_free(&resp);
    if (!doc)
       return CALDAV_ERR_PARSE;

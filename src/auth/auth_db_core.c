@@ -934,6 +934,58 @@ static int create_schema(void) {
       LOG_INFO("auth_db: added oauth_tokens table and calendar OAuth support (v25)");
    }
 
+   /* v26 migration: contacts table + email_accounts table */
+   if (current_version >= 1 && current_version < 26) {
+      const char *v26_sql =
+          "CREATE TABLE IF NOT EXISTS contacts ("
+          "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+          "  user_id INTEGER NOT NULL,"
+          "  entity_id INTEGER NOT NULL,"
+          "  field_type TEXT NOT NULL,"
+          "  value TEXT NOT NULL,"
+          "  label TEXT DEFAULT '',"
+          "  created_at INTEGER NOT NULL,"
+          "  FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,"
+          "  FOREIGN KEY(entity_id) REFERENCES memory_entities(id) ON DELETE CASCADE"
+          ");"
+          "CREATE INDEX IF NOT EXISTS idx_contacts_entity ON contacts(entity_id);"
+          "CREATE INDEX IF NOT EXISTS idx_contacts_user_type ON contacts(user_id, field_type);"
+          "CREATE TABLE IF NOT EXISTS email_accounts ("
+          "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+          "  user_id INTEGER NOT NULL,"
+          "  name TEXT NOT NULL,"
+          "  imap_server TEXT NOT NULL,"
+          "  imap_port INTEGER DEFAULT 993,"
+          "  imap_ssl INTEGER DEFAULT 1,"
+          "  smtp_server TEXT NOT NULL,"
+          "  smtp_port INTEGER DEFAULT 465,"
+          "  smtp_ssl INTEGER DEFAULT 1,"
+          "  username TEXT NOT NULL,"
+          "  display_name TEXT DEFAULT '',"
+          "  encrypted_password BLOB,"
+          "  encrypted_password_len INTEGER DEFAULT 0,"
+          "  auth_type TEXT DEFAULT 'app_password',"
+          "  oauth_account_key TEXT DEFAULT '',"
+          "  enabled INTEGER DEFAULT 1,"
+          "  read_only INTEGER DEFAULT 0,"
+          "  max_recent INTEGER DEFAULT 10,"
+          "  max_body_chars INTEGER DEFAULT 4000,"
+          "  created_at INTEGER NOT NULL,"
+          "  FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE"
+          ");"
+          "CREATE INDEX IF NOT EXISTS idx_email_acct_user ON email_accounts(user_id);";
+
+      rc = sqlite3_exec(s_db.db, v26_sql, NULL, NULL, &errmsg);
+      if (rc != SQLITE_OK) {
+         LOG_ERROR("auth_db: v26 migration (contacts + email_accounts) failed: %s",
+                   errmsg ? errmsg : "unknown");
+         sqlite3_free(errmsg);
+         return AUTH_DB_FAILURE;
+      }
+
+      LOG_INFO("auth_db: added contacts and email_accounts tables (v26)");
+   }
+
    /* Create continuation index (runs for both new databases and migrations) */
    rc = sqlite3_exec(s_db.db,
                      "CREATE INDEX IF NOT EXISTS idx_conversations_continued "
@@ -2143,6 +2195,13 @@ static int prepare_statements(void) {
       return AUTH_DB_FAILURE;
    }
 
+   rc = sqlite3_prepare_v2(s_db.db, "UPDATE calendar_accounts SET enabled = ? WHERE id = ?", -1,
+                           &s_db.stmt_cal_acct_set_enabled, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare cal_acct_set_enabled failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
    rc = sqlite3_prepare_v2(s_db.db,
                            "INSERT INTO calendar_calendars (account_id, caldav_path, display_name, "
                            "color, is_active, ctag, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -2363,6 +2422,129 @@ static int prepare_statements(void) {
                            -1, &s_db.stmt_oauth_exists, NULL);
    if (rc != SQLITE_OK) {
       LOG_ERROR("auth_db: prepare oauth_exists failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT account_key, scopes FROM oauth_tokens "
+                           "WHERE user_id = ? AND provider = ?",
+                           -1, &s_db.stmt_oauth_list_accounts, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare oauth_list_accounts failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   /* === Contacts statements === */
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "SELECT c.id, c.entity_id, e.name, e.canonical_name, c.field_type, c.value, c.label "
+       "FROM contacts c JOIN memory_entities e ON c.entity_id = e.id "
+       "WHERE c.user_id = ? AND e.canonical_name LIKE ? ESCAPE '\\' "
+       "AND c.field_type LIKE ? ORDER BY e.name LIMIT ?",
+       -1, &s_db.stmt_contacts_find, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare contacts_find failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "INSERT INTO contacts (user_id, entity_id, field_type, value, label, created_at) "
+       "VALUES (?, ?, ?, ?, ?, ?)",
+       -1, &s_db.stmt_contacts_add, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare contacts_add failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM contacts WHERE id = ? AND user_id = ?", -1,
+                           &s_db.stmt_contacts_delete, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare contacts_delete failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "SELECT c.id, c.entity_id, e.name, e.canonical_name, c.field_type, c.value, c.label "
+       "FROM contacts c JOIN memory_entities e ON c.entity_id = e.id "
+       "WHERE c.user_id = ? AND c.field_type LIKE ? ORDER BY e.name LIMIT ?",
+       -1, &s_db.stmt_contacts_list, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare contacts_list failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   /* === Email account statements === */
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "INSERT INTO email_accounts (user_id, name, imap_server, imap_port, imap_ssl, "
+       "smtp_server, smtp_port, smtp_ssl, username, display_name, "
+       "encrypted_password, encrypted_password_len, auth_type, oauth_account_key, "
+       "enabled, read_only, max_recent, max_body_chars, created_at) "
+       "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+       -1, &s_db.stmt_email_acct_create, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare email_acct_create failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "SELECT id, user_id, name, imap_server, imap_port, imap_ssl, "
+       "smtp_server, smtp_port, smtp_ssl, username, display_name, "
+       "encrypted_password, encrypted_password_len, auth_type, oauth_account_key, "
+       "enabled, read_only, max_recent, max_body_chars, created_at "
+       "FROM email_accounts WHERE id = ?",
+       -1, &s_db.stmt_email_acct_get, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare email_acct_get failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "SELECT id, user_id, name, imap_server, imap_port, imap_ssl, "
+       "smtp_server, smtp_port, smtp_ssl, username, display_name, "
+       "encrypted_password, encrypted_password_len, auth_type, oauth_account_key, "
+       "enabled, read_only, max_recent, max_body_chars, created_at "
+       "FROM email_accounts WHERE user_id = ? ORDER BY name",
+       -1, &s_db.stmt_email_acct_list, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare email_acct_list failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "UPDATE email_accounts SET name=?, imap_server=?, imap_port=?, imap_ssl=?, "
+       "smtp_server=?, smtp_port=?, smtp_ssl=?, username=?, display_name=?, "
+       "encrypted_password=?, encrypted_password_len=?, auth_type=?, oauth_account_key=?, "
+       "max_recent=?, max_body_chars=? WHERE id=?",
+       -1, &s_db.stmt_email_acct_update, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare email_acct_update failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM email_accounts WHERE id = ?", -1,
+                           &s_db.stmt_email_acct_delete, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare email_acct_delete failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db, "UPDATE email_accounts SET read_only = ? WHERE id = ?", -1,
+                           &s_db.stmt_email_acct_set_read_only, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare email_acct_set_read_only failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db, "UPDATE email_accounts SET enabled = ? WHERE id = ?", -1,
+                           &s_db.stmt_email_acct_set_enabled, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare email_acct_set_enabled failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2630,6 +2812,8 @@ static void finalize_statements(void) {
       sqlite3_finalize(s_db.stmt_cal_acct_list_enabled);
    if (s_db.stmt_cal_acct_set_read_only)
       sqlite3_finalize(s_db.stmt_cal_acct_set_read_only);
+   if (s_db.stmt_cal_acct_set_enabled)
+      sqlite3_finalize(s_db.stmt_cal_acct_set_enabled);
    if (s_db.stmt_cal_acct_update)
       sqlite3_finalize(s_db.stmt_cal_acct_update);
    if (s_db.stmt_cal_acct_delete)
@@ -2673,6 +2857,32 @@ static void finalize_statements(void) {
    if (s_db.stmt_cal_occ_next)
       sqlite3_finalize(s_db.stmt_cal_occ_next);
 
+   /* Contacts statements */
+   if (s_db.stmt_contacts_find)
+      sqlite3_finalize(s_db.stmt_contacts_find);
+   if (s_db.stmt_contacts_add)
+      sqlite3_finalize(s_db.stmt_contacts_add);
+   if (s_db.stmt_contacts_delete)
+      sqlite3_finalize(s_db.stmt_contacts_delete);
+   if (s_db.stmt_contacts_list)
+      sqlite3_finalize(s_db.stmt_contacts_list);
+
+   /* Email account statements */
+   if (s_db.stmt_email_acct_create)
+      sqlite3_finalize(s_db.stmt_email_acct_create);
+   if (s_db.stmt_email_acct_get)
+      sqlite3_finalize(s_db.stmt_email_acct_get);
+   if (s_db.stmt_email_acct_list)
+      sqlite3_finalize(s_db.stmt_email_acct_list);
+   if (s_db.stmt_email_acct_update)
+      sqlite3_finalize(s_db.stmt_email_acct_update);
+   if (s_db.stmt_email_acct_delete)
+      sqlite3_finalize(s_db.stmt_email_acct_delete);
+   if (s_db.stmt_email_acct_set_read_only)
+      sqlite3_finalize(s_db.stmt_email_acct_set_read_only);
+   if (s_db.stmt_email_acct_set_enabled)
+      sqlite3_finalize(s_db.stmt_email_acct_set_enabled);
+
    /* OAuth statements */
    if (s_db.stmt_oauth_store)
       sqlite3_finalize(s_db.stmt_oauth_store);
@@ -2682,11 +2892,14 @@ static void finalize_statements(void) {
       sqlite3_finalize(s_db.stmt_oauth_delete);
    if (s_db.stmt_oauth_exists)
       sqlite3_finalize(s_db.stmt_oauth_exists);
+   if (s_db.stmt_oauth_list_accounts)
+      sqlite3_finalize(s_db.stmt_oauth_list_accounts);
 
    /* Clear all statement pointers using offsetof for safety
     * MAINTENANCE: If statements are reordered, update first/last_stmt names */
    size_t first_stmt_offset = offsetof(auth_db_state_t, stmt_create_user);
-   size_t last_stmt_end = offsetof(auth_db_state_t, stmt_oauth_exists) + sizeof(sqlite3_stmt *);
+   size_t last_stmt_end = offsetof(auth_db_state_t, stmt_oauth_list_accounts) +
+                          sizeof(sqlite3_stmt *);
    memset((char *)&s_db + first_stmt_offset, 0, last_stmt_end - first_stmt_offset);
 }
 

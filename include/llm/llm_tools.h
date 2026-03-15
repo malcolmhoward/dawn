@@ -65,7 +65,7 @@ typedef enum {
 #define LLM_TOOLS_MAX_PARAMS 8         /* Maximum parameters per tool */
 #define LLM_TOOLS_MAX_ENUM_VALUES 16   /* Maximum enum values per parameter */
 #define LLM_TOOLS_MAX_PARALLEL_CALLS 8 /* Maximum parallel tool calls */
-#define LLM_TOOLS_MAX_ITERATIONS 5     /* Maximum tool execution loop iterations */
+#define LLM_TOOLS_MAX_ITERATIONS 8     /* Maximum tool execution loop iterations */
 
 #define LLM_TOOLS_NAME_LEN 64
 #define LLM_TOOLS_DESC_LEN 512
@@ -106,6 +106,7 @@ typedef struct {
    bool enabled_local;                            /**< Enabled for local sessions */
    bool enabled_remote;                           /**< Enabled for remote sessions */
    bool armor_feature;                            /**< OASIS armor-specific feature */
+   bool dangerous;                                /**< Requires explicit opt-in to enable */
    bool parallel_safe;                            /**< Safe for concurrent execution */
    const char *device_name;                       /**< Mapped device name for callback */
 } tool_definition_t;
@@ -120,6 +121,7 @@ typedef struct {
    bool enabled_local;  /**< User setting for local sessions */
    bool enabled_remote; /**< User setting for remote sessions */
    bool armor_feature;  /**< OASIS armor-specific feature */
+   bool dangerous;      /**< Requires explicit opt-in (TOOL_CAP_DANGEROUS) */
 } tool_info_t;
 
 /* =============================================================================

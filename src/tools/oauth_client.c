@@ -321,11 +321,12 @@ int oauth_get_auth_url(const oauth_provider_config_t *provider,
    url_encode(provider->scopes, enc_scopes, sizeof(enc_scopes));
    url_encode(code_challenge, enc_challenge, sizeof(enc_challenge));
 
-   /* Build authorization URL */
+   /* Build authorization URL (include_granted_scopes for incremental auth) */
    int written = snprintf(url_buf, url_len,
                           "%s?client_id=%s&redirect_uri=%s&response_type=code"
                           "&scope=%s&state=%s&access_type=offline&prompt=consent"
-                          "&code_challenge=%s&code_challenge_method=S256",
+                          "&code_challenge=%s&code_challenge_method=S256"
+                          "&include_granted_scopes=true",
                           provider->auth_endpoint, enc_client_id, enc_redirect, enc_scopes, state,
                           enc_challenge);
    if (written < 0 || (size_t)written >= url_len) {
@@ -897,4 +898,143 @@ int oauth_revoke_and_delete(const oauth_provider_config_t *provider,
 
    /* Always delete locally */
    return oauth_delete_tokens(user_id, provider->provider, account_key);
+}
+
+/* =============================================================================
+ * Scope Merging
+ * ============================================================================= */
+
+int oauth_merge_scopes(const char *existing, const char *requested, char *out, size_t out_len) {
+   if (!out || out_len < 2)
+      return 1;
+   out[0] = '\0';
+
+   /* Collect unique scopes from both inputs */
+   const char *all_scopes[32];
+   int count = 0;
+
+   /* Parse existing scopes */
+   char buf1[1024] = { 0 };
+   if (existing && existing[0]) {
+      snprintf(buf1, sizeof(buf1), "%s", existing);
+      char *saveptr = NULL;
+      char *tok = strtok_r(buf1, " ", &saveptr);
+      while (tok && count < 32) {
+         if (tok[0])
+            all_scopes[count++] = tok;
+         tok = strtok_r(NULL, " ", &saveptr);
+      }
+   }
+
+   /* Parse requested scopes, skipping duplicates */
+   char buf2[1024] = { 0 };
+   if (requested && requested[0]) {
+      snprintf(buf2, sizeof(buf2), "%s", requested);
+      char *saveptr = NULL;
+      char *tok = strtok_r(buf2, " ", &saveptr);
+      while (tok && count < 32) {
+         if (tok[0]) {
+            bool dup = false;
+            for (int i = 0; i < count; i++) {
+               if (strcmp(all_scopes[i], tok) == 0) {
+                  dup = true;
+                  break;
+               }
+            }
+            if (!dup)
+               all_scopes[count++] = tok;
+         }
+         tok = strtok_r(NULL, " ", &saveptr);
+      }
+   }
+
+   /* Join with spaces */
+   size_t pos = 0;
+   for (int i = 0; i < count && pos < out_len - 1; i++) {
+      if (i > 0 && pos < out_len - 1)
+         out[pos++] = ' ';
+      size_t slen = strlen(all_scopes[i]);
+      if (pos + slen >= out_len)
+         break;
+      memcpy(out + pos, all_scopes[i], slen);
+      pos += slen;
+   }
+   out[pos] = '\0';
+   return 0;
+}
+
+/* =============================================================================
+ * Scope Checking
+ * ============================================================================= */
+
+bool oauth_has_scopes(const char *stored_scopes, const char *required_scopes) {
+   if (!required_scopes || !required_scopes[0])
+      return true;
+   if (!stored_scopes || !stored_scopes[0])
+      return false;
+
+   /* Tokenize stored_scopes once into an array for O(n+m) lookup */
+   char stored_buf[1024];
+   snprintf(stored_buf, sizeof(stored_buf), "%s", stored_scopes);
+
+   const char *stored_tokens[32];
+   int stored_count = 0;
+   char *saveptr = NULL;
+   char *tok = strtok_r(stored_buf, " ", &saveptr);
+   while (tok && stored_count < 32) {
+      if (tok[0] != '\0')
+         stored_tokens[stored_count++] = tok;
+      tok = strtok_r(NULL, " ", &saveptr);
+   }
+
+   /* Check each required scope against pre-parsed stored tokens */
+   char req_buf[1024];
+   snprintf(req_buf, sizeof(req_buf), "%s", required_scopes);
+
+   char *saveptr2 = NULL;
+   char *req_token = strtok_r(req_buf, " ", &saveptr2);
+   while (req_token) {
+      if (req_token[0] != '\0') {
+         bool found = false;
+         for (int i = 0; i < stored_count; i++) {
+            if (strcmp(stored_tokens[i], req_token) == 0) {
+               found = true;
+               break;
+            }
+         }
+         if (!found)
+            return false;
+      }
+      req_token = strtok_r(NULL, " ", &saveptr2);
+   }
+   return true;
+}
+
+/* =============================================================================
+ * Account Listing
+ * ============================================================================= */
+
+int oauth_list_accounts(int user_id, const char *provider, char accounts[][256], int max_accounts) {
+   if (!provider || !accounts || max_accounts <= 0)
+      return 0;
+
+   AUTH_DB_LOCK_OR_RETURN(0);
+
+   sqlite3_stmt *st = s_db.stmt_oauth_list_accounts;
+   sqlite3_reset(st);
+   sqlite3_bind_int(st, 1, user_id);
+   sqlite3_bind_text(st, 2, provider, -1, SQLITE_STATIC);
+
+   int count = 0;
+   while (sqlite3_step(st) == SQLITE_ROW && count < max_accounts) {
+      const char *key = (const char *)sqlite3_column_text(st, 0);
+      if (key) {
+         snprintf(accounts[count], 256, "%s", key);
+         count++;
+      }
+   }
+   sqlite3_reset(st);
+
+   AUTH_DB_UNLOCK();
+   return count;
 }

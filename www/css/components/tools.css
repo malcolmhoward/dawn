@@ -119,6 +119,18 @@
    display: block;
 }
 
+.danger-icon {
+   display: inline-flex;
+   align-items: center;
+   color: var(--error, #e74c3c);
+   opacity: 0.85;
+   flex-shrink: 0;
+}
+
+.danger-icon svg {
+   display: block;
+}
+
 .tool-description {
    display: none;
 }

@@ -64,6 +64,12 @@ typedef struct {
 #define GOOGLE_CALENDAR_SCOPE \
    "https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/userinfo.email"
 
+/** Google Gmail + userinfo scopes (used by email tool and WebUI OAuth handlers) */
+#define GOOGLE_EMAIL_SCOPE "https://mail.google.com/ https://www.googleapis.com/auth/userinfo.email"
+
+/** Buffer size for OAuth access tokens (Google tokens can exceed 1KB) */
+#define OAUTH_TOKEN_BUF_SIZE 2048
+
 /* ============================================================================
  * Provider Setup
  * ============================================================================ */
@@ -190,5 +196,43 @@ bool oauth_has_tokens(int user_id, const char *provider, const char *account_key
 int oauth_revoke_and_delete(const oauth_provider_config_t *provider,
                             int user_id,
                             const char *account_key);
+
+/* ============================================================================
+ * Scope Checking & Account Listing
+ * ============================================================================ */
+
+/**
+ * Merge two space-separated scope strings into a deduplicated union.
+ * Example: merge("a b", "b c") → "a b c"
+ *
+ * @param existing   First scope string (may be NULL/empty)
+ * @param requested  Second scope string (may be NULL/empty)
+ * @param out        Output buffer for merged scopes
+ * @param out_len    Size of output buffer
+ * @return 0 on success
+ */
+int oauth_merge_scopes(const char *existing, const char *requested, char *out, size_t out_len);
+
+/**
+ * Check if stored_scopes contains all required_scopes.
+ * Both are space-separated lists. Uses exact token matching
+ * (not substring) to avoid e.g. "calendar" matching "calendar.readonly".
+ *
+ * @param stored_scopes   Space-separated granted scopes
+ * @param required_scopes Space-separated required scopes
+ * @return true if all required scopes are present in stored scopes
+ */
+bool oauth_has_scopes(const char *stored_scopes, const char *required_scopes);
+
+/**
+ * List OAuth accounts for a user+provider.
+ *
+ * @param user_id       User ID
+ * @param provider      Provider name (e.g., "google")
+ * @param accounts      Output array of account keys
+ * @param max_accounts  Maximum entries in accounts array
+ * @return Number of accounts found, or 0 on error
+ */
+int oauth_list_accounts(int user_id, const char *provider, char accounts[][256], int max_accounts);
 
 #endif /* OAUTH_CLIENT_H */

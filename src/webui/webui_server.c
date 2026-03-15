@@ -84,6 +84,12 @@
 #ifdef DAWN_ENABLE_CALENDAR_TOOL
 #include "webui/webui_calendar.h"
 #endif
+#ifdef DAWN_ENABLE_EMAIL_TOOL
+#include "webui/webui_email.h"
+#endif
+#if defined(DAWN_ENABLE_CALENDAR_TOOL) || defined(DAWN_ENABLE_EMAIL_TOOL)
+#include "webui/webui_oauth.h"
+#endif
 /* HTTP rate limiting and CSRF constants moved to webui_http.c */
 #endif /* ENABLE_AUTH */
 
@@ -2917,8 +2923,8 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
          handle_doc_library_toggle_global(conn, payload);
       }
    }
-   /* OAuth flow */
-#ifdef DAWN_ENABLE_CALENDAR_TOOL
+   /* OAuth flow (shared by calendar and email) */
+#if defined(DAWN_ENABLE_CALENDAR_TOOL) || defined(DAWN_ENABLE_EMAIL_TOOL)
    else if (strcmp(type, "oauth_get_auth_url") == 0) {
       if (payload)
          handle_oauth_get_auth_url(conn, payload);
@@ -2928,6 +2934,9 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
    } else if (strcmp(type, "oauth_disconnect") == 0) {
       if (payload)
          handle_oauth_disconnect(conn, payload);
+   } else if (strcmp(type, "oauth_check_scopes") == 0) {
+      if (payload)
+         handle_oauth_check_scopes(conn, payload);
    }
 #endif
 
@@ -2967,8 +2976,41 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
       if (payload) {
          handle_calendar_toggle_read_only(conn, payload);
       }
+   } else if (strcmp(type, "calendar_set_enabled") == 0) {
+      if (payload) {
+         handle_calendar_set_enabled(conn, payload);
+      }
    }
 #endif /* DAWN_ENABLE_CALENDAR_TOOL */
+#ifdef DAWN_ENABLE_EMAIL_TOOL
+   else if (strcmp(type, "email_list_accounts") == 0) {
+      handle_email_list_accounts(conn);
+   } else if (strcmp(type, "email_add_account") == 0) {
+      if (payload) {
+         handle_email_add_account(conn, payload);
+      }
+   } else if (strcmp(type, "email_update_account") == 0) {
+      if (payload) {
+         handle_email_update_account(conn, payload);
+      }
+   } else if (strcmp(type, "email_remove_account") == 0) {
+      if (payload) {
+         handle_email_remove_account(conn, payload);
+      }
+   } else if (strcmp(type, "email_test_connection") == 0) {
+      if (payload) {
+         handle_email_test_connection(conn, payload);
+      }
+   } else if (strcmp(type, "email_set_read_only") == 0) {
+      if (payload) {
+         handle_email_set_read_only(conn, payload);
+      }
+   } else if (strcmp(type, "email_set_enabled") == 0) {
+      if (payload) {
+         handle_email_set_enabled(conn, payload);
+      }
+   }
+#endif /* DAWN_ENABLE_EMAIL_TOOL */
    /* TTS control (per-connection) */
    else if (strcmp(type, "set_tts_enabled") == 0) {
       if (!conn_require_auth(conn)) {

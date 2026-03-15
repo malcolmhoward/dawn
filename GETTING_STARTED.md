@@ -589,6 +589,56 @@ For iCloud, Nextcloud, Radicale, and other CalDAV servers:
 
 **Test it:** Ask DAWN: *"What's on my calendar today?"*
 
+### Email (IMAP/SMTP)
+
+DAWN can check, read, search, send, trash, and archive email via voice commands. It works with any IMAP/SMTP provider (Gmail, iCloud, Outlook, Fastmail, Proton Mail via Bridge, self-hosted). Supports both app password and Google OAuth 2.0 (XOAUTH2) authentication.
+
+The email tool is disabled by default (compile-time and runtime gates) because it has `TOOL_CAP_DANGEROUS` — email send is irreversible.
+
+#### Enable Email
+
+```bash
+# Build with email enabled
+cmake --preset debug -DDAWN_ENABLE_EMAIL_TOOL=ON
+make -C build-debug -j8
+```
+
+Enable at runtime in `dawn.toml`:
+```toml
+[email]
+enabled = true
+```
+
+#### Add an Email Account
+
+All accounts are managed through the **WebUI Settings > Email Accounts** panel.
+
+**Gmail (Google OAuth — Recommended)**:
+1. Follow [docs/GOOGLE_OAUTH_SETUP.md](docs/GOOGLE_OAUTH_SETUP.md) — enable the **Gmail API** and add the `https://mail.google.com/` scope
+2. In WebUI → **Settings > Email Accounts** → **Add Account** → **Google OAuth** tab
+3. Click **Connect with Google**, authorize, then **Save Account**
+
+**Gmail (App Password)**:
+1. Generate an app password at Google Account → Security → 2-Step Verification → App Passwords
+2. In WebUI → **Settings > Email Accounts** → **Add Account** → **App Password** tab
+3. Select **Gmail** preset (auto-fills server/port/SSL), enter username and app password
+
+**Other Providers**:
+
+| Provider | IMAP Server | SMTP Server | Auth |
+|----------|------------|-------------|------|
+| **iCloud** | imap.mail.me.com:993 | smtp.mail.me.com:587 | App-specific password from [appleid.apple.com](https://appleid.apple.com) |
+| **Outlook/365** | outlook.office365.com:993 | smtp.office365.com:587 | App password |
+| **Fastmail** | imap.fastmail.com:993 | smtp.fastmail.com:465 | App password |
+| **Proton Mail** | 127.0.0.1:1143 (Bridge) | 127.0.0.1:1025 (Bridge) | Proton Bridge password |
+
+**Test it:**
+- *"Check my email"*
+- *"Search for emails from Alice"*
+- *"Send an email to bob@example.com about the meeting tomorrow"* (two-step: draft → confirm)
+- *"Delete that email"* (two-step: pending → confirm)
+- *"Archive that email"* (single-step, non-destructive)
+
 ## Troubleshooting
 
 | Issue | Solution |

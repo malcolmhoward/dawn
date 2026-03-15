@@ -56,6 +56,7 @@ void handle_get_tools_config(ws_connection_t *conn) {
       json_object_object_add(tool_obj, "remote", json_object_new_boolean(tools[i].enabled_remote));
       json_object_object_add(tool_obj, "armor_feature",
                              json_object_new_boolean(tools[i].armor_feature));
+      json_object_object_add(tool_obj, "dangerous", json_object_new_boolean(tools[i].dangerous));
       json_object_array_add(tools_array, tool_obj);
    }
 

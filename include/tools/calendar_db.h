@@ -30,6 +30,12 @@
 #include <time.h>
 
 /* ============================================================================
+ * Constants
+ * ============================================================================ */
+
+#define CALENDAR_MAX_ACCOUNTS 16
+
+/* ============================================================================
  * Types
  * ============================================================================ */
 
@@ -116,9 +122,12 @@ int calendar_db_account_update_discovery(int64_t id,
 /** Set the read_only flag on an account (dedicated setter to avoid accidental clears) */
 int calendar_db_account_set_read_only(int64_t id, bool read_only);
 
+/** Set the enabled flag on an account */
+int calendar_db_account_set_enabled(int64_t id, bool enabled);
+
 /**
  * List all enabled accounts across all users (for background sync).
- * Returns count, or -1 on error.
+ * Returns count (0 if none).
  */
 int calendar_db_account_list_enabled(calendar_account_t *out, int max_count);
 
@@ -135,7 +144,7 @@ int calendar_db_calendar_delete(int64_t id);
 
 /**
  * Get all active calendars for a user (across all enabled accounts).
- * Returns count, or -1 on error.
+ * Returns count (0 if none).
  */
 int calendar_db_active_calendars_for_user(int user_id, calendar_calendar_t *out, int max_count);
 
@@ -157,7 +166,7 @@ int calendar_db_occurrence_delete_for_event(int64_t event_id);
 
 /**
  * Query occurrences in a time range across given calendar IDs.
- * Returns count, or -1 on error. Only returns non-cancelled occurrences.
+ * Returns count (0 if none). Only returns non-cancelled occurrences.
  */
 int calendar_db_occurrences_in_range(const int64_t *calendar_ids,
                                      int calendar_count,

@@ -98,7 +98,10 @@
 .status-dot,
 #ring-container,
 .theme-btn,
-.btn {
+.btn,
+.dawn-toggle,
+.dawn-status-dot,
+.dawn-badge {
    transition:
       background-color 200ms ease-out,
       border-color 200ms ease-out,

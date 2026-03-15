@@ -86,6 +86,20 @@ int html_extract_text_with_base(const char *html,
                                 char **out_text,
                                 const char *base_url);
 
+/**
+ * @brief Extract plain text from HTML (no Markdown formatting)
+ *
+ * Like html_extract_text but treats tables as transparent containers and
+ * emits link text without URLs. Ideal for HTML emails where tables are
+ * used for layout and tracking URLs add noise.
+ *
+ * @param html Raw HTML content
+ * @param html_len Length of HTML content
+ * @param out_text Receives allocated plain text (caller frees)
+ * @return HTML_PARSE_SUCCESS or error code
+ */
+int html_extract_text_plain(const char *html, size_t html_len, char **out_text);
+
 #ifdef __cplusplus
 }
 #endif

@@ -434,19 +434,40 @@ char *llm_tool_iteration_loop(llm_tool_loop_params_t *params) {
          return strdup(""); /* Empty = no TTS output */
       }
 
-      /* Step 9: Check iteration limit */
+      /* Step 9: Check iteration limit — force a final text response with what we have */
       if (iteration >= LLM_TOOLS_MAX_ITERATIONS) {
-         LOG_WARNING("Tool loop: Max iterations (%d) reached", LLM_TOOLS_MAX_ITERATIONS);
-         const char *error_msg = "I apologize, but I wasn't able to complete that request after "
-                                 "several attempts. Could you try rephrasing your question?";
-         if (params->chunk_callback) {
-            void (*cb)(const char *, void *) = params->chunk_callback;
-            cb(error_msg, params->callback_userdata);
-         }
+         LOG_WARNING("Tool loop: Max iterations (%d) reached, forcing text response",
+                     LLM_TOOLS_MAX_ITERATIONS);
+
+         /* Inject a system hint telling the LLM to respond with what it has */
+         json_object *hint_msg = json_object_new_object();
+         json_object_object_add(hint_msg, "role", json_object_new_string("user"));
+         json_object_object_add(
+             hint_msg, "content",
+             json_object_new_string(
+                 "[System: Maximum tool iterations reached. Respond to the user now with "
+                 "the information you have gathered so far. Do not call any more tools.]"));
+         json_object_array_add(params->conversation_history, hint_msg);
+
          free_tool_result_resources(results);
          free(results);
          llm_tool_response_free(&result);
-         return strdup(error_msg);
+
+         /* Make one final call with tools disabled */
+         LOG_INFO("Tool loop: Making final call without tools to present gathered results");
+         memset(&result, 0, sizeof(result));
+         int final_rc = params->provider_fn(params->conversation_history, "", NULL, NULL, 0,
+                                            params->base_url, params->api_key, params->model,
+                                            params->chunk_callback, params->callback_userdata,
+                                            LLM_TOOLS_MAX_ITERATIONS, &result);
+
+         char *final_text = NULL;
+         if (final_rc == 0 && result.text) {
+            final_text = strdup(result.text);
+         }
+         llm_tool_response_free(&result);
+         free(loop_vision_image);
+         return final_text;
       }
 
       /* Step 10: Extract vision data from tool results (take ownership) */

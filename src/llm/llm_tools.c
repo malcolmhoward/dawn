@@ -593,11 +593,19 @@ static void generate_tool_from_treg(const tool_metadata_t *meta, void *user_data
    safe_strncpy(t->name, meta->name, LLM_TOOLS_NAME_LEN);
    safe_strncpy(t->description, meta->description, LLM_TOOLS_DESC_LEN);
    t->device_name = meta->device_string;
-   t->enabled = true;       /* Will be updated by llm_tools_refresh() */
-   t->enabled_local = true; /* Default to enabled for local */
-   t->enabled_remote = meta->default_remote;
+   t->enabled = true; /* Will be updated by llm_tools_refresh() */
    t->armor_feature = (meta->capabilities & TOOL_CAP_ARMOR_FEATURE) != 0;
+   t->dangerous = (meta->capabilities & TOOL_CAP_DANGEROUS) != 0;
    t->parallel_safe = is_tool_parallel_safe(meta->name);
+
+   /* Dangerous tools require explicit opt-in — default to disabled */
+   if (t->dangerous) {
+      t->enabled_local = false;
+      t->enabled_remote = false;
+   } else {
+      t->enabled_local = true;
+      t->enabled_remote = meta->default_remote;
+   }
 
    /* Copy parameters */
    for (int i = 0; i < meta->param_count && i < LLM_TOOLS_MAX_PARAMS; i++) {
@@ -631,8 +639,10 @@ void llm_tools_init(void) {
 
    s_tool_count = 0;
 
-   /* Generate tools from tool_registry (compile-time C struct metadata) */
-   tool_registry_foreach_enabled(generate_tool_from_treg, NULL);
+   /* Generate tools from ALL registry entries (including dangerous tools that
+    * default to disabled). This ensures they appear in the WebUI tools config
+    * so users can opt in. The enabled_local/remote flags control LLM access. */
+   tool_registry_foreach(generate_tool_from_treg, NULL);
 
    s_initialized = true;
    LOG_INFO("Initialized %d LLM tools from tool_registry", s_tool_count);
@@ -1021,6 +1031,7 @@ int llm_tools_get_all(tool_info_t *out, int max_tools) {
       info->enabled_local = t->enabled_local;
       info->enabled_remote = t->enabled_remote;
       info->armor_feature = t->armor_feature;
+      info->dangerous = t->dangerous;
    }
 
    return count;
@@ -1136,8 +1147,15 @@ void llm_tools_apply_config(const char **local_list,
    /* Single pass to apply with mutex protection */
    pthread_mutex_lock(&s_tools_mutex);
    for (int i = 0; i < s_tool_count; i++) {
-      s_tools[i].enabled_local = enable_all_local || local_set[i];
-      s_tools[i].enabled_remote = enable_all_remote || remote_set[i];
+      /* Dangerous tools require explicit opt-in — don't auto-enable them
+       * when no config whitelist exists. They must appear in the whitelist. */
+      if (s_tools[i].dangerous) {
+         s_tools[i].enabled_local = local_set[i];
+         s_tools[i].enabled_remote = remote_set[i];
+      } else {
+         s_tools[i].enabled_local = enable_all_local || local_set[i];
+         s_tools[i].enabled_remote = enable_all_remote || remote_set[i];
+      }
    }
 
    /* Invalidate token estimate cache */

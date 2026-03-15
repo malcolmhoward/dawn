@@ -18,6 +18,7 @@
 @import url('base/typography.css');
 @import url('base/reset.css');
 @import url('base/buttons.css');
+@import url('base/components.css');
 
 /* =============================================================================
  * Layout Styles
@@ -46,6 +47,7 @@
 @import url('components/scheduler.css');
 @import url('components/doc-library.css');
 @import url('components/calendar-accounts.css');
+@import url('components/email-accounts.css');
 @import url('components/oauth.css');
 @import url('components/sidebar-rail.css');
 

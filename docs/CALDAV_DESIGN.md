@@ -1,7 +1,7 @@
 # CalDAV Calendar Integration — Design Document
 
 **Created**: March 9, 2026
-**Status**: Implemented (2026-03-12), read_only flag added (2026-03-12), Google OAuth 2.0 added (2026-03-13)
+**Status**: Implemented (2026-03-12), read_only flag added (2026-03-12), Google OAuth 2.0 added (2026-03-13), calendar name filtering added (2026-03-15)
 **Dependencies**: libical-dev (apt), libcurl (already linked), libxml2 (already linked), libsodium (already linked)
 
 ---
@@ -598,10 +598,10 @@ All account management uses WebSocket messages (`calendar_add_account`, `calenda
 ### Query Routing
 
 When the tool queries events (today, range, next, search):
-1. Get all active calendars for the current user
-2. Query the local cache across all active calendars
+1. Get all active calendars for the current user (optionally filtered by calendar name)
+2. Query the local cache across matching calendars
 3. Results include the calendar display name for context
-4. LLM can filter by calendar name if the user specifies ("What's on my work calendar?")
+4. Optional `calendar` parameter on all query actions (today, range, next, search) — case-insensitive match on display name. If no match, returns an error listing available calendars.
 
 ### Add Routing
 
@@ -678,7 +678,7 @@ After add/update/delete, the affected calendar is re-synced immediately (ctag wi
 
 ## Implementation Status
 
-All phases implemented as of 2026-03-12. Google OAuth 2.0 added 2026-03-13. Key implementation notes:
+All phases implemented as of 2026-03-12. Google OAuth 2.0 added 2026-03-13. Calendar name filtering added 2026-03-15 (optional `calendar` parameter on today/range/next/search actions for filtering by calendar display name). Key implementation notes:
 
 - **Schema**: v23 (initial tables), v24 (read_only column migration), v25 (oauth_tokens table + oauth_account_key column)
 - **Password storage**: Changed from secrets.toml references to encrypted-in-DB via shared `crypto_store` module (libsodium secretbox, `dawn.key`)

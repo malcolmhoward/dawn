@@ -518,6 +518,10 @@
                if (typeof DawnCalendarAccounts !== 'undefined')
                   DawnCalendarAccounts.handleToggleReadOnlyResponse(msg.payload);
                break;
+            case 'calendar_set_enabled_response':
+               if (typeof DawnCalendarAccounts !== 'undefined')
+                  DawnCalendarAccounts.handleSetEnabledResponse(msg.payload);
+               break;
             // OAuth
             case 'oauth_get_auth_url_response':
                if (typeof DawnOAuth !== 'undefined') DawnOAuth.handleAuthUrlResponse(msg.payload);
@@ -527,10 +531,50 @@
                   DawnOAuth.handleExchangeCodeResponse(msg.payload);
                if (typeof DawnCalendarAccounts !== 'undefined')
                   DawnCalendarAccounts.handleOAuthExchangeResponse(msg.payload);
+               if (typeof DawnEmailAccounts !== 'undefined')
+                  DawnEmailAccounts.handleOAuthExchangeResponse(msg.payload);
                break;
             case 'oauth_disconnect_response':
                if (typeof DawnCalendarAccounts !== 'undefined')
                   DawnCalendarAccounts.handleOAuthDisconnectResponse(msg.payload);
+               if (
+                  typeof DawnEmailAccounts !== 'undefined' &&
+                  DawnEmailAccounts.handleOAuthDisconnectResponse
+               )
+                  DawnEmailAccounts.handleOAuthDisconnectResponse(msg.payload);
+               break;
+            case 'oauth_check_scopes_response':
+               if (typeof DawnOAuth !== 'undefined')
+                  DawnOAuth.handleCheckScopesResponse(msg.payload);
+               break;
+            // Email account management
+            case 'email_list_accounts_response':
+               if (typeof DawnEmailAccounts !== 'undefined')
+                  DawnEmailAccounts.handleListAccountsResponse(msg.payload);
+               break;
+            case 'email_add_account_response':
+               if (typeof DawnEmailAccounts !== 'undefined')
+                  DawnEmailAccounts.handleAddAccountResponse(msg.payload);
+               break;
+            case 'email_update_account_response':
+               if (typeof DawnEmailAccounts !== 'undefined')
+                  DawnEmailAccounts.handleUpdateAccountResponse(msg.payload);
+               break;
+            case 'email_remove_account_response':
+               if (typeof DawnEmailAccounts !== 'undefined')
+                  DawnEmailAccounts.handleRemoveAccountResponse(msg.payload);
+               break;
+            case 'email_test_connection_response':
+               if (typeof DawnEmailAccounts !== 'undefined')
+                  DawnEmailAccounts.handleTestConnectionResponse(msg.payload);
+               break;
+            case 'email_set_read_only_response':
+               if (typeof DawnEmailAccounts !== 'undefined')
+                  DawnEmailAccounts.handleSetReadOnlyResponse(msg.payload);
+               break;
+            case 'email_set_enabled_response':
+               if (typeof DawnEmailAccounts !== 'undefined')
+                  DawnEmailAccounts.handleSetEnabledResponse(msg.payload);
                break;
             case 'conversation_reset':
                // Tool triggered conversation reset - sync frontend
@@ -1377,6 +1421,13 @@
             getAuthState: () => DawnState.authState,
          });
          DawnCalendarAccounts.init();
+      }
+      if (typeof DawnEmailAccounts !== 'undefined') {
+         DawnEmailAccounts.setCallbacks({
+            showConfirmModal: DawnSettings.showConfirmModal,
+            getAuthState: () => DawnState.authState,
+         });
+         DawnEmailAccounts.init();
       }
       DawnHistory.setCallbacks({
          trapFocus: DawnSettings.trapFocus,

@@ -1,0 +1,208 @@
+/* =============================================================================
+ * Shared Component Primitives
+ *
+ * dawn-* classes used across all UI modules for visual consistency.
+ * Component CSS files handle layout/structure; these handle appearance.
+ * ============================================================================= */
+
+/* -----------------------------------------------------------------------------
+ * Toggle Switch (.dawn-toggle)
+ * Usage: <input type="checkbox" class="dawn-toggle" />
+ * -------------------------------------------------------------------------- */
+.dawn-toggle {
+   appearance: none;
+   width: 32px;
+   height: 18px;
+   background: var(--bg-secondary);
+   border: 1px solid var(--border-color);
+   border-radius: 9px;
+   position: relative;
+   cursor: pointer;
+   flex-shrink: 0;
+   transition:
+      background var(--transition-fast),
+      border-color var(--transition-fast);
+}
+
+.dawn-toggle::before {
+   content: '';
+   position: absolute;
+   width: 12px;
+   height: 12px;
+   border-radius: 50%;
+   top: 2px;
+   left: 2px;
+   background: var(--text-secondary);
+   transition: transform var(--transition-fast);
+}
+
+.dawn-toggle:checked {
+   background: var(--accent);
+   border-color: var(--accent);
+}
+
+.dawn-toggle:checked::before {
+   transform: translateX(14px);
+   background: #fff;
+}
+
+.dawn-toggle:focus-visible {
+   outline: 2px solid var(--accent);
+   outline-offset: 2px;
+}
+
+.dawn-toggle:disabled {
+   opacity: 0.4;
+   cursor: not-allowed;
+}
+
+.dawn-toggle:hover:not(:checked):not(:disabled) {
+   border-color: var(--text-tertiary);
+}
+
+/* Toggle label */
+.dawn-toggle-label {
+   font-size: 0.85rem;
+   color: var(--text-secondary);
+}
+
+/* Toggle row container */
+.dawn-toggle-row {
+   display: flex;
+   align-items: center;
+   gap: 0.5rem;
+   padding: 0.25rem 0;
+}
+
+/* -----------------------------------------------------------------------------
+ * Status Dot (.dawn-status-dot)
+ * Usage: <span class="dawn-status-dot success"></span>
+ * -------------------------------------------------------------------------- */
+.dawn-status-dot {
+   display: inline-block;
+   width: 8px;
+   height: 8px;
+   border-radius: 50%;
+   background: var(--text-tertiary);
+   vertical-align: middle;
+   flex-shrink: 0;
+}
+
+.dawn-status-dot.success {
+   background: var(--success);
+}
+
+.dawn-status-dot.warning {
+   background: var(--warning);
+}
+
+.dawn-status-dot.error {
+   background: var(--error);
+}
+
+/* -----------------------------------------------------------------------------
+ * Badge (.dawn-badge)
+ * Usage: <span class="dawn-badge accent">OAuth</span>
+ * -------------------------------------------------------------------------- */
+.dawn-badge {
+   display: inline-flex;
+   align-items: center;
+   font-size: 0.6875rem;
+   font-weight: 600;
+   padding: 2px 6px;
+   border-radius: 3px;
+   text-transform: uppercase;
+   letter-spacing: 0.5px;
+   line-height: 1.2;
+   vertical-align: middle;
+   white-space: nowrap;
+}
+
+.dawn-badge.accent {
+   background: var(--accent);
+   color: #000;
+}
+
+.dawn-badge.warning {
+   background: var(--warning);
+   color: #000;
+}
+
+.dawn-badge.muted {
+   background: var(--bg-secondary);
+   color: var(--text-secondary);
+   border: 1px solid var(--border-color);
+}
+
+/* -----------------------------------------------------------------------------
+ * Form (.dawn-form)
+ * Usage: <form class="dawn-form"> or <div class="dawn-form">
+ * -------------------------------------------------------------------------- */
+.dawn-form {
+   display: flex;
+   flex-direction: column;
+   gap: 0.75rem;
+}
+
+.dawn-form .form-group {
+   display: flex;
+   flex-direction: column;
+   gap: 0.25rem;
+}
+
+.dawn-form label {
+   font-size: 0.85rem;
+   color: var(--text-secondary);
+}
+
+.dawn-form input[type='text'],
+.dawn-form input[type='password'],
+.dawn-form input[type='number'],
+.dawn-form input[type='email'],
+.dawn-form input[type='url'],
+.dawn-form select,
+.dawn-form textarea {
+   background: var(--bg-tertiary);
+   border: 1px solid var(--border-color);
+   border-radius: 6px;
+   padding: 0.625rem 0.875rem;
+   color: var(--text-primary);
+   font-size: 0.875rem;
+}
+
+.dawn-form input[type='text']:focus,
+.dawn-form input[type='password']:focus,
+.dawn-form input[type='number']:focus,
+.dawn-form input[type='email']:focus,
+.dawn-form input[type='url']:focus,
+.dawn-form select:focus,
+.dawn-form textarea:focus {
+   outline: none;
+   border-color: var(--accent);
+}
+
+.dawn-form input.input-error {
+   border-color: var(--error);
+}
+
+.dawn-form .form-error {
+   font-size: 0.75rem;
+   color: var(--error);
+   display: none;
+}
+
+.dawn-form .form-error.visible {
+   display: block;
+}
+
+.dawn-form .form-hint {
+   font-size: 0.75rem;
+   color: var(--text-tertiary);
+}
+
+.dawn-form .form-actions {
+   display: flex;
+   justify-content: flex-end;
+   gap: 0.5rem;
+   margin-top: 0.25rem;
+}

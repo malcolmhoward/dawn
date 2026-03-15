@@ -48,7 +48,7 @@
  * ============================================================================= */
 
 /* Current schema version */
-#define AUTH_DB_SCHEMA_VERSION 25
+#define AUTH_DB_SCHEMA_VERSION 26
 
 /* Retention periods */
 #define LOGIN_ATTEMPT_RETENTION_SEC (7 * 24 * 60 * 60) /* 7 days */
@@ -243,16 +243,33 @@ typedef struct {
    sqlite3_stmt *stmt_cal_occ_next;
    sqlite3_stmt *stmt_cal_acct_list_enabled;
    sqlite3_stmt *stmt_cal_acct_set_read_only;
+   sqlite3_stmt *stmt_cal_acct_set_enabled;
+
+   /* === Contacts module statements (contacts_db.c) === */
+   sqlite3_stmt *stmt_contacts_find;
+   sqlite3_stmt *stmt_contacts_add;
+   sqlite3_stmt *stmt_contacts_delete;
+   sqlite3_stmt *stmt_contacts_list;
+
+   /* === Email module statements (email_db.c) === */
+   sqlite3_stmt *stmt_email_acct_create;
+   sqlite3_stmt *stmt_email_acct_get;
+   sqlite3_stmt *stmt_email_acct_list;
+   sqlite3_stmt *stmt_email_acct_update;
+   sqlite3_stmt *stmt_email_acct_delete;
+   sqlite3_stmt *stmt_email_acct_set_read_only;
+   sqlite3_stmt *stmt_email_acct_set_enabled;
 
    /* === OAuth module statements (oauth_client.c) === */
    sqlite3_stmt *stmt_oauth_store;
    sqlite3_stmt *stmt_oauth_load;
    sqlite3_stmt *stmt_oauth_delete;
    sqlite3_stmt *stmt_oauth_exists;
+   sqlite3_stmt *stmt_oauth_list_accounts;
 } auth_db_state_t;
 
 /* Ensure last_stmt_end covers all statement fields (catches reorder bugs) */
-_Static_assert(offsetof(auth_db_state_t, stmt_oauth_exists) >
+_Static_assert(offsetof(auth_db_state_t, stmt_oauth_list_accounts) >
                    offsetof(auth_db_state_t, stmt_create_user),
                "last_stmt_end must be after first_stmt_offset");
 

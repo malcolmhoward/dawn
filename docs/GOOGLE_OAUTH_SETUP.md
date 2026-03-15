@@ -1,6 +1,6 @@
 # Google OAuth 2.0 Setup for DAWN
 
-This guide walks through setting up Google OAuth for Calendar (and future Email) integration.
+This guide walks through setting up Google OAuth for Calendar and Email integration.
 
 ## 1. Create a Google Cloud Project
 
@@ -12,8 +12,8 @@ This guide walks through setting up Google OAuth for Calendar (and future Email)
 
 1. Go to **APIs & Services > Library**
 2. Search for and enable:
-   - **CalDAV API** (required — this is the protocol DAWN uses for calendar sync)
-   - **Gmail API** (optional, for future email integration)
+   - **CalDAV API** (required for calendar sync)
+   - **Gmail API** (required for email integration — enables IMAP/SMTP via XOAUTH2)
 
 ## 3. Configure OAuth Consent Screen
 
@@ -25,7 +25,7 @@ This guide walks through setting up Google OAuth for Calendar (and future Email)
    - **Developer contact**: your email
 4. Add scopes:
    - `https://www.googleapis.com/auth/calendar` (Calendar read/write)
-   - `https://www.googleapis.com/auth/gmail.modify` (optional, for email)
+   - `https://mail.google.com/` (Email — full IMAP/SMTP access via XOAUTH2)
 5. Add **test users** (your Google account email)
    - In "Testing" mode, only listed test users can authorize
    - Up to 100 test users allowed without Google verification
@@ -122,3 +122,20 @@ Make sure the **CalDAV API** is enabled in your project (step 2). Note: this is 
 Tokens auto-refresh. If refresh fails (e.g., you revoked access at
 [myaccount.google.com/permissions](https://myaccount.google.com/permissions)),
 remove and re-add the account.
+
+## 7. Add a Google Email Account (Optional)
+
+Calendar and email use **separate OAuth token sets** — revoking one does not affect the other.
+
+1. Build DAWN with email enabled: `cmake --preset debug -DDAWN_ENABLE_EMAIL_TOOL=ON`
+2. Open the DAWN WebUI
+3. Go to **Settings > Email Accounts**
+4. Click **Add Account**
+5. Select **Google OAuth** (tab at top)
+6. Enter an account name (e.g., "Gmail")
+7. Click **Connect with Google**
+8. Authorize DAWN (consent screen will request mail access)
+9. The popup will close automatically
+10. Click **Save Account**
+
+DAWN uses XOAUTH2 for both IMAP and SMTP — no app password needed for Google accounts.

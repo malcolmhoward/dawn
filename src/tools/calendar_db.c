@@ -198,13 +198,13 @@ int64_t calendar_db_account_create(const calendar_account_t *acct) {
 }
 
 int calendar_db_account_get(int64_t id, calendar_account_t *out) {
-   AUTH_DB_LOCK_OR_RETURN(-1);
+   AUTH_DB_LOCK_OR_FAIL();
 
    sqlite3_stmt *st = s_db.stmt_cal_acct_get;
    sqlite3_reset(st);
    sqlite3_bind_int64(st, 1, id);
 
-   int result = -1;
+   int result = 1;
    if (sqlite3_step(st) == SQLITE_ROW) {
       row_to_account(st, out);
       result = 0;
@@ -251,7 +251,7 @@ int calendar_db_account_list_enabled(calendar_account_t *out, int max_count) {
 }
 
 int calendar_db_account_update(const calendar_account_t *acct) {
-   AUTH_DB_LOCK_OR_RETURN(-1);
+   AUTH_DB_LOCK_OR_FAIL();
 
    sqlite3_stmt *st = s_db.stmt_cal_acct_update;
    sqlite3_reset(st);
@@ -264,7 +264,7 @@ int calendar_db_account_update(const calendar_account_t *acct) {
    sqlite3_bind_int(st, 7, acct->sync_interval_sec);
    sqlite3_bind_int64(st, 8, acct->id);
 
-   int result = (sqlite3_step(st) == SQLITE_DONE) ? 0 : -1;
+   int result = (sqlite3_step(st) == SQLITE_DONE) ? 0 : 1;
    if (result != 0)
       LOG_ERROR("calendar_db: account update failed: %s", sqlite3_errmsg(s_db.db));
    sqlite3_reset(st);
@@ -274,13 +274,13 @@ int calendar_db_account_update(const calendar_account_t *acct) {
 }
 
 int calendar_db_account_delete(int64_t id) {
-   AUTH_DB_LOCK_OR_RETURN(-1);
+   AUTH_DB_LOCK_OR_FAIL();
 
    sqlite3_stmt *st = s_db.stmt_cal_acct_delete;
    sqlite3_reset(st);
    sqlite3_bind_int64(st, 1, id);
 
-   int result = (sqlite3_step(st) == SQLITE_DONE) ? 0 : -1;
+   int result = (sqlite3_step(st) == SQLITE_DONE) ? 0 : 1;
    sqlite3_reset(st);
 
    AUTH_DB_UNLOCK();
@@ -288,14 +288,14 @@ int calendar_db_account_delete(int64_t id) {
 }
 
 int calendar_db_account_update_sync(int64_t id, time_t last_sync) {
-   AUTH_DB_LOCK_OR_RETURN(-1);
+   AUTH_DB_LOCK_OR_FAIL();
 
    sqlite3_stmt *st = s_db.stmt_cal_acct_update_sync;
    sqlite3_reset(st);
    sqlite3_bind_int64(st, 1, (int64_t)last_sync);
    sqlite3_bind_int64(st, 2, id);
 
-   int result = (sqlite3_step(st) == SQLITE_DONE) ? 0 : -1;
+   int result = (sqlite3_step(st) == SQLITE_DONE) ? 0 : 1;
    sqlite3_reset(st);
 
    AUTH_DB_UNLOCK();
@@ -305,7 +305,7 @@ int calendar_db_account_update_sync(int64_t id, time_t last_sync) {
 int calendar_db_account_update_discovery(int64_t id,
                                          const char *principal_url,
                                          const char *calendar_home_url) {
-   AUTH_DB_LOCK_OR_RETURN(-1);
+   AUTH_DB_LOCK_OR_FAIL();
 
    sqlite3_stmt *st = s_db.stmt_cal_acct_update_discovery;
    sqlite3_reset(st);
@@ -313,7 +313,7 @@ int calendar_db_account_update_discovery(int64_t id,
    sqlite3_bind_text(st, 2, calendar_home_url ? calendar_home_url : "", -1, SQLITE_STATIC);
    sqlite3_bind_int64(st, 3, id);
 
-   int result = (sqlite3_step(st) == SQLITE_DONE) ? 0 : -1;
+   int result = (sqlite3_step(st) == SQLITE_DONE) ? 0 : 1;
    sqlite3_reset(st);
 
    AUTH_DB_UNLOCK();
@@ -321,16 +321,33 @@ int calendar_db_account_update_discovery(int64_t id,
 }
 
 int calendar_db_account_set_read_only(int64_t id, bool read_only) {
-   AUTH_DB_LOCK_OR_RETURN(-1);
+   AUTH_DB_LOCK_OR_FAIL();
 
    sqlite3_stmt *st = s_db.stmt_cal_acct_set_read_only;
    sqlite3_reset(st);
    sqlite3_bind_int(st, 1, read_only ? 1 : 0);
    sqlite3_bind_int64(st, 2, id);
 
-   int result = (sqlite3_step(st) == SQLITE_DONE) ? 0 : -1;
+   int result = (sqlite3_step(st) == SQLITE_DONE) ? 0 : 1;
    if (result != 0)
       LOG_ERROR("calendar_db: set_read_only failed: %s", sqlite3_errmsg(s_db.db));
+   sqlite3_reset(st);
+
+   AUTH_DB_UNLOCK();
+   return result;
+}
+
+int calendar_db_account_set_enabled(int64_t id, bool enabled) {
+   AUTH_DB_LOCK_OR_FAIL();
+
+   sqlite3_stmt *st = s_db.stmt_cal_acct_set_enabled;
+   sqlite3_reset(st);
+   sqlite3_bind_int(st, 1, enabled ? 1 : 0);
+   sqlite3_bind_int64(st, 2, id);
+
+   int result = (sqlite3_step(st) == SQLITE_DONE) ? 0 : 1;
+   if (result != 0)
+      LOG_ERROR("calendar_db: set_enabled failed: %s", sqlite3_errmsg(s_db.db));
    sqlite3_reset(st);
 
    AUTH_DB_UNLOCK();
@@ -367,13 +384,13 @@ int64_t calendar_db_calendar_create(const calendar_calendar_t *cal) {
 }
 
 int calendar_db_calendar_get(int64_t id, calendar_calendar_t *out) {
-   AUTH_DB_LOCK_OR_RETURN(-1);
+   AUTH_DB_LOCK_OR_FAIL();
 
    sqlite3_stmt *st = s_db.stmt_cal_cal_get;
    sqlite3_reset(st);
    sqlite3_bind_int64(st, 1, id);
 
-   int result = -1;
+   int result = 1;
    if (sqlite3_step(st) == SQLITE_ROW) {
       row_to_calendar(st, out);
       result = 0;
@@ -403,14 +420,14 @@ int calendar_db_calendar_list(int64_t account_id, calendar_calendar_t *out, int 
 }
 
 int calendar_db_calendar_update_ctag(int64_t id, const char *ctag) {
-   AUTH_DB_LOCK_OR_RETURN(-1);
+   AUTH_DB_LOCK_OR_FAIL();
 
    sqlite3_stmt *st = s_db.stmt_cal_cal_update_ctag;
    sqlite3_reset(st);
    sqlite3_bind_text(st, 1, ctag ? ctag : "", -1, SQLITE_STATIC);
    sqlite3_bind_int64(st, 2, id);
 
-   int result = (sqlite3_step(st) == SQLITE_DONE) ? 0 : -1;
+   int result = (sqlite3_step(st) == SQLITE_DONE) ? 0 : 1;
    sqlite3_reset(st);
 
    AUTH_DB_UNLOCK();
@@ -418,14 +435,14 @@ int calendar_db_calendar_update_ctag(int64_t id, const char *ctag) {
 }
 
 int calendar_db_calendar_set_active(int64_t id, bool active) {
-   AUTH_DB_LOCK_OR_RETURN(-1);
+   AUTH_DB_LOCK_OR_FAIL();
 
    sqlite3_stmt *st = s_db.stmt_cal_cal_set_active;
    sqlite3_reset(st);
    sqlite3_bind_int(st, 1, active ? 1 : 0);
    sqlite3_bind_int64(st, 2, id);
 
-   int result = (sqlite3_step(st) == SQLITE_DONE) ? 0 : -1;
+   int result = (sqlite3_step(st) == SQLITE_DONE) ? 0 : 1;
    sqlite3_reset(st);
 
    AUTH_DB_UNLOCK();
@@ -433,13 +450,13 @@ int calendar_db_calendar_set_active(int64_t id, bool active) {
 }
 
 int calendar_db_calendar_delete(int64_t id) {
-   AUTH_DB_LOCK_OR_RETURN(-1);
+   AUTH_DB_LOCK_OR_FAIL();
 
    sqlite3_stmt *st = s_db.stmt_cal_cal_delete;
    sqlite3_reset(st);
    sqlite3_bind_int64(st, 1, id);
 
-   int result = (sqlite3_step(st) == SQLITE_DONE) ? 0 : -1;
+   int result = (sqlite3_step(st) == SQLITE_DONE) ? 0 : 1;
    sqlite3_reset(st);
 
    AUTH_DB_UNLOCK();
@@ -508,7 +525,7 @@ int calendar_db_event_get_by_uid(const char *uid, calendar_event_t *out) {
    /* This query requires user_id — but the header says uid only.
     * We use a version that joins through to accounts for access control.
     * Caller must set out->calendar_id to user_id before calling (overloaded). */
-   AUTH_DB_LOCK_OR_RETURN(-1);
+   AUTH_DB_LOCK_OR_FAIL();
 
    sqlite3_stmt *st = s_db.stmt_cal_evt_get_by_uid;
    sqlite3_reset(st);
@@ -516,7 +533,7 @@ int calendar_db_event_get_by_uid(const char *uid, calendar_event_t *out) {
    /* Bind user_id from the calendar_id field (overloaded for this call) */
    sqlite3_bind_int64(st, 2, out->calendar_id);
 
-   int result = -1;
+   int result = 1;
    if (sqlite3_step(st) == SQLITE_ROW) {
       row_to_event(st, out);
       result = 0;
@@ -528,13 +545,13 @@ int calendar_db_event_get_by_uid(const char *uid, calendar_event_t *out) {
 }
 
 int calendar_db_event_delete(int64_t id) {
-   AUTH_DB_LOCK_OR_RETURN(-1);
+   AUTH_DB_LOCK_OR_FAIL();
 
    sqlite3_stmt *st = s_db.stmt_cal_evt_delete;
    sqlite3_reset(st);
    sqlite3_bind_int64(st, 1, id);
 
-   int result = (sqlite3_step(st) == SQLITE_DONE) ? 0 : -1;
+   int result = (sqlite3_step(st) == SQLITE_DONE) ? 0 : 1;
    sqlite3_reset(st);
 
    AUTH_DB_UNLOCK();
@@ -542,13 +559,13 @@ int calendar_db_event_delete(int64_t id) {
 }
 
 int calendar_db_event_delete_by_calendar(int64_t calendar_id) {
-   AUTH_DB_LOCK_OR_RETURN(-1);
+   AUTH_DB_LOCK_OR_FAIL();
 
    sqlite3_stmt *st = s_db.stmt_cal_evt_delete_by_cal;
    sqlite3_reset(st);
    sqlite3_bind_int64(st, 1, calendar_id);
 
-   int result = (sqlite3_step(st) == SQLITE_DONE) ? 0 : -1;
+   int result = (sqlite3_step(st) == SQLITE_DONE) ? 0 : 1;
    sqlite3_reset(st);
 
    AUTH_DB_UNLOCK();
@@ -589,13 +606,13 @@ int64_t calendar_db_occurrence_insert(const calendar_occurrence_t *occ) {
 }
 
 int calendar_db_occurrence_delete_for_event(int64_t event_id) {
-   AUTH_DB_LOCK_OR_RETURN(-1);
+   AUTH_DB_LOCK_OR_FAIL();
 
    sqlite3_stmt *st = s_db.stmt_cal_occ_delete_for_event;
    sqlite3_reset(st);
    sqlite3_bind_int64(st, 1, event_id);
 
-   int result = (sqlite3_step(st) == SQLITE_DONE) ? 0 : -1;
+   int result = (sqlite3_step(st) == SQLITE_DONE) ? 0 : 1;
    sqlite3_reset(st);
 
    AUTH_DB_UNLOCK();
@@ -677,15 +694,28 @@ int calendar_db_occurrences_search(const int64_t *calendar_ids,
    char id_json[768];
    build_cal_id_json(calendar_ids, calendar_count, id_json, sizeof(id_json));
 
-   /* Build LIKE pattern */
-   char pattern[256];
-   snprintf(pattern, sizeof(pattern), "%%%s%%", query);
+   /* Escape LIKE metacharacters (%, _, \) before building pattern */
+   if (strlen(query) > 200) {
+      AUTH_DB_UNLOCK();
+      return 0;
+   }
+   char escaped[512];
+   size_t ej = 0;
+   for (size_t ei = 0; query[ei] && ej < sizeof(escaped) - 2; ei++) {
+      if (query[ei] == '%' || query[ei] == '_' || query[ei] == '\\')
+         escaped[ej++] = '\\';
+      escaped[ej++] = query[ei];
+   }
+   escaped[ej] = '\0';
+
+   char pattern[600];
+   snprintf(pattern, sizeof(pattern), "%%%s%%", escaped);
 
    sqlite3_stmt *st = s_db.stmt_cal_occ_search;
    sqlite3_reset(st);
-   sqlite3_bind_text(st, 1, id_json, -1, SQLITE_STATIC);
-   sqlite3_bind_text(st, 2, pattern, -1, SQLITE_STATIC);
-   sqlite3_bind_text(st, 3, pattern, -1, SQLITE_STATIC);
+   sqlite3_bind_text(st, 1, id_json, -1, SQLITE_TRANSIENT);
+   sqlite3_bind_text(st, 2, pattern, -1, SQLITE_TRANSIENT);
+   sqlite3_bind_text(st, 3, pattern, -1, SQLITE_TRANSIENT);
    sqlite3_bind_int(st, 4, max_count);
 
    int count = 0;
@@ -706,7 +736,7 @@ int calendar_db_next_occurrence(const int64_t *calendar_ids,
    if (calendar_count <= 0)
       return 1;
 
-   AUTH_DB_LOCK_OR_RETURN(-1);
+   AUTH_DB_LOCK_OR_FAIL();
 
    char id_json[768];
    build_cal_id_json(calendar_ids, calendar_count, id_json, sizeof(id_json));
@@ -716,7 +746,7 @@ int calendar_db_next_occurrence(const int64_t *calendar_ids,
    sqlite3_bind_text(st, 1, id_json, -1, SQLITE_STATIC);
    sqlite3_bind_int64(st, 2, (int64_t)after);
 
-   int result = -1;
+   int result = 1;
    if (sqlite3_step(st) == SQLITE_ROW) {
       row_to_occurrence(st, out);
       result = 0;

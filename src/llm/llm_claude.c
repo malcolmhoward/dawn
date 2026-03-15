@@ -338,7 +338,7 @@ static void claude_sse_event_handler(const char *event_type,
 }
 
 /* Maximum tool call iterations to prevent infinite loops */
-#define MAX_TOOL_ITERATIONS 5
+#define MAX_TOOL_ITERATIONS 8
 
 /**
  * @brief Extract error message from Claude API error response
@@ -707,17 +707,21 @@ static char *llm_claude_streaming_internal(struct json_object *conversation_hist
             return direct_response;
          }
 
-         // Check iteration limit
+         // Check iteration limit — force a final text response with what we have
          if (iteration >= MAX_TOOL_ITERATIONS) {
-            LOG_WARNING("Claude streaming: Max tool iterations (%d) reached, returning without "
-                        "final response",
+            LOG_WARNING("Claude streaming: Max tool iterations (%d) reached, forcing text response",
                         MAX_TOOL_ITERATIONS);
-            const char *error_msg = "I apologize, but I wasn't able to complete that request after "
-                                    "several attempts. Could you try rephrasing your question?";
-            // Send through chunk callback so TTS receives it
-            if (chunk_callback) {
-               chunk_callback(error_msg, callback_userdata);
-            }
+
+            // Inject a system hint telling the LLM to respond with what it has
+            json_object *hint_msg = json_object_new_object();
+            json_object_object_add(hint_msg, "role", json_object_new_string("user"));
+            json_object_object_add(
+                hint_msg, "content",
+                json_object_new_string(
+                    "[System: Maximum tool iterations reached. Respond to the user now with "
+                    "the information you have gathered so far. Do not call any more tools.]"));
+            json_object_array_add(conversation_history, hint_msg);
+
             // Free any vision data from tool results
             for (int i = 0; i < results->count; i++) {
                if (results->results[i].vision_image) {
@@ -726,7 +730,12 @@ static char *llm_claude_streaming_internal(struct json_object *conversation_hist
                }
             }
             free(results);
-            return strdup(error_msg);
+
+            // Make one final call with tools disabled
+            LOG_INFO("Claude streaming: Making final call without tools to present results");
+            return llm_claude_streaming_internal(conversation_history, "", NULL, NULL, 0, base_url,
+                                                 api_key, model, chunk_callback, callback_userdata,
+                                                 MAX_TOOL_ITERATIONS);
          }
 
          // Check for vision data in tool results (session-isolated)

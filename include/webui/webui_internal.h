@@ -769,6 +769,7 @@ void handle_calendar_sync_account(ws_connection_t *conn, struct json_object *pay
 void handle_calendar_list_calendars(ws_connection_t *conn, struct json_object *payload);
 void handle_calendar_toggle_calendar(ws_connection_t *conn, struct json_object *payload);
 void handle_calendar_toggle_read_only(ws_connection_t *conn, struct json_object *payload);
+void handle_calendar_set_enabled(ws_connection_t *conn, struct json_object *payload);
 #endif /* DAWN_ENABLE_CALENDAR_TOOL */
 
 /* =============================================================================

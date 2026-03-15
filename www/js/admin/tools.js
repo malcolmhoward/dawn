@@ -37,11 +37,11 @@
          return;
       }
 
-      // Sort tools: non-armor first, then armor tools at bottom, alphabetically within each group
+      // Sort tools: normal first, then dangerous, then armor — alphabetically within each group
       toolsConfig = payload.tools.sort((a, b) => {
-         const aArmor = a.armor_feature ? 1 : 0;
-         const bArmor = b.armor_feature ? 1 : 0;
-         if (aArmor !== bArmor) return aArmor - bArmor;
+         const aGroup = a.armor_feature ? 2 : a.dangerous ? 1 : 0;
+         const bGroup = b.armor_feature ? 2 : b.dangerous ? 1 : 0;
+         if (aGroup !== bGroup) return aGroup - bGroup;
          return a.name.localeCompare(b.name);
       });
       renderToolsList();
@@ -110,12 +110,20 @@
             const disabledClass = !tool.available ? 'disabled' : '';
             const disabledAttr = !tool.available ? 'disabled' : '';
             // Arc reactor SVG for armor features - circle with inverted triangle
-            // Equilateral triangle inscribed in circle (center 12,12, radius 10)
             const armorIcon = tool.armor_feature
                ? `<span class="armor-icon" title="OASIS armor feature">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5">
           <circle cx="12" cy="12" r="10"/>
           <polygon points="12,22 3.34,7 20.66,7" stroke-linejoin="round"/>
+        </svg>
+      </span>`
+               : '';
+
+            // Warning triangle for dangerous tools — requires explicit opt-in
+            const dangerIcon = tool.dangerous
+               ? `<span class="danger-icon" title="Dangerous tool — can perform irreversible actions. Enable with caution.">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+          <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/>
         </svg>
       </span>`
                : '';
@@ -127,7 +135,7 @@
             return `
         <div class="tool-item ${disabledClass}" data-tool="${safeName}" title="${safeDesc}">
           <div class="tool-info">
-            <div class="tool-name">${safeName}${armorIcon}</div>
+            <div class="tool-name">${safeName}${dangerIcon}${armorIcon}</div>
           </div>
           <div class="tool-checkbox">
             <input type="checkbox" id="tool-local-${safeName}"
