@@ -84,11 +84,40 @@ int contacts_delete(int user_id, int64_t contact_id);
  * @brief List all contacts for a user, optionally filtered by type.
  *
  * @param user_id    User ID
- * @param field_type Filter by type or NULL for all
+ * @param field_type Filter by exact type ("email", "phone", "address") or NULL for all
  * @param out        Output array
  * @param max_results Maximum results
+ * @param offset     Number of rows to skip (for pagination)
  * @return Number of results, or -1 on error
  */
-int contacts_list(int user_id, const char *field_type, contact_result_t *out, int max_results);
+int contacts_list(int user_id,
+                  const char *field_type,
+                  contact_result_t *out,
+                  int max_results,
+                  int offset);
+
+/**
+ * @brief Count all contacts for a user.
+ *
+ * @param user_id User ID
+ * @return Contact count, or -1 on error
+ */
+int contacts_count(int user_id);
+
+/**
+ * @brief Update an existing contact record.
+ *
+ * @param user_id    User ID (ownership check)
+ * @param contact_id Contact record ID
+ * @param field_type New field type ("email", "phone", "address")
+ * @param value      New contact value
+ * @param label      New label ("work", "personal", etc.) or NULL
+ * @return 0 on success, 1 on failure
+ */
+int contacts_update(int user_id,
+                    int64_t contact_id,
+                    const char *field_type,
+                    const char *value,
+                    const char *label);
 
 #endif /* CONTACTS_DB_H */

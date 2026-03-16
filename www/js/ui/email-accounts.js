@@ -181,8 +181,13 @@
 
       const statusEl = document.getElementById('email-oauth-status');
       const saveBtn = document.getElementById('email-oauth-save-btn');
+      const connectBtn = document.getElementById('email-oauth-connect-btn');
       if (statusEl) statusEl.textContent = 'Connected as ' + pendingOAuthAccountKey;
       if (saveBtn) saveBtn.disabled = false;
+      if (connectBtn) {
+         connectBtn.disabled = false;
+         connectBtn.textContent = 'Re-authorize';
+      }
    }
 
    function handleOAuthDisconnectResponse(payload) {
@@ -798,21 +803,13 @@
 
             if (statusEl) statusEl.textContent = 'Checking existing connections...';
 
-            DawnOAuth.checkScopes('google', requestScopes)
-               .then(function (result) {
-                  if (result.success && result.has_scopes && result.account_key) {
-                     pendingOAuthAccountKey = result.account_key;
-                     if (statusEl)
-                        statusEl.textContent =
-                           result.account_key +
-                           ' is already connected. No additional sign-in needed.';
-                     if (saveBtn) saveBtn.disabled = false;
-                     return;
-                  }
-                  if (statusEl) statusEl.textContent = 'Waiting for authorization...';
-                  return DawnOAuth.startFlow('google', requestScopes).then(function () {
-                     if (statusEl) statusEl.textContent = 'Exchanging authorization code...';
-                  });
+            // Always launch OAuth popup for email — user may want a different
+            // Google account than one already connected. The Google consent
+            // screen provides its own account picker.
+            if (statusEl) statusEl.textContent = 'Waiting for authorization...';
+            DawnOAuth.startFlow('google', requestScopes)
+               .then(function () {
+                  if (statusEl) statusEl.textContent = 'Exchanging authorization code...';
                })
                .catch(function (err) {
                   oauthBtn.disabled = false;

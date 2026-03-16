@@ -534,6 +534,7 @@ if(ENABLE_WEBUI)
         src/webui/webui_doc_library.c
         src/webui/webui_satellite.c
         src/webui/webui_admin_satellite.c
+        src/webui/webui_contacts.c
     )
     if(DAWN_ENABLE_CALENDAR_TOOL)
         list(APPEND DAWN_SOURCES src/webui/webui_calendar.c)

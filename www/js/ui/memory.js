@@ -26,8 +26,14 @@
       activeTab: 'facts',
       searchQuery: '',
       searchTimeout: null,
-      tabOffset: { facts: 0, preferences: 0, summaries: 0, entities: 0 },
-      tabHasMore: { facts: false, preferences: false, summaries: false, entities: false },
+      tabOffset: { facts: 0, preferences: 0, summaries: 0, entities: 0, contacts: 0 },
+      tabHasMore: {
+         facts: false,
+         preferences: false,
+         summaries: false,
+         entities: false,
+         contacts: false,
+      },
       loading: false,
    };
 
@@ -62,6 +68,7 @@
       statPrefs: null,
       statSummaries: null,
       statEntities: null,
+      statContacts: null,
    };
 
    /* Import modal state */
@@ -122,6 +129,14 @@
       DawnWS.send({
          type: 'delete_memory_entity',
          payload: { entity_id: entityId },
+      });
+   }
+
+   function requestMergeEntities(sourceId, targetId) {
+      if (typeof DawnWS === 'undefined' || !DawnWS.isConnected()) return;
+      DawnWS.send({
+         type: 'merge_memory_entities',
+         payload: { source_id: sourceId, target_id: targetId },
       });
    }
 
@@ -218,6 +233,23 @@
 
       if (typeof DawnToast !== 'undefined') {
          DawnToast.show('Entity deleted', 'success');
+      }
+
+      requestStats();
+      memoryState.tabOffset.entities = 0;
+      requestEntities(0);
+   }
+
+   function handleMergeEntityResponse(payload) {
+      if (!payload.success) {
+         if (typeof DawnToast !== 'undefined') {
+            DawnToast.show(payload.error || 'Failed to merge entities', 'error');
+         }
+         return;
+      }
+
+      if (typeof DawnToast !== 'undefined') {
+         DawnToast.show('Entities merged', 'success');
       }
 
       requestStats();
@@ -472,12 +504,13 @@
       memoryState.summaries = [];
       memoryState.entities = [];
       memoryState.allEntities = [];
-      memoryState.tabOffset = { facts: 0, preferences: 0, summaries: 0, entities: 0 };
+      memoryState.tabOffset = { facts: 0, preferences: 0, summaries: 0, entities: 0, contacts: 0 };
       memoryState.tabHasMore = {
          facts: false,
          preferences: false,
          summaries: false,
          entities: false,
+         contacts: false,
       };
       requestStats();
       showEmptyState('No memories yet');
@@ -501,6 +534,9 @@
       }
       if (memoryElements.statEntities) {
          memoryElements.statEntities.textContent = memoryState.stats.entity_count || 0;
+      }
+      if (memoryElements.statContacts) {
+         memoryElements.statContacts.textContent = memoryState.stats.contact_count || 0;
       }
    }
 
@@ -547,17 +583,19 @@
 
       return `
          <div class="memory-item fact" data-fact-id="${fact.id}">
-            <div class="memory-item-text">${escapeHtml(fact.fact_text)}</div>
+            <div class="memory-item-header">
+               <div class="memory-item-text">${escapeHtml(fact.fact_text)}</div>
+               <button class="memory-item-delete" data-fact-id="${fact.id}" title="Delete this fact" aria-label="Delete fact">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                     <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>
+                  </svg>
+               </button>
+            </div>
             <div class="memory-item-meta">
                <span class="memory-item-confidence ${confidenceClass}">${confidencePercent}%</span>
                <span class="memory-item-source">${escapeHtml(fact.source || 'unknown')}</span>
                <span class="memory-item-date">${dateStr}</span>
             </div>
-            <button class="memory-item-delete" data-fact-id="${fact.id}" title="Delete this fact" aria-label="Delete fact">
-               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>
-               </svg>
-            </button>
          </div>
       `;
    }
@@ -591,7 +629,14 @@
 
       return `
          <div class="memory-item preference" data-pref-category="${escapeHtml(pref.category)}">
-            <div class="memory-item-category">${escapeHtml(pref.category)}</div>
+            <div class="memory-item-header">
+               <div class="memory-item-category">${escapeHtml(pref.category)}</div>
+               <button class="memory-item-delete" data-pref-category="${escapeHtml(pref.category)}" title="Delete this preference" aria-label="Delete preference">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                     <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>
+                  </svg>
+               </button>
+            </div>
             <div class="memory-item-value">${escapeHtml(pref.value)}</div>
             <div class="memory-item-meta">
                <span class="memory-item-confidence ${confidenceClass}">${confidencePercent}%</span>
@@ -599,11 +644,6 @@
                <span class="memory-item-date">${dateStr}</span>
                ${pref.reinforcement_count > 1 ? `<span>${pref.reinforcement_count}x</span>` : ''}
             </div>
-            <button class="memory-item-delete" data-pref-category="${escapeHtml(pref.category)}" title="Delete this preference" aria-label="Delete preference">
-               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>
-               </svg>
-            </button>
          </div>
       `;
    }
@@ -643,17 +683,19 @@
 
       return `
          <div class="memory-item summary" data-summary-id="${summary.id}">
-            <div class="memory-item-text">${escapeHtml(summary.summary)}</div>
+            <div class="memory-item-header">
+               <div class="memory-item-text">${escapeHtml(summary.summary)}</div>
+               <button class="memory-item-delete" data-summary-id="${summary.id}" title="Delete this summary" aria-label="Delete summary">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                     <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>
+                  </svg>
+               </button>
+            </div>
             ${topicsHtml ? `<div class="memory-item-topics">${topicsHtml}</div>` : ''}
             <div class="memory-item-meta">
                <span class="memory-item-date">${dateStr}</span>
                ${summary.message_count ? `<span>${summary.message_count} messages</span>` : ''}
             </div>
-            <button class="memory-item-delete" data-summary-id="${summary.id}" title="Delete this summary" aria-label="Delete summary">
-               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>
-               </svg>
-            </button>
          </div>
       `;
    }
@@ -715,11 +757,33 @@
            '</div>'
          : '';
 
+      const contactBadgeHtml =
+         entity.entity_type === 'person'
+            ? `<span class="entity-contact-badge" data-contact-entity-id="${entity.id}" ` +
+              `data-contact-entity-name="${escapeHtml(entity.name)}" tabindex="0" role="button" ` +
+              `title="View contacts for ${escapeHtml(entity.name)}">` +
+              '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+              '<path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>' +
+              '<circle cx="8.5" cy="7" r="4"/></svg> contacts</span>'
+            : '';
+
       return (
          `<div class="memory-item entity" data-entity-id="${entity.id}">` +
          `<div class="entity-header">` +
          `<span class="entity-type-badge ${typeClass}">${escapeHtml(entity.entity_type || 'other')}</span>` +
          `<span class="entity-name">${escapeHtml(entity.name)}</span>` +
+         contactBadgeHtml +
+         `<button class="entity-merge-btn" data-merge-entity-id="${entity.id}" ` +
+         `title="Merge into another entity" aria-label="Merge entity">` +
+         `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">` +
+         `<path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/>` +
+         `<path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>` +
+         `</svg></button>` +
+         `<button class="memory-item-delete" data-entity-id="${entity.id}" ` +
+         `title="Delete this entity" aria-label="Delete entity">` +
+         `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">` +
+         `<path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>` +
+         `</svg></button>` +
          `</div>` +
          `<div class="memory-item-meta">` +
          `<span class="entity-mentions">${entity.mention_count || 0} mentions</span>` +
@@ -728,11 +792,7 @@
          (relations.length > 0
             ? `<div class="entity-relations">${relationsHtml}${hiddenHtml}${moreHtml}</div>`
             : '') +
-         `<button class="memory-item-delete" data-entity-id="${entity.id}" ` +
-         `title="Delete this entity" aria-label="Delete entity">` +
-         `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">` +
-         `<path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>` +
-         `</svg></button></div>`
+         `</div>`
       );
    }
 
@@ -768,7 +828,9 @@
 
    function handleListKeydown(e) {
       if (e.key !== 'Enter' && e.key !== ' ') return;
-      const target = e.target.closest('.entity-relation-target, .entity-relations-more');
+      const target = e.target.closest(
+         '.entity-relation-target, .entity-relations-more, .entity-contact-badge, .entity-merge-btn'
+      );
       if (!target) return;
       e.preventDefault();
       target.click();
@@ -796,6 +858,40 @@
             moreToggle.textContent = isVisible ? `+${hidden.children.length} more` : 'show less';
          }
          return;
+      }
+
+      // Handle entity contact badge click — switch to contacts tab filtered by entity
+      const contactBadge = e.target.closest('.entity-contact-badge');
+      if (contactBadge) {
+         const entityId = parseInt(contactBadge.dataset.contactEntityId, 10);
+         const entityName = contactBadge.dataset.contactEntityName;
+         if (entityId && entityName && typeof DawnContacts !== 'undefined') {
+            switchTab('contacts');
+            DawnContacts.filterByEntity(entityId, entityName);
+         }
+         return;
+      }
+
+      // Handle merge button click — enter/cancel merge mode
+      const mergeBtn = e.target.closest('.entity-merge-btn');
+      if (mergeBtn) {
+         e.stopPropagation();
+         const sourceId = parseInt(mergeBtn.dataset.mergeEntityId, 10);
+         showMergeEntityPicker(sourceId);
+         return;
+      }
+
+      // If in merge mode, clicking an entity selects it as target
+      if (mergeSourceId) {
+         const entityEl = e.target.closest('.memory-item.entity');
+         if (entityEl) {
+            e.stopPropagation();
+            const targetId = parseInt(entityEl.dataset.entityId, 10);
+            if (targetId && targetId !== mergeSourceId) {
+               handleMergeTargetClick(targetId);
+            }
+            return;
+         }
       }
 
       const btn = e.target.closest('.memory-item-delete');
@@ -870,6 +966,82 @@
       }
    }
 
+   let mergeSourceId = null;
+
+   function showMergeEntityPicker(sourceId) {
+      const source = memoryState.allEntities.find((e) => e.id === sourceId);
+      if (!source) return;
+
+      if (memoryState.allEntities.length < 2) {
+         if (typeof DawnToast !== 'undefined') {
+            DawnToast.show('No other entities to merge with', 'info');
+         }
+         return;
+      }
+
+      // If clicking the same merge button again, cancel merge mode
+      if (mergeSourceId === sourceId) {
+         cancelMergeMode();
+         return;
+      }
+
+      // Enter merge mode: highlight source, wait for target click
+      mergeSourceId = sourceId;
+      if (memoryElements.list) {
+         // Add merge-source class to highlight
+         const sourceEl = memoryElements.list.querySelector(
+            `.memory-item.entity[data-entity-id="${sourceId}"]`
+         );
+         if (sourceEl) sourceEl.classList.add('merge-source');
+         // Add merge-mode to list so other entities show merge-target cursor
+         memoryElements.list.classList.add('merge-mode');
+      }
+      if (typeof DawnToast !== 'undefined') {
+         DawnToast.show(
+            `Select target entity to merge "${source.name}" into, or click merge again to cancel`,
+            'info'
+         );
+      }
+   }
+
+   function cancelMergeMode() {
+      if (memoryElements.list) {
+         memoryElements.list.classList.remove('merge-mode');
+         const sourceEl = memoryElements.list.querySelector('.merge-source');
+         if (sourceEl) sourceEl.classList.remove('merge-source');
+      }
+      mergeSourceId = null;
+   }
+
+   function handleMergeTargetClick(targetId) {
+      if (!mergeSourceId || mergeSourceId === targetId) return;
+
+      const source = memoryState.allEntities.find((e) => e.id === mergeSourceId);
+      const target = memoryState.allEntities.find((e) => e.id === targetId);
+      if (!source || !target) return;
+
+      const sid = mergeSourceId;
+      cancelMergeMode();
+
+      if (callbacks.showConfirmModal) {
+         callbacks.showConfirmModal(
+            `Merge "${source.name}" into "${target.name}"?`,
+            () => {
+               requestMergeEntities(sid, targetId);
+            },
+            {
+               detail:
+                  `"${source.name}" will be deleted. All contacts and relations ` +
+                  `will transfer to "${target.name}".`,
+               danger: false,
+               okText: 'Merge',
+            }
+         );
+      } else {
+         requestMergeEntities(sid, targetId);
+      }
+   }
+
    function scrollToEntity(entityId) {
       if (!memoryElements.list) return;
       const el = memoryElements.list.querySelector(
@@ -890,6 +1062,9 @@
 
    function open() {
       if (!memoryElements.popover) return;
+
+      // Close doc library if open
+      if (typeof DawnDocLibrary !== 'undefined') DawnDocLibrary.close();
 
       // Store trigger element for focus restoration
       triggerElement = document.activeElement;
@@ -917,6 +1092,7 @@
    function close() {
       if (!memoryElements.popover) return;
 
+      cancelMergeMode();
       memoryElements.popover.classList.add('hidden');
       memoryElements.btn.classList.remove('active');
 
@@ -952,6 +1128,15 @@
    }
 
    function handleClickOutside(e) {
+      // Don't close if clicking inside the contact modal (it's a sibling, not a child)
+      const contactModal = document.getElementById('contact-modal');
+      if (
+         contactModal &&
+         !contactModal.classList.contains('hidden') &&
+         contactModal.contains(e.target)
+      )
+         return;
+
       if (
          memoryElements.popover &&
          !memoryElements.popover.contains(e.target) &&
@@ -964,6 +1149,9 @@
 
    function handleKeyDown(e) {
       if (e.key === 'Escape') {
+         // Let the contact modal handle its own Escape
+         const contactModal = document.getElementById('contact-modal');
+         if (contactModal && !contactModal.classList.contains('hidden')) return;
          close();
       }
    }
@@ -975,6 +1163,7 @@
    function switchTab(tabName) {
       if (memoryState.activeTab === tabName) return;
 
+      cancelMergeMode();
       memoryState.activeTab = tabName;
 
       // Update tab buttons
@@ -1029,6 +1218,9 @@
          case 'entities':
             requestEntities(0);
             break;
+         case 'contacts':
+            if (typeof DawnContacts !== 'undefined') DawnContacts.loadContacts();
+            break;
       }
    }
 
@@ -1055,7 +1247,11 @@
       memoryState.searchTimeout = setTimeout(() => {
          memoryState.searchQuery = query;
          showLoading();
-         requestSearch(query);
+         if (memoryState.activeTab === 'contacts' && typeof DawnContacts !== 'undefined') {
+            DawnContacts.searchContacts(query);
+         } else {
+            requestSearch(query);
+         }
       }, 300);
    }
 
@@ -1090,6 +1286,12 @@
 
    function handleLoadMore() {
       const tab = memoryState.activeTab;
+
+      if (tab === 'contacts') {
+         if (typeof DawnContacts !== 'undefined') DawnContacts.loadMore();
+         return;
+      }
+
       if (!memoryState.tabHasMore[tab]) return;
       if (memoryState.loading) return;
 
@@ -1637,6 +1839,7 @@
       memoryElements.statPrefs = document.getElementById('memory-pref-count');
       memoryElements.statSummaries = document.getElementById('memory-summary-count');
       memoryElements.statEntities = document.getElementById('memory-entity-count');
+      memoryElements.statContacts = document.getElementById('memory-contact-count');
 
       if (!memoryElements.btn || !memoryElements.popover) {
          console.warn('DawnMemory: Required elements not found');
@@ -1686,6 +1889,9 @@
       initImportModal();
       initExportModal();
 
+      // Initialize contacts module
+      if (typeof DawnContacts !== 'undefined') DawnContacts.init();
+
       // Load more handler
       if (memoryElements.loadMoreBtn) {
          memoryElements.loadMoreBtn.addEventListener('click', handleLoadMore);
@@ -1715,6 +1921,7 @@
       handleDeletePreferenceResponse,
       handleDeleteSummaryResponse,
       handleDeleteEntityResponse,
+      handleMergeEntityResponse,
       handleDeleteAllResponse,
       handleExportResponse,
       handleImportResponse,

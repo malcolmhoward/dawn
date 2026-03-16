@@ -1,0 +1,339 @@
+/*
+ * DAWN WebUI - Contacts Component
+ * Contact cards in memory popover + add/edit modal
+ */
+
+/* =============================================================================
+ * Contact Cards (inside memory-list)
+ *
+ * Layout:  Row 1:  <Name>         <label badge>  [edit] [delete]
+ *          Row 2:  [type badge]   <value>
+ * ============================================================================= */
+.contact-card {
+   display: flex;
+   flex-direction: column;
+   gap: 0.25rem;
+   padding: 0.75rem 1rem;
+   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.contact-card:last-child {
+   border-bottom: none;
+}
+
+/* Row 1: entity name, label, action buttons */
+.contact-card-header {
+   display: flex;
+   align-items: center;
+   gap: 0.5rem;
+   min-width: 0;
+}
+
+.contact-entity-name {
+   min-width: 0;
+   overflow: hidden;
+   text-overflow: ellipsis;
+   white-space: nowrap;
+   font-size: 0.85rem;
+   font-weight: 500;
+   color: var(--text-primary);
+}
+
+.contact-field-label {
+   flex-shrink: 0;
+}
+
+/* Row 2: type badge + value */
+.contact-card-row {
+   display: flex;
+   align-items: center;
+   gap: 0.5rem;
+   min-width: 0;
+}
+
+.contact-field-type {
+   flex-shrink: 0;
+}
+
+.contact-field-value {
+   flex: 1;
+   min-width: 0;
+   overflow: hidden;
+   text-overflow: ellipsis;
+   white-space: nowrap;
+   font-family: var(--font-mono, monospace);
+   font-size: 0.85rem;
+   color: var(--text-primary);
+}
+
+/* =============================================================================
+ * Contact Actions (edit/delete buttons, inline in header row)
+ * ============================================================================= */
+.contact-actions {
+   display: flex;
+   gap: 0.25rem;
+   flex-shrink: 0;
+   margin-left: auto;
+   opacity: 0;
+   transition: opacity var(--transition-fast);
+}
+
+.contact-card:hover .contact-actions {
+   opacity: 1;
+}
+
+.contact-actions button {
+   background: none;
+   border: none;
+   color: var(--text-secondary);
+   cursor: pointer;
+   padding: 0.25rem;
+   border-radius: 4px;
+   display: flex;
+   align-items: center;
+   justify-content: center;
+   transition:
+      color var(--transition-fast),
+      background var(--transition-fast);
+}
+
+.contact-actions button:hover {
+   color: var(--text-primary);
+   background: var(--bg-secondary);
+}
+
+.contact-actions button.contact-delete-btn:hover {
+   color: var(--error);
+}
+
+.contact-actions button:focus-visible {
+   opacity: 1;
+   outline: 2px solid var(--accent);
+   outline-offset: 2px;
+}
+
+.contact-card:focus-within .contact-actions {
+   opacity: 1;
+}
+
+.contact-actions svg {
+   width: 14px;
+   height: 14px;
+}
+
+/* =============================================================================
+ * Contact Add Button (in tab area)
+ * ============================================================================= */
+.contact-add-btn {
+   display: inline-flex;
+   align-items: center;
+   gap: 0.25rem;
+   background: none;
+   border: 1px solid var(--border-color);
+   color: var(--text-secondary);
+   cursor: pointer;
+   padding: 0.25rem 0.5rem;
+   border-radius: 6px;
+   font-size: 0.75rem;
+   transition:
+      color var(--transition-fast),
+      border-color var(--transition-fast);
+   margin-bottom: 0.5rem;
+}
+
+.contact-add-btn:hover {
+   color: var(--accent);
+   border-color: var(--accent);
+}
+
+.contact-add-btn svg {
+   width: 14px;
+   height: 14px;
+}
+
+/* =============================================================================
+ * Contact Add Row
+ * ============================================================================= */
+.contact-add-row {
+   padding: 0.5rem 0.75rem 0;
+}
+
+/* =============================================================================
+ * Contact Modal
+ * ============================================================================= */
+.contact-modal-content {
+   max-width: 420px;
+}
+
+.contact-modal-content .modal-header {
+   display: flex;
+   justify-content: space-between;
+   align-items: center;
+}
+
+.contact-modal-content .modal-close-btn {
+   width: 28px;
+   height: 28px;
+   padding: 0;
+   background: transparent;
+   border: 1px solid var(--text-secondary);
+   border-radius: 50%;
+   color: var(--text-secondary);
+   font-size: 1.1rem;
+   line-height: 1;
+   cursor: pointer;
+   transition: all var(--transition-fast);
+   display: flex;
+   align-items: center;
+   justify-content: center;
+   flex-shrink: 0;
+}
+
+.contact-modal-content .modal-close-btn:hover {
+   border-color: var(--accent);
+   color: var(--accent);
+}
+
+.contact-modal-actions {
+   display: flex;
+   justify-content: flex-end;
+   gap: 0.75rem;
+   margin-top: 0.5rem;
+}
+
+.contact-entity-hint {
+   font-size: 0.75rem;
+   color: var(--text-secondary);
+   padding: 0.125rem 0;
+}
+
+.contact-entity-hint.new-entity {
+   color: var(--accent);
+}
+
+/* =============================================================================
+ * Typeahead Dropdown
+ * ============================================================================= */
+.contact-typeahead-dropdown {
+   position: absolute;
+   left: 0;
+   right: 0;
+   top: 100%;
+   z-index: 10;
+   background: var(--bg-primary);
+   border: 1px solid var(--accent-border);
+   border-radius: 6px;
+   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+   max-height: 180px;
+   overflow-y: auto;
+}
+
+.contact-disambig-header {
+   padding: 0.5rem 0.75rem;
+   font-size: 0.8rem;
+   color: var(--text-secondary);
+   border-bottom: 1px solid var(--border-color);
+}
+
+.contact-typeahead-item {
+   display: flex;
+   justify-content: space-between;
+   align-items: center;
+   padding: 0.5rem 0.75rem;
+   cursor: pointer;
+   transition: background var(--transition-fast);
+}
+
+.contact-typeahead-item:hover {
+   background: var(--bg-secondary);
+}
+
+.contact-typeahead-name {
+   color: var(--text-primary);
+   font-size: 0.85rem;
+}
+
+.contact-typeahead-meta {
+   color: var(--text-secondary);
+   font-size: 0.7rem;
+}
+
+/* =============================================================================
+ * Contact Filter Banner
+ * ============================================================================= */
+.contact-filter-banner {
+   display: flex;
+   align-items: center;
+   gap: 0.5rem;
+   padding: 0.375rem 0.75rem;
+   background: var(--bg-secondary);
+   border-bottom: 1px solid var(--border-color);
+   font-size: 0.8rem;
+   color: var(--text-secondary);
+}
+
+.contact-filter-banner strong {
+   color: var(--text-primary);
+}
+
+.contact-filter-clear {
+   margin-left: auto;
+   background: none;
+   border: none;
+   color: var(--accent);
+   cursor: pointer;
+   font-size: 0.75rem;
+   padding: 0.125rem 0.375rem;
+}
+
+.contact-filter-clear:hover {
+   text-decoration: underline;
+}
+
+/* =============================================================================
+ * Entity Contact Badge (in Graph tab entity cards)
+ * ============================================================================= */
+.entity-contact-badge {
+   display: inline-flex;
+   align-items: center;
+   gap: 0.25rem;
+   font-size: 0.7rem;
+   color: var(--accent);
+   cursor: pointer;
+   padding: 0.125rem 0.375rem;
+   border-radius: 4px;
+   transition: background var(--transition-fast);
+}
+
+.entity-contact-badge:hover {
+   background: var(--bg-secondary);
+   text-decoration: underline;
+}
+
+.entity-contact-badge svg {
+   width: 12px;
+   height: 12px;
+}
+
+/* =============================================================================
+ * Mobile Responsive
+ * ============================================================================= */
+@media (max-width: 480px) {
+   .contact-actions {
+      opacity: 1;
+   }
+
+   .contact-actions button {
+      width: 44px;
+      height: 44px;
+   }
+
+   .contact-modal-content {
+      max-width: 95vw;
+   }
+
+   #contact-value,
+   #contact-entity-name {
+      font-size: 16px;
+   }
+}

@@ -159,6 +159,7 @@
 .dawn-form input[type='password'],
 .dawn-form input[type='number'],
 .dawn-form input[type='email'],
+.dawn-form input[type='tel'],
 .dawn-form input[type='url'],
 .dawn-form select,
 .dawn-form textarea {
@@ -174,6 +175,7 @@
 .dawn-form input[type='password']:focus,
 .dawn-form input[type='number']:focus,
 .dawn-form input[type='email']:focus,
+.dawn-form input[type='tel']:focus,
 .dawn-form input[type='url']:focus,
 .dawn-form select:focus,
 .dawn-form textarea:focus {

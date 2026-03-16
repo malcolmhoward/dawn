@@ -46,13 +46,14 @@ static const treg_param_t memory_params[] = {
                       "'save_contact' (store email/phone for a person), "
                       "'find_contact' (look up contact info), "
                       "'list_contacts' (list all contacts), "
-                      "'delete_contact' (remove contact by ID)",
+                      "'delete_contact' (remove contact by ID), "
+                      "'merge_entities' (combine two entities that refer to the same person/thing)",
        .type = TOOL_PARAM_TYPE_ENUM,
        .required = true,
        .maps_to = TOOL_MAPS_TO_ACTION,
        .enum_values = { "remember", "search", "forget", "recent", "save_contact", "find_contact",
-                        "list_contacts", "delete_contact" },
-       .enum_count = 8,
+                        "list_contacts", "delete_contact", "merge_entities" },
+       .enum_count = 9,
    },
    {
        .name = "query",
@@ -63,7 +64,8 @@ static const treg_param_t memory_params[] = {
                       "For 'save_contact': the person's name. "
                       "For 'find_contact': name to search for. "
                       "For 'list_contacts': optional field_type filter (email/phone). "
-                      "For 'delete_contact': contact ID to remove.",
+                      "For 'delete_contact': contact ID to remove. "
+                      "For 'merge_entities': the source entity name (will be deleted).",
        .type = TOOL_PARAM_TYPE_STRING,
        .required = false,
        .maps_to = TOOL_MAPS_TO_VALUE,
@@ -76,6 +78,15 @@ static const treg_param_t memory_params[] = {
        .required = false,
        .maps_to = TOOL_MAPS_TO_CUSTOM,
        .field_name = "time_range",
+   },
+   {
+       .name = "target_name",
+       .description = "For 'merge_entities': the name of the entity to merge INTO (keeps its name, "
+                      "absorbs all relations and contacts from the source entity).",
+       .type = TOOL_PARAM_TYPE_STRING,
+       .required = false,
+       .maps_to = TOOL_MAPS_TO_CUSTOM,
+       .field_name = "target_name",
    },
 };
 
@@ -96,14 +107,17 @@ static const tool_metadata_t memory_metadata = {
                   "Use 'recent' to list recently stored memories. "
                   "Use 'save_contact' to store contact info (email, phone) for a person "
                   "(query: person name, field_type: email/phone, value: the address/number, "
-                  "label: work/personal). "
+                  "label: work/personal, entity_id: optional, use to select a specific person "
+                  "when prompted for disambiguation). "
                   "Use 'find_contact' to look up contact info by name "
                   "(query: name, optional field_type). "
                   "Use 'list_contacts' to list all stored contacts (query: optional field_type). "
                   "Use 'delete_contact' to remove a contact record by ID. "
+                  "Use 'merge_entities' to combine two entities that refer to the same "
+                  "person/pet/place (query: source name to delete, target_name: entity to keep). "
                   "Memories persist across sessions and are private to each user.",
    .params = memory_params,
-   .param_count = 3,
+   .param_count = 4,
 
    .device_type = TOOL_DEVICE_TYPE_GETTER,
    .capabilities = TOOL_CAP_FILESYSTEM,

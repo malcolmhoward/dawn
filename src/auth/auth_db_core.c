@@ -2450,7 +2450,8 @@ static int prepare_statements(void) {
    rc = sqlite3_prepare_v2(
        s_db.db,
        "INSERT INTO contacts (user_id, entity_id, field_type, value, label, created_at) "
-       "VALUES (?, ?, ?, ?, ?, ?)",
+       "SELECT ?, ?, ?, ?, ?, ? WHERE EXISTS "
+       "(SELECT 1 FROM memory_entities WHERE id = ? AND user_id = ?)",
        -1, &s_db.stmt_contacts_add, NULL);
    if (rc != SQLITE_OK) {
       LOG_ERROR("auth_db: prepare contacts_add failed: %s", sqlite3_errmsg(s_db.db));
@@ -2468,10 +2469,27 @@ static int prepare_statements(void) {
        s_db.db,
        "SELECT c.id, c.entity_id, e.name, e.canonical_name, c.field_type, c.value, c.label "
        "FROM contacts c JOIN memory_entities e ON c.entity_id = e.id "
-       "WHERE c.user_id = ? AND c.field_type LIKE ? ORDER BY e.name LIMIT ?",
+       "WHERE c.user_id = ? AND (? IS NULL OR c.field_type = ?) "
+       "ORDER BY e.name LIMIT ? OFFSET ?",
        -1, &s_db.stmt_contacts_list, NULL);
    if (rc != SQLITE_OK) {
       LOG_ERROR("auth_db: prepare contacts_list failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(
+       s_db.db,
+       "UPDATE contacts SET field_type = ?, value = ?, label = ? WHERE id = ? AND user_id = ?", -1,
+       &s_db.stmt_contacts_update, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare contacts_update failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db, "SELECT COUNT(*) FROM contacts WHERE user_id = ?", -1,
+                           &s_db.stmt_contacts_count, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare contacts_count failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2866,6 +2884,10 @@ static void finalize_statements(void) {
       sqlite3_finalize(s_db.stmt_contacts_delete);
    if (s_db.stmt_contacts_list)
       sqlite3_finalize(s_db.stmt_contacts_list);
+   if (s_db.stmt_contacts_update)
+      sqlite3_finalize(s_db.stmt_contacts_update);
+   if (s_db.stmt_contacts_count)
+      sqlite3_finalize(s_db.stmt_contacts_count);
 
    /* Email account statements */
    if (s_db.stmt_email_acct_create)

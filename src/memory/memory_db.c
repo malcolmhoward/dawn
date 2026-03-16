@@ -1766,6 +1766,166 @@ int memory_db_entity_delete(int64_t entity_id, int user_id) {
    return (changes > 0) ? MEMORY_DB_SUCCESS : MEMORY_DB_NOT_FOUND;
 }
 
+int memory_db_entity_merge(int user_id, int64_t source_id, int64_t target_id) {
+   if (source_id == target_id || source_id <= 0 || target_id <= 0)
+      return MEMORY_DB_FAILURE;
+
+   AUTH_DB_LOCK_OR_RETURN(MEMORY_DB_FAILURE);
+
+   /* Verify both entities exist and belong to user */
+   sqlite3_stmt *chk = NULL;
+   int rc = sqlite3_prepare_v2(
+       s_db.db,
+       "SELECT id, mention_count, first_seen, last_seen FROM memory_entities "
+       "WHERE id = ? AND user_id = ?",
+       -1, &chk, NULL);
+   if (rc != SQLITE_OK) {
+      AUTH_DB_UNLOCK();
+      return MEMORY_DB_FAILURE;
+   }
+
+   sqlite3_bind_int64(chk, 1, source_id);
+   sqlite3_bind_int(chk, 2, user_id);
+   if (sqlite3_step(chk) != SQLITE_ROW) {
+      sqlite3_finalize(chk);
+      AUTH_DB_UNLOCK();
+      return MEMORY_DB_NOT_FOUND;
+   }
+   int src_mentions = sqlite3_column_int(chk, 1);
+   int64_t src_first_seen = sqlite3_column_int64(chk, 2);
+   int64_t src_last_seen = sqlite3_column_int64(chk, 3);
+   sqlite3_reset(chk);
+
+   sqlite3_bind_int64(chk, 1, target_id);
+   sqlite3_bind_int(chk, 2, user_id);
+   if (sqlite3_step(chk) != SQLITE_ROW) {
+      sqlite3_finalize(chk);
+      AUTH_DB_UNLOCK();
+      return MEMORY_DB_NOT_FOUND;
+   }
+   sqlite3_finalize(chk);
+
+   /* Begin transaction */
+   sqlite3_exec(s_db.db, "BEGIN IMMEDIATE", NULL, NULL, NULL);
+
+   /* Helper macro: prepare, bind, step, finalize — ROLLBACK on any failure */
+#define MERGE_EXEC(sql, bind_block)                         \
+   do {                                                     \
+      sqlite3_stmt *_s = NULL;                              \
+      rc = sqlite3_prepare_v2(s_db.db, sql, -1, &_s, NULL); \
+      if (rc != SQLITE_OK)                                  \
+         goto merge_fail;                                   \
+      bind_block;                                           \
+      rc = sqlite3_step(_s);                                \
+      sqlite3_finalize(_s);                                 \
+      if (rc != SQLITE_DONE)                                \
+         goto merge_fail;                                   \
+   } while (0)
+
+   /* Reassign relations: subject */
+   MERGE_EXEC("UPDATE memory_relations SET subject_entity_id = ? "
+              "WHERE subject_entity_id = ? AND user_id = ?",
+              {
+                 sqlite3_bind_int64(_s, 1, target_id);
+                 sqlite3_bind_int64(_s, 2, source_id);
+                 sqlite3_bind_int(_s, 3, user_id);
+              });
+
+   /* Reassign relations: object */
+   MERGE_EXEC("UPDATE memory_relations SET object_entity_id = ? "
+              "WHERE object_entity_id = ? AND user_id = ?",
+              {
+                 sqlite3_bind_int64(_s, 1, target_id);
+                 sqlite3_bind_int64(_s, 2, source_id);
+                 sqlite3_bind_int(_s, 3, user_id);
+              });
+
+   /* Reassign contacts */
+   MERGE_EXEC("UPDATE contacts SET entity_id = ? "
+              "WHERE entity_id = ? AND user_id = ?",
+              {
+                 sqlite3_bind_int64(_s, 1, target_id);
+                 sqlite3_bind_int64(_s, 2, source_id);
+                 sqlite3_bind_int(_s, 3, user_id);
+              });
+
+   /* Delete self-referencing relations (subject == object == target) */
+   MERGE_EXEC("DELETE FROM memory_relations WHERE user_id = ? "
+              "AND subject_entity_id = ? AND object_entity_id = ?",
+              {
+                 sqlite3_bind_int(_s, 1, user_id);
+                 sqlite3_bind_int64(_s, 2, target_id);
+                 sqlite3_bind_int64(_s, 3, target_id);
+              });
+
+   /* Deduplicate relations: keep highest confidence per unique relation tuple */
+   MERGE_EXEC("DELETE FROM memory_relations WHERE id IN ("
+              "  SELECT id FROM ("
+              "    SELECT id, ROW_NUMBER() OVER ("
+              "      PARTITION BY subject_entity_id, relation, object_entity_id, "
+              "        COALESCE(object_value, '') "
+              "      ORDER BY confidence DESC, id ASC"
+              "    ) AS rn FROM memory_relations "
+              "    WHERE user_id = ? AND (subject_entity_id = ? OR object_entity_id = ?)"
+              "  ) WHERE rn > 1"
+              ")",
+              {
+                 sqlite3_bind_int(_s, 1, user_id);
+                 sqlite3_bind_int64(_s, 2, target_id);
+                 sqlite3_bind_int64(_s, 3, target_id);
+              });
+
+   /* Deduplicate contacts: keep oldest per (entity_id, field_type, value) */
+   MERGE_EXEC("DELETE FROM contacts WHERE id IN ("
+              "  SELECT id FROM ("
+              "    SELECT id, ROW_NUMBER() OVER ("
+              "      PARTITION BY entity_id, field_type, value "
+              "      ORDER BY id ASC"
+              "    ) AS rn FROM contacts "
+              "    WHERE user_id = ? AND entity_id = ?"
+              "  ) WHERE rn > 1"
+              ")",
+              {
+                 sqlite3_bind_int(_s, 1, user_id);
+                 sqlite3_bind_int64(_s, 2, target_id);
+              });
+
+   /* Update target: absorb mention count and time range */
+   MERGE_EXEC("UPDATE memory_entities SET "
+              "mention_count = mention_count + ?, "
+              "first_seen = MIN(first_seen, ?), "
+              "last_seen = MAX(COALESCE(last_seen, 0), ?) "
+              "WHERE id = ? AND user_id = ?",
+              {
+                 sqlite3_bind_int(_s, 1, src_mentions);
+                 sqlite3_bind_int64(_s, 2, src_first_seen);
+                 sqlite3_bind_int64(_s, 3, src_last_seen);
+                 sqlite3_bind_int64(_s, 4, target_id);
+                 sqlite3_bind_int(_s, 5, user_id);
+              });
+
+   /* Delete source entity */
+   MERGE_EXEC("DELETE FROM memory_entities WHERE id = ? AND user_id = ?", {
+      sqlite3_bind_int64(_s, 1, source_id);
+      sqlite3_bind_int(_s, 2, user_id);
+   });
+
+#undef MERGE_EXEC
+
+   sqlite3_exec(s_db.db, "COMMIT", NULL, NULL, NULL);
+   AUTH_DB_UNLOCK();
+
+   LOG_INFO("memory_db: merged entity %lld into %lld for user %d", (long long)source_id,
+            (long long)target_id, user_id);
+   return MEMORY_DB_SUCCESS;
+
+merge_fail:
+   LOG_ERROR("memory_db: entity merge failed at step rc=%d: %s", rc, sqlite3_errmsg(s_db.db));
+   sqlite3_exec(s_db.db, "ROLLBACK", NULL, NULL, NULL);
+   AUTH_DB_UNLOCK();
+   return MEMORY_DB_FAILURE;
+}
+
 int memory_db_entity_get_embeddings(int user_id,
                                     int expected_dims,
                                     int64_t *out_ids,

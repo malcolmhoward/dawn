@@ -39,7 +39,7 @@
    position: fixed;
    top: 50px;
    right: 60px;
-   width: 360px;
+   width: 460px;
    max-height: 70vh;
    background: rgba(18, 18, 26, 0.98);
    backdrop-filter: blur(20px);
@@ -237,7 +237,6 @@
    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
    cursor: default;
    transition: background var(--transition-fast);
-   position: relative;
 }
 
 .memory-item:hover {
@@ -248,7 +247,15 @@
    opacity: 1;
 }
 
+.memory-item-header {
+   display: flex;
+   align-items: flex-start;
+   gap: 0.5rem;
+}
+
 .memory-item-text {
+   flex: 1;
+   min-width: 0;
    font-size: 0.9rem;
    color: var(--text-primary);
    line-height: 1.4;
@@ -282,16 +289,15 @@
    opacity: 0.7;
 }
 
-/* Delete button */
+/* Delete button (inline in header row) */
 .memory-item-delete {
-   position: absolute;
-   right: 0.5rem;
-   top: 0.75rem;
+   flex-shrink: 0;
+   margin-left: auto;
    width: 24px;
    height: 24px;
    padding: 0;
-   background: rgba(0, 0, 0, 0.4);
-   border: 1px solid rgba(255, 255, 255, 0.1);
+   background: none;
+   border: none;
    border-radius: 4px;
    color: var(--text-secondary);
    cursor: pointer;
@@ -299,7 +305,6 @@
    transition:
       opacity var(--transition-fast),
       background var(--transition-fast),
-      border-color var(--transition-fast),
       color var(--transition-fast);
    display: flex;
    align-items: center;
@@ -308,8 +313,17 @@
 
 .memory-item-delete:hover {
    background: rgba(239, 68, 68, 0.15);
-   border-color: rgba(239, 68, 68, 0.3);
    color: var(--error);
+}
+
+.memory-item-delete:focus-visible {
+   opacity: 1;
+   outline: 2px solid var(--accent);
+   outline-offset: 2px;
+}
+
+.memory-item:focus-within .memory-item-delete {
+   opacity: 1;
 }
 
 .memory-item-delete svg {
@@ -509,6 +523,67 @@
    font-size: 0.95rem;
    font-weight: 600;
    color: var(--text-primary);
+}
+
+/* Entity Merge Button (inline in header, same pattern as delete) */
+.entity-merge-btn {
+   flex-shrink: 0;
+   width: 24px;
+   height: 24px;
+   padding: 0;
+   background: none;
+   border: none;
+   border-radius: 4px;
+   color: var(--text-secondary);
+   cursor: pointer;
+   opacity: 0;
+   transition:
+      opacity var(--transition-fast),
+      background var(--transition-fast),
+      color var(--transition-fast);
+   display: flex;
+   align-items: center;
+   justify-content: center;
+}
+
+.memory-item.entity:hover .entity-merge-btn {
+   opacity: 1;
+}
+
+.entity-merge-btn:hover {
+   background: rgba(99, 102, 241, 0.15);
+   color: var(--accent);
+}
+
+.entity-merge-btn:focus-visible {
+   opacity: 1;
+   outline: 2px solid var(--accent);
+   outline-offset: 2px;
+}
+
+.memory-item.entity:focus-within .entity-merge-btn {
+   opacity: 1;
+}
+
+.entity-merge-btn svg {
+   width: 14px;
+   height: 14px;
+}
+
+/* Merge mode: source entity highlighted */
+.memory-item.entity.merge-source {
+   outline: 2px solid var(--accent);
+   outline-offset: -2px;
+   background: rgba(99, 102, 241, 0.08);
+}
+
+/* Merge mode: other entities get pointer cursor */
+.merge-mode .memory-item.entity:not(.merge-source) {
+   cursor: pointer;
+}
+
+.merge-mode .memory-item.entity:not(.merge-source):hover {
+   background: rgba(99, 102, 241, 0.05);
 }
 
 /* Entity Type Badges */
@@ -1100,6 +1175,12 @@
       height: 44px;
    }
 
+   .entity-merge-btn {
+      opacity: 1;
+      width: 44px;
+      height: 44px;
+   }
+
    /* Entity relations: allow wrapping on narrow screens */
    .entity-relation {
       flex-wrap: wrap;
@@ -1129,10 +1210,10 @@
    }
 }
 
-/* Small screens - slightly narrower popover */
+/* Small screens - narrower popover */
 @media (min-width: 481px) and (max-width: 768px) {
    #memory-popover {
-      width: 320px;
+      width: 360px;
       right: 10px;
    }
 

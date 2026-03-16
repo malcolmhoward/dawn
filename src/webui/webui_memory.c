@@ -29,6 +29,7 @@
 #include <string.h>
 
 #include "logging.h"
+#include "memory/contacts_db.h"
 #include "memory/memory_db.h"
 #include "memory/memory_similarity.h"
 #include "webui/webui_internal.h"
@@ -65,6 +66,12 @@ void handle_get_memory_stats(ws_connection_t *conn) {
       json_object_object_add(resp_payload, "entity_count", json_object_new_int(stats.entity_count));
       json_object_object_add(resp_payload, "oldest_fact", json_object_new_int64(stats.oldest_fact));
       json_object_object_add(resp_payload, "newest_fact", json_object_new_int64(stats.newest_fact));
+
+      /* Count contacts for this user */
+      int contact_count = contacts_count(conn->auth_user_id);
+      if (contact_count < 0)
+         contact_count = 0;
+      json_object_object_add(resp_payload, "contact_count", json_object_new_int(contact_count));
    } else {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
       json_object_object_add(resp_payload, "error",
@@ -601,6 +608,70 @@ void handle_delete_memory_entity(ws_connection_t *conn, struct json_object *payl
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
       json_object_object_add(resp_payload, "error",
                              json_object_new_string("Failed to delete entity"));
+   }
+
+   json_object_object_add(response, "payload", resp_payload);
+   send_json_response(conn, response);
+   json_object_put(response);
+}
+
+/* =============================================================================
+ * Entity Merge Handler
+ * ============================================================================= */
+
+/**
+ * @brief Merge two memory entities (source absorbed into target)
+ */
+void handle_merge_memory_entities(ws_connection_t *conn, struct json_object *payload) {
+   if (!conn_require_auth(conn)) {
+      return;
+   }
+
+   json_object *response = json_object_new_object();
+   json_object_object_add(response, "type",
+                          json_object_new_string("merge_memory_entities_response"));
+   json_object *resp_payload = json_object_new_object();
+
+   json_object *source_obj, *target_obj;
+   if (!json_object_object_get_ex(payload, "source_id", &source_obj) ||
+       !json_object_object_get_ex(payload, "target_id", &target_obj)) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Missing source_id or target_id"));
+      json_object_object_add(response, "payload", resp_payload);
+      send_json_response(conn, response);
+      json_object_put(response);
+      return;
+   }
+
+   int64_t source_id = json_object_get_int64(source_obj);
+   int64_t target_id = json_object_get_int64(target_obj);
+
+   if (source_id == target_id) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Cannot merge an entity with itself"));
+      json_object_object_add(response, "payload", resp_payload);
+      send_json_response(conn, response);
+      json_object_put(response);
+      return;
+   }
+
+   int result = memory_db_entity_merge(conn->auth_user_id, source_id, target_id);
+
+   if (result == MEMORY_DB_SUCCESS) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
+      json_object_object_add(resp_payload, "message", json_object_new_string("Entities merged"));
+      LOG_INFO("WebUI: User %d merged entity %lld into %lld", conn->auth_user_id,
+               (long long)source_id, (long long)target_id);
+   } else if (result == MEMORY_DB_NOT_FOUND) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Entity not found or not owned by user"));
+   } else {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error",
+                             json_object_new_string("Failed to merge entities"));
    }
 
    json_object_object_add(response, "payload", resp_payload);

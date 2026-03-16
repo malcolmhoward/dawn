@@ -1,9 +1,9 @@
 # DAWN Memory System Design
 
-**Status:** Phases 1-6.5, S4 Complete - Core Memory, Decay, WebUI Viewer, Import/Export, Entity Graph, Embeddings
+**Status:** Phases 1-6.7, S4 Complete - Core Memory, Decay, WebUI Viewer, Import/Export, Contacts WebUI, Entity Merge, Entity Graph, Embeddings
 **Date:** January 2026
 **Authors:** Kris Kersey, with input from community proposals
-**Last Updated:** 2026-03-06
+**Last Updated:** 2026-03-16
 
 ---
 
@@ -16,8 +16,10 @@ A comprehensive design for DAWN's persistent memory system with integrated RAG (
 - **Phases 1-4 (Core Memory):** ✅ Complete - Storage, tool, context injection, and extraction
 - **Phase 4.5 (Privacy Toggle):** ✅ Complete - Per-conversation privacy flag
 - **Phase 5 (Decay/Maintenance):** ✅ Complete - Nightly decay job, pruning, reinforcement
-- **Phase 6 (Memory WebUI):** ✅ Complete - Viewer with facts/preferences/summaries/graph tabs
+- **Phase 6 (Memory WebUI):** ✅ Complete - Viewer with facts/preferences/summaries/graph/contacts tabs
 - **Phase 6.5 (Import/Export):** ✅ Complete - JSON and plain text export, multi-format import with duplicate detection
+- **Phase 6.6 (Contacts WebUI):** ✅ Complete - 5th tab in Memory popover, WebSocket CRUD, modal add/edit, entity cross-link from Graph tab
+- **Phase 6.7 (Entity Merge):** ✅ Complete - Transactional merge with relation/contact dedup, LLM tool action + WebUI two-click merge
 - **S4 (Entity Graph):** ✅ Complete - Entities, relations, embeddings, graph search, WebUI graph tab
 - **S4b (Entity Dedup):** ✅ Complete - Existing entities fed into extraction prompt
 - **Phases 7-11 (RAG):** Pending - Document search and retrieval
@@ -1337,6 +1339,35 @@ User confirms → Commit (commit=true) → write to DB
 3. Duplicates are counted and reported but silently skipped
 
 **Files:** `src/webui/webui_memory.c` (handlers), `include/memory/memory_similarity.h` (dedup), `www/js/ui/memory.js` (UI)
+
+### Phase 6.6: Contacts WebUI ✅ COMPLETE
+
+- [x] 5th "Contacts" tab in Memory popover with contact count in stats bar
+- [x] WebSocket CRUD: `contacts_list`, `contacts_add`, `contacts_update`, `contacts_delete`, `contacts_search`
+- [x] Contact card rendering: field_type badge, value, label badge, entity name, hover-reveal edit/delete
+- [x] Add/edit modal: entity name with typeahead, field_type select, value input (adapts type), label select
+- [x] Entity cross-link from Graph tab: person entities show contact count badge, clicking navigates to filtered Contacts tab
+- [x] Server-side search via `contacts_find()` (case-insensitive LIKE with escaping)
+- [x] Pagination with Load More (PAGE_SIZE=20)
+- [x] Mobile-responsive layout with touch targets
+
+**Files:** `src/webui/webui_contacts.c` (handlers), `www/js/ui/contacts.js` (UI), `www/css/components/contacts.css` (styles)
+
+### Phase 6.7: Entity Merge ✅ COMPLETE
+
+- [x] `memory_db_entity_merge()` — transactional SQL (BEGIN IMMEDIATE → COMMIT/ROLLBACK)
+- [x] MERGE_EXEC macro for error-checked ad-hoc prepared statements with goto-based rollback
+- [x] Reassign all relations (subject + object) and contacts from source to target entity
+- [x] Delete self-referencing relations after reassignment
+- [x] Deduplicate relations via ROW_NUMBER() window function (PARTITION BY subject, relation, object, COALESCE(object_value, ''))
+- [x] Deduplicate contacts via ROW_NUMBER() (PARTITION BY entity_id, field_type, value)
+- [x] Absorb mention count and time range from source entity
+- [x] Delete source entity (hard merge, not alias)
+- [x] LLM tool: `merge_entities` action on memory tool (resolves by canonical name)
+- [x] WebUI: two-click merge in Graph tab (click merge button on source → entity highlights → click target → confirm)
+- [x] WebSocket handler with source_id == target_id validation
+
+**Files:** `src/memory/memory_db.c` (merge logic), `src/memory/memory_callback.c` (tool action), `src/webui/webui_memory.c` (WS handler), `www/js/ui/memory.js` (UI)
 
 ### S4: Entity Graph ✅ COMPLETE
 

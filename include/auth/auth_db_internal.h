@@ -250,6 +250,8 @@ typedef struct {
    sqlite3_stmt *stmt_contacts_add;
    sqlite3_stmt *stmt_contacts_delete;
    sqlite3_stmt *stmt_contacts_list;
+   sqlite3_stmt *stmt_contacts_update;
+   sqlite3_stmt *stmt_contacts_count;
 
    /* === Email module statements (email_db.c) === */
    sqlite3_stmt *stmt_email_acct_create;

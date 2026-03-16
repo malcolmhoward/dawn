@@ -550,6 +550,10 @@ Accounts are configured through the WebUI with provider presets (Gmail, iCloud, 
 
 Each account card shows: name, username, server info (or "Google OAuth" badge), and toggle switches for enabled/read-only. Actions: Test, Edit, Remove.
 
+### Google OAuth Multi-Account
+
+The "Connect with Google" button always launches the OAuth popup, even if an existing account already has the same scopes. This lets users select a different Google account via Google's own account picker in the consent screen. On success, the button resets to "Re-authorize" (not stuck on "Connecting...").
+
 ### Add Account Form
 
 - **Auth type selector**: App Password or Google OAuth tabs

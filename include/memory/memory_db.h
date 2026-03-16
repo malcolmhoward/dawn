@@ -705,6 +705,20 @@ int memory_db_entity_search(int user_id, const char *keywords, memory_entity_t *
 int memory_db_entity_delete(int64_t entity_id, int user_id);
 
 /**
+ * @brief Merge source entity into target entity
+ *
+ * Reassigns all relations and contacts from source to target,
+ * adds source mention_count to target, deduplicates self-referencing
+ * relations, then deletes the source entity. All within a transaction.
+ *
+ * @param user_id User ID (ownership check on both entities)
+ * @param source_id Entity to merge FROM (will be deleted)
+ * @param target_id Entity to merge INTO (will absorb data)
+ * @return MEMORY_DB_SUCCESS, MEMORY_DB_NOT_FOUND, or MEMORY_DB_FAILURE
+ */
+int memory_db_entity_merge(int user_id, int64_t source_id, int64_t target_id);
+
+/**
  * @brief Load all entity embeddings for a user (for cache)
  *
  * @param user_id User ID

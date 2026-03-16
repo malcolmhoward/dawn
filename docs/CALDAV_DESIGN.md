@@ -591,6 +591,8 @@ Account and calendar configuration is stored in the database (not TOML) because:
 
 All account management uses WebSocket messages (`calendar_add_account`, `calendar_delete_account`, `calendar_test_connection`, `calendar_toggle_read_only`, etc.) — not REST endpoints. Passwords are encrypted via libsodium before DB storage; the WebUI never receives passwords back.
 
+**Google OAuth multi-account**: The "Connect with Google" button always launches the OAuth popup, even if an existing account already has the same scopes. This lets users select a different Google account via Google's own account picker in the consent screen. On success, the button resets to show "Connected as [email]".
+
 ---
 
 ## Multi-Account / Multi-Calendar Routing

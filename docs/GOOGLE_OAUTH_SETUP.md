@@ -95,6 +95,13 @@ Restart the DAWN daemon after configuration.
 9. The popup will close automatically
 10. Click **Save Account**
 
+## Multiple Google Accounts
+
+You can connect multiple Google accounts for both Calendar and Email. Each "Add Account" +
+"Connect with Google" click opens a fresh OAuth popup where you can pick a different Google
+account. Calendar and email use **separate token sets** — connecting a second Gmail account
+for email does not affect existing calendar tokens, and vice versa.
+
 ## Troubleshooting
 
 ### "redirect_uri_mismatch" Error

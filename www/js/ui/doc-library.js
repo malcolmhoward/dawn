@@ -132,6 +132,9 @@
    }
 
    function open() {
+      // Close memory popover if open
+      if (typeof DawnMemory !== 'undefined') DawnMemory.close();
+
       triggerElement = document.activeElement;
       el.popover.classList.remove('hidden');
       el.btn.classList.add('active');

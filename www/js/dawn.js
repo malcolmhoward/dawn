@@ -455,6 +455,9 @@
             case 'delete_memory_entity_response':
                DawnMemory.handleDeleteEntityResponse(msg.payload);
                break;
+            case 'merge_memory_entities_response':
+               DawnMemory.handleMergeEntityResponse(msg.payload);
+               break;
             case 'delete_all_memories_response':
                DawnMemory.handleDeleteAllResponse(msg.payload);
                break;
@@ -463,6 +466,30 @@
                break;
             case 'import_memories_response':
                DawnMemory.handleImportResponse(msg.payload);
+               break;
+            // Contacts management responses
+            case 'contacts_list_response':
+               if (typeof DawnContacts !== 'undefined')
+                  DawnContacts.handleListResponse(msg.payload);
+               break;
+            case 'contacts_search_response':
+               if (typeof DawnContacts !== 'undefined')
+                  DawnContacts.handleSearchResponse(msg.payload);
+               break;
+            case 'contacts_add_response':
+               if (typeof DawnContacts !== 'undefined') DawnContacts.handleAddResponse(msg.payload);
+               break;
+            case 'contacts_update_response':
+               if (typeof DawnContacts !== 'undefined')
+                  DawnContacts.handleUpdateResponse(msg.payload);
+               break;
+            case 'contacts_delete_response':
+               if (typeof DawnContacts !== 'undefined')
+                  DawnContacts.handleDeleteResponse(msg.payload);
+               break;
+            case 'contacts_search_entities_response':
+               if (typeof DawnContacts !== 'undefined')
+                  DawnContacts.handleSearchEntitiesResponse(msg.payload);
                break;
             // Document library (RAG) responses
             case 'doc_library_list_response':

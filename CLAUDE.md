@@ -437,6 +437,28 @@ Manual testing covers:
 - `www/js/oauth-callback.js`: OAuth callback page script (postMessage to opener)
 - `docs/GOOGLE_OAUTH_SETUP.md`: Google OAuth setup guide
 
+**Memory System:**
+- `include/memory/memory_db.h`: Entity/relation CRUD, entity merge API
+- `src/memory/memory_db.c`: SQLite operations, transactional entity merge with dedup
+- `src/memory/memory_callback.c`: LLM tool callback (9 actions incl. merge_entities)
+- `include/memory/contacts_db.h`: Contacts CRUD API (find, add, update, delete, list)
+- `src/memory/contacts_db.c`: Contacts SQLite operations with LIKE escape
+- `include/webui/webui_contacts.h`: Contacts WebSocket handler declarations
+- `src/webui/webui_contacts.c`: Contacts WebSocket handlers (list, add, update, delete, search)
+- `www/js/ui/contacts.js`: Contacts tab UI + add/edit modal
+- `www/css/components/contacts.css`: Contact card and modal styles
+- `docs/MEMORY_SYSTEM_DESIGN.md`: Full design document (Phases 1-6.5, S4, entity merge)
+
+**Email (IMAP/SMTP):**
+- `src/tools/email_tool.c`: LLM tool interface (10 actions)
+- `src/tools/email_service.c`: Multi-account routing, drafts, trash, auth dispatch
+- `src/tools/email_client.c`: IMAP/SMTP via libcurl
+- `src/tools/gmail_client.c`: Gmail REST API backend (OAuth accounts)
+- `src/tools/email_db.c`: Email account DB operations
+- `src/webui/webui_email.c`: WebSocket handlers for account CRUD
+- `www/js/ui/email-accounts.js`: Email account management UI
+- `docs/EMAIL_DESIGN.md`: Full design document
+
 **Satellite (DAP2):**
 - `dawn_satellite/`: Standalone satellite binary for Raspberry Pi
 - `dawn_satellite/config/satellite.toml`: Default satellite configuration
@@ -466,6 +488,10 @@ Manual testing covers:
 - Modular tool registry system with O(1) hash lookups
 - Parallel tool execution for concurrent API calls
 - Extended thinking/reasoning mode (Claude, OpenAI, local models)
+- Email integration with contacts system (IMAP/SMTP, Gmail REST API, multi-account, WebUI management)
+- Contacts WebUI (5th Memory tab, WebSocket CRUD, modal add/edit, entity cross-linking from Graph tab)
+- Entity merge (transactional SQL, relation/contact dedup, LLM tool + WebUI two-click merge)
+- OAuth multi-account fix (always launch popup for account picker, button state reset on success)
 
 ## Code Review Workflow
 

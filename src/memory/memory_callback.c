@@ -924,17 +924,84 @@ char *memoryCallback(const char *actionName, char *value, int *should_respond) {
       char label[32] = "";
       tool_param_extract_custom(value, "label", label, sizeof(label));
 
+      /* Optional entity_id for disambiguation (from a prior fuzzy match prompt) */
+      char entity_id_str[32] = "";
+      tool_param_extract_custom(value, "entity_id", entity_id_str, sizeof(entity_id_str));
+
       if (!entity_name[0] || !field_type[0] || !contact_value[0])
          return strdup("Error: save_contact requires entity name, field_type, and value");
 
-      /* Find or create entity */
-      char canonical[64];
-      memory_make_canonical_name(entity_name, canonical, sizeof(canonical));
-      bool created = false;
-      int64_t entity_id = memory_db_entity_upsert(user_id, entity_name, "person", canonical,
-                                                  &created);
-      if (entity_id < 0)
-         return strdup("Error: failed to find or create entity");
+      int64_t entity_id;
+
+      if (entity_id_str[0]) {
+         /* Explicit entity_id provided — use it directly (disambiguation resolved) */
+         entity_id = atoll(entity_id_str);
+         if (entity_id <= 0)
+            return strdup("Error: invalid entity_id");
+      } else {
+         /* Check for exact canonical match first */
+         char canonical[64];
+         memory_make_canonical_name(entity_name, canonical, sizeof(canonical));
+
+         memory_entity_t exact;
+         int exact_rc = memory_db_entity_get_by_name(user_id, canonical, &exact);
+
+         if (exact_rc == MEMORY_DB_SUCCESS) {
+            /* Exact match — use existing entity */
+            entity_id = exact.id;
+         } else {
+            /* No exact match — search for similar entities */
+            memory_entity_t similar[5];
+            int sim_count = memory_db_entity_search(user_id, entity_name, similar, 5);
+
+            /* Filter to person entities only */
+            int person_count = 0;
+            memory_entity_t persons[5];
+            for (int i = 0; i < sim_count; i++) {
+               if (strcmp(similar[i].entity_type, "person") == 0) {
+                  persons[person_count++] = similar[i];
+               }
+            }
+
+            if (person_count > 0) {
+               /* Similar people found — return disambiguation prompt */
+               char *buf = malloc(2048);
+               if (!buf)
+                  return strdup("Error: memory allocation failed");
+               int pos = snprintf(buf, 2048,
+                                  "Similar people already exist. Which person should receive "
+                                  "this contact info?\n");
+               for (int i = 0; i < person_count && pos < 1800; i++) {
+                  pos += snprintf(buf + pos, 2048 - pos, "[%d] %s (%d mentions, id:%lld)\n", i + 1,
+                                  persons[i].name, persons[i].mention_count,
+                                  (long long)persons[i].id);
+               }
+               pos += snprintf(buf + pos, 2048 - pos,
+                               "[%d] Create new person '%s'\n\n"
+                               "Call save_contact again with entity_id parameter set to the "
+                               "chosen person's id, or set entity_id to 0 to create new.",
+                               person_count + 1, entity_name);
+               return buf;
+            }
+
+            /* No similar people — create new entity */
+            bool created = false;
+            entity_id = memory_db_entity_upsert(user_id, entity_name, "person", canonical,
+                                                &created);
+            if (entity_id < 0)
+               return strdup("Error: failed to create entity");
+         }
+      }
+
+      /* entity_id == 0 means "create new" from disambiguation */
+      if (entity_id == 0) {
+         char canonical[64];
+         memory_make_canonical_name(entity_name, canonical, sizeof(canonical));
+         bool created = false;
+         entity_id = memory_db_entity_upsert(user_id, entity_name, "person", canonical, &created);
+         if (entity_id < 0)
+            return strdup("Error: failed to create entity");
+      }
 
       if (contacts_add(user_id, entity_id, field_type, contact_value, label) != 0)
          return strdup("Error: failed to save contact information");
@@ -978,7 +1045,7 @@ char *memoryCallback(const char *actionName, char *value, int *should_respond) {
          tool_param_extract_base(value, field_type, sizeof(field_type));
 
       contact_result_t results[20];
-      int count = contacts_list(user_id, field_type[0] ? field_type : NULL, results, 20);
+      int count = contacts_list(user_id, field_type[0] ? field_type : NULL, results, 20, 0);
 
       if (count <= 0)
          return strdup("No contacts stored.");
@@ -993,6 +1060,49 @@ char *memoryCallback(const char *actionName, char *value, int *should_respond) {
                          results[i].label, results[i].label[0] ? ")" : "");
       }
       return buf;
+   } else if (strcmp(actionName, "merge_entities") == 0) {
+      if (!value || !value[0])
+         return strdup("Error: merge_entities requires source_name (query) and target_name");
+
+      char source_name[128] = "";
+      tool_param_extract_base(value, source_name, sizeof(source_name));
+
+      char target_name[128] = "";
+      tool_param_extract_custom(value, "target_name", target_name, sizeof(target_name));
+
+      if (!source_name[0] || !target_name[0])
+         return strdup("Error: merge_entities requires both source_name (query) and target_name");
+
+      /* Look up both entities by canonical name */
+      char src_canonical[64], tgt_canonical[64];
+      memory_make_canonical_name(source_name, src_canonical, sizeof(src_canonical));
+      memory_make_canonical_name(target_name, tgt_canonical, sizeof(tgt_canonical));
+
+      memory_entity_t src_entity, tgt_entity;
+      if (memory_db_entity_get_by_name(user_id, src_canonical, &src_entity) != MEMORY_DB_SUCCESS)
+         return strdup("Error: source entity not found");
+      if (memory_db_entity_get_by_name(user_id, tgt_canonical, &tgt_entity) != MEMORY_DB_SUCCESS)
+         return strdup("Error: target entity not found");
+
+      int rc = memory_db_entity_merge(user_id, src_entity.id, tgt_entity.id);
+      if (rc == MEMORY_DB_SUCCESS) {
+         char *result = malloc(512);
+         if (result)
+            snprintf(result, 512,
+                     "Merged '%s' into '%s'. The '%s' entity has been deleted; "
+                     "all its relations and contacts were transferred to '%s'. "
+                     "Use '%s' for future queries.",
+                     source_name, target_name, source_name, target_name, target_name);
+         return result ? result : strdup("Entities merged successfully.");
+      } else if (rc == MEMORY_DB_NOT_FOUND) {
+         /* Race: entity deleted between lookup and merge */
+         LOG_WARNING("memory_callback: merge_entities race — entity vanished between lookup and "
+                     "merge (source='%s', target='%s')",
+                     source_name, target_name);
+         return strdup("Error: one or both entities no longer exist (may have been deleted)");
+      } else {
+         return strdup("Error: merge operation failed");
+      }
    } else if (strcmp(actionName, "delete_contact") == 0) {
       if (!value || !value[0])
          return strdup("Error: delete_contact requires a contact ID");

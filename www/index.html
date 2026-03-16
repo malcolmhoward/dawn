@@ -302,6 +302,7 @@
                <span>Prefs: <span id="memory-pref-count">0</span></span>
                <span>Sums: <span id="memory-summary-count">0</span></span>
                <span>Entities: <span id="memory-entity-count">0</span></span>
+               <span>Contacts: <span id="memory-contact-count">0</span></span>
             </div>
 
             <div class="memory-tabs" role="tablist">
@@ -344,6 +345,16 @@
                   aria-controls="memory-list"
                >
                   Graph
+               </button>
+               <button
+                  id="memory-tab-contacts"
+                  class="memory-tab"
+                  data-tab="contacts"
+                  role="tab"
+                  aria-selected="false"
+                  aria-controls="memory-list"
+               >
+                  Contacts
                </button>
             </div>
 
@@ -516,6 +527,67 @@ Format rules:
                </div>
                <div class="memory-export-actions">
                   <button id="memory-export-cancel-btn" class="btn-link">Cancel</button>
+               </div>
+            </div>
+         </div>
+
+         <!-- Contact Add/Edit Modal -->
+         <div
+            id="contact-modal"
+            class="modal-overlay hidden"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="contact-modal-title"
+         >
+            <div class="modal-content contact-modal-content">
+               <div class="modal-header">
+                  <h3 id="contact-modal-title">Add Contact</h3>
+                  <button id="contact-modal-close" class="modal-close-btn">&times;</button>
+               </div>
+               <div class="dawn-form" id="contact-form">
+                  <div class="form-group">
+                     <label for="contact-entity-name">Person Name</label>
+                     <input
+                        type="text"
+                        id="contact-entity-name"
+                        placeholder="e.g. John Smith"
+                        autocomplete="off"
+                        required
+                     />
+                     <div id="contact-entity-hint" class="contact-entity-hint hidden"></div>
+                  </div>
+                  <div class="form-group">
+                     <label for="contact-field-type">Contact Type</label>
+                     <select id="contact-field-type">
+                        <option value="email">Email</option>
+                        <option value="phone">Phone</option>
+                        <option value="address">Address</option>
+                     </select>
+                  </div>
+                  <div class="form-group">
+                     <label for="contact-value">Value</label>
+                     <input
+                        type="email"
+                        id="contact-value"
+                        placeholder="e.g. john@example.com"
+                        required
+                     />
+                  </div>
+                  <div class="form-group">
+                     <label for="contact-label">Label</label>
+                     <select id="contact-label">
+                        <option value="">None</option>
+                        <option value="work">Work</option>
+                        <option value="personal">Personal</option>
+                        <option value="mobile">Mobile</option>
+                        <option value="home">Home</option>
+                        <option value="other">Other</option>
+                     </select>
+                  </div>
+                  <div class="contact-modal-actions">
+                     <button id="contact-modal-cancel" class="btn-link">Cancel</button>
+                     <button id="contact-modal-save" class="btn-primary">Save</button>
+                  </div>
                </div>
             </div>
          </div>
@@ -2761,6 +2833,7 @@ token = "eyJ..."</pre
       <script src="/js/ui/export.js"></script>
       <script src="/js/ui/history.js"></script>
       <script src="/js/ui/memory.js"></script>
+      <script src="/js/ui/contacts.js"></script>
       <script src="/js/ui/doc-library.js"></script>
       <script src="/js/ui/oauth.js"></script>
       <script src="/js/ui/calendar-accounts.js"></script>

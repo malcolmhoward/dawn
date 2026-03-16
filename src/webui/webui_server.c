@@ -87,6 +87,7 @@
 #ifdef DAWN_ENABLE_EMAIL_TOOL
 #include "webui/webui_email.h"
 #endif
+#include "webui/webui_contacts.h"
 #if defined(DAWN_ENABLE_CALENDAR_TOOL) || defined(DAWN_ENABLE_EMAIL_TOOL)
 #include "webui/webui_oauth.h"
 #endif
@@ -2896,6 +2897,10 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
       if (payload) {
          handle_delete_memory_entity(conn, payload);
       }
+   } else if (strcmp(type, "merge_memory_entities") == 0) {
+      if (payload) {
+         handle_merge_memory_entities(conn, payload);
+      }
    } else if (strcmp(type, "delete_all_memories") == 0) {
       if (payload) {
          handle_delete_all_memories(conn, payload);
@@ -2905,6 +2910,30 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
    } else if (strcmp(type, "import_memories") == 0) {
       if (payload) {
          handle_import_memories(conn, payload);
+      }
+   }
+   /* Contacts management */
+   else if (strcmp(type, "contacts_list") == 0) {
+      handle_contacts_list(conn, payload);
+   } else if (strcmp(type, "contacts_search") == 0) {
+      if (payload) {
+         handle_contacts_search(conn, payload);
+      }
+   } else if (strcmp(type, "contacts_add") == 0) {
+      if (payload) {
+         handle_contacts_add(conn, payload);
+      }
+   } else if (strcmp(type, "contacts_update") == 0) {
+      if (payload) {
+         handle_contacts_update(conn, payload);
+      }
+   } else if (strcmp(type, "contacts_delete") == 0) {
+      if (payload) {
+         handle_contacts_delete(conn, payload);
+      }
+   } else if (strcmp(type, "contacts_search_entities") == 0) {
+      if (payload) {
+         handle_contacts_search_entities(conn, payload);
       }
    }
    /* Document library (RAG) */

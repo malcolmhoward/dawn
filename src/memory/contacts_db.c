@@ -139,14 +139,22 @@ int contacts_add(int user_id,
    sqlite3_bind_text(st, 4, value, -1, SQLITE_TRANSIENT);
    sqlite3_bind_text(st, 5, label ? label : "", -1, SQLITE_TRANSIENT);
    sqlite3_bind_int64(st, 6, (int64_t)time(NULL));
+   /* Entity ownership check parameters */
+   sqlite3_bind_int64(st, 7, entity_id);
+   sqlite3_bind_int(st, 8, user_id);
 
    int rc = sqlite3_step(st);
    sqlite3_reset(st);
 
+   int changes = sqlite3_changes(s_db.db);
    AUTH_DB_UNLOCK();
 
    if (rc != SQLITE_DONE) {
       LOG_ERROR("contacts_add: insert failed: %s", sqlite3_errmsg(s_db.db));
+      return 1;
+   }
+   if (changes == 0) {
+      LOG_ERROR("contacts_add: entity %lld not owned by user %d", (long long)entity_id, user_id);
       return 1;
    }
    return 0;
@@ -171,9 +179,64 @@ int contacts_delete(int user_id, int64_t contact_id) {
    return 0;
 }
 
-int contacts_list(int user_id, const char *field_type, contact_result_t *out, int max_results) {
+int contacts_count(int user_id) {
+   AUTH_DB_LOCK_OR_RETURN(-1);
+
+   sqlite3_stmt *st = s_db.stmt_contacts_count;
+   sqlite3_reset(st);
+   sqlite3_bind_int(st, 1, user_id);
+
+   int count = 0;
+   if (sqlite3_step(st) == SQLITE_ROW) {
+      count = sqlite3_column_int(st, 0);
+   }
+   sqlite3_reset(st);
+
+   AUTH_DB_UNLOCK();
+   return count;
+}
+
+int contacts_update(int user_id,
+                    int64_t contact_id,
+                    const char *field_type,
+                    const char *value,
+                    const char *label) {
+   if (!field_type || !value || !value[0])
+      return 1;
+
+   AUTH_DB_LOCK_OR_FAIL();
+
+   sqlite3_stmt *st = s_db.stmt_contacts_update;
+   sqlite3_reset(st);
+   sqlite3_bind_text(st, 1, field_type, -1, SQLITE_TRANSIENT);
+   sqlite3_bind_text(st, 2, value, -1, SQLITE_TRANSIENT);
+   sqlite3_bind_text(st, 3, label ? label : "", -1, SQLITE_TRANSIENT);
+   sqlite3_bind_int64(st, 4, contact_id);
+   sqlite3_bind_int(st, 5, user_id);
+
+   int rc = sqlite3_step(st);
+   sqlite3_reset(st);
+
+   int changes = sqlite3_changes(s_db.db);
+   if (rc != SQLITE_DONE || changes == 0) {
+      LOG_ERROR("contacts_update: update failed: %s", sqlite3_errmsg(s_db.db));
+      AUTH_DB_UNLOCK();
+      return 1;
+   }
+
+   AUTH_DB_UNLOCK();
+   return 0;
+}
+
+int contacts_list(int user_id,
+                  const char *field_type,
+                  contact_result_t *out,
+                  int max_results,
+                  int offset) {
    if (max_results <= 0)
       return 0;
+   if (offset < 0)
+      offset = 0;
 
    AUTH_DB_LOCK_OR_RETURN(-1);
 
@@ -183,10 +246,13 @@ int contacts_list(int user_id, const char *field_type, contact_result_t *out, in
 
    if (field_type && field_type[0]) {
       sqlite3_bind_text(st, 2, field_type, -1, SQLITE_TRANSIENT);
+      sqlite3_bind_text(st, 3, field_type, -1, SQLITE_TRANSIENT);
    } else {
-      sqlite3_bind_text(st, 2, "%", -1, SQLITE_STATIC);
+      sqlite3_bind_null(st, 2);
+      sqlite3_bind_null(st, 3);
    }
-   sqlite3_bind_int(st, 3, max_results);
+   sqlite3_bind_int(st, 4, max_results);
+   sqlite3_bind_int(st, 5, offset);
 
    int count = 0;
    while (count < max_results && sqlite3_step(st) == SQLITE_ROW) {

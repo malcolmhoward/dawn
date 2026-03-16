@@ -730,6 +730,11 @@ void handle_list_memory_entities(ws_connection_t *conn, struct json_object *payl
 void handle_delete_memory_entity(ws_connection_t *conn, struct json_object *payload);
 
 /**
+ * @brief Merge two memory entities (source absorbed into target)
+ */
+void handle_merge_memory_entities(ws_connection_t *conn, struct json_object *payload);
+
+/**
  * @brief Delete all memories for the current user
  */
 void handle_delete_all_memories(ws_connection_t *conn, struct json_object *payload);

@@ -952,38 +952,19 @@
             ? calendarScopes + ' ' + GOOGLE_EMAIL_SCOPE
             : calendarScopes;
 
-      /* Check if existing token already has the scopes we need */
-      DawnOAuth.checkScopes('google', requestScopes)
-         .then(function (result) {
-            if (result.success && result.has_scopes && result.account_key) {
-               /* Scopes already sufficient — no popup needed */
-               pendingOAuthAccountKey = result.account_key;
-               if (statusEl) {
-                  statusEl.className = 'oauth-flow-status success';
-                  statusEl.textContent =
-                     result.account_key + ' is already connected. No additional sign-in needed.';
-               }
-               var saveBtn = document.getElementById('cal-oauth-save');
-               if (saveBtn) saveBtn.disabled = false;
-               if (connectBtn) {
-                  connectBtn.disabled = false;
-                  connectBtn.textContent = 'Re-authorize';
-               }
-               return;
-            }
+      // Always launch OAuth popup — user may want a different Google account
+      // than one already connected. Google's consent screen has an account picker.
+      if (statusEl) {
+         statusEl.innerHTML =
+            '<span class="oauth-flow-spinner"></span>Waiting for authorization...';
+      }
 
-            /* Need OAuth flow (new or scope upgrade) */
+      DawnOAuth.startFlow('google', requestScopes)
+         .then(function () {
             if (statusEl) {
                statusEl.innerHTML =
-                  '<span class="oauth-flow-spinner"></span>Waiting for authorization...';
+                  '<span class="oauth-flow-spinner"></span>Exchanging authorization code...';
             }
-
-            return DawnOAuth.startFlow('google', requestScopes).then(function () {
-               if (statusEl) {
-                  statusEl.innerHTML =
-                     '<span class="oauth-flow-spinner"></span>Exchanging authorization code...';
-               }
-            });
          })
          .catch(function (err) {
             if (err.message === 'popup_blocked') {
@@ -1007,9 +988,14 @@
 
       if (statusEl) {
          statusEl.className = 'oauth-flow-status success';
-         statusEl.textContent = 'Connected successfully';
+         statusEl.textContent = 'Connected as ' + pendingOAuthAccountKey;
       }
       if (saveBtn) saveBtn.disabled = false;
+      var connectBtn = document.getElementById('cal-oauth-connect');
+      if (connectBtn) {
+         connectBtn.disabled = false;
+         connectBtn.textContent = 'Re-authorize';
+      }
    }
 
    function handleOAuthDisconnectResponse(payload) {
