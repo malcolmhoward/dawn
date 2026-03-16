@@ -606,6 +606,8 @@ char *setPcmPlaybackDevice(const char *actionName, char *value, int *should_resp
 
    /* Device not found */
    LOG_ERROR("Requested audio playback device not found: %s", value);
+   LOG_ERROR("  Hint: List available devices with: aplay -L");
+   LOG_ERROR("  Hint: Set in dawn.toml [audio] playback_device or WebUI Settings > Audio");
 
    if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
       snprintf(speech, MAX_COMMAND_LENGTH, "Sorry sir. A playback device called %s was not found.",
@@ -675,6 +677,8 @@ char *setPcmCaptureDevice(const char *actionName, char *value, int *should_respo
 
    /* Device not found */
    LOG_ERROR("Requested audio capture device not found: %s", value);
+   LOG_ERROR("  Hint: List available devices with: arecord -L");
+   LOG_ERROR("  Hint: Set in dawn.toml [audio] capture_device or WebUI Settings > Audio");
 
    if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
       snprintf(speech, MAX_COMMAND_LENGTH, "Sorry sir. A capture device called %s was not found.",
@@ -1901,6 +1905,8 @@ int main(int argc, char *argv[]) {
    int audio_init_result = audio_backend_init(audio_backend_type);
    if (audio_init_result != AUDIO_SUCCESS) {
       LOG_ERROR("Failed to initialize audio backend: %s", audio_error_string(audio_init_result));
+      LOG_ERROR("  Hint: Check PulseAudio is running (pulseaudio --check) or try [audio] backend = "
+                "\"alsa\" in dawn.toml");
       return 1;
    }
    LOG_INFO("Audio backend initialized: %s", audio_backend_type_name(audio_backend_get_type()));
@@ -1908,6 +1914,8 @@ int main(int argc, char *argv[]) {
    // Initialize audio decoder subsystem (FLAC, MP3, Ogg Vorbis)
    if (audio_decoder_init() != AUDIO_DECODER_SUCCESS) {
       LOG_ERROR("Failed to initialize audio decoder subsystem");
+      LOG_ERROR("  Hint: Ensure audio libraries are installed: sudo apt install libmpg123-dev "
+                "libvorbis-dev libflac-dev");
       return 1;
    }
 
@@ -1937,6 +1945,9 @@ int main(int argc, char *argv[]) {
    audio_capture_ctx = audio_capture_start(pcm_capture_device, 262144, 1);
    if (!audio_capture_ctx) {
       LOG_ERROR("Failed to start audio capture thread");
+      LOG_ERROR("  Hint: Check that capture device '%s' exists and isn't in use by another "
+                "application",
+                pcm_capture_device);
       return 1;
    }
 
@@ -2029,6 +2040,7 @@ int main(int argc, char *argv[]) {
                                                                            : NULL);
          if (rc != MOSQ_ERR_SUCCESS) {
             LOG_ERROR("Failed to set MQTT credentials: %s", mosquitto_strerror(rc));
+            LOG_ERROR("  Hint: Check mqtt_username/mqtt_password in secrets.toml");
          } else {
             LOG_INFO("MQTT authentication configured for user: %s", g_secrets.mqtt_username);
          }
@@ -2054,12 +2066,15 @@ int main(int argc, char *argv[]) {
          for (int i = 0; i < 3; i++) {
             if (paths[i] && access(paths[i], R_OK) != 0) {
                LOG_ERROR("MQTT TLS %s not readable: %s (%s)", labels[i], paths[i], strerror(errno));
+               LOG_ERROR("  Hint: Check file path and permissions in dawn.toml [mqtt]");
                tls_ok = false;
             }
          }
 
          if (!tls_ok) {
             LOG_ERROR("MQTT disabled — TLS certificate files not accessible");
+            LOG_ERROR("  Hint: Verify TLS cert paths in dawn.toml [mqtt] or set tls = false to "
+                      "disable TLS");
             mosquitto_destroy(mosq);
             mosq = NULL;
             goto mqtt_disabled;
@@ -2085,6 +2100,8 @@ int main(int argc, char *argv[]) {
       if (rc != MOSQ_ERR_SUCCESS) {
          mosquitto_destroy(mosq);
          LOG_ERROR("Error on mosquitto_connect(): %s\n", mosquitto_strerror(rc));
+         LOG_ERROR("  Hint: Check Mosquitto is running: sudo systemctl status mosquitto");
+         LOG_ERROR("  Hint: Verify [mqtt] broker and port in dawn.toml (default: 127.0.0.1:1883)");
          return 1;
       } else {
          LOG_INFO("Connected to local MQTT server.\n");
@@ -2241,6 +2258,7 @@ mqtt_disabled:
    snprintf(auth_db_path, sizeof(auth_db_path), "%s/auth.db", expanded_data_dir);
    if (auth_db_init(auth_db_path) != AUTH_DB_SUCCESS) {
       LOG_ERROR("Failed to initialize database - memory system disabled");
+      LOG_ERROR("  Hint: Check file permissions on %s", expanded_data_dir);
    }
 
    /* Initialize memory embeddings (non-fatal — falls back to keyword search) */

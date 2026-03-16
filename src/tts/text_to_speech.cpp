@@ -261,6 +261,7 @@ static int openPlaybackDevice(const char *pcm_device) {
                                                            &tts_handle.hw_params);
    if (!tts_handle.playback_handle) {
       LOG_ERROR("Failed to open playback device: %s", pcm_device);
+      LOG_ERROR("  Hint: Check device with: aplay -L. Set [audio] playback_device in dawn.toml");
       return 1;
    }
 
@@ -706,6 +707,8 @@ void initialize_text_to_speech(char *pcm_device) {
       LOG_INFO("Loaded TTS voice model: %s", g_config.tts.voice_model);
    } catch (const std::exception &e) {
       LOG_ERROR("Failed to load voice model '%s': %s", g_config.tts.voice_model, e.what());
+      LOG_ERROR("  Hint: Check [tts] voice_model path in dawn.toml. Default voices are in the "
+                "models/ directory");
       return;
    }
 
@@ -728,6 +731,8 @@ void initialize_text_to_speech(char *pcm_device) {
    int rc = openPlaybackDevice(tts_handle.pcm_playback_device);
    if (rc) {
       LOG_ERROR("Error creating audio playback device");
+      LOG_ERROR("  Hint: Check that playback device is available and not in use. List devices: "
+                "aplay -L");
       // Cleanup Piper
       terminate(tts_handle.config);
       // Cleanup synchronization primitives

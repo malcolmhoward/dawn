@@ -4018,16 +4018,22 @@ int webui_server_init(int port, const char *www_path) {
    if (use_https) {
       if (g_config.webui.ssl_cert_path[0] == '\0' || g_config.webui.ssl_key_path[0] == '\0') {
          LOG_ERROR("WebUI: HTTPS enabled but ssl_cert_path or ssl_key_path not set");
+         LOG_ERROR("  Hint: Set ssl_cert_path and ssl_key_path in dawn.toml [webui], or run "
+                   "./generate_ssl_cert.sh");
          return WEBUI_ERROR_SOCKET;
       }
 
       /* Verify certificate files exist */
       if (access(g_config.webui.ssl_cert_path, R_OK) != 0) {
          LOG_ERROR("WebUI: Cannot read SSL certificate: %s", g_config.webui.ssl_cert_path);
+         LOG_ERROR("  Hint: Check file exists and permissions. Regenerate with "
+                   "./generate_ssl_cert.sh --renew if expired");
          return WEBUI_ERROR_SOCKET;
       }
       if (access(g_config.webui.ssl_key_path, R_OK) != 0) {
          LOG_ERROR("WebUI: Cannot read SSL private key: %s", g_config.webui.ssl_key_path);
+         LOG_ERROR("  Hint: Check file exists and permissions. Key should be readable by the DAWN "
+                   "process user");
          return WEBUI_ERROR_SOCKET;
       }
 

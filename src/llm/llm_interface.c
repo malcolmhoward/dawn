@@ -328,6 +328,7 @@ void llm_init(const char *cloud_provider_override) {
       if (strcmp(provider_source, "openai") == 0) {
          if (!openai_available) {
             LOG_ERROR("OpenAI requested but no API key available");
+            LOG_ERROR("  Hint: Add openai_api_key to secrets.toml or set OPENAI_API_KEY env var");
             exit(1);
          }
          current_cloud_provider = CLOUD_PROVIDER_OPENAI;
@@ -336,6 +337,7 @@ void llm_init(const char *cloud_provider_override) {
       } else if (strcmp(provider_source, "claude") == 0) {
          if (!claude_available) {
             LOG_ERROR("Claude requested but no API key available");
+            LOG_ERROR("  Hint: Add claude_api_key to secrets.toml or set CLAUDE_API_KEY env var");
             exit(1);
          }
          current_cloud_provider = CLOUD_PROVIDER_CLAUDE;
@@ -344,6 +346,7 @@ void llm_init(const char *cloud_provider_override) {
       } else if (strcmp(provider_source, "gemini") == 0) {
          if (!gemini_available) {
             LOG_ERROR("Gemini requested but no API key available");
+            LOG_ERROR("  Hint: Add gemini_api_key to secrets.toml or set GEMINI_API_KEY env var");
             exit(1);
          }
          current_cloud_provider = CLOUD_PROVIDER_GEMINI;

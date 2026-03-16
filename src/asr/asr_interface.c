@@ -413,6 +413,7 @@ struct asr_context {
 asr_context_t *asr_init(asr_engine_type_t engine_type, const char *model_path, int sample_rate) {
    if (!model_path) {
       LOG_ERROR("ASR: model_path cannot be NULL");
+      LOG_ERROR("  Hint: Set [asr] model_path in dawn.toml or run ./setup_models.sh");
       return NULL;
    }
 
@@ -432,6 +433,7 @@ asr_context_t *asr_init(asr_engine_type_t engine_type, const char *model_path, i
          ctx->engine_context = asr_vosk_init(model_path, sample_rate);
          if (!ctx->engine_context) {
             LOG_ERROR("ASR: Vosk initialization failed");
+            LOG_ERROR("  Hint: Check that the Vosk model directory exists at the configured path");
             free(ctx);
             return NULL;
          }
@@ -449,6 +451,8 @@ asr_context_t *asr_init(asr_engine_type_t engine_type, const char *model_path, i
          ctx->whisper_ctx = asr_whisper_init(&wcfg);
          if (!ctx->whisper_ctx) {
             LOG_ERROR("ASR: Whisper initialization failed");
+            LOG_ERROR("  Hint: Run ./setup_models.sh to download Whisper models. Check [asr] "
+                      "model_path in dawn.toml");
             free(ctx);
             return NULL;
          }
