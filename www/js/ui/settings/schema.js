@@ -482,6 +482,7 @@
                   { value: 'disabled', label: 'Disabled' },
                ],
                hint: 'Native Tools: LLM function calling, Command Tags: XML-style <command> tags, Disabled: no tool use',
+               configPath: 'llm.tools.mode',
             },
          },
          customContent: 'tools_list', // Special marker for injecting tools list
@@ -1460,16 +1461,7 @@
 
       sectionsContainer.innerHTML = '';
 
-      // Create virtual tool_calling config from llm.tools.mode
-      // The tool_calling section is a UI convenience - backend uses llm.tools.mode
       const virtualConfig = { ...currentConfig };
-      if (currentConfig.llm && currentConfig.llm.tools && currentConfig.llm.tools.mode) {
-         virtualConfig.tool_calling = {
-            mode: currentConfig.llm.tools.mode,
-         };
-      } else {
-         virtualConfig.tool_calling = { mode: 'native' }; // Default
-      }
 
       // Populate persona description with built-in default if not set
       const Config = window.DawnSettingsConfig;

@@ -493,16 +493,6 @@
          config.general.ai_name = config.general.ai_name.toLowerCase();
       }
 
-      // Map virtual tool_calling section to llm.tools.mode
-      // The UI has a separate "Tool Calling" section, but backend uses llm.tools.mode
-      if (config.tool_calling && config.tool_calling.mode !== undefined) {
-         if (!config.llm) config.llm = {};
-         if (!config.llm.tools) config.llm.tools = {};
-         config.llm.tools.mode = config.tool_calling.mode;
-         // Remove the virtual tool_calling section (not in backend config)
-         delete config.tool_calling;
-      }
-
       return config;
    }
 
