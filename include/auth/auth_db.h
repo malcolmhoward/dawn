@@ -1143,6 +1143,32 @@ int conv_db_set_private(int64_t conv_id, int user_id, bool is_private);
 int conv_db_is_private(int64_t conv_id, int user_id);
 
 /**
+ * @brief Auto-title a conversation (atomic check-and-set)
+ *
+ * Sets the title only if title_locked = 0 (first extraction or never manually renamed).
+ * On success, also sets title_locked = 1 to prevent future overwrites.
+ * Single SQL round-trip eliminates TOCTOU race conditions.
+ *
+ * @param conv_id Conversation ID
+ * @param user_id User ID (for authorization check)
+ * @param title New title (should be <= 40 UTF-8 bytes)
+ * @return AUTH_DB_SUCCESS if updated, AUTH_DB_NOT_FOUND if already locked or not found
+ */
+int conv_db_auto_title(int64_t conv_id, int user_id, const char *title);
+
+/**
+ * @brief Set or clear the title_locked flag on a conversation
+ *
+ * Used by manual rename to prevent future auto-title overwrites.
+ *
+ * @param conv_id Conversation ID
+ * @param user_id User ID (for authorization check)
+ * @param locked 1 to lock, 0 to unlock
+ * @return AUTH_DB_SUCCESS, AUTH_DB_NOT_FOUND, or AUTH_DB_FAILURE
+ */
+int conv_db_set_title_locked(int64_t conv_id, int user_id, int locked);
+
+/**
  * @brief Update context usage for a conversation
  *
  * @param conv_id Conversation ID

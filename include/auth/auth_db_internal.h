@@ -48,7 +48,7 @@
  * ============================================================================= */
 
 /* Current schema version */
-#define AUTH_DB_SCHEMA_VERSION 26
+#define AUTH_DB_SCHEMA_VERSION 27
 
 /* Retention periods */
 #define LOGIN_ATTEMPT_RETENTION_SEC (7 * 24 * 60 * 60) /* 7 days */
@@ -175,6 +175,10 @@ typedef struct {
    /* Privacy flag */
    sqlite3_stmt *stmt_conv_set_private;
 
+   /* Auto-title (memory extraction) */
+   sqlite3_stmt *stmt_conv_auto_title;
+   sqlite3_stmt *stmt_conv_set_title_locked;
+
    /* === Embedding module statements (memory_db.c) === */
    sqlite3_stmt *stmt_memory_fact_update_embedding;
    sqlite3_stmt *stmt_memory_fact_get_embeddings;
@@ -271,7 +275,7 @@ typedef struct {
 } auth_db_state_t;
 
 /* Ensure last_stmt_end covers all statement fields (catches reorder bugs) */
-_Static_assert(offsetof(auth_db_state_t, stmt_oauth_list_accounts) >
+_Static_assert(offsetof(auth_db_state_t, stmt_conv_set_title_locked) >
                    offsetof(auth_db_state_t, stmt_create_user),
                "last_stmt_end must be after first_stmt_offset");
 

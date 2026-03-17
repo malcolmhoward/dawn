@@ -61,8 +61,11 @@ static void append_openai_tool_history(struct json_object *history,
                                        const tool_result_list_t *results) {
    json_object *assistant_msg = json_object_new_object();
    json_object_object_add(assistant_msg, "role", json_object_new_string("assistant"));
-   /* Use empty string instead of NULL for Gemini API compatibility */
-   json_object_object_add(assistant_msg, "content", json_object_new_string(""));
+   /* Preserve any text the LLM streamed before its tool calls, so the follow-up
+    * iteration can see what was already said and won't repeat itself.
+    * Use empty string as fallback for Gemini API compatibility (rejects NULL). */
+   const char *pre_tool_text = (response->text && response->text[0] != '\0') ? response->text : "";
+   json_object_object_add(assistant_msg, "content", json_object_new_string(pre_tool_text));
 
    json_object *tc_array = json_object_new_array();
    for (int i = 0; i < response->tool_calls.count; i++) {
@@ -124,6 +127,15 @@ static void append_claude_tool_history(struct json_object *history,
       }
 
       json_object_array_add(content_array, thinking_block);
+   }
+
+   /* Preserve any text the LLM streamed before its tool_use blocks, so the follow-up
+    * iteration can see what was already said and won't repeat itself. */
+   if (response->text && response->text[0] != '\0') {
+      json_object *text_block = json_object_new_object();
+      json_object_object_add(text_block, "type", json_object_new_string("text"));
+      json_object_object_add(text_block, "text", json_object_new_string(response->text));
+      json_object_array_add(content_array, text_block);
    }
 
    /* Add tool_use blocks */

@@ -40,6 +40,7 @@
 #include <time.h>
 
 #include "config/dawn_config.h"
+#include "core/buf_printf.h"
 #include "logging.h"
 #include "tools/curl_buffer.h"
 #include "utils/string_utils.h"
@@ -884,54 +885,36 @@ int web_search_format_for_llm(const search_response_t *response, char *buffer, s
 
    size_t written = 0;
    size_t remaining = buffer_size;
-   int n;
 
-/* Helper macro: write to buffer, update written/remaining, break on truncation */
-#define SAFE_SNPRINTF(...)                                    \
-   do {                                                       \
-      n = snprintf(buffer + written, remaining, __VA_ARGS__); \
-      if (n < 0)                                              \
-         goto done;                                           \
-      if ((size_t)n >= remaining) {                           \
-         written = buffer_size - 1;                           \
-         goto done;                                           \
-      }                                                       \
-      written += (size_t)n;                                   \
-      remaining -= (size_t)n;                                 \
-   } while (0)
-
-   SAFE_SNPRINTF("Web search results:\n\n");
+   BUF_PRINTF(buffer, written, remaining, "Web search results:\n\n");
 
    for (int i = 0; i < response->count && remaining > 1; i++) {
       search_result_t *r = &response->results[i];
 
-      SAFE_SNPRINTF("%d. %s", i + 1, r->title ? r->title : "(no title)");
+      BUF_PRINTF(buffer, written, remaining, "%d. %s", i + 1, r->title ? r->title : "(no title)");
 
       if (r->engine) {
-         SAFE_SNPRINTF(" [%s]", r->engine);
+         BUF_PRINTF(buffer, written, remaining, " [%s]", r->engine);
       }
 
       if (r->published_date && r->published_date[0]) {
          /* Show date only (first 10 chars: YYYY-MM-DD) */
-         SAFE_SNPRINTF(" (%.10s)", r->published_date);
+         BUF_PRINTF(buffer, written, remaining, " (%.10s)", r->published_date);
       }
 
-      SAFE_SNPRINTF("\n");
+      BUF_PRINTF(buffer, written, remaining, "\n");
 
       if (r->snippet) {
-         SAFE_SNPRINTF("   %s\n", r->snippet);
+         BUF_PRINTF(buffer, written, remaining, "   %s\n", r->snippet);
       }
 
       if (r->url) {
-         SAFE_SNPRINTF("   URL: %s\n", r->url);
+         BUF_PRINTF(buffer, written, remaining, "   URL: %s\n", r->url);
       }
 
-      SAFE_SNPRINTF("\n");
+      BUF_PRINTF(buffer, written, remaining, "\n");
    }
 
-#undef SAFE_SNPRINTF
-
-done:
    return (int)written;
 }
 

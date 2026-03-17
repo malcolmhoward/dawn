@@ -502,6 +502,18 @@ void webui_send_metrics_update(struct session *session,
                                float token_rate,
                                int context_percent);
 
+/**
+ * @brief Broadcast a conversation title change to all connections for a given user
+ *
+ * Thread-safe — can be called from the extraction thread.
+ * Uses the same queue_response + lws_cancel_service pattern as scheduler broadcasts.
+ *
+ * @param user_id User whose connections should receive the update
+ * @param conv_id Conversation ID that was renamed
+ * @param title New title string
+ */
+void webui_broadcast_conversation_renamed(int user_id, int64_t conv_id, const char *title);
+
 #ifdef __cplusplus
 }
 #endif

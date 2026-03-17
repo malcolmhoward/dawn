@@ -57,12 +57,26 @@
     * @param {string} text - Markdown text to format
     * @returns {string} Sanitized HTML
     */
+   // Custom marked renderer: open links in new tab
+   function escapeAttr(s) {
+      return s
+         .replace(/&/g, '&amp;')
+         .replace(/"/g, '&quot;')
+         .replace(/</g, '&lt;')
+         .replace(/>/g, '&gt;');
+   }
+   const renderer = new marked.Renderer();
+   renderer.link = function ({ href, title, text }) {
+      const titleAttr = title ? ` title="${escapeAttr(title)}"` : '';
+      return `<a href="${escapeAttr(href)}"${titleAttr} target="_blank" rel="noopener noreferrer">${text}</a>`;
+   };
+
    function formatMarkdown(text) {
       // Strip command tags before rendering (they should go to debug panel only)
       const cleanText = text.replace(/<command>[\s\S]*?<\/command>/g, '');
       // Parse markdown to HTML, then sanitize
-      const html = marked.parse(cleanText, { breaks: true, gfm: true });
-      return DOMPurify.sanitize(html);
+      const html = marked.parse(cleanText, { breaks: true, gfm: true, renderer });
+      return DOMPurify.sanitize(html, { ADD_ATTR: ['target'] });
    }
 
    /**

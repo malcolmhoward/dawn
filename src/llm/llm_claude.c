@@ -1047,9 +1047,11 @@ int llm_claude_streaming_single_shot(struct json_object *conversation_history,
       }
    }
 
-   if (!result->has_tool_calls) {
-      result->text = llm_stream_get_response(stream_ctx);
-   }
+   /* Always capture streamed text — even when tool calls are present.
+    * The LLM may stream text before tool_use blocks (e.g. "Let me check that...").
+    * The tool loop needs this to include it in follow-up history so the LLM
+    * doesn't repeat itself after the tool result comes back. */
+   result->text = llm_stream_get_response(stream_ctx);
 
    if (stream_ctx->finish_reason[0] != '\0') {
       strncpy(result->finish_reason, stream_ctx->finish_reason, sizeof(result->finish_reason) - 1);

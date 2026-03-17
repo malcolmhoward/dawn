@@ -2282,4 +2282,4 @@ void session_set_metrics_user(session_t *session, int user_id) {
 /* Note: File-based history saving (session_manager_save_all_histories) has been removed.
  * WebUI sessions persist to auth.db (conversations/messages tables) during the session.
  * LOCAL/DAP sessions do not persist conversation history.
- * See docs/NEXT_STEPS.md Section 13 for future export functionality via dawn-admin. */
+ * WebUI export (JSON/HTML) is available via conversation history panel. */

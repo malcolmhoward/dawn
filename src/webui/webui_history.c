@@ -1045,6 +1045,7 @@ void handle_rename_conversation(ws_connection_t *conn, struct json_object *paylo
    int result = conv_db_rename(conv_id, conn->auth_user_id, title);
 
    if (result == AUTH_DB_SUCCESS) {
+      conv_db_set_title_locked(conv_id, conn->auth_user_id, 1);
       json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
       json_object_object_add(resp_payload, "message",
                              json_object_new_string("Conversation renamed"));

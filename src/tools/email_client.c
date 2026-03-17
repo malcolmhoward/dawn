@@ -39,6 +39,7 @@
 #include <string.h>
 #include <time.h>
 
+#include "core/buf_printf.h"
 #include "logging.h"
 #include "tools/html_parser.h"
 
@@ -209,9 +210,9 @@ static bool validate_imap_date(const char *iso_date, char *imap_out, size_t out_
  * Literals are length-prefixed and cannot be escaped out of.
  * ============================================================================= */
 
-static int append_imap_literal(char *buf, size_t buf_len, int pos, const char *value) {
+static void append_imap_literal(char *buf, size_t *off, size_t *rem, const char *value) {
    size_t val_len = strlen(value);
-   return pos + snprintf(buf + pos, buf_len - pos, "{%zu}\r\n%s", val_len, value);
+   BUF_PRINTF(buf, *off, *rem, "{%zu}\r\n%s", val_len, value);
 }
 
 /* =============================================================================
@@ -646,11 +647,12 @@ static int batch_fetch_headers(CURL *curl,
 
    /* Build comma-separated UID list: "uid1,uid2,...,uidN" */
    char uid_list[1024];
-   int pos = 0;
-   for (int i = 0; i < uid_count && pos < (int)sizeof(uid_list) - 12; i++) {
+   size_t upos = 0;
+   size_t urem = sizeof(uid_list);
+   for (int i = 0; i < uid_count && urem > 12; i++) {
       if (i > 0)
-         uid_list[pos++] = ',';
-      pos += snprintf(uid_list + pos, sizeof(uid_list) - pos, "%u", uids[i]);
+         BUF_PRINTF(uid_list, upos, urem, ",");
+      BUF_PRINTF(uid_list, upos, urem, "%u", uids[i]);
    }
 
    /* Send single UID FETCH command */
@@ -940,42 +942,44 @@ int email_search(const email_conn_t *conn,
 
    /* Build IMAP SEARCH command with literal syntax for user-provided values */
    char search_cmd[2048];
-   int pos = snprintf(search_cmd, sizeof(search_cmd), "SEARCH");
+   size_t spos = 0;
+   size_t srem = sizeof(search_cmd);
+   BUF_PRINTF(search_cmd, spos, srem, "SEARCH");
 
    if (params->unread_only) {
-      pos += snprintf(search_cmd + pos, sizeof(search_cmd) - pos, " UNSEEN");
+      BUF_PRINTF(search_cmd, spos, srem, " UNSEEN");
    }
    if (params->from[0]) {
-      pos += snprintf(search_cmd + pos, sizeof(search_cmd) - pos, " FROM ");
-      pos = append_imap_literal(search_cmd, sizeof(search_cmd), pos, params->from);
+      BUF_PRINTF(search_cmd, spos, srem, " FROM ");
+      append_imap_literal(search_cmd, &spos, &srem, params->from);
    }
    if (params->subject[0]) {
-      pos += snprintf(search_cmd + pos, sizeof(search_cmd) - pos, " SUBJECT ");
-      pos = append_imap_literal(search_cmd, sizeof(search_cmd), pos, params->subject);
+      BUF_PRINTF(search_cmd, spos, srem, " SUBJECT ");
+      append_imap_literal(search_cmd, &spos, &srem, params->subject);
    }
    if (params->text[0]) {
-      pos += snprintf(search_cmd + pos, sizeof(search_cmd) - pos, " TEXT ");
-      pos = append_imap_literal(search_cmd, sizeof(search_cmd), pos, params->text);
+      BUF_PRINTF(search_cmd, spos, srem, " TEXT ");
+      append_imap_literal(search_cmd, &spos, &srem, params->text);
    }
 
    /* Date parameters — validate via strptime/strftime (never raw) */
    if (params->since[0]) {
       char imap_date[32];
       if (validate_imap_date(params->since, imap_date, sizeof(imap_date))) {
-         pos += snprintf(search_cmd + pos, sizeof(search_cmd) - pos, " SINCE %s", imap_date);
+         BUF_PRINTF(search_cmd, spos, srem, " SINCE %s", imap_date);
       }
    }
    if (params->before[0]) {
       char imap_date[32];
       if (validate_imap_date(params->before, imap_date, sizeof(imap_date))) {
-         pos += snprintf(search_cmd + pos, sizeof(search_cmd) - pos, " BEFORE %s", imap_date);
+         BUF_PRINTF(search_cmd, spos, srem, " BEFORE %s", imap_date);
       }
    }
 
    /* Need at least one search key */
    if (!params->unread_only && !params->from[0] && !params->subject[0] && !params->text[0] &&
        !params->since[0] && !params->before[0]) {
-      pos += snprintf(search_cmd + pos, sizeof(search_cmd) - pos, " ALL");
+      BUF_PRINTF(search_cmd, spos, srem, " ALL");
    }
 
    char url[1024];

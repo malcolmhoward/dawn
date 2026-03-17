@@ -673,6 +673,57 @@ int conv_db_rename(int64_t conv_id, int user_id, const char *new_title) {
    return (changes > 0) ? AUTH_DB_SUCCESS : AUTH_DB_NOT_FOUND;
 }
 
+int conv_db_auto_title(int64_t conv_id, int user_id, const char *title) {
+   if (conv_id <= 0 || !title || title[0] == '\0') {
+      return AUTH_DB_INVALID;
+   }
+
+   AUTH_DB_LOCK_OR_FAIL();
+
+   sqlite3_reset(s_db.stmt_conv_auto_title);
+   sqlite3_bind_text(s_db.stmt_conv_auto_title, 1, title, -1, SQLITE_STATIC);
+   sqlite3_bind_int64(s_db.stmt_conv_auto_title, 2, (int64_t)time(NULL));
+   sqlite3_bind_int64(s_db.stmt_conv_auto_title, 3, conv_id);
+   sqlite3_bind_int(s_db.stmt_conv_auto_title, 4, user_id);
+
+   int rc = sqlite3_step(s_db.stmt_conv_auto_title);
+   int changes = sqlite3_changes(s_db.db);
+   sqlite3_reset(s_db.stmt_conv_auto_title);
+
+   AUTH_DB_UNLOCK();
+
+   if (rc != SQLITE_DONE) {
+      return AUTH_DB_FAILURE;
+   }
+
+   return (changes > 0) ? AUTH_DB_SUCCESS : AUTH_DB_NOT_FOUND;
+}
+
+int conv_db_set_title_locked(int64_t conv_id, int user_id, int locked) {
+   if (conv_id <= 0 || user_id <= 0) {
+      return AUTH_DB_INVALID;
+   }
+
+   AUTH_DB_LOCK_OR_FAIL();
+
+   sqlite3_reset(s_db.stmt_conv_set_title_locked);
+   sqlite3_bind_int(s_db.stmt_conv_set_title_locked, 1, locked);
+   sqlite3_bind_int64(s_db.stmt_conv_set_title_locked, 2, conv_id);
+   sqlite3_bind_int(s_db.stmt_conv_set_title_locked, 3, user_id);
+
+   int rc = sqlite3_step(s_db.stmt_conv_set_title_locked);
+   int changes = sqlite3_changes(s_db.db);
+   sqlite3_reset(s_db.stmt_conv_set_title_locked);
+
+   AUTH_DB_UNLOCK();
+
+   if (rc != SQLITE_DONE) {
+      return AUTH_DB_FAILURE;
+   }
+
+   return (changes > 0) ? AUTH_DB_SUCCESS : AUTH_DB_NOT_FOUND;
+}
+
 int conv_db_set_private(int64_t conv_id, int user_id, bool is_private) {
    if (conv_id <= 0 || user_id <= 0) {
       return AUTH_DB_INVALID;

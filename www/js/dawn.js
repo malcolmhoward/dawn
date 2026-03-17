@@ -626,6 +626,9 @@
                   DawnScheduler.handleNotification(msg.payload);
                }
                break;
+            case 'conversation_renamed':
+               DawnHistory.handleConversationRenamed(msg.payload);
+               break;
             default:
                console.log('Unknown message type:', msg.type);
          }

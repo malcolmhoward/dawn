@@ -299,6 +299,19 @@
    gap: 0.4rem;
 }
 
+.history-item-title.title-updated {
+   animation: title-flash 0.6s ease-out;
+}
+
+@keyframes title-flash {
+   0% {
+      background-color: var(--accent-hover);
+   }
+   100% {
+      background-color: transparent;
+   }
+}
+
 /* Chain link icon for continued conversations */
 .history-item-chain {
    display: inline-flex;

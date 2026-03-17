@@ -159,6 +159,7 @@ static const char *SCHEMA_SQL =
     "   thinking_mode TEXT DEFAULT NULL,"
     "   last_extracted_msg_count INTEGER DEFAULT 0,"
     "   is_private INTEGER DEFAULT 0,"
+    "   title_locked INTEGER DEFAULT 0,"
     "   origin TEXT DEFAULT 'webui',"
     "   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,"
     "   FOREIGN KEY (continued_from) REFERENCES conversations(id) ON DELETE SET NULL"
@@ -986,6 +987,20 @@ static int create_schema(void) {
       LOG_INFO("auth_db: added contacts and email_accounts tables (v26)");
    }
 
+   /* v27 migration: add title_locked column to conversations for auto-title feature */
+   if (current_version >= 4 && current_version < 27) {
+      rc = sqlite3_exec(s_db.db,
+                        "ALTER TABLE conversations ADD COLUMN title_locked INTEGER DEFAULT 0", NULL,
+                        NULL, &errmsg);
+      if (rc != SQLITE_OK) {
+         LOG_INFO("auth_db: v27 migration note (title_locked): %s", errmsg ? errmsg : "ok");
+         sqlite3_free(errmsg);
+         errmsg = NULL;
+      } else {
+         LOG_INFO("auth_db: added title_locked column to conversations (v27)");
+      }
+   }
+
    /* Create continuation index (runs for both new databases and migrations) */
    rc = sqlite3_exec(s_db.db,
                      "CREATE INDEX IF NOT EXISTS idx_conversations_continued "
@@ -1777,6 +1792,25 @@ static int prepare_statements(void) {
                            -1, &s_db.stmt_conv_set_private, NULL);
    if (rc != SQLITE_OK) {
       LOG_ERROR("auth_db: prepare conv_set_private failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   /* Auto-title statements */
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "UPDATE conversations SET title = ?, title_locked = 1, updated_at = ? "
+                           "WHERE id = ? AND user_id = ? AND title_locked = 0",
+                           -1, &s_db.stmt_conv_auto_title, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare conv_auto_title failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "UPDATE conversations SET title_locked = ? "
+                           "WHERE id = ? AND user_id = ?",
+                           -1, &s_db.stmt_conv_set_title_locked, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare conv_set_title_locked failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2744,6 +2778,12 @@ static void finalize_statements(void) {
    /* Privacy statement */
    if (s_db.stmt_conv_set_private)
       sqlite3_finalize(s_db.stmt_conv_set_private);
+
+   /* Auto-title statements */
+   if (s_db.stmt_conv_auto_title)
+      sqlite3_finalize(s_db.stmt_conv_auto_title);
+   if (s_db.stmt_conv_set_title_locked)
+      sqlite3_finalize(s_db.stmt_conv_set_title_locked);
 
    /* Embedding statements */
    if (s_db.stmt_memory_fact_update_embedding)

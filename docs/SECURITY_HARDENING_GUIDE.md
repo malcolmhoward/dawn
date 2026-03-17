@@ -114,7 +114,7 @@ The pentest suite (`tests/test_pentest.sh`) confirms that DAWN handles known att
 | Gap | Risk | Notes |
 |-----|------|-------|
 | **No reverse proxy** | Direct exposure of a C application to the internet. Any undiscovered bug in the HTTP handling or libwebsockets is directly exploitable. | Internet-facing services should sit behind nginx/caddy/HAProxy for TLS termination, connection limits, and request filtering. |
-| **No 2FA** | Password-only authentication. One compromised password = full access to your assistant and connected smart home devices. | TOTP support is designed (see `docs/NEXT_STEPS.md` §20) but not yet implemented. |
+| **No 2FA** | Password-only authentication. One compromised password = full access to your assistant and connected smart home devices. | TOTP support is designed (see `docs/FUTURE_WORK.md` §10) but not yet implemented. |
 | **No WAF** | No request filtering for novel attack patterns before they reach application code. | A reverse proxy with ModSecurity or similar provides defense-in-depth. |
 | **Private CA only** | Browsers will show certificate warnings for your domain. Users learn to click through warnings. | Internet-facing deployments need Let's Encrypt / ACME for publicly-trusted certificates. |
 
@@ -187,10 +187,10 @@ Even with all of the above, a custom C application serving directly to the inter
 | Risk | Rationale |
 |------|-----------|
 | **HTTPS is optional** | Localhost-only use is legitimate; enforcing would break first-run UX. Documented as strongly recommended. |
-| **Shared PSK for satellites** | Per-device certs (mTLS) add significant setup complexity for minimal gain on a home LAN. PSK + TLS is appropriate for the threat model. See `docs/NEXT_STEPS.md` section 21. |
+| **Shared PSK for satellites** | Per-device certs (mTLS) add significant setup complexity for minimal gain on a home LAN. PSK + TLS is appropriate for the threat model. See `docs/FUTURE_WORK.md` §11. |
 | **ESP32 credentials in flash** | Registration key and WiFi password stored in NVS/binary. Requires physical access to extract. Full mitigation needs ESP32 flash encryption (hardware-level). |
 | **SQLite DB not encrypted** | Database files are plaintext on disk. Filesystem-level encryption (LUKS) is the appropriate mitigation for at-rest protection. |
-| **No 2FA** | Planned but not yet implemented. See `docs/NEXT_STEPS.md` section 20. |
+| **No 2FA** | Planned but not yet implemented. See `docs/FUTURE_WORK.md` §10. |
 | **Audit logging scope** | Auth events (login, logout, failure, lockout, CSRF, rate limit) are logged to SQLite. Tool execution is logged to syslog only (not queryable). Config changes are not logged. Extending audit scope to cover tool execution and config changes is a future improvement — see below. |
 | **No automated update notifications** | DAWN does not check for new releases. Users should watch the GitHub repository (Watch → Releases only) for security updates. Building this into the application would add complexity for marginal gain — GitHub's notification system already handles this well. |
 
@@ -235,7 +235,7 @@ All authentication and security events via `auth_db_audit.c`:
 
 ### Recommendation
 
-The current audit logging covers the security-critical events: authentication, authorization failures, and rate limiting. These are the events an admin needs to detect attacks or investigate incidents. Tool execution and config change logging are observability improvements — valuable but not security-blocking. They should be implemented alongside the audit log viewer WebUI panel (NEXT_STEPS.md item #26).
+The current audit logging covers the security-critical events: authentication, authorization failures, and rate limiting. These are the events an admin needs to detect attacks or investigate incidents. Tool execution and config change logging are observability improvements — valuable but not security-blocking. They should be implemented alongside the audit log viewer WebUI panel (`RELEASE_TODO.md` item #26).
 
 ---
 

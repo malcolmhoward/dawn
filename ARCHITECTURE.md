@@ -4,7 +4,7 @@ This document describes the architecture of the D.A.W.N. (Digital Assistant for 
 
 **D.A.W.N.** is the central intelligence layer of the OASIS ecosystem, responsible for interpreting user intent, fusing data from every subsystem, and routing commands. At its core, DAWN performs neural-inference to understand context and drive decision-making, acting as OASIS's orchestration hub for MIRAGE, AURA, SPARK, STAT, and any future modules.
 
-**Last Updated**: March 12, 2026 (Document search/RAG system, embedding engine extraction, document_read tool, admin document management)
+**Last Updated**: March 16, 2026 (Email, OAuth/Crypto, Scheduler, Home Assistant subsystems; contacts, entity merge, per-user settings)
 
 ## Table of Contents
 
@@ -35,8 +35,9 @@ dawn/
 │   ├── memory/             # Persistent memory system
 │   ├── tts/                # Text-to-speech (Piper)
 │   ├── audio/              # Audio capture, playback, music
-│   ├── core/               # Session manager, scheduler, embedding engine
-│   ├── tools/              # Modular LLM tools (search, weather, calculator, scheduler, etc.)
+│   ├── core/               # Session manager, scheduler, embedding engine, crypto
+│   ├── auth/               # User auth, per-user settings, satellite mappings
+│   ├── tools/              # Modular LLM tools (search, weather, calendar, email, scheduler, etc.)
 │   └── webui/              # Web UI server
 │
 ├── include/                # Header files (mirrors src/)
@@ -992,7 +993,21 @@ Memory extraction happens at session end, not during conversation. This adds zer
    - `recent`: Time-based retrieval (e.g., "24h", "7d", "1w")
    - `remember`: Immediate fact storage with guardrails
    - `forget`: Delete matching facts
+   - `merge_entities`: Combine duplicate entities (transfers relations, contacts, deduplicates)
+   - `save_contact`, `find_contact`, `list_contacts`, `delete_contact`: Contact management
    - `append_graph_context()`: Entity graph results appended to search output
+
+- **contacts_db.c/h**: Contacts database operations
+   - Structured contact info (email, phone, address) linked to `memory_entities` via `entity_id`
+   - CRUD: `contacts_add()`, `contacts_find()`, `contacts_update()`, `contacts_delete()`, `contacts_list()`
+   - Case-insensitive search with LIKE escape
+
+- **memory_db_entity_merge()**: Transactional entity merge
+   - MERGE_EXEC macro for error-checked SQL within a transaction
+   - Reassigns relations (both subject and object FKs) and contacts to target entity
+   - Deletes self-referential relations created by reassignment
+   - Deduplicates via ROW_NUMBER() window function
+   - Absorbs mention count and time range from source entity
 
 - **memory_maintenance.c/h**: Nightly decay orchestration
    - Called from auth maintenance thread (15-minute cycle)
@@ -1027,6 +1042,12 @@ memory_relations (id, user_id, subject_entity_id, relation, object_entity_id,
                   object_value, fact_id, confidence, created_at)
    FK subject_entity_id → memory_entities(id)
    FK object_entity_id → memory_entities(id) (nullable, literal if NULL)
+
+-- Contacts: structured contact info linked to entities
+contacts (id, user_id, entity_id, field_type, value, label, created_at)
+   FK entity_id → memory_entities(id)
+   field_type: "email", "phone", "address"
+   label: "work", "personal", "mobile", "home", "other", NULL
 ```
 
 #### Privacy Toggle
@@ -1091,10 +1112,11 @@ access_reinforcement_boost = 0.05  # +5% on access (1-hour cooldown)
 
 The memory viewer provides a browser-based interface for inspecting and managing all memory types:
 
-- **Tabs**: Facts, Preferences, Summaries, Graph (entities)
-- **Stats bar**: Real-time counts for each memory type
+- **Tabs**: Facts, Preferences, Summaries, Graph (entities), Contacts
+- **Stats bar**: Real-time counts for each memory type including contacts
 - **Search**: Filter memories by keyword across all tabs
-- **Graph tab**: Entity cards with type badges, expandable relations (→ outgoing, ← incoming)
+- **Graph tab**: Entity cards with type badges, expandable relations (→ outgoing, ← incoming), contact count badge on person entities, two-click entity merge (select source → click target → confirm)
+- **Contacts tab**: Contact cards with field_type/label badges, hover-reveal edit/delete, search, pagination. Add/edit modal with entity typeahead. Cross-linked from Graph tab person entities.
 - **Delete**: Per-item delete with confirmation, bulk "Forget Everything"
 - **Import / Export**: Transfer memories between DAWN instances or other AI assistants
 - **Keyboard accessible**: tabindex, ARIA roles, Enter/Space activation
@@ -1322,6 +1344,180 @@ max_indexed_documents = 50     # Per-user document count limit
 
 ---
 
+### 13. Email Subsystem (`src/tools/email_*.c`, `src/webui/webui_email.c`)
+
+**Purpose**: Multi-account email via IMAP/SMTP and Gmail REST API, with voice-controlled send, read, search, trash, and archive
+
+#### Architecture: **Dual Backend + Service Router**
+
+```
+┌───────────────────────────────────────────────────────────────────────┐
+│                     LLM TOOL INTERFACE                                │
+│  email_tool.c                                                        │
+│  Actions: recent | read | search | folders | send | confirm_send     │
+│           | accounts | trash | confirm_trash | archive               │
+│  → TOOL_CAP_DANGEROUS: compile-time + runtime gates                  │
+├───────────────────────────────────────────────────────────────────────┤
+│                     SERVICE LAYER                                     │
+│  email_service.c                                                     │
+│  → Multi-account routing (dispatches to correct backend per account) │
+│  → Two-step confirmation for send and trash (draft → confirm)        │
+│  → Per-account read-only flag                                        │
+│  → Pagination for large result sets                                  │
+├───────────────────────────────────────────────────────────────────────┤
+│              BACKEND A                     BACKEND B                  │
+│  email_client.c (IMAP/SMTP)    gmail_client.c (Gmail REST API)      │
+│  → libcurl for IMAP/SMTP       → OAuth Bearer + XOAUTH2             │
+│  → App password or XOAUTH2     → REST endpoints for all operations   │
+│  → Any IMAP provider           → Google-specific (thread model)      │
+├───────────────────────────────────────────────────────────────────────┤
+│                     SQLITE STORAGE                                    │
+│  email_db.c                                                          │
+│  Tables: email_accounts (encrypted passwords via crypto_store)       │
+│  → Shares auth_db SQLite handle                                      │
+└───────────────────────────────────────────────────────────────────────┘
+```
+
+#### Key Design Points
+
+- **Dual backend**: IMAP/SMTP for any provider, Gmail REST API for OAuth accounts (auto-selected per account)
+- **Two-step confirmation**: Send and trash require a confirm step — the LLM drafts, then the user confirms
+- **Contacts integration**: Recipient resolution via `contacts_find()` — "email Bob" resolves to Bob's stored email
+- **Compile-time gate**: `DAWN_ENABLE_EMAIL_TOOL=ON` in CMake; runtime gate in `[email] enabled`
+- **WebUI management**: Account CRUD via `webui_email.c`, Google OAuth connect flow
+
+---
+
+### 14. OAuth 2.0 / Crypto Subsystem (`src/tools/oauth_client.c`, `src/core/crypto_store.c`)
+
+**Purpose**: Shared OAuth 2.0 authentication and encrypted credential storage
+
+#### Key Components
+
+- **oauth_client.c/h**: OAuth 2.0 client with PKCE S256
+   - Provider-agnostic design (currently Google, extensible to Microsoft 365)
+   - Authorization URL generation with PKCE challenge
+   - Code exchange and token refresh
+   - Token storage in `oauth_tokens` SQLite table (encrypted via crypto_store)
+   - WebUI popup consent flow with `postMessage` origin validation
+
+- **crypto_store.c/h**: Shared libsodium encryption module
+   - `crypto_secretbox` (XSalsa20-Poly1305) for symmetric encryption
+   - Key file: `dawn.key` (auto-generated on first use, 256-bit)
+   - Used by OAuth (token encryption) and email (password encryption)
+   - `crypto_store_encrypt()` / `crypto_store_decrypt()` API
+
+#### OAuth Flow
+
+```
+WebUI → popup window → Google consent → redirect to /oauth/callback
+  → callback page posts auth code via postMessage to opener
+  → opener sends code to daemon via WebSocket
+  → daemon exchanges code for tokens (PKCE verification)
+  → tokens encrypted and stored in oauth_tokens table
+  → automatic refresh on expiry
+```
+
+---
+
+### 15. Scheduler Subsystem (`src/core/scheduler.c`, `src/core/scheduler_db.c`, `src/tools/scheduler_tool.c`)
+
+**Purpose**: Timers, alarms, reminders, and scheduled tool execution with audible chimes and WebUI notifications
+
+#### Architecture: **Background Thread + SQLite + Tool Interface**
+
+```
+┌───────────────────────────────────────────────────────────────────────┐
+│                     LLM TOOL INTERFACE                                │
+│  scheduler_tool.c                                                    │
+│  Actions: create | list | cancel | query | snooze | dismiss          │
+│  → "Set a 10 minute timer", "Remind me at 3pm", "Cancel all timers" │
+├───────────────────────────────────────────────────────────────────────┤
+│                     SCHEDULER ENGINE                                  │
+│  scheduler.c                                                         │
+│  → Background thread polls every second                              │
+│  → Fires events when time arrives (chime audio + WebSocket notify)   │
+│  → Recurrence: daily, weekdays, weekends, weekly, custom days        │
+│  → Snooze (configurable duration) and dismiss                        │
+│  → Scheduled tasks: execute any registered tool at a given time      │
+├───────────────────────────────────────────────────────────────────────┤
+│                     SQLITE STORAGE                                    │
+│  scheduler_db.c                                                      │
+│  Table: scheduler_events (user_id, type, label, fire_at, recurrence) │
+│  → Shares auth_db SQLite handle                                      │
+│  → Prepared statements for CRUD and time-range queries               │
+└───────────────────────────────────────────────────────────────────────┘
+```
+
+#### Key Design Points
+
+- **Event types**: timer (countdown), alarm (absolute time), reminder (absolute + label), task (absolute + tool invocation)
+- **Chime audio**: Built-in chime WAV played via audio subsystem at configurable volume
+- **WebUI notifications**: `scheduler_fire` WebSocket message triggers banner with snooze/dismiss buttons
+- **Recurrence**: Events auto-reschedule after firing based on recurrence pattern
+- **94 unit test assertions** across 16 tests in `tests/test_scheduler.c`
+
+---
+
+### 16. Home Assistant Subsystem (`src/tools/homeassistant_service.c`, `src/tools/homeassistant_tool.c`)
+
+**Purpose**: Smart home control via Home Assistant REST API — lights, climate, locks, covers, media players, scenes, scripts, automations
+
+#### Architecture: **Service + Tool + WebUI Admin**
+
+```
+┌───────────────────────────────────────────────────────────────────────┐
+│                     LLM TOOL INTERFACE                                │
+│  homeassistant_tool.c                                                │
+│  16 actions: get_state, turn_on, turn_off, toggle, set_brightness,   │
+│  set_color, set_color_temp, set_climate, lock, unlock, open_cover,   │
+│  close_cover, media_play, activate_scene, trigger_script,            │
+│  trigger_automation                                                  │
+├───────────────────────────────────────────────────────────────────────┤
+│                     SERVICE LAYER                                     │
+│  homeassistant_service.c                                             │
+│  → REST API via libcurl with Long-Lived Access Token                 │
+│  → Entity cache with periodic refresh                                │
+│  → Fuzzy name matching (Levenshtein + token overlap)                 │
+│  → Generic call_service() dispatcher                                 │
+├───────────────────────────────────────────────────────────────────────┤
+│                     WEBUI ADMIN                                       │
+│  webui_homeassistant.c + homeassistant.js                            │
+│  → Entity browser, connection status, URL/token config               │
+│  → Compile-time feature guard (DAWN_ENABLE_HOMEASSISTANT_TOOL)       │
+│  → server_features WS message + CSS feature-flag visibility          │
+└───────────────────────────────────────────────────────────────────────┘
+```
+
+#### Key Design Points
+
+- **Fuzzy matching**: "Turn on the living room light" works even if the HA entity name differs slightly
+- **Area-aware**: Satellite user mapping injects `HomeAssistant_Area=[X]` into LLM system prompt
+- **Feature guard**: `DAWN_ENABLE_HOMEASSISTANT_TOOL` CMake option; mutually exclusive with SmartThings
+- **Entity cache**: Avoids per-request API calls; refreshed on configurable interval
+
+---
+
+### 17. Per-User Settings (`src/auth/auth_db_settings.c`, `src/webui/webui_settings.c`)
+
+**Purpose**: Per-user personalization — persona, location, timezone, units, theme
+
+#### Key Components
+
+- **auth_db_settings.c**: `user_settings` SQLite table with per-user preferences
+   - Persona (append or replace mode), location, timezone, units, theme
+   - CRUD via prepared statements on shared auth_db handle
+
+- **webui_settings.c + my-settings.js**: "My Settings" WebUI panel
+   - Per-user preferences editable from the browser
+   - Theme selection syncs immediately
+
+- **build_user_prompt()**: System prompt personalization
+   - Injects user preferences (persona, location, timezone, units) into LLM system prompt at session start
+   - Each session is personalized to the authenticated user
+
+---
+
 ## Module Dependency Hierarchy
 
 To prevent circular dependencies and maintain clean architecture, modules are organized into layers. **Modules may only depend on modules in lower layers.**
@@ -1348,10 +1544,13 @@ Layer 2 (Services)
 │   ├── llm_claude.c      - Anthropic Claude (depends: llm_interface)
 │   └── llm_tools.c       - Tool execution (depends: tool_registry)
 ├── core/embedding_engine.c - Shared embedding infrastructure (depends: Layer 0-1)
+├── core/crypto_store.c   - Shared libsodium encryption (depends: Layer 0)
+├── core/scheduler.c      - Scheduler engine + background thread (depends: Layer 0-1)
 ├── tts/                  - Text-to-speech (depends: Layer 0-1)
 ├── asr/                  - Speech recognition (depends: Layer 0-1)
 ├── mosquitto_comms.c     - MQTT integration (depends: Layer 0-1, tool_registry)
-└── memory/               - Persistent memory (depends: Layer 0-1, embedding_engine)
+├── memory/               - Persistent memory + contacts (depends: Layer 0-1, embedding_engine)
+└── auth/                 - User auth, settings, per-user prefs (depends: Layer 0-1)
 
 Layer 3 (Tools)
 ├── tools/weather_tool.c      - Weather API (depends: Layer 0-2)
@@ -1361,6 +1560,12 @@ Layer 3 (Tools)
 ├── tools/document_search.c   - RAG semantic search (depends: Layer 0-2, embedding_engine)
 ├── tools/document_read.c     - Paginated doc reader (depends: Layer 0-2, document_db)
 ├── tools/document_db.c       - Document SQLite CRUD (depends: Layer 0-1, auth_db)
+├── tools/email_service.c     - Email routing + two-step confirm (depends: Layer 0-2, oauth_client)
+├── tools/email_client.c      - IMAP/SMTP backend (depends: Layer 0-1, crypto_store)
+├── tools/gmail_client.c      - Gmail REST API backend (depends: Layer 0-1, oauth_client)
+├── tools/oauth_client.c      - OAuth 2.0 + PKCE (depends: Layer 0-1, crypto_store)
+├── tools/homeassistant_service.c - HA REST API + entity cache (depends: Layer 0-1)
+├── tools/calendar_service.c  - CalDAV business logic (depends: Layer 0-2, oauth_client)
 └── tools/*.c                 - All other tools (depends: Layer 0-2)
 
 Layer 4 (Application)
@@ -1606,10 +1811,10 @@ static const tool_metadata_t my_tool_metadata = {
 
 **Registered Tools** (as of March 2026):
 
-- audio_tools, calculator_tool, datetime_tool, document_read_tool, document_search_tool
-- homeassistant_tool, hud_tools, llm_status_tool, memory_tool, music_tool
-- reset_conversation_tool, scheduler_tool, search_tool, shutdown_tool
-- switch_llm_tool, url_tool, viewing_tool, volume_tool, weather_tool
+- audio_tools, calculator_tool, calendar_tool, datetime_tool, document_read_tool
+- document_search_tool, email_tool, homeassistant_tool, hud_tools, llm_status_tool
+- memory_tool, music_tool, reset_conversation_tool, scheduler_tool, search_tool
+- shutdown_tool, switch_llm_tool, url_tool, viewing_tool, volume_tool, weather_tool
 
 ### Command Flow
 
@@ -2163,30 +2368,31 @@ The WebUI settings panel (`www/js/ui/settings.js`) defines a `SETTINGS_SCHEMA` t
 
 1. ✅ **Multi-Client Network Server** — Worker thread pool, per-client sessions, non-blocking main loop
 2. ✅ **Conversation Persistence** — SQLite-backed conversation history with search/rename/delete
-3. ✅ **DAP2 Satellite System** — Text-first WebSocket protocol, Tier 1 RPi satellite with SDL2 UI
+3. ✅ **DAP2 Satellite System** — Text-first WebSocket protocol, Tier 1 RPi satellite with SDL2 UI, Tier 2 ESP32 satellite
 4. ✅ **Music Streaming to Satellites** — Opus audio over dedicated WebSocket, Goertzel FFT visualizer
 5. ✅ **Document Search (RAG)** — Upload documents, semantic search + paginated reading via LLM tools, shared embedding engine, admin document management with global toggle
+6. ✅ **CalDAV Calendar** — Multi-account, multi-calendar, RFC 4791, Google OAuth, RRULE expansion, background sync
+7. ✅ **Email Integration** — IMAP/SMTP + Gmail REST API, multi-account, two-step send/trash, contacts system
+8. ✅ **OAuth 2.0 + Crypto** — PKCE S256, encrypted token storage, Google provider, WebUI popup flow
+9. ✅ **Scheduler** — Timers, alarms, reminders, scheduled tool execution, recurrence, chime audio, WebUI notifications
+10. ✅ **Home Assistant** — REST API, 16 actions, fuzzy name matching, entity cache, WebUI admin panel
+11. ✅ **Persistent Memory** — Entity graph, semantic embeddings, contacts, entity merge, confidence decay, import/export
+12. ✅ **Per-User Settings** — Persona, location, timezone, units, theme. System prompt personalization per session.
+13. ✅ **Plex Music Source** — Unified music DB with local + Plex, priority-based dedup, source abstraction
+14. ✅ **Security Hardening** — HTTP security headers, pentest suite (34 tests), private CA for TLS
+15. ✅ **Modular Tool Registry** — O(1) hash lookups, parallel execution, capability flags, compile-time feature guards
 
 ### Planned Features
 
-1. **Improved Error Recovery**
-   - Auto-reconnect for MQTT
-   - Network protocol timeout tuning
-   - ASR fallback on GPU failure
-
-2. **CI/CD Pipeline**
+1. **CI/CD Pipeline**
    - GitHub Actions for automated builds
    - Regression testing
    - Code quality checks
 
-3. **Enhanced Testing**
+2. **Enhanced Testing**
    - Integration tests (end-to-end)
    - Stress tests (concurrent clients, memory leaks)
    - Automated regression tests
-
-4. **DAP Device Token Authentication** (Phase 4.3)
-   - Certificate-based satellite authentication
-   - Replace session-based auth for headless devices
 
 ---
 
@@ -2201,8 +2407,8 @@ The WebUI settings panel (`www/js/ui/settings.js`) defines a `SETTINGS_SCHEMA` t
 
 ---
 
-**Document Version**: 2.0
-**Last Updated**: March 2, 2026 (Unified music database with multi-source dedup)
+**Document Version**: 3.0
+**Last Updated**: March 16, 2026
 **Reorganization Commit**: [Git SHA to be added after commit]
 
 ### LLM Threading Architecture (Post-Interrupt Implementation)

@@ -33,6 +33,7 @@
 
 #include "auth/auth_db.h"
 #include "config/dawn_config.h"
+#include "core/buf_printf.h"
 #include "llm/llm_interface.h"
 #include "logging.h"
 #include "memory/memory_db.h"
@@ -69,6 +70,7 @@ static const char *EXTRACTION_PROMPT_TEMPLATE =
     "\"object\": \"entity name or value\"}\n"
     "  ],\n"
     "  \"summary\": \"1-2 sentence conversation summary\",\n"
+    "  \"title\": \"short conversation title, max 40 chars\",\n"
     "  \"topics\": [\"topic1\", \"topic2\"]\n"
     "}\n\n"
     "Guidelines:\n"
@@ -84,6 +86,8 @@ static const char *EXTRACTION_PROMPT_TEMPLATE =
     "- IMPORTANT: Reuse entity names from EXISTING USER PROFILE exactly as listed. "
     "Do NOT create alternate names for the same entity (e.g., use \"Kris\" not \"Kris Kersey\" "
     "if \"Kris\" is already known)\n"
+    "- Generate a concise title (under 40 characters) that captures the main topic(s)\n"
+    "- Title should be human-friendly, not a sentence — more like a label\n"
     "- If nothing notable to extract, return empty arrays\n";
 
 /* =============================================================================
@@ -181,17 +185,17 @@ static char *build_existing_profile(int user_id) {
    if (!profile)
       return strdup("(none)");
 
-   int offset = 0;
+   size_t off = 0;
+   size_t rem = 4096;
 
    /* Load existing preferences */
    memory_preference_t prefs[10];
    int pref_count = memory_db_pref_list(user_id, prefs, 10, 0);
 
    if (pref_count > 0) {
-      offset += snprintf(profile + offset, 4096 - offset, "Preferences:\n");
-      for (int i = 0; i < pref_count && offset < 3900; i++) {
-         offset += snprintf(profile + offset, 4096 - offset, "- %s: %s\n", prefs[i].category,
-                            prefs[i].value);
+      BUF_PRINTF(profile, off, rem, "Preferences:\n");
+      for (int i = 0; i < pref_count && rem > 1; i++) {
+         BUF_PRINTF(profile, off, rem, "- %s: %s\n", prefs[i].category, prefs[i].value);
       }
    }
 
@@ -200,11 +204,11 @@ static char *build_existing_profile(int user_id) {
    int fact_count = memory_db_fact_list(user_id, facts, 10, 0);
 
    if (fact_count > 0) {
-      if (offset > 0)
-         offset += snprintf(profile + offset, 4096 - offset, "\n");
-      offset += snprintf(profile + offset, 4096 - offset, "Known facts:\n");
-      for (int i = 0; i < fact_count && offset < 3900; i++) {
-         offset += snprintf(profile + offset, 4096 - offset, "- %s\n", facts[i].fact_text);
+      if (off > 0)
+         BUF_PRINTF(profile, off, rem, "\n");
+      BUF_PRINTF(profile, off, rem, "Known facts:\n");
+      for (int i = 0; i < fact_count && rem > 1; i++) {
+         BUF_PRINTF(profile, off, rem, "- %s\n", facts[i].fact_text);
       }
    }
 
@@ -213,17 +217,16 @@ static char *build_existing_profile(int user_id) {
    int entity_count = memory_db_entity_list(user_id, entities, 20, 0);
 
    if (entity_count > 0) {
-      if (offset > 0)
-         offset += snprintf(profile + offset, 4096 - offset, "\n");
-      offset += snprintf(profile + offset, 4096 - offset,
-                         "Known entities (reuse these exact names, do NOT create variants):\n");
-      for (int i = 0; i < entity_count && offset < 3900; i++) {
-         offset += snprintf(profile + offset, 4096 - offset, "- %s (%s)\n", entities[i].name,
-                            entities[i].entity_type);
+      if (off > 0)
+         BUF_PRINTF(profile, off, rem, "\n");
+      BUF_PRINTF(profile, off, rem,
+                 "Known entities (reuse these exact names, do NOT create variants):\n");
+      for (int i = 0; i < entity_count && rem > 1; i++) {
+         BUF_PRINTF(profile, off, rem, "- %s (%s)\n", entities[i].name, entities[i].entity_type);
       }
    }
 
-   if (offset == 0) {
+   if (off == 0) {
       strcpy(profile, "(none)");
    }
 
@@ -296,10 +299,47 @@ static struct json_object *extract_json_from_response(const char *response) {
 }
 
 /* =============================================================================
+ * WebUI broadcast for auto-title (provided by webui_server.c when ENABLE_WEBUI)
+ * ============================================================================= */
+
+#ifdef ENABLE_WEBUI
+#include "webui/webui_server.h"
+#endif
+
+/* =============================================================================
+ * Helper: UTF-8-safe truncation
+ * ============================================================================= */
+
+static void utf8_truncate(char *str, size_t max_bytes) {
+   if (strlen(str) <= max_bytes)
+      return;
+   str[max_bytes] = '\0';
+   /* Back up past any UTF-8 continuation bytes (10xxxxxx) */
+   while (max_bytes > 0 && (str[max_bytes - 1] & 0xC0) == 0x80) {
+      str[--max_bytes] = '\0';
+   }
+   /* Remove the leading byte of the incomplete sequence */
+   if (max_bytes > 0 && (str[max_bytes - 1] & 0x80) != 0) {
+      int expected_len = 0;
+      unsigned char c = (unsigned char)str[max_bytes - 1];
+      if ((c & 0xE0) == 0xC0)
+         expected_len = 2;
+      else if ((c & 0xF0) == 0xE0)
+         expected_len = 3;
+      else if ((c & 0xF8) == 0xF0)
+         expected_len = 4;
+      if (expected_len > 0 && strlen(str + max_bytes - 1) < (size_t)expected_len) {
+         str[max_bytes - 1] = '\0';
+      }
+   }
+}
+
+/* =============================================================================
  * Helper: Parse extraction response
  * ============================================================================= */
 
 static void process_extraction_response(int user_id,
+                                        int64_t conversation_id,
                                         const char *session_id,
                                         const char *response_text,
                                         int message_count,
@@ -560,14 +600,15 @@ static void process_extraction_response(int user_id,
       char topics[MEMORY_TOPICS_MAX] = { 0 };
       if (json_object_object_get_ex(root, "topics", &topics_arr)) {
          int count = json_object_array_length(topics_arr);
-         int offset = 0;
-         for (int i = 0; i < count && offset < MEMORY_TOPICS_MAX - 32; i++) {
+         size_t toff = 0;
+         size_t trem = MEMORY_TOPICS_MAX;
+         for (int i = 0; i < count && trem > 1; i++) {
             const char *topic = json_object_get_string(json_object_array_get_idx(topics_arr, i));
             if (topic) {
-               if (offset > 0) {
-                  offset += snprintf(topics + offset, MEMORY_TOPICS_MAX - offset, ", ");
+               if (toff > 0) {
+                  BUF_PRINTF(topics, toff, trem, ", ");
                }
-               offset += snprintf(topics + offset, MEMORY_TOPICS_MAX - offset, "%s", topic);
+               BUF_PRINTF(topics, toff, trem, "%s", topic);
             }
          }
       }
@@ -575,6 +616,27 @@ static void process_extraction_response(int user_id,
       memory_db_summary_create(user_id, session_id, summary, topics, "neutral", message_count,
                                duration_seconds);
       LOG_INFO("memory_extraction: stored summary for session %s", session_id);
+   }
+
+   /* Process title — auto-rename conversation if not locked (atomic check-and-set) */
+   struct json_object *title_obj;
+   if (json_object_object_get_ex(root, "title", &title_obj)) {
+      const char *title = json_object_get_string(title_obj);
+      if (title && title[0] != '\0' && conversation_id > 0) {
+         char safe_title[48];
+         strncpy(safe_title, title, sizeof(safe_title) - 1);
+         safe_title[sizeof(safe_title) - 1] = '\0';
+         utf8_truncate(safe_title, 40);
+
+         int rc = conv_db_auto_title(conversation_id, user_id, safe_title);
+         if (rc == AUTH_DB_SUCCESS) {
+#ifdef ENABLE_WEBUI
+            webui_broadcast_conversation_renamed(user_id, conversation_id, safe_title);
+#endif
+            LOG_INFO("memory_extraction: auto-titled conversation %lld: %s",
+                     (long long)conversation_id, safe_title);
+         }
+      }
    }
 
    json_object_put(root);
@@ -680,8 +742,8 @@ static void *extraction_thread(void *arg) {
    json_object_put(extraction_history);
 
    if (response) {
-      process_extraction_response(ctx->user_id, ctx->session_id, response, ctx->new_message_count,
-                                  ctx->duration_seconds);
+      process_extraction_response(ctx->user_id, ctx->conversation_id, ctx->session_id, response,
+                                  ctx->new_message_count, ctx->duration_seconds);
       free(response);
 
       /* Update extraction high-water mark on success */

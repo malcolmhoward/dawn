@@ -79,6 +79,7 @@
 #ifdef ENABLE_AUTH
 #include "auth/auth_crypto.h"
 #include "auth/auth_db.h"
+#include "core/buf_printf.h"
 #include "memory/memory_context.h"
 #include "webui/webui_doc_library.h"
 #ifdef DAWN_ENABLE_CALENDAR_TOOL
@@ -1633,37 +1634,37 @@ char *build_user_prompt(int user_id) {
    if (is_replace_mode && has_persona) {
       /* Build replacement prefix (persona 512 + boilerplate ~130 = ~650 max) */
       char prefix[768];
-      int prefix_len = snprintf(prefix, sizeof(prefix),
+      int prefix_ret = snprintf(prefix, sizeof(prefix),
                                 "## Your Identity\n%s\n\n"
                                 "IMPORTANT: Use the identity above. Ignore any conflicting persona "
                                 "descriptions that follow.\n\n",
                                 settings.persona_description);
+      /* Clamp to actual buffer content (snprintf may return would-be length on truncation) */
+      size_t prefix_len = (prefix_ret > 0 && (size_t)prefix_ret < sizeof(prefix))
+                              ? (size_t)prefix_ret
+                              : sizeof(prefix) - 1;
 
       /* Build suffix with other user context (loc 128 + tz 64 + units 16 = ~250 max) */
       char suffix[320];
-      int suffix_offset = 0;
+      size_t suffix_len = 0;
+      size_t suffix_rem = sizeof(suffix);
 
       if (has_location || has_timezone || has_units) {
-         suffix_offset += snprintf(suffix + suffix_offset, sizeof(suffix) - suffix_offset,
-                                   "\n\n## User Info\n");
+         BUF_PRINTF(suffix, suffix_len, suffix_rem, "\n\n## User Info\n");
          if (has_location) {
-            suffix_offset += snprintf(suffix + suffix_offset, sizeof(suffix) - suffix_offset,
-                                      "Location: %s\n", settings.location);
+            BUF_PRINTF(suffix, suffix_len, suffix_rem, "Location: %s\n", settings.location);
          }
          if (has_timezone) {
-            suffix_offset += snprintf(suffix + suffix_offset, sizeof(suffix) - suffix_offset,
-                                      "Timezone: %s\n", settings.timezone);
+            BUF_PRINTF(suffix, suffix_len, suffix_rem, "Timezone: %s\n", settings.timezone);
          }
          if (has_units) {
-            suffix_offset += snprintf(suffix + suffix_offset, sizeof(suffix) - suffix_offset,
-                                      "Preferred units: %s\n", settings.units);
+            BUF_PRINTF(suffix, suffix_len, suffix_rem, "Preferred units: %s\n", settings.units);
          }
       } else {
          suffix[0] = '\0';
       }
 
       /* Allocate: prefix + base + suffix + memory */
-      size_t suffix_len = strlen(suffix);
       char *combined = malloc(prefix_len + base_len + suffix_len + memory_len + 1);
       if (!combined) {
          return strdup(base_prompt);
@@ -1677,34 +1678,31 @@ char *build_user_prompt(int user_id) {
       }
       combined[prefix_len + base_len + suffix_len + memory_len] = '\0';
 
-      LOG_INFO("Built REPLACE prompt for user_id=%d (%d + %zu + %zu + %zu bytes)", user_id,
+      LOG_INFO("Built REPLACE prompt for user_id=%d (%zu + %zu + %zu + %zu bytes)", user_id,
                prefix_len, base_len, suffix_len, memory_len);
 
       return combined;
    }
 
-   /* Append mode: Add user context (persona 512 + loc 128 + tz 64 + units 16 = ~750 max) */
-   char user_context[768];
-   int offset = 0;
+   /* Append mode: Add user context (persona 512 + loc 128 + tz 64 + units 16 + headers ~40) */
+   char user_context[1024];
+   size_t offset = 0;
+   size_t remain = sizeof(user_context);
 
-   offset += snprintf(user_context + offset, sizeof(user_context) - offset,
-                      "\n\n## User Context\n");
+   BUF_PRINTF(user_context, offset, remain, "\n\n## User Context\n");
 
    if (has_persona) {
-      offset += snprintf(user_context + offset, sizeof(user_context) - offset,
-                         "Additional persona traits: %s\n", settings.persona_description);
+      BUF_PRINTF(user_context, offset, remain, "Additional persona traits: %s\n",
+                 settings.persona_description);
    }
    if (has_location) {
-      offset += snprintf(user_context + offset, sizeof(user_context) - offset, "Location: %s\n",
-                         settings.location);
+      BUF_PRINTF(user_context, offset, remain, "Location: %s\n", settings.location);
    }
    if (has_timezone) {
-      offset += snprintf(user_context + offset, sizeof(user_context) - offset, "Timezone: %s\n",
-                         settings.timezone);
+      BUF_PRINTF(user_context, offset, remain, "Timezone: %s\n", settings.timezone);
    }
    if (has_units) {
-      offset += snprintf(user_context + offset, sizeof(user_context) - offset,
-                         "Preferred units: %s\n", settings.units);
+      BUF_PRINTF(user_context, offset, remain, "Preferred units: %s\n", settings.units);
    }
 
    /* Allocate combined prompt with memory context */
@@ -5493,6 +5491,52 @@ void scheduler_broadcast_notification(const sched_event_t *event, const char *te
 
    if (sent > 0) {
       LOG_INFO("Scheduler: Broadcast notification to %d client(s): %s", sent, text);
+   }
+}
+
+/* =============================================================================
+ * Conversation Title Broadcast (called from memory extraction thread)
+ * ============================================================================= */
+
+void webui_broadcast_conversation_renamed(int user_id, int64_t conv_id, const char *title) {
+   if (user_id <= 0 || !title)
+      return;
+
+   json_object *root = json_object_new_object();
+   json_object_object_add(root, "type", json_object_new_string("conversation_renamed"));
+
+   json_object *payload = json_object_new_object();
+   json_object_object_add(payload, "conversation_id", json_object_new_int64(conv_id));
+   json_object_object_add(payload, "title", json_object_new_string(title));
+   json_object_object_add(root, "payload", payload);
+
+   const char *json_str = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN);
+
+   int sent = 0;
+   pthread_mutex_lock(&s_conn_registry_mutex);
+   for (int i = 0; i < MAX_ACTIVE_CONNECTIONS; i++) {
+      ws_connection_t *conn = s_active_connections[i];
+      if (!conn || !conn->session || !conn->authenticated)
+         continue;
+      if (conn->auth_user_id != user_id)
+         continue;
+
+      char *json_copy = strdup(json_str);
+      if (!json_copy)
+         continue;
+
+      ws_response_t resp = { .session = conn->session,
+                             .type = WS_RESP_JSON,
+                             .generic_json = { .json = json_copy } };
+      queue_response(&resp);
+      sent++;
+   }
+   pthread_mutex_unlock(&s_conn_registry_mutex);
+
+   json_object_put(root);
+
+   if (sent > 0) {
+      LOG_INFO("WebUI: Broadcast conversation rename to %d client(s): %s", sent, title);
    }
 }
 

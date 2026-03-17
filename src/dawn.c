@@ -914,7 +914,7 @@ dawn_state_t currentState = DAWN_STATE_INVALID;
 
 /* Conversation history for WebUI sessions is stored in auth.db (conversations/messages tables).
  * LOCAL and DAP sessions do not persist conversation history to database.
- * TODO: Add dawn-admin conversations export command (see docs/NEXT_STEPS.md Section 13) */
+ * WebUI export (JSON/HTML) is available via conversation history panel. */
 
 /* Mutex for thread-safe conversation management */
 static pthread_mutex_t conversation_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -3777,8 +3777,7 @@ mqtt_disabled:
 
    // Note: curl_global_cleanup() is called via atexit() registered at startup
 
-   /* TODO: Store metrics in auth.db session_metrics table (see docs/NEXT_STEPS.md Section 13)
-    * Currently metrics are in-memory only (dawn_metrics_t in src/ui/metrics.c).
+   /* Metrics are in-memory only (dawn_metrics_t in src/ui/metrics.c).
     * File-based dawn_stats_*.json export has been removed. */
 
 #ifdef ENABLE_WEBUI

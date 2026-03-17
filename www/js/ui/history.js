@@ -594,6 +594,37 @@
       requestListConversations();
    }
 
+   function handleConversationRenamed(payload) {
+      const { conversation_id, title } = payload;
+      if (!conversation_id || !title) return;
+
+      // Update sidebar item if visible
+      const id = Number(conversation_id);
+      if (!Number.isInteger(id) || id <= 0) return;
+      const item = historyElements.list?.querySelector(
+         `.history-item[data-conv-id="${CSS.escape(String(id))}"] .history-item-title`
+      );
+      if (item) {
+         // Remove existing text nodes, preserve icon elements in-place
+         Array.from(item.childNodes)
+            .filter((n) => n.nodeType === Node.TEXT_NODE)
+            .forEach((n) => n.remove());
+         item.appendChild(document.createTextNode(title));
+
+         // Brief highlight to signal the update
+         item.classList.add('title-updated');
+         item.addEventListener('animationend', () => item.classList.remove('title-updated'), {
+            once: true,
+         });
+      }
+
+      // Update in cached conversations list
+      const conv = historyState.conversations.find((c) => c.id === conversation_id);
+      if (conv) {
+         conv.title = title;
+      }
+   }
+
    function handleSearchConversationsResponse(payload) {
       if (!payload.success) {
          console.error('Search failed:', payload.error);
@@ -1722,5 +1753,7 @@
       // Reassign modal handlers (admin only)
       handleUsersListForReassign: handleUsersListForReassign,
       handleReassignResponse: handleReassignResponse,
+      // Auto-title broadcast handler
+      handleConversationRenamed: handleConversationRenamed,
    };
 })();

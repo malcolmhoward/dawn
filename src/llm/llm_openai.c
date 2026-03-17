@@ -2221,9 +2221,11 @@ int llm_openai_streaming_single_shot(struct json_object *conversation_history,
       }
    }
 
-   if (!result->has_tool_calls) {
-      result->text = llm_stream_get_response(stream_ctx);
-   }
+   /* Always capture streamed text — even when tool calls are present.
+    * The LLM may stream text before tool_use blocks (e.g. "Let me check that...").
+    * The tool loop needs this to include it in follow-up history so the LLM
+    * doesn't repeat itself after the tool result comes back. */
+   result->text = llm_stream_get_response(stream_ctx);
 
    /* Copy thinking content if present (local LLM reasoning_content or inline <think> tags) */
    result->thinking_content = llm_stream_get_thinking(stream_ctx);
