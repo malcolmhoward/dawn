@@ -26,12 +26,14 @@
 
 #include "tools/homeassistant_tool.h"
 
+#include <math.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 
+#include "core/buf_printf.h"
 #include "logging.h"
 #include "tools/homeassistant_service.h"
 #include "tools/toml.h"
@@ -51,9 +53,10 @@ static void ha_write_config(void *fp, const void *config);
 typedef struct {
    bool enabled;
    char url[256];
+   int led_hue_correction; /* degrees to shift magenta region toward red (0-60) */
 } ha_tool_config_t;
 
-static ha_tool_config_t s_config = { .enabled = true, .url = "" };
+static ha_tool_config_t s_config = { .enabled = true, .url = "", .led_hue_correction = 20 };
 static pthread_mutex_t s_reconfig_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /* ========== Config Parser ========== */
@@ -76,6 +79,16 @@ static void ha_parse_config(toml_table_t *table, void *config) {
       cfg->url[sizeof(cfg->url) - 1] = '\0';
       free(url.u.s);
    }
+
+   toml_datum_t hue_corr = toml_int_in(table, "led_hue_correction");
+   if (hue_corr.ok) {
+      int val = (int)hue_corr.u.i;
+      if (val < 0)
+         val = 0;
+      if (val > 60)
+         val = 60;
+      cfg->led_hue_correction = val;
+   }
 }
 
 /* ========== Config Writer ========== */
@@ -97,6 +110,7 @@ static void ha_write_config(void *fp, const void *config) {
          fprintf(f, "url = \"%s\"\n", cfg->url);
       }
    }
+   fprintf(f, "led_hue_correction = %d\n", cfg->led_hue_correction);
 }
 
 /* ========== Secret Requirements ========== */
@@ -128,7 +142,7 @@ static const treg_param_t ha_params[] = {
        .name = "device",
        .description = "Entity name or entity_id. For brightness/color_temp/temperature: "
                       "'name value' (e.g., 'kitchen light 75', 'thermostat 72'). "
-                      "For color: 'name color' (e.g., 'lamp red').",
+                      "For color: 'name color' — use hex (#FF6B35) or name (red, blue, warm).",
        .type = TOOL_PARAM_TYPE_STRING,
        .required = false,
        .maps_to = TOOL_MAPS_TO_VALUE,
@@ -146,7 +160,7 @@ static const tool_metadata_t ha_metadata = {
 
    .description = "Control Home Assistant smart home entities. Actions: list (show all), "
                   "status (get state), on/off/toggle (power), brightness (0-100%), "
-                  "color (red/green/blue/etc), color_temp (warm/cool), temperature (thermostat), "
+                  "color (hex #RRGGBB or name), color_temp (kelvin), temperature (thermostat), "
                   "lock/unlock, open/close (covers), scene/script/automation (activate).",
    .params = ha_params,
    .param_count = 2,
@@ -190,7 +204,7 @@ static void ha_tool_cleanup(void) {
    homeassistant_cleanup();
 }
 
-int homeassistant_tool_update_config(const char *url, int enabled) {
+int homeassistant_tool_update_config(const char *url, int enabled, int led_hue_correction) {
    if (url) {
       /* Validate URL scheme (SSRF prevention) */
       if (strncmp(url, "http://", 7) != 0 && strncmp(url, "https://", 8) != 0) {
@@ -204,6 +218,15 @@ int homeassistant_tool_update_config(const char *url, int enabled) {
    if (enabled >= 0) {
       s_config.enabled = (bool)enabled;
    }
+   if (led_hue_correction >= 0) {
+      if (led_hue_correction > 60)
+         led_hue_correction = 60;
+      s_config.led_hue_correction = led_hue_correction;
+   }
+
+   /* If only hue correction changed, no service reinit needed */
+   if (!url && enabled < 0)
+      return 0;
 
    /* Serialize cleanup+init so concurrent callers don't see partially-initialized state */
    pthread_mutex_lock(&s_reconfig_mutex);
@@ -353,6 +376,43 @@ static const char *domain_display_name(ha_domain_t domain) {
    }
 }
 
+/* ========== LED Hue Correction ========== */
+
+/**
+ * @brief Convert RGB to HS and apply LED hue correction
+ *
+ * LED bulbs render magenta/pink (hue ~300°) as blue/purple due to phosphor
+ * wavelength offsets from sRGB assumptions.  This applies a raised-cosine
+ * weighted shift centered on 300° with ±90° falloff, nudging magenta toward
+ * red so it renders correctly on real hardware.
+ */
+static void rgb_to_corrected_hs(int r,
+                                int g,
+                                int b,
+                                int correction,
+                                double *out_hue,
+                                double *out_sat) {
+   double hue, sat;
+   homeassistant_rgb_to_hs(r, g, b, &hue, &sat);
+   *out_sat = sat;
+
+   /* Apply hue correction: raised-cosine taper centered at 300° (magenta) */
+   if (correction != 0 && *out_sat > 1.0) {
+      double dist = fabs(hue - 300.0);
+      if (dist > 180.0)
+         dist = 360.0 - dist;
+      if (dist < 90.0) {
+         double weight = 0.5 + 0.5 * cos(dist * M_PI / 90.0);
+         hue += (double)correction * weight;
+         if (hue >= 360.0)
+            hue -= 360.0;
+         if (hue < 0.0)
+            hue += 360.0;
+      }
+   }
+   *out_hue = hue;
+}
+
 /* ========== Action Handlers ========== */
 
 static char *handle_list(void) {
@@ -371,19 +431,9 @@ static char *handle_list(void) {
       return strdup("Memory allocation failed");
 
    size_t len = 0;
-   size_t remaining = buf_size;
-   int n;
+   size_t rem = buf_size;
 
-#define SAFE_APPEND(...)                               \
-   do {                                                \
-      n = snprintf(buf + len, remaining, __VA_ARGS__); \
-      if (n > 0 && (size_t)n < remaining) {            \
-         len += (size_t)n;                             \
-         remaining -= (size_t)n;                       \
-      }                                                \
-   } while (0)
-
-   SAFE_APPEND("Found %d Home Assistant entities:\n", entities->count);
+   BUF_PRINTF(buf, len, rem, "Found %d Home Assistant entities:\n", entities->count);
 
    /* Group by domain — iterate domain enum values */
    for (int d = 0; d <= HA_DOMAIN_UNKNOWN; d++) {
@@ -400,39 +450,43 @@ static char *handle_list(void) {
       if (domain_count == 0)
          continue;
 
-      SAFE_APPEND("\n%s (%d):\n", domain_display_name(domain), domain_count);
+      BUF_PRINTF(buf, len, rem, "\n%s (%d):\n", domain_display_name(domain), domain_count);
 
-      for (int i = 0; i < entities->count && remaining > 100; i++) {
+      for (int i = 0; i < entities->count && rem > 100; i++) {
          const ha_entity_t *ent = &entities->entities[i];
          if (ent->domain != domain)
             continue;
 
-         SAFE_APPEND("- %s (%s", ent->friendly_name, ent->entity_id);
+         BUF_PRINTF(buf, len, rem, "- %s (%s", ent->friendly_name, ent->entity_id);
          if (ent->area_name[0])
-            SAFE_APPEND(", %s", ent->area_name);
-         SAFE_APPEND(") - %s", ent->state);
+            BUF_PRINTF(buf, len, rem, ", %s", ent->area_name);
+         BUF_PRINTF(buf, len, rem, ") - %s", ent->state);
 
          /* Domain-specific details */
-         if (domain == HA_DOMAIN_LIGHT && ent->brightness > 0) {
-            SAFE_APPEND(", %d%%", ent->brightness * 100 / 255);
+         if (domain == HA_DOMAIN_LIGHT) {
+            if (ent->brightness > 0)
+               BUF_PRINTF(buf, len, rem, ", %d%%", ent->brightness * 100 / 255);
+            if (ent->rgb_color[0] || ent->rgb_color[1] || ent->rgb_color[2])
+               BUF_PRINTF(buf, len, rem, ", #%02X%02X%02X", ent->rgb_color[0], ent->rgb_color[1],
+                          ent->rgb_color[2]);
          } else if (domain == HA_DOMAIN_CLIMATE) {
             if (ent->temperature != 0)
-               SAFE_APPEND(", %.0f\xC2\xB0"
-                           "F",
-                           ent->temperature);
+               BUF_PRINTF(buf, len, rem,
+                          ", %.0f\xC2\xB0"
+                          "F",
+                          ent->temperature);
             if (ent->target_temp != 0)
-               SAFE_APPEND(" (target: %.0f\xC2\xB0"
-                           "F)",
-                           ent->target_temp);
+               BUF_PRINTF(buf, len, rem,
+                          " (target: %.0f\xC2\xB0"
+                          "F)",
+                          ent->target_temp);
          } else if (domain == HA_DOMAIN_COVER && ent->cover_position >= 0) {
-            SAFE_APPEND(", %d%%", ent->cover_position);
+            BUF_PRINTF(buf, len, rem, ", %d%%", ent->cover_position);
          }
 
-         SAFE_APPEND("\n");
+         BUF_PRINTF(buf, len, rem, "\n");
       }
    }
-
-#undef SAFE_APPEND
 
    return buf;
 }
@@ -460,37 +514,36 @@ static char *handle_status(const char *value) {
       return strdup("Memory allocation failed");
 
    size_t len = 0;
-   size_t remaining = 1024;
-   int n;
+   size_t rem = 1024;
 
-#define SAFE_APPEND(...)                               \
-   do {                                                \
-      n = snprintf(buf + len, remaining, __VA_ARGS__); \
-      if (n > 0 && (size_t)n < remaining) {            \
-         len += (size_t)n;                             \
-         remaining -= (size_t)n;                       \
-      }                                                \
-   } while (0)
-
-   SAFE_APPEND("Status of '%s' (%s):\n", fresh.friendly_name, fresh.entity_id);
-   SAFE_APPEND("- State: %s\n", fresh.state);
+   BUF_PRINTF(buf, len, rem, "Status of '%s' (%s):\n", fresh.friendly_name, fresh.entity_id);
+   BUF_PRINTF(buf, len, rem, "- State: %s\n", fresh.state);
 
    if (fresh.brightness > 0)
-      SAFE_APPEND("- Brightness: %d%%\n", fresh.brightness * 100 / 255);
+      BUF_PRINTF(buf, len, rem, "- Brightness: %d%%\n", fresh.brightness * 100 / 255);
+   if (fresh.color_mode[0])
+      BUF_PRINTF(buf, len, rem, "- Color mode: %s\n", fresh.color_mode);
+   if (fresh.rgb_color[0] || fresh.rgb_color[1] || fresh.rgb_color[2])
+      BUF_PRINTF(buf, len, rem, "- Color: #%02X%02X%02X (RGB %d,%d,%d)\n", fresh.rgb_color[0],
+                 fresh.rgb_color[1], fresh.rgb_color[2], fresh.rgb_color[0], fresh.rgb_color[1],
+                 fresh.rgb_color[2]);
+   if (fresh.hs_color[1] > 0.0)
+      BUF_PRINTF(buf, len, rem, "- HS color: hue %.0f°, saturation %.0f%%\n", fresh.hs_color[0],
+                 fresh.hs_color[1]);
    if (fresh.color_temp > 0)
-      SAFE_APPEND("- Color temp: %dK\n", 1000000 / fresh.color_temp);
+      BUF_PRINTF(buf, len, rem, "- Color temp: %dK\n", 1000000 / fresh.color_temp);
    if (fresh.temperature != 0)
-      SAFE_APPEND("- Temperature: %.1f\xC2\xB0"
-                  "F\n",
-                  fresh.temperature);
+      BUF_PRINTF(buf, len, rem,
+                 "- Temperature: %.1f\xC2\xB0"
+                 "F\n",
+                 fresh.temperature);
    if (fresh.target_temp != 0)
-      SAFE_APPEND("- Target: %.1f\xC2\xB0"
-                  "F\n",
-                  fresh.target_temp);
+      BUF_PRINTF(buf, len, rem,
+                 "- Target: %.1f\xC2\xB0"
+                 "F\n",
+                 fresh.target_temp);
    if (fresh.hvac_mode[0])
-      SAFE_APPEND("- HVAC mode: %s\n", fresh.hvac_mode);
-
-#undef SAFE_APPEND
+      BUF_PRINTF(buf, len, rem, "- HVAC mode: %s\n", fresh.hvac_mode);
 
    return buf;
 }
@@ -585,6 +638,8 @@ static char *handle_color(const char *value) {
    }
 
    int r = -1, g = -1, b = -1;
+
+   /* Try named color first */
    for (int i = 0; i < color_count; i++) {
       if (strcasecmp(color_part, color_names[i].name) == 0) {
          r = color_names[i].r;
@@ -594,10 +649,23 @@ static char *handle_color(const char *value) {
       }
    }
 
+   /* Try hex color: #RRGGBB or RRGGBB */
+   if (r < 0) {
+      const char *hex = color_part;
+      if (hex[0] == '#')
+         hex++;
+      unsigned int hr, hg, hb;
+      if (strlen(hex) == 6 && sscanf(hex, "%02x%02x%02x", &hr, &hg, &hb) == 3) {
+         r = (int)hr;
+         g = (int)hg;
+         b = (int)hb;
+      }
+   }
+
    if (r < 0) {
       return strdup(
-          "Unknown color. Try: red, orange, yellow, green, cyan, blue, purple, pink, white, "
-          "warm, cool");
+          "Unknown color. Use a hex code (#FF6B35) or name: red, orange, yellow, green, cyan, "
+          "blue, purple, pink, white, warm, cool");
    }
 
    const ha_entity_t *entity;
@@ -606,7 +674,10 @@ static char *handle_color(const char *value) {
       return make_error_msg("Entity '%s' not found", device_name);
    ENTITY_LOCAL_COPY(entity);
 
-   err = homeassistant_set_color(entity_id_buf, r, g, b);
+   /* Convert RGB to HS with LED hue correction applied */
+   double hue, sat;
+   rgb_to_corrected_hs(r, g, b, s_config.led_hue_correction, &hue, &sat);
+   err = homeassistant_set_hs_color(entity_id_buf, hue, sat);
    if (err != HA_OK)
       return make_error_msg("Failed to set color: %s", homeassistant_error_str(err));
 
@@ -844,6 +915,10 @@ static char *ha_tool_callback(const char *action, char *value, int *should_respo
 }
 
 /* ========== Public API ========== */
+
+int homeassistant_tool_get_hue_correction(void) {
+   return s_config.led_hue_correction;
+}
 
 int homeassistant_tool_register(void) {
    return tool_registry_register(&ha_metadata);

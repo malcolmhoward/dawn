@@ -273,11 +273,22 @@
       state.entity_count = payload.entity_count || 0;
       state.version = payload.version || '';
       if (payload.url !== undefined) state.url = payload.url;
+      if (payload.led_hue_correction !== undefined) {
+         state.led_hue_correction = payload.led_hue_correction;
+      }
       updateStatusUI();
 
       // Populate URL field from server state
       if (elements.urlInput && state.url && !elements.urlInput.value) {
          elements.urlInput.value = state.url;
+      }
+
+      // Populate hue correction slider from server state
+      if (elements.hueCorrection && state.led_hue_correction !== undefined) {
+         elements.hueCorrection.value = state.led_hue_correction;
+         if (elements.hueCorrectionValue) {
+            elements.hueCorrectionValue.innerHTML = state.led_hue_correction + '&deg;';
+         }
       }
 
       // Auto-fetch entities if connected and we haven't yet
@@ -357,6 +368,26 @@
       }, 2000);
    }
 
+   var hueSaveTimer = null;
+
+   function onHueCorrectionChange() {
+      if (!elements.hueCorrection) return;
+      var val = parseInt(elements.hueCorrection.value, 10);
+      if (elements.hueCorrectionValue) {
+         elements.hueCorrectionValue.innerHTML = val + '&deg;';
+      }
+      // Debounce save — only send after user stops sliding
+      if (hueSaveTimer) clearTimeout(hueSaveTimer);
+      hueSaveTimer = setTimeout(function () {
+         if (typeof DawnWS !== 'undefined') {
+            DawnWS.send({
+               type: 'set_config',
+               payload: { home_assistant: { led_hue_correction: val } },
+            });
+         }
+      }, 500);
+   }
+
    // =============================================================================
    // Initialization
    // =============================================================================
@@ -390,6 +421,10 @@
          elements.urlInput.addEventListener('keydown', function (e) {
             if (e.key === 'Enter') saveUrl();
          });
+      }
+      // Bind hue correction slider
+      if (elements.hueCorrection) {
+         elements.hueCorrection.addEventListener('input', onHueCorrectionChange);
       }
    }
 

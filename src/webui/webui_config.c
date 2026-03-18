@@ -940,6 +940,7 @@ void handle_set_config(ws_connection_t *conn, struct json_object *payload) {
             struct json_object *val;
             const char *new_url = NULL;
             int new_enabled = -1;
+            int new_hue_correction = -1;
 
             if (json_object_object_get_ex(ha_section, "url", &val)) {
                new_url = json_object_get_string(val);
@@ -947,9 +948,12 @@ void handle_set_config(ws_connection_t *conn, struct json_object *payload) {
             if (json_object_object_get_ex(ha_section, "enabled", &val)) {
                new_enabled = json_object_get_boolean(val) ? 1 : 0;
             }
+            if (json_object_object_get_ex(ha_section, "led_hue_correction", &val)) {
+               new_hue_correction = json_object_get_int(val);
+            }
 
-            if (new_url || new_enabled >= 0) {
-               homeassistant_tool_update_config(new_url, new_enabled);
+            if (new_url || new_enabled >= 0 || new_hue_correction >= 0) {
+               homeassistant_tool_update_config(new_url, new_enabled, new_hue_correction);
 
                /* Re-save config to persist tool-owned changes.
                 * config_write_toml + tool_registry_write_configs handles it. */

@@ -41,9 +41,16 @@ int homeassistant_tool_register(void);
  *
  * @param url    New HA base URL (NULL to keep current)
  * @param enabled New enabled state (-1 to keep current)
+ * @param led_hue_correction New hue correction degrees (-1 to keep current, 0-60)
  * @return 0 on success, non-zero on error
  */
-int homeassistant_tool_update_config(const char *url, int enabled);
+int homeassistant_tool_update_config(const char *url, int enabled, int led_hue_correction);
+
+/**
+ * @brief Get current LED hue correction value
+ * @return Hue correction in degrees (0-60)
+ */
+int homeassistant_tool_get_hue_correction(void);
 
 #ifdef __cplusplus
 }

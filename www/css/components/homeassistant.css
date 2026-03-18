@@ -201,6 +201,32 @@
    font-style: italic;
 }
 
+/* Slider */
+.ha-slider {
+   flex: 1;
+   height: 4px;
+   accent-color: var(--accent);
+   cursor: pointer;
+}
+
+.ha-slider-value {
+   font-size: 0.8125rem;
+   font-family: 'Monaco', 'Menlo', monospace;
+   color: var(--text-secondary);
+   min-width: 2.5rem;
+   text-align: right;
+   flex-shrink: 0;
+}
+
+/* Hint text below controls */
+.ha-hint {
+   font-size: 0.75rem;
+   color: var(--text-tertiary);
+   line-height: 1.4;
+   margin-bottom: 0.75rem;
+   margin-top: -0.25rem;
+}
+
 /* Info box for setup instructions */
 .ha-info-box {
    padding: 1rem;

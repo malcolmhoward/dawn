@@ -99,10 +99,13 @@ typedef struct {
    char area_name[64]; /* From area registry, may be empty */
    ha_domain_t domain;
    /* Domain-specific attributes */
-   int brightness;     /* 0-255 (lights) */
-   int color_temp;     /* mireds (lights) */
-   double temperature; /* current (climate/sensor) */
-   double target_temp; /* setpoint (climate) */
+   int brightness;      /* 0-255 (lights) */
+   int color_temp;      /* mireds (lights) */
+   int rgb_color[3];    /* R, G, B 0-255 (lights, from HA state) */
+   double hs_color[2];  /* hue 0-360, saturation 0-100 (lights, from HA state) */
+   char color_mode[16]; /* "hs", "color_temp", "xy", "rgb", "rgbw", etc. */
+   double temperature;  /* current (climate/sensor) */
+   double target_temp;  /* setpoint (climate) */
    char hvac_mode[32];
    int cover_position; /* 0-100 */
 } ha_entity_t;
@@ -211,6 +214,12 @@ ha_error_t homeassistant_turn_off(const char *entity_id);
 ha_error_t homeassistant_toggle(const char *entity_id);
 ha_error_t homeassistant_set_brightness(const char *entity_id, int pct);
 ha_error_t homeassistant_set_color(const char *entity_id, int r, int g, int b);
+ha_error_t homeassistant_set_hs_color(const char *entity_id, double hue, double saturation);
+
+/**
+ * @brief Convert RGB (0-255) to hue (0-360) and saturation (0-100)
+ */
+void homeassistant_rgb_to_hs(int r, int g, int b, double *out_hue, double *out_sat);
 ha_error_t homeassistant_set_color_temp(const char *entity_id, int kelvin);
 ha_error_t homeassistant_set_temperature(const char *entity_id, double temp_f);
 ha_error_t homeassistant_lock(const char *entity_id);

@@ -26,6 +26,7 @@
 
 #include "logging.h"
 #include "tools/homeassistant_service.h"
+#include "tools/homeassistant_tool.h"
 #include "webui/webui_internal.h"
 
 /* =============================================================================
@@ -74,6 +75,8 @@ void handle_ha_status(ws_connection_t *conn) {
       json_object_object_add(payload, "version", json_object_new_string(status.version));
       json_object_object_add(payload, "url", json_object_new_string(status.url));
    }
+   json_object_object_add(payload, "led_hue_correction",
+                          json_object_new_int(homeassistant_tool_get_hue_correction()));
 
    json_object_object_add(response, "payload", payload);
    send_json_response(conn, response);

@@ -2161,6 +2161,24 @@ client_secret = "..."</pre
                         <button class="ha-btn ha-save-btn" id="ha-save-url-btn">Save</button>
                      </div>
 
+                     <div class="ha-config-row">
+                        <label class="ha-label" for="ha-hue-correction">LED Color Correction</label>
+                        <input
+                           type="range"
+                           id="ha-hue-correction"
+                           min="0"
+                           max="60"
+                           value="20"
+                           class="ha-slider"
+                           aria-label="LED hue correction (degrees)"
+                        />
+                        <span class="ha-slider-value" id="ha-hue-correction-value">20&deg;</span>
+                     </div>
+                     <div class="ha-hint">
+                        Shifts magenta/pink hues toward red to compensate for LED bulb color drift.
+                        0 = no correction, higher = more shift.
+                     </div>
+
                      <div class="ha-actions">
                         <button class="ha-btn" id="ha-test-connection-btn">Test Connection</button>
                         <button class="ha-btn ha-hidden" id="ha-refresh-entities-btn">

@@ -30,6 +30,7 @@
 #include <ctype.h>
 #include <curl/curl.h>
 #include <json-c/json.h>
+#include <math.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -689,6 +690,51 @@ static const char *find_area_for_entity(const char *entity_id) {
 }
 
 /* =============================================================================
+ * Attribute Parsing Helper
+ * ============================================================================= */
+
+/**
+ * @brief Parse domain-specific attributes from a JSON attributes object into an entity
+ *
+ * Shared by both the entity cache refresh (fetch_entities) and single-entity
+ * fetch (homeassistant_get_entity_state) to avoid duplicated parsing logic.
+ */
+static void parse_entity_attributes(json_object *attrs, ha_entity_t *ent) {
+   json_object *val;
+   if (json_object_object_get_ex(attrs, "brightness", &val))
+      ent->brightness = json_object_get_int(val);
+   if (json_object_object_get_ex(attrs, "color_temp", &val))
+      ent->color_temp = json_object_get_int(val);
+   if (json_object_object_get_ex(attrs, "rgb_color", &val) &&
+       json_object_is_type(val, json_type_array) && json_object_array_length(val) == 3) {
+      ent->rgb_color[0] = json_object_get_int(json_object_array_get_idx(val, 0));
+      ent->rgb_color[1] = json_object_get_int(json_object_array_get_idx(val, 1));
+      ent->rgb_color[2] = json_object_get_int(json_object_array_get_idx(val, 2));
+   }
+   if (json_object_object_get_ex(attrs, "hs_color", &val) &&
+       json_object_is_type(val, json_type_array) && json_object_array_length(val) == 2) {
+      ent->hs_color[0] = json_object_get_double(json_object_array_get_idx(val, 0));
+      ent->hs_color[1] = json_object_get_double(json_object_array_get_idx(val, 1));
+   }
+   if (json_object_object_get_ex(attrs, "color_mode", &val)) {
+      const char *cm = json_object_get_string(val);
+      if (cm)
+         strncpy(ent->color_mode, cm, sizeof(ent->color_mode) - 1);
+   }
+   if (json_object_object_get_ex(attrs, "current_temperature", &val))
+      ent->temperature = json_object_get_double(val);
+   if (json_object_object_get_ex(attrs, "temperature", &val))
+      ent->target_temp = json_object_get_double(val);
+   if (json_object_object_get_ex(attrs, "hvac_mode", &val)) {
+      const char *hvac = json_object_get_string(val);
+      if (hvac)
+         strncpy(ent->hvac_mode, hvac, sizeof(ent->hvac_mode) - 1);
+   }
+   if (json_object_object_get_ex(attrs, "current_position", &val))
+      ent->cover_position = json_object_get_int(val);
+}
+
+/* =============================================================================
  * Entity Discovery
  * ============================================================================= */
 static ha_error_t fetch_entities(void) {
@@ -776,23 +822,7 @@ static ha_error_t fetch_entities(void) {
             str_tolower(ent->friendly_name_lower, dot + 1, sizeof(ent->friendly_name_lower));
          }
 
-         /* Domain-specific attributes */
-         json_object *val;
-         if (json_object_object_get_ex(attrs, "brightness", &val))
-            ent->brightness = json_object_get_int(val);
-         if (json_object_object_get_ex(attrs, "color_temp", &val))
-            ent->color_temp = json_object_get_int(val);
-         if (json_object_object_get_ex(attrs, "current_temperature", &val))
-            ent->temperature = json_object_get_double(val);
-         if (json_object_object_get_ex(attrs, "temperature", &val))
-            ent->target_temp = json_object_get_double(val);
-         if (json_object_object_get_ex(attrs, "hvac_mode", &val)) {
-            const char *hvac = json_object_get_string(val);
-            if (hvac)
-               strncpy(ent->hvac_mode, hvac, sizeof(ent->hvac_mode) - 1);
-         }
-         if (json_object_object_get_ex(attrs, "current_position", &val))
-            ent->cover_position = json_object_get_int(val);
+         parse_entity_attributes(attrs, ent);
       }
 
       /* Area enrichment */
@@ -1011,14 +1041,7 @@ ha_error_t homeassistant_get_entity_state(const char *entity_id, ha_entity_t *ou
          if (fname)
             strncpy(out->friendly_name, fname, sizeof(out->friendly_name) - 1);
       }
-      if (json_object_object_get_ex(attrs, "brightness", &val))
-         out->brightness = json_object_get_int(val);
-      if (json_object_object_get_ex(attrs, "color_temp", &val))
-         out->color_temp = json_object_get_int(val);
-      if (json_object_object_get_ex(attrs, "current_temperature", &val))
-         out->temperature = json_object_get_double(val);
-      if (json_object_object_get_ex(attrs, "temperature", &val))
-         out->target_temp = json_object_get_double(val);
+      parse_entity_attributes(attrs, out);
    }
 
    json_object_put(root);
@@ -1056,16 +1079,45 @@ ha_error_t homeassistant_set_brightness(const char *entity_id, int pct) {
    return call_service_json("light", "turn_on", entity_id, data);
 }
 
+void homeassistant_rgb_to_hs(int r, int g, int b, double *out_hue, double *out_sat) {
+   double rf = r / 255.0, gf = g / 255.0, bf = b / 255.0;
+   double cmax = rf > gf ? (rf > bf ? rf : bf) : (gf > bf ? gf : bf);
+   double cmin = rf < gf ? (rf < bf ? rf : bf) : (gf < bf ? gf : bf);
+   double delta = cmax - cmin;
+
+   double hue = 0.0;
+   if (delta > 0.0001) {
+      /* Use integer comparison for max-channel to avoid float equality fragility */
+      int max_ch = (r >= g) ? (r >= b ? 0 : 2) : (g >= b ? 1 : 2);
+      if (max_ch == 0)
+         hue = 60.0 * fmod((gf - bf) / delta + 6.0, 6.0);
+      else if (max_ch == 1)
+         hue = 60.0 * ((bf - rf) / delta + 2.0);
+      else
+         hue = 60.0 * ((rf - gf) / delta + 4.0);
+   }
+   *out_hue = hue;
+   *out_sat = (cmax > 0.0001) ? (delta / cmax) * 100.0 : 0.0;
+}
+
 ha_error_t homeassistant_set_color(const char *entity_id, int r, int g, int b) {
    if (r < 0 || r > 255 || g < 0 || g > 255 || b < 0 || b > 255)
       return HA_ERR_INVALID_PARAM;
 
+   double hue, sat;
+   homeassistant_rgb_to_hs(r, g, b, &hue, &sat);
+   return homeassistant_set_hs_color(entity_id, hue, sat);
+}
+
+ha_error_t homeassistant_set_hs_color(const char *entity_id, double hue, double saturation) {
+   if (hue < 0.0 || hue >= 360.0 || saturation < 0.0 || saturation > 100.0)
+      return HA_ERR_INVALID_PARAM;
+
    json_object *data = json_object_new_object();
    json_object *color = json_object_new_array();
-   json_object_array_add(color, json_object_new_int(r));
-   json_object_array_add(color, json_object_new_int(g));
-   json_object_array_add(color, json_object_new_int(b));
-   json_object_object_add(data, "rgb_color", color);
+   json_object_array_add(color, json_object_new_double(hue));
+   json_object_array_add(color, json_object_new_double(saturation));
+   json_object_object_add(data, "hs_color", color);
    return call_service_json("light", "turn_on", entity_id, data);
 }
 

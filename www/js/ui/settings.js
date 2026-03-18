@@ -625,6 +625,8 @@
             filterInput: document.getElementById('ha-filter-input'),
             urlInput: document.getElementById('ha-url-input'),
             saveUrlBtn: document.getElementById('ha-save-url-btn'),
+            hueCorrection: document.getElementById('ha-hue-correction'),
+            hueCorrectionValue: document.getElementById('ha-hue-correction-value'),
          });
       }
    }
