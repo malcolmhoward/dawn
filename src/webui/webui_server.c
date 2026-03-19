@@ -2610,6 +2610,16 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                      free(new_prompt);
                   }
                }
+
+               /* Persist LLM settings to the active conversation DB so that
+                * session recreation (after timeout) restores the latest config */
+               if (conn->active_conversation_id > 0) {
+                  const char *type_str = config.type == LLM_LOCAL ? "local" : "cloud";
+                  conv_db_update_llm_settings(conn->active_conversation_id, conn->auth_user_id,
+                                              type_str,
+                                              cloud_provider_to_string(config.cloud_provider),
+                                              config.model, config.tool_mode, config.thinking_mode);
+               }
             }
          }
       }
@@ -3183,6 +3193,9 @@ static void handle_cancel_message(ws_connection_t *conn) {
  * WebSocket Protocol Callbacks
  * ============================================================================= */
 
+/* Forward declaration — defined after handle_text_message */
+static bool webui_conn_create_session(ws_connection_t *conn);
+
 static int callback_websocket(struct lws *wsi,
                               enum lws_callback_reasons reason,
                               void *user,
@@ -3235,21 +3248,21 @@ static int callback_websocket(struct lws *wsi,
       case LWS_CALLBACK_CLOSED: {
          /* Unregister from connection registry */
          unregister_connection(conn);
-         /* WebSocket disconnected */
+         /* WebSocket disconnected.
+          * Atomic load: maintenance thread may have NULLed conn->session. */
+         session_t *closing_session = conn_get_session(conn);
          LOG_INFO("WebUI: WebSocket client disconnecting (session %u)",
-                  conn->session ? conn->session->session_id : 0);
+                  closing_session ? closing_session->session_id : 0);
 
-         bool had_session = (conn->session != NULL);
-
-         if (conn->session) {
+         if (closing_session) {
             /* Mark session as disconnected (aborts any pending LLM calls) */
-            conn->session->disconnected = true;
-            conn->session->client_data = NULL;
+            closing_session->disconnected = true;
+            closing_session->client_data = NULL;
 
             /* Release our reference to the session.
              * Session manager will clean it up when ref_count reaches 0. */
             LOG_INFO("WebUI: Releasing session reference...");
-            session_release(conn->session);
+            session_release(closing_session);
             LOG_INFO("WebUI: Session reference released");
             conn->session = NULL;
          }
@@ -3274,16 +3287,17 @@ static int callback_websocket(struct lws *wsi,
          /* Clean up music streaming state */
          webui_music_session_cleanup(conn);
 
-         /* Only decrement client count if this connection had a session
-          * (i.e., completed the init handshake) */
-         if (had_session) {
-            LOG_INFO("WebUI: Acquiring s_mutex for client count...");
+         /* Decrement client count if this connection was counted.
+          * Uses conn->counted instead of checking session != NULL because
+          * session may have been detached (set to NULL) by webui_detach_session
+          * during session expiry while the WS connection stayed alive. */
+         if (conn->counted) {
             pthread_mutex_lock(&s_mutex);
             if (s_client_count > 0) {
                s_client_count--;
             }
             pthread_mutex_unlock(&s_mutex);
-            LOG_INFO("WebUI: s_mutex released");
+            conn->counted = false;
          }
 
          LOG_INFO("WebUI: WebSocket client disconnected (total: %d)", s_client_count);
@@ -3291,190 +3305,211 @@ static int callback_websocket(struct lws *wsi,
       }
 
       case LWS_CALLBACK_RECEIVE: {
-         /* Message received from client */
-         if (!conn->session) {
-            /*
-             * No session yet - this must be the init/reconnect message.
-             * Parse it to determine if we're reconnecting with a token or
-             * need a new session. Check client limits here.
-             */
-            char *json_str = strndup((const char *)in, len);
-            if (!json_str) {
-               LOG_ERROR("WebUI: Failed to allocate init message buffer");
-               return -1;
-            }
+         /* Message received from client.
+          * Atomic load: maintenance thread may have NULLed conn->session
+          * via webui_detach_session() on session expiry. */
+         if (!conn_get_session(conn)) {
+            /* Session is NULL — either this is the first message (init/reconnect)
+             * or the conversation session expired while the WS connection stayed alive.
+             * If already authenticated, auto-create a new session so the user
+             * doesn't have to log in again. */
+            if (conn->authenticated) {
+               LOG_INFO("WebUI: Session expired for authenticated connection, auto-creating");
+               if (!webui_conn_create_session(conn)) {
+                  break; /* Error already sent to client */
+               }
+               /* Fall through to normal message handling below */
+            } else {
+               /*
+                * Not yet authenticated - this must be the init/reconnect message.
+                * Parse it to determine if we're reconnecting with a token or
+                * need a new session. Check client limits here.
+                */
+               char *json_str = strndup((const char *)in, len);
+               if (!json_str) {
+                  LOG_ERROR("WebUI: Failed to allocate init message buffer");
+                  return -1;
+               }
 
-            struct json_object *root = json_tokener_parse(json_str);
-            free(json_str);
+               struct json_object *root = json_tokener_parse(json_str);
+               free(json_str);
 
-            if (!root) {
-               LOG_WARNING("WebUI: Invalid JSON in init message");
-               return -1;
-            }
+               if (!root) {
+                  LOG_WARNING("WebUI: Invalid JSON in init message");
+                  return -1;
+               }
 
-            struct json_object *type_obj;
-            const char *type = NULL;
-            if (json_object_object_get_ex(root, "type", &type_obj)) {
-               type = json_object_get_string(type_obj);
-            }
+               struct json_object *type_obj;
+               const char *type = NULL;
+               if (json_object_object_get_ex(root, "type", &type_obj)) {
+                  type = json_object_get_string(type_obj);
+               }
 
-            struct json_object *payload = NULL;
-            json_object_object_get_ex(root, "payload", &payload);
+               struct json_object *payload = NULL;
+               json_object_object_get_ex(root, "payload", &payload);
 
-            LOG_INFO("WebUI: Init message received, type=%s", type ? type : "(null)");
+               LOG_INFO("WebUI: Init message received, type=%s", type ? type : "(null)");
 
-            bool is_reconnect = false;
-            session_t *existing_session = NULL;
+               bool is_reconnect = false;
+               session_t *existing_session = NULL;
 
-            /* Check for reconnection token */
-            if (type && strcmp(type, "reconnect") == 0 && payload) {
-               struct json_object *token_obj;
-               if (json_object_object_get_ex(payload, "token", &token_obj)) {
-                  const char *token = json_object_get_string(token_obj);
-                  if (token && strlen(token) > 0) {
-                     existing_session = lookup_session_by_token(token);
-                     if (existing_session) {
-                        is_reconnect = true;
-                        conn->session = existing_session;
-                        existing_session->client_data = conn;
-                        existing_session->disconnected = false;
-                        strncpy(conn->session_token, token, WEBUI_SESSION_TOKEN_LEN - 1);
-                        conn->session_token[WEBUI_SESSION_TOKEN_LEN - 1] = '\0';
+               /* Check for reconnection token */
+               if (type && strcmp(type, "reconnect") == 0 && payload) {
+                  struct json_object *token_obj;
+                  if (json_object_object_get_ex(payload, "token", &token_obj)) {
+                     const char *token = json_object_get_string(token_obj);
+                     if (token && strlen(token) > 0) {
+                        existing_session = lookup_session_by_token(token);
+                        if (existing_session) {
+                           is_reconnect = true;
+                           conn->session = existing_session;
+                           existing_session->client_data = conn;
+                           existing_session->disconnected = false;
+                           strncpy(conn->session_token, token, WEBUI_SESSION_TOKEN_LEN - 1);
+                           conn->session_token[WEBUI_SESSION_TOKEN_LEN - 1] = '\0';
 
-                        /* Check for Opus codec support */
-                        conn->use_opus = check_opus_capability(payload);
+                           /* Check for Opus codec support */
+                           conn->use_opus = check_opus_capability(payload);
 
-                        /* Check for TTS preference (default off) */
-                        conn->tts_enabled = false;
-                        struct json_object *tts_obj;
-                        if (json_object_object_get_ex(payload, "tts_enabled", &tts_obj)) {
-                           conn->tts_enabled = json_object_get_boolean(tts_obj);
+                           /* Check for TTS preference (default off) */
+                           conn->tts_enabled = false;
+                           struct json_object *tts_obj;
+                           if (json_object_object_get_ex(payload, "tts_enabled", &tts_obj)) {
+                              conn->tts_enabled = json_object_get_boolean(tts_obj);
+                           }
+
+                           /* Reconnections still count against client limit */
+                           pthread_mutex_lock(&s_mutex);
+                           s_client_count++;
+                           pthread_mutex_unlock(&s_mutex);
+                           conn->counted = true;
+
+                           LOG_INFO(
+                               "WebUI: Reconnected to session %u with token %.4s... (total: %d, "
+                               "opus: %s, tts: %s)",
+                               existing_session->session_id, token, s_client_count,
+                               conn->use_opus ? "yes" : "no", conn->tts_enabled ? "yes" : "no");
+
+                           /* Queue init messages (one lws_write per callback) */
+                           queue_init_messages(conn, token);
                         }
-
-                        /* Reconnections still count against client limit */
-                        pthread_mutex_lock(&s_mutex);
-                        s_client_count++;
-                        pthread_mutex_unlock(&s_mutex);
-
-                        LOG_INFO("WebUI: Reconnected to session %u with token %.4s... (total: %d, "
-                                 "opus: %s, tts: %s)",
-                                 existing_session->session_id, token, s_client_count,
-                                 conn->use_opus ? "yes" : "no", conn->tts_enabled ? "yes" : "no");
-
-                        /* Queue init messages (one lws_write per callback) */
-                        queue_init_messages(conn, token);
                      }
                   }
                }
-            }
 
-            /* Check for satellite registration (DAP2 Tier 1) */
-            if (type && strcmp(type, "satellite_register") == 0 && payload) {
-               pthread_mutex_lock(&s_mutex);
-               if (s_client_count >= g_config.webui.max_clients) {
-                  pthread_mutex_unlock(&s_mutex);
-                  LOG_WARNING("WebUI: Satellite rejected - max clients reached (%d)",
-                              g_config.webui.max_clients);
-                  send_error_impl(wsi, "MAX_CLIENTS",
-                                  "Maximum clients reached. Please try again later.");
-                  json_object_put(root);
-                  return -1;
-               }
-               s_client_count++;
-               pthread_mutex_unlock(&s_mutex);
-
-               /* Delegate to satellite handler for full registration
-                * (session_create_dap2 handles both new sessions and reconnection) */
-               conn->is_satellite = true;
-               handle_satellite_register(conn, payload);
-
-               /* If registration failed, session won't be set */
-               if (conn->session) {
-                  /* Mark authenticated so broadcasts (scheduler notifications, etc.)
-                   * include this satellite. Browser clients get this from cookie auth
-                   * at LWS_CALLBACK_ESTABLISHED; satellites authenticate via
-                   * registration key in handle_satellite_register instead. */
-                  conn->authenticated = true;
-               }
-               if (!conn->session) {
-                  LOG_ERROR("WebUI: Failed to create satellite session");
+               /* Check for satellite registration (DAP2 Tier 1) */
+               if (type && strcmp(type, "satellite_register") == 0 && payload) {
                   pthread_mutex_lock(&s_mutex);
-                  s_client_count--;
+                  if (s_client_count >= g_config.webui.max_clients) {
+                     pthread_mutex_unlock(&s_mutex);
+                     LOG_WARNING("WebUI: Satellite rejected - max clients reached (%d)",
+                                 g_config.webui.max_clients);
+                     send_error_impl(wsi, "MAX_CLIENTS",
+                                     "Maximum clients reached. Please try again later.");
+                     json_object_put(root);
+                     return -1;
+                  }
+                  s_client_count++;
                   pthread_mutex_unlock(&s_mutex);
+                  conn->counted = true;
+
+                  /* Delegate to satellite handler for full registration
+                   * (session_create_dap2 handles both new sessions and reconnection) */
+                  conn->is_satellite = true;
+                  handle_satellite_register(conn, payload);
+
+                  /* If registration failed, session won't be set */
+                  if (conn->session) {
+                     /* Mark authenticated so broadcasts (scheduler notifications, etc.)
+                      * include this satellite. Browser clients get this from cookie auth
+                      * at LWS_CALLBACK_ESTABLISHED; satellites authenticate via
+                      * registration key in handle_satellite_register instead. */
+                     conn->authenticated = true;
+                  }
+                  if (!conn->session) {
+                     LOG_ERROR("WebUI: Failed to create satellite session");
+                     pthread_mutex_lock(&s_mutex);
+                     s_client_count--;
+                     pthread_mutex_unlock(&s_mutex);
+                     conn->counted = false;
+                     json_object_put(root);
+                     return -1;
+                  }
                   json_object_put(root);
-                  return -1;
+                  break;
                }
+
+               /* If not reconnecting, create new session (with client limit check) */
+               if (!is_reconnect) {
+                  pthread_mutex_lock(&s_mutex);
+                  if (s_client_count >= g_config.webui.max_clients) {
+                     pthread_mutex_unlock(&s_mutex);
+                     LOG_WARNING("WebUI: Connection rejected - max clients reached (%d)",
+                                 g_config.webui.max_clients);
+                     send_error_impl(wsi, "MAX_CLIENTS",
+                                     "Maximum WebUI clients reached. Please try again later.");
+                     json_object_put(root);
+                     return -1;
+                  }
+                  s_client_count++;
+                  pthread_mutex_unlock(&s_mutex);
+                  conn->counted = true;
+
+                  conn->session = session_create(SESSION_TYPE_WEBUI, -1);
+                  if (!conn->session) {
+                     LOG_ERROR("WebUI: Failed to create session");
+                     send_error_impl(wsi, "SESSION_LIMIT", "Maximum sessions reached");
+                     pthread_mutex_lock(&s_mutex);
+                     s_client_count--;
+                     pthread_mutex_unlock(&s_mutex);
+                     conn->counted = false;
+                     json_object_put(root);
+                     return -1;
+                  }
+
+                  /* Set user_id for metrics and memory extraction */
+                  session_set_metrics_user(conn->session, conn->auth_user_id);
+                  /* Build personalized prompt with user settings + memory context */
+                  char *prompt = build_user_prompt(conn->auth_user_id);
+                  session_init_system_prompt(conn->session,
+                                             prompt ? prompt : get_remote_command_prompt());
+                  free(prompt);
+                  conn->session->client_data = conn;
+
+                  /* Check for Opus codec support */
+                  conn->use_opus = check_opus_capability(payload);
+
+                  /* Check for TTS preference (default off) */
+                  conn->tts_enabled = false;
+                  struct json_object *tts_obj;
+                  if (json_object_object_get_ex(payload, "tts_enabled", &tts_obj)) {
+                     conn->tts_enabled = json_object_get_boolean(tts_obj);
+                  }
+
+                  if (generate_session_token(conn->session_token) != 0) {
+                     LOG_ERROR("WebUI: Failed to generate session token");
+                     session_destroy(conn->session->session_id);
+                     conn->session = NULL;
+                     pthread_mutex_lock(&s_mutex);
+                     s_client_count--;
+                     pthread_mutex_unlock(&s_mutex);
+                     conn->counted = false;
+                     json_object_put(root);
+                     return -1;
+                  }
+                  register_token(conn->session_token, conn->session->session_id);
+
+                  LOG_INFO("WebUI: New session %u created (token %.4s..., total: %d, opus: %s, "
+                           "tts: %s)",
+                           conn->session->session_id, conn->session_token, s_client_count,
+                           conn->use_opus ? "yes" : "no", conn->tts_enabled ? "yes" : "no");
+
+                  queue_init_messages(conn, conn->session_token);
+               }
+
                json_object_put(root);
-               break;
-            }
-
-            /* If not reconnecting, create new session (with client limit check) */
-            if (!is_reconnect) {
-               pthread_mutex_lock(&s_mutex);
-               if (s_client_count >= g_config.webui.max_clients) {
-                  pthread_mutex_unlock(&s_mutex);
-                  LOG_WARNING("WebUI: Connection rejected - max clients reached (%d)",
-                              g_config.webui.max_clients);
-                  send_error_impl(wsi, "MAX_CLIENTS",
-                                  "Maximum WebUI clients reached. Please try again later.");
-                  json_object_put(root);
-                  return -1;
-               }
-               s_client_count++;
-               pthread_mutex_unlock(&s_mutex);
-
-               conn->session = session_create(SESSION_TYPE_WEBUI, -1);
-               if (!conn->session) {
-                  LOG_ERROR("WebUI: Failed to create session");
-                  send_error_impl(wsi, "SESSION_LIMIT", "Maximum sessions reached");
-                  pthread_mutex_lock(&s_mutex);
-                  s_client_count--;
-                  pthread_mutex_unlock(&s_mutex);
-                  json_object_put(root);
-                  return -1;
-               }
-
-               /* Set user_id for metrics and memory extraction */
-               session_set_metrics_user(conn->session, conn->auth_user_id);
-               /* Build personalized prompt with user settings + memory context */
-               char *prompt = build_user_prompt(conn->auth_user_id);
-               session_init_system_prompt(conn->session,
-                                          prompt ? prompt : get_remote_command_prompt());
-               free(prompt);
-               conn->session->client_data = conn;
-
-               /* Check for Opus codec support */
-               conn->use_opus = check_opus_capability(payload);
-
-               /* Check for TTS preference (default off) */
-               conn->tts_enabled = false;
-               struct json_object *tts_obj;
-               if (json_object_object_get_ex(payload, "tts_enabled", &tts_obj)) {
-                  conn->tts_enabled = json_object_get_boolean(tts_obj);
-               }
-
-               if (generate_session_token(conn->session_token) != 0) {
-                  LOG_ERROR("WebUI: Failed to generate session token");
-                  session_destroy(conn->session->session_id);
-                  conn->session = NULL;
-                  pthread_mutex_lock(&s_mutex);
-                  s_client_count--;
-                  pthread_mutex_unlock(&s_mutex);
-                  json_object_put(root);
-                  return -1;
-               }
-               register_token(conn->session_token, conn->session->session_id);
-
-               LOG_INFO("WebUI: New session %u created (token %.4s..., total: %d, opus: %s, "
-                        "tts: %s)",
-                        conn->session->session_id, conn->session_token, s_client_count,
-                        conn->use_opus ? "yes" : "no", conn->tts_enabled ? "yes" : "no");
-
-               queue_init_messages(conn, conn->session_token);
-            }
-
-            json_object_put(root);
-            break; /* Don't process this message further - it was just the init */
+               break; /* Don't process this message further - it was just the init */
+            }         /* end else (not authenticated — init message) */
          }
 
          session_touch(conn->session);
@@ -4766,6 +4801,64 @@ void webui_send_conversation_reset(session_t *session) {
 }
 
 /* =============================================================================
+ * Session Detach (called before session destruction)
+ * ============================================================================= */
+
+void webui_detach_session(session_t *session) {
+   if (!session)
+      return;
+
+   /* Clean up stale token registry entries for this session */
+   unregister_tokens_for_session(session->session_id);
+
+   int detached = 0;
+   pthread_mutex_lock(&s_conn_registry_mutex);
+   for (int i = 0; i < MAX_ACTIVE_CONNECTIONS; i++) {
+      ws_connection_t *conn = s_active_connections[i];
+      if (!conn || conn->session != session)
+         continue;
+
+      /* Detach session pointer — the connection stays alive.
+       * On the next message, webui_conn_create_session() will
+       * transparently create a fresh session so the user can
+       * keep working without logging in again.
+       * Atomic store: this runs on the maintenance thread while
+       * the LWS thread may read conn->session concurrently. */
+      conn_set_session(conn, NULL);
+      detached++;
+   }
+   pthread_mutex_unlock(&s_conn_registry_mutex);
+
+   if (detached > 0) {
+      LOG_INFO("WebUI: Detached %d connection(s) from expiring session %u", detached,
+               session->session_id);
+
+      /* Release the references that the connections held.
+       * This unblocks session_destroy's ref_count wait. */
+      for (int i = 0; i < detached; i++) {
+         session_release(session);
+      }
+   }
+}
+
+/* =============================================================================
+ * Plan Progress (session-targeted)
+ * ============================================================================= */
+
+void webui_broadcast_plan_progress(session_t *session, const char *json_str) {
+   if (!session || session->type != SESSION_TYPE_WEBUI || !json_str)
+      return;
+
+   ws_response_t resp = { .session = session,
+                          .type = WS_RESP_JSON,
+                          .generic_json = { .json = strdup(json_str) } };
+   if (!resp.generic_json.json)
+      return;
+
+   queue_response(&resp);
+}
+
+/* =============================================================================
  * Real-Time Metrics for UI Visualization
  *
  * Provides metrics for multi-ring visualization. Sent on:
@@ -5628,6 +5721,201 @@ void webui_force_disconnect_satellite(const char *uuid) {
  * JSON Message Handler Implementation
  * ============================================================================= */
 
+/**
+ * @brief Message callback for session context restoration.
+ * Builds JSON objects with role + content for iterating into session_add_message.
+ */
+static int webui_session_restore_msg_cb(const conversation_message_t *msg, void *context) {
+   json_object *arr = (json_object *)context;
+   json_object *obj = json_object_new_object();
+   json_object_object_add(obj, "role", json_object_new_string(msg->role));
+   json_object_object_add(obj, "content", json_object_new_string(msg->content ? msg->content : ""));
+   json_object_array_add(arr, obj);
+   return 0;
+}
+
+/**
+ * @brief Restore conversation context into a session from DB
+ *
+ * Shared implementation used by both session expiry recovery and sidebar load.
+ */
+int webui_restore_conversation_context(ws_connection_t *conn,
+                                       const conversation_t *conv,
+                                       int64_t conv_id,
+                                       json_object *preloaded_msgs) {
+   json_object *all_msgs = NULL;
+   bool owns_msgs = false;
+
+   if (preloaded_msgs) {
+      all_msgs = preloaded_msgs;
+   } else {
+      all_msgs = json_object_new_array();
+      owns_msgs = true;
+      int rc = conv_db_get_messages(conv_id, conn->auth_user_id, webui_session_restore_msg_cb,
+                                    all_msgs);
+      if (rc != AUTH_DB_SUCCESS) {
+         json_object_put(all_msgs);
+         return -1;
+      }
+   }
+
+   int count = json_object_array_length(all_msgs);
+
+   /* Check if stored messages include a system prompt */
+   bool has_system = false;
+   if (count > 0) {
+      json_object *first = json_object_array_get_idx(all_msgs, 0);
+      json_object *role_obj;
+      if (json_object_object_get_ex(first, "role", &role_obj)) {
+         const char *role = json_object_get_string(role_obj);
+         if (role && strcmp(role, "system") == 0)
+            has_system = true;
+      }
+   }
+
+   session_clear_history(conn->session);
+
+   if (!has_system) {
+      char *prompt = build_user_prompt(conn->auth_user_id);
+      session_add_message(conn->session, "system", prompt ? prompt : get_remote_command_prompt());
+      free(prompt);
+   }
+
+   if (conv->compaction_summary && strlen(conv->compaction_summary) > 0) {
+      char summary[4096];
+      snprintf(summary, sizeof(summary), "Previous conversation context (summarized): %s",
+               conv->compaction_summary);
+      session_add_message(conn->session, "system", summary);
+   }
+
+   for (int i = 0; i < count; i++) {
+      json_object *msg = json_object_array_get_idx(all_msgs, i);
+      json_object *role_obj, *content_obj;
+      if (json_object_object_get_ex(msg, "role", &role_obj) &&
+          json_object_object_get_ex(msg, "content", &content_obj)) {
+         session_add_message(conn->session, json_object_get_string(role_obj),
+                             json_object_get_string(content_obj));
+      }
+   }
+
+   /* Restore LLM config from conversation DB (reflects last-used settings) */
+   if (conv->llm_type[0] != '\0' || conv->tools_mode[0] != '\0') {
+      session_llm_config_t cfg;
+      session_get_llm_config(conn->session, &cfg);
+
+      if (conv->llm_type[0] != '\0') {
+         if (strcmp(conv->llm_type, "local") == 0)
+            cfg.type = LLM_LOCAL;
+         else if (strcmp(conv->llm_type, "cloud") == 0)
+            cfg.type = LLM_CLOUD;
+      }
+      if (conv->cloud_provider[0] != '\0') {
+         if (strcmp(conv->cloud_provider, "openai") == 0)
+            cfg.cloud_provider = CLOUD_PROVIDER_OPENAI;
+         else if (strcmp(conv->cloud_provider, "claude") == 0)
+            cfg.cloud_provider = CLOUD_PROVIDER_CLAUDE;
+         else if (strcmp(conv->cloud_provider, "gemini") == 0)
+            cfg.cloud_provider = CLOUD_PROVIDER_GEMINI;
+      }
+      if (conv->model[0] != '\0') {
+         strncpy(cfg.model, conv->model, sizeof(cfg.model) - 1);
+         cfg.model[sizeof(cfg.model) - 1] = '\0';
+
+         /* Infer provider from model name if not explicitly stored */
+         if (conv->cloud_provider[0] == '\0') {
+            if (strncmp(conv->model, "gpt-", 4) == 0 || strncmp(conv->model, "o1-", 3) == 0 ||
+                strncmp(conv->model, "o3-", 3) == 0) {
+               cfg.cloud_provider = CLOUD_PROVIDER_OPENAI;
+            } else if (strncmp(conv->model, "claude-", 7) == 0) {
+               cfg.cloud_provider = CLOUD_PROVIDER_CLAUDE;
+            } else if (strncmp(conv->model, "gemini-", 7) == 0) {
+               cfg.cloud_provider = CLOUD_PROVIDER_GEMINI;
+            }
+         }
+      }
+      if (conv->tools_mode[0] != '\0') {
+         strncpy(cfg.tool_mode, conv->tools_mode, sizeof(cfg.tool_mode) - 1);
+         cfg.tool_mode[sizeof(cfg.tool_mode) - 1] = '\0';
+      }
+      /* Fix #6: Restore thinking_mode from conversation DB */
+      if (conv->thinking_mode[0] != '\0') {
+         strncpy(cfg.thinking_mode, conv->thinking_mode, sizeof(cfg.thinking_mode) - 1);
+         cfg.thinking_mode[sizeof(cfg.thinking_mode) - 1] = '\0';
+      }
+      session_set_llm_config(conn->session, &cfg);
+   }
+
+   if (owns_msgs)
+      json_object_put(all_msgs);
+   return count;
+}
+
+/**
+ * @brief Create a new conversation session for an authenticated connection.
+ *
+ * Called when conn->session is NULL (e.g., after session expiry) but the user
+ * is still authenticated. Creates a fresh session so the user can keep working
+ * without logging in again. If the connection had an active conversation, its
+ * messages and LLM config are silently restored from the DB.
+ *
+ * @return true if session was created, false on failure (error sent to client)
+ */
+static bool webui_conn_create_session(ws_connection_t *conn) {
+   conn->session = session_create(SESSION_TYPE_WEBUI, -1);
+   if (!conn->session) {
+      send_error_impl(conn->wsi, "SESSION_LIMIT", "Maximum sessions reached");
+      return false;
+   }
+
+   session_set_metrics_user(conn->session, conn->auth_user_id);
+   conn->session->client_data = conn;
+
+   /* Generate and register a new session token */
+   if (generate_session_token(conn->session_token) != 0) {
+      LOG_ERROR("WebUI: Failed to generate session token");
+      session_destroy(conn->session->session_id);
+      conn->session = NULL;
+      return false;
+   }
+   register_token(conn->session_token, conn->session->session_id);
+
+   LOG_INFO("WebUI: Auto-created session %u for connection (user %d, token %.4s...)",
+            conn->session->session_id, conn->auth_user_id, conn->session_token);
+
+   /* Send new session token and init messages so the client updates seamlessly */
+   queue_init_messages(conn, conn->session_token);
+
+   /* Restore the active conversation's context into the new session.
+    * Uses the shared helper (same logic as sidebar load, but without
+    * sending a UI response — the browser still has the messages displayed). */
+   bool restored = false;
+   if (conn->active_conversation_id > 0) {
+      conversation_t conv;
+      int rc = conv_db_get(conn->active_conversation_id, conn->auth_user_id, &conv);
+      if (rc == AUTH_DB_SUCCESS) {
+         if (!conv.is_archived) {
+            int count = webui_restore_conversation_context(conn, &conv,
+                                                           conn->active_conversation_id, NULL);
+            if (count >= 0) {
+               restored = true;
+               LOG_INFO("WebUI: Restored conversation %lld (%d messages) into new session %u",
+                        (long long)conn->active_conversation_id, count, conn->session->session_id);
+            }
+         }
+         conv_free(&conv);
+      }
+   }
+
+   /* If no conversation was restored, initialize with the user's system prompt */
+   if (!restored) {
+      char *prompt = build_user_prompt(conn->auth_user_id);
+      session_init_system_prompt(conn->session, prompt ? prompt : get_remote_command_prompt());
+      free(prompt);
+   }
+
+   return true;
+}
+
 static void handle_text_message(ws_connection_t *conn,
                                 const char *text,
                                 size_t len,
@@ -5642,9 +5930,13 @@ static void handle_text_message(ws_connection_t *conn,
       return; /* conn_require_auth already sent error */
    }
 
-   if (!conn->session) {
-      LOG_WARNING("WebUI: Text message received but no session");
-      return;
+   /* Auto-create session if expired (user is still authenticated).
+    * Atomic load: maintenance thread may have NULLed conn->session. */
+   if (!conn_get_session(conn)) {
+      LOG_INFO("WebUI: Session expired for authenticated connection, creating new session");
+      if (!webui_conn_create_session(conn)) {
+         return;
+      }
    }
 
    if (vision_image_count > 0) {

@@ -24,6 +24,7 @@
  */
 
 #include <ctype.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -569,7 +570,8 @@ static char *memory_action_search(int user_id, const char *keywords, time_t sinc
       for (int i = 0; i < fact_count && offset < buf_size - 100; i++) {
          char time_str[32];
          format_time_ago(facts[i].created_at, time_str, sizeof(time_str));
-         offset += snprintf(result + offset, buf_size - offset, "- %s (confidence: %.0f%%, %s)\n",
+         offset += snprintf(result + offset, buf_size - offset,
+                            "- [ID:%lld] %s (confidence: %.0f%%, %s)\n", (long long)facts[i].id,
                             facts[i].fact_text, facts[i].confidence * 100, time_str);
 
          /* Update access time */
@@ -743,37 +745,40 @@ static char *memory_action_remember(int user_id, const char *fact_text) {
 
 static char *memory_action_forget(int user_id, const char *fact_text) {
    if (!fact_text || strlen(fact_text) == 0) {
-      return strdup("Please specify what to forget.");
+      return strdup("Please specify the fact ID to forget. Use 'search' or 'recent' first to find "
+                    "the ID.");
    }
 
-   /* Tokenize query for per-word matching */
-   char tokens[MAX_SEARCH_TOKENS][64];
-   int token_count = tokenize_query(fact_text, tokens, MAX_SEARCH_TOKENS);
-
-   /* Search for matching facts */
-   memory_fact_t facts[5];
-   int count = 0;
-
-   if (token_count <= 1) {
-      count = memory_db_fact_search(user_id, fact_text, facts, 5);
-   } else {
-      /* Multi-word: search per token, dedup, pick best match */
-      count = multi_token_fact_search(user_id, tokens, token_count, 5, facts, 5, 0, NULL);
+   /* Require numeric DB ID — prevents accidental deletion from fuzzy search */
+   char *endptr = NULL;
+   errno = 0;
+   long long id_val = strtoll(fact_text, &endptr, 10);
+   if (!endptr || *endptr != '\0' || id_val <= 0 || errno == ERANGE) {
+      return strdup("Please provide a numeric fact ID (e.g., '42'). Use 'search' or 'recent' first "
+                    "to find the ID of the memory you want to forget.");
    }
 
-   if (count == 0) {
-      return strdup("No matching facts found to forget.");
+   /* Look up fact by ID and verify ownership */
+   memory_fact_t fact;
+   int get_result = memory_db_fact_get((int64_t)id_val, &fact);
+   if (get_result != MEMORY_DB_SUCCESS) {
+      char *msg = malloc(128);
+      if (msg)
+         snprintf(msg, 128, "No fact found with ID %lld.", id_val);
+      return msg ? msg : strdup("Fact not found.");
    }
 
-   /* Delete the most relevant match (highest word-match count) */
-   int result = memory_db_fact_delete(facts[0].id, user_id);
+   if (fact.user_id != user_id) {
+      return strdup("Fact not found."); /* Don't reveal other users' facts */
+   }
+
+   int result = memory_db_fact_delete((int64_t)id_val, user_id);
 
    if (result == MEMORY_DB_SUCCESS) {
-      char *msg = malloc(256);
+      char *msg = malloc(384);
       if (msg) {
-         /* Truncate fact_text to fit in message buffer */
-         snprintf(msg, 256, "Forgotten: \"%.200s%s\"", facts[0].fact_text,
-                  strlen(facts[0].fact_text) > 200 ? "..." : "");
+         snprintf(msg, 384, "Forgotten (ID %lld): \"%.200s%s\"", id_val, fact.fact_text,
+                  strlen(fact.fact_text) > 200 ? "..." : "");
          return msg;
       }
       return strdup("Fact forgotten successfully.");
@@ -820,8 +825,8 @@ static char *memory_action_recent(int user_id, const char *period) {
       for (int i = 0; i < fact_count && offset < buf_size - 100; i++) {
          char time_str[32];
          format_time_ago(facts[i].created_at, time_str, sizeof(time_str));
-         offset += snprintf(result + offset, buf_size - offset, "- %s (%s, %s)\n",
-                            facts[i].fact_text, facts[i].source, time_str);
+         offset += snprintf(result + offset, buf_size - offset, "- [ID:%lld] %s (%s, %s)\n",
+                            (long long)facts[i].id, facts[i].fact_text, facts[i].source, time_str);
       }
    }
 

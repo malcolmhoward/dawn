@@ -1204,6 +1204,21 @@ int conv_db_lock_llm_settings(int64_t conv_id,
                               const char *thinking_mode);
 
 /**
+ * @brief Update LLM settings on an existing conversation (any message count).
+ *
+ * Unlike conv_db_lock_llm_settings, this works regardless of message_count.
+ * Called when the user changes model/provider mid-conversation so the DB
+ * always reflects the last-used LLM config.
+ */
+int conv_db_update_llm_settings(int64_t conv_id,
+                                int user_id,
+                                const char *llm_type,
+                                const char *cloud_provider,
+                                const char *model,
+                                const char *tools_mode,
+                                const char *thinking_mode);
+
+/**
  * @brief Delete a conversation and all its messages
  *
  * @param conv_id Conversation ID

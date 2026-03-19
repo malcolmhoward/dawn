@@ -91,7 +91,9 @@ extern "C" {
 
 typedef struct {
    struct lws *wsi;                             /* libwebsockets handle */
-   session_t *session;                          /* Session manager reference */
+   session_t *session;                          /* Session manager reference (use
+                                                 * conn_get_session/conn_set_session for
+                                                 * cross-thread access) */
    char session_token[WEBUI_SESSION_TOKEN_LEN]; /* Reconnection token */
    uint8_t *audio_buffer;                       /* Opus audio accumulation */
    size_t audio_buffer_len;
@@ -117,6 +119,10 @@ typedef struct {
    /* Client IP address (captured at connection establishment for reliable logging) */
    char client_ip[64];
 
+   /* Client counting: true once this connection has incremented s_client_count.
+    * Ensures balanced decrement even if session is detached before disconnect. */
+   bool counted;
+
    /* Active conversation tracking (for memory extraction on switch) */
    int64_t active_conversation_id;
    bool active_conversation_private; /* If true, skip memory extraction */
@@ -130,6 +136,28 @@ typedef struct {
     * Atomic: written by LLM tool thread and LWS thread, read by music stream thread. */
    _Atomic float volume;
 } ws_connection_t;
+
+/**
+ * @brief Atomically load conn->session (acquire semantics)
+ *
+ * Use at cross-thread boundaries where the maintenance thread may have
+ * set conn->session to NULL via webui_detach_session(). Within the
+ * single-threaded LWS callback context, direct conn->session access is fine
+ * after an initial atomic load confirms non-NULL.
+ */
+static inline session_t *conn_get_session(ws_connection_t *conn) {
+   return __atomic_load_n(&conn->session, __ATOMIC_ACQUIRE);
+}
+
+/**
+ * @brief Atomically store conn->session (release semantics)
+ *
+ * Use when writing conn->session from a non-LWS thread (e.g., maintenance
+ * thread in webui_detach_session). Pairs with conn_get_session().
+ */
+static inline void conn_set_session(ws_connection_t *conn, session_t *s) {
+   __atomic_store_n(&conn->session, s, __ATOMIC_RELEASE);
+}
 
 /* =============================================================================
  * HTTP Session Data
@@ -593,6 +621,34 @@ void handle_change_password(ws_connection_t *conn, struct json_object *payload);
  * @brief Unlock a locked user account (admin only)
  */
 void handle_unlock_user(ws_connection_t *conn, struct json_object *payload);
+
+/* =============================================================================
+ * Conversation Context Restore (defined in webui_server.c)
+ * ============================================================================= */
+
+/**
+ * @brief Restore conversation context into a session from DB
+ *
+ * Clears session history, rebuilds with system prompt + compaction summary +
+ * stored messages, and restores LLM config (type, provider, model, tools,
+ * thinking).
+ *
+ * Used by both webui_conn_create_session (session expiry recovery) and
+ * handle_load_conversation (sidebar click). Caller owns the conversation_t
+ * and must call conv_free() after this returns.
+ *
+ * @param conn Connection with authenticated user
+ * @param conv Conversation metadata (already fetched via conv_db_get)
+ * @param conv_id Conversation ID
+ * @param preloaded_msgs Optional pre-fetched message array (json_object array
+ *        with "role" and "content" fields per element). If NULL, messages are
+ *        fetched from the DB. Caller retains ownership; not freed by this function.
+ * @return Number of messages restored, or -1 on error
+ */
+int webui_restore_conversation_context(ws_connection_t *conn,
+                                       const conversation_t *conv,
+                                       int64_t conv_id,
+                                       json_object *preloaded_msgs);
 
 /* =============================================================================
  * History Handler Functions (defined in webui_history.c)

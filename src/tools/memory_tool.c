@@ -41,13 +41,15 @@ static bool memory_tool_is_available(void);
 static const treg_param_t memory_params[] = {
    {
        .name = "action",
-       .description = "Memory action: 'remember' (store a fact), 'search' (find memories), "
-                      "'forget' (delete a memory by ID), 'recent' (list recent memories), "
-                      "'save_contact' (store email/phone for a person), "
-                      "'find_contact' (look up contact info), "
-                      "'list_contacts' (list all contacts), "
-                      "'delete_contact' (remove contact by ID), "
-                      "'merge_entities' (combine two entities that refer to the same person/thing)",
+       .description =
+           "Memory action: 'remember' (store a fact), 'search' (find memories), "
+           "'forget' (delete a memory by numeric ID — use search/recent first to find the "
+           "ID), 'recent' (list recent memories), "
+           "'save_contact' (store email/phone for a person), "
+           "'find_contact' (look up contact info), "
+           "'list_contacts' (list all contacts), "
+           "'delete_contact' (remove contact by ID), "
+           "'merge_entities' (combine two entities that refer to the same person/thing)",
        .type = TOOL_PARAM_TYPE_ENUM,
        .required = true,
        .maps_to = TOOL_MAPS_TO_ACTION,
@@ -59,7 +61,7 @@ static const treg_param_t memory_params[] = {
        .name = "query",
        .description = "For 'remember': the fact to store (e.g., 'User prefers dark mode'). "
                       "For 'search': keywords to find relevant memories. "
-                      "For 'forget': memory ID to delete. "
+                      "For 'forget': numeric fact ID to delete (from search/recent results). "
                       "For 'recent': optional limit number (default 10). "
                       "For 'save_contact': the person's name. "
                       "For 'find_contact': name to search for. "
@@ -103,7 +105,8 @@ static const tool_metadata_t memory_metadata = {
                   "Use 'remember' to store facts (preferences, information shared by user). "
                   "Use 'search' to find relevant stored memories (optionally filtered by "
                   "time_range like '24h', '7d', '2w'). "
-                  "Use 'forget' to delete a specific memory by ID. "
+                  "Use 'forget' to delete a specific memory by its numeric ID (you MUST use "
+                  "'search' or 'recent' first to find the ID). "
                   "Use 'recent' to list recently stored memories. "
                   "Use 'save_contact' to store contact info (email, phone) for a person "
                   "(query: person name, field_type: email/phone, value: the address/number, "

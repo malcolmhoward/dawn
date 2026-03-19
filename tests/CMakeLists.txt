@@ -224,6 +224,18 @@ target_link_libraries(test_embedding_engine
                       pthread
                       m)
 
+# Test: Plan Executor
+# Tests variable store, conditions, interpolation, parsing, execution, safety limits
+add_executable(test_plan_executor
+               test_plan_executor.c
+               test_plan_executor_stub.c
+               ${SRC_ROOT}/src/tools/plan_executor.c)
+
+target_link_libraries(test_plan_executor
+                      dawn_common
+                      ${JSONC_LIBRARIES}
+                      pthread)
+
 # =============================================================================
 # Aggregate "tests" target
 # =============================================================================
@@ -244,4 +256,5 @@ add_custom_target(tests
                           test_document_chunker
                           test_document_db
                           test_embedding_engine
+                          test_plan_executor
                   COMMENT "Building all tests")

@@ -71,26 +71,54 @@ static const char *NATIVE_TOOLS_RULES =
    "6. Do NOT lead responses with weather, time, or location info unless explicitly asked.\n"
    "   Vary your greetings and openers. The user's context below is for tool use only.\n";
 
+// clang-format off
+static const char *PLAN_EXECUTOR_PROMPT =
+   "\n## Multi-Step Tool Plans\n\n"
+   "When a task requires multiple tool calls, especially with conditions or dependencies\n"
+   "between results, use the `execute_plan` tool instead of individual tool calls.\n\n"
+   "Plan format: JSON array of steps.\n"
+   "Step types: call (execute tool), if (conditional), loop (iterate), set (variable), log (output).\n\n"
+   "Example - check and conditionally create:\n"
+   "{\"plan\": [{\"type\": \"call\", \"tool\": \"scheduler\", \"args\": {\"action\": \"query\", \"type\": \"alarm\"}, \"store\": \"alarms\"}, "
+   "{\"type\": \"if\", \"condition\": \"alarms.empty\", \"then\": ["
+   "{\"type\": \"call\", \"tool\": \"scheduler\", \"args\": {\"action\": \"create\", \"type\": \"alarm\", \"time\": \"7:00 AM\"}, \"store\": \"result\"}, "
+   "{\"type\": \"log\", \"message\": \"Created alarm: $result\"}"
+   "], \"else\": [{\"type\": \"log\", \"message\": \"Existing alarms: $alarms\"}]}]}\n\n"
+   "Example - batch operations:\n"
+   "{\"plan\": [{\"type\": \"loop\", \"over\": [\"kitchen\", \"living room\", \"bedroom\"], \"as\": \"room\", \"steps\": ["
+   "{\"type\": \"call\", \"tool\": \"home_assistant\", \"args\": {\"action\": \"off\", \"entity\": \"$room light\"}}"
+   "]}, {\"type\": \"log\", \"message\": \"All lights turned off\"}]}\n\n"
+   "Conditions: var.empty, var.notempty, var.contains:text, var.equals:text, var.success, var.failed\n\n"
+   "Use execute_plan when:\n"
+   "- A task needs 2+ tool calls with data dependencies\n"
+   "- You need to check a result before deciding the next action\n"
+   "- You need to perform the same action on multiple items\n"
+   "- Intermediate results don't need LLM reasoning\n\n"
+   "Use individual tool calls when:\n"
+   "- Only one tool call is needed\n"
+   "- You need to reason about intermediate results\n";
+// clang-format on
+
 /* Core behavior rules for <command> tag mode (legacy) */
 static const char *LEGACY_RULES_CORE =
-   "Do not use thinking mode. Respond directly without internal reasoning.\n"
-   "Max 30 words plus <command> tags unless the user says \"explain in detail\".\n"
-   "\n"
-   "RULES\n"
-   "1. For Boolean / Analog / Music actions: one sentence, then the JSON tag(s). No prose after "
-   "the tag block.\n"
-   "2. For Getter actions (date, time, suit_status): send ONLY the tag, wait for the "
-   "system JSON, then one confirmation sentence ≤15 words.\n"
-   "3. Use only the devices and actions listed below; never invent new ones.\n"
-   "4. If a request is ambiguous (e.g., \"Mute it\"), ask one-line clarification.\n"
-   "5. If the user wants information that has no matching getter yet, answer verbally with no "
-   "tags.\n"
-   "6. Device \"info\" supports ENABLE / DISABLE only—never use \"get\" with it.\n"
-   "7. To mute playback after clarification, use "
-   "<command>{\"device\":\"volume\",\"action\":\"set\",\"value\":0}</command>.\n"
-   "8. Multiple commands can be sent in one response using multiple <command> tags.\n"
-   "9. Do NOT lead responses with comments about location, weather, or time of day.\n"
-   "   Vary your greetings. The user's context below is for tool use only.\n";
+    "Do not use thinking mode. Respond directly without internal reasoning.\n"
+    "Max 30 words plus <command> tags unless the user says \"explain in detail\".\n"
+    "\n"
+    "RULES\n"
+    "1. For Boolean / Analog / Music actions: one sentence, then the JSON tag(s). No prose after "
+    "the tag block.\n"
+    "2. For Getter actions (date, time, suit_status): send ONLY the tag, wait for the "
+    "system JSON, then one confirmation sentence ≤15 words.\n"
+    "3. Use only the devices and actions listed below; never invent new ones.\n"
+    "4. If a request is ambiguous (e.g., \"Mute it\"), ask one-line clarification.\n"
+    "5. If the user wants information that has no matching getter yet, answer verbally with no "
+    "tags.\n"
+    "6. Device \"info\" supports ENABLE / DISABLE only—never use \"get\" with it.\n"
+    "7. To mute playback after clarification, use "
+    "<command>{\"device\":\"volume\",\"action\":\"set\",\"value\":0}</command>.\n"
+    "8. Multiple commands can be sent in one response using multiple <command> tags.\n"
+    "9. Do NOT lead responses with comments about location, weather, or time of day.\n"
+    "   Vary your greetings. The user's context below is for tool use only.\n";
 
 // clang-format on
 
@@ -401,6 +429,10 @@ static int build_system_instructions_to_buffer(const char *mode, char *buffer, s
 
    if (use_native) {
       len += snprintf(buffer + len, remaining - len, "%s\n", NATIVE_TOOLS_RULES);
+      /* Add plan executor DSL when tool is registered and 3+ tools enabled */
+      if (tool_registry_is_enabled("execute_plan") && llm_tools_get_enabled_count() >= 3) {
+         len += snprintf(buffer + len, remaining - len, "%s", PLAN_EXECUTOR_PROMPT);
+      }
       return len;
    }
 

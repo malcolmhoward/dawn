@@ -716,8 +716,10 @@ static const treg_param_t scheduler_params[] = {
        .description =
            "JSON object with action-specific fields. "
            "For 'create': {type (timer|alarm|reminder), name (optional), "
-           "duration_minutes (1-43200, relative offset from now - works for ALL types), "
-           "fire_at (ISO 8601 absolute time, alternative to duration_minutes), "
+           "fire_at (ISO 8601 absolute time — PREFERRED for alarms/reminders at specific times, "
+           "e.g. '2026-03-19T07:00:00'), "
+           "duration_minutes (1-43200, relative offset from now — use for timers or "
+           "'in X minutes' requests only), "
            "message (for reminders, max 512 chars), recurrence (once|daily|weekdays|weekends|"
            "weekly|custom), recurrence_days (csv: mon,tue,...), announce_all (bool)}. "
            "Type 'task' is ONLY for scheduling execution of other registered tools and "

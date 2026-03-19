@@ -1,0 +1,190 @@
+/*
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ * By contributing to this project, you agree to license your contributions
+ * under the GPLv3 (or any later version) or any future licenses chosen by
+ * the project author(s). Contributions include any modifications,
+ * enhancements, or additions to the project. These contributions become
+ * part of the project and are adopted by the project author(s).
+ *
+ * Plan Executor Tool — tool registry entry and callback wrapper
+ *
+ * Bridges the tool registry to the plan execution engine.
+ * Receives plan JSON from LLM, creates execution context,
+ * runs the plan, and returns accumulated output.
+ */
+
+#include <json-c/json.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+#include "logging.h"
+#include "tools/plan_executor.h"
+#include "tools/tool_registry.h"
+
+/* =============================================================================
+ * Forward Declarations
+ * ============================================================================= */
+
+static char *plan_executor_callback(const char *action, char *value, int *should_respond);
+
+/* =============================================================================
+ * Tool Metadata
+ * ============================================================================= */
+
+static const treg_param_t plan_params[] = {
+   { .name = "plan",
+     .type = TOOL_PARAM_TYPE_STRING,
+     .required = true,
+     .description = "JSON array of plan steps to execute sequentially. "
+                    "Each step is an object with 'type' field: "
+                    "'call' (execute tool), 'if' (conditional), "
+                    "'loop' (iterate), 'set' (variable), 'log' (output)." },
+};
+
+static const tool_metadata_t plan_executor_metadata = {
+   .name = "execute_plan",
+   .device_string = "plan executor",
+   .description = "Execute a multi-step tool plan locally. Use this when a task "
+                  "requires multiple tool calls with conditional logic or data "
+                  "dependencies between steps. The plan runs entirely on the server "
+                  "without additional LLM round trips. Returns aggregated results.",
+   .params = plan_params,
+   .param_count = 1,
+   .device_type = TOOL_DEVICE_TYPE_GETTER,
+   .capabilities = 0,
+   .is_getter = true,
+   .callback = plan_executor_callback,
+};
+
+/* =============================================================================
+ * Callback Implementation
+ * ============================================================================= */
+
+/**
+ * @brief Plan executor tool callback
+ *
+ * Receives plan JSON string from LLM tool dispatch, creates an execution
+ * context, parses the plan, executes all steps, and returns accumulated
+ * output. Handles both direct JSON arrays and double-encoded JSON strings.
+ *
+ * @param action  Unused (single-action tool)
+ * @param value   Plan JSON string (may be a JSON array or escaped string)
+ * @param should_respond  Set to 1 — always return result to LLM
+ * @return Heap-allocated result string (caller frees)
+ */
+static char *plan_executor_callback(const char *action, char *value, int *should_respond) {
+   (void)action;
+   *should_respond = 1;
+
+   if (!value || !value[0]) {
+      return strdup("Error: empty plan");
+   }
+
+   LOG_INFO("plan_executor: received plan (%zu bytes)", strlen(value));
+
+   /* Parse the plan JSON */
+   struct json_object *plan = NULL;
+   int rc = plan_parse(value, &plan);
+   if (rc != PLAN_OK || !plan) {
+      char err[256];
+      snprintf(err, sizeof(err), "Error: plan parse failed (code %d)", rc);
+      LOG_WARNING("plan_executor: %s", err);
+      return strdup(err);
+   }
+
+   /* Initialize execution context */
+   plan_context_t ctx = { 0 };
+   ctx.timeout_s = PLAN_TIMEOUT_DEFAULT_S;
+   clock_gettime(CLOCK_MONOTONIC, &ctx.start_time);
+
+   /* Notify: plan start */
+   plan_notify_progress("{\"type\":\"plan_progress\",\"payload\":{\"action\":\"start\"}}");
+
+   /* Execute */
+   rc = plan_execute_steps(&ctx, plan);
+
+   /* Calculate total elapsed time */
+   struct timespec now;
+   clock_gettime(CLOCK_MONOTONIC, &now);
+   long total_ms = (now.tv_sec - ctx.start_time.tv_sec) * 1000 +
+                   (now.tv_nsec - ctx.start_time.tv_nsec) / 1000000;
+
+   /* Build result */
+   char *result = NULL;
+   if (rc != PLAN_OK) {
+      /* Partial output + error */
+      size_t len = strlen(ctx.output) + strlen(ctx.error) + 64;
+      result = malloc(len);
+      if (result) {
+         if (ctx.output[0]) {
+            snprintf(result, len, "%s\n[Plan stopped: %s]", ctx.output, ctx.error);
+         } else {
+            snprintf(result, len, "[Plan error: %s]", ctx.error);
+         }
+      }
+      LOG_WARNING("plan_executor: failed (code %d): %s", rc, ctx.error);
+
+      /* Notify: plan error — use json-c to safely escape error text */
+      {
+         struct json_object *nerr = json_object_new_object();
+         struct json_object *perr = json_object_new_object();
+         if (nerr && perr) {
+            json_object_object_add(nerr, "type", json_object_new_string("plan_progress"));
+            json_object_object_add(perr, "action", json_object_new_string("error"));
+            json_object_object_add(perr, "error", json_object_new_string(ctx.error));
+            json_object_object_add(nerr, "payload", perr);
+            const char *ns = json_object_to_json_string_ext(nerr, JSON_C_TO_STRING_PLAIN);
+            if (ns)
+               plan_notify_progress(ns);
+            json_object_put(nerr);
+         } else {
+            json_object_put(nerr);
+            json_object_put(perr);
+         }
+      }
+   } else {
+      if (ctx.output[0]) {
+         result = strdup(ctx.output);
+      } else {
+         result = strdup("Plan executed successfully (no output).");
+      }
+      LOG_INFO("plan_executor: completed — %d steps, %d tool calls", ctx.total_steps_executed,
+               ctx.total_tool_calls);
+
+      /* Notify: plan done */
+      char notify[256];
+      snprintf(notify, sizeof(notify),
+               "{\"type\":\"plan_progress\",\"payload\":{\"action\":\"done\","
+               "\"total_ms\":%ld,\"tool_calls\":%d}}",
+               total_ms, ctx.total_tool_calls);
+      plan_notify_progress(notify);
+   }
+
+   /* Cleanup */
+   plan_context_cleanup(&ctx);
+   json_object_put(plan);
+
+   return result ? result : strdup("Error: allocation failed");
+}
+
+/* =============================================================================
+ * Tool Registration
+ * ============================================================================= */
+
+int plan_executor_tool_register(void) {
+   return tool_registry_register(&plan_executor_metadata);
+}

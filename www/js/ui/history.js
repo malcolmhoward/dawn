@@ -383,6 +383,11 @@
       // Update input area state based on archived status
       setArchivedMode(isArchived);
 
+      // Reset ephemeral UI state
+      if (typeof DawnPlanOrchestrator !== 'undefined') {
+         DawnPlanOrchestrator.reset();
+      }
+
       // Clear transcript
       if (transcript) {
          transcript.innerHTML = '';

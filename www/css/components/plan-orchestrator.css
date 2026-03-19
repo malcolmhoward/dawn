@@ -1,0 +1,286 @@
+/* =============================================================================
+ * Plan Orchestrator Block — real-time multi-step plan execution progress
+ *
+ * Purple-themed collapsible block, mirroring .thinking-block pattern.
+ * Uses --tool-color-alt (#a855f7) as accent.
+ * ============================================================================= */
+
+.plan-block {
+   background: rgba(168, 85, 247, 0.06);
+   border: 1px solid rgba(168, 85, 247, 0.2);
+   border-radius: var(--border-radius);
+   margin-bottom: 0.75rem;
+   overflow: hidden;
+   animation: fade-in var(--transition-fast) ease-out;
+}
+
+.plan-block.completed {
+   opacity: 0.85;
+}
+
+/* Collapsed state */
+.plan-block.collapsed .plan-content {
+   max-height: 0;
+   padding-top: 0;
+   padding-bottom: 0;
+   opacity: 0;
+   overflow: hidden;
+   border-top-color: transparent;
+}
+
+.plan-block.collapsed .plan-toggle {
+   transform: rotate(0deg);
+}
+
+.plan-block:not(.collapsed) .plan-toggle {
+   transform: rotate(180deg);
+}
+
+/* =============================================================================
+ * Header
+ * ============================================================================= */
+
+.plan-header {
+   display: flex;
+   align-items: center;
+   gap: 0.5rem;
+   padding: 0.6rem 0.75rem;
+   cursor: pointer;
+   user-select: none;
+   transition: background-color var(--transition-fast);
+}
+
+.plan-header:hover {
+   background: rgba(168, 85, 247, 0.1);
+}
+
+.plan-header:focus-visible {
+   outline: 2px solid var(--tool-color-alt);
+   outline-offset: 2px;
+}
+
+.plan-icon {
+   font-size: 0.9rem;
+   line-height: 1;
+   color: var(--tool-color-alt);
+}
+
+.plan-label {
+   flex: 1;
+   font-size: 0.85rem;
+   font-weight: 500;
+   color: var(--tool-color-alt);
+}
+
+/* Streaming dot while plan is running */
+.plan-block:not(.completed) .plan-label::after {
+   content: '';
+   display: inline-block;
+   width: 0.5em;
+   height: 0.5em;
+   margin-left: 0.5em;
+   background: var(--tool-color-alt);
+   border-radius: 50%;
+   animation: plan-pulse 1.5s ease-in-out infinite;
+}
+
+.plan-progress-text {
+   font-size: 0.75rem;
+   color: var(--text-secondary);
+   font-family: 'IBM Plex Mono', monospace;
+}
+
+.plan-toggle {
+   color: var(--text-secondary);
+   font-size: 0.7rem;
+   transition: transform var(--transition-fast);
+}
+
+/* =============================================================================
+ * Step List
+ * ============================================================================= */
+
+.plan-content {
+   padding: 0.75rem;
+   border-top: 1px solid rgba(168, 85, 247, 0.15);
+   background: rgba(0, 0, 0, 0.1);
+   max-height: 300px;
+   overflow-y: auto;
+   transition:
+      max-height var(--transition-fast),
+      padding var(--transition-fast),
+      opacity var(--transition-fast);
+}
+
+.plan-steps {
+   list-style: none;
+   margin: 0;
+   padding: 0;
+}
+
+.plan-step {
+   display: flex;
+   align-items: center;
+   gap: 0.5rem;
+   padding: 0.3rem 0;
+   font-size: 0.8rem;
+   animation: plan-step-enter 200ms ease-out;
+}
+
+.plan-step-indicator {
+   width: 1rem;
+   flex-shrink: 0;
+   text-align: center;
+   font-size: 0.75rem;
+   line-height: 1;
+}
+
+.plan-step-name {
+   flex: 1;
+   font-family: 'IBM Plex Mono', monospace;
+   font-weight: 500;
+   color: var(--text-primary);
+}
+
+.plan-step-duration {
+   font-size: 0.75rem;
+   font-family: 'IBM Plex Mono', monospace;
+   color: var(--text-secondary);
+}
+
+/* Step states */
+.plan-step.running {
+   opacity: 1;
+}
+
+.plan-step.running .plan-step-indicator {
+   color: var(--tool-color-alt);
+   animation: plan-arrow-blink 1s step-end infinite;
+}
+
+.plan-step.running .plan-step-name {
+   font-weight: 600;
+}
+
+.plan-step.complete {
+   opacity: 0.8;
+}
+
+.plan-step.complete .plan-step-indicator {
+   color: var(--success);
+}
+
+.plan-step.complete .plan-step-name {
+   font-weight: 500;
+}
+
+.plan-step.error {
+   opacity: 1;
+}
+
+.plan-step.error .plan-step-indicator {
+   color: var(--error);
+}
+
+.plan-step.error .plan-step-duration {
+   color: var(--error);
+}
+
+/* Animated dots for running step */
+.plan-dots {
+   display: inline-flex;
+   gap: 2px;
+}
+
+.plan-dots span {
+   display: inline-block;
+   width: 3px;
+   height: 3px;
+   border-radius: 50%;
+   background: var(--text-secondary);
+   animation: plan-dot-pulse 1.4s ease-in-out infinite;
+}
+
+.plan-dots span:nth-child(2) {
+   animation-delay: 0.2s;
+}
+
+.plan-dots span:nth-child(3) {
+   animation-delay: 0.4s;
+}
+
+/* =============================================================================
+ * Animations
+ * ============================================================================= */
+
+@keyframes plan-arrow-blink {
+   0%,
+   49% {
+      opacity: 1;
+   }
+   50%,
+   100% {
+      opacity: 0.3;
+   }
+}
+
+@keyframes plan-step-enter {
+   from {
+      transform: translateX(-8px);
+      opacity: 0;
+   }
+   to {
+      transform: translateX(0);
+      opacity: 1;
+   }
+}
+
+@keyframes plan-dot-pulse {
+   0%,
+   80%,
+   100% {
+      opacity: 0.3;
+      transform: scale(0.8);
+   }
+   40% {
+      opacity: 1;
+      transform: scale(1.2);
+   }
+}
+
+@keyframes plan-pulse {
+   0%,
+   100% {
+      opacity: 0.3;
+      transform: scale(0.8);
+   }
+   50% {
+      opacity: 1;
+      transform: scale(1);
+   }
+}
+
+/* =============================================================================
+ * Reduced motion
+ * ============================================================================= */
+
+@media (prefers-reduced-motion: reduce) {
+   .plan-step {
+      animation: none;
+   }
+
+   .plan-step.running .plan-step-indicator {
+      animation: none;
+      opacity: 1;
+   }
+
+   .plan-block:not(.completed) .plan-label::after {
+      animation: none;
+      opacity: 1;
+   }
+
+   .plan-dots span {
+      animation: none;
+      opacity: 0.6;
+   }
+}

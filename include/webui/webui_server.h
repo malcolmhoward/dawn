@@ -503,6 +503,32 @@ void webui_send_metrics_update(struct session *session,
                                int context_percent);
 
 /**
+ * @brief Detach all WebSocket connections referencing a session about to be destroyed
+ *
+ * Called from session_destroy() before freeing session memory to prevent
+ * use-after-free. Sends force_logout to connected clients and NULLs their
+ * session pointer.
+ *
+ * @param session Session being destroyed
+ *
+ * @note Thread-safe (acquires connection registry mutex)
+ */
+void webui_detach_session(struct session *session);
+
+/**
+ * @brief Send a plan progress JSON message to a specific session's WebSocket
+ *
+ * Used by the plan executor to deliver real-time step progress during
+ * multi-step plan execution. Targets only the session that initiated the plan.
+ *
+ * @param session Session to send to (must be SESSION_TYPE_WEBUI)
+ * @param json_str Pre-serialized JSON string (copied internally)
+ *
+ * @note Thread-safe - can be called from any thread
+ */
+void webui_broadcast_plan_progress(struct session *session, const char *json_str);
+
+/**
  * @brief Broadcast a conversation title change to all connections for a given user
  *
  * Thread-safe — can be called from the extraction thread.

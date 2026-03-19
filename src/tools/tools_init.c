@@ -95,6 +95,8 @@
 #include "tools/email_tool.h"
 #endif
 
+#include "tools/plan_executor.h"
+
 /* ========== Registration ========== */
 
 int tools_register_all(void) {
@@ -252,6 +254,11 @@ int tools_register_all(void) {
       LOG_WARNING("Failed to register email tool");
    }
 #endif
+
+   /* Plan executor (always available — meta-tool, no external deps) */
+   if (plan_executor_tool_register() != 0) {
+      LOG_WARNING("Failed to register plan_executor tool");
+   }
 
    LOG_INFO("Tool registration complete");
    return 0;

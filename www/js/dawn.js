@@ -626,6 +626,11 @@
                   DawnScheduler.handleNotification(msg.payload);
                }
                break;
+            case 'plan_progress':
+               if (typeof DawnPlanOrchestrator !== 'undefined') {
+                  DawnPlanOrchestrator.handlePlanProgress(msg.payload);
+               }
+               break;
             case 'conversation_renamed':
                DawnHistory.handleConversationRenamed(msg.payload);
                break;

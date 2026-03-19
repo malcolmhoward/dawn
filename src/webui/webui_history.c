@@ -666,9 +666,9 @@ void handle_load_conversation(ws_connection_t *conn, struct json_object *payload
       int64_t oldest_id = 0;
       bool has_more = false;
 
-      /* Optimization: For initial load of non-archived conversations that need session context,
-       * fetch ALL messages once and use them for both session context and UI display.
-       * This avoids the previous double-fetch pattern. */
+      /* For initial load of non-archived conversations that need session context,
+       * fetch ALL messages in one query for both UI display (last N) and session
+       * context restore (passed to webui_restore_conversation_context). */
       if (needs_session_context && !conv.is_archived) {
          /* Fetch all messages in one query */
          all_msgs = json_object_new_array();
@@ -736,105 +736,11 @@ void handle_load_conversation(ws_connection_t *conn, struct json_object *payload
 
       if (result == AUTH_DB_SUCCESS) {
          /* Restore to session context on initial load of non-archived conversations */
-         if (all_msgs && !conv.is_archived && conn->session) {
-            int all_count = json_object_array_length(all_msgs);
-
-            /* Check if first message is a system prompt */
-            bool has_system_prompt = false;
-            if (all_count > 0) {
-               json_object *first_msg = json_object_array_get_idx(all_msgs, 0);
-               json_object *role_obj;
-               if (json_object_object_get_ex(first_msg, "role", &role_obj)) {
-                  const char *role = json_object_get_string(role_obj);
-                  if (role && strcmp(role, "system") == 0) {
-                     has_system_prompt = true;
-                  }
-               }
-            }
-
-            session_clear_history(conn->session);
-
-            /* If no system prompt in stored messages, add user's personalized prompt */
-            if (!has_system_prompt) {
-               char *prompt = build_user_prompt(conn->auth_user_id);
-               session_add_message(conn->session, "system",
-                                   prompt ? prompt : get_remote_command_prompt());
-               free(prompt);
-               LOG_INFO("WebUI: Added system prompt to restored conversation");
-            }
-
-            /* If this is a continuation conversation, inject the compaction summary */
-            if (conv.compaction_summary && strlen(conv.compaction_summary) > 0) {
-               char summary_msg[4096];
-               snprintf(summary_msg, sizeof(summary_msg),
-                        "Previous conversation context (summarized): %s", conv.compaction_summary);
-               session_add_message(conn->session, "system", summary_msg);
-               LOG_INFO("WebUI: Injected compaction summary into session context");
-            }
-
-            /* Add all stored messages to session context */
-            for (int i = 0; i < all_count; i++) {
-               json_object *msg = json_object_array_get_idx(all_msgs, i);
-               json_object *role_obj, *content_obj;
-               if (json_object_object_get_ex(msg, "role", &role_obj) &&
-                   json_object_object_get_ex(msg, "content", &content_obj)) {
-                  session_add_message(conn->session, json_object_get_string(role_obj),
-                                      json_object_get_string(content_obj));
-               }
-            }
-            LOG_INFO(
-                "WebUI: Restored %d messages to session %u context (single-fetch optimization)",
-                all_count, conn->session->session_id);
-
-            /* Apply stored LLM settings to session (if any were locked) */
-            if (conv.llm_type[0] != '\0' || conv.tools_mode[0] != '\0') {
-               session_llm_config_t cfg;
-               session_get_llm_config(conn->session, &cfg);
-
-               if (conv.llm_type[0] != '\0') {
-                  if (strcmp(conv.llm_type, "local") == 0) {
-                     cfg.type = LLM_LOCAL;
-                  } else if (strcmp(conv.llm_type, "cloud") == 0) {
-                     cfg.type = LLM_CLOUD;
-                  }
-               }
-               if (conv.cloud_provider[0] != '\0') {
-                  if (strcmp(conv.cloud_provider, "openai") == 0) {
-                     cfg.cloud_provider = CLOUD_PROVIDER_OPENAI;
-                  } else if (strcmp(conv.cloud_provider, "claude") == 0) {
-                     cfg.cloud_provider = CLOUD_PROVIDER_CLAUDE;
-                  } else if (strcmp(conv.cloud_provider, "gemini") == 0) {
-                     cfg.cloud_provider = CLOUD_PROVIDER_GEMINI;
-                  }
-               }
-               if (conv.model[0] != '\0') {
-                  strncpy(cfg.model, conv.model, sizeof(cfg.model) - 1);
-                  cfg.model[sizeof(cfg.model) - 1] = '\0';
-
-                  /* Infer provider from model name if not explicitly stored
-                   * (for conversations created before cloud_provider was saved) */
-                  if (conv.cloud_provider[0] == '\0') {
-                     if (strncmp(conv.model, "gpt-", 4) == 0 ||
-                         strncmp(conv.model, "o1-", 3) == 0 || strncmp(conv.model, "o3-", 3) == 0) {
-                        cfg.cloud_provider = CLOUD_PROVIDER_OPENAI;
-                        LOG_INFO("WebUI: Inferred OpenAI provider from model '%s'", conv.model);
-                     } else if (strncmp(conv.model, "claude-", 7) == 0) {
-                        cfg.cloud_provider = CLOUD_PROVIDER_CLAUDE;
-                        LOG_INFO("WebUI: Inferred Claude provider from model '%s'", conv.model);
-                     } else if (strncmp(conv.model, "gemini-", 7) == 0) {
-                        cfg.cloud_provider = CLOUD_PROVIDER_GEMINI;
-                        LOG_INFO("WebUI: Inferred Gemini provider from model '%s'", conv.model);
-                     }
-                  }
-               }
-               if (conv.tools_mode[0] != '\0') {
-                  strncpy(cfg.tool_mode, conv.tools_mode, sizeof(cfg.tool_mode) - 1);
-                  cfg.tool_mode[sizeof(cfg.tool_mode) - 1] = '\0';
-               }
-
-               session_set_llm_config(conn->session, &cfg);
-               LOG_INFO("WebUI: Applied stored LLM config (type=%s, model=%s, tools=%s)",
-                        conv.llm_type, conv.model, conv.tools_mode);
+         if (needs_session_context && !conv.is_archived && conn->session) {
+            int restored = webui_restore_conversation_context(conn, &conv, conv_id, all_msgs);
+            if (restored >= 0) {
+               LOG_INFO("WebUI: Restored %d messages to session %u context", restored,
+                        conn->session->session_id);
             }
          }
 

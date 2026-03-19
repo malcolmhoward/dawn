@@ -256,6 +256,7 @@ static const char *SEQUENTIAL_TOOLS[] = {
    "cloud_provider",     /* Modifies LLM provider selection */
    "viewing",            /* Uses shared MQTT state for image capture */
    "shutdown",           /* Critical system operation */
+   "execute_plan",       /* Plan executor modifies state via sub-tool calls */
    NULL                  /* Sentinel */
 };
 

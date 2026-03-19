@@ -1088,6 +1088,55 @@ int conv_db_lock_llm_settings(int64_t conv_id,
    return (changes > 0) ? AUTH_DB_SUCCESS : AUTH_DB_NOT_FOUND;
 }
 
+int conv_db_update_llm_settings(int64_t conv_id,
+                                int user_id,
+                                const char *llm_type,
+                                const char *cloud_provider,
+                                const char *model,
+                                const char *tools_mode,
+                                const char *thinking_mode) {
+   if (conv_id <= 0) {
+      return AUTH_DB_INVALID;
+   }
+
+   AUTH_DB_LOCK_OR_FAIL();
+
+   const char *sql = "UPDATE conversations SET "
+                     "llm_type = ?, cloud_provider = ?, model = ?, "
+                     "tools_mode = ?, thinking_mode = ? "
+                     "WHERE id = ? AND user_id = ?";
+
+   sqlite3_stmt *stmt = NULL;
+   int rc = sqlite3_prepare_v2(s_db.db, sql, -1, &stmt, NULL);
+   if (rc != SQLITE_OK) {
+      LOG_ERROR("auth_db: prepare update_llm_settings failed: %s", sqlite3_errmsg(s_db.db));
+      AUTH_DB_UNLOCK();
+      return AUTH_DB_FAILURE;
+   }
+
+   sqlite3_bind_text(stmt, 1, llm_type ? llm_type : "", -1, SQLITE_STATIC);
+   sqlite3_bind_text(stmt, 2, cloud_provider ? cloud_provider : "", -1, SQLITE_STATIC);
+   sqlite3_bind_text(stmt, 3, model ? model : "", -1, SQLITE_STATIC);
+   sqlite3_bind_text(stmt, 4, tools_mode ? tools_mode : "", -1, SQLITE_STATIC);
+   sqlite3_bind_text(stmt, 5, thinking_mode ? thinking_mode : "", -1, SQLITE_STATIC);
+   sqlite3_bind_int64(stmt, 6, conv_id);
+   sqlite3_bind_int(stmt, 7, user_id);
+
+   rc = sqlite3_step(stmt);
+   sqlite3_finalize(stmt);
+
+   if (rc != SQLITE_DONE) {
+      LOG_ERROR("auth_db: update_llm_settings step failed: %s", sqlite3_errmsg(s_db.db));
+      AUTH_DB_UNLOCK();
+      return AUTH_DB_FAILURE;
+   }
+
+   int changes = sqlite3_changes(s_db.db);
+   AUTH_DB_UNLOCK();
+
+   return (changes > 0) ? AUTH_DB_SUCCESS : AUTH_DB_NOT_FOUND;
+}
+
 /* =============================================================================
  * Message Operations
  * ============================================================================= */

@@ -934,6 +934,14 @@ void session_destroy(uint32_t session_id) {
 
    pthread_rwlock_unlock(&session_manager_rwlock);
 
+   /* Phase 1.5: Detach WebUI connections before waiting for ref_count.
+    * This NULLs out conn->session pointers and calls session_release()
+    * for each detached connection, allowing the ref_count wait below
+    * to complete without timing out. */
+#ifdef ENABLE_WEBUI
+   webui_detach_session(session);
+#endif
+
    // Phase 2: Wait for ref_count to reach 0 (with timeout to prevent shutdown hang)
    pthread_mutex_lock(&session->ref_mutex);
    while (session->ref_count > 0) {
@@ -1110,6 +1118,25 @@ void session_add_message(session_t *session, const char *role, const char *conte
 
    pthread_mutex_lock(&session->history_mutex);
 
+   /* Guard against corrupted or NULL history — recover by creating a fresh array */
+   if (!session->conversation_history ||
+       !json_object_is_type(session->conversation_history, json_type_array)) {
+      LOG_ERROR("Session %u: conversation_history is %s (expected array), recreating",
+                session->session_id,
+                session->conversation_history
+                    ? json_type_to_name(json_object_get_type(session->conversation_history))
+                    : "NULL");
+      if (session->conversation_history) {
+         json_object_put(session->conversation_history);
+      }
+      session->conversation_history = json_object_new_array();
+      if (!session->conversation_history) {
+         pthread_mutex_unlock(&session->history_mutex);
+         LOG_ERROR("Session %u: Failed to recreate conversation history", session->session_id);
+         return;
+      }
+   }
+
    struct json_object *message = json_object_new_object();
    if (!message) {
       pthread_mutex_unlock(&session->history_mutex);
@@ -1145,6 +1172,21 @@ void session_add_message_with_images(session_t *session,
    }
 
    pthread_mutex_lock(&session->history_mutex);
+
+   /* Guard against corrupted or NULL history */
+   if (!session->conversation_history ||
+       !json_object_is_type(session->conversation_history, json_type_array)) {
+      LOG_ERROR("Session %u: conversation_history corrupt in add_message_with_images, recreating",
+                session->session_id);
+      if (session->conversation_history) {
+         json_object_put(session->conversation_history);
+      }
+      session->conversation_history = json_object_new_array();
+      if (!session->conversation_history) {
+         pthread_mutex_unlock(&session->history_mutex);
+         return;
+      }
+   }
 
    struct json_object *message = json_object_new_object();
    if (!message) {

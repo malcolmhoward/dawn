@@ -52,6 +52,8 @@ endif()
 
 set(TOOL_REGISTRY_SOURCES
     src/tools/tool_registry.c
+    src/tools/plan_executor.c
+    src/tools/plan_executor_tool.c
 )
 
 # =============================================================================
