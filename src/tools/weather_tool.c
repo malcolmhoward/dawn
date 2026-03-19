@@ -100,6 +100,9 @@ static const tool_metadata_t weather_metadata = {
 static char *weather_tool_callback(const char *action, char *value, int *should_respond) {
    *should_respond = 1; /* Always return results to LLM */
 
+   if (!action)
+      action = "today";
+
    /* Determine forecast type from action */
    forecast_type_t forecast = FORECAST_TODAY; /* Default */
 

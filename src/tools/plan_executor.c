@@ -533,20 +533,22 @@ bool plan_tool_is_allowed(const tool_metadata_t *meta) {
  * Plan Parsing
  * ============================================================================= */
 
-static int validate_step(struct json_object *step);
+static int validate_step_depth(struct json_object *step, int depth);
 
-static int validate_step_array(struct json_object *steps) {
+static int validate_step_array_depth(struct json_object *steps, int depth) {
    int len = json_object_array_length(steps);
    for (int i = 0; i < len; i++) {
       struct json_object *step = json_object_array_get_idx(steps, i);
-      int rc = validate_step(step);
+      int rc = validate_step_depth(step, depth);
       if (rc != PLAN_OK)
          return rc;
    }
    return PLAN_OK;
 }
 
-static int validate_step(struct json_object *step) {
+static int validate_step_depth(struct json_object *step, int depth) {
+   if (depth > PLAN_MAX_DEPTH)
+      return PLAN_ERR_PARSE;
    if (!json_object_is_type(step, json_type_object))
       return PLAN_ERR_PARSE;
 
@@ -592,14 +594,14 @@ static int validate_step(struct json_object *step) {
       struct json_object *then_branch = jobj_get(step, "then");
       if (!then_branch || !json_object_is_type(then_branch, json_type_array))
          return PLAN_ERR_PARSE;
-      int rc = validate_step_array(then_branch);
+      int rc = validate_step_array_depth(then_branch, depth + 1);
       if (rc != PLAN_OK)
          return rc;
       struct json_object *else_branch = jobj_get(step, "else");
       if (else_branch) {
          if (!json_object_is_type(else_branch, json_type_array))
             return PLAN_ERR_PARSE;
-         rc = validate_step_array(else_branch);
+         rc = validate_step_array_depth(else_branch, depth + 1);
          if (rc != PLAN_OK)
             return rc;
       }
@@ -618,7 +620,7 @@ static int validate_step(struct json_object *step) {
          return PLAN_ERR_INVALID_VAR;
       if (!steps_arr || !json_object_is_type(steps_arr, json_type_array))
          return PLAN_ERR_PARSE;
-      return validate_step_array(steps_arr);
+      return validate_step_array_depth(steps_arr, depth + 1);
    }
 
    /* Unknown step type */
@@ -646,7 +648,7 @@ int plan_parse(const char *json, struct json_object **out) {
    }
 
    /* Validate all steps */
-   int rc = validate_step_array(root);
+   int rc = validate_step_array_depth(root, 0);
    if (rc != PLAN_OK) {
       json_object_put(root);
       return rc;

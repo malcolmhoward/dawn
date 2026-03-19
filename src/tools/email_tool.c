@@ -343,14 +343,22 @@ static char *handle_send(struct json_object *details, int user_id) {
          if (!buf)
             return strdup("Error: memory allocation failed");
          int pos = snprintf(buf, 1024, "Multiple email addresses found for '%s':\n", to);
+         if (pos > 1024)
+            pos = 1024;
          for (int i = 0; i < found && pos < 900; i++) {
             pos += snprintf(buf + pos, 1024 - pos, "- %s: %s%s%s\n", contacts[i].entity_name,
                             contacts[i].value, contacts[i].label[0] ? " (" : "",
                             contacts[i].label[0] ? contacts[i].label : "");
-            if (contacts[i].label[0])
+            if (pos > 1024)
+               pos = 1024;
+            if (contacts[i].label[0] && pos < 1024) {
                pos += snprintf(buf + pos, 1024 - pos, ")");
+               if (pos > 1024)
+                  pos = 1024;
+            }
          }
-         pos += snprintf(buf + pos, 1024 - pos, "\nPlease specify which email address to use.");
+         if (pos < 1024)
+            snprintf(buf + pos, 1024 - pos, "\nPlease specify which email address to use.");
          return buf;
       }
    }

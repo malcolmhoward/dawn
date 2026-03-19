@@ -505,12 +505,12 @@ static char *smartthings_tool_callback(const char *action, char *value, int *sho
    }
 
    /* Unknown action */
-   char *msg = malloc(256);
-   snprintf(msg, 256,
+   char buf[256];
+   snprintf(buf, sizeof(buf),
             "Unknown SmartThings action '%s'. Supported: list, status, on, off, brightness, "
             "color, temperature, lock, unlock",
             action);
-   return msg;
+   return strdup(buf);
 }
 
 /* ========== Public API ========== */

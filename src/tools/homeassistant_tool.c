@@ -909,9 +909,9 @@ static char *ha_tool_callback(const char *action, char *value, int *should_respo
    if (strcmp(action, "automation") == 0)
       return handle_automation(value);
 
-   char *msg = malloc(256);
-   snprintf(msg, 256, "Unknown Home Assistant action '%s'.", action);
-   return msg;
+   char buf[256];
+   snprintf(buf, sizeof(buf), "Unknown Home Assistant action '%s'.", action);
+   return strdup(buf);
 }
 
 /* ========== Public API ========== */

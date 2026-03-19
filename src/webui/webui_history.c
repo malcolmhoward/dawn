@@ -735,12 +735,26 @@ void handle_load_conversation(ws_connection_t *conn, struct json_object *payload
       }
 
       if (result == AUTH_DB_SUCCESS) {
-         /* Restore to session context on initial load of non-archived conversations */
+         /* Restore to session context on initial load of non-archived conversations.
+          * Skip if session already has conversation history (e.g., auto-create already
+          * restored this conversation — re-restoring would wipe any user messages
+          * that were added between the auto-create restore and this load request). */
          if (needs_session_context && !conv.is_archived && conn->session) {
-            int restored = webui_restore_conversation_context(conn, &conv, conv_id, all_msgs);
-            if (restored >= 0) {
-               LOG_INFO("WebUI: Restored %d messages to session %u context", restored,
-                        conn->session->session_id);
+            struct json_object *existing = session_get_history(conn->session);
+            int existing_count = existing ? json_object_array_length(existing) : 0;
+            if (existing)
+               json_object_put(existing);
+
+            if (existing_count <= 1) {
+               int restored = webui_restore_conversation_context(conn, &conv, conv_id, all_msgs);
+               if (restored >= 0) {
+                  LOG_INFO("WebUI: Restored %d messages to session %u context", restored,
+                           conn->session->session_id);
+               }
+            } else {
+               LOG_INFO("WebUI: Skipped redundant restore for session %u "
+                        "(already has %d messages)",
+                        conn->session->session_id, existing_count);
             }
          }
 

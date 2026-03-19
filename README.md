@@ -80,6 +80,7 @@ DAWN's LLM automatically invokes tools and incorporates results into responses. 
    - Recurring events (daily, weekdays, weekends, weekly, custom days)
    - Audible chimes with configurable volume, snooze, and dismiss via voice or WebUI
    - Scheduled tasks: "Turn off the lights at midnight" (executes any registered tool)
+- **Multi-Step Plans** — Complex workflows execute locally in a single LLM round trip. The plan executor interprets a JSON DSL with conditional logic, loops, and variable binding — "If I don't have any alarms, set one for 7am" runs as one plan instead of multiple back-and-forth tool calls.
 - **Document Search (RAG)** — Upload documents and ask questions about their content.
    - Semantic search across uploaded PDFs, DOCX, TXT, and Markdown files
    - Paginated document reading for full-document summaries
@@ -193,6 +194,7 @@ These features are not required but extend what DAWN can do. Each links to its s
 | **[dawn_satellite_arduino/README.md](dawn_satellite_arduino/README.md)** | Tier 2 satellite (ESP32-S3, Arduino) setup |
 | **[docs/EMAIL_DESIGN.md](docs/EMAIL_DESIGN.md)** | Email integration architecture and design |
 | **[docs/GOOGLE_OAUTH_SETUP.md](docs/GOOGLE_OAUTH_SETUP.md)** | Google OAuth 2.0 setup for Calendar and Email |
+| **[docs/TOOL_PLAN_EXECUTOR_DESIGN.md](docs/TOOL_PLAN_EXECUTOR_DESIGN.md)** | Plan executor DSL specification and design |
 | **[docs/TOOL_DEVELOPMENT_GUIDE.md](docs/TOOL_DEVELOPMENT_GUIDE.md)** | Guide for adding new LLM tools |
 | **[services/llama-server/README.md](services/llama-server/README.md)** | Local LLM service setup |
 | **[test_recordings/BENCHMARK_RESULTS.md](test_recordings/BENCHMARK_RESULTS.md)** | ASR performance benchmarks |

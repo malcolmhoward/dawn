@@ -13,6 +13,7 @@ D.A.W.N. (part of The OASIS Project) is a voice-controlled AI assistant system w
 - Vision AI capabilities
 - Extended thinking/reasoning mode support
 - Scheduler system (timers, alarms, reminders, scheduled tool execution)
+- Plan executor for multi-step tool orchestration (JSON DSL, conditional logic, loops)
 
 The project is designed for embedded Linux systems (specifically targeting Jetson platforms with CUDA support).
 
@@ -357,6 +358,7 @@ Unit tests in `tests/` (standalone binaries, no framework):
 - `test_sse_parser` — SSE stream parser
 - `test_sentence_buffer` — Sentence boundary detection
 - `test_session_commands` — Thread-local session context
+- `test_plan_executor` — Plan executor DSL parsing, execution, safety limits (130 assertions, 30 tests)
 
 Build and run: `make -C build-debug test_scheduler && ./build-debug/tests/test_scheduler`
 
@@ -459,6 +461,13 @@ Manual testing covers:
 - `www/js/ui/email-accounts.js`: Email account management UI
 - `docs/EMAIL_DESIGN.md`: Full design document
 
+**Plan Executor:**
+- `include/tools/plan_executor.h`: Public API, constants, data structures
+- `src/tools/plan_executor.c`: Plan parser, executor, condition evaluator, arg builder (~580 lines)
+- `src/tools/plan_executor_tool.c`: Tool registry metadata and callback wrapper
+- `tests/test_plan_executor.c`: Unit tests (130 assertions, 30 tests)
+- `docs/TOOL_PLAN_EXECUTOR_DESIGN.md`: Full design document with DSL spec
+
 **Satellite (DAP2):**
 - `dawn_satellite/`: Standalone satellite binary for Raspberry Pi
 - `dawn_satellite/config/satellite.toml`: Default satellite configuration
@@ -492,6 +501,10 @@ Manual testing covers:
 - Contacts WebUI (5th Memory tab, WebSocket CRUD, modal add/edit, entity cross-linking from Graph tab)
 - Entity merge (transactional SQL, relation/contact dedup, LLM tool + WebUI two-click merge)
 - OAuth multi-account fix (always launch popup for account picker, button state reset on success)
+- Plan executor (multi-step tool orchestration DSL with conditional logic, loops, variable binding, safety controls)
+- Session lifecycle hardening (auto-create on expiry, race-safe conversation restore)
+- Memory forget-by-ID (exact text/ID match replaces index guessing)
+- Orchestrator UI (WebUI plan execution debug display)
 
 ## Code Review Workflow
 

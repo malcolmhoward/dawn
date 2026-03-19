@@ -675,11 +675,12 @@ static int fuzzy_match_score(const char *haystack, const char *needle) {
    strncpy(needle_copy, needle_lower, sizeof(needle_copy) - 1);
    needle_copy[sizeof(needle_copy) - 1] = '\0';
 
-   char *token = strtok(needle_copy, " ");
+   char *saveptr;
+   char *token = strtok_r(needle_copy, " ", &saveptr);
    while (token) {
       if (strstr(hay_lower, token))
          score += 20;
-      token = strtok(NULL, " ");
+      token = strtok_r(NULL, " ", &saveptr);
    }
 
    return score;

@@ -27,6 +27,7 @@
 #define _GNU_SOURCE
 #include "tools/music_tool.h"
 
+#include <errno.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -72,11 +73,15 @@ typedef struct {
 
 static Playlist s_playlist = { .count = 0 };
 static int s_current_track = 0;
-static pthread_t s_music_thread = -1;
+static pthread_t s_music_thread;
+static bool s_thread_active = false;
 
 /* Pause/resume position tracking */
 static uint64_t s_paused_position = 0;    /* Position in samples when paused */
 static uint32_t s_paused_sample_rate = 0; /* Sample rate for position conversion */
+
+/* Protects s_playlist, s_current_track, s_paused_*, s_thread_active, s_music_thread */
+static pthread_mutex_t s_music_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /* ========== Forward Declarations ========== */
 
@@ -180,16 +185,15 @@ static const char *extract_filename(const char *path) {
  *
  * Note: When called from the playback thread itself (auto-advance via
  * music_tool_auto_advance), pthread_join returns EDEADLK (self-join).
- * The join fails, s_music_thread is NOT reset, and start_playback()
- * overwrites it with the new thread handle. The old thread exits
- * naturally after music_tool_auto_advance() returns.
+ * In that case we clear s_thread_active so start_playback() can proceed;
+ * the old thread exits naturally after music_tool_auto_advance() returns.
  */
 static void stop_current_playback(void) {
-   if (s_music_thread != (pthread_t)-1) {
+   if (s_thread_active) {
       setMusicPlay(0);
       int join_result = pthread_join(s_music_thread, NULL);
-      if (join_result == 0) {
-         s_music_thread = -1;
+      if (join_result == 0 || join_result == EDEADLK) {
+         s_thread_active = false;
       }
    }
 }
@@ -218,6 +222,7 @@ static char *start_playback_at(unsigned int start_time) {
       free(args);
       return NULL;
    }
+   s_thread_active = true;
 
    return NULL;
 }
@@ -244,6 +249,7 @@ static char *start_playback(bool report_result) {
       free(args);
       return report_result ? strdup("Failed to start music playback") : NULL;
    }
+   s_thread_active = true;
 
    if (!report_result) {
       return NULL;
@@ -304,7 +310,16 @@ static int search_music_database(const char *query, Playlist *playlist) {
 
 /* ========== Callback Implementation ========== */
 
+static char *music_tool_callback_inner(const char *action, char *value, int *should_respond);
+
 static char *music_tool_callback(const char *action, char *value, int *should_respond) {
+   pthread_mutex_lock(&s_music_mutex);
+   char *result = music_tool_callback_inner(action, value, should_respond);
+   pthread_mutex_unlock(&s_music_mutex);
+   return result;
+}
+
+static char *music_tool_callback_inner(const char *action, char *value, int *should_respond) {
    char *result = NULL;
 
    *should_respond = 1;
@@ -603,6 +618,13 @@ static char *music_tool_callback(const char *action, char *value, int *should_re
          return strdup("No playlist available");
       }
 
+      if (!value || !*value) {
+         if (direct_mode) {
+            *should_respond = 0;
+            return NULL;
+         }
+         return strdup("Please specify a track number");
+      }
       int track_num = atoi(value);
       if (track_num < 1 || track_num > s_playlist.count) {
          if (direct_mode) {
@@ -894,17 +916,21 @@ static char *music_tool_callback(const char *action, char *value, int *should_re
 /* ========== Auto-Advance (called from playback thread) ========== */
 
 void music_tool_auto_advance(void) {
+   pthread_mutex_lock(&s_music_mutex);
    int should_respond = 0;
-   char *result = music_tool_callback("next", NULL, &should_respond);
+   char *result = music_tool_callback_inner("next", NULL, &should_respond);
    free(result);
+   pthread_mutex_unlock(&s_music_mutex);
 }
 
 /* ========== Lifecycle Functions ========== */
 
 static void music_tool_cleanup(void) {
+   pthread_mutex_lock(&s_music_mutex);
    stop_current_playback();
    s_playlist.count = 0;
    s_current_track = 0;
+   pthread_mutex_unlock(&s_music_mutex);
 }
 
 /* ========== Public API ========== */

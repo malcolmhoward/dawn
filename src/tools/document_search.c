@@ -111,13 +111,16 @@ static bool contains_keyword(const char *text, const char *keyword, int keyword_
    for (const char *p = text; *p; p++) {
       if (tolower((unsigned char)*p) == tolower((unsigned char)keyword[0])) {
          bool match = true;
+         int matched = 1;
          for (int i = 1; i < keyword_len && p[i]; i++) {
             if (tolower((unsigned char)p[i]) != tolower((unsigned char)keyword[i])) {
                match = false;
                break;
             }
+            matched++;
          }
-         if (match && (p[keyword_len] == '\0' || !isalnum((unsigned char)p[keyword_len])))
+         if (match && matched == keyword_len &&
+             (p[keyword_len] == '\0' || !isalnum((unsigned char)p[keyword_len])))
             return true;
       }
    }

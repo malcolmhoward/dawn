@@ -73,6 +73,8 @@ static char *truncate_with_notice(const char *text, size_t max_len, size_t origi
    // Reserve space for truncation notice (use sizeof for robustness)
    const char *notice_fmt = "\n\n[Content truncated: showing %zu of %zu bytes]";
    char notice[80];
+   if (max_len <= sizeof(notice) + 1)
+      return NULL;
    size_t content_max = max_len - sizeof(notice) - 1;
    snprintf(notice, sizeof(notice), notice_fmt, content_max, original_len);
    size_t notice_len = strlen(notice);

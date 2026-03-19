@@ -357,7 +357,7 @@ This allows robust plans like:
 | Max total step executions | 50 (`PLAN_MAX_STEPS`) | Counts every execution including loop iterations and nested branches |
 | Max tool calls per plan | 20 (`PLAN_MAX_TOOL_CALLS`) | Separate counter, only `call` steps |
 | Max loop iterations | 10 (`PLAN_MAX_LOOP_ITERATIONS`) | Server-enforced, LLM-provided values ignored |
-| Max nested depth | 5 (if/loop nesting) | |
+| Max nested depth | 5 (`PLAN_MAX_DEPTH`, if/loop nesting) | Enforced at **parse time** via `validate_step_depth()` |
 | Max variables | 32 (`PLAN_MAX_VARS`) | |
 | Max output size | 8192 bytes (`LLM_TOOLS_RESULT_LEN`) | Truncated with marker on overflow |
 | Max plan JSON size | 16384 bytes | Validated before `json_tokener_parse()` |
@@ -544,7 +544,7 @@ typedef struct {
 **Public API** (declared in `plan_executor.h`):
 
 ```c
-/* Parse and validate a plan (checks JSON size, structure, variable names) */
+/* Parse and validate a plan (checks JSON size, structure, variable names, depth) */
 int plan_parse(const char *json, struct json_object **out);
 
 /* Execute a plan step array (recursive for if/loop bodies) */
@@ -586,6 +586,10 @@ static int plan_step_if(plan_context_t *ctx, struct json_object *step);
 static int plan_step_loop(plan_context_t *ctx, struct json_object *step);
 static int plan_step_set(plan_context_t *ctx, struct json_object *step);
 static int plan_step_log(plan_context_t *ctx, struct json_object *step);
+
+/* Depth-limited recursive validation (called at parse time) */
+static int validate_step_depth(struct json_object *step, int depth);
+static int validate_step_array_depth(struct json_object *steps, int depth);
 
 /* json-c accessor helpers */
 static const char *jobj_get_string(struct json_object *obj, const char *key);
@@ -733,6 +737,10 @@ Design reviewed 2026-02-22 by architecture-reviewer, embedded-efficiency-reviewe
 18. **Audit logging** via existing `notify_tool_execution()` path (Security L2)
 19. **Configurable timeout** via `[llm.tools] plan_timeout` (Embedded L2)
 20. **Handle both JSON forms** for plan parameter (Arch H3)
+
+Post-implementation security hardening (2026-03-19):
+
+21. **Parse-time depth validation** — `validate_step`/`validate_step_array` renamed to `validate_step_depth`/`validate_step_array_depth` with explicit `depth` parameter. Rejects plans exceeding `PLAN_MAX_DEPTH` at parse time before any execution begins, preventing stack overflow from malicious deeply-nested JSON
 
 ## References
 

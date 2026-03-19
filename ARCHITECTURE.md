@@ -4,7 +4,7 @@ This document describes the architecture of the D.A.W.N. (Digital Assistant for 
 
 **D.A.W.N.** is the central intelligence layer of the OASIS ecosystem, responsible for interpreting user intent, fusing data from every subsystem, and routing commands. At its core, DAWN performs neural-inference to understand context and drive decision-making, acting as OASIS's orchestration hub for MIRAGE, AURA, SPARK, STAT, and any future modules.
 
-**Last Updated**: March 16, 2026 (Email, OAuth/Crypto, Scheduler, Home Assistant subsystems; contacts, entity merge, per-user settings)
+**Last Updated**: March 19, 2026 (Plan executor, session lifecycle hardening, memory forget-by-ID, orchestrator UI)
 
 ## Table of Contents
 
@@ -1813,8 +1813,8 @@ static const tool_metadata_t my_tool_metadata = {
 
 - audio_tools, calculator_tool, calendar_tool, datetime_tool, document_read_tool
 - document_search_tool, email_tool, homeassistant_tool, hud_tools, llm_status_tool
-- memory_tool, music_tool, reset_conversation_tool, scheduler_tool, search_tool
-- shutdown_tool, switch_llm_tool, url_tool, viewing_tool, volume_tool, weather_tool
+- memory_tool, music_tool, plan_executor_tool, reset_conversation_tool, scheduler_tool
+- search_tool, shutdown_tool, switch_llm_tool, url_tool, viewing_tool, volume_tool, weather_tool
 
 ### Command Flow
 
@@ -2381,6 +2381,7 @@ The WebUI settings panel (`www/js/ui/settings.js`) defines a `SETTINGS_SCHEMA` t
 13. ✅ **Plex Music Source** — Unified music DB with local + Plex, priority-based dedup, source abstraction
 14. ✅ **Security Hardening** — HTTP security headers, pentest suite (34 tests), private CA for TLS
 15. ✅ **Modular Tool Registry** — O(1) hash lookups, parallel execution, capability flags, compile-time feature guards
+16. ✅ **Plan Executor** — Multi-step tool orchestration DSL (call, if, loop, set, log), safety controls, 130 unit tests
 
 ### Planned Features
 
@@ -2407,8 +2408,8 @@ The WebUI settings panel (`www/js/ui/settings.js`) defines a `SETTINGS_SCHEMA` t
 
 ---
 
-**Document Version**: 3.0
-**Last Updated**: March 16, 2026
+**Document Version**: 3.1
+**Last Updated**: March 19, 2026
 **Reorganization Commit**: [Git SHA to be added after commit]
 
 ### LLM Threading Architecture (Post-Interrupt Implementation)

@@ -331,7 +331,7 @@ static ha_error_t do_api_request(const char *method,
       if (http_code == 401) {
          LOG_ERROR("Home Assistant: Authentication failed (401)");
          result = HA_ERR_NOT_CONNECTED;
-         s_ha.connected = false;
+         __atomic_store_n(&s_ha.connected, false, __ATOMIC_RELEASE);
       } else if (http_code == 429) {
          LOG_WARNING("Home Assistant: Rate limited (429)");
          result = HA_ERR_RATE_LIMITED;
@@ -489,7 +489,7 @@ bool homeassistant_is_configured(void) {
 }
 
 bool homeassistant_is_connected(void) {
-   return s_ha.initialized && s_ha.connected;
+   return s_ha.initialized && __atomic_load_n(&s_ha.connected, __ATOMIC_ACQUIRE);
 }
 
 ha_error_t homeassistant_test_connection(void) {
@@ -509,7 +509,7 @@ ha_error_t homeassistant_test_connection(void) {
          if (json_object_object_get_ex(root, "message", &msg_obj)) {
             const char *msg = json_object_get_string(msg_obj);
             if (msg && strstr(msg, "API running")) {
-               s_ha.connected = true;
+               __atomic_store_n(&s_ha.connected, true, __ATOMIC_RELEASE);
             }
          }
          /* Try to extract version */
@@ -526,7 +526,8 @@ ha_error_t homeassistant_test_connection(void) {
    }
 
    curl_buffer_free(&response);
-   return s_ha.connected ? HA_OK : (err == HA_OK ? HA_ERR_API : err);
+   return __atomic_load_n(&s_ha.connected, __ATOMIC_ACQUIRE) ? HA_OK
+                                                             : (err == HA_OK ? HA_ERR_API : err);
 }
 
 ha_error_t homeassistant_get_status(ha_status_t *status) {
@@ -534,7 +535,7 @@ ha_error_t homeassistant_get_status(ha_status_t *status) {
       return HA_ERR_INVALID_PARAM;
 
    status->configured = s_ha.initialized;
-   status->connected = s_ha.connected;
+   status->connected = __atomic_load_n(&s_ha.connected, __ATOMIC_ACQUIRE);
    status->entity_count = s_ha.entity_cache.count;
    strncpy(status->version, s_ha.version, sizeof(status->version) - 1);
    status->version[sizeof(status->version) - 1] = '\0';
@@ -580,10 +581,18 @@ static const char HA_AREA_TEMPLATE[] =
     "{% endfor %}"
     "{{ ns.items | to_json }}\"}";
 
-static void refresh_area_cache(void) {
+/**
+ * @brief Fetch area→entity mappings from HA (no lock held — does network I/O).
+ *
+ * Parses the result into @p out. Caller must hold the write lock when
+ * committing @p out into s_ha.area_cache.
+ *
+ * @return true if new data was fetched, false if cache is still valid or fetch failed.
+ */
+static bool fetch_area_data(ha_area_cache_t *out) {
    int64_t now = (int64_t)time(NULL);
    if (s_ha.area_cache.cached_at > 0 && (now - s_ha.area_cache.cached_at) < HA_AREA_CACHE_TTL_SEC) {
-      return; /* Still valid */
+      return false; /* Still valid */
    }
 
    /* The area/entity registries are WebSocket-only in HA — no REST endpoint.
@@ -598,8 +607,9 @@ static void refresh_area_cache(void) {
    if (err != HA_OK) {
       curl_buffer_free(&response);
       LOG_INFO("Home Assistant: Area template query failed (will continue without areas)");
-      s_ha.area_cache.cached_at = now;
-      return;
+      out->count = 0;
+      out->cached_at = now;
+      return true;
    }
 
    /* Parse response: [{entity_id, area}, ...] */
@@ -609,13 +619,14 @@ static void refresh_area_cache(void) {
       if (root)
          json_object_put(root);
       LOG_INFO("Home Assistant: Area template returned non-array (will continue without areas)");
-      s_ha.area_cache.cached_at = now;
-      return;
+      out->count = 0;
+      out->cached_at = now;
+      return true;
    }
 
-   s_ha.area_cache.count = 0;
+   out->count = 0;
    int n = json_object_array_length(root);
-   for (int i = 0; i < n && s_ha.area_cache.count < HA_MAX_AREAS * 4; i++) {
+   for (int i = 0; i < n && out->count < HA_MAX_AREAS * 4; i++) {
       json_object *item = json_object_array_get_idx(root, i);
       json_object *eid_obj, *area_obj;
       if (!json_object_object_get_ex(item, "entity_id", &eid_obj) ||
@@ -627,24 +638,24 @@ static void refresh_area_cache(void) {
       if (!eid || !eid[0] || !area || !area[0])
          continue;
 
-      ha_area_entry_t *entry = &s_ha.area_cache.entries[s_ha.area_cache.count];
+      ha_area_entry_t *entry = &out->entries[out->count];
       strncpy(entry->entity_id, eid, sizeof(entry->entity_id) - 1);
       entry->entity_id[sizeof(entry->entity_id) - 1] = '\0';
       strncpy(entry->area_name, area, sizeof(entry->area_name) - 1);
       entry->area_name[sizeof(entry->area_name) - 1] = '\0';
-      s_ha.area_cache.count++;
+      out->count++;
    }
 
    json_object_put(root);
 
    /* Sort area cache by entity_id for O(log n) lookup via bsearch */
-   if (s_ha.area_cache.count > 1) {
-      qsort(s_ha.area_cache.entries, s_ha.area_cache.count, sizeof(ha_area_entry_t),
-            area_entry_compare);
+   if (out->count > 1) {
+      qsort(out->entries, out->count, sizeof(ha_area_entry_t), area_entry_compare);
    }
 
-   s_ha.area_cache.cached_at = now;
-   LOG_INFO("Home Assistant: Cached %d entity-area assignments", s_ha.area_cache.count);
+   out->cached_at = now;
+   LOG_INFO("Home Assistant: Cached %d entity-area assignments", out->count);
+   return true;
 }
 
 int homeassistant_list_areas(char areas[][64], int max_areas) {
@@ -756,10 +767,16 @@ static ha_error_t fetch_entities(void) {
       return HA_ERR_API;
    }
 
-   /* Refresh area cache if needed */
-   refresh_area_cache();
+   /* Fetch area data outside the lock (does network I/O) */
+   ha_area_cache_t area_update;
+   bool area_updated = fetch_area_data(&area_update);
 
    pthread_rwlock_wrlock(&s_ha.rwlock);
+
+   /* Commit area data under write lock */
+   if (area_updated) {
+      s_ha.area_cache = area_update;
+   }
    s_ha.entity_cache.count = 0;
 
    int total = json_object_array_length(root);
@@ -854,7 +871,7 @@ ha_error_t homeassistant_list_entities(const ha_entity_list_t **list) {
       return HA_ERR_INVALID_PARAM;
    if (!s_ha.initialized)
       return HA_ERR_NOT_CONFIGURED;
-   if (!s_ha.connected)
+   if (!__atomic_load_n(&s_ha.connected, __ATOMIC_ACQUIRE))
       return HA_ERR_NOT_CONNECTED;
 
    int64_t now = (int64_t)time(NULL);
@@ -876,7 +893,7 @@ ha_error_t homeassistant_refresh_entities(const ha_entity_list_t **list) {
       return HA_ERR_INVALID_PARAM;
    if (!s_ha.initialized)
       return HA_ERR_NOT_CONFIGURED;
-   if (!s_ha.connected)
+   if (!__atomic_load_n(&s_ha.connected, __ATOMIC_ACQUIRE))
       return HA_ERR_NOT_CONNECTED;
 
    /* Force area cache refresh too */

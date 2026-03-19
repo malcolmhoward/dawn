@@ -874,7 +874,7 @@ static void build_all_dense_vectors(sentence_t *sentences,
          hash_entry_t *entry = word_counts[j];
          while (entry) {
             int word_idx = hash_table_get(vocab_table, entry->word);
-            if (word_idx > 0) {
+            if (word_idx > 0 && word_idx <= vocab_size) {
                int df = hash_table_get(doc_freq_table, entry->word);
                float idf = (df > 0) ? logf((float)num_sentences / (float)df) : 0.0f;
                float tfidf = (float)entry->doc_freq * idf;

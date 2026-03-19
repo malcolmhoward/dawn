@@ -26,6 +26,7 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <limits.h>
 #include <math.h>
 #include <pthread.h>
 #include <stdbool.h>
@@ -388,7 +389,8 @@ char *calculator_random(const char *value_str) {
    // Also check if range exceeds RAND_MAX for unbiased results
    unsigned long long range;
    bool range_clamped = false;
-   if (max_val > 0 && min_val < 0 && (max_val - min_val) < 0) {
+   if (max_val > 0 && min_val < 0 &&
+       (unsigned long long)max_val - (unsigned long long)min_val > (unsigned long long)LLONG_MAX) {
       // Overflow detected - limit to RAND_MAX
       range = (unsigned long long)RAND_MAX;
       range_clamped = true;
