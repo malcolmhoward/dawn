@@ -24,6 +24,8 @@
  * Executes tools via llm_tools_execute() to preserve all dispatch logic.
  */
 
+#define _GNU_SOURCE /* strcasestr */
+
 #include "tools/plan_executor.h"
 
 #include <ctype.h>

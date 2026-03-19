@@ -196,6 +196,7 @@ typedef struct {
       struct {
          char *role;
          char *text;
+         bool server_saved; /* Message already persisted to DB server-side */
       } transcript;
       struct {
          char *code;

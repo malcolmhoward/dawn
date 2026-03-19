@@ -249,6 +249,17 @@ int webui_get_queue_fill_pct(void);
 void webui_send_transcript(struct session *session, const char *role, const char *text);
 
 /**
+ * @brief Send transcript with server_saved flag
+ *
+ * When server_saved is true, the client skips its own save_message round-trip
+ * because the server already persisted the message to the conversation DB.
+ */
+void webui_send_transcript_ex(struct session *session,
+                              const char *role,
+                              const char *text,
+                              bool server_saved);
+
+/**
  * @brief Send state update to WebSocket client
  *
  * @param session Session to send to (must be SESSION_TYPE_WEBUI)

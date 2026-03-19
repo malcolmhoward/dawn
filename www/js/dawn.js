@@ -89,8 +89,9 @@
                   DawnTranscript.addEntry(msg.payload.role, displayContent);
 
                   // Save to conversation history (auto-creates conversation on first message)
-                  // Skip replay messages - these are history replay on reconnect, already in DB
-                  if (!msg.payload.replay) {
+                  // Skip replay messages (history replay on reconnect, already in DB)
+                  // Skip server_saved messages (server persisted to DB, client save would dupe)
+                  if (!msg.payload.replay && !msg.payload.server_saved) {
                      DawnHistory.saveMessage(msg.payload.role, displayContent);
                   }
                }

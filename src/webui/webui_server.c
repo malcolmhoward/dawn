@@ -985,7 +985,8 @@ static void send_music_position_impl(struct lws *wsi, double position_sec, uint3
 static void send_transcript_impl_ex(struct lws *wsi,
                                     const char *role,
                                     const char *text,
-                                    bool replay) {
+                                    bool replay,
+                                    bool server_saved) {
    /* Escape JSON special characters in text */
    struct json_object *obj = json_object_new_object();
    struct json_object *payload = json_object_new_object();
@@ -994,6 +995,9 @@ static void send_transcript_impl_ex(struct lws *wsi,
    json_object_object_add(payload, "text", json_object_new_string(text));
    if (replay) {
       json_object_object_add(payload, "replay", json_object_new_boolean(true));
+   }
+   if (server_saved) {
+      json_object_object_add(payload, "server_saved", json_object_new_boolean(true));
    }
    json_object_object_add(obj, "type", json_object_new_string("transcript"));
    json_object_object_add(obj, "payload", payload);
@@ -1004,7 +1008,7 @@ static void send_transcript_impl_ex(struct lws *wsi,
 }
 
 static void send_transcript_impl(struct lws *wsi, const char *role, const char *text) {
-   send_transcript_impl_ex(wsi, role, text, false);
+   send_transcript_impl_ex(wsi, role, text, false, false);
 }
 
 void send_error_impl(struct lws *wsi, const char *code, const char *message) {
@@ -1389,7 +1393,8 @@ static void process_one_response(void) {
          free(resp.state.tools_json);
          break;
       case WS_RESP_TRANSCRIPT:
-         send_transcript_impl(conn->wsi, resp.transcript.role, resp.transcript.text);
+         send_transcript_impl_ex(conn->wsi, resp.transcript.role, resp.transcript.text, false,
+                                 resp.transcript.server_saved);
          free(resp.transcript.role);
          free(resp.transcript.text);
          break;
@@ -4265,7 +4270,10 @@ int webui_get_queue_fill_pct(void) {
  * @param role    Message role (see above)
  * @param text    Message content
  */
-void webui_send_transcript(session_t *session, const char *role, const char *text) {
+void webui_send_transcript_ex(session_t *session,
+                              const char *role,
+                              const char *text,
+                              bool server_saved) {
    if (!session || session->type != SESSION_TYPE_WEBUI) {
       return;
    }
@@ -4275,6 +4283,7 @@ void webui_send_transcript(session_t *session, const char *role, const char *tex
                           .transcript = {
                               .role = strdup(role),
                               .text = strdup(text),
+                              .server_saved = server_saved,
                           } };
 
    if (!resp.transcript.role || !resp.transcript.text) {
@@ -4285,6 +4294,10 @@ void webui_send_transcript(session_t *session, const char *role, const char *tex
    }
 
    queue_response(&resp);
+}
+
+void webui_send_transcript(session_t *session, const char *role, const char *text) {
+   webui_send_transcript_ex(session, role, text, false);
 }
 
 void webui_send_state_with_detail(session_t *session, const char *state, const char *detail) {
@@ -5208,11 +5221,8 @@ static void *text_worker_thread(void *arg) {
       webui_send_state_with_detail(session, "thinking", "Processing request...");
    }
 
-   /* Echo user input as transcript */
-   webui_send_transcript(session, "user", text);
-
-   /* Add user message to history immediately (before LLM call can be cancelled)
-    * If images present, store in multi-part format so they persist across turns */
+   /* Add user message to session history immediately (before LLM call can be cancelled).
+    * If images present, store in multi-part format so they persist across turns. */
    if (work->vision_image_count > 0) {
       session_add_message_with_images(session, "user", text,
                                       (const char *const *)work->vision_images,
@@ -5221,8 +5231,25 @@ static void *text_worker_thread(void *arg) {
       session_add_message(session, "user", text);
    }
 
-   /* Check if TTS is enabled for this connection */
+   /* Persist user message to conversation DB immediately (server-side).
+    * This ensures the message is in the DB before any client-side load_conversation
+    * request arrives — fixes a race where session expiry triggers auto-create,
+    * the client reloads conversation from DB, but the new user message hasn't been
+    * persisted yet (normally saved via client round-trip save_message).
+    * When server_saved=true, the client skips its own save_message to avoid dupes. */
    ws_connection_t *conn = (ws_connection_t *)session->client_data;
+   bool saved_to_db = false;
+   if (conn && conn->active_conversation_id > 0) {
+      if (conv_db_add_message(conn->active_conversation_id, conn->auth_user_id, "user", text) ==
+          AUTH_DB_SUCCESS) {
+         saved_to_db = true;
+      }
+   }
+
+   /* Echo user input as transcript (with server_saved flag to prevent duplicate DB save) */
+   webui_send_transcript_ex(session, "user", text, saved_to_db);
+
+   /* Check if TTS is enabled for this connection */
    bool tts_enabled = conn && conn->tts_enabled;
 
    /* Call LLM with session's conversation history (message already added above)

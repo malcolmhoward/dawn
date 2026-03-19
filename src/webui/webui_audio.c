@@ -31,6 +31,7 @@
 
 #include "asr/asr_interface.h"
 #include "audio/resampler.h"
+#include "auth/auth_db.h"
 #include "core/session_manager.h"
 #include "core/worker_pool.h"
 #include "llm/llm_context.h"
@@ -961,11 +962,21 @@ static void *audio_worker_thread(void *arg) {
       return NULL;
    }
 
-   /* Echo transcription as user message */
-   webui_send_transcript(session, "user", transcript);
-
-   /* Add user message to history immediately (before LLM call can be cancelled) */
+   /* Add user message to session history immediately (before LLM call can be cancelled) */
    session_add_message(session, "user", transcript);
+
+   /* Persist to conversation DB immediately (prevents race with client reload) */
+   ws_connection_t *conn = (ws_connection_t *)session->client_data;
+   bool saved_to_db = false;
+   if (conn && conn->active_conversation_id > 0) {
+      if (conv_db_add_message(conn->active_conversation_id, conn->auth_user_id, "user",
+                              transcript) == AUTH_DB_SUCCESS) {
+         saved_to_db = true;
+      }
+   }
+
+   /* Echo transcription as user message (server_saved prevents duplicate client save) */
+   webui_send_transcript_ex(session, "user", transcript, saved_to_db);
 
    /* Send "thinking" state while LLM processes - streaming callback will switch to "speaking" */
    webui_send_state_with_detail(session, "thinking", "Processing request...");
