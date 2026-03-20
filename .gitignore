@@ -21,6 +21,36 @@ dawn_satellite_arduino/ca_cert.h
 # Arduino secrets (WiFi credentials, server IP)
 dawn_satellite_arduino/arduino_secrets.h
 
+# Downloaded models (not shipped in repo)
+models/embeddings/
+models/whisper.cpp
+
+# Build artifacts
+*.a
+*.db
+
+# Runtime data
+logs/
+
+# Backup files
+*.bak
+*-db.bak*/
+
+# Test output and compiled test binaries
+tests/summarizer_results*/
+tests/test_audio_decoder
+tests/test_playlist_formats
+tests/test_tts_preprocessing
+tests/test_vad_models/
+
+# LLM testing results (historical, not tracked)
+llm_testing/results/archive/
+llm_testing/results/config_search/
+llm_testing/results/fine_tuning/
+llm_testing/results/model_tests/
+llm_testing/results/quality_tests/
+llm_testing/scripts/archive/
+
 # Local planning/tracking docs (not for git)
 docs/FUTURE_WORK.md
 docs/RELEASE_TODO.md
