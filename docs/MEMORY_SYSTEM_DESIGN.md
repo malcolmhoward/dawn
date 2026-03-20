@@ -3,7 +3,7 @@
 **Status:** Phases 1-6.7, S4 Complete - Core Memory, Decay, WebUI Viewer, Import/Export, Contacts WebUI, Entity Merge, Entity Graph, Embeddings
 **Date:** January 2026
 **Authors:** Kris Kersey, with input from community proposals
-**Last Updated:** 2026-03-16
+**Last Updated:** 2026-03-20
 
 ---
 
@@ -22,7 +22,7 @@ A comprehensive design for DAWN's persistent memory system with integrated RAG (
 - **Phase 6.7 (Entity Merge):** ✅ Complete - Transactional merge with relation/contact dedup, LLM tool action + WebUI two-click merge
 - **S4 (Entity Graph):** ✅ Complete - Entities, relations, embeddings, graph search, WebUI graph tab
 - **S4b (Entity Dedup):** ✅ Complete - Existing entities fed into extraction prompt
-- **Phases 7-11 (RAG):** Pending - Document search and retrieval
+- **Phases 7-11 (RAG):** ✅ Implemented — see `docs/RAG_DESIGN.md` (separate system)
 
 ---
 
@@ -1393,45 +1393,9 @@ User confirms → Commit (commit=true) → write to DB
 
 ---
 
-### RAG SYSTEM (Independent, can start after or during Memory)
+### RAG SYSTEM — ✅ IMPLEMENTED (see `docs/RAG_DESIGN.md`)
 
-### Phase 7: RAG Foundation (~1.5 weeks)
-
-- [ ] Add SQLite tables: rag_documents, rag_chunks
-- [ ] Integrate all-MiniLM-L6-v2 embedding model via ONNX Runtime
-- [ ] Embedding generation function
-- [ ] Vector similarity search (cosine) in SQLite
-- [ ] Unit tests for embedding and search
-
-### Phase 8: Document Indexing - TXT/MD (~1 week)
-
-- [ ] Document parser for TXT and MD files
-- [ ] Chunking logic (256 tokens, 50 overlap)
-- [ ] File hash for change detection
-- [ ] Index configured documents directory
-- [ ] Re-index on file changes
-
-### Phase 9: Document Search Tool (~1 week)
-
-- [ ] Add `documents` device (or extend `memory` with `search_docs` action)
-- [ ] RAG retrieval during conversation
-- [ ] Add to commands_config_nuevo.json
-- [ ] Update AI_DESCRIPTION with document search instructions
-
-### Phase 10: PDF and DOCX Support (~1 week)
-
-- [ ] PDF text extraction via poppler
-- [ ] DOCX text extraction via libzip + libxml2
-- [ ] Incremental re-indexing for changed files
-
-### Phase 11: RAG WebUI (~0.5 weeks)
-
-- [ ] Document list in settings panel
-- [ ] Add/remove documents from index
-- [ ] Re-index button
-- [ ] Index statistics (document count, chunk count)
-
-**RAG System Total: ~5 weeks**
+Phases 7-11 were implemented as a separate subsystem documented in `docs/RAG_DESIGN.md` (March 2026). Key implementation files: `src/tools/document_search.c`, `src/tools/document_db.c`, `src/tools/document_chunker.c`, `src/core/embedding_engine.c`, `src/webui/webui_doc_library.c`, `www/js/ui/doc-library.js`.
 
 ---
 
@@ -1953,7 +1917,9 @@ _This document reflects finalized design decisions as of January 2026. Implement
 
 ---
 
-## Appendix C: Future Work - Semantic Memory Search
+## Appendix C: Semantic Memory Search — ✅ IMPLEMENTED
+
+> **Note**: The embedding infrastructure described below was implemented as `src/core/embedding_engine.c` — a shared module used by both memory and RAG. The implementation uses a unified API rather than the separate `embeddings/` directory originally planned. Entity embeddings live in `src/memory/memory_embeddings.c`. WebUI configuration is integrated into the existing settings panel.
 
 ### C.1 Overview
 

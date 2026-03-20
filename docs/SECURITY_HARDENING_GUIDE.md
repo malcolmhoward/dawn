@@ -523,7 +523,7 @@ Tested via `tests/test_pentest.sh --section headers` and `curl -I` on 2026-03-10
 
 ## Previous Audits
 
-- **Static code audit** (2025-12-18): [docs/archive/SECURITY_AUDIT.md](archive/SECURITY_AUDIT.md) — 15 findings, all Critical/High resolved
+- **Static code audit** (2025-12-18): 15 findings across ~58K LOC, all Critical/High resolved (archived to [atlas](https://github.com/The-OASIS-Project/atlas))
 - **Security hardening commit** (2026-03-06): `a365088` — MQTT TLS, auth guards, CSP hardening, realloc bug fix
 - **Security headers + TLS pentest** (2026-03-10): `1857403` — HTTP security headers on all response paths, testssl.sh clean (LUCKY13 accepted)
 - **Manual pentest suite** (2026-03-10): `1857403` — 34 tests via `tests/test_pentest.sh`: auth (7), authz (3+2), xss (6), satellite (4), headers (4). All passed. See tables above.

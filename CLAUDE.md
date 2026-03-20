@@ -173,7 +173,6 @@ This ensures code is formatted before every commit.
 - `[webui]`: Web interface bind address, port, SSL settings
 - `[scheduler]`: Timers/alarms settings (snooze, timeout, volume, limits)
 - `[mqtt]`: MQTT broker connection settings
-- See `docs/archive/CONFIG_FILE_DESIGN.md` for full schema
 
 **dawn.h** contains compile-time defaults:
 - `AI_NAME`: Default wake word ("friday")
@@ -394,7 +393,6 @@ Manual testing covers:
 - `www/css/main.css`: CSS entry point with @import statements (modular CSS)
 - `www/js/core/`: Core JS modules (constants, websocket, audio)
 - `www/js/ui/`: UI JS modules (settings, history, themes)
-- `docs/archive/WEBUI_DESIGN.md`: WebUI architecture and feature documentation
 
 **Scheduler:**
 - `include/core/scheduler.h`: Scheduler public API (init, shutdown, dismiss, snooze)
@@ -428,7 +426,6 @@ Manual testing covers:
 - `src/tools/calendar_service.c`: Business logic (multi-account, background sync, RRULE expansion, Google-specific discovery)
 - `include/tools/calendar_tool.h`: Tool registration header
 - `src/tools/calendar_tool.c`: LLM tool interface (today/range/next/search/add/update/delete)
-- `docs/CALDAV_DESIGN.md`: Full design document
 
 **OAuth 2.0 / Crypto:**
 - `include/tools/oauth_client.h`: OAuth client API (auth URL, code exchange, token refresh, storage)
@@ -459,7 +456,6 @@ Manual testing covers:
 - `src/tools/email_db.c`: Email account DB operations
 - `src/webui/webui_email.c`: WebSocket handlers for account CRUD
 - `www/js/ui/email-accounts.js`: Email account management UI
-- `docs/EMAIL_DESIGN.md`: Full design document
 
 **Plan Executor:**
 - `include/tools/plan_executor.h`: Public API, constants, data structures

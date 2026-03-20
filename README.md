@@ -192,7 +192,6 @@ These features are not required but extend what DAWN can do. Each links to its s
 | **[docs/DAP2_SATELLITE.md](docs/DAP2_SATELLITE.md)** | Satellite architecture and deployment guide |
 | **[dawn_satellite/README.md](dawn_satellite/README.md)** | Tier 1 satellite (RPi) build, config, and usage |
 | **[dawn_satellite_arduino/README.md](dawn_satellite_arduino/README.md)** | Tier 2 satellite (ESP32-S3, Arduino) setup |
-| **[docs/EMAIL_DESIGN.md](docs/EMAIL_DESIGN.md)** | Email integration architecture and design |
 | **[docs/GOOGLE_OAUTH_SETUP.md](docs/GOOGLE_OAUTH_SETUP.md)** | Google OAuth 2.0 setup for Calendar and Email |
 | **[docs/TOOL_PLAN_EXECUTOR_DESIGN.md](docs/TOOL_PLAN_EXECUTOR_DESIGN.md)** | Plan executor DSL specification and design |
 | **[docs/TOOL_DEVELOPMENT_GUIDE.md](docs/TOOL_DEVELOPMENT_GUIDE.md)** | Guide for adding new LLM tools |

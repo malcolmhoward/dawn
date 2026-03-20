@@ -2,9 +2,9 @@
 
 **Status**: Phases 0-4 Complete (WebUI auth, multi-user, conversation history, session management)
 **Date**: 2025-12-18
-**Last Updated**: 2026-02-19
+**Last Updated**: 2026-03-20
 
-**Note**: DAP2 satellite authentication is now handled via pre-shared registration key in `secrets.toml`, validated in `handle_satellite_register()`. Satellite-to-user assignment is managed via the `satellite_mappings` DB table (schema v21) and the WebUI Satellite Management admin panel (`webui_admin_satellite.c`). Mapped satellites inherit their assigned user's music queue, memory extraction, and personalized prompt on connect. The `dawn-admin` CLI tool described in this document was never implemented — all administration is done via the WebUI. DAP1 has been removed entirely.
+**Note**: DAP2 satellite authentication is now handled via pre-shared registration key in `secrets.toml`, validated in `handle_satellite_register()`. Satellite-to-user assignment is managed via the `satellite_mappings` DB table (schema v21) and the WebUI Satellite Management admin panel (`webui_admin_satellite.c`). Mapped satellites inherit their assigned user's music queue, memory extraction, and personalized prompt on connect. The `dawn-admin` CLI tool (v2.0.0) provides user, session, conversation, music DB, audit log, and IP management. DAP1 has been removed entirely.
 **Note**: Phase 3 reviewed by architecture, efficiency, security, and UI agents (2026-01-04).
 
 ## Overview
@@ -3639,7 +3639,7 @@ typedef struct {
 
 **Purpose**: Device authentication for satellite clients.
 
-**Note**: DAP1 has been removed. DAP2 satellite authentication is implemented via a pre-shared registration key (`satellite_registration_key` in `secrets.toml`), validated during the `satellite_register` WebSocket handshake in `webui_satellite.c`. The `dawn-admin` CLI tool was never built — all user and session management is done through the WebUI. The token rotation and device CRUD features below remain unimplemented but are lower priority given the registration key approach.
+**Note**: DAP1 has been removed. DAP2 satellite authentication is implemented via a pre-shared registration key (`satellite_registration_key` in `secrets.toml`), validated during the `satellite_register` WebSocket handshake in `webui_satellite.c`. The `dawn-admin` CLI tool (v2.0.0) provides full user, session, conversation, music DB, audit log, and IP management. The token rotation and device CRUD features below remain unimplemented but are lower priority given the registration key approach.
 
 #### DAP2 Authentication
 - Device token table and CRUD operations
@@ -3738,10 +3738,10 @@ The following items were identified during security, architecture, efficiency, a
 |---|-------|--------|-------------|
 | 5 | Session nonce for TOCTOU | Security | Add session-bound nonce to setup flow to prevent race during password hashing |
 | 6 | IPv6 prefix rate limiting | Security | Rate limit by /64 prefix for IPv6, not exact address (prevents address rotation bypass) |
-| 7 | Non-blocking hash semaphore | Efficiency | Use `sem_trywait()` returning `AUTH_BUSY` instead of blocking `sem_wait()` |
-| 8 | SQLite cache size | Efficiency | Increase from 64KB (16 pages) to 512KB (128 pages) for reduced I/O |
-| 9 | Password visibility toggle | UI | Add show/hide password toggle to login form (mentioned but not implemented) |
-| 10 | Reduced motion support | UI | Add `@media (prefers-reduced-motion: reduce)` to disable animations |
+| 7 | Non-blocking hash semaphore | Efficiency | ✅ Done — `sem_timedwait()` with `AUTH_CRYPTO_BUSY` in `auth_crypto.c` |
+| 8 | SQLite cache size | Efficiency | ✅ Done — `PRAGMA cache_size=64` in `auth_db_core.c` |
+| 9 | Password visibility toggle | UI | ⚠️ Partial — Settings page API key toggles done; login form toggle not implemented |
+| 10 | Reduced motion support | UI | ✅ Done — `@media (prefers-reduced-motion: reduce)` in plan-orchestrator, visualizer, transcript CSS |
 
 ### Implementation Notes
 
