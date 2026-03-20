@@ -155,7 +155,13 @@ DAWN runs on a range of hardware. These tables can help you choose the right pla
 
 ## Getting Started
 
-See **[GETTING_STARTED.md](GETTING_STARTED.md)** for full installation and setup instructions.
+Choose the guide that matches your deployment:
+
+| Deployment | Guide | Description |
+|------------|-------|-------------|
+| **Jetson / Embedded** | [GETTING_STARTED.md](GETTING_STARTED.md) | Full setup with local microphone, speaker, wake word, and GPU |
+| **x86_64 Server** | [docs/GETTING_STARTED_SERVER.md](docs/GETTING_STARTED_SERVER.md) | WebUI + satellite connections, no local audio hardware needed |
+| **Cloud Overview** | [docs/CLOUD_DEPLOYMENT.md](docs/CLOUD_DEPLOYMENT.md) | Platform independence, feature matrix, and architecture notes |
 
 ---
 
@@ -180,7 +186,9 @@ These features are not required but extend what DAWN can do. Each links to its s
 
 | Document | Description |
 |----------|-------------|
-| **[GETTING_STARTED.md](GETTING_STARTED.md)** | Step-by-step installation and setup guide |
+| **[GETTING_STARTED.md](GETTING_STARTED.md)** | Jetson / embedded installation and setup guide |
+| **[docs/GETTING_STARTED_SERVER.md](docs/GETTING_STARTED_SERVER.md)** | x86_64 server mode setup guide |
+| **[docs/CLOUD_DEPLOYMENT.md](docs/CLOUD_DEPLOYMENT.md)** | Cloud deployment architecture and status |
 | **[ARCHITECTURE.md](ARCHITECTURE.md)** | System architecture, data flow, and threading model |
 | **[CODING_STYLE_GUIDE.md](CODING_STYLE_GUIDE.md)** | Code formatting and development standards |
 | **[docs/LLM_INTEGRATION_GUIDE.md](docs/LLM_INTEGRATION_GUIDE.md)** | LLM setup for cloud and local providers |

@@ -8,7 +8,7 @@
    // LLM runtime state (updated from server on connect)
    let llmRuntimeState = {
       type: 'local',
-      provider: 'openai',
+      provider: '',
       model: '',
       openai_available: false,
       claude_available: false,
@@ -28,7 +28,7 @@
    // Global defaults from config (populated on config load)
    let globalDefaults = {
       type: 'cloud',
-      provider: 'openai',
+      provider: '',
       openai_model: '',
       claude_model: '',
       gemini_model: '',
@@ -135,13 +135,17 @@
                      opt.textContent = 'Gemini';
                      providerSelect.appendChild(opt);
                   }
-                  // Select default provider from global defaults
-                  const defaultProvider = globalDefaults.provider || 'openai';
+                  // Select default provider: prefer global default, fall back to first available
+                  const defaultProvider = globalDefaults.provider;
                   if (providerSelect.querySelector(`option[value="${defaultProvider}"]`)) {
                      providerSelect.value = defaultProvider;
+                  } else if (providerSelect.options.length > 0) {
+                     providerSelect.value = providerSelect.options[0].value;
                   }
-                  // Also send provider to session
-                  setSessionLlm({ provider: providerSelect.value });
+                  // Also send provider to session (only if a provider is actually selected)
+                  if (providerSelect.value) {
+                     setSessionLlm({ provider: providerSelect.value });
+                  }
                }
                // Populate cloud models and send model to session
                updateModelDropdownForCloud(true);
@@ -787,7 +791,7 @@
       const providerSelect = document.getElementById('llm-provider-select');
       if (!modelSelect || !providerSelect) return;
 
-      const provider = providerSelect.value?.toLowerCase() || 'openai';
+      const provider = providerSelect.value?.toLowerCase() || '';
       const models = cloudModelLists[provider] || [];
 
       modelSelect.innerHTML = '';
@@ -997,7 +1001,7 @@
          } else {
             providerSelect.disabled = false;
             // Set current value
-            const currentProvider = runtime.provider?.toLowerCase() || 'openai';
+            const currentProvider = runtime.provider?.toLowerCase() || '';
             if (providerSelect.querySelector(`option[value="${currentProvider}"]`)) {
                providerSelect.value = currentProvider;
             }

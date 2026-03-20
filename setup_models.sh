@@ -4,6 +4,7 @@
 #
 # This script downloads and configures the required ML models for DAWN:
 # - Whisper ASR models (speech recognition) - downloaded from Hugging Face
+# - Embedding model (semantic memory search) - downloaded by default
 # - Vosk model (optional legacy ASR) - downloaded from alphacephei.com
 #
 # Note: TTS (Piper) and VAD (Silero) models are committed to git and don't
@@ -31,7 +32,7 @@ NC='\033[0m' # No Color
 WHISPER_MODEL="base"
 INCLUDE_VOSK=false
 VOSK_VARIANT=""
-INCLUDE_EMBEDDINGS=false
+INCLUDE_EMBEDDINGS=true
 
 # Project root (where this script lives)
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -76,11 +77,11 @@ show_help() {
     echo "  --whisper-model SIZE Whisper model (default: base)"
     echo "                       Accepts: tiny, base, small, medium"
     echo "                       Quantized: tiny-q5_1, base-q5_1, etc."
-    echo "  --embeddings         Download embedding model for semantic memory search (~23MB)"
+    echo "  --no-embeddings      Skip embedding model download"
     echo "  --help               Show this help message"
     echo ""
     echo "Examples:"
-    echo "  $0                               # Standard setup (Whisper base)"
+    echo "  $0                               # Standard setup (Whisper base + embeddings)"
     echo "  $0 --vosk-small                  # Add Vosk small (satellite default)"
     echo "  $0 --whisper-model tiny-q5_1     # Quantized tiny (best for Pi 4)"
     echo "  $0 --whisper-model tiny          # Tiny English-only"
@@ -114,6 +115,10 @@ parse_args() {
                 ;;
             --embeddings)
                 INCLUDE_EMBEDDINGS=true
+                shift
+                ;;
+            --no-embeddings)
+                INCLUDE_EMBEDDINGS=false
                 shift
                 ;;
             --whisper-model)
@@ -362,24 +367,30 @@ verify_committed_models() {
 }
 
 setup_build_symlink() {
-    print_step "Setting up build directory symlink..."
+    print_step "Setting up build directory symlinks..."
 
-    local build_dir="$PROJECT_ROOT/build"
+    local found=0
+    for build_dir in "$PROJECT_ROOT"/build*; do
+        [ -d "$build_dir" ] || continue
+        # Only process actual CMake build directories
+        [ -f "$build_dir/CMakeCache.txt" ] || continue
+        found=1
 
-    if [ ! -d "$build_dir" ]; then
-        print_warning "Build directory not found. Create it with: mkdir build && cd build && cmake .."
-        return 0
-    fi
+        local build_symlink="$build_dir/models"
+        local dir_name=$(basename "$build_dir")
 
-    local build_symlink="$build_dir/models"
+        if [ -L "$build_symlink" ]; then
+            print_success "$dir_name/models symlink already exists"
+        elif [ -e "$build_symlink" ]; then
+            print_warning "$build_symlink exists but is not a symlink"
+        else
+            ln -s "../models" "$build_symlink"
+            print_success "Created symlink: $dir_name/models -> ../models"
+        fi
+    done
 
-    if [ -L "$build_symlink" ]; then
-        print_success "Build models symlink already exists"
-    elif [ -e "$build_symlink" ]; then
-        print_warning "$build_symlink exists but is not a symlink"
-    else
-        ln -s "../models" "$build_symlink"
-        print_success "Created symlink: build/models -> ../models"
+    if [ $found -eq 0 ]; then
+        print_warning "No build directories found. Run cmake --preset <preset> first."
     fi
 }
 

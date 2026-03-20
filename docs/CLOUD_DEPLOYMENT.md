@@ -9,10 +9,11 @@ requires physical hardware.
 
 ## Platform Independence
 
-### CUDA — Optional
+### CUDA — Auto-detected
 
-CUDA is only enabled when CMake detects a Jetson platform (`/etc/nv_tegra_release`). All other
-platforms build with CPU-only inference automatically. No code changes needed.
+CUDA is auto-detected on any platform via the shared `cmake/DawnCUDA.cmake` module. It searches
+for the CUDA toolkit at `/usr/local/cuda*`, `/opt/cuda`, or `nvcc` on PATH. If found, Whisper
+uses GPU-accelerated inference. Use `-DENABLE_CUDA=OFF` to disable explicitly.
 
 ### ARM NEON — Optional
 
@@ -131,13 +132,18 @@ If no home automation devices will connect, MQTT runs idle with negligible resou
 
 ## Audio Subsystem
 
-ALSA and PulseAudio are linked unconditionally at build time. The dev packages must be
-installed even on headless servers.
+When audio dev packages are installed, ALSA and PulseAudio are linked at build time. With
+`SERVER_ONLY=ON`, audio libraries are optional — if not found, linking is skipped entirely.
 
-At runtime, if no audio hardware exists:
-- Audio capture thread fails to open the device and logs an error
-- The daemon continues running — all other subsystems are unaffected
-- WebUI, LLM, calendar, email, memory, scheduler all work normally
+At runtime in server mode (`--server` flag or `[general] mode = "server"`):
+- Local audio capture and playback are skipped entirely
+- TTS engine still initializes (for WebUI/satellite audio via WebSocket)
+- ASR engine still initializes (for satellite speech recognition)
+- No local microphone, speaker, AEC, VAD, or boot greeting
+
+**Note:** If ALSA/PulseAudio libraries are linked but no audio daemon is running (common on
+headless servers), `libpulse` may log harmless warnings to stderr at startup due to its
+constructor function attempting to connect. These can be ignored.
 
 For WebUI-only deployments, local audio is irrelevant. Satellite devices (Tier 1 RPi, Tier 2
 ESP32) connect over WebSocket and handle their own audio I/O.
@@ -175,7 +181,8 @@ timezone = "America/New_York"
 type = "cloud"
 
 [llm.cloud]
-provider = "claude"           # or "openai"
+# provider is auto-detected from available API keys (Claude > OpenAI > Gemini)
+# Uncomment to override: provider = "claude"  # or "openai", "gemini"
 model = "claude-sonnet-4-20250514"
 
 [asr]
@@ -239,68 +246,43 @@ Access WebUI at `http://your-server:3000` (or `https://` if SSL configured).
 | OAuth 2.0 flows | Works | Needs valid redirect URL |
 | Satellite connections (Tier 1) | Works | RPi satellites connect via WebSocket |
 | Satellite connections (Tier 2) | Works | ESP32 satellites connect via WebSocket |
-| ASR (Whisper) | Works | CPU inference, slower than GPU |
-| TTS (Piper) | Works | CPU inference, slower than GPU |
+| ASR (Whisper) | Works | GPU with CUDA, CPU fallback |
+| TTS (Piper) | Works | CPU inference |
 | Local microphone / wake word | No | Requires audio hardware |
-| CUDA acceleration | No | x86_64 uses CPU inference |
+| CUDA acceleration | Works | Auto-detected when toolkit + driver present |
 
 ---
 
-## x86_64 Compatibility Audit (2026-03-19)
+## x86_64 Port — Implementation Status (2026-03-20)
 
-Full codebase review for x86_64 cloud deployment. Findings are grouped by severity. All changes
-should be made and verified on an x86_64 system.
+All blockers and problems from the original compatibility audit have been resolved.
+See `docs/GETTING_STARTED_SERVER.md` for the full setup guide.
 
-### BLOCKER — Must fix before x86_64 will compile and run
+### What was implemented
 
-| # | Domain | File(s) | Finding | Recommended Fix |
-|---|--------|---------|---------|-----------------|
-| 1 | Build | `CMakeLists.txt:274-279` | Hardcoded `aarch64-linux` in CUDA library paths — breaks `find_library()` on x86_64 | Use `CMAKE_SYSTEM_PROCESSOR` to select arch suffix, or use `find_library()` without hardcoded paths |
-| 2 | Build | `CMakeLists.txt:710,714` | Hardcoded aarch64 harfbuzz include/lib paths (`/usr/lib/aarch64-linux-gnu/`) | Use `pkg_check_modules(HARFBUZZ harfbuzz)` or `find_package(harfbuzz)` |
-| 3 | Build | `dawn_satellite/CMakeLists.txt:194-201` | Same hardcoded aarch64 harfbuzz paths in satellite build | Same fix as #2 |
-| 4 | Audio | `dawn.c:1945-1951` | `init_audio_capture()` failure returns 1 (exit) — no audio device = daemon won't start | Add `--headless` flag or `[general] mode = "cloud"` that skips local audio init |
-| 5 | Audio | `dawn.c` (speaker init) | Local speaker required at startup — same fatal exit pattern | Same headless mode flag |
-| 6 | Audio | Audio backend | `AUDIO_ERR_NO_DEVICE` with no null/dummy fallback — no way to run without audio hardware | Add null audio backend that accepts but discards all audio operations |
-| 7 | Config | `services/dawn-server/dawn.service` | Hardcoded aarch64 Tegra paths (`/usr/lib/aarch64-linux-gnu/tegra/`) in systemd unit | Create separate `dawn-server-x86_64.service` or template with arch variable |
+**Build system (Package A):**
+- CUDA auto-detection via shared `cmake/DawnCUDA.cmake` (works on Jetson, x86_64, any platform)
+- Harfbuzz discovery via `pkg_check_modules` (no hardcoded arch paths)
+- `SERVER_ONLY` CMake option makes audio libraries optional
+- `server` and `server-debug` CMake presets
+- `clang-format-14` enforced for consistent formatting across platforms
 
-### PROBLEM — Will cause issues but have workarounds
+**Server runtime mode (Package B):**
+- `--server` CLI flag and `[general] mode = "server"` config option
+- `AUDIO_BACKEND_NONE` skips local audio hardware
+- TTS engine initializes without local playback device (WebSocket output only)
+- ASR engine initializes for WebUI/satellite audio processing
+- Boot greeting, AEC, VAD, music player skipped in server mode
+- Hardcoded `/home/jetson/` paths replaced with `$HOME`-based paths (fail-closed when unset)
 
-| # | Domain | File(s) | Finding | Recommended Fix |
-|---|--------|---------|---------|-----------------|
-| 8 | Build | `CMakeLists.txt` | CUDA linked unconditionally when detected — will error on x86 without CUDA toolkit installed | Guard CUDA block with `if(CMAKE_CUDA_COMPILER)` and add `-DENABLE_CUDA=OFF` option |
-| 9 | Build | `CMakeLists.txt` | Unconditional ALSA/PulseAudio linking — dev packages always required even if audio unused | Make optional when headless mode is active (`-DENABLE_LOCAL_AUDIO=OFF`) |
-| 10 | Audio | ASR init | ASR subsystem requires an audio capture device to initialize | Allow ASR to init without local capture — only needed for satellite/WebUI audio paths |
-| 11 | Audio | Music player | Music playback requires local audio output device | Skip music player init in headless/cloud mode |
-| 12 | Audio | `dawn.c` (boot greeting) | Boot greeting TTS blocks startup for ~10 seconds | Skip in headless/cloud mode |
-| 13 | Config | `src/tools/llm_tools.c:361` | Hardcoded `/home/jetson/` path in vision tool image storage | Use runtime config path or `$HOME` expansion |
-| 14 | Config | Various | Memory tuning (512KB thread stacks, buffer sizes) calibrated for Jetson, not cloud | Acceptable defaults — document cloud-recommended tuning values |
+**LLM provider auto-detection:**
+- Cloud provider auto-detected from available API keys (Claude > OpenAI > Gemini)
+- Graceful fallback when configured provider unavailable
+- Default config no longer hardcodes OpenAI as cloud provider
 
-### MINOR — No action required
-
-| # | Domain | File(s) | Finding | Status |
-|---|--------|---------|---------|--------|
-| 15 | Platform | `src/core/embedding_engine.c` | NEON intrinsics behind `#ifdef __ARM_NEON` with scalar fallback | Already portable — no fix needed |
-| 16 | Platform | CUDA detection | Treats x86_64 as non-CUDA platform | Correct behavior for CPU-only cloud |
-| 17 | Config | `dawn.toml` defaults | Worker pool (4), max_clients (4) conservative for cloud | Document cloud-recommended values |
-| 18 | Config | Thread config | 512KB thread stacks, conservative timeouts | Fine for cloud — document if tuning needed |
-
-### Recommended Fix Approach
-
-Fixes fall into two logical work packages, both best done on an x86_64 system:
-
-**Package A — Build system portability (Blockers 1-3, Problems 8-9):**
-- Replace hardcoded `aarch64-linux-gnu` paths with `find_library()` / `pkg-config`
-- Make CUDA fully optional via `-DENABLE_CUDA=OFF`
-- Add `-DENABLE_LOCAL_AUDIO=OFF` to skip audio library requirements
-- Estimated scope: CMakeLists.txt changes only
-
-**Package B — Headless/cloud runtime mode (Blockers 4-7, Problems 10-13):**
-- Add `[general] mode = "cloud"` config option (or `--headless` CLI flag)
-- When active: skip local audio init (mic + speaker), skip boot greeting, skip music player
-- Add null audio backend that gracefully handles calls without hardware
-- WebUI and satellite audio paths (WebSocket-based) continue to work normally
-- Fix hardcoded `/home/jetson/` path in llm_tools.c
-- Create x86_64 systemd unit file
-- Estimated scope: `dawn.c` startup logic, audio backend, config parsing, one llm_tools.c path
-
-**Platform code (NEON, atomics, ONNX) is already portable — no work needed.**
+**Additional fixes:**
+- Fresh-install DB schema includes all tables (memory, calendar, contacts, email, etc.)
+- TTS shutdown handles all blocking states (synthesis, pause, audio write)
+- LWS log level set to errors/warnings only (suppresses lifecycle noise)
+- WebSocket reconnect preserves TTS and Opus capability flags
+- `setup_models.sh` downloads embeddings by default, finds all build directories

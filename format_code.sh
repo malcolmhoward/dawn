@@ -22,8 +22,8 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Configuration
-CLANG_FORMAT="clang-format"
+# Configuration — require clang-format-14 for consistent formatting across all platforms
+CLANG_FORMAT="clang-format-14"
 CONFIG_FILE=".clang-format"
 
 # File extensions to format
@@ -106,15 +106,24 @@ log_error() {
 
 check_clang_format() {
    if ! command -v "$CLANG_FORMAT" &> /dev/null; then
-      log_error "clang-format not found. Please install it:"
-      echo "  Ubuntu/Debian: sudo apt-get install clang-format"
-      echo "  macOS:         brew install clang-format"
-      echo "  Fedora:        sudo dnf install clang-tools-extra"
+      log_error "clang-format-14 not found. This project requires clang-format version 14."
+      echo "  Ubuntu/Debian: sudo apt-get install clang-format-14"
+      echo "  macOS:         brew install clang-format@14"
+      echo ""
+      echo "  Note: Other versions produce different output. Version 14 is required"
+      echo "  for consistent formatting across all development platforms."
       exit 1
    fi
 
    local version
    version=$($CLANG_FORMAT --version | grep -oP '\d+\.\d+' | head -1)
+   local major
+   major=$(echo "$version" | cut -d. -f1)
+   if [ "$major" != "14" ]; then
+      log_error "clang-format version 14 required, found version $version"
+      echo "  Install with: sudo apt-get install clang-format-14"
+      exit 1
+   fi
    log_info "Using clang-format version $version"
 }
 

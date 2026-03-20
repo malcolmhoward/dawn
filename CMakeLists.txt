@@ -9,6 +9,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(PLATFORM "AUTO" CACHE STRING "Choose platform: AUTO, JETSON, RPI")
 set_property(CACHE PLATFORM PROPERTY STRINGS AUTO JETSON RPI)
 
+# Server-only mode: skip local audio hardware requirements
+# Enables WebUI + satellite connections without local microphone/speaker
+option(SERVER_ONLY "Server-only mode: no local audio capture/playback" OFF)
+
 # Platform detection
 if(PLATFORM STREQUAL "AUTO")
     # Check if it's a Jetson board first
@@ -265,24 +269,13 @@ endif()
 # Provides options to enable/disable individual tools
 include(cmake/DawnTools.cmake)
 
-# Platform-specific CUDA configuration (Jetson only)
-if(PLATFORM STREQUAL "JETSON")
-    set(CUDA_TOOLKIT_ROOT_DIR "/usr/local/cuda-12.6")
-    set(ENABLE_WHISPER_CUDA ON CACHE BOOL "Enable CUDA for Whisper on Jetson" FORCE)
-
-    # Find the required CUDA libraries and add them to the link libraries
-    find_library(CUDA_LIBRARIES NAMES cuda HINTS ${CUDA_TOOLKIT_ROOT_DIR}/targets/aarch64-linux/lib)
-    find_library(CUDART_LIBRARIES NAMES cudart HINTS ${CUDA_TOOLKIT_ROOT_DIR}/targets/aarch64-linux/lib)
-    find_library(CUSPARSE_LIBRARIES NAMES cusparse HINTS ${CUDA_TOOLKIT_ROOT_DIR}/targets/aarch64-linux/lib)
-    find_library(CUBLAS_LIBRARIES NAMES cublas HINTS ${CUDA_TOOLKIT_ROOT_DIR}/targets/aarch64-linux/lib)
-    find_library(CUSOLVER_LIBRARIES NAMES cusolver HINTS ${CUDA_TOOLKIT_ROOT_DIR}/targets/aarch64-linux/lib)
-    find_library(CURAND_LIBRARIES NAMES curand HINTS ${CUDA_TOOLKIT_ROOT_DIR}/targets/aarch64-linux/lib)
-
+# CUDA configuration — shared module handles auto-detection on any platform
+include(cmake/DawnCUDA.cmake)
+if(DAWN_CUDA_FOUND)
+    set(ENABLE_WHISPER_CUDA ON CACHE BOOL "Enable CUDA for Whisper" FORCE)
     add_definitions(-DHAVE_CUDA_GPU)
-    message(STATUS "CUDA support: ENABLED (Jetson platform)")
 else()
-    set(ENABLE_WHISPER_CUDA OFF CACHE BOOL "CUDA disabled on non-Jetson platforms" FORCE)
-    message(STATUS "CUDA support: DISABLED (Raspberry Pi or other non-CUDA platform)")
+    set(ENABLE_WHISPER_CUDA OFF CACHE BOOL "CUDA not available" FORCE)
 endif()
 
 # Wave file handling
@@ -300,14 +293,41 @@ endif()
 # Audio Backend - Runtime Selectable (both ALSA and PulseAudio supported)
 # The backend can be selected at runtime via config file: [audio] backend = "auto|alsa|pulse"
 # At compile time, we need both libraries for runtime selection
+# In SERVER_ONLY mode, audio backends are optional (no local mic/speaker needed)
 
-# Find PulseAudio (optional, but recommended for desktop systems)
-find_package(PulseAudio QUIET)
-if(PULSEAUDIO_FOUND)
-    include_directories(${PULSEAUDIO_INCLUDE_DIRS})
-    message(STATUS "Audio backend: Runtime selectable (ALSA + PulseAudio)")
+if(NOT SERVER_ONLY)
+    # Find PulseAudio (optional, but recommended for desktop systems)
+    find_package(PulseAudio QUIET)
+    if(PULSEAUDIO_FOUND)
+        include_directories(${PULSEAUDIO_INCLUDE_DIRS})
+        message(STATUS "Audio backend: Runtime selectable (ALSA + PulseAudio)")
+    else()
+        message(STATUS "Audio backend: ALSA only (PulseAudio not found)")
+    endif()
+    set(HAVE_LOCAL_AUDIO ON)
 else()
-    message(STATUS "Audio backend: ALSA only (PulseAudio not found)")
+    # Server mode: check for audio libs but don't require them
+    find_package(PulseAudio QUIET)
+    if(PULSEAUDIO_FOUND)
+        include_directories(${PULSEAUDIO_INCLUDE_DIRS})
+    endif()
+    # Check if ALSA is available (for satellite audio relay even in server mode)
+    find_package(ALSA QUIET)
+    if(ALSA_FOUND AND PULSEAUDIO_FOUND)
+        set(HAVE_LOCAL_AUDIO ON)
+        message(STATUS "Audio backend: Available (ALSA + PulseAudio found)")
+    elseif(ALSA_FOUND)
+        set(HAVE_LOCAL_AUDIO ON)
+        message(STATUS "Audio backend: Available (ALSA only)")
+    else()
+        set(HAVE_LOCAL_AUDIO OFF)
+        message(STATUS "Audio backend: DISABLED (server-only mode, no audio libs found)")
+    endif()
+endif()
+
+if(SERVER_ONLY)
+    add_definitions(-DSERVER_ONLY)
+    message(STATUS "Server-only mode: ENABLED (no local audio capture/playback)")
 endif()
 
 # Legacy option - kept for backward compatibility. No longer affects compilation.
@@ -673,9 +693,16 @@ target_link_libraries(dawn
 # Link uuid for Plex client identifier generation
 target_link_libraries(dawn uuid)
 
-# Link both audio libraries for runtime backend selection
+# Link audio libraries for runtime backend selection
 # Both backends are statically linked; runtime selection via vtable
-target_link_libraries(dawn asound pulse-simple pulse)
+if(HAVE_LOCAL_AUDIO)
+    target_link_libraries(dawn asound pulse-simple pulse)
+elseif(NOT SERVER_ONLY)
+    message(FATAL_ERROR
+        "Audio libraries (ALSA, PulseAudio) not found.\n"
+        "Install with: sudo apt install libasound2-dev libpulse-dev\n"
+        "Or use -DSERVER_ONLY=ON for server deployments without local audio.")
+endif()
 
 # Conditionally link libmpg123 for MP3 decoding
 if(DAWN_ENABLE_MP3)
@@ -707,11 +734,12 @@ if(MUPDF_FOUND)
     # MuPDF ships only static libs on Ubuntu 22.04. All transitive deps must be linked.
     # Deps from: pkg-config --libs --static mupdf (plus harfbuzz for text shaping)
     pkg_check_modules(FREETYPE2 REQUIRED freetype2)
-    find_library(HARFBUZZ_LIB NAMES harfbuzz PATHS /lib/aarch64-linux-gnu /usr/lib/aarch64-linux-gnu)
-    if(NOT HARFBUZZ_LIB)
-        # Fallback: try the SONAME directly
-        find_library(HARFBUZZ_LIB NAMES libharfbuzz.so.0
-                     PATHS /lib/aarch64-linux-gnu /usr/lib/aarch64-linux-gnu)
+    pkg_check_modules(HARFBUZZ harfbuzz)
+    if(HARFBUZZ_FOUND)
+        set(HARFBUZZ_LIB ${HARFBUZZ_LIBRARIES})
+    else()
+        # Fallback: find_library without hardcoded arch paths
+        find_library(HARFBUZZ_LIB NAMES harfbuzz)
     endif()
     target_link_libraries(dawn
         ${MUPDF_LIB} ${MUPDF_THIRD_LIB}

@@ -2009,22 +2009,41 @@ int session_set_llm_config(session_t *session, const session_llm_config_t *confi
       return 1;
    }
 
-   // Validate that requested provider has API key
+   // Validate that requested provider has API key; fall back to available provider
+   session_llm_config_t fallback_config;
    if (config->type == LLM_CLOUD) {
-      if (config->cloud_provider == CLOUD_PROVIDER_OPENAI && !llm_has_openai_key()) {
-         LOG_WARNING("Session %u: Cannot set OpenAI provider - no API key configured",
-                     session->session_id);
-         return 1;
-      }
-      if (config->cloud_provider == CLOUD_PROVIDER_CLAUDE && !llm_has_claude_key()) {
-         LOG_WARNING("Session %u: Cannot set Claude provider - no API key configured",
-                     session->session_id);
-         return 1;
-      }
-      if (config->cloud_provider == CLOUD_PROVIDER_GEMINI && !llm_has_gemini_key()) {
-         LOG_WARNING("Session %u: Cannot set Gemini provider - no API key configured",
-                     session->session_id);
-         return 1;
+      bool has_key = false;
+      if (config->cloud_provider == CLOUD_PROVIDER_OPENAI)
+         has_key = llm_has_openai_key();
+      else if (config->cloud_provider == CLOUD_PROVIDER_CLAUDE)
+         has_key = llm_has_claude_key();
+      else if (config->cloud_provider == CLOUD_PROVIDER_GEMINI)
+         has_key = llm_has_gemini_key();
+
+      if (!has_key) {
+         // Try to fall back to an available provider
+         cloud_provider_t fallback = CLOUD_PROVIDER_NONE;
+         if (llm_has_claude_key())
+            fallback = CLOUD_PROVIDER_CLAUDE;
+         else if (llm_has_openai_key())
+            fallback = CLOUD_PROVIDER_OPENAI;
+         else if (llm_has_gemini_key())
+            fallback = CLOUD_PROVIDER_GEMINI;
+
+         if (fallback == CLOUD_PROVIDER_NONE) {
+            LOG_WARNING("Session %u: No cloud provider has an API key configured",
+                        session->session_id);
+            return 1;
+         }
+
+         LOG_INFO("Session %u: %s provider unavailable, falling back to %s", session->session_id,
+                  cloud_provider_to_string(config->cloud_provider),
+                  cloud_provider_to_string(fallback));
+         memcpy(&fallback_config, config, sizeof(session_llm_config_t));
+         fallback_config.cloud_provider = fallback;
+         fallback_config.model[0] =
+             '\0'; /* Clear model — let resolver pick default for new provider */
+         config = &fallback_config;
       }
    }
 

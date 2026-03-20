@@ -87,6 +87,9 @@
       // Initialize visual state from current ttsEnabled
       updateUI(ttsEnabled);
 
+      // Note: TTS state is synced to server via the WebSocket init/reconnect handshake
+      // (websocket.js sends tts_enabled in both 'init' and 'reconnect' messages)
+
       // Bind click handler
       btn.addEventListener('click', toggle);
    }

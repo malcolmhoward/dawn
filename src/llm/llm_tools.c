@@ -358,7 +358,17 @@ static bool validate_file_path(const char *path) {
    }
 
    /* Allowed directories for viewing response files */
-   const char *allowed_prefixes[] = { "/home/jetson/recordings/", "/tmp/", "/home/jetson/oasis/" };
+   /* Build allowed prefixes using $HOME instead of hardcoded /home/jetson */
+   const char *home = getenv("HOME");
+   if (!home || home[0] == '\0') {
+      LOG_WARNING("$HOME not set — rejecting file view request for security");
+      return false;
+   }
+   char home_recordings[PATH_MAX];
+   char home_oasis[PATH_MAX];
+   snprintf(home_recordings, sizeof(home_recordings), "%s/recordings/", home);
+   snprintf(home_oasis, sizeof(home_oasis), "%s/oasis/", home);
+   const char *allowed_prefixes[] = { home_recordings, "/tmp/", home_oasis };
    size_t prefix_count = sizeof(allowed_prefixes) / sizeof(allowed_prefixes[0]);
 
    for (size_t i = 0; i < prefix_count; i++) {

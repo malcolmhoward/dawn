@@ -2470,10 +2470,21 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                   config.type = LLM_LOCAL;
                } else if (strcmp(new_type, "cloud") == 0) {
                   config.type = LLM_CLOUD;
-                  /* If no provider is set, default to OpenAI */
+                  /* If no provider is set, pick the first one with an API key */
                   if (config.cloud_provider == CLOUD_PROVIDER_NONE) {
-                     config.cloud_provider = CLOUD_PROVIDER_OPENAI;
-                     LOG_INFO("WebUI: No cloud provider set, defaulting to OpenAI");
+                     if (llm_has_claude_key()) {
+                        config.cloud_provider = CLOUD_PROVIDER_CLAUDE;
+                        LOG_INFO("WebUI: Auto-selected Claude (API key available)");
+                     } else if (llm_has_openai_key()) {
+                        config.cloud_provider = CLOUD_PROVIDER_OPENAI;
+                        LOG_INFO("WebUI: Auto-selected OpenAI (API key available)");
+                     } else if (llm_has_gemini_key()) {
+                        config.cloud_provider = CLOUD_PROVIDER_GEMINI;
+                        LOG_INFO("WebUI: Auto-selected Gemini (API key available)");
+                     } else {
+                        config.cloud_provider = CLOUD_PROVIDER_OPENAI;
+                        LOG_INFO("WebUI: No cloud API keys found, defaulting to OpenAI");
+                     }
                   }
                } else if (strcmp(new_type, "reset") == 0) {
                   /* Reset to defaults from dawn.toml */
@@ -2515,16 +2526,18 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                   LOG_INFO("WebUI: Session model set to '%s'", config.model);
 
                   /* Infer provider from model name if not explicitly set
-                   * (handles old conversations and frontend bugs) */
+                   * (handles old conversations and frontend bugs).
+                   * Only infer if the inferred provider has an API key available. */
                   if (!provider_explicitly_set) {
-                     if (strncmp(new_model, "gpt-", 4) == 0 || strncmp(new_model, "o1-", 3) == 0 ||
-                         strncmp(new_model, "o3-", 3) == 0) {
+                     if ((strncmp(new_model, "gpt-", 4) == 0 || strncmp(new_model, "o1-", 3) == 0 ||
+                          strncmp(new_model, "o3-", 3) == 0) &&
+                         llm_has_openai_key()) {
                         config.cloud_provider = CLOUD_PROVIDER_OPENAI;
                         LOG_INFO("WebUI: Inferred OpenAI provider from model '%s'", new_model);
-                     } else if (strncmp(new_model, "claude-", 7) == 0) {
+                     } else if (strncmp(new_model, "claude-", 7) == 0 && llm_has_claude_key()) {
                         config.cloud_provider = CLOUD_PROVIDER_CLAUDE;
                         LOG_INFO("WebUI: Inferred Claude provider from model '%s'", new_model);
-                     } else if (strncmp(new_model, "gemini-", 7) == 0) {
+                     } else if (strncmp(new_model, "gemini-", 7) == 0 && llm_has_gemini_key()) {
                         config.cloud_provider = CLOUD_PROVIDER_GEMINI;
                         LOG_INFO("WebUI: Inferred Gemini provider from model '%s'", new_model);
                      }
@@ -2723,8 +2736,17 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                   strncpy(conn->session_token, token, WEBUI_SESSION_TOKEN_LEN - 1);
                   conn->session_token[WEBUI_SESSION_TOKEN_LEN - 1] = '\0';
 
-                  LOG_INFO("WebUI: Reconnected to session %u with token %.4s...",
-                           existing->session_id, token);
+                  /* Restore connection capabilities from init payload */
+                  conn->use_opus = check_opus_capability(payload);
+                  struct json_object *tts_obj;
+                  if (json_object_object_get_ex(payload, "tts_enabled", &tts_obj)) {
+                     conn->tts_enabled = json_object_get_boolean(tts_obj);
+                  }
+
+                  LOG_INFO("WebUI: Reconnected to session %u with token %.4s... "
+                           "(opus: %s, tts: %s)",
+                           existing->session_id, token, conn->use_opus ? "yes" : "no",
+                           conn->tts_enabled ? "yes" : "no");
 
                   /* Queue init messages (one lws_write per callback) */
                   queue_init_messages(conn, token);
@@ -4041,7 +4063,9 @@ int webui_server_init(int port, const char *www_path) {
    /* Increase service buffer for large WebSocket messages (conversation history).
     * Default is ~4KB which causes OVERSIZED_PAYLOAD errors on HTTP/2 connections. */
    info.pt_serv_buf_size = 128 * 1024; /* 128KB - enough for large conversation loads */
-   info.ws_ping_pong_interval = 0;     /* Disabled: satellites use app-level pings instead */
+#if LWS_LIBRARY_VERSION_NUMBER >= 4004000
+   info.ws_ping_pong_interval = 0; /* Disabled: satellites use app-level pings instead */
+#endif
    /* Note: Not using LWS_SERVER_OPTION_HTTP_HEADERS_SECURITY_BEST_PRACTICES_ENFORCE
     * because it sets CSP: default-src 'none' which blocks WebAssembly for Opus codec.
     * Security headers are added manually via webui_add_security_headers() and
@@ -4089,6 +4113,10 @@ int webui_server_init(int port, const char *www_path) {
 
    LOG_INFO("WebUI: Initializing %s server on port %d, serving from: %s",
             use_https ? "HTTPS" : "HTTP", port, s_www_path);
+
+   /* Suppress noisy LWS lifecycle logs (connection tags, accept gate, netlink).
+    * Only show errors and warnings — everything else is handled by DAWN's own logging. */
+   lws_set_log_level(LLL_ERR | LLL_WARN, NULL);
 
    /* Create context */
    s_lws_context = lws_create_context(&info);

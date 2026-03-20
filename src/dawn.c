@@ -1127,6 +1127,7 @@ void display_help(int argc, char *argv[]) {
    printf("  --dump-config          Print effective configuration and exit.\n");
    printf("  --dump-settings        Print all settings with env vars and sources, then exit.\n");
    printf("  --audio-backend TYPE   Audio backend: auto (default), alsa, or pulse.\n");
+   printf("  --server               Server mode: no local audio, WebUI + satellites only.\n");
    printf("  -m, --llm TYPE         Set default LLM type (cloud or local).\n");
    printf("  -P, --cloud-provider PROVIDER    Set cloud provider (openai or claude).\n");
    printf(
@@ -1309,6 +1310,7 @@ int main(int argc, char *argv[]) {
       { "dump-config", no_argument, NULL, 259 },                // Dump effective config and exit
       { "dump-settings", no_argument, NULL, 261 },              // Dump all settings with sources
       { "audio-backend", required_argument, NULL, 260 },        // Audio backend (auto/alsa/pulse)
+      { "server", no_argument, NULL, 262 },                     // Server mode (no local audio)
 #ifdef ENABLE_AEC
       { "aec-record", optional_argument, NULL, 'R' },  // Record AEC audio for debugging
 #endif
@@ -1363,6 +1365,9 @@ int main(int argc, char *argv[]) {
 
    // Audio backend selection (default: auto-detect)
    audio_backend_type_t audio_backend_type = AUDIO_BACKEND_AUTO;
+
+   // Server mode: no local audio capture/playback (WebUI + satellites only)
+   int server_mode = 0;
 
    // Construct default Whisper base model path
    snprintf(whisper_full_path, sizeof(whisper_full_path), "%s/ggml-%s.bin", whisper_path,
@@ -1563,6 +1568,11 @@ int main(int argc, char *argv[]) {
             LOG_INFO("Audio backend set to: %s (CLI override)",
                      audio_backend_type_name(audio_backend_type));
             break;
+         case 262:  // --server
+            server_mode = 1;
+            strncpy(g_config.general.mode, "server", sizeof(g_config.general.mode) - 1);
+            LOG_INFO("Server mode: ENABLED (no local audio capture/playback)");
+            break;
          case '?':
             display_help(argc, argv);
             exit(EXIT_FAILURE);
@@ -1681,6 +1691,13 @@ int main(int argc, char *argv[]) {
       audio_backend_type = audio_backend_parse_type(g_config.audio.backend);
       LOG_INFO("Audio backend from config: %s", audio_backend_type_name(audio_backend_type));
    }
+
+   // Apply server mode from config (CLI --server takes precedence)
+   if (!server_mode && strcmp(g_config.general.mode, "server") == 0) {
+      server_mode = 1;
+      LOG_INFO("Server mode: ENABLED (from config [general] mode = \"server\")");
+   }
+
    // Apply search summarizer settings from config if CLI didn't set them
    if (!(cli_overrides & CLI_OVERRIDE_SUMMARIZER_BACKEND) &&
        g_config.search.summarizer.backend[0] != '\0') {
@@ -1902,53 +1919,66 @@ int main(int argc, char *argv[]) {
    conversation_history = local_session->conversation_history;
 
    // Initialize audio backend (runtime selection between ALSA and PulseAudio)
+   // In server mode, use AUDIO_BACKEND_NONE — no local audio hardware needed
+   if (server_mode) {
+      audio_backend_type = AUDIO_BACKEND_NONE;
+      LOG_INFO("Server mode: using null audio backend (no local audio hardware)");
+   }
    int audio_init_result = audio_backend_init(audio_backend_type);
    if (audio_init_result != AUDIO_SUCCESS) {
-      LOG_ERROR("Failed to initialize audio backend: %s", audio_error_string(audio_init_result));
-      LOG_ERROR("  Hint: Check PulseAudio is running (pulseaudio --check) or try [audio] backend = "
-                "\"alsa\" in dawn.toml");
-      return 1;
+      if (server_mode) {
+         LOG_WARNING("Audio backend init failed in server mode — continuing without audio");
+      } else {
+         LOG_ERROR("Failed to initialize audio backend: %s", audio_error_string(audio_init_result));
+         LOG_ERROR("  Hint: Check PulseAudio is running (pulseaudio --check) or try [audio] "
+                   "backend = \"alsa\" in dawn.toml");
+         return 1;
+      }
    }
    LOG_INFO("Audio backend initialized: %s", audio_backend_type_name(audio_backend_get_type()));
 
-   // Initialize audio decoder subsystem (FLAC, MP3, Ogg Vorbis)
-   if (audio_decoder_init() != AUDIO_DECODER_SUCCESS) {
-      LOG_ERROR("Failed to initialize audio decoder subsystem");
-      LOG_ERROR("  Hint: Ensure audio libraries are installed: sudo apt install libmpg123-dev "
-                "libvorbis-dev libflac-dev");
-      return 1;
-   }
+   if (!server_mode) {
+      // Initialize audio decoder subsystem (FLAC, MP3, Ogg Vorbis)
+      if (audio_decoder_init() != AUDIO_DECODER_SUCCESS) {
+         LOG_ERROR("Failed to initialize audio decoder subsystem");
+         LOG_ERROR("  Hint: Ensure audio libraries are installed: sudo apt install libmpg123-dev "
+                   "libvorbis-dev libflac-dev");
+         return 1;
+      }
 
-   // Initialize music metadata database for search by artist/title/album
-   // Construct path: {data_dir}/music.db
-   char music_db_path[CONFIG_PATH_MAX + 16];
-   snprintf(music_db_path, sizeof(music_db_path), "%s/music.db", g_config.paths.data_dir);
-   if (music_db_init(music_db_path) == 0) {
-      // Register available music source providers before starting scanner
-      music_scanner_register_source(plex_db_get_provider());
+      // Initialize music metadata database for search by artist/title/album
+      // Construct path: {data_dir}/music.db
+      char music_db_path[CONFIG_PATH_MAX + 16];
+      snprintf(music_db_path, sizeof(music_db_path), "%s/music.db", g_config.paths.data_dir);
+      if (music_db_init(music_db_path) == 0) {
+         // Register available music source providers before starting scanner
+         music_scanner_register_source(plex_db_get_provider());
 
-      // Start background scanner to index music library
-      // Uses paths.music_dir with tilde expansion handled by scanner
-      if (music_scanner_start(g_config.paths.music_dir, g_config.music.scan_interval_minutes,
-                              music_db_path) != 0) {
-         LOG_WARNING("Music scanner failed to start");
+         // Start background scanner to index music library
+         // Uses paths.music_dir with tilde expansion handled by scanner
+         if (music_scanner_start(g_config.paths.music_dir, g_config.music.scan_interval_minutes,
+                                 music_db_path) != 0) {
+            LOG_WARNING("Music scanner failed to start");
+         }
+      } else {
+         LOG_WARNING("Music database init failed");
+      }
+
+      // Start dedicated audio capture thread with ring buffer
+      // Ring buffer size: 262144 bytes = ~8 seconds of audio at 16kHz mono 16-bit
+      // Increased to prevent audio loss during Vosk processing which can take 100-500ms
+      // Realtime priority: enabled (requires cap_sys_nice capability or root)
+      LOG_INFO("Starting audio capture thread...");
+      audio_capture_ctx = audio_capture_start(pcm_capture_device, 262144, 1);
+      if (!audio_capture_ctx) {
+         LOG_ERROR("Failed to start audio capture thread");
+         LOG_ERROR("  Hint: Check that capture device '%s' exists and isn't in use by another "
+                   "application",
+                   pcm_capture_device);
+         return 1;
       }
    } else {
-      LOG_WARNING("Music database init failed");
-   }
-
-   // Start dedicated audio capture thread with ring buffer
-   // Ring buffer size: 262144 bytes = ~8 seconds of audio at 16kHz mono 16-bit
-   // Increased to prevent audio loss during Vosk processing which can take 100-500ms per iteration
-   // Realtime priority: enabled (requires cap_sys_nice capability or root)
-   LOG_INFO("Starting audio capture thread...");
-   audio_capture_ctx = audio_capture_start(pcm_capture_device, 262144, 1);
-   if (!audio_capture_ctx) {
-      LOG_ERROR("Failed to start audio capture thread");
-      LOG_ERROR("  Hint: Check that capture device '%s' exists and isn't in use by another "
-                "application",
-                pcm_capture_device);
-      return 1;
+      LOG_INFO("Server mode: skipping audio decoder, music scanner, and audio capture");
    }
 
    myAudioControls.full_buff_size = DEFAULT_FRAMES * DEFAULT_CHANNELS * sizeof(int16_t);
@@ -2117,61 +2147,65 @@ int main(int argc, char *argv[]) {
    }
 mqtt_disabled:
 
+   // TTS engine init — always needed (WebUI and satellites use TTS via WebSocket)
    LOG_INFO("Init text to speech.");
-   /* Initialize text to speech processing. */
    initialize_text_to_speech(pcm_playback_device);
 
+   if (!server_mode) {
 #ifdef ENABLE_AEC
-   // Initialize AEC (must be after TTS which creates the resampler)
-   LOG_INFO("Init AEC for echo cancellation.");
-   aec_config_t aec_config = aec_get_default_config();
+      // Initialize AEC (must be after TTS which creates the resampler)
+      LOG_INFO("Init AEC for echo cancellation.");
+      aec_config_t aec_config = aec_get_default_config();
 
-   // Auto-detect platform for mobile mode
+      // Auto-detect platform for mobile mode
 #ifdef PLATFORM_RPI
-   aec_config.mobile_mode = true;
-   LOG_INFO("AEC: Using mobile mode for Raspberry Pi");
+      aec_config.mobile_mode = true;
+      LOG_INFO("AEC: Using mobile mode for Raspberry Pi");
 #endif
 
-   if (aec_init(&aec_config) != 0) {
-      LOG_WARNING("AEC initialization failed - continuing without echo cancellation");
-   }
+      if (aec_init(&aec_config) != 0) {
+         LOG_WARNING("AEC initialization failed - continuing without echo cancellation");
+      }
 #endif
 
-   // Initialize Silero VAD
-   LOG_INFO("Init Silero VAD for voice activity detection.");
-   const char *home_dir = getenv("HOME");
-   char vad_model_path[512];
-   if (home_dir) {
-      snprintf(vad_model_path, sizeof(vad_model_path),
-               "%s/code/The-OASIS-Project/dawn/models/silero_vad_16k_op15.onnx", home_dir);
-      vad_ctx = vad_silero_init(vad_model_path, NULL);  // Option B: separate OrtEnv
-      if (!vad_ctx) {
-         LOG_WARNING("Failed to initialize Silero VAD - proceeding without VAD");
+      // Initialize Silero VAD
+      LOG_INFO("Init Silero VAD for voice activity detection.");
+      const char *home_dir = getenv("HOME");
+      char vad_model_path[512];
+      if (home_dir) {
+         snprintf(vad_model_path, sizeof(vad_model_path),
+                  "%s/code/The-OASIS-Project/dawn/models/silero_vad_16k_op15.onnx", home_dir);
+         vad_ctx = vad_silero_init(vad_model_path, NULL);  // Option B: separate OrtEnv
+         if (!vad_ctx) {
+            LOG_WARNING("Failed to initialize Silero VAD - proceeding without VAD");
+         } else {
+            vad_silero_set_probability_callback(vad_ctx, vad_metrics_callback, NULL);
+            LOG_INFO("Silero VAD initialized successfully (opset15 model, 0.311ms inference)");
+         }
       } else {
-         vad_silero_set_probability_callback(vad_ctx, vad_metrics_callback, NULL);
-         LOG_INFO("Silero VAD initialized successfully (opset15 model, 0.311ms inference)");
+         LOG_WARNING("HOME environment variable not set - VAD initialization skipped");
+      }
+
+      // Speak greeting with AEC delay calibration (uses boot greeting to measure acoustic delay)
+      tts_speak_greeting_with_calibration(timeOfDayGreeting());
+
+      // Wait for greeting to complete before enabling barge-in
+      // This prevents VAD from interrupting the greeting during calibration
+      LOG_INFO("Waiting for boot greeting to complete...");
+      int tts_result = tts_wait_for_completion(10000);  // 10 second timeout
+      if (tts_result == 0) {
+         LOG_INFO("Boot greeting completed successfully");
+      } else {
+         LOG_WARNING("Boot greeting wait timed out - continuing anyway");
+      }
+
+      // Flush audio buffer to discard any speech captured during greeting
+      if (audio_capture_ctx) {
+         audio_capture_clear(audio_capture_ctx);
+         LOG_INFO("Audio buffer cleared after boot greeting");
       }
    } else {
-      LOG_WARNING("HOME environment variable not set - VAD initialization skipped");
-   }
-
-   // Speak greeting with AEC delay calibration (uses boot greeting to measure acoustic delay)
-   tts_speak_greeting_with_calibration(timeOfDayGreeting());
-
-   // Wait for greeting to complete before enabling barge-in
-   // This prevents VAD from interrupting the greeting during calibration
-   LOG_INFO("Waiting for boot greeting to complete...");
-   int tts_result = tts_wait_for_completion(10000);  // 10 second timeout
-   if (tts_result == 0) {
-      LOG_INFO("Boot greeting completed successfully");
-   } else {
-      LOG_WARNING("Boot greeting wait timed out - continuing anyway");
-   }
-
-   // Flush audio buffer to discard any speech captured during greeting
-   if (audio_capture_ctx) {
-      audio_capture_clear(audio_capture_ctx);
-      LOG_INFO("Audio buffer cleared after boot greeting");
+      LOG_INFO("Server mode: skipping AEC, VAD, and boot greeting");
    }
 
    // Reset VAD state to clear any detections from greeting playback
@@ -2299,6 +2333,20 @@ mqtt_disabled:
 #endif
 
    // Main loop
+   if (server_mode) {
+      // Server mode: no local audio state machine
+      // WebUI, satellites, MQTT, scheduler, etc. run on their own threads
+      // Main thread just waits for shutdown signal
+      LOG_INFO("Server mode active — WebUI and satellite connections ready");
+      LOG_INFO("Access WebUI at http%s://%s:%d", g_config.webui.https ? "s" : "",
+               g_config.webui.bind_address[0] ? g_config.webui.bind_address : "0.0.0.0",
+               g_config.webui.port);
+      while (!quit) {
+         sleep(1);
+      }
+      goto server_shutdown;
+   }
+
    LOG_INFO("Listening...\n");
    while (!quit) {
 #ifdef ENABLE_TUI
@@ -3638,6 +3686,7 @@ mqtt_disabled:
       }
    }
 
+server_shutdown:
    LOG_INFO("Quit.\n");
 
    // Stop heartbeat immediately — no dependencies on other subsystems

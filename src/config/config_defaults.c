@@ -94,7 +94,7 @@ void config_set_defaults(dawn_config_t *config) {
    config->vad.chunking.max_duration = 10.0f;  /* VAD_MAX_CHUNK_DURATION */
 
    /* ASR */
-   SAFE_COPY(config->asr.model, "base");
+   SAFE_COPY(config->asr.model, "base.en");
    SAFE_COPY(config->asr.models_path, "models/whisper.cpp");
 
    /* TTS */
@@ -110,7 +110,7 @@ void config_set_defaults(dawn_config_t *config) {
    config->llm.max_tokens = 4096; /* GPT_MAX_TOKENS from dawn.h */
 
    /* LLM Cloud */
-   SAFE_COPY(config->llm.cloud.provider, "openai");
+   config->llm.cloud.provider[0] = '\0'; /* Empty = auto-detect from available API keys */
    config->llm.cloud.endpoint[0] = '\0'; /* Empty = use default */
    config->llm.cloud.vision_enabled = true;
 
@@ -207,7 +207,7 @@ void config_set_defaults(dawn_config_t *config) {
    config->tui.enabled = false;
 
    /* WebUI */
-   config->webui.enabled = false;
+   config->webui.enabled = true;
    config->webui.port = 3000; /* "I love you 3000" */
    config->webui.max_clients = 4;
    config->webui.audio_chunk_ms = 200; /* 200ms chunks for streaming audio */

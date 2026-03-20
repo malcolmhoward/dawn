@@ -189,20 +189,13 @@ endif()
 # Include directories
 include_directories(include)
 
-# Platform-specific CUDA configuration (same as main server)
-set(CUDA_TOOLKIT_ROOT_DIR "/usr/local/cuda-12.6")
-find_library(CUDA_LIBRARIES NAMES cuda HINTS ${CUDA_TOOLKIT_ROOT_DIR}/targets/aarch64-linux/lib)
-if(CUDA_LIBRARIES)
+# CUDA configuration — shared module handles auto-detection
+# Note: PLATFORM is not set in satellite builds; CUDA toolkit simply won't be found on RPi
+include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/DawnCUDA.cmake)
+if(DAWN_CUDA_FOUND)
     set(ENABLE_WHISPER_CUDA ON)
-    find_library(CUDART_LIBRARIES NAMES cudart HINTS ${CUDA_TOOLKIT_ROOT_DIR}/targets/aarch64-linux/lib)
-    find_library(CUSPARSE_LIBRARIES NAMES cusparse HINTS ${CUDA_TOOLKIT_ROOT_DIR}/targets/aarch64-linux/lib)
-    find_library(CUBLAS_LIBRARIES NAMES cublas HINTS ${CUDA_TOOLKIT_ROOT_DIR}/targets/aarch64-linux/lib)
-    find_library(CUSOLVER_LIBRARIES NAMES cusolver HINTS ${CUDA_TOOLKIT_ROOT_DIR}/targets/aarch64-linux/lib)
-    find_library(CURAND_LIBRARIES NAMES curand HINTS ${CUDA_TOOLKIT_ROOT_DIR}/targets/aarch64-linux/lib)
-    message(STATUS "CUDA support: ENABLED")
 else()
     set(ENABLE_WHISPER_CUDA OFF)
-    message(STATUS "CUDA support: DISABLED (not found)")
 endif()
 
 # Include whisper.cpp for Whisper ASR (must be before dawn_common so target exists)

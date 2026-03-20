@@ -129,6 +129,14 @@ int config_validate(const dawn_config_t *config,
       }
    }
 
+   /* ===== General Mode (enum) ===== */
+   if (config->general.mode[0] != '\0') {
+      const char *valid_modes[] = { "server" };
+      if (!string_in_list(config->general.mode, valid_modes, 1)) {
+         ADD_ERROR("general.mode", "must be 'server' or empty (got '%s')", config->general.mode);
+      }
+   }
+
    /* ===== LLM Type (enum) ===== */
    {
       const char *valid_types[] = { "cloud", "local" };
@@ -138,13 +146,12 @@ int config_validate(const dawn_config_t *config,
    }
 
    /* ===== LLM Cloud Provider (enum) ===== */
-   if (strcmp(config->llm.type, "cloud") == 0) {
-      const char *valid_providers[] = { "openai", "claude" };
-      if (!string_in_list(config->llm.cloud.provider, valid_providers, 2)) {
-         ADD_ERROR("llm.cloud.provider", "must be 'openai' or 'claude' (got '%s')",
+   if (strcmp(config->llm.type, "cloud") == 0 && config->llm.cloud.provider[0] != '\0') {
+      const char *valid_providers[] = { "openai", "claude", "gemini" };
+      if (!string_in_list(config->llm.cloud.provider, valid_providers, 3)) {
+         ADD_ERROR("llm.cloud.provider", "must be 'openai', 'claude', or 'gemini' (got '%s')",
                    config->llm.cloud.provider);
       }
-      /* Note: API key check removed - handled in dawn.c with graceful fallback to local */
    }
 
    /* ===== LLM Local Provider (enum) ===== */

@@ -251,6 +251,9 @@ int webui_music_server_init(int port) {
 
    LOG_INFO("Music server: Initializing on port %d", port);
 
+   /* Match main server log level (errors and warnings only) */
+   lws_set_log_level(LLL_ERR | LLL_WARN, NULL);
+
    /* Create context */
    s_music_lws_context = lws_create_context(&info);
    if (!s_music_lws_context) {

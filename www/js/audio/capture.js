@@ -22,6 +22,7 @@
    let audioChunkMs = 200; // Updated from server config
    let useWorklet = false; // Whether AudioWorklet is being used
    let workletLoaded = false; // Whether worklet module has been loaded into context
+   let startPromise = null; // Tracks in-flight start() to prevent stop() race
 
    // Callbacks (set by dawn.js)
    let callbacks = {
@@ -69,8 +70,8 @@
     * Start recording audio from microphone
     */
    async function start() {
-      if (DawnState.getIsRecording()) {
-         console.warn('Already recording');
+      if (DawnState.getIsRecording() || startPromise) {
+         console.warn('Already recording or start in progress');
          return;
       }
 
@@ -79,6 +80,19 @@
          return;
       }
 
+      // Track the start promise so stop() can wait for it
+      startPromise = startInternal();
+      try {
+         await startPromise;
+      } finally {
+         startPromise = null;
+      }
+   }
+
+   /**
+    * Internal start implementation
+    */
+   async function startInternal() {
       try {
          // Request microphone access
          mediaStream = await navigator.mediaDevices.getUserMedia({
@@ -158,9 +172,13 @@
          // Handle messages from worklet
          audioProcessor.port.onmessage = function (event) {
             const msg = event.data;
-            if (msg.type === 'audio' && DawnState.getIsRecording()) {
-               // msg.data is already Int16Array
-               sendAudioChunk(msg.data.buffer);
+            if (msg.type === 'audio') {
+               if (DawnState.getIsRecording()) {
+                  // msg.data is already Int16Array
+                  sendAudioChunk(msg.data.buffer);
+               } else {
+                  console.debug('Audio chunk dropped: recording state is false');
+               }
             }
          };
 
@@ -242,17 +260,29 @@
    /**
     * Stop recording and send end marker
     */
-   function stop() {
+   async function stop() {
+      // Wait for start() to complete if it's still in progress
+      if (startPromise) {
+         try {
+            await startPromise;
+         } catch (e) {
+            // start failed — nothing to stop
+         }
+      }
+
       if (!DawnState.getIsRecording()) {
          return;
       }
 
-      DawnState.setIsRecording(false);
-
-      // Tell worklet to stop (will flush remaining buffer)
+      // Tell worklet to stop and flush remaining buffer BEFORE clearing recording state
+      // The onmessage handler checks isRecording, so it must still be true during flush
       if (useWorklet && audioProcessor && audioProcessor.port) {
          audioProcessor.port.postMessage({ type: 'stop' });
+         // Allow worklet thread to process the stop message and flush
+         await new Promise((resolve) => setTimeout(resolve, 50));
       }
+
+      DawnState.setIsRecording(false);
 
       // Stop audio processing
       if (audioProcessor) {

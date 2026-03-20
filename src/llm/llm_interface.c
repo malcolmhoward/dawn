@@ -325,46 +325,41 @@ void llm_init(const char *cloud_provider_override) {
    }
 
    if (provider_source != NULL) {
-      if (strcmp(provider_source, "openai") == 0) {
-         if (!openai_available) {
-            LOG_ERROR("OpenAI requested but no API key available");
-            LOG_ERROR("  Hint: Add openai_api_key to secrets.toml or set OPENAI_API_KEY env var");
-            exit(1);
-         }
+      bool provider_ok = false;
+      if (strcmp(provider_source, "openai") == 0 && openai_available) {
          current_cloud_provider = CLOUD_PROVIDER_OPENAI;
+         provider_ok = true;
          LOG_INFO("Cloud provider set to OpenAI (%s)",
                   cloud_provider_override ? "CLI override" : "config file");
-      } else if (strcmp(provider_source, "claude") == 0) {
-         if (!claude_available) {
-            LOG_ERROR("Claude requested but no API key available");
-            LOG_ERROR("  Hint: Add claude_api_key to secrets.toml or set CLAUDE_API_KEY env var");
-            exit(1);
-         }
+      } else if (strcmp(provider_source, "claude") == 0 && claude_available) {
          current_cloud_provider = CLOUD_PROVIDER_CLAUDE;
+         provider_ok = true;
          LOG_INFO("Cloud provider set to Claude (%s)",
                   cloud_provider_override ? "CLI override" : "config file");
-      } else if (strcmp(provider_source, "gemini") == 0) {
-         if (!gemini_available) {
-            LOG_ERROR("Gemini requested but no API key available");
-            LOG_ERROR("  Hint: Add gemini_api_key to secrets.toml or set GEMINI_API_KEY env var");
-            exit(1);
-         }
+      } else if (strcmp(provider_source, "gemini") == 0 && gemini_available) {
          current_cloud_provider = CLOUD_PROVIDER_GEMINI;
+         provider_ok = true;
          LOG_INFO("Cloud provider set to Gemini (%s)",
                   cloud_provider_override ? "CLI override" : "config file");
-      } else {
-         LOG_ERROR("Unknown cloud provider: %s (valid: openai, claude, gemini)", provider_source);
-         exit(1);
       }
-   } else {
-      // Auto-detect: prefer OpenAI for backward compatibility
-      if (openai_available) {
-         current_cloud_provider = CLOUD_PROVIDER_OPENAI;
-         LOG_INFO("Cloud provider auto-detected: OpenAI");
-      } else if (claude_available) {
+
+      if (!provider_ok) {
+         /* Configured provider unavailable — fall through to auto-detect */
+         LOG_WARNING("Cloud provider '%s' has no API key — auto-detecting available provider",
+                     provider_source);
+         provider_source = NULL;
+      }
+   }
+
+   if (provider_source == NULL) {
+      /* Auto-detect: pick the first provider with an API key */
+      if (claude_available) {
          current_cloud_provider = CLOUD_PROVIDER_CLAUDE;
          LOG_INFO("Cloud provider auto-detected: Claude");
-      } else {
+      } else if (openai_available) {
+         current_cloud_provider = CLOUD_PROVIDER_OPENAI;
+         LOG_INFO("Cloud provider auto-detected: OpenAI");
+      } else if (gemini_available) {
          current_cloud_provider = CLOUD_PROVIDER_GEMINI;
          LOG_INFO("Cloud provider auto-detected: Gemini");
       }
@@ -1087,13 +1082,26 @@ void llm_get_default_config(session_llm_config_t *config) {
       config->type = LLM_CLOUD;
    }
 
-   // Always set default cloud provider (used when switching from local to cloud)
+   // Set default cloud provider (used when switching from local to cloud)
+   // If config specifies a provider AND it has a key, use it; otherwise auto-detect
+   cloud_provider_t configured = CLOUD_PROVIDER_NONE;
+   bool configured_has_key = false;
    if (strcasecmp(g_config.llm.cloud.provider, "claude") == 0) {
-      config->cloud_provider = CLOUD_PROVIDER_CLAUDE;
+      configured = CLOUD_PROVIDER_CLAUDE;
+      configured_has_key = is_claude_available();
    } else if (strcasecmp(g_config.llm.cloud.provider, "gemini") == 0) {
-      config->cloud_provider = CLOUD_PROVIDER_GEMINI;
+      configured = CLOUD_PROVIDER_GEMINI;
+      configured_has_key = is_gemini_available();
+   } else if (strcasecmp(g_config.llm.cloud.provider, "openai") == 0) {
+      configured = CLOUD_PROVIDER_OPENAI;
+      configured_has_key = is_openai_available();
+   }
+
+   if (configured != CLOUD_PROVIDER_NONE && configured_has_key) {
+      config->cloud_provider = configured;
    } else {
-      config->cloud_provider = CLOUD_PROVIDER_OPENAI;
+      // Config provider unavailable or empty — use the auto-detected provider
+      config->cloud_provider = llm_get_cloud_provider();
    }
 
    // Endpoint and model are empty by default (resolved at call time from config)

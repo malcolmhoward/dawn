@@ -45,6 +45,30 @@
         "CMAKE_BUILD_TYPE": "Debug",
         "ENABLE_WEBUI": "ON"
       }
+    },
+    {
+      "name": "server",
+      "displayName": "Server",
+      "description": "Cloud/server deployment: WebUI + satellites, no local audio required",
+      "binaryDir": "${sourceDir}/build-server",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "ENABLE_WEBUI": "ON",
+        "SERVER_ONLY": "ON",
+        "ENABLE_AEC": "OFF"
+      }
+    },
+    {
+      "name": "server-debug",
+      "displayName": "Server (Debug)",
+      "description": "Server deployment with debug symbols",
+      "binaryDir": "${sourceDir}/build-server-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "ENABLE_WEBUI": "ON",
+        "SERVER_ONLY": "ON",
+        "ENABLE_AEC": "OFF"
+      }
     }
   ],
   "buildPresets": [
@@ -63,6 +87,14 @@
     {
       "name": "debug",
       "configurePreset": "debug"
+    },
+    {
+      "name": "server",
+      "configurePreset": "server"
+    },
+    {
+      "name": "server-debug",
+      "configurePreset": "server-debug"
     }
   ]
 }

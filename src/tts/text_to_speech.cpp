@@ -236,9 +236,9 @@ static int openPlaybackDevice(const char *pcm_device) {
    LOG_INFO("TTS playback device: %s (backend: %s)", pcm_device,
             audio_backend_type_name(audio_backend_get_type()));
 
-   // Check that audio backend is initialized
+   // Guard: should not be called when audio backend is NONE (server mode)
    if (audio_backend_get_type() == AUDIO_BACKEND_NONE) {
-      LOG_ERROR("Audio backend not initialized. Call audio_backend_init() first.");
+      LOG_WARNING("openPlaybackDevice called with no audio backend — skipping");
       return 1;
    }
 
@@ -362,8 +362,14 @@ pthread_t tts_thread;
 
 /**
  * @brief Flag indicating whether the worker thread should continue running.
+ * Atomic because it is read outside tts_queue_mutex in the audio write loop.
  */
-bool tts_thread_running = false;
+std::atomic<bool> tts_thread_running(false);
+
+/**
+ * @brief Flag to interrupt in-progress TTS synthesis (e.g. during shutdown).
+ */
+static std::atomic<bool> tts_stop_processing(false);
 
 /**
  * @brief TTS playback state (mutex-protected)
@@ -386,9 +392,6 @@ extern "C" {
  */
 void *tts_thread_function(void *arg) {
    LOG_INFO("tts_thread_function() started.");
-
-   // Declare the interruption flag
-   std::atomic<bool> tts_stop_processing(false);
 
    while (!get_quit()) {
       pthread_mutex_lock(&tts_queue_mutex);
@@ -443,12 +446,20 @@ void *tts_thread_function(void *arg) {
              pthread_mutex_unlock(&tts_mutex);
 
              // Play audio data using unified audio backend API
+             // Skip entire write loop when no local playback device (server mode) —
+             // audio data is already captured in audioBuffer for WebSocket delivery
              const size_t chunk_frames = tts_handle.period_frames;
-             for (size_t i = 0; i < audioBuffer.size(); i += chunk_frames) {
+             for (size_t i = 0; tts_handle.playback_handle && i < audioBuffer.size();
+                  i += chunk_frames) {
+                // Check for shutdown request
+                if (tts_stop_processing.load() || !tts_thread_running.load()) {
+                   break;
+                }
                 // Check playback state
                 pthread_mutex_lock(&tts_mutex);
                 bool was_paused = false;
-                while (tts_playback_state == TTS_PLAYBACK_PAUSE) {
+                while (tts_playback_state == TTS_PLAYBACK_PAUSE && !tts_stop_processing.load() &&
+                       tts_thread_running.load()) {
                    if (!was_paused) {
                       LOG_INFO("TTS playback is PAUSED.");
 #ifdef ENABLE_AEC
@@ -486,8 +497,11 @@ void *tts_thread_function(void *arg) {
                       mic_stop_recording();
 
                       // Drop (flush) audio device buffer immediately to stop playback
-                      audio_stream_playback_drop(tts_handle.playback_handle);
-                      audio_stream_playback_recover(tts_handle.playback_handle, AUDIO_ERR_UNDERRUN);
+                      if (tts_handle.playback_handle) {
+                         audio_stream_playback_drop(tts_handle.playback_handle);
+                         audio_stream_playback_recover(tts_handle.playback_handle,
+                                                       AUDIO_ERR_UNDERRUN);
+                      }
 
                       pthread_mutex_unlock(&tts_mutex);
 
@@ -496,7 +510,10 @@ void *tts_thread_function(void *arg) {
                    } else if (tts_playback_state == TTS_PLAYBACK_PLAY) {
                       LOG_INFO("TTS unpaused to PLAY.");
                       // Prepare stream after unpause to avoid underrun on first write
-                      audio_stream_playback_recover(tts_handle.playback_handle, AUDIO_ERR_UNDERRUN);
+                      if (tts_handle.playback_handle) {
+                         audio_stream_playback_recover(tts_handle.playback_handle,
+                                                       AUDIO_ERR_UNDERRUN);
+                      }
                    } else if (tts_playback_state == TTS_PLAYBACK_IDLE) {
                       LOG_WARNING("TTS unpaused to IDLE.");
                    } else {
@@ -519,7 +536,10 @@ void *tts_thread_function(void *arg) {
                 size_t samples_this_chunk = std::min(chunk_frames, audioBuffer.size() - i);
                 ssize_t frames_written = 0;
 
-                if (tts_handle.needs_conversion) {
+                // Skip local audio write when no playback device (server mode)
+                if (!tts_handle.playback_handle) {
+                   frames_written = (ssize_t)samples_this_chunk;  // Pretend success
+                } else if (tts_handle.needs_conversion) {
                    // Convert audio to hardware format (rate/channels/bit-depth)
                    ssize_t converted_frames = tts_convert_audio(&audioBuffer[i], samples_this_chunk,
                                                                 tts_handle.convert_out,
@@ -549,7 +569,9 @@ void *tts_thread_function(void *arg) {
                       LOG_ERROR("Audio write error: %s", audio_error_string((audio_error_t)err));
                    }
                    // Attempt recovery
-                   audio_stream_playback_recover(tts_handle.playback_handle, err);
+                   if (tts_handle.playback_handle) {
+                      audio_stream_playback_recover(tts_handle.playback_handle, err);
+                   }
                 }
                 rc = (int)frames_written;  // For AEC compatibility
 
@@ -607,8 +629,10 @@ void *tts_thread_function(void *arg) {
              }
 
              // Drain audio buffer to ensure all audio is played before returning
-             if (audio_stream_playback_drain(tts_handle.playback_handle) != AUDIO_SUCCESS) {
-                LOG_ERROR("Audio drain error");
+             if (tts_handle.playback_handle) {
+                if (audio_stream_playback_drain(tts_handle.playback_handle) != AUDIO_SUCCESS) {
+                   LOG_ERROR("Audio drain error");
+                }
              }
              // Clear the audio buffer for the next request
              audioBuffer.clear();
@@ -728,17 +752,22 @@ void initialize_text_to_speech(char *pcm_device) {
    pthread_cond_init(&tts_queue_cond, NULL);
 
    // Open the audio playback device using runtime audio backend abstraction
-   int rc = openPlaybackDevice(tts_handle.pcm_playback_device);
-   if (rc) {
-      LOG_ERROR("Error creating audio playback device");
-      LOG_ERROR("  Hint: Check that playback device is available and not in use. List devices: "
-                "aplay -L");
-      // Cleanup Piper
-      terminate(tts_handle.config);
-      // Cleanup synchronization primitives
-      pthread_mutex_destroy(&tts_queue_mutex);
-      pthread_cond_destroy(&tts_queue_cond);
-      return;
+   // In server mode (AUDIO_BACKEND_NONE), skip local playback — TTS output goes via WebSocket
+   if (audio_backend_get_type() != AUDIO_BACKEND_NONE) {
+      int rc = openPlaybackDevice(tts_handle.pcm_playback_device);
+      if (rc) {
+         LOG_ERROR("Error creating audio playback device");
+         LOG_ERROR("  Hint: Check that playback device is available and not in use. List devices: "
+                   "aplay -L");
+         // Cleanup Piper
+         terminate(tts_handle.config);
+         // Cleanup synchronization primitives
+         pthread_mutex_destroy(&tts_queue_mutex);
+         pthread_cond_destroy(&tts_queue_cond);
+         return;
+      }
+   } else {
+      LOG_INFO("TTS: No local playback device (server mode) — audio output via WebSocket only");
    }
 
    // Start the worker thread
@@ -789,7 +818,7 @@ void initialize_text_to_speech(char *pcm_device) {
  */
 void text_to_speech(char *text) {
    if (!tts_handle.is_initialized) {
-      LOG_ERROR("Text-to-Speech system not initialized. Call initialize_text_to_speech() first.");
+      LOG_WARNING("TTS not yet initialized — dropping speech request");
       return;
    }
 
@@ -1063,17 +1092,26 @@ void tts_speak_greeting_with_calibration(const char *greeting) {
  */
 void cleanup_text_to_speech() {
    if (!tts_handle.is_initialized) {
-      LOG_ERROR("Text-to-Speech system not initialized. Call initialize_text_to_speech() first.");
-      return;
+      return; /* Nothing to clean up */
    }
 
    tts_handle.is_initialized = 0;
 
    // Signal the worker thread to exit
+   tts_stop_processing.store(true);  // Interrupt any in-progress synthesis
+
    pthread_mutex_lock(&tts_queue_mutex);
    tts_thread_running = false;
    pthread_cond_signal(&tts_queue_cond);
    pthread_mutex_unlock(&tts_queue_mutex);
+
+   // Also wake the thread if it's blocked on tts_cond (paused state)
+   pthread_mutex_lock(&tts_mutex);
+   if (tts_playback_state == TTS_PLAYBACK_PAUSE) {
+      tts_playback_state = TTS_PLAYBACK_DISCARD;
+   }
+   pthread_cond_signal(&tts_cond);
+   pthread_mutex_unlock(&tts_mutex);
 
    // Wait for the worker thread to finish
    pthread_join(tts_thread, NULL);
