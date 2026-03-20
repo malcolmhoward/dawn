@@ -1,0 +1,42 @@
+[Unit]
+Description=DAWN Voice Assistant Server
+Documentation=https://github.com/The-OASIS-Project/dawn
+After=network-online.target mosquitto.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dawn
+Group=dawn
+
+# Working directory contains www/, models/, ssl/, and secrets.toml symlink
+WorkingDirectory=/var/lib/dawn
+
+# Environment
+EnvironmentFile=/usr/local/etc/dawn/dawn-server.conf
+
+# Startup
+ExecStart=/usr/local/bin/dawn --config /usr/local/etc/dawn/dawn.toml
+
+# Logging
+StandardOutput=append:/var/log/dawn/server.log
+StandardError=append:/var/log/dawn/server.log
+
+# Restart policy
+Restart=on-failure
+RestartSec=10s
+StartLimitInterval=5min
+StartLimitBurst=3
+
+# Supplementary groups for hardware access
+SupplementaryGroups=audio video render
+
+# Security hardening
+ProtectSystem=strict
+ReadWritePaths=/var/lib/dawn /var/log/dawn /usr/local/etc/dawn
+NoNewPrivileges=true
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

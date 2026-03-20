@@ -1,0 +1,12 @@
+/var/log/dawn-satellite/*.log {
+    daily
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 dawn dawn
+    postrotate
+        systemctl kill -s HUP dawn-satellite.service >/dev/null 2>&1 || true
+    endscript
+}

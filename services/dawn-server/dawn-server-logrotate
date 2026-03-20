@@ -1,0 +1,12 @@
+/var/log/dawn/*.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 dawn dawn
+    postrotate
+        systemctl kill -s HUP dawn-server.service >/dev/null 2>&1 || true
+    endscript
+}

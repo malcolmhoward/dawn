@@ -1,0 +1,42 @@
+[Unit]
+Description=DAWN Voice Satellite (DAP2 Tier 1)
+Documentation=https://github.com/The-OASIS-Project/dawn
+After=network-online.target sound.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dawn
+Group=dawn
+
+# Working directory contains models/, assets/, and config references
+WorkingDirectory=/var/lib/dawn-satellite
+
+# Environment
+EnvironmentFile=/usr/local/etc/dawn-satellite/dawn-satellite.conf
+
+# Startup
+ExecStart=/usr/local/bin/dawn_satellite --config /usr/local/etc/dawn-satellite/satellite.toml
+
+# Logging
+StandardOutput=append:/var/log/dawn-satellite/satellite.log
+StandardError=append:/var/log/dawn-satellite/satellite.log
+
+# Restart policy - satellite should always reconnect
+Restart=always
+RestartSec=5s
+StartLimitInterval=5min
+StartLimitBurst=5
+
+# Supplementary groups for hardware access
+SupplementaryGroups=audio video render input
+
+# Security hardening
+ProtectSystem=strict
+ReadWritePaths=/var/lib/dawn-satellite /var/log/dawn-satellite /usr/local/etc/dawn-satellite
+NoNewPrivileges=true
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
