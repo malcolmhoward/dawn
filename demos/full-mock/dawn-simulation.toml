@@ -1,0 +1,53 @@
+# D.A.W.N. configuration for full simulation mode.
+#
+# All external services are replaced by E.C.H.O. simulation framework mocks:
+#   - Home Assistant → HomeAssistantMock (Flask server on mock-ha:8123)
+#   - LLM → LLMMock wrapped in OpenAI-compatible HTTP server (mock-llm:8080)
+#   - MQTT → Mosquitto broker (mqtt-broker:1883)
+#
+# No GPU, no API keys, no external services required.
+
+[general]
+name = "DAWN Simulation Demo"
+
+[llm]
+type = "local"
+
+[llm.local]
+endpoint = "http://mock-llm:8080"
+provider = "generic"
+model = "echo-mock"
+vision_enabled = false
+
+[llm.tools]
+mode = "native"
+
+[mqtt]
+enabled = true
+broker = "mqtt-broker"
+port = 1883
+tls = false
+
+[homeassistant]
+url = "http://mock-ha:8123"
+enabled = true
+
+[memory]
+enabled = true
+embedding_provider = ""
+
+[audio]
+enabled = false
+
+[asr]
+enabled = false
+
+[tts]
+enabled = false
+
+[webui]
+enabled = true
+port = 3000
+
+[debug]
+log_level = "info"

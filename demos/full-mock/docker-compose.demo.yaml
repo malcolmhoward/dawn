@@ -1,0 +1,63 @@
+# D.A.W.N. Full Simulation Demo
+#
+# Runs D.A.W.N. with all external services replaced by E.C.H.O. mocks.
+# No GPU, no API keys, no external services required.
+#
+# Usage:
+#   docker compose -f demos/full-mock/docker-compose.demo.yaml up --build
+#
+# Then open http://localhost:3000 to access D.A.W.N.'s WebUI.
+# Type in the chat: "turn on the kitchen lights" or "hello"
+
+services:
+  mqtt-broker:
+    image: eclipse-mosquitto:2
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    ports:
+      - "1883:1883"
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_sub -t '$$SYS/broker/uptime' -C 1 -W 3"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  mock-services:
+    build:
+      context: ../..
+      dockerfile: demos/full-mock/mock_services/Dockerfile
+    environment:
+      - HA_PORT=8123
+      - LLM_PORT=8080
+    ports:
+      - "8123:8123"
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/v1/models')\""]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  dawn:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./dawn-simulation.toml:/opt/dawn/dawn.toml:ro
+      - ./secrets-simulation.toml:/opt/dawn/secrets.toml:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      mqtt-broker:
+        condition: service_healthy
+      mock-services:
+        condition: service_healthy
+    environment:
+      - DAWN_LLM_TYPE=local
+      - DAWN_LLM_LOCAL_ENDPOINT=http://mock-services:8080
+      - DAWN_LLM_LOCAL_PROVIDER=generic
+      - DAWN_MQTT_BROKER=mqtt-broker
+      - DAWN_HOMEASSISTANT_URL=http://mock-services:8123
+      - DAWN_AUDIO_ENABLED=false
+      - DAWN_ASR_ENABLED=false
+      - DAWN_TTS_ENABLED=false
