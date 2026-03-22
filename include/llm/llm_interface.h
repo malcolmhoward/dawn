@@ -410,6 +410,15 @@ bool llm_has_claude_key(void);
  */
 bool llm_has_gemini_key(void);
 
+/**
+ * @brief Auto-detect the first cloud provider with an available API key
+ *
+ * Priority: Claude > OpenAI > Gemini
+ *
+ * @return The first available provider, or CLOUD_PROVIDER_NONE if no keys found
+ */
+cloud_provider_t llm_detect_available_provider(void);
+
 /* ============================================================================
  * Per-Session LLM Configuration Support
  * ============================================================================ */

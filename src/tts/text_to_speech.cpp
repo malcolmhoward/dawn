@@ -1101,7 +1101,7 @@ void cleanup_text_to_speech() {
    tts_stop_processing.store(true);  // Interrupt any in-progress synthesis
 
    pthread_mutex_lock(&tts_queue_mutex);
-   tts_thread_running = false;
+   tts_thread_running.store(false);
    pthread_cond_signal(&tts_queue_cond);
    pthread_mutex_unlock(&tts_queue_mutex);
 

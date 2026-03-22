@@ -207,7 +207,7 @@ void config_set_defaults(dawn_config_t *config) {
    config->tui.enabled = false;
 
    /* WebUI */
-   config->webui.enabled = true;
+   config->webui.enabled = false;
    config->webui.port = 3000; /* "I love you 3000" */
    config->webui.max_clients = 4;
    config->webui.audio_chunk_ms = 200; /* 200ms chunks for streaming audio */

@@ -106,6 +106,16 @@ bool llm_has_gemini_key(void) {
    return is_gemini_available();
 }
 
+cloud_provider_t llm_detect_available_provider(void) {
+   if (is_claude_available())
+      return CLOUD_PROVIDER_CLAUDE;
+   if (is_openai_available())
+      return CLOUD_PROVIDER_OPENAI;
+   if (is_gemini_available())
+      return CLOUD_PROVIDER_GEMINI;
+   return CLOUD_PROVIDER_NONE;
+}
+
 // Global state
 static llm_type_t current_type = LLM_UNDEFINED;
 static cloud_provider_t current_cloud_provider = CLOUD_PROVIDER_NONE;
@@ -353,15 +363,10 @@ void llm_init(const char *cloud_provider_override) {
 
    if (provider_source == NULL) {
       /* Auto-detect: pick the first provider with an API key */
-      if (claude_available) {
-         current_cloud_provider = CLOUD_PROVIDER_CLAUDE;
-         LOG_INFO("Cloud provider auto-detected: Claude");
-      } else if (openai_available) {
-         current_cloud_provider = CLOUD_PROVIDER_OPENAI;
-         LOG_INFO("Cloud provider auto-detected: OpenAI");
-      } else if (gemini_available) {
-         current_cloud_provider = CLOUD_PROVIDER_GEMINI;
-         LOG_INFO("Cloud provider auto-detected: Gemini");
+      current_cloud_provider = llm_detect_available_provider();
+      if (current_cloud_provider != CLOUD_PROVIDER_NONE) {
+         LOG_INFO("Cloud provider auto-detected: %s",
+                  cloud_provider_to_string(current_cloud_provider));
       }
    }
 

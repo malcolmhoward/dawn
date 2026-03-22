@@ -2472,18 +2472,13 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                   config.type = LLM_CLOUD;
                   /* If no provider is set, pick the first one with an API key */
                   if (config.cloud_provider == CLOUD_PROVIDER_NONE) {
-                     if (llm_has_claude_key()) {
-                        config.cloud_provider = CLOUD_PROVIDER_CLAUDE;
-                        LOG_INFO("WebUI: Auto-selected Claude (API key available)");
-                     } else if (llm_has_openai_key()) {
-                        config.cloud_provider = CLOUD_PROVIDER_OPENAI;
-                        LOG_INFO("WebUI: Auto-selected OpenAI (API key available)");
-                     } else if (llm_has_gemini_key()) {
-                        config.cloud_provider = CLOUD_PROVIDER_GEMINI;
-                        LOG_INFO("WebUI: Auto-selected Gemini (API key available)");
+                     config.cloud_provider = llm_detect_available_provider();
+                     if (config.cloud_provider != CLOUD_PROVIDER_NONE) {
+                        LOG_INFO("WebUI: Auto-selected %s (API key available)",
+                                 cloud_provider_to_string(config.cloud_provider));
                      } else {
-                        config.cloud_provider = CLOUD_PROVIDER_OPENAI;
-                        LOG_INFO("WebUI: No cloud API keys found, defaulting to OpenAI");
+                        LOG_WARNING("WebUI: No cloud API keys found — configure in "
+                                    "Settings or secrets.toml");
                      }
                   }
                } else if (strcmp(new_type, "reset") == 0) {

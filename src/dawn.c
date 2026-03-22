@@ -2168,22 +2168,16 @@ mqtt_disabled:
       }
 #endif
 
-      // Initialize Silero VAD
+      // Initialize Silero VAD (model path relative to working directory, same as Whisper)
       LOG_INFO("Init Silero VAD for voice activity detection.");
-      const char *home_dir = getenv("HOME");
       char vad_model_path[512];
-      if (home_dir) {
-         snprintf(vad_model_path, sizeof(vad_model_path),
-                  "%s/code/The-OASIS-Project/dawn/models/silero_vad_16k_op15.onnx", home_dir);
-         vad_ctx = vad_silero_init(vad_model_path, NULL);  // Option B: separate OrtEnv
-         if (!vad_ctx) {
-            LOG_WARNING("Failed to initialize Silero VAD - proceeding without VAD");
-         } else {
-            vad_silero_set_probability_callback(vad_ctx, vad_metrics_callback, NULL);
-            LOG_INFO("Silero VAD initialized successfully (opset15 model, 0.311ms inference)");
-         }
+      snprintf(vad_model_path, sizeof(vad_model_path), "models/silero_vad_16k_op15.onnx");
+      vad_ctx = vad_silero_init(vad_model_path, NULL);  // Option B: separate OrtEnv
+      if (!vad_ctx) {
+         LOG_WARNING("Failed to initialize Silero VAD - proceeding without VAD");
       } else {
-         LOG_WARNING("HOME environment variable not set - VAD initialization skipped");
+         vad_silero_set_probability_callback(vad_ctx, vad_metrics_callback, NULL);
+         LOG_INFO("Silero VAD initialized successfully (opset15 model, 0.311ms inference)");
       }
 
       // Speak greeting with AEC delay calibration (uses boot greeting to measure acoustic delay)

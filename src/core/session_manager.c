@@ -2022,13 +2022,7 @@ int session_set_llm_config(session_t *session, const session_llm_config_t *confi
 
       if (!has_key) {
          // Try to fall back to an available provider
-         cloud_provider_t fallback = CLOUD_PROVIDER_NONE;
-         if (llm_has_claude_key())
-            fallback = CLOUD_PROVIDER_CLAUDE;
-         else if (llm_has_openai_key())
-            fallback = CLOUD_PROVIDER_OPENAI;
-         else if (llm_has_gemini_key())
-            fallback = CLOUD_PROVIDER_GEMINI;
+         cloud_provider_t fallback = llm_detect_available_provider();
 
          if (fallback == CLOUD_PROVIDER_NONE) {
             LOG_WARNING("Session %u: No cloud provider has an API key configured",

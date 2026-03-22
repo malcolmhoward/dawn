@@ -278,8 +278,11 @@
       // The onmessage handler checks isRecording, so it must still be true during flush
       if (useWorklet && audioProcessor && audioProcessor.port) {
          audioProcessor.port.postMessage({ type: 'stop' });
-         // Allow worklet thread to process the stop message and flush
-         await new Promise((resolve) => setTimeout(resolve, 50));
+         // Allow worklet thread to process stop and flush remaining samples.
+         // AudioWorklet runs at 128-sample intervals (8ms at 16kHz); 50ms gives
+         // ~6 render quanta of headroom for the flush to complete.
+         const WORKLET_FLUSH_MS = 50;
+         await new Promise((resolve) => setTimeout(resolve, WORKLET_FLUSH_MS));
       }
 
       DawnState.setIsRecording(false);
