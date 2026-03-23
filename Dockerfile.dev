@@ -50,9 +50,10 @@ RUN curl -fsSL \
     && rm /tmp/cmake.sh
 
 # Meson + Ninja (for WebRTC AEC submodule)
+# Ubuntu 22.04 ships meson 0.61; webrtc-audio-processing requires >= 0.63
 RUN apt-get update && apt-get install -y \
-    meson \
     ninja-build \
+    && pip3 install --no-cache-dir meson \
     && rm -rf /var/lib/apt/lists/*
 
 # Audio libraries
@@ -84,13 +85,17 @@ RUN apt-get update && apt-get install -y \
 RUN apt-get update && apt-get install -y \
     libsqlite3-dev \
     libncurses-dev \
-    libabseil-dev \
+    libabsl-dev \
     uuid-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Document parsing (MuPDF dependency stack)
+# Document parsing (MuPDF dependency stack + transitive deps)
 RUN apt-get update && apt-get install -y \
     libmupdf-dev \
+    libfreetype-dev \
+    libharfbuzz-dev \
+    libxml2-dev \
+    libjpeg-dev \
     libzip-dev \
     libmujs-dev \
     libgumbo-dev \
@@ -138,8 +143,9 @@ RUN git clone https://github.com/rhasspy/piper-phonemize.git /tmp/piper-phonemiz
     && rm -rf /tmp/piper-phonemize
 
 # Copy entrypoint before source (separate layer; rarely changes)
+# sed fixes CRLF line endings from Windows checkouts
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 
 # Copy DAWN source (submodules must be initialized: git submodule update --init --recursive)
 WORKDIR /opt/dawn
@@ -147,7 +153,7 @@ COPY . .
 
 # Build WebRTC audio processing (submodule: webrtc-audio-processing)
 RUN cd webrtc-audio-processing \
-    && meson setup build \
+    && meson setup build --default-library=static \
     && ninja -C build
 
 # Build DAWN (binary at build/dawn)
