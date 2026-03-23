@@ -255,9 +255,33 @@ Use `--network host` so DAWN can reach an Ollama or llama.cpp server on the host
 
 ---
 
+## Server Mode (No Audio Hardware)
+
+D.A.W.N. supports a `--server` flag (or `[general] mode = "server"` in `dawn.toml`) that disables local audio capture, ASR microphone input, and TTS speaker output. The WebUI and satellite connections remain fully functional.
+
+This is required for:
+- **Docker containers without audio devices** — the default dev container has no `/dev/snd`
+- **Simulation demos** — D.A.W.N. runs with mock LLM and HA services via the E.C.H.O. framework
+- **Cloud/headless deployments** — interaction via WebUI text input only
+
+```bash
+# Start in server mode
+docker run --rm -it -p 3000:3000 \
+  -e DAWN_GENERAL_MODE=server \
+  -e SKIP_MODEL_DOWNLOAD=false \
+  -e WHISPER_MODEL=tiny.en \
+  dawn:dev
+```
+
+> **Note**: ASR (Whisper) still initializes in server mode (for satellite voice connections). A Whisper model must be present even if local audio is disabled.
+
+## Simulation Demo
+
+For running D.A.W.N. with all external services replaced by E.C.H.O. simulation framework mocks (no GPU, no API keys), see [`demos/full-mock/README.md`](../demos/full-mock/README.md).
+
 ## Multi-Component Development
 
-For running DAWN alongside other O.A.S.I.S. components (MIRAGE, S.T.A.T.), use the `docker-compose.yml` in the [S.C.O.P.E. meta-repo](https://github.com/malcolmhoward/the-oasis-project-meta-repo).
+For running DAWN alongside other O.A.S.I.S. components (MIRAGE, S.T.A.T.), use the ecosystem demo in the [S.C.O.P.E. meta-repo](https://github.com/malcolmhoward/the-oasis-project-meta-repo/tree/feat/scope/40-ecosystem-demo/demos/ecosystem-mock).
 
 ---
 
@@ -308,6 +332,18 @@ DAWN starts Mosquitto locally by default. For external brokers, configure in `da
 [mqtt]
 host = "your-broker-host"
 port = 1883
+```
+
+### Build Fails on Windows (CRLF Line Endings)
+
+If the entrypoint fails with `exec /entrypoint.sh: no such file or directory`, the script has Windows-style line endings (CRLF). The Dockerfile includes a `sed` fix for this, but if you encounter it with other scripts:
+```bash
+sed -i 's/\r$//' entrypoint.sh
+```
+
+Or configure git to check out with LF endings:
+```bash
+git config core.autocrlf input
 ```
 
 ### Build Cache Invalidated
