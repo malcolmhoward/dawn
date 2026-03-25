@@ -464,6 +464,13 @@ Manual testing covers:
 - `tests/test_plan_executor.c`: Unit tests (130 assertions, 30 tests)
 - `docs/TOOL_PLAN_EXECUTOR_DESIGN.md`: Full design document with DSL spec
 
+**Always-On Voice (WebUI):**
+- `src/webui/webui_always_on.c`: Server-side state machine, VAD, wake word dispatch
+- `include/webui/webui_always_on.h`: Always-on context, state enum, timeouts
+- `src/core/wake_word.c`: Shared wake word matching (used by local mic, always-on, satellite)
+- `www/js/audio/always-on.js`: Browser coordinator (mode management, resolveButtonState, dropdown, text override)
+- `www/js/ui/user-badge.js`: User badge dropdown (extracted from dawn.js)
+
 **Satellite (DAP2):**
 - `dawn_satellite/`: Standalone satellite binary for Raspberry Pi
 - `dawn_satellite/config/satellite.toml`: Default satellite configuration
@@ -501,6 +508,11 @@ Manual testing covers:
 - Session lifecycle hardening (auto-create on expiry, race-safe conversation restore)
 - Memory forget-by-ID (exact text/ID match replaces index guessing)
 - Orchestrator UI (WebUI plan execution debug display)
+- Always-on continuous voice listening via WebUI (server-side VAD, wake word detection, TTS echo prevention, per-connection context)
+- x86_64 server mode with CUDA auto-detect and cross-platform build fixes
+- Unified action button (Send/Mic/Listen merged into single split button with dropdown mode selection, smart typing override, cancel state)
+- Shared CSS split-button primitives (`.dawn-split-btn` / `.dawn-split-chevron` / `.dawn-split-menu` in `components.css`)
+- User badge module extraction (`www/js/ui/user-badge.js` from `dawn.js`)
 
 ## Code Review Workflow
 

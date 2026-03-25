@@ -4,7 +4,7 @@ This document describes the architecture of the D.A.W.N. (Digital Assistant for 
 
 **D.A.W.N.** is the central intelligence layer of the OASIS ecosystem, responsible for interpreting user intent, fusing data from every subsystem, and routing commands. At its core, DAWN performs neural-inference to understand context and drive decision-making, acting as OASIS's orchestration hub for MIRAGE, AURA, SPARK, STAT, and any future modules.
 
-**Last Updated**: March 19, 2026 (Plan executor, session lifecycle hardening, memory forget-by-ID, orchestrator UI)
+**Last Updated**: March 25, 2026 (Always-on continuous voice, unified action button, x86_64 server mode)
 
 ## Table of Contents
 
@@ -683,6 +683,48 @@ The WebUI uses Opus audio compression for efficient bidirectional audio streamin
 | Latency              | Minimal          | +2-5ms encoding                     |
 | Quality              | Lossless         | Near-lossless (voice optimized)     |
 | Browser Support      | Universal        | WebCodecs (Chrome/Edge/Firefox 90+) |
+
+### 7a. Always-On Voice Mode (`src/webui/webui_always_on.c`, `www/js/audio/always-on.js`)
+
+**Purpose**: Continuous wake word listening via WebUI browser — local client parity
+
+The always-on subsystem enables hands-free voice interaction from the browser, matching the local microphone's wake word detection without any browser-side AI models. The browser streams audio continuously; all VAD and wake word detection runs server-side.
+
+#### State Machine
+
+```
+DISABLED → LISTENING → WAKE_CHECK → WAKE_PENDING → PROCESSING → LISTENING
+                  ↑        ↓                              ↓
+                  ↑   RECORDING → PROCESSING ─────────────┘
+                  ↑        (wake word only, no inline command)
+                  └────────────────────────────────────────┘
+```
+
+- **LISTENING**: VAD monitors for speech onset (Silero VAD, 32ms chunks at 16kHz)
+- **WAKE_CHECK**: Speech detected — buffer audio, wait for 1.5s silence, then dispatch ASR
+- **WAKE_PENDING**: ASR running on worker thread (async)
+- **RECORDING**: Wake word confirmed but no inline command — record follow-up command
+- **PROCESSING**: Command sent to LLM; audio muted to prevent TTS echo
+
+#### Key Design Decisions
+
+- **Server-side VAD + wake word**: No production voice assistant runs wake word detection in the browser. Server-side matches the proven local session architecture.
+- **Shared `wake_word.c`**: Same wake word matching logic used by local mic (`dawn.c`) and satellites.
+- **Audio chunk cadence**: Browser sends audio in configurable chunks (default 100ms via `audio_chunk_ms`). Smaller chunks reduce end-of-speech detection jitter.
+- **TTS echo prevention**: Audio capture is muted during PROCESSING state and deferred until TTS playback completes.
+- **Per-connection context**: Each WebSocket connection gets its own VAD, Opus decoder, resampler, and circular buffer. No shared state between clients.
+
+#### Unified Action Button (Browser UI)
+
+The WebUI uses a single split button with a dropdown for input mode selection:
+
+| Mode | Button Behavior | Events |
+|------|----------------|--------|
+| **Send Text** (default) | Click sends text | `click` → `handleSend()` |
+| **Hold to Talk** | Hold to record, release to send | `mousedown`/`mouseup` → start/stop capture |
+| **Continuous Listening** | Click toggles always-on | `click` → `toggle()` |
+
+A single `resolveButtonState()` function determines the button label with priority: Cancel (red, during processing) > PTT recording > text override > mode-specific label. Smart typing override temporarily shows "Send" when text is present in any voice mode.
 
 ### 8. Vision/Image Subsystem (`src/image_store.c`, `src/webui/webui_images.c`, `www/js/ui/vision.js`)
 

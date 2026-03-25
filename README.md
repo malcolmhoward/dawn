@@ -47,7 +47,7 @@ DAWN runs on platforms from a Jetson Orin to a Raspberry Pi 5 and supports multi
 ### Web Interface
 
 - **Browser-Based** — Accessible on port 3000 from any device on your network.
-- **Voice & Text Input** — Push-to-talk voice and text input from any browser.
+- **Voice & Text Input** — Three input modes via unified action button: Send Text, Hold to Talk (push-to-talk), and Continuous Listening (always-on wake word detection with server-side VAD). Smart typing override temporarily switches voice modes to Send when text is present.
 - **Real-Time Communication** — WebSocket-based with session persistence across page refreshes (30-minute timeout).
 - **Settings Panel** — Live configuration editing from the browser. API keys with secure handling. Restart indicators for settings that require it.
 - **User Management** — Cookie-based authentication with "Remember Me" (30-day sessions). Admin tools: create/delete users, reset passwords, unlock accounts. Per-user persona, location, timezone, units, and TTS speed preferences.
@@ -161,7 +161,7 @@ Choose the guide that matches your deployment:
 |------------|-------|-------------|
 | **Jetson / Embedded** | [GETTING_STARTED.md](GETTING_STARTED.md) | Full setup with local microphone, speaker, wake word, and GPU |
 | **x86_64 Server** | [docs/GETTING_STARTED_SERVER.md](docs/GETTING_STARTED_SERVER.md) | WebUI + satellite connections, no local audio hardware needed |
-| **Cloud Overview** | [docs/CLOUD_DEPLOYMENT.md](docs/CLOUD_DEPLOYMENT.md) | Platform independence, feature matrix, and architecture notes |
+| **Cloud / x86_64 Server** | [docs/CLOUD_DEPLOYMENT.md](docs/CLOUD_DEPLOYMENT.md) | Platform independence, feature matrix, and architecture notes |
 
 ---
 
