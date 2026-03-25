@@ -195,18 +195,6 @@
    }
 }
 
-/* Attach button wrapper (for counter badge positioning) */
-.attach-btn-wrapper {
-   position: relative;
-   display: inline-flex;
-   align-items: stretch; /* Chevron matches attach button height */
-}
-
-/* Neutralize base button hover lift so split-button moves as one unit */
-.attach-btn-wrapper button:hover:not(:disabled) {
-   transform: none;
-}
-
 /* Attach counter badge */
 .attach-counter {
    position: absolute;
@@ -225,91 +213,9 @@
    display: none;
 }
 
-/* =============================================================================
- * Attach Dropdown (split-button chevron for "Take Photo")
- * ============================================================================= */
-/* Join attach button + chevron visually */
-.attach-btn-wrapper #attach-btn {
-   border-top-right-radius: 0;
-   border-bottom-right-radius: 0;
-   border-right: none;
-}
-
+/* Attach chevron — narrower than default for compact layout */
 #attach-dropdown-btn {
-   background-color: var(--bg-tertiary);
-   color: var(--text-secondary);
-   border: 1px solid var(--text-secondary);
-   border-left: 1px solid var(--border-color);
-   border-top-left-radius: 0;
-   border-bottom-left-radius: 0;
    min-width: 24px;
-   padding: 0.5rem 0.35rem;
-   display: flex;
-   align-items: center;
-   justify-content: center;
-   cursor: pointer;
-   transition: all var(--transition-fast);
-}
-
-#attach-dropdown-btn:not(:disabled):hover {
-   border-color: var(--accent);
-   color: var(--accent);
-}
-
-#attach-dropdown-btn:disabled {
-   opacity: 0.5;
-   cursor: not-allowed;
-}
-
-#attach-dropdown-btn[aria-expanded='true'] {
-   background-color: var(--bg-tertiary);
-   border-color: var(--accent);
-   color: var(--accent);
-}
-
-#attach-dropdown-btn svg {
-   transition: transform var(--transition-fast);
-   transform: rotate(180deg); /* Point up by default (menu opens upward) */
-}
-
-#attach-dropdown-btn[aria-expanded='true'] svg {
-   transform: rotate(0deg); /* Point down when menu is open */
-}
-
-#attach-dropdown-btn:focus-visible {
-   outline: 2px solid var(--accent);
-   outline-offset: 2px;
-}
-
-/* Dropdown menu */
-.attach-dropdown {
-   position: absolute;
-   bottom: 100%;
-   left: 0;
-   margin-bottom: 4px;
-   background: var(--bg-secondary);
-   border: 1px solid var(--border-color);
-   border-radius: var(--border-radius);
-   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-   min-width: 150px;
-   z-index: 100;
-   overflow: hidden;
-   /* Animation properties */
-   opacity: 1;
-   transform: translateY(0) scale(1);
-   transform-origin: bottom left;
-   transition:
-      opacity 0.15s ease-out,
-      transform 0.15s ease-out,
-      visibility 0.15s;
-   visibility: visible;
-}
-
-.attach-dropdown.hidden {
-   opacity: 0;
-   transform: translateY(4px) scale(0.95);
-   visibility: hidden;
-   pointer-events: none;
 }
 
 /* Dropdown menu item */
@@ -816,122 +722,9 @@
    }
 }
 
-/* =============================================================================
- * Action Split Button — Unified Send / Voice Mode
- * Mirrors .attach-btn-wrapper pattern for consistency
- * ============================================================================= */
-
-.action-btn-wrapper {
-   position: relative;
-   display: inline-flex;
-   align-items: stretch;
-}
-
-.action-btn-wrapper button:hover:not(:disabled) {
-   transform: none;
-}
-
-/* Group hover: highlight both halves when hovering either */
-.action-btn-wrapper:hover #action-btn:not(:disabled),
-.action-btn-wrapper:hover #action-dropdown-btn:not(:disabled) {
-   border-color: var(--accent);
-}
-
-/* Join action button + chevron visually */
-.action-btn-wrapper #action-btn {
-   border-top-right-radius: 0;
-   border-bottom-right-radius: 0;
-   border-right: none;
-}
-
+/* Action chevron — slightly wider than attach for touch target */
 #action-dropdown-btn {
-   background-color: var(--bg-tertiary);
-   color: var(--text-secondary);
-   border: 1px solid var(--text-secondary);
-   border-left: 1px solid var(--border-color);
-   border-top-left-radius: 0;
-   border-bottom-left-radius: 0;
    min-width: 32px;
-   padding: 0.5rem 0.35rem;
-   display: flex;
-   align-items: center;
-   justify-content: center;
-   cursor: pointer;
-   transition: all var(--transition-fast);
-}
-
-#action-dropdown-btn:not(:disabled):hover {
-   border-color: var(--accent);
-   color: var(--accent);
-}
-
-#action-dropdown-btn:disabled {
-   opacity: 0.5;
-   cursor: not-allowed;
-}
-
-#action-dropdown-btn[aria-expanded='true'] {
-   background-color: var(--bg-tertiary);
-   border-color: var(--accent);
-   color: var(--accent);
-}
-
-#action-dropdown-btn svg {
-   transition: transform var(--transition-fast);
-   transform: rotate(180deg);
-}
-
-#action-dropdown-btn[aria-expanded='true'] svg {
-   transform: rotate(0deg);
-}
-
-#action-dropdown-btn:focus-visible {
-   outline: 2px solid var(--accent);
-   outline-offset: 2px;
-}
-
-/* Action dropdown menu */
-.action-dropdown {
-   position: absolute;
-   bottom: 100%;
-   right: 0;
-   margin-bottom: 4px;
-   background: var(--bg-secondary);
-   border: 1px solid var(--border-color);
-   border-radius: var(--border-radius);
-   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-   min-width: min(180px, calc(100vw - 1rem));
-   z-index: 100;
-   overflow: hidden;
-   opacity: 1;
-   transform: translateY(0) scale(1);
-   transform-origin: bottom right;
-   transition:
-      opacity 0.15s ease-out,
-      transform 0.15s ease-out,
-      visibility 0.15s;
-   visibility: visible;
-}
-
-.action-dropdown.hidden {
-   opacity: 0;
-   transform: translateY(4px) scale(0.95);
-   visibility: hidden;
-   pointer-events: none;
-}
-
-/* Active mode indicator */
-.action-dropdown .dropdown-item.active {
-   color: var(--success);
-}
-
-.action-dropdown .dropdown-item.active::after {
-   content: '';
-   width: 6px;
-   height: 6px;
-   background: var(--success);
-   border-radius: 50%;
-   margin-left: auto;
 }
 
 /* =============================================================================

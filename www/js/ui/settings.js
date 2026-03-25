@@ -209,6 +209,11 @@
       // Allow time for WebSocket to be ready
       setTimeout(function () {
          switch (sectionId) {
+            case 'my-settings-section':
+               if (typeof DawnMySettings !== 'undefined' && DawnMySettings.requestGet) {
+                  DawnMySettings.requestGet();
+               }
+               break;
             case 'my-sessions-section':
                if (typeof DawnMySessions !== 'undefined' && DawnMySessions.requestList) {
                   DawnMySessions.requestList();
@@ -219,7 +224,6 @@
                   DawnUserManagement.requestList();
                }
                break;
-            // Add other sections that need data loading here
          }
       }, 150);
    }

@@ -1139,7 +1139,7 @@ Format rules:
                autocomplete="off"
                rows="1"
             ></textarea>
-            <div class="attach-btn-wrapper">
+            <div class="dawn-split-btn attach-btn-wrapper">
                <button
                   id="attach-btn"
                   class="input-button"
@@ -1163,7 +1163,7 @@ Format rules:
                </button>
                <button
                   id="attach-dropdown-btn"
-                  class="input-button-dropdown"
+                  class="dawn-split-chevron"
                   aria-haspopup="true"
                   aria-expanded="false"
                   aria-controls="attach-dropdown"
@@ -1181,7 +1181,7 @@ Format rules:
                      <polyline points="6 9 12 15 18 9" />
                   </svg>
                </button>
-               <div id="attach-dropdown" class="attach-dropdown hidden" role="menu">
+               <div id="attach-dropdown" class="dawn-split-menu anchor-left hidden" role="menu">
                   <button class="dropdown-item" data-action="camera" role="menuitem">
                      <svg
                         width="16"
@@ -1215,10 +1215,11 @@ Format rules:
                   style="display: none"
                />
             </div>
-            <div class="action-btn-wrapper">
+            <div class="dawn-split-btn action-btn-wrapper">
                <button id="action-btn" title="Send message" aria-label="Send message">Send</button>
                <button
                   id="action-dropdown-btn"
+                  class="dawn-split-chevron"
                   title="Input mode"
                   aria-label="Select input mode"
                   aria-haspopup="true"
@@ -1236,7 +1237,7 @@ Format rules:
                      <polyline points="6 9 12 15 18 9" />
                   </svg>
                </button>
-               <div id="action-dropdown" class="action-dropdown hidden" role="menu">
+               <div id="action-dropdown" class="dawn-split-menu anchor-right hidden" role="menu">
                   <button
                      role="menuitem"
                      class="dropdown-item active"
@@ -2905,6 +2906,7 @@ token = "eyJ..."</pre
       <script src="/js/ui/settings.js"></script>
       <script src="/js/ui/scheduler.js"></script>
       <script src="/js/ui/plan-orchestrator.js"></script>
+      <script src="/js/ui/user-badge.js"></script>
       <script src="/js/dawn.js"></script>
    </body>
 </html>

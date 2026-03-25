@@ -208,3 +208,144 @@
    gap: 0.5rem;
    margin-top: 0.25rem;
 }
+
+/* -----------------------------------------------------------------------------
+ * Split Button (.dawn-split-btn)
+ * A main button joined to a dropdown chevron, opening a popup menu.
+ * Usage:
+ *   <div class="dawn-split-btn">
+ *     <button id="main-btn">Label</button>
+ *     <button class="dawn-split-chevron" aria-haspopup="true">▾</button>
+ *     <div class="dawn-split-menu anchor-right hidden">...items...</div>
+ *   </div>
+ * Modifier: .anchor-left / .anchor-right on .dawn-split-menu
+ * -------------------------------------------------------------------------- */
+
+/* Wrapper */
+.dawn-split-btn {
+   position: relative;
+   display: inline-flex;
+   align-items: stretch;
+}
+
+/* Neutralize base button hover lift so split-button moves as one unit */
+.dawn-split-btn button:hover:not(:disabled) {
+   transform: none;
+}
+
+/* Join main button + chevron visually */
+.dawn-split-btn > button:first-child {
+   border-top-right-radius: 0;
+   border-bottom-right-radius: 0;
+   border-right: none;
+}
+
+/* Chevron (dropdown trigger) */
+.dawn-split-chevron {
+   background-color: var(--bg-tertiary);
+   color: var(--text-secondary);
+   border: 1px solid var(--text-secondary);
+   border-left: 1px solid var(--border-color);
+   border-top-left-radius: 0;
+   border-bottom-left-radius: 0;
+   padding: 0.5rem 0.35rem;
+   display: flex;
+   align-items: center;
+   justify-content: center;
+   cursor: pointer;
+   transition: all var(--transition-fast);
+}
+
+.dawn-split-chevron:not(:disabled):hover {
+   border-color: var(--accent);
+   color: var(--accent);
+}
+
+.dawn-split-chevron:disabled {
+   opacity: 0.5;
+   cursor: not-allowed;
+}
+
+.dawn-split-chevron[aria-expanded='true'] {
+   background-color: var(--bg-tertiary);
+   border-color: var(--accent);
+   color: var(--accent);
+}
+
+.dawn-split-chevron svg {
+   transition: transform var(--transition-fast);
+   transform: rotate(180deg);
+}
+
+.dawn-split-chevron[aria-expanded='true'] svg {
+   transform: rotate(0deg);
+}
+
+.dawn-split-chevron:focus-visible {
+   outline: 2px solid var(--accent);
+   outline-offset: 2px;
+}
+
+/* Split-button group hover: highlight both halves */
+.dawn-split-btn:hover > button:first-child:not(:disabled),
+.dawn-split-btn:hover > .dawn-split-chevron:not(:disabled) {
+   border-color: var(--accent);
+}
+
+/* Dropdown menu */
+.dawn-split-menu {
+   position: absolute;
+   bottom: 100%;
+   margin-bottom: 4px;
+   background: var(--bg-secondary);
+   border: 1px solid var(--border-color);
+   border-radius: var(--border-radius);
+   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+   min-width: min(180px, calc(100vw - 1rem));
+   z-index: 100;
+   overflow: hidden;
+   opacity: 1;
+   transform: translateY(0) scale(1);
+   transition:
+      opacity 0.15s ease-out,
+      transform 0.15s ease-out,
+      visibility 0.15s;
+   visibility: visible;
+}
+
+.dawn-split-menu.hidden {
+   opacity: 0;
+   transform: translateY(4px) scale(0.95);
+   visibility: hidden;
+   pointer-events: none;
+}
+
+/* Anchor direction */
+.dawn-split-menu.anchor-left {
+   left: 0;
+   transform-origin: bottom left;
+}
+
+.dawn-split-menu.anchor-right {
+   right: 0;
+   transform-origin: bottom right;
+}
+
+.dawn-split-menu.hidden.anchor-left,
+.dawn-split-menu.hidden.anchor-right {
+   transform: translateY(4px) scale(0.95);
+}
+
+/* Active mode indicator (for mode-selection menus) */
+.dawn-split-menu .dropdown-item.active {
+   color: var(--success);
+}
+
+.dawn-split-menu .dropdown-item.active::after {
+   content: '';
+   width: 6px;
+   height: 6px;
+   background: var(--success);
+   border-radius: 50%;
+   margin-left: auto;
+}

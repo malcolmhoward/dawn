@@ -1523,7 +1523,10 @@
       DawnSettings.initConversationLlmControls();
       DawnTools.init();
       DawnMetricsPanel.init();
-      initUserBadgeDropdown();
+      DawnUserBadge.init({
+         openSection: DawnSettings.openSection,
+         metricsToggle: typeof DawnMetricsPanel !== 'undefined' ? DawnMetricsPanel.toggle : null,
+      });
       DawnUsers.setCallbacks({
          trapFocus: DawnSettings.trapFocus,
          showConfirmModal: DawnSettings.showConfirmModal,
@@ -1649,148 +1652,8 @@
 
    // =============================================================================
    // NOTE: Settings Panel moved to /js/ui/settings.js (DawnSettings module)
+   // NOTE: User Badge Dropdown moved to /js/ui/user-badge.js (DawnUserBadge module)
    // =============================================================================
-
-   // =============================================================================
-   // User Badge Dropdown
-   // =============================================================================
-
-   function initUserBadgeDropdown() {
-      const badge = document.getElementById('user-badge');
-      const dropdown = document.getElementById('user-badge-dropdown');
-
-      if (!badge || !dropdown) return;
-
-      // Toggle dropdown on badge click
-      badge.addEventListener('click', function (e) {
-         e.stopPropagation();
-         const isOpen = dropdown.classList.contains('open');
-         if (isOpen) {
-            closeUserDropdown();
-         } else {
-            openUserDropdown();
-         }
-      });
-
-      // Handle keyboard navigation
-      badge.addEventListener('keydown', function (e) {
-         if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            badge.click();
-         } else if (e.key === 'Escape') {
-            closeUserDropdown();
-         }
-      });
-
-      // Handle keyboard navigation in dropdown (H11)
-      dropdown.addEventListener('keydown', function (e) {
-         const items = Array.from(
-            dropdown.querySelectorAll('.dropdown-item:not(.dropdown-divider)')
-         );
-         const currentIndex = items.indexOf(document.activeElement);
-
-         switch (e.key) {
-            case 'Escape':
-               closeUserDropdown();
-               badge.focus();
-               break;
-            case 'ArrowDown':
-               e.preventDefault();
-               const nextIndex = currentIndex < items.length - 1 ? currentIndex + 1 : 0;
-               items[nextIndex]?.focus();
-               break;
-            case 'ArrowUp':
-               e.preventDefault();
-               const prevIndex = currentIndex > 0 ? currentIndex - 1 : items.length - 1;
-               items[prevIndex]?.focus();
-               break;
-            case 'Home':
-               e.preventDefault();
-               items[0]?.focus();
-               break;
-            case 'End':
-               e.preventDefault();
-               items[items.length - 1]?.focus();
-               break;
-         }
-      });
-
-      // Handle dropdown item clicks
-      dropdown.addEventListener('click', function (e) {
-         const item = e.target.closest('.dropdown-item');
-         if (!item) return;
-
-         const action = item.dataset.action;
-         closeUserDropdown();
-
-         switch (action) {
-            case 'my-settings':
-               DawnSettings.openSection('my-settings-section');
-               break;
-            case 'my-sessions':
-               DawnSettings.openSection('my-sessions-section');
-               break;
-            case 'system-metrics':
-               if (typeof DawnMetricsPanel !== 'undefined') {
-                  DawnMetricsPanel.toggle();
-               }
-               break;
-            case 'logout':
-               handleLogout();
-               break;
-         }
-      });
-
-      // Close dropdown when clicking outside
-      document.addEventListener('click', function (e) {
-         if (!e.target.closest('.user-badge-container')) {
-            closeUserDropdown();
-         }
-      });
-   }
-
-   function openUserDropdown() {
-      const badge = document.getElementById('user-badge');
-      const dropdown = document.getElementById('user-badge-dropdown');
-      if (!badge || !dropdown) return;
-
-      badge.setAttribute('aria-expanded', 'true');
-      dropdown.classList.add('open');
-
-      // Focus first menu item for keyboard users
-      const firstItem = dropdown.querySelector('.dropdown-item');
-      if (firstItem) {
-         setTimeout(() => firstItem.focus(), 50);
-      }
-   }
-
-   function closeUserDropdown() {
-      const badge = document.getElementById('user-badge');
-      const dropdown = document.getElementById('user-badge-dropdown');
-      if (!badge || !dropdown) return;
-
-      badge.setAttribute('aria-expanded', 'false');
-      dropdown.classList.remove('open');
-   }
-
-   async function handleLogout() {
-      // Clear WebSocket session token from localStorage
-      localStorage.removeItem('dawn_session_token');
-
-      try {
-         // Use GET - logout has no request body
-         const response = await fetch('/api/auth/logout', {
-            credentials: 'same-origin',
-         });
-
-         // Always redirect to login page regardless of response
-         window.location.href = '/login.html';
-      } catch (err) {
-         console.error('Logout error:', err);
-         // Redirect anyway on network error
-         window.location.href = '/login.html';
-      }
-   }
 
    // Start when DOM is ready
    if (document.readyState === 'loading') {
