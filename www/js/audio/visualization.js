@@ -53,6 +53,7 @@
    // =============================================================================
 
    let fftAnimationId = null;
+   let inputFftAnimationId = null;
    let waveformHistory = [];
    let frameCount = 0;
 
@@ -776,6 +777,82 @@
    }
 
    /**
+    * Start input (mic) FFT visualization for always-on mode.
+    * Shows the user's voice in the EQ bars so they know the system hears them.
+    */
+   function startInputFFT() {
+      if (inputFftAnimationId) return;
+
+      var analyser = DawnAudioCapture.getInputAnalyser();
+      var fftData = DawnAudioCapture.getInputFFTData();
+      if (!DawnElements.ringContainer) {
+         return;
+      }
+      if (!analyser || !fftData) {
+         // AnalyserNode not ready yet (async mic acquisition) — retry shortly
+         setTimeout(function () {
+            if (!inputFftAnimationId) startInputFFT();
+         }, 200);
+         return;
+      }
+
+      DawnElements.ringContainer.classList.add('fft-active');
+
+      function animate() {
+         analyser = DawnAudioCapture.getInputAnalyser();
+         fftData = DawnAudioCapture.getInputFFTData();
+         if (!analyser || !fftData) {
+            stopInputFFT();
+            return;
+         }
+
+         analyser.getByteFrequencyData(fftData);
+
+         var sum = 0;
+         for (var i = 0; i < fftData.length; i++) {
+            sum += fftData[i];
+         }
+         var normalizedLevel = sum / fftData.length / 255;
+
+         if (visualizationMode === 'bars') {
+            var barData = processFFTDataForBars(fftData);
+            renderBars(barData, 1.0);
+         }
+
+         var coreScale = 1.0 + normalizedLevel * 0.15;
+         var coreOpacity = 0.5 + normalizedLevel * 0.5;
+         if (DawnElements.ringInner) {
+            DawnElements.ringInner.style.transform = 'scale(' + coreScale.toFixed(3) + ')';
+            DawnElements.ringInner.style.opacity = coreOpacity.toFixed(2);
+         }
+
+         if (!document.hidden) {
+            inputFftAnimationId = requestAnimationFrame(animate);
+         }
+      }
+
+      inputFftAnimationId = requestAnimationFrame(animate);
+   }
+
+   /**
+    * Stop input FFT visualization
+    */
+   function stopInputFFT() {
+      if (inputFftAnimationId) {
+         cancelAnimationFrame(inputFftAnimationId);
+         inputFftAnimationId = null;
+      }
+
+      if (DawnElements.ringInner) {
+         DawnElements.ringInner.style.transform = '';
+         DawnElements.ringInner.style.opacity = '';
+      }
+      if (DawnElements.ringContainer) {
+         DawnElements.ringContainer.classList.remove('fft-active');
+      }
+   }
+
+   /**
     * Start hesitation animation
     */
    function startHesitationAnimation(updateTelemetryFn) {
@@ -882,6 +959,8 @@
       init: init,
       startFFT: startFFTVisualization,
       stopFFT: stopFFTVisualization,
+      startInputFFT: startInputFFT,
+      stopInputFFT: stopInputFFT,
       drawDefault: drawDefaultWaveform,
       toggleMode: toggleVisualizationMode,
       getMode: getMode,

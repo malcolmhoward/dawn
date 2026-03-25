@@ -1215,9 +1215,49 @@ Format rules:
                   style="display: none"
                />
             </div>
-            <button id="mic-btn" title="Hold to speak" aria-label="Hold to speak" disabled>
-               Mic
-            </button>
+            <div class="mic-btn-wrapper">
+               <button id="mic-btn" title="Hold to speak" aria-label="Hold to speak" disabled>
+                  Mic
+               </button>
+               <button
+                  id="mic-dropdown-btn"
+                  title="Audio mode"
+                  aria-label="Select audio mode"
+                  aria-haspopup="true"
+                  aria-expanded="false"
+                  aria-controls="mic-dropdown"
+                  disabled
+               >
+                  <svg
+                     width="12"
+                     height="12"
+                     viewBox="0 0 24 24"
+                     fill="none"
+                     stroke="currentColor"
+                     stroke-width="2"
+                  >
+                     <polyline points="6 9 12 15 18 9" />
+                  </svg>
+               </button>
+               <div id="mic-dropdown" class="mic-dropdown hidden" role="menu">
+                  <button
+                     role="menuitem"
+                     class="dropdown-item active"
+                     data-mode="push-to-talk"
+                     tabindex="-1"
+                  >
+                     Hold to Talk
+                  </button>
+                  <button
+                     role="menuitem"
+                     class="dropdown-item"
+                     data-mode="continuous"
+                     tabindex="-1"
+                  >
+                     Continuous Listening
+                  </button>
+               </div>
+            </div>
             <button id="send-btn" title="Send message">Send</button>
             <button
                id="stop-btn"
@@ -2828,6 +2868,7 @@ token = "eyJ..."</pre
       <script src="/js/ui/toast.js"></script>
       <script src="/js/ui/format.js"></script>
       <script src="/js/audio/capture.js"></script>
+      <script src="/js/audio/always-on.js"></script>
       <script src="/js/audio/playback.js"></script>
       <script src="/js/audio/music-playback.js"></script>
       <script src="/js/audio/visualization.js"></script>

@@ -100,9 +100,10 @@ typedef struct {
    size_t audio_buffer_capacity;
    bool in_binary_fragment; /* True if receiving fragmented binary frame */
    uint8_t binary_msg_type; /* Message type from first fragment */
-   bool use_opus;           /* True if client supports Opus codec */
-   bool tts_enabled;        /* True if TTS output enabled for this connection */
-   bool is_satellite;       /* True if this is a DAP2 satellite connection */
+   _Atomic bool
+       use_opus; /* True if client supports Opus codec (atomic: set by LWS, read by worker) */
+   _Atomic bool tts_enabled; /* True if TTS output enabled (atomic: set by LWS, read by worker) */
+   bool is_satellite;        /* True if this is a DAP2 satellite connection */
 
    /* Text message fragmentation support (for large JSON payloads) */
    char *text_buffer;      /* Accumulation buffer for fragmented text messages */
@@ -135,6 +136,11 @@ typedef struct {
     * before music_subscribe and is an audio property of the connection.
     * Atomic: written by LLM tool thread and LWS thread, read by music stream thread. */
    _Atomic float volume;
+
+   /* Always-on voice mode (per-connection, allocated on enable, freed on disable/disconnect).
+    * NULL when always-on is not active. Owns per-connection VAD context, Opus decoder,
+    * resampler, and circular audio buffer. */
+   struct always_on_ctx *always_on;
 } ws_connection_t;
 
 /**
@@ -208,6 +214,7 @@ typedef struct {
       struct {
          uint8_t *data;
          size_t len;
+         bool is_opus; /* Codec used for this segment (for AUDIO_END marker) */
       } audio;
       struct {
          int current_tokens;
@@ -398,7 +405,7 @@ void send_audio_impl(struct lws *wsi, const uint8_t *data, size_t len);
 /**
  * @brief Send audio end marker to WebSocket client
  */
-void send_audio_end_impl(struct lws *wsi);
+void send_audio_end_impl(struct lws *wsi, bool is_opus);
 
 /* =============================================================================
  * Path Security Helpers
@@ -1111,7 +1118,7 @@ void webui_send_audio(session_t *session, const uint8_t *data, size_t len);
  *
  * @param session WebSocket session
  */
-void webui_send_audio_end(session_t *session);
+void webui_send_audio_end(session_t *session, bool is_opus);
 
 /**
  * @brief TTS sentence callback for LLM streaming

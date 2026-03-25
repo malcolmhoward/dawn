@@ -1320,7 +1320,20 @@ int voice_processing_loop(voice_ctx_t *ctx,
                if (ctx->awaiting_speech && is_speech) {
                   ctx->awaiting_speech = false;
                   ctx->silence_frame_count = 0;
-                  LOG_INFO("Speech detected after manual wake");
+                  LOG_INFO("Speech detected after wake word");
+               }
+
+               /* Timeout awaiting_speech after ~10 seconds (312 frames × 32ms) */
+               if (ctx->awaiting_speech) {
+                  ctx->silence_frame_count++;
+                  if (ctx->silence_frame_count >= 312) {
+                     LOG_INFO("No speech after wake word (10s timeout), returning to silence");
+                     ctx->awaiting_speech = false;
+                     ctx->state = VOICE_STATE_SILENCE;
+                     ctx->speech_frame_count = 0;
+                     ctx->silence_frame_count = 0;
+                     continue;
+                  }
                }
 
                /* Check for end of speech (skip while awaiting initial speech) */
@@ -1404,11 +1417,30 @@ int voice_processing_loop(voice_ctx_t *ctx,
                                  ws_client_send_query(ws, command_text);
                                  free(command_text);
                               } else {
-                                 /* Wake word only - wait for command */
-                                 LOG_INFO("Waiting for command...");
+                                 /* Wake word only - greet and wait for command */
+                                 LOG_INFO("Wake word only — greeting, waiting for command...");
+#ifdef HAVE_TTS_PIPER
+                                 if (ctx->tts) {
+                                    int16_t *greet_audio = NULL;
+                                    size_t greet_len = 0;
+                                    tts_piper_result_t greet_result;
+                                    if (tts_piper_synthesize(ctx->tts, "Hello sir.", &greet_audio,
+                                                             &greet_len, &greet_result) == 0 &&
+                                        greet_audio && greet_len > 0) {
+                                       int sr = tts_piper_get_sample_rate(ctx->tts);
+                                       if (ctx->tts_queue) {
+                                          tts_playback_queue_push(ctx->tts_queue, greet_audio,
+                                                                  greet_len, sr);
+                                       } else {
+                                          free(greet_audio);
+                                       }
+                                    }
+                                 }
+#endif
                                  ctx->state = VOICE_STATE_COMMAND_RECORDING;
                                  ctx->audio_buffer_len = 0;
                                  ctx->silence_frame_count = 0;
+                                 ctx->awaiting_speech = true;
                               }
                            } else {
                               LOG_DEBUG("No wake word, returning to silence");

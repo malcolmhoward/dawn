@@ -623,6 +623,18 @@
    }
 }
 
+@keyframes core-recording {
+   0%,
+   100% {
+      opacity: 0.8;
+      transform: scale(1);
+   }
+   50% {
+      opacity: 1;
+      transform: scale(1.08);
+   }
+}
+
 /* Phase 5: Idle breathing animation (±2% scale, opacity pulse) */
 @keyframes idle-breathe {
    0%,
@@ -639,6 +651,8 @@
 /* Apply subtle breathing to entire ring assembly when idle ONLY */
 #ring-container:not(.listening):not(.thinking):not(.summarizing):not(.speaking):not(.error):not(
       .fft-active
+   ):not(.always-on-listening):not(.always-on-wake-check):not(.always-on-recording):not(
+      .always-on-processing
    )
    #ring-svg {
    animation: idle-breathe 4s ease-in-out infinite;
@@ -947,5 +961,49 @@
    .tool-pill.running {
       animation: none;
       animation-delay: 0s;
+   }
+}
+
+/* =============================================================================
+ * Always-On Voice Mode — Ring/Visualizer States
+ * ============================================================================= */
+
+/* Always-on listening — dimmed green, slow idle pulse */
+#ring-container.always-on-listening #ring-svg path,
+#ring-container.always-on-listening .ring-base {
+   stroke: var(--success);
+   opacity: 0.5;
+}
+
+#ring-container.always-on-listening #ring-inner {
+   animation: core-idle-pulse 4s ease-in-out infinite;
+}
+
+/* Always-on wake check — brighter green, faster pulse */
+#ring-container.always-on-wake-check #ring-svg path {
+   stroke: var(--success);
+   opacity: 0.8;
+}
+
+/* Always-on recording — full green, same as manual recording */
+#ring-container.always-on-recording #ring-svg path {
+   stroke: var(--success);
+   opacity: 1;
+}
+
+#ring-container.always-on-recording #ring-inner {
+   animation: core-recording 0.5s ease-in-out infinite;
+}
+
+/* Always-on processing — amber, same as thinking */
+#ring-container.always-on-processing #ring-svg path {
+   stroke: var(--warning);
+   opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+   #ring-container.always-on-listening #ring-inner,
+   #ring-container.always-on-recording #ring-inner {
+      animation: none;
    }
 }

@@ -74,6 +74,7 @@
 #include "ui/metrics.h"
 #include "utils/string_utils.h"
 #include "version.h"
+#include "webui/webui_always_on.h"
 #include "webui/webui_music.h"
 
 #ifdef ENABLE_AUTH
@@ -870,8 +871,9 @@ void send_audio_impl(struct lws *wsi, const uint8_t *data, size_t len) {
    }
 }
 
-void send_audio_end_impl(struct lws *wsi) {
-   send_binary_message(wsi, WS_BIN_AUDIO_SEGMENT_END, NULL, 0);
+void send_audio_end_impl(struct lws *wsi, bool is_opus) {
+   uint8_t codec_flag = is_opus ? 1 : 0;
+   send_binary_message(wsi, WS_BIN_AUDIO_SEGMENT_END, &codec_flag, 1);
 }
 
 /**
@@ -1388,6 +1390,20 @@ static void process_one_response(void) {
       case WS_RESP_STATE:
          send_state_impl_full(conn->wsi, resp.state.state, resp.state.detail,
                               resp.state.tools_json);
+         /* If LLM pipeline sent "idle" and always-on is in PROCESSING, resume listening.
+          * processing_complete resets internal state (buffer, VAD, cooldown) but set_state
+          * does NOT send a WebSocket message. We must notify the client via the response
+          * queue (not lws_write directly, since we already wrote once in this callback). */
+         if (conn->always_on && always_on_get_state(conn->always_on) == ALWAYS_ON_PROCESSING &&
+             strcmp(resp.state.state, "idle") == 0) {
+            always_on_processing_complete(conn->always_on);
+            ws_response_t ao_resp = { 0 };
+            ao_resp.session = conn->session;
+            ao_resp.type = WS_RESP_JSON;
+            ao_resp.generic_json.json = strdup(
+                "{\"type\":\"always_on_state\",\"payload\":{\"state\":\"listening\"}}");
+            queue_response(&ao_resp);
+         }
          free(resp.state.state);
          free(resp.state.detail);
          free(resp.state.tools_json);
@@ -1412,7 +1428,7 @@ static void process_one_response(void) {
          free(resp.audio.data);
          break;
       case WS_RESP_AUDIO_END:
-         send_audio_end_impl(conn->wsi);
+         send_audio_end_impl(conn->wsi, resp.audio.is_opus);
          break;
       case WS_RESP_MUSIC_DATA:
          send_binary_message(conn->wsi, WS_BIN_MUSIC_DATA, resp.audio.data, resp.audio.len);
@@ -2164,6 +2180,87 @@ static bool handle_smart_home_message(ws_connection_t *conn,
    return false;
 }
 
+/* =============================================================================
+ * Always-On Voice Mode Handlers
+ * ============================================================================= */
+
+/**
+ * Check if another connection for the same user already has always-on active.
+ * Must NOT hold s_conn_registry_mutex when calling conn_require_auth.
+ */
+static bool user_has_always_on(int auth_user_id) {
+   pthread_mutex_lock(&s_conn_registry_mutex);
+   for (int i = 0; i < MAX_ACTIVE_CONNECTIONS; i++) {
+      ws_connection_t *c = s_active_connections[i];
+      if (c && c->auth_user_id == auth_user_id && c->always_on) {
+         pthread_mutex_unlock(&s_conn_registry_mutex);
+         return true;
+      }
+   }
+   pthread_mutex_unlock(&s_conn_registry_mutex);
+   return false;
+}
+
+static void handle_always_on_enable(ws_connection_t *conn, struct json_object *payload) {
+   /* Reject if already enabled on this connection */
+   if (conn->always_on) {
+      send_always_on_state(conn->wsi, "listening"); /* Already active, re-confirm */
+      return;
+   }
+
+   /* Reject if push-to-talk audio is in progress */
+   if (conn->audio_buffer && conn->audio_buffer_len > 0) {
+      send_error_impl(conn->wsi, "PTT_ACTIVE",
+                      "Cannot enable always-on while push-to-talk recording is active");
+      return;
+   }
+
+   /* Enforce per-user limit (max 1 always-on session) */
+   if (user_has_always_on(conn->auth_user_id)) {
+      send_error_impl(conn->wsi, "ALREADY_ACTIVE",
+                      "Always-on is active in another tab for this user");
+      return;
+   }
+
+   /* Validate sample_rate from payload */
+   uint32_t sample_rate = 48000; /* Default if not specified */
+   if (payload) {
+      struct json_object *sr_obj;
+      if (json_object_object_get_ex(payload, "sample_rate", &sr_obj)) {
+         sample_rate = (uint32_t)json_object_get_int(sr_obj);
+      }
+   }
+
+   if (!always_on_valid_sample_rate(sample_rate)) {
+      LOG_WARNING("WebUI: Invalid always-on sample rate %u", sample_rate);
+      send_error_impl(conn->wsi, "INVALID_SAMPLE_RATE", "Unsupported sample rate");
+      return;
+   }
+
+   /* Create always-on context */
+   conn->always_on = always_on_create(sample_rate, conn->wsi);
+   if (!conn->always_on) {
+      send_error_impl(conn->wsi, "INIT_FAILED", "Failed to initialize always-on mode");
+      return;
+   }
+
+   LOG_INFO("WebUI: Always-on enabled for user %d (sample_rate=%u)", conn->auth_user_id,
+            sample_rate);
+   send_always_on_state(conn->wsi, "listening");
+}
+
+static void handle_always_on_disable(ws_connection_t *conn) {
+   if (!conn->always_on) {
+      send_always_on_state(conn->wsi, "disabled");
+      return;
+   }
+
+   LOG_INFO("WebUI: Always-on disabled for user %d", conn->auth_user_id);
+   always_on_destroy(conn->always_on);
+   conn->always_on = NULL;
+   send_always_on_state(conn->wsi, "disabled");
+}
+
 static void handle_json_message(ws_connection_t *conn, const char *data, size_t len) {
    /* Null-terminate for JSON parsing */
    char *json_str = strndup(data, len);
@@ -2769,9 +2866,36 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                         queue_init_messages(conn, conn->session_token);
                      }
                   }
+
+                  /* Sync capabilities from reconnect payload regardless of whether
+                   * session was just created or already existed (e.g. auto-created
+                   * from cookie auth before this message was processed). */
+                  if (conn->session && payload) {
+                     conn->use_opus = check_opus_capability(payload);
+                     struct json_object *tts_obj;
+                     if (json_object_object_get_ex(payload, "tts_enabled", &tts_obj)) {
+                        conn->tts_enabled = json_object_get_boolean(tts_obj);
+                     }
+                     LOG_INFO("WebUI: Session %u capabilities synced (opus: %s, tts: %s)",
+                              conn->session->session_id, conn->use_opus ? "yes" : "no",
+                              conn->tts_enabled ? "yes" : "no");
+                  }
                }
             }
          }
+      }
+   } else if (strcmp(type, "init") == 0) {
+      /* Init message arrived on an already-authenticated connection (cookie auth
+       * auto-created the session before this message was processed). Sync capabilities. */
+      if (payload) {
+         conn->use_opus = check_opus_capability(payload);
+         struct json_object *tts_obj;
+         if (json_object_object_get_ex(payload, "tts_enabled", &tts_obj)) {
+            conn->tts_enabled = json_object_get_boolean(tts_obj);
+         }
+         LOG_INFO("WebUI: Session %u init capabilities synced (opus: %s, tts: %s)",
+                  conn->session ? conn->session->session_id : 0, conn->use_opus ? "yes" : "no",
+                  conn->tts_enabled ? "yes" : "no");
       }
    } else if (strcmp(type, "capabilities_update") == 0) {
       /* Client capability update (e.g., Opus codec became available after connect) */
@@ -3166,6 +3290,27 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
          }
       }
    }
+   /* Always-on voice mode */
+   else if (strcmp(type, "always_on_enable") == 0) {
+      if (!conn_require_auth(conn)) {
+         return;
+      }
+      handle_always_on_enable(conn, payload);
+   } else if (strcmp(type, "always_on_disable") == 0) {
+      if (!conn_require_auth(conn)) {
+         return;
+      }
+      handle_always_on_disable(conn);
+   } else if (strcmp(type, "always_on_state_request") == 0) {
+      if (!conn_require_auth(conn)) {
+         return;
+      }
+      /* Client re-sync (e.g., tab returned from background) */
+      const char *state_name = conn->always_on
+                                   ? always_on_state_name(always_on_get_state(conn->always_on))
+                                   : "disabled";
+      send_always_on_state(conn->wsi, state_name);
+   }
    /* Satellite (DAP2 Tier 1) messages — only accept from existing satellites.
     * Initial registration is handled in the init block above (line ~2924).
     * Re-registration is rejected to prevent identity spoofing. */
@@ -3304,6 +3449,12 @@ static int callback_websocket(struct lws *wsi,
             conn->text_buffer = NULL;
             conn->text_buffer_len = 0;
             conn->text_buffer_cap = 0;
+         }
+
+         /* Clean up always-on state */
+         if (conn->always_on) {
+            always_on_destroy(conn->always_on);
+            conn->always_on = NULL;
          }
 
          /* Clean up music streaming state */
@@ -3585,6 +3736,19 @@ static int callback_websocket(struct lws *wsi,
                /* Check if this is the final fragment */
                if (is_final) {
                   conn->in_binary_fragment = false;
+
+                  /* Always-on: process the fully reassembled audio frame.
+                   * conn->audio_buffer has accumulated all fragment payloads.
+                   * Prepend the type byte so handle_binary_message can parse it. */
+                  if (conn->always_on && conn->binary_msg_type == WS_BIN_AUDIO_IN &&
+                      always_on_get_state(conn->always_on) != ALWAYS_ON_DISABLED) {
+                     if (conn->audio_buffer && conn->audio_buffer_len > 0) {
+                        always_on_process_audio(conn->always_on, conn->audio_buffer,
+                                                conn->audio_buffer_len, conn->use_opus, conn);
+                     }
+                     /* Clear the accumulation buffer */
+                     conn->audio_buffer_len = 0;
+                  }
                }
             } else {
                /* New message - parse type byte and handle */
@@ -3594,6 +3758,18 @@ static int callback_websocket(struct lws *wsi,
                if (!is_final && len > 0) {
                   conn->in_binary_fragment = true;
                   conn->binary_msg_type = ((const uint8_t *)in)[0];
+               }
+
+               /* Always-on: for non-fragmented complete messages, route audio
+                * from the accumulation buffer (handle_binary_message appended it). */
+               if (is_final && conn->always_on && len > 0 &&
+                   ((const uint8_t *)in)[0] == WS_BIN_AUDIO_IN &&
+                   always_on_get_state(conn->always_on) != ALWAYS_ON_DISABLED) {
+                  if (conn->audio_buffer && conn->audio_buffer_len > 0) {
+                     always_on_process_audio(conn->always_on, conn->audio_buffer,
+                                             conn->audio_buffer_len, conn->use_opus, conn);
+                     conn->audio_buffer_len = 0;
+                  }
                }
             }
 #else
@@ -3709,6 +3885,30 @@ static void *webui_thread_func(void *arg) {
       /* Process one pending response per iteration.
        * The writeable callback chain handles additional responses. */
       process_response_queue();
+
+      /* Always-on timeout checks (~1Hz, not every 5ms iteration) */
+      {
+         static int64_t last_timeout_check_ms = 0;
+         struct timespec ts;
+         clock_gettime(CLOCK_MONOTONIC, &ts);
+         int64_t now_ms = (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+         if (now_ms - last_timeout_check_ms >= 1000) {
+            last_timeout_check_ms = now_ms;
+            pthread_mutex_lock(&s_conn_registry_mutex);
+            for (int i = 0; i < MAX_ACTIVE_CONNECTIONS; i++) {
+               ws_connection_t *c = s_active_connections[i];
+               if (c && c->always_on) {
+                  if (always_on_check_timeouts(c->always_on, c)) {
+                     /* Auto-disabled — clean up */
+                     send_always_on_state(c->wsi, "disabled");
+                     always_on_destroy(c->always_on);
+                     c->always_on = NULL;
+                  }
+               }
+            }
+            pthread_mutex_unlock(&s_conn_registry_mutex);
+         }
+      }
    }
 
    LOG_INFO("WebUI: Server thread exiting");
@@ -4481,12 +4681,13 @@ void webui_send_audio(session_t *session, const uint8_t *data, size_t len) {
  *
  * @param session WebSocket session
  */
-void webui_send_audio_end(session_t *session) {
+void webui_send_audio_end(session_t *session, bool is_opus) {
    if (!session || (session->type != SESSION_TYPE_WEBUI && session->type != SESSION_TYPE_DAP2)) {
       return;
    }
 
    ws_response_t resp = { .session = session, .type = WS_RESP_AUDIO_END };
+   resp.audio.is_opus = is_opus;
 
    queue_response(&resp);
 }
@@ -5383,7 +5584,8 @@ static void *text_worker_thread(void *arg) {
 
    /* Send audio end marker if TTS was enabled */
    if (tts_enabled) {
-      webui_send_audio_end(session);
+      bool use_opus = conn && conn->use_opus;
+      webui_send_audio_end(session, use_opus);
    }
 
    /* Note: Don't send transcript here - streaming already delivered the content.

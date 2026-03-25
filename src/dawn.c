@@ -64,6 +64,7 @@
 #include "core/embedding_engine.h"
 #include "core/path_utils.h"
 #include "core/session_manager.h"
+#include "core/wake_word.h"
 #include "core/worker_pool.h"
 #include "dawn.h"
 #include "input_queue.h"
@@ -1779,6 +1780,7 @@ int main(int argc, char *argv[]) {
 
    // Step 7: Initialize wake words from config (must be after config is finalized)
    init_wake_words();
+   wake_word_init(g_config.general.ai_name); /* Shared module for WebUI always-on */
 
    // Step 8: Initialize preroll buffer size from config
    // Buffer is statically allocated (VAD_PREROLL_MAX_BYTES), we just set the usable portion

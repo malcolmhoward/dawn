@@ -383,6 +383,189 @@
       if (cbs.getOpusEncoder) callbacks.getOpusEncoder = cbs.getOpusEncoder;
    }
 
+   // ==========================================================================
+   // Continuous mode (always-on voice)
+   // ==========================================================================
+
+   let continuousMode = false;
+   let inputAnalyser = null;
+   let inputFFTData = null;
+
+   /**
+    * Start continuous audio capture for always-on mode.
+    * Acquires mic once, keeps AudioContext running, streams indefinitely.
+    */
+   async function startContinuous() {
+      if (continuousMode) return;
+      if (!DawnState.getAudioSupported()) {
+         console.error('Audio not supported');
+         return;
+      }
+
+      try {
+         mediaStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+               sampleRate: DawnConfig.AUDIO_SAMPLE_RATE,
+               channelCount: DawnConfig.AUDIO_CHANNELS,
+               echoCancellation: true,
+               noiseSuppression: true,
+               autoGainControl: true,
+            },
+         });
+
+         // Monitor for mic permission revocation
+         const track = mediaStream.getAudioTracks()[0];
+         if (track) {
+            track.onended = function () {
+               console.warn('Continuous: mic track ended unexpectedly');
+               if (continuousMode && typeof DawnAlwaysOn !== 'undefined') {
+                  DawnAlwaysOn.handleMicRevoked();
+               }
+               stopContinuous();
+            };
+         }
+
+         const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+         if (!audioContext || audioContext.state === 'closed') {
+            audioContext = new AudioContextClass({ sampleRate: DawnConfig.AUDIO_SAMPLE_RATE });
+            workletLoaded = false;
+            console.log(
+               'Continuous: AudioContext created, actual rate',
+               audioContext.sampleRate,
+               'Hz'
+            );
+         } else if (audioContext.state === 'suspended') {
+            await audioContext.resume();
+         }
+
+         mediaStreamSource = audioContext.createMediaStreamSource(mediaStream);
+
+         // Create analyser for input visualization (shows user's voice in EQ)
+         inputAnalyser = audioContext.createAnalyser();
+         inputAnalyser.fftSize = 256;
+         inputAnalyser.smoothingTimeConstant = 0.4;
+         inputAnalyser.minDecibels = -60;
+         inputAnalyser.maxDecibels = -10;
+         inputFFTData = new Uint8Array(inputAnalyser.frequencyBinCount);
+         // Tap the mic stream — analyser is passive, doesn't affect audio flow
+         mediaStreamSource.connect(inputAnalyser);
+
+         const workletOk = await trySetupWorklet();
+         if (!workletOk) {
+            setupScriptProcessor();
+         }
+
+         continuousMode = true;
+         // Use recording state so sendAudioChunk works
+         DawnState.setIsRecording(true);
+         console.log('Continuous audio capture started');
+      } catch (e) {
+         console.error('Failed to start continuous capture:', e);
+         if (callbacks.onError) {
+            callbacks.onError(
+               e.name === 'NotAllowedError'
+                  ? 'Microphone access denied'
+                  : 'Failed to access microphone: ' + e.message
+            );
+         }
+      }
+   }
+
+   /**
+    * Stop continuous audio capture.
+    */
+   async function stopContinuous() {
+      if (!continuousMode) return;
+
+      continuousMode = false;
+      DawnState.setIsRecording(false);
+
+      if (useWorklet && audioProcessor && audioProcessor.port) {
+         audioProcessor.port.postMessage({ type: 'stop' });
+         await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+
+      if (audioProcessor) {
+         audioProcessor.disconnect();
+         audioProcessor = null;
+      }
+
+      if (inputAnalyser) {
+         inputAnalyser.disconnect();
+         inputAnalyser = null;
+         inputFFTData = null;
+      }
+
+      if (mediaStreamSource) {
+         mediaStreamSource.disconnect();
+         mediaStreamSource = null;
+      }
+
+      if (audioContext && audioContext.state === 'running') {
+         audioContext.suspend();
+      }
+
+      if (mediaStream) {
+         mediaStream.getTracks().forEach((track) => track.stop());
+         mediaStream = null;
+      }
+
+      console.log('Continuous audio capture stopped');
+   }
+
+   /**
+    * Mute continuous stream (pause worklet, keep mic acquired).
+    * Used for TTS echo prevention during processing state.
+    */
+   function muteContinuous() {
+      if (!continuousMode || !audioProcessor) return;
+      if (useWorklet && audioProcessor.port) {
+         audioProcessor.port.postMessage({ type: 'stop' });
+      }
+      DawnState.setIsRecording(false);
+      console.log('Always-on: muted during TTS playback');
+   }
+
+   /**
+    * Unmute continuous stream (resume worklet streaming).
+    */
+   function unmuteContinuous() {
+      if (!continuousMode || !audioProcessor) return;
+      if (useWorklet && audioProcessor.port) {
+         audioProcessor.port.postMessage({ type: 'start' });
+      }
+      DawnState.setIsRecording(true);
+      console.log('Always-on: unmuted, resuming listening');
+   }
+
+   /**
+    * Check if currently in continuous mode
+    */
+   function isContinuous() {
+      return continuousMode;
+   }
+
+   /**
+    * Get the AudioContext sample rate (for the always_on_enable message)
+    */
+   function getAudioContextSampleRate() {
+      return audioContext ? audioContext.sampleRate : 48000;
+   }
+
+   /**
+    * Get the input AnalyserNode for mic visualization (always-on mode)
+    */
+   function getInputAnalyser() {
+      return inputAnalyser;
+   }
+
+   /**
+    * Get the input FFT data array for mic visualization
+    */
+   function getInputFFTData() {
+      return inputFFTData;
+   }
+
    // Expose globally
    global.DawnAudioCapture = {
       init: init,
@@ -390,5 +573,13 @@
       stop: stop,
       setAudioChunkMs: setAudioChunkMs,
       setCallbacks: setCallbacks,
+      startContinuous: startContinuous,
+      stopContinuous: stopContinuous,
+      muteContinuous: muteContinuous,
+      unmuteContinuous: unmuteContinuous,
+      isContinuous: isContinuous,
+      getAudioContextSampleRate: getAudioContextSampleRate,
+      getInputAnalyser: getInputAnalyser,
+      getInputFFTData: getInputFFTData,
    };
 })(window);

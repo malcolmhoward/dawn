@@ -236,12 +236,22 @@ target_link_libraries(test_plan_executor
                       ${JSONC_LIBRARIES}
                       pthread)
 
+# Test: Wake Word Matching
+# Tests normalization, wake word detection, command extraction, goodbye/cancel/ignore
+add_executable(test_wake_word
+               test_wake_word.c
+               ${SRC_ROOT}/src/core/wake_word.c)
+
+target_link_libraries(test_wake_word
+                      dawn_common)
+
 # =============================================================================
 # Aggregate "tests" target
 # =============================================================================
 # This creates a target that builds all tests when you run "make tests"
 add_custom_target(tests
-                  DEPENDS test_sse_parser
+                  DEPENDS test_wake_word
+                          test_sse_parser
                           test_sentence_buffer
                           test_streaming
                           asr_benchmark

@@ -70,7 +70,11 @@
    /* Buttons share the second row */
    #send-btn,
    #stop-btn,
-   #mic-btn {
+   .mic-btn-wrapper {
+      flex: 1;
+   }
+
+   .mic-btn-wrapper #mic-btn {
       flex: 1;
    }
 }

@@ -464,6 +464,7 @@ set(DAWN_SOURCES
     src/core/device_types.c
     src/core/ocp_helpers.c
     src/core/path_utils.c
+    src/core/wake_word.c
 
     # ASR subsystem
     src/asr/asr_interface.c
@@ -564,6 +565,7 @@ if(ENABLE_WEBUI)
     endif()
     if(OPUS_FOUND)
         list(APPEND DAWN_SOURCES src/webui/webui_audio.c)
+        list(APPEND DAWN_SOURCES src/webui/webui_always_on.c)
         list(APPEND DAWN_SOURCES src/webui/webui_music.c)
         list(APPEND DAWN_SOURCES src/webui/webui_music_handlers.c)
         list(APPEND DAWN_SOURCES src/webui/webui_music_queue_db.c)

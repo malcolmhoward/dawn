@@ -38,6 +38,7 @@
 #include "logging.h"
 #include "tts/text_to_speech.h"
 #include "tts/tts_preprocessing.h"
+#include "webui/webui_always_on.h"
 #include "webui/webui_internal.h"
 #include "webui/webui_server.h"
 
@@ -814,7 +815,7 @@ void webui_sentence_audio_callback(const char *sentence, void *userdata) {
              * Use snapshotted conn (not session->client_data) to avoid TOCTOU race. */
             if (!session->disconnected && conn->tts_enabled) {
                webui_send_audio(session, opus, opus_len);
-               webui_send_audio_end(session);
+               webui_send_audio_end(session, true);
             }
             free(opus);
          }
@@ -834,12 +835,12 @@ void webui_sentence_audio_callback(const char *sentence, void *userdata) {
             if (!session->disconnected && conn->tts_enabled) {
                size_t bytes = tts_samples * sizeof(int16_t);
                webui_send_audio(session, (const uint8_t *)tts_pcm, bytes);
-               webui_send_audio_end(session);
+               webui_send_audio_end(session, false);
             }
             free(tts_pcm);
          }
       } else {
-         /* WebUI browser: send resampled 48kHz PCM */
+         /* WebUI browser (no Opus): send 48kHz PCM matching browser's playback rate */
          int16_t *pcm = NULL;
          size_t samples = 0;
          int ret = webui_audio_text_to_pcm(cleaned, &pcm, &samples);
@@ -850,7 +851,7 @@ void webui_sentence_audio_callback(const char *sentence, void *userdata) {
             if (!session->disconnected && conn->tts_enabled) {
                size_t bytes = samples * sizeof(int16_t);
                webui_send_audio(session, (const uint8_t *)pcm, bytes);
-               webui_send_audio_end(session);
+               webui_send_audio_end(session, false);
             }
             free(pcm);
          }
@@ -1018,7 +1019,7 @@ static void *audio_worker_thread(void *arg) {
    }
 
    /* Send audio end marker (all audio chunks have been sent) */
-   webui_send_audio_end(session);
+   webui_send_audio_end(session, conn ? conn->use_opus : false);
 
    /* Free response */
    free(response);
@@ -1066,6 +1067,16 @@ void handle_binary_message(ws_connection_t *conn, const uint8_t *data, size_t le
    uint8_t msg_type = data[0];
    const uint8_t *payload = data + 1;
    size_t payload_len = len - 1;
+
+   /* Always-on routing: AUDIO_IN accumulates normally (handles fragmentation).
+    * The WebSocket callback routes complete frames to always_on_process_audio
+    * after fragment reassembly. AUDIO_IN_END is a no-op in always-on mode. */
+   if (conn->always_on && always_on_get_state(conn->always_on) != ALWAYS_ON_DISABLED) {
+      if (msg_type == WS_BIN_AUDIO_IN_END) {
+         return; /* Ignore end markers in always-on mode */
+      }
+      /* AUDIO_IN: fall through to PTT accumulation for fragment handling */
+   }
 
    switch (msg_type) {
       case WS_BIN_AUDIO_IN: {

@@ -584,6 +584,8 @@ int oauth_refresh(const oauth_provider_config_t *provider, oauth_token_set_t *to
    if (cres != CURLE_OK || http_code != 200) {
       LOG_ERROR("oauth: refresh failed (HTTP %ld, curl %d)", http_code, cres);
       if (resp.data) {
+         LOG_ERROR("oauth: server response: %.*s", (int)(resp.size < 512 ? resp.size : 512),
+                   resp.data);
          sodium_memzero(resp.data, resp.size);
          free(resp.data);
       }

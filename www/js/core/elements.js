@@ -38,6 +38,7 @@
       sendBtn: null,
       stopBtn: null,
       micBtn: null,
+      micDropdownBtn: null,
       debugBtn: null,
 
       // Visualizer collapse
@@ -88,6 +89,7 @@
       elements.sendBtn = document.getElementById('send-btn');
       elements.stopBtn = document.getElementById('stop-btn');
       elements.micBtn = document.getElementById('mic-btn');
+      elements.micDropdownBtn = document.getElementById('mic-dropdown-btn');
       elements.debugBtn = document.getElementById('debug-btn');
 
       // Visualizer collapse

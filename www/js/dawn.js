@@ -21,6 +21,7 @@
    let pendingDecodes = [];
    let pendingOpusData = [];
    let pendingDecodePlayback = false;
+   let segmentIsOpus = null; // Codec locked on first chunk of each audio segment
 
    // =============================================================================
    // WebSocket Callbacks (connection managed by DawnWS module)
@@ -635,6 +636,14 @@
             case 'conversation_renamed':
                DawnHistory.handleConversationRenamed(msg.payload);
                break;
+            case 'always_on_state':
+            case 'wake_detected':
+            case 'recording_end':
+            case 'always_on_error':
+               if (typeof DawnAlwaysOn !== 'undefined') {
+                  DawnAlwaysOn.handleMessage(msg);
+               }
+               break;
             default:
                console.log('Unknown message type:', msg.type);
          }
@@ -663,6 +672,11 @@
                }
                if (bytes.length > 1) {
                   const payload = bytes.slice(1);
+                  // Lock codec on first chunk of segment — prevents race where
+                  // Opus loads mid-segment and we decode raw PCM as Opus
+                  if (segmentIsOpus === null) {
+                     segmentIsOpus = !!(opusReady && opusWorker);
+                  }
                   // Store raw data (Opus or PCM) until segment end
                   // Bound array to prevent memory exhaustion on protocol errors
                   const MAX_PENDING_CHUNKS = 100;
@@ -692,16 +706,21 @@
                   }
                   pendingOpusData = [];
 
-                  if (opusReady && opusWorker) {
+                  // Server includes codec flag in segment end payload:
+                  // payload[0] = 1 for Opus, 0 for PCM (or absent for legacy)
+                  const payload = bytes.slice(1);
+                  const serverSaysOpus = payload.length > 0 ? payload[0] === 1 : segmentIsOpus;
+
+                  if (serverSaysOpus && opusReady && opusWorker) {
                      // Decode complete Opus stream via worker
-                     // Set flag so playback triggers when decode completes
                      pendingDecodePlayback = true;
                      opusWorker.postMessage({ type: 'decode', data: combined }, [combined.buffer]);
                   } else {
-                     // Raw PCM: 16-bit signed, 16kHz, mono
+                     // Raw PCM: 16-bit signed, 48kHz, mono
                      DawnAudioPlayback.queueAudio(combined);
                      DawnAudioPlayback.play();
                   }
+                  segmentIsOpus = null;
                }
                break;
 
@@ -791,6 +810,9 @@
          DawnElements.connectionStatus.textContent = 'Connected';
          if (typeof DawnSatellites !== 'undefined') {
             DawnSatellites.handleReconnect();
+         }
+         if (typeof DawnAlwaysOn !== 'undefined') {
+            DawnAlwaysOn.handleReconnect();
          }
       } else if (status === 'connecting') {
          DawnElements.connectionStatus.textContent = 'Connecting...';
@@ -1195,9 +1217,21 @@
          this.style.overflowY = this.scrollHeight > 150 ? 'auto' : 'hidden';
       });
 
-      // Mic button - push to talk
+      // Mic button behavior depends on selected mode:
+      // - "Hold to Talk": mousedown/mouseup for push-to-talk (existing)
+      // - "Continuous Listening": click toggles continuous on/off
       if (DawnElements.micBtn) {
+         // Click handler for continuous mode toggle
+         DawnElements.micBtn.addEventListener('click', function (e) {
+            if (typeof DawnAlwaysOn !== 'undefined' && DawnAlwaysOn.isContinuousMode()) {
+               e.preventDefault();
+               DawnAlwaysOn.toggle();
+            }
+         });
+
+         // Push-to-talk: mousedown starts, mouseup/mouseleave stops
          DawnElements.micBtn.addEventListener('mousedown', function (e) {
+            if (typeof DawnAlwaysOn !== 'undefined' && DawnAlwaysOn.isContinuousMode()) return;
             e.preventDefault();
             if (!DawnState.getIsRecording() && DawnState.getAudioSupported()) {
                DawnAudioCapture.start();
@@ -1205,6 +1239,7 @@
          });
 
          DawnElements.micBtn.addEventListener('mouseup', function (e) {
+            if (typeof DawnAlwaysOn !== 'undefined' && DawnAlwaysOn.isContinuousMode()) return;
             e.preventDefault();
             if (DawnState.getIsRecording()) {
                DawnAudioCapture.stop();
@@ -1212,7 +1247,7 @@
          });
 
          DawnElements.micBtn.addEventListener('mouseleave', function (e) {
-            // Stop recording if mouse leaves button while pressed
+            if (typeof DawnAlwaysOn !== 'undefined' && DawnAlwaysOn.isContinuousMode()) return;
             if (DawnState.getIsRecording()) {
                DawnAudioCapture.stop();
             }
@@ -1220,6 +1255,7 @@
 
          // Touch events for mobile
          DawnElements.micBtn.addEventListener('touchstart', function (e) {
+            if (typeof DawnAlwaysOn !== 'undefined' && DawnAlwaysOn.isContinuousMode()) return;
             e.preventDefault();
             if (!DawnState.getIsRecording() && DawnState.getAudioSupported()) {
                DawnAudioCapture.start();
@@ -1227,6 +1263,7 @@
          });
 
          DawnElements.micBtn.addEventListener('touchend', function (e) {
+            if (typeof DawnAlwaysOn !== 'undefined' && DawnAlwaysOn.isContinuousMode()) return;
             e.preventDefault();
             if (DawnState.getIsRecording()) {
                DawnAudioCapture.stop();
@@ -1236,6 +1273,11 @@
 
       // TTS toggle button (via DawnTts module)
       DawnTts.init();
+
+      // Always-on voice mode
+      if (typeof DawnAlwaysOn !== 'undefined') {
+         DawnAlwaysOn.init();
+      }
 
       // Debug mode toggle
       DawnElements.debugBtn.addEventListener('click', function () {
@@ -1388,6 +1430,10 @@
                console.log('Audio playback finished, applying deferred idle state');
                updateState('idle', null, null);
             }
+            // Complete deferred always-on unmute after TTS finishes
+            if (typeof DawnAlwaysOn !== 'undefined') {
+               DawnAlwaysOn.onPlaybackEnd();
+            }
          },
       });
 
@@ -1401,6 +1447,9 @@
       if (audioResult.supported && DawnElements.micBtn) {
          DawnElements.micBtn.disabled = false;
          DawnElements.micBtn.title = 'Hold to speak';
+         if (DawnElements.micDropdownBtn) {
+            DawnElements.micDropdownBtn.disabled = false;
+         }
       } else if (DawnElements.micBtn) {
          // Show why audio is disabled
          DawnElements.micBtn.title = audioResult.reason || 'Audio not available';
