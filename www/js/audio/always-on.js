@@ -1,9 +1,15 @@
 /**
  * DAWN Always-On Voice Mode — Browser Coordinator
  *
- * Two-step UX: dropdown selects the MODE, mic button activates it.
- * - "Hold to Talk" mode: mic button works as push-to-talk (existing behavior)
- * - "Continuous Listening" mode: mic button click toggles continuous on/off
+ * Unified action button controller: dropdown selects the MODE, button activates it.
+ * - "Send Text" mode: button clicks send text (default)
+ * - "Hold to Talk" mode: button works as push-to-talk
+ * - "Continuous Listening" mode: button click toggles continuous on/off
+ *
+ * Also manages:
+ * - resolveButtonState(): single source of truth for button label/style
+ * - Text override: typing in any voice mode temporarily shows "Send"
+ * - Cancel state: processing/speaking/thinking → "Cancel" (red)
  *
  * Server drives the always-on state machine. Client responsibilities:
  * - Start/stop continuous audio capture on button toggle
@@ -17,9 +23,10 @@
 
    const STORAGE_KEY = 'dawn_always_on_mode';
 
-   let selectedMode = 'push-to-talk'; // Mode selected in dropdown
+   let selectedMode = 'send'; // 'send' | 'push-to-talk' | 'continuous'
    let enabled = false; // Whether continuous listening is currently active
    let state = 'disabled'; // Server state
+   let textOverride = false; // Textarea has text in a voice mode
    let pendingUnmute = false; // Defer unmute until TTS playback finishes
    let pendingVisualState = null; // Defer visual state update until TTS finishes
 
@@ -29,13 +36,14 @@
    function init() {
       setupDropdown();
 
-      // Restore mode preference from localStorage (mode only, not activation)
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored === 'continuous') {
-         selectedMode = 'continuous';
-         updateDropdownActive('continuous');
-         updateMicButtonLabel();
+      // Restore mode preference from localStorage
+      var stored = localStorage.getItem(STORAGE_KEY);
+      if (stored === 'continuous' || stored === 'push-to-talk') {
+         selectedMode = stored;
+         updateDropdownActive(stored);
       }
+
+      resolveButtonState();
 
       document.addEventListener('visibilitychange', handleVisibilityChange);
    }
@@ -45,8 +53,8 @@
     * The dropdown only selects the mode — it does NOT activate/deactivate.
     */
    function setupDropdown() {
-      const dropdownBtn = document.getElementById('mic-dropdown-btn');
-      const dropdown = document.getElementById('mic-dropdown');
+      var dropdownBtn = document.getElementById('action-dropdown-btn');
+      var dropdown = document.getElementById('action-dropdown');
 
       if (!dropdownBtn || !dropdown) {
          return;
@@ -56,7 +64,7 @@
       dropdownBtn.addEventListener('click', function (e) {
          e.preventDefault();
          e.stopPropagation();
-         const isOpen = !dropdown.classList.contains('hidden');
+         var isOpen = !dropdown.classList.contains('hidden');
          if (isOpen) {
             closeDropdown();
          } else {
@@ -68,10 +76,13 @@
       dropdown.addEventListener('click', function (e) {
          if (dropdown.classList.contains('hidden')) return;
 
-         const item = e.target.closest('.dropdown-item');
+         var item = e.target.closest('.dropdown-item');
          if (!item) return;
 
-         const mode = item.dataset.mode;
+         // Skip disabled items
+         if (item.disabled || item.classList.contains('disabled')) return;
+
+         var mode = item.dataset.mode;
 
          // If switching away from continuous while it's active, disable first
          if (mode !== 'continuous' && enabled) {
@@ -81,19 +92,21 @@
          selectedMode = mode;
          localStorage.setItem(STORAGE_KEY, mode);
          updateDropdownActive(mode);
-         updateMicButtonLabel();
+         textOverride = false;
+         resolveButtonState();
          closeDropdown();
 
-         announce(
-            mode === 'continuous'
-               ? 'Continuous listening mode selected. Press mic button to start.'
-               : 'Hold to talk mode selected.'
-         );
+         var announceMsg = {
+            send: 'Send text mode selected.',
+            'push-to-talk': 'Hold to talk mode selected.',
+            continuous: 'Continuous listening mode selected. Press button to start.',
+         };
+         announce(announceMsg[mode] || '');
       });
 
       // Close dropdown on outside click
       document.addEventListener('click', function (e) {
-         if (!e.target.closest('.mic-btn-wrapper')) {
+         if (!e.target.closest('.action-btn-wrapper')) {
             closeDropdown();
          }
       });
@@ -108,22 +121,24 @@
             if (dropdown.classList.contains('hidden')) {
                openDropdown();
             }
-            const firstItem = dropdown.querySelector('.dropdown-item');
+            var firstItem = dropdown.querySelector('.dropdown-item:not(:disabled)');
             if (firstItem) firstItem.focus();
          }
       });
 
       dropdown.addEventListener('keydown', function (e) {
-         const items = [...dropdown.querySelectorAll('.dropdown-item')];
-         const idx = items.indexOf(document.activeElement);
+         var items = Array.prototype.slice.call(
+            dropdown.querySelectorAll('.dropdown-item:not(:disabled)')
+         );
+         var idx = items.indexOf(document.activeElement);
 
          if (e.key === 'ArrowDown') {
             e.preventDefault();
-            const next = items[(idx + 1) % items.length];
+            var next = items[(idx + 1) % items.length];
             if (next) next.focus();
          } else if (e.key === 'ArrowUp') {
             e.preventDefault();
-            const prev = items[(idx - 1 + items.length) % items.length];
+            var prev = items[(idx - 1 + items.length) % items.length];
             if (prev) prev.focus();
          } else if (e.key === 'Escape') {
             closeDropdown();
@@ -139,8 +154,8 @@
    }
 
    function closeDropdown() {
-      const dropdown = document.getElementById('mic-dropdown');
-      const btn = document.getElementById('mic-dropdown-btn');
+      var dropdown = document.getElementById('action-dropdown');
+      var btn = document.getElementById('action-dropdown-btn');
       if (dropdown) {
          dropdown.classList.add('hidden');
          dropdown.style.pointerEvents = 'none';
@@ -149,8 +164,8 @@
    }
 
    function openDropdown() {
-      const dropdown = document.getElementById('mic-dropdown');
-      const btn = document.getElementById('mic-dropdown-btn');
+      var dropdown = document.getElementById('action-dropdown');
+      var btn = document.getElementById('action-dropdown-btn');
       if (dropdown) {
          dropdown.classList.remove('hidden');
          dropdown.style.pointerEvents = '';
@@ -159,7 +174,7 @@
    }
 
    /**
-    * Toggle continuous listening (called from mic button click in continuous mode)
+    * Toggle continuous listening (called from action button click in continuous mode)
     */
    function toggle() {
       if (enabled) {
@@ -204,8 +219,8 @@
       });
 
       enabled = true;
-      updateMicButton();
-      updateMicButtonLabel();
+      updateActionButton();
+      resolveButtonState();
       announce('Continuous listening started');
    }
 
@@ -222,8 +237,8 @@
       state = 'disabled';
       pendingUnmute = false;
       pendingVisualState = null;
-      updateMicButton();
-      updateMicButtonLabel();
+      updateActionButton();
+      resolveButtonState();
       announce('Continuous listening stopped');
    }
 
@@ -268,7 +283,6 @@
             pendingUnmute = true;
             pendingVisualState = newState;
             console.log('Always-on: deferring unmute + visual until TTS playback finishes');
-            // Don't update visuals yet — keep showing processing/speaking state
             return;
          } else {
             DawnAudioCapture.unmuteContinuous();
@@ -281,8 +295,8 @@
          enabled = false;
       }
 
-      updateMicButton();
-      updateMicButtonLabel();
+      updateActionButton();
+      resolveButtonState();
       updateVisualizer();
       announce(stateAnnouncement(newState));
    }
@@ -307,15 +321,15 @@
       enabled = false;
       state = 'disabled';
       DawnAudioCapture.stopContinuous();
-      updateMicButton();
-      updateMicButtonLabel();
+      updateActionButton();
+      resolveButtonState();
    }
 
    /**
     * Update the dropdown active indicator
     */
    function updateDropdownActive(mode) {
-      var dropdown = document.getElementById('mic-dropdown');
+      var dropdown = document.getElementById('action-dropdown');
       if (!dropdown) return;
 
       dropdown.querySelectorAll('.dropdown-item').forEach(function (item) {
@@ -324,34 +338,79 @@
    }
 
    /**
-    * Update mic button label/title based on selected mode and active state
+    * Resolve the action button's label, title, and CSS state.
+    * Priority: cancel > PTT recording > text override > mode-specific
     */
-   function updateMicButtonLabel() {
-      var btn = DawnElements.micBtn;
+   function resolveButtonState() {
+      var btn = DawnElements.actionBtn;
       if (!btn) return;
 
-      var label;
-      if (selectedMode === 'continuous') {
-         if (enabled) {
-            label = 'Stop continuous listening';
-            btn.textContent = 'Stop';
-         } else {
-            label = 'Start continuous listening';
-            btn.textContent = 'Listen';
-         }
-      } else {
-         label = 'Hold to speak';
-         btn.textContent = 'Mic';
+      var appState = DawnState.getAppState ? DawnState.getAppState() : 'idle';
+
+      // 1. Cancel override: processing/speaking/thinking
+      var isCancelState =
+         appState === 'processing' || appState === 'speaking' || appState === 'thinking';
+      if (isCancelState) {
+         btn.textContent = 'Cancel';
+         btn.title = 'Cancel request';
+         btn.setAttribute('aria-label', 'Cancel request');
+         btn.classList.add('cancel-active');
+         btn.classList.remove('recording');
+         return;
       }
-      btn.title = label;
-      btn.setAttribute('aria-label', label);
+
+      btn.classList.remove('cancel-active');
+
+      // 2. PTT recording: isRecording is true
+      if (
+         selectedMode === 'push-to-talk' &&
+         DawnState.getIsRecording &&
+         DawnState.getIsRecording()
+      ) {
+         btn.textContent = 'Rec';
+         btn.title = 'Release to send';
+         btn.setAttribute('aria-label', 'Release to send');
+         btn.classList.add('recording');
+         return;
+      }
+
+      btn.classList.remove('recording');
+
+      // 3. Text override: textarea has text AND mode ≠ send
+      if (textOverride && selectedMode !== 'send') {
+         btn.textContent = 'Send';
+         btn.title = 'Send message';
+         btn.setAttribute('aria-label', 'Send message');
+         return;
+      }
+
+      // 4. Mode-specific
+      if (selectedMode === 'send') {
+         btn.textContent = 'Send';
+         btn.title = 'Send message';
+         btn.setAttribute('aria-label', 'Send message');
+      } else if (selectedMode === 'push-to-talk') {
+         btn.textContent = 'Mic';
+         btn.title = 'Hold to speak';
+         btn.setAttribute('aria-label', 'Hold to speak');
+      } else if (selectedMode === 'continuous') {
+         if (enabled) {
+            btn.textContent = 'Stop';
+            btn.title = 'Stop continuous listening';
+            btn.setAttribute('aria-label', 'Stop continuous listening');
+         } else {
+            btn.textContent = 'Listen';
+            btn.title = 'Start continuous listening';
+            btn.setAttribute('aria-label', 'Start continuous listening');
+         }
+      }
    }
 
    /**
-    * Update mic button visual state based on always-on state
+    * Update action button visual state based on always-on state
     */
-   function updateMicButton() {
-      var wrapper = document.querySelector('.mic-btn-wrapper');
+   function updateActionButton() {
+      var wrapper = document.querySelector('.action-btn-wrapper');
       if (!wrapper) return;
 
       wrapper.classList.remove(
@@ -527,8 +586,8 @@
          enabled = false;
          state = 'disabled';
          pendingUnmute = false;
-         updateMicButton();
-         updateMicButtonLabel();
+         updateActionButton();
+         resolveButtonState();
       }
    }
 
@@ -538,8 +597,8 @@
          enabled = false;
          state = 'disabled';
          DawnWS.send({ type: 'always_on_disable' });
-         updateMicButton();
-         updateMicButtonLabel();
+         updateActionButton();
+         resolveButtonState();
          if (typeof DawnToast !== 'undefined') {
             DawnToast.show('Microphone access lost — continuous listening disabled', 'warning');
          }
@@ -547,10 +606,22 @@
    }
 
    /**
-    * Check if continuous mode is selected (for mic button behavior in dawn.js)
+    * Check if continuous mode is selected (for button behavior in dawn.js)
     */
    function isContinuousMode() {
       return selectedMode === 'continuous';
+   }
+
+   function isPushToTalkMode() {
+      return selectedMode === 'push-to-talk';
+   }
+
+   function isSendMode() {
+      return selectedMode === 'send';
+   }
+
+   function getSelectedMode() {
+      return selectedMode;
    }
 
    function isEnabled() {
@@ -559,6 +630,20 @@
 
    function getState() {
       return state;
+   }
+
+   /**
+    * Set text override state (textarea has text in a voice mode)
+    */
+   function setTextOverride(hasText) {
+      if (textOverride !== hasText) {
+         textOverride = hasText;
+         resolveButtonState();
+      }
+   }
+
+   function isTextOverrideActive() {
+      return textOverride;
    }
 
    /**
@@ -576,10 +661,35 @@
          var deferred = pendingVisualState;
          pendingVisualState = null;
          console.log('Always-on: TTS finished, applying deferred state:', deferred);
-         updateMicButton();
-         updateMicButtonLabel();
+         updateActionButton();
+         resolveButtonState();
          updateVisualizer();
          announce(stateAnnouncement(deferred));
+      }
+   }
+
+   /**
+    * Disable audio mode dropdown items (when audio not supported)
+    */
+   function disableAudioModes() {
+      var dropdown = document.getElementById('action-dropdown');
+      if (!dropdown) return;
+
+      dropdown.querySelectorAll('.dropdown-item').forEach(function (item) {
+         if (item.dataset.mode === 'push-to-talk' || item.dataset.mode === 'continuous') {
+            item.disabled = true;
+            item.classList.add('disabled');
+            item.style.opacity = '0.5';
+            item.style.cursor = 'not-allowed';
+         }
+      });
+
+      // If current mode is a voice mode, fall back to send
+      if (selectedMode !== 'send') {
+         selectedMode = 'send';
+         localStorage.setItem(STORAGE_KEY, 'send');
+         updateDropdownActive('send');
+         resolveButtonState();
       }
    }
 
@@ -593,7 +703,14 @@
       handleMicRevoked: handleMicRevoked,
       onPlaybackEnd: onPlaybackEnd,
       isContinuousMode: isContinuousMode,
+      isPushToTalkMode: isPushToTalkMode,
+      isSendMode: isSendMode,
+      getSelectedMode: getSelectedMode,
       isEnabled: isEnabled,
       getState: getState,
+      setTextOverride: setTextOverride,
+      isTextOverrideActive: isTextOverrideActive,
+      resolveButtonState: resolveButtonState,
+      disableAudioModes: disableAudioModes,
    };
 })(window);

@@ -35,10 +35,8 @@
 
       // Input
       textInput: null,
-      sendBtn: null,
-      stopBtn: null,
-      micBtn: null,
-      micDropdownBtn: null,
+      actionBtn: null,
+      actionDropdownBtn: null,
       debugBtn: null,
 
       // Visualizer collapse
@@ -86,10 +84,8 @@
 
       // Input
       elements.textInput = document.getElementById('text-input');
-      elements.sendBtn = document.getElementById('send-btn');
-      elements.stopBtn = document.getElementById('stop-btn');
-      elements.micBtn = document.getElementById('mic-btn');
-      elements.micDropdownBtn = document.getElementById('mic-dropdown-btn');
+      elements.actionBtn = document.getElementById('action-btn');
+      elements.actionDropdownBtn = document.getElementById('action-dropdown-btn');
       elements.debugBtn = document.getElementById('debug-btn');
 
       // Visualizer collapse

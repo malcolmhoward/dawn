@@ -741,13 +741,12 @@
    }
 
    /**
-    * Update mic button visual state
+    * Update action button visual state for PTT recording
     */
    function updateMicButton(recording) {
-      if (DawnElements.micBtn) {
-         DawnElements.micBtn.classList.toggle('recording', recording);
-         DawnElements.micBtn.textContent = recording ? 'Stop' : 'Mic';
-         DawnElements.micBtn.title = recording ? 'Stop recording' : 'Start recording';
+      DawnState.setIsRecording(recording);
+      if (typeof DawnAlwaysOn !== 'undefined') {
+         DawnAlwaysOn.resolveButtonState();
       }
    }
 
@@ -874,14 +873,9 @@
          DawnElements.ringContainer.classList.add('fft-active');
       }
 
-      // Toggle send/stop button based on state
-      // Show stop button during processing, speaking, or thinking states
-      const showStop = state === 'processing' || state === 'speaking' || state === 'thinking';
-      if (DawnElements.sendBtn) {
-         DawnElements.sendBtn.classList.toggle('hidden', showStop);
-      }
-      if (DawnElements.stopBtn) {
-         DawnElements.stopBtn.classList.toggle('hidden', !showStop);
+      // Update unified action button state (cancel/send/mic/listen)
+      if (typeof DawnAlwaysOn !== 'undefined') {
+         DawnAlwaysOn.resolveButtonState();
       }
 
       // Emit state event for decoupled modules
@@ -975,6 +969,10 @@
          if (sendTextMessage(text)) {
             DawnElements.textInput.value = '';
             DawnElements.textInput.style.height = 'auto';
+            // Reset text override after sending
+            if (typeof DawnAlwaysOn !== 'undefined') {
+               DawnAlwaysOn.setTextOverride(false);
+            }
          }
       }
    }
@@ -986,8 +984,8 @@
       }
    }
 
-   function handleStop() {
-      console.log('Stop button clicked - sending cancel');
+   function handleCancel() {
+      console.log('Cancel button clicked - sending cancel');
       DawnWS.send({ type: 'cancel' });
       // Finalize any active stream immediately on the client side
       DawnStreaming.finalize();
@@ -1204,66 +1202,116 @@
       DawnTheme.init();
 
       // Event listeners
-      DawnElements.sendBtn.addEventListener('click', handleSend);
-      DawnElements.stopBtn.addEventListener('click', handleStop);
       DawnElements.textInput.addEventListener('keydown', handleKeydown);
 
-      // Auto-resize textarea as user types
+      // Auto-resize textarea as user types + smart text override
       DawnElements.textInput.addEventListener('input', function () {
          this.style.height = 'auto';
          const newHeight = Math.min(this.scrollHeight, 150);
          this.style.height = newHeight + 'px';
          // Only show scrollbar when content exceeds max height
          this.style.overflowY = this.scrollHeight > 150 ? 'auto' : 'hidden';
+
+         // Smart typing override: when text present in voice mode, show "Send"
+         if (typeof DawnAlwaysOn !== 'undefined') {
+            DawnAlwaysOn.setTextOverride(this.value.trim().length > 0);
+         }
       });
 
-      // Mic button behavior depends on selected mode:
-      // - "Hold to Talk": mousedown/mouseup for push-to-talk (existing)
-      // - "Continuous Listening": click toggles continuous on/off
-      if (DawnElements.micBtn) {
-         // Click handler for continuous mode toggle
-         DawnElements.micBtn.addEventListener('click', function (e) {
-            if (typeof DawnAlwaysOn !== 'undefined' && DawnAlwaysOn.isContinuousMode()) {
-               e.preventDefault();
+      // Unified action button: mode determines behavior
+      if (DawnElements.actionBtn) {
+         // Click handler — delegates based on mode + state
+         DawnElements.actionBtn.addEventListener('click', function (e) {
+            var appState = DawnState.getAppState ? DawnState.getAppState() : 'idle';
+            var isCancelState =
+               appState === 'processing' || appState === 'speaking' || appState === 'thinking';
+
+            // Cancel takes priority
+            if (isCancelState) {
+               handleCancel();
+               return;
+            }
+
+            var mode =
+               typeof DawnAlwaysOn !== 'undefined' ? DawnAlwaysOn.getSelectedMode() : 'send';
+            var hasTextOverride =
+               typeof DawnAlwaysOn !== 'undefined' && DawnAlwaysOn.isTextOverrideActive();
+
+            // Text override: send text regardless of mode
+            if (hasTextOverride) {
+               handleSend();
+               DawnAlwaysOn.setTextOverride(false);
+               return;
+            }
+
+            if (mode === 'send') {
+               handleSend();
+            } else if (mode === 'continuous') {
                DawnAlwaysOn.toggle();
             }
+            // PTT mode: click is a no-op (mousedown/mouseup handles it)
          });
 
-         // Push-to-talk: mousedown starts, mouseup/mouseleave stops
-         DawnElements.micBtn.addEventListener('mousedown', function (e) {
-            if (typeof DawnAlwaysOn !== 'undefined' && DawnAlwaysOn.isContinuousMode()) return;
+         // PTT: mousedown starts, mouseup/mouseleave stops
+         DawnElements.actionBtn.addEventListener('mousedown', function (e) {
+            var mode =
+               typeof DawnAlwaysOn !== 'undefined' ? DawnAlwaysOn.getSelectedMode() : 'send';
+            if (mode !== 'push-to-talk') return;
+
+            // Suppress PTT during cancel state or text override
+            var appState = DawnState.getAppState ? DawnState.getAppState() : 'idle';
+            var isCancelState =
+               appState === 'processing' || appState === 'speaking' || appState === 'thinking';
+            if (isCancelState) return;
+            if (typeof DawnAlwaysOn !== 'undefined' && DawnAlwaysOn.isTextOverrideActive()) return;
+
             e.preventDefault();
             if (!DawnState.getIsRecording() && DawnState.getAudioSupported()) {
                DawnAudioCapture.start();
             }
          });
 
-         DawnElements.micBtn.addEventListener('mouseup', function (e) {
-            if (typeof DawnAlwaysOn !== 'undefined' && DawnAlwaysOn.isContinuousMode()) return;
+         DawnElements.actionBtn.addEventListener('mouseup', function (e) {
+            var mode =
+               typeof DawnAlwaysOn !== 'undefined' ? DawnAlwaysOn.getSelectedMode() : 'send';
+            if (mode !== 'push-to-talk') return;
             e.preventDefault();
             if (DawnState.getIsRecording()) {
                DawnAudioCapture.stop();
             }
          });
 
-         DawnElements.micBtn.addEventListener('mouseleave', function (e) {
-            if (typeof DawnAlwaysOn !== 'undefined' && DawnAlwaysOn.isContinuousMode()) return;
+         DawnElements.actionBtn.addEventListener('mouseleave', function () {
+            var mode =
+               typeof DawnAlwaysOn !== 'undefined' ? DawnAlwaysOn.getSelectedMode() : 'send';
+            if (mode !== 'push-to-talk') return;
             if (DawnState.getIsRecording()) {
                DawnAudioCapture.stop();
             }
          });
 
-         // Touch events for mobile
-         DawnElements.micBtn.addEventListener('touchstart', function (e) {
-            if (typeof DawnAlwaysOn !== 'undefined' && DawnAlwaysOn.isContinuousMode()) return;
+         // Touch events for mobile PTT
+         DawnElements.actionBtn.addEventListener('touchstart', function (e) {
+            var mode =
+               typeof DawnAlwaysOn !== 'undefined' ? DawnAlwaysOn.getSelectedMode() : 'send';
+            if (mode !== 'push-to-talk') return;
+
+            var appState = DawnState.getAppState ? DawnState.getAppState() : 'idle';
+            var isCancelState =
+               appState === 'processing' || appState === 'speaking' || appState === 'thinking';
+            if (isCancelState) return;
+            if (typeof DawnAlwaysOn !== 'undefined' && DawnAlwaysOn.isTextOverrideActive()) return;
+
             e.preventDefault();
             if (!DawnState.getIsRecording() && DawnState.getAudioSupported()) {
                DawnAudioCapture.start();
             }
          });
 
-         DawnElements.micBtn.addEventListener('touchend', function (e) {
-            if (typeof DawnAlwaysOn !== 'undefined' && DawnAlwaysOn.isContinuousMode()) return;
+         DawnElements.actionBtn.addEventListener('touchend', function (e) {
+            var mode =
+               typeof DawnAlwaysOn !== 'undefined' ? DawnAlwaysOn.getSelectedMode() : 'send';
+            if (mode !== 'push-to-talk') return;
             e.preventDefault();
             if (DawnState.getIsRecording()) {
                DawnAudioCapture.stop();
@@ -1444,16 +1492,12 @@
       });
 
       const audioResult = await DawnAudioCapture.init();
-      if (audioResult.supported && DawnElements.micBtn) {
-         DawnElements.micBtn.disabled = false;
-         DawnElements.micBtn.title = 'Hold to speak';
-         if (DawnElements.micDropdownBtn) {
-            DawnElements.micDropdownBtn.disabled = false;
+      if (!audioResult.supported) {
+         // Disable voice mode dropdown items (Send still works)
+         if (typeof DawnAlwaysOn !== 'undefined') {
+            DawnAlwaysOn.disableAudioModes();
          }
-      } else if (DawnElements.micBtn) {
-         // Show why audio is disabled
-         DawnElements.micBtn.title = audioResult.reason || 'Audio not available';
-         console.warn('Mic disabled:', audioResult.reason);
+         console.warn('Audio disabled:', audioResult.reason);
       }
 
       // Initialize visualization (rings, bars, default waveform)

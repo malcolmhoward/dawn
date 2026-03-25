@@ -691,8 +691,8 @@
 
    function setArchivedMode(isArchived) {
       const textInput = document.getElementById('text-input');
-      const sendBtn = document.getElementById('send-btn');
-      const micBtn = document.getElementById('mic-btn');
+      const actionBtn = document.getElementById('action-btn');
+      const actionDropdownBtn = document.getElementById('action-dropdown-btn');
       const inputArea = document.getElementById('input-area');
 
       if (textInput) {
@@ -701,8 +701,8 @@
             ? 'This conversation is archived (read only)'
             : 'Type a message...';
       }
-      if (sendBtn) sendBtn.disabled = isArchived;
-      if (micBtn && isArchived) micBtn.disabled = true;
+      if (actionBtn) actionBtn.disabled = isArchived;
+      if (actionDropdownBtn && isArchived) actionDropdownBtn.disabled = true;
       if (inputArea) {
          inputArea.classList.toggle('archived', isArchived);
       }

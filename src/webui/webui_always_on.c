@@ -606,6 +606,11 @@ void always_on_consume_wake_result(always_on_ctx_t *ctx, void *conn_ptr) {
          ctx->wake_command = NULL;
          pthread_mutex_unlock(&ctx->mutex);
 
+         /* Capitalize first letter of the extracted command */
+         if (cmd && cmd[0] >= 'a' && cmd[0] <= 'z') {
+            cmd[0] -= 32;
+         }
+
          send_always_on_state(ctx->wsi, "processing");
 
          if (conn->session && cmd[0] != '\0') {

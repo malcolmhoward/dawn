@@ -297,7 +297,7 @@
                                   # Env: DAWN_WEBUI_BIND_ADDRESS
 # max_clients = 4                 # Max concurrent WebSocket clients
                                   # Env: DAWN_WEBUI_MAX_CLIENTS
-# audio_chunk_ms = 200            # Audio chunk size for streaming (100-500ms)
+# audio_chunk_ms = 100            # Audio chunk size for streaming (100-500ms)
                                   # Env: DAWN_WEBUI_AUDIO_CHUNK_MS
 # workers = 1                     # ASR worker threads for voice input
                                   # Env: DAWN_WEBUI_WORKERS

@@ -67,14 +67,12 @@
       margin-bottom: 0.5rem;
    }
 
-   /* Buttons share the second row */
-   #send-btn,
-   #stop-btn,
-   .mic-btn-wrapper {
+   /* Action button shares the second row */
+   .action-btn-wrapper {
       flex: 1;
    }
 
-   .mic-btn-wrapper #mic-btn {
+   .action-btn-wrapper #action-btn {
       flex: 1;
    }
 }

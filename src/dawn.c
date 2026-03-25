@@ -3189,6 +3189,11 @@ mqtt_disabled:
                         free(input_text);
                         input_text = NULL;
 
+                        /* Capitalize first letter of the extracted command */
+                        if (command_text && command_text[0] >= 'a' && command_text[0] <= 'z') {
+                           command_text[0] -= 32;
+                        }
+
                         // Log the user command for TUI activity feed
                         if (command_text) {
                            metrics_set_last_user_command(command_text);

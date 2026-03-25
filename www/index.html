@@ -1215,18 +1215,15 @@ Format rules:
                   style="display: none"
                />
             </div>
-            <div class="mic-btn-wrapper">
-               <button id="mic-btn" title="Hold to speak" aria-label="Hold to speak" disabled>
-                  Mic
-               </button>
+            <div class="action-btn-wrapper">
+               <button id="action-btn" title="Send message" aria-label="Send message">Send</button>
                <button
-                  id="mic-dropdown-btn"
-                  title="Audio mode"
-                  aria-label="Select audio mode"
+                  id="action-dropdown-btn"
+                  title="Input mode"
+                  aria-label="Select input mode"
                   aria-haspopup="true"
                   aria-expanded="false"
-                  aria-controls="mic-dropdown"
-                  disabled
+                  aria-controls="action-dropdown"
                >
                   <svg
                      width="12"
@@ -1239,10 +1236,18 @@ Format rules:
                      <polyline points="6 9 12 15 18 9" />
                   </svg>
                </button>
-               <div id="mic-dropdown" class="mic-dropdown hidden" role="menu">
+               <div id="action-dropdown" class="action-dropdown hidden" role="menu">
                   <button
                      role="menuitem"
                      class="dropdown-item active"
+                     data-mode="send"
+                     tabindex="-1"
+                  >
+                     Send Text
+                  </button>
+                  <button
+                     role="menuitem"
+                     class="dropdown-item"
                      data-mode="push-to-talk"
                      tabindex="-1"
                   >
@@ -1258,15 +1263,6 @@ Format rules:
                   </button>
                </div>
             </div>
-            <button id="send-btn" title="Send message">Send</button>
-            <button
-               id="stop-btn"
-               title="Stop generating"
-               aria-label="Stop generating"
-               class="hidden"
-            >
-               Stop
-            </button>
          </div>
 
          <!-- Footer -->

@@ -360,10 +360,10 @@
    function updateMicButton(recording) {
       if (callbacks.onMicButton) {
          callbacks.onMicButton(recording);
-      } else if (DawnElements.micBtn) {
-         DawnElements.micBtn.classList.toggle('recording', recording);
-         DawnElements.micBtn.textContent = recording ? 'Stop' : 'Mic';
-         DawnElements.micBtn.title = recording ? 'Stop recording' : 'Start recording';
+      } else if (DawnElements.actionBtn) {
+         DawnElements.actionBtn.classList.toggle('recording', recording);
+         DawnElements.actionBtn.textContent = recording ? 'Rec' : 'Mic';
+         DawnElements.actionBtn.title = recording ? 'Release to send' : 'Hold to speak';
       }
    }
 

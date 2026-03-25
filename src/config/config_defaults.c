@@ -210,7 +210,7 @@ void config_set_defaults(dawn_config_t *config) {
    config->webui.enabled = false;
    config->webui.port = 3000; /* "I love you 3000" */
    config->webui.max_clients = 4;
-   config->webui.audio_chunk_ms = 200; /* 200ms chunks for streaming audio */
+   config->webui.audio_chunk_ms = 100; /* 100ms chunks for lower VAD latency */
    SAFE_COPY(config->webui.www_path, "www");
    SAFE_COPY(config->webui.bind_address, "0.0.0.0");
    config->webui.https = false;
