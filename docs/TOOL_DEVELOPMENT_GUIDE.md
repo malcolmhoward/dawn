@@ -873,3 +873,145 @@ void tool_registry_foreach_enabled(tool_foreach_callback_t callback, void *user_
 int tool_registry_count(void);
 int tool_registry_enabled_count(void);
 ```
+
+---
+
+## Two-Step Tool Pattern (Instruction Loader)
+
+Some tools need detailed operational instructions that are too large to include in every conversation's system prompt. The two-step pattern solves this: the LLM calls a lightweight "load instructions" tool first, gets the rules it needs, then calls the actual tool.
+
+For the full design rationale, see `docs/TWO_STEP_TOOL_PATTERN.md`.
+
+### When to Use
+
+A tool should use the two-step pattern when:
+- **Instructions are large** (>500 tokens) — would waste context in conversations that don't use the tool
+- **Instructions vary by sub-task** — different modules for different use cases
+- **Output quality depends on following specific rules** — the difference between "works" and "works well" is significant
+- **Instructions evolve independently** — edit markdown files without recompiling
+
+Do NOT use this pattern for simple tools where the function calling schema is sufficient (email, timers, weather, etc.).
+
+### Architecture
+
+```
+tool_instructions/              ← Project root (alongside www/, models/)
+├── render_visual/              ← One directory per tool
+│   ├── _core.md                ← Always loaded (shared rules for all modules)
+│   ├── diagram.md              ← Module: loaded on demand
+│   └── chart.md                ← Module: loaded on demand
+└── test_greeter/               ← Test/demo tool
+    ├── _core.md
+    ├── formal.md
+    └── casual.md
+```
+
+The `instruction_loader` module (`src/tools/instruction_loader.c`) provides a single generic function that any two-step tool can use:
+
+```c
+#include "tools/instruction_loader.h"
+
+char *content = NULL;
+int rc = instruction_loader_load("render_visual", "diagram,chart", &content);
+// content is heap-allocated, caller must free()
+```
+
+- Reads `_core.md` first (if present), then each comma-separated module
+- Sanitizes module names (rejects `/`, `\`, `..` — prevents path traversal)
+- Dynamically allocates output, capped at 128 KB
+- Returns concatenated content with `---` separators between sections
+
+### How to Create a Two-Step Tool
+
+A two-step tool registers **two** entries in the tool registry:
+
+1. **`{tool}_load_instructions`** — getter that calls `instruction_loader_load()` and returns content
+2. **`{tool}`** — the actual tool that executes after the LLM has read the instructions
+
+Both are registered from a single `*_tool_register()` function.
+
+#### Step 1: Create Instruction Files
+
+Create a directory under `tool_instructions/` with your tool name. Add `_core.md` for shared rules and one `.md` file per module.
+
+#### Step 2: Implement the Tool
+
+```c
+#include "tools/instruction_loader.h"
+#include "tools/tool_registry.h"
+
+#define TOOL_DIR "my_tool"
+
+/* Instruction loader callback */
+static char *load_instructions_callback(const char *action, char *value,
+                                         int *should_respond) {
+   (void)action;
+   *should_respond = 1;
+
+   if (!value || value[0] == '\0')
+      return strdup("Error: provide module names.");
+
+   char *content = NULL;
+   int rc = instruction_loader_load(TOOL_DIR, value, &content);
+   if (rc != 0 || !content)
+      return strdup("Error: failed to load instructions.");
+
+   return content; /* Caller (registry) frees this */
+}
+
+/* Actual tool callback */
+static char *my_tool_callback(const char *action, char *value,
+                               int *should_respond) {
+   *should_respond = 1;
+   /* Your tool logic here */
+   return strdup("Tool result");
+}
+```
+
+#### Step 3: Register Both Tools
+
+```c
+/* Metadata for the instruction loader */
+static const tool_metadata_t load_metadata = {
+   .name = "my_tool_load_instructions",
+   .device_string = "my tool instructions",
+   .description = "Load guidelines before using my_tool. Call this FIRST.",
+   .params = load_params,     /* modules param (STRING type) */
+   .param_count = 1,
+   .device_type = TOOL_DEVICE_TYPE_GETTER,
+   .capabilities = TOOL_CAP_FILESYSTEM,
+   .is_getter = true,
+   .callback = load_instructions_callback,
+   /* ... */
+};
+
+/* Metadata for the actual tool */
+static const tool_metadata_t tool_metadata = {
+   .name = "my_tool",
+   .description = "Do the thing. Always call my_tool_load_instructions first.",
+   /* ... */
+   .callback = my_tool_callback,
+};
+
+int my_tool_register(void) {
+   int rc = tool_registry_register(&load_metadata);
+   if (rc != 0) return rc;
+   return tool_registry_register(&tool_metadata);
+}
+```
+
+#### Step 4: CMake + tools_init.c
+
+Same as any other tool — add option, conditional source, include, and registration call.
+
+### Key Design Details
+
+- **Modules param is a comma-separated STRING**, not an array (avoids adding array type to the registry)
+- **`_core.md` is always loaded** when present — the LLM doesn't need to request it
+- **Instructions are plain markdown on disk** — edit and test without recompiling
+- **Path traversal is sanitized** — module names with `/`, `\`, or `..` are rejected
+- **Buffer is dynamically allocated** and capped at `INSTRUCTION_LOADER_MAX_SIZE` (128 KB)
+
+### Reference
+
+See `docs/TWO_STEP_TOOL_PATTERN.md` for the full design rationale, assessment matrix for when to use this pattern, and a complete end-to-end example flow.

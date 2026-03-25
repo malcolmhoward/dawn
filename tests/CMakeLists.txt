@@ -245,12 +245,22 @@ add_executable(test_wake_word
 target_link_libraries(test_wake_word
                       dawn_common)
 
+# Test: Instruction Loader
+# Tests file loading, path traversal sanitization, module concatenation, edge cases
+add_executable(test_instruction_loader
+               test_instruction_loader.c
+               ${SRC_ROOT}/src/tools/instruction_loader.c)
+
+target_link_libraries(test_instruction_loader
+                      dawn_common)
+
 # =============================================================================
 # Aggregate "tests" target
 # =============================================================================
 # This creates a target that builds all tests when you run "make tests"
 add_custom_target(tests
-                  DEPENDS test_wake_word
+                  DEPENDS test_instruction_loader
+                          test_wake_word
                           test_sse_parser
                           test_sentence_buffer
                           test_streaming

@@ -1091,9 +1091,9 @@ char *memoryCallback(const char *actionName, char *value, int *should_respond) {
 
       int rc = memory_db_entity_merge(user_id, src_entity.id, tgt_entity.id);
       if (rc == MEMORY_DB_SUCCESS) {
-         char *result = malloc(512);
+         char *result = malloc(768);
          if (result)
-            snprintf(result, 512,
+            snprintf(result, 768,
                      "Merged '%s' into '%s'. The '%s' entity has been deleted; "
                      "all its relations and contacts were transferred to '%s'. "
                      "Use '%s' for future queries.",
