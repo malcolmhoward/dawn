@@ -249,12 +249,10 @@ static void test_path_traversal(void) {
    char *output = NULL;
 
    /* Tool name with path traversal */
-   ASSERT(instruction_loader_load("../etc", "passwd", &output) != 0,
-          "tool_name with ../ rejected");
+   ASSERT(instruction_loader_load("../etc", "passwd", &output) != 0, "tool_name with ../ rejected");
    ASSERT(output == NULL, "no output on traversal attempt (tool)");
 
-   ASSERT(instruction_loader_load("foo/bar", "baz", &output) != 0,
-          "tool_name with / rejected");
+   ASSERT(instruction_loader_load("foo/bar", "baz", &output) != 0, "tool_name with / rejected");
 
    /* Module name with path traversal */
    int rc = instruction_loader_load(CWD_TOOL_NAME, "../../etc/passwd", &output);
@@ -265,8 +263,7 @@ static void test_path_traversal(void) {
       output = NULL;
    } else {
       /* If _core.md loaded, rc is 0. If not (no _core), could be error. Either is safe. */
-      ASSERT(output == NULL || strstr(output, "root:") == NULL,
-             "path traversal in module blocked");
+      ASSERT(output == NULL || strstr(output, "root:") == NULL, "path traversal in module blocked");
       free(output);
       output = NULL;
    }

@@ -14,6 +14,7 @@
    let visualizerCollapsed = false;
    let pendingIdleState = false; // Server sent "idle" but audio still playing
    let pendingThumbnailsForSave = []; // Thumbnails to attach when saving user message
+   let pendingVisualsForSave = []; // <dawn-visual> content to attach to next assistant message
 
    // Opus codec state
    let opusWorker = null;
@@ -72,9 +73,11 @@
                      console.error('Failed to parse LLM state update:', e);
                   }
                } else if (msg.payload.role === 'tool') {
-                  // Tool execution debug messages - display only, don't save to history
-                  // This prevents polluting history with internal tool call formatting
+                  // Tool debug messages - display only, don't save to history
                   DawnTranscript.addEntry(msg.payload.role, msg.payload.text);
+               } else if (msg.payload.role === 'visual') {
+                  // Visual tool results - stash for streaming finalize
+                  pendingVisualsForSave.push(msg.payload.text);
                } else {
                   // For user messages with pending images, format with thumbnail markers
                   // This ensures images display immediately AND are saved to history
@@ -85,6 +88,15 @@
                         pendingThumbnailsForSave
                      );
                      pendingThumbnailsForSave = []; // Clear after use
+                  }
+
+                  // Append pending visuals to assistant messages for history persistence
+                  // On replay, extractVisuals() in addNormalEntry strips and re-renders them
+                  // Append pending visuals to non-streamed assistant messages
+                  // (Streamed messages are handled in streaming.js finalize)
+                  if (msg.payload.role === 'assistant' && pendingVisualsForSave.length > 0) {
+                     displayContent += '\n' + pendingVisualsForSave.join('\n');
+                     pendingVisualsForSave = [];
                   }
 
                   DawnTranscript.addEntry(msg.payload.role, displayContent);
@@ -1489,6 +1501,11 @@
       DawnStreaming.setCallbacks({
          onStateChange: updateState,
          onSaveMessage: DawnHistory.saveMessage,
+         getPendingVisuals: function () {
+            var visuals = pendingVisualsForSave.slice();
+            pendingVisualsForSave = [];
+            return visuals;
+         },
       });
 
       const audioResult = await DawnAudioCapture.init();
@@ -1579,6 +1596,11 @@
 
       // Initialize vision module (paste, camera, image processing)
       DawnVision.init();
+
+      // Initialize visual renderer (inline SVG/HTML diagrams)
+      if (typeof DawnVisualRender !== 'undefined') {
+         DawnVisualRender.init();
+      }
 
       // Initialize document upload module (chip UI, upload)
       if (typeof DawnDocuments !== 'undefined') {

@@ -1,0 +1,17 @@
+/*
+ * DAWN WebUI - Visual Render Component
+ * Styles for inline SVG/HTML visuals rendered via the render_visual tool
+ */
+
+/* Container for a rendered visual */
+.dawn-visual-container {
+   margin: 0.75rem 0;
+   border: 1px solid var(--border-color);
+   border-radius: var(--border-radius);
+   overflow: hidden;
+   background: var(--bg-primary);
+}
+
+.dawn-visual-container iframe {
+   display: block;
+}

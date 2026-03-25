@@ -407,6 +407,14 @@
          displayText = parsed.text;
       }
 
+      // Extract <dawn-visual> blocks before markdown/sanitize (DOMPurify strips custom tags)
+      let visualBlocks = [];
+      if (typeof DawnVisualRender !== 'undefined') {
+         const extracted = DawnVisualRender.extractVisuals(displayText);
+         displayText = extracted.cleanText;
+         visualBlocks = extracted.visuals;
+      }
+
       // Create and append entry FIRST (before loading images) for immediate visibility
       const entry = document.createElement('div');
       entry.className = `transcript-entry ${role}`;
@@ -422,9 +430,14 @@
       // Store raw text and add copy buttons
       const textEl = entry.querySelector('.text');
       if (textEl) {
-         textEl.setAttribute('data-raw-text', displayText);
+         textEl.setAttribute('data-raw-text', docData.cleanText);
          DawnFormat.addCopyButtons(textEl);
          DawnFormat.addMessageCopyButton(textEl);
+
+         // Render extracted visual blocks as sandboxed iframes
+         if (visualBlocks.length > 0 && typeof DawnVisualRender !== 'undefined') {
+            DawnVisualRender.renderVisuals(textEl, visualBlocks);
+         }
       }
 
       // Render document chips if any documents were attached
@@ -532,6 +545,14 @@
          displayText = parsed.text;
       }
 
+      // Extract <dawn-visual> blocks before markdown/sanitize
+      let visualBlocks = [];
+      if (typeof DawnVisualRender !== 'undefined') {
+         const extracted = DawnVisualRender.extractVisuals(displayText);
+         displayText = extracted.cleanText;
+         visualBlocks = extracted.visuals;
+      }
+
       // Create the entry
       const entry = document.createElement('div');
       entry.className = `transcript-entry ${role}`;
@@ -543,9 +564,14 @@
       // Store raw text and add copy buttons
       const textEl = entry.querySelector('.text');
       if (textEl) {
-         textEl.setAttribute('data-raw-text', displayText);
+         textEl.setAttribute('data-raw-text', docData.cleanText);
          DawnFormat.addCopyButtons(textEl);
          DawnFormat.addMessageCopyButton(textEl);
+
+         // Render extracted visual blocks as sandboxed iframes
+         if (visualBlocks.length > 0 && typeof DawnVisualRender !== 'undefined') {
+            DawnVisualRender.renderVisuals(textEl, visualBlocks);
+         }
       }
 
       // Render document chips if any documents were attached
@@ -647,6 +673,14 @@
                return;
             }
          }
+      }
+
+      // Visual tool results: stash for attachment to the next assistant message.
+      // The actual rendering happens in addNormalEntry via extractVisuals() when
+      // the assistant response arrives with the visual content appended.
+      // (Stashing is handled in dawn.js handleTextMessage via pendingVisualsForSave)
+      if (role === 'visual') {
+         return;
       }
 
       // Route tool role messages to debug entries (server sends role:"tool" for tool results)

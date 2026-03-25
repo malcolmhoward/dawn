@@ -226,6 +226,26 @@
          DawnState.streamingState.entryElement.classList.remove('streaming');
       }
 
+      // Render pending visuals inline in the streamed assistant entry
+      if (
+         typeof DawnVisualRender !== 'undefined' &&
+         callbacks.getPendingVisuals &&
+         DawnState.streamingState.textElement
+      ) {
+         var pendingVisuals = callbacks.getPendingVisuals();
+         if (pendingVisuals && pendingVisuals.length > 0) {
+            var allVisuals = pendingVisuals.join('\n');
+            var extracted = DawnVisualRender.extractVisuals(allVisuals);
+            if (extracted.visuals.length > 0) {
+               DawnVisualRender.renderVisuals(
+                  DawnState.streamingState.textElement,
+                  extracted.visuals
+               );
+               DawnElements.transcript.scrollTop = DawnElements.transcript.scrollHeight;
+            }
+         }
+      }
+
       // Save the complete assistant message to conversation history
       if (DawnState.streamingState.content && callbacks.onSaveMessage) {
          let contentToSave = DawnState.streamingState.content;
@@ -250,6 +270,15 @@
             contentToSave =
                `<dawn:reasoning tokens="${DawnState.streamingState.reasoningTokens}"/>\n` +
                contentToSave;
+         }
+
+         // Append pending visual content for history persistence
+         // (visual tool results are stashed in dawn.js pendingVisualsForSave)
+         if (typeof DawnVisualRender !== 'undefined' && callbacks.getPendingVisuals) {
+            var visuals = callbacks.getPendingVisuals();
+            if (visuals && visuals.length > 0) {
+               contentToSave += '\n' + visuals.join('\n');
+            }
          }
 
          callbacks.onSaveMessage('assistant', contentToSave);
@@ -277,6 +306,7 @@
    function setCallbacks(cbs) {
       if (cbs.onStateChange) callbacks.onStateChange = cbs.onStateChange;
       if (cbs.onSaveMessage) callbacks.onSaveMessage = cbs.onSaveMessage;
+      if (cbs.getPendingVisuals) callbacks.getPendingVisuals = cbs.getPendingVisuals;
    }
 
    // =============================================================================

@@ -4192,11 +4192,19 @@ static void webui_tool_execution_callback(void *session_ptr,
    /* Tool execution completed - remove from active list */
    session_remove_active_tool(session, display_name);
 
+   /* If the tool result contains a <dawn-visual> tag, send the full result
+    * as a visible transcript entry (not debug-only). The WebUI visual renderer
+    * extracts and renders the tag as a sandboxed iframe. The result may exceed
+    * the debug_msg buffer size (8KB), so we send the raw result directly. */
+   if (success && result && strstr(result, "<dawn-visual") != NULL) {
+      webui_send_transcript(session, "visual", result);
+   }
+
    /* Format as debug entry for transcript - use "tool" role (not "assistant")
     * to avoid confusion with actual LLM responses and ensure proper JS routing */
    char debug_msg[LLM_TOOLS_RESULT_LEN + 256];
    snprintf(debug_msg, sizeof(debug_msg), "[Tool Call: %s(%s) -> %s%s]", tool_name,
-            tool_args ? tool_args : "", success ? "" : "FAILED: ", result);
+            tool_args ? tool_args : "", success ? "" : "FAILED: ", result ? result : "(null)");
    webui_send_transcript(session, "tool", debug_msg);
 
    /* Send updated state (may still have other active tools) */

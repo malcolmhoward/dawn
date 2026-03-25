@@ -95,6 +95,10 @@
 #include "tools/email_tool.h"
 #endif
 
+#ifdef DAWN_ENABLE_RENDER_VISUAL_TOOL
+#include "tools/render_visual_tool.h"
+#endif
+
 #include "tools/plan_executor.h"
 
 /* ========== Registration ========== */
@@ -252,6 +256,12 @@ int tools_register_all(void) {
 #ifdef DAWN_ENABLE_EMAIL_TOOL
    if (email_tool_register() != 0) {
       LOG_WARNING("Failed to register email tool");
+   }
+#endif
+
+#ifdef DAWN_ENABLE_RENDER_VISUAL_TOOL
+   if (render_visual_tool_register() != 0) {
+      LOG_WARNING("Failed to register render_visual tool");
    }
 #endif
 

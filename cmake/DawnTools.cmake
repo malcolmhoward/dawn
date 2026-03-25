@@ -38,6 +38,7 @@ option(DAWN_ENABLE_TTS_TOOL "Enable text-to-speech command tool" ON)
 option(DAWN_ENABLE_DOCUMENT_SEARCH_TOOL "Enable RAG document search tool" ON)
 option(DAWN_ENABLE_CALENDAR_TOOL "Enable CalDAV calendar integration" ON)
 option(DAWN_ENABLE_EMAIL_TOOL "Enable IMAP/SMTP email integration" ON)
+option(DAWN_ENABLE_RENDER_VISUAL_TOOL "Enable visual rendering tool (SVG/HTML diagrams)" ON)
 
 # =============================================================================
 # Mutual Exclusion: Home Assistant and SmartThings
@@ -286,6 +287,15 @@ endif()
 # Shared OAuth WebUI (needed by calendar or email for Google OAuth)
 if(DAWN_ENABLE_CALENDAR_TOOL OR DAWN_ENABLE_EMAIL_TOOL)
     list(APPEND TOOL_SOURCES src/webui/webui_oauth.c)
+endif()
+
+# Render Visual Tool (SVG/HTML diagrams via two-step instruction loader)
+if(DAWN_ENABLE_RENDER_VISUAL_TOOL)
+    add_definitions(-DDAWN_ENABLE_RENDER_VISUAL_TOOL)
+    list(APPEND TOOL_SOURCES src/tools/render_visual_tool.c)
+    message(STATUS "DAWN: Render Visual tool ENABLED")
+else()
+    message(STATUS "DAWN: Render Visual tool DISABLED")
 endif()
 
 # =============================================================================

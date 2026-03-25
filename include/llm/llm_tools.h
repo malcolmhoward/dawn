@@ -70,7 +70,11 @@ typedef enum {
 #define LLM_TOOLS_NAME_LEN 64
 #define LLM_TOOLS_DESC_LEN 512
 #define LLM_TOOLS_ID_LEN 64
-#define LLM_TOOLS_ARGS_LEN 4096
+/* 16 KB — large enough for SVG/HTML code in render_visual tool arguments.
+ * If tools need even larger arguments in the future, consider switching
+ * tool_call_t.arguments from a fixed array to a heap-allocated char*
+ * with dynamic sizing from the parsed JSON. */
+#define LLM_TOOLS_ARGS_LEN 16384
 #define LLM_TOOLS_RESULT_LEN 8192
 
 /* =============================================================================
