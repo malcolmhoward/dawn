@@ -160,7 +160,8 @@
          ''
       );
 
-      // Apply markdown formatting
+      // Apply markdown formatting (visuals are siblings of .text, not children,
+      // so innerHTML overwrite does not affect them)
       DawnState.streamingState.textElement.innerHTML = DawnFormat.markdown(cleanText);
    }
 
@@ -212,6 +213,7 @@
          DawnState.streamingState.textElement.innerHTML = DawnFormat.markdown(
             DawnState.streamingState.content
          );
+
          // Add copy buttons to code blocks and message copy button
          DawnFormat.addCopyButtons(DawnState.streamingState.textElement);
          DawnState.streamingState.textElement.setAttribute(
@@ -226,29 +228,23 @@
          DawnState.streamingState.entryElement.classList.remove('streaming');
       }
 
-      // Render pending visuals inline in the streamed assistant entry
-      if (
-         typeof DawnVisualRender !== 'undefined' &&
-         callbacks.getPendingVisuals &&
-         DawnState.streamingState.textElement
-      ) {
-         var pendingVisuals = callbacks.getPendingVisuals();
-         if (pendingVisuals && pendingVisuals.length > 0) {
-            var allVisuals = pendingVisuals.join('\n');
-            var extracted = DawnVisualRender.extractVisuals(allVisuals);
-            if (extracted.visuals.length > 0) {
-               DawnVisualRender.renderVisuals(
-                  DawnState.streamingState.textElement,
-                  extracted.visuals
-               );
-               DawnElements.transcript.scrollTop = DawnElements.transcript.scrollHeight;
-            }
+      /* Drain pending visuals and interleave with text content for history save.
+       * Order: pre-visual text + visual tags + post-visual text.
+       * This ensures replay renders visuals inline, not at the end. */
+      var visualContent = '';
+      if (callbacks.getPendingVisuals) {
+         var visuals = callbacks.getPendingVisuals();
+         if (visuals && visuals.length > 0) {
+            visualContent = '\n' + visuals.join('\n') + '\n';
          }
       }
 
-      // Save the complete assistant message to conversation history
-      if (DawnState.streamingState.content && callbacks.onSaveMessage) {
-         let contentToSave = DawnState.streamingState.content;
+      var fullContent =
+         (DawnState.streamingState.preVisualContent || '') +
+         visualContent +
+         DawnState.streamingState.content;
+      if (fullContent && callbacks.onSaveMessage) {
+         let contentToSave = fullContent;
 
          // Include thinking content if present (from finalized thinking block)
          if (
@@ -293,6 +289,7 @@
       DawnState.streamingState.entryElement = null;
       DawnState.streamingState.textElement = null;
       DawnState.streamingState.content = '';
+      DawnState.streamingState.preVisualContent = '';
       DawnState.streamingState.pendingRender = false;
       DawnState.streamingState.reasoningTokens = 0;
    }

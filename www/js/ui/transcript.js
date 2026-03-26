@@ -409,36 +409,59 @@
 
       // Extract <dawn-visual> blocks before markdown/sanitize (DOMPurify strips custom tags)
       let visualBlocks = [];
+      let preVisualText = displayText;
+      let postVisualText = '';
       if (typeof DawnVisualRender !== 'undefined') {
          const extracted = DawnVisualRender.extractVisuals(displayText);
-         displayText = extracted.cleanText;
          visualBlocks = extracted.visuals;
+         if (visualBlocks.length > 0) {
+            // Split text around the visual tag for inline positioning
+            const tagMatch = displayText.match(
+               /<dawn-visual\s+title="[^"]*"\s+type="(?:svg|html)">[\s\S]*?<\/dawn-visual>/
+            );
+            if (tagMatch) {
+               const idx = displayText.indexOf(tagMatch[0]);
+               preVisualText = displayText.substring(0, idx).trim();
+               postVisualText = displayText.substring(idx + tagMatch[0].length).trim();
+            } else {
+               preVisualText = extracted.cleanText;
+            }
+         } else {
+            preVisualText = extracted.cleanText;
+         }
       }
 
-      // Create and append entry FIRST (before loading images) for immediate visibility
+      // Create and append entry
       const entry = document.createElement('div');
       entry.className = `transcript-entry ${role}`;
       entry.innerHTML = `
       <div class="role">${DawnFormat.escapeHtml(role)}</div>
-      <div class="text">${DawnFormat.markdown(displayText)}</div>
+      <div class="text">${DawnFormat.markdown(preVisualText)}</div>
     `;
       transcript.appendChild(entry);
+
+      // Render visual blocks inline, then add post-visual text below
+      if (visualBlocks.length > 0 && typeof DawnVisualRender !== 'undefined') {
+         DawnVisualRender.renderVisuals(entry, visualBlocks);
+         if (postVisualText) {
+            const postTextEl = document.createElement('div');
+            postTextEl.className = 'text';
+            postTextEl.innerHTML = DawnFormat.markdown(postVisualText);
+            entry.appendChild(postTextEl);
+         }
+      }
 
       // Scroll immediately after adding entry
       transcript.scrollTop = transcript.scrollHeight;
 
-      // Store raw text and add copy buttons
-      const textEl = entry.querySelector('.text');
-      if (textEl) {
-         textEl.setAttribute('data-raw-text', docData.cleanText);
+      // Store raw text and add copy buttons on all .text elements
+      entry.querySelectorAll('.text').forEach(function (textEl) {
+         if (!textEl.getAttribute('data-raw-text')) {
+            textEl.setAttribute('data-raw-text', docData.cleanText);
+         }
          DawnFormat.addCopyButtons(textEl);
          DawnFormat.addMessageCopyButton(textEl);
-
-         // Render extracted visual blocks as sandboxed iframes
-         if (visualBlocks.length > 0 && typeof DawnVisualRender !== 'undefined') {
-            DawnVisualRender.renderVisuals(textEl, visualBlocks);
-         }
-      }
+      });
 
       // Render document chips if any documents were attached
       if (docData.documents.length > 0 && textEl) {
@@ -547,10 +570,25 @@
 
       // Extract <dawn-visual> blocks before markdown/sanitize
       let visualBlocks = [];
+      let preVisualText = displayText;
+      let postVisualText = '';
       if (typeof DawnVisualRender !== 'undefined') {
          const extracted = DawnVisualRender.extractVisuals(displayText);
-         displayText = extracted.cleanText;
          visualBlocks = extracted.visuals;
+         if (visualBlocks.length > 0) {
+            const tagMatch = displayText.match(
+               /<dawn-visual\s+title="[^"]*"\s+type="(?:svg|html)">[\s\S]*?<\/dawn-visual>/
+            );
+            if (tagMatch) {
+               const idx = displayText.indexOf(tagMatch[0]);
+               preVisualText = displayText.substring(0, idx).trim();
+               postVisualText = displayText.substring(idx + tagMatch[0].length).trim();
+            } else {
+               preVisualText = extracted.cleanText;
+            }
+         } else {
+            preVisualText = extracted.cleanText;
+         }
       }
 
       // Create the entry
@@ -558,21 +596,28 @@
       entry.className = `transcript-entry ${role}`;
       entry.innerHTML = `
       <div class="role">${DawnFormat.escapeHtml(role)}</div>
-      <div class="text">${DawnFormat.markdown(displayText)}</div>
+      <div class="text">${DawnFormat.markdown(preVisualText)}</div>
     `;
 
-      // Store raw text and add copy buttons
-      const textEl = entry.querySelector('.text');
-      if (textEl) {
-         textEl.setAttribute('data-raw-text', docData.cleanText);
-         DawnFormat.addCopyButtons(textEl);
-         DawnFormat.addMessageCopyButton(textEl);
-
-         // Render extracted visual blocks as sandboxed iframes
-         if (visualBlocks.length > 0 && typeof DawnVisualRender !== 'undefined') {
-            DawnVisualRender.renderVisuals(textEl, visualBlocks);
+      // Render visual blocks inline, then add post-visual text below
+      if (visualBlocks.length > 0 && typeof DawnVisualRender !== 'undefined') {
+         DawnVisualRender.renderVisuals(entry, visualBlocks);
+         if (postVisualText) {
+            const postTextEl = document.createElement('div');
+            postTextEl.className = 'text';
+            postTextEl.innerHTML = DawnFormat.markdown(postVisualText);
+            entry.appendChild(postTextEl);
          }
       }
+
+      // Store raw text and add copy buttons on all .text elements
+      entry.querySelectorAll('.text').forEach(function (textEl) {
+         if (!textEl.getAttribute('data-raw-text')) {
+            textEl.setAttribute('data-raw-text', docData.cleanText);
+         }
+         DawnFormat.addCopyButtons(textEl);
+         DawnFormat.addMessageCopyButton(textEl);
+      });
 
       // Render document chips if any documents were attached
       if (docData.documents.length > 0 && textEl) {

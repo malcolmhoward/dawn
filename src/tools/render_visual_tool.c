@@ -111,33 +111,75 @@ static char *render_visual_callback(const char *action, char *value, int *should
       return strdup("Error: 'type' must be 'svg' or 'html'.");
    }
 
-   /* Sanitize title — strip characters that would break the tag attribute
-    * or the JS regex that parses it (quotes, angle brackets) */
+   /* Sanitize title — strip characters that would break the tag attribute,
+    * the JS regex that parses it, or filesystem paths for downloads */
    char safe_title[256];
    size_t si = 0;
    for (size_t i = 0; title[i] != '\0' && si < sizeof(safe_title) - 1; i++) {
       char c = title[i];
-      if (c != '"' && c != '<' && c != '>' && c != '&') {
+      if (c != '"' && c != '<' && c != '>' && c != '&' && c != '/' && c != '\\') {
          safe_title[si++] = c;
       }
    }
    safe_title[si] = '\0';
 
-   /* Build the <dawn-visual> tag for WebUI rendering.
-    * Format: <dawn-visual title="..." type="svg|html">...code...</dawn-visual>
-    * The code is embedded verbatim — the WebUI handles sandboxing. */
+   /* Escape any </dawn-visual in the code to prevent tag breakout.
+    * A closing tag in the code would prematurely end the wrapper,
+    * allowing unsanitized content to appear in the transcript. */
+   const char *poison = "</dawn-visual";
    size_t code_len = strlen(code);
+   char *safe_code = NULL;
+   if (strstr(code, poison) != NULL) {
+      /* Replace </dawn-visual with <\/dawn-visual (HTML-safe escape) */
+      size_t poison_len = strlen(poison);
+      /* Count occurrences to size the buffer */
+      size_t count = 0;
+      const char *p = code;
+      while ((p = strstr(p, poison)) != NULL) {
+         count++;
+         p += poison_len;
+      }
+      /* Each replacement adds 1 byte (the backslash) */
+      safe_code = (char *)malloc(code_len + count + 1);
+      if (safe_code) {
+         size_t out = 0;
+         p = code;
+         const char *prev = code;
+         while ((p = strstr(prev, poison)) != NULL) {
+            size_t chunk = (size_t)(p - prev);
+            memcpy(safe_code + out, prev, chunk);
+            out += chunk;
+            safe_code[out++] = '<';
+            safe_code[out++] = '\\';
+            /* Copy rest of poison tag (skip the '<') */
+            memcpy(safe_code + out, poison + 1, poison_len - 1);
+            out += poison_len - 1;
+            prev = p + poison_len;
+         }
+         /* Copy remainder */
+         size_t tail = code_len - (size_t)(prev - code);
+         memcpy(safe_code + out, prev, tail);
+         out += tail;
+         safe_code[out] = '\0';
+         code = safe_code;
+         code_len = out;
+      }
+   }
+
+   /* Build the <dawn-visual> tag for WebUI rendering. */
    size_t type_len = strlen(type);
    size_t buf_size = code_len + si + type_len + 128;
 
    char *result = (char *)malloc(buf_size);
    if (!result) {
+      free(safe_code);
       json_object_put(json);
       return strdup("Error: memory allocation failed.");
    }
 
    snprintf(result, buf_size, "<dawn-visual title=\"%s\" type=\"%s\">\n%s\n</dawn-visual>",
             safe_title, type, code);
+   free(safe_code);
 
    json_object_put(json);
 

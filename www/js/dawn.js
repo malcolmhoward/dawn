@@ -76,7 +76,46 @@
                   // Tool debug messages - display only, don't save to history
                   DawnTranscript.addEntry(msg.payload.role, msg.payload.text);
                } else if (msg.payload.role === 'visual') {
-                  // Visual tool results - stash for streaming finalize
+                  // Split the streaming entry: finalize pre-visual text, render
+                  // the visual, then create a new .text div for post-visual text.
+                  // This gives: text → diagram → more text within one entry.
+                  if (typeof DawnVisualRender !== 'undefined') {
+                     var extracted = DawnVisualRender.extractVisuals(msg.payload.text);
+                     if (extracted.visuals.length > 0) {
+                        var sEntry = DawnState.streamingState.entryElement;
+                        if (sEntry) {
+                           // Finalize the current .text with markdown
+                           if (
+                              DawnState.streamingState.textElement &&
+                              DawnState.streamingState.content
+                           ) {
+                              DawnState.streamingState.textElement.innerHTML = DawnFormat.markdown(
+                                 DawnState.streamingState.content
+                              );
+                           }
+
+                           // Append visual frames
+                           extracted.visuals.forEach(function (v) {
+                              var frame = DawnVisualRender.createFrame(v.title, v.type, v.code);
+                              sEntry.appendChild(frame);
+                           });
+
+                           // Create a new .text div for post-visual streaming
+                           var newTextEl = document.createElement('div');
+                           newTextEl.className = 'text';
+                           sEntry.appendChild(newTextEl);
+
+                           // Save pre-visual content, redirect streaming to new div
+                           DawnState.streamingState.preVisualContent =
+                              (DawnState.streamingState.preVisualContent || '') +
+                              DawnState.streamingState.content;
+                           DawnState.streamingState.content = '';
+                           DawnState.streamingState.textElement = newTextEl;
+                        }
+                        DawnElements.transcript.scrollTop = DawnElements.transcript.scrollHeight;
+                     }
+                  }
+                  // Stash for history persistence (appended to next assistant save)
                   pendingVisualsForSave.push(msg.payload.text);
                } else {
                   // For user messages with pending images, format with thumbnail markers

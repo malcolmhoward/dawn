@@ -155,9 +155,13 @@ int instruction_loader_load(const char *tool_name, const char *modules, char **o
             size_t mlen = strlen(m);
             while (mlen > 0 && m[mlen - 1] == ' ')
                mlen--;
-            if (mlen > 0 && is_safe_module_name(m)) {
-               char mpath[1024];
+            if (mlen > 0) {
                m[mlen] = '\0';
+               if (!is_safe_module_name(m)) {
+                  m = strtok_r(NULL, ",", &sp);
+                  continue;
+               }
+               char mpath[1024];
                snprintf(mpath, sizeof(mpath), "%s/%s/%s.md", base_dir, tool_name, m);
                if (stat(mpath, &st) == 0) {
                   total_size += (size_t)st.st_size + SEPARATOR_LEN;

@@ -35,7 +35,7 @@ Chart.defaults.borderColor = gridColor;
 Use color ramp 600 stops for dataset colors:
 - Dataset 1: #534AB7 (purple-600)
 - Dataset 2: #0F6E56 (teal-600)
-- Dataset 3: #D85A30 (coral-600)
+- Dataset 3: #993C1D (coral-600)
 - Dataset 4: #185FA5 (blue-600)
 
 ## Chart Type Selection

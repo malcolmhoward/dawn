@@ -249,8 +249,9 @@
    margin-right: 2rem;
 }
 
-/* Streaming cursor - appears inline at end of text */
-.transcript-entry.assistant.streaming .text::after {
+/* Streaming cursor - appears inline at end of the last .text only
+ * (visual splits create multiple .text divs in one entry) */
+.transcript-entry.assistant.streaming .text:last-of-type::after {
    content: '▋';
    animation: blink 1s step-end infinite;
    color: var(--accent);

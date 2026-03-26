@@ -5451,6 +5451,14 @@ static void *text_worker_thread(void *arg) {
       LOG_INFO("WebUI: Processing text input for session %u: %s", session->session_id, text);
    }
 
+   /* Clear stale pending_visual from a previous turn that may not have
+    * been consumed (e.g., LLM response interrupted or error). Prevents
+    * visuals from attaching to the wrong assistant message. */
+   pthread_mutex_lock(&session->tools_mutex);
+   free(session->pending_visual);
+   session->pending_visual = NULL;
+   pthread_mutex_unlock(&session->tools_mutex);
+
    /* Send "thinking" state */
    if (work->vision_image_count > 0) {
       if (work->vision_image_count == 1) {

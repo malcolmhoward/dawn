@@ -244,13 +244,19 @@
       var themeCSS = buildThemeCSS();
       var visualClasses = buildVisualClasses();
 
-      /* Build the bridge script: sendPrompt + ResizeObserver height reporting */
+      /* Build the bridge script: sendPrompt + debounced ResizeObserver */
       var bridgeScript =
          '<script>\n' +
          'function sendPrompt(t){parent.postMessage({type:"dawn_prompt",text:t},"*")}\n' +
-         'new ResizeObserver(function(){parent.postMessage(' +
-         '{type:"dawn_visual_resize",height:document.body.scrollHeight},"*")})' +
-         '.observe(document.body);\n' +
+         'var _lastH=0,_tid=0;\n' +
+         'new ResizeObserver(function(){\n' +
+         '  clearTimeout(_tid);\n' +
+         '  _tid=setTimeout(function(){\n' +
+         '    var h=document.body.scrollHeight;\n' +
+         '    if(h!==_lastH){_lastH=h;\n' +
+         '      parent.postMessage({type:"dawn_visual_resize",height:h},"*")}\n' +
+         '  },100)\n' +
+         '}).observe(document.body);\n' +
          '</' +
          'script>\n';
 
@@ -290,7 +296,8 @@
 
       /* Resolve vendor script tags: replace <script src="/js/vendor/X"> with
        * inline <script>...code...</script>. srcdoc iframes can't load external
-       * scripts (no base URL), so we fetch once, cache, and inline. */
+       * scripts (no base URL), so we fetch once, cache, and inline.
+       * Escape </script in vendor content to prevent premature tag close. */
       var vendorMatch = content.match(/<script src="(\/js\/vendor\/[^"]+)"><\/script>/g);
       if (vendorMatch && vendorMatch.length > 0) {
          var pendingFetches = [];
@@ -310,8 +317,10 @@
                         return r.text();
                      })
                      .then(function (text) {
-                        vendorScriptCache[src] = text;
-                        content = content.replace(tag, '<script>' + text + '</' + 'script>');
+                        /* Escape </script in vendor code to prevent premature tag close */
+                        var safe = text.replace(/<\/script/gi, '<\\/script');
+                        vendorScriptCache[src] = safe;
+                        content = content.replace(tag, '<script>' + safe + '</' + 'script>');
                      })
                );
             }
@@ -342,11 +351,16 @@
       });
 
       /* Listen for height updates from ResizeObserver inside the iframe */
+      var lastKnownHeight = 0;
       function handleMessage(event) {
          if (!frameRef.contentWindow || event.source !== frameRef.contentWindow) return;
          if (event.data && event.data.type === 'dawn_visual_resize') {
-            frameRef.style.height = event.data.height + 'px';
-            frameRef.style.maxHeight = ''; /* Clear aspect-ratio cap */
+            var h = event.data.height;
+            if (h !== lastKnownHeight && h > 0) {
+               lastKnownHeight = h;
+               frameRef.style.height = h + 'px';
+               frameRef.style.maxHeight = '';
+            }
          }
       }
       window.addEventListener('message', handleMessage);
@@ -431,5 +445,6 @@
       init: init,
       extractVisuals: extractVisuals,
       renderVisuals: renderVisuals,
+      createFrame: createVisualFrame,
    };
 })(window);

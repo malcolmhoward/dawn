@@ -1152,31 +1152,17 @@ void handle_save_message(ws_connection_t *conn, struct json_object *payload) {
       return;
    }
 
-   /* For assistant messages, append any pending visual content from the
-    * render_visual tool so it persists in the conversation DB for replay.
-    * Protected by tools_mutex — written by webui_tool_execution_callback. */
-   char *save_content = NULL;
+   /* Clear pending_visual if present — the client-side streaming save
+    * already interleaves the visual content at the correct position
+    * (pre-visual text + <dawn-visual> tag + post-visual text). */
    if (strcmp(role, "assistant") == 0 && conn->session) {
       pthread_mutex_lock(&conn->session->tools_mutex);
-      if (conn->session->pending_visual) {
-         size_t content_len = strlen(content);
-         size_t visual_len = strlen(conn->session->pending_visual);
-         save_content = (char *)malloc(content_len + visual_len + 2);
-         if (save_content) {
-            memcpy(save_content, content, content_len);
-            save_content[content_len] = '\n';
-            memcpy(save_content + content_len + 1, conn->session->pending_visual, visual_len);
-            save_content[content_len + 1 + visual_len] = '\0';
-         }
-         free(conn->session->pending_visual);
-         conn->session->pending_visual = NULL;
-      }
+      free(conn->session->pending_visual);
+      conn->session->pending_visual = NULL;
       pthread_mutex_unlock(&conn->session->tools_mutex);
    }
 
-   int result = conv_db_add_message(conv_id, conn->auth_user_id, role,
-                                    save_content ? save_content : content);
-   free(save_content);
+   int result = conv_db_add_message(conv_id, conn->auth_user_id, role, content);
 
    if (result == AUTH_DB_SUCCESS) {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
