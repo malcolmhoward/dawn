@@ -66,8 +66,7 @@ a ring diagram:
 
 Next on the last stage wraps to the first — that IS the loop.
 
-## External Libraries (if CDN access is enabled)
-Load from cdnjs.cloudflare.com only:
-- Chart.js for data visualization
-- D3 for complex custom visualizations
-- Three.js for 3D (use sparingly, heavy)
+## External Libraries
+Load from DAWN's local server only (no CDN — offline-first):
+- Chart.js: `<script src="/js/vendor/chart.umd.js"></script>`
+- D3 and Three.js: not bundled yet — use SVG-only approaches instead

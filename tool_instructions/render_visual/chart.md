@@ -1,10 +1,10 @@
 # Chart guidelines
 
-Use Chart.js for data visualization. Load from CDN inside HTML type visuals.
+Use Chart.js for data visualization. Load from the local server inside HTML type visuals.
 
 ## Setup
 ```html
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script src="/js/vendor/chart.umd.js"></script>
 
 <canvas id="myChart" style="max-height:400px"></canvas>
 <script>

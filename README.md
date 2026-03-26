@@ -228,6 +228,7 @@ Contributions are welcome! DAWN is part of The OASIS Project and is licensed und
 - **[Silero VAD](https://github.com/snakers4/silero-vad)** (MIT License)
 - **[ONNX Runtime](https://github.com/microsoft/onnxruntime)** (MIT License)
 - **[espeak-ng](https://github.com/espeak-ng/espeak-ng)** (GPL v3+)
+- **[Chart.js](https://www.chartjs.org/)** (MIT License)
 
 ## License
 

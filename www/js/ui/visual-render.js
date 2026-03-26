@@ -12,6 +12,9 @@
    /* Track known visual iframe contentWindows for postMessage source validation */
    var knownVisualWindows = new WeakSet();
 
+   /* Cached vendor scripts for inlining into srcdoc iframes */
+   var vendorScriptCache = {};
+
    /* Regex to match <dawn-visual title="..." type="svg|html">...</dawn-visual> */
    var VISUAL_TAG_RE =
       /<dawn-visual\s+title="([^"]*)"\s+type="(svg|html)">([\s\S]*?)<\/dawn-visual>/g;
@@ -201,7 +204,10 @@
       container.setAttribute('data-visual-title', title);
 
       var iframe = document.createElement('iframe');
-      iframe.sandbox = 'allow-scripts'; /* Scripts allowed for interactivity */
+      /* allow-scripts: onclick handlers, sendPrompt bridge, ResizeObserver.
+       * No allow-same-origin — iframe cannot access parent DOM/cookies.
+       * Vendor scripts (Chart.js) are inlined into srcdoc, not loaded via src. */
+      iframe.sandbox = 'allow-scripts';
       iframe.title = 'Visual: ' + title;
       iframe.style.cssText = 'width:100%; border:none; overflow:hidden;';
 
@@ -252,8 +258,50 @@
          iframe.style.height = '400px';
       }
 
-      iframe.srcdoc = content;
-      container.appendChild(iframe);
+      /* Resolve vendor script tags: replace <script src="/js/vendor/X"> with
+       * inline <script>...code...</script>. srcdoc iframes can't load external
+       * scripts (no base URL), so we fetch once, cache, and inline. */
+      var vendorMatch = content.match(/<script src="(\/js\/vendor\/[^"]+)"><\/script>/g);
+      if (vendorMatch && vendorMatch.length > 0) {
+         var pendingFetches = [];
+         vendorMatch.forEach(function (tag) {
+            var srcMatch = tag.match(/src="([^"]+)"/);
+            if (!srcMatch) return;
+            var src = srcMatch[1];
+            if (vendorScriptCache[src]) {
+               content = content.replace(
+                  tag,
+                  '<script>' + vendorScriptCache[src] + '</' + 'script>'
+               );
+            } else {
+               pendingFetches.push(
+                  fetch(src)
+                     .then(function (r) {
+                        return r.text();
+                     })
+                     .then(function (text) {
+                        vendorScriptCache[src] = text;
+                        content = content.replace(tag, '<script>' + text + '</' + 'script>');
+                     })
+               );
+            }
+         });
+
+         if (pendingFetches.length > 0) {
+            /* Async path: wait for fetches, then set srcdoc */
+            Promise.all(pendingFetches).then(function () {
+               iframe.srcdoc = content;
+            });
+            container.appendChild(iframe);
+         } else {
+            /* Sync path: all scripts were cached */
+            iframe.srcdoc = content;
+            container.appendChild(iframe);
+         }
+      } else {
+         iframe.srcdoc = content;
+         container.appendChild(iframe);
+      }
 
       /* Register iframe's contentWindow for sendPrompt source validation */
       var frameRef = iframe;
