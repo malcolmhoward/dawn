@@ -1067,8 +1067,7 @@ char *llm_stream_get_response(llm_stream_context_t *ctx) {
        * output in reasoning_content. Don't apply fallback when tool calls are
        * present — an empty response with tool_use is normal (the LLM chose to
        * call tools instead of responding with text). */
-      if (ctx && ctx->accumulated_thinking && ctx->thinking_size > 0 &&
-          !ctx->has_tool_calls) {
+      if (ctx && ctx->accumulated_thinking && ctx->thinking_size > 0 && !ctx->has_tool_calls) {
          LOG_WARNING("LLM: Empty response but has thinking content (%zu bytes), using as response",
                      ctx->thinking_size);
          return strdup(ctx->accumulated_thinking);

@@ -74,10 +74,14 @@ typedef struct {
    size_t len;
 } content_type_entry_t;
 
-static const content_type_entry_t ALLOWED_CONTENT_TYPES[] = {
-   { "text/html", 9 },        { "text/plain", 10 }, { "application/xhtml+xml", 21 },
-   { "application/xml", 15 }, { "text/xml", 8 },    { NULL, 0 }
-};
+static const content_type_entry_t ALLOWED_CONTENT_TYPES[] = { { "text/html", 9 },
+                                                              { "text/plain", 10 },
+                                                              { "application/xhtml+xml", 21 },
+                                                              { "application/xml", 15 },
+                                                              { "text/xml", 8 },
+                                                              { "application/json", 16 },
+                                                              { "application/ld+json", 19 },
+                                                              { NULL, 0 } };
 
 // =============================================================================
 // Config Accessor Functions for FlareSolverr
@@ -1282,7 +1286,8 @@ int url_fetch_content_with_base(const char *url,
 
    // Build headers list once (reused across retries)
    struct curl_slist *headers = NULL;
-   headers = curl_slist_append(headers, "Accept: text/html,application/xhtml+xml,text/plain");
+   headers = curl_slist_append(
+       headers, "Accept: text/html,application/xhtml+xml,application/json,text/plain");
    headers = curl_slist_append(headers, "Accept-Language: en-US,en;q=0.9");
 
    // Retry loop for transient failures

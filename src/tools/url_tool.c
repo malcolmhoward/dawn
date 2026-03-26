@@ -75,7 +75,7 @@ static const tool_metadata_t url_metadata = {
    .param_count = 1,
 
    .device_type = TOOL_DEVICE_TYPE_GETTER,
-   .capabilities = TOOL_CAP_NETWORK,
+   .capabilities = TOOL_CAP_NETWORK | TOOL_CAP_SCHEDULABLE,
    .is_getter = true,
    .skip_followup = false,
    .default_remote = true,
@@ -132,18 +132,26 @@ static char *url_tool_callback(const char *action, char *value, int *should_resp
 
    LOG_INFO("url_tool: Extracted %zu bytes of content", content_size);
 
-   /* Run through summarizer if enabled and over threshold */
-   char *summarized = NULL;
-   int sum_result = search_summarizer_process(content, value, &summarized);
-   if (sum_result == SUMMARIZER_SUCCESS && summarized) {
-      free(content);
-      content = summarized;
-   } else if (summarized) {
-      /* Summarizer returned something even on error (passthrough policy) */
-      free(content);
-      content = summarized;
+   /* Skip summarizer for JSON content — TF-IDF sentence splitting destroys
+    * JSON structure. The LLM can parse raw JSON directly. */
+   bool is_json = (content && content_size > 0 && (content[0] == '{' || content[0] == '['));
+
+   if (!is_json) {
+      /* Run through summarizer if enabled and over threshold */
+      char *summarized = NULL;
+      int sum_result = search_summarizer_process(content, value, &summarized);
+      if (sum_result == SUMMARIZER_SUCCESS && summarized) {
+         free(content);
+         content = summarized;
+      } else if (summarized) {
+         /* Summarizer returned something even on error (passthrough policy) */
+         free(content);
+         content = summarized;
+      }
+      /* If summarizer failed with no output, keep original content */
+   } else {
+      LOG_INFO("url_tool: JSON content detected, skipping summarizer");
    }
-   /* If summarizer failed with no output, keep original content */
 
    /* Hard limit on content size */
    if (content && strlen(content) > URL_CONTENT_MAX_CHARS) {
