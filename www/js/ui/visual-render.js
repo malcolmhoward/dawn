@@ -52,9 +52,14 @@
          '  --color-border: ' +
          get('--border-color') +
          ';\n' +
+         '  --color-border-light: ' +
+         (get('--border-color-light') || get('--border-color')) +
+         ';\n' +
          '  --color-accent: ' +
          get('--accent') +
          ';\n' +
+         '  --border-radius-md: 8px;\n' +
+         '  --border-radius-lg: 12px;\n' +
          '  --font-sans: Inter, system-ui, sans-serif;\n' +
          '  --font-mono: "JetBrains Mono", monospace;\n' +
          '}\n' +
