@@ -208,6 +208,31 @@
       container.className = 'dawn-visual-container';
       container.setAttribute('data-visual-title', title);
 
+      /* Download button — saves the raw SVG/HTML as a file */
+      var downloadBtn = document.createElement('button');
+      downloadBtn.className = 'dawn-visual-download';
+      downloadBtn.title = 'Download ' + (type === 'svg' ? 'SVG' : 'HTML');
+      downloadBtn.setAttribute('aria-label', 'Download visual as file');
+      downloadBtn.innerHTML =
+         '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+         'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+         '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>' +
+         '<polyline points="7 10 12 15 17 10"/>' +
+         '<line x1="12" y1="15" x2="12" y2="3"/>' +
+         '</svg>';
+      downloadBtn.addEventListener('click', function () {
+         var ext = type === 'svg' ? 'svg' : 'html';
+         var mimeType = type === 'svg' ? 'image/svg+xml' : 'text/html';
+         var blob = new Blob([code], { type: mimeType });
+         var url = URL.createObjectURL(blob);
+         var a = document.createElement('a');
+         a.href = url;
+         a.download = title + '.' + ext;
+         a.click();
+         URL.revokeObjectURL(url);
+      });
+      container.appendChild(downloadBtn);
+
       var iframe = document.createElement('iframe');
       /* allow-scripts: onclick handlers, sendPrompt bridge, ResizeObserver.
        * No allow-same-origin — iframe cannot access parent DOM/cookies.
