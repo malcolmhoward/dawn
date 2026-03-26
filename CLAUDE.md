@@ -358,6 +358,8 @@ Unit tests in `tests/` (standalone binaries, no framework):
 - `test_sentence_buffer` — Sentence boundary detection
 - `test_session_commands` — Thread-local session context
 - `test_plan_executor` — Plan executor DSL parsing, execution, safety limits (130 assertions, 30 tests)
+- `test_instruction_loader` — Two-step instruction loader file I/O, path traversal, edge cases (42 assertions)
+- `test_wake_word` — Wake word matching, normalization, command extraction
 
 Build and run: `make -C build-debug test_scheduler && ./build-debug/tests/test_scheduler`
 
@@ -471,6 +473,17 @@ Manual testing covers:
 - `www/js/audio/always-on.js`: Browser coordinator (mode management, resolveButtonState, dropdown, text override)
 - `www/js/ui/user-badge.js`: User badge dropdown (extracted from dawn.js)
 
+**Visual Rendering:**
+- `src/tools/render_visual_tool.c`: Two-step tool (load guidelines + render SVG/HTML)
+- `src/tools/instruction_loader.c`: Generic markdown file loader for two-step pattern
+- `include/tools/instruction_loader.h`: Instruction loader API
+- `www/js/ui/visual-render.js`: Sandboxed iframe renderer, theme injection, color ramps, download button
+- `www/css/components/visual-render.css`: Visual container and download button styles
+- `tool_instructions/render_visual/`: Design guideline modules (_core, diagram, chart, interactive, art, mockup)
+- `www/js/vendor/chart.umd.js`: Bundled Chart.js 4.4.1 (MIT) for offline chart rendering
+- `docs/TWO_STEP_TOOL_PATTERN.md`: Two-step pattern design document
+- `docs/VISUAL_RENDERING_TOOL.md`: Visual rendering design document
+
 **Satellite (DAP2):**
 - `dawn_satellite/`: Standalone satellite binary for Raspberry Pi
 - `dawn_satellite/config/satellite.toml`: Default satellite configuration
@@ -516,6 +529,16 @@ Manual testing covers:
 - Two-step instruction loader pattern (generic markdown file reader, path traversal sanitization, 42 unit tests)
 - Visual rendering tool Phase 1 (inline SVG diagrams via LLM tool calling, sandboxed iframe, theme CSS, color ramps, design guidelines on disk)
 - LLM_TOOLS_ARGS_LEN bumped from 4KB to 16KB for large tool arguments (SVG code)
+- Visual rendering Phase 2: persistence, interactivity, and review fixes
+- Shared CSS split-button primitives (`.dawn-split-btn` / `.dawn-split-chevron` / `.dawn-split-menu` in `components.css`)
+- User badge module extraction (`www/js/ui/user-badge.js` from `dawn.js`)
+- Chart.js bundled locally (`www/js/vendor/chart.umd.js`, MIT license)
+- All 5 visual guideline modules: diagram, chart, interactive, art, mockup
+- Visual download button (SVG/HTML export matching copy-btn pattern)
+- Inline visual positioning (text → diagram → text within one message, persists on reload)
+- Fix: thinking content leak into chat (tool-use fallback + raw `<thinking>` tag stripping)
+- URL fetcher: JSON content type support (`application/json`), summarizer bypass for JSON
+- url_fetch whitelisted for plan executor (`TOOL_CAP_SCHEDULABLE`)
 
 ## Code Review Workflow
 

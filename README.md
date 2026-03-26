@@ -81,7 +81,7 @@ DAWN's LLM automatically invokes tools and incorporates results into responses. 
    - Audible chimes with configurable volume, snooze, and dismiss via voice or WebUI
    - Scheduled tasks: "Turn off the lights at midnight" (executes any registered tool)
 - **Multi-Step Plans** — Complex workflows execute locally in a single LLM round trip. The plan executor interprets a JSON DSL with conditional logic, loops, and variable binding — "If I don't have any alarms, set one for 7am" runs as one plan instead of multiple back-and-forth tool calls.
-- **Visual Diagrams** — The LLM generates inline SVG diagrams to explain concepts visually. Flowcharts, architecture diagrams, sequence diagrams, and structural layouts render directly in the conversation with clickable nodes for drill-down. Design guidelines loaded on demand via the two-step instruction pattern keep the system prompt lightweight.
+- **Visual Diagrams** — The LLM generates inline SVG/HTML visuals to explain concepts. Flowcharts, architecture diagrams, data charts (Chart.js), interactive widgets, UI mockups, and illustrations render directly in the conversation with clickable nodes for drill-down. Visuals persist across page refresh and render inline within the message text. Design guidelines loaded on demand via the two-step instruction pattern keep the system prompt lightweight. Download button for SVG/HTML export.
 - **Document Search (RAG)** — Upload documents and ask questions about their content.
    - Semantic search across uploaded PDFs, DOCX, TXT, and Markdown files
    - Paginated document reading for full-document summaries

@@ -353,12 +353,19 @@ These headers should be present on all HTTP responses. Check with browser dev to
 
 | Header | Expected Value | Status |
 |--------|---------------|--------|
-| `Content-Security-Policy` | `default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' wss: ws:; img-src 'self' data: blob:; manifest-src 'self'; worker-src 'self'` | |
+| `Content-Security-Policy` | `default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' wss: ws:; img-src 'self' data: blob:; manifest-src 'self'; worker-src 'self' blob:` | |
 | `Strict-Transport-Security` | `max-age=31536000; includeSubDomains` (HTTPS only) | |
 | `X-Frame-Options` | `DENY` | |
 | `X-Content-Type-Options` | `nosniff` | |
 | `Referrer-Policy` | `strict-origin-when-cross-origin` | |
-| `Permissions-Policy` | `camera=(), geolocation=(), payment=()` | |
+| `Permissions-Policy` | `camera=(self), geolocation=(), payment=()` | |
+
+**CSP Change Log:**
+- **2026-03-25**: Added `'unsafe-inline'` to `script-src` — required for visual rendering tool's srcdoc iframe interactivity (sendPrompt bridge, ResizeObserver, onclick handlers). Sandbox attribute (`allow-scripts` without `allow-same-origin`) provides DOM isolation.
+- **2026-03-25**: Added `blob:` to `worker-src` — required for Opus audio codec Web Worker.
+- **2026-03-15**: Added `camera=(self)` to Permissions-Policy — required for WebUI camera capture (Take Photo feature).
+
+**Note:** Pentest results (2026-03-10) predate the CSP changes above. Re-run security headers validation to confirm current state.
 
 **Verify on these response types:**
 - [ ] Static HTML files (index.html, login.html)
