@@ -154,11 +154,12 @@
    function renderStreamingContent() {
       if (!DawnState.streamingState.textElement) return;
 
-      // Strip command tags before rendering
-      const cleanText = DawnState.streamingState.content.replace(
-         /<command>[\s\S]*?<\/command>/g,
-         ''
-      );
+      // Strip command tags and self-inserted <thinking> tags before rendering.
+      // Claude sometimes emits <thinking>...</thinking> in its text even when
+      // extended thinking is disabled — these are chain-of-thought, not output.
+      const cleanText = DawnState.streamingState.content
+         .replace(/<command>[\s\S]*?<\/command>/g, '')
+         .replace(/<thinking>[\s\S]*?<\/thinking>\s*/g, '');
 
       // Apply markdown formatting (visuals are siblings of .text, not children,
       // so innerHTML overwrite does not affect them)
@@ -210,16 +211,16 @@
 
       // Final render to ensure all content is displayed (in case debounce was pending)
       if (DawnState.streamingState.textElement && DawnState.streamingState.content) {
-         DawnState.streamingState.textElement.innerHTML = DawnFormat.markdown(
-            DawnState.streamingState.content
+         // Strip self-inserted <thinking> tags from final render
+         var finalContent = DawnState.streamingState.content.replace(
+            /<thinking>[\s\S]*?<\/thinking>\s*/g,
+            ''
          );
+         DawnState.streamingState.textElement.innerHTML = DawnFormat.markdown(finalContent);
 
          // Add copy buttons to code blocks and message copy button
          DawnFormat.addCopyButtons(DawnState.streamingState.textElement);
-         DawnState.streamingState.textElement.setAttribute(
-            'data-raw-text',
-            DawnState.streamingState.content
-         );
+         DawnState.streamingState.textElement.setAttribute('data-raw-text', finalContent);
          DawnFormat.addMessageCopyButton(DawnState.streamingState.textElement);
       }
 
@@ -243,6 +244,8 @@
          (DawnState.streamingState.preVisualContent || '') +
          visualContent +
          DawnState.streamingState.content;
+      /* Strip self-inserted <thinking> tags from save content */
+      fullContent = fullContent.replace(/<thinking>[\s\S]*?<\/thinking>\s*/g, '');
       if (fullContent && callbacks.onSaveMessage) {
          let contentToSave = fullContent;
 

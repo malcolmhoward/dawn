@@ -407,6 +407,9 @@
          displayText = parsed.text;
       }
 
+      // Strip self-inserted <thinking> tags (Claude chain-of-thought leaking into text)
+      displayText = displayText.replace(/<thinking>[\s\S]*?<\/thinking>\s*/g, '');
+
       // Extract <dawn-visual> blocks before markdown/sanitize (DOMPurify strips custom tags)
       let visualBlocks = [];
       let preVisualText = displayText;

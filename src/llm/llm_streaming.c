@@ -1062,9 +1062,13 @@ void llm_stream_handle_event(llm_stream_context_t *ctx, const char *event_data) 
 
 char *llm_stream_get_response(llm_stream_context_t *ctx) {
    if (!ctx || !ctx->accumulated_response || ctx->accumulated_size == 0) {
-      // Fallback: if we have thinking content but no response, use thinking as response
-      // This handles models like Qwen3.5 that put all output in reasoning_content
-      if (ctx && ctx->accumulated_thinking && ctx->thinking_size > 0) {
+      /* Fallback: if we have thinking content but no response AND no tool calls,
+       * use thinking as response. This handles models like Qwen3.5 that put all
+       * output in reasoning_content. Don't apply fallback when tool calls are
+       * present — an empty response with tool_use is normal (the LLM chose to
+       * call tools instead of responding with text). */
+      if (ctx && ctx->accumulated_thinking && ctx->thinking_size > 0 &&
+          !ctx->has_tool_calls) {
          LOG_WARNING("LLM: Empty response but has thinking content (%zu bytes), using as response",
                      ctx->thinking_size);
          return strdup(ctx->accumulated_thinking);
