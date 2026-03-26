@@ -130,20 +130,66 @@ int instruction_loader_load(const char *tool_name, const char *modules, char **o
       return 1;
    }
 
-   /* Allocate output buffer */
-   char *buf = (char *)malloc(INSTRUCTION_LOADER_MAX_SIZE);
+   const char *base_dir = instruction_loader_get_base_dir();
+   char path[1024];
+
+   /* Pre-scan file sizes to allocate right-sized buffer instead of 128KB.
+    * Start with _core.md, then each module. Add separator overhead. */
+   size_t total_size = 0;
+   struct stat st;
+
+   snprintf(path, sizeof(path), "%s/%s/_core.md", base_dir, tool_name);
+   if (stat(path, &st) == 0) {
+      total_size += (size_t)st.st_size + SEPARATOR_LEN;
+   }
+
+   if (modules && modules[0] != '\0') {
+      /* Quick scan — parse module names and stat each file */
+      char *scan_copy = strdup(modules);
+      if (scan_copy) {
+         char *sp = NULL;
+         char *m = strtok_r(scan_copy, ",", &sp);
+         while (m) {
+            while (*m == ' ')
+               m++;
+            size_t mlen = strlen(m);
+            while (mlen > 0 && m[mlen - 1] == ' ')
+               mlen--;
+            if (mlen > 0 && is_safe_module_name(m)) {
+               char mpath[1024];
+               m[mlen] = '\0';
+               snprintf(mpath, sizeof(mpath), "%s/%s/%s.md", base_dir, tool_name, m);
+               if (stat(mpath, &st) == 0) {
+                  total_size += (size_t)st.st_size + SEPARATOR_LEN;
+               }
+            }
+            m = strtok_r(NULL, ",", &sp);
+         }
+         free(scan_copy);
+      }
+   }
+
+   /* Allocate right-sized buffer (minimum 4KB, capped at 128KB) */
+   if (total_size == 0) {
+      total_size = 4096;
+   } else {
+      total_size += 256; /* Margin for separators and null terminator */
+   }
+   if (total_size > INSTRUCTION_LOADER_MAX_SIZE) {
+      total_size = INSTRUCTION_LOADER_MAX_SIZE;
+   }
+
+   char *buf = (char *)malloc(total_size);
    if (!buf) {
-      LOG_ERROR("instruction_loader: failed to allocate %d bytes", INSTRUCTION_LOADER_MAX_SIZE);
+      LOG_ERROR("instruction_loader: failed to allocate %zu bytes", total_size);
       return 1;
    }
 
-   const char *base_dir = instruction_loader_get_base_dir();
-   char path[1024];
    size_t offset = 0;
 
    /* Always load _core.md first if it exists */
    snprintf(path, sizeof(path), "%s/%s/_core.md", base_dir, tool_name);
-   if (read_file_into(path, buf, INSTRUCTION_LOADER_MAX_SIZE, &offset) == 0 && offset > 0) {
+   if (read_file_into(path, buf, total_size, &offset) == 0 && offset > 0) {
       LOG_INFO("instruction_loader: loaded _core.md (%zu bytes)", offset);
    }
 
@@ -184,12 +230,12 @@ int instruction_loader_load(const char *tool_name, const char *modules, char **o
 
          /* Add separator before this module if we already have content */
          if (offset > 0) {
-            append_separator(buf, INSTRUCTION_LOADER_MAX_SIZE, &offset);
+            append_separator(buf, total_size, &offset);
          }
 
          snprintf(path, sizeof(path), "%s/%s/%s.md", base_dir, tool_name, module);
          size_t before = offset;
-         if (read_file_into(path, buf, INSTRUCTION_LOADER_MAX_SIZE, &offset) == 0) {
+         if (read_file_into(path, buf, total_size, &offset) == 0) {
             LOG_INFO("instruction_loader: loaded %s.md (%zu bytes)", module, offset - before);
          } else {
             LOG_WARNING("instruction_loader: module not found: %s/%s", tool_name, module);

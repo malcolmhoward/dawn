@@ -272,14 +272,12 @@
                contentToSave;
          }
 
-         // Append pending visual content for history persistence
-         // (visual tool results are stashed in dawn.js pendingVisualsForSave)
-         if (typeof DawnVisualRender !== 'undefined' && callbacks.getPendingVisuals) {
-            var visuals = callbacks.getPendingVisuals();
-            if (visuals && visuals.length > 0) {
-               contentToSave += '\n' + visuals.join('\n');
-            }
-         }
+         /* Note: visual content is NOT appended here for client-side save.
+          * The server appends pending_visual to the assistant message in
+          * session_add_message(), so the DB copy already includes it.
+          * The client save_message is a backup that may be skipped on
+          * server_saved replay. Visual rendering on replay is handled by
+          * extractVisuals() in addNormalEntry/prependTranscriptEntry. */
 
          callbacks.onSaveMessage('assistant', contentToSave);
 

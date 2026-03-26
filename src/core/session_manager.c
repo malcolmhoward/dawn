@@ -277,6 +277,7 @@ static session_t *session_alloc(void) {
 
    // Initialize active tool tracking
    session->active_tool_count = 0;
+   session->pending_visual = NULL;
 
    // Initialize metrics tracker (db_id = -1 means not yet saved to DB)
    session->metrics.db_id = -1;
@@ -312,6 +313,10 @@ static void session_free(session_t *session) {
       json_object_put(session->conversation_history);
       session->conversation_history = NULL;
    }
+
+   // Free pending visual content
+   free(session->pending_visual);
+   session->pending_visual = NULL;
 
    // Clear client_data pointer (don't free - WebSocket sessions use libwebsockets-managed memory)
    session->client_data = NULL;

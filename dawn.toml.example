@@ -135,7 +135,7 @@
 [llm]
 # type = "cloud"                  # "cloud" or "local"
                                   # Env: DAWN_LLM_TYPE
-# max_tokens = 4096               # Maximum response tokens
+# max_tokens = 8192               # Maximum response tokens
                                   # Env: DAWN_LLM_MAX_TOKENS
 # summarize_threshold = 0.80      # Compact conversation at this % of context limit
                                   # Env: DAWN_LLM_SUMMARIZE_THRESHOLD

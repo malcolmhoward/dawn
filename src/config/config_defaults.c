@@ -107,7 +107,7 @@ void config_set_defaults(dawn_config_t *config) {
 
    /* LLM */
    SAFE_COPY(config->llm.type, "cloud");
-   config->llm.max_tokens = 4096; /* GPT_MAX_TOKENS from dawn.h */
+   config->llm.max_tokens = 8192; /* Higher default for SVG tool output */
 
    /* LLM Cloud */
    config->llm.cloud.provider[0] = '\0'; /* Empty = auto-detect from available API keys */

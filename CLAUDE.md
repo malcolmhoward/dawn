@@ -513,6 +513,9 @@ Manual testing covers:
 - Unified action button (Send/Mic/Listen merged into single split button with dropdown mode selection, smart typing override, cancel state)
 - Shared CSS split-button primitives (`.dawn-split-btn` / `.dawn-split-chevron` / `.dawn-split-menu` in `components.css`)
 - User badge module extraction (`www/js/ui/user-badge.js` from `dawn.js`)
+- Two-step instruction loader pattern (generic markdown file reader, path traversal sanitization, 42 unit tests)
+- Visual rendering tool Phase 1 (inline SVG diagrams via LLM tool calling, sandboxed iframe, theme CSS, color ramps, design guidelines on disk)
+- LLM_TOOLS_ARGS_LEN bumped from 4KB to 16KB for large tool arguments (SVG code)
 
 ## Code Review Workflow
 

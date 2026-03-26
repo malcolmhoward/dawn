@@ -204,6 +204,9 @@ typedef struct session {
    int active_tool_count;        // Number of tools currently executing
    pthread_mutex_t tools_mutex;  // Protects active_tools (lock level 4)
 
+   // Pending visual content (render_visual tool results awaiting assistant message save)
+   char *pending_visual;  // Heap-allocated <dawn-visual> content, or NULL
+
    // Reference counting for safe access (two-phase destruction pattern)
    int ref_count;
    pthread_mutex_t ref_mutex;

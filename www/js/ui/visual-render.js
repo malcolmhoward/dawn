@@ -9,6 +9,9 @@
 (function (global) {
    'use strict';
 
+   /* Track known visual iframe contentWindows for postMessage source validation */
+   var knownVisualWindows = new WeakSet();
+
    /* Regex to match <dawn-visual title="..." type="svg|html">...</dawn-visual> */
    var VISUAL_TAG_RE =
       /<dawn-visual\s+title="([^"]*)"\s+type="(svg|html)">([\s\S]*?)<\/dawn-visual>/g;
@@ -187,7 +190,10 @@
     * The iframe renders SVG/HTML with theme CSS but without interactivity
     * (onclick/sendPrompt). Height is computed from the SVG viewBox aspect ratio.
     *
-    * Phase 2 will add interactivity via CSP nonce or blob URL approach.
+    * Uses srcdoc with sandbox="allow-scripts". Parent CSP allows
+    * 'unsafe-inline' for script-src to enable the bridge script and
+    * onclick handlers. The sandbox attribute provides DOM isolation
+    * (no allow-same-origin) — iframe cannot access parent page.
     */
    function createVisualFrame(title, type, code) {
       var container = document.createElement('div');
@@ -195,50 +201,77 @@
       container.setAttribute('data-visual-title', title);
 
       var iframe = document.createElement('iframe');
-      iframe.sandbox = ''; /* No capabilities — static content only (Phase 1) */
+      iframe.sandbox = 'allow-scripts'; /* Scripts allowed for interactivity */
       iframe.title = 'Visual: ' + title;
       iframe.style.cssText = 'width:100%; border:none; overflow:hidden;';
 
       var themeCSS = buildThemeCSS();
       var visualClasses = buildVisualClasses();
 
-      /* Strip onclick/onmouseover/etc. attributes — Phase 1 has no script
-       * capability in the sandbox, and these trigger console warnings */
-      var cleanCode = code.replace(/\s+on\w+="[^"]*"/g, '');
+      /* Build the bridge script: sendPrompt + ResizeObserver height reporting */
+      var bridgeScript =
+         '<script>\n' +
+         'function sendPrompt(t){parent.postMessage({type:"dawn_prompt",text:t},"*")}\n' +
+         'new ResizeObserver(function(){parent.postMessage(' +
+         '{type:"dawn_visual_resize",height:document.body.scrollHeight},"*")})' +
+         '.observe(document.body);\n' +
+         '</' +
+         'script>\n';
 
       var content;
       if (type === 'svg') {
          content =
-            '<style>' +
+            '<!DOCTYPE html><html><head><style>' +
             themeCSS +
             visualClasses +
             'body { margin: 0; padding: 0; overflow: hidden; }\n' +
             'svg { display: block; width: 100%; height: auto; }\n' +
-            '</style>\n' +
-            cleanCode;
+            '</style></head><body>\n' +
+            bridgeScript +
+            code +
+            '</body></html>';
 
-         /* Compute height from viewBox aspect ratio */
+         /* Set initial height from viewBox aspect ratio (ResizeObserver refines it).
+          * Use pixel estimate based on 680px design width to avoid vw overshoot. */
          var vb = parseViewBox(code);
          if (vb && vb.width > 0) {
-            /* Use the container's width (will be full transcript width).
-             * Set a reasonable default and let the SVG scale. */
             var aspectRatio = vb.height / vb.width;
-            /* Estimate container width as ~600px (transcript area).
-             * The SVG scales via width="100%", so just set a height
-             * that preserves the aspect ratio. */
-            iframe.style.height = Math.ceil(aspectRatio * 100) + 'vw';
-            /* Cap at the actual pixel height to avoid oversizing */
-            iframe.style.maxHeight = vb.height + 'px';
+            iframe.style.height = Math.min(Math.ceil(aspectRatio * 680), vb.height) + 'px';
          } else {
-            iframe.style.height = '400px'; /* Fallback */
+            iframe.style.height = '400px';
          }
       } else {
-         content = '<style>' + themeCSS + visualClasses + '</style>\n' + cleanCode;
-         iframe.style.height = '400px'; /* HTML content — fixed fallback */
+         content =
+            '<!DOCTYPE html><html><head><style>' +
+            themeCSS +
+            visualClasses +
+            '</style></head><body>\n' +
+            bridgeScript +
+            code +
+            '</body></html>';
+         iframe.style.height = '400px';
       }
 
       iframe.srcdoc = content;
       container.appendChild(iframe);
+
+      /* Register iframe's contentWindow for sendPrompt source validation */
+      var frameRef = iframe;
+      iframe.addEventListener('load', function () {
+         if (frameRef.contentWindow) {
+            knownVisualWindows.add(frameRef.contentWindow);
+         }
+      });
+
+      /* Listen for height updates from ResizeObserver inside the iframe */
+      function handleMessage(event) {
+         if (!frameRef.contentWindow || event.source !== frameRef.contentWindow) return;
+         if (event.data && event.data.type === 'dawn_visual_resize') {
+            frameRef.style.height = event.data.height + 'px';
+            frameRef.style.maxHeight = ''; /* Clear aspect-ratio cap */
+         }
+      }
+      window.addEventListener('message', handleMessage);
 
       return container;
    }
@@ -288,12 +321,32 @@
 
    /**
     * Initialize visual renderer.
-    * Phase 1: No-op (static SVG only, no interactivity).
-    * Phase 2: Will add postMessage listener for sendPrompt bridge.
+    * Sets up the sendPrompt bridge listener for interactive diagram nodes.
     */
    function init() {
-      /* Phase 2: add window.addEventListener('message', ...) for
-       * dawn_prompt and dawn_visual_resize from interactive iframes */
+      window.addEventListener('message', function (event) {
+         if (
+            event.data &&
+            event.data.type === 'dawn_prompt' &&
+            typeof event.data.text === 'string' &&
+            event.source &&
+            knownVisualWindows.has(event.source)
+         ) {
+            /* Inject prompt text and send as if user typed it */
+            if (DawnElements.textInput) {
+               DawnElements.textInput.value = event.data.text;
+               DawnElements.textInput.dispatchEvent(new Event('input'));
+               var enterEvent = new KeyboardEvent('keydown', {
+                  key: 'Enter',
+                  code: 'Enter',
+                  keyCode: 13,
+                  which: 13,
+                  bubbles: true,
+               });
+               DawnElements.textInput.dispatchEvent(enterEvent);
+            }
+         }
+      });
    }
 
    global.DawnVisualRender = {

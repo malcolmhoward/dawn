@@ -126,10 +126,11 @@ static char s_static_security_headers[1024];
 static int s_static_security_headers_len = 0;
 
 /* CSP policy shared between add_security_headers() and the static string */
-static const char s_csp_policy[] =
-    "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; "
-    "style-src 'self' 'unsafe-inline'; connect-src 'self' wss: ws:; "
-    "img-src 'self' data: blob:; manifest-src 'self'; worker-src 'self'";
+static const char s_csp_policy[] = "default-src 'self'; "
+                                   "script-src 'self' 'wasm-unsafe-eval' 'unsafe-inline'; "
+                                   "style-src 'self' 'unsafe-inline'; connect-src 'self' wss: ws:; "
+                                   "img-src 'self' data: blob:; "
+                                   "manifest-src 'self'; worker-src 'self' blob:";
 
 int webui_add_security_headers(struct lws *wsi, unsigned char **p, unsigned char *end) {
    if (lws_add_http_header_by_name(wsi, (const unsigned char *)"Content-Security-Policy:",

@@ -111,14 +111,24 @@ static char *render_visual_callback(const char *action, char *value, int *should
       return strdup("Error: 'type' must be 'svg' or 'html'.");
    }
 
+   /* Sanitize title — strip characters that would break the tag attribute
+    * or the JS regex that parses it (quotes, angle brackets) */
+   char safe_title[256];
+   size_t si = 0;
+   for (size_t i = 0; title[i] != '\0' && si < sizeof(safe_title) - 1; i++) {
+      char c = title[i];
+      if (c != '"' && c != '<' && c != '>' && c != '&') {
+         safe_title[si++] = c;
+      }
+   }
+   safe_title[si] = '\0';
+
    /* Build the <dawn-visual> tag for WebUI rendering.
     * Format: <dawn-visual title="..." type="svg|html">...code...</dawn-visual>
     * The code is embedded verbatim — the WebUI handles sandboxing. */
    size_t code_len = strlen(code);
-   size_t title_len = strlen(title);
    size_t type_len = strlen(type);
-   /* <dawn-visual title="..." type="...">...</dawn-visual> */
-   size_t buf_size = code_len + title_len + type_len + 128;
+   size_t buf_size = code_len + si + type_len + 128;
 
    char *result = (char *)malloc(buf_size);
    if (!result) {
@@ -126,8 +136,8 @@ static char *render_visual_callback(const char *action, char *value, int *should
       return strdup("Error: memory allocation failed.");
    }
 
-   snprintf(result, buf_size, "<dawn-visual title=\"%s\" type=\"%s\">\n%s\n</dawn-visual>", title,
-            type, code);
+   snprintf(result, buf_size, "<dawn-visual title=\"%s\" type=\"%s\">\n%s\n</dawn-visual>",
+            safe_title, type, code);
 
    json_object_put(json);
 

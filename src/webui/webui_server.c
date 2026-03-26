@@ -4198,6 +4198,15 @@ static void webui_tool_execution_callback(void *session_ptr,
     * the debug_msg buffer size (8KB), so we send the raw result directly. */
    if (success && result && strstr(result, "<dawn-visual") != NULL) {
       webui_send_transcript(session, "visual", result);
+
+      /* Stash visual content on the session so it gets appended to the
+       * assistant message when saved to the conversation DB. This enables
+       * visual replay when the conversation is reloaded.
+       * Protected by tools_mutex — consumed by handle_save_message. */
+      pthread_mutex_lock(&session->tools_mutex);
+      free(session->pending_visual);
+      session->pending_visual = strdup(result);
+      pthread_mutex_unlock(&session->tools_mutex);
    }
 
    /* Format as debug entry for transcript - use "tool" role (not "assistant")
