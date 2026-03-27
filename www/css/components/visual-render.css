@@ -64,3 +64,10 @@
       opacity: 1;
    }
 }
+
+/* Prevent tall SVGs from pushing content off-screen on mobile */
+@media (max-width: 600px) {
+   .dawn-visual-container iframe {
+      max-height: 60vh;
+   }
+}

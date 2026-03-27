@@ -12,8 +12,16 @@
    /* Track known visual iframe contentWindows for postMessage source validation */
    var knownVisualWindows = new WeakSet();
 
+   /* Map from iframe contentWindow to iframe element for delegated resize handling.
+    * Single global listener dispatches by source — no per-iframe listeners needed. */
+   var iframeResizeMap = new Map();
+
    /* Cached vendor scripts for inlining into srcdoc iframes */
    var vendorScriptCache = {};
+
+   /* Cached theme CSS string — rebuilt only when theme changes */
+   var cachedThemeCSS = null;
+   var cachedVisualClasses = null;
 
    /* Regex to match <dawn-visual title="..." type="svg|html">...</dawn-visual> */
    var VISUAL_TAG_RE =
@@ -223,7 +231,48 @@
       downloadBtn.addEventListener('click', function () {
          var ext = type === 'svg' ? 'svg' : 'html';
          var mimeType = type === 'svg' ? 'image/svg+xml' : 'text/html';
-         var blob = new Blob([code], { type: mimeType });
+         var downloadContent;
+         if (type === 'svg') {
+            /* Embed theme CSS + visual classes into SVG as a <defs><style> block
+             * so the downloaded file is self-contained and renders correctly
+             * outside the DAWN WebUI iframe context. */
+            if (!cachedThemeCSS) cachedThemeCSS = buildThemeCSS();
+            if (!cachedVisualClasses) cachedVisualClasses = buildVisualClasses();
+            var styleBlock =
+               '<defs><style>' + cachedThemeCSS + cachedVisualClasses + '</style></defs>';
+            /* Insert style after opening <svg> tag, add XML namespace and
+             * background for standalone rendering. Replace width="100%" with
+             * the viewBox width so the SVG has intrinsic dimensions. */
+            downloadContent = code.replace(/(<svg[^>]*>)/, '$1\n' + styleBlock);
+            /* Add xmlns if missing (required for standalone SVG) */
+            if (downloadContent.indexOf('xmlns=') === -1) {
+               downloadContent = downloadContent.replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" ');
+            }
+            /* Replace width="100%" with viewBox width for standalone sizing */
+            var vb = parseViewBox(code);
+            if (vb) {
+               downloadContent = downloadContent.replace(
+                  /width="100%"/,
+                  'width="' + vb.width + '"'
+               );
+            }
+            /* Add dark background rect so colors are visible standalone */
+            var bgRect = '<rect width="100%" height="100%" fill="' +
+               getComputedStyle(document.documentElement).getPropertyValue('--bg-primary').trim() +
+               '"/>';
+            downloadContent = downloadContent.replace(
+               /(<\/defs>(?:\s*<\/defs>)?\s*)/,
+               '$1' + bgRect + '\n'
+            );
+         } else {
+            if (!cachedThemeCSS) cachedThemeCSS = buildThemeCSS();
+            if (!cachedVisualClasses) cachedVisualClasses = buildVisualClasses();
+            downloadContent =
+               '<!DOCTYPE html><html><head><style>' +
+               cachedThemeCSS + cachedVisualClasses +
+               '</style></head><body>' + code + '</body></html>';
+         }
+         var blob = new Blob([downloadContent], { type: mimeType });
          var url = URL.createObjectURL(blob);
          var a = document.createElement('a');
          a.href = url;
@@ -241,8 +290,11 @@
       iframe.title = 'Visual: ' + title;
       iframe.style.cssText = 'width:100%; border:none; overflow:hidden;';
 
-      var themeCSS = buildThemeCSS();
-      var visualClasses = buildVisualClasses();
+      /* Cache theme CSS — only rebuild on theme change (MutationObserver in init) */
+      if (!cachedThemeCSS) cachedThemeCSS = buildThemeCSS();
+      if (!cachedVisualClasses) cachedVisualClasses = buildVisualClasses();
+      var themeCSS = cachedThemeCSS;
+      var visualClasses = cachedVisualClasses;
 
       /* Build the bridge script: sendPrompt + debounced ResizeObserver */
       var bridgeScript =
@@ -278,7 +330,7 @@
          var vb = parseViewBox(code);
          if (vb && vb.width > 0) {
             var aspectRatio = vb.height / vb.width;
-            iframe.style.height = Math.min(Math.ceil(aspectRatio * 680), vb.height) + 'px';
+            iframe.style.height = Math.min(Math.ceil(aspectRatio * 680), vb.height, 800) + 'px';
          } else {
             iframe.style.height = '400px';
          }
@@ -342,28 +394,14 @@
          container.appendChild(iframe);
       }
 
-      /* Register iframe's contentWindow for sendPrompt source validation */
+      /* Register iframe for sendPrompt validation and delegated resize handling */
       var frameRef = iframe;
       iframe.addEventListener('load', function () {
          if (frameRef.contentWindow) {
             knownVisualWindows.add(frameRef.contentWindow);
+            iframeResizeMap.set(frameRef.contentWindow, { iframe: frameRef, lastHeight: 0 });
          }
       });
-
-      /* Listen for height updates from ResizeObserver inside the iframe */
-      var lastKnownHeight = 0;
-      function handleMessage(event) {
-         if (!frameRef.contentWindow || event.source !== frameRef.contentWindow) return;
-         if (event.data && event.data.type === 'dawn_visual_resize') {
-            var h = event.data.height;
-            if (h !== lastKnownHeight && h > 0) {
-               lastKnownHeight = h;
-               frameRef.style.height = h + 'px';
-               frameRef.style.maxHeight = '';
-            }
-         }
-      }
-      window.addEventListener('message', handleMessage);
 
       return container;
    }
@@ -416,15 +454,17 @@
     * Sets up the sendPrompt bridge listener for interactive diagram nodes.
     */
    function init() {
+      /* Single delegated message handler for ALL visual iframes.
+       * Handles both sendPrompt (dawn_prompt) and resize (dawn_visual_resize).
+       * No per-iframe listeners — prevents unbounded listener accumulation. */
       window.addEventListener('message', function (event) {
+         if (!event.data || !event.source) return;
+
          if (
-            event.data &&
             event.data.type === 'dawn_prompt' &&
             typeof event.data.text === 'string' &&
-            event.source &&
             knownVisualWindows.has(event.source)
          ) {
-            /* Inject prompt text and send as if user typed it */
             if (DawnElements.textInput) {
                DawnElements.textInput.value = event.data.text;
                DawnElements.textInput.dispatchEvent(new Event('input'));
@@ -437,7 +477,27 @@
                });
                DawnElements.textInput.dispatchEvent(enterEvent);
             }
+         } else if (event.data.type === 'dawn_visual_resize') {
+            var entry = iframeResizeMap.get(event.source);
+            if (entry) {
+               var h = event.data.height;
+               if (h !== entry.lastHeight && h > 0) {
+                  entry.lastHeight = h;
+                  entry.iframe.style.height = h + 'px';
+                  entry.iframe.style.maxHeight = '';
+               }
+            }
          }
+      });
+
+      /* Invalidate theme CSS cache on theme change */
+      var observer = new MutationObserver(function () {
+         cachedThemeCSS = null;
+         cachedVisualClasses = null;
+      });
+      observer.observe(document.documentElement, {
+         attributes: true,
+         attributeFilter: ['class', 'data-theme'],
       });
    }
 

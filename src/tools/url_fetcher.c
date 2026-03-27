@@ -488,16 +488,22 @@ static time_t flaresolverr_check_time = 0;
 static int flaresolverr_is_available(void) {
    time_t now = time(NULL);
 
-   // Check cache validity
+   /* Check cache validity under mutex — parallel tool threads may race here */
+   pthread_mutex_lock(&module_mutex);
    if (flaresolverr_available_cached >= 0 &&
        (now - flaresolverr_check_time) < FLARESOLVERR_AVAILABILITY_CACHE_TTL_SEC) {
-      return flaresolverr_available_cached;
+      int cached = flaresolverr_available_cached;
+      pthread_mutex_unlock(&module_mutex);
+      return cached;
    }
+   pthread_mutex_unlock(&module_mutex);
 
    CURL *curl = curl_easy_init();
    if (!curl) {
+      pthread_mutex_lock(&module_mutex);
       flaresolverr_available_cached = 0;
       flaresolverr_check_time = now;
+      pthread_mutex_unlock(&module_mutex);
       return 0;
    }
 
@@ -509,15 +515,19 @@ static int flaresolverr_is_available(void) {
    CURLcode res = curl_easy_perform(curl);
    curl_easy_cleanup(curl);
 
-   flaresolverr_available_cached = (res == CURLE_OK) ? 1 : 0;
-   flaresolverr_check_time = now;
+   int available = (res == CURLE_OK) ? 1 : 0;
 
-   if (!flaresolverr_available_cached) {
+   pthread_mutex_lock(&module_mutex);
+   flaresolverr_available_cached = available;
+   flaresolverr_check_time = now;
+   pthread_mutex_unlock(&module_mutex);
+
+   if (!available) {
       LOG_INFO("url_fetcher: FlareSolverr not available at %s (cached for %ds)",
                flaresolverr_get_endpoint(), FLARESOLVERR_AVAILABILITY_CACHE_TTL_SEC);
    }
 
-   return flaresolverr_available_cached;
+   return available;
 }
 
 /**

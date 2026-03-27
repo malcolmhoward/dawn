@@ -412,45 +412,55 @@
 
       // Extract <dawn-visual> blocks before markdown/sanitize (DOMPurify strips custom tags)
       let visualBlocks = [];
-      let preVisualText = displayText;
-      let postVisualText = '';
+      // Split text around visual tags iteratively for inline positioning.
+      // Produces alternating text/visual segments: text, visual, text, visual, text
+      let segments = []; // { type: 'text'|'visual', content: string, visual: object }
       if (typeof DawnVisualRender !== 'undefined') {
          const extracted = DawnVisualRender.extractVisuals(displayText);
          visualBlocks = extracted.visuals;
          if (visualBlocks.length > 0) {
-            // Split text around the visual tag for inline positioning
-            const tagMatch = displayText.match(
-               /<dawn-visual\s+title="[^"]*"\s+type="(?:svg|html)">[\s\S]*?<\/dawn-visual>/
-            );
-            if (tagMatch) {
-               const idx = displayText.indexOf(tagMatch[0]);
-               preVisualText = displayText.substring(0, idx).trim();
-               postVisualText = displayText.substring(idx + tagMatch[0].length).trim();
-            } else {
-               preVisualText = extracted.cleanText;
+            const tagRe =
+               /<dawn-visual\s+title="[^"]*"\s+type="(?:svg|html)">[\s\S]*?<\/dawn-visual>/g;
+            let lastIdx = 0;
+            let match;
+            let vi = 0;
+            while ((match = tagRe.exec(displayText)) !== null) {
+               const before = displayText.substring(lastIdx, match.index).trim();
+               if (before) segments.push({ type: 'text', content: before });
+               if (vi < visualBlocks.length) {
+                  segments.push({ type: 'visual', visual: visualBlocks[vi++] });
+               }
+               lastIdx = match.index + match[0].length;
             }
+            const after = displayText.substring(lastIdx).trim();
+            if (after) segments.push({ type: 'text', content: after });
          } else {
-            preVisualText = extracted.cleanText;
+            segments.push({ type: 'text', content: extracted.cleanText });
          }
+      } else {
+         segments.push({ type: 'text', content: displayText });
       }
 
-      // Create and append entry
+      // Create entry with first text segment
       const entry = document.createElement('div');
       entry.className = `transcript-entry ${role}`;
+      const firstText =
+         segments.length > 0 && segments[0].type === 'text' ? segments[0].content : '';
       entry.innerHTML = `
       <div class="role">${DawnFormat.escapeHtml(role)}</div>
-      <div class="text">${DawnFormat.markdown(preVisualText)}</div>
+      <div class="text">${DawnFormat.markdown(firstText)}</div>
     `;
       transcript.appendChild(entry);
 
-      // Render visual blocks inline, then add post-visual text below
-      if (visualBlocks.length > 0 && typeof DawnVisualRender !== 'undefined') {
-         DawnVisualRender.renderVisuals(entry, visualBlocks);
-         if (postVisualText) {
-            const postTextEl = document.createElement('div');
-            postTextEl.className = 'text';
-            postTextEl.innerHTML = DawnFormat.markdown(postVisualText);
-            entry.appendChild(postTextEl);
+      // Append remaining segments (visuals + text blocks)
+      for (let i = firstText ? 1 : 0; i < segments.length; i++) {
+         if (segments[i].type === 'visual') {
+            DawnVisualRender.renderVisuals(entry, [segments[i].visual]);
+         } else if (segments[i].content) {
+            const textDiv = document.createElement('div');
+            textDiv.className = 'text';
+            textDiv.innerHTML = DawnFormat.markdown(segments[i].content);
+            entry.appendChild(textDiv);
          }
       }
 
@@ -458,17 +468,18 @@
       transcript.scrollTop = transcript.scrollHeight;
 
       // Store raw text and add copy buttons on all .text elements
-      entry.querySelectorAll('.text').forEach(function (textEl) {
-         if (!textEl.getAttribute('data-raw-text')) {
-            textEl.setAttribute('data-raw-text', docData.cleanText);
+      const firstTextEl = entry.querySelector('.text');
+      entry.querySelectorAll('.text').forEach(function (el) {
+         if (!el.getAttribute('data-raw-text')) {
+            el.setAttribute('data-raw-text', docData.cleanText);
          }
-         DawnFormat.addCopyButtons(textEl);
-         DawnFormat.addMessageCopyButton(textEl);
+         DawnFormat.addCopyButtons(el);
+         DawnFormat.addMessageCopyButton(el);
       });
 
       // Render document chips if any documents were attached
-      if (docData.documents.length > 0 && textEl) {
-         textEl.appendChild(createDocumentChips(docData.documents));
+      if (docData.documents.length > 0 && firstTextEl) {
+         firstTextEl.appendChild(createDocumentChips(docData.documents));
          transcript.scrollTop = transcript.scrollHeight;
       }
 
@@ -484,8 +495,8 @@
                   imagesContainer.appendChild(imageEl);
                }
             }
-            if (imagesContainer.children.length > 0) {
-               textEl.appendChild(imagesContainer);
+            if (imagesContainer.children.length > 0 && firstTextEl) {
+               firstTextEl.appendChild(imagesContainer);
                // Scroll again after images are added (they increase height)
                transcript.scrollTop = transcript.scrollHeight;
             }
@@ -571,60 +582,70 @@
          displayText = parsed.text;
       }
 
-      // Extract <dawn-visual> blocks before markdown/sanitize
+      // Split text around visual tags iteratively for inline positioning
       let visualBlocks = [];
-      let preVisualText = displayText;
-      let postVisualText = '';
+      let segments = [];
       if (typeof DawnVisualRender !== 'undefined') {
          const extracted = DawnVisualRender.extractVisuals(displayText);
          visualBlocks = extracted.visuals;
          if (visualBlocks.length > 0) {
-            const tagMatch = displayText.match(
-               /<dawn-visual\s+title="[^"]*"\s+type="(?:svg|html)">[\s\S]*?<\/dawn-visual>/
-            );
-            if (tagMatch) {
-               const idx = displayText.indexOf(tagMatch[0]);
-               preVisualText = displayText.substring(0, idx).trim();
-               postVisualText = displayText.substring(idx + tagMatch[0].length).trim();
-            } else {
-               preVisualText = extracted.cleanText;
+            const tagRe =
+               /<dawn-visual\s+title="[^"]*"\s+type="(?:svg|html)">[\s\S]*?<\/dawn-visual>/g;
+            let lastIdx = 0;
+            let match;
+            let vi = 0;
+            while ((match = tagRe.exec(displayText)) !== null) {
+               const before = displayText.substring(lastIdx, match.index).trim();
+               if (before) segments.push({ type: 'text', content: before });
+               if (vi < visualBlocks.length) {
+                  segments.push({ type: 'visual', visual: visualBlocks[vi++] });
+               }
+               lastIdx = match.index + match[0].length;
             }
+            const after = displayText.substring(lastIdx).trim();
+            if (after) segments.push({ type: 'text', content: after });
          } else {
-            preVisualText = extracted.cleanText;
+            segments.push({ type: 'text', content: extracted.cleanText });
          }
+      } else {
+         segments.push({ type: 'text', content: displayText });
       }
 
-      // Create the entry
+      // Create the entry with first text segment
       const entry = document.createElement('div');
       entry.className = `transcript-entry ${role}`;
+      const firstText =
+         segments.length > 0 && segments[0].type === 'text' ? segments[0].content : '';
       entry.innerHTML = `
       <div class="role">${DawnFormat.escapeHtml(role)}</div>
-      <div class="text">${DawnFormat.markdown(preVisualText)}</div>
+      <div class="text">${DawnFormat.markdown(firstText)}</div>
     `;
 
-      // Render visual blocks inline, then add post-visual text below
-      if (visualBlocks.length > 0 && typeof DawnVisualRender !== 'undefined') {
-         DawnVisualRender.renderVisuals(entry, visualBlocks);
-         if (postVisualText) {
-            const postTextEl = document.createElement('div');
-            postTextEl.className = 'text';
-            postTextEl.innerHTML = DawnFormat.markdown(postVisualText);
-            entry.appendChild(postTextEl);
+      // Append remaining segments (visuals + text blocks)
+      for (let i = firstText ? 1 : 0; i < segments.length; i++) {
+         if (segments[i].type === 'visual') {
+            DawnVisualRender.renderVisuals(entry, [segments[i].visual]);
+         } else if (segments[i].content) {
+            const textDiv = document.createElement('div');
+            textDiv.className = 'text';
+            textDiv.innerHTML = DawnFormat.markdown(segments[i].content);
+            entry.appendChild(textDiv);
          }
       }
 
       // Store raw text and add copy buttons on all .text elements
-      entry.querySelectorAll('.text').forEach(function (textEl) {
-         if (!textEl.getAttribute('data-raw-text')) {
-            textEl.setAttribute('data-raw-text', docData.cleanText);
+      const firstTextEl = entry.querySelector('.text');
+      entry.querySelectorAll('.text').forEach(function (el) {
+         if (!el.getAttribute('data-raw-text')) {
+            el.setAttribute('data-raw-text', docData.cleanText);
          }
-         DawnFormat.addCopyButtons(textEl);
-         DawnFormat.addMessageCopyButton(textEl);
+         DawnFormat.addCopyButtons(el);
+         DawnFormat.addMessageCopyButton(el);
       });
 
       // Render document chips if any documents were attached
-      if (docData.documents.length > 0 && textEl) {
-         textEl.appendChild(createDocumentChips(docData.documents));
+      if (docData.documents.length > 0 && firstTextEl) {
+         firstTextEl.appendChild(createDocumentChips(docData.documents));
       }
 
       // Insert thinking/reasoning block first if present
@@ -654,8 +675,8 @@
                   imagesContainer.appendChild(imageEl);
                }
             }
-            if (imagesContainer.children.length > 0) {
-               textEl.appendChild(imagesContainer);
+            if (imagesContainer.children.length > 0 && firstTextEl) {
+               firstTextEl.appendChild(imagesContainer);
             }
          }
       }
