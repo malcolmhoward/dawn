@@ -481,7 +481,7 @@ Manual testing covers:
 - `www/css/components/visual-render.css`: Visual container and download button styles
 - `tool_instructions/render_visual/`: Design guideline modules (_core, diagram, chart, interactive, art, mockup)
 - `www/js/vendor/chart.umd.js`: Bundled Chart.js 4.4.1 (MIT) for offline chart rendering
-- `docs/TWO_STEP_TOOL_PATTERN.md`: Two-step pattern design document
+- Two-step pattern design: archived to [atlas](https://github.com/The-OASIS-Project/atlas/blob/main/dawn/archive/TWO_STEP_TOOL_PATTERN.md)
 - `docs/VISUAL_RENDERING_TOOL.md`: Visual rendering design document
 
 **Satellite (DAP2):**

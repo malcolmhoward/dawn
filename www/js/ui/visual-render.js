@@ -246,7 +246,10 @@
             downloadContent = code.replace(/(<svg[^>]*>)/, '$1\n' + styleBlock);
             /* Add xmlns if missing (required for standalone SVG) */
             if (downloadContent.indexOf('xmlns=') === -1) {
-               downloadContent = downloadContent.replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" ');
+               downloadContent = downloadContent.replace(
+                  '<svg ',
+                  '<svg xmlns="http://www.w3.org/2000/svg" '
+               );
             }
             /* Replace width="100%" with viewBox width for standalone sizing */
             var vb = parseViewBox(code);
@@ -257,7 +260,8 @@
                );
             }
             /* Add dark background rect so colors are visible standalone */
-            var bgRect = '<rect width="100%" height="100%" fill="' +
+            var bgRect =
+               '<rect width="100%" height="100%" fill="' +
                getComputedStyle(document.documentElement).getPropertyValue('--bg-primary').trim() +
                '"/>';
             downloadContent = downloadContent.replace(
@@ -269,8 +273,11 @@
             if (!cachedVisualClasses) cachedVisualClasses = buildVisualClasses();
             downloadContent =
                '<!DOCTYPE html><html><head><style>' +
-               cachedThemeCSS + cachedVisualClasses +
-               '</style></head><body>' + code + '</body></html>';
+               cachedThemeCSS +
+               cachedVisualClasses +
+               '</style></head><body>' +
+               code +
+               '</body></html>';
          }
          var blob = new Blob([downloadContent], { type: mimeType });
          var url = URL.createObjectURL(blob);

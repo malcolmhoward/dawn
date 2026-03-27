@@ -133,8 +133,21 @@ static char *url_tool_callback(const char *action, char *value, int *should_resp
    LOG_INFO("url_tool: Extracted %zu bytes of content", content_size);
 
    /* Skip summarizer for JSON content — TF-IDF sentence splitting destroys
-    * JSON structure. The LLM can parse raw JSON directly. */
-   bool is_json = (content && content_size > 0 && (content[0] == '{' || content[0] == '['));
+    * JSON structure. The LLM can parse raw JSON directly.
+    * Check for JSON object '{' or JSON array '[{' / '[ {' — plain '[' could
+    * be markdown (e.g., '[Jump to content]' from HTML extraction). */
+   bool is_json = false;
+   if (content && content_size > 0) {
+      if (content[0] == '{') {
+         is_json = true;
+      } else if (content[0] == '[') {
+         /* Only treat as JSON array if followed by '{' (possibly with whitespace) */
+         const char *p = content + 1;
+         while (*p == ' ' || *p == '\n' || *p == '\r' || *p == '\t')
+            p++;
+         is_json = (*p == '{' || *p == '"');
+      }
+   }
 
    if (!is_json) {
       /* Run through summarizer if enabled and over threshold */

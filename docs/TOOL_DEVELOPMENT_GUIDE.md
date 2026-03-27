@@ -880,7 +880,7 @@ int tool_registry_enabled_count(void);
 
 Some tools need detailed operational instructions that are too large to include in every conversation's system prompt. The two-step pattern solves this: the LLM calls a lightweight "load instructions" tool first, gets the rules it needs, then calls the actual tool.
 
-For the full design rationale, see `docs/TWO_STEP_TOOL_PATTERN.md`.
+For the full design rationale, see the [TWO_STEP_TOOL_PATTERN.md](https://github.com/The-OASIS-Project/atlas/blob/main/dawn/archive/TWO_STEP_TOOL_PATTERN.md) archive.
 
 ### When to Use
 
@@ -1014,4 +1014,4 @@ Same as any other tool — add option, conditional source, include, and registra
 
 ### Reference
 
-See `docs/TWO_STEP_TOOL_PATTERN.md` for the full design rationale, assessment matrix for when to use this pattern, and a complete end-to-end example flow.
+See the [TWO_STEP_TOOL_PATTERN.md](https://github.com/The-OASIS-Project/atlas/blob/main/dawn/archive/TWO_STEP_TOOL_PATTERN.md) archive for the full design rationale, assessment matrix for when to use this pattern, and a complete end-to-end example flow.

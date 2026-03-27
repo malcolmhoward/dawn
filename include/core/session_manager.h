@@ -207,6 +207,10 @@ typedef struct session {
    // Pending visual content (render_visual tool results awaiting assistant message save)
    char *pending_visual;  // Heap-allocated <dawn-visual> content, or NULL
 
+   // Visual guideline cache — tracks which modules have been loaded in this conversation
+   // Format: ",diagram,chart," (delimiter-bounded for exact substring matching)
+   char visual_modules_loaded[512];
+
    // Reference counting for safe access (two-phase destruction pattern)
    int ref_count;
    pthread_mutex_t ref_mutex;

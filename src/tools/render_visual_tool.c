@@ -42,6 +42,102 @@
 #define TOOL_DIR "render_visual"
 
 /* =============================================================================
+ * Instruction Caching
+ *
+ * Track which modules have been loaded in the current conversation to avoid
+ * returning 10KB+ of guidelines that the LLM already has in context.
+ * Anchored to the session (via session_get_command_context) so it persists
+ * across tool loop iterations and resets on conversation clear.
+ *
+ * Format: delimiter-bounded ",diagram,chart," to prevent substring collisions
+ * (e.g., "art" matching inside "chart").
+ * ============================================================================= */
+
+#include "core/session_manager.h"
+
+/**
+ * Check if all requested modules were already loaded in this conversation.
+ */
+static bool modules_already_loaded(const char *loaded, const char *modules) {
+   if (!loaded || loaded[0] == '\0') {
+      return false;
+   }
+
+   char *copy = strdup(modules);
+   if (!copy) {
+      return false;
+   }
+
+   bool all_loaded = true;
+   char *saveptr = NULL;
+   char *mod = strtok_r(copy, ",", &saveptr);
+   while (mod) {
+      while (*mod == ' ')
+         mod++;
+      size_t len = strlen(mod);
+      while (len > 0 && mod[len - 1] == ' ')
+         len--;
+      mod[len] = '\0';
+
+      if (len > 0) {
+         /* Delimiter-bounded search: look for ",module," in ",diagram,chart," */
+         char needle[128];
+         snprintf(needle, sizeof(needle), ",%s,", mod);
+         if (!strstr(loaded, needle)) {
+            all_loaded = false;
+            break;
+         }
+      }
+      mod = strtok_r(NULL, ",", &saveptr);
+   }
+   free(copy);
+   return all_loaded;
+}
+
+/**
+ * Record that these modules have been loaded. Appends each module
+ * with delimiters: ",diagram,chart," format.
+ */
+static void record_loaded_modules(char *buf, size_t buf_size, const char *modules) {
+   char *copy = strdup(modules);
+   if (!copy) {
+      return;
+   }
+
+   char *saveptr = NULL;
+   char *mod = strtok_r(copy, ",", &saveptr);
+   while (mod) {
+      while (*mod == ' ')
+         mod++;
+      size_t len = strlen(mod);
+      while (len > 0 && mod[len - 1] == ' ')
+         len--;
+      mod[len] = '\0';
+
+      if (len > 0) {
+         /* Check if already recorded (avoid duplicates) */
+         char needle[128];
+         snprintf(needle, sizeof(needle), ",%s,", mod);
+         if (!strstr(buf, needle)) {
+            size_t cur_len = strlen(buf);
+            /* Append ",module" (leading comma provides delimiter boundary) */
+            if (cur_len == 0) {
+               /* First entry: start with "," for leading delimiter */
+               snprintf(buf, buf_size, ",%s,", mod);
+            } else if (cur_len + len + 2 < buf_size) {
+               /* Overwrite trailing comma, append "module," */
+               snprintf(buf + cur_len - 1, buf_size - cur_len + 1, ",%s,", mod);
+            } else {
+               LOG_WARNING("render_visual: module cache full, skipping '%s'", mod);
+            }
+         }
+      }
+      mod = strtok_r(NULL, ",", &saveptr);
+   }
+   free(copy);
+}
+
+/* =============================================================================
  * Instruction Loader Callback
  * ============================================================================= */
 
@@ -53,6 +149,14 @@ static char *load_guidelines_callback(const char *action, char *value, int *shou
       return strdup("Error: provide module names (e.g., 'diagram', 'chart', 'interactive').");
    }
 
+   /* Check session cache — return short message if modules already in context */
+   session_t *session = session_get_command_context();
+   if (session && modules_already_loaded(session->visual_modules_loaded, value)) {
+      LOG_INFO("render_visual: guidelines already loaded for '%s', returning cache hint", value);
+      return strdup("Guidelines already loaded in this conversation. "
+                    "Refer to the instructions provided above.");
+   }
+
    char *content = NULL;
    int rc = instruction_loader_load(TOOL_DIR, value, &content);
    if (rc != 0 || !content) {
@@ -60,6 +164,11 @@ static char *load_guidelines_callback(const char *action, char *value, int *shou
                     "tool_instructions/render_visual/ directory exists.");
    }
 
+   /* Record loaded modules on the session for future cache hits */
+   if (session) {
+      record_loaded_modules(session->visual_modules_loaded, sizeof(session->visual_modules_loaded),
+                            value);
+   }
    return content;
 }
 

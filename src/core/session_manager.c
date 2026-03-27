@@ -278,6 +278,7 @@ static session_t *session_alloc(void) {
    // Initialize active tool tracking
    session->active_tool_count = 0;
    session->pending_visual = NULL;
+   session->visual_modules_loaded[0] = '\0';
 
    // Initialize metrics tracker (db_id = -1 means not yet saved to DB)
    session->metrics.db_id = -1;
@@ -1284,6 +1285,9 @@ void session_clear_history(session_t *session) {
    if (!session->conversation_history) {
       LOG_ERROR("Failed to create new conversation history array");
    }
+
+   // Clear visual guideline cache — LLM no longer has them in context
+   session->visual_modules_loaded[0] = '\0';
 
    pthread_mutex_unlock(&session->history_mutex);
 }
