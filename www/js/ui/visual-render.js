@@ -508,10 +508,56 @@
       });
    }
 
+   /**
+    * Show a progress placeholder while a visual is being generated.
+    * Called when visual_progress_start arrives from the server.
+    */
+   function showVisualProgress(payload) {
+      var sEntry = DawnState.streamingState.entryElement;
+      if (!sEntry) return;
+
+      // Finalize current .text div with markdown (same split as visual arrival)
+      if (DawnState.streamingState.textElement && DawnState.streamingState.content) {
+         DawnState.streamingState.textElement.innerHTML = DawnFormat.markdown(
+            DawnState.streamingState.content
+         );
+      }
+
+      // Create placeholder card
+      var card = document.createElement('div');
+      card.className = 'dawn-visual-progress';
+      card.setAttribute('data-tool-id', payload.tool_id || '');
+      card.dataset.startTime = Date.now();
+      card.innerHTML =
+         '<div class="dawn-visual-progress-title">Generating visual\u2026</div>' +
+         '<div class="dawn-visual-progress-time">0s</div>';
+      sEntry.appendChild(card);
+
+      // Tick elapsed time every second
+      card._progressTimer = setInterval(function () {
+         var elapsed = Math.round((Date.now() - parseInt(card.dataset.startTime)) / 1000);
+         var timeEl = card.querySelector('.dawn-visual-progress-time');
+         if (timeEl) timeEl.textContent = elapsed + 's';
+      }, 1000);
+
+      // Create new .text div for post-progress streaming
+      var newTextEl = document.createElement('div');
+      newTextEl.className = 'text';
+      sEntry.appendChild(newTextEl);
+
+      DawnState.streamingState.preVisualContent =
+         (DawnState.streamingState.preVisualContent || '') + DawnState.streamingState.content;
+      DawnState.streamingState.content = '';
+      DawnState.streamingState.textElement = newTextEl;
+
+      DawnElements.transcript.scrollTop = DawnElements.transcript.scrollHeight;
+   }
+
    global.DawnVisualRender = {
       init: init,
       extractVisuals: extractVisuals,
       renderVisuals: renderVisuals,
       createFrame: createVisualFrame,
+      showProgress: showVisualProgress,
    };
 })(window);

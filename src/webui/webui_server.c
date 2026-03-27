@@ -5043,6 +5043,22 @@ void webui_send_reasoning_summary(session_t *session, int reasoning_tokens) {
             reasoning_tokens, session->session_id);
 }
 
+void webui_send_session_json(session_t *session, const char *json_str) {
+   if (!session || session->type != SESSION_TYPE_WEBUI || !json_str) {
+      return;
+   }
+
+   ws_response_t resp = { 0 };
+   resp.session = session;
+   resp.type = WS_RESP_JSON;
+   resp.generic_json.json = strdup(json_str);
+   if (!resp.generic_json.json) {
+      LOG_ERROR("WebUI: Failed to allocate JSON response string");
+      return;
+   }
+   queue_response(&resp);
+}
+
 void webui_send_conversation_reset(session_t *session) {
    if (!session || session->type != SESSION_TYPE_WEBUI) {
       return;

@@ -792,6 +792,19 @@ static void parse_claude_event(llm_stream_context_t *ctx, const char *event_data
 
                LOG_INFO("Claude: Starting tool_use block: %s (id=%s)",
                         ctx->provider.claude.tool_name, ctx->provider.claude.tool_id);
+
+               /* Visual progress: notify frontend when render_visual starts */
+               if (strcmp(ctx->provider.claude.tool_name, "render_visual") == 0) {
+                  ctx->provider.claude.visual_progress_active = 1;
+                  if (has_ws_session) {
+                     char json_buf[384];
+                     snprintf(json_buf, sizeof(json_buf),
+                              "{\"type\":\"visual_progress_start\",\"payload\":"
+                              "{\"tool_id\":\"%s\"}}",
+                              ctx->provider.claude.tool_id);
+                     webui_send_session_json(ws_session, json_buf);
+                  }
+               }
             }
          }
       }
@@ -863,6 +876,11 @@ static void parse_claude_event(llm_stream_context_t *ctx, const char *event_data
                      }
                   }
                }
+
+               /* Note: visual_progress_update was removed — Claude streams tool args
+                * in bursts (not smoothly), so byte count and title extraction arrive
+                * too late to provide meaningful progress. The placeholder with pulsing
+                * dot + client-side timer is the best UX for this API constraint. */
             } else if (strcmp(delta_type, "signature_delta") == 0 &&
                        ctx->provider.claude.thinking_block_active) {
                // Accumulate signature for thinking block (required when sending back to Claude)
@@ -901,6 +919,11 @@ static void parse_claude_event(llm_stream_context_t *ctx, const char *event_data
          if (has_ws_session) {
             webui_send_thinking_end(ws_session, ctx->thinking_size > 0);
          }
+      }
+
+      // Reset visual progress tracking
+      if (ctx->provider.claude.visual_progress_active) {
+         ctx->provider.claude.visual_progress_active = 0;
       }
 
       // If we were in a tool_use block, finalize it

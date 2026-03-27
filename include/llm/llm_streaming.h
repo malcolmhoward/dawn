@@ -103,6 +103,9 @@ typedef struct {
    char tool_args[LLM_TOOLS_ARGS_LEN]; /**< Accumulated partial_json */
    size_t tool_args_len;               /**< Length of accumulated args */
 
+   /* Visual progress tracking (render_visual tool) */
+   int visual_progress_active; /**< Notify frontend when render_visual generation starts */
+
    /* Thinking block tracking (extended thinking) */
    int thinking_block_active;                           /**< Currently in a thinking block */
    char thinking_signature[LLM_THINKING_SIGNATURE_MAX]; /**< Accumulated signature from

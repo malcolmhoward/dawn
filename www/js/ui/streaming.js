@@ -209,6 +209,20 @@
          DawnVisualization.stopHesitation();
       }
 
+      // Clean up any stale visual progress placeholders (tool failed before completing)
+      if (DawnState.streamingState.entryElement) {
+         var staleCards =
+            DawnState.streamingState.entryElement.querySelectorAll('.dawn-visual-progress');
+         staleCards.forEach(function (card) {
+            var titleEl = card.querySelector('.dawn-visual-progress-title');
+            if (titleEl) titleEl.textContent = 'Visual generation failed';
+            if (card._progressTimer) {
+               clearInterval(card._progressTimer);
+               card._progressTimer = null;
+            }
+         });
+      }
+
       // Final render to ensure all content is displayed (in case debounce was pending)
       if (DawnState.streamingState.textElement && DawnState.streamingState.content) {
          // Strip self-inserted <thinking> tags from final render

@@ -455,6 +455,19 @@ void webui_send_thinking_end(struct session *session, bool has_content);
 void webui_send_reasoning_summary(struct session *session, int reasoning_tokens);
 
 /**
+ * @brief Send arbitrary JSON message to WebSocket client
+ *
+ * Convenience function for sending generic JSON messages via WS_RESP_JSON.
+ * The input string is strdup'd internally (caller can use a stack buffer).
+ *
+ * @param session Session to send to (must be SESSION_TYPE_WEBUI)
+ * @param json_str Complete JSON string to send
+ *
+ * @note Thread-safe (uses queue_response)
+ */
+void webui_send_session_json(struct session *session, const char *json_str);
+
+/**
  * @brief Send conversation reset notification to WebSocket client
  *
  * Notifies the frontend that the conversation context was reset (e.g., via

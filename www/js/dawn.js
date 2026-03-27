@@ -76,41 +76,53 @@
                   // Tool debug messages - display only, don't save to history
                   DawnTranscript.addEntry(msg.payload.role, msg.payload.text);
                } else if (msg.payload.role === 'visual') {
-                  // Split the streaming entry: finalize pre-visual text, render
-                  // the visual, then create a new .text div for post-visual text.
-                  // This gives: text → diagram → more text within one entry.
+                  // Render visual inline. If a progress placeholder exists (from
+                  // visual_progress_start), swap it in-place. Otherwise, split the
+                  // streaming entry (text → diagram → more text).
                   if (typeof DawnVisualRender !== 'undefined') {
                      var extracted = DawnVisualRender.extractVisuals(msg.payload.text);
                      if (extracted.visuals.length > 0) {
                         var sEntry = DawnState.streamingState.entryElement;
                         if (sEntry) {
-                           // Finalize the current .text with markdown
-                           if (
-                              DawnState.streamingState.textElement &&
-                              DawnState.streamingState.content
-                           ) {
-                              DawnState.streamingState.textElement.innerHTML = DawnFormat.markdown(
+                           // Check for existing progress placeholder (in-place swap)
+                           var placeholder = sEntry.querySelector('.dawn-visual-progress');
+                           if (placeholder) {
+                              // Placeholder already split the text — just replace it
+                              extracted.visuals.forEach(function (v) {
+                                 var frame = DawnVisualRender.createFrame(v.title, v.type, v.code);
+                                 frame.classList.add('dawn-visual-entering');
+                                 placeholder.parentNode.insertBefore(frame, placeholder);
+                              });
+                              // Clear interval timer and remove placeholder
+                              if (placeholder._progressTimer) {
+                                 clearInterval(placeholder._progressTimer);
+                              }
+                              placeholder.remove();
+                           } else {
+                              // No placeholder — run the full split logic (history replay etc.)
+                              if (
+                                 DawnState.streamingState.textElement &&
                                  DawnState.streamingState.content
-                              );
+                              ) {
+                                 DawnState.streamingState.textElement.innerHTML =
+                                    DawnFormat.markdown(DawnState.streamingState.content);
+                              }
+
+                              extracted.visuals.forEach(function (v) {
+                                 var frame = DawnVisualRender.createFrame(v.title, v.type, v.code);
+                                 sEntry.appendChild(frame);
+                              });
+
+                              var newTextEl = document.createElement('div');
+                              newTextEl.className = 'text';
+                              sEntry.appendChild(newTextEl);
+
+                              DawnState.streamingState.preVisualContent =
+                                 (DawnState.streamingState.preVisualContent || '') +
+                                 DawnState.streamingState.content;
+                              DawnState.streamingState.content = '';
+                              DawnState.streamingState.textElement = newTextEl;
                            }
-
-                           // Append visual frames
-                           extracted.visuals.forEach(function (v) {
-                              var frame = DawnVisualRender.createFrame(v.title, v.type, v.code);
-                              sEntry.appendChild(frame);
-                           });
-
-                           // Create a new .text div for post-visual streaming
-                           var newTextEl = document.createElement('div');
-                           newTextEl.className = 'text';
-                           sEntry.appendChild(newTextEl);
-
-                           // Save pre-visual content, redirect streaming to new div
-                           DawnState.streamingState.preVisualContent =
-                              (DawnState.streamingState.preVisualContent || '') +
-                              DawnState.streamingState.content;
-                           DawnState.streamingState.content = '';
-                           DawnState.streamingState.textElement = newTextEl;
                         }
                         DawnElements.transcript.scrollTop = DawnElements.transcript.scrollHeight;
                      }
@@ -389,6 +401,11 @@
                break;
             case 'reasoning_summary':
                DawnStreaming.handleReasoningSummary(msg.payload);
+               break;
+            case 'visual_progress_start':
+               if (typeof DawnVisualRender !== 'undefined' && DawnVisualRender.showProgress) {
+                  DawnVisualRender.showProgress(msg.payload);
+               }
                break;
             case 'metrics_update':
                DawnMetrics.handleUpdate(msg.payload);
