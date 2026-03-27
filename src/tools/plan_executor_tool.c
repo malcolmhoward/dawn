@@ -36,6 +36,36 @@
 #include "tools/tool_registry.h"
 
 /* =============================================================================
+ * Configuration
+ * ============================================================================= */
+
+#include "tools/toml.h"
+
+typedef struct {
+   int timeout_seconds;
+} plan_executor_config_t;
+
+static plan_executor_config_t s_config = {
+   .timeout_seconds = PLAN_TIMEOUT_DEFAULT_S,
+};
+
+static void plan_executor_parse_config(toml_table_t *table, void *config) {
+   plan_executor_config_t *cfg = (plan_executor_config_t *)config;
+   if (!table) return;
+
+   toml_datum_t timeout = toml_int_in(table, "timeout_seconds");
+   if (timeout.ok) {
+      int val = (int)timeout.u.i;
+      if (val >= 5 && val <= 300) {
+         cfg->timeout_seconds = val;
+      } else {
+         LOG_WARNING("plan_executor: timeout_seconds %d out of range [5-300], using default %d", val,
+                     PLAN_TIMEOUT_DEFAULT_S);
+      }
+   }
+}
+
+/* =============================================================================
  * Forward Declarations
  * ============================================================================= */
 
@@ -52,7 +82,8 @@ static const treg_param_t plan_params[] = {
      .description = "JSON array of plan steps to execute sequentially. "
                     "Each step is an object with 'type' field: "
                     "'call' (execute tool), 'if' (conditional), "
-                    "'loop' (iterate), 'set' (variable), 'log' (output)." },
+                    "'loop' (iterate), 'set' (variable), 'log' (output), "
+                    "'sleep' (pause execution, {\"type\":\"sleep\",\"seconds\":N} where N is 1-300)." },
 };
 
 static const tool_metadata_t plan_executor_metadata = {
@@ -67,6 +98,12 @@ static const tool_metadata_t plan_executor_metadata = {
    .device_type = TOOL_DEVICE_TYPE_GETTER,
    .capabilities = 0,
    .is_getter = true,
+
+   .config = &s_config,
+   .config_size = sizeof(s_config),
+   .config_parser = plan_executor_parse_config,
+   .config_section = "plan_executor",
+
    .callback = plan_executor_callback,
 };
 
@@ -108,7 +145,7 @@ static char *plan_executor_callback(const char *action, char *value, int *should
 
    /* Initialize execution context */
    plan_context_t ctx = { 0 };
-   ctx.timeout_s = PLAN_TIMEOUT_DEFAULT_S;
+   ctx.timeout_s = s_config.timeout_seconds;
    clock_gettime(CLOCK_MONOTONIC, &ctx.start_time);
 
    /* Notify: plan start */

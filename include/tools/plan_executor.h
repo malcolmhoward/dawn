@@ -52,6 +52,7 @@ extern "C" {
 #define PLAN_MAX_VARS 32            /* Max variables in variable store */
 #define PLAN_MAX_DEPTH 5            /* Max nesting depth (if/loop) */
 #define PLAN_MAX_PLAN_SIZE 16384    /* Max plan JSON size in bytes */
+#define PLAN_MAX_SLEEP_S 300        /* Max sleep duration per step (5 minutes) */
 #define PLAN_VAR_NAME_MAX 32        /* Max variable name length */
 #define PLAN_TIMEOUT_DEFAULT_S 60   /* Default execution timeout */
 

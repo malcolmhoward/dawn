@@ -34,6 +34,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <unistd.h>
 
 #include "logging.h"
 
@@ -549,8 +550,8 @@ static int validate_step_array_depth(struct json_object *steps, int depth) {
 }
 
 static int validate_step_depth(struct json_object *step, int depth) {
-   if (depth > PLAN_MAX_DEPTH)
-      return PLAN_ERR_PARSE;
+   /* Note: depth limit is enforced at execution time (plan_execute_steps),
+    * not during parsing. The parser validates structure only. */
    if (!json_object_is_type(step, json_type_object))
       return PLAN_ERR_PARSE;
 
@@ -572,6 +573,16 @@ static int validate_step_depth(struct json_object *step, int depth) {
          return PLAN_ERR_PARSE;
       if (!plan_validate_var_name(var))
          return PLAN_ERR_INVALID_VAR;
+      return PLAN_OK;
+   }
+
+   if (strcmp(type, "sleep") == 0) {
+      struct json_object *sec_obj = jobj_get(step, "seconds");
+      if (!sec_obj)
+         return PLAN_ERR_PARSE;
+      int seconds = json_object_get_int(sec_obj);
+      if (seconds < 1 || seconds > PLAN_MAX_SLEEP_S)
+         return PLAN_ERR_PARSE;
       return PLAN_OK;
    }
 
@@ -663,6 +674,36 @@ int plan_parse(const char *json, struct json_object **out) {
 /* =============================================================================
  * Step Executors
  * ============================================================================= */
+
+static int plan_step_sleep(plan_context_t *ctx, struct json_object *step) {
+   struct json_object *sec_obj = jobj_get(step, "seconds");
+   if (!sec_obj)
+      return PLAN_ERR_PARSE;
+
+   int seconds = json_object_get_int(sec_obj);
+   if (seconds < 1)
+      seconds = 1;
+   if (seconds > PLAN_MAX_SLEEP_S)
+      seconds = PLAN_MAX_SLEEP_S;
+
+   LOG_INFO("plan_executor: sleeping %d seconds", seconds);
+   plan_send_progress("step_start", ctx->call_index, "sleep", 0, 0, 0, NULL);
+
+   /* Sleep in 1-second intervals to check for timeout */
+   for (int i = 0; i < seconds; i++) {
+      if (check_timeout(ctx)) {
+         LOG_WARNING("plan_executor: timeout during sleep at %d/%d seconds", i, seconds);
+         snprintf(ctx->error, sizeof(ctx->error), "Plan timeout (%ds) exceeded during sleep",
+                  ctx->timeout_s);
+         return PLAN_ERR_TIMEOUT;
+      }
+      sleep(1);
+   }
+
+   plan_send_progress("step_complete", ctx->call_index, "sleep", 0, 0, 0, NULL);
+   ctx->call_index++;
+   return PLAN_OK;
+}
 
 static int plan_step_log(plan_context_t *ctx, struct json_object *step) {
    const char *msg = jobj_get_string(step, "message");
@@ -943,6 +984,8 @@ int plan_execute_steps(plan_context_t *ctx, struct json_object *steps) {
          rc = plan_step_if(ctx, step);
       else if (strcmp(type, "loop") == 0)
          rc = plan_step_loop(ctx, step);
+      else if (strcmp(type, "sleep") == 0)
+         rc = plan_step_sleep(ctx, step);
 
       /* Safety violations abort the plan */
       if (rc != PLAN_OK) {

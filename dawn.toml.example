@@ -397,6 +397,10 @@
 # Scheduler (timers, alarms, reminders)
 # =============================================================================
 
+[plan_executor]
+# timeout_seconds = 60             # Maximum execution time for multi-step plans
+                                   # Range: 5-300
+
 [scheduler]
 # enabled = true                  # Enable scheduler system
 # default_snooze_minutes = 10     # Default snooze duration
