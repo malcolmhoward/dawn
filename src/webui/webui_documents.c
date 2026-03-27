@@ -38,23 +38,10 @@
 
 #include "config/dawn_config.h"
 #include "logging.h"
-#include "tools/html_parser.h"
+#include "tools/document_extract.h"
 #include "tools/tfidf_summarizer.h"
 #include "utils/string_utils.h"
 #include "webui/webui_internal.h"
-
-#ifdef HAVE_MUPDF
-#include <mupdf/fitz.h>
-#endif
-
-#ifdef HAVE_LIBZIP
-#include <zip.h>
-#endif
-
-#if defined(HAVE_LIBZIP) && defined(HAVE_LIBXML2)
-#include <libxml/parser.h>
-#include <libxml/tree.h>
-#endif
 
 /* =============================================================================
  * Session Data (forward-declared in header)
@@ -73,25 +60,6 @@ struct document_upload_session {
    size_t max_extracted_size; /* bytes */
    int max_pages;
 };
-
-/* =============================================================================
- * Allowed Extensions
- * ============================================================================= */
-
-static const char *allowed_extensions[] = {
-   ".txt",  ".md",   ".csv",  ".json", ".c",   ".h",   ".cpp", ".py",  ".js",    ".ts",
-   ".sh",   ".toml", ".yaml", ".yml",  ".xml", ".log", ".cfg", ".ini", ".conf",  ".rs",
-   ".go",   ".java", ".rb",   ".html", ".htm", ".css", ".sql", ".mk",  ".cmake",
-#ifdef HAVE_MUPDF
-   ".pdf",
-#endif
-#if defined(HAVE_LIBZIP) && defined(HAVE_LIBXML2)
-   ".docx",
-#endif
-};
-
-static const size_t allowed_extensions_count = sizeof(allowed_extensions) /
-                                               sizeof(allowed_extensions[0]);
 
 /* =============================================================================
  * Internal Helpers
@@ -132,34 +100,6 @@ static int send_doc_error(struct lws *wsi, int status, const char *error) {
 
    json_object_put(err_obj);
    return -1; /* Close connection */
-}
-
-/**
- * @brief Check if a file extension is in the allowed list (case-insensitive)
- */
-static bool is_extension_allowed(const char *ext) {
-   if (!ext || *ext == '\0')
-      return false;
-
-   for (size_t i = 0; i < allowed_extensions_count; i++) {
-      if (strcasecmp(ext, allowed_extensions[i]) == 0)
-         return true;
-   }
-   return false;
-}
-
-/**
- * @brief Get file extension from filename (including the dot)
- */
-static const char *get_extension(const char *filename) {
-   if (!filename)
-      return NULL;
-
-   const char *dot = strrchr(filename, '.');
-   if (!dot || dot == filename)
-      return NULL;
-
-   return dot;
 }
 
 /**
@@ -296,301 +236,6 @@ static bool parse_doc_multipart(document_upload_session_t *session) {
 
    return true;
 }
-
-/* =============================================================================
- * Format Extraction: PDF (MuPDF)
- * ============================================================================= */
-
-#ifdef HAVE_MUPDF
-/**
- * @brief Extract text from PDF using MuPDF's in-memory buffer API
- *
- * Security: fz_try/fz_catch for longjmp safety, 32MB allocation ceiling,
- * page count cap, output size cap. No temp files.
- */
-static char *extract_pdf_text(const char *data,
-                              size_t data_len,
-                              size_t *out_len,
-                              int *out_page_count,
-                              size_t max_extracted,
-                              int max_pages) {
-   *out_len = 0;
-   *out_page_count = 0;
-
-   /* Validate magic bytes: PDF starts with %PDF- */
-   if (data_len < 5 || memcmp(data, "%PDF-", 5) != 0) {
-      LOG_WARNING("webui_documents: PDF magic bytes not found");
-      return NULL;
-   }
-
-   fz_context *ctx = fz_new_context(NULL, NULL, DOC_MUPDF_MEM_LIMIT);
-   if (!ctx) {
-      LOG_ERROR("webui_documents: fz_new_context failed");
-      return NULL;
-   }
-
-   char *result = NULL;
-   fz_stream *stm = NULL;
-   fz_document *doc = NULL;
-   fz_buffer *out = NULL;
-   fz_output *output = NULL;
-
-   fz_try(ctx) {
-      fz_register_document_handlers(ctx);
-
-      stm = fz_open_memory(ctx, (const unsigned char *)data, data_len);
-      doc = fz_open_document_with_stream(ctx, "application/pdf", stm);
-
-      int pages = fz_count_pages(ctx, doc);
-      *out_page_count = pages;
-
-      if (pages > max_pages)
-         pages = max_pages;
-
-      out = fz_new_buffer(ctx, 4096);
-      output = fz_new_output_with_buffer(ctx, out);
-
-      for (int i = 0; i < pages; i++) {
-         fz_stext_page *stext = fz_new_stext_page_from_page_number(ctx, doc, i, NULL);
-         fz_print_stext_page_as_text(ctx, output, stext);
-         fz_drop_stext_page(ctx, stext);
-
-         /* Check output size cap */
-         size_t current = fz_buffer_storage(ctx, out, NULL);
-         if (current > max_extracted)
-            break;
-      }
-
-      fz_close_output(ctx, output);
-      fz_drop_output(ctx, output);
-      output = NULL;
-
-      /* Extract result */
-      unsigned char *text_data;
-      size_t len = fz_buffer_storage(ctx, out, &text_data);
-      if (len > max_extracted)
-         len = max_extracted;
-
-      result = malloc(len + 1);
-      if (result) {
-         memcpy(result, text_data, len);
-         result[len] = '\0';
-         *out_len = len;
-      }
-   }
-   fz_always(ctx) {
-      if (output)
-         fz_drop_output(ctx, output);
-      if (out)
-         fz_drop_buffer(ctx, out);
-      if (doc)
-         fz_drop_document(ctx, doc);
-      if (stm)
-         fz_drop_stream(ctx, stm);
-   }
-   fz_catch(ctx) {
-      LOG_ERROR("webui_documents: PDF extraction failed: %s", fz_caught_message(ctx));
-      free(result);
-      result = NULL;
-      *out_len = 0;
-   }
-
-   fz_drop_context(ctx);
-   return result;
-}
-#endif /* HAVE_MUPDF */
-
-/* =============================================================================
- * Format Extraction: DOCX (libzip + libxml2)
- * ============================================================================= */
-
-#if defined(HAVE_LIBZIP) && defined(HAVE_LIBXML2)
-
-/* Dynamic text buffer for XML walker output */
-typedef struct {
-   char *buf;
-   size_t len;
-   size_t cap;
-   size_t max_cap; /* Extraction limit snapshot from config */
-} text_buf_t;
-
-static void text_buf_append(text_buf_t *tb, const char *str, size_t slen) {
-   if (tb->len + slen >= tb->max_cap)
-      return; /* Output cap reached */
-
-   if (tb->len + slen >= tb->cap) {
-      size_t new_cap = tb->cap * 2;
-      if (new_cap < tb->len + slen + 1)
-         new_cap = tb->len + slen + 1;
-      if (new_cap > tb->max_cap + 1)
-         new_cap = tb->max_cap + 1;
-      char *new_buf = realloc(tb->buf, new_cap);
-      if (!new_buf)
-         return;
-      tb->buf = new_buf;
-      tb->cap = new_cap;
-   }
-   memcpy(tb->buf + tb->len, str, slen);
-   tb->len += slen;
-   tb->buf[tb->len] = '\0';
-}
-
-/**
- * @brief Recursively walk OOXML nodes extracting text from <w:t> elements
- *
- * Handles paragraphs (double newline), line breaks, tabs, and table cells.
- */
-static void docx_walk_xml(xmlNode *node, text_buf_t *tb) {
-   for (xmlNode *cur = node; cur; cur = cur->next) {
-      if (tb->len >= tb->max_cap)
-         return;
-
-      if (cur->type == XML_ELEMENT_NODE) {
-         const char *name = (const char *)cur->name;
-
-         /* Recurse into children first */
-         docx_walk_xml(cur->children, tb);
-
-         /* Structural whitespace after processing children */
-         if (strcmp(name, "p") == 0) {
-            text_buf_append(tb, "\n\n", 2);
-         } else if (strcmp(name, "br") == 0) {
-            text_buf_append(tb, "\n", 1);
-         } else if (strcmp(name, "tab") == 0) {
-            text_buf_append(tb, "\t", 1);
-         } else if (strcmp(name, "tc") == 0) {
-            text_buf_append(tb, "\t", 1);
-         } else if (strcmp(name, "tr") == 0) {
-            text_buf_append(tb, "\n", 1);
-         }
-      } else if (cur->type == XML_TEXT_NODE && cur->content) {
-         /* Only collect text from <w:t> nodes */
-         if (cur->parent && cur->parent->name &&
-             strcmp((const char *)cur->parent->name, "t") == 0) {
-            size_t tlen = strlen((const char *)cur->content);
-            text_buf_append(tb, (const char *)cur->content, tlen);
-         }
-      }
-   }
-}
-
-/**
- * @brief Extract text from DOCX (ZIP + OOXML) using libzip + libxml2
- *
- * Security: ZIP bomb protection (read loop size cap), XXE prevention
- * (no entity expansion, no DTD loading, no network access), freep=0
- * on zip_source_buffer_create.
- */
-static char *extract_docx_text(const char *data,
-                               size_t data_len,
-                               size_t *out_len,
-                               size_t max_extracted) {
-   *out_len = 0;
-
-   /* Validate magic bytes: ZIP starts with PK\x03\x04 */
-   if (data_len < 4 || memcmp(data, "PK\x03\x04", 4) != 0) {
-      LOG_WARNING("webui_documents: DOCX magic bytes not found (not a ZIP)");
-      return NULL;
-   }
-
-   zip_error_t zerr;
-   zip_error_init(&zerr);
-
-   /* freep=0: we manage the buffer, don't let libzip free it */
-   zip_source_t *src = zip_source_buffer_create(data, data_len, 0, &zerr);
-   if (!src) {
-      LOG_ERROR("webui_documents: zip_source_buffer_create failed: %s", zip_error_strerror(&zerr));
-      zip_error_fini(&zerr);
-      return NULL;
-   }
-
-   zip_t *za = zip_open_from_source(src, ZIP_RDONLY, &zerr);
-   if (!za) {
-      LOG_ERROR("webui_documents: zip_open_from_source failed: %s", zip_error_strerror(&zerr));
-      zip_source_free(src);
-      zip_error_fini(&zerr);
-      return NULL;
-   }
-   zip_error_fini(&zerr);
-
-   /* Open word/document.xml */
-   zip_file_t *zf = zip_fopen(za, "word/document.xml", 0);
-   if (!zf) {
-      LOG_WARNING("webui_documents: word/document.xml not found in DOCX");
-      zip_close(za);
-      return NULL;
-   }
-
-   /* Read with decompression size limit (ZIP bomb protection) */
-   char *xml_buf = malloc(max_extracted + 1);
-   if (!xml_buf) {
-      zip_fclose(zf);
-      zip_close(za);
-      return NULL;
-   }
-
-   size_t total = 0;
-   zip_int64_t n;
-   while ((n = zip_fread(zf, xml_buf + total, max_extracted - total)) > 0) {
-      total += (size_t)n;
-      if (total >= max_extracted)
-         break;
-   }
-   xml_buf[total] = '\0';
-   zip_fclose(zf);
-   zip_close(za);
-
-   if (total == 0) {
-      free(xml_buf);
-      return NULL;
-   }
-
-   /* Parse XML with full XXE prevention */
-   xmlParserCtxtPtr parser = xmlNewParserCtxt();
-   if (!parser) {
-      free(xml_buf);
-      return NULL;
-   }
-
-   /* Defensive flags: no network, no warnings/errors to stdout */
-   int flags = XML_PARSE_NONET | XML_PARSE_NOWARNING | XML_PARSE_NOERROR;
-
-   xmlDocPtr xmldoc = xmlCtxtReadMemory(parser, xml_buf, (int)total, NULL, NULL, flags);
-   free(xml_buf);
-
-   if (!xmldoc) {
-      LOG_ERROR("webui_documents: DOCX XML parse failed");
-      xmlFreeParserCtxt(parser);
-      return NULL;
-   }
-
-   /* Reject DTDs entirely (legitimate DOCX never has one — XXE prevention) */
-   if (xmldoc->intSubset) {
-      LOG_WARNING("webui_documents: DOCX XML contains DTD, rejecting (XXE prevention)");
-      xmlFreeDoc(xmldoc);
-      xmlFreeParserCtxt(parser);
-      return NULL;
-   }
-
-   /* Walk XML tree to extract text */
-   xmlNode *root = xmlDocGetRootElement(xmldoc);
-   text_buf_t tb = { .buf = malloc(4096), .len = 0, .cap = 4096, .max_cap = max_extracted };
-   if (!tb.buf) {
-      xmlFreeDoc(xmldoc);
-      xmlFreeParserCtxt(parser);
-      return NULL;
-   }
-   tb.buf[0] = '\0';
-
-   docx_walk_xml(root, &tb);
-
-   xmlFreeDoc(xmldoc);
-   xmlFreeParserCtxt(parser);
-
-   *out_len = tb.len;
-   return tb.buf;
-}
-#endif /* HAVE_LIBZIP && HAVE_LIBXML2 */
 
 /* =============================================================================
  * Send JSON Success Response
@@ -870,15 +515,15 @@ int webui_documents_handle_upload_complete(struct lws *wsi, document_upload_sess
    }
 
    /* Validate filename has an allowed extension */
-   const char *ext = get_extension(session->filename);
-   if (!is_extension_allowed(ext)) {
+   const char *ext = document_get_extension(session->filename);
+   if (!document_extension_allowed(ext)) {
       LOG_WARNING("webui_documents: rejected upload with extension: %s (file: %s)",
                   ext ? ext : "(none)", session->filename);
       webui_documents_session_free(session);
       return send_doc_error(wsi, HTTP_STATUS_UNSUPPORTED_MEDIA_TYPE, "Unsupported file type");
    }
 
-   /* Check extracted content size */
+   /* Check raw content size */
    if (session->content_len > session->max_file_size) {
       char err_msg[64];
       snprintf(err_msg, sizeof(err_msg), "File too large (max %zu KB)",
@@ -887,85 +532,30 @@ int webui_documents_handle_upload_complete(struct lws *wsi, document_upload_sess
       return send_doc_error(wsi, HTTP_STATUS_REQ_ENTITY_TOO_LARGE, err_msg);
    }
 
-   /* =========================================================================
-    * Format-specific text extraction (PDF, DOCX, HTML)
-    * Runs BEFORE null-termination and UTF-8 sanitization since extractors
-    * produce their own clean text output.
-    * ========================================================================= */
-
-#ifdef HAVE_MUPDF
-   if (strcasecmp(ext, ".pdf") == 0) {
-      size_t extracted_len = 0;
-      int page_count = 0;
-      char *extracted = extract_pdf_text(session->content_buf, session->content_len, &extracted_len,
-                                         &page_count, session->max_extracted_size,
-                                         session->max_pages);
-      if (!extracted || extracted_len == 0) {
-         free(extracted);
-         webui_documents_session_free(session);
-         return send_doc_error(wsi, 422, "Could not extract text from PDF");
-      }
-      free(session->content_buf);
-      session->content_buf = extracted;
-      session->content_len = extracted_len;
-      session->content_cap = extracted_len + 1;
-      session->page_count = page_count;
-      goto extracted;
-   }
-#endif
-
-#if defined(HAVE_LIBZIP) && defined(HAVE_LIBXML2)
-   if (strcasecmp(ext, ".docx") == 0) {
-      size_t extracted_len = 0;
-      char *extracted = extract_docx_text(session->content_buf, session->content_len,
-                                          &extracted_len, session->max_extracted_size);
-      if (!extracted || extracted_len == 0) {
-         free(extracted);
-         webui_documents_session_free(session);
-         return send_doc_error(wsi, 422, "Could not extract text from DOCX");
-      }
-      free(session->content_buf);
-      session->content_buf = extracted;
-      session->content_len = extracted_len;
-      session->content_cap = extracted_len + 1;
-      goto extracted;
-   }
-#endif
-
-   if (strcasecmp(ext, ".html") == 0 || strcasecmp(ext, ".htm") == 0) {
-      /* Null-terminate for html_extract_text */
-      if (session->content_len < session->content_cap) {
-         session->content_buf[session->content_len] = '\0';
-      } else {
-         char *new_buf = realloc(session->content_buf, session->content_len + 1);
-         if (!new_buf) {
-            webui_documents_session_free(session);
-            return send_doc_error(wsi, HTTP_STATUS_INTERNAL_SERVER_ERROR,
-                                  "Memory allocation failed");
-         }
-         session->content_buf = new_buf;
-         session->content_cap = session->content_len + 1;
-         session->content_buf[session->content_len] = '\0';
-      }
-
-      char *extracted = NULL;
-      int rc = html_extract_text(session->content_buf, session->content_len, &extracted);
-      if (rc == HTML_PARSE_SUCCESS && extracted) {
-         free(session->content_buf);
-         session->content_buf = extracted;
-         session->content_len = strlen(extracted);
-         session->content_cap = session->content_len + 1;
-      }
-      /* If HTML extraction fails, fall through with raw content */
-      goto extracted;
+   /* Extract text using shared document extraction module */
+   doc_extract_result_t extract = { 0 };
+   int extract_rc = document_extract_from_buffer(session->content_buf, session->content_len, ext,
+                                                 session->max_extracted_size, session->max_pages,
+                                                 &extract);
+   if (extract_rc != DOC_EXTRACT_SUCCESS) {
+      const char *err_msg = document_extract_error_string(extract_rc);
+      LOG_WARNING("webui_documents: extraction failed for %s: %s", session->filename, err_msg);
+      webui_documents_session_free(session);
+      return send_doc_error(wsi, 422, err_msg);
    }
 
-extracted:
+   /* Replace raw content with extracted text */
+   free(session->content_buf);
+   session->content_buf = extract.text;
+   session->content_len = extract.text_len;
+   session->content_cap = extract.text_len + 1;
+   if (extract.page_count >= 0)
+      session->page_count = extract.page_count;
+
    /* Null-terminate for string operations */
    if (session->content_len < session->content_cap) {
       session->content_buf[session->content_len] = '\0';
    } else {
-      /* Need to grow by 1 for null terminator */
       char *new_buf = realloc(session->content_buf, session->content_len + 1);
       if (!new_buf) {
          webui_documents_session_free(session);

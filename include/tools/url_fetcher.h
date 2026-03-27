@@ -133,6 +133,26 @@ int url_is_valid(const char *url);
 int url_is_blocked(const char *url);
 
 /**
+ * @brief Check if URL is blocked and resolve DNS, returning the resolved IP
+ *
+ * Same as url_is_blocked but also performs DNS resolution and returns the
+ * resolved IP address for use with CURLOPT_RESOLVE (DNS pinning to prevent
+ * TOCTOU/DNS rebinding attacks).
+ *
+ * @param url URL to check
+ * @param resolved_ip Buffer for resolved IP (at least INET6_ADDRSTRLEN bytes, can be NULL)
+ * @param host_out Buffer for extracted hostname (can be NULL)
+ * @param host_out_size Size of host_out buffer
+ * @param port_out Receives extracted port number (can be NULL)
+ * @return 1 if URL is blocked, 0 if allowed
+ */
+int url_is_blocked_with_resolve(const char *url,
+                                char *resolved_ip,
+                                char *host_out,
+                                size_t host_out_size,
+                                int *port_out);
+
+/**
  * @brief Add a URL or CIDR network to the whitelist
  *
  * Whitelisted URLs/networks are allowed even if they would normally be blocked

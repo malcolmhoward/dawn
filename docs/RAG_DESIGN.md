@@ -22,8 +22,10 @@ Core system implemented as designed with these additions/deviations:
    - Global upload checkbox below dropzone (admin-only)
    - Audit logging for admin cross-user delete and global toggle operations
    - `user_id` only sent in list responses when admin "All Users" view is active
-- **Filesystem watch directory**: Designed but not yet implemented. WebUI upload is the only ingestion path.
+- **Filesystem watch directory**: Designed but not yet implemented.
 - **`embedding_provider_t` typedef** moved from `memory_embeddings.h` to `core/embedding_engine.h` for shared access.
+- **`document_index` tool added** (March 26, 2026): LLM can autonomously download and index documents from URLs. Supports PDF, DOCX, HTML, plain text, markdown, and code files. Includes SSRF-safe redirect handling with DNS pinning, per-user rate limiting (5/min), FlareSolverr fallback for HTTP/2 errors and JS-rendered pages, filename sanitization, and audit logging. Extraction code refactored from `webui_documents.c` into shared `document_extract` module; indexing pipeline refactored from `webui_doc_library.c` into shared `document_index_pipeline` module. 81 unit tests in `test_document_extract.c`.
+- **Three ingestion paths**: WebUI upload (manual), filesystem watch (not yet implemented), and LLM-driven URL indexing (`document_index` tool).
 
 ---
 

@@ -51,7 +51,8 @@ static plan_executor_config_t s_config = {
 
 static void plan_executor_parse_config(toml_table_t *table, void *config) {
    plan_executor_config_t *cfg = (plan_executor_config_t *)config;
-   if (!table) return;
+   if (!table)
+      return;
 
    toml_datum_t timeout = toml_int_in(table, "timeout_seconds");
    if (timeout.ok) {
@@ -59,8 +60,8 @@ static void plan_executor_parse_config(toml_table_t *table, void *config) {
       if (val >= 5 && val <= 300) {
          cfg->timeout_seconds = val;
       } else {
-         LOG_WARNING("plan_executor: timeout_seconds %d out of range [5-300], using default %d", val,
-                     PLAN_TIMEOUT_DEFAULT_S);
+         LOG_WARNING("plan_executor: timeout_seconds %d out of range [5-300], using default %d",
+                     val, PLAN_TIMEOUT_DEFAULT_S);
       }
    }
 }
@@ -79,11 +80,12 @@ static const treg_param_t plan_params[] = {
    { .name = "plan",
      .type = TOOL_PARAM_TYPE_STRING,
      .required = true,
-     .description = "JSON array of plan steps to execute sequentially. "
-                    "Each step is an object with 'type' field: "
-                    "'call' (execute tool), 'if' (conditional), "
-                    "'loop' (iterate), 'set' (variable), 'log' (output), "
-                    "'sleep' (pause execution, {\"type\":\"sleep\",\"seconds\":N} where N is 1-300)." },
+     .description =
+         "JSON array of plan steps to execute sequentially. "
+         "Each step is an object with 'type' field: "
+         "'call' (execute tool), 'if' (conditional), "
+         "'loop' (iterate), 'set' (variable), 'log' (output), "
+         "'sleep' (pause execution, {\"type\":\"sleep\",\"seconds\":N} where N is 1-300)." },
 };
 
 static const tool_metadata_t plan_executor_metadata = {

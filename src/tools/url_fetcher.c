@@ -1034,6 +1034,15 @@ static int is_private_ipv6(const char *ip) {
    if (memcmp(&addr, unspec, 16) == 0)
       return 1;
 
+   // ::ffff:0:0/96 (IPv4-mapped) — extract embedded IPv4 and check
+   static const unsigned char v4mapped_prefix[12] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF };
+   if (memcmp(&addr, v4mapped_prefix, 12) == 0) {
+      char v4_str[INET_ADDRSTRLEN];
+      snprintf(v4_str, sizeof(v4_str), "%u.%u.%u.%u", addr.s6_addr[12], addr.s6_addr[13],
+               addr.s6_addr[14], addr.s6_addr[15]);
+      return is_private_ipv4(v4_str);
+   }
+
    return 0;
 }
 
@@ -1101,11 +1110,11 @@ static int extract_host_port(const char *url, char *host, size_t host_size, int 
  * @param port_out Output for port number (optional, can be NULL)
  * @return 1 if blocked, 0 if allowed
  */
-static int url_is_blocked_with_resolve(const char *url,
-                                       char *resolved_ip,
-                                       char *host_out,
-                                       size_t host_out_size,
-                                       int *port_out) {
+int url_is_blocked_with_resolve(const char *url,
+                                char *resolved_ip,
+                                char *host_out,
+                                size_t host_out_size,
+                                int *port_out) {
    if (!url)
       return 1;
 
@@ -1359,11 +1368,22 @@ int url_fetch_content_with_base(const char *url,
          if (is_retryable_curl_error(res) && retry_count < URL_FETCH_MAX_RETRIES) {
             continue;  // Retry with same handle
          }
-         // Non-retryable error - cleanup and return
+         // Non-retryable error - cleanup and try FlareSolverr before giving up
          curl_slist_free_all(headers);
          if (resolve_list)
             curl_slist_free_all(resolve_list);
          curl_easy_cleanup(curl);
+
+         // HTTP/2 errors are often server-side blocking — try FlareSolverr
+         if ((res == CURLE_HTTP2_STREAM || res == CURLE_HTTP2) && flaresolverr_is_enabled()) {
+            LOG_INFO("url_fetcher: HTTP/2 error, trying FlareSolverr fallback");
+            if (try_flaresolverr_fallback(url, base_url, out_content, out_size) ==
+                URL_FETCH_SUCCESS) {
+               return URL_FETCH_SUCCESS;
+            }
+            LOG_WARNING("url_fetcher: FlareSolverr fallback failed for HTTP/2 error");
+         }
+
          return URL_FETCH_ERROR_NETWORK;
       }
 

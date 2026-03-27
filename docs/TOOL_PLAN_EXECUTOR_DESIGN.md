@@ -142,6 +142,20 @@ A plan is a JSON array of **steps**. Each step is an object with a `type` field:
 - The accumulated log output becomes the plan's result returned to the LLM
 - Output is bounded: if the buffer would overflow, the message is truncated with a `[truncated]` marker
 
+#### 6. `sleep` — Pause Execution
+
+```json
+{
+  "type": "sleep",
+  "seconds": 30
+}
+```
+
+- `seconds` (required): Duration to pause in seconds (range 1-300, capped at `PLAN_MAX_SLEEP_S`)
+- Sleeps in 1-second intervals, checking the plan timeout between each
+- If the plan timeout expires during sleep, the plan aborts with a timeout error
+- Use cases: rate-limiting API calls, waiting between device state changes, timed sequences
+
 ### Condition Expressions
 
 Conditions are simple string expressions evaluated against the variable store. Keep the expression language minimal — the LLM can pre-compute complex logic by choosing which plan structure to emit.
@@ -391,7 +405,7 @@ When a task requires multiple tool calls, especially with conditions or dependen
 between results, use the `execute_plan` tool instead of individual tool calls.
 
 Plan format: JSON array of steps.
-Step types: call (execute tool), if (conditional), loop (iterate), set (variable), log (output).
+Step types: call (execute tool), if (conditional), loop (iterate), set (variable), log (output), sleep (pause N seconds).
 
 Example - check and conditionally create:
 {
@@ -651,7 +665,8 @@ static struct json_object *jobj_get(struct json_object *obj, const char *key);
 - [x] Conditional system prompt inclusion (3+ tools enabled)
 - [x] Handle both JSON string and JSON object forms for plan parameter
 - [ ] Test with all LLM providers (Claude, OpenAI, local) — manual testing pending
-- [ ] Configurable timeout via `[llm.tools] plan_timeout` — deferred, uses `PLAN_TIMEOUT_DEFAULT_S` (30s)
+- [x] Configurable timeout via `[plan_executor] timeout_seconds` in dawn.toml (range 5-300, default 60)
+- [x] Sleep step: `{"type": "sleep", "seconds": N}` — pauses 1-300s, checks timeout each second
 
 ### Phase 4: Testing — COMPLETE
 
@@ -669,7 +684,7 @@ static struct json_object *jobj_get(struct json_object *obj, const char *key);
 ### Test Results
 
 ```
-130 assertions across 30 test functions — ALL PASSED
+140 assertions across 30+ test functions — ALL PASSED
 
 Test coverage:
 - Variable name validation (valid patterns, invalid patterns, edge cases)
@@ -703,14 +718,14 @@ Build: `make -C build-debug test_plan_executor && ./build-debug/tests/test_plan_
 |-------|----------|--------|
 | Phase 1: Core executor (includes security controls) | ~2-3 days | COMPLETE |
 | Phase 2: Control flow | ~1 day | COMPLETE |
-| Phase 3: Integration | ~1 day | COMPLETE (config timeout deferred) |
-| Phase 4: Testing | ~1 day | COMPLETE (130/130 unit tests pass) |
+| Phase 3: Integration | ~1 day | COMPLETE (config timeout shipped, sleep step added) |
+| Phase 4: Testing | ~1 day | COMPLETE (140/140 unit tests pass) |
 | **Total** | **~5-6 days** | **Implemented 2026-03-18** |
 
 ## Remaining Work
 
 - [ ] Manual testing with Claude, OpenAI, and local LLM providers
-- [ ] Configurable timeout via `[llm.tools] plan_timeout` config key
+- [x] Configurable timeout via `[plan_executor] timeout_seconds` — shipped
 - [ ] Integration testing with real tool callbacks (scheduler, music, home_assistant)
 
 ## Review Findings Log

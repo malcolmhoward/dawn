@@ -77,7 +77,7 @@ static const char *PLAN_EXECUTOR_PROMPT =
    "When a task requires multiple tool calls, especially with conditions or dependencies\n"
    "between results, use the `execute_plan` tool instead of individual tool calls.\n\n"
    "Plan format: JSON array of steps.\n"
-   "Step types: call (execute tool), if (conditional), loop (iterate), set (variable), log (output).\n\n"
+   "Step types: call (execute tool), if (conditional), loop (iterate), set (variable), log (output), sleep (pause N seconds, 1-300).\n\n"
    "Example - check and conditionally create:\n"
    "{\"plan\": [{\"type\": \"call\", \"tool\": \"scheduler\", \"args\": {\"action\": \"query\", \"type\": \"alarm\"}, \"store\": \"alarms\"}, "
    "{\"type\": \"if\", \"condition\": \"alarms.empty\", \"then\": ["

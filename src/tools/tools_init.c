@@ -85,6 +85,7 @@
 #include "tools/tts_tool.h"
 #endif
 #ifdef DAWN_ENABLE_DOCUMENT_SEARCH_TOOL
+#include "tools/document_index_tool.h"
 #include "tools/document_read.h"
 #include "tools/document_search.h"
 #endif
@@ -244,6 +245,9 @@ int tools_register_all(void) {
    }
    if (document_read_tool_register() != 0) {
       LOG_WARNING("Failed to register document_read tool");
+   }
+   if (document_index_tool_register() != 0) {
+      LOG_WARNING("Failed to register document_index tool");
    }
 #endif
 

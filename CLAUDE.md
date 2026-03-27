@@ -357,9 +357,10 @@ Unit tests in `tests/` (standalone binaries, no framework):
 - `test_sse_parser` — SSE stream parser
 - `test_sentence_buffer` — Sentence boundary detection
 - `test_session_commands` — Thread-local session context
-- `test_plan_executor` — Plan executor DSL parsing, execution, safety limits (130 assertions, 30 tests)
+- `test_plan_executor` — Plan executor DSL parsing, execution, safety limits (140 assertions, 30+ tests)
 - `test_instruction_loader` — Two-step instruction loader file I/O, path traversal, edge cases (42 assertions)
 - `test_wake_word` — Wake word matching, normalization, command extraction
+- `test_document_extract` — Extension validation, Content-Type mapping, extraction, magic bytes, error codes (81 assertions)
 
 Build and run: `make -C build-debug test_scheduler && ./build-debug/tests/test_scheduler`
 
@@ -413,8 +414,13 @@ Manual testing covers:
 - `src/tools/document_db.c`: SQLite operations for documents and chunks
 - `src/tools/document_search.c`: Semantic search tool (hybrid cosine + keyword)
 - `src/tools/document_read.c`: Paginated document reader tool
+- `src/tools/document_index_tool.c`: URL-based document download and indexing tool
+- `include/tools/document_extract.h`: Shared text extraction API (PDF, DOCX, HTML, plain text)
+- `src/tools/document_extract.c`: Format-specific extraction (MuPDF, libzip+libxml2, html_parser)
+- `include/tools/document_index_pipeline.h`: Shared indexing pipeline API (chunk, embed, store)
+- `src/tools/document_index_pipeline.c`: SHA-256 dedup, chunking, embedding, DB storage
 - `src/tools/document_chunker.c`: Text chunking for embedding
-- `src/webui/webui_doc_library.c`: WebUI Document Library endpoints
+- `src/webui/webui_doc_library.c`: WebUI Document Library endpoints (delegates to shared pipeline)
 - `www/js/ui/doc-library.js`: Document Library frontend
 - `www/css/components/doc-library.css`: Document Library styles
 - `docs/RAG_DESIGN.md`: Full design document with implementation notes
@@ -539,6 +545,10 @@ Manual testing covers:
 - Fix: thinking content leak into chat (tool-use fallback + raw `<thinking>` tag stripping)
 - URL fetcher: JSON content type support (`application/json`), summarizer bypass for JSON
 - url_fetch whitelisted for plan executor (`TOOL_CAP_SCHEDULABLE`)
+- RAG self-population: `document_index` LLM tool (URL download, PDF/DOCX/HTML/text extraction, FlareSolverr fallback, SSRF-safe DNS pinning, rate limiting, 81 unit tests)
+- Shared document_extract module (refactored from webui_documents.c) and document_index_pipeline (refactored from webui_doc_library.c)
+- URL fetcher: HTTP/2 FlareSolverr fallback, IPv4-mapped IPv6 SSRF fix
+- Plan executor: sleep step (1-300s), configurable timeout via dawn.toml
 
 ## Code Review Workflow
 

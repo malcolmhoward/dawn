@@ -595,10 +595,12 @@ list(APPEND DAWN_SOURCES
     src/core/scheduler.c
 )
 
-# Document DB and chunker (RAG document search)
+# Document DB, chunker, extraction, and indexing pipeline (RAG document search)
 list(APPEND DAWN_SOURCES
     src/tools/document_db.c
     src/tools/document_chunker.c
+    src/tools/document_extract.c
+    src/tools/document_index_pipeline.c
 )
 
 # Database core + memory subsystem (always compiled — memory works in all modes)

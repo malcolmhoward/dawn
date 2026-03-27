@@ -41,8 +41,8 @@
 typedef struct document_upload_session document_upload_session_t;
 
 /* Document upload limits are now configurable via documents_config_t (dawn_config.h).
- * Use g_config.documents.max_file_size_kb * 1024 etc. at runtime. */
-#define DOC_MUPDF_MEM_LIMIT (32 * 1024 * 1024) /* 32 MB MuPDF allocation ceiling (security) */
+ * Use g_config.documents.max_file_size_kb * 1024 etc. at runtime.
+ * Text extraction moved to tools/document_extract.h (shared with document_index tool). */
 
 /* =============================================================================
  * HTTP Handlers

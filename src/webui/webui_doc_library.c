@@ -27,16 +27,13 @@
 #include "webui/webui_doc_library.h"
 
 #include <json-c/json.h>
-#include <openssl/sha.h>
 #include <string.h>
 #include <time.h>
 
 #include "auth/auth_db.h"
-#include "config/dawn_config.h"
-#include "core/embedding_engine.h"
 #include "logging.h"
-#include "tools/document_chunker.h"
 #include "tools/document_db.h"
+#include "tools/document_index_pipeline.h"
 #include "webui/webui_internal.h"
 
 /* =============================================================================
@@ -184,17 +181,8 @@ void handle_doc_library_delete(ws_connection_t *conn, json_object *payload) {
 }
 
 /* =============================================================================
- * Index Document (chunk + embed + store)
+ * Index Document (delegates to shared pipeline)
  * ============================================================================= */
-
-static void sha256_hex(const char *data, size_t len, char *out_hex) {
-   unsigned char hash[SHA256_DIGEST_LENGTH];
-   SHA256((const unsigned char *)data, len, hash);
-   for (int i = 0; i < SHA256_DIGEST_LENGTH; i++) {
-      sprintf(out_hex + (i * 2), "%02x", hash[i]);
-   }
-   out_hex[SHA256_DIGEST_LENGTH * 2] = '\0';
-}
 
 void handle_doc_library_index(ws_connection_t *conn, json_object *payload) {
    if (!conn_require_auth(conn))
@@ -225,120 +213,31 @@ void handle_doc_library_index(ws_connection_t *conn, json_object *payload) {
    if (is_global && !conn_check_admin_quiet(conn))
       is_global = false;
 
-   size_t text_len = text ? strlen(text) : 0;
-   if (text_len == 0) {
-      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
-      json_object_object_add(resp_payload, "error",
-                             json_object_new_string("Document text is empty"));
-      goto done;
-   }
+   {
+      size_t text_len = text ? strlen(text) : 0;
+      doc_index_result_t result;
+      int rc = document_index_text(conn->auth_user_id, filename, filetype, text, text_len,
+                                   is_global, &result);
 
-   if (text_len > (size_t)g_config.documents.max_index_size_kb * 1024) {
-      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
-      json_object_object_add(resp_payload, "error",
-                             json_object_new_string("Document text exceeds maximum size"));
-      goto done;
-   }
-
-   int user_doc_count = document_db_count_user(conn->auth_user_id);
-   if (user_doc_count >= 0 && user_doc_count >= g_config.documents.max_indexed_documents) {
-      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
-      json_object_object_add(resp_payload, "error",
-                             json_object_new_string("Document limit reached"));
-      goto done;
-   }
-
-   /* Check embedding engine */
-   if (!embedding_engine_available()) {
-      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
-      json_object_object_add(resp_payload, "error",
-                             json_object_new_string("Embedding engine not available"));
-      goto done;
-   }
-
-   /* Compute file hash for dedup */
-   char file_hash[65];
-   sha256_hex(text, text_len, file_hash);
-
-   /* Check for duplicate */
-   int64_t existing = document_db_find_by_hash(file_hash, conn->auth_user_id);
-   if (existing > 0) {
-      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
-      json_object_object_add(resp_payload, "error",
-                             json_object_new_string("Document already indexed"));
-      json_object_object_add(resp_payload, "existing_id", json_object_new_int64(existing));
-      goto done;
-   }
-
-   /* Chunk the text */
-   chunk_config_t chunk_cfg = CHUNK_CONFIG_DEFAULT;
-   chunk_result_t chunks;
-   if (document_chunk_text(text, &chunk_cfg, &chunks) != 0 || chunks.count == 0) {
-      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
-      json_object_object_add(resp_payload, "error",
-                             json_object_new_string("Failed to chunk document text"));
-      goto done;
-   }
-
-   int dims = embedding_engine_dims();
-
-   /* Create document record */
-   int64_t doc_id = document_db_create(conn->auth_user_id, filename, filename, filetype, file_hash,
-                                       chunks.count, is_global);
-   if (doc_id < 0) {
-      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
-      json_object_object_add(resp_payload, "error",
-                             json_object_new_string("Failed to create document record"));
-      chunk_result_free(&chunks);
-      goto done;
-   }
-
-   /* TODO: offload to background thread for large documents */
-   /* Embed and store each chunk */
-   float *emb_buf = malloc((size_t)dims * sizeof(float));
-   int embedded_count = 0;
-   int failed_count = 0;
-
-   if (emb_buf) {
-      for (int i = 0; i < chunks.count; i++) {
-         int out_dims = 0;
-         int rc = embedding_engine_embed(chunks.chunks[i], emb_buf, dims, &out_dims);
-         if (rc != 0 || out_dims != dims) {
-            failed_count++;
-            continue;
+      if (rc != DOC_INDEX_SUCCESS) {
+         json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+         json_object_object_add(resp_payload, "error",
+                                json_object_new_string(result.error_msg[0]
+                                                           ? result.error_msg
+                                                           : document_index_error_string(rc)));
+         if (rc == DOC_INDEX_ERROR_DUPLICATE && result.doc_id > 0) {
+            /* Legacy: WebUI checks for existing_id on duplicate */
          }
-
-         float norm = embedding_engine_l2_norm(emb_buf, dims);
-         int64_t chunk_id = document_db_chunk_create(doc_id, i, chunks.chunks[i], emb_buf, dims,
-                                                     norm);
-         if (chunk_id >= 0) {
-            embedded_count++;
-         } else {
-            failed_count++;
+      } else {
+         json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
+         json_object_object_add(resp_payload, "id", json_object_new_int64(result.doc_id));
+         json_object_object_add(resp_payload, "filename", json_object_new_string(filename));
+         json_object_object_add(resp_payload, "num_chunks", json_object_new_int(result.num_chunks));
+         if (result.failed_chunks > 0) {
+            json_object_object_add(resp_payload, "failed_chunks",
+                                   json_object_new_int(result.failed_chunks));
          }
       }
-      free(emb_buf);
-   } else {
-      /* Memory allocation failed — delete the document record */
-      document_db_delete(doc_id);
-      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
-      json_object_object_add(resp_payload, "error",
-                             json_object_new_string("Memory allocation failed"));
-      chunk_result_free(&chunks);
-      goto done;
-   }
-
-   chunk_result_free(&chunks);
-
-   LOG_INFO("doc_library: indexed '%s' — %d chunks embedded, %d failed%s", filename, embedded_count,
-            failed_count, is_global ? " [GLOBAL]" : "");
-
-   json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
-   json_object_object_add(resp_payload, "id", json_object_new_int64(doc_id));
-   json_object_object_add(resp_payload, "filename", json_object_new_string(filename));
-   json_object_object_add(resp_payload, "num_chunks", json_object_new_int(embedded_count));
-   if (failed_count > 0) {
-      json_object_object_add(resp_payload, "failed_chunks", json_object_new_int(failed_count));
    }
 
 done:

@@ -191,6 +191,31 @@ target_link_libraries(test_memory_embeddings
                       pthread
                       m)
 
+# Test: Document Extract
+# Tests extension validation, Content-Type mapping, plain text extraction, error codes
+add_executable(test_document_extract
+               test_document_extract.c
+               ${SRC_ROOT}/src/tools/document_extract.c
+               ${SRC_ROOT}/src/tools/html_parser.c)
+
+target_include_directories(test_document_extract PRIVATE ${SRC_ROOT}/include)
+target_link_libraries(test_document_extract dawn_common)
+
+# Conditionally link document extraction libraries for the test
+if(MUPDF_FOUND)
+    target_link_libraries(test_document_extract
+        ${MUPDF_LIB} ${MUPDF_THIRD_LIB}
+        mujs gumbo openjp2 jbig2dec jpeg
+        ${HARFBUZZ_LIB} ${FREETYPE2_LIBRARIES} z m)
+    target_compile_definitions(test_document_extract PRIVATE HAVE_MUPDF)
+else()
+    target_link_libraries(test_document_extract m)
+endif()
+if(LIBZIP_FOUND AND LIBXML2_FOUND)
+    target_link_libraries(test_document_extract ${LIBZIP_LIBRARIES} ${LIBXML2_LIBRARIES})
+    target_compile_definitions(test_document_extract PRIVATE HAVE_LIBZIP HAVE_LIBXML2)
+endif()
+
 # Test: Document Chunker
 # Tests paragraph splitting, sentence splitting, overlap, merging, edge cases
 add_executable(test_document_chunker
@@ -273,6 +298,7 @@ add_custom_target(tests
                           test_scheduler
                           test_music_db
                           test_memory_embeddings
+                          test_document_extract
                           test_document_chunker
                           test_document_db
                           test_embedding_engine
