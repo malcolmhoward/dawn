@@ -14,9 +14,9 @@ Both interfaces share the same AI backend (ASR, LLM, TTS).
 
 ## Prerequisites
 
-- **OS**: Ubuntu 22.04+, Debian 12+, or Jetson Linux
+- **OS**: Ubuntu 22.04+, Debian 12+, or Jetson Linux (Raspberry Pi: **Raspberry Pi OS Lite 64-bit** recommended)
 - **RAM**: 4GB minimum (8GB recommended)
-- **Audio**: Microphone and speakers (for local voice interface)
+- **Audio**: Microphone and speakers (for local voice interface; not required for WebUI-only — see [Headless Setup](#headless-setup-no-microphone))
 - **LLM**: Either a cloud API key (OpenAI, Claude, Gemini) or a local LLM server (llama.cpp, Ollama)
 
 ## 1. Install System Dependencies
@@ -33,14 +33,14 @@ sudo apt update && sudo apt install -y \
   meson ninja-build libabsl-dev \
   libmupdf-dev libfreetype-dev libharfbuzz-dev \
   libzip-dev libmujs-dev libgumbo-dev libopenjp2-7-dev libjbig2dec0-dev \
-  libical-dev
+  libical-dev libxml2-dev
 ```
 
 > **Package name note**: On Ubuntu 22.04 (including Jetson Linux R36), the abseil package is `libabsl-dev`. On Ubuntu 24.04+, it may be named `libabseil-dev`. If one isn't found, try the other.
 
 > **Jetson users**: CUDA runtime is pre-installed. For building GPU-accelerated components (ONNX Runtime, Whisper), you may need CUDA development headers. Check with `ls /usr/local/cuda/include/cuda.h`.
 
-> **CMake version**: DAWN presets require CMake 3.21+, but building ONNX Runtime from source requires CMake 3.28+. Check with `cmake --version`. If your system CMake is too old (Ubuntu 22.04 ships 3.22), install a newer version:
+> **CMake version**: DAWN presets require CMake 3.21+, but building ONNX Runtime from source requires CMake 3.28+. Check with `cmake --version`. Debian 13+ and Ubuntu 24.04+ ship recent enough versions. If your system CMake is too old (Ubuntu 22.04 ships 3.22), install a newer version:
 > ```bash
 > # Option 1: Official binary (aarch64)
 > wget https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-linux-aarch64.tar.gz
@@ -85,25 +85,34 @@ cd ..
 
 **Step 3: Install ONNX Runtime**
 
-> **Tip**: Pre-built x86_64 CPU packages are available at [ONNX Runtime releases](https://github.com/microsoft/onnxruntime/releases). See [docs/GETTING_STARTED_SERVER.md](docs/GETTING_STARTED_SERVER.md) for the prebuilt install path. Jetson users must build from source for CUDA support.
+Pre-built packages are available for **x86_64** and **aarch64** (Raspberry Pi, non-CUDA ARM boards). Only Jetson users need to build from source (for CUDA support).
+
+**Option A: Pre-built package (recommended for RPi and x86_64)**
+
+```bash
+# aarch64 (Raspberry Pi 5, etc.)
+wget https://github.com/microsoft/onnxruntime/releases/download/v1.19.2/onnxruntime-linux-aarch64-1.19.2.tgz
+tar xzf onnxruntime-linux-aarch64-1.19.2.tgz
+sudo cp -a onnxruntime-linux-aarch64-1.19.2/lib/libonnxruntime*.so* /usr/local/lib/
+sudo cp onnxruntime-linux-aarch64-1.19.2/include/*.h /usr/local/include/
+sudo ldconfig
+
+# x86_64 — see docs/GETTING_STARTED_SERVER.md for the x86_64 package URL
+```
+
+**Option B: Build from source (Jetson with CUDA)**
 
 > **Important**: Use a release tag (e.g., `v1.19.2`), not the `main` branch. The latest `main` may pull abseil versions that require GCC 12+, which is not available on Ubuntu 22.04.
+
+> **GCC 14 / Debian 13 note**: Building ONNX Runtime v1.19.2 from source on GCC 14+ (Debian 13 Trixie, Ubuntu 25.04+) fails with `-Werror=template-id-cdtor` in `tree_ensemble_aggregator.h`. Use the pre-built package instead, or patch the source (remove template arguments from the `TreeAggregatorMax` constructor on line 329).
 
 ```bash
 git clone --recursive --branch v1.19.2 --depth 1 https://github.com/microsoft/onnxruntime.git
 cd onnxruntime
-```
 
-Build varies by platform:
-- **Jetson with CUDA**:
-  ```bash
-  ./build.sh --use_cuda --cudnn_home /usr/local/cuda --cuda_home /usr/local/cuda \
-    --config MinSizeRel --update --build --parallel --build_shared_lib
-  ```
-- **CPU-only (RPi, x86)**:
-  ```bash
-  ./build.sh --config MinSizeRel --update --build --parallel --build_shared_lib
-  ```
+./build.sh --use_cuda --cudnn_home /usr/local/cuda --cuda_home /usr/local/cuda \
+  --config MinSizeRel --update --build --parallel --build_shared_lib
+```
 
 > **Eigen download failure**: If the build fails downloading Eigen from GitLab (hash mismatch or connection refused), download it manually and point the build at it:
 > ```bash
@@ -307,6 +316,31 @@ This appends a `satellite_registration_key` to `secrets.toml`. Copy the key to e
 **Local voice**: Say any supported wake phrase followed by your command.
 
 **Web UI**: Open `https://localhost:3000` and log in with your admin account.
+
+### Headless Setup (No Microphone)
+
+If your device has no physical microphone (e.g., a Raspberry Pi used as a WebUI-only server, or a board where you plan to add audio hardware later), the daemon will exit on startup because ALSA cannot open the default capture device.
+
+**Workaround**: Load the kernel dummy sound driver to provide a virtual capture device:
+
+```bash
+# Load the dummy ALSA driver
+sudo modprobe snd-dummy
+
+# Persist across reboots
+echo "snd-dummy" | sudo tee /etc/modules-load.d/snd-dummy.conf
+```
+
+Then configure `dawn.toml` to use the dummy device:
+
+```toml
+[audio]
+capture_device = "plughw:CARD=Dummy,DEV=0"
+```
+
+Voice input still works through the WebUI and DAP2 satellites — only the local microphone path uses the dummy device. When you later connect a USB microphone or audio HAT, update `capture_device` to the real device (use `arecord -L` to list available devices) and remove the snd-dummy module.
+
+> **Tip**: For a dedicated x86_64 server with no local audio hardware at all, consider [server mode](docs/GETTING_STARTED_SERVER.md) which skips local audio initialization entirely.
 
 ## Wake Words and Voice Commands
 
