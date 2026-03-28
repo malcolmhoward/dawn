@@ -24,18 +24,39 @@ Both interfaces share the same AI backend (ASR, LLM, TTS).
 ```bash
 sudo apt update && sudo apt install -y \
   build-essential cmake git pkg-config wget unzip autoconf automake libtool \
+  python3-pip \
   libasound2-dev libpulse-dev libsndfile1-dev libflac-dev \
-  libmosquitto-dev libjson-c-dev libcurl4-openssl-dev libssl-dev \
+  libmosquitto-dev mosquitto mosquitto-clients \
+  libjson-c-dev libcurl4-openssl-dev libssl-dev \
   libwebsockets-dev libopus-dev libsodium-dev libsqlite3-dev \
   libsamplerate0-dev libmpg123-dev libvorbis-dev libncurses-dev \
-  meson ninja-build libabseil-dev \
-  libmupdf-dev libzip-dev libmujs-dev libgumbo-dev libopenjp2-7-dev libjbig2dec0-dev \
+  meson ninja-build libabsl-dev \
+  libmupdf-dev libfreetype-dev libharfbuzz-dev \
+  libzip-dev libmujs-dev libgumbo-dev libopenjp2-7-dev libjbig2dec0-dev \
   libical-dev
 ```
 
+> **Package name note**: On Ubuntu 22.04 (including Jetson Linux R36), the abseil package is `libabsl-dev`. On Ubuntu 24.04+, it may be named `libabseil-dev`. If one isn't found, try the other.
+
 > **Jetson users**: CUDA runtime is pre-installed. For building GPU-accelerated components (ONNX Runtime, Whisper), you may need CUDA development headers. Check with `ls /usr/local/cuda/include/cuda.h`.
 
-> **CMake version**: Presets require CMake 3.21+. Check with `cmake --version`.
+> **CMake version**: DAWN presets require CMake 3.21+, but building ONNX Runtime from source requires CMake 3.28+. Check with `cmake --version`. If your system CMake is too old (Ubuntu 22.04 ships 3.22), install a newer version:
+> ```bash
+> # Option 1: Official binary (aarch64)
+> wget https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-linux-aarch64.tar.gz
+> tar xzf cmake-3.31.6-linux-aarch64.tar.gz
+> sudo cp -r cmake-3.31.6-linux-aarch64/bin/* /usr/local/bin/
+> sudo cp -r cmake-3.31.6-linux-aarch64/share/* /usr/local/share/
+>
+> # Option 2: Official binary (x86_64)
+> wget https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-linux-x86_64.tar.gz
+> tar xzf cmake-3.31.6-linux-x86_64.tar.gz
+> sudo cp -r cmake-3.31.6-linux-x86_64/bin/* /usr/local/bin/
+> sudo cp -r cmake-3.31.6-linux-x86_64/share/* /usr/local/share/
+>
+> # Option 3: Via pip
+> pip3 install cmake --upgrade
+> ```
 
 ## 2. Install Core Libraries
 
@@ -64,18 +85,41 @@ cd ..
 
 **Step 3: Install ONNX Runtime**
 
-ONNX Runtime build varies by platform:
-- **Jetson with CUDA**: `./build.sh --use_cuda --cudnn_home /usr/local/cuda --cuda_home /usr/local/cuda --config MinSizeRel --update --build --parallel --build_shared_lib`
-- **CPU-only (RPi, x86)**: `./build.sh --config MinSizeRel --update --build --parallel --build_shared_lib`
+> **Tip**: Pre-built x86_64 CPU packages are available at [ONNX Runtime releases](https://github.com/microsoft/onnxruntime/releases). See [docs/GETTING_STARTED_SERVER.md](docs/GETTING_STARTED_SERVER.md) for the prebuilt install path. Jetson users must build from source for CUDA support.
+
+> **Important**: Use a release tag (e.g., `v1.19.2`), not the `main` branch. The latest `main` may pull abseil versions that require GCC 12+, which is not available on Ubuntu 22.04.
+
+```bash
+git clone --recursive --branch v1.19.2 --depth 1 https://github.com/microsoft/onnxruntime.git
+cd onnxruntime
+```
+
+Build varies by platform:
+- **Jetson with CUDA**:
+  ```bash
+  ./build.sh --use_cuda --cudnn_home /usr/local/cuda --cuda_home /usr/local/cuda \
+    --config MinSizeRel --update --build --parallel --build_shared_lib
+  ```
+- **CPU-only (RPi, x86)**:
+  ```bash
+  ./build.sh --config MinSizeRel --update --build --parallel --build_shared_lib
+  ```
+
+> **Eigen download failure**: If the build fails downloading Eigen from GitLab (hash mismatch or connection refused), download it manually and point the build at it:
+> ```bash
+> wget -O /tmp/eigen.zip "https://gitlab.com/libeigen/eigen/-/archive/e7248b26a1ed53fa030c5c459f7ea095dfd276ac/eigen-e7248b26a1ed53fa030c5c459f7ea095dfd276ac.zip"
+> unzip -q /tmp/eigen.zip -d /tmp/eigen-src
+> # Re-run the build command above, adding:
+> #   --cmake_extra_defines FETCHCONTENT_SOURCE_DIR_EIGEN=/tmp/eigen-src/eigen-e7248b26a1ed53fa030c5c459f7ea095dfd276ac
+> ```
 
 After building:
 ```bash
 sudo cp -a build/Linux/MinSizeRel/libonnxruntime.so* /usr/local/lib/
 sudo cp include/onnxruntime/core/session/*.h /usr/local/include/
 sudo ldconfig
+cd ..
 ```
-
-> **Tip**: Pre-built packages may be available at [ONNX Runtime releases](https://github.com/microsoft/onnxruntime/releases).
 
 **Step 4: Build piper-phonemize**
 ```bash
@@ -104,7 +148,8 @@ cd dawn
 git submodule update --init --recursive
 
 # Build WebRTC audio processing (for echo cancellation)
-cd webrtc-audio-processing && meson setup build && ninja -C build && cd ..
+# Requires Meson 0.63+ (Ubuntu 22.04 ships 0.61; upgrade with: pip3 install --user meson --upgrade)
+cd webrtc-audio-processing && meson setup build --default-library=static && ninja -C build && cd ..
 
 # Configure and build DAWN
 cmake --preset default

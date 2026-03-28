@@ -42,7 +42,7 @@ LD_LIBRARY_PATH=/usr/local/lib ./build-debug/dawn
 
 ### Dependencies
 The project requires many external dependencies. See `README.md` for complete installation instructions including:
-- CMake 3.27.1+
+- CMake 3.21+ (3.28+ for building ONNX Runtime from source)
 - spdlog
 - espeak-ng
 - ONNX Runtime (with CUDA support)

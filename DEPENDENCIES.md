@@ -37,7 +37,10 @@ This document tracks all third-party dependencies used by the DAWN project.
 | libsodium | ISC | Encrypted credential/token storage (crypto_secretbox) |
 | libical | LGPL 2.1 / MPL 2.0 | iCalendar parsing, RRULE expansion, timezone handling |
 | libxml2 | MIT | XML parsing (CalDAV PROPFIND/REPORT responses) |
+| freetype2 | FreeType (BSD-like) | MuPDF font rendering dependency |
+| harfbuzz | MIT | MuPDF text shaping dependency |
 | libmujs-dev, libgumbo-dev, libopenjp2-7-dev, libjbig2dec0-dev | Various (MIT/LGPL/BSD) | MuPDF static link dependencies |
+| mosquitto | EPL/EDL | MQTT broker (runtime dependency) |
 
 ### Audio Processing
 
@@ -79,7 +82,8 @@ This document tracks all third-party dependencies used by the DAWN project.
 
 | Tool | Version | Purpose |
 |------|---------|---------|
-| CMake | 3.27.1+ | Build system |
+| CMake | 3.21+ (3.28+ for ONNX Runtime build) | Build system |
+| Meson | 0.63+ | WebRTC AEC build |
 | GCC/G++ | 11+ | C/C++ compiler |
 | pkg-config | - | Library discovery |
 

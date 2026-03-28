@@ -91,11 +91,53 @@ Present these as a checklist with defaults. Let the user answer all at once.
 
 Reference: `GETTING_STARTED.md` section 1.
 
+The full package list is:
+```
+build-essential cmake git pkg-config wget unzip autoconf automake libtool python3-pip
+libasound2-dev libpulse-dev libsndfile1-dev libflac-dev
+libmosquitto-dev mosquitto mosquitto-clients
+libjson-c-dev libcurl4-openssl-dev libssl-dev
+libwebsockets-dev libopus-dev libsodium-dev libsqlite3-dev
+libsamplerate0-dev libmpg123-dev libvorbis-dev libncurses-dev
+meson ninja-build libabsl-dev
+libmupdf-dev libfreetype-dev libharfbuzz-dev
+libzip-dev libmujs-dev libgumbo-dev libopenjp2-7-dev libjbig2dec0-dev
+libical-dev libspdlog-dev
+```
+
+**Known package name variations:**
+- `libabsl-dev` (Ubuntu 22.04 / Jetson Linux R36) vs `libabseil-dev` (Ubuntu 24.04+). If one isn't found, try the other via `apt-cache search abseil`.
+
 1. Check which packages from the apt install list are already installed
 2. Report what's missing
-3. Generate the `sudo apt install` command for only the missing packages
-4. Run it (or ask user to run it if sudo requires password)
-5. **Verify**: Confirm all packages are installed with `dpkg -l`
+3. **Before generating the install command**, verify each missing package exists in apt-cache. Flag any that aren't found and search for alternatives.
+4. Generate the `sudo apt install` command for only the missing packages
+5. Run it (or ask user to run it if sudo requires password)
+6. **Verify**: Confirm all packages are installed with `dpkg -l`
+
+### CMake Version Check
+
+After apt install, check `cmake --version`. DAWN presets need 3.21+, but ONNX Runtime (built from source) needs 3.28+. If the system CMake is too old:
+
+```bash
+# aarch64 (Jetson, RPi)
+wget https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-linux-aarch64.tar.gz
+tar xzf cmake-3.31.6-linux-aarch64.tar.gz
+sudo cp -r cmake-3.31.6-linux-aarch64/bin/* /usr/local/bin/
+sudo cp -r cmake-3.31.6-linux-aarch64/share/* /usr/local/share/
+
+# x86_64
+wget https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-linux-x86_64.tar.gz
+# ... same pattern
+```
+
+### Meson Version Check
+
+WebRTC AEC requires Meson 0.63+. Ubuntu 22.04 ships 0.61. If too old:
+```bash
+pip3 install --user meson --upgrade
+```
+Then use `~/.local/bin/meson` or ensure `~/.local/bin` is in PATH.
 
 ## Phase 2: Core Libraries
 
@@ -113,8 +155,12 @@ For each of the 4 required libraries, check if already installed before building
 
 ### 2c. ONNX Runtime
 - Check: `ls /usr/local/lib/libonnxruntime.so*` and `ls /usr/local/include/onnxruntime_c_api.h`
-- Build: Clone onnxruntime, build with CUDA flags if Jetson detected, otherwise CPU-only
-- This is the longest build — warn the user it may take 30+ minutes
+- **x86_64 shortcut**: Prebuilt packages available — see `docs/GETTING_STARTED_SERVER.md` section 2
+- **From source** (Jetson, ARM, or GPU builds):
+  - **CRITICAL**: Clone with `--branch v1.19.2 --depth 1` (NOT main). The `main` branch pulls abseil lts_20250814 which requires GCC 12+, breaking on Ubuntu 22.04 (GCC 11).
+  - Build with CUDA flags if Jetson detected, otherwise CPU-only
+  - **Known issue**: Eigen download from GitLab may fail (hash mismatch or 403). Workaround: download Eigen manually and pass `--cmake_extra_defines FETCHCONTENT_SOURCE_DIR_EIGEN=/path/to/eigen-source`
+  - This is the longest build — warn the user it may take 30-60 minutes
 
 ### 2d. piper-phonemize
 - Check: `ls /usr/local/lib/libpiper_phonemize.so*`
@@ -128,9 +174,13 @@ Reference: `GETTING_STARTED.md` section 3.
 
 1. If not already in a dawn repo, clone with `--recursive`
 2. If in repo but submodules missing, run `git submodule update --init --recursive`
-3. Build WebRTC audio processing (meson + ninja)
+3. Build WebRTC audio processing:
+   - **Must use `--default-library=static`** — CMakeLists.txt expects `.a` files, not `.so`
+   - Check Meson version first — needs 0.63+ (upgrade via pip if needed)
+   - Command: `meson setup build --default-library=static && ninja -C build`
    - If build fails, note that AEC can be disabled with `-DENABLE_AEC=OFF`
 4. Run `cmake --preset <selected-preset>`
+   - If CMake fails with missing `freetype2` or `harfbuzz`, install `libfreetype-dev libharfbuzz-dev`
 5. Run `cmake --build --preset <selected-preset>` (or `make -C <build-dir> -j$(nproc)`)
 
 **Verify**:
@@ -225,14 +275,27 @@ Reference: `GETTING_STARTED.md` section 7.
 
 Reference: `GETTING_STARTED.md` section 6.
 
-1. Start DAWN briefly in the background to generate the setup token
-2. Capture the setup token from console output
-3. Run `./build/dawn-admin user create <username> --admin`
-4. Note: This is interactive (password prompt), so guide the user through it
+The admin creation requires the daemon running (it generates a setup token). Use environment
+variables for fully non-interactive creation:
+
+1. Start DAWN in the background, redirecting stderr to capture the setup token:
+   ```bash
+   ./build/dawn 2>/tmp/dawn_stderr.log &
+   DAWN_PID=$!
+   sleep 5
+   TOKEN=$(grep -oP 'Token: \K[A-Z0-9-]+' /tmp/dawn_stderr.log)
+   ```
+2. Create the admin account using env vars (no interactive prompts):
+   ```bash
+   DAWN_SETUP_TOKEN="$TOKEN" DAWN_PASSWORD="changeme123" \
+     ./build/dawn-admin/dawn-admin user create admin --admin
+   ```
+3. Stop the background daemon: `kill $DAWN_PID`
+4. Remind the user to change the default password via the WebUI after first login
 
 **Verify**:
 - User database exists: `ls ~/.local/share/dawn/auth.db` (or configured data_dir)
-- Admin account exists: `./build/dawn-admin user list`
+- Admin account exists (requires daemon running): `./build/dawn-admin user list`
 
 ## Phase 9: Optional Features Setup
 

@@ -20,8 +20,11 @@ sudo apt install cmake build-essential pkg-config
 ```bash
 sudo apt install libcurl4-openssl-dev libjson-c-dev libssl-dev libsqlite3-dev \
    libsodium-dev libspdlog-dev libwebsockets-dev libopus-dev \
-   libmosquitto-dev libflac-dev libsamplerate0-dev uuid-dev libncurses-dev
+   libmosquitto-dev libflac-dev libsamplerate0-dev uuid-dev libncurses-dev \
+   libabsl-dev
 ```
+
+> **Package name note**: On Ubuntu 22.04, the abseil package is `libabsl-dev`. On Ubuntu 24.04+, it may be named `libabseil-dev`.
 
 ### Audio (required at link time even without local hardware)
 
@@ -36,7 +39,7 @@ sudo apt install libasound2-dev libpulse-dev
 sudo apt install libmpg123-dev libvorbis-dev
 
 # Document processing (RAG — PDF and DOCX support)
-sudo apt install libmupdf-dev libzip-dev libxml2-dev
+sudo apt install libmupdf-dev libfreetype-dev libharfbuzz-dev libzip-dev libxml2-dev
 
 # MuPDF transitive dependencies (static linking)
 sudo apt install libmujs-dev libgumbo-dev libopenjp2-7-dev libjbig2dec0-dev
@@ -136,9 +139,11 @@ cd ../..
 ## 5. MQTT Broker
 
 MQTT is required — the daemon initializes it at startup for device command routing.
+If you already installed `mosquitto mosquitto-clients` with the core libraries above, just
+enable and start the service:
 
 ```bash
-sudo apt install mosquitto mosquitto-clients
+sudo apt install mosquitto mosquitto-clients  # if not already installed
 sudo systemctl enable mosquitto
 sudo systemctl start mosquitto
 ```
