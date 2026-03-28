@@ -1,0 +1,165 @@
+# Dockerfile.jetson - DAWN Production Container for NVIDIA Jetson (ARM64 Tegra)
+#
+# Builds DAWN with GPU-accelerated Whisper inference via CUDA.
+# CUDA is detected automatically by CMakeLists.txt based on the Jetson platform.
+#
+# Prerequisites:
+#   - Submodules initialized: git submodule update --init --recursive
+#   - NVIDIA Docker runtime installed on Jetson host
+#   - Audio device available (typically /dev/snd)
+#
+# Usage:
+#   docker build -f Dockerfile.jetson -t dawn:jetson .
+#   docker run --rm -it \
+#     --runtime=nvidia \
+#     -p 3000:3000 \
+#     --device /dev/snd \
+#     dawn:jetson
+#
+#   To download Whisper on first run:
+#   docker run --rm -it --runtime=nvidia -p 3000:3000 \
+#     --device /dev/snd -e SKIP_MODEL_DOWNLOAD=false dawn:jetson
+
+FROM nvcr.io/nvidia/l4t-base:r35.4.1
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Version constants — update in all Dockerfiles together (ADR-0005)
+ENV CMAKE_VERSION=3.28.3
+ENV ONNXRUNTIME_VERSION=1.20.1
+
+# Build tools
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    git \
+    pkg-config \
+    autoconf \
+    automake \
+    libtool \
+    curl \
+    wget \
+    unzip \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# CMake 3.28 — l4t-base ships an older CMake; DAWN presets require 3.27+
+RUN curl -fsSL \
+    "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-aarch64.sh" \
+    -o /tmp/cmake.sh \
+    && chmod +x /tmp/cmake.sh \
+    && /tmp/cmake.sh --prefix=/usr/local --skip-license \
+    && rm /tmp/cmake.sh
+
+# Meson + Ninja (for WebRTC AEC submodule)
+RUN apt-get update && apt-get install -y \
+    meson \
+    ninja-build \
+    && rm -rf /var/lib/apt/lists/*
+
+# Audio libraries
+RUN apt-get update && apt-get install -y \
+    libasound2-dev \
+    libpulse-dev \
+    libflac-dev \
+    libsamplerate0-dev \
+    libmpg123-dev \
+    libvorbis-dev \
+    libsndfile1-dev \
+    libopus-dev \
+    pulseaudio \
+    && rm -rf /var/lib/apt/lists/*
+
+# Network / MQTT / TLS
+RUN apt-get update && apt-get install -y \
+    libmosquitto-dev \
+    libjson-c-dev \
+    libcurl4-openssl-dev \
+    libssl-dev \
+    libwebsockets-dev \
+    libsodium-dev \
+    mosquitto \
+    mosquitto-clients \
+    && rm -rf /var/lib/apt/lists/*
+
+# Storage + terminal + misc
+RUN apt-get update && apt-get install -y \
+    libsqlite3-dev \
+    libncurses-dev \
+    libabseil-dev \
+    uuid-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Document parsing (MuPDF dependency stack)
+RUN apt-get update && apt-get install -y \
+    libmupdf-dev \
+    libzip-dev \
+    libmujs-dev \
+    libgumbo-dev \
+    libopenjp2-7-dev \
+    libjbig2dec0-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# spdlog
+RUN apt-get update && apt-get install -y \
+    libspdlog-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# espeak-ng from rhasspy fork (apt version lacks required phoneme data for Piper)
+RUN apt-get purge -y espeak-ng-data libespeak-ng1 2>/dev/null || true \
+    && git clone https://github.com/rhasspy/espeak-ng.git /tmp/espeak-ng \
+    && cd /tmp/espeak-ng \
+    && ./autogen.sh \
+    && ./configure --prefix=/usr \
+    && make -j$(nproc) \
+    && make LIBDIR=/usr/lib/aarch64-linux-gnu install \
+    && ldconfig \
+    && rm -rf /tmp/espeak-ng
+
+# ONNX Runtime (aarch64 pre-built binary)
+RUN curl -fsSL \
+    "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-aarch64-${ONNXRUNTIME_VERSION}.tgz" \
+    -o /tmp/onnxruntime.tgz \
+    && tar -xzf /tmp/onnxruntime.tgz -C /tmp \
+    && cp -r "/tmp/onnxruntime-linux-aarch64-${ONNXRUNTIME_VERSION}/include/." /usr/local/include/ \
+    && cp -P "/tmp/onnxruntime-linux-aarch64-${ONNXRUNTIME_VERSION}/lib/libonnxruntime"*.so* /usr/local/lib/ \
+    && ldconfig \
+    && rm -rf /tmp/onnxruntime*
+
+# piper-phonemize (requires ONNX Runtime + espeak-ng; must build from source)
+RUN git clone https://github.com/rhasspy/piper-phonemize.git /tmp/piper-phonemize \
+    && cd /tmp/piper-phonemize \
+    && mkdir build && cd build \
+    && cmake .. -DONNXRUNTIME_DIR=/usr/local -DESPEAK_NG_DIR=/usr \
+    && make -j$(nproc) \
+    && cp -a libpiper_phonemize.so* /usr/local/lib/ \
+    && mkdir -p /usr/local/include/piper-phonemize \
+    && cp ../src/*.hpp /usr/local/include/piper-phonemize/ \
+    && cp ../src/uni_algo.h /usr/local/include/piper-phonemize/ \
+    && ldconfig \
+    && rm -rf /tmp/piper-phonemize
+
+# Copy entrypoint before source (separate layer; rarely changes)
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Copy DAWN source (submodules must be initialized: git submodule update --init --recursive)
+WORKDIR /opt/dawn
+COPY . .
+
+# Build WebRTC audio processing (submodule: webrtc-audio-processing)
+RUN cd webrtc-audio-processing \
+    && meson setup build \
+    && ninja -C build
+
+# Build DAWN with CUDA (CMakeLists.txt auto-detects aarch64 + CUDA on Jetson)
+RUN cmake --preset default \
+    && cmake --build --preset default --parallel $(nproc)
+
+EXPOSE 3000
+
+# Default: skip model downloads (container starts immediately)
+ENV SKIP_MODEL_DOWNLOAD=true
+ENV WHISPER_MODEL=base.en
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["/opt/dawn/build/dawn"]
