@@ -37,7 +37,7 @@ sed_safe_set() {
    # The sed range /^\[section\]/,/^\[/ scopes to the section
    if grep -qP "^\[${section_re}\]" "$file" 2>/dev/null; then
       # First try: uncomment a commented line like "# key = ..."
-      sed -i "/^\[${section_re}\]/,/^\[/{s/^# *${key} *=.*/${key} = ${quoted_value}/}" "$file"
+      sed -i "/^\[${section_re}\]/,/^\[/{s|^# *${key} *=.*|${key} = ${quoted_value}|}" "$file"
 
       # If the key is still not set (wasn't commented out), try replacing an existing uncommented line
       if ! sed -n "/^\[${section_re}\]/,/^\[/p" "$file" | grep -qP "^${key} *=" 2>/dev/null; then
@@ -123,17 +123,17 @@ write_api_keys() {
    if [ -n "${OPENAI_KEY:-}" ]; then
       sed -i "s|^# *openai_api_key.*|openai_api_key = \"$OPENAI_KEY\"|" "$secrets"
       log "secrets.toml: OpenAI API key set"
-      ((keys_set++))
+      ((++keys_set))
    fi
    if [ -n "${CLAUDE_KEY:-}" ]; then
       sed -i "s|^# *claude_api_key.*|claude_api_key = \"$CLAUDE_KEY\"|" "$secrets"
       log "secrets.toml: Claude API key set"
-      ((keys_set++))
+      ((++keys_set))
    fi
    if [ -n "${GEMINI_KEY:-}" ]; then
       sed -i "s|^# *gemini_api_key.*|gemini_api_key = \"$GEMINI_KEY\"|" "$secrets"
       log "secrets.toml: Gemini API key set"
-      ((keys_set++))
+      ((++keys_set))
    fi
 
    if [ "$keys_set" -eq 0 ]; then

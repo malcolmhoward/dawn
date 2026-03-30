@@ -549,6 +549,7 @@ Manual testing covers:
 - Shared document_extract module (refactored from webui_documents.c) and document_index_pipeline (refactored from webui_doc_library.c)
 - URL fetcher: HTTP/2 FlareSolverr fallback, IPv4-mapped IPv6 SSRF fix
 - Plan executor: sleep step (1-300s), configurable timeout via dawn.toml
+- Automated install script overhaul: cmake --install for deploy (proper RPATH), settings cache with --fresh, random admin passwords, set -e safety fixes, FHS service layout (/var/lib/dawn/db)
 
 ## Code Review Workflow
 

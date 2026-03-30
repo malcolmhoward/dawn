@@ -48,10 +48,12 @@ INTERACTIVE=true
 VERBOSE=false
 DRY_RUN=false
 VERIFY_ONLY=false
+FRESH_INSTALL=false
 DEPLOY_TARGET=""
 RESUME_FROM=""
 CONFIG_FILE=""
 CURRENT_PHASE=""
+SETTINGS_LOADED=false
 
 # User preferences (set via CLI, config file, or interactive prompts)
 INSTALL_TARGET="${INSTALL_TARGET:-server}"
@@ -85,6 +87,7 @@ Options:
                          (ssl,mqtt,searxng,flaresolverr,plex,homeassistant)
   --config FILE          Config file for unattended installation
   --unattended           Disable interactive prompts (use defaults)
+  --fresh                Ignore cached settings from a previous run
   --resume-from PHASE    Resume from a specific phase
   --verify               Run verification suite only
   --deploy TARGET        Deploy as systemd service (server or satellite)
@@ -104,6 +107,9 @@ Examples:
 
   # Resume after a build failure
   ./scripts/install.sh --resume-from build
+
+  # Re-run ignoring previous choices
+  ./scripts/install.sh --fresh
 
   # Just verify an existing installation
   ./scripts/install.sh --verify
@@ -146,6 +152,10 @@ parse_args() {
             ;;
          --unattended)
             INTERACTIVE=false
+            shift
+            ;;
+         --fresh)
+            FRESH_INSTALL=true
             shift
             ;;
          --resume-from)
@@ -328,9 +338,10 @@ run_admin() {
       return 0
    fi
 
-   # Check if admin already exists
+   # Check if admin already exists (dev location or service location)
    local db_path="$HOME/.local/share/dawn/auth.db"
-   if [ -f "$db_path" ]; then
+   local service_db="/var/lib/dawn/db/auth.db"
+   if [ -f "$db_path" ] || [ -f "$service_db" ]; then
       log "Admin: auth.db already exists, skipping account creation"
       return 0
    fi
@@ -358,7 +369,7 @@ run_admin() {
       fi
 
       sleep 1
-      ((elapsed++))
+      ((++elapsed))
    done
 
    if [ -z "$token" ]; then
@@ -374,7 +385,10 @@ run_admin() {
    log "Setup token obtained: $token"
    log "Creating admin account..."
 
-   DAWN_SETUP_TOKEN="$token" DAWN_PASSWORD="changeme123" \
+   local admin_pass
+   admin_pass=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 16)
+
+   DAWN_SETUP_TOKEN="$token" DAWN_PASSWORD="$admin_pass" \
       run_dawn "$BUILD_DIR/dawn-admin/dawn-admin" user create admin --admin ||
       warn "dawn-admin failed (admin may already exist)"
 
@@ -383,8 +397,12 @@ run_admin() {
    wait "$dawn_pid" 2>/dev/null || true
    rm -f "$log_file"
 
-   log "Admin account created (username: admin, password: changeme123)"
-   warn "IMPORTANT: Change the default password via the WebUI after first login!"
+   echo ""
+   log "Admin account created:"
+   log "  Username: admin"
+   log "  Password: $admin_pass"
+   echo ""
+   warn "Save this password now — it will not be shown again."
 
    log "Phase 8 complete"
 }
@@ -549,28 +567,28 @@ verify_deployed_service() {
    # Check 1: Service unit file exists
    if [ -f "/etc/systemd/system/${service_name}.service" ]; then
       log "  Service unit file: EXISTS"
-      ((pass++))
+      ((++pass))
    else
       warn "  Service unit file: MISSING"
-      ((fail++))
+      ((++fail))
    fi
 
    # Check 2: Service is enabled
    if systemctl is-enabled --quiet "$service_name" 2>/dev/null; then
       log "  Service enabled: YES"
-      ((pass++))
+      ((++pass))
    else
       warn "  Service enabled: NO"
-      ((fail++))
+      ((++fail))
    fi
 
    # Check 3: Service is active
    if systemctl is-active --quiet "$service_name" 2>/dev/null; then
       log "  Service active: YES"
-      ((pass++))
+      ((++pass))
    else
       warn "  Service active: NO"
-      ((fail++))
+      ((++fail))
       warn "  Check logs: journalctl -u $service_name -n 30"
    fi
 
@@ -582,10 +600,10 @@ verify_deployed_service() {
    esac
    if [ -f "$bin_path" ]; then
       log "  Binary: $bin_path"
-      ((pass++))
+      ((++pass))
    else
       warn "  Binary: NOT FOUND at $bin_path"
-      ((fail++))
+      ((++fail))
    fi
 
    # Check 5: Config exists
@@ -596,10 +614,10 @@ verify_deployed_service() {
    esac
    if [ -d "$config_dir" ]; then
       log "  Config dir: $config_dir"
-      ((pass++))
+      ((++pass))
    else
       warn "  Config dir: NOT FOUND"
-      ((fail++))
+      ((++fail))
    fi
 
    # Check 6: Secrets permissions (server only)
@@ -610,10 +628,10 @@ verify_deployed_service() {
          perms=$(stat -c '%a' "$secrets_path" 2>/dev/null || echo "???")
          if [ "$perms" = "600" ]; then
             log "  Secrets permissions: 600 (correct)"
-            ((pass++))
+            ((++pass))
          else
             warn "  Secrets permissions: $perms (should be 600)"
-            ((fail++))
+            ((++fail))
          fi
       fi
    fi
@@ -626,10 +644,10 @@ verify_deployed_service() {
    esac
    if [ -d "$log_dir" ]; then
       log "  Log dir: $log_dir"
-      ((pass++))
+      ((++pass))
    else
       warn "  Log dir: NOT FOUND"
-      ((fail++))
+      ((++fail))
    fi
 
    # Check 8: Recent log output (if service is active)
@@ -641,14 +659,14 @@ verify_deployed_service() {
       esac
       if [ -f "$log_file" ] && [ -s "$log_file" ]; then
          local errors
-         errors=$(grep -ci "\[ERR\]" "$log_file" 2>/dev/null || echo "0")
+         errors=$(grep -ci "\[ERR\]" "$log_file" 2>/dev/null) || errors=0
          if [ "$errors" -eq 0 ]; then
             log "  Log health: clean (no errors)"
-            ((pass++))
+            ((++pass))
          else
             warn "  Log health: $errors error(s) found"
             warn "  Review: tail -30 $log_file"
-            ((fail++))
+            ((++fail))
          fi
       else
          info "  Log health: no log output yet"
@@ -662,20 +680,20 @@ verify_deployed_service() {
       if curl -sk --max-time 5 "https://localhost:$port/" >/dev/null 2>&1 ||
          curl -s --max-time 5 "http://localhost:$port/" >/dev/null 2>&1; then
          log "  WebUI port $port: RESPONDING"
-         ((pass++))
+         ((++pass))
       else
          warn "  WebUI port $port: NOT RESPONDING (may still be starting)"
-         ((fail++))
+         ((++fail))
       fi
    fi
 
    # Check 10: ldconfig entry
    if [ -f /etc/ld.so.conf.d/dawn.conf ]; then
       log "  ldconfig: configured"
-      ((pass++))
+      ((++pass))
    else
       warn "  ldconfig: /etc/ld.so.conf.d/dawn.conf missing"
-      ((fail++))
+      ((++fail))
    fi
 
    echo ""
@@ -732,20 +750,29 @@ main() {
       load_config_file "$CONFIG_FILE"
    fi
 
-   # Load state if resuming
-   if [ -n "$RESUME_FROM" ]; then
-      if load_state; then
-         log "Resumed from state file (last completed: ${LAST_COMPLETED_PHASE:-none})"
-      else
-         warn "No state file found — running from $RESUME_FROM anyway"
+   # Load cached settings from a previous run (unless --fresh)
+   if [ "$FRESH_INSTALL" = true ]; then
+      if [ -f "$STATE_FILE" ]; then
+         info "Ignoring cached settings (--fresh)"
       fi
+   elif load_state; then
+      echo -e "${BLUE}[INFO]${NC} Loaded settings from previous install (last phase: ${LAST_COMPLETED_PHASE:-none})"
+      echo -e "       Provider: ${LLM_PROVIDER:-unset}, Whisper: ${WHISPER_MODEL:-unset}, Preset: ${BUILD_PRESET:-unset}"
+      echo -e "       Features: ${FEATURES:-none}"
+      echo -e "       To start over: ${BOLD}./scripts/install.sh --fresh${NC}"
+      echo ""
+   fi
+
+   # Load state for resume logic
+   if [ -n "$RESUME_FROM" ] && [ "$SETTINGS_LOADED" = false ]; then
+      warn "No state file found — running from $RESUME_FROM anyway"
    fi
 
    # Phase 0: Discovery
    run_discovery
 
-   # Interactive preferences (skip if resuming or unattended with all choices made)
-   if [ "$INTERACTIVE" = true ] && [ -z "$RESUME_FROM" ]; then
+   # Interactive preferences (skip if settings already loaded from cache/config/CLI)
+   if [ "$INTERACTIVE" = true ] && [ -z "$RESUME_FROM" ] && [ "$SETTINGS_LOADED" = false ]; then
       present_choices
    fi
 
@@ -832,12 +859,14 @@ main() {
 
    # Phase 10: Verification
    if should_run_phase "verify"; then
-      run_verify
+      run_verify || true
       save_state "verify"
    fi
 
    # Offer to deploy as service
    if [ "$INTERACTIVE" = true ]; then
+      echo ""
+      echo -e "${BOLD}═══════════════════════════════════════════════${NC}"
       echo ""
       if ask_yes_no "Deploy DAWN as a systemd service?"; then
          run_deploy "server"

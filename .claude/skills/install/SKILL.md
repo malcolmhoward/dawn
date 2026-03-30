@@ -310,14 +310,15 @@ variables for fully non-interactive creation:
    model, etc.) and fix them before retrying.
 2. Create the admin account using env vars (no interactive prompts):
    ```bash
-   DAWN_SETUP_TOKEN="$TOKEN" DAWN_PASSWORD="changeme123" \
+   ADMIN_PASS=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 16)
+   DAWN_SETUP_TOKEN="$TOKEN" DAWN_PASSWORD="$ADMIN_PASS" \
      LD_LIBRARY_PATH=/usr/local/lib ./build/dawn-admin/dawn-admin user create admin --admin
    ```
 3. Stop the background daemon: `kill $DAWN_PID`
-4. Remind the user to change the default password via the WebUI after first login
+4. Display the generated password prominently and warn the user to save it (it will not be shown again)
 
 **Verify**:
-- User database exists: `ls ~/.local/share/dawn/auth.db` (or configured data_dir)
+- User database exists: `ls ~/.local/share/dawn/auth.db` (dev) or `/var/lib/dawn/db/auth.db` (service)
 - Admin account exists (requires daemon running): `./build/dawn-admin user list`
 
 ## Phase 9: Optional Features Setup

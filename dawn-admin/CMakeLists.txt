@@ -22,9 +22,9 @@ target_include_directories(dawn-admin PRIVATE
 # Note: SODIUM variables are set in parent CMakeLists.txt when ENABLE_AUTH is ON
 target_link_libraries(dawn-admin pthread ${SODIUM_LIBRARIES})
 
-# Install to sbin (administrative tools)
+# Install to bin (alongside dawn binary)
 install(TARGETS dawn-admin
-    RUNTIME DESTINATION sbin
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
 # Set C standard

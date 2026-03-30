@@ -113,7 +113,7 @@ SETTINGS_EOF
          return 0
       fi
       sleep 2
-      ((tries++))
+      ((++tries))
    done
 
    warn "SearXNG: started but health check failed (may need a moment to initialize)"

@@ -55,6 +55,7 @@ _error_handler() {
    echo -e "${RED}[FATAL]${NC} Command failed (exit $exit_code) at line $line: $cmd" >&2
    if [ -n "${CURRENT_PHASE:-}" ]; then
       echo -e "${RED}[FATAL]${NC} Failed during phase: $CURRENT_PHASE" >&2
+      echo -e "${YELLOW}[TIP]${NC}   To resume: ./scripts/install.sh --resume-from ${CURRENT_PHASE}" >&2
    fi
    exit "$exit_code"
 }
@@ -314,7 +315,8 @@ detect_existing_install() {
 
    local multiarch
    multiarch=$(dpkg-architecture -qDEB_HOST_MULTIARCH 2>/dev/null || echo "")
-   if has_lib "libespeak-ng.so" || [ -f "/usr/lib/${multiarch}/libespeak-ng.so" ]; then
+   if has_lib "libespeak-ng.so" || [ -f "/usr/lib/${multiarch}/libespeak-ng.so" ] \
+      || compgen -G "/usr/lib/${multiarch}/libespeak-ng.so.*" >/dev/null 2>&1; then
       HAS_ESPEAK=true
    fi
 
@@ -538,8 +540,17 @@ EOF
 
 load_state() {
    if [ -f "$STATE_FILE" ]; then
+      # Validate: only allow comments, blanks, and KEY=VALUE assignments
+      local suspicious
+      suspicious=$(grep -vE '^\s*#|^\s*$|^\s*[A-Z_]+=' "$STATE_FILE" | head -5 || true)
+      if [ -n "$suspicious" ]; then
+         warn "State file contains unexpected content — ignoring: $STATE_FILE"
+         return 1
+      fi
+
       # shellcheck disable=SC1090
       source "$STATE_FILE"
+      SETTINGS_LOADED=true
 
       # Warn if installer version changed
       local current_sha

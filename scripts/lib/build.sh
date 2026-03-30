@@ -37,7 +37,7 @@ build_webrtc_aec() {
    esac
 
    local webrtc_dir="$PROJECT_ROOT/webrtc-audio-processing"
-   local aec_lib="$webrtc_dir/build/subprojects/webrtc-audio-processing-1/libwebrtc_audio_processing.a"
+   local aec_lib="$webrtc_dir/build/webrtc/modules/audio_processing/libwebrtc-audio-processing-1.a"
 
    if [ -f "$aec_lib" ]; then
       log "WebRTC AEC: already built"

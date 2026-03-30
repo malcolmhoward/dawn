@@ -5,6 +5,13 @@ project(dawn LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Standard install paths (/usr/local/bin, /usr/local/lib, etc.)
+include(GNUInstallDirs)
+
+# RPATH: build-tree binary finds libs in-tree; installed binary uses install libdir
+set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_FULL_LIBDIR}")
+set(CMAKE_INSTALL_RPATH_USE_LINK_PATH FALSE)
+
 # Platform selection
 set(PLATFORM "AUTO" CACHE STRING "Choose platform: AUTO, JETSON, RPI")
 set_property(CACHE PLATFORM PROPERTY STRINGS AUTO JETSON RPI)
@@ -806,6 +813,15 @@ target_include_directories(piper PUBLIC
                            /usr/local/include/piper-phonemize
                            ${SPDLOG_INCLUDE_DIRS}
                            /usr/local/include/onnxruntime/)
+
+# =============================================================================
+# Install rules (used by: cmake --install build --prefix /usr/local)
+# =============================================================================
+# Binary
+install(TARGETS dawn RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+# Shared libraries built as subprojects (whisper, ggml, ggml-base, ggml-cpu)
+# whisper.cpp and ggml already define their own install() rules via add_subdirectory
 
 set(DESTINATION_DIR
     ${CMAKE_BINARY_DIR}

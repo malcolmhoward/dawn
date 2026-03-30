@@ -16,6 +16,8 @@ SECRETS_PATH=""
 SYMLINK_MODELS=false
 SYMLINK_WWW=false
 UNINSTALL=false
+ADMIN_CREATED=false
+ADMIN_PASS=""
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 SERVICE_USER="dawn"
@@ -90,11 +92,12 @@ uninstall() {
 
     # 6. Prompt for database removal
     local remove_db=false
-    if [ -f "$DATA_DIR/auth.db" ]; then
-        if ask_yes_no "Remove database? ($DATA_DIR/auth.db)"; then
+    local db_dir="$DATA_DIR/db"
+    if [ -d "$db_dir" ] && ls "$db_dir"/*.db >/dev/null 2>&1; then
+        if ask_yes_no "Remove databases? ($db_dir/*.db)"; then
             remove_db=true
         else
-            log "Keeping database: $DATA_DIR/auth.db"
+            log "Keeping databases in $db_dir"
         fi
     fi
 
@@ -104,15 +107,8 @@ uninstall() {
             log "Removing data directory: $DATA_DIR"
             rm -rf "$DATA_DIR"
         else
-            log "Removing data directory contents (preserving auth.db)"
-            # Remove everything except auth.db
-            find "$DATA_DIR" -mindepth 1 -not -name "auth.db" -not -path "$DATA_DIR" -delete 2>/dev/null || true
-            # If only auth.db remains, leave the directory
-            if [ -z "$(ls -A "$DATA_DIR" 2>/dev/null | grep -v auth.db)" ] && [ -f "$DATA_DIR/auth.db" ]; then
-                log "Data directory preserved with auth.db"
-            else
-                rm -rf "$DATA_DIR"
-            fi
+            log "Removing data directory contents (preserving db/)"
+            find "$DATA_DIR" -mindepth 1 -not -path "$db_dir" -not -path "$db_dir/*" -delete 2>/dev/null || true
         fi
     fi
 
@@ -369,13 +365,29 @@ log "Creating directory structure"
 mkdir -p "$DATA_DIR/models"
 mkdir -p "$DATA_DIR/www"
 mkdir -p "$DATA_DIR/ssl"
+mkdir -p "$DATA_DIR/db"
 mkdir -p "$CONFIG_DIR"
 mkdir -p "$LOG_DIR"
+chown "$SERVICE_USER:$SERVICE_USER" "$LOG_DIR"
+chmod 750 "$LOG_DIR"
 
-# Install binary
-log "Installing binary to /usr/local/bin/dawn"
-cp "$BINARY_PATH" /usr/local/bin/dawn
-chmod 755 /usr/local/bin/dawn
+# Install binary and shared libraries via cmake --install
+# This installs dawn, dawn-admin, and all subproject libraries (whisper, ggml)
+# with proper RPATH set to /usr/local/lib (build-tree paths stripped automatically)
+BUILD_DIR="$(dirname "$BINARY_PATH")"
+if [ -f "$BUILD_DIR/CMakeCache.txt" ]; then
+    log "Installing via cmake --install (prefix: /usr/local)"
+    cmake --install "$BUILD_DIR" --prefix /usr/local 2>&1 | while IFS= read -r line; do
+        log "  $line"
+    done
+    ldconfig
+else
+    error "CMake build directory not found (no CMakeCache.txt in $(dirname "$BINARY_PATH")).
+
+Build with cmake first, then deploy:
+  cmake --preset default && cmake --build --preset default
+  sudo $0 --binary <build-dir>/dawn"
+fi
 
 # Install www (WebUI static files)
 if [ -n "$WWW_DIR" ]; then
@@ -401,7 +413,14 @@ if [ -n "$MODELS_DIR" ]; then
         ln -sfn "$MODELS_DIR" "$DATA_DIR/models"
     else
         log "Copying models from $MODELS_DIR"
-        cp -r "$MODELS_DIR"/. "$DATA_DIR/models/"
+        # Remove stale symlinks at destination before copying
+        find "$DATA_DIR/models" -maxdepth 1 -type l -delete 2>/dev/null || true
+        # Copy with symlink dereferencing; skip broken symlinks
+        for item in "$MODELS_DIR"/*; do
+            if [ -e "$item" ]; then
+                cp -rL "$item" "$DATA_DIR/models/" 2>/dev/null || true
+            fi
+        done
     fi
 fi
 
@@ -430,6 +449,21 @@ else
     fi
 fi
 chmod 644 "$CONFIG_DIR/dawn.toml"
+
+# Set service-appropriate paths in config (data_dir defaults to ~/.local/share/dawn
+# which is wrong for a system service — use /var/lib/dawn/db instead)
+if grep -q '^# *data_dir' "$CONFIG_DIR/dawn.toml"; then
+    sed -i 's|^# *data_dir *= *".*"|data_dir = "/var/lib/dawn/db"|' "$CONFIG_DIR/dawn.toml"
+    log "Set data_dir = /var/lib/dawn/db"
+elif ! grep -q '^data_dir' "$CONFIG_DIR/dawn.toml"; then
+    # [paths] section might not exist — append if needed
+    if grep -q '^\[paths\]' "$CONFIG_DIR/dawn.toml"; then
+        sed -i '/^\[paths\]/a data_dir = "/var/lib/dawn/db"' "$CONFIG_DIR/dawn.toml"
+    else
+        printf '\n[paths]\ndata_dir = "/var/lib/dawn/db"\n' >> "$CONFIG_DIR/dawn.toml"
+    fi
+    log "Set data_dir = /var/lib/dawn/db"
+fi
 
 # Install secrets (never overwrite existing, restrictive permissions)
 if [ -f "$CONFIG_DIR/secrets.toml" ]; then
@@ -473,8 +507,6 @@ chmod 644 "$CONFIG_DIR/dawn-server.conf"
 log "Setting permissions"
 chown -R "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR"
 chmod -R 755 "$DATA_DIR"
-chown "$SERVICE_USER:$SERVICE_USER" "$LOG_DIR"
-chmod 755 "$LOG_DIR"
 chown -R root:root "$CONFIG_DIR"
 chown "$SERVICE_USER:$SERVICE_USER" "$CONFIG_DIR/secrets.toml"
 
@@ -505,6 +537,43 @@ systemctl restart "$SERVICE_NAME.service"
 sleep 3
 if systemctl is-active --quiet "$SERVICE_NAME.service"; then
     log "Service successfully started"
+
+    # Create admin account if no users exist yet
+    has_users=false
+    if [ -f "$DATA_DIR/db/auth.db" ]; then
+        user_count=$(sqlite3 "$DATA_DIR/db/auth.db" "SELECT COUNT(*) FROM users;" 2>/dev/null) || user_count=0
+        [ "$user_count" -gt 0 ] 2>/dev/null && has_users=true
+    fi
+    if [ "$has_users" = false ] && command -v dawn-admin >/dev/null 2>&1; then
+        log ""
+        log "Creating admin account..."
+
+        # Extract setup token from service log
+        token="" timeout=15 elapsed=0
+        while [ $elapsed -lt $timeout ]; do
+            token=$(grep -oP 'Token: \K[A-Z0-9-]+' "$LOG_DIR/server.log" 2>/dev/null | tail -1 || true)
+            [ -n "$token" ] && break
+            sleep 1
+            ((++elapsed))
+        done
+
+        if [ -n "$token" ]; then
+            admin_pass=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 16)
+            if DAWN_SETUP_TOKEN="$token" DAWN_PASSWORD="$admin_pass" \
+                dawn-admin user create admin --admin >/dev/null 2>&1; then
+                ADMIN_CREATED=true
+                ADMIN_PASS="$admin_pass"
+            else
+                warn "Admin account creation failed (may already exist)"
+            fi
+        else
+            warn "Setup token not found in logs after ${timeout}s"
+            warn "Create admin manually after service is running:"
+            warn "  1. Find the setup token: grep 'Token:' $LOG_DIR/server.log"
+            warn "  2. Run: DAWN_SETUP_TOKEN=<token> dawn-admin user create admin --admin"
+        fi
+    fi
+
     log ""
     log "Management commands:"
     log "  Status:  systemctl status $SERVICE_NAME"
@@ -516,6 +585,31 @@ if systemctl is-active --quiet "$SERVICE_NAME.service"; then
     log "  Main:    $CONFIG_DIR/dawn.toml"
     log "  Secrets: $CONFIG_DIR/secrets.toml"
     log "  Env:     $CONFIG_DIR/dawn-server.conf"
+    log ""
+    ip=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "localhost")
+    proto="http"
+    grep -q 'https *= *true' "$CONFIG_DIR/dawn.toml" 2>/dev/null && proto="https"
+
+    echo ""
+    echo -e "${GREEN}╔═══════════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║              DAWN is ready!                   ║${NC}"
+    echo -e "${GREEN}╚═══════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "  WebUI:     ${GREEN}${proto}://${ip}:3000${NC}"
+    if [ "${ADMIN_CREATED:-false}" = true ]; then
+        echo ""
+        echo -e "  Username:  ${GREEN}admin${NC}"
+        echo -e "  Password:  ${GREEN}${ADMIN_PASS}${NC}"
+        echo ""
+        warn "Save this password now — it will not be shown again."
+        warn "Change it after first login via Settings > Account."
+    fi
+    echo ""
+    log "Wake word: \"Hey Friday\" or \"Okay Friday\""
+    if [ "$proto" = "https" ]; then
+        echo ""
+        log "Install ssl/ca.crt in your browser to avoid certificate warnings"
+    fi
 else
     warn "Service failed to start. Check logs:"
     warn "  journalctl -u $SERVICE_NAME -n 50"

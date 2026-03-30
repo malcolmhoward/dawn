@@ -30,7 +30,12 @@ install_espeak_ng() {
    multiarch=$(dpkg-architecture -qDEB_HOST_MULTIARCH 2>/dev/null || echo "")
 
    local found=false
-   for so_path in /usr/local/lib/libespeak-ng.so "/usr/lib/${multiarch}/libespeak-ng.so"; do
+   # Check unversioned and versioned .so paths
+   local -a candidates=(/usr/local/lib/libespeak-ng.so "/usr/lib/${multiarch}/libespeak-ng.so")
+   for f in /usr/local/lib/libespeak-ng.so.* "/usr/lib/${multiarch}"/libespeak-ng.so.*; do
+      [ -f "$f" ] && candidates+=("$f")
+   done
+   for so_path in "${candidates[@]}"; do
       if [ -f "$so_path" ] && nm -D "$so_path" 2>/dev/null | grep -q TextToPhonemesWithTerminator; then
          log "espeak-ng: rhasspy fork already installed ($so_path)"
          found=true
@@ -56,10 +61,10 @@ install_espeak_ng() {
    cd "$tmpdir/espeak-ng" || return
 
    ./autogen.sh || error "espeak-ng autogen failed"
-   ./configure --prefix=/usr || error "espeak-ng configure failed"
+   ./configure --prefix=/usr --libdir="/usr/lib/${multiarch}" || error "espeak-ng configure failed"
    make -j"$(nproc)" || error "espeak-ng build failed"
 
-   run_sudo make LIBDIR="/usr/lib/${multiarch}" install || error "espeak-ng install failed"
+   run_sudo make install || error "espeak-ng install failed"
    sudo_keepalive
    run_sudo ldconfig
 
@@ -269,7 +274,8 @@ run_libs() {
 
    local multiarch
    multiarch=$(dpkg-architecture -qDEB_HOST_MULTIARCH 2>/dev/null || echo "")
-   if ! has_lib "libespeak-ng.so" && ! [ -f "/usr/lib/${multiarch}/libespeak-ng.so" ]; then
+   if ! has_lib "libespeak-ng.so" && ! [ -f "/usr/lib/${multiarch}/libespeak-ng.so" ] \
+      && ! compgen -G "/usr/lib/${multiarch}/libespeak-ng.so.*" >/dev/null 2>&1; then
       failed+=("espeak-ng")
    fi
    has_lib "libonnxruntime.so" || [ -f /usr/local/lib/libonnxruntime.so.1 ] || failed+=("onnxruntime")

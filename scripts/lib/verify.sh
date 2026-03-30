@@ -85,7 +85,7 @@ check_tts_models() {
    local count=0
    local f
    for f in "$PROJECT_ROOT"/models/*.onnx; do
-      [ -f "$f" ] && ((count++))
+      [ -f "$f" ] && ((++count))
    done
    if [ "$count" -gt 0 ]; then
       echo "PASS|$count voice model(s)"
@@ -122,10 +122,7 @@ check_api_key() {
       echo "SKIP|Not configured"
       return
    fi
-   local status
-   status=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
-      -H "Authorization: Bearer $key" \
-      https://api.openai.com/v1/models 2>/dev/null || echo "000")
+   local status=""
 
    case "$provider" in
       openai)
@@ -166,7 +163,7 @@ check_ssl_certs() {
       sed 's/notAfter=//' || echo "")
    if [ -n "$expiry" ]; then
       # Check if expired
-      if openssl x509 -in "$PROJECT_ROOT/ssl/dawn.crt" -noout -checkend 0 2>/dev/null; then
+      if openssl x509 -in "$PROJECT_ROOT/ssl/dawn.crt" -noout -checkend 0 >/dev/null 2>&1; then
          echo "PASS|Valid until $expiry"
       else
          echo "FAIL|EXPIRED ($expiry)"
@@ -327,11 +324,13 @@ run_verify() {
    for entry in "${checks[@]}"; do
       IFS='|' read -r label func args1 args2 <<<"$entry"
 
-      local result
-      if [ -n "${args1:-}" ] && [ -n "${args2:-}" ]; then
-         result=$($func "$args1" "$args2" 2>/dev/null || echo "FAIL|Error running check")
-      elif [ -n "${args1:-}" ]; then
-         result=$($func "$args1" 2>/dev/null || echo "FAIL|Error running check")
+      local result nargs
+      # Count pipe-delimited fields to determine argument count
+      nargs=$(awk -F'|' '{print NF}' <<<"$entry")
+      if [ "$nargs" -ge 4 ]; then
+         result=$($func "${args1:-}" "${args2:-}" 2>/dev/null || echo "FAIL|Error running check")
+      elif [ "$nargs" -ge 3 ]; then
+         result=$($func "${args1:-}" 2>/dev/null || echo "FAIL|Error running check")
       else
          result=$($func 2>/dev/null || echo "FAIL|Error running check")
       fi
@@ -341,10 +340,10 @@ run_verify() {
 
       local color
       case "$status" in
-         PASS) color="$GREEN"; ((pass++)) ;;
-         FAIL) color="$RED"; ((fail++)) ;;
-         SKIP) color="$YELLOW"; ((skip++)) ;;
-         *) color="$RED"; status="FAIL"; ((fail++)) ;;
+         PASS) color="$GREEN"; ((++pass)) ;;
+         FAIL) color="$RED"; ((++fail)) ;;
+         SKIP) color="$YELLOW"; ((++skip)) ;;
+         *) color="$RED"; status="FAIL"; ((++fail)) ;;
       esac
 
       printf "  %-24s ${color}%-8s${NC} %s\n" "$label" "$status" "$detail"
