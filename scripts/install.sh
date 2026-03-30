@@ -386,7 +386,7 @@ run_admin() {
    log "Creating admin account..."
 
    local admin_pass
-   admin_pass=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 16)
+   admin_pass=$(dd if=/dev/urandom bs=64 count=1 status=none | tr -dc 'A-Za-z0-9' | head -c 16)
 
    DAWN_SETUP_TOKEN="$token" DAWN_PASSWORD="$admin_pass" \
       run_dawn "$BUILD_DIR/dawn-admin/dawn-admin" user create admin --admin ||
