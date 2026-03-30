@@ -7,6 +7,19 @@ Tested on Ubuntu 24.04 LTS (x86_64) with NVIDIA GPU (optional).
 
 ---
 
+## Automated Install
+
+The install script auto-detects x86_64 and handles everything:
+
+```bash
+git clone --recursive https://github.com/The-OASIS-Project/dawn.git && cd dawn
+./scripts/install.sh --preset server
+```
+
+See [GETTING_STARTED.md — Automated Install](../GETTING_STARTED.md#automated-install-recommended) for full options. The manual steps below are for reference.
+
+---
+
 ## 1. System Dependencies
 
 ### Build tools
@@ -63,7 +76,10 @@ falls back to CPU (slower but functional).
 ## 2. ONNX Runtime
 
 ONNX Runtime is required for TTS (Piper), VAD (Silero), and the embedding engine.
-Install the prebuilt x86_64 CPU package:
+
+**CPU-only** — install the prebuilt x86_64 package:
+
+> **Have an NVIDIA GPU?** If you want GPU-accelerated Whisper ASR, build ONNX Runtime from source with CUDA instead. See [GETTING_STARTED.md — Option B](../GETTING_STARTED.md#step-3-install-onnx-runtime) for build instructions. The install script (`scripts/install.sh`) detects CUDA automatically and handles the source build, including the GCC 14 workaround.
 
 ```bash
 wget https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-linux-x64-1.22.0.tgz

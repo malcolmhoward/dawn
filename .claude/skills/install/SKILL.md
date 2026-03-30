@@ -11,6 +11,11 @@ argument-hint: "[fresh|verify|deploy|uninstall|step-name]"
 
 You are guiding the user through a complete installation of the DAWN voice assistant. Your job is to execute each phase, verify it succeeded, and move on. Be methodical and thorough.
 
+**Automated script alternative**: If `scripts/install.sh` exists, you may run it with appropriate flags
+instead of executing phases manually. The script handles platform detection, sudo, and all phases.
+Use it when the user wants a streamlined install. Fall back to manual phases if the script fails or
+for troubleshooting. Deploy commands: `./scripts/install.sh --deploy server` or `--deploy satellite`.
+
 ## Invocation Modes
 
 - `/install` or `/install fresh` — Full installation from scratch
@@ -50,6 +55,7 @@ You are guiding the user through a complete installation of the DAWN voice assis
 - Existing models: Check `models/whisper.cpp/` for `.bin` files
 - CMake version: `cmake --version`
 - Audio backend: Check for PulseAudio (`pactl info`) and ALSA (`arecord -L`)
+- Audio capture devices: Check `arecord -l` for physical capture devices. If none found, flag as headless (will need snd-dummy workaround or server mode)
 - Docker: `docker --version` and `docker compose version`
 - Passwordless sudo: `sudo -n true 2>/dev/null`
 
@@ -102,7 +108,7 @@ libsamplerate0-dev libmpg123-dev libvorbis-dev libncurses-dev
 meson ninja-build libabsl-dev
 libmupdf-dev libfreetype-dev libharfbuzz-dev
 libzip-dev libmujs-dev libgumbo-dev libopenjp2-7-dev libjbig2dec0-dev
-libical-dev libspdlog-dev
+libical-dev libspdlog-dev libxml2-dev
 ```
 
 **Known package name variations:**
@@ -117,7 +123,7 @@ libical-dev libspdlog-dev
 
 ### CMake Version Check
 
-After apt install, check `cmake --version`. DAWN presets need 3.21+, but ONNX Runtime (built from source) needs 3.28+. If the system CMake is too old:
+After apt install, check `cmake --version`. DAWN presets need 3.21+, but ONNX Runtime (built from source) needs 3.28+. Debian 13+ and Ubuntu 24.04+ ship recent enough versions. If the system CMake is too old (Ubuntu 22.04 ships 3.22):
 
 ```bash
 # aarch64 (Jetson, RPi)
@@ -155,10 +161,20 @@ For each of the 4 required libraries, check if already installed before building
 
 ### 2c. ONNX Runtime
 - Check: `ls /usr/local/lib/libonnxruntime.so*` and `ls /usr/local/include/onnxruntime_c_api.h`
-- **x86_64 shortcut**: Prebuilt packages available — see `docs/GETTING_STARTED_SERVER.md` section 2
-- **From source** (Jetson, ARM, or GPU builds):
+- **Pre-built packages (recommended for RPi and x86_64)**:
+  - **aarch64** (RPi 5, non-CUDA ARM boards):
+    ```bash
+    wget https://github.com/microsoft/onnxruntime/releases/download/v1.19.2/onnxruntime-linux-aarch64-1.19.2.tgz
+    tar xzf onnxruntime-linux-aarch64-1.19.2.tgz
+    sudo cp -a onnxruntime-linux-aarch64-1.19.2/lib/libonnxruntime*.so* /usr/local/lib/
+    sudo cp onnxruntime-linux-aarch64-1.19.2/include/*.h /usr/local/include/
+    sudo ldconfig
+    ```
+  - **x86_64**: See `docs/GETTING_STARTED_SERVER.md` section 2
+- **From source** (any system with CUDA — Jetson, x86_64 with NVIDIA GPU):
   - **CRITICAL**: Clone with `--branch v1.19.2 --depth 1` (NOT main). The `main` branch pulls abseil lts_20250814 which requires GCC 12+, breaking on Ubuntu 22.04 (GCC 11).
-  - Build with CUDA flags if Jetson detected, otherwise CPU-only
+  - **GCC 14+ workaround**: v1.19.2 fails with `-Werror=template-id-cdtor` on GCC 14+. Install `gcc-12 g++-12` and build with `CC=gcc-12 CXX=g++-12`. The `scripts/install.sh` handles this automatically.
+  - Build with CUDA flags: `CC=gcc-12 CXX=g++-12 ./build.sh --use_cuda --cudnn_home /usr/local/cuda --cuda_home /usr/local/cuda --config MinSizeRel --update --build --parallel --build_shared_lib`
   - **Known issue**: Eigen download from GitLab may fail (hash mismatch or 403). Workaround: download Eigen manually and pass `--cmake_extra_defines FETCHCONTENT_SOURCE_DIR_EIGEN=/path/to/eigen-source`
   - This is the longest build — warn the user it may take 30-60 minutes
 
@@ -185,8 +201,9 @@ Reference: `GETTING_STARTED.md` section 3.
 
 **Verify**:
 - Binary exists: `ls -la build/dawn` (path depends on preset)
-- Binary runs: `./build/dawn --help` or `./build/dawn --dump-config` (should print config and exit)
-- `dawn-admin` exists: `ls -la build/dawn-admin`
+- Binary runs: `LD_LIBRARY_PATH=/usr/local/lib ./build/dawn --help` or `--dump-config` (should print config and exit).
+  **Note**: `LD_LIBRARY_PATH=/usr/local/lib` is needed when core libraries (ONNX Runtime, espeak-ng, piper-phonemize) are installed to `/usr/local/lib/`. Use it for all `./build/dawn` and `./build/dawn-admin/dawn-admin` invocations.
+- `dawn-admin` exists: `ls -la build/dawn-admin/dawn-admin`
 
 ## Phase 4: Download Models
 
@@ -213,6 +230,9 @@ Reference: `GETTING_STARTED.md` section 5.
    - Set `[llm.cloud] provider` to their primary cloud provider
    - Set `[webui] enabled = true` if not using `local` preset
    - Set audio devices if auto-detected
+   - **Headless (no capture device detected)**: Load `snd-dummy` kernel module, persist via
+     `/etc/modules-load.d/snd-dummy.conf`, and set `capture_device = "plughw:CARD=Dummy,DEV=0"`.
+     This allows the daemon to start; voice input works via WebUI and satellites.
    - Enable/disable MQTT based on selection
 6. If Plex was selected, ask for Plex token and configure `[music.plex]`
 7. If Home Assistant was selected, ask for HA token and configure
@@ -278,17 +298,20 @@ Reference: `GETTING_STARTED.md` section 6.
 The admin creation requires the daemon running (it generates a setup token). Use environment
 variables for fully non-interactive creation:
 
-1. Start DAWN in the background, redirecting stderr to capture the setup token:
+1. Start DAWN in the background, capturing all output (the token appears in the combined
+   stdout/stderr stream, printed by the admin socket after full initialization):
    ```bash
-   ./build/dawn 2>/tmp/dawn_stderr.log &
+   LD_LIBRARY_PATH=/usr/local/lib ./build/dawn > /tmp/dawn_startup.log 2>&1 &
    DAWN_PID=$!
-   sleep 5
-   TOKEN=$(grep -oP 'Token: \K[A-Z0-9-]+' /tmp/dawn_stderr.log)
+   sleep 6
+   TOKEN=$(grep -oP 'Token: \K[A-Z0-9-]+' /tmp/dawn_startup.log)
    ```
+   If TOKEN is empty, check `/tmp/dawn_startup.log` for startup errors (audio device, missing
+   model, etc.) and fix them before retrying.
 2. Create the admin account using env vars (no interactive prompts):
    ```bash
    DAWN_SETUP_TOKEN="$TOKEN" DAWN_PASSWORD="changeme123" \
-     ./build/dawn-admin/dawn-admin user create admin --admin
+     LD_LIBRARY_PATH=/usr/local/lib ./build/dawn-admin/dawn-admin user create admin --admin
    ```
 3. Stop the background daemon: `kill $DAWN_PID`
 4. Remind the user to change the default password via the WebUI after first login
@@ -358,10 +381,21 @@ Installed paths:
 - Logs: `/var/log/dawn/`
 - Service: `dawn-server.service`
 
-**Verify**:
+**Verify** (run ALL of these post-deploy checks):
 - `systemctl is-active dawn-server` should return `active`
 - `systemctl is-enabled dawn-server` should return `enabled`
+- Binary exists: `ls /usr/local/bin/dawn`
+- Config exists: `ls /usr/local/etc/dawn/dawn.toml`
+- Secrets permissions: `stat -c '%a' /usr/local/etc/dawn/secrets.toml` should be `600`
+- Log directory: `ls /var/log/dawn/`
+- ldconfig entry: `cat /etc/ld.so.conf.d/dawn.conf` should contain `/usr/local/lib`
+- Clean logs: `grep -c "\[ERR\]" /var/log/dawn/server.log` should be 0
+- WebUI responds: `curl -sk https://localhost:3000/ | head -c 100` (wait a few seconds after start)
 - `journalctl -u dawn-server -n 20` shows clean startup
+
+**CUDA note**: If CUDA was detected during install, `scripts/install.sh --deploy server` automatically
+configures `/usr/local/etc/dawn/dawn-server.conf` with the correct GPU library paths and enables
+`CUDA_VISIBLE_DEVICES`. For manual deploy, uncomment the CUDA lines in `dawn-server.conf`.
 
 ### Deploy Satellite
 
@@ -391,9 +425,14 @@ Installed paths:
 3. Configure `[audio]` capture/playback devices
 4. Restart: `sudo systemctl restart dawn-satellite`
 
-**Verify**:
+**Verify** (run ALL of these post-deploy checks):
 - `systemctl is-active dawn-satellite` should return `active`
 - `systemctl is-enabled dawn-satellite` should return `enabled`
+- Binary exists: `ls /usr/local/bin/dawn_satellite`
+- Config exists: `ls /usr/local/etc/dawn-satellite/satellite.toml`
+- Log directory: `ls /var/log/dawn-satellite/`
+- ldconfig entry: `cat /etc/ld.so.conf.d/dawn.conf` should contain `/usr/local/lib`
+- Clean logs: `grep -c "\[ERR\]" /var/log/dawn-satellite/satellite.log` should be 0
 - `journalctl -u dawn-satellite -n 20` shows clean startup
 
 ## Uninstall

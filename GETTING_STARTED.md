@@ -19,6 +19,38 @@ Both interfaces share the same AI backend (ASR, LLM, TTS).
 - **Audio**: Microphone and speakers (for local voice interface; not required for WebUI-only — see [Headless Setup](#headless-setup-no-microphone))
 - **LLM**: Either a cloud API key (OpenAI, Claude, Gemini) or a local LLM server (llama.cpp, Ollama)
 
+## Automated Install (Recommended)
+
+The install script handles platform detection, dependencies, library builds, configuration, and verification automatically. It works on Jetson, Raspberry Pi, and x86_64 systems.
+
+```bash
+# Clone the repository first (if you haven't already)
+git clone --recursive https://github.com/The-OASIS-Project/dawn.git
+cd dawn
+
+# Run the interactive installer
+./scripts/install.sh
+```
+
+The script will detect your platform, ask a few questions (LLM provider, model size, optional features), then run through all installation phases. It handles sudo prompts automatically — works with or without passwordless sudo.
+
+**Other modes:**
+```bash
+./scripts/install.sh --verify              # Verify an existing installation
+./scripts/install.sh --resume-from build   # Resume after a failure
+./scripts/install.sh --deploy server       # Deploy as a systemd service
+./scripts/install.sh --config install.conf # Unattended (see scripts/install.conf.example)
+./scripts/install.sh -h                    # Full usage
+```
+
+If the automated installer completes successfully, skip to [Run DAWN](#8-run-dawn). The manual steps below are provided for reference or if you prefer step-by-step control.
+
+---
+
+## Manual Installation
+
+The following sections walk through each step individually.
+
 ## 1. Install System Dependencies
 
 ```bash
@@ -38,7 +70,7 @@ sudo apt update && sudo apt install -y \
 
 > **Package name note**: On Ubuntu 22.04 (including Jetson Linux R36), the abseil package is `libabsl-dev`. On Ubuntu 24.04+, it may be named `libabseil-dev`. If one isn't found, try the other.
 
-> **Jetson users**: CUDA runtime is pre-installed. For building GPU-accelerated components (ONNX Runtime, Whisper), you may need CUDA development headers. Check with `ls /usr/local/cuda/include/cuda.h`.
+> **CUDA users** (Jetson, x86_64 with NVIDIA GPU): For GPU-accelerated Whisper ASR, DAWN needs ONNX Runtime built with CUDA support. The install script detects CUDA automatically. Verify your CUDA toolkit is installed: `ls /usr/local/cuda/include/cuda.h`.
 
 > **CMake version**: DAWN presets require CMake 3.21+, but building ONNX Runtime from source requires CMake 3.28+. Check with `cmake --version`. Debian 13+ and Ubuntu 24.04+ ship recent enough versions. If your system CMake is too old (Ubuntu 22.04 ships 3.22), install a newer version:
 > ```bash
@@ -85,7 +117,7 @@ cd ..
 
 **Step 3: Install ONNX Runtime**
 
-Pre-built packages are available for **x86_64** and **aarch64** (Raspberry Pi, non-CUDA ARM boards). Only Jetson users need to build from source (for CUDA support).
+Pre-built packages are available for **x86_64** and **aarch64** (Raspberry Pi, non-CUDA ARM boards). Systems with CUDA (Jetson, x86_64 with NVIDIA GPU) should build from source for GPU-accelerated Whisper ASR.
 
 **Option A: Pre-built package (recommended for RPi and x86_64)**
 
@@ -100,11 +132,16 @@ sudo ldconfig
 # x86_64 — see docs/GETTING_STARTED_SERVER.md for the x86_64 package URL
 ```
 
-**Option B: Build from source (Jetson with CUDA)**
+**Option B: Build from source (any system with CUDA)**
 
 > **Important**: Use a release tag (e.g., `v1.19.2`), not the `main` branch. The latest `main` may pull abseil versions that require GCC 12+, which is not available on Ubuntu 22.04.
 
-> **GCC 14 / Debian 13 note**: Building ONNX Runtime v1.19.2 from source on GCC 14+ (Debian 13 Trixie, Ubuntu 25.04+) fails with `-Werror=template-id-cdtor` in `tree_ensemble_aggregator.h`. Use the pre-built package instead, or patch the source (remove template arguments from the `TreeAggregatorMax` constructor on line 329).
+> **GCC 14 / Debian 13 note**: Building ONNX Runtime v1.19.2 from source on GCC 14+ (Debian 13 Trixie, Ubuntu 25.04+) fails with `-Werror=template-id-cdtor`. Workaround: install GCC 12 alongside your system compiler and use it for the ONNX build only:
+> ```bash
+> sudo apt install gcc-12 g++-12
+> CC=gcc-12 CXX=g++-12 ./build.sh --use_cuda ...  # same flags as below
+> ```
+> The install script (`scripts/install.sh`) handles this automatically.
 
 ```bash
 git clone --recursive --branch v1.19.2 --depth 1 https://github.com/microsoft/onnxruntime.git

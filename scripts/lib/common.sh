@@ -1,0 +1,586 @@
+#!/bin/bash
+#
+# DAWN Installation - Common Utilities
+# Logging, sudo handling, state management, platform detection, cleanup
+#
+# Sourced by install.sh and all lib/*.sh files. Do not execute directly.
+#
+
+# Prevent double-sourcing
+[ -n "${_DAWN_COMMON_LOADED:-}" ] && return 0
+_DAWN_COMMON_LOADED=1
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Colors and logging (matches services/dawn-server/install.sh convention)
+# ─────────────────────────────────────────────────────────────────────────────
+
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+RED='\033[0;31m'
+BLUE='\033[0;34m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+log() {
+   echo -e "${GREEN}[INFO]${NC} $1"
+}
+
+warn() {
+   echo -e "${YELLOW}[WARN]${NC} $1"
+}
+
+error() {
+   echo -e "${RED}[ERROR]${NC} $1"
+   exit 1
+}
+
+info() {
+   echo -e "${BLUE}[*]${NC} $1"
+}
+
+header() {
+   echo ""
+   echo -e "${BOLD}═══ $1 ═══${NC}"
+   echo ""
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Error handling
+# ─────────────────────────────────────────────────────────────────────────────
+
+_error_handler() {
+   local exit_code=$?
+   local line=$1
+   local cmd=$2
+   echo -e "${RED}[FATAL]${NC} Command failed (exit $exit_code) at line $line: $cmd" >&2
+   if [ -n "${CURRENT_PHASE:-}" ]; then
+      echo -e "${RED}[FATAL]${NC} Failed during phase: $CURRENT_PHASE" >&2
+   fi
+   exit "$exit_code"
+}
+
+trap '_error_handler $LINENO "$BASH_COMMAND"' ERR
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Temp directory cleanup
+# ─────────────────────────────────────────────────────────────────────────────
+
+CLEANUP_DIRS=()
+
+register_cleanup() {
+   CLEANUP_DIRS+=("$1")
+}
+
+_cleanup_handler() {
+   local exit_code=$?
+   for dir in "${CLEANUP_DIRS[@]}"; do
+      [ -d "$dir" ] && rm -rf "$dir"
+   done
+   exit "$exit_code"
+}
+
+trap '_cleanup_handler' EXIT
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Interactive helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Ask a yes/no question. Returns 0 for yes, 1 for no.
+# Usage: ask_yes_no "Enable SSL?" [default_yes]
+# In non-interactive mode, returns 1 (no) unless $2 is "default_yes".
+ask_yes_no() {
+   if [ "${INTERACTIVE:-true}" = false ]; then
+      [ "${2:-}" = "default_yes" ] && return 0
+      return 1
+   fi
+   local answer
+   read -rp "$1 [y/N] " answer
+   [[ "$answer" =~ ^[Yy] ]]
+}
+
+# Ask for a value with a default. Returns the value.
+# Usage: result=$(ask_value "Whisper model" "base")
+ask_value() {
+   if [ "${INTERACTIVE:-true}" = false ]; then
+      echo "${2:-}"
+      return
+   fi
+   local answer
+   read -rp "$1 [${2:-}]: " answer
+   echo "${answer:-${2:-}}"
+}
+
+# Read a secret value (no echo). Returns the value.
+# Usage: key=$(ask_secret "Claude API key")
+ask_secret() {
+   if [ "${INTERACTIVE:-true}" = false ]; then
+      echo ""
+      return
+   fi
+   local answer
+   read -rsp "$1: " answer
+   echo "$answer"
+   # Print newline since -s suppresses it
+   echo "" >&2
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Idempotency helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+has_command() {
+   command -v "$1" >/dev/null 2>&1
+}
+
+is_pkg_installed() {
+   dpkg -l "$1" 2>/dev/null | grep -q "^ii"
+}
+
+has_lib() {
+   [ -f "/usr/local/lib/$1" ]
+}
+
+has_header() {
+   [ -f "$1" ]
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Sudo handling
+# ─────────────────────────────────────────────────────────────────────────────
+
+SUDO_CMD=""
+SUDO_PASSWORDLESS=false
+
+detect_sudo() {
+   if [ "$(id -u)" -eq 0 ]; then
+      SUDO_CMD=""
+      SUDO_PASSWORDLESS=true
+   elif sudo -n true 2>/dev/null; then
+      SUDO_CMD="sudo"
+      SUDO_PASSWORDLESS=true
+   else
+      SUDO_CMD="sudo"
+      SUDO_PASSWORDLESS=false
+   fi
+}
+
+# Call at the start of a phase that needs sudo.
+# Prompts once for password if needed, caches credentials.
+sudo_begin_phase() {
+   local phase_name="${1:-this phase}"
+   if [ "$SUDO_PASSWORDLESS" = false ] && [ -n "$SUDO_CMD" ]; then
+      log "Phase '$phase_name' requires sudo privileges"
+      sudo -v || error "Failed to obtain sudo credentials"
+   fi
+}
+
+# Call periodically during long sudo phases to prevent timeout.
+sudo_keepalive() {
+   if [ "$SUDO_PASSWORDLESS" = false ] && [ -n "$SUDO_CMD" ]; then
+      sudo -v 2>/dev/null || true
+   fi
+}
+
+# Run a command with sudo if needed.
+run_sudo() {
+   if [ -n "$SUDO_CMD" ]; then
+      $SUDO_CMD "$@"
+   else
+      "$@"
+   fi
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Run DAWN binary (handles LD_LIBRARY_PATH)
+# ─────────────────────────────────────────────────────────────────────────────
+
+LDCONFIG_DONE=false
+
+run_dawn() {
+   local binary="$1"
+   shift
+   if [ "$LDCONFIG_DONE" = true ]; then
+      "$binary" "$@"
+   else
+      LD_LIBRARY_PATH=/usr/local/lib "$binary" "$@"
+   fi
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Platform detection
+# ─────────────────────────────────────────────────────────────────────────────
+
+ARCH=""
+PLATFORM=""
+PLATFORM_DISPLAY=""
+OS_NAME=""
+OS_VERSION=""
+OS_ID=""
+HAS_CUDA=false
+CUDA_VERSION=""
+HAS_AUDIO_CAPTURE=false
+HAS_AUDIO_PLAYBACK=false
+HEADLESS=false
+
+detect_arch() {
+   ARCH=$(uname -m)
+   if [ "$ARCH" != "aarch64" ] && [ "$ARCH" != "x86_64" ]; then
+      error "Unsupported architecture: $ARCH (need aarch64 or x86_64)"
+   fi
+}
+
+detect_platform() {
+   if [ -f /etc/nv_tegra_release ]; then
+      PLATFORM="jetson"
+      PLATFORM_DISPLAY="NVIDIA Jetson"
+   elif [ -f /sys/firmware/devicetree/base/model ] &&
+      grep -qi "raspberry pi" /sys/firmware/devicetree/base/model 2>/dev/null; then
+      PLATFORM="rpi"
+      PLATFORM_DISPLAY="$(tr -d '\0' </sys/firmware/devicetree/base/model)"
+   else
+      PLATFORM="generic"
+      PLATFORM_DISPLAY="Generic Linux ($ARCH)"
+   fi
+}
+
+detect_os() {
+   if [ ! -f /etc/os-release ]; then
+      error "Cannot detect OS: /etc/os-release not found"
+   fi
+   # shellcheck disable=SC1091
+   source /etc/os-release
+   OS_NAME="${NAME:-Unknown}"
+   OS_VERSION="${VERSION_ID:-Unknown}"
+   OS_ID="${ID:-unknown}"
+}
+
+detect_cuda() {
+   HAS_CUDA=false
+   CUDA_VERSION=""
+   if [ -f /usr/local/cuda/include/cuda.h ]; then
+      HAS_CUDA=true
+      if has_command nvcc; then
+         CUDA_VERSION=$(nvcc --version 2>/dev/null | grep -oP 'release \K[0-9]+\.[0-9]+' || echo "unknown")
+      fi
+   fi
+}
+
+detect_audio() {
+   HAS_AUDIO_CAPTURE=false
+   HAS_AUDIO_PLAYBACK=false
+   HEADLESS=false
+
+   if has_command arecord; then
+      if arecord -l 2>/dev/null | grep -q "card"; then
+         HAS_AUDIO_CAPTURE=true
+      fi
+   fi
+   if has_command aplay; then
+      if aplay -l 2>/dev/null | grep -q "card"; then
+         HAS_AUDIO_PLAYBACK=true
+      fi
+   fi
+   if [ "$HAS_AUDIO_CAPTURE" = false ]; then
+      HEADLESS=true
+   fi
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Existing install detection
+# ─────────────────────────────────────────────────────────────────────────────
+
+HAS_ONNXRUNTIME=false
+HAS_ESPEAK=false
+HAS_PIPER_PHONEMIZE=false
+HAS_SPDLOG=false
+HAS_BUILD=false
+BUILD_DIR=""
+HAS_DAWN_TOML=false
+HAS_SECRETS_TOML=false
+HAS_WHISPER_MODEL=false
+HAS_TTS_MODELS=false
+HAS_VAD_MODEL=false
+HAS_DOCKER=false
+HAS_DOCKER_COMPOSE=false
+HAS_SUBMODULES=false
+CMAKE_VERSION=""
+MESON_VERSION=""
+
+detect_existing_install() {
+   # Core libraries
+   if has_lib "libonnxruntime.so" || [ -f /usr/local/lib/libonnxruntime.so.1 ]; then
+      HAS_ONNXRUNTIME=true
+   fi
+
+   local multiarch
+   multiarch=$(dpkg-architecture -qDEB_HOST_MULTIARCH 2>/dev/null || echo "")
+   if has_lib "libespeak-ng.so" || [ -f "/usr/lib/${multiarch}/libespeak-ng.so" ]; then
+      HAS_ESPEAK=true
+   fi
+
+   if has_lib "libpiper_phonemize.so"; then
+      HAS_PIPER_PHONEMIZE=true
+   fi
+
+   if is_pkg_installed libspdlog-dev; then
+      HAS_SPDLOG=true
+   fi
+
+   # Build artifacts
+   HAS_BUILD=false
+   for dir in build build-debug build-release build-local build-full build-server build-server-debug; do
+      if [ -f "$PROJECT_ROOT/$dir/dawn" ]; then
+         HAS_BUILD=true
+         BUILD_DIR="$PROJECT_ROOT/$dir"
+         break
+      fi
+   done
+
+   # Config files
+   [ -f "$PROJECT_ROOT/dawn.toml" ] && HAS_DAWN_TOML=true
+   [ -f "$PROJECT_ROOT/secrets.toml" ] && HAS_SECRETS_TOML=true
+
+   # Models
+   local f
+   for f in "$PROJECT_ROOT"/models/whisper.cpp/ggml-*.bin; do
+      [ -f "$f" ] && HAS_WHISPER_MODEL=true && break
+   done
+   for f in "$PROJECT_ROOT"/models/*.onnx; do
+      [ -f "$f" ] && HAS_TTS_MODELS=true && break
+   done
+   for f in "$PROJECT_ROOT"/models/silero_vad*.onnx; do
+      [ -f "$f" ] && HAS_VAD_MODEL=true && break
+   done
+
+   # Docker
+   if has_command docker; then
+      HAS_DOCKER=true
+      if docker compose version >/dev/null 2>&1; then
+         HAS_DOCKER_COMPOSE=true
+      fi
+   fi
+
+   # CMake / Meson versions
+   if has_command cmake; then
+      CMAKE_VERSION=$(cmake --version 2>/dev/null | head -1 | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' || echo "")
+   fi
+   if has_command meson; then
+      MESON_VERSION=$(meson --version 2>/dev/null || echo "")
+   fi
+
+   # Git submodules
+   if [ -d "$PROJECT_ROOT/whisper.cpp/.git" ] || [ -f "$PROJECT_ROOT/whisper.cpp/.git" ]; then
+      HAS_SUBMODULES=true
+   fi
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Discovery (run all detectors, print report)
+# ─────────────────────────────────────────────────────────────────────────────
+
+run_discovery() {
+   info "Phase 0: Discovering system configuration..."
+   detect_arch
+   detect_platform
+   detect_os
+   detect_sudo
+   detect_cuda
+   detect_audio
+   detect_existing_install
+
+   echo ""
+   log "System Discovery Results"
+   printf "  %-20s %s\n" "Architecture:" "$ARCH"
+   printf "  %-20s %s\n" "Platform:" "$PLATFORM_DISPLAY"
+   printf "  %-20s %s\n" "OS:" "$OS_NAME $OS_VERSION"
+   printf "  %-20s %s\n" "CUDA:" "$([ "$HAS_CUDA" = true ] && echo "Yes ($CUDA_VERSION)" || echo "No")"
+   printf "  %-20s %s\n" "Audio capture:" "$([ "$HAS_AUDIO_CAPTURE" = true ] && echo "Yes" || echo "No (headless)")"
+   printf "  %-20s %s\n" "Audio playback:" "$([ "$HAS_AUDIO_PLAYBACK" = true ] && echo "Yes" || echo "No")"
+   printf "  %-20s %s\n" "Sudo:" "$([ "$SUDO_PASSWORDLESS" = true ] && echo "Passwordless" || echo "Password required")"
+   printf "  %-20s %s\n" "CMake:" "${CMAKE_VERSION:-Not installed}"
+   printf "  %-20s %s\n" "Meson:" "${MESON_VERSION:-Not installed}"
+   printf "  %-20s %s\n" "Docker:" "$([ "$HAS_DOCKER" = true ] && echo "Yes" || echo "No")"
+   echo ""
+   log "Existing Install"
+   printf "  %-20s %s\n" "ONNX Runtime:" "$([ "$HAS_ONNXRUNTIME" = true ] && echo "Installed" || echo "Missing")"
+   printf "  %-20s %s\n" "espeak-ng:" "$([ "$HAS_ESPEAK" = true ] && echo "Installed" || echo "Missing")"
+   printf "  %-20s %s\n" "piper-phonemize:" "$([ "$HAS_PIPER_PHONEMIZE" = true ] && echo "Installed" || echo "Missing")"
+   printf "  %-20s %s\n" "spdlog:" "$([ "$HAS_SPDLOG" = true ] && echo "Installed" || echo "Missing")"
+   printf "  %-20s %s\n" "Build:" "$([ "$HAS_BUILD" = true ] && echo "Yes ($BUILD_DIR)" || echo "No")"
+   printf "  %-20s %s\n" "dawn.toml:" "$([ "$HAS_DAWN_TOML" = true ] && echo "Yes" || echo "No")"
+   printf "  %-20s %s\n" "Whisper model:" "$([ "$HAS_WHISPER_MODEL" = true ] && echo "Yes" || echo "No")"
+   printf "  %-20s %s\n" "Submodules:" "$([ "$HAS_SUBMODULES" = true ] && echo "Initialized" || echo "Not initialized")"
+   echo ""
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Interactive choice presentation
+# ─────────────────────────────────────────────────────────────────────────────
+
+present_choices() {
+   header "Installation Options"
+
+   # 1. LLM Provider
+   if [ -z "${LLM_PROVIDER:-}" ]; then
+      echo "LLM provider (comma-separated for multiple, first = default):"
+      echo "  openai   - OpenAI (GPT)"
+      echo "  claude   - Anthropic (Claude)"
+      echo "  gemini   - Google (Gemini)"
+      echo "  local    - Local LLM (llama.cpp / Ollama)"
+      LLM_PROVIDER=$(ask_value "Provider(s)" "claude")
+   fi
+   PRIMARY_PROVIDER="${LLM_PROVIDER%%,*}"
+   log "LLM provider: $LLM_PROVIDER (primary: $PRIMARY_PROVIDER)"
+
+   # 2. API keys (interactive only, read silently)
+   if [ "${INTERACTIVE:-true}" = true ]; then
+      if echo "$LLM_PROVIDER" | grep -q "openai" && [ -z "${OPENAI_KEY:-}" ]; then
+         OPENAI_KEY=$(ask_secret "OpenAI API key (or Enter to skip)")
+      fi
+      if echo "$LLM_PROVIDER" | grep -q "claude" && [ -z "${CLAUDE_KEY:-}" ]; then
+         CLAUDE_KEY=$(ask_secret "Claude API key (or Enter to skip)")
+      fi
+      if echo "$LLM_PROVIDER" | grep -q "gemini" && [ -z "${GEMINI_KEY:-}" ]; then
+         GEMINI_KEY=$(ask_secret "Gemini API key (or Enter to skip)")
+      fi
+   fi
+
+   # 3. Whisper model
+   if [ -z "${WHISPER_MODEL:-}" ]; then
+      echo ""
+      echo "Whisper model sizes:"
+      echo "  tiny   ~75MB  (fastest, least accurate)"
+      echo "  base   ~142MB (good balance)"
+      echo "  small  ~466MB (slower, more accurate)"
+      WHISPER_MODEL=$(ask_value "Whisper model" "base")
+   fi
+   case "$WHISPER_MODEL" in
+      tiny | base | small) ;;
+      *) error "Invalid whisper model: $WHISPER_MODEL (must be tiny, base, or small)" ;;
+   esac
+   log "Whisper model: $WHISPER_MODEL"
+
+   # 4. Build preset
+   if [ -z "${BUILD_PRESET:-}" ]; then
+      echo ""
+      echo "Build presets:"
+      echo "  default  - Release with WebUI (recommended)"
+      echo "  local    - Local microphone only, no WebUI"
+      echo "  debug    - Debug symbols, for development"
+      echo "  server   - Server-only (no local audio required)"
+      local default_preset="default"
+      if [ "$HEADLESS" = true ]; then
+         default_preset="default"
+      fi
+      BUILD_PRESET=$(ask_value "Build preset" "$default_preset")
+   fi
+   case "$BUILD_PRESET" in
+      default | local | debug | full | server | server-debug) ;;
+      *) error "Invalid preset: $BUILD_PRESET" ;;
+   esac
+   log "Build preset: $BUILD_PRESET"
+
+   # 5. Features
+   if [ -z "${FEATURES:-}" ]; then
+      echo ""
+      echo "Optional features:"
+      local features=""
+      ask_yes_no "  SSL/TLS for HTTPS?" "default_yes" && features="${features}ssl,"
+      ask_yes_no "  MQTT integration?" "default_yes" && features="${features}mqtt,"
+      if [ "$HAS_DOCKER" = true ]; then
+         ask_yes_no "  SearXNG web search? (Docker)" && features="${features}searxng,"
+         ask_yes_no "  FlareSolverr for JS-heavy sites? (Docker)" && features="${features}flaresolverr,"
+      else
+         info "  SearXNG/FlareSolverr skipped (Docker not installed)"
+      fi
+      ask_yes_no "  Plex music integration?" && features="${features}plex,"
+      ask_yes_no "  Home Assistant smart home?" && features="${features}homeassistant,"
+      FEATURES="${features%,}" # Remove trailing comma
+   fi
+   # Handle "all" shorthand
+   if [ "$FEATURES" = "all" ]; then
+      FEATURES="ssl,mqtt,searxng,flaresolverr,plex,homeassistant"
+   fi
+   log "Features: ${FEATURES:-none}"
+   echo ""
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# State management (XDG-compliant, survives reboots)
+# ─────────────────────────────────────────────────────────────────────────────
+
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/dawn"
+STATE_FILE="$STATE_DIR/install-state.env"
+
+# Phase ordering for resume logic
+PHASE_ORDER=(discovery deps libs build models configure apikeys ssl admin services verify)
+
+save_state() {
+   local phase="$1"
+   mkdir -p "$STATE_DIR"
+   cat >"$STATE_FILE" <<EOF
+# DAWN install state — generated $(date -Iseconds)
+INSTALLER_SHA="${INSTALLER_SHA:-unknown}"
+LAST_COMPLETED_PHASE="$phase"
+INSTALL_TARGET="${INSTALL_TARGET:-server}"
+LLM_PROVIDER="${LLM_PROVIDER:-}"
+PRIMARY_PROVIDER="${PRIMARY_PROVIDER:-}"
+WHISPER_MODEL="${WHISPER_MODEL:-base}"
+BUILD_PRESET="${BUILD_PRESET:-default}"
+FEATURES="${FEATURES:-}"
+BUILD_DIR="${BUILD_DIR:-}"
+HEADLESS="${HEADLESS:-false}"
+HAS_CUDA="${HAS_CUDA:-false}"
+ONNX_HAS_CUDA="${ONNX_HAS_CUDA:-false}"
+EOF
+   chmod 600 "$STATE_FILE"
+}
+
+load_state() {
+   if [ -f "$STATE_FILE" ]; then
+      # shellcheck disable=SC1090
+      source "$STATE_FILE"
+
+      # Warn if installer version changed
+      local current_sha
+      current_sha=$(git -C "$PROJECT_ROOT" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+      if [ "${INSTALLER_SHA:-}" != "$current_sha" ] && [ "${INSTALLER_SHA:-}" != "unknown" ]; then
+         warn "Install script has changed since state was saved (was $INSTALLER_SHA, now $current_sha)"
+         warn "Some phases may need to be re-run"
+      fi
+      return 0
+   fi
+   return 1
+}
+
+# Returns 0 if the phase should be run, 1 if it should be skipped.
+should_run_phase() {
+   local phase="$1"
+
+   # No resume requested — run everything
+   if [ -z "${RESUME_FROM:-}" ]; then
+      return 0
+   fi
+
+   # Find positions
+   local phase_pos=-1 resume_pos=-1
+   local i
+   for i in "${!PHASE_ORDER[@]}"; do
+      if [ "${PHASE_ORDER[$i]}" = "$phase" ]; then
+         phase_pos=$i
+      fi
+      if [ "${PHASE_ORDER[$i]}" = "$RESUME_FROM" ]; then
+         resume_pos=$i
+      fi
+   done
+
+   if [ "$resume_pos" -eq -1 ]; then
+      error "Unknown phase for --resume-from: $RESUME_FROM (valid: ${PHASE_ORDER[*]})"
+   fi
+
+   # Skip phases before the resume point
+   if [ "$phase_pos" -lt "$resume_pos" ]; then
+      return 1
+   fi
+   return 0
+}

@@ -1,0 +1,29 @@
+# DAWN install.conf — Unattended installation configuration
+#
+# Usage: ./scripts/install.sh --config scripts/install.conf.example
+#
+# This file is sourced as a shell script. Only KEY=VALUE assignments are allowed.
+# If this file contains API keys, restrict permissions: chmod 600 install.conf
+#
+
+# Install target: "server" (default) or "satellite"
+INSTALL_TARGET="server"
+
+# LLM provider(s), comma-separated. First = default.
+# Options: openai, claude, gemini, local
+LLM_PROVIDER="claude"
+
+# Whisper ASR model: tiny, base, small
+WHISPER_MODEL="base"
+
+# Build preset: default, local, debug, server, full
+BUILD_PRESET="default"
+
+# Optional features, comma-separated or "all"
+# Options: ssl, mqtt, searxng, flaresolverr, plex, homeassistant
+FEATURES="ssl,mqtt"
+
+# API keys — uncomment and fill in, or add to secrets.toml after install
+# OPENAI_KEY=""
+# CLAUDE_KEY=""
+# GEMINI_KEY=""

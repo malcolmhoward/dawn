@@ -1,0 +1,856 @@
+#!/bin/bash
+#
+# DAWN Installation Script
+# Automated installation of the DAWN voice assistant
+#
+# Usage:
+#   ./scripts/install.sh                    # Full interactive install
+#   ./scripts/install.sh --verify           # Run verification only
+#   ./scripts/install.sh --resume-from libs # Resume from a specific phase
+#   ./scripts/install.sh --config FILE      # Unattended with config file
+#   ./scripts/install.sh -h                 # Show help
+#
+
+set -euo pipefail
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Resolve paths
+# ─────────────────────────────────────────────────────────────────────────────
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+LIB_DIR="$SCRIPT_DIR/lib"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Source library files
+# ─────────────────────────────────────────────────────────────────────────────
+
+# shellcheck source=lib/common.sh
+source "$LIB_DIR/common.sh"
+# shellcheck source=lib/deps.sh
+source "$LIB_DIR/deps.sh"
+# shellcheck source=lib/libs.sh
+source "$LIB_DIR/libs.sh"
+# shellcheck source=lib/build.sh
+source "$LIB_DIR/build.sh"
+# shellcheck source=lib/configure.sh
+source "$LIB_DIR/configure.sh"
+# shellcheck source=lib/services.sh
+source "$LIB_DIR/services.sh"
+# shellcheck source=lib/verify.sh
+source "$LIB_DIR/verify.sh"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Default settings
+# ─────────────────────────────────────────────────────────────────────────────
+
+INTERACTIVE=true
+VERBOSE=false
+DRY_RUN=false
+VERIFY_ONLY=false
+DEPLOY_TARGET=""
+RESUME_FROM=""
+CONFIG_FILE=""
+CURRENT_PHASE=""
+
+# User preferences (set via CLI, config file, or interactive prompts)
+INSTALL_TARGET="${INSTALL_TARGET:-server}"
+LLM_PROVIDER="${LLM_PROVIDER:-}"
+PRIMARY_PROVIDER="${PRIMARY_PROVIDER:-}"
+OPENAI_KEY="${OPENAI_KEY:-}"
+CLAUDE_KEY="${CLAUDE_KEY:-}"
+GEMINI_KEY="${GEMINI_KEY:-}"
+WHISPER_MODEL="${WHISPER_MODEL:-}"
+BUILD_PRESET="${BUILD_PRESET:-}"
+FEATURES="${FEATURES:-}"
+
+# Installer version for state management
+INSTALLER_SHA=$(git -C "$PROJECT_ROOT" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Usage
+# ─────────────────────────────────────────────────────────────────────────────
+
+usage() {
+   cat <<EOF
+DAWN Installation Script
+
+Usage: $(basename "$0") [OPTIONS]
+
+Options:
+  --provider VALUE       LLM provider(s), comma-separated (openai,claude,gemini,local)
+  --whisper-model VALUE  Whisper model size (tiny, base, small)
+  --preset VALUE         Build preset (default, local, debug, server)
+  --features VALUE       Features, comma-separated or "all"
+                         (ssl,mqtt,searxng,flaresolverr,plex,homeassistant)
+  --config FILE          Config file for unattended installation
+  --unattended           Disable interactive prompts (use defaults)
+  --resume-from PHASE    Resume from a specific phase
+  --verify               Run verification suite only
+  --deploy TARGET        Deploy as systemd service (server or satellite)
+  --dry-run              Show what would be done (not implemented yet)
+  --verbose, -v          Verbose output
+  -h, --help             Show this help
+
+Phases (for --resume-from):
+  discovery, deps, libs, build, models, configure, apikeys, ssl, admin, services, verify
+
+Examples:
+  # Interactive install with defaults
+  ./scripts/install.sh
+
+  # Unattended with Claude as primary provider
+  ./scripts/install.sh --config scripts/install.conf.example
+
+  # Resume after a build failure
+  ./scripts/install.sh --resume-from build
+
+  # Just verify an existing installation
+  ./scripts/install.sh --verify
+
+  # Deploy as a systemd service (after building)
+  ./scripts/install.sh --deploy server
+  ./scripts/install.sh --deploy satellite
+EOF
+   exit 0
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Argument parsing
+# ─────────────────────────────────────────────────────────────────────────────
+
+parse_args() {
+   while [ $# -gt 0 ]; do
+      case "$1" in
+         --provider)
+            LLM_PROVIDER="$2"
+            PRIMARY_PROVIDER="${LLM_PROVIDER%%,*}"
+            shift 2
+            ;;
+         --whisper-model)
+            WHISPER_MODEL="$2"
+            shift 2
+            ;;
+         --preset)
+            BUILD_PRESET="$2"
+            shift 2
+            ;;
+         --features)
+            FEATURES="$2"
+            shift 2
+            ;;
+         --config)
+            CONFIG_FILE="$2"
+            INTERACTIVE=false
+            shift 2
+            ;;
+         --unattended)
+            INTERACTIVE=false
+            shift
+            ;;
+         --resume-from)
+            RESUME_FROM="$2"
+            shift 2
+            ;;
+         --verify)
+            VERIFY_ONLY=true
+            shift
+            ;;
+         --deploy)
+            DEPLOY_TARGET="$2"
+            shift 2
+            ;;
+         --dry-run)
+            DRY_RUN=true
+            shift
+            ;;
+         --verbose | -v)
+            VERBOSE=true
+            shift
+            ;;
+         -h | --help)
+            usage
+            ;;
+         *)
+            error "Unknown option: $1 (use -h for help)"
+            ;;
+      esac
+   done
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Config file validation and loading
+# ─────────────────────────────────────────────────────────────────────────────
+
+load_config_file() {
+   local file="$1"
+
+   if [ ! -f "$file" ]; then
+      error "Config file not found: $file"
+   fi
+
+   # Syntax check
+   if ! bash -n "$file" 2>/dev/null; then
+      error "Config file has syntax errors: $file"
+   fi
+
+   # Security check: only allow variable assignments (no commands)
+   local suspicious
+   suspicious=$(grep -vE '^\s*#|^\s*$|^\s*[A-Z_]+=' "$file" | head -5 || true)
+   if [ -n "$suspicious" ]; then
+      warn "Config file contains non-assignment lines:"
+      echo "$suspicious"
+      error "Config file must only contain KEY=VALUE assignments"
+   fi
+
+   # Check permissions if it contains API keys
+   if grep -qE '(KEY|key|secret)' "$file"; then
+      local perms
+      perms=$(stat -c '%a' "$file" 2>/dev/null || echo "???")
+      if [ "$perms" != "600" ] && [ "$perms" != "400" ]; then
+         warn "Config file contains keys but has permissive mode ($perms). Consider: chmod 600 $file"
+      fi
+   fi
+
+   # shellcheck disable=SC1090
+   source "$file"
+   PRIMARY_PROVIDER="${LLM_PROVIDER%%,*}"
+   log "Loaded config from $file"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 4: Download Models (delegates to setup_models.sh)
+# ─────────────────────────────────────────────────────────────────────────────
+
+run_models() {
+   header "Phase 4: Download Models"
+   CURRENT_PHASE="models"
+
+   local model_script="$PROJECT_ROOT/setup_models.sh"
+   if [ ! -x "$model_script" ]; then
+      chmod +x "$model_script" 2>/dev/null || true
+   fi
+
+   if [ ! -f "$model_script" ]; then
+      error "setup_models.sh not found at $PROJECT_ROOT"
+   fi
+
+   local model_args=()
+   if [ -n "${WHISPER_MODEL:-}" ]; then
+      model_args+=(--whisper-model "$WHISPER_MODEL")
+   fi
+
+   log "Running setup_models.sh ${model_args[*]:-}..."
+   "$model_script" "${model_args[@]}" || error "Model download failed"
+
+   # Verify
+   local model_found=false
+   local f
+   for f in "$PROJECT_ROOT"/models/whisper.cpp/ggml-*.bin; do
+      [ -f "$f" ] && model_found=true && break
+   done
+   if [ "$model_found" = false ]; then
+      warn "Whisper model not found after setup_models.sh"
+   fi
+
+   log "Phase 4 complete"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 7: SSL Setup (delegates to generate_ssl_cert.sh)
+# ─────────────────────────────────────────────────────────────────────────────
+
+run_ssl() {
+   header "Phase 7: SSL Setup"
+   CURRENT_PHASE="ssl"
+
+   if ! echo "${FEATURES:-}" | grep -q "ssl"; then
+      log "SSL: not selected, skipping"
+      return 0
+   fi
+
+   # Check if certs already exist
+   if [ -f "$PROJECT_ROOT/ssl/dawn.crt" ] && [ -f "$PROJECT_ROOT/ssl/dawn.key" ]; then
+      log "SSL: certificates already exist"
+      configure_ssl
+      return 0
+   fi
+
+   local ssl_script="$PROJECT_ROOT/generate_ssl_cert.sh"
+   if [ ! -f "$ssl_script" ]; then
+      error "generate_ssl_cert.sh not found"
+   fi
+   chmod +x "$ssl_script" 2>/dev/null || true
+
+   if [ "$INTERACTIVE" = false ]; then
+      warn "SSL: generate_ssl_cert.sh requires interactive input (CA passphrase)"
+      warn "SSL: skipping in unattended mode — run ./generate_ssl_cert.sh manually"
+      return 0
+   fi
+
+   log "Running SSL certificate generator..."
+   log "You will be prompted for a CA passphrase."
+   "$ssl_script" || error "SSL certificate generation failed"
+
+   # Verify
+   if [ -f "$PROJECT_ROOT/ssl/dawn.crt" ] && [ -f "$PROJECT_ROOT/ssl/dawn.key" ]; then
+      configure_ssl
+
+      # Install CA into system trust store
+      if [ -f "$PROJECT_ROOT/ssl/ca.crt" ]; then
+         sudo_begin_phase "ssl"
+         run_sudo cp "$PROJECT_ROOT/ssl/ca.crt" /usr/local/share/ca-certificates/dawn-ca.crt
+         run_sudo update-ca-certificates 2>/dev/null || true
+         log "CA certificate installed in system trust store"
+      fi
+   else
+      warn "SSL certificates not found after generation"
+   fi
+
+   log "Phase 7 complete"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 8: Create Admin Account
+# ─────────────────────────────────────────────────────────────────────────────
+
+run_admin() {
+   header "Phase 8: Create Admin Account"
+   CURRENT_PHASE="admin"
+
+   if [ -z "${BUILD_DIR:-}" ] || [ ! -f "$BUILD_DIR/dawn" ]; then
+      warn "Admin: binary not found, skipping admin creation"
+      return 0
+   fi
+
+   if [ ! -f "$BUILD_DIR/dawn-admin/dawn-admin" ]; then
+      warn "Admin: dawn-admin binary not found, skipping"
+      return 0
+   fi
+
+   # Check if admin already exists
+   local db_path="$HOME/.local/share/dawn/auth.db"
+   if [ -f "$db_path" ]; then
+      log "Admin: auth.db already exists, skipping account creation"
+      return 0
+   fi
+
+   log "Starting DAWN daemon to obtain setup token..."
+
+   local log_file="/tmp/dawn-install-startup-$$.log"
+
+   run_dawn "$BUILD_DIR/dawn" >"$log_file" 2>&1 &
+   local dawn_pid=$!
+
+   # Poll for setup token with timeout
+   local token="" timeout=30 elapsed=0
+   while [ $elapsed -lt $timeout ]; do
+      token=$(grep -oP 'Token: \K[A-Z0-9-]+' "$log_file" 2>/dev/null || true)
+      [ -n "$token" ] && break
+
+      # Check daemon is still alive
+      if ! kill -0 "$dawn_pid" 2>/dev/null; then
+         echo ""
+         warn "Daemon exited during startup. Last 20 lines of output:"
+         tail -20 "$log_file"
+         rm -f "$log_file"
+         error "Cannot create admin account — daemon failed to start"
+      fi
+
+      sleep 1
+      ((elapsed++))
+   done
+
+   if [ -z "$token" ]; then
+      # Daemon is running but no token appeared
+      kill "$dawn_pid" 2>/dev/null
+      wait "$dawn_pid" 2>/dev/null || true
+      warn "Setup token not found after ${timeout}s. Last 20 lines:"
+      tail -20 "$log_file"
+      rm -f "$log_file"
+      error "Cannot create admin account — setup token not found"
+   fi
+
+   log "Setup token obtained: $token"
+   log "Creating admin account..."
+
+   DAWN_SETUP_TOKEN="$token" DAWN_PASSWORD="changeme123" \
+      run_dawn "$BUILD_DIR/dawn-admin/dawn-admin" user create admin --admin ||
+      warn "dawn-admin failed (admin may already exist)"
+
+   # Clean shutdown
+   kill "$dawn_pid" 2>/dev/null
+   wait "$dawn_pid" 2>/dev/null || true
+   rm -f "$log_file"
+
+   log "Admin account created (username: admin, password: changeme123)"
+   warn "IMPORTANT: Change the default password via the WebUI after first login!"
+
+   log "Phase 8 complete"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CUDA environment file configuration
+# ─────────────────────────────────────────────────────────────────────────────
+
+# After service deploy, enable CUDA paths in the environment file if GPU is present.
+configure_cuda_env_file() {
+   local env_file="$1"
+
+   if [ "${ONNX_HAS_CUDA:-false}" = false ] && [ "$HAS_CUDA" = false ]; then
+      return 0
+   fi
+
+   if [ ! -f "$env_file" ]; then
+      return 0
+   fi
+
+   log "CUDA detected — configuring GPU library paths in $env_file"
+
+   # Build the LD_LIBRARY_PATH with CUDA paths
+   local ld_path="/usr/local/lib"
+
+   # Add CUDA toolkit library path
+   if [ -d /usr/local/cuda/lib64 ]; then
+      ld_path="${ld_path}:/usr/local/cuda/lib64"
+   fi
+
+   # Add Jetson Tegra libraries (only on Jetson)
+   if [ "$PLATFORM" = "jetson" ]; then
+      local tegra_lib="/usr/lib/aarch64-linux-gnu/tegra"
+      if [ -d "$tegra_lib" ]; then
+         ld_path="${ld_path}:${tegra_lib}"
+      fi
+   fi
+
+   # Update the LD_LIBRARY_PATH line (replace the default one)
+   sudo_begin_phase "cuda-env"
+   run_sudo sed -i "s|^LD_LIBRARY_PATH=.*|LD_LIBRARY_PATH=${ld_path}|" "$env_file"
+
+   # Uncomment CUDA_VISIBLE_DEVICES if it's commented out
+   run_sudo sed -i 's/^#CUDA_VISIBLE_DEVICES=/CUDA_VISIBLE_DEVICES=/' "$env_file"
+
+   # Restart service to pick up the new environment
+   # Derive service name from env filename (dawn-server.conf → dawn-server)
+   local service_name
+   service_name=$(basename "$env_file" .conf)
+   if systemctl is-active --quiet "$service_name" 2>/dev/null; then
+      log "Restarting $service_name to apply CUDA configuration..."
+      run_sudo systemctl restart "$service_name"
+      sleep 3
+   fi
+
+   log "CUDA environment configured: $ld_path"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Deploy as systemd service
+# ─────────────────────────────────────────────────────────────────────────────
+
+run_deploy() {
+   local target="$1"
+
+   case "$target" in
+      server)
+         header "Deploy: DAWN Server Service"
+         local script="$PROJECT_ROOT/services/dawn-server/install.sh"
+         if [ ! -f "$script" ]; then
+            error "Service install script not found: $script"
+         fi
+
+         # Build deploy arguments from what we know
+         local deploy_args=()
+         if [ -n "${BUILD_DIR:-}" ] && [ -f "$BUILD_DIR/dawn" ]; then
+            deploy_args+=(--binary "$BUILD_DIR/dawn")
+         fi
+         if [ -d "$PROJECT_ROOT/models" ]; then
+            deploy_args+=(--models-dir "$PROJECT_ROOT/models")
+         fi
+         if [ -d "$PROJECT_ROOT/www" ]; then
+            deploy_args+=(--www-dir "$PROJECT_ROOT/www")
+         fi
+         if [ -d "$PROJECT_ROOT/ssl" ]; then
+            deploy_args+=(--ssl-dir "$PROJECT_ROOT/ssl")
+         fi
+         if [ -f "$PROJECT_ROOT/dawn.toml" ]; then
+            deploy_args+=(--config "$PROJECT_ROOT/dawn.toml")
+         fi
+         if [ -f "$PROJECT_ROOT/secrets.toml" ]; then
+            deploy_args+=(--secrets "$PROJECT_ROOT/secrets.toml")
+         fi
+
+         log "Running: sudo $script ${deploy_args[*]}"
+
+         if [ "$SUDO_PASSWORDLESS" = true ]; then
+            run_sudo bash "$script" "${deploy_args[@]}"
+         else
+            log "The service installer requires root. You will be prompted for your password."
+            sudo bash "$script" "${deploy_args[@]}"
+         fi
+
+         # If CUDA is available, update the environment file with GPU library paths
+         configure_cuda_env_file "/usr/local/etc/dawn/dawn-server.conf"
+         ;;
+
+      satellite)
+         header "Deploy: DAWN Satellite Service"
+         local script="$PROJECT_ROOT/services/dawn-satellite/install.sh"
+         if [ ! -f "$script" ]; then
+            error "Service install script not found: $script"
+         fi
+
+         local deploy_args=()
+         # Satellite binary could be in multiple locations
+         for bin_path in \
+            "$PROJECT_ROOT/dawn_satellite/build/dawn_satellite" \
+            "$PROJECT_ROOT/build-debug/dawn_satellite/dawn_satellite" \
+            "$PROJECT_ROOT/build/dawn_satellite/dawn_satellite"; do
+            if [ -f "$bin_path" ]; then
+               deploy_args+=(--binary "$bin_path")
+               break
+            fi
+         done
+         if [ -d "$PROJECT_ROOT/models" ]; then
+            deploy_args+=(--models-dir "$PROJECT_ROOT/models")
+         fi
+
+         log "Running: sudo $script ${deploy_args[*]}"
+
+         if [ "$SUDO_PASSWORDLESS" = true ]; then
+            run_sudo bash "$script" "${deploy_args[@]}"
+         else
+            log "The service installer requires root. You will be prompted for your password."
+            sudo bash "$script" "${deploy_args[@]}"
+         fi
+         ;;
+
+      *)
+         error "Unknown deploy target: $target (use 'server' or 'satellite')"
+         ;;
+   esac
+
+   # Post-deploy verification
+   verify_deployed_service "$target"
+}
+
+verify_deployed_service() {
+   local target="$1"
+   local service_name
+
+   case "$target" in
+      server) service_name="dawn-server" ;;
+      satellite) service_name="dawn-satellite" ;;
+   esac
+
+   header "Post-Deploy Verification: $service_name"
+
+   local pass=0 fail=0
+
+   # Check 1: Service unit file exists
+   if [ -f "/etc/systemd/system/${service_name}.service" ]; then
+      log "  Service unit file: EXISTS"
+      ((pass++))
+   else
+      warn "  Service unit file: MISSING"
+      ((fail++))
+   fi
+
+   # Check 2: Service is enabled
+   if systemctl is-enabled --quiet "$service_name" 2>/dev/null; then
+      log "  Service enabled: YES"
+      ((pass++))
+   else
+      warn "  Service enabled: NO"
+      ((fail++))
+   fi
+
+   # Check 3: Service is active
+   if systemctl is-active --quiet "$service_name" 2>/dev/null; then
+      log "  Service active: YES"
+      ((pass++))
+   else
+      warn "  Service active: NO"
+      ((fail++))
+      warn "  Check logs: journalctl -u $service_name -n 30"
+   fi
+
+   # Check 4: Binary installed
+   local bin_path
+   case "$target" in
+      server) bin_path="/usr/local/bin/dawn" ;;
+      satellite) bin_path="/usr/local/bin/dawn_satellite" ;;
+   esac
+   if [ -f "$bin_path" ]; then
+      log "  Binary: $bin_path"
+      ((pass++))
+   else
+      warn "  Binary: NOT FOUND at $bin_path"
+      ((fail++))
+   fi
+
+   # Check 5: Config exists
+   local config_dir
+   case "$target" in
+      server) config_dir="/usr/local/etc/dawn" ;;
+      satellite) config_dir="/usr/local/etc/dawn-satellite" ;;
+   esac
+   if [ -d "$config_dir" ]; then
+      log "  Config dir: $config_dir"
+      ((pass++))
+   else
+      warn "  Config dir: NOT FOUND"
+      ((fail++))
+   fi
+
+   # Check 6: Secrets permissions (server only)
+   if [ "$target" = "server" ]; then
+      local secrets_path="$config_dir/secrets.toml"
+      if [ -f "$secrets_path" ]; then
+         local perms
+         perms=$(stat -c '%a' "$secrets_path" 2>/dev/null || echo "???")
+         if [ "$perms" = "600" ]; then
+            log "  Secrets permissions: 600 (correct)"
+            ((pass++))
+         else
+            warn "  Secrets permissions: $perms (should be 600)"
+            ((fail++))
+         fi
+      fi
+   fi
+
+   # Check 7: Logs directory
+   local log_dir
+   case "$target" in
+      server) log_dir="/var/log/dawn" ;;
+      satellite) log_dir="/var/log/dawn-satellite" ;;
+   esac
+   if [ -d "$log_dir" ]; then
+      log "  Log dir: $log_dir"
+      ((pass++))
+   else
+      warn "  Log dir: NOT FOUND"
+      ((fail++))
+   fi
+
+   # Check 8: Recent log output (if service is active)
+   if systemctl is-active --quiet "$service_name" 2>/dev/null; then
+      local log_file
+      case "$target" in
+         server) log_file="$log_dir/server.log" ;;
+         satellite) log_file="$log_dir/satellite.log" ;;
+      esac
+      if [ -f "$log_file" ] && [ -s "$log_file" ]; then
+         local errors
+         errors=$(grep -ci "\[ERR\]" "$log_file" 2>/dev/null || echo "0")
+         if [ "$errors" -eq 0 ]; then
+            log "  Log health: clean (no errors)"
+            ((pass++))
+         else
+            warn "  Log health: $errors error(s) found"
+            warn "  Review: tail -30 $log_file"
+            ((fail++))
+         fi
+      else
+         info "  Log health: no log output yet"
+      fi
+   fi
+
+   # Check 9: WebUI port responding (server only, if HTTPS)
+   if [ "$target" = "server" ]; then
+      sleep 2
+      local port=3000
+      if curl -sk --max-time 5 "https://localhost:$port/" >/dev/null 2>&1 ||
+         curl -s --max-time 5 "http://localhost:$port/" >/dev/null 2>&1; then
+         log "  WebUI port $port: RESPONDING"
+         ((pass++))
+      else
+         warn "  WebUI port $port: NOT RESPONDING (may still be starting)"
+         ((fail++))
+      fi
+   fi
+
+   # Check 10: ldconfig entry
+   if [ -f /etc/ld.so.conf.d/dawn.conf ]; then
+      log "  ldconfig: configured"
+      ((pass++))
+   else
+      warn "  ldconfig: /etc/ld.so.conf.d/dawn.conf missing"
+      ((fail++))
+   fi
+
+   echo ""
+   log "Post-deploy: $pass passed, $fail failed"
+
+   if [ "$fail" -eq 0 ]; then
+      echo ""
+      log "$service_name is running!"
+      echo ""
+      log "Management commands:"
+      echo "  sudo systemctl status $service_name"
+      echo "  sudo systemctl restart $service_name"
+      echo "  sudo journalctl -u $service_name -f"
+      if [ "$target" = "server" ]; then
+         local ip
+         ip=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "localhost")
+         echo ""
+         log "WebUI: https://${ip}:3000"
+      fi
+   else
+      warn "Some post-deploy checks failed — review above"
+   fi
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Main orchestration
+# ─────────────────────────────────────────────────────────────────────────────
+
+main() {
+   parse_args "$@"
+
+   echo ""
+   echo -e "${BOLD}╔═══════════════════════════════════════════════╗${NC}"
+   echo -e "${BOLD}║       D.A.W.N. Installation Script            ║${NC}"
+   echo -e "${BOLD}╚═══════════════════════════════════════════════╝${NC}"
+   echo ""
+
+   # Verify-only mode
+   if [ "$VERIFY_ONLY" = true ]; then
+      run_discovery
+      run_verify
+      exit $?
+   fi
+
+   # Deploy-only mode (delegates to existing service install scripts)
+   if [ -n "$DEPLOY_TARGET" ]; then
+      run_discovery
+      run_deploy "$DEPLOY_TARGET"
+      exit $?
+   fi
+
+   # Load config file if specified
+   if [ -n "$CONFIG_FILE" ]; then
+      load_config_file "$CONFIG_FILE"
+   fi
+
+   # Load state if resuming
+   if [ -n "$RESUME_FROM" ]; then
+      if load_state; then
+         log "Resumed from state file (last completed: ${LAST_COMPLETED_PHASE:-none})"
+      else
+         warn "No state file found — running from $RESUME_FROM anyway"
+      fi
+   fi
+
+   # Phase 0: Discovery
+   run_discovery
+
+   # Interactive preferences (skip if resuming or unattended with all choices made)
+   if [ "$INTERACTIVE" = true ] && [ -z "$RESUME_FROM" ]; then
+      present_choices
+   fi
+
+   # Set defaults for any unset preferences
+   : "${LLM_PROVIDER:=claude}"
+   : "${PRIMARY_PROVIDER:=${LLM_PROVIDER%%,*}}"
+   : "${WHISPER_MODEL:=base}"
+   : "${BUILD_PRESET:=default}"
+   : "${FEATURES:=ssl,mqtt}"
+
+   save_state "discovery"
+
+   # Phase 1: System Dependencies
+   if should_run_phase "deps"; then
+      run_deps
+      save_state "deps"
+   else
+      info "Skipping Phase 1 (deps)"
+   fi
+
+   # Phase 2: Core Libraries
+   if should_run_phase "libs"; then
+      run_libs
+      save_state "libs"
+   else
+      info "Skipping Phase 2 (libs)"
+   fi
+
+   # Phase 3: Build
+   if should_run_phase "build"; then
+      run_build
+      save_state "build"
+   else
+      info "Skipping Phase 3 (build)"
+   fi
+
+   # Phase 4: Models
+   if should_run_phase "models"; then
+      run_models
+      save_state "models"
+   else
+      info "Skipping Phase 4 (models)"
+   fi
+
+   # Phase 5: Configure
+   if should_run_phase "configure"; then
+      run_configure
+      save_state "configure"
+   else
+      info "Skipping Phase 5 (configure)"
+   fi
+
+   # Phase 6: API Key Validation
+   if should_run_phase "apikeys"; then
+      run_apikeys
+      save_state "apikeys"
+   else
+      info "Skipping Phase 6 (apikeys)"
+   fi
+
+   # Phase 7: SSL
+   if should_run_phase "ssl"; then
+      run_ssl
+      save_state "ssl"
+   else
+      info "Skipping Phase 7 (ssl)"
+   fi
+
+   # Phase 8: Admin Account
+   if should_run_phase "admin"; then
+      run_admin
+      save_state "admin"
+   else
+      info "Skipping Phase 8 (admin)"
+   fi
+
+   # Phase 9: Optional Features
+   if should_run_phase "services"; then
+      run_services
+      save_state "services"
+   else
+      info "Skipping Phase 9 (services)"
+   fi
+
+   # Phase 10: Verification
+   if should_run_phase "verify"; then
+      run_verify
+      save_state "verify"
+   fi
+
+   # Offer to deploy as service
+   if [ "$INTERACTIVE" = true ]; then
+      echo ""
+      if ask_yes_no "Deploy DAWN as a systemd service?"; then
+         run_deploy "server"
+      else
+         echo ""
+         log "To deploy as a service later:"
+         echo "  ./scripts/install.sh --deploy server"
+         echo "  # or: sudo ./services/dawn-server/install.sh"
+      fi
+   fi
+
+   echo ""
+   log "Installation complete!"
+}
+
+main "$@"

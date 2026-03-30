@@ -251,16 +251,24 @@ else()
     message(STATUS "DAWN: Document Search tool DISABLED")
 endif()
 
-# Calendar Tool (CalDAV)
+# Calendar Tool (CalDAV) — requires libxml2 for XML parsing and libical for iCalendar
 if(DAWN_ENABLE_CALENDAR_TOOL)
-    add_definitions(-DDAWN_ENABLE_CALENDAR_TOOL)
-    list(APPEND TOOL_SOURCES
-        src/tools/calendar_tool.c
-        src/tools/calendar_service.c
-        src/tools/calendar_db.c
-        src/tools/caldav_client.c
-        src/tools/oauth_client.c)
-    message(STATUS "DAWN: Calendar tool ENABLED")
+    if(NOT LIBXML2_FOUND)
+        message(WARNING "DAWN: Calendar tool requires libxml2 — disabling (install libxml2-dev)")
+        set(DAWN_ENABLE_CALENDAR_TOOL OFF)
+    elseif(NOT LIBICAL_FOUND)
+        message(WARNING "DAWN: Calendar tool requires libical — disabling (install libical-dev)")
+        set(DAWN_ENABLE_CALENDAR_TOOL OFF)
+    else()
+        add_definitions(-DDAWN_ENABLE_CALENDAR_TOOL)
+        list(APPEND TOOL_SOURCES
+            src/tools/calendar_tool.c
+            src/tools/calendar_service.c
+            src/tools/calendar_db.c
+            src/tools/caldav_client.c
+            src/tools/oauth_client.c)
+        message(STATUS "DAWN: Calendar tool ENABLED")
+    endif()
 else()
     message(STATUS "DAWN: Calendar tool DISABLED")
 endif()
