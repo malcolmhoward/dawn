@@ -36,6 +36,33 @@ SERVER_CERT="$OUTPUT_DIR/dawn.crt"
 SERVER_CHAIN="$OUTPUT_DIR/dawn-chain.crt"
 CA_CERT_HEADER="$ARDUINO_DIR/ca_cert.h"
 
+# Track what we create so we can clean up on failure
+_SSL_CREATED_CA=false
+_SSL_CREATED_SERVER=false
+
+_ssl_cleanup() {
+   local exit_code=$?
+   if [ "$exit_code" -ne 0 ]; then
+      echo ""
+      echo "SSL certificate generation failed — cleaning up partial files..."
+      # Always clean up temp files
+      rm -f "$OUTPUT_DIR/dawn.csr" "$OUTPUT_DIR/dawn.ext" "$OUTPUT_DIR/ca.srl"
+      # Clean up server cert artifacts if we were creating them
+      if [ "$_SSL_CREATED_SERVER" = true ]; then
+         rm -f "$SERVER_KEY" "$SERVER_CERT" "$SERVER_CHAIN"
+         echo "  Removed partial server certificate files"
+      fi
+      # Clean up CA artifacts only if we just created them (don't nuke existing CA)
+      if [ "$_SSL_CREATED_CA" = true ]; then
+         rm -f "$CA_KEY" "$CA_CERT"
+         echo "  Removed partial CA certificate files"
+      fi
+   fi
+   exit "$exit_code"
+}
+
+trap '_ssl_cleanup' EXIT
+
 # Parse arguments
 FORCE_CA=0
 RENEW=0
@@ -272,6 +299,7 @@ elif [ ! -f "$CA_KEY" ] || [ ! -f "$CA_CERT" ]; then
 fi
 
 if [ "$NEED_CA" -eq 1 ] && [ "$RENEW" -eq 0 ]; then
+   _SSL_CREATED_CA=true
    echo "--- Generating CA Certificate (RSA-4096, 10 years) ---"
    echo ""
    echo "You will be prompted for a passphrase to protect the CA private key."
@@ -288,6 +316,8 @@ if [ "$NEED_CA" -eq 1 ] && [ "$RENEW" -eq 0 ]; then
 
    chmod 0400 "$CA_KEY"
    chmod 0644 "$CA_CERT"
+
+   _SSL_CREATED_CA=false  # CA completed successfully, don't clean up on later failure
 
    echo ""
    echo "CA certificate created."
@@ -308,6 +338,7 @@ fi
 # Step 2: Server Certificate (EC P-256, signed by CA)
 # =============================================================================
 
+_SSL_CREATED_SERVER=true
 echo "--- Generating Server Certificate (EC P-256, 1 year) ---"
 echo ""
 echo "SANs: $SAN"

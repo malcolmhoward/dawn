@@ -158,6 +158,10 @@ check_ssl_certs() {
       echo "SKIP|Not configured"
       return
    fi
+   if [ ! -s "$PROJECT_ROOT/ssl/dawn.crt" ]; then
+      echo "FAIL|Certificate file is empty (run ./generate_ssl_cert.sh)"
+      return
+   fi
    local expiry
    expiry=$(openssl x509 -in "$PROJECT_ROOT/ssl/dawn.crt" -noout -enddate 2>/dev/null |
       sed 's/notAfter=//' || echo "")
@@ -169,7 +173,7 @@ check_ssl_certs() {
          echo "FAIL|EXPIRED ($expiry)"
       fi
    else
-      echo "FAIL|Cannot read certificate"
+      echo "FAIL|Cannot parse certificate (run ./generate_ssl_cert.sh)"
    fi
 }
 

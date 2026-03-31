@@ -278,6 +278,14 @@ run_models() {
 # Phase 7: SSL Setup (delegates to generate_ssl_cert.sh)
 # ─────────────────────────────────────────────────────────────────────────────
 
+ssl_certs_valid() {
+   # Check that SSL certs exist, are non-empty, and parseable
+   local cert="$PROJECT_ROOT/ssl/dawn.crt"
+   local key="$PROJECT_ROOT/ssl/dawn.key"
+   [ -f "$cert" ] && [ -s "$cert" ] && [ -f "$key" ] && [ -s "$key" ] &&
+      openssl x509 -in "$cert" -noout -checkend 0 >/dev/null 2>&1
+}
+
 run_ssl() {
    header "Phase 7: SSL Setup"
    CURRENT_PHASE="ssl"
@@ -287,16 +295,27 @@ run_ssl() {
       return 0
    fi
 
-   # Check if certs already exist
-   if [ -f "$PROJECT_ROOT/ssl/dawn.crt" ] && [ -f "$PROJECT_ROOT/ssl/dawn.key" ]; then
-      log "SSL: certificates already exist"
+   # Check if valid certs already exist (not just that files are present)
+   if ssl_certs_valid; then
+      log "SSL: certificates already exist and are valid"
       configure_ssl
       return 0
    fi
 
+   # If cert files exist but are invalid (e.g., 0-byte from a failed run), clean up
+   if [ -f "$PROJECT_ROOT/ssl/dawn.crt" ] || [ -f "$PROJECT_ROOT/ssl/dawn.key" ]; then
+      if ! ssl_certs_valid; then
+         warn "SSL: found invalid/partial certificate files — removing"
+         rm -f "$PROJECT_ROOT/ssl/dawn.crt" "$PROJECT_ROOT/ssl/dawn.key" \
+               "$PROJECT_ROOT/ssl/dawn-chain.crt" "$PROJECT_ROOT/ssl/dawn.csr" \
+               "$PROJECT_ROOT/ssl/dawn.ext" "$PROJECT_ROOT/ssl/ca.srl"
+      fi
+   fi
+
    local ssl_script="$PROJECT_ROOT/generate_ssl_cert.sh"
    if [ ! -f "$ssl_script" ]; then
-      error "generate_ssl_cert.sh not found"
+      warn "SSL: generate_ssl_cert.sh not found — skipping"
+      return 0
    fi
    chmod +x "$ssl_script" 2>/dev/null || true
 
@@ -306,26 +325,44 @@ run_ssl() {
       return 0
    fi
 
-   log "Running SSL certificate generator..."
-   log "You will be prompted for a CA passphrase."
-   "$ssl_script" || error "SSL certificate generation failed"
-
-   # Verify
-   if [ -f "$PROJECT_ROOT/ssl/dawn.crt" ] && [ -f "$PROJECT_ROOT/ssl/dawn.key" ]; then
-      configure_ssl
-
-      # Install CA into system trust store
-      if [ -f "$PROJECT_ROOT/ssl/ca.crt" ]; then
-         sudo_begin_phase "ssl"
-         run_sudo cp "$PROJECT_ROOT/ssl/ca.crt" /usr/local/share/ca-certificates/dawn-ca.crt
-         run_sudo update-ca-certificates 2>/dev/null || true
-         log "CA certificate installed in system trust store"
+   # Try up to 2 times (user may mistype CA passphrase)
+   local attempt max_attempts=2
+   for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+      if [ "$attempt" -gt 1 ]; then
+         echo ""
+         warn "SSL: retrying certificate generation (attempt $attempt/$max_attempts)..."
+      else
+         log "Running SSL certificate generator..."
+         log "You will be prompted for a CA passphrase."
       fi
-   else
-      warn "SSL certificates not found after generation"
-   fi
 
-   log "Phase 7 complete"
+      if "$ssl_script"; then
+         # Verify the result is actually valid
+         if ssl_certs_valid; then
+            configure_ssl
+
+            # Install CA into system trust store
+            if [ -f "$PROJECT_ROOT/ssl/ca.crt" ]; then
+               sudo_begin_phase "ssl"
+               run_sudo cp "$PROJECT_ROOT/ssl/ca.crt" /usr/local/share/ca-certificates/dawn-ca.crt
+               run_sudo update-ca-certificates 2>/dev/null || true
+               log "CA certificate installed in system trust store"
+            fi
+
+            log "Phase 7 complete"
+            return 0
+         else
+            warn "SSL: certificate files created but failed validation"
+         fi
+      else
+         warn "SSL: certificate generation failed (attempt $attempt/$max_attempts)"
+      fi
+   done
+
+   # All attempts failed — warn but continue installation
+   warn "SSL: could not generate valid certificates after $max_attempts attempts"
+   warn "SSL: run ./generate_ssl_cert.sh manually to set up HTTPS"
+   log "Phase 7 complete (SSL skipped)"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -768,12 +805,26 @@ main() {
    if [ "$FRESH_INSTALL" = true ]; then
       if [ -f "$STATE_FILE" ]; then
          info "Ignoring cached settings (--fresh)"
+         rm -f "$STATE_FILE"
       fi
+      SETTINGS_LOADED=false
    elif load_state; then
       echo -e "${BLUE}[INFO]${NC} Loaded settings from previous install (last phase: ${LAST_COMPLETED_PHASE:-none})"
       echo -e "       Provider: ${LLM_PROVIDER:-unset}, Whisper: ${WHISPER_MODEL:-unset}, Preset: ${BUILD_PRESET:-unset}"
       echo -e "       Features: ${FEATURES:-none}"
-      echo -e "       To start over: ${BOLD}./scripts/install.sh --fresh${NC}"
+      echo ""
+      # If the previous install completed fully, ask whether to reuse settings
+      if [ "$INTERACTIVE" = true ] && [ "${LAST_COMPLETED_PHASE:-}" = "verify" ]; then
+         if ! ask_yes_no "Use these cached settings?"; then
+            info "Re-entering installation options..."
+            # Clear loaded settings so present_choices will re-prompt
+            LLM_PROVIDER="" PRIMARY_PROVIDER="" WHISPER_MODEL="" BUILD_PRESET="" FEATURES=""
+            SETTINGS_LOADED=false
+            rm -f "$STATE_FILE"
+         fi
+      else
+         echo -e "       To start over: ${BOLD}./scripts/install.sh --fresh${NC}"
+      fi
       echo ""
    fi
 
