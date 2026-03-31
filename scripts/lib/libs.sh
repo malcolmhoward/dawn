@@ -43,6 +43,15 @@ install_espeak_ng() {
       fi
    done
    if [ "$found" = true ]; then
+      # Also verify that the dev symlink exists (needed by piper-phonemize build)
+      local has_dev=false
+      [ -f /usr/local/lib/libespeak-ng.so ] && has_dev=true
+      [ -f "/usr/lib/${multiarch}/libespeak-ng.so" ] && has_dev=true
+      if [ "$has_dev" = false ]; then
+         log "espeak-ng: shared lib found but dev symlink missing — installing libespeak-ng-dev"
+         sudo_begin_phase "espeak-ng"
+         run_sudo apt-get install -y libespeak-ng-dev 2>/dev/null || true
+      fi
       return 0
    fi
 

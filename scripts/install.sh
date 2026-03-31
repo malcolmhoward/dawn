@@ -39,6 +39,8 @@ source "$LIB_DIR/configure.sh"
 source "$LIB_DIR/services.sh"
 # shellcheck source=lib/verify.sh
 source "$LIB_DIR/verify.sh"
+# shellcheck source=lib/uninstall.sh
+source "$LIB_DIR/uninstall.sh"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Default settings
@@ -50,6 +52,7 @@ DRY_RUN=false
 VERIFY_ONLY=false
 FRESH_INSTALL=false
 DEPLOY_TARGET=""
+UNINSTALL=false
 RESUME_FROM=""
 CONFIG_FILE=""
 CURRENT_PHASE=""
@@ -91,6 +94,7 @@ Options:
   --resume-from PHASE    Resume from a specific phase
   --verify               Run verification suite only
   --deploy TARGET        Deploy as systemd service (server or satellite)
+  -u, --uninstall        Remove DAWN-installed components (interactive)
   --dry-run              Show what would be done (not implemented yet)
   --verbose, -v          Verbose output
   -h, --help             Show this help
@@ -169,6 +173,10 @@ parse_args() {
          --deploy)
             DEPLOY_TARGET="$2"
             shift 2
+            ;;
+         -u | --uninstall)
+            UNINSTALL=true
+            shift
             ;;
          --dry-run)
             DRY_RUN=true
@@ -735,6 +743,12 @@ main() {
    if [ "$VERIFY_ONLY" = true ]; then
       run_discovery
       run_verify
+      exit $?
+   fi
+
+   # Uninstall mode
+   if [ "$UNINSTALL" = true ]; then
+      run_uninstall
       exit $?
    fi
 

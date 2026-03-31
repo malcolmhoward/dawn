@@ -558,7 +558,7 @@ if systemctl is-active --quiet "$SERVICE_NAME.service"; then
         done
 
         if [ -n "$token" ]; then
-            admin_pass=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 16)
+            admin_pass=$(dd if=/dev/urandom bs=64 count=1 status=none | tr -dc 'A-Za-z0-9' | head -c 16)
             if DAWN_SETUP_TOKEN="$token" DAWN_PASSWORD="$admin_pass" \
                 dawn-admin user create admin --admin >/dev/null 2>&1; then
                 ADMIN_CREATED=true
