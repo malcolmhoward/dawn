@@ -570,8 +570,9 @@ if systemctl is-active --quiet "$SERVICE_NAME.service"; then
             [ "$user_count" -gt 0 ] 2>/dev/null && has_users=true
         else
             # No sqlite3 CLI — use dawn-admin to check
+            # Match only non-zero counts (e.g., "1 user(s) total" but NOT "0 user(s) total")
             if dawn-admin ping >/dev/null 2>&1 && \
-               dawn-admin user list 2>/dev/null | grep -q "user(s) total"; then
+               dawn-admin user list 2>/dev/null | grep -qE "^[1-9][0-9]* user\(s\) total"; then
                 has_users=true
             fi
         fi

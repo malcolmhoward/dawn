@@ -431,6 +431,16 @@ uninstall_docker_containers() {
       return 0
    fi
 
+   # Use sudo for docker commands if user isn't in docker group
+   local _docker="docker"
+   if ! docker info >/dev/null 2>&1; then
+      _docker="sudo docker"
+   fi
+   local _docker_compose="docker compose"
+   if ! docker compose version >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+      _docker_compose="sudo docker compose"
+   fi
+
    local found=()
 
    # SearXNG (docker compose)
@@ -440,7 +450,7 @@ uninstall_docker_containers() {
    fi
 
    # FlareSolverr (standalone container)
-   if docker ps -a --filter name=flaresolverr --format '{{.Names}}' 2>/dev/null | grep -q flaresolverr; then
+   if $_docker ps -a --filter name=flaresolverr --format '{{.Names}}' 2>/dev/null | grep -q flaresolverr; then
       found+=("flaresolverr")
    fi
 
@@ -455,16 +465,16 @@ uninstall_docker_containers() {
          case "$container" in
             searxng)
                log "  Stopping SearXNG..."
-               (cd "$searx_dir" && docker compose down 2>/dev/null) || true
+               (cd "$searx_dir" && $_docker_compose down 2>/dev/null) || true
                if ask_yes_no "  Remove SearXNG data directory ($searx_dir)?"; then
-                  rm -rf "$searx_dir"
+                  sudo rm -rf "$searx_dir"
                   log "  Removed $searx_dir"
                fi
                ;;
             flaresolverr)
                log "  Stopping FlareSolverr..."
-               docker stop flaresolverr 2>/dev/null || true
-               docker rm flaresolverr 2>/dev/null || true
+               $_docker stop flaresolverr 2>/dev/null || true
+               $_docker rm flaresolverr 2>/dev/null || true
                log "  Removed flaresolverr container"
                ;;
          esac
@@ -620,6 +630,9 @@ run_uninstall() {
 
    echo "Not removed (by design):"
    echo "  - apt packages (shared system dependencies)"
+   if has_command docker; then
+      echo "  - Docker Engine (shared system service)"
+   fi
    echo "  - Project source: $PROJECT_ROOT"
    echo "  - Build directories: $PROJECT_ROOT/build-*/"
    echo "  - Project config: $PROJECT_ROOT/dawn.toml, secrets.toml"

@@ -479,6 +479,11 @@ run_admin() {
       warn "Save this password now — it will not be shown again."
    else
       warn "Failed to create admin account"
+      # Show DB init errors (often early in startup, missed by tail)
+      if grep -q "ERR.*auth_db\|Failed to initialize database" "$log_file" 2>/dev/null; then
+         warn "Database initialization errors found:"
+         grep "ERR.*auth_db\|Failed to initialize database\|Hint:" "$log_file" 2>/dev/null
+      fi
       warn "Last 10 lines of daemon output:"
       tail -10 "$log_file"
       warn "Create admin manually after starting DAWN:"

@@ -6,6 +6,24 @@
 # Sourced by install.sh. Do not execute directly.
 #
 
+# Run docker command, using sudo if user isn't in docker group yet
+# (group membership from install_docker won't be active in current session)
+run_docker() {
+   if docker info >/dev/null 2>&1; then
+      docker "$@"
+   else
+      sudo docker "$@"
+   fi
+}
+
+run_docker_compose() {
+   if docker compose version >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+      docker compose "$@"
+   else
+      sudo docker compose "$@"
+   fi
+}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SearXNG (privacy-focused web search)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -22,13 +40,17 @@ install_searxng() {
    local searx_dir="$HOME/docker/searxng"
 
    # Check if already running
-   if docker compose -f "$searx_dir/docker-compose.yml" ps 2>/dev/null | grep -q "searxng"; then
+   if run_docker_compose -f "$searx_dir/docker-compose.yml" ps 2>/dev/null | grep -q "searxng"; then
       log "SearXNG: already running"
       return 0
    fi
 
    log "Setting up SearXNG..."
    mkdir -p "$searx_dir/searxng"
+   # Container may have changed ownership on a previous run
+   if [ -d "$searx_dir/searxng" ] && [ ! -w "$searx_dir/searxng" ]; then
+      sudo chown -R "$(id -u):$(id -g)" "$searx_dir/searxng"
+   fi
 
    local secret_key
    secret_key=$(openssl rand -hex 32)
@@ -102,7 +124,7 @@ engines:
 SETTINGS_EOF
 
    cd "$searx_dir" || return
-   docker compose up -d || error "Failed to start SearXNG"
+   run_docker_compose up -d || error "Failed to start SearXNG"
 
    # Wait and verify
    local tries=0
@@ -134,13 +156,13 @@ install_flaresolverr() {
    fi
 
    # Check if already running
-   if docker ps --filter name=flaresolverr --format '{{.Names}}' 2>/dev/null | grep -q flaresolverr; then
+   if run_docker ps --filter name=flaresolverr --format '{{.Names}}' 2>/dev/null | grep -q flaresolverr; then
       log "FlareSolverr: already running"
       return 0
    fi
 
    log "Starting FlareSolverr..."
-   docker run -d --name flaresolverr \
+   run_docker run -d --name flaresolverr \
       --restart unless-stopped \
       -p 8191:8191 \
       ghcr.io/flaresolverr/flaresolverr:latest || error "Failed to start FlareSolverr"

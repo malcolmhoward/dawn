@@ -209,8 +209,88 @@ check_meson_version() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Docker check (warn only, don't auto-install)
+# Docker install (if needed for selected features)
 # ─────────────────────────────────────────────────────────────────────────────
+
+install_docker() {
+   log "Installing Docker Engine..."
+   sudo_begin_phase "docker"
+
+   # Official Docker install: https://docs.docker.com/engine/install/debian/
+   # Works for Debian, Ubuntu, and Raspberry Pi OS (all Debian-based)
+   run_sudo apt-get update -qq
+   run_sudo apt-get install -y ca-certificates curl gnupg || error "Failed to install Docker prerequisites"
+
+   # Add Docker's official GPG key
+   run_sudo install -m 0755 -d /etc/apt/keyrings
+   if [ ! -f /etc/apt/keyrings/docker.gpg ]; then
+      curl -fsSL "https://download.docker.com/linux/$OS_ID/gpg" | \
+         run_sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+      run_sudo chmod a+r /etc/apt/keyrings/docker.gpg
+   fi
+
+   # Raspberry Pi OS reports as "raspbian" but Docker repo uses "debian"
+   local docker_os_id="$OS_ID"
+   if [ "$docker_os_id" = "raspbian" ]; then
+      docker_os_id="debian"
+   fi
+
+   # Add Docker repository
+   local arch_deb
+   arch_deb=$(dpkg --print-architecture)
+   local codename
+   codename=$(. /etc/os-release && echo "${VERSION_CODENAME:-}")
+
+   # Some rolling releases (e.g., Debian trixie) may not have a Docker repo yet.
+   # Fall back to the latest stable codename.
+   if [ -z "$codename" ] || \
+      ! curl -fsSL "https://download.docker.com/linux/$docker_os_id/dists/$codename/Release" \
+         >/dev/null 2>&1; then
+      local fallback=""
+      case "$docker_os_id" in
+         debian) fallback="bookworm" ;;
+         ubuntu) fallback="noble" ;;
+      esac
+      if [ -n "$fallback" ]; then
+         warn "Docker repo not available for '$codename', using '$fallback'"
+         codename="$fallback"
+      fi
+   fi
+
+   echo "deb [arch=$arch_deb signed-by=/etc/apt/keyrings/docker.gpg] \
+https://download.docker.com/linux/$docker_os_id $codename stable" | \
+      run_sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+
+   run_sudo apt-get update -qq
+   run_sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin \
+      || error "Failed to install Docker packages"
+
+   # Add current user to docker group (avoids needing sudo for docker commands)
+   local target_user="${SUDO_USER:-$USER}"
+   if ! groups "$target_user" 2>/dev/null | grep -q docker; then
+      run_sudo usermod -aG docker "$target_user"
+      log "Added $target_user to docker group"
+      # Apply group membership for this session so Phase 9 can use docker
+      if [ -n "${SUDO_USER:-}" ]; then
+         # Running under sudo — newgrp won't help, but sg will for subcommands
+         log "Note: Docker group takes effect in new shells; using sudo for this session"
+      fi
+   fi
+
+   # Start and enable Docker
+   run_sudo systemctl enable docker
+   run_sudo systemctl start docker
+
+   # Re-detect Docker availability
+   if has_command docker; then
+      HAS_DOCKER=true
+      if docker compose version >/dev/null 2>&1 || sudo docker compose version >/dev/null 2>&1; then
+         HAS_DOCKER_COMPOSE=true
+      fi
+   fi
+
+   log "Docker installed successfully"
+}
 
 check_docker() {
    local needs_docker=false
@@ -219,10 +299,7 @@ check_docker() {
    fi
 
    if [ "$needs_docker" = true ] && [ "$HAS_DOCKER" = false ]; then
-      warn "Docker is required for SearXNG/FlareSolverr but not installed"
-      warn "Install Docker: https://docs.docker.com/engine/install/"
-      warn "Disabling Docker-dependent features for this install"
-      FEATURES=$(echo "$FEATURES" | sed 's/searxng,\?//;s/flaresolverr,\?//;s/,$//')
+      install_docker
    fi
 }
 
