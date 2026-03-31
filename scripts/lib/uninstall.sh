@@ -40,7 +40,7 @@ _count_skipped() { ((_SKIPPED++)) || true; }
 
 stop_running_processes() {
    local pids
-   pids=$(pgrep -x "dawn\|dawn_satellite" 2>/dev/null || true)
+   pids=$(pgrep -x "dawn|dawn_satellite" 2>/dev/null || true)
 
    if [ -z "$pids" ]; then
       log "Running processes: none found"
@@ -59,14 +59,14 @@ stop_running_processes() {
       # Wait briefly for graceful shutdown
       local tries=0
       while [ $tries -lt 5 ]; do
-         pids=$(pgrep -x "dawn\|dawn_satellite" 2>/dev/null || true)
+         pids=$(pgrep -x "dawn|dawn_satellite" 2>/dev/null || true)
          [ -z "$pids" ] && break
          sleep 1
          ((tries++)) || true
       done
 
       # Force kill if still running
-      pids=$(pgrep -x "dawn\|dawn_satellite" 2>/dev/null || true)
+      pids=$(pgrep -x "dawn|dawn_satellite" 2>/dev/null || true)
       if [ -n "$pids" ]; then
          warn "Processes still running after 5s — sending SIGKILL"
          for pid in $pids; do

@@ -56,6 +56,7 @@ UNINSTALL=false
 RESUME_FROM=""
 CONFIG_FILE=""
 CURRENT_PHASE=""
+INSTALL_ADMIN_PASS=""
 SETTINGS_LOADED=false
 
 # User preferences (set via CLI, config file, or interactive prompts)
@@ -391,11 +392,22 @@ run_admin() {
       return 0
    fi
 
+   # Stop any existing dawn-server service to avoid socket conflicts
+   if systemctl is-active --quiet dawn-server 2>/dev/null; then
+      log "Stopping existing dawn-server service..."
+      run_sudo systemctl stop dawn-server
+      sleep 1
+   fi
+
    log "Starting DAWN daemon to obtain setup token..."
 
    local log_file="/tmp/dawn-install-startup-$$.log"
 
-   run_dawn "$BUILD_DIR/dawn" >"$log_file" 2>&1 &
+   # Start daemon directly (not via run_dawn wrapper) so $! captures the
+   # actual binary PID, not a subshell.  A backgrounded function call creates
+   # a subshell whose PID is what $! returns — killing it orphans the real
+   # process.
+   LD_LIBRARY_PATH=/usr/local/lib "$BUILD_DIR/dawn" >"$log_file" 2>&1 &
    local dawn_pid=$!
 
    # Poll for setup token with timeout
@@ -428,26 +440,66 @@ run_admin() {
    fi
 
    log "Setup token obtained: $token"
+
+   # Wait for admin socket to be ready (daemon may still be initializing)
+   local ready=false ping_timeout=10 ping_elapsed=0
+   while [ $ping_elapsed -lt $ping_timeout ]; do
+      if run_dawn "$BUILD_DIR/dawn-admin/dawn-admin" ping >/dev/null 2>&1; then
+         ready=true
+         break
+      fi
+      sleep 1
+      ((++ping_elapsed))
+   done
+
+   if [ "$ready" != true ]; then
+      kill "$dawn_pid" 2>/dev/null
+      wait "$dawn_pid" 2>/dev/null || true
+      rm -f "$log_file"
+      warn "Daemon started but admin socket not ready after ${ping_timeout}s"
+      warn "Create admin manually: dawn-admin user create admin --admin"
+      log "Phase 8 complete (admin not created)"
+      return 0
+   fi
+
    log "Creating admin account..."
 
    local admin_pass
    admin_pass=$(dd if=/dev/urandom bs=64 count=1 status=none | tr -dc 'A-Za-z0-9' | head -c 16)
 
-   DAWN_SETUP_TOKEN="$token" DAWN_PASSWORD="$admin_pass" \
-      run_dawn "$BUILD_DIR/dawn-admin/dawn-admin" user create admin --admin ||
-      warn "dawn-admin failed (admin may already exist)"
+   if DAWN_SETUP_TOKEN="$token" DAWN_PASSWORD="$admin_pass" \
+      run_dawn "$BUILD_DIR/dawn-admin/dawn-admin" user create admin --admin; then
+      # Store password globally so deploy step can reprint it
+      INSTALL_ADMIN_PASS="$admin_pass"
+      echo ""
+      log "Admin account created:"
+      log "  Username: admin"
+      log "  Password: $admin_pass"
+      echo ""
+      warn "Save this password now — it will not be shown again."
+   else
+      warn "Failed to create admin account"
+      warn "Last 10 lines of daemon output:"
+      tail -10 "$log_file"
+      warn "Create admin manually after starting DAWN:"
+      warn "  dawn-admin user create admin --admin"
+   fi
 
-   # Clean shutdown
+   # Clean shutdown — ensure daemon is fully stopped before service deploy
    kill "$dawn_pid" 2>/dev/null
+   # Wait up to 10s for graceful shutdown
+   local shutdown_tries=0
+   while kill -0 "$dawn_pid" 2>/dev/null && [ $shutdown_tries -lt 10 ]; do
+      sleep 1
+      ((++shutdown_tries))
+   done
+   # Force kill if still running
+   if kill -0 "$dawn_pid" 2>/dev/null; then
+      warn "Daemon did not stop gracefully — sending SIGKILL"
+      kill -9 "$dawn_pid" 2>/dev/null || true
+   fi
    wait "$dawn_pid" 2>/dev/null || true
    rm -f "$log_file"
-
-   echo ""
-   log "Admin account created:"
-   log "  Username: admin"
-   log "  Password: $admin_pass"
-   echo ""
-   warn "Save this password now — it will not be shown again."
 
    log "Phase 8 complete"
 }
@@ -935,6 +987,15 @@ main() {
       echo ""
       if ask_yes_no "Deploy DAWN as a systemd service?"; then
          run_deploy "server"
+         # Reprint admin credentials so user doesn't have to scroll up
+         if [ -n "${INSTALL_ADMIN_PASS:-}" ]; then
+            echo ""
+            log "Admin credentials (same as Phase 8):"
+            log "  Username: admin"
+            log "  Password: $INSTALL_ADMIN_PASS"
+            echo ""
+            warn "Save this password now — it will not be shown again."
+         fi
       else
          echo ""
          log "To deploy as a service later:"

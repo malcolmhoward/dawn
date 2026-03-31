@@ -527,6 +527,30 @@ log "Installing logrotate configuration"
 cp "$SCRIPT_DIR/dawn-server-logrotate" /etc/logrotate.d/dawn-server
 chmod 644 /etc/logrotate.d/dawn-server
 
+# Copy existing auth.db from dev install (Phase 8 creates admin there)
+# This avoids needing to re-create admin for the service
+dev_auth_db=""
+for candidate in \
+    "/home/$SUDO_USER/.local/share/dawn/auth.db" \
+    "$HOME/.local/share/dawn/auth.db"; do
+    if [ -n "$candidate" ] && [ -f "$candidate" ]; then
+        dev_auth_db="$candidate"
+        break
+    fi
+done
+
+if [ -n "$dev_auth_db" ] && [ ! -f "$DATA_DIR/db/auth.db" ]; then
+    log "Copying auth.db from $dev_auth_db"
+    cp "$dev_auth_db" "$DATA_DIR/db/auth.db"
+    # Also copy WAL/SHM if present (ensures all data is captured)
+    [ -f "${dev_auth_db}-wal" ] && cp "${dev_auth_db}-wal" "$DATA_DIR/db/auth.db-wal"
+    [ -f "${dev_auth_db}-shm" ] && cp "${dev_auth_db}-shm" "$DATA_DIR/db/auth.db-shm"
+    chown "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR/db/auth.db"*
+    chmod 600 "$DATA_DIR/db/auth.db"*
+    ADMIN_CREATED=carried
+    log "Admin account carried over from development install"
+fi
+
 # Enable and start service
 log "Enabling and starting service"
 systemctl daemon-reload
@@ -541,36 +565,56 @@ if systemctl is-active --quiet "$SERVICE_NAME.service"; then
     # Create admin account if no users exist yet
     has_users=false
     if [ -f "$DATA_DIR/db/auth.db" ]; then
-        user_count=$(sqlite3 "$DATA_DIR/db/auth.db" "SELECT COUNT(*) FROM users;" 2>/dev/null) || user_count=0
-        [ "$user_count" -gt 0 ] 2>/dev/null && has_users=true
+        if command -v sqlite3 >/dev/null 2>&1; then
+            user_count=$(sqlite3 "$DATA_DIR/db/auth.db" "SELECT COUNT(*) FROM users;" 2>/dev/null) || user_count=0
+            [ "$user_count" -gt 0 ] 2>/dev/null && has_users=true
+        else
+            # No sqlite3 CLI — use dawn-admin to check
+            if dawn-admin ping >/dev/null 2>&1 && \
+               dawn-admin user list 2>/dev/null | grep -q "user(s) total"; then
+                has_users=true
+            fi
+        fi
     fi
     if [ "$has_users" = false ] && command -v dawn-admin >/dev/null 2>&1; then
         log ""
         log "Creating admin account..."
 
-        # Extract setup token from service log
-        token="" timeout=15 elapsed=0
+        # Wait for daemon to be fully ready (model loading can be slow on Pi)
+        ready=false timeout=60 elapsed=0
         while [ $elapsed -lt $timeout ]; do
-            token=$(grep -oP 'Token: \K[A-Z0-9-]+' "$LOG_DIR/server.log" 2>/dev/null | tail -1 || true)
-            [ -n "$token" ] && break
-            sleep 1
-            ((++elapsed))
+            if dawn-admin ping >/dev/null 2>&1; then
+                ready=true
+                break
+            fi
+            sleep 2
+            ((++elapsed+=2))
         done
 
-        if [ -n "$token" ]; then
-            admin_pass=$(dd if=/dev/urandom bs=64 count=1 status=none | tr -dc 'A-Za-z0-9' | head -c 16)
-            if DAWN_SETUP_TOKEN="$token" DAWN_PASSWORD="$admin_pass" \
-                dawn-admin user create admin --admin >/dev/null 2>&1; then
-                ADMIN_CREATED=true
-                ADMIN_PASS="$admin_pass"
-            else
-                warn "Admin account creation failed (may already exist)"
-            fi
-        else
-            warn "Setup token not found in logs after ${timeout}s"
+        if [ "$ready" != true ]; then
+            warn "Daemon not ready after ${timeout}s"
             warn "Create admin manually after service is running:"
             warn "  1. Find the setup token: grep 'Token:' $LOG_DIR/server.log"
             warn "  2. Run: DAWN_SETUP_TOKEN=<token> dawn-admin user create admin --admin"
+        else
+            # Extract setup token from service log
+            token=$(grep -oP 'Token: \K[A-Z0-9-]+' "$LOG_DIR/server.log" 2>/dev/null | tail -1 || true)
+
+            if [ -n "$token" ]; then
+                admin_pass=$(dd if=/dev/urandom bs=64 count=1 status=none | tr -dc 'A-Za-z0-9' | head -c 16)
+                if DAWN_SETUP_TOKEN="$token" DAWN_PASSWORD="$admin_pass" \
+                    dawn-admin user create admin --admin >/dev/null 2>&1; then
+                    ADMIN_CREATED=true
+                    ADMIN_PASS="$admin_pass"
+                else
+                    warn "Admin account creation failed (may already exist)"
+                fi
+            else
+                warn "Setup token not found in logs (admin may already exist)"
+                warn "If needed, create admin manually:"
+                warn "  1. Find the setup token: grep 'Token:' $LOG_DIR/server.log"
+                warn "  2. Run: DAWN_SETUP_TOKEN=<token> dawn-admin user create admin --admin"
+            fi
         fi
     fi
 
@@ -603,6 +647,9 @@ if systemctl is-active --quiet "$SERVICE_NAME.service"; then
         echo ""
         warn "Save this password now — it will not be shown again."
         warn "Change it after first login via Settings > Account."
+    elif [ "${ADMIN_CREATED:-false}" = "carried" ]; then
+        echo ""
+        log "Admin account carried over — use the password from Phase 8 above."
     fi
     echo ""
     log "Wake word: \"Hey Friday\" or \"Okay Friday\""
