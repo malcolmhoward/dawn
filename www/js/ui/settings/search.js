@@ -27,7 +27,9 @@
       emptyState = document.getElementById('settings-search-empty');
 
       if (searchInput) {
-         searchInput.addEventListener('input', handleInput);
+         const Utils = window.DawnSettingsUtils;
+         const debouncedInput = Utils.debounce(handleInput, 120);
+         searchInput.addEventListener('input', debouncedInput);
       }
       if (clearBtn) {
          clearBtn.addEventListener('click', clearSearch);

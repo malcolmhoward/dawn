@@ -50,10 +50,29 @@
       return parseFloat(num.toPrecision(6));
    }
 
+   /**
+    * Create a debounced version of a function
+    * @param {Function} fn - Function to debounce
+    * @param {number} delay - Delay in milliseconds
+    * @returns {Function} Debounced function
+    */
+   function debounce(fn, delay) {
+      let timer = null;
+      return function () {
+         const context = this;
+         const args = arguments;
+         clearTimeout(timer);
+         timer = setTimeout(function () {
+            fn.apply(context, args);
+         }, delay);
+      };
+   }
+
    // Export for settings module
    window.DawnSettingsUtils = {
       escapeAttr,
       getNestedValue,
       formatNumber,
+      debounce,
    };
 })();

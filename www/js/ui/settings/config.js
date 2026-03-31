@@ -5,6 +5,79 @@
 (function () {
    'use strict';
 
+   // Secrets field definitions — drives HTML generation, save, and status updates
+   const SECRETS_FIELDS = [
+      {
+         id: 'secret-openai',
+         key: 'openai_api_key',
+         label: 'OpenAI API Key',
+         placeholder: 'Enter API key...',
+         maxlength: 256,
+      },
+      {
+         id: 'secret-claude',
+         key: 'claude_api_key',
+         label: 'Claude API Key',
+         placeholder: 'Enter API key...',
+         maxlength: 256,
+      },
+      {
+         id: 'secret-gemini',
+         key: 'gemini_api_key',
+         label: 'Gemini API Key',
+         placeholder: 'Enter API key...',
+         maxlength: 256,
+      },
+      {
+         id: 'secret-mqtt-user',
+         key: 'mqtt_username',
+         label: 'MQTT Username',
+         placeholder: 'Enter username...',
+      },
+      {
+         id: 'secret-mqtt-pass',
+         key: 'mqtt_password',
+         label: 'MQTT Password',
+         placeholder: 'Enter password...',
+      },
+      {
+         id: 'secret-plex-token',
+         key: 'plex_token',
+         label: 'Plex Token',
+         placeholder: 'Enter Plex token...',
+      },
+      {
+         id: 'secret-ha-token',
+         key: 'home_assistant_token',
+         label: 'Home Assistant Token',
+         placeholder: 'Enter Long-Lived Access Token...',
+         maxlength: 256,
+         itemId: 'secret-ha-token-item',
+      },
+      {
+         id: 'secret-google-client-id',
+         key: 'google_client_id',
+         label: 'Google OAuth Client ID',
+         placeholder: 'Enter Google client ID...',
+         maxlength: 256,
+      },
+      {
+         id: 'secret-google-client-secret',
+         key: 'google_client_secret',
+         label: 'Google OAuth Client Secret',
+         placeholder: 'Enter Google client secret...',
+         maxlength: 256,
+      },
+      {
+         id: 'secret-google-redirect-url',
+         key: 'google_redirect_url',
+         label: 'Google OAuth Redirect URL',
+         placeholder: 'https://jetson.example.com:3000/oauth/callback',
+         maxlength: 256,
+         inputType: 'text',
+      },
+   ];
+
    // Configuration state
    let currentConfig = null;
    let currentSecrets = null;
@@ -354,14 +427,20 @@
          logoEl.textContent = currentConfig.general.ai_name.toUpperCase();
       }
 
-      // Render settings sections
-      if (callbacks.renderSettingsSections) {
-         callbacks.renderSettingsSections();
-      }
-
-      // Build search index after sections are rendered
-      if (callbacks.buildSearchIndex) {
-         callbacks.buildSearchIndex();
+      // Render settings sections (full rebuild) or update values in-place
+      const Schema = window.DawnSettingsSchema;
+      if (Schema && !Schema.needsRebuild()) {
+         // DOM already rendered — update values in-place (fast path)
+         Schema.updateSettingsValues(currentConfig);
+      } else {
+         // First render or schema version changed — full rebuild
+         if (callbacks.renderSettingsSections) {
+            callbacks.renderSettingsSections();
+         }
+         // Build search index after sections are rendered
+         if (callbacks.buildSearchIndex) {
+            callbacks.buildSearchIndex();
+         }
       }
 
       // Update memory extraction model dropdown based on provider
@@ -378,10 +457,13 @@
       // Initialize audio backend state (grey out or request devices)
       const backendSelect = document.getElementById('setting-audio-backend');
       if (backendSelect && callbacks.updateAudioBackendState) {
-         // Add backend change listener
-         backendSelect.addEventListener('change', () => {
-            callbacks.updateAudioBackendState(backendSelect.value);
-         });
+         // Add backend change listener (only once)
+         if (!backendSelect._dawnListenerAttached) {
+            backendSelect.addEventListener('change', () => {
+               callbacks.updateAudioBackendState(backendSelect.value);
+            });
+            backendSelect._dawnListenerAttached = true;
+         }
 
          // Initialize state based on current value
          callbacks.updateAudioBackendState(backendSelect.value);
@@ -427,22 +509,14 @@
    function updateSecretsStatus(secrets) {
       if (!secrets) return;
 
-      const updateStatus = (el, isSet) => {
+      SECRETS_FIELDS.forEach((field) => {
+         const statusId = 'status-' + field.id.replace('secret-', '');
+         const el = document.getElementById(statusId);
          if (!el) return;
+         const isSet = !!secrets[field.key];
          el.textContent = isSet ? 'Set' : 'Not set';
          el.className = `secret-status ${isSet ? 'is-set' : 'not-set'}`;
-      };
-
-      updateStatus(settingsElements.statusOpenai, secrets.openai_api_key);
-      updateStatus(settingsElements.statusClaude, secrets.claude_api_key);
-      updateStatus(settingsElements.statusGemini, secrets.gemini_api_key);
-      updateStatus(settingsElements.statusMqttUser, secrets.mqtt_username);
-      updateStatus(settingsElements.statusMqttPass, secrets.mqtt_password);
-      updateStatus(settingsElements.statusPlexToken, secrets.plex_token);
-      updateStatus(settingsElements.statusHaToken, secrets.home_assistant_token);
-      updateStatus(settingsElements.statusGoogleClientId, secrets.google_client_id);
-      updateStatus(settingsElements.statusGoogleClientSecret, secrets.google_client_secret);
-      updateStatus(settingsElements.statusGoogleRedirectUrl, secrets.google_redirect_url);
+      });
    }
 
    /**
@@ -549,6 +623,62 @@
    }
 
    /**
+    * Render secrets fields into the secrets section content container.
+    * Replaces 300+ lines of repetitive HTML with data-driven generation.
+    * @param {HTMLElement} container - The .section-content element inside #secrets-section
+    */
+   function renderSecretsFields(container) {
+      if (!container) return;
+
+      const eyeSvg =
+         '<svg class="eye-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+         '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>' +
+         '<circle cx="12" cy="12" r="3"/></svg>';
+
+      SECRETS_FIELDS.forEach((field) => {
+         const item = document.createElement('div');
+         item.className = 'setting-item';
+         if (field.itemId) item.id = field.itemId;
+
+         const type = field.inputType || 'password';
+         const maxAttr = field.maxlength ? ` maxlength="${field.maxlength}"` : '';
+         const toggleBtn =
+            type === 'password'
+               ? `<button class="secret-toggle" data-target="${field.id}" title="Show/hide" aria-label="Toggle ${field.label} visibility">${eyeSvg}</button>`
+               : '';
+
+         item.innerHTML =
+            `<label for="${field.id}">${field.label}</label>` +
+            '<div class="secret-input-wrapper">' +
+            `<input type="${type}" id="${field.id}" class="secret-input" placeholder="${field.placeholder}"${maxAttr}/>` +
+            toggleBtn +
+            `<span class="secret-status" id="status-${field.id.replace('secret-', '')}" aria-live="polite"></span>` +
+            '</div>';
+
+         container.appendChild(item);
+
+         // Wire up toggle button
+         const btn = item.querySelector('.secret-toggle');
+         if (btn) {
+            btn.addEventListener('click', () => {
+               const input = document.getElementById(field.id);
+               if (input) {
+                  input.type = input.type === 'password' ? 'text' : 'password';
+               }
+            });
+         }
+      });
+
+      // Add save button
+      const saveBtn = document.createElement('button');
+      saveBtn.id = 'save-secrets-btn';
+      saveBtn.className = 'save-btn';
+      saveBtn.textContent = 'Save Secrets';
+      saveBtn.addEventListener('click', saveSecrets);
+      container.appendChild(saveBtn);
+   }
+
+   /**
     * Save secrets to server
     */
    function saveSecrets() {
@@ -563,42 +693,12 @@
       const secrets = {};
 
       // Only send non-empty values (don't overwrite with empty)
-      if (settingsElements.secretOpenai && settingsElements.secretOpenai.value) {
-         secrets.openai_api_key = settingsElements.secretOpenai.value;
-      }
-      if (settingsElements.secretClaude && settingsElements.secretClaude.value) {
-         secrets.claude_api_key = settingsElements.secretClaude.value;
-      }
-      if (settingsElements.secretGemini && settingsElements.secretGemini.value) {
-         secrets.gemini_api_key = settingsElements.secretGemini.value;
-      }
-      if (settingsElements.secretMqttUser && settingsElements.secretMqttUser.value) {
-         secrets.mqtt_username = settingsElements.secretMqttUser.value;
-      }
-      if (settingsElements.secretMqttPass && settingsElements.secretMqttPass.value) {
-         secrets.mqtt_password = settingsElements.secretMqttPass.value;
-      }
-      if (settingsElements.secretPlexToken && settingsElements.secretPlexToken.value) {
-         secrets.plex_token = settingsElements.secretPlexToken.value;
-      }
-      if (settingsElements.secretHaToken && settingsElements.secretHaToken.value) {
-         secrets.home_assistant_token = settingsElements.secretHaToken.value;
-      }
-      if (settingsElements.secretGoogleClientId && settingsElements.secretGoogleClientId.value) {
-         secrets.google_client_id = settingsElements.secretGoogleClientId.value;
-      }
-      if (
-         settingsElements.secretGoogleClientSecret &&
-         settingsElements.secretGoogleClientSecret.value
-      ) {
-         secrets.google_client_secret = settingsElements.secretGoogleClientSecret.value;
-      }
-      if (
-         settingsElements.secretGoogleRedirectUrl &&
-         settingsElements.secretGoogleRedirectUrl.value
-      ) {
-         secrets.google_redirect_url = settingsElements.secretGoogleRedirectUrl.value;
-      }
+      SECRETS_FIELDS.forEach((field) => {
+         const input = document.getElementById(field.id);
+         if (input && input.value) {
+            secrets[field.key] = input.value;
+         }
+      });
 
       if (Object.keys(secrets).length === 0) {
          if (typeof DawnToast !== 'undefined') {
@@ -613,18 +713,10 @@
       });
 
       // Clear inputs after sending
-      if (settingsElements.secretOpenai) settingsElements.secretOpenai.value = '';
-      if (settingsElements.secretClaude) settingsElements.secretClaude.value = '';
-      if (settingsElements.secretGemini) settingsElements.secretGemini.value = '';
-      if (settingsElements.secretMqttUser) settingsElements.secretMqttUser.value = '';
-      if (settingsElements.secretMqttPass) settingsElements.secretMqttPass.value = '';
-      if (settingsElements.secretPlexToken) settingsElements.secretPlexToken.value = '';
-      if (settingsElements.secretHaToken) settingsElements.secretHaToken.value = '';
-      if (settingsElements.secretGoogleClientId) settingsElements.secretGoogleClientId.value = '';
-      if (settingsElements.secretGoogleClientSecret)
-         settingsElements.secretGoogleClientSecret.value = '';
-      if (settingsElements.secretGoogleRedirectUrl)
-         settingsElements.secretGoogleRedirectUrl.value = '';
+      SECRETS_FIELDS.forEach((field) => {
+         const input = document.getElementById(field.id);
+         if (input) input.value = '';
+      });
    }
 
    /**
@@ -768,6 +860,7 @@
       updateDynamicSelects,
       initMemoryExtractionHandlers,
       updateMemoryExtractionModels,
+      renderSecretsFields,
       getDefaultPersona: function () {
          return defaultPersona;
       },

@@ -47,41 +47,14 @@
       settingsElements.secretsPath = document.getElementById('secrets-path-display');
       settingsElements.sectionsContainer = document.getElementById('settings-sections');
       settingsElements.saveConfigBtn = document.getElementById('save-config-btn');
-      settingsElements.saveSecretsBtn = document.getElementById('save-secrets-btn');
       settingsElements.resetBtn = document.getElementById('reset-config-btn');
       settingsElements.restartNotice = document.getElementById('restart-notice');
 
-      // Secret inputs
-      settingsElements.secretOpenai = document.getElementById('secret-openai');
-      settingsElements.secretClaude = document.getElementById('secret-claude');
-      settingsElements.secretGemini = document.getElementById('secret-gemini');
-      settingsElements.secretMqttUser = document.getElementById('secret-mqtt-user');
-      settingsElements.secretMqttPass = document.getElementById('secret-mqtt-pass');
-      settingsElements.secretPlexToken = document.getElementById('secret-plex-token');
-      settingsElements.secretHaToken = document.getElementById('secret-ha-token');
-      settingsElements.secretGoogleClientId = document.getElementById('secret-google-client-id');
-      settingsElements.secretGoogleClientSecret = document.getElementById(
-         'secret-google-client-secret'
-      );
-      settingsElements.secretGoogleRedirectUrl = document.getElementById(
-         'secret-google-redirect-url'
-      );
-
-      // Secret status indicators
-      settingsElements.statusOpenai = document.getElementById('status-openai');
-      settingsElements.statusClaude = document.getElementById('status-claude');
-      settingsElements.statusGemini = document.getElementById('status-gemini');
-      settingsElements.statusMqttUser = document.getElementById('status-mqtt-user');
-      settingsElements.statusMqttPass = document.getElementById('status-mqtt-pass');
-      settingsElements.statusPlexToken = document.getElementById('status-plex-token');
-      settingsElements.statusHaToken = document.getElementById('status-ha-token');
-      settingsElements.statusGoogleClientId = document.getElementById('status-google-client-id');
-      settingsElements.statusGoogleClientSecret = document.getElementById(
-         'status-google-client-secret'
-      );
-      settingsElements.statusGoogleRedirectUrl = document.getElementById(
-         'status-google-redirect-url'
-      );
+      // Generate secrets fields from data-driven schema
+      const secretsContent = document.getElementById('secrets-content');
+      if (secretsContent) {
+         Config.renderSecretsFields(secretsContent);
+      }
 
       // SmartThings elements
       settingsElements.stStatusIndicator = document.getElementById('st-status-indicator');
@@ -481,11 +454,6 @@
          settingsElements.saveConfigBtn.addEventListener('click', Config.saveConfig);
       }
 
-      // Save secrets button
-      if (settingsElements.saveSecretsBtn) {
-         settingsElements.saveSecretsBtn.addEventListener('click', Config.saveSecrets);
-      }
-
       // Reset button
       if (settingsElements.resetBtn) {
          settingsElements.resetBtn.addEventListener('click', () => {
@@ -500,17 +468,7 @@
          });
       }
 
-      // Secret toggle buttons
-      document.querySelectorAll('.secret-toggle').forEach((btn) => {
-         btn.addEventListener('click', () => {
-            const targetId = btn.dataset.target;
-            if (targetId) {
-               Audio.toggleSecretVisibility(targetId);
-            }
-         });
-      });
-
-      // Password toggle buttons (modals)
+      // Password toggle buttons (modals — secrets toggles are wired in renderSecretsFields)
       document.querySelectorAll('.password-toggle').forEach((btn) => {
          btn.addEventListener('click', () => {
             const targetId = btn.dataset.target;

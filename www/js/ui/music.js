@@ -1338,6 +1338,12 @@
       }
 
       function animate() {
+         if (document.hidden) {
+            // Pause animation when tab is hidden; visibilitychange restarts it
+            visualizerAnimationId = null;
+            return;
+         }
+
          const analyser = DawnMusicPlayback.getAnalyser();
          const fftData = DawnMusicPlayback.getFFTData();
 
@@ -1368,6 +1374,16 @@
          }
 
          visualizerAnimationId = requestAnimationFrame(animate);
+      }
+
+      // Resume animation when tab becomes visible (register once)
+      if (!startVisualizer._visListenerAdded) {
+         document.addEventListener('visibilitychange', function () {
+            if (!document.hidden && !visualizerAnimationId && elements.visualizer) {
+               startVisualizer();
+            }
+         });
+         startVisualizer._visListenerAdded = true;
       }
 
       animate();

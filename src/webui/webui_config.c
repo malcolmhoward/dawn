@@ -532,6 +532,25 @@ static void apply_config_from_json(dawn_config_t *config, struct json_object *pa
          JSON_TO_CONFIG_SIZE_T(summarizer, "target_words", config->search.summarizer.target_words);
          JSON_TO_CONFIG_DOUBLE(summarizer, "target_ratio", config->search.summarizer.target_ratio);
       }
+
+      /* Parse title_filters string array */
+      struct json_object *title_filters_arr;
+      if (json_object_object_get_ex(section, "title_filters", &title_filters_arr) &&
+          json_object_is_type(title_filters_arr, json_type_array)) {
+         config->search.title_filters_count = 0;
+         int arr_len = json_object_array_length(title_filters_arr);
+         for (int i = 0; i < arr_len && i < SEARCH_MAX_TITLE_FILTERS; i++) {
+            struct json_object *filter_obj = json_object_array_get_idx(title_filters_arr, i);
+            const char *filter = json_object_get_string(filter_obj);
+            if (filter && filter[0] != '\0') {
+               strncpy(config->search.title_filters[config->search.title_filters_count], filter,
+                       SEARCH_TITLE_FILTER_MAX - 1);
+               config->search.title_filters[config->search.title_filters_count]
+                                           [SEARCH_TITLE_FILTER_MAX - 1] = '\0';
+               config->search.title_filters_count++;
+            }
+         }
+      }
    }
 
    /* [url_fetcher] */
@@ -544,6 +563,25 @@ static void apply_config_from_json(dawn_config_t *config, struct json_object *pa
                             config->url_fetcher.flaresolverr.timeout_sec);
          JSON_TO_CONFIG_SIZE_T(flaresolverr, "max_response_bytes",
                                config->url_fetcher.flaresolverr.max_response_bytes);
+      }
+
+      /* Parse whitelist string array */
+      struct json_object *whitelist_arr;
+      if (json_object_object_get_ex(section, "whitelist", &whitelist_arr) &&
+          json_object_is_type(whitelist_arr, json_type_array)) {
+         config->url_fetcher.whitelist_count = 0;
+         int arr_len = json_object_array_length(whitelist_arr);
+         for (int i = 0; i < arr_len && i < URL_FETCHER_MAX_WHITELIST; i++) {
+            struct json_object *entry_obj = json_object_array_get_idx(whitelist_arr, i);
+            const char *entry = json_object_get_string(entry_obj);
+            if (entry && entry[0] != '\0') {
+               strncpy(config->url_fetcher.whitelist[config->url_fetcher.whitelist_count], entry,
+                       URL_FETCHER_ENTRY_MAX - 1);
+               config->url_fetcher.whitelist[config->url_fetcher.whitelist_count]
+                                            [URL_FETCHER_ENTRY_MAX - 1] = '\0';
+               config->url_fetcher.whitelist_count++;
+            }
+         }
       }
    }
 

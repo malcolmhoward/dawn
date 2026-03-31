@@ -7,12 +7,22 @@
 
    const Utils = window.DawnSettingsUtils;
 
+   // Schema version — bump when adding/removing/reordering fields or sections.
+   // When this changes, the settings DOM is rebuilt from scratch.
+   const SCHEMA_VERSION = 2;
+
+   // Track whether DOM has been rendered and which schema version it represents
+   let renderedSchemaVersion = null;
+
    // Dependencies (injected by main settings module)
    let sectionsContainer = null;
    let handleSettingChangeCallback = null;
    let getCurrentConfigFn = null;
    let getRestartRequiredFieldsFn = null;
    let getDynamicOptionsFn = null;
+
+   // showWhen dependency map: changedKey -> [element, ...]
+   let showWhenDependents = {};
 
    /**
     * Set dependencies for schema module
@@ -151,6 +161,23 @@
                restart: true,
                hint: 'Speaker device name (e.g., default, hw:0,0)',
             },
+            output_rate: {
+               type: 'number',
+               label: 'Output Sample Rate',
+               min: 8000,
+               max: 96000,
+               step: 100,
+               hint: 'Audio output sample rate in Hz (default: 44100)',
+               advanced: true,
+            },
+            output_channels: {
+               type: 'number',
+               label: 'Output Channels',
+               min: 1,
+               max: 2,
+               hint: 'Audio output channels: 1 = mono, 2 = stereo (default: 2)',
+               advanced: true,
+            },
             bargein: {
                type: 'group',
                label: 'Barge-In',
@@ -239,6 +266,41 @@
                label: 'Preroll (ms)',
                min: 0,
                hint: 'Audio captured before VAD trigger (catches word beginnings)',
+            },
+            chunking: {
+               type: 'group',
+               label: 'Audio Chunking',
+               fields: {
+                  enabled: {
+                     type: 'checkbox',
+                     label: 'Enable Chunking',
+                     hint: 'Split long utterances into chunks for incremental ASR processing',
+                  },
+                  pause_duration: {
+                     type: 'number',
+                     label: 'Pause Duration (sec)',
+                     min: 0.1,
+                     max: 2.0,
+                     step: 0.05,
+                     hint: 'Silence duration to trigger a chunk boundary (default: 0.3)',
+                  },
+                  min_duration: {
+                     type: 'number',
+                     label: 'Min Chunk (sec)',
+                     min: 0.1,
+                     max: 10,
+                     step: 0.1,
+                     hint: 'Minimum audio duration before a chunk is sent (default: 1.0)',
+                  },
+                  max_duration: {
+                     type: 'number',
+                     label: 'Max Chunk (sec)',
+                     min: 1,
+                     max: 60,
+                     step: 1,
+                     hint: 'Force chunk boundary at this duration (default: 10.0)',
+                  },
+               },
             },
          },
       },
@@ -404,8 +466,8 @@
                   mode: {
                      type: 'select',
                      label: 'Mode',
-                     options: ['disabled', 'enabled'],
-                     hint: 'Enable extended thinking for complex queries',
+                     options: ['disabled', 'enabled', 'auto'],
+                     hint: 'Enable extended thinking for complex queries (auto: provider decides)',
                   },
                   reasoning_effort: {
                      type: 'select',
@@ -416,16 +478,16 @@
                   budget_low: {
                      type: 'number',
                      label: 'Budget Low',
-                     min: 256,
+                     min: 1024,
                      step: 256,
-                     hint: 'Token budget for "low" reasoning effort (default: 1024)',
+                     hint: 'Token budget for "low" reasoning effort (default: 1024, minimum: 1024)',
                   },
                   budget_medium: {
                      type: 'number',
                      label: 'Budget Medium',
-                     min: 512,
+                     min: 1024,
                      step: 512,
-                     hint: 'Token budget for "medium" reasoning effort (default: 8192)',
+                     hint: 'Token budget for "medium" reasoning effort (default: 8192, minimum: 1024)',
                   },
                   budget_high: {
                      type: 'number',
@@ -435,6 +497,21 @@
                      hint: 'Token budget for "high" reasoning effort (default: 16384)',
                   },
                },
+            },
+            summarize_threshold: {
+               type: 'number',
+               label: 'Context Compaction Threshold',
+               min: 0.1,
+               max: 1.0,
+               step: 0.05,
+               hint: 'Compact conversation at this fraction of context limit (default: 0.80)',
+               advanced: true,
+            },
+            conversation_logging: {
+               type: 'checkbox',
+               label: 'Conversation File Logging',
+               hint: 'Save chat history to log files on disk (debug use — WebUI saves to DB regardless)',
+               advanced: true,
             },
             rate_limit_enabled: {
                type: 'checkbox',
@@ -553,6 +630,13 @@
          adminOnly: true,
          advanced: true,
          fields: {
+            whitelist: {
+               type: 'string_list',
+               label: 'URL Whitelist',
+               rows: 4,
+               placeholder: 'api.example.com\ninternal.corp.com',
+               hint: 'Only allow fetching from these domains (one per line, empty = allow all)',
+            },
             flaresolverr: {
                type: 'group',
                label: 'FlareSolverr',
@@ -599,7 +683,7 @@
                type: 'number',
                label: 'Context Budget (tokens)',
                min: 100,
-               max: 4000,
+               max: 2000,
                step: 100,
                hint: 'Max tokens for memory context injected into system prompt (~800 recommended)',
                advanced: true,
@@ -782,6 +866,7 @@
                      type: 'select',
                      label: 'Embedding Provider',
                      hint: 'ONNX runs locally (~23MB model). Ollama/OpenAI require a running service.',
+                     configPath: 'memory.embedding_provider',
                      options: [
                         { value: 'onnx', label: 'ONNX (Built-in)' },
                         { value: 'ollama', label: 'Ollama' },
@@ -794,6 +879,7 @@
                      label: 'Model',
                      hint: 'Model name for the embedding provider (e.g., "all-minilm" for Ollama)',
                      placeholder: 'all-minilm',
+                     configPath: 'memory.embedding_model',
                      advanced: true,
                      showWhen: { key: 'memory.embedding_provider', notValue: ['onnx', ''] },
                   },
@@ -802,6 +888,7 @@
                      label: 'Endpoint URL',
                      hint: 'Base URL for the embedding service',
                      placeholder: 'http://localhost:11434',
+                     configPath: 'memory.embedding_endpoint',
                      advanced: true,
                      showWhen: { key: 'memory.embedding_provider', notValue: ['onnx', ''] },
                   },
@@ -809,6 +896,7 @@
                      type: 'range',
                      label: 'Keyword Match Strength',
                      hint: 'How much exact word matching influences search results (independent of semantic strength)',
+                     configPath: 'memory.embedding_keyword_weight',
                      min: 0,
                      max: 1,
                      step: 0.05,
@@ -818,6 +906,7 @@
                      type: 'range',
                      label: 'Semantic Match Strength',
                      hint: 'How much meaning-based similarity influences search results (independent of keyword strength)',
+                     configPath: 'memory.embedding_vector_weight',
                      min: 0,
                      max: 1,
                      step: 0.05,
@@ -827,6 +916,7 @@
                      type: 'checkbox',
                      label: 'Index Existing Memories',
                      hint: 'Generate search embeddings for memories stored before semantic search was enabled. Runs once at startup.',
+                     configPath: 'memory.embedding_backfill_on_startup',
                      advanced: true,
                   },
                },
@@ -924,6 +1014,31 @@
                label: 'Enable HTTPS',
                restart: true,
                hint: 'Required for microphone access on remote connections',
+               advanced: true,
+            },
+            ssl_cert_path: {
+               type: 'text',
+               label: 'SSL Certificate Path',
+               restart: true,
+               hint: 'Path to PEM certificate file for HTTPS',
+               advanced: true,
+               showWhen: { key: 'webui.https', value: true },
+            },
+            ssl_key_path: {
+               type: 'text',
+               label: 'SSL Key Path',
+               restart: true,
+               hint: 'Path to PEM private key file for HTTPS',
+               advanced: true,
+               showWhen: { key: 'webui.https', value: true },
+            },
+            audio_chunk_ms: {
+               type: 'number',
+               label: 'Audio Chunk Size (ms)',
+               min: 10,
+               max: 500,
+               step: 10,
+               hint: 'WebSocket audio chunk duration — lower = less VAD latency (default: 100)',
                advanced: true,
             },
             export_max_messages: {
@@ -1460,6 +1575,7 @@
       if (!currentConfig) return;
 
       sectionsContainer.innerHTML = '';
+      showWhenDependents = {};
 
       const virtualConfig = { ...currentConfig };
 
@@ -1507,6 +1623,8 @@
             sectionsContainer.appendChild(el);
          }
       }
+
+      renderedSchemaVersion = SCHEMA_VERSION;
    }
 
    /**
@@ -1648,21 +1766,32 @@
    }
 
    /**
-    * Update visibility of all showWhen elements when a config key changes
+    * Register an element in the showWhen dependency map
+    * @param {string} key - The config key this element depends on
+    * @param {HTMLElement} el - The element to show/hide
+    */
+   function registerShowWhenDependent(key, el) {
+      if (!showWhenDependents[key]) {
+         showWhenDependents[key] = [];
+      }
+      showWhenDependents[key].push(el);
+   }
+
+   /**
+    * Update visibility of showWhen elements when a config key changes (O(1) lookup)
     * @param {string} changedKey - The config key that changed
-    * @param {string} newValue - The new value
+    * @param {*} newValue - The new value (string or boolean from checkbox)
     */
    function updateShowWhenVisibility(changedKey, newValue) {
-      if (!sectionsContainer) return;
-      const elements = sectionsContainer.querySelectorAll('[data-show-when-key]');
-      elements.forEach((el) => {
-         if (el.dataset.showWhenKey === changedKey) {
-            if (el.dataset.showWhenNotValue) {
-               const blocked = JSON.parse(el.dataset.showWhenNotValue);
-               el.style.display = blocked.includes(newValue) ? 'none' : '';
-            } else {
-               el.style.display = newValue === el.dataset.showWhenValue ? '' : 'none';
-            }
+      const dependents = showWhenDependents[changedKey];
+      if (!dependents) return;
+      dependents.forEach((el) => {
+         if (el.dataset.showWhenNotValue) {
+            const blocked = JSON.parse(el.dataset.showWhenNotValue);
+            el.style.display = blocked.includes(newValue) ? 'none' : '';
+         } else {
+            // Compare with type coercion for booleans stored as strings in dataset
+            el.style.display = String(newValue) === el.dataset.showWhenValue ? '' : 'none';
          }
       });
    }
@@ -1706,6 +1835,7 @@
                groupEl.dataset.showWhenValue = def.showWhen.value;
             }
             applyShowWhen(groupEl, def.showWhen);
+            registerShowWhenDependent(def.showWhen.key, groupEl);
          }
          groupEl.innerHTML = `<div class="group-label">${escapeHtml(def.label || '')}</div>`;
 
@@ -1754,6 +1884,7 @@
             item.dataset.showWhenValue = def.showWhen.value;
          }
          applyShowWhen(item, def.showWhen);
+         registerShowWhenDependent(def.showWhen.key, item);
       }
 
       // Add tooltip hint if defined
@@ -1907,15 +2038,27 @@
             const newVal = input.type === 'checkbox' ? input.checked : input.value;
             updateShowWhenVisibility(fullKey, newVal);
          });
-         input.addEventListener('input', () => {
-            handleSettingChangeCallback(fullKey, input);
-            const newVal = input.type === 'checkbox' ? input.checked : input.value;
-            updateShowWhenVisibility(fullKey, newVal);
-         });
+         // Debounce the input handler — change event already fires on blur/commit
+         // Range inputs get an immediate handler (cheap, needed for live showWhen updates)
+         if (input.type === 'range') {
+            input.addEventListener('input', () => {
+               handleSettingChangeCallback(fullKey, input);
+               updateShowWhenVisibility(fullKey, input.value);
+            });
+         } else {
+            const debouncedInput = Utils.debounce(() => {
+               handleSettingChangeCallback(fullKey, input);
+               const newVal = input.type === 'checkbox' ? input.checked : input.value;
+               updateShowWhenVisibility(fullKey, newVal);
+            }, 150);
+            input.addEventListener('input', debouncedInput);
+         }
       }
 
       // Special handling for range inputs - update display value
       if (def.type === 'range' && input) {
+         // Stash displayValue callback for updateSettingsValues() fast path
+         if (def.displayValue) input._displayValue = def.displayValue;
          const valueDisplay = item.querySelector('.range-value');
          if (valueDisplay) {
             input.addEventListener('input', () => {
@@ -1976,6 +2119,80 @@
    }
 
    /**
+    * Check if the settings DOM needs a full rebuild
+    * @returns {boolean} True if DOM needs rebuilding
+    */
+   function needsRebuild() {
+      return (
+         renderedSchemaVersion !== SCHEMA_VERSION ||
+         !sectionsContainer ||
+         !sectionsContainer.hasChildNodes()
+      );
+   }
+
+   /**
+    * Update existing settings DOM values in-place without rebuilding.
+    * Walks all [data-key] inputs and updates their values from config.
+    * @param {Object} config - Current config object
+    */
+   function updateSettingsValues(config) {
+      if (!sectionsContainer || !config) return;
+
+      // Populate persona description with built-in default if not set
+      const Config = window.DawnSettingsConfig;
+      const virtualConfig = { ...config };
+      if (
+         Config &&
+         Config.getDefaultPersona &&
+         (!virtualConfig.persona || !virtualConfig.persona.description)
+      ) {
+         if (!virtualConfig.persona) virtualConfig.persona = {};
+         virtualConfig.persona.description = Config.getDefaultPersona();
+      }
+
+      const inputs = sectionsContainer.querySelectorAll('[data-key]');
+      inputs.forEach((input) => {
+         const key = input.dataset.key;
+         const value = Utils.getNestedValue(virtualConfig, key);
+
+         if (input.type === 'checkbox') {
+            input.checked = !!value;
+         } else if (input.dataset.type === 'model_list' || input.dataset.type === 'string_list') {
+            input.value = Array.isArray(value) ? value.join('\n') : value || '';
+         } else if (input.dataset.type === 'model_default_select') {
+            input.value = parseInt(value, 10) || 0;
+         } else if (input.type === 'number' || input.type === 'range') {
+            // Skip if config has no value — preserve the schema default from initial render
+            if (value == null) return;
+            const m = parseFloat(input.dataset.multiplier) || 1;
+            const displayValue = value / m;
+            input.value = input.type === 'number' ? Utils.formatNumber(displayValue) : displayValue;
+            // Update range display value (use stashed displayValue callback if available)
+            if (input.type === 'range') {
+               const valueDisplay = input.parentElement?.querySelector('.range-value');
+               if (valueDisplay) {
+                  const formatted = input._displayValue
+                     ? input._displayValue(displayValue)
+                     : displayValue;
+                  valueDisplay.textContent = String(formatted);
+               }
+               input.setAttribute('aria-valuenow', displayValue);
+            }
+         } else {
+            input.value = value ?? '';
+         }
+      });
+
+      // Re-apply showWhen visibility based on updated values
+      for (const key in showWhenDependents) {
+         const val = Utils.getNestedValue(virtualConfig, key);
+         if (val !== undefined) {
+            updateShowWhenVisibility(key, val);
+         }
+      }
+   }
+
+   /**
     * Get the settings schema
     * @returns {Object} Settings schema
     */
@@ -1988,6 +2205,8 @@
       setDependencies,
       getSchema,
       renderSettingsSections,
+      updateSettingsValues,
+      needsRebuild,
       createSettingsSection,
       createSettingField,
       updateDependentModelSelects,

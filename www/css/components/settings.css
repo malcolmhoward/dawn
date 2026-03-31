@@ -13,8 +13,6 @@
    right: 0;
    bottom: 0;
    background-color: rgba(0, 0, 0, 0.6);
-   backdrop-filter: blur(4px);
-   -webkit-backdrop-filter: blur(4px);
    z-index: 998;
    opacity: 1;
    transition: opacity var(--transition-medium);
@@ -36,8 +34,8 @@
    max-width: calc(100vw - 0.5rem);
    height: 100%;
    background: rgba(18, 18, 26, 0.92);
-   backdrop-filter: blur(20px);
-   -webkit-backdrop-filter: blur(20px);
+   backdrop-filter: blur(10px);
+   -webkit-backdrop-filter: blur(10px);
    border-left: 1px solid var(--accent-focus);
    box-shadow: -10px 0 40px rgba(0, 0, 0, 0.5);
    z-index: 999;
@@ -872,7 +870,8 @@
    border-color: var(--accent);
 }
 
-.secret-toggle {
+.secret-toggle,
+.password-toggle {
    width: 32px;
    height: 32px;
    padding: 0;
@@ -884,9 +883,11 @@
    display: flex;
    align-items: center;
    justify-content: center;
+   flex-shrink: 0;
 }
 
-.secret-toggle:hover {
+.secret-toggle:hover,
+.password-toggle:hover {
    border-color: var(--accent);
    color: var(--accent);
 }
@@ -919,26 +920,6 @@
 
 .password-input-wrapper input {
    flex: 1;
-}
-
-.password-toggle {
-   width: 32px;
-   height: 32px;
-   padding: 0;
-   background: transparent;
-   border: 1px solid var(--text-secondary);
-   border-radius: 6px;
-   color: var(--text-secondary);
-   cursor: pointer;
-   display: flex;
-   align-items: center;
-   justify-content: center;
-   flex-shrink: 0;
-}
-
-.password-toggle:hover {
-   border-color: var(--accent);
-   color: var(--accent);
 }
 
 /* =============================================================================
@@ -1094,7 +1075,7 @@
 .save-btn.has-unsaved {
    background: var(--accent);
    color: var(--bg-primary);
-   animation: save-pulse 2s ease-in-out infinite;
+   animation: save-pulse 2s ease-in-out 3;
 }
 
 .save-btn.has-unsaved:hover {
@@ -1168,9 +1149,7 @@
    top: 0;
    z-index: 10;
    padding: 0.75rem 1.5rem;
-   background: rgba(18, 18, 26, 0.85);
-   backdrop-filter: blur(12px);
-   -webkit-backdrop-filter: blur(12px);
+   background: rgba(18, 18, 26, 0.97);
    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 }
 
