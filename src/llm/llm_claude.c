@@ -132,10 +132,6 @@ char *llm_claude_chat_completion(struct json_object *conversation_history,
    curl_easy_setopt(curl_handle, CURLOPT_XFERINFOFUNCTION, llm_curl_progress_callback);
    curl_easy_setopt(curl_handle, CURLOPT_XFERINFODATA, NULL);
 
-   // Set low-speed timeout: abort if transfer drops below 1 byte/sec for 30 seconds
-   curl_easy_setopt(curl_handle, CURLOPT_LOW_SPEED_LIMIT, 1L);
-   curl_easy_setopt(curl_handle, CURLOPT_LOW_SPEED_TIME, 30L);
-
    // Set connect timeout: fail fast on unreachable hosts instead of waiting for overall timeout
    curl_easy_setopt(curl_handle, CURLOPT_CONNECTTIMEOUT_MS, LLM_CONNECT_TIMEOUT_MS);
 
@@ -144,6 +140,14 @@ char *llm_claude_chat_completion(struct json_object *conversation_history,
    if (effective_timeout > 0) {
       curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT_MS, (long)effective_timeout);
    }
+
+   // Set low-speed timeout — scale for long-running requests (see llm_openai.c)
+   long low_speed_time = 30L;
+   if (effective_timeout > 60000) {
+      low_speed_time = (long)(effective_timeout / 1000);
+   }
+   curl_easy_setopt(curl_handle, CURLOPT_LOW_SPEED_LIMIT, 1L);
+   curl_easy_setopt(curl_handle, CURLOPT_LOW_SPEED_TIME, low_speed_time);
 
    res = curl_easy_perform(curl_handle);
    if (res != CURLE_OK) {
