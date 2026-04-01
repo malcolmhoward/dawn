@@ -2030,6 +2030,41 @@ int llm_tools_get_enabled_count(void) {
    return s_enabled_count;
 }
 
+int llm_tools_build_disabled_hint(char *buffer, size_t buffer_size) {
+   if (!s_initialized || !buffer || buffer_size == 0) {
+      return 0;
+   }
+
+   /* Collect names of tools that are registered but disabled for all session types */
+   char names[512] = "";
+   int offset = 0;
+   int count = 0;
+
+   for (int i = 0; i < s_tool_count; i++) {
+      const tool_definition_t *t = &s_tools[i];
+      /* Skip tools that are enabled for at least one session type */
+      if (t->enabled && (t->enabled_local || t->enabled_remote)) {
+         continue;
+      }
+      if (offset > 0 && offset < (int)sizeof(names) - 2) {
+         offset += snprintf(names + offset, sizeof(names) - offset, ", ");
+      }
+      offset += snprintf(names + offset, sizeof(names) - offset, "%s", t->name);
+      count++;
+   }
+
+   if (count == 0) {
+      buffer[0] = '\0';
+      return 0;
+   }
+
+   return snprintf(buffer, buffer_size,
+                   "\nNote: The following tools exist but are currently disabled by the "
+                   "administrator: %s. If the user asks about these capabilities, let them "
+                   "know the feature exists but is not currently enabled.\n",
+                   names);
+}
+
 void llm_tool_response_free(llm_tool_response_t *response) {
    if (response) {
       if (response->text) {

@@ -620,6 +620,18 @@ bool llm_check_thinking_trigger(const char *text);
 int llm_tools_get_enabled_count(void);
 
 /**
+ * @brief Build a hint string listing disabled tools for the LLM system prompt
+ *
+ * Lists tools that are registered but disabled for all session types, so the LLM
+ * can inform users that capabilities exist but are not currently enabled.
+ *
+ * @param buffer Output buffer
+ * @param buffer_size Size of output buffer
+ * @return Number of bytes written (0 if no disabled tools)
+ */
+int llm_tools_build_disabled_hint(char *buffer, size_t buffer_size);
+
+/**
  * @brief Free an llm_tool_response_t structure
  *
  * @param response Response to free (text and thinking fields are freed if not NULL)

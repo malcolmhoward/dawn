@@ -433,6 +433,8 @@ static int build_system_instructions_to_buffer(const char *mode, char *buffer, s
       if (tool_registry_is_enabled("execute_plan") && llm_tools_get_enabled_count() >= 3) {
          len += snprintf(buffer + len, remaining - len, "%s", PLAN_EXECUTOR_PROMPT);
       }
+      /* Append hint about disabled tools so LLM can inform users */
+      len += llm_tools_build_disabled_hint(buffer + len, remaining - len);
       return len;
    }
 

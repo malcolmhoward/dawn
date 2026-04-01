@@ -454,7 +454,7 @@ void llm_context_update_usage(uint32_t session_id,
       if (!local_model || local_model[0] == '\0') {
          session_t *session = session_get_command_context();
          if (session) {
-            session_llm_config_t scfg = {0};
+            session_llm_config_t scfg = { 0 };
             session_get_llm_config(session, &scfg);
             if (scfg.model[0] != '\0') {
                local_model = scfg.model;
