@@ -45,6 +45,10 @@
 #include "webui/webui_server.h"
 #endif
 
+/* Forward declaration — avoid including path_utils.h which conflicts with
+ * string_utils.h's static inline safe_strncpy */
+bool path_ensure_parent_dir(const char *file_path);
+
 /* =============================================================================
  * Configuration Access
  * ============================================================================= */
@@ -696,11 +700,6 @@ int llm_context_save_conversation(uint32_t session_id,
       return -1;
    }
 
-   /* Create logs directory if needed */
-   if (mkdir("logs", 0755) != 0 && errno != EEXIST) {
-      LOG_WARNING("llm_context: Could not create logs directory");
-   }
-
    /* Generate timestamped filename */
    time_t now = time(NULL);
    struct tm tm_storage;
@@ -711,6 +710,11 @@ int llm_context_save_conversation(uint32_t session_id,
    char filename[256];
    snprintf(filename, sizeof(filename), "logs/chat_history_session%u_%s_%s.json", session_id,
             suffix, timestamp);
+
+   /* Create logs directory if needed */
+   if (!path_ensure_parent_dir(filename)) {
+      LOG_WARNING("llm_context: Could not create logs directory");
+   }
 
    /* Write JSON to file */
    const char *json_str = json_object_to_json_string_ext(

@@ -26,6 +26,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <sys/types.h>
 
 /**
  * @brief Expand tilde in path to home directory
@@ -88,15 +89,27 @@ void safe_strncpy(char *dst, const char *src, size_t dst_size);
 /**
  * @brief Ensure parent directory exists for a file path
  *
- * Creates the parent directory if it doesn't exist (single level only).
- * Uses mode 0755 for the directory.
+ * Recursively creates all missing parent directories for the given file path.
+ * Uses mode 0755 for directories.
  *
- * @param file_path Path to a file (parent directory will be created)
+ * @param file_path Path to a file (parent directories will be created)
  * @return true on success or if directory already exists, false on error
  *
- * @note Only creates one level of directory. If multiple levels are missing,
- *       this will fail. The file_path should be an expanded absolute path.
+ * @note The file_path should be an expanded absolute path.
  */
 bool path_ensure_parent_dir(const char *file_path);
+
+/**
+ * @brief Ensure parent directory exists with specific permissions
+ *
+ * Like path_ensure_parent_dir() but allows specifying the directory mode.
+ * Useful for creating directories with restrictive permissions (e.g. 0700
+ * for credential storage).
+ *
+ * @param file_path Path to a file (parent directories will be created)
+ * @param mode      Permission mode for created directories (e.g. 0700)
+ * @return true on success or if directory already exists, false on error
+ */
+bool path_ensure_parent_dir_mode(const char *file_path, mode_t mode);
 
 #endif /* DAWN_PATH_UTILS_H */

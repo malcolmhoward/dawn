@@ -42,6 +42,7 @@
 #include <unistd.h>
 
 #include "config/dawn_config.h"
+#include "core/path_utils.h"
 #include "llm/llm_command_parser.h"
 #include "logging.h"
 #include "tools/curl_buffer.h"
@@ -233,26 +234,13 @@ static int save_tokens_to_file(void) {
    }
 
    /* Create config directory if needed using secure path from token_file_path */
-   char dir_path[512];
-   strncpy(dir_path, s_state.token_file_path, sizeof(dir_path) - 1);
-   dir_path[sizeof(dir_path) - 1] = '\0';
-
-   /* Find last slash and truncate to get directory */
-   char *last_slash = strrchr(dir_path, '/');
-   if (last_slash) {
-      *last_slash = '\0';
-      /* Create parent directories with secure permissions */
-      char *p = dir_path + 1;
-      while (*p) {
-         if (*p == '/') {
-            *p = '\0';
-            mkdir(dir_path, 0700);
-            *p = '/';
-         }
-         p++;
-      }
-      mkdir(dir_path, 0700);
+   mode_t old_umask = umask(0077);
+   if (!path_ensure_parent_dir_mode(s_state.token_file_path, 0700)) {
+      LOG_ERROR("smartthings: failed to create directory for token file");
+      umask(old_umask);
+      return 1;
    }
+   umask(old_umask);
 
    /* Write to temp file first (atomic) using O_NOFOLLOW to prevent symlink attacks */
    char tmp_path[520];

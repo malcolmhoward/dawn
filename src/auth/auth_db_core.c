@@ -43,6 +43,7 @@
 #include <unistd.h>
 
 #include "auth/auth_db_internal.h"
+#include "core/path_utils.h"
 #include "logging.h"
 
 /* =============================================================================
@@ -3250,25 +3251,12 @@ static void finalize_statements(void) {
  * ============================================================================= */
 
 int auth_db_internal_create_parent_dir(const char *path) {
-   char *path_copy = strdup(path);
-   if (!path_copy) {
-      return AUTH_DB_FAILURE;
-   }
-
-   char *dir = dirname(path_copy);
-
-   /* Set restrictive umask for directory creation */
+   /* Set restrictive umask — auth databases need 0700 directories */
    mode_t old_umask = umask(0077);
-
-   int rc = AUTH_DB_SUCCESS;
-   if (mkdir(dir, 0700) != 0 && errno != EEXIST) {
-      LOG_ERROR("auth_db: failed to create directory %s: %s", dir, strerror(errno));
-      rc = AUTH_DB_FAILURE;
-   }
-
+   bool ok = path_ensure_parent_dir_mode(path, 0700);
    umask(old_umask);
-   free(path_copy);
-   return rc;
+
+   return ok ? AUTH_DB_SUCCESS : AUTH_DB_FAILURE;
 }
 
 int auth_db_internal_verify_permissions(const char *path) {

@@ -44,6 +44,7 @@
 #include "audio/music_scanner.h"
 #include "auth/auth_crypto.h"
 #include "auth/auth_db.h"
+#include "core/path_utils.h"
 #include "logging.h"
 #ifdef ENABLE_WEBUI
 #include "webui/webui_server.h"
@@ -421,7 +422,10 @@ static int load_lockout_state(void) {
 
 static int save_lockout_state(void) {
    /* Create directory if needed */
-   mkdir(ADMIN_SOCKET_DIR, 0700);
+   if (!path_ensure_parent_dir_mode(SETUP_TOKEN_LOCKOUT_FILE, 0700)) {
+      LOG_WARNING("Failed to create lockout state directory");
+      return 1;
+   }
 
    int fd = open(SETUP_TOKEN_LOCKOUT_FILE, O_WRONLY | O_CREAT | O_TRUNC, 0600);
    if (fd < 0) {

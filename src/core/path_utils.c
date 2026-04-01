@@ -165,6 +165,10 @@ bool path_is_within_root(const char *path, const char *root_dir) {
  * ============================================================================= */
 
 bool path_ensure_parent_dir(const char *file_path) {
+   return path_ensure_parent_dir_mode(file_path, 0755);
+}
+
+bool path_ensure_parent_dir_mode(const char *file_path, mode_t mode) {
    if (!file_path || file_path[0] == '\0') {
       return false;
    }
@@ -178,30 +182,54 @@ bool path_ensure_parent_dir(const char *file_path) {
 
    char *dir = dirname(path_copy);
 
-   /* Try to create directory first (avoids TOCTOU race with stat-then-mkdir) */
-   if (mkdir(dir, 0755) == 0) {
+   /* Fast path: try creating the leaf directory first (common case where only
+    * the final component is missing, avoids walking the entire path) */
+   if (mkdir(dir, mode) == 0) {
       LOG_INFO("Created directory: %s", dir);
       free(path_copy);
       return true;
    }
 
-   /* mkdir failed - check why */
    if (errno == EEXIST) {
-      /* Something exists at this path - verify it's a directory (use lstat to not follow symlinks)
-       */
+      /* Verify it's actually a directory (use lstat to not follow symlinks) */
       struct stat st;
       if (lstat(dir, &st) == 0 && S_ISDIR(st.st_mode)) {
          free(path_copy);
-         return true; /* Directory already exists */
+         return true;
       }
-      /* Path exists but is not a directory (could be file or symlink) */
       LOG_ERROR("path_ensure_parent_dir: '%s' exists but is not a directory", dir);
       free(path_copy);
       return false;
    }
 
-   /* Other error (permission denied, parent doesn't exist, etc.) */
-   LOG_ERROR("path_ensure_parent_dir: failed to create '%s': %s", dir, strerror(errno));
+   /* Fast path failed (missing intermediate dirs) — walk the path and create
+    * each component.  This handles fresh installs where e.g. ~/.local/share/
+    * doesn't exist yet. */
+   char *p = dir;
+   if (*p == '/') {
+      p++; /* skip leading slash */
+   }
+
+   for (; *p; p++) {
+      if (*p == '/') {
+         *p = '\0';
+         if (mkdir(dir, mode) != 0 && errno != EEXIST) {
+            LOG_ERROR("path_ensure_parent_dir: failed to create '%s': %s", dir, strerror(errno));
+            free(path_copy);
+            return false;
+         }
+         *p = '/';
+      }
+   }
+
+   /* Create the final component */
+   if (mkdir(dir, mode) != 0 && errno != EEXIST) {
+      LOG_ERROR("path_ensure_parent_dir: failed to create '%s': %s", dir, strerror(errno));
+      free(path_copy);
+      return false;
+   }
+
+   LOG_INFO("Created directory: %s", dir);
    free(path_copy);
-   return false;
+   return true;
 }

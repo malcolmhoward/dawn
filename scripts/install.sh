@@ -399,6 +399,9 @@ run_admin() {
       sleep 1
    fi
 
+   # Ensure XDG data directory exists (fresh installs may lack ~/.local/share)
+   mkdir -p "$HOME/.local/share"
+
    log "Starting DAWN daemon to obtain setup token..."
 
    local log_file="/tmp/dawn-install-startup-$$.log"
