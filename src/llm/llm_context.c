@@ -352,7 +352,11 @@ int llm_context_get_size(llm_type_t type, cloud_provider_t provider, const char 
          /* Initial query — model may not be loaded yet for Ollama */
          const char *endpoint = g_config.llm.local.endpoint[0] != '\0' ? g_config.llm.local.endpoint
                                                                        : "http://127.0.0.1:8080";
+         /* Use session model if global config model is empty (user picked model via WebUI) */
          const char *local_model = g_config.llm.local.model;
+         if ((!local_model || local_model[0] == '\0') && model && model[0] != '\0') {
+            local_model = model;
+         }
          s_state.local_context_size = llm_local_query_context_size(endpoint, local_model);
          s_state.local_context_queried = true;
          /* For non-Ollama providers (llama.cpp), /props is always authoritative */
@@ -445,7 +449,18 @@ void llm_context_update_usage(uint32_t session_id,
    if (need_ollama_refresh) {
       const char *endpoint = g_config.llm.local.endpoint[0] != '\0' ? g_config.llm.local.endpoint
                                                                     : "http://127.0.0.1:8080";
+      /* Use session model if global config model is empty (user picked model via WebUI) */
       const char *local_model = g_config.llm.local.model;
+      if (!local_model || local_model[0] == '\0') {
+         session_t *session = session_get_command_context();
+         if (session) {
+            session_llm_config_t scfg = {0};
+            session_get_llm_config(session, &scfg);
+            if (scfg.model[0] != '\0') {
+               local_model = scfg.model;
+            }
+         }
+      }
       int refreshed = llm_local_query_context_size(endpoint, local_model);
       if (refreshed != LLM_CONTEXT_DEFAULT_LOCAL) {
          pthread_mutex_lock(&s_state.mutex);
@@ -858,11 +873,68 @@ int llm_context_compact(uint32_t session_id,
    }
 
    if (end_idx <= start_idx) {
-      /* Not enough messages to summarize */
+      /* Tool-call expansion consumed the entire summarizable window.
+       * Fallback: strip tool result content from the conversation history.
+       * The assistant responses that followed already incorporate the information,
+       * so raw tool output (often large JSON) is dead weight. This is a mechanical
+       * in-place transformation — no LLM summarization call needed. */
+      LOG_WARNING("llm_context: Tool-heavy conversation — stripping tool result content "
+                  "(fallback compaction)");
+
+      int stripped = 0;
+      for (int i = start_idx; i < history_len; i++) {
+         struct json_object *msg = json_object_array_get_idx(history, i);
+         struct json_object *role_obj = NULL;
+         if (!json_object_object_get_ex(msg, "role", &role_obj))
+            continue;
+         const char *role = json_object_get_string(role_obj);
+
+         /* OpenAI format: role="tool" — replace content with empty string */
+         if (strcmp(role, "tool") == 0) {
+            json_object_object_del(msg, "content");
+            json_object_object_add(msg, "content", json_object_new_string(""));
+            stripped++;
+            continue;
+         }
+
+         /* Claude format: role="user" with tool_result content blocks —
+          * empty the content field within each tool_result block */
+         if (strcmp(role, "user") == 0) {
+            struct json_object *content = NULL;
+            if (json_object_object_get_ex(msg, "content", &content) &&
+                json_object_is_type(content, json_type_array)) {
+               int clen = json_object_array_length(content);
+               for (int j = 0; j < clen; j++) {
+                  struct json_object *block = json_object_array_get_idx(content, j);
+                  struct json_object *type_val = NULL;
+                  if (json_object_object_get_ex(block, "type", &type_val) &&
+                      strcmp(json_object_get_string(type_val), "tool_result") == 0) {
+                     json_object_object_del(block, "content");
+                     json_object_object_add(block, "content", json_object_new_string(""));
+                     stripped++;
+                  }
+               }
+            }
+         }
+         /* Assistant messages with tool_calls/tool_use are left intact —
+          * call metadata is small and needed for conversation coherence */
+      }
+
+      result->tokens_after = llm_context_estimate_tokens(history);
+      int saved = result->tokens_before - result->tokens_after;
+      result->messages_summarized = stripped;
+      result->performed = (stripped > 0);
+
       if (system_msg) {
          json_object_put(system_msg);
       }
-      LOG_INFO("llm_context: Not enough messages to summarize");
+
+      if (stripped > 0) {
+         LOG_INFO("llm_context: Stripped %d tool result(s), saved %d tokens (%d -> %d)", stripped,
+                  saved, result->tokens_before, result->tokens_after);
+      } else {
+         LOG_INFO("llm_context: No tool results to strip");
+      }
       return 0;
    }
 
