@@ -59,6 +59,23 @@
 #define CLAUDE_URL "https://api.anthropic.com"
 #define GEMINI_URL "https://generativelanguage.googleapis.com/v1beta/openai"
 
+/* Thread-local timeout override for per-request timeout control.
+ * Set by llm_chat_completion_with_config() when config->timeout_ms > 0,
+ * read by llm_openai.c and llm_claude.c via llm_get_effective_timeout_ms().
+ * Avoids racing on g_config.network.llm_timeout_ms from concurrent threads. */
+static __thread int s_tl_timeout_ms = 0;
+
+int llm_get_effective_timeout_ms(void) {
+   if (s_tl_timeout_ms > 0) {
+      return s_tl_timeout_ms;
+   }
+   return g_config.network.llm_timeout_ms;
+}
+
+void llm_set_timeout_override(int timeout_ms) {
+   s_tl_timeout_ms = timeout_ms;
+}
+
 // Helper functions to get API keys from runtime config (secrets.toml)
 static const char *get_openai_api_key(void) {
    if (g_secrets.openai_api_key[0] != '\0') {
@@ -1279,6 +1296,12 @@ char *llm_chat_completion_with_config(struct json_object *conversation_history,
    // Set thread-local config so llm_tools_enabled() can check session-specific tool_mode
    llm_tools_set_current_config(config);
 
+   /* Set thread-local timeout override if specified (avoids global config race) */
+   int saved_tl_timeout = s_tl_timeout_ms;
+   if (config->timeout_ms > 0) {
+      s_tl_timeout_ms = config->timeout_ms;
+   }
+
    /* Gate cloud API calls through rate limiter */
    if (config->type != LLM_LOCAL) {
       if (llm_rate_limit_wait())
@@ -1319,8 +1342,9 @@ char *llm_chat_completion_with_config(struct json_object *conversation_history,
       }
    }
 
-   // Clear thread-local config
+   // Clear thread-local state
    llm_tools_set_current_config(NULL);
+   s_tl_timeout_ms = saved_tl_timeout;
 
    // Note: No automatic fallback for per-session config - caller handles this
 

@@ -291,8 +291,8 @@ static int summarize_with_local_llm(const char *prompt, char **out_summary) {
    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, payload);
    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_buffer_write_callback);
    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
-   curl_easy_setopt(curl, CURLOPT_TIMEOUT, SUMMARIZER_LOCAL_TIMEOUT_SEC);
-   curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5);
+   curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)SUMMARIZER_LOCAL_TIMEOUT_SEC);
+   curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L);
 
    LOG_INFO("search_summarizer: Sending %zu byte prompt to local LLM", strlen(prompt));
 

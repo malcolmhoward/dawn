@@ -508,6 +508,7 @@ log "Setting permissions"
 chown -R "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR"
 chmod -R 755 "$DATA_DIR"
 chown -R root:root "$CONFIG_DIR"
+chown "$SERVICE_USER:$SERVICE_USER" "$CONFIG_DIR/dawn.toml"
 chown "$SERVICE_USER:$SERVICE_USER" "$CONFIG_DIR/secrets.toml"
 
 # Ensure library path is configured

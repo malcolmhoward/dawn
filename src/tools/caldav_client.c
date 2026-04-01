@@ -36,6 +36,7 @@
 #include <string.h>
 
 #include "logging.h"
+#include "tools/curl_buffer.h"
 
 #ifdef HAVE_LIBICAL
 #include <libical/ical.h>
@@ -149,7 +150,7 @@ static CURL *caldav_curl_init(const caldav_auth_t *auth, curl_buf_t *resp) {
    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
    /* SSRF protection: restrict to HTTPS only (CalDAV servers must use TLS) */
-   curl_easy_setopt(curl, CURLOPT_PROTOCOLS, CURLPROTO_HTTPS);
+   DAWN_CURL_SET_PROTOCOLS(curl, "https");
 
    if (auth && auth->bearer_token) {
       curl_easy_setopt(curl, CURLOPT_HTTPAUTH, CURLAUTH_BEARER);

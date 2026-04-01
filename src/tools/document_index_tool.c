@@ -295,7 +295,7 @@ static char *download_url(const char *url,
       curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)DOC_INDEX_CURL_TRANSFER_TIMEOUT);
       curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, (long)DOC_INDEX_CURL_LOW_SPEED_LIMIT);
       curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, (long)DOC_INDEX_CURL_LOW_SPEED_TIME);
-      curl_easy_setopt(curl, CURLOPT_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
+      DAWN_CURL_SET_PROTOCOLS(curl, "http,https");
       curl_easy_setopt(curl, CURLOPT_USERAGENT, URL_FETCH_USER_AGENT);
 
       CURLcode res = curl_easy_perform(curl);

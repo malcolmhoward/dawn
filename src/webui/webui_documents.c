@@ -552,19 +552,18 @@ int webui_documents_handle_upload_complete(struct lws *wsi, document_upload_sess
    if (extract.page_count >= 0)
       session->page_count = extract.page_count;
 
-   /* Null-terminate for string operations */
-   if (session->content_len < session->content_cap) {
-      session->content_buf[session->content_len] = '\0';
-   } else {
-      char *new_buf = realloc(session->content_buf, session->content_len + 1);
+   /* Null-terminate for string operations — ensure capacity for the trailing NUL */
+   if (session->content_len >= session->content_cap) {
+      size_t new_cap = session->content_len + 1;
+      char *new_buf = realloc(session->content_buf, new_cap);
       if (!new_buf) {
          webui_documents_session_free(session);
          return send_doc_error(wsi, HTTP_STATUS_INTERNAL_SERVER_ERROR, "Memory allocation failed");
       }
       session->content_buf = new_buf;
-      session->content_cap = session->content_len + 1;
-      session->content_buf[session->content_len] = '\0';
+      session->content_cap = new_cap;
    }
+   session->content_buf[session->content_len] = '\0';
 
    /* Sanitize UTF-8 for JSON safety */
    sanitize_utf8_for_json(session->content_buf);

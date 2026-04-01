@@ -38,6 +38,7 @@
 #include "config/dawn_config.h"
 #include "core/crypto_store.h"
 #include "logging.h"
+#include "tools/curl_buffer.h"
 
 /* =============================================================================
  * Constants
@@ -361,7 +362,7 @@ static void oauth_fetch_google_email(const char *access_token, char *email_out, 
    curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)OAUTH_CURL_TIMEOUT);
    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
-   curl_easy_setopt(curl, CURLOPT_PROTOCOLS, CURLPROTO_HTTPS);
+   DAWN_CURL_SET_PROTOCOLS(curl, "https");
 
    /* Set Authorization: Bearer header */
    char auth_header[2200];
@@ -476,7 +477,7 @@ int oauth_exchange_code(const oauth_provider_config_t *provider,
    curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)OAUTH_CURL_TIMEOUT);
    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
-   curl_easy_setopt(curl, CURLOPT_PROTOCOLS, CURLPROTO_HTTPS);
+   DAWN_CURL_SET_PROTOCOLS(curl, "https");
 
    CURLcode cres = curl_easy_perform(curl);
    long http_code = 0;
@@ -570,7 +571,7 @@ int oauth_refresh(const oauth_provider_config_t *provider, oauth_token_set_t *to
    curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)OAUTH_CURL_TIMEOUT);
    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
-   curl_easy_setopt(curl, CURLOPT_PROTOCOLS, CURLPROTO_HTTPS);
+   DAWN_CURL_SET_PROTOCOLS(curl, "https");
 
    CURLcode cres = curl_easy_perform(curl);
    long http_code = 0;
@@ -874,7 +875,7 @@ int oauth_revoke_and_delete(const oauth_provider_config_t *provider,
          curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)OAUTH_CURL_TIMEOUT);
          curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
          curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
-         curl_easy_setopt(curl, CURLOPT_PROTOCOLS, CURLPROTO_HTTPS);
+         DAWN_CURL_SET_PROTOCOLS(curl, "https");
 
          CURLcode cres = curl_easy_perform(curl);
          long http_code = 0;

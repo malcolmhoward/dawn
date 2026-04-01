@@ -1020,8 +1020,11 @@ void session_destroy(uint32_t session_id) {
           * Pass 0 for conversation_id - session doesn't track which DB conversation
           * it's associated with. Incremental extraction works when triggered from
           * WebUI with known conversation_id. */
+         memory_extraction_fallback_t fb;
+         memory_extraction_build_fallback(session, &fb);
+
          memory_trigger_extraction(session->metrics.user_id, 0, session_id_str, history,
-                                   message_count, duration_seconds);
+                                   message_count, duration_seconds, &fb);
       }
       pthread_mutex_unlock(&session->history_mutex);
    }
@@ -1419,9 +1422,11 @@ int64_t session_save_voice_conversation(session_t *session) {
       }
 
       if (history_copy) {
+         memory_extraction_fallback_t fb;
+         memory_extraction_build_fallback(session, &fb);
+
          memory_trigger_extraction(user_id, conv_id, session_id_str, history_copy, msg_count,
-                                   duration_seconds);
-         /* Note: memory_trigger_extraction takes ownership and frees history_copy */
+                                   duration_seconds, &fb);
       }
    }
 

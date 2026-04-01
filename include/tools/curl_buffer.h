@@ -24,10 +24,47 @@
 #ifndef CURL_BUFFER_H
 #define CURL_BUFFER_H
 
+#include <curl/curl.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* CURLOPT_PROTOCOLS was deprecated in 7.85.0 in favor of CURLOPT_PROTOCOLS_STR.
+ * Provide a compat macro so callers can use the string form everywhere. */
+#if LIBCURL_VERSION_NUM >= 0x075500 /* 7.85.0 */
+#define DAWN_CURL_SET_PROTOCOLS(curl, str) curl_easy_setopt((curl), CURLOPT_PROTOCOLS_STR, (str))
+#else
+/* Fallback: parse the comma-separated string into the old bitmask flags. */
+#define DAWN_CURL_SET_PROTOCOLS(curl, str) _dawn_curl_set_protocols_compat((curl), (str))
+
+static inline CURLcode _dawn_curl_set_protocols_compat(CURL *curl, const char *protocols) {
+   long mask = 0;
+   /* Match exact comma-delimited tokens to avoid "http" matching inside "https" */
+   const char *p = protocols;
+   while (*p) {
+      size_t len = 0;
+      while (p[len] && p[len] != ',')
+         len++;
+      if (len == 5 && memcmp(p, "https", 5) == 0)
+         mask |= CURLPROTO_HTTPS;
+      else if (len == 4 && memcmp(p, "http", 4) == 0)
+         mask |= CURLPROTO_HTTP;
+      else if (len == 5 && memcmp(p, "imaps", 5) == 0)
+         mask |= CURLPROTO_IMAPS;
+      else if (len == 4 && memcmp(p, "imap", 4) == 0)
+         mask |= CURLPROTO_IMAP;
+      else if (len == 5 && memcmp(p, "smtps", 5) == 0)
+         mask |= CURLPROTO_SMTPS;
+      else if (len == 4 && memcmp(p, "smtp", 4) == 0)
+         mask |= CURLPROTO_SMTP;
+      p += len;
+      if (*p == ',')
+         p++;
+   }
+   return curl_easy_setopt(curl, CURLOPT_PROTOCOLS, mask);
+}
+#endif
 
 // Buffer capacity constants
 #define CURL_BUFFER_INITIAL_CAPACITY 4096

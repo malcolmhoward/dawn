@@ -96,6 +96,7 @@ typedef struct {
    char tool_mode[LLM_TOOL_MODE_MAX];            /**< Tool mode: native, command_tags, disabled */
    char thinking_mode[LLM_THINKING_MODE_MAX];    /**< Thinking: disabled, auto, enabled */
    char reasoning_effort[LLM_THINKING_MODE_MAX]; /**< Reasoning effort: low, medium, high */
+   int timeout_ms;                               /**< Per-request timeout (0 = use global default) */
 } llm_resolved_config_t;
 
 /**
@@ -524,5 +525,21 @@ char *llm_chat_completion_streaming_tts_with_config(struct json_object *conversa
  * @return 0 on success, 1 on failure
  */
 int llm_get_current_resolved_config(llm_resolved_config_t *config_out);
+
+/**
+ * @brief Get effective LLM timeout in milliseconds
+ *
+ * Returns the thread-local override if set (> 0), otherwise the global config value.
+ * Used by llm_openai.c and llm_claude.c to avoid reading a global that may be
+ * mutated by concurrent threads.
+ */
+int llm_get_effective_timeout_ms(void);
+
+/**
+ * @brief Set thread-local LLM timeout override
+ *
+ * @param timeout_ms Timeout in milliseconds (0 to clear override)
+ */
+void llm_set_timeout_override(int timeout_ms);
 
 #endif  // LLM_INTERFACE_H

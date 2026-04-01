@@ -805,8 +805,9 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
       curl_easy_setopt(curl_handle, CURLOPT_CONNECTTIMEOUT_MS, LLM_CONNECT_TIMEOUT_MS);
 
       // Set overall timeout from config (default 30000ms)
-      if (g_config.network.llm_timeout_ms > 0) {
-         curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT_MS, (long)g_config.network.llm_timeout_ms);
+      int effective_timeout = llm_get_effective_timeout_ms();
+      if (effective_timeout > 0) {
+         curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT_MS, (long)effective_timeout);
       }
 
       res = curl_easy_perform(curl_handle);
@@ -814,7 +815,7 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
          if (res == CURLE_ABORTED_BY_CALLBACK) {
             LOG_INFO("LLM transfer interrupted by user");
          } else if (res == CURLE_OPERATION_TIMEDOUT) {
-            LOG_ERROR("LLM request timed out (limit: %dms)", g_config.network.llm_timeout_ms);
+            LOG_ERROR("LLM request timed out (limit: %dms)", effective_timeout);
          } else {
             LOG_ERROR("curl_easy_perform() failed: %s", curl_easy_strerror(res));
          }

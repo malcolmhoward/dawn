@@ -347,10 +347,12 @@ void handle_new_conversation(ws_connection_t *conn, struct json_object *payload)
       if (old_history) {
          int msg_count = json_object_array_length(old_history);
          if (msg_count >= 2) {
+            memory_extraction_fallback_t fb;
+            memory_extraction_build_fallback(conn->session, &fb);
             LOG_INFO("WebUI: Triggering memory extraction for conversation %lld before new",
                      (long long)conn->active_conversation_id);
             memory_trigger_extraction(conn->auth_user_id, conn->active_conversation_id, NULL,
-                                      old_history, msg_count, 0);
+                                      old_history, msg_count, 0, &fb);
          }
          json_object_put(old_history);
       }
@@ -442,10 +444,12 @@ void handle_clear_session(ws_connection_t *conn) {
       if (old_history) {
          int msg_count = json_object_array_length(old_history);
          if (msg_count >= 2) {
+            memory_extraction_fallback_t fb;
+            memory_extraction_build_fallback(conn->session, &fb);
             LOG_INFO("WebUI: Triggering memory extraction for conversation %lld before clear",
                      (long long)conn->active_conversation_id);
             memory_trigger_extraction(conn->auth_user_id, conn->active_conversation_id, NULL,
-                                      old_history, msg_count, 0);
+                                      old_history, msg_count, 0, &fb);
          }
          json_object_put(old_history);
       }
@@ -645,10 +649,12 @@ void handle_load_conversation(ws_connection_t *conn, struct json_object *payload
       if (old_history) {
          int msg_count = json_object_array_length(old_history);
          if (msg_count >= 2) {
+            memory_extraction_fallback_t fb;
+            memory_extraction_build_fallback(conn->session, &fb);
             LOG_INFO("WebUI: Triggering memory extraction for conversation %lld before switch",
                      (long long)conn->active_conversation_id);
             memory_trigger_extraction(conn->auth_user_id, conn->active_conversation_id, NULL,
-                                      old_history, msg_count, 0);
+                                      old_history, msg_count, 0, &fb);
          }
          json_object_put(old_history);
       }

@@ -41,6 +41,7 @@
 
 #include "core/buf_printf.h"
 #include "logging.h"
+#include "tools/curl_buffer.h"
 #include "tools/html_parser.h"
 
 /* =============================================================================
@@ -142,7 +143,7 @@ static CURL *create_imap_handle(const email_conn_t *conn) {
    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
 
    /* SSRF protection: restrict to IMAP/IMAPS only */
-   curl_easy_setopt(curl, CURLOPT_PROTOCOLS, CURLPROTO_IMAP | CURLPROTO_IMAPS);
+   DAWN_CURL_SET_PROTOCOLS(curl, "imap,imaps");
    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);
 
    /* TLS settings — STARTTLS on port 143 */
@@ -168,7 +169,7 @@ static CURL *create_smtp_handle(const email_conn_t *conn) {
    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
 
    /* SSRF protection: restrict to SMTP/SMTPS only */
-   curl_easy_setopt(curl, CURLOPT_PROTOCOLS, CURLPROTO_SMTP | CURLPROTO_SMTPS);
+   DAWN_CURL_SET_PROTOCOLS(curl, "smtp,smtps");
    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);
 
    /* TLS settings — STARTTLS on port 587 */

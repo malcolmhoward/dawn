@@ -438,7 +438,6 @@
             local: {
                type: 'group',
                label: 'Local Settings',
-               advanced: true,
                fields: {
                   endpoint: {
                      type: 'text',

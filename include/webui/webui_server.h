@@ -564,6 +564,15 @@ void webui_broadcast_plan_progress(struct session *session, const char *json_str
  */
 void webui_broadcast_conversation_renamed(int user_id, int64_t conv_id, const char *title);
 
+/**
+ * @brief Broadcast memory extraction notice to a user's WebUI connections
+ *
+ * @param user_id   Target user
+ * @param level     "info", "warning", or "error"
+ * @param message   Human-readable notification message
+ */
+void webui_broadcast_memory_notice(int user_id, const char *level, const char *message);
+
 #ifdef __cplusplus
 }
 #endif

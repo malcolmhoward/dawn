@@ -34,6 +34,7 @@
 #include "auth/auth_db.h"
 #include "config/dawn_config.h"
 #include "core/buf_printf.h"
+#include "core/session_manager.h"
 #include "llm/llm_interface.h"
 #include "logging.h"
 #include "memory/memory_db.h"
@@ -102,6 +103,8 @@ typedef struct {
    int message_count;       /* Total messages in conversation */
    int new_message_count;   /* Messages being extracted this time */
    int duration_seconds;
+   bool has_fallback;                       /* Whether fallback LLM info is available */
+   memory_extraction_fallback_t fallback;   /* Session's active LLM for retry */
 } extraction_context_t;
 
 /* =============================================================================
@@ -299,7 +302,7 @@ static struct json_object *extract_json_from_response(const char *response) {
 }
 
 /* =============================================================================
- * WebUI broadcast for auto-title (provided by webui_server.c when ENABLE_WEBUI)
+ * WebUI broadcast (provided by webui_server.c when ENABLE_WEBUI)
  * ============================================================================= */
 
 #ifdef ENABLE_WEBUI
@@ -643,6 +646,22 @@ static void process_extraction_response(int user_id,
 }
 
 /* =============================================================================
+ * Fallback Builder
+ * ============================================================================= */
+
+void memory_extraction_build_fallback(session_t *session, memory_extraction_fallback_t *fb) {
+   memset(fb, 0, sizeof(*fb));
+   if (!session)
+      return;
+   session_llm_config_t cfg;
+   session_get_llm_config(session, &cfg);
+   fb->type = cfg.type;
+   fb->cloud_provider = cfg.cloud_provider;
+   strncpy(fb->endpoint, cfg.endpoint, sizeof(fb->endpoint) - 1);
+   strncpy(fb->model, cfg.model, sizeof(fb->model) - 1);
+}
+
+/* =============================================================================
  * Extraction Thread
  * ============================================================================= */
 
@@ -729,22 +748,74 @@ static void *extraction_thread(void *arg) {
    LOG_INFO("memory_extraction: using provider=%s, model=%s", provider,
             model ? model : "(default)");
 
-   /* Temporarily increase timeout for extraction — processing long conversations
-    * can exceed the normal LLM timeout */
-   int saved_timeout = g_config.network.llm_timeout_ms;
-   g_config.network.llm_timeout_ms = g_config.memory.extraction_timeout_ms;
+   /* Set per-request timeout for extraction (thread-local, no global mutation) */
+   extraction_config.timeout_ms = g_config.memory.extraction_timeout_ms;
 
    /* Use the configured LLM for extraction */
    response = llm_chat_completion_with_config(extraction_history, prompt, NULL, NULL, 0,
                                               &extraction_config);
 
-   g_config.network.llm_timeout_ms = saved_timeout;
+   /* If primary model failed and we have a fallback, retry with the session's active model */
+   bool used_fallback = false;
+   if (!response && ctx->has_fallback && ctx->fallback.model[0] != '\0') {
+      /* Skip retry if fallback is the same model, provider, and endpoint */
+      bool same_config =
+          (extraction_config.model && ctx->fallback.model[0] != '\0' &&
+           strcmp(extraction_config.model, ctx->fallback.model) == 0 &&
+           extraction_config.type == ctx->fallback.type &&
+           extraction_config.endpoint && ctx->fallback.endpoint[0] != '\0' &&
+           strcmp(extraction_config.endpoint, ctx->fallback.endpoint) == 0);
+      if (!same_config) {
+         LOG_WARNING("memory_extraction: primary model failed, retrying with session model %s",
+                     ctx->fallback.model);
+
+         llm_resolved_config_t fallback_config = { 0 };
+         fallback_config.type = ctx->fallback.type;
+         fallback_config.cloud_provider = ctx->fallback.cloud_provider;
+         fallback_config.endpoint = ctx->fallback.endpoint;
+         fallback_config.model = ctx->fallback.model;
+         strncpy(fallback_config.tool_mode, "disabled", sizeof(fallback_config.tool_mode) - 1);
+         strncpy(fallback_config.thinking_mode, "disabled",
+                 sizeof(fallback_config.thinking_mode) - 1);
+
+         fallback_config.timeout_ms = g_config.memory.extraction_timeout_ms;
+
+         /* Resolve API key for cloud providers */
+         if (fallback_config.type == LLM_CLOUD) {
+            if (fallback_config.cloud_provider == CLOUD_PROVIDER_OPENAI)
+               fallback_config.api_key = g_secrets.openai_api_key;
+            else if (fallback_config.cloud_provider == CLOUD_PROVIDER_CLAUDE)
+               fallback_config.api_key = g_secrets.claude_api_key;
+         }
+
+         response = llm_chat_completion_with_config(extraction_history, prompt, NULL, NULL, 0,
+                                                    &fallback_config);
+         if (response) {
+            used_fallback = true;
+         }
+      }
+   }
+
    json_object_put(extraction_history);
 
    if (response) {
       process_extraction_response(ctx->user_id, ctx->conversation_id, ctx->session_id, response,
                                   ctx->new_message_count, ctx->duration_seconds);
       free(response);
+
+      /* Notify user if we had to fall back */
+      if (used_fallback) {
+         char notice[256];
+         snprintf(notice, sizeof(notice),
+                  "Memory extraction used fallback model \"%s\" "
+                  "(configured model \"%s\" unavailable)",
+                  ctx->fallback.model,
+                  model ? model : "(default)");
+         LOG_WARNING("memory_extraction: %s", notice);
+#ifdef ENABLE_WEBUI
+         webui_broadcast_memory_notice(ctx->user_id, "warning", notice);
+#endif
+      }
 
       /* Update extraction high-water mark on success */
       if (ctx->conversation_id > 0) {
@@ -768,6 +839,14 @@ static void *extraction_thread(void *arg) {
       }
    } else {
       LOG_WARNING("memory_extraction: LLM returned no response");
+      char notice[256];
+      snprintf(notice, sizeof(notice),
+               "Memory extraction failed — model \"%s\" unavailable. "
+               "Check extraction_model in Settings.",
+               model ? model : "(default)");
+#ifdef ENABLE_WEBUI
+      webui_broadcast_memory_notice(ctx->user_id, "error", notice);
+#endif
    }
 
    free(prompt);
@@ -797,7 +876,8 @@ int memory_trigger_extraction(int user_id,
                               const char *session_id_str,
                               struct json_object *conversation_history,
                               int message_count,
-                              int duration_seconds) {
+                              int duration_seconds,
+                              const memory_extraction_fallback_t *fallback) {
    if (user_id <= 0 || !conversation_history) {
       return 1;
    }
@@ -880,6 +960,10 @@ int memory_trigger_extraction(int user_id,
    ctx->message_count = message_count;
    ctx->new_message_count = new_messages;
    ctx->duration_seconds = duration_seconds;
+   if (fallback) {
+      ctx->has_fallback = true;
+      ctx->fallback = *fallback;
+   }
 
    /* Serialize conversation history (skip system messages, only include new messages) */
    size_t arr_len = json_object_array_length(conversation_history);

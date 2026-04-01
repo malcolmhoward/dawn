@@ -46,6 +46,7 @@
 #include <time.h>
 
 #include "logging.h"
+#include "tools/curl_buffer.h"
 #include "tools/html_parser.h"
 
 /* =============================================================================
@@ -142,7 +143,7 @@ static CURL *gmail_create_curl(void) {
       return NULL;
 
    curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)GMAIL_CURL_TIMEOUT);
-   curl_easy_setopt(curl, CURLOPT_PROTOCOLS, (long)CURLPROTO_HTTPS);
+   DAWN_CURL_SET_PROTOCOLS(curl, "https");
    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, gmail_write_cb);

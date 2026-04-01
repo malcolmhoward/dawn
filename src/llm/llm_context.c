@@ -900,16 +900,14 @@ int llm_context_compact(uint32_t session_id,
     * causing a "content field is empty" error. */
    llm_tools_suppress_push();
 
-   /* Temporarily increase timeout for summarization - summarizing many messages
-    * can take longer than normal requests (especially with local LLMs) */
-   int saved_timeout = g_config.network.llm_timeout_ms;
-   g_config.network.llm_timeout_ms = g_config.network.summarization_timeout_ms;
+   /* Set thread-local timeout for summarization (avoids racing on
+    * g_config.network.llm_timeout_ms from concurrent threads) */
+   llm_set_timeout_override(g_config.network.summarization_timeout_ms);
 
    /* Make LLM call for summary (with fallback enabled) */
    char *summary = llm_chat_completion(summary_request, NULL, NULL, NULL, 0, true);
 
-   /* Restore timeout and tools */
-   g_config.network.llm_timeout_ms = saved_timeout;
+   llm_set_timeout_override(0);
    llm_tools_suppress_pop();
 
    json_object_put(summary_request);

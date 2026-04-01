@@ -30,11 +30,37 @@
 #include <json-c/json.h>
 #include <stdbool.h>
 
+#include "llm/llm_interface.h"
 #include "memory/memory_types.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/**
+ * @brief Fallback LLM info for extraction retry
+ *
+ * When the configured extraction model is unavailable (e.g. HTTP 404),
+ * the extraction thread retries using the session's active model.
+ * Pass NULL to memory_trigger_extraction() to disable fallback.
+ */
+typedef struct {
+   llm_type_t type;
+   cloud_provider_t cloud_provider;
+   char endpoint[128];
+   char model[LLM_MODEL_NAME_MAX];
+} memory_extraction_fallback_t;
+
+/**
+ * @brief Build fallback LLM info from a session's active model
+ *
+ * Uses session_get_llm_config() for proper mutex acquisition.
+ *
+ * @param session Session to read LLM config from (may be NULL)
+ * @param fb      Output fallback struct (zeroed if session is NULL)
+ */
+struct session;
+void memory_extraction_build_fallback(struct session *session, memory_extraction_fallback_t *fb);
 
 /**
  * @brief Trigger memory extraction for a session
@@ -52,6 +78,7 @@ extern "C" {
  * @param conversation_history JSON array of messages (copied internally)
  * @param message_count Number of messages in conversation
  * @param duration_seconds Session duration
+ * @param fallback Session's active LLM config to retry with on failure (NULL to disable)
  * @return 0 on success, 1 on failure
  */
 int memory_trigger_extraction(int user_id,
@@ -59,7 +86,8 @@ int memory_trigger_extraction(int user_id,
                               const char *session_id_str,
                               struct json_object *conversation_history,
                               int message_count,
-                              int duration_seconds);
+                              int duration_seconds,
+                              const memory_extraction_fallback_t *fallback);
 
 /**
  * @brief Check if extraction is in progress for a user

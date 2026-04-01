@@ -696,6 +696,11 @@
                   DawnScheduler.handleNotification(msg.payload);
                }
                break;
+            case 'memory_extraction_notice':
+               if (msg.payload) {
+                  showMemoryExtractionNotice(msg.payload.level, msg.payload.message);
+               }
+               break;
             case 'plan_progress':
                if (typeof DawnPlanOrchestrator !== 'undefined') {
                   DawnPlanOrchestrator.handlePlanProgress(msg.payload);
@@ -806,6 +811,22 @@
       } catch (e) {
          console.error('Error handling binary message:', e);
       }
+   }
+
+   /**
+    * Show a transient notification banner for memory extraction events
+    */
+   function showMemoryExtractionNotice(level, message) {
+      const existing = document.querySelector('.memory-notice');
+      if (existing) existing.remove();
+      const banner = document.createElement('div');
+      banner.className = 'memory-notice memory-notice--' + (level || 'info');
+      banner.textContent = message;
+      document.body.appendChild(banner);
+      setTimeout(() => {
+         banner.classList.add('memory-notice--fade');
+         setTimeout(() => banner.remove(), 500);
+      }, 8000);
    }
 
    /**

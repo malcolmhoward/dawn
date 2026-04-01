@@ -509,8 +509,8 @@ static int flaresolverr_is_available(void) {
 
    curl_easy_setopt(curl, CURLOPT_URL, flaresolverr_get_endpoint());
    curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
-   curl_easy_setopt(curl, CURLOPT_TIMEOUT, 2);
-   curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 2);
+   curl_easy_setopt(curl, CURLOPT_TIMEOUT, 2L);
+   curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 2L);
 
    CURLcode res = curl_easy_perform(curl);
    curl_easy_cleanup(curl);

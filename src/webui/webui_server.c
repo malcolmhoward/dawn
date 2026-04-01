@@ -5927,6 +5927,52 @@ void webui_broadcast_conversation_renamed(int user_id, int64_t conv_id, const ch
 }
 
 /* =============================================================================
+ * Memory Extraction Notice Broadcast
+ * ============================================================================= */
+
+void webui_broadcast_memory_notice(int user_id, const char *level, const char *message) {
+   if (user_id <= 0 || !level || !message)
+      return;
+
+   json_object *root = json_object_new_object();
+   json_object_object_add(root, "type", json_object_new_string("memory_extraction_notice"));
+
+   json_object *payload = json_object_new_object();
+   json_object_object_add(payload, "level", json_object_new_string(level));
+   json_object_object_add(payload, "message", json_object_new_string(message));
+   json_object_object_add(root, "payload", payload);
+
+   const char *json_str = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN);
+
+   int sent = 0;
+   pthread_mutex_lock(&s_conn_registry_mutex);
+   for (int i = 0; i < MAX_ACTIVE_CONNECTIONS; i++) {
+      ws_connection_t *conn = s_active_connections[i];
+      if (!conn || !conn->session || !conn->authenticated)
+         continue;
+      if (conn->auth_user_id != user_id)
+         continue;
+
+      char *json_copy = strdup(json_str);
+      if (!json_copy)
+         continue;
+
+      ws_response_t resp = { .session = conn->session,
+                             .type = WS_RESP_JSON,
+                             .generic_json = { .json = json_copy } };
+      queue_response(&resp);
+      sent++;
+   }
+   pthread_mutex_unlock(&s_conn_registry_mutex);
+
+   json_object_put(root);
+
+   if (sent > 0) {
+      LOG_INFO("WebUI: Broadcast memory notice (%s) to %d client(s)", level, sent);
+   }
+}
+
+/* =============================================================================
  * Connection Iterator (for per-user broadcasting)
  * ============================================================================= */
 
