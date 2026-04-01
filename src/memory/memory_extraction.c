@@ -103,8 +103,8 @@ typedef struct {
    int message_count;       /* Total messages in conversation */
    int new_message_count;   /* Messages being extracted this time */
    int duration_seconds;
-   bool has_fallback;                       /* Whether fallback LLM info is available */
-   memory_extraction_fallback_t fallback;   /* Session's active LLM for retry */
+   bool has_fallback;                     /* Whether fallback LLM info is available */
+   memory_extraction_fallback_t fallback; /* Session's active LLM for retry */
 } extraction_context_t;
 
 /* =============================================================================
@@ -759,12 +759,11 @@ static void *extraction_thread(void *arg) {
    bool used_fallback = false;
    if (!response && ctx->has_fallback && ctx->fallback.model[0] != '\0') {
       /* Skip retry if fallback is the same model, provider, and endpoint */
-      bool same_config =
-          (extraction_config.model && ctx->fallback.model[0] != '\0' &&
-           strcmp(extraction_config.model, ctx->fallback.model) == 0 &&
-           extraction_config.type == ctx->fallback.type &&
-           extraction_config.endpoint && ctx->fallback.endpoint[0] != '\0' &&
-           strcmp(extraction_config.endpoint, ctx->fallback.endpoint) == 0);
+      bool same_config = (extraction_config.model && ctx->fallback.model[0] != '\0' &&
+                          strcmp(extraction_config.model, ctx->fallback.model) == 0 &&
+                          extraction_config.type == ctx->fallback.type &&
+                          extraction_config.endpoint && ctx->fallback.endpoint[0] != '\0' &&
+                          strcmp(extraction_config.endpoint, ctx->fallback.endpoint) == 0);
       if (!same_config) {
          LOG_WARNING("memory_extraction: primary model failed, retrying with session model %s",
                      ctx->fallback.model);
@@ -809,8 +808,7 @@ static void *extraction_thread(void *arg) {
          snprintf(notice, sizeof(notice),
                   "Memory extraction used fallback model \"%s\" "
                   "(configured model \"%s\" unavailable)",
-                  ctx->fallback.model,
-                  model ? model : "(default)");
+                  ctx->fallback.model, model ? model : "(default)");
          LOG_WARNING("memory_extraction: %s", notice);
 #ifdef ENABLE_WEBUI
          webui_broadcast_memory_notice(ctx->user_id, "warning", notice);

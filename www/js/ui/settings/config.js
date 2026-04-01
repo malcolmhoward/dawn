@@ -550,7 +550,9 @@
             // Parse as integer index
             value = parseInt(input.value, 10) || 0;
          } else {
-            value = input.value;
+            // Trim trailing whitespace from text/textarea values to prevent
+            // accumulating blank lines in multi-line TOML strings (e.g., persona)
+            value = input.value.replace(/\s+$/, '');
          }
 
          // Build nested structure

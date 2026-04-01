@@ -96,7 +96,7 @@ typedef struct {
    char tool_mode[LLM_TOOL_MODE_MAX];            /**< Tool mode: native, command_tags, disabled */
    char thinking_mode[LLM_THINKING_MODE_MAX];    /**< Thinking: disabled, auto, enabled */
    char reasoning_effort[LLM_THINKING_MODE_MAX]; /**< Reasoning effort: low, medium, high */
-   int timeout_ms;                               /**< Per-request timeout (0 = use global default) */
+   int timeout_ms; /**< Per-request timeout (0 = use global default) */
 } llm_resolved_config_t;
 
 /**

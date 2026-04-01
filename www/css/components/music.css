@@ -675,6 +675,15 @@
    letter-spacing: 0.05em;
 }
 
+.music-queue-filter {
+   margin-bottom: 0.5rem;
+   display: none;
+}
+
+.music-queue-item.hidden {
+   display: none;
+}
+
 .music-clear-btn {
    padding: 0.25rem 0.5rem;
    background: rgba(239, 68, 68, 0.1);

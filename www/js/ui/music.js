@@ -148,6 +148,7 @@
 
       // Queue
       elements.queueList = document.querySelector('.music-queue-list');
+      elements.queueFilter = document.getElementById('music-queue-filter');
 
       // Library
       elements.searchInput = document.getElementById('music-search');
@@ -234,6 +235,12 @@
                clearSearchResults();
             }
          });
+      }
+
+      // Queue filter
+      if (elements.queueFilter) {
+         elements.queueFilter.addEventListener('input', filterQueue);
+         elements.queueFilter.addEventListener('search', filterQueue);
       }
 
       // Clear queue button
@@ -1263,7 +1270,16 @@
       if (!payload.queue || payload.queue.length === 0) {
          elements.queueList.innerHTML = '<div class="music-queue-empty">Queue is empty</div>';
          localStorage.removeItem('dawn_music_queue');
+         if (elements.queueFilter) {
+            elements.queueFilter.style.display = 'none';
+            elements.queueFilter.value = '';
+         }
          return;
+      }
+
+      // Show filter when queue has items
+      if (elements.queueFilter) {
+         elements.queueFilter.style.display = 'block';
       }
 
       const html = payload.queue
@@ -1299,6 +1315,26 @@
             const index = parseInt(btn.closest('.music-queue-item').dataset.index);
             DawnMusicPlayback.control('remove_from_queue', { index: index });
          });
+      });
+   }
+
+   /**
+    * Filter queue items by title/artist based on the queue filter input
+    */
+   function filterQueue() {
+      if (!elements.queueList || !elements.queueFilter) return;
+      const query = elements.queueFilter.value.trim().toLowerCase();
+      const items = elements.queueList.querySelectorAll('.music-queue-item');
+      items.forEach((item) => {
+         if (!query) {
+            item.classList.remove('hidden');
+            return;
+         }
+         const title =
+            item.querySelector('.music-queue-item-title')?.textContent.toLowerCase() || '';
+         const artist =
+            item.querySelector('.music-queue-item-artist')?.textContent.toLowerCase() || '';
+         item.classList.toggle('hidden', !title.includes(query) && !artist.includes(query));
       });
    }
 
