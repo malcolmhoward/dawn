@@ -36,14 +36,15 @@
  * String Conversion Tables
  * ============================================================================= */
 
-static const char *const event_type_strings[] = { "timer", "alarm", "reminder", "task" };
+static const char *const event_type_strings[] = { "timer", "alarm", "reminder", "task",
+                                                  "briefing" };
 static const char *const status_strings[] = { "pending", "ringing", "fired",     "cancelled",
                                               "snoozed", "missed",  "dismissed", "timed_out" };
 static const char *const recurrence_strings[] = { "once",     "daily",  "weekdays",
                                                   "weekends", "weekly", "custom" };
 
 const char *sched_event_type_to_str(sched_event_type_t type) {
-   if (type >= 0 && type <= SCHED_EVENT_TASK)
+   if (type >= 0 && type <= SCHED_EVENT_BRIEFING)
       return event_type_strings[type];
    return "timer";
 }
@@ -51,7 +52,7 @@ const char *sched_event_type_to_str(sched_event_type_t type) {
 sched_event_type_t sched_event_type_from_str(const char *str) {
    if (!str)
       return SCHED_EVENT_TIMER;
-   for (int i = 0; i <= SCHED_EVENT_TASK; i++) {
+   for (int i = 0; i <= SCHED_EVENT_BRIEFING; i++) {
       if (strcmp(str, event_type_strings[i]) == 0)
          return (sched_event_type_t)i;
    }

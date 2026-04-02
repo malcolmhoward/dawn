@@ -669,7 +669,7 @@ static const tool_metadata_t email_metadata = {
    .param_count = 2,
 
    .device_type = TOOL_DEVICE_TYPE_TRIGGER,
-   .capabilities = TOOL_CAP_NETWORK | TOOL_CAP_DANGEROUS,
+   .capabilities = TOOL_CAP_NETWORK | TOOL_CAP_DANGEROUS | TOOL_CAP_SCHEDULABLE,
    .is_getter = false,
    .skip_followup = false,
    .default_local = true,

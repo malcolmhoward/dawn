@@ -889,18 +889,33 @@ static void parse_claude_event(llm_stream_context_t *ctx, const char *event_data
                   const char *sig_chunk = json_object_get_string(signature_obj);
                   if (sig_chunk) {
                      size_t sig_len = strlen(sig_chunk);
-                     if (ctx->provider.claude.thinking_signature_len + sig_len <
-                         sizeof(ctx->provider.claude.thinking_signature) - 1) {
+                     size_t needed = ctx->provider.claude.thinking_signature_len + sig_len + 1;
+
+                     /* Grow buffer if needed */
+                     if (needed > ctx->provider.claude.thinking_signature_cap) {
+                        size_t new_cap = ctx->provider.claude.thinking_signature_cap;
+                        if (new_cap == 0)
+                           new_cap = LLM_THINKING_SIGNATURE_INITIAL;
+                        while (new_cap < needed)
+                           new_cap *= 2;
+                        char *new_buf = realloc(ctx->provider.claude.thinking_signature, new_cap);
+                        if (!new_buf) {
+                           LOG_ERROR("Claude: Failed to allocate signature buffer (%zu bytes)",
+                                     new_cap);
+                        } else {
+                           ctx->provider.claude.thinking_signature = new_buf;
+                           ctx->provider.claude.thinking_signature_cap = new_cap;
+                        }
+                     }
+
+                     if (ctx->provider.claude.thinking_signature &&
+                         needed <= ctx->provider.claude.thinking_signature_cap) {
                         memcpy(ctx->provider.claude.thinking_signature +
                                    ctx->provider.claude.thinking_signature_len,
                                sig_chunk, sig_len);
                         ctx->provider.claude.thinking_signature_len += sig_len;
                         ctx->provider.claude
                             .thinking_signature[ctx->provider.claude.thinking_signature_len] = '\0';
-                     } else {
-                        LOG_WARNING(
-                            "Claude: Thinking signature truncated (buffer full at %zu bytes)",
-                            ctx->provider.claude.thinking_signature_len);
                      }
                   }
                }
@@ -1063,6 +1078,7 @@ void llm_stream_free(llm_stream_context_t *ctx) {
 
    free(ctx->accumulated_response);
    free(ctx->accumulated_thinking);
+   free(ctx->provider.claude.thinking_signature);
    free(ctx);
 }
 

@@ -224,7 +224,8 @@ static char *handle_create(struct json_object *details,
 
    const char *type_str = json_get_string(details, "type");
    if (!type_str) {
-      snprintf(result, sizeof(result), "Error: 'type' is required (timer, alarm, reminder, task)");
+      snprintf(result, sizeof(result),
+               "Error: 'type' is required (timer, alarm, reminder, task, briefing)");
       return strdup(result);
    }
 
@@ -367,10 +368,11 @@ static char *handle_create(struct json_object *details,
 
    /* Tool scheduling (Phase 5) */
    const char *tool_name = json_get_string(details, "tool_name");
-   if (type == SCHED_EVENT_TASK && !tool_name) {
+   if ((type == SCHED_EVENT_TASK || type == SCHED_EVENT_BRIEFING) && !tool_name) {
       snprintf(result, sizeof(result),
-               "Error: 'tool_name' is required for scheduled tasks. "
-               "System shutdown is not available as a schedulable tool.");
+               "Error: 'tool_name' is required for scheduled %s. "
+               "System shutdown is not available as a schedulable tool.",
+               type == SCHED_EVENT_BRIEFING ? "briefings" : "tasks");
       return strdup(result);
    }
    if (tool_name) {
@@ -390,8 +392,16 @@ static char *handle_create(struct json_object *details,
    if (tool_action)
       strncpy(event.tool_action, tool_action, SCHED_TOOL_NAME_MAX - 1);
    const char *tool_value = json_get_string(details, "tool_value");
-   if (tool_value)
+   if (tool_value) {
+      if (strlen(tool_value) >= SCHED_TOOL_VALUE_MAX) {
+         snprintf(result, sizeof(result),
+                  "Error: tool_value too long (%zu bytes, max %d). "
+                  "Shorten the content and retry.",
+                  strlen(tool_value), SCHED_TOOL_VALUE_MAX - 1);
+         return strdup(result);
+      }
       strncpy(event.tool_value, tool_value, SCHED_TOOL_VALUE_MAX - 1);
+   }
 
    /* Atomic limit check + insert */
    int64_t id = scheduler_db_insert_checked(&event, g_config.scheduler.max_events_per_user,
@@ -715,7 +725,7 @@ static const treg_param_t scheduler_params[] = {
        .name = "details",
        .description =
            "JSON object with action-specific fields. "
-           "For 'create': {type (timer|alarm|reminder), name (optional), "
+           "For 'create': {type (timer|alarm|reminder|briefing), name (optional), "
            "fire_at (ISO 8601 absolute time — PREFERRED for alarms/reminders at specific times, "
            "e.g. '2026-03-19T07:00:00'), "
            "duration_minutes (1-43200, relative offset from now — use for timers or "
@@ -724,8 +734,10 @@ static const treg_param_t scheduler_params[] = {
            "weekly|custom), recurrence_days (csv: mon,tue,...), announce_all (bool)}. "
            "Type 'task' is ONLY for scheduling execution of other registered tools and "
            "requires tool_name (must be a valid registered tool), tool_action, tool_value. "
+           "Type 'briefing' is like 'task' but summarizes the tool output via LLM, speaks the "
+           "summary, and creates a conversation the user can continue (e.g., weather briefing). "
            "Do NOT use type 'task' for arbitrary system operations like shutdown or reboot. "
-           "For 'list': {type (optional filter)}. "
+           "For 'list': {type (optional filter: timer|alarm|reminder|task|briefing)}. "
            "For 'cancel'/'query': {name or event_id}. "
            "For 'snooze': {event_id (optional), snooze_minutes (1-120, optional)}. "
            "For 'dismiss': {event_id (optional)}.",
@@ -746,11 +758,12 @@ static const tool_metadata_t scheduler_metadata = {
    .aliases = { "timer", "alarm", "reminder", "schedule" },
    .alias_count = 4,
 
-   .description = "Manage timers, alarms, reminders, and scheduled tasks. "
+   .description = "Manage timers, alarms, reminders, scheduled tasks, and briefings. "
                   "Set timers with duration ('set a 10 minute timer'), "
                   "alarms at specific times ('set an alarm for 7 AM'), "
                   "reminders with messages ('remind me to call Mom at 3pm'), "
-                  "or schedule tool execution ('turn off lights at midnight'). "
+                  "schedule tool execution ('turn off lights at midnight'), "
+                  "or briefings that summarize tool output via LLM ('weather briefing at 7am'). "
                   "Query time remaining, list active events, cancel, snooze, or dismiss.",
    .params = scheduler_params,
    .param_count = 2,

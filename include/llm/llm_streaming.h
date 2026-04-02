@@ -29,13 +29,13 @@
 #include "llm/llm_tools.h"
 
 /**
- * @brief Maximum size for Claude thinking signature buffer
+ * @brief Initial size for Claude thinking signature buffer
  *
  * Claude's extended thinking returns a cryptographic signature that must be
- * preserved and sent back in conversation history. 4KB should be sufficient
- * for current signature formats.
+ * preserved and sent back in conversation history. The buffer grows dynamically
+ * since signature sizes vary across model versions.
  */
-#define LLM_THINKING_SIGNATURE_MAX 4096
+#define LLM_THINKING_SIGNATURE_INITIAL 8192
 
 /**
  * @brief Callback function type for text chunks from LLM stream
@@ -107,10 +107,10 @@ typedef struct {
    int visual_progress_active; /**< Notify frontend when render_visual generation starts */
 
    /* Thinking block tracking (extended thinking) */
-   int thinking_block_active;                           /**< Currently in a thinking block */
-   char thinking_signature[LLM_THINKING_SIGNATURE_MAX]; /**< Accumulated signature from
-                                                           signature_delta */
-   size_t thinking_signature_len;                       /**< Length of accumulated signature */
+   int thinking_block_active;     /**< Currently in a thinking block */
+   char *thinking_signature;      /**< Accumulated signature (heap, grows as needed) */
+   size_t thinking_signature_len; /**< Length of accumulated signature */
+   size_t thinking_signature_cap; /**< Capacity of signature buffer */
 } claude_stream_state_t;
 
 /**

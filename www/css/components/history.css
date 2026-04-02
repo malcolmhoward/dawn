@@ -390,6 +390,42 @@
    color: var(--accent);
 }
 
+.history-item-briefing {
+   display: inline-flex;
+   align-items: center;
+   margin-right: 6px;
+   color: #26a69a;
+   transition: color 0.15s ease;
+}
+
+.history-item-briefing svg {
+   display: block;
+}
+
+.history-item-briefing:hover,
+.history-item.active .history-item-briefing {
+   color: #4db6ac;
+}
+
+.history-item-briefing.unread {
+   position: relative;
+}
+
+.history-item-briefing.unread::after {
+   content: '';
+   position: absolute;
+   top: -2px;
+   right: -4px;
+   width: 6px;
+   height: 6px;
+   background: #26a69a;
+   border-radius: 50%;
+}
+
+.history-item.unread .history-item-title {
+   font-weight: 600;
+}
+
 /* Conversation Chain Groups - collapsible accordion */
 .history-chain-group {
    position: relative;

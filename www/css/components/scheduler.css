@@ -70,6 +70,24 @@
    color: #ab47bc;
 }
 
+.sched-briefing {
+   border-left: 3px solid #26a69a;
+}
+
+.sched-briefing .sched-type-badge {
+   background: rgba(38, 166, 154, 0.2);
+   color: #26a69a;
+}
+
+.sched-btn-view {
+   background: rgba(38, 166, 154, 0.2);
+   color: #26a69a;
+}
+
+.sched-btn-view:hover {
+   background: rgba(38, 166, 154, 0.3);
+}
+
 .sched-banner-content {
    display: flex;
    align-items: center;

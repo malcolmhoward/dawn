@@ -9,6 +9,39 @@
    let container = null;
    let chimeCtx = null; // Web Audio context for alarm chime
    const localDismissed = new Set(); // event IDs dismissed locally (suppress rebroadcast)
+   function unreadKey() {
+      const user =
+         typeof DawnState !== 'undefined' && DawnState.authState
+            ? DawnState.authState.username
+            : '';
+      return 'dawn_unread_briefings' + (user ? '_' + user : '');
+   }
+
+   function getUnreadBriefings() {
+      try {
+         return JSON.parse(localStorage.getItem(unreadKey()) || '[]');
+      } catch {
+         return [];
+      }
+   }
+
+   function addUnreadBriefing(convId) {
+      if (!convId) return;
+      const list = getUnreadBriefings();
+      if (!list.includes(convId)) {
+         list.push(convId);
+         localStorage.setItem(unreadKey(), JSON.stringify(list));
+      }
+   }
+
+   function removeUnreadBriefing(convId) {
+      const list = getUnreadBriefings().filter((id) => id !== convId);
+      localStorage.setItem(unreadKey(), JSON.stringify(list));
+      /* Update sidebar if available */
+      if (typeof DawnHistory !== 'undefined' && DawnHistory.refreshUnread) {
+         DawnHistory.refreshUnread();
+      }
+   }
 
    /**
     * Ensure notification container exists
@@ -65,6 +98,8 @@
             return 'sched-timer';
          case 'task':
             return 'sched-task';
+         case 'briefing':
+            return 'sched-briefing';
          default:
             return 'sched-timer';
       }
@@ -83,6 +118,8 @@
             return 'TIMER';
          case 'task':
             return 'TASK';
+         case 'briefing':
+            return 'BRIEFING';
          default:
             return 'EVENT';
       }
@@ -125,8 +162,16 @@
       // Only alarms support snooze (timers/reminders auto-dismiss on daemon)
       const canSnooze = isRinging && eventType === 'alarm';
 
+      const isBriefing = eventType === 'briefing';
+      const conversationId = payload.conversation_id;
+
       let actionsHtml;
-      if (isRinging) {
+      if (isBriefing && conversationId) {
+         actionsHtml = `<div class="sched-actions">
+               <button class="sched-btn sched-btn-view" title="View">View</button>
+               <button class="sched-btn sched-btn-dismiss" title="Close">Close</button>
+            </div>`;
+      } else if (isRinging) {
          actionsHtml = `<div class="sched-actions">
                ${canSnooze ? '<button class="sched-btn sched-btn-snooze" title="Snooze">Snooze</button>' : ''}
                <button class="sched-btn sched-btn-dismiss" title="Dismiss">Dismiss</button>
@@ -166,6 +211,19 @@
          });
       }
 
+      const viewBtn = banner.querySelector('.sched-btn-view');
+      if (viewBtn) {
+         viewBtn.addEventListener('click', () => {
+            if (typeof DawnHistory !== 'undefined' && conversationId) {
+               DawnHistory.loadConversation(conversationId);
+               DawnHistory.open();
+               removeUnreadBriefing(conversationId);
+            }
+            banner.classList.add('sched-banner-out');
+            setTimeout(() => banner.remove(), 300);
+         });
+      }
+
       // Keyboard: Escape to dismiss
       banner.tabIndex = 0;
       banner.addEventListener('keydown', (e) => {
@@ -177,14 +235,15 @@
       el.appendChild(banner);
       banner.focus();
 
-      // Auto-dismiss non-ringing notifications after 10s
-      if (!isRinging) {
+      // Auto-dismiss non-ringing notifications (briefings: 60s, others: 10s)
+      if (!isRinging || isBriefing) {
+         const dismissMs = isBriefing ? 60000 : 10000;
          setTimeout(() => {
             if (banner.parentNode) {
                banner.classList.add('sched-banner-out');
                setTimeout(() => banner.remove(), 300);
             }
-         }, 10000);
+         }, dismissMs);
       }
    }
 
@@ -223,10 +282,21 @@
       console.log('Scheduler notification:', payload);
       showNotification(payload);
       playChime(payload.event_type);
+
+      /* Track unread briefings and refresh history sidebar */
+      if (payload.event_type === 'briefing' && payload.conversation_id) {
+         addUnreadBriefing(payload.conversation_id);
+         if (typeof DawnHistory !== 'undefined') {
+            DawnHistory.refreshList();
+            DawnHistory.open();
+         }
+      }
    }
 
    // Public API
    window.DawnScheduler = {
       handleNotification,
+      getUnreadBriefings,
+      removeUnreadBriefing,
    };
 })();

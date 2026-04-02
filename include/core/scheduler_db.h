@@ -45,7 +45,7 @@ extern "C" {
 #define SCHED_UUID_MAX 37
 #define SCHED_LOCATION_MAX 32
 #define SCHED_TOOL_NAME_MAX 64
-#define SCHED_TOOL_VALUE_MAX 256
+#define SCHED_TOOL_VALUE_MAX 2048
 #define SCHED_RECURRENCE_DAYS_MAX 32
 #define SCHED_ORIGINAL_TIME_MAX 6 /* HH:MM + null */
 #define SCHED_MAX_RESULTS 50
@@ -59,6 +59,7 @@ typedef enum {
    SCHED_EVENT_ALARM,
    SCHED_EVENT_REMINDER,
    SCHED_EVENT_TASK,
+   SCHED_EVENT_BRIEFING,
 } sched_event_type_t;
 
 typedef enum {

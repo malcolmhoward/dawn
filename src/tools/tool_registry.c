@@ -442,12 +442,10 @@ int tool_registry_register(const tool_metadata_t *metadata) {
    entry->registered = true;
    entry->initialized = false;
 
-   /* Default enabled state */
-   if (metadata->capabilities & TOOL_CAP_DANGEROUS) {
-      entry->enabled = false; /* Dangerous tools default to disabled */
-   } else {
-      entry->enabled = true;
-   }
+   /* Default enabled state — all tools start enabled, including dangerous ones.
+    * TOOL_CAP_DANGEROUS controls LLM confirmation behavior, not availability.
+    * Tools can be explicitly disabled via their config section. */
+   entry->enabled = true;
 
    /* Insert into name hash table */
    hash_insert(s_name_hash, HASH_BUCKETS, metadata->name, idx);
@@ -614,14 +612,15 @@ int tool_registry_parse_configs(const char *config_path) {
       /* Call the tool's config parser (section may be NULL if not present) */
       entry->metadata.config_parser(section, entry->metadata.config);
 
-      /* For dangerous tools, check if enabled field was set */
-      if (entry->metadata.capabilities & TOOL_CAP_DANGEROUS) {
-         /* The tool's config parser should have set an 'enabled' field.
-          * We assume the config struct's first field is 'bool enabled' for dangerous tools.
-          * This is a convention that must be followed. */
+      /* For dangerous tools, check if enabled field was explicitly set.
+       * Only override the default if the tool has a config section in the TOML —
+       * missing section means the user hasn't configured it, so respect the
+       * default_local/default_remote flags from tool metadata instead. */
+      if ((entry->metadata.capabilities & TOOL_CAP_DANGEROUS) && section) {
+         /* Convention: config struct's first field is 'bool enabled' for dangerous tools */
          bool *enabled_ptr = (bool *)entry->metadata.config;
          entry->enabled = *enabled_ptr;
-         LOG_INFO("Dangerous tool '%s' enabled=%s", entry->metadata.name,
+         LOG_INFO("Dangerous tool '%s' enabled=%s (from config)", entry->metadata.name,
                   entry->enabled ? "true" : "false");
       }
    }

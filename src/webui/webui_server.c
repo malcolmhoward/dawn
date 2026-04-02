@@ -5880,6 +5880,73 @@ void scheduler_broadcast_notification(const sched_event_t *event, const char *te
    }
 }
 
+void scheduler_broadcast_briefing_notification(const sched_event_t *event,
+                                               const char *text,
+                                               int64_t conversation_id) {
+   if (!event || !text)
+      return;
+
+   json_object *root = json_object_new_object();
+   json_object_object_add(root, "type", json_object_new_string("scheduler_notification"));
+
+   json_object *payload = json_object_new_object();
+   json_object_object_add(payload, "event_id", json_object_new_int64(event->id));
+   json_object_object_add(payload, "event_type",
+                          json_object_new_string(sched_event_type_to_str(event->event_type)));
+   json_object_object_add(payload, "status",
+                          json_object_new_string(sched_status_to_str(event->status)));
+   json_object_object_add(payload, "name", json_object_new_string(event->name));
+
+   /* Truncate preview to ~80 chars */
+   char preview[84];
+   size_t text_len = strlen(text);
+   if (text_len > 80) {
+      memcpy(preview, text, 80);
+      memcpy(preview + 80, "...", 4);
+   } else {
+      memcpy(preview, text, text_len + 1);
+   }
+   json_object_object_add(payload, "message", json_object_new_string(preview));
+   json_object_object_add(payload, "fire_at", json_object_new_int64((int64_t)event->fire_at));
+
+   if (conversation_id > 0) {
+      json_object_object_add(payload, "conversation_id", json_object_new_int64(conversation_id));
+   }
+
+   json_object_object_add(root, "payload", payload);
+   const char *json_str = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN);
+
+   int sent = 0;
+   int target_user = event->user_id;
+   pthread_mutex_lock(&s_conn_registry_mutex);
+   for (int i = 0; i < MAX_ACTIVE_CONNECTIONS; i++) {
+      ws_connection_t *conn = s_active_connections[i];
+      if (!conn || !conn->session)
+         continue;
+      if (!conn->authenticated && !conn->is_satellite)
+         continue;
+      if (target_user > 0 && conn->auth_user_id != target_user)
+         continue;
+
+      char *json_copy = strdup(json_str);
+      if (!json_copy)
+         continue;
+
+      ws_response_t resp = { .session = conn->session,
+                             .type = WS_RESP_SCHEDULER_NOTIFICATION,
+                             .scheduler_json = { .json = json_copy } };
+      queue_response(&resp);
+      sent++;
+   }
+   pthread_mutex_unlock(&s_conn_registry_mutex);
+
+   json_object_put(root);
+
+   if (sent > 0) {
+      LOG_INFO("Scheduler: Broadcast briefing notification to %d client(s)", sent);
+   }
+}
+
 /* =============================================================================
  * Conversation Title Broadcast (called from memory extraction thread)
  * ============================================================================= */
