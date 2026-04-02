@@ -197,6 +197,10 @@
             localDismissed.add(eventId);
             setTimeout(() => localDismissed.delete(eventId), 5000);
             sendAction('dismiss', eventId);
+            /* Stop TTS if scheduler audio is playing */
+            if (typeof DawnAudioPlayback !== 'undefined' && DawnAudioPlayback.stop) {
+               DawnAudioPlayback.stop();
+            }
             banner.classList.add('sched-banner-out');
             setTimeout(() => banner.remove(), 300);
          });
@@ -281,7 +285,10 @@
 
       console.log('Scheduler notification:', payload);
       showNotification(payload);
-      playChime(payload.event_type);
+      /* Skip chime if TTS audio is being routed to this client */
+      if (!payload.tts_routed) {
+         playChime(payload.event_type);
+      }
 
       /* Track unread briefings and refresh history sidebar */
       if (payload.event_type === 'briefing' && payload.conversation_id) {

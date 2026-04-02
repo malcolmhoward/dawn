@@ -5837,6 +5837,10 @@ void scheduler_broadcast_notification(const sched_event_t *event, const char *te
    json_object_object_add(payload, "message", json_object_new_string(text));
    json_object_object_add(payload, "fire_at", json_object_new_int64((int64_t)event->fire_at));
 
+   /* Tell WebUI clients whether TTS audio is being routed to them (skip chime if so) */
+   bool tts_routed = (event->source_client_type == SCHED_SOURCE_WEBUI);
+   json_object_object_add(payload, "tts_routed", json_object_new_boolean(tts_routed));
+
    json_object_object_add(root, "payload", payload);
    const char *json_str = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN);
 
@@ -5945,6 +5949,76 @@ void scheduler_broadcast_briefing_notification(const sched_event_t *event,
    if (sent > 0) {
       LOG_INFO("Scheduler: Broadcast briefing notification to %d client(s)", sent);
    }
+}
+
+/* Forward declarations for scheduler TTS routing */
+extern void satellite_send_response(session_t *session, const char *text);
+extern void scheduler_send_tts_to_session(session_t *session, const char *text);
+
+int scheduler_route_tts_to_user(int user_id,
+                                const char *text,
+                                const char *skip_uuid,
+                                int skip_user_id) {
+   if (!text || !text[0])
+      return 0;
+
+   int delivered = 0;
+   session_t *best_webui = NULL;
+   time_t best_activity = 0;
+
+   pthread_mutex_lock(&s_conn_registry_mutex);
+   for (int i = 0; i < MAX_ACTIVE_CONNECTIONS; i++) {
+      ws_connection_t *conn = s_active_connections[i];
+      if (!conn || !conn->session)
+         continue;
+      if (!conn->authenticated && !conn->is_satellite)
+         continue;
+      if (user_id > 0 && conn->auth_user_id != user_id)
+         continue;
+      /* Skip originating user's sessions (for announce_all dedup) */
+      if (skip_user_id > 0 && conn->auth_user_id == skip_user_id)
+         continue;
+
+      session_t *s = conn->session;
+      if (s->disconnected)
+         continue;
+
+      if (conn->is_satellite) {
+         /* Satellite: send TTS text for local synthesis (Tier 1 only) */
+         if (s->type == SESSION_TYPE_DAP2 && s->tier == DAP2_TIER_1) {
+            if (skip_uuid && skip_uuid[0] && strcmp(s->identity.uuid, skip_uuid) == 0)
+               continue;
+            satellite_send_response(s, text);
+            delivered++;
+            LOG_INFO("scheduler: TTS routed to satellite %s for user %d", s->identity.uuid,
+                     user_id);
+         }
+      } else {
+         /* WebUI: pick the most recently active session to avoid multi-tab echo */
+         if (!best_webui || s->last_activity > best_activity) {
+            best_webui = s;
+            best_activity = s->last_activity;
+         }
+      }
+   }
+
+   /* Retain best WebUI session before releasing mutex (prevents use-after-free
+    * if the session disconnects between mutex release and TTS synthesis) */
+   if (best_webui)
+      session_retain(best_webui);
+
+   pthread_mutex_unlock(&s_conn_registry_mutex);
+
+   /* Send TTS to the best WebUI session (outside the mutex — TTS synthesis blocks) */
+   if (best_webui) {
+      scheduler_send_tts_to_session(best_webui, text);
+      delivered++;
+      LOG_INFO("scheduler: TTS routed to WebUI session %u for user %d", best_webui->session_id,
+               user_id);
+      session_release(best_webui);
+   }
+
+   return delivered;
 }
 
 /* =============================================================================

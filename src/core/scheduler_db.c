@@ -91,6 +91,24 @@ sched_recurrence_t sched_recurrence_from_str(const char *str) {
    return SCHED_RECUR_ONCE;
 }
 
+static const char *const source_type_strings[] = { "local", "webui", "dap2" };
+
+const char *sched_source_type_to_str(sched_source_type_t type) {
+   if (type >= 0 && type <= SCHED_SOURCE_DAP2)
+      return source_type_strings[type];
+   return "local";
+}
+
+sched_source_type_t sched_source_type_from_str(const char *str) {
+   if (!str)
+      return SCHED_SOURCE_LOCAL;
+   for (int i = 0; i <= SCHED_SOURCE_DAP2; i++) {
+      if (strcmp(str, source_type_strings[i]) == 0)
+         return (sched_source_type_t)i;
+   }
+   return SCHED_SOURCE_LOCAL;
+}
+
 /* =============================================================================
  * Internal: Row extraction helper
  * ============================================================================= */
@@ -138,30 +156,32 @@ static void extract_event_row(sqlite3_stmt *stmt, sched_event_t *event) {
    if (loc)
       strncpy(event->source_location, loc, SCHED_LOCATION_MAX - 1);
 
-   event->announce_all = sqlite3_column_int(stmt, 15) != 0;
+   event->source_client_type = (sched_source_type_t)sqlite3_column_int(stmt, 15);
 
-   const char *tool = (const char *)sqlite3_column_text(stmt, 16);
+   event->announce_all = sqlite3_column_int(stmt, 16) != 0;
+
+   const char *tool = (const char *)sqlite3_column_text(stmt, 17);
    if (tool)
       strncpy(event->tool_name, tool, SCHED_TOOL_NAME_MAX - 1);
 
-   const char *tool_act = (const char *)sqlite3_column_text(stmt, 17);
+   const char *tool_act = (const char *)sqlite3_column_text(stmt, 18);
    if (tool_act)
       strncpy(event->tool_action, tool_act, SCHED_TOOL_NAME_MAX - 1);
 
-   const char *tool_val = (const char *)sqlite3_column_text(stmt, 18);
+   const char *tool_val = (const char *)sqlite3_column_text(stmt, 19);
    if (tool_val)
       strncpy(event->tool_value, tool_val, SCHED_TOOL_VALUE_MAX - 1);
 
-   event->fired_at = (time_t)sqlite3_column_int64(stmt, 19);
-   event->snooze_count = sqlite3_column_int(stmt, 20);
+   event->fired_at = (time_t)sqlite3_column_int64(stmt, 20);
+   event->snooze_count = sqlite3_column_int(stmt, 21);
 }
 
 /* Select all columns in consistent order */
 #define SCHED_SELECT_COLS                                                      \
    "id, user_id, event_type, status, name, message, fire_at, created_at, "     \
    "duration_sec, snoozed_until, recurrence, recurrence_days, original_time, " \
-   "source_uuid, source_location, announce_all, tool_name, tool_action, "      \
-   "tool_value, fired_at, snooze_count"
+   "source_uuid, source_location, source_client_type, announce_all, "          \
+   "tool_name, tool_action, tool_value, fired_at, snooze_count"
 
 /* =============================================================================
  * CRUD Operations
@@ -175,9 +195,9 @@ int64_t scheduler_db_insert(sched_event_t *event) {
    const char *sql = "INSERT INTO scheduled_events "
                      "(user_id, event_type, status, name, message, fire_at, created_at, "
                      "duration_sec, snoozed_until, recurrence, recurrence_days, original_time, "
-                     "source_uuid, source_location, announce_all, tool_name, tool_action, "
-                     "tool_value, fired_at, snooze_count) "
-                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                     "source_uuid, source_location, source_client_type, announce_all, "
+                     "tool_name, tool_action, tool_value, fired_at, snooze_count) "
+                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
    sqlite3_stmt *stmt = NULL;
    int rc = sqlite3_prepare_v2(s_db.db, sql, -1, &stmt, NULL);
@@ -203,14 +223,15 @@ int64_t scheduler_db_insert(sched_event_t *event) {
                      SQLITE_TRANSIENT);
    sqlite3_bind_text(stmt, 14, event->source_location[0] ? event->source_location : NULL, -1,
                      SQLITE_TRANSIENT);
-   sqlite3_bind_int(stmt, 15, event->announce_all ? 1 : 0);
-   sqlite3_bind_text(stmt, 16, event->tool_name[0] ? event->tool_name : NULL, -1, SQLITE_TRANSIENT);
-   sqlite3_bind_text(stmt, 17, event->tool_action[0] ? event->tool_action : NULL, -1,
+   sqlite3_bind_int(stmt, 15, (int)event->source_client_type);
+   sqlite3_bind_int(stmt, 16, event->announce_all ? 1 : 0);
+   sqlite3_bind_text(stmt, 17, event->tool_name[0] ? event->tool_name : NULL, -1, SQLITE_TRANSIENT);
+   sqlite3_bind_text(stmt, 18, event->tool_action[0] ? event->tool_action : NULL, -1,
                      SQLITE_TRANSIENT);
-   sqlite3_bind_text(stmt, 18, event->tool_value[0] ? event->tool_value : NULL, -1,
+   sqlite3_bind_text(stmt, 19, event->tool_value[0] ? event->tool_value : NULL, -1,
                      SQLITE_TRANSIENT);
-   sqlite3_bind_int64(stmt, 19, 0);
-   sqlite3_bind_int(stmt, 20, 0);
+   sqlite3_bind_int64(stmt, 20, 0);
+   sqlite3_bind_int(stmt, 21, 0);
 
    rc = sqlite3_step(stmt);
    int64_t id = -1;
@@ -270,9 +291,9 @@ int64_t scheduler_db_insert_checked(sched_event_t *event, int max_per_user, int 
    const char *sql = "INSERT INTO scheduled_events "
                      "(user_id, event_type, status, name, message, fire_at, created_at, "
                      "duration_sec, snoozed_until, recurrence, recurrence_days, original_time, "
-                     "source_uuid, source_location, announce_all, tool_name, tool_action, "
-                     "tool_value, fired_at, snooze_count) "
-                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                     "source_uuid, source_location, source_client_type, announce_all, "
+                     "tool_name, tool_action, tool_value, fired_at, snooze_count) "
+                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
    sqlite3_stmt *stmt = NULL;
    rc = sqlite3_prepare_v2(s_db.db, sql, -1, &stmt, NULL);
@@ -298,14 +319,15 @@ int64_t scheduler_db_insert_checked(sched_event_t *event, int max_per_user, int 
                      SQLITE_TRANSIENT);
    sqlite3_bind_text(stmt, 14, event->source_location[0] ? event->source_location : NULL, -1,
                      SQLITE_TRANSIENT);
-   sqlite3_bind_int(stmt, 15, event->announce_all ? 1 : 0);
-   sqlite3_bind_text(stmt, 16, event->tool_name[0] ? event->tool_name : NULL, -1, SQLITE_TRANSIENT);
-   sqlite3_bind_text(stmt, 17, event->tool_action[0] ? event->tool_action : NULL, -1,
+   sqlite3_bind_int(stmt, 15, (int)event->source_client_type);
+   sqlite3_bind_int(stmt, 16, event->announce_all ? 1 : 0);
+   sqlite3_bind_text(stmt, 17, event->tool_name[0] ? event->tool_name : NULL, -1, SQLITE_TRANSIENT);
+   sqlite3_bind_text(stmt, 18, event->tool_action[0] ? event->tool_action : NULL, -1,
                      SQLITE_TRANSIENT);
-   sqlite3_bind_text(stmt, 18, event->tool_value[0] ? event->tool_value : NULL, -1,
+   sqlite3_bind_text(stmt, 19, event->tool_value[0] ? event->tool_value : NULL, -1,
                      SQLITE_TRANSIENT);
-   sqlite3_bind_int64(stmt, 19, 0);
-   sqlite3_bind_int(stmt, 20, 0);
+   sqlite3_bind_int64(stmt, 20, 0);
+   sqlite3_bind_int(stmt, 21, 0);
 
    rc = sqlite3_step(stmt);
    int64_t id = -1;

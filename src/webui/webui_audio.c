@@ -861,6 +861,58 @@ void webui_sentence_audio_callback(const char *sentence, void *userdata) {
    free(cleaned);
 }
 
+/**
+ * Send TTS audio for a scheduler notification to a specific WebUI session.
+ *
+ * Unlike webui_sentence_audio_callback, this bypasses the tts_enabled check
+ * (scheduler notifications are unsolicited) and brackets the audio with
+ * speaking/idle state transitions for the browser state machine.
+ */
+void scheduler_send_tts_to_session(session_t *session, const char *text) {
+   if (!session || !text || !text[0] || session->disconnected)
+      return;
+
+   ws_connection_t *conn = (ws_connection_t *)session->client_data;
+   if (!conn)
+      return;
+
+   bool use_opus = conn->use_opus;
+
+   LOG_INFO("WebUI: Scheduler TTS to session %u (%s): %.60s%s", session->session_id,
+            use_opus ? "opus" : "pcm", text, strlen(text) > 60 ? "..." : "");
+
+   webui_send_state(session, "speaking");
+
+   if (use_opus) {
+      uint8_t *opus = NULL;
+      size_t opus_len = 0;
+      int ret = webui_audio_text_to_opus(text, &opus, &opus_len);
+
+      if (ret == WEBUI_AUDIO_SUCCESS && opus && opus_len > 0) {
+         if (!session->disconnected) {
+            webui_send_audio(session, opus, opus_len);
+            webui_send_audio_end(session, true);
+         }
+         free(opus);
+      }
+   } else {
+      int16_t *pcm = NULL;
+      size_t samples = 0;
+      int ret = webui_audio_text_to_pcm(text, &pcm, &samples);
+
+      if (ret == WEBUI_AUDIO_SUCCESS && pcm && samples > 0) {
+         if (!session->disconnected) {
+            size_t bytes = samples * sizeof(int16_t);
+            webui_send_audio(session, (const uint8_t *)pcm, bytes);
+            webui_send_audio_end(session, false);
+         }
+         free(pcm);
+      }
+   }
+
+   webui_send_state(session, "idle");
+}
+
 /* REQUEST_SUPERSEDED macro now defined in webui_internal.h */
 
 /**

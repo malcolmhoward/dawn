@@ -82,6 +82,12 @@ typedef enum {
    SCHED_RECUR_CUSTOM,
 } sched_recurrence_t;
 
+typedef enum {
+   SCHED_SOURCE_LOCAL = 0, /**< Local mic — daemon speaker (default/legacy) */
+   SCHED_SOURCE_WEBUI = 1, /**< WebUI browser session */
+   SCHED_SOURCE_DAP2 = 2,  /**< DAP2 satellite */
+} sched_source_type_t;
+
 /* =============================================================================
  * Event Structure
  * ============================================================================= */
@@ -102,6 +108,7 @@ typedef struct {
    char original_time[SCHED_ORIGINAL_TIME_MAX];
    char source_uuid[SCHED_UUID_MAX];
    char source_location[SCHED_LOCATION_MAX];
+   sched_source_type_t source_client_type;
    bool announce_all;
    char tool_name[SCHED_TOOL_NAME_MAX];
    char tool_action[SCHED_TOOL_NAME_MAX];
@@ -120,6 +127,9 @@ const char *sched_status_to_str(sched_status_t status);
 sched_status_t sched_status_from_str(const char *str);
 const char *sched_recurrence_to_str(sched_recurrence_t recurrence);
 sched_recurrence_t sched_recurrence_from_str(const char *str);
+
+const char *sched_source_type_to_str(sched_source_type_t type);
+sched_source_type_t sched_source_type_from_str(const char *str);
 
 /* =============================================================================
  * CRUD Operations

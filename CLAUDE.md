@@ -506,7 +506,7 @@ Manual testing covers:
 - Google OAuth 2.0 for CalDAV (shared oauth_client + crypto_store modules, PKCE S256, WebUI popup flow)
 - CalDAV calendar integration (multi-account, RFC 4791 discovery, Google OAuth, RRULE expansion, background sync, LLM tool)
 - Document search/RAG system with semantic search, paginated document reader, WebUI Document Library, shared embedding engine, admin document management (global toggle, all-users view, username resolution)
-- Scheduler system (timers, alarms, reminders, scheduled tool execution) with audible chimes, WebUI notifications, recurrence, snooze/dismiss
+- Scheduler system (timers, alarms, reminders, scheduled tool execution, briefings) with audible chimes, WebUI notifications, recurrence, snooze/dismiss
 - Satellite registration key (pre-shared key authentication for satellite registration)
 - Private CA for TLS validation (all client types: ESP32, RPi, browser)
 - LLM playlist builder (add/remove/clear_queue actions) with genre search
@@ -550,6 +550,13 @@ Manual testing covers:
 - URL fetcher: HTTP/2 FlareSolverr fallback, IPv4-mapped IPv6 SSRF fix
 - Plan executor: sleep step (1-300s), configurable timeout via dawn.toml
 - Automated install script overhaul: cmake --install for deploy (proper RPATH), settings cache with --fresh, random admin passwords, set -e safety fixes, FHS service layout (/var/lib/dawn/db)
+- Scheduler briefings: SCHED_EVENT_BRIEFING (tool execution → LLM summarization → persistent conversation → TTS + WebUI notification with View button)
+- DANGEROUS tools allowed in scheduler (user authorized at scheduling time), search + email now TOOL_CAP_SCHEDULABLE
+- DANGEROUS tools default to enabled in registry (config `enabled = false` to opt out, no silent disable)
+- Recurring TASK events fixed (schedule_next_occurrence was missing from TASK fire path)
+- SCHED_TOOL_VALUE_MAX increased 256→2048 with creation-time overflow rejection
+- Claude thinking signature: fixed 4KB buffer → dynamic realloc (8KB initial, grows as needed)
+- Source-aware scheduler notification routing: WebUI events play TTS in browser (not daemon speaker), satellite fallback to user's other sessions, source_client_type tracking (v28 DB migration), per-session TTS with state bracketing, announce_all dedup fix
 
 ## Code Review Workflow
 

@@ -219,7 +219,8 @@ static bool json_get_bool(struct json_object *obj, const char *key, bool default
 static char *handle_create(struct json_object *details,
                            int user_id,
                            const char *source_uuid,
-                           const char *source_location) {
+                           const char *source_location,
+                           sched_source_type_t source_client_type) {
    char result[RESULT_BUF_SIZE];
 
    const char *type_str = json_get_string(details, "type");
@@ -362,6 +363,7 @@ static char *handle_create(struct json_object *details,
       strncpy(event.source_uuid, source_uuid, SCHED_UUID_MAX - 1);
    if (source_location)
       strncpy(event.source_location, source_location, SCHED_LOCATION_MAX - 1);
+   event.source_client_type = source_client_type;
 
    /* Announce all */
    event.announce_all = json_get_bool(details, "announce_all", false);
@@ -654,6 +656,7 @@ static char *scheduler_tool_callback(const char *action, char *value, int *shoul
    int user_id = 1; /* Default */
    const char *source_uuid = NULL;
    const char *source_location = NULL;
+   sched_source_type_t source_client_type = SCHED_SOURCE_LOCAL;
 
 #ifdef ENABLE_MULTI_CLIENT
    session_t *ctx = session_get_command_context();
@@ -662,6 +665,9 @@ static char *scheduler_tool_callback(const char *action, char *value, int *shoul
       if (ctx->type == SESSION_TYPE_DAP2) {
          source_uuid = ctx->identity.uuid;
          source_location = ctx->identity.location;
+         source_client_type = SCHED_SOURCE_DAP2;
+      } else if (ctx->type == SESSION_TYPE_WEBUI) {
+         source_client_type = SCHED_SOURCE_WEBUI;
       }
    }
 #endif
@@ -669,7 +675,7 @@ static char *scheduler_tool_callback(const char *action, char *value, int *shoul
    char *result = NULL;
 
    if (strcmp(action, "create") == 0) {
-      result = handle_create(details, user_id, source_uuid, source_location);
+      result = handle_create(details, user_id, source_uuid, source_location, source_client_type);
    } else if (strcmp(action, "list") == 0) {
       result = handle_list(details, user_id);
    } else if (strcmp(action, "cancel") == 0) {

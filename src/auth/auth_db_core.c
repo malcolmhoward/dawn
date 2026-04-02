@@ -70,7 +70,7 @@ static void finalize_statements(void);
  * Schema SQL
  * ============================================================================= */
 
-/* Base schema for fresh installs.  Must match AUTH_DB_SCHEMA_VERSION (v27).
+/* Base schema for fresh installs.  Must match AUTH_DB_SCHEMA_VERSION (v28).
  *
  * IMPORTANT: When adding a new column or table via migration, also add it here
  * so that fresh installs get the complete schema.  All statements use
@@ -359,6 +359,7 @@ static const char *SCHEMA_SQL =
     "  original_time TEXT,"
     "  source_uuid TEXT,"
     "  source_location TEXT,"
+    "  source_client_type INTEGER DEFAULT 0,"
     "  announce_all INTEGER DEFAULT 0,"
     "  tool_name TEXT,"
     "  tool_action TEXT,"
@@ -1279,6 +1280,20 @@ static int create_schema(void) {
          errmsg = NULL;
       } else {
          LOG_INFO("auth_db: added title_locked column to conversations (v27)");
+      }
+   }
+
+   /* v28 migration: add source_client_type to scheduled_events for notification routing */
+   if (current_version >= 18 && current_version < 28) {
+      rc = sqlite3_exec(
+          s_db.db, "ALTER TABLE scheduled_events ADD COLUMN source_client_type INTEGER DEFAULT 0",
+          NULL, NULL, &errmsg);
+      if (rc != SQLITE_OK) {
+         LOG_INFO("auth_db: v28 migration note (source_client_type): %s", errmsg ? errmsg : "ok");
+         sqlite3_free(errmsg);
+         errmsg = NULL;
+      } else {
+         LOG_INFO("auth_db: added source_client_type to scheduled_events (v28)");
       }
    }
 

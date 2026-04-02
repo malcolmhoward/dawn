@@ -75,6 +75,27 @@ void scheduler_broadcast_briefing_notification(const sched_event_t *event,
    (void)text;
    (void)conversation_id;
 }
+
+void scheduler_send_tts_to_session(session_t *session, const char *text) __attribute__((weak));
+void scheduler_send_tts_to_session(session_t *session, const char *text) {
+   (void)session;
+   (void)text;
+}
+
+int scheduler_route_tts_to_user(int user_id,
+                                const char *text,
+                                const char *skip_uuid,
+                                int skip_user_id) __attribute__((weak));
+int scheduler_route_tts_to_user(int user_id,
+                                const char *text,
+                                const char *skip_uuid,
+                                int skip_user_id) {
+   (void)user_id;
+   (void)text;
+   (void)skip_uuid;
+   (void)skip_user_id;
+   return 0;
+}
 #endif
 
 /* =============================================================================
@@ -156,50 +177,91 @@ static void generate_announcement_text(const sched_event_t *event, char *buf, si
  * ============================================================================= */
 
 /**
- * Route announcement text to TTS/satellite outputs.
- * Shared by announce_event (generated text) and briefing (custom text).
+ * Route announcement text to TTS/satellite outputs based on source client type.
+ * Returns true if TTS was delivered to at least one session.
+ *
+ * - SCHED_SOURCE_DAP2: Try source satellite, fall back to user's other sessions
+ * - SCHED_SOURCE_WEBUI: Route to user's WebUI + satellite sessions (no daemon speaker)
+ * - SCHED_SOURCE_LOCAL: Daemon local speaker (existing behavior)
+ *
+ * announce_all: additionally broadcasts to all user sessions via connection registry
+ * (fixes pre-existing bug where session_get(i) missed sessions with IDs > MAX_SESSIONS).
  */
-static void route_tts_announcement(const sched_event_t *event, const char *text) {
+static bool route_tts_announcement(const sched_event_t *event, const char *text) {
 #ifdef ENABLE_MULTI_CLIENT
-   /* Route to source satellite if connected */
-   if (event->source_uuid[0]) {
-      session_t *session = session_find_by_uuid(event->source_uuid);
-      if (session) {
-         if (!session->disconnected && session->tier == DAP2_TIER_1) {
-            satellite_send_response(session, text);
-            LOG_INFO("scheduler: announced to satellite %s", event->source_uuid);
+   bool delivered = false;
+
+   switch (event->source_client_type) {
+      case SCHED_SOURCE_DAP2: {
+         /* Try originating satellite first */
+         if (event->source_uuid[0]) {
+            session_t *session = session_find_by_uuid(event->source_uuid);
+            if (session) {
+               if (!session->disconnected && session->tier == DAP2_TIER_1) {
+                  satellite_send_response(session, text);
+                  delivered = true;
+                  LOG_INFO("scheduler: announced to source satellite %s", event->source_uuid);
+               }
+               session_release(session);
+            }
          }
-         session_release(session);
-      } else {
-         LOG_INFO("scheduler: satellite %s disconnected, WebUI notification only",
-                  event->source_uuid);
+         /* Fallback: try any active session for this user */
+         if (!delivered) {
+#ifdef ENABLE_WEBUI
+            delivered = scheduler_route_tts_to_user(event->user_id, text, event->source_uuid, 0) >
+                        0;
+#endif
+         }
+         break;
       }
-   } else {
-      char *tts_text = strdup(text);
-      if (tts_text)
-         text_to_speech(tts_text);
+
+      case SCHED_SOURCE_WEBUI: {
+         /* Route to user's active sessions (WebUI TTS + satellites) — no daemon speaker */
+#ifdef ENABLE_WEBUI
+         delivered = scheduler_route_tts_to_user(event->user_id, text, NULL, 0) > 0;
+#endif
+         break;
+      }
+
+      case SCHED_SOURCE_LOCAL:
+      default: {
+         /* Daemon local speaker (existing behavior) */
+         char *tts_text = strdup(text);
+         if (tts_text) {
+            text_to_speech(tts_text);
+            delivered = true;
+         }
+         break;
+      }
    }
 
-   /* Announce everywhere if requested */
+   if (!delivered) {
+      LOG_WARNING("scheduler: no active session for user %d, TTS not delivered for event %lld",
+                  event->user_id, (long long)event->id);
+   }
+
+   /* Announce everywhere if requested — uses connection registry (not session_get) */
    if (event->announce_all) {
-      for (int i = 0; i < MAX_SESSIONS; i++) {
-         session_t *s = session_get((uint32_t)i);
-         if (!s)
-            continue;
-         if (s->type == SESSION_TYPE_DAP2 && s->tier == DAP2_TIER_1 && !s->disconnected) {
-            if (event->source_uuid[0] && strcmp(s->identity.uuid, event->source_uuid) == 0) {
-               session_release(s);
-               continue;
-            }
-            satellite_send_response(s, text);
-         }
-         session_release(s);
+#ifdef ENABLE_WEBUI
+      /* scheduler_route_tts_to_user already delivered to originating user's sessions;
+       * for announce_all, broadcast to other users' sessions (skip originating user) */
+      scheduler_route_tts_to_user(0, text, event->source_uuid, event->user_id);
+#endif
+      /* Also play on daemon speaker if not already done */
+      if (event->source_client_type != SCHED_SOURCE_LOCAL) {
+         char *tts_text = strdup(text);
+         if (tts_text)
+            text_to_speech(tts_text);
       }
    }
+
+   return delivered;
 #else
+   (void)event;
    char *tts_text = strdup(text);
    if (tts_text)
       text_to_speech(tts_text);
+   return true;
 #endif
 }
 
