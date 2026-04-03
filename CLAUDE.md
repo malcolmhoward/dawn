@@ -558,6 +558,53 @@ Manual testing covers:
 - Claude thinking signature: fixed 4KB buffer → dynamic realloc (8KB initial, grows as needed)
 - Source-aware scheduler notification routing: WebUI events play TTS in browser (not daemon speaker), satellite fallback to user's other sessions, source_client_type tracking (v28 DB migration), per-session TTS with state bracketing, announce_all dedup fix
 
+## Development Lifecycle
+
+The full cycle for implementing features in this project. Steps may repeat — testing often reveals adjacent bugs that loop back to implement/review.
+
+### 1. Plan (if non-trivial)
+- Use plan mode for features that touch multiple subsystems
+- Launch Explore agents to understand existing code, then Plan agent to design the approach
+- Run architecture-reviewer and/or ui-design-architect on the plan before implementing
+- Incorporate agent feedback into the plan before exiting plan mode
+
+### 2. Implement
+- Build from an existing plan if one exists (check `~/.claude/plans/`)
+- Use task tracking for multi-step work
+- Build and format check after each logical chunk: `make -C build-debug -j8` + `./format_code.sh --check`
+- Run relevant unit tests: `./build-debug/tests/test_<name>`
+
+### 3. Review
+- Run all relevant review agents in parallel on the diff
+- Synthesize findings into a consolidated table with severity and action (Fix/Skip/Ask)
+- Triage: fix real bugs, skip nitpicks, ask about anything that would change public APIs
+- Apply fixes, rebuild, re-verify format and tests
+- For critical fixes: have the architecture-reviewer verify the fix is correct
+
+### 4. Test
+- Developer tests manually and reports results (logs, behavior observations)
+- Fix issues found in testing — these often reveal adjacent bugs worth fixing
+- Adjacent bugs may require their own mini review cycle
+- Iterate until the developer is satisfied
+
+### 5. Document
+- Update the atlas design doc if one exists (e.g., `~/code/The-OASIS-Project/atlas/dawn/archive/`)
+- Have the architecture-reviewer verify the design doc against the actual code
+- Fix any discrepancies found
+
+### 6. Update Planning Docs
+- **CLAUDE.md**: Add to "Recently Completed" list
+- **docs/RELEASE_TODO.md**: Move item from active to shipped, update shipped count
+- **docs/FUTURE_WORK.md**: Mark section as SHIPPED with implementation summary
+- **NEVER commit**: `docs/FUTURE_WORK.md`, `docs/RELEASE_TODO.md` (developer-maintained)
+
+### 7. Commit
+- Run `./format_code.sh --check` one final time
+- Provide a single `git add` command with all relevant files
+- Suggest a commit message (present tense, summary line + bullet details)
+- **NEVER run `git add`, `git commit`, or `git push`** — the developer does this
+- Wait for the developer to confirm before moving on
+
 ## Code Review Workflow
 
 When the developer requests a "code review" (or similar phrasing like "review my changes", "run the agents on this"):
