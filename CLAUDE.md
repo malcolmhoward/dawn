@@ -594,9 +594,8 @@ The full cycle for implementing features in this project. Steps may repeat — t
 
 ### 6. Update Planning Docs
 - **CLAUDE.md**: Add to "Recently Completed" list
-- **docs/RELEASE_TODO.md**: Move item from active to shipped, update shipped count
-- **docs/FUTURE_WORK.md**: Mark section as SHIPPED with implementation summary
-- **NEVER commit**: `docs/FUTURE_WORK.md`, `docs/RELEASE_TODO.md` (developer-maintained)
+- **docs/TODO.md**: Move item from active to shipped, update shipped list. If the item had a §N detail section, remove it.
+- **NEVER commit**: `docs/TODO.md` (developer-maintained)
 
 ### 7. Commit
 - Run `./format_code.sh --check` one final time
