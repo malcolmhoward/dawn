@@ -557,6 +557,8 @@ Manual testing covers:
 - SCHED_TOOL_VALUE_MAX increased 256→2048 with creation-time overflow rejection
 - Claude thinking signature: fixed 4KB buffer → dynamic realloc (8KB initial, grows as needed)
 - Source-aware scheduler notification routing: WebUI events play TTS in browser (not daemon speaker), satellite fallback to user's other sessions, source_client_type tracking (v28 DB migration), per-session TTS with state bracketing, announce_all dedup fix
+- Docker multi-arch image (amd64 + arm64): multi-stage Dockerfile (deps → builder → runtime), debian:bookworm-slim, non-root user, SHA256-verified ONNX, pinned from-source deps, 297MB runtime
+- GitHub Actions CI pipeline: format-check (clang-format-14 + Prettier) → unit-tests (ci preset, 13 tests) + docker-build (full image + smoke test), SHA-pinned actions, least-privilege permissions
 
 ## Development Lifecycle
 

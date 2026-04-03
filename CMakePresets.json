@@ -69,6 +69,19 @@
         "SERVER_ONLY": "ON",
         "ENABLE_AEC": "OFF"
       }
+    },
+    {
+      "name": "ci",
+      "displayName": "CI (Unit Tests Only)",
+      "description": "Minimal build for CI: unit tests without ONNX, CUDA, WebUI, or hardware deps. VOSK=ON skips the whisper.cpp submodule.",
+      "binaryDir": "${sourceDir}/build-ci",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "ENABLE_WEBUI": "OFF",
+        "ENABLE_TUI": "OFF",
+        "ENABLE_AEC": "OFF",
+        "ENABLE_VOSK": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -95,6 +108,10 @@
     {
       "name": "server-debug",
       "configurePreset": "server-debug"
+    },
+    {
+      "name": "ci",
+      "configurePreset": "ci"
     }
   ]
 }

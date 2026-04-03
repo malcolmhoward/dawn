@@ -1,0 +1,41 @@
+# Build artifacts
+build-*/
+cmake-build-*/
+
+# Git
+.git
+.gitmodules
+
+# Data and models (mount as volumes)
+data/
+models/
+vosk-model-*/
+*.db
+
+# Secrets
+secrets.toml
+*.key
+dawn.key
+ssl/
+.env
+.env.*
+
+# Satellite (separate build target)
+dawn_satellite/
+
+# Submodules rebuilt inside Docker
+webrtc-audio-processing/
+
+# Development files
+node_modules/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Docs (not needed in image)
+docs/
+
+# CI artifacts
+.github/

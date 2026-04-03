@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  # -------------------------------------------------------------------------
+  # Job 1: Format Check (~30s)
+  # Runs on ubuntu-22.04 which has clang-format-14 available
+  # -------------------------------------------------------------------------
+  format-check:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Install clang-format-14
+        run: sudo apt-get update && sudo apt-get install -y clang-format-14
+
+      - name: Install Prettier
+        run: npm install
+
+      - name: Check formatting
+        run: ./format_code.sh --check
+
+  # -------------------------------------------------------------------------
+  # Job 2: Unit Tests (~2 min)
+  # Uses ci CMake preset: WEBUI=OFF, TUI=OFF, AEC=OFF, VOSK=ON
+  # No submodules needed (VOSK=ON skips whisper.cpp submodule)
+  # -------------------------------------------------------------------------
+  unit-tests:
+    needs: format-check
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake build-essential pkg-config \
+            libcurl4-openssl-dev libjson-c-dev libssl-dev libsqlite3-dev \
+            libsodium-dev libspdlog-dev libmosquitto-dev \
+            libflac-dev libsamplerate0-dev libsndfile1-dev \
+            libmpg123-dev libvorbis-dev \
+            libmupdf-dev libfreetype-dev libharfbuzz-dev libzip-dev libxml2-dev \
+            libmujs-dev libgumbo-dev libopenjp2-7-dev libjbig2dec0-dev libjpeg-dev \
+            libical-dev
+
+      - name: Configure (ci preset)
+        run: cmake --preset ci
+
+      - name: Build CI tests
+        run: make -C build-ci -j"$(nproc)" tests-ci
+
+      - name: Run tests
+        run: |
+          cd build-ci/tests
+          failed=0
+          for test in \
+            test_scheduler test_music_db test_document_chunker \
+            test_document_db test_embedding_engine test_memory_embeddings \
+            test_plan_executor test_sse_parser test_sentence_buffer \
+            test_session_commands test_wake_word test_instruction_loader \
+            test_document_extract; do
+            echo "::group::${test}"
+            if ./"${test}"; then
+              echo "::endgroup::"
+            else
+              echo "::endgroup::"
+              echo "::error::${test} FAILED"
+              failed=1
+            fi
+          done
+          exit $failed
+
+  # -------------------------------------------------------------------------
+  # Job 3: Docker Build (~10 min)
+  # Builds full image (deps + server compile + runtime) and smoke tests it
+  # -------------------------------------------------------------------------
+  docker-build:
+    needs: format-check
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout with submodules
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          submodules: recursive
+
+      - name: Build Docker image
+        run: docker build -t dawn .
+
+      - name: Smoke test
+        run: docker run --rm dawn --help

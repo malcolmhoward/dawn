@@ -283,6 +283,23 @@ target_link_libraries(test_instruction_loader
 # Aggregate "tests" target
 # =============================================================================
 # This creates a target that builds all tests when you run "make tests"
+# CI-safe tests: no ONNX, CUDA, hardware, or external API dependencies
+add_custom_target(tests-ci
+                  DEPENDS test_scheduler
+                          test_music_db
+                          test_document_chunker
+                          test_document_db
+                          test_embedding_engine
+                          test_memory_embeddings
+                          test_plan_executor
+                          test_sse_parser
+                          test_sentence_buffer
+                          test_session_commands
+                          test_wake_word
+                          test_instruction_loader
+                          test_document_extract
+                  COMMENT "Building CI-safe unit tests")
+
 add_custom_target(tests
                   DEPENDS test_instruction_loader
                           test_wake_word
