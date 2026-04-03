@@ -400,7 +400,7 @@ test_db_compact() {
 
     info "Compacting database (may be rate-limited)"
     output=$(DAWN_ADMIN_USER="$ADMIN_USER" DAWN_ADMIN_PASSWORD="$ADMIN_PASS" \
-             $DAWN_ADMIN db compact 2>&1)
+             $DAWN_ADMIN db compact 2>&1) || true
 
     if echo "$output" | grep -qi "compacted\|rate.limited\|success"; then
         pass "Database compact command executed"
@@ -481,6 +481,146 @@ test_last_admin_protection() {
     skip "Last admin protection already tested in user delete"
 }
 
+test_ip_list() {
+    print_header "Testing: ip list"
+
+    if $DAWN_ADMIN ip list 2>&1 >/dev/null; then
+        pass "IP list command executed"
+    else
+        fail "IP list command failed"
+    fi
+}
+
+test_metrics() {
+    print_header "Testing: metrics"
+
+    # Basic list
+    if $DAWN_ADMIN metrics list 2>&1 >/dev/null; then
+        pass "Metrics list command executed"
+    else
+        fail "Metrics list command failed"
+    fi
+
+    # With limit
+    info "Testing --last option"
+    if $DAWN_ADMIN metrics list --last 5 2>&1 >/dev/null; then
+        pass "Metrics list with --last works"
+    else
+        fail "Metrics list with --last failed"
+    fi
+
+    # Filter by type
+    info "Testing --type LOCAL filter"
+    if $DAWN_ADMIN metrics list --type LOCAL 2>&1 >/dev/null; then
+        pass "Metrics list with --type LOCAL works"
+    else
+        fail "Metrics list with --type LOCAL failed"
+    fi
+
+    info "Testing --type WEBSOCKET filter"
+    if $DAWN_ADMIN metrics list --type WEBSOCKET 2>&1 >/dev/null; then
+        pass "Metrics list with --type WEBSOCKET works"
+    else
+        fail "Metrics list with --type WEBSOCKET failed"
+    fi
+
+    # Summary
+    info "Testing metrics summary"
+    if $DAWN_ADMIN metrics summary 2>&1 >/dev/null; then
+        pass "Metrics summary command executed"
+    else
+        fail "Metrics summary command failed"
+    fi
+}
+
+test_conversations() {
+    print_header "Testing: conversations"
+
+    # List
+    if $DAWN_ADMIN conv list 2>&1 >/dev/null; then
+        pass "Conv list command executed"
+    else
+        fail "Conv list command failed"
+    fi
+
+    # With limit
+    info "Testing --last option"
+    if $DAWN_ADMIN conv list --last 5 2>&1 >/dev/null; then
+        pass "Conv list with --last works"
+    else
+        fail "Conv list with --last failed"
+    fi
+
+    # With archived
+    info "Testing --archived option"
+    if $DAWN_ADMIN conv list --archived 2>&1 >/dev/null; then
+        pass "Conv list with --archived works"
+    else
+        fail "Conv list with --archived failed"
+    fi
+
+    # Show a specific conversation (grab first ID)
+    info "Testing conv show"
+    local conv_id
+    conv_id=$($DAWN_ADMIN conv list --last 1 2>&1 | grep -oP '^\s*\K\d+' | head -1 || true)
+    if [ -n "$conv_id" ]; then
+        if $DAWN_ADMIN conv show "$conv_id" 2>&1 >/dev/null; then
+            pass "Conv show $conv_id executed"
+        else
+            fail "Conv show $conv_id failed"
+        fi
+    else
+        skip "No conversations found to show"
+    fi
+}
+
+test_music() {
+    print_header "Testing: music"
+
+    # Stats
+    if $DAWN_ADMIN music stats 2>&1 >/dev/null; then
+        pass "Music stats command executed"
+    else
+        fail "Music stats command failed"
+    fi
+
+    # List with limit
+    info "Testing music list"
+    if $DAWN_ADMIN music list --limit 5 2>&1 >/dev/null; then
+        pass "Music list with --limit works"
+    else
+        fail "Music list with --limit failed"
+    fi
+
+    # Search
+    info "Testing music search"
+    if $DAWN_ADMIN music search "test" 2>&1 >/dev/null; then
+        pass "Music search command executed"
+    else
+        fail "Music search command failed"
+    fi
+}
+
+test_edge_cases() {
+    print_header "Testing: edge cases"
+
+    # Unknown command should fail
+    info "Testing unknown command"
+    if $DAWN_ADMIN nonexistent_command 2>&1 >/dev/null; then
+        fail "Unknown command should return non-zero"
+    else
+        pass "Unknown command correctly returns error"
+    fi
+
+    # Help
+    info "Testing help"
+    if $DAWN_ADMIN help 2>&1 | grep -q "Usage:"; then
+        pass "Help command shows usage"
+    else
+        fail "Help command missing usage text"
+    fi
+}
+
 # ============================================================================
 # Main
 # ============================================================================
@@ -516,6 +656,11 @@ main() {
     test_db_backup
     test_db_compact
     test_log_show
+    test_ip_list
+    test_metrics
+    test_conversations
+    test_music
+    test_edge_cases
 
     # Cleanup tests (run last)
     test_user_delete

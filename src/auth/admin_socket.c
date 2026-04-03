@@ -27,7 +27,9 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <grp.h>
 #include <pthread.h>
+#include <pwd.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -466,17 +468,53 @@ static int validate_peer_credentials(int client_fd) {
       return 1;
    }
 
-   /* Allow only root (uid 0) or the daemon's own user */
+   /* Allow root (uid 0), the daemon's own user, or members of the daemon's group */
    uid_t daemon_uid = getuid();
+   gid_t daemon_gid = getgid();
 
-   if (cred.uid != 0 && cred.uid != daemon_uid) {
-      LOG_WARNING("Admin socket connection rejected: unauthorized UID %d (expected 0 or %d)",
-                  cred.uid, daemon_uid);
-      return 1;
+   if (cred.uid == 0 || cred.uid == daemon_uid) {
+      LOG_INFO("Admin socket client authenticated: uid=%d, pid=%d", cred.uid, cred.pid);
+      return 0;
    }
 
-   LOG_INFO("Admin socket client authenticated: uid=%d, pid=%d", cred.uid, cred.pid);
-   return 0;
+   /* Check if the connecting user is in the daemon's primary group.
+    * This allows e.g. users in the 'dawn' group to run dawn-admin without sudo. */
+   struct passwd pwd_buf;
+   struct passwd *pw = NULL;
+   char pw_storage[256];
+   if (getpwuid_r(cred.uid, &pwd_buf, pw_storage, sizeof(pw_storage), &pw) == 0 && pw) {
+      int ngroups = 64;
+      gid_t groups_stack[64];
+      gid_t *groups = groups_stack;
+
+      if (getgrouplist(pw->pw_name, pw->pw_gid, groups, &ngroups) == -1) {
+         /* User has more than 64 groups — retry with heap allocation */
+         groups = malloc(ngroups * sizeof(gid_t));
+         if (groups) {
+            getgrouplist(pw->pw_name, pw->pw_gid, groups, &ngroups);
+         } else {
+            ngroups = 0;
+         }
+      }
+
+      for (int i = 0; i < ngroups; i++) {
+         if (groups[i] == daemon_gid) {
+            LOG_INFO("Admin socket client authenticated via group: uid=%d, gid=%d, pid=%d",
+                     cred.uid, daemon_gid, cred.pid);
+            if (groups != groups_stack)
+               free(groups);
+            return 0;
+         }
+      }
+
+      if (groups != groups_stack)
+         free(groups);
+   }
+
+   LOG_WARNING(
+       "Admin socket connection rejected: unauthorized UID %d (expected 0, %d, or group %d)",
+       cred.uid, daemon_uid, daemon_gid);
+   return 1;
 }
 
 /* =============================================================================

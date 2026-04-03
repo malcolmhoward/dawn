@@ -230,8 +230,25 @@ static int recv_list_response(int fd,
                               admin_list_response_t *resp,
                               char *buffer,
                               size_t buffer_size) {
+   /* Read the full list response header (8 bytes).
+    * If the daemon rejected early (e.g. unauthorized), it sends a simple
+    * 4-byte admin_msg_response_t instead. Handle both cases. */
+   memset(resp, 0, sizeof(*resp));
    ssize_t n = read(fd, resp, sizeof(*resp));
-   if (n != sizeof(*resp)) {
+
+   if (n == (ssize_t)sizeof(admin_msg_response_t)) {
+      /* Got a 4-byte simple response — this is an error (unauthorized, etc.) */
+      if (resp->response_code != ADMIN_RESP_SUCCESS) {
+         fprintf(stderr, "Error: %s\n",
+                 admin_resp_strerror((admin_resp_code_t)resp->response_code));
+         return -1;
+      }
+      /* Success but short — shouldn't happen for list commands */
+      fprintf(stderr, "Error: Unexpected short response from daemon\n");
+      return -1;
+   }
+
+   if (n != (ssize_t)sizeof(*resp)) {
       if (n == 0) {
          fprintf(stderr, "Error: Daemon closed connection\n");
       } else if (n < 0) {
@@ -244,6 +261,12 @@ static int recv_list_response(int fd,
 
    if (resp->version != ADMIN_PROTOCOL_VERSION) {
       fprintf(stderr, "Error: Protocol version mismatch\n");
+      return -1;
+   }
+
+   /* Check for error in the list response itself */
+   if (resp->response_code != ADMIN_RESP_SUCCESS) {
+      fprintf(stderr, "Error: %s\n", admin_resp_strerror((admin_resp_code_t)resp->response_code));
       return -1;
    }
 
@@ -879,7 +902,7 @@ const char *admin_resp_strerror(admin_resp_code_t code) {
       case ADMIN_RESP_VERSION_MISMATCH:
          return "Protocol version mismatch - update dawn-admin";
       case ADMIN_RESP_UNAUTHORIZED:
-         return "Unauthorized - invalid admin credentials";
+         return "Unauthorized - run as root, the daemon user, or a member of the daemon's group";
       case ADMIN_RESP_LAST_ADMIN:
          return "Cannot delete the last admin user";
       case ADMIN_RESP_NOT_FOUND:
