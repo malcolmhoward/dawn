@@ -1,41 +1,41 @@
 # =============================================================================
-# DAWN Multi-Stage Dockerfile (Multi-Arch: amd64 + arm64)
+# DAWN Multi-Stage Dockerfile — CUDA Variant (Multi-Arch: amd64 + arm64)
 # =============================================================================
-# Stage 1: dawn-deps    — apt packages + from-source dependency builds (cached)
-# Stage 2: dawn-builder — compile DAWN server binary
-# Stage 3: dawn-runtime — minimal deployment image
+# Stage 1: dawn-deps    — apt packages + CUDA ONNX Runtime from source
+# Stage 2: dawn-builder — compile DAWN server binary with CUDA acceleration
+# Stage 3: dawn-runtime — minimal deployment image with CUDA runtime
 #
-# Usage (native build):
-#   docker build -t dawn .
+# Usage:
+#   docker build -f Dockerfile.cuda -t dawn:cuda .
 #
-# Usage (cross-platform via buildx):
-#   docker buildx build --platform linux/amd64,linux/arm64 -t dawn .
-#
-# Running:
-#   docker run -v /path/to/models:/var/lib/dawn/models \
+# Running (requires nvidia-container-toolkit):
+#   docker run --gpus all \
+#              -v /path/to/models:/var/lib/dawn/models \
 #              -v /path/to/dawn.toml:/var/lib/dawn/dawn.toml:ro \
-#              -p 3000:3000 dawn
+#              -p 3000:3000 dawn:cuda
 #
 # For --read-only deployments:
-#   docker run --read-only --tmpfs /tmp \
+#   docker run --gpus all --read-only --tmpfs /tmp \
 #              -v /path/to/data:/var/lib/dawn ...
 #
-# Note: This image uses CPU-only ONNX Runtime on both architectures.
-# For GPU-accelerated Whisper ASR, use the CUDA variant instead:
-#   docker build -f Dockerfile.cuda -t dawn:cuda .
+# Build time: ~30-60 minutes (ONNX Runtime from-source CUDA build)
+# See also: Dockerfile (CPU-only variant, much faster build)
 # =============================================================================
 
 # -----------------------------------------------------------------------------
-# Stage 1: Dependencies
+# Stage 1: Dependencies (CUDA devel image for nvcc + toolkit)
 # -----------------------------------------------------------------------------
-FROM debian:bookworm-slim AS dawn-deps
+FROM nvidia/cuda:12.6.3-devel-ubuntu22.04 AS dawn-deps
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Build tools
+# Build tools + DAWN dependencies
+# Ubuntu 22.04 package names (not Debian Bookworm)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    cmake build-essential pkg-config git wget ca-certificates \
-    autotools-dev automake autoconf libtool \
+    build-essential pkg-config git wget ca-certificates \
+    autotools-dev automake autoconf libtool unzip python3 \
+    # cuDNN (not included in nvidia/cuda devel image)
+    libcudnn9-dev-cuda-12 \
     # Core required
     libcurl4-openssl-dev libjson-c-dev libssl-dev libsqlite3-dev \
     libsodium-dev libspdlog-dev libwebsockets-dev libopus-dev \
@@ -48,34 +48,42 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libical-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# --- ONNX Runtime (pre-built, arch-specific) ---
-# amd64: v1.22.0, arm64: v1.19.2 — arm64 uses older version because
-# v1.22.0 has no pre-built aarch64 tarball. Matches scripts/lib/libs.sh.
+# CMake 3.28 required by ONNX Runtime v1.19.2 (Ubuntu 22.04 ships 3.22).
+# Cannot use latest CMake — versions 3.31+ break google_nsync's old cmake_minimum_required.
+ARG CMAKE_VERSION=3.28.6
 ARG TARGETARCH
-ARG ONNX_VERSION_AMD64=1.22.0
-ARG ONNX_SHA256_AMD64=8344d55f93d5bc5021ce342db50f62079daf39aaafb5d311a451846228be49b3
-ARG ONNX_VERSION_ARM64=1.19.2
-ARG ONNX_SHA256_ARM64=5e30145277d6d6fcb0e8f14f0d0ab5048af7b13ffd608023bb1e2875621fab07
 RUN set -e; \
-    if [ "$TARGETARCH" = "arm64" ]; then \
-        ONNX_VERSION="${ONNX_VERSION_ARM64}"; \
-        ONNX_SHA256="${ONNX_SHA256_ARM64}"; \
-        ONNX_ARCH="aarch64"; \
-    else \
-        ONNX_VERSION="${ONNX_VERSION_AMD64}"; \
-        ONNX_SHA256="${ONNX_SHA256_AMD64}"; \
-        ONNX_ARCH="x64"; \
-    fi; \
-    ONNX_TARBALL="onnxruntime-linux-${ONNX_ARCH}-${ONNX_VERSION}.tgz"; \
-    ONNX_DIR="onnxruntime-linux-${ONNX_ARCH}-${ONNX_VERSION}"; \
-    cd /tmp \
-    && wget -q "https://github.com/microsoft/onnxruntime/releases/download/v${ONNX_VERSION}/${ONNX_TARBALL}" \
-    && echo "${ONNX_SHA256}  ${ONNX_TARBALL}" | sha256sum -c \
-    && tar xzf "${ONNX_TARBALL}" \
-    && cp -a "${ONNX_DIR}/lib/"* /usr/local/lib/ \
-    && cp -r "${ONNX_DIR}/include/"* /usr/local/include/ \
+    if [ "$TARGETARCH" = "arm64" ]; then CMAKE_ARCH="aarch64"; \
+    else CMAKE_ARCH="x86_64"; fi; \
+    wget -q "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-${CMAKE_ARCH}.tar.gz" \
+    && tar xzf "cmake-${CMAKE_VERSION}-linux-${CMAKE_ARCH}.tar.gz" --strip-components=1 -C /usr/local \
+    && rm "cmake-${CMAKE_VERSION}-linux-${CMAKE_ARCH}.tar.gz"
+
+# --- ONNX Runtime (built from source with CUDA) ---
+# v1.19.2 is the latest version that builds cleanly on both amd64 and arm64
+# with CUDA 12.x. See scripts/lib/libs.sh for the bare-metal equivalent.
+ARG ONNX_VERSION=1.19.2
+# Pre-download Eigen to avoid FetchContent failures inside Docker
+ARG EIGEN_COMMIT=e7248b26a1ed53fa030c5c459f7ea095dfd276ac
+RUN wget -q -O /tmp/eigen.zip \
+    "https://gitlab.com/libeigen/eigen/-/archive/${EIGEN_COMMIT}/eigen-${EIGEN_COMMIT}.zip" \
+    && unzip -q /tmp/eigen.zip -d /tmp/eigen-src \
+    && rm /tmp/eigen.zip
+
+RUN cd /tmp \
+    && git clone --recursive --branch v${ONNX_VERSION} --depth 1 \
+       https://github.com/microsoft/onnxruntime.git \
+    && cd onnxruntime \
+    && ./build.sh --use_cuda \
+       --cudnn_home /usr/local/cuda --cuda_home /usr/local/cuda \
+       --config MinSizeRel --update --build --build_shared_lib \
+       --allow_running_as_root \
+       --parallel 2 --nvcc_threads 1 \
+       --cmake_extra_defines "FETCHCONTENT_SOURCE_DIR_EIGEN=/tmp/eigen-src/eigen-${EIGEN_COMMIT}" \
+    && cp -a build/Linux/MinSizeRel/libonnxruntime.so* /usr/local/lib/ \
+    && cp include/onnxruntime/core/session/*.h /usr/local/include/ \
     && ldconfig \
-    && rm -rf /tmp/onnxruntime-*
+    && rm -rf /tmp/onnxruntime /tmp/eigen-src
 
 # --- espeak-ng (rhasspy fork, pinned commit) ---
 ARG ESPEAK_COMMIT=8593723f10cfd9befd50de447f14bf0a9d2a14a4
@@ -115,8 +123,7 @@ COPY . /src
 WORKDIR /src
 
 # whisper.cpp submodule must be present in the build context.
-# When building via CI, use: git checkout --recurse-submodules
-# When building locally: git submodule update --init whisper.cpp
+# git submodule update --init whisper.cpp
 
 RUN cmake --preset server \
     && make -C build-server -j"$(nproc)"
@@ -124,9 +131,9 @@ RUN cmake --preset server \
 RUN cmake --install build-server --prefix /opt/dawn
 
 # -----------------------------------------------------------------------------
-# Stage 3: Runtime
+# Stage 3: Runtime (CUDA runtime — no toolkit/nvcc)
 # -----------------------------------------------------------------------------
-FROM debian:bookworm-slim AS dawn-runtime
+FROM nvidia/cuda:12.6.3-runtime-ubuntu22.04 AS dawn-runtime
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -134,15 +141,17 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN groupadd -r dawn && useradd -r -g dawn -d /var/lib/dawn -s /sbin/nologin dawn
 
 # Runtime libraries only (no -dev packages)
+# Ubuntu 22.04 package names
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libcurl4 libjson-c5 libssl3 libsqlite3-0 \
-    libsodium23 libsndfile1 libspdlog1.10 libfmt9 libwebsockets17 libopus0 \
-    libmosquitto1 libflac12 libsamplerate0 libuuid1 libncurses6 \
+    libcudnn9-cuda-12 \
+    libsodium23 libsndfile1 libspdlog1 libfmt8 libwebsockets16 libopus0 \
+    libmosquitto1 libflac8 libsamplerate0 libuuid1 libncurses6 \
     libasound2 libpulse0 \
     libmpg123-0 libvorbis0a libvorbisfile3 \
-    # MuPDF is statically linked; these are its transitive shared deps + other link deps
+    # MuPDF is statically linked; these are its transitive shared deps
     libfreetype6 libharfbuzz0b libzip4 libxml2 \
-    libgumbo1 libopenjp2-7 libjbig2dec0 libmujs2 libjpeg62-turbo \
+    libgumbo1 libopenjp2-7 libjbig2dec0 libmujs1 libjpeg-turbo8 \
     libgomp1 \
     libical3 \
     ca-certificates \
@@ -171,6 +180,9 @@ RUN mkdir -p /var/lib/dawn/models /var/lib/dawn/db \
 
 # Add binaries to PATH
 ENV PATH="/opt/dawn/bin:${PATH}"
+# CUDA runtime library path (nvidia-container-toolkit typically handles this,
+# but set explicitly as fallback)
+ENV LD_LIBRARY_PATH="/usr/local/cuda/lib64:${LD_LIBRARY_PATH}"
 
 EXPOSE 3000
 VOLUME /var/lib/dawn
