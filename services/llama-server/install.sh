@@ -53,17 +53,16 @@ error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 # min_memory_gb, speed, quality, vision (0/1), notes
 
 define_presets() {
-    # Preset A: Qwen3 4B Instruct
+    # Preset A: Qwen3 4B Instruct (no vision)
     PRESET_A_LABEL="Qwen3 4B Instruct"
-    PRESET_A_MODEL="Qwen3-4B-Instruct-2507-Q4_K_M.gguf"
-    PRESET_A_HF_REPO="unsloth/Qwen3-4B-Instruct-2507-GGUF"
-    PRESET_A_HF_FILE="Qwen3-4B-Instruct-2507-Q4_K_M.gguf"
+    PRESET_A_MODEL="Qwen_Qwen3-4B-Instruct-2507-Q4_K_M.gguf"
+    PRESET_A_HF_REPO="bartowski/Qwen_Qwen3-4B-Instruct-2507-GGUF"
+    PRESET_A_HF_FILE="Qwen_Qwen3-4B-Instruct-2507-Q4_K_M.gguf"
     PRESET_A_MMPROJ=""
     PRESET_A_MMPROJ_REPO=""
     PRESET_A_MMPROJ_FILE=""
     PRESET_A_TEMPLATE="qwen3_chatml.jinja"
     PRESET_A_REASONING="none"
-
     PRESET_A_CTX=16384
     PRESET_A_BATCH=768
     PRESET_A_TEMP="0.7"
@@ -72,11 +71,59 @@ define_presets() {
     PRESET_A_MIN_P=0
     PRESET_A_REPEAT="1.1"
     PRESET_A_MIN_MEM=6
-    PRESET_A_SPEED="35.5"
-    PRESET_A_QUALITY="84.8% (B)"
+    PRESET_A_SPEED="35.1"
+    PRESET_A_QUALITY="91.8% (A)"
     PRESET_A_VISION=0
-    PRESET_A_SIZE="2.3 GB"
-    PRESET_A_NOTES="Voice assistant, small hardware"
+    PRESET_A_SIZE="2.5 GB"
+    PRESET_A_NOTES="Voice, no vision"
+
+    # Preset A2: Qwen3.5 4B (vision, hybrid SSM)
+    PRESET_A2_LABEL="Qwen3.5 4B Vision"
+    PRESET_A2_MODEL="Qwen_Qwen3.5-4B-Q4_K_M.gguf"
+    PRESET_A2_HF_REPO="bartowski/Qwen_Qwen3.5-4B-GGUF"
+    PRESET_A2_HF_FILE="Qwen_Qwen3.5-4B-Q4_K_M.gguf"
+    PRESET_A2_MMPROJ="mmproj-Qwen_Qwen3.5-4B-f16.gguf"
+    PRESET_A2_MMPROJ_REPO="bartowski/Qwen_Qwen3.5-4B-GGUF"
+    PRESET_A2_MMPROJ_FILE="mmproj-Qwen_Qwen3.5-4B-f16.gguf"
+    PRESET_A2_TEMPLATE=""
+    PRESET_A2_REASONING="deepseek"
+    PRESET_A2_CTX=16384
+    PRESET_A2_BATCH=768
+    PRESET_A2_TEMP="0.7"
+    PRESET_A2_TOP_P="0.8"
+    PRESET_A2_TOP_K=20
+    PRESET_A2_MIN_P=0
+    PRESET_A2_REPEAT="1.1"
+    PRESET_A2_MIN_MEM=6
+    PRESET_A2_SPEED="28.4"
+    PRESET_A2_QUALITY="88.1% (B)"
+    PRESET_A2_VISION=1
+    PRESET_A2_SIZE="2.9 GB"
+    PRESET_A2_NOTES="Vision, small hardware"
+
+    # Preset A3: Gemma 3 4B Vision (fastest 4B with vision)
+    PRESET_A3_LABEL="Gemma 3 4B Vision"
+    PRESET_A3_MODEL="google_gemma-3-4b-it-Q4_K_M.gguf"
+    PRESET_A3_HF_REPO="bartowski/google_gemma-3-4b-it-GGUF"
+    PRESET_A3_HF_FILE="google_gemma-3-4b-it-Q4_K_M.gguf"
+    PRESET_A3_MMPROJ="mmproj-google_gemma-3-4b-it-f16.gguf"
+    PRESET_A3_MMPROJ_REPO="bartowski/google_gemma-3-4b-it-GGUF"
+    PRESET_A3_MMPROJ_FILE="mmproj-google_gemma-3-4b-it-f16.gguf"
+    PRESET_A3_TEMPLATE=""
+    PRESET_A3_REASONING="deepseek"
+    PRESET_A3_CTX=16384
+    PRESET_A3_BATCH=768
+    PRESET_A3_TEMP="1.0"
+    PRESET_A3_TOP_P="0.95"
+    PRESET_A3_TOP_K=64
+    PRESET_A3_MIN_P=0
+    PRESET_A3_REPEAT="1.0"
+    PRESET_A3_MIN_MEM=6
+    PRESET_A3_SPEED="36.3"
+    PRESET_A3_QUALITY="87.3% (B)"
+    PRESET_A3_VISION=1
+    PRESET_A3_SIZE="2.5 GB"
+    PRESET_A3_NOTES="Best for 16GB + vision"
 
     # Preset B: Qwen3 4B Thinking
     PRESET_B_LABEL="Qwen3 4B Thinking"
@@ -103,30 +150,29 @@ define_presets() {
     PRESET_B_SIZE="2.3 GB"
     PRESET_B_NOTES="Reasoning mode"
 
-    # Preset C: Qwen3 8B
-    PRESET_C_LABEL="Qwen3 8B"
-    PRESET_C_MODEL="Qwen3-8B-Q4_K_M.gguf"
-    PRESET_C_HF_REPO="Qwen/Qwen3-8B-GGUF"
-    PRESET_C_HF_FILE="Qwen3-8B-Q4_K_M.gguf"
-    PRESET_C_MMPROJ=""
-    PRESET_C_MMPROJ_REPO=""
-    PRESET_C_MMPROJ_FILE=""
-    PRESET_C_TEMPLATE="qwen3_chatml.jinja"
-    PRESET_C_REASONING="none"
-
+    # Preset C: Gemma 3 12B Vision
+    PRESET_C_LABEL="Gemma 3 12B Vision"
+    PRESET_C_MODEL="google_gemma-3-12b-it-Q4_K_M.gguf"
+    PRESET_C_HF_REPO="bartowski/google_gemma-3-12b-it-GGUF"
+    PRESET_C_HF_FILE="google_gemma-3-12b-it-Q4_K_M.gguf"
+    PRESET_C_MMPROJ="mmproj-google_gemma-3-12b-it-f16.gguf"
+    PRESET_C_MMPROJ_REPO="bartowski/google_gemma-3-12b-it-GGUF"
+    PRESET_C_MMPROJ_FILE="mmproj-google_gemma-3-12b-it-f16.gguf"
+    PRESET_C_TEMPLATE=""
+    PRESET_C_REASONING="deepseek"
     PRESET_C_CTX=16384
-    PRESET_C_BATCH=512
-    PRESET_C_TEMP="0.7"
-    PRESET_C_TOP_P="0.8"
-    PRESET_C_TOP_K=20
+    PRESET_C_BATCH=768
+    PRESET_C_TEMP="1.0"
+    PRESET_C_TOP_P="0.95"
+    PRESET_C_TOP_K=64
     PRESET_C_MIN_P=0
-    PRESET_C_REPEAT="1.1"
-    PRESET_C_MIN_MEM=10
-    PRESET_C_SPEED="~4"
-    PRESET_C_QUALITY="TBD"
-    PRESET_C_VISION=0
-    PRESET_C_SIZE="4.5 GB"
-    PRESET_C_NOTES="Quality over speed"
+    PRESET_C_REPEAT="1.0"
+    PRESET_C_MIN_MEM=16
+    PRESET_C_SPEED="16.1"
+    PRESET_C_QUALITY="91.8% (A)"
+    PRESET_C_VISION=1
+    PRESET_C_SIZE="7.3 GB"
+    PRESET_C_NOTES="High quality + vision"
 
     # Preset D: Gemma 4 31B dense
     PRESET_D_LABEL="Gemma 4 31B Vision (dense)"
@@ -189,7 +235,7 @@ define_presets() {
     PRESET_F_TEMPLATE=""
     PRESET_F_REASONING="deepseek"
 
-    PRESET_F_CTX=32768
+    PRESET_F_CTX=131072
     PRESET_F_BATCH=768
     PRESET_F_TEMP="0.7"
     PRESET_F_TOP_P="0.8"
@@ -228,7 +274,7 @@ define_presets() {
     PRESET_G_SIZE="15.9 GB"
     PRESET_G_NOTES="PENDING: thinking leak"
 
-    ALL_PRESETS="A B C D E F G"
+    ALL_PRESETS="A A2 A3 B C D E F G"
 }
 
 # Get a preset variable by name: get_preset_var F LABEL -> value
@@ -479,6 +525,57 @@ check_model_files() {
 }
 
 # =============================================================================
+# Preserve existing settings on re-install
+# =============================================================================
+
+# Flags to track whether HOST/PORT were explicitly set on CLI
+CLI_HOST_SET=false
+CLI_PORT_SET=false
+
+read_existing_config() {
+    local conf_file="$CONFIG_DIR/llama-server.conf"
+    if [ ! -f "$conf_file" ]; then
+        return
+    fi
+
+    log "Detected existing configuration"
+
+    # Read existing values
+    local existing_host=$(grep -E '^HOST=' "$conf_file" | head -1 | cut -d= -f2)
+    local existing_port=$(grep -E '^PORT=' "$conf_file" | head -1 | cut -d= -f2)
+
+    # Preserve HOST if not explicitly overridden on CLI
+    if [ "$CLI_HOST_SET" = false ] && [ -n "$existing_host" ] && [ "$existing_host" != "$HOST" ]; then
+        if [ -t 0 ]; then
+            warn "Existing HOST=$existing_host (default: $HOST)"
+            read -r -p "  Keep existing HOST? [Y/n]: " confirm
+            if [[ ! "$confirm" =~ ^[Nn] ]]; then
+                HOST="$existing_host"
+                log "Preserving HOST=$HOST"
+            fi
+        else
+            HOST="$existing_host"
+            log "Preserving existing HOST=$HOST"
+        fi
+    fi
+
+    # Preserve PORT if not explicitly overridden on CLI
+    if [ "$CLI_PORT_SET" = false ] && [ -n "$existing_port" ] && [ "$existing_port" != "$PORT" ]; then
+        if [ -t 0 ]; then
+            warn "Existing PORT=$existing_port (default: $PORT)"
+            read -r -p "  Keep existing PORT? [Y/n]: " confirm
+            if [[ ! "$confirm" =~ ^[Nn] ]]; then
+                PORT="$existing_port"
+                log "Preserving PORT=$PORT"
+            fi
+        else
+            PORT="$existing_port"
+            log "Preserving existing PORT=$PORT"
+        fi
+    fi
+}
+
+# =============================================================================
 # Generate configuration file
 # =============================================================================
 
@@ -573,10 +670,12 @@ parse_args() {
                 ;;
             -p|--port)
                 PORT="$2"
+                CLI_PORT_SET=true
                 shift 2
                 ;;
             --host)
                 HOST="$2"
+                CLI_HOST_SET=true
                 shift 2
                 ;;
             -h|--help)
@@ -597,13 +696,15 @@ parse_args() {
                 echo "  -h, --help             Show this help message"
                 echo ""
                 echo "Presets:"
-                echo "  A  Qwen3 4B Instruct        2.3 GB   Voice, small hardware"
-                echo "  B  Qwen3 4B Thinking         2.3 GB   Reasoning mode"
-                echo "  C  Qwen3 8B                  4.5 GB   Quality over speed"
-                echo "  D  Gemma 4 31B Vision       18.2 GB   WebUI only (64GB)"
-                echo "  E  Qwen3.5 27B Vision       15.9 GB   WebUI only (64GB)"
-                echo "  F  Qwen3.5 35B-A3B MoE      19.9 GB   Recommended for 64GB"
-                echo "  G  Gemma 4 26B-A4B MoE      15.9 GB   Pending thinking fix"
+                echo "  A   Qwen3 4B Instruct        2.5 GB   Voice, no vision"
+                echo "  A2  Qwen3.5 4B Vision        2.9 GB   Vision, small hardware"
+                echo "  A3  Gemma 3 4B Vision         2.5 GB   Fastest 4B + vision"
+                echo "  B   Qwen3 4B Thinking         2.5 GB   Reasoning mode"
+                echo "  C   Gemma 3 12B Vision        7.3 GB   High quality + vision"
+                echo "  D   Gemma 4 31B Vision       18.2 GB   WebUI only (64GB)"
+                echo "  E   Qwen3.5 27B Vision       15.9 GB   WebUI only (64GB)"
+                echo "  F   Qwen3.5 35B-A3B MoE      19.9 GB   Recommended for 64GB"
+                echo "  G   Gemma 4 26B-A4B MoE      15.9 GB   Pending thinking fix"
                 echo ""
                 echo "Examples:"
                 echo "  $0                     # Interactive preset selection"
@@ -715,7 +816,7 @@ if [ -n "$CLI_MODEL_PATH" ]; then
 elif [ -n "$CLI_PRESET" ]; then
     # Non-interactive preset mode
     if [[ ! " $ALL_PRESETS " == *" $CLI_PRESET "* ]]; then
-        error "Invalid preset: $CLI_PRESET (valid: A B C D E F G)"
+        error "Invalid preset: $CLI_PRESET (valid: A A2 A3 B C D E F G)"
     fi
     SELECTED_PRESET="$CLI_PRESET"
     log "Preset $SELECTED_PRESET: $(get_preset_var "$SELECTED_PRESET" LABEL)"
@@ -771,10 +872,26 @@ else
     done
 fi
 
-# --- Set permissions ---
+# --- Set permissions (preserve custom permissions on re-install) ---
 log "Setting permissions"
+# Check for custom permissions on models dir before overwriting
+MODELS_PERMS=$(stat -c '%a' "$DATA_DIR/models" 2>/dev/null)
 chown -R "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR"
 chmod -R 755 "$DATA_DIR"
+if [ -n "$MODELS_PERMS" ] && [ "$MODELS_PERMS" != "755" ]; then
+    if [ -t 0 ]; then
+        echo ""
+        warn "Models directory had custom permissions: $MODELS_PERMS (reset to 755)"
+        read -r -p "  Restore previous permissions ($MODELS_PERMS)? [Y/n]: " confirm
+        if [[ ! "$confirm" =~ ^[Nn] ]]; then
+            chmod "$MODELS_PERMS" "$DATA_DIR/models"
+            log "Restored models directory permissions: $MODELS_PERMS"
+        fi
+    else
+        chmod "$MODELS_PERMS" "$DATA_DIR/models"
+        log "Preserved models directory permissions: $MODELS_PERMS"
+    fi
+fi
 chown "$SERVICE_USER:$SERVICE_USER" "/var/log/llama-cpp"
 chmod 755 "/var/log/llama-cpp"
 
@@ -784,6 +901,9 @@ if [ ! -f /etc/ld.so.conf.d/llama-cpp.conf ]; then
     echo "/usr/local/lib" > /etc/ld.so.conf.d/llama-cpp.conf
     ldconfig
 fi
+
+# --- Check existing config and preserve user settings ---
+read_existing_config
 
 # --- Generate configuration ---
 generate_config

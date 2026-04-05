@@ -8,22 +8,62 @@ All speeds measured on **Jetson AGX Orin 64GB at MAXN (60W)** power mode.
 Run `sudo nvpmodel -m 0 && sudo jetson_clocks` before benchmarking.
 At 30W mode, speeds are ~3x slower.
 
-### MoE Vision Models (AGX Orin 64GB) — Voice-viable with vision
+### Recommended Configurations
 
-| Model | Active/Total | Size | Quality | Speed | Vision | Notes |
-|-------|-------------|------|---------|-------|--------|-------|
-| **Qwen3.5 35B-A3B** | 3B/35B MoE | 19.9 GB | 93.3% (A) | 29.6 tok/s | Yes | **Recommended** for production |
-| Gemma 4 26B-A4B | 4B/25B MoE | 15.9 GB | 95.5% (A) | 32.2 tok/s | Yes | Faster + higher quality, but thinking leaks (see below) |
+| Use Case | Model | Preset | Speed | Quality | Vision |
+|----------|-------|--------|-------|---------|--------|
+| **Home (64GB Orin)** | Qwen3.5 35B-A3B MoE | F | 29.6 tok/s | 93.3% (A) | Yes |
+| **Helmet (16GB Orin)** | Gemma 3 4B IT | A3 | 13.9 tok/s (28W) | 87.3% (B) | Yes |
+| **Voice only (any)** | Qwen3 4B Instruct | A | 35.1 tok/s | 91.8% (A) | No |
 
-### Dense Models
+### Full Benchmark Results (AGX Orin 64GB MAXN)
 
-| Model | Params | Size | Quality | Speed | Vision | Use Case |
-|-------|--------|------|---------|-------|--------|----------|
-| **Qwen3-4B-Instruct** | 4.0B | 2.3 GB | 84.8% (B) | 35.5 tok/s | No | Voice (no vision needed) |
-| **Qwen3-4B-Thinking** | 4.0B | 2.3 GB | TBD | TBD | No | Shows reasoning process |
-| Qwen3-8B | 8.2B | ~4.5 GB | TBD | TBD | No | Quality over speed |
-| Qwen3.5-27B Vision | 26.9B | 15.9 GB | TBD | 7.2 tok/s | Yes | WebUI only (too slow for voice) |
-| Gemma 4 31B Vision | 30.7B | 18.2 GB | TBD | 6.8 tok/s | Yes | WebUI only (too slow for voice) |
+TTFT = time to first token with DAWN's full system prompt (~1000 tokens).
+Cold = first request after server start. Warm = subsequent requests (prompt cached).
+
+**4B class (voice-viable on all hardware):**
+
+| Model | Type | Size | Quality | Speed | Cold TTFT | Warm TTFT | Vision | Notes |
+|-------|------|------|---------|-------|-----------|-----------|--------|-------|
+| **Gemma 3 4B IT** | Dense | 2.5 GB | 87.3% (B) | 36.3 tok/s | 669 ms | 676 ms | Yes | Fastest 4B + vision (64GB) |
+| **Gemma 3 4B IT** | Dense | 2.5 GB | 87.3% (B) | 13.9 tok/s | 1820 ms | 158 ms | Yes | 16GB Orin @ 28W |
+| **Qwen3 4B Instruct** | Dense | 2.5 GB | 91.8% (A) | 35.1 tok/s | 659 ms | 95 ms | No | Best prompt caching |
+| Qwen3.5 4B | SSM hybrid | 2.9 GB | 88.1% (B) | 28.4 tok/s | 950 ms | 760 ms | Yes | Vision, slower (SSM overhead) |
+
+**12B+ class (mixed voice/WebUI):**
+
+| Model | Type | Size | Quality | Speed | Cold TTFT | Warm TTFT | Vision | Notes |
+|-------|------|------|---------|-------|-----------|-----------|--------|-------|
+| Gemma 3 12B IT | Dense | 7.3 GB | 91.8% (A) | 16.1 tok/s | 1904 ms | 1956 ms | Yes | WebUI quality tier |
+
+**MoE class (voice-viable on 64GB):**
+
+| Model | Active/Total | Size | Quality | Speed | Cold TTFT | Warm TTFT | Vision | Notes |
+|-------|-------------|------|---------|-------|-----------|-----------|--------|-------|
+| **Qwen3.5 35B-A3B** | 3B/35B | 19.9 GB | 93.3% (A) | 29.6 tok/s | 1894 ms | 1302 ms | Yes | **Home recommended**, 128K ctx |
+| Gemma 4 26B-A4B | 4B/25B | 15.9 GB | 95.5% (A) | 32.2 tok/s | 1467 ms | 1396 ms | Yes | Pending thinking fix |
+
+**Dense large (WebUI only on 64GB):**
+
+| Model | Params | Size | Speed | Vision | Notes |
+|-------|--------|------|-------|--------|-------|
+| Qwen3.5 27B | 26.9B | 15.9 GB | 7.2 tok/s | Yes | Too slow for voice |
+| Gemma 4 31B | 30.7B | 18.2 GB | 6.8 tok/s | Yes | Too slow + thinking leaks |
+
+### Context Scaling: Qwen3.5 35B-A3B on AGX Orin 64GB MAXN
+
+The hybrid SSM+Transformer architecture (30 SSM + 10 attention layers) makes
+context scaling nearly free. Only the 10 attention layers grow KV cache with
+context size, and with only 2 KV heads per layer the cost is minimal.
+
+| Context | KV Cache | Gen Speed | TTFT | Free Memory |
+|---------|----------|-----------|------|-------------|
+| 32K | 340 MB | 30.0 tok/s | 188 ms | ~30 GB |
+| 64K | 680 MB | 30.1 tok/s | 171 ms | ~29.7 GB |
+| **128K** | **1360 MB** | **30.2 tok/s** | **168 ms** | **~29 GB** |
+
+128K is the recommended context for Preset F on AGX Orin 64GB. Zero performance
+penalty vs 32K, with 4x the usable context for heavy tool workflows.
 
 ### Gemma 4 Thinking Leak Issue
 
@@ -32,13 +72,8 @@ responses via llama.cpp. The `<|channel>thought` content appears in
 `reasoning_content` with `--reasoning-format deepseek`, but the model spends its
 entire token budget on thinking and produces empty `content`. Neither
 `--reasoning off` nor `--chat-template-kwargs '{"enable_thinking":false}'`
-reliably suppresses this. Monitor `ggml-org/llama.cpp` issues for fixes. The
-Qwen 3.5 models do not have this issue.
-
-**Current recommendation:** Use **Qwen 3.5 35B-A3B** (Preset F) for production.
-The Gemma 4 26B-A4B scores higher on quality (95.5% vs 93.3%) and is faster
-(32.2 vs 29.6 tok/s), so it becomes the top recommendation once the thinking
-leak is resolved upstream.
+reliably suppresses this. Monitor `ggml-org/llama.cpp` issues for fixes.
+Gemma **3** models do not have this issue.
 
 ### Hardware: Jetson AGX Orin 64GB Developer Kit
 
@@ -437,16 +472,17 @@ sudo journalctl -u llama-server -n 100
 
 ### AGX Orin 64GB at MAXN (60W)
 
-| Metric | Cloud (GPT-4o) | Qwen3-4B | Qwen3.5-35B-A3B | Gemma4-26B-A4B |
-|--------|----------------|----------|-----------------|----------------|
-| Quality | 100% | 84.8% (B) | 93.3% (A) | 95.5% (A) |
-| Speed | ~50 tok/s | 35.5 tok/s | 29.6 tok/s | 32.2 tok/s |
-| Prompt eval | N/A | 181 tok/s | 78 tok/s | 110 tok/s |
-| Vision | Yes | No | Yes | Yes |
-| Thinking | Yes | No | Clean disable | Leaks (blocking) |
-| Offline | No | Yes | Yes | Yes |
-| Privacy | Data sent to API | Fully local | Fully local | Fully local |
-| Cost | ~$0.01/query | Free | Free | Free |
+| Metric | Cloud (GPT-4o) | Qwen3 4B | Gemma 3 4B | Qwen3.5 35B-A3B | Gemma 4 26B-A4B |
+|--------|----------------|----------|------------|-----------------|----------------|
+| Quality | 100% | 91.8% (A) | 87.3% (B) | 93.3% (A) | 95.5% (A) |
+| Speed | ~50 tok/s | 35.1 tok/s | 36.3 tok/s | 29.6 tok/s | 32.2 tok/s |
+| Prompt eval | N/A | 220 tok/s | 128 tok/s | 78 tok/s | 110 tok/s |
+| Vision | Yes | No | Yes | Yes | Yes |
+| Thinking | Yes | No | N/A | Clean disable | Leaks (blocking) |
+| Offline | No | Yes | Yes | Yes | Yes |
+| Privacy | Data sent | Local | Local | Local | Local |
+| Cost | ~$0.01/query | Free | Free | Free | Free |
+| Best for | - | Voice only | Helmet/16GB | Home/64GB | Pending fix |
 
 ### Power Mode Impact (Qwen3-4B baseline)
 
