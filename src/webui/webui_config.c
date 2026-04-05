@@ -963,11 +963,13 @@ void handle_set_config(ws_connection_t *conn, struct json_object *payload) {
          }
       }
 
-      /* Invalidate local provider and models cache if endpoint changed */
+      /* Invalidate local provider, models, and context cache if endpoint changed */
       if (strcmp(old_local_endpoint, g_config.llm.local.endpoint) != 0) {
          llm_local_invalidate_cache();
          llm_local_invalidate_models_cache();
-         LOG_INFO("WebUI: Local LLM endpoint changed, invalidated provider and models cache");
+         llm_context_refresh_local();
+         LOG_INFO("WebUI: Local LLM endpoint changed, invalidated provider, models, and context "
+                  "cache");
       }
 
 #ifdef DAWN_ENABLE_HOMEASSISTANT_TOOL

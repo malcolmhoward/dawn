@@ -86,6 +86,7 @@ Available devices and actions:
 # Test Cases
 TEST_CASES = [
     # Boolean Actions - Enable
+    # Achievable: has_command(2) + json_valid(2) + command_accuracy(3) + sentence(1) + no_prose(1) + persona(1) + word_limit(1) = 11
     {
         "name": "Boolean Enable - Armor Display",
         "user": "Turn on the armor display",
@@ -93,7 +94,7 @@ TEST_CASES = [
         "expected_action": "enable",
         "expected_value": None,
         "type": "boolean",
-        "points": 10,
+        "points": 11,
         "checks": {
             "has_command": True,
             "json_valid": True,
@@ -104,6 +105,7 @@ TEST_CASES = [
         }
     },
     # Boolean Actions - Disable
+    # Achievable: has_command(2) + json_valid(2) + command_accuracy(3) + sentence(1) + no_prose(1) + persona(1) + word_limit(1) = 11
     {
         "name": "Boolean Disable - Object Detection",
         "user": "Turn off object detection",
@@ -111,7 +113,7 @@ TEST_CASES = [
         "expected_action": "disable",
         "expected_value": None,
         "type": "boolean",
-        "points": 10,
+        "points": 11,
         "checks": {
             "has_command": True,
             "json_valid": True,
@@ -122,6 +124,7 @@ TEST_CASES = [
         }
     },
     # Analog Actions - Set with value
+    # Achievable: has_command(2) + json_valid(2) + command_accuracy(3) + value(1) + sentence(1) + no_prose(1) + persona(1) + word_limit(1) = 12
     {
         "name": "Analog Set - Volume",
         "user": "Set the volume to 75",
@@ -129,7 +132,7 @@ TEST_CASES = [
         "expected_action": "set",
         "expected_value": 75,
         "type": "analog",
-        "points": 10,
+        "points": 12,
         "checks": {
             "has_command": True,
             "json_valid": True,
@@ -141,6 +144,7 @@ TEST_CASES = [
         }
     },
     # Getter Actions - Should be ONLY command, no sentence before
+    # Achievable: has_command(2) + json_valid(2) + command_accuracy(3) + command_only(2) = 9
     {
         "name": "Getter - Time",
         "user": "What time is it?",
@@ -148,7 +152,7 @@ TEST_CASES = [
         "expected_action": "get",
         "expected_value": None,
         "type": "getter",
-        "points": 10,
+        "points": 9,
         "checks": {
             "has_command": True,
             "json_valid": True,
@@ -164,7 +168,7 @@ TEST_CASES = [
         "expected_action": "get",
         "expected_value": None,
         "type": "getter",
-        "points": 10,
+        "points": 9,
         "checks": {
             "has_command": True,
             "json_valid": True,
@@ -174,6 +178,7 @@ TEST_CASES = [
         }
     },
     # Vision - Should be ONLY viewing command
+    # Achievable: has_command(2) + json_valid(2) + command_accuracy(3) + command_only(2) = 9
     {
         "name": "Vision Request",
         "user": "What am I looking at?",
@@ -181,7 +186,7 @@ TEST_CASES = [
         "expected_action": "get",
         "expected_value": None,
         "type": "vision",
-        "points": 10,
+        "points": 9,
         "checks": {
             "has_command": True,
             "json_valid": True,
@@ -191,6 +196,7 @@ TEST_CASES = [
         }
     },
     # Ambiguous Request - Should ask clarification
+    # Achievable: no_command(2) + persona(1) + word_limit(1) + clarification(3) = 7
     {
         "name": "Ambiguous Request",
         "user": "Mute it",
@@ -198,7 +204,7 @@ TEST_CASES = [
         "expected_action": None,
         "expected_value": None,
         "type": "clarification",
-        "points": 10,
+        "points": 7,
         "checks": {
             "has_command": False,  # Should NOT send command
             "asks_clarification": True,
@@ -207,6 +213,7 @@ TEST_CASES = [
         }
     },
     # Music Actions
+    # Achievable: has_command(2) + json_valid(2) + command_accuracy(3) + value(1) + sentence(1) + no_prose(1) + persona(1) + word_limit(1) = 12
     {
         "name": "Music Play",
         "user": "Play some jazz music",
@@ -214,7 +221,7 @@ TEST_CASES = [
         "expected_action": "play",
         "expected_value": "jazz",
         "type": "music",
-        "points": 10,
+        "points": 12,
         "checks": {
             "has_command": True,
             "json_valid": True,
@@ -226,6 +233,7 @@ TEST_CASES = [
         }
     },
     # Multiple Commands
+    # Achievable: has_command(2) + json_valid(2) + multiple(2) + sentence(1) + no_prose(1) + persona(1) + word_limit(1) = 10
     {
         "name": "Multiple Commands",
         "user": "Turn on the armor display and enable object detection",
@@ -234,7 +242,7 @@ TEST_CASES = [
             {"device": "detect", "action": "enable"}
         ],
         "type": "multiple",
-        "points": 15,
+        "points": 10,
         "checks": {
             "has_command": True,
             "json_valid": True,
@@ -246,6 +254,9 @@ TEST_CASES = [
         }
     },
     # Conversational - No command needed
+    # Achievable: no_command(2) + persona(1) + word_limit(1) = 4
+    # Note: "How are the systems looking" is intentionally ambiguous — a correct
+    # response is conversational with no command (Rule 6: answer verbally with no tags).
     {
         "name": "Conversational Question",
         "user": "How are the systems looking today?",
@@ -253,15 +264,15 @@ TEST_CASES = [
         "expected_action": None,
         "expected_value": None,
         "type": "conversational",
-        "points": 10,
+        "points": 4,
         "checks": {
             "has_command": False,  # No command for general questions
             "uses_sir_boss": True,
-            "friday_persona": True,
             "word_limit": 30,
         }
     },
     # Weather - With location provided (should use directly, like getter)
+    # Achievable: has_command(2) + json_valid(2) + command_accuracy(3) + command_only(2) + has_value(2) = 11
     {
         "name": "Weather with Location",
         "user": "What's the weather in Seattle, Washington?",
@@ -269,7 +280,7 @@ TEST_CASES = [
         "expected_action": "get",
         "expected_value": "Seattle",  # Partial match on city name
         "type": "weather",
-        "points": 10,
+        "points": 11,
         "checks": {
             "has_command": True,
             "json_valid": True,
@@ -278,6 +289,7 @@ TEST_CASES = [
         }
     },
     # Weather - Without location (should ask for clarification)
+    # Achievable: no_command(2) + persona(1) + word_limit(1) + clarification(3) = 7
     {
         "name": "Weather without Location",
         "user": "What's the weather like outside?",
@@ -285,7 +297,7 @@ TEST_CASES = [
         "expected_action": None,
         "expected_value": None,
         "type": "weather_clarify",
-        "points": 10,
+        "points": 7,
         "checks": {
             "has_command": False,  # Should NOT send command without location
             "asks_clarification": True,  # Should ask where
@@ -294,6 +306,7 @@ TEST_CASES = [
         }
     },
     # Web Search - Current events query
+    # Achievable: has_command(2) + json_valid(2) + command_accuracy(3) + command_only(2) + has_value(2) = 11
     {
         "name": "Web Search - News",
         "user": "What's the latest news about SpaceX?",
@@ -301,7 +314,7 @@ TEST_CASES = [
         "expected_action": "web",
         "expected_value": "SpaceX",  # Partial match
         "type": "search",
-        "points": 10,
+        "points": 11,
         "checks": {
             "has_command": True,
             "json_valid": True,
@@ -310,6 +323,7 @@ TEST_CASES = [
         }
     },
     # Web Search - General information query
+    # Achievable: has_command(2) + json_valid(2) + command_accuracy(3) + command_only(2) + has_value(2) = 11
     {
         "name": "Web Search - Information",
         "user": "Look up who won the Super Bowl last year",
@@ -317,7 +331,7 @@ TEST_CASES = [
         "expected_action": "web",
         "expected_value": "Super Bowl",  # Partial match
         "type": "search",
-        "points": 10,
+        "points": 11,
         "checks": {
             "has_command": True,
             "json_valid": True,
@@ -326,6 +340,18 @@ TEST_CASES = [
         }
     },
 ]
+
+
+def strip_thinking_leak(text: str) -> str:
+    """Strip thinking channel artifacts that leak from some models (e.g. Gemma 4).
+    Removes <channel|>, <|channel>thought...content, and <think>...</think> blocks."""
+    # Gemma 4 thinking leak: <channel|> prefix or <|channel>...<channel|> blocks
+    text = re.sub(r'<\|?channel\|?>(?:thought)?', '', text)
+    # Gemma 4 thought tags: <|thought|> prefix
+    text = re.sub(r'<\|?thought\|?>', '', text)
+    # Qwen/DeepSeek empty think blocks: <think>\n\n</think>\n\n
+    text = re.sub(r'<think>\s*</think>\s*', '', text)
+    return text.strip()
 
 
 def extract_commands(text: str) -> List[Dict]:
@@ -343,27 +369,29 @@ def extract_commands(text: str) -> List[Dict]:
 
 
 def count_words_before_command(text: str) -> int:
-    """Count words before first <command> tag"""
-    match = re.search(r'<command>', text)
+    """Count words before first <command> tag, ignoring thinking leak artifacts"""
+    cleaned = strip_thinking_leak(text)
+    match = re.search(r'<command>', cleaned)
     if not match:
-        return len(text.split())
-    before = text[:match.start()].strip()
+        return len(cleaned.split())
+    before = cleaned[:match.start()].strip()
     return len(before.split()) if before else 0
 
 
 def count_words_after_command(text: str) -> int:
-    """Count words after last </command> tag"""
-    matches = list(re.finditer(r'</command>', text))
+    """Count words after last </command> tag, ignoring thinking leak artifacts"""
+    cleaned = strip_thinking_leak(text)
+    matches = list(re.finditer(r'</command>', cleaned))
     if not matches:
         return 0
-    after = text[matches[-1].end():].strip()
+    after = cleaned[matches[-1].end():].strip()
     return len(after.split()) if after else 0
 
 
 def check_persona(text: str) -> bool:
     """Check if response uses FRIDAY persona markers (sir, boss, etc.)"""
-    text_lower = text.lower()
-    return 'sir' in text_lower or 'boss' in text_lower
+    cleaned = strip_thinking_leak(text).lower()
+    return 'sir' in cleaned or 'boss' in cleaned
 
 
 def check_clarification(text: str) -> bool:
@@ -411,9 +439,13 @@ def score_test_case(test: Dict, response: str) -> Tuple[int, Dict]:
     details = {}
     checks = test.get('checks', {})
 
-    # Extract commands from response
-    commands = extract_commands(response)
-    details['response'] = response
+    # Strip thinking leak artifacts before scoring
+    cleaned_response = strip_thinking_leak(response)
+
+    # Extract commands from cleaned response
+    commands = extract_commands(cleaned_response)
+    details['response'] = response  # Keep original for inspection
+    details['cleaned_response'] = cleaned_response
     details['commands_found'] = len(commands)
     details['commands'] = commands
 

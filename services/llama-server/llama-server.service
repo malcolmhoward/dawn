@@ -15,8 +15,29 @@ Environment="LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64:/usr/lib/aarch
 Environment="CUDA_VISIBLE_DEVICES=0"
 EnvironmentFile=/usr/local/etc/llama-cpp/llama-server.conf
 
-# Single line execution command (with optimal DAWN settings)
-ExecStart=/usr/local/bin/llama-server -m ${MODEL} --gpu-layers ${GPU_LAYERS} -c ${CONTEXT_SIZE} -b ${BATCH_SIZE} -ub ${UNBATCH_SIZE} -t ${THREADS} -ctk ${CACHE_TYPE_K} -ctv ${CACHE_TYPE_V} --flash-attn on --temp ${TEMPERATURE} --top-p ${TOP_P} --top-k ${TOP_K} --repeat-penalty ${REPEAT_PENALTY} --min-p ${MIN_P} --reasoning-format ${REASONING_FORMAT} --jinja --chat-template-file ${TEMPLATE} --host ${HOST} --port ${PORT}
+# Execution command (with optimal DAWN settings)
+# Shell wrapper enables conditional args: TEMPLATE (omit for built-in) and MMPROJ (vision models)
+ExecStart=/bin/sh -c 'exec /usr/local/bin/llama-server \
+  -m "${MODEL}" \
+  --gpu-layers "${GPU_LAYERS}" \
+  -c "${CONTEXT_SIZE}" \
+  -b "${BATCH_SIZE}" \
+  -ub "${UNBATCH_SIZE}" \
+  -t "${THREADS}" \
+  -ctk "${CACHE_TYPE_K}" \
+  -ctv "${CACHE_TYPE_V}" \
+  --flash-attn on \
+  --temp "${TEMPERATURE}" \
+  --top-p "${TOP_P}" \
+  --top-k "${TOP_K}" \
+  --repeat-penalty "${REPEAT_PENALTY}" \
+  --min-p "${MIN_P}" \
+  --reasoning-format "${REASONING_FORMAT}" \
+  --jinja \
+  ${TEMPLATE:+--chat-template-file "${TEMPLATE}"} \
+  ${MMPROJ:+--mmproj "${MMPROJ}"} \
+  --host "${HOST}" \
+  --port "${PORT}"'
 
 # Logging
 StandardOutput=append:/var/log/llama-cpp/server.log

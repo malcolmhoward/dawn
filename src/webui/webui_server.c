@@ -2558,6 +2558,12 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
          strncpy(old_tool_mode, config.tool_mode, sizeof(old_tool_mode) - 1);
          old_tool_mode[sizeof(old_tool_mode) - 1] = '\0';
 
+         /* Track old model + type for context cache invalidation */
+         char old_model[LLM_MODEL_NAME_MAX];
+         strncpy(old_model, config.model, sizeof(old_model) - 1);
+         old_model[sizeof(old_model) - 1] = '\0';
+         int old_type = config.type;
+
          /* Parse type (local/cloud) */
          if (json_object_object_get_ex(payload, "type", &type_obj)) {
             const char *new_type = json_object_get_string(type_obj);
@@ -2708,6 +2714,12 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
             } else {
                LOG_INFO("WebUI: Session %u LLM config updated (type=%d, provider=%d)",
                         conn->session->session_id, config.type, config.cloud_provider);
+
+               /* If local model or LLM type changed, context size may differ */
+               if (config.type == LLM_LOCAL &&
+                   (strcmp(old_model, config.model) != 0 || old_type != config.type)) {
+                  llm_context_refresh_local();
+               }
 
                /* If tool_mode changed, rebuild and update the session's system prompt */
                if (strcmp(old_tool_mode, config.tool_mode) != 0) {
