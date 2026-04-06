@@ -7,6 +7,79 @@ Tested on Ubuntu 24.04 LTS (x86_64) with NVIDIA GPU (optional).
 
 ---
 
+## Docker Quickstart
+
+The fastest way to run DAWN on any Linux system. Docker handles all dependencies — no manual compilation needed.
+
+### Prerequisites
+
+- [Docker Engine](https://docs.docker.com/engine/install/) (20.10+)
+- For CUDA variant: [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)
+
+### CPU Image (amd64 + arm64, 297MB)
+
+```bash
+# Build
+git clone --recursive https://github.com/The-OASIS-Project/dawn.git && cd dawn
+docker build -t dawn .
+
+# Run
+docker run -d --name dawn \
+   -p 3000:3000 \
+   -v /path/to/models:/var/lib/dawn/models \
+   -v /path/to/dawn.toml:/var/lib/dawn/dawn.toml:ro \
+   -v /path/to/secrets.toml:/var/lib/dawn/secrets.toml:ro \
+   -v dawn-data:/var/lib/dawn/db \
+   dawn
+```
+
+### CUDA Image (GPU-accelerated ASR, 3.55GB)
+
+Builds ONNX Runtime from source with CUDA support. First build takes 30-60 minutes; subsequent builds use Docker layer cache.
+
+```bash
+# Build (requires NVIDIA GPU or cross-compile)
+docker build -f Dockerfile.cuda -t dawn:cuda .
+
+# Run (requires nvidia-container-toolkit)
+docker run -d --name dawn --gpus all \
+   -p 3000:3000 \
+   -v /path/to/models:/var/lib/dawn/models \
+   -v /path/to/dawn.toml:/var/lib/dawn/dawn.toml:ro \
+   -v /path/to/secrets.toml:/var/lib/dawn/secrets.toml:ro \
+   -v dawn-data:/var/lib/dawn/db \
+   dawn:cuda
+```
+
+### Required Volumes
+
+| Mount | Purpose |
+|-------|---------|
+| `/var/lib/dawn/models` | Whisper ASR model, Piper voice model, Silero VAD model |
+| `/var/lib/dawn/dawn.toml` | Runtime configuration (bind as read-only) |
+| `/var/lib/dawn/secrets.toml` | API keys (bind as read-only) |
+| `/var/lib/dawn/db` | SQLite databases (conversations, memory, scheduler, etc.) |
+
+Run `./setup_models.sh` on the host first to download models, then mount the `models/` directory.
+
+### Security Notes
+
+- The container runs as a non-root `dawn` user
+- Supports `--read-only --tmpfs /tmp` for read-only root filesystem
+- Health monitored via `docker inspect` (HEALTHCHECK uses `dawn-admin ping`)
+- TLS: bind-mount your certificates and configure paths in `dawn.toml`
+
+### When to Use Docker vs Bare Metal
+
+| Choose Docker if... | Choose bare metal if... |
+|---------------------|------------------------|
+| You want quick setup without compiling dependencies | You need local microphone + speaker (wake word) |
+| You're deploying on a cloud server or VPS | You want maximum CUDA performance on Jetson |
+| You want reproducible, isolated deployments | You're developing or modifying DAWN source code |
+| You're running multiple services on one host | You need to minimize disk/memory overhead |
+
+---
+
 ## Automated Install
 
 The install script auto-detects x86_64 and handles everything:

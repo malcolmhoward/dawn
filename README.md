@@ -160,6 +160,7 @@ Choose the guide that matches your deployment:
 
 | Deployment | Guide | Description |
 |------------|-------|-------------|
+| **Docker** | [docs/GETTING_STARTED_SERVER.md — Docker](docs/GETTING_STARTED_SERVER.md#docker-quickstart) | Fastest path — pull and run with Docker (CPU or CUDA) |
 | **Jetson / Embedded** | [GETTING_STARTED.md](GETTING_STARTED.md) | Full setup with local microphone, speaker, wake word, and GPU |
 | **x86_64 Server** | [docs/GETTING_STARTED_SERVER.md](docs/GETTING_STARTED_SERVER.md) | WebUI + satellite connections, no local audio hardware needed |
 | **Cloud / x86_64 Server** | [docs/CLOUD_DEPLOYMENT.md](docs/CLOUD_DEPLOYMENT.md) | Platform independence, feature matrix, and architecture notes |
