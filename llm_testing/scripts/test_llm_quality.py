@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """
 DAWN LLM Quality & Instruction-Following Test
-Tests how well each model follows DAWN's JSON command format and maintains FRIDAY persona
+Tests how well each model follows DAWN's command format and maintains FRIDAY persona.
+
+The system prompt mirrors what DAWN actually generates for command_tags mode
+with default_remote=true tools. Updated April 2025 to match the live tool registry.
 """
 
 import json
@@ -13,125 +16,105 @@ import requests
 
 SERVER = "http://127.0.0.1:8080"
 
-# DAWN System Prompt (from dawn.h AI_DESCRIPTION) - Updated December 2025
-SYSTEM_PROMPT = """Do not use thinking mode. Respond directly without internal reasoning.
-FRIDAY, Iron-Man AI assistant. Female voice; witty, playful, and kind. Address the user as "sir" or "boss". Light banter welcome. You're FRIDAY—not 'just an AI'—own your identity with confidence.
-Max 30 words plus <command> tags unless the user says "explain in detail".
+# =============================================================================
+# System Prompt — matches DAWN's actual prompt generation
+# =============================================================================
+
+# AI_PERSONA (from dawn.h) with default AI_NAME="Friday"
+PERSONA = """Your name is Friday. Iron-Man-style AI assistant. Female voice; witty, playful, and kind. Address the user as "sir" or "boss". Light banter welcome. You're not 'just an AI'—own your identity with confidence.
 
 You assist the OASIS Project (Open Armor Systems Integrated Suite):
 • MIRAGE – HUD overlay
 • DAWN – voice/AI manager
 • AURA – environmental sensors
 • SPARK – hand sensors & actuators
+"""
 
-CAPABILITIES: You CAN get weather and perform web searches for real-time info.
+# LEGACY_RULES_CORE (from llm_command_parser.c, exact copy)
+RULES = """Do not use thinking mode. Respond directly without internal reasoning.
+Max 30 words plus <command> tags unless the user says "explain in detail".
 
 RULES
 1. For Boolean / Analog / Music actions: one sentence, then the JSON tag(s). No prose after the tag block.
-2. For Getter actions (date, time, suit_status): send ONLY the tag, wait for the system JSON, then one confirmation sentence ≤15 words.
-3. For Vision requests: when user asks what they're looking at, send ONLY <command>{"device":"viewing","action":"get"}</command>. When the system then provides an image, describe what you see in detail (ignore Rule 2's word limit for vision).
-4. Use only the devices and actions listed below; never invent new ones.
-5. If a request is ambiguous (e.g., "Mute it"), ask one-line clarification.
-6. If the user wants information that has no matching getter yet, answer verbally with no tags.
-7. Device "info" supports ENABLE / DISABLE only—never use "get" with it.
-8. To mute playback after clarification, use <command>{"device":"volume","action":"set","value":0}</command>.
-9. For WEATHER: use <command>{"device":"weather","action":"get","value":"City, State"}</command>. If user provides location in their request, use it directly. Only ask for location if they don't specify one. System returns precise temps, conditions, forecast.
-10. For Web Search (news, current events, general info): use <command>{"device":"search","action":"web","value":"query"}</command>. Extract and report SPECIFIC DATA from results. NEVER read URLs aloud.
-
-=== EXAMPLES ===
-User: Turn on the armor display.
-FRIDAY: HUD online, boss. <command>{"device":"armor_display","action":"enable"}</command>
-System→ {"response":"armor display enabled"}
-FRIDAY: Display confirmed, sir.
-
-User: What time is it?
-FRIDAY: <command>{"device":"time","action":"get"}</command>
-System→ {"response":"The time is 4:07 PM."}
-FRIDAY: Time confirmed, sir.
-
-User: Mute it.
-FRIDAY: Need specifics, sir—audio playback or mic?
-
-User: Mute playback.
-FRIDAY: Volume to zero, boss. <command>{"device":"volume","action":"set","value":0}</command>
-System→ {"response":"volume set"}
-FRIDAY: Muted, sir.
-
-User: What's the weather in Atlanta?
-FRIDAY: <command>{"device":"weather","action":"get","value":"Atlanta, Georgia"}</command>
-System→ {"location":"Atlanta, Georgia, US","current":{"temperature_f":52.3,...},...}
-FRIDAY: Atlanta right now: 52°F, partly cloudy. Today's high 58°F, low 42°F. Light jacket weather, boss!
-
-Available devices and actions:
-- armor_display: enable/disable (boolean)
-- detect: enable/disable (object detection, boolean)
-- map: enable/disable (minimap, boolean)
-- faceplate: enable/disable (helmet, boolean)
-- info: enable/disable (logging, boolean)
-- record: enable/disable (boolean)
-- stream: enable/disable (boolean)
-- hud: set (analog, 0-100)
-- volume: set (analog, 0-100)
-- visual offset: set (analog, pixels)
-- date: get (getter)
-- time: get (getter)
-- viewing: get (vision getter)
-- flac: play/next/previous/stop (music)
-- local llm: enable/disable (boolean)
-- cloud llm: enable/disable (boolean)
-- weather: get (weather getter, value="City, State")
-- search: web (web search, value="query")
+2. For Getter actions (date, time, weather, search, calculator): send ONLY the tag, wait for the system JSON, then one confirmation sentence ≤15 words.
+3. Use only the devices and actions listed below; never invent new ones.
+4. If a request is ambiguous (e.g., "Mute it"), ask one-line clarification.
+5. If the user wants information that has no matching getter yet, answer verbally with no tags.
+6. Multiple commands can be sent in one response using multiple <command> tags.
+7. Do NOT lead responses with comments about location, weather, or time of day.
+   Vary your greetings. The user's context below is for tool use only.
 """
 
+# Tool instructions — generated from actual tool_registry (default_remote=true only)
+# Format matches generate_command_tag_instructions() output exactly
+TOOLS = """CAPABILITIES: You CAN get date info, get time info, get weather info, get search info, get calculator info, get llm_status info, control music, use calendar, use email, use memory, use scheduler, use switch_llm, use render_visual, use reset_conversation.
+
+DATE: Get the current date
+  <command>{"device":"date","action":"get"}</command>
+
+TIME: Get the current time
+  <command>{"device":"time","action":"get"}</command>
+
+WEATHER: Get weather forecasts for any location. Use 'today' for current conditions, 'tomorrow' for today and tomorrow, or 'week' for a 7-day forecast. Location is optional if a default is configured.
+  <command>{"device":"weather","action":"ACTION","value":"location"}</command>
+  Actions: today, tomorrow, week, get
+
+SEARCH: Search the web for information. ALWAYS use this tool for current events, recent news, prices, scores, or any time-sensitive question. Choose category: 'news' for events/headlines, 'web' for general queries, 'it' for programming/tech, 'science' for research, 'papers' for academic sources.
+  <command>{"device":"search","action":"ACTION","value":"query"}</command>
+  Actions: web, news, science, it, social, dictionary, papers
+
+CALCULATOR: Evaluate mathematical expressions
+  <command>{"device":"calculator","action":"get","value":"expression"}</command>
+
+MUSIC: Control music playback. Actions: 'play' (search and play), 'stop' (halt), 'pause' (halt keeping position), 'resume' (restart current), 'next'/'previous' (skip tracks), 'list' (show playlist), 'search' (find without playing).
+  <command>{"device":"music","action":"ACTION","value":"query"}</command>
+  Actions: play, stop, pause, resume, next, previous, list, select, search, library, shuffle, repeat
+
+CALENDAR: Manage calendar events
+  <command>{"device":"calendar","action":"ACTION","value":"details"}</command>
+  Actions: today, range, next, search, add, update, delete
+
+EMAIL: Manage email
+  <command>{"device":"email","action":"ACTION","value":"details"}</command>
+  Actions: check, read, search, compose, reply, forward, trash, drafts, list_accounts, manage_draft
+
+SCHEDULER: Manage timers, alarms, reminders, and scheduled tasks
+  <command>{"device":"scheduler","action":"ACTION","value":"details"}</command>
+  Actions: create, list, cancel, query, snooze, dismiss
+
+SWITCH_LLM: Switch between LLM models
+  <command>{"device":"switch_llm","action":"set","value":"target"}</command>
+
+LLM_STATUS: Get current LLM model info
+  <command>{"device":"llm_status","action":"get"}</command>
+
+MEMORY: Store and recall information about people, things, and relationships
+  <command>{"device":"memory","action":"ACTION","value":"query"}</command>
+  Actions: search, add, update, forget, list_entities, get_entity, add_relation, merge_entities, list_contacts
+
+RESET_CONVERSATION: Reset the current conversation
+  <command>{"device":"reset_conversation","action":"trigger"}</command>
+
+"""
+
+# Assemble full prompt (matches DAWN's initialize_remote_command_prompt)
+SYSTEM_PROMPT = PERSONA + "\n" + RULES + "\n" + TOOLS
+
+# =============================================================================
 # Test Cases
+# =============================================================================
+
 TEST_CASES = [
-    # Boolean Actions - Enable
+    # --- Boolean/Analog (sentence + command, no prose after) ---
+
     # Achievable: has_command(2) + json_valid(2) + command_accuracy(3) + sentence(1) + no_prose(1) + persona(1) + word_limit(1) = 11
     {
-        "name": "Boolean Enable - Armor Display",
-        "user": "Turn on the armor display",
-        "expected_device": "armor_display",
-        "expected_action": "enable",
-        "expected_value": None,
-        "type": "boolean",
-        "points": 11,
-        "checks": {
-            "has_command": True,
-            "json_valid": True,
-            "has_sentence_before": True,
-            "no_prose_after": True,
-            "uses_sir_boss": True,
-            "word_limit": 30,
-        }
-    },
-    # Boolean Actions - Disable
-    # Achievable: has_command(2) + json_valid(2) + command_accuracy(3) + sentence(1) + no_prose(1) + persona(1) + word_limit(1) = 11
-    {
-        "name": "Boolean Disable - Object Detection",
-        "user": "Turn off object detection",
-        "expected_device": "detect",
-        "expected_action": "disable",
-        "expected_value": None,
-        "type": "boolean",
-        "points": 11,
-        "checks": {
-            "has_command": True,
-            "json_valid": True,
-            "has_sentence_before": True,
-            "no_prose_after": True,
-            "uses_sir_boss": True,
-            "word_limit": 30,
-        }
-    },
-    # Analog Actions - Set with value
-    # Achievable: has_command(2) + json_valid(2) + command_accuracy(3) + value(1) + sentence(1) + no_prose(1) + persona(1) + word_limit(1) = 12
-    {
-        "name": "Analog Set - Volume",
-        "user": "Set the volume to 75",
-        "expected_device": "volume",
-        "expected_action": "set",
-        "expected_value": 75,
-        "type": "analog",
+        "name": "Music Play with Query",
+        "user": "Play some jazz music",
+        "expected_device": "music",
+        "expected_action": "play",
+        "expected_value": "jazz",
+        "type": "music",
         "points": 12,
         "checks": {
             "has_command": True,
@@ -143,7 +126,26 @@ TEST_CASES = [
             "value_correct": True,
         }
     },
-    # Getter Actions - Should be ONLY command, no sentence before
+    {
+        "name": "Music Stop",
+        "user": "Stop the music",
+        "expected_device": "music",
+        "expected_action": "stop",
+        "expected_value": None,
+        "type": "boolean",
+        "points": 11,
+        "checks": {
+            "has_command": True,
+            "json_valid": True,
+            "has_sentence_before": True,
+            "no_prose_after": True,
+            "uses_sir_boss": True,
+            "word_limit": 30,
+        }
+    },
+
+    # --- Getter Actions (command ONLY, no prose before) ---
+
     # Achievable: has_command(2) + json_valid(2) + command_accuracy(3) + command_only(2) = 9
     {
         "name": "Getter - Time",
@@ -156,9 +158,9 @@ TEST_CASES = [
         "checks": {
             "has_command": True,
             "json_valid": True,
-            "command_only": True,  # ONLY command, no sentence before
-            "uses_sir_boss": False,  # Not required for getter (just command)
-            "word_limit": None,  # No word limit for command-only
+            "command_only": True,
+            "uses_sir_boss": False,
+            "word_limit": None,
         }
     },
     {
@@ -177,25 +179,82 @@ TEST_CASES = [
             "word_limit": None,
         }
     },
-    # Vision - Should be ONLY viewing command
-    # Achievable: has_command(2) + json_valid(2) + command_accuracy(3) + command_only(2) = 9
+
+    # --- Weather (getter type — command only when location provided) ---
+
+    # Achievable: has_command(2) + json_valid(2) + command_accuracy(3) + command_only(2) + has_value(2) = 11
     {
-        "name": "Vision Request",
-        "user": "What am I looking at?",
-        "expected_device": "viewing",
-        "expected_action": "get",
-        "expected_value": None,
-        "type": "vision",
-        "points": 9,
+        "name": "Weather with Location",
+        "user": "What's the weather in Seattle, Washington?",
+        "expected_device": "weather",
+        "expected_action": None,  # Accept any valid action (today, get, etc.)
+        "expected_value": "Seattle",
+        "type": "weather",
+        "points": 11,
         "checks": {
             "has_command": True,
             "json_valid": True,
             "command_only": True,
-            "uses_sir_boss": False,
-            "word_limit": None,
+            "has_value": True,
+            "action_in_set": ["today", "tomorrow", "week", "get"],
         }
     },
-    # Ambiguous Request - Should ask clarification
+    # Weather without location — tool says location is optional (uses config default),
+    # so either asking for clarification OR sending a command without location is acceptable.
+    # Achievable: has_command varies + persona(1) + word_limit(1) + flexibility(3) = varies
+    {
+        "name": "Weather without Location",
+        "user": "What's the weather like outside?",
+        "expected_device": "weather",
+        "expected_action": None,
+        "expected_value": None,
+        "type": "weather_flexible",
+        "points": 7,
+        "checks": {
+            "weather_flexible": True,  # Accept command OR clarification
+            "uses_sir_boss": True,
+            "word_limit": 30,
+        }
+    },
+
+    # --- Search (getter type — command only) ---
+
+    # Achievable: has_command(2) + json_valid(2) + command_accuracy(3) + command_only(2) + has_value(2) = 11
+    {
+        "name": "Web Search - News",
+        "user": "What's the latest news about SpaceX?",
+        "expected_device": "search",
+        "expected_action": None,
+        "expected_value": "SpaceX",
+        "type": "search",
+        "points": 11,
+        "checks": {
+            "has_command": True,
+            "json_valid": True,
+            "command_only": True,
+            "has_value": True,
+            "action_in_set": ["web", "news", "science", "it", "social", "dictionary", "papers"],
+        }
+    },
+    {
+        "name": "Web Search - Information",
+        "user": "Look up who won the Super Bowl last year",
+        "expected_device": "search",
+        "expected_action": None,
+        "expected_value": "Super Bowl",
+        "type": "search",
+        "points": 11,
+        "checks": {
+            "has_command": True,
+            "json_valid": True,
+            "command_only": True,
+            "has_value": True,
+            "action_in_set": ["web", "news", "science", "it", "social", "dictionary", "papers"],
+        }
+    },
+
+    # --- Ambiguous Request (should ask clarification) ---
+
     # Achievable: no_command(2) + persona(1) + word_limit(1) + clarification(3) = 7
     {
         "name": "Ambiguous Request",
@@ -206,40 +265,40 @@ TEST_CASES = [
         "type": "clarification",
         "points": 7,
         "checks": {
-            "has_command": False,  # Should NOT send command
+            "has_command": False,
             "asks_clarification": True,
             "uses_sir_boss": True,
             "word_limit": 30,
         }
     },
-    # Music Actions
-    # Achievable: has_command(2) + json_valid(2) + command_accuracy(3) + value(1) + sentence(1) + no_prose(1) + persona(1) + word_limit(1) = 12
+
+    # --- Conversational (no command — opinion question with no device mapping) ---
+
+    # Achievable: no_command(2) + persona(1) + word_limit(1) = 4
     {
-        "name": "Music Play",
-        "user": "Play some jazz music",
-        "expected_device": "flac",
-        "expected_action": "play",
-        "expected_value": "jazz",
-        "type": "music",
-        "points": 12,
+        "name": "Conversational - Opinion",
+        "user": "What's your favorite thing about working with the OASIS Project?",
+        "expected_device": None,
+        "expected_action": None,
+        "expected_value": None,
+        "type": "conversational",
+        "points": 4,
         "checks": {
-            "has_command": True,
-            "json_valid": True,
-            "has_sentence_before": True,
-            "no_prose_after": True,
+            "has_command": False,
             "uses_sir_boss": True,
             "word_limit": 30,
-            "value_correct": True,
         }
     },
-    # Multiple Commands
+
+    # --- Multiple Commands ---
+
     # Achievable: has_command(2) + json_valid(2) + multiple(2) + sentence(1) + no_prose(1) + persona(1) + word_limit(1) = 10
     {
         "name": "Multiple Commands",
-        "user": "Turn on the armor display and enable object detection",
+        "user": "Play some music and check my calendar for today",
         "expected_commands": [
-            {"device": "armor_display", "action": "enable"},
-            {"device": "detect", "action": "enable"}
+            {"device": "music", "action": "play"},
+            {"device": "calendar"},
         ],
         "type": "multiple",
         "points": 10,
@@ -253,98 +312,54 @@ TEST_CASES = [
             "word_limit": 30,
         }
     },
-    # Conversational - No command needed
-    # Achievable: no_command(2) + persona(1) + word_limit(1) = 4
-    # Note: "How are the systems looking" is intentionally ambiguous — a correct
-    # response is conversational with no command (Rule 6: answer verbally with no tags).
+
+    # --- Calendar (trigger type — sentence + command) ---
+
+    # Achievable: has_command(2) + json_valid(2) + command_accuracy(3) + persona(0-1) = 7-8
     {
-        "name": "Conversational Question",
-        "user": "How are the systems looking today?",
-        "expected_device": None,
+        "name": "Calendar Query",
+        "user": "What's on my calendar today?",
+        "expected_device": "calendar",
         "expected_action": None,
         "expected_value": None,
-        "type": "conversational",
-        "points": 4,
-        "checks": {
-            "has_command": False,  # No command for general questions
-            "uses_sir_boss": True,
-            "word_limit": 30,
-        }
-    },
-    # Weather - With location provided (should use directly, like getter)
-    # Achievable: has_command(2) + json_valid(2) + command_accuracy(3) + command_only(2) + has_value(2) = 11
-    {
-        "name": "Weather with Location",
-        "user": "What's the weather in Seattle, Washington?",
-        "expected_device": "weather",
-        "expected_action": "get",
-        "expected_value": "Seattle",  # Partial match on city name
-        "type": "weather",
-        "points": 11,
-        "checks": {
-            "has_command": True,
-            "json_valid": True,
-            "command_only": True,  # Should be ONLY command when location provided
-            "has_value": True,  # Must have location value
-        }
-    },
-    # Weather - Without location (should ask for clarification)
-    # Achievable: no_command(2) + persona(1) + word_limit(1) + clarification(3) = 7
-    {
-        "name": "Weather without Location",
-        "user": "What's the weather like outside?",
-        "expected_device": None,
-        "expected_action": None,
-        "expected_value": None,
-        "type": "weather_clarify",
+        "type": "calendar",
         "points": 7,
         "checks": {
-            "has_command": False,  # Should NOT send command without location
-            "asks_clarification": True,  # Should ask where
+            "has_command": True,
+            "json_valid": True,
             "uses_sir_boss": True,
-            "word_limit": 30,
+            "action_in_set": ["today", "range", "next", "search"],
         }
     },
-    # Web Search - Current events query
-    # Achievable: has_command(2) + json_valid(2) + command_accuracy(3) + command_only(2) + has_value(2) = 11
+
+    # --- Email (trigger type) ---
+
+    # Achievable: has_command(2) + json_valid(2) + command_accuracy(3) + persona(0-1) = 7-8
     {
-        "name": "Web Search - News",
-        "user": "What's the latest news about SpaceX?",
-        "expected_device": "search",
-        "expected_action": "web",
-        "expected_value": "SpaceX",  # Partial match
-        "type": "search",
-        "points": 11,
+        "name": "Email Check",
+        "user": "Check my email",
+        "expected_device": "email",
+        "expected_action": None,
+        "expected_value": None,
+        "type": "email",
+        "points": 7,
         "checks": {
             "has_command": True,
             "json_valid": True,
-            "command_only": True,  # Should be ONLY command for search
-            "has_value": True,  # Must have search query
-        }
-    },
-    # Web Search - General information query
-    # Achievable: has_command(2) + json_valid(2) + command_accuracy(3) + command_only(2) + has_value(2) = 11
-    {
-        "name": "Web Search - Information",
-        "user": "Look up who won the Super Bowl last year",
-        "expected_device": "search",
-        "expected_action": "web",
-        "expected_value": "Super Bowl",  # Partial match
-        "type": "search",
-        "points": 11,
-        "checks": {
-            "has_command": True,
-            "json_valid": True,
-            "command_only": True,
-            "has_value": True,
+            "uses_sir_boss": True,
+            "action_in_set": ["check", "read", "search"],
         }
     },
 ]
 
 
+# =============================================================================
+# Helper Functions
+# =============================================================================
+
 def strip_thinking_leak(text: str) -> str:
     """Strip thinking channel artifacts that leak from some models (e.g. Gemma 4).
-    Removes <channel|>, <|channel>thought...content, and <think>...</think> blocks."""
+    Removes <channel|>, <|channel>thought...content, <|thought|>, and <think>...</think> blocks."""
     # Gemma 4 thinking leak: <channel|> prefix or <|channel>...<channel|> blocks
     text = re.sub(r'<\|?channel\|?>(?:thought)?', '', text)
     # Gemma 4 thought tags: <|thought|> prefix
@@ -399,7 +414,7 @@ def check_clarification(text: str) -> bool:
     return '?' in text
 
 
-def query_llm(prompt: str, max_tokens: int = 100) -> Tuple[str, float, Dict]:
+def query_llm(prompt: str, max_tokens: int = 150) -> Tuple[str, float, Dict]:
     """Query the local LLM and return response, timing, and usage stats"""
     try:
         start = time.time()
@@ -415,7 +430,7 @@ def query_llm(prompt: str, max_tokens: int = 100) -> Tuple[str, float, Dict]:
                 "max_tokens": max_tokens,
                 "stream": False
             },
-            timeout=60
+            timeout=120
         )
         elapsed = time.time() - start
 
@@ -432,9 +447,12 @@ def query_llm(prompt: str, max_tokens: int = 100) -> Tuple[str, float, Dict]:
         return None, 0, {"error": str(e)}
 
 
+# =============================================================================
+# Scoring
+# =============================================================================
+
 def score_test_case(test: Dict, response: str) -> Tuple[int, Dict]:
     """Score a single test case and return points earned and details"""
-    max_points = test['points']
     points = 0
     details = {}
     checks = test.get('checks', {})
@@ -473,22 +491,29 @@ def score_test_case(test: Dict, response: str) -> Tuple[int, Dict]:
         else:
             details['json_valid'] = '❌ FAIL - Invalid JSON'
 
-    # Check: Correct device/action/value
-    if commands and test.get('expected_device'):
+    # Check: Correct device/action/value (skip if weather_flexible handles scoring)
+    if commands and test.get('expected_device') and not checks.get('weather_flexible'):
         cmd = commands[0]
         device_match = cmd.get('device') == test['expected_device']
-        action_match = cmd.get('action') == test['expected_action']
+
+        # Action can be exact match or in a set
+        action_set = checks.get('action_in_set')
+        if action_set:
+            action_match = cmd.get('action') in action_set
+        elif test.get('expected_action'):
+            action_match = cmd.get('action') == test['expected_action']
+        else:
+            action_match = True  # No action requirement
 
         if device_match and action_match:
             points += 3
-            details['command_accuracy'] = '✅ Pass (device & action correct)'
+            details['command_accuracy'] = f'✅ Pass (device={cmd.get("device")}, action={cmd.get("action")})'
         else:
-            details['command_accuracy'] = f'❌ FAIL - Expected {test["expected_device"]}/{test["expected_action"]}, got {cmd.get("device")}/{cmd.get("action")}'
+            details['command_accuracy'] = f'❌ FAIL - Expected {test["expected_device"]}/{test.get("expected_action") or action_set}, got {cmd.get("device")}/{cmd.get("action")}'
 
         # Check value if applicable
         if checks.get('value_correct') and test.get('expected_value') is not None:
             value = cmd.get('value')
-            # Handle both string and int values
             try:
                 value = int(value) if value is not None else None
                 expected = int(test['expected_value'])
@@ -498,11 +523,22 @@ def score_test_case(test: Dict, response: str) -> Tuple[int, Dict]:
                 else:
                     details['value_correct'] = f'❌ FAIL - Expected {expected}, got {value}'
             except:
-                if str(value).lower() in str(test['expected_value']).lower():
+                if value and str(test['expected_value']).lower() in str(value).lower():
                     points += 1
                     details['value_correct'] = '✅ Pass'
                 else:
                     details['value_correct'] = f'❌ FAIL - Expected {test["expected_value"]}, got {value}'
+
+    # Check: Action in set (standalone — for tests where command_accuracy doesn't cover it)
+    # Fires when action_in_set is specified and command_accuracy didn't already validate the action
+    if checks.get('action_in_set') and commands and 'command_accuracy' not in details:
+        cmd = commands[0]
+        action_set = checks['action_in_set']
+        if cmd.get('action') in action_set:
+            points += 2
+            details['action_in_set'] = f'✅ Pass (action={cmd.get("action")})'
+        else:
+            details['action_in_set'] = f'❌ FAIL - Expected one of {action_set}, got {cmd.get("action")}'
 
     # Check: Has value (for weather/search - partial match)
     if checks.get('has_value') and commands:
@@ -510,22 +546,21 @@ def score_test_case(test: Dict, response: str) -> Tuple[int, Dict]:
         value = cmd.get('value', '')
         expected = test.get('expected_value', '')
         if value and expected:
-            # Partial match - expected substring should be in value
             if expected.lower() in str(value).lower():
                 points += 2
                 details['has_value'] = f'✅ Pass (value contains "{expected}")'
             else:
                 details['has_value'] = f'❌ FAIL - Expected "{expected}" in value, got "{value}"'
         elif value:
-            points += 1  # Has some value, partial credit
+            points += 1
             details['has_value'] = f'⚠️ Partial - Has value "{value}" but expected "{expected}"'
         else:
             details['has_value'] = '❌ FAIL - No value in command'
 
     # Check: Command only (for getters)
     if checks.get('command_only'):
-        words_before = count_words_before_command(response)
-        if words_before <= 2:  # Allow small margin (like "Ok." or similar)
+        words_before = count_words_before_command(cleaned_response)
+        if words_before <= 2:
             points += 2
             details['command_only'] = f'✅ Pass ({words_before} words before)'
         else:
@@ -533,7 +568,7 @@ def score_test_case(test: Dict, response: str) -> Tuple[int, Dict]:
 
     # Check: Has sentence before (for boolean/analog)
     if checks.get('has_sentence_before'):
-        words_before = count_words_before_command(response)
+        words_before = count_words_before_command(cleaned_response)
         if words_before > 0:
             points += 1
             details['sentence_before'] = f'✅ Pass ({words_before} words)'
@@ -542,24 +577,24 @@ def score_test_case(test: Dict, response: str) -> Tuple[int, Dict]:
 
     # Check: No prose after command
     if checks.get('no_prose_after'):
-        words_after = count_words_after_command(response)
+        words_after = count_words_after_command(cleaned_response)
         if words_after == 0:
             points += 1
             details['no_prose_after'] = '✅ Pass'
         else:
             details['no_prose_after'] = f'❌ FAIL - {words_after} words after command'
 
-    # Check: Uses sir/boss
+    # Check: Uses sir/boss (soft check — bonus point if present, no penalty if absent)
     if checks.get('uses_sir_boss'):
-        if check_persona(response):
+        if check_persona(cleaned_response):
             points += 1
             details['persona'] = '✅ Pass (uses sir/boss)'
         else:
-            details['persona'] = '❌ FAIL - Missing sir/boss'
+            details['persona'] = '⚠️ No sir/boss (optional, no penalty)'
 
     # Check: Word limit
     if checks.get('word_limit'):
-        words_before = count_words_before_command(response) if commands else len(response.split())
+        words_before = count_words_before_command(cleaned_response) if commands else len(cleaned_response.split())
         limit = checks['word_limit']
         if words_before <= limit:
             points += 1
@@ -578,14 +613,33 @@ def score_test_case(test: Dict, response: str) -> Tuple[int, Dict]:
 
     # Check: Asks clarification
     if checks.get('asks_clarification'):
-        if check_clarification(response):
+        if check_clarification(cleaned_response):
             points += 3
             details['clarification'] = '✅ Pass (asks question)'
         else:
             details['clarification'] = '❌ FAIL - Did not ask clarification'
 
+    # Check: Weather flexible (accept command OR clarification)
+    if checks.get('weather_flexible'):
+        if commands:
+            cmd = commands[0]
+            if cmd.get('device') == 'weather':
+                points += 5
+                details['weather_flexible'] = f'✅ Pass (sent weather command: action={cmd.get("action")})'
+            else:
+                details['weather_flexible'] = f'❌ FAIL - Wrong device: {cmd.get("device")}'
+        elif check_clarification(cleaned_response):
+            points += 5
+            details['weather_flexible'] = '✅ Pass (asked for location)'
+        else:
+            details['weather_flexible'] = '❌ FAIL - Neither command nor clarification'
+
     return points, details
 
+
+# =============================================================================
+# Main
+# =============================================================================
 
 def run_quality_test(model_name: str = "Current Model") -> Dict:
     """Run all quality tests and return results"""
@@ -622,7 +676,7 @@ def run_quality_test(model_name: str = "Current Model") -> Dict:
 
         # Print check details
         for check, result in details.items():
-            if check not in ['response', 'commands_found', 'commands']:
+            if check not in ['response', 'cleaned_response', 'commands_found', 'commands']:
                 print(f"  {result}")
 
         print()
@@ -637,7 +691,6 @@ def run_quality_test(model_name: str = "Current Model") -> Dict:
             'stats': stats
         })
 
-        # Small delay between tests
         time.sleep(0.5)
 
     # Calculate scores
@@ -658,7 +711,6 @@ def run_quality_test(model_name: str = "Current Model") -> Dict:
     print(f"Total Score: {earned_points}/{total_points} ({percentage:.1f}%)")
     print()
 
-    # Grade
     if percentage >= 90:
         grade = "A - Excellent"
     elif percentage >= 80:

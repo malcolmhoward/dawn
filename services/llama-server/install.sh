@@ -72,7 +72,7 @@ define_presets() {
     PRESET_A_REPEAT="1.1"
     PRESET_A_MIN_MEM=6
     PRESET_A_SPEED="35.1"
-    PRESET_A_QUALITY="91.8% (A)"
+    PRESET_A_QUALITY="94.8% (A)"
     PRESET_A_VISION=0
     PRESET_A_SIZE="2.5 GB"
     PRESET_A_NOTES="Voice, no vision"
@@ -96,7 +96,7 @@ define_presets() {
     PRESET_A2_REPEAT="1.1"
     PRESET_A2_MIN_MEM=6
     PRESET_A2_SPEED="28.4"
-    PRESET_A2_QUALITY="88.1% (B)"
+    PRESET_A2_QUALITY="90.5% (A)"
     PRESET_A2_VISION=1
     PRESET_A2_SIZE="2.9 GB"
     PRESET_A2_NOTES="Vision, small hardware"
@@ -120,7 +120,7 @@ define_presets() {
     PRESET_A3_REPEAT="1.0"
     PRESET_A3_MIN_MEM=6
     PRESET_A3_SPEED="36.3"
-    PRESET_A3_QUALITY="87.3% (B)"
+    PRESET_A3_QUALITY="89.7% (B)"
     PRESET_A3_VISION=1
     PRESET_A3_SIZE="2.5 GB"
     PRESET_A3_NOTES="Best for 16GB + vision"
@@ -169,7 +169,7 @@ define_presets() {
     PRESET_C_REPEAT="1.0"
     PRESET_C_MIN_MEM=16
     PRESET_C_SPEED="16.1"
-    PRESET_C_QUALITY="91.8% (A)"
+    PRESET_C_QUALITY="89.7% (B)"
     PRESET_C_VISION=1
     PRESET_C_SIZE="7.3 GB"
     PRESET_C_NOTES="High quality + vision"
@@ -194,7 +194,7 @@ define_presets() {
     PRESET_D_REPEAT="1.0"
     PRESET_D_MIN_MEM=48
     PRESET_D_SPEED="6.8"
-    PRESET_D_QUALITY="TBD"
+    PRESET_D_QUALITY="100% (A)"
     PRESET_D_VISION=1
     PRESET_D_SIZE="18.2 GB"
     PRESET_D_NOTES="WebUI only, thinking leaks"
@@ -219,7 +219,7 @@ define_presets() {
     PRESET_E_REPEAT="1.1"
     PRESET_E_MIN_MEM=48
     PRESET_E_SPEED="7.2"
-    PRESET_E_QUALITY="TBD"
+    PRESET_E_QUALITY="91.4% (A)"
     PRESET_E_VISION=1
     PRESET_E_SIZE="15.9 GB"
     PRESET_E_NOTES="WebUI only"
@@ -244,7 +244,7 @@ define_presets() {
     PRESET_F_REPEAT="1.1"
     PRESET_F_MIN_MEM=48
     PRESET_F_SPEED="29.6"
-    PRESET_F_QUALITY="93.3% (A)"
+    PRESET_F_QUALITY="94.8% (A)"
     PRESET_F_VISION=1
     PRESET_F_SIZE="19.9 GB"
     PRESET_F_NOTES="RECOMMENDED for 64GB"
@@ -269,7 +269,7 @@ define_presets() {
     PRESET_G_REPEAT="1.0"
     PRESET_G_MIN_MEM=48
     PRESET_G_SPEED="32.2"
-    PRESET_G_QUALITY="95.5% (A)"
+    PRESET_G_QUALITY="94.8% (A)"
     PRESET_G_VISION=1
     PRESET_G_SIZE="15.9 GB"
     PRESET_G_NOTES="PENDING: thinking leak"

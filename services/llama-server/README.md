@@ -12,9 +12,9 @@ At 30W mode, speeds are ~3x slower.
 
 | Use Case | Model | Preset | Speed | Quality | Vision |
 |----------|-------|--------|-------|---------|--------|
-| **Home (64GB Orin)** | Qwen3.5 35B-A3B MoE | F | 29.6 tok/s | 93.3% (A) | Yes |
-| **Helmet (16GB Orin)** | Gemma 3 4B IT | A3 | 13.9 tok/s (28W) | 87.3% (B) | Yes |
-| **Voice only (any)** | Qwen3 4B Instruct | A | 35.1 tok/s | 91.8% (A) | No |
+| **Home (64GB Orin)** | Qwen3.5 35B-A3B MoE | F | 29.6 tok/s | 94.8% (A) | Yes |
+| **Helmet (16GB Orin)** | Gemma 3 4B IT | A3 | 13.9 tok/s (28W) | 89.7% (B) | Yes |
+| **Voice only (any)** | Qwen3 4B Instruct | A | 35.1 tok/s | 94.8% (A) | No |
 
 ### Full Benchmark Results (AGX Orin 64GB MAXN)
 
@@ -25,30 +25,30 @@ Cold = first request after server start. Warm = subsequent requests (prompt cach
 
 | Model | Type | Size | Quality | Speed | Cold TTFT | Warm TTFT | Vision | Notes |
 |-------|------|------|---------|-------|-----------|-----------|--------|-------|
-| **Gemma 3 4B IT** | Dense | 2.5 GB | 87.3% (B) | 36.3 tok/s | 669 ms | 676 ms | Yes | Fastest 4B + vision (64GB) |
-| **Gemma 3 4B IT** | Dense | 2.5 GB | 87.3% (B) | 13.9 tok/s | 1820 ms | 158 ms | Yes | 16GB Orin @ 28W |
-| **Qwen3 4B Instruct** | Dense | 2.5 GB | 91.8% (A) | 35.1 tok/s | 659 ms | 95 ms | No | Best prompt caching |
-| Qwen3.5 4B | SSM hybrid | 2.9 GB | 88.1% (B) | 28.4 tok/s | 950 ms | 760 ms | Yes | Vision, slower (SSM overhead) |
+| **Gemma 3 4B IT** | Dense | 2.5 GB | 89.7% (B) | 36.3 tok/s | 669 ms | 676 ms | Yes | Fastest 4B + vision (64GB) |
+| **Gemma 3 4B IT** | Dense | 2.5 GB | 89.7% (B) | 13.9 tok/s | 1820 ms | 158 ms | Yes | 16GB Orin @ 28W |
+| **Qwen3 4B Instruct** | Dense | 2.5 GB | 94.8% (A) | 35.1 tok/s | 659 ms | 95 ms | No | Best prompt caching |
+| Qwen3.5 4B | SSM hybrid | 2.9 GB | 90.5% (A) | 28.4 tok/s | 950 ms | 760 ms | Yes | Vision, slower (SSM overhead) |
 
 **12B+ class (mixed voice/WebUI):**
 
 | Model | Type | Size | Quality | Speed | Cold TTFT | Warm TTFT | Vision | Notes |
 |-------|------|------|---------|-------|-----------|-----------|--------|-------|
-| Gemma 3 12B IT | Dense | 7.3 GB | 91.8% (A) | 16.1 tok/s | 1904 ms | 1956 ms | Yes | WebUI quality tier |
+| Gemma 3 12B IT | Dense | 7.3 GB | 89.7% (B) | 16.1 tok/s | 1904 ms | 1956 ms | Yes | WebUI quality tier |
 
 **MoE class (voice-viable on 64GB):**
 
 | Model | Active/Total | Size | Quality | Speed | Cold TTFT | Warm TTFT | Vision | Notes |
 |-------|-------------|------|---------|-------|-----------|-----------|--------|-------|
-| **Qwen3.5 35B-A3B** | 3B/35B | 19.9 GB | 93.3% (A) | 29.6 tok/s | 1894 ms | 1302 ms | Yes | **Home recommended**, 128K ctx |
-| Gemma 4 26B-A4B | 4B/25B | 15.9 GB | 95.5% (A) | 32.2 tok/s | 1467 ms | 1396 ms | Yes | Pending thinking fix |
+| **Qwen3.5 35B-A3B** | 3B/35B | 19.9 GB | 94.8% (A) | 29.6 tok/s | 1894 ms | 1302 ms | Yes | **Home recommended**, 128K ctx |
+| Gemma 4 26B-A4B | 4B/25B | 15.9 GB | 94.8% (A) | 32.2 tok/s | 1467 ms | 1396 ms | Yes | Pending thinking fix |
 
 **Dense large (WebUI only on 64GB):**
 
-| Model | Params | Size | Speed | Vision | Notes |
-|-------|--------|------|-------|--------|-------|
-| Qwen3.5 27B | 26.9B | 15.9 GB | 7.2 tok/s | Yes | Too slow for voice |
-| Gemma 4 31B | 30.7B | 18.2 GB | 6.8 tok/s | Yes | Too slow + thinking leaks |
+| Model | Params | Size | Quality | Speed | Vision | Notes |
+|-------|--------|------|---------|-------|--------|-------|
+| Qwen3.5 27B | 26.9B | 15.9 GB | 91.4% (A) | 7.2 tok/s | Yes | Too slow for voice |
+| Gemma 4 31B | 30.7B | 18.2 GB | 100% (A) | 6.8 tok/s | Yes | Highest quality, thinking leaks |
 
 ### Context Scaling: Qwen3.5 35B-A3B on AGX Orin 64GB MAXN
 
@@ -474,7 +474,7 @@ sudo journalctl -u llama-server -n 100
 
 | Metric | Cloud (GPT-4o) | Qwen3 4B | Gemma 3 4B | Qwen3.5 35B-A3B | Gemma 4 26B-A4B |
 |--------|----------------|----------|------------|-----------------|----------------|
-| Quality | 100% | 91.8% (A) | 87.3% (B) | 93.3% (A) | 95.5% (A) |
+| Quality | 100% | 94.8% (A) | 89.7% (B) | 94.8% (A) | 94.8% (A) |
 | Speed | ~50 tok/s | 35.1 tok/s | 36.3 tok/s | 29.6 tok/s | 32.2 tok/s |
 | Prompt eval | N/A | 220 tok/s | 128 tok/s | 78 tok/s | 110 tok/s |
 | Vision | Yes | No | Yes | Yes | Yes |
