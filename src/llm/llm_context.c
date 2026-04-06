@@ -161,15 +161,15 @@ static const model_context_entry_t s_gemini_models[] = {
 
 static struct {
    bool initialized;
-   int local_context_size;           /* Cached context size */
-   bool local_context_queried;       /* True if we've queried local LLM */
-   bool local_context_authoritative; /* True if from runtime source (not model max/default) */
-   bool local_context_querying;      /* True if a thread is currently doing HTTP refresh */
-   time_t local_context_queried_at;  /* When context was last queried (for TTL) */
+   int local_context_size;            /* Cached context size */
+   bool local_context_queried;        /* True if we've queried local LLM */
+   bool local_context_authoritative;  /* True if from runtime source (not model max/default) */
+   bool local_context_querying;       /* True if a thread is currently doing HTTP refresh */
+   time_t local_context_queried_at;   /* When context was last queried (for TTL) */
    uint32_t local_context_generation; /* Incremented on invalidation, detects stale writes */
-   int last_prompt_tokens;           /* Last known prompt tokens (for WebUI) */
-   int last_context_size;            /* Last known context size (for WebUI) */
-   pthread_mutex_t mutex;            /* Protects state */
+   int last_prompt_tokens;            /* Last known prompt tokens (for WebUI) */
+   int last_context_size;             /* Last known context size (for WebUI) */
+   pthread_mutex_t mutex;             /* Protects state */
 } s_state = {
    .initialized = false,
    .local_context_size = LLM_CONTEXT_DEFAULT_LOCAL,
@@ -407,8 +407,8 @@ int llm_context_get_size(llm_type_t type, cloud_provider_t provider, const char 
             s_state.local_context_size = new_size;
             s_state.local_context_queried = true;
             s_state.local_context_queried_at = now;
-            s_state.local_context_authoritative =
-                (llm_local_get_provider() != LOCAL_PROVIDER_OLLAMA);
+            s_state.local_context_authoritative = (llm_local_get_provider() !=
+                                                   LOCAL_PROVIDER_OLLAMA);
          }
       }
 
