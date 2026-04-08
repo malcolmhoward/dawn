@@ -280,6 +280,33 @@ target_link_libraries(test_instruction_loader
                       dawn_common)
 
 # =============================================================================
+# Benchmark: Retrieval Quality (LongMemEval, LoCoMo, ConvoMem)
+# =============================================================================
+# Standalone binary exercising DAWN's embedding engine + document DB search.
+# Driven by benchmarks/run_benchmark.py via JSON-lines on stdin/stdout.
+# Requires ONNX Runtime (or Ollama/OpenAI endpoint) for real embeddings.
+add_executable(bench_retrieval
+               ${SRC_ROOT}/benchmarks/bench_retrieval.c
+               ${SRC_ROOT}/benchmarks/bench_retrieval_stub.c
+               ${SRC_ROOT}/src/tools/document_db.c
+               ${SRC_ROOT}/src/core/embedding_engine.c
+               ${SRC_ROOT}/src/memory/memory_embed_onnx.c
+               ${SRC_ROOT}/src/memory/memory_embed_ollama.c
+               ${SRC_ROOT}/src/memory/memory_embed_openai.c)
+
+target_include_directories(bench_retrieval PRIVATE
+                           /usr/local/include/onnxruntime)
+
+target_link_libraries(bench_retrieval
+                      dawn_common
+                      sqlite3
+                      pthread
+                      m
+                      onnxruntime
+                      ${CURL_LIBRARIES}
+                      ${JSONC_LIBRARIES})
+
+# =============================================================================
 # Aggregate "tests" target
 # =============================================================================
 # This creates a target that builds all tests when you run "make tests"
@@ -301,7 +328,8 @@ add_custom_target(tests-ci
                   COMMENT "Building CI-safe unit tests")
 
 add_custom_target(tests
-                  DEPENDS test_instruction_loader
+                  DEPENDS bench_retrieval
+                          test_instruction_loader
                           test_wake_word
                           test_sse_parser
                           test_sentence_buffer
