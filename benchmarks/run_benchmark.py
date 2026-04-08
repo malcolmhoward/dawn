@@ -160,8 +160,21 @@ def partial_recall(retrieved_texts, evidence_texts, k):
 # =============================================================================
 
 
-def run_longmemeval(engine, dataset_path, limit=0):
-   """Run LongMemEval benchmark. Returns metrics dict."""
+def turn_id_to_session_id(turn_id):
+   """Extract session ID from a turn ID (e.g., 'sess_123_turn_4' -> 'sess_123')."""
+   if "_turn_" in turn_id:
+      return turn_id.rsplit("_turn_", 1)[0]
+   return turn_id
+
+
+def run_longmemeval(engine, dataset_path, limit=0, granularity="session"):
+   """Run LongMemEval benchmark. Returns metrics dict.
+
+   granularity:
+      'session' — one doc per session (all user turns joined). Easier task (~48 docs).
+      'turn'    — one doc per user turn. Harder task (~300-500 docs).
+                  Matches academic evaluation (ACL 2025 RMM paper).
+   """
    with open(dataset_path) as f:
       data = json.load(f)
 
@@ -182,16 +195,32 @@ def run_longmemeval(engine, dataset_path, limit=0):
 
       engine.reset()
 
-      # Ingest sessions (user turns only, joined)
-      for session, sess_id in zip(sessions, session_ids):
-         user_turns = [t["content"] for t in session if t["role"] == "user"]
-         text = "\n".join(user_turns)
-         if text.strip():
-            engine.add(sess_id, text)
+      if granularity == "turn":
+         # One doc per user turn — matches academic evaluation
+         for session, sess_id in zip(sessions, session_ids):
+            turn_idx = 0
+            for turn in session:
+               if turn["role"] == "user" and turn["content"].strip():
+                  turn_id = f"{sess_id}_turn_{turn_idx}"
+                  engine.add(turn_id, turn["content"])
+                  turn_idx += 1
+      else:
+         # One doc per session — user turns joined
+         for session, sess_id in zip(sessions, session_ids):
+            user_turns = [t["content"] for t in session if t["role"] == "user"]
+            text = "\n".join(user_turns)
+            if text.strip():
+               engine.add(sess_id, text)
 
       # Query
       result = engine.query(question, top_k=max(ks))
       retrieved_ids = [r["id"] for r in result.get("results", [])]
+
+      # For turn granularity, map turn IDs back to session IDs before scoring
+      if granularity == "turn":
+         retrieved_ids = list(dict.fromkeys(
+            turn_id_to_session_id(rid) for rid in retrieved_ids
+         ))
 
       # Score
       for k in ks:
@@ -214,6 +243,7 @@ def run_longmemeval(engine, dataset_path, limit=0):
    for key, values in metrics.items():
       results[key] = sum(values) / len(values) if values else 0.0
    results["total_questions"] = total
+   results["granularity"] = granularity
    results["elapsed_seconds"] = time.time() - t0
    return results
 
@@ -454,6 +484,8 @@ def print_results(benchmark_name, results):
    print(f"  DAWN Retrieval Benchmark: {benchmark_name}")
    print(f"{'=' * 60}")
 
+   if "granularity" in results:
+      print(f"  Granularity: {results['granularity']}")
    if "total_questions" in results:
       print(f"  Questions:  {results['total_questions']}")
    if "total_qa" in results:
@@ -506,8 +538,9 @@ def main():
    parser.add_argument(
       "--granularity",
       default="session",
-      choices=["session", "dialog"],
-      help="LoCoMo granularity (default: session)",
+      choices=["session", "turn", "dialog"],
+      help="Retrieval granularity: session (default), turn (academic standard for "
+      "LongMemEval), dialog (LoCoMo per-dialog)",
    )
    parser.add_argument(
       "--raw",
@@ -536,7 +569,8 @@ def main():
 
    # Run benchmark
    if args.benchmark == "longmemeval":
-      results = run_longmemeval(engine, args.dataset, limit=args.limit)
+      gran = "turn" if args.granularity == "turn" else "session"
+      results = run_longmemeval(engine, args.dataset, limit=args.limit, granularity=gran)
    elif args.benchmark == "locomo":
       results = run_locomo(
          engine,
