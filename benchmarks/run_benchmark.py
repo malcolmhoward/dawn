@@ -172,8 +172,10 @@ def run_longmemeval(engine, dataset_path, limit=0, granularity="session"):
 
    granularity:
       'session' — one doc per session (all user turns joined). Easier task (~48 docs).
+                  Scores against answer_session_ids.
       'turn'    — one doc per user turn. Harder task (~300-500 docs).
-                  Matches academic evaluation (ACL 2025 RMM paper).
+                  Scores against turns with has_answer=true (proper turn-level).
+                  Uses top_k=5 to match RMM paper methodology (ACL 2025).
    """
    with open(dataset_path) as f:
       data = json.load(f)
@@ -182,28 +184,40 @@ def run_longmemeval(engine, dataset_path, limit=0, granularity="session"):
       data = data[:limit]
 
    total = len(data)
-   ks = [1, 3, 5, 10]
+   ks = [1, 3, 5, 10] if granularity == "session" else [1, 3, 5]
    metrics = {f"recall_any@{k}": [] for k in ks}
    metrics.update({f"ndcg@{k}": [] for k in ks})
+   skipped = 0
 
    t0 = time.time()
    for i, entry in enumerate(data):
       sessions = entry["haystack_sessions"]
       session_ids = entry["haystack_session_ids"]
-      answer_ids = set(entry["answer_session_ids"])
       question = entry["question"]
 
       engine.reset()
 
       if granularity == "turn":
-         # One doc per user turn — matches academic evaluation
+         # One doc per user turn — true turn-level evaluation
+         # Build set of turn IDs that have has_answer=true
+         answer_turn_ids = set()
          for session, sess_id in zip(sessions, session_ids):
             turn_idx = 0
             for turn in session:
                if turn["role"] == "user" and turn["content"].strip():
                   turn_id = f"{sess_id}_turn_{turn_idx}"
                   engine.add(turn_id, turn["content"])
+                  if turn.get("has_answer"):
+                     answer_turn_ids.add(turn_id)
                   turn_idx += 1
+
+         # Skip questions with no answer turns (21 entries lack has_answer)
+         if not answer_turn_ids:
+            skipped += 1
+            continue
+
+         relevant_ids = answer_turn_ids
+         top_k = 5  # Match RMM paper: Top-K=5 without reranker
       else:
          # One doc per session — user turns joined
          for session, sess_id in zip(sessions, session_ids):
@@ -212,29 +226,29 @@ def run_longmemeval(engine, dataset_path, limit=0, granularity="session"):
             if text.strip():
                engine.add(sess_id, text)
 
+         relevant_ids = set(entry["answer_session_ids"])
+         top_k = max(ks)
+
       # Query
-      result = engine.query(question, top_k=max(ks))
+      result = engine.query(question, top_k=top_k)
       retrieved_ids = [r["id"] for r in result.get("results", [])]
 
-      # For turn granularity, map turn IDs back to session IDs before scoring
-      if granularity == "turn":
-         retrieved_ids = list(dict.fromkeys(
-            turn_id_to_session_id(rid) for rid in retrieved_ids
-         ))
-
-      # Score
+      # Score — turn-level scores against answer turn IDs directly
       for k in ks:
-         metrics[f"recall_any@{k}"].append(recall_any_at_k(retrieved_ids, answer_ids, k))
-         metrics[f"ndcg@{k}"].append(ndcg_at_k(retrieved_ids, answer_ids, k))
+         metrics[f"recall_any@{k}"].append(recall_any_at_k(retrieved_ids, relevant_ids, k))
+         metrics[f"ndcg@{k}"].append(ndcg_at_k(retrieved_ids, relevant_ids, k))
 
       # Progress
+      evaluated = len(metrics["recall_any@5"]) if "recall_any@5" in metrics else len(metrics["recall_any@3"])
       if (i + 1) % 10 == 0 or i == total - 1:
          elapsed = time.time() - t0
-         r5 = sum(metrics["recall_any@5"]) / len(metrics["recall_any@5"])
+         r5_key = "recall_any@5" if "recall_any@5" in metrics else "recall_any@3"
+         r5 = sum(metrics[r5_key]) / len(metrics[r5_key]) if metrics[r5_key] else 0
+         skip_label = f"  skipped={skipped}" if skipped else ""
          print(
             f"  [{i + 1:4}/{total}] R@5={r5:.3f}  "
             f"elapsed={elapsed:.0f}s  "
-            f"avg={elapsed / (i + 1):.1f}s/q",
+            f"avg={elapsed / (i + 1):.1f}s/q{skip_label}",
             file=sys.stderr,
          )
 
@@ -242,8 +256,12 @@ def run_longmemeval(engine, dataset_path, limit=0, granularity="session"):
    results = {}
    for key, values in metrics.items():
       results[key] = sum(values) / len(values) if values else 0.0
+   evaluated = len(metrics[f"recall_any@{ks[0]}"])
    results["total_questions"] = total
+   results["evaluated"] = evaluated
+   results["skipped"] = skipped
    results["granularity"] = granularity
+   results["top_k"] = 5 if granularity == "turn" else max(ks)
    results["elapsed_seconds"] = time.time() - t0
    return results
 
@@ -486,8 +504,12 @@ def print_results(benchmark_name, results):
 
    if "granularity" in results:
       print(f"  Granularity: {results['granularity']}")
+   if "top_k" in results:
+      print(f"  Top-K:      {results['top_k']}")
    if "total_questions" in results:
       print(f"  Questions:  {results['total_questions']}")
+   if "evaluated" in results and results.get("skipped", 0) > 0:
+      print(f"  Evaluated:  {results['evaluated']} (skipped {results['skipped']} without answer turns)")
    if "total_qa" in results:
       print(f"  QA pairs:   {results['total_qa']}")
    if "total_items" in results:
