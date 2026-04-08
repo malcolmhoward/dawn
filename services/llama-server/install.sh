@@ -274,7 +274,31 @@ define_presets() {
     PRESET_G_SIZE="15.9 GB"
     PRESET_G_NOTES="PENDING: thinking leak"
 
-    ALL_PRESETS="A A2 A3 B C D E F G"
+    # Preset H: Qwen3-Coder-Next 80B-A3B MoE (coding)
+    PRESET_H_LABEL="Qwen3-Coder-Next 80B (MoE)"
+    PRESET_H_MODEL="Qwen3-Coder-Next-Q4_0.gguf"
+    PRESET_H_HF_REPO="unsloth/Qwen3-Coder-Next-GGUF"
+    PRESET_H_HF_FILE="Qwen3-Coder-Next-Q4_0.gguf"
+    PRESET_H_MMPROJ=""
+    PRESET_H_MMPROJ_REPO=""
+    PRESET_H_MMPROJ_FILE=""
+    PRESET_H_TEMPLATE=""
+    PRESET_H_REASONING="none"
+    PRESET_H_CTX=32768
+    PRESET_H_BATCH=768
+    PRESET_H_TEMP="1.0"
+    PRESET_H_TOP_P="0.95"
+    PRESET_H_TOP_K=40
+    PRESET_H_MIN_P=0
+    PRESET_H_REPEAT="1.0"
+    PRESET_H_MIN_MEM=48
+    PRESET_H_SPEED="28.2"
+    PRESET_H_QUALITY="92.2% (A)"
+    PRESET_H_VISION=0
+    PRESET_H_SIZE="42.2 GB"
+    PRESET_H_NOTES="Coding model, no vision"
+
+    ALL_PRESETS="A A2 A3 B C D E F G H"
 }
 
 # Get a preset variable by name: get_preset_var F LABEL -> value
@@ -696,15 +720,16 @@ parse_args() {
                 echo "  -h, --help             Show this help message"
                 echo ""
                 echo "Presets:"
-                echo "  A   Qwen3 4B Instruct        2.5 GB   Voice, no vision"
-                echo "  A2  Qwen3.5 4B Vision        2.9 GB   Vision, small hardware"
-                echo "  A3  Gemma 3 4B Vision         2.5 GB   Fastest 4B + vision"
-                echo "  B   Qwen3 4B Thinking         2.5 GB   Reasoning mode"
-                echo "  C   Gemma 3 12B Vision        7.3 GB   High quality + vision"
+                echo "  A   Qwen3 4B Instruct        2.5 GB    Voice, no vision"
+                echo "  A2  Qwen3.5 4B Vision        2.9 GB    Vision, small hardware"
+                echo "  A3  Gemma 3 4B Vision        2.5 GB    Fastest 4B + vision"
+                echo "  B   Qwen3 4B Thinking        2.5 GB    Reasoning mode"
+                echo "  C   Gemma 3 12B Vision       7.3 GB    High quality + vision"
                 echo "  D   Gemma 4 31B Vision       18.2 GB   WebUI only (64GB)"
                 echo "  E   Qwen3.5 27B Vision       15.9 GB   WebUI only (64GB)"
                 echo "  F   Qwen3.5 35B-A3B MoE      19.9 GB   Recommended for 64GB"
                 echo "  G   Gemma 4 26B-A4B MoE      15.9 GB   Pending thinking fix"
+                echo "  H   Qwen3-Coder-Next 80B     42.2 GB   Coding model, no vision"
                 echo ""
                 echo "Examples:"
                 echo "  $0                     # Interactive preset selection"
@@ -816,7 +841,7 @@ if [ -n "$CLI_MODEL_PATH" ]; then
 elif [ -n "$CLI_PRESET" ]; then
     # Non-interactive preset mode
     if [[ ! " $ALL_PRESETS " == *" $CLI_PRESET "* ]]; then
-        error "Invalid preset: $CLI_PRESET (valid: A A2 A3 B C D E F G)"
+        error "Invalid preset: $CLI_PRESET (valid: A A2 A3 B C D E F G H)"
     fi
     SELECTED_PRESET="$CLI_PRESET"
     log "Preset $SELECTED_PRESET: $(get_preset_var "$SELECTED_PRESET" LABEL)"
