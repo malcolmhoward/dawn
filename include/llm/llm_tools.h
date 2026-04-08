@@ -61,11 +61,11 @@ typedef enum {
  * Constants
  * ============================================================================= */
 
-#define LLM_TOOLS_MAX_TOOLS 32         /* Maximum number of tools */
-#define LLM_TOOLS_MAX_PARAMS 8         /* Maximum parameters per tool */
-#define LLM_TOOLS_MAX_ENUM_VALUES 16   /* Maximum enum values per parameter */
-#define LLM_TOOLS_MAX_PARALLEL_CALLS 8 /* Maximum parallel tool calls */
-#define LLM_TOOLS_MAX_ITERATIONS 8     /* Maximum tool execution loop iterations */
+#define LLM_TOOLS_MAX_TOOLS TOOL_MAX_REGISTERED /* Derived from tool_registry.h */
+#define LLM_TOOLS_MAX_PARAMS 8                  /* Maximum parameters per tool */
+#define LLM_TOOLS_MAX_ENUM_VALUES 16            /* Maximum enum values per parameter */
+#define LLM_TOOLS_MAX_PARALLEL_CALLS 8          /* Maximum parallel tool calls */
+#define LLM_TOOLS_MAX_ITERATIONS 8              /* Maximum tool execution loop iterations */
 
 #define LLM_TOOLS_NAME_LEN 64
 #define LLM_TOOLS_DESC_LEN 512

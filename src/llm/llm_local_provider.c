@@ -349,7 +349,13 @@ local_provider_t llm_local_detect_provider(const char *endpoint) {
     * Must check before /api/tags because llama.cpp may have Ollama compatibility. */
    if (probe_endpoint(base_url, "/props", LLM_LOCAL_PROBE_TIMEOUT_MS)) {
       detected = LOCAL_PROVIDER_LLAMA_CPP;
-      LOG_INFO("llm_local_provider: Detected llama.cpp at %s", base_url);
+      LOG_INFO("llm_local_provider: Detected llama.cpp at %s (via /props)", base_url);
+   }
+   /* Try llama.cpp /slots - newer llama.cpp builds disable /props for remote connections
+    * but /slots is always available and unique to llama.cpp */
+   else if (probe_endpoint(base_url, "/slots", LLM_LOCAL_PROBE_TIMEOUT_MS)) {
+      detected = LOCAL_PROVIDER_LLAMA_CPP;
+      LOG_INFO("llm_local_provider: Detected llama.cpp at %s (via /slots)", base_url);
    }
    /* Try Ollama /api/tags */
    else if (probe_endpoint(base_url, "/api/tags", LLM_LOCAL_PROBE_TIMEOUT_MS)) {
@@ -579,6 +585,51 @@ static int try_llamacpp_context(const char *base_url, int *ctx_out) {
    return -1;
 }
 
+/**
+ * @brief Try to get context size from llama.cpp /slots endpoint
+ *
+ * Newer llama.cpp builds disable /props for remote connections but /slots
+ * is always available. Each slot has an n_ctx field.
+ */
+static int try_llamacpp_slots_context(const char *base_url, int *ctx_out) {
+   char url[512];
+   snprintf(url, sizeof(url), "%s/slots", base_url);
+
+   curl_buffer_t response;
+   int result = http_get(url, 3000, &response);
+
+   if (result != 0 || !response.data) {
+      curl_buffer_free(&response);
+      return -1;
+   }
+
+   struct json_object *root = json_tokener_parse(response.data);
+   curl_buffer_free(&response);
+
+   if (!root) {
+      return -1;
+   }
+
+   /* /slots returns an array — read n_ctx from the first slot */
+   int context_size = 0;
+   if (json_object_get_type(root) == json_type_array && json_object_array_length(root) > 0) {
+      struct json_object *slot = json_object_array_get_idx(root, 0);
+      struct json_object *n_ctx_obj = NULL;
+      if (json_object_object_get_ex(slot, "n_ctx", &n_ctx_obj)) {
+         context_size = json_object_get_int(n_ctx_obj);
+      }
+   }
+
+   json_object_put(root);
+
+   if (context_size > 0) {
+      *ctx_out = context_size;
+      return 0;
+   }
+
+   return -1;
+}
+
 int llm_local_query_context_size(const char *endpoint, const char *model) {
    if (!endpoint || endpoint[0] == '\0') {
       return LLM_CONTEXT_DEFAULT_LOCAL;
@@ -610,7 +661,13 @@ int llm_local_query_context_size(const char *endpoint, const char *model) {
 
    /* Try llama.cpp /props (works for llama.cpp and as fallback) */
    if (try_llamacpp_context(base_url, &context_size) == 0) {
-      LOG_INFO("llm_local_provider: llama.cpp context size: %d tokens", context_size);
+      LOG_INFO("llm_local_provider: llama.cpp context size: %d tokens (from /props)", context_size);
+      return context_size;
+   }
+
+   /* Try llama.cpp /slots — newer builds disable /props for remote connections */
+   if (try_llamacpp_slots_context(base_url, &context_size) == 0) {
+      LOG_INFO("llm_local_provider: llama.cpp context size: %d tokens (from /slots)", context_size);
       return context_size;
    }
 
