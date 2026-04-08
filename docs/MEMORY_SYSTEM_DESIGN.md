@@ -3,7 +3,7 @@
 **Status:** Phases 1-6.7, S4 Complete - Core Memory, Decay, WebUI Viewer, Import/Export, Contacts WebUI, Entity Merge, Entity Graph, Embeddings
 **Date:** January 2026
 **Authors:** Kris Kersey, with input from community proposals
-**Last Updated:** 2026-03-20
+**Last Updated:** 2026-04-08
 
 ---
 
@@ -23,6 +23,7 @@ A comprehensive design for DAWN's persistent memory system with integrated RAG (
 - **S4 (Entity Graph):** ✅ Complete - Entities, relations, embeddings, graph search, WebUI graph tab
 - **S4b (Entity Dedup):** ✅ Complete - Existing entities fed into extraction prompt
 - **Phases 7-11 (RAG):** ✅ Implemented — see `docs/RAG_DESIGN.md` (separate system)
+- **Retrieval Benchmarks:** ✅ Complete - LongMemEval (97.2% R@5), LoCoMo, ConvoMem (99.0%) — see `benchmarks/README.md`
 
 ---
 
@@ -1054,7 +1055,98 @@ RECENT CONVERSATIONS:
 Total: 2 facts, 1 conversations
 ```
 
-#### 9.1.4 LLM Prompt Addition
+#### 9.1.4 Forget Action
+
+Deletes a specific fact by numeric ID. Requires exact ID match to prevent accidental bulk deletion.
+
+**Tool Definition:**
+
+```json
+{ "device": "memory", "action": "forget", "value": "42" }
+```
+
+**Parameters:**
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `value` | Yes | Numeric fact ID (from search results) |
+
+**Design Principles:**
+
+- **Exact ID match**: Prevents fuzzy string matching from deleting unintended facts
+- **Numeric only**: Rejects non-numeric input to avoid ambiguity
+- **Ownership check**: Only deletes facts belonging to the requesting user
+
+#### 9.1.5 Contact Management Actions
+
+Four actions for managing contact information linked to memory entities.
+
+**Save Contact:**
+
+```json
+{ "device": "memory", "action": "save_contact", "value": "{\"entity_name\":\"Mom\",\"field_type\":\"phone\",\"value\":\"+1-555-0123\",\"label\":\"mobile\"}" }
+```
+
+**Find Contact:**
+
+```json
+{ "device": "memory", "action": "find_contact", "value": "{\"name\":\"Mom\",\"field_type\":\"phone\"}" }
+```
+
+**List Contacts:**
+
+```json
+{ "device": "memory", "action": "list_contacts", "value": "{\"field_type\":\"email\"}" }
+```
+
+**Delete Contact:**
+
+```json
+{ "device": "memory", "action": "delete_contact", "value": "7" }
+```
+
+**Parameters:**
+| Action | Parameters | Description |
+|--------|-----------|-------------|
+| `save_contact` | entity_name, field_type, value, label | Store email/phone/address for an entity |
+| `find_contact` | name, field_type (optional) | Lookup contact by entity name |
+| `list_contacts` | field_type (optional) | List all contacts, optionally filtered |
+| `delete_contact` | contact_id (numeric) | Remove a contact by ID |
+
+Contacts are linked to memory entities — saving a contact for "Mom" automatically associates it with the "Mom" entity in the knowledge graph.
+
+#### 9.1.6 Merge Entities Action
+
+Combines two duplicate entities, reassigning all relations and contacts from source to target.
+
+**Tool Definition:**
+
+```json
+{ "device": "memory", "action": "merge_entities", "value": "{\"source_name\":\"Kris\",\"target_name\":\"Kris Kersey\"}" }
+```
+
+**Parameters:**
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `source_name` | Yes | Entity to merge FROM (will be deleted) |
+| `target_name` | Yes | Entity to merge INTO (survives) |
+
+**Merge Behavior:**
+
+1. Resolve both names to entity IDs via canonical name lookup
+2. BEGIN IMMEDIATE transaction
+3. Reassign all relations (subject + object references) from source to target
+4. Reassign all contacts from source to target
+5. Delete self-referencing relations created by reassignment
+6. Deduplicate relations and contacts via ROW_NUMBER() window functions
+7. Absorb mention count and time range from source
+8. Delete source entity
+9. COMMIT (or ROLLBACK on any error)
+
+#### 9.1.7 Entity Graph Context
+
+Entity graph context is automatically appended to memory search results — it is not a separate tool action. When a search returns facts, the system also queries for related entities and appends an ENTITIES section showing entity names, types, and their relationships. This provides the LLM with graph context without requiring a separate tool call.
+
+#### 9.1.8 LLM Prompt Addition
 
 ```
 For MEMORY:
@@ -1071,7 +1163,7 @@ For MEMORY:
   Respond naturally: "I'll remember that."
 ```
 
-#### 9.1.5 When to Use Each
+#### 9.1.9 When to Use Each
 
 | User Says                                | LLM Action                                               |
 | ---------------------------------------- | -------------------------------------------------------- |
@@ -1086,7 +1178,7 @@ For MEMORY:
 | "What were we working on last week?"     | Call `recent` with "1w"                                  |
 | "Catch me up on the past few days"       | Call `recent` with "3d"                                  |
 
-#### 9.1.6 Three-Tier Retrieval
+#### 9.1.10 Three-Tier Retrieval
 
 | Tier                | Mechanism         | When                          | Budget                                  |
 | ------------------- | ----------------- | ----------------------------- | --------------------------------------- |
@@ -1094,7 +1186,7 @@ For MEMORY:
 | **Memory search**   | Tool call         | LLM needs to recall something | ~500 tokens per search                  |
 | **Document search** | Tool call (RAG)   | LLM needs info from files     | ~500 tokens per search                  |
 
-#### 9.1.7 Active Store vs Session-End Extraction
+#### 9.1.11 Active Store vs Session-End Extraction
 
 Both mechanisms work together:
 
@@ -1389,7 +1481,7 @@ User confirms → Commit (commit=true) → write to DB
 - [x] Bulk relation loading (`memory_db_relation_list_all_by_user()`) — N+1 query fix
 - [x] Entity deletion with FK-ordered relation cleanup
 
-**Memory System Status: Phases 1-6.5 + S4 Complete, RAG Pending**
+**Memory System Status: Phases 1-6.7 + S4/S4b Complete, RAG Complete (see `docs/RAG_DESIGN.md`)**
 
 ---
 
@@ -1443,29 +1535,36 @@ Memory and RAG can be developed in parallel by different contributors, or sequen
 
 ```
 include/memory/
-├── memory_db.h            # CRUD for facts, prefs, summaries, entities, relations
-├── memory_embeddings.h    # Semantic embedding API (multi-provider)
+├── memory_db.h            # CRUD for facts, prefs, summaries, entities, relations, entity merge
+├── memory_embeddings.h    # Semantic embedding API (multi-provider, hybrid search)
 ├── memory_context.h       # Context building for LLM system prompt
 ├── memory_maintenance.h   # Nightly decay orchestration API
-└── memory_types.h         # Data structures (fact, pref, summary, entity, relation)
+├── memory_similarity.h    # Duplicate detection API (normalize, hash, Jaccard)
+├── memory_types.h         # Data structures (fact, pref, summary, entity, relation)
+└── contacts_db.h          # Contact CRUD API (find, add, update, delete, list)
 
-include/rag/
-├── rag_indexer.h          # Document indexing (future)
-├── rag_retriever.h        # Vector search (future)
-├── rag_embeddings.h       # Embedding generation (ONNX) (future)
-└── document_parsers.h     # TXT/PDF/DOCX parsers (future)
+include/core/
+└── embedding_engine.h     # Shared embedding API (ONNX, Ollama, OpenAI providers)
+
+include/tools/
+├── document_db.h          # Document/chunk CRUD (RAG storage layer)
+├── document_chunker.h     # Text chunking for embedding
+├── document_search.h      # RAG semantic search tool
+├── document_extract.h     # PDF/DOCX/HTML text extraction
+└── document_index_pipeline.h  # Shared indexing pipeline (chunk, embed, store)
 
 src/memory/
-├── memory_db.c            # SQLite CRUD, entity upsert, relation create, decay, pruning
+├── memory_db.c            # SQLite CRUD, entity upsert, relation create, entity merge
 ├── memory_embeddings.c    # Embedding cache, hybrid search, cache invalidation
 ├── memory_embed_ollama.c  # Ollama embedding provider (/api/embed endpoint)
 ├── memory_embed_openai.c  # OpenAI embedding provider (/v1/embeddings endpoint)
-├── memory_embed_onnx.c    # ONNX Runtime embedding provider (local inference)
+├── memory_embed_onnx.c    # ONNX Runtime embedding provider (local, WordPiece tokenizer)
 ├── memory_context.c       # Context building for LLM system prompt
-├── memory_callback.c      # LLM tool callback (search/remember/forget/recent + graph)
-├── memory_extraction.c    # LLM-based extraction: facts, prefs, entities, relations
+├── memory_callback.c      # LLM tool callback (9 actions: search/remember/forget/recent + contacts + merge)
+├── memory_extraction.c    # LLM-based extraction: facts, prefs, entities, relations (threaded)
 ├── memory_maintenance.c   # Nightly decay orchestration
-└── memory_similarity.c    # Duplicate detection (Jaccard, hashing)
+├── memory_similarity.c    # Duplicate detection (Jaccard, FNV-1a hashing)
+└── contacts_db.c          # Contact CRUD (find, add, update, delete, list)
 
 src/webui/
 ├── webui_memory.c         # WebUI memory endpoints (list, delete, stats, entities)
@@ -1479,13 +1578,16 @@ www/css/components/
 ├── memory.css             # Memory viewer styles (entity badges, relations, tabs)
 └── ...
 
-src/rag/                   # (future - RAG not yet implemented)
-├── rag_indexer.c
-├── rag_retriever.c
-├── rag_embeddings.c
-├── parser_txt.c
-├── parser_pdf.c
-└── parser_docx.c
+src/core/
+└── embedding_engine.c     # Provider-agnostic embedding + vector math (shared by memory + RAG)
+
+src/tools/
+├── document_db.c          # SQLite CRUD for documents and chunks
+├── document_chunker.c     # Paragraph/sentence splitting with configurable overlap
+├── document_search.c      # RAG search: cosine similarity + keyword boosting
+├── document_extract.c     # PDF (MuPDF), DOCX (libzip+libxml2), HTML, plain text
+├── document_index_tool.c  # LLM tool for URL-based document ingestion
+└── document_index_pipeline.c  # SHA-256 dedup, chunking, embedding, DB storage
 ```
 
 ---
@@ -1619,11 +1721,12 @@ const char *MEMORY_BLOCKED_PATTERNS[] = {
 
 ### 14.1 Unit Tests
 
-- Storage CRUD operations
-- Embedding generation
-- Vector similarity search
+- Storage CRUD operations (`test_document_db`, `test_memory_embeddings`)
+- Embedding math: L2 norm, cosine similarity (`test_embedding_engine`)
+- Text chunking: paragraph/sentence splitting, overlap (`test_document_chunker`)
 - Decay calculations
 - JSON extraction parsing
+- Duplicate detection: FNV-1a hash, Jaccard similarity
 
 ### 14.2 Integration Tests
 
@@ -1632,12 +1735,79 @@ const char *MEMORY_BLOCKED_PATTERNS[] = {
 - RAG retrieval accuracy
 - Session lifecycle
 
-### 14.3 Evaluation Metrics
+### 14.3 Retrieval Benchmarks
+
+A standalone benchmark harness (`benchmarks/`) measures retrieval quality against
+three published academic benchmarks. The harness exercises DAWN's real embedding
+engine and document search scoring via a C binary (`bench_retrieval`) driven by a
+Python orchestrator (`run_benchmark.py`). The binary uses an in-memory SQLite
+database — completely isolated from production data.
+
+**Benchmarks supported:**
+
+| Benchmark | Source | Size | Metric |
+|-----------|--------|------|--------|
+| LongMemEval | HuggingFace `xiaowu0162/longmemeval-cleaned` | 500 questions | Recall@K, NDCG@K |
+| LoCoMo | GitHub `snap-research/locomo` | 10 convos, ~2000 QA pairs | Avg recall (fraction of evidence found) |
+| ConvoMem | HuggingFace `Salesforce/ConvoMem` | 75K+ QA pairs | Partial recall (substring evidence match) |
+
+**Modes:**
+
+- **Raw**: Pure cosine similarity (no keyword boosting). Baseline comparison.
+- **Hybrid**: Cosine similarity + keyword boosting (0.15 weight on top 50 candidates). DAWN's default production scoring path.
+
+**Results (April 2026, all-MiniLM-L6-v2 ONNX, full datasets):**
+
+| Benchmark | Raw | Hybrid | Notes |
+|-----------|-----|--------|-------|
+| **LongMemEval R@5** | 96.0% | 97.2% | 500 questions, session-level retrieval |
+| **LongMemEval R@10** | 98.4% | 99.2% | Near-perfect at depth 10 |
+| **LongMemEval NDCG@10** | 88.9% | 91.7% | Position-weighted relevance |
+| **LoCoMo avg recall** | — | 71.3% | 1982 QA pairs, dialog granularity |
+| **ConvoMem avg recall** | — | 99.0% | 100 items, per-message retrieval |
+
+**Analysis:**
+
+- **LongMemEval**: Strong results. Keyword boosting adds ~1.2% R@5 over raw cosine. The int8 ONNX quantization of all-MiniLM-L6-v2 performs within 0.6% of float32 baselines.
+- **LoCoMo**: Temporal inference (category 3) is the weakest area at 51.4% recall. This category asks questions like "what happened a week ago?" — DAWN currently has no timestamp-aware scoring. Category 2 (temporal facts) scores 76.4%, and category 5 (adversarial) scores 76.0%.
+- **ConvoMem**: 99.0% recall on per-message retrieval demonstrates strong fine-grained search quality. The keyword boost helps surface exact-match evidence.
+
+**Identified gaps from benchmarking:**
+
+1. **No temporal scoring**: Queries with relative time references ("last week", "a month ago") are scored purely by semantic similarity. Adding date-aware boosting would improve LoCoMo temporal categories significantly.
+2. **No fact categorization**: All facts are stored flat without domain/topic metadata. Filtering by category before scoring (analogous to searching within a specific topic) improves retrieval by up to 34% in academic benchmarks.
+3. **No relation temporality**: Entity relations lack `valid_from`/`valid_to` fields, preventing "as of date X" queries.
+
+**Running benchmarks:** See `benchmarks/README.md` for dataset download instructions and usage.
+
+### 14.4 Evaluation Metrics
 
 - Extraction precision (correct facts extracted)
 - Extraction recall (facts not missed)
-- RAG retrieval relevance
+- RAG retrieval relevance (measured via benchmarks above)
 - User satisfaction (qualitative)
+
+### 14.5 Implementation Notes
+
+**Duplicate detection internals:**
+
+Facts include a `normalized_hash` column (FNV-1a hash of normalized text) for O(1)
+duplicate detection at insertion time. Normalization strips stopwords, lowercases,
+and sorts words before hashing. Jaccard similarity (0.7 threshold) serves as a
+fuzzy fallback when hash lookup misses near-duplicates.
+
+**Extraction concurrency:**
+
+The extraction pipeline limits concurrent extractions via `MAX_EXTRACTION_SLOTS`
+to prevent runaway LLM calls when multiple sessions end simultaneously. The slot
+count respects the `max_clients` configuration.
+
+**Embedding backfill:**
+
+On startup, facts without embeddings are queued for background embedding via a
+backfill thread. This handles facts created before embeddings were enabled, or
+facts that failed embedding on first attempt. Controlled by the
+`embedding_backfill_on_startup` config flag.
 
 ---
 

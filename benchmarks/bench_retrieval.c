@@ -64,7 +64,7 @@ extern dawn_config_t g_config;
 extern secrets_config_t g_secrets;
 extern auth_db_state_t s_db;
 
-/* When true, skip keyword boosting (pure cosine — matches MemPalace "raw" mode) */
+/* When true, skip keyword boosting (pure cosine baseline) */
 static bool s_no_keyword_boost = false;
 
 /* =============================================================================

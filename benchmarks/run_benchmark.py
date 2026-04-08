@@ -512,7 +512,7 @@ def main():
    parser.add_argument(
       "--raw",
       action="store_true",
-      help="Disable keyword boosting (raw cosine only, matches MemPalace raw mode)",
+      help="Disable keyword boosting (raw cosine only, for baseline comparison)",
    )
    parser.add_argument("--output", help="Save results JSON to file")
 

@@ -112,8 +112,8 @@ python3 benchmarks/run_benchmark.py \
 ### Raw mode
 
 By default, DAWN uses hybrid scoring (cosine similarity + keyword boosting).
-To benchmark raw cosine similarity only (directly comparable to MemPalace's
-reported 96.6% R@5), add `--raw`:
+To benchmark raw cosine similarity only (no keyword boosting, for baseline
+comparison against published results), add `--raw`:
 
 ```bash
 python3 benchmarks/run_benchmark.py \
