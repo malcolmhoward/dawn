@@ -167,15 +167,22 @@ def turn_id_to_session_id(turn_id):
    return turn_id
 
 
-def run_longmemeval(engine, dataset_path, limit=0, granularity="session"):
+def run_longmemeval(engine, dataset_path, limit=0, granularity="session", turn_scoring="official"):
    """Run LongMemEval benchmark. Returns metrics dict.
 
    granularity:
-      'session' — one doc per session (all user turns joined). Easier task (~48 docs).
+      'session' — one doc per session (all user turns joined). ~48 docs per question.
                   Scores against answer_session_ids.
-      'turn'    — one doc per user turn. Harder task (~300-500 docs).
-                  Scores against turns with has_answer=true (proper turn-level).
+      'turn'    — one doc per user turn. ~273 docs per question.
                   Uses top_k=5 to match RMM paper methodology (ACL 2025).
+
+   turn_scoring (only applies when granularity='turn'):
+      'official' — any user turn from an answer session counts as correct
+                   (~11 correct targets per question). Matches the official
+                   LongMemEval eval code (xiaowu0162/LongMemEval). Directly
+                   comparable to RMM paper Table 1 numbers.
+      'strict'   — only turns with has_answer=true count as correct
+                   (~1.7 correct targets per question). Harder criterion.
    """
    with open(dataset_path) as f:
       data = json.load(f)
@@ -198,20 +205,30 @@ def run_longmemeval(engine, dataset_path, limit=0, granularity="session"):
       engine.reset()
 
       if granularity == "turn":
-         # One doc per user turn — true turn-level evaluation
-         # Build set of turn IDs that have has_answer=true
+         # One doc per user turn — turn-level evaluation
+         # Build correct set based on scoring mode
          answer_turn_ids = set()
+         answer_session_ids = set(entry["answer_session_ids"])
+
          for session, sess_id in zip(sessions, session_ids):
             turn_idx = 0
             for turn in session:
                if turn["role"] == "user" and turn["content"].strip():
                   turn_id = f"{sess_id}_turn_{turn_idx}"
                   engine.add(turn_id, turn["content"])
-                  if turn.get("has_answer"):
-                     answer_turn_ids.add(turn_id)
+
+                  if turn_scoring == "official":
+                     # Official: any turn from answer session is correct
+                     if sess_id in answer_session_ids:
+                        answer_turn_ids.add(turn_id)
+                  else:
+                     # Strict: only turns with has_answer=true
+                     if turn.get("has_answer"):
+                        answer_turn_ids.add(turn_id)
+
                   turn_idx += 1
 
-         # Skip questions with no answer turns (21 entries lack has_answer)
+         # Skip questions with no correct turns
          if not answer_turn_ids:
             skipped += 1
             continue
@@ -233,7 +250,7 @@ def run_longmemeval(engine, dataset_path, limit=0, granularity="session"):
       result = engine.query(question, top_k=top_k)
       retrieved_ids = [r["id"] for r in result.get("results", [])]
 
-      # Score — turn-level scores against answer turn IDs directly
+      # Score
       for k in ks:
          metrics[f"recall_any@{k}"].append(recall_any_at_k(retrieved_ids, relevant_ids, k))
          metrics[f"ndcg@{k}"].append(ndcg_at_k(retrieved_ids, relevant_ids, k))
@@ -261,6 +278,7 @@ def run_longmemeval(engine, dataset_path, limit=0, granularity="session"):
    results["evaluated"] = evaluated
    results["skipped"] = skipped
    results["granularity"] = granularity
+   results["turn_scoring"] = turn_scoring if granularity == "turn" else "n/a"
    results["top_k"] = 5 if granularity == "turn" else max(ks)
    results["elapsed_seconds"] = time.time() - t0
    return results
@@ -506,6 +524,8 @@ def print_results(benchmark_name, results):
       print(f"  Granularity: {results['granularity']}")
    if "top_k" in results:
       print(f"  Top-K:      {results['top_k']}")
+   if results.get("turn_scoring", "n/a") != "n/a":
+      print(f"  Scoring:    {results['turn_scoring']}")
    if "total_questions" in results:
       print(f"  Questions:  {results['total_questions']}")
    if "evaluated" in results and results.get("skipped", 0) > 0:
@@ -569,6 +589,13 @@ def main():
       action="store_true",
       help="Disable keyword boosting (raw cosine only, for baseline comparison)",
    )
+   parser.add_argument(
+      "--turn-scoring",
+      default="official",
+      choices=["official", "strict"],
+      help="Turn-level scoring: official (any turn from answer session, matches "
+      "LongMemEval eval code) or strict (only has_answer turns)",
+   )
    parser.add_argument("--output", help="Save results JSON to file")
 
    args = parser.parse_args()
@@ -592,7 +619,13 @@ def main():
    # Run benchmark
    if args.benchmark == "longmemeval":
       gran = "turn" if args.granularity == "turn" else "session"
-      results = run_longmemeval(engine, args.dataset, limit=args.limit, granularity=gran)
+      results = run_longmemeval(
+         engine,
+         args.dataset,
+         limit=args.limit,
+         granularity=gran,
+         turn_scoring=args.turn_scoring,
+      )
    elif args.benchmark == "locomo":
       results = run_locomo(
          engine,
