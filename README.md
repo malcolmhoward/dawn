@@ -80,6 +80,7 @@ DAWN's LLM automatically invokes tools and incorporates results into responses. 
    - Recurring events (daily, weekdays, weekends, weekly, custom days)
    - Audible chimes with configurable volume, snooze, and dismiss via voice or WebUI
    - Scheduled tasks: "Turn off the lights at midnight" (executes any registered tool)
+- **Sound Effects** — Play sound effects from the OASIS armor system (SPARK repulsor → AURA → MIRAGE → DAWN). Concurrent playback (4 slots), path traversal protection, configurable sound directory.
 - **Multi-Step Plans** — Complex workflows execute locally in a single LLM round trip. The plan executor interprets a JSON DSL with conditional logic, loops, and variable binding — "If I don't have any alarms, set one for 7am" runs as one plan instead of multiple back-and-forth tool calls.
 - **Visual Diagrams** — The LLM generates inline SVG/HTML visuals to explain concepts. Flowcharts, architecture diagrams, data charts (Chart.js), interactive widgets, UI mockups, and illustrations render directly in the conversation with clickable nodes for drill-down. Visuals persist across page refresh and render inline within the message text. Design guidelines loaded on demand via the two-step instruction pattern keep the system prompt lightweight. Download button for SVG/HTML export.
 - **Document Search (RAG)** — Upload documents and ask questions about their content.

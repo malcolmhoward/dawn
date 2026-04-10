@@ -54,7 +54,7 @@
  * ============================================================================= */
 
 #define PULSE_MAX_CAPTURE_HANDLES 2
-#define PULSE_MAX_PLAYBACK_HANDLES 2
+#define PULSE_MAX_PLAYBACK_HANDLES 6
 #define PULSE_HANDLE_MAGIC 0x50554C53 /* "PULS" in ASCII */
 
 /* =============================================================================

@@ -84,6 +84,9 @@
 #ifdef DAWN_ENABLE_TTS_TOOL
 #include "tools/tts_tool.h"
 #endif
+#ifdef DAWN_ENABLE_SFX_TOOL
+#include "tools/sfx_tool.h"
+#endif
 #ifdef DAWN_ENABLE_DOCUMENT_SEARCH_TOOL
 #include "tools/document_index_tool.h"
 #include "tools/document_read.h"
@@ -236,6 +239,12 @@ int tools_register_all(void) {
 #ifdef DAWN_ENABLE_TTS_TOOL
    if (tts_tool_register() != 0) {
       LOG_WARNING("Failed to register tts tool");
+   }
+#endif
+
+#ifdef DAWN_ENABLE_SFX_TOOL
+   if (sfx_tool_register() != 0) {
+      LOG_WARNING("Failed to register sfx tool");
    }
 #endif
 

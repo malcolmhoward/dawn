@@ -47,7 +47,7 @@
  * ============================================================================= */
 
 #define ALSA_MAX_CAPTURE_HANDLES 2
-#define ALSA_MAX_PLAYBACK_HANDLES 2
+#define ALSA_MAX_PLAYBACK_HANDLES 6
 #define ALSA_HANDLE_MAGIC 0x414C5341 /* "ALSA" in ASCII */
 
 /* =============================================================================

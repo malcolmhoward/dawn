@@ -117,6 +117,17 @@ typedef struct {
  */
 char *llm_tool_iteration_loop(llm_tool_loop_params_t *params);
 
+/**
+ * @brief Check if the last tool loop iteration skipped follow-up
+ *
+ * Thread-local flag set when a tool with skip_followup=true executes.
+ * Used by the caller to distinguish "no response because tool handled
+ * it silently" from "no response because of an API error."
+ *
+ * @return true if the last tool loop skipped follow-up
+ */
+bool llm_tool_loop_did_skip_followup(void);
+
 #ifdef __cplusplus
 }
 #endif

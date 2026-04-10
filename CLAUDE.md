@@ -490,6 +490,12 @@ Manual testing covers:
 - Two-step pattern design: archived to [atlas](https://github.com/The-OASIS-Project/atlas/blob/main/dawn/archive/TWO_STEP_TOOL_PATTERN.md)
 - `docs/VISUAL_RENDERING_TOOL.md`: Visual rendering design document
 
+**SFX (Sound Effects):**
+- `include/tools/sfx_tool.h`: SFX tool registration header
+- `src/tools/sfx_tool.c`: Sound effect playback (4 concurrent slots, per-slot stop, path validation, rate limiting)
+- `include/audio/audio_utils.h`: Shared audio_apply_volume() inline function
+- `sound_assets/`: Sound effect files (ogg) played by DAWN on behalf of SPARK/MIRAGE
+
 **Satellite (DAP2):**
 - `dawn_satellite/`: Standalone satellite binary for Raspberry Pi
 - `dawn_satellite/config/satellite.toml`: Default satellite configuration
@@ -560,6 +566,10 @@ Manual testing covers:
 - Docker multi-arch image (amd64 + arm64): multi-stage Dockerfile (deps → builder → runtime), debian:bookworm-slim, non-root user, SHA256-verified ONNX, pinned from-source deps, 297MB runtime
 - GitHub Actions CI pipeline: format-check (clang-format-14 + Prettier) → unit-tests (ci preset, 13 tests) + docker-build (full image + smoke test), SHA-pinned actions, least-privilege permissions
 - CUDA Docker variant (Dockerfile.cuda): nvidia/cuda base, ONNX Runtime from source with --use_cuda, cuDNN, memory-safe build (--parallel 2 --nvcc_threads 1), 3.55GB runtime
+- SFX tool: concurrent sound effect playback (4 slots, path traversal validation, rate limiting, list action) via MQTT from MIRAGE/SPARK
+- Shared audio_apply_volume() extracted to include/audio/audio_utils.h
+- Audio backend playback handle pool increased from 2 to 6 (ALSA + PulseAudio)
+- Fix: skip_followup tools (SFX, TTS, reset_conversation) no longer trigger false "unavailable" error on voice pipeline (thread-local flag in llm_tool_loop)
 
 ## Development Lifecycle
 

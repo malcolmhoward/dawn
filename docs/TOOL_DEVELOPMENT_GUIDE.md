@@ -384,6 +384,14 @@ User: "What's the weather?"
 3. LLM does NOT generate a follow-up response
 4. Saves an LLM API call and reduces latency
 
+**Voice pipeline note:** When `skip_followup = true` and the callback returns NULL
+(i.e., `should_respond = 0`), the tool loop signals this via a thread-local flag
+(`llm_tool_loop_did_skip_followup()`). The voice pipeline in `dawn.c` checks this
+flag to distinguish "tool completed silently" from "LLM API error" — without it,
+a NULL response would trigger an error message ("I'm currently unavailable").
+If your tool uses `skip_followup = true` with `should_respond = 0`, this is
+handled automatically.
+
 **Example flow (music play action):**
 ```
 User: "Play some jazz"

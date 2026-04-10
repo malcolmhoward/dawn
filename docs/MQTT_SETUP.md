@@ -250,6 +250,41 @@ MQTT: Connecting to broker at 127.0.0.1:8883
 MQTT: Connected to broker
 ```
 
+### AURA (Helmet Sensors -- ESP32)
+
+AURA is configured at compile time via `arduino_secrets.h`:
+
+```c
+#define SECRET_MQTT_BROKER "192.168.1.100"  // Jetson IP ("" = auto-detect via gateway)
+#define SECRET_MQTT_USERNAME "oasis"
+#define SECRET_MQTT_PASSWORD "your-password"
+
+// CA certificate in PEM format (paste from: cat /etc/mosquitto/certs/ca.crt)
+#define SECRET_MQTT_CA_CERT \
+  "-----BEGIN CERTIFICATE-----\n" \
+  "MIIDazCCAlOgAwIBAgIU...\n" \
+  "...\n" \
+  "-----END CERTIFICATE-----\n"
+```
+
+Enable TLS in `config.h`:
+```c
+#define ENABLE_MQTT
+#define MQTT_USE_TLS
+```
+
+> **Note**: The CA certificate must be embedded as a C string constant since ESP32 has no filesystem. Copy the PEM content with `\n` at the end of each line. The port auto-switches from 1883 to 8883 when TLS is enabled.
+
+**Expected serial output:**
+```
+MQTT: Authentication configured for user: oasis
+MQTT: TLS enabled with CA certificate
+MQTT: Auto-switched to TLS port 8883
+MQTT: Connecting to broker at 192.168.1.100:8883
+MQTT: Connected to broker
+MQTT: Subscribing to topic: helmet
+```
+
 ### stat-monitor (GUI)
 
 ```bash

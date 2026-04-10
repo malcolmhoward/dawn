@@ -72,6 +72,7 @@
 #include "llm/llm_context.h"
 #include "llm/llm_interface.h"
 #include "llm/llm_rate_limit.h"
+#include "llm/llm_tool_loop.h"
 #include "llm/llm_tools.h"
 #include "logging.h"
 /* logging_bridge is now built into init_logging() in common/src/logging.c */
@@ -372,8 +373,9 @@ static int g_bargein_disabled = 1;       // Start disabled until after boot cali
 static int g_bargein_user_disabled = 0;  // Set by --no-bargein CLI option
 
 // Shared buffers for LLM thread communication (protected by llm_mutex)
-static char *llm_request_text = NULL;   // Input: command text for LLM
-static char *llm_response_text = NULL;  // Output: LLM response
+static char *llm_request_text = NULL;        // Input: command text for LLM
+static char *llm_response_text = NULL;       // Output: LLM response
+static _Atomic int llm_response_silent = 0;  // Flag: tool handled output, no text expected
 // Note: Vision is handled by native tool calling - viewing tool captures image
 // and streaming code passes it to recursive LLM calls automatically
 
@@ -1210,6 +1212,11 @@ void *llm_worker_thread(void *arg) {
                                                                   &resolved_config);
    // Command context auto-cleared by scope guard
 
+   // A NULL response that wasn't interrupted may be a silent tool (skip_followup)
+   // rather than an API error. Check before we lose the interrupt state.
+   llm_response_silent = (response == NULL && !llm_is_interrupt_requested() &&
+                          llm_tool_loop_did_skip_followup());
+
    // Free local copy
    if (request_text) {
       free(request_text);
@@ -1218,7 +1225,7 @@ void *llm_worker_thread(void *arg) {
    // Lock mutex to store response
    pthread_mutex_lock(&llm_mutex);
 
-   // Store response (or NULL if interrupted/failed)
+   // Store response (or NULL if interrupted/failed/silent tool)
    if (llm_response_text) {
       free(llm_response_text);
    }
@@ -2476,8 +2483,17 @@ mqtt_disabled:
             /* Mark successful interaction complete for idle timeout tracking */
             session_update_interaction_complete(local_session);
 #endif
+         } else if (llm_response_silent) {
+            // Tool handled its own output (skip_followup with no text response)
+            LOG_INFO("Tool completed silently (no text response expected)");
+            pthread_mutex_lock(&tts_mutex);
+            if (tts_playback_state == TTS_PLAYBACK_PAUSE) {
+               tts_playback_state = TTS_PLAYBACK_DISCARD;
+               pthread_cond_signal(&tts_cond);
+            }
+            pthread_mutex_unlock(&tts_mutex);
          } else {
-            // Response is NULL but not interrupted - error case
+            // Response is NULL but not interrupted and not silent - error case
             pthread_mutex_lock(&tts_mutex);
             if (tts_playback_state == TTS_PLAYBACK_PAUSE) {
                tts_playback_state = TTS_PLAYBACK_DISCARD;

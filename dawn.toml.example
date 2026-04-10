@@ -424,6 +424,10 @@
 # streaming_quality = "standard"  # Opus encoding quality
 # streaming_bitrate_mode = "vbr"  # Bitrate mode: "vbr" or "cbr"
 
+[sfx]
+# sound_path = "sound_assets/"    # Directory containing sound effect files
+                                  # Env: DAWN_SFX_SOUND_PATH
+
 # =============================================================================
 # Calendar (CalDAV)
 # =============================================================================

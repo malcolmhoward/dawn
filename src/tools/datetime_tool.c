@@ -166,7 +166,7 @@ static char *time_tool_callback(const char *action, char *value, int *should_res
    time(&current_time);
    struct tm tm_storage;
    struct tm *time_info = localtime_r(&current_time, &tm_storage);
-   strftime(buffer, sizeof(buffer), "%I:%M %p %Z", time_info);
+   strftime(buffer, sizeof(buffer), "%I:%M:%S %p %Z", time_info);
 
    if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
       /* Direct mode: use TTS with personality */

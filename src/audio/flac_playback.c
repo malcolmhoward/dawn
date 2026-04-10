@@ -44,6 +44,7 @@
 #include "audio/audio_backend.h"
 #include "audio/audio_converter.h"
 #include "audio/audio_decoder.h"
+#include "audio/audio_utils.h"
 #include "logging.h"
 #ifdef DAWN_ENABLE_MUSIC_TOOL
 #include "tools/music_tool.h"
@@ -102,30 +103,17 @@ uint32_t audio_playback_get_sample_rate(void) {
 }
 
 /**
- * @brief Apply volume scaling to audio samples
+ * @brief Apply global volume scaling to audio samples
  *
- * Applies global_volume scaling with clipping protection.
+ * Reads global_volume and delegates to shared audio_apply_volume().
  *
  * @param buffer Sample buffer (interleaved)
  * @param frames Number of frames
  * @param channels Number of channels
  */
 static void apply_volume(int16_t *buffer, size_t frames, unsigned int channels) {
-   size_t total_samples = frames * channels;
    float vol = atomic_load_explicit(&global_volume, memory_order_relaxed);
-
-   for (size_t i = 0; i < total_samples; i++) {
-      int32_t adjusted = (int32_t)(buffer[i] * vol);
-
-      /* Clipping protection */
-      if (adjusted < INT16_MIN) {
-         adjusted = INT16_MIN;
-      } else if (adjusted > INT16_MAX) {
-         adjusted = INT16_MAX;
-      }
-
-      buffer[i] = (int16_t)adjusted;
-   }
+   audio_apply_volume(buffer, frames, channels, vol);
 }
 
 void *playFlacAudio(void *arg) {

@@ -43,6 +43,13 @@
 #include "logging.h"
 #include "webui/webui_server.h"
 
+/* Thread-local flag: set when the tool loop skips follow-up */
+static _Thread_local bool s_did_skip_followup = false;
+
+bool llm_tool_loop_did_skip_followup(void) {
+   return s_did_skip_followup;
+}
+
 /* =============================================================================
  * History Format Helpers
  *
@@ -285,6 +292,7 @@ char *llm_tool_iteration_loop(llm_tool_loop_params_t *params) {
       return NULL;
    }
 
+   s_did_skip_followup = false;
    char *final_response = NULL;
 
    /* Persistent vision state across iterations.
@@ -414,6 +422,7 @@ char *llm_tool_iteration_loop(llm_tool_loop_params_t *params) {
 
       if (followup.skip_followup) {
          LOG_INFO("Tool loop: Skipping follow-up (tool requested no follow-up)");
+         s_did_skip_followup = true;
 
          /* Send through chunk callback so TTS receives it */
          if (followup.direct_response && params->chunk_callback) {
