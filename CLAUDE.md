@@ -570,6 +570,9 @@ Manual testing covers:
 - Shared audio_apply_volume() extracted to include/audio/audio_utils.h
 - Audio backend playback handle pool increased from 2 to 6 (ALSA + PulseAudio)
 - Fix: skip_followup tools (SFX, TTS, reset_conversation) no longer trigger false "unavailable" error on voice pipeline (thread-local flag in llm_tool_loop)
+- Server-side TTS audio pacing: sleep-based real-time delivery prevents mobile WebUI audio skips, syncs text + audio output (1s lookahead, per-connection state, stream reset detection)
+- TTS preprocessing: strip markdown header markers (# through ######) so headings are spoken as plain text
+- URL fetch timeout defaults reduced (document_index 30s→10s, FlareSolverr 60s→10s)
 
 ## Development Lifecycle
 
