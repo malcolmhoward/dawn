@@ -65,6 +65,13 @@ extern "C" {
    (WEBUI_OPUS_SAMPLE_RATE * WEBUI_MAX_RECORDING_SECONDS) /* at 48kHz \
                                                            */
 
+/* TTS pacing: how far ahead of real-time to allow audio buffering.
+ * 1s is enough for uninterrupted playback without the burst problem. */
+#define WEBUI_TTS_PACE_LOOKAHEAD_US 1000000ULL /* 1s lookahead buffer */
+#define WEBUI_TTS_PACE_SLEEP_MIN_US 5000ULL    /* 5ms minimum (skip tiny sleeps) */
+#define WEBUI_TTS_PACE_SLEEP_MAX_US 5000000ULL /* 5s cap (clamped, not skipped) */
+#define WEBUI_TTS_PACE_CHECK_US 500000ULL      /* 500ms disconnect/cancel check interval */
+
 /* Error codes */
 #define WEBUI_AUDIO_SUCCESS 0
 #define WEBUI_AUDIO_ERROR 1
@@ -164,6 +171,7 @@ int webui_opus_decode_frame(const uint8_t *opus_frame,
  * @param pcm_samples Number of input samples
  * @param opus_out Output: allocated buffer with length-prefixed Opus frames
  * @param opus_len Output: total size of encoded data
+ * @param frame_count_out Output: number of Opus frames encoded (optional, NULL to ignore)
  * @return WEBUI_AUDIO_SUCCESS on success, error code on failure
  *
  * @note Thread-safe (uses internal mutex)
@@ -172,7 +180,8 @@ int webui_opus_decode_frame(const uint8_t *opus_frame,
 int webui_opus_encode_stream(const int16_t *pcm_data,
                              size_t pcm_samples,
                              uint8_t **opus_out,
-                             size_t *opus_len);
+                             size_t *opus_len,
+                             size_t *frame_count_out);
 
 /* =============================================================================
  * ASR Integration Functions
@@ -235,12 +244,16 @@ int webui_audio_pcm48k_to_text(const int16_t *pcm_data, size_t pcm_samples, char
  * @param text Input text to synthesize
  * @param opus_out Output: allocated buffer with length-prefixed Opus frames
  * @param opus_len Output: total size of encoded data
+ * @param frame_count_out Output: number of Opus frames encoded (optional, NULL to ignore)
  * @return WEBUI_AUDIO_SUCCESS on success, error code on failure
  *
  * @note Thread-safe
  * @note Caller is responsible for freeing *opus_out
  */
-int webui_audio_text_to_opus(const char *text, uint8_t **opus_out, size_t *opus_len);
+int webui_audio_text_to_opus(const char *text,
+                             uint8_t **opus_out,
+                             size_t *opus_len,
+                             size_t *frame_count_out);
 
 /**
  * @brief Generate TTS audio as raw PCM (for browser playback)

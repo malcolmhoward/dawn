@@ -49,7 +49,7 @@
  * ============================================================================= */
 
 #define DOC_INDEX_CURL_CONNECT_TIMEOUT 5    /* seconds */
-#define DOC_INDEX_CURL_TRANSFER_TIMEOUT 30  /* seconds */
+#define DOC_INDEX_CURL_TRANSFER_TIMEOUT 10  /* seconds */
 #define DOC_INDEX_CURL_LOW_SPEED_LIMIT 1024 /* bytes/sec minimum */
 #define DOC_INDEX_CURL_LOW_SPEED_TIME 10    /* seconds below limit before abort */
 #define DOC_INDEX_MAX_REDIRECTS 5

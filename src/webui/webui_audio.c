@@ -28,6 +28,8 @@
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <unistd.h>
 
 #include "asr/asr_interface.h"
 #include "audio/resampler.h"
@@ -309,7 +311,8 @@ int webui_opus_decode_frame(const uint8_t *opus_frame,
 int webui_opus_encode_stream(const int16_t *pcm_data,
                              size_t pcm_samples,
                              uint8_t **opus_out,
-                             size_t *opus_len) {
+                             size_t *opus_len,
+                             size_t *frame_count_out) {
    if (!pcm_data || pcm_samples == 0 || !opus_out || !opus_len) {
       return WEBUI_AUDIO_ERROR;
    }
@@ -389,6 +392,8 @@ int webui_opus_encode_stream(const int16_t *pcm_data,
    /* Buffer may be slightly oversized but is valid - skip realloc for shrinking */
    *opus_out = output;
    *opus_len = output_offset;
+   if (frame_count_out)
+      *frame_count_out = num_frames;
 
    LOG_INFO("WebUI audio: Encoded %zu samples to %zu bytes Opus (%zu frames)", pcm_samples,
             output_offset, num_frames);
@@ -560,7 +565,10 @@ int webui_audio_pcm48k_to_text(const int16_t *pcm_data, size_t pcm_samples, char
  * TTS Integration Functions
  * ============================================================================= */
 
-int webui_audio_text_to_opus(const char *text, uint8_t **opus_out, size_t *opus_len) {
+int webui_audio_text_to_opus(const char *text,
+                             uint8_t **opus_out,
+                             size_t *opus_len,
+                             size_t *frame_count_out) {
    if (!text || strlen(text) == 0 || !opus_out || !opus_len) {
       return WEBUI_AUDIO_ERROR;
    }
@@ -631,7 +639,7 @@ int webui_audio_text_to_opus(const char *text, uint8_t **opus_out, size_t *opus_
             WEBUI_OPUS_SAMPLE_RATE);
 
    /* Encode to Opus */
-   ret = webui_opus_encode_stream(resampled, total_resampled, opus_out, opus_len);
+   ret = webui_opus_encode_stream(resampled, total_resampled, opus_out, opus_len, frame_count_out);
    free(resampled);
 
    return ret;
@@ -735,6 +743,75 @@ typedef struct {
 } audio_work_t;
 
 /**
+ * @brief Sleep-based TTS pacing to prevent burst delivery
+ *
+ * Called after each sentence's audio is queued. Tracks cumulative audio duration
+ * sent versus wall-clock elapsed time. When cumulative audio exceeds
+ * elapsed + lookahead window, sleeps the difference on the LLM worker thread.
+ *
+ * The first sentence is never paced (sent immediately to minimize time-to-first-playback).
+ * Sleep is chunked to allow prompt exit on disconnect or new request cancellation.
+ *
+ * @note This function sleeps on the LLM worker thread, extending its occupancy from
+ *       TTS-synthesis-time (~5s for a 30s response) to approximately real-time (~30s).
+ *       With the default worker pool size of 4, this means 4 concurrent TTS-active
+ *       sessions could fully saturate the pool. If concurrent TTS load increases,
+ *       consider adding a cumulative pacing budget per response or a pool-utilization
+ *       check that skips pacing when most workers are busy.
+ *
+ * @note Opus frame count slightly overstates real audio duration due to zero-padding
+ *       of the last partial frame (max 19ms per sentence). The 1s lookahead absorbs this.
+ */
+static void webui_tts_pace_after_send(ws_connection_t *conn,
+                                      session_t *session,
+                                      uint64_t audio_duration_us) {
+   /* Bail if client already disconnected (avoid writing to stale conn) */
+   if (session->disconnected)
+      return;
+
+   conn->tts_audio_sent_us += audio_duration_us;
+
+   /* First sentence: set start time, don't sleep (minimize time-to-first-playback) */
+   if (conn->tts_pace_start_us == 0) {
+      struct timespec ts;
+      clock_gettime(CLOCK_MONOTONIC, &ts);
+      conn->tts_pace_start_us = (uint64_t)ts.tv_sec * 1000000ULL + ts.tv_nsec / 1000;
+      return;
+   }
+
+   /* How far ahead of real-time are we? */
+   struct timespec ts;
+   clock_gettime(CLOCK_MONOTONIC, &ts);
+   uint64_t now_us = (uint64_t)ts.tv_sec * 1000000ULL + ts.tv_nsec / 1000;
+   uint64_t elapsed_us = now_us - conn->tts_pace_start_us;
+
+   if (conn->tts_audio_sent_us <= elapsed_us + WEBUI_TTS_PACE_LOOKAHEAD_US)
+      return; /* Not ahead enough to need pacing */
+
+   uint64_t sleep_us = conn->tts_audio_sent_us - elapsed_us - WEBUI_TTS_PACE_LOOKAHEAD_US;
+
+   if (sleep_us < WEBUI_TTS_PACE_SLEEP_MIN_US)
+      return; /* Skip tiny sleeps */
+
+   /* Clamp to safety cap (don't skip — still pace, just bounded) */
+   if (sleep_us > WEBUI_TTS_PACE_SLEEP_MAX_US)
+      sleep_us = WEBUI_TTS_PACE_SLEEP_MAX_US;
+
+   LOG_INFO("WebUI: TTS pacing sleep %llums (audio_sent=%llums, elapsed=%llums)",
+            (unsigned long long)(sleep_us / 1000),
+            (unsigned long long)(conn->tts_audio_sent_us / 1000),
+            (unsigned long long)(elapsed_us / 1000));
+
+   /* Sleep in chunks, checking for disconnect and cancellation between each */
+   while (sleep_us > 0 && !session->disconnected &&
+          atomic_load(&session->current_stream_id) == conn->tts_pace_stream_id) {
+      uint64_t chunk = sleep_us < WEBUI_TTS_PACE_CHECK_US ? sleep_us : WEBUI_TTS_PACE_CHECK_US;
+      usleep((useconds_t)chunk);
+      sleep_us -= chunk;
+   }
+}
+
+/**
  * @brief Sentence callback for real-time TTS audio streaming
  *
  * Called for each complete sentence during LLM response streaming.
@@ -753,6 +830,14 @@ void webui_sentence_audio_callback(const char *sentence, void *userdata) {
    ws_connection_t *conn = (ws_connection_t *)session->client_data;
    if (!conn || !conn->tts_enabled) {
       return;
+   }
+
+   /* Reset pacing state when a new LLM response stream starts */
+   uint32_t stream_id = atomic_load(&session->current_stream_id);
+   if (stream_id != conn->tts_pace_stream_id) {
+      conn->tts_pace_start_us = 0;
+      conn->tts_audio_sent_us = 0;
+      conn->tts_pace_stream_id = stream_id;
    }
 
    /* Fast path: skip strdup + 4 string scans if sentence has no special content */
@@ -808,7 +893,8 @@ void webui_sentence_audio_callback(const char *sentence, void *userdata) {
          /* Encode TTS output as Opus for bandwidth savings */
          uint8_t *opus = NULL;
          size_t opus_len = 0;
-         int ret = webui_audio_text_to_opus(cleaned, &opus, &opus_len);
+         size_t frame_count = 0;
+         int ret = webui_audio_text_to_opus(cleaned, &opus, &opus_len, &frame_count);
 
          if (ret == WEBUI_AUDIO_SUCCESS && opus && opus_len > 0) {
             /* Re-check: session may have disconnected during TTS synthesis.
@@ -816,6 +902,8 @@ void webui_sentence_audio_callback(const char *sentence, void *userdata) {
             if (!session->disconnected && conn->tts_enabled) {
                webui_send_audio(session, opus, opus_len);
                webui_send_audio_end(session, true);
+               webui_tts_pace_after_send(conn, session,
+                                         (uint64_t)frame_count * WEBUI_OPUS_FRAME_MS * 1000ULL);
             }
             free(opus);
          }
@@ -852,6 +940,8 @@ void webui_sentence_audio_callback(const char *sentence, void *userdata) {
                size_t bytes = samples * sizeof(int16_t);
                webui_send_audio(session, (const uint8_t *)pcm, bytes);
                webui_send_audio_end(session, false);
+               webui_tts_pace_after_send(conn, session,
+                                         (samples * 1000000ULL) / WEBUI_OPUS_SAMPLE_RATE);
             }
             free(pcm);
          }
@@ -867,6 +957,9 @@ void webui_sentence_audio_callback(const char *sentence, void *userdata) {
  * Unlike webui_sentence_audio_callback, this bypasses the tts_enabled check
  * (scheduler notifications are unsolicited) and brackets the audio with
  * speaking/idle state transitions for the browser state machine.
+ *
+ * No TTS pacing is applied here — scheduler notifications are single-sentence
+ * by design (the briefing summarizer produces one consolidated sentence).
  */
 void scheduler_send_tts_to_session(session_t *session, const char *text) {
    if (!session || !text || !text[0] || session->disconnected)
@@ -886,7 +979,7 @@ void scheduler_send_tts_to_session(session_t *session, const char *text) {
    if (use_opus) {
       uint8_t *opus = NULL;
       size_t opus_len = 0;
-      int ret = webui_audio_text_to_opus(text, &opus, &opus_len);
+      int ret = webui_audio_text_to_opus(text, &opus, &opus_len, NULL);
 
       if (ret == WEBUI_AUDIO_SUCCESS && opus && opus_len > 0) {
          if (!session->disconnected) {

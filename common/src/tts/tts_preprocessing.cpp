@@ -767,9 +767,20 @@ template<PassMode mode> static size_t process_text_impl(const char *src, size_t 
       i++;
    }
 
-   // Skip leading markdown bullet marker ("- ", "* ", "1. ", "2. ", etc.)
+   // Skip leading markdown markers:
+   // - Bullet markers: "- ", "* ", "1. ", "2. ", etc.
+   // - Header markers: "# ", "## ", "### ", etc. (1-6 hashes)
    if (i < len) {
-      if (src[i] == '-' && i + 1 < len && src[i + 1] == ' ') {
+      if (src[i] == '#') {
+         // Markdown header: skip 1-6 '#' characters followed by a space
+         size_t j = i;
+         while (j < len && j - i < 6 && src[j] == '#') {
+            j++;
+         }
+         if (j < len && src[j] == ' ') {
+            i = j + 1;
+         }
+      } else if (src[i] == '-' && i + 1 < len && src[i + 1] == ' ') {
          i += 2;
       } else if (src[i] == '*' && i + 1 < len && src[i + 1] == ' ') {
          i += 2;

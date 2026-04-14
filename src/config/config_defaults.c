@@ -185,7 +185,7 @@ void config_set_defaults(dawn_config_t *config) {
    /* FlareSolverr */
    config->url_fetcher.flaresolverr.enabled = false;
    SAFE_COPY(config->url_fetcher.flaresolverr.endpoint, "http://127.0.0.1:8191/v1");
-   config->url_fetcher.flaresolverr.timeout_sec = 60;
+   config->url_fetcher.flaresolverr.timeout_sec = 10;
    config->url_fetcher.flaresolverr.max_response_bytes = 4 * 1024 * 1024; /* 4MB */
 
    /* MQTT - matching dawn.h */

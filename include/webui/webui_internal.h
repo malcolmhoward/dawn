@@ -141,6 +141,15 @@ typedef struct {
     * NULL when always-on is not active. Owns per-connection VAD context, Opus decoder,
     * resampler, and circular audio buffer. */
    struct always_on_ctx *always_on;
+
+   /* TTS audio pacing state (pacing fields written only from LLM worker thread,
+    * not accessed by scheduler or LWS thread — no synchronization needed).
+    * Note: ws_connection_t memory is owned by lws and remains valid until
+    * server shutdown (not freed per-connection), so pointer access during
+    * sleep is safe against use-after-free. */
+   uint64_t tts_pace_start_us;  /* CLOCK_MONOTONIC when first audio sent (0 = not started) */
+   uint64_t tts_audio_sent_us;  /* Cumulative audio duration sent (microseconds) */
+   uint32_t tts_pace_stream_id; /* Stream ID for reset detection */
 } ws_connection_t;
 
 /**
