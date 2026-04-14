@@ -306,6 +306,17 @@ target_link_libraries(bench_retrieval
                       ${CURL_LIBRARIES}
                       ${JSONC_LIBRARIES})
 
+# Test: Phone DB Unit Test
+add_executable(test_phone_db
+               test_phone_db.c
+               test_scheduler_stub.c
+               ${SRC_ROOT}/src/tools/phone_db.c)
+
+target_link_libraries(test_phone_db
+                      dawn_common
+                      sqlite3
+                      pthread)
+
 # =============================================================================
 # Aggregate "tests" target
 # =============================================================================
@@ -325,6 +336,7 @@ add_custom_target(tests-ci
                           test_wake_word
                           test_instruction_loader
                           test_document_extract
+                          test_phone_db
                   COMMENT "Building CI-safe unit tests")
 
 add_custom_target(tests
@@ -348,4 +360,5 @@ add_custom_target(tests
                           test_document_db
                           test_embedding_engine
                           test_plan_executor
+                          test_phone_db
                   COMMENT "Building all tests")

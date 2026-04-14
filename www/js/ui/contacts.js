@@ -165,12 +165,23 @@
             DawnToast.show('Failed to add contact: ' + (payload.error || ''), 'error');
          return;
       }
-      if (typeof DawnToast !== 'undefined') DawnToast.show('Contact added', 'success');
+      if (typeof DawnToast !== 'undefined') DawnToast.show('Contact saved', 'success');
       // Keep modal open for rapid entry — clear value but keep name/type
       const valueInput = document.getElementById('contact-value');
       if (valueInput) {
          valueInput.value = '';
          valueInput.focus();
+      }
+      // Flash save button green with "Saved!" confirmation
+      const saveBtn = document.getElementById('contact-modal-save');
+      if (saveBtn) {
+         const origText = saveBtn.textContent;
+         saveBtn.textContent = 'Saved!';
+         saveBtn.classList.add('btn-saved');
+         setTimeout(() => {
+            saveBtn.textContent = origText;
+            saveBtn.classList.remove('btn-saved');
+         }, 1500);
       }
       reload();
    }
@@ -402,13 +413,29 @@
          return;
       }
 
+      // Validate and normalize based on field type
+      const normalizedValue = validateAndNormalize(fieldType, value);
+      if (normalizedValue === null) {
+         valueInput.focus();
+         return;
+      }
+      // Update input with normalized value so user sees the canonical form
+      valueInput.value = normalizedValue;
+
       setSaveButtonEnabled(false);
       if (state.editingContact) {
-         requestUpdate(state.editingContact.contact_id, fieldType, value, label);
+         requestUpdate(state.editingContact.contact_id, fieldType, normalizedValue, label);
       } else {
          const forceCreate = state.forceCreate || false;
          state.forceCreate = false;
-         requestAdd(entityName, state.selectedEntityId, fieldType, value, label, forceCreate);
+         requestAdd(
+            entityName,
+            state.selectedEntityId,
+            fieldType,
+            normalizedValue,
+            label,
+            forceCreate
+         );
       }
    }
 
@@ -578,6 +605,67 @@
       nameInput.parentNode.appendChild(dropdown);
    }
 
+   /**
+    * Validate and normalize a contact value based on field type.
+    * @returns {string|null} Normalized value, or null if invalid (toast shown).
+    */
+   function validateAndNormalize(fieldType, rawValue) {
+      if (fieldType === 'email') {
+         // Loose email regex — must have user@domain.tld
+         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawValue)) {
+            if (typeof DawnToast !== 'undefined')
+               DawnToast.show('Invalid email format (expected user@domain.com)', 'error');
+            return null;
+         }
+         return rawValue.toLowerCase();
+      }
+
+      if (fieldType === 'phone') {
+         // Strip formatting: spaces, dashes, parens, dots
+         let digits = rawValue.replace(/[\s\-().]/g, '');
+
+         // Reject invalid characters (anything not + or digit)
+         if (/[^+0-9]/.test(digits)) {
+            if (typeof DawnToast !== 'undefined')
+               DawnToast.show('Phone number contains invalid characters', 'error');
+            return null;
+         }
+
+         // Already has +, validate it
+         if (digits.startsWith('+')) {
+            if (!/^\+[0-9]{7,15}$/.test(digits)) {
+               if (typeof DawnToast !== 'undefined')
+                  DawnToast.show(
+                     'Invalid phone number (expected + followed by 7-15 digits)',
+                     'error'
+                  );
+               return null;
+            }
+            return digits;
+         }
+
+         // 11 digits starting with 1 — US number without +
+         if (/^1[0-9]{10}$/.test(digits)) {
+            return '+' + digits;
+         }
+
+         // 10 digits — US number, prepend +1
+         if (/^[0-9]{10}$/.test(digits)) {
+            return '+1' + digits;
+         }
+
+         if (typeof DawnToast !== 'undefined')
+            DawnToast.show(
+               'Invalid phone number. Enter 10-digit US number, or +country code with number.',
+               'error'
+            );
+         return null;
+      }
+
+      // Address and other types — no validation needed
+      return rawValue;
+   }
+
    function updateValueInputType(fieldType) {
       const valueInput = document.getElementById('contact-value');
       if (!valueInput) return;
@@ -589,7 +677,7 @@
             break;
          case 'phone':
             valueInput.type = 'tel';
-            valueInput.placeholder = 'e.g. +1 555-0123';
+            valueInput.placeholder = 'e.g. 5551234567 or +15551234567';
             break;
          case 'address':
             valueInput.type = 'text';

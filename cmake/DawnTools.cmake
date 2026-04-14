@@ -40,6 +40,7 @@ option(DAWN_ENABLE_CALENDAR_TOOL "Enable CalDAV calendar integration" ON)
 option(DAWN_ENABLE_EMAIL_TOOL "Enable IMAP/SMTP email integration" ON)
 option(DAWN_ENABLE_SFX_TOOL "Enable sound effect playback tool" ON)
 option(DAWN_ENABLE_RENDER_VISUAL_TOOL "Enable visual rendering tool (SVG/HTML diagrams)" ON)
+option(DAWN_ENABLE_PHONE_TOOL "Enable phone call and SMS tool (requires ECHO daemon)" ON)
 
 # =============================================================================
 # Mutual Exclusion: Home Assistant and SmartThings
@@ -314,6 +315,18 @@ if(DAWN_ENABLE_RENDER_VISUAL_TOOL)
     message(STATUS "DAWN: Render Visual tool ENABLED")
 else()
     message(STATUS "DAWN: Render Visual tool DISABLED")
+endif()
+
+# Phone Tool (calls and SMS via ECHO modem daemon)
+if(DAWN_ENABLE_PHONE_TOOL)
+    add_definitions(-DDAWN_ENABLE_PHONE_TOOL)
+    list(APPEND TOOL_SOURCES
+        src/tools/phone_tool.c
+        src/tools/phone_service.c
+        src/tools/phone_db.c)
+    message(STATUS "DAWN: Phone tool ENABLED")
+else()
+    message(STATUS "DAWN: Phone tool DISABLED")
 endif()
 
 # =============================================================================

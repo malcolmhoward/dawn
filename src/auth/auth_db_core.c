@@ -70,7 +70,7 @@ static void finalize_statements(void);
  * Schema SQL
  * ============================================================================= */
 
-/* Base schema for fresh installs.  Must match AUTH_DB_SCHEMA_VERSION (v28).
+/* Base schema for fresh installs.  Must match AUTH_DB_SCHEMA_VERSION (v29).
  *
  * IMPORTANT: When adding a new column or table via migration, also add it here
  * so that fresh installs get the complete schema.  All statements use
@@ -527,7 +527,35 @@ static const char *SCHEMA_SQL =
     "  created_at INTEGER NOT NULL,"
     "  FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE"
     ");"
-    "CREATE INDEX IF NOT EXISTS idx_email_acct_user ON email_accounts(user_id);";
+    "CREATE INDEX IF NOT EXISTS idx_email_acct_user ON email_accounts(user_id);"
+
+    /* Phone call and SMS logs (v29) */
+    "CREATE TABLE IF NOT EXISTS phone_call_log ("
+    "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "  user_id INTEGER NOT NULL,"
+    "  direction INTEGER NOT NULL,"
+    "  number TEXT NOT NULL,"
+    "  contact_name TEXT DEFAULT '',"
+    "  duration_sec INTEGER DEFAULT 0,"
+    "  timestamp INTEGER NOT NULL,"
+    "  status INTEGER NOT NULL"
+    ");"
+    "CREATE INDEX IF NOT EXISTS idx_phone_call_user_ts "
+    "  ON phone_call_log(user_id, timestamp DESC);"
+    "CREATE TABLE IF NOT EXISTS phone_sms_log ("
+    "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "  user_id INTEGER NOT NULL,"
+    "  direction INTEGER NOT NULL,"
+    "  number TEXT NOT NULL,"
+    "  contact_name TEXT DEFAULT '',"
+    "  body TEXT NOT NULL,"
+    "  timestamp INTEGER NOT NULL,"
+    "  read INTEGER DEFAULT 0"
+    ");"
+    "CREATE INDEX IF NOT EXISTS idx_phone_sms_user_ts "
+    "  ON phone_sms_log(user_id, timestamp DESC);"
+    "CREATE INDEX IF NOT EXISTS idx_phone_sms_unread "
+    "  ON phone_sms_log(user_id, read) WHERE read = 0;";
 
 /* =============================================================================
  * Schema Version and Migration
@@ -1294,6 +1322,45 @@ static int create_schema(void) {
          errmsg = NULL;
       } else {
          LOG_INFO("auth_db: added source_client_type to scheduled_events (v28)");
+      }
+   }
+
+   /* v29 migration: phone call and SMS log tables */
+   if (current_version >= 1 && current_version < 29) {
+      const char *v29_sql = "CREATE TABLE IF NOT EXISTS phone_call_log ("
+                            "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                            "  user_id INTEGER NOT NULL,"
+                            "  direction INTEGER NOT NULL,"
+                            "  number TEXT NOT NULL,"
+                            "  contact_name TEXT DEFAULT '',"
+                            "  duration_sec INTEGER DEFAULT 0,"
+                            "  timestamp INTEGER NOT NULL,"
+                            "  status INTEGER NOT NULL"
+                            ");"
+                            "CREATE INDEX IF NOT EXISTS idx_phone_call_user_ts "
+                            "  ON phone_call_log(user_id, timestamp DESC);"
+                            "CREATE TABLE IF NOT EXISTS phone_sms_log ("
+                            "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                            "  user_id INTEGER NOT NULL,"
+                            "  direction INTEGER NOT NULL,"
+                            "  number TEXT NOT NULL,"
+                            "  contact_name TEXT DEFAULT '',"
+                            "  body TEXT NOT NULL,"
+                            "  timestamp INTEGER NOT NULL,"
+                            "  read INTEGER DEFAULT 0"
+                            ");"
+                            "CREATE INDEX IF NOT EXISTS idx_phone_sms_user_ts "
+                            "  ON phone_sms_log(user_id, timestamp DESC);"
+                            "CREATE INDEX IF NOT EXISTS idx_phone_sms_unread "
+                            "  ON phone_sms_log(user_id, read) WHERE read = 0;";
+
+      rc = sqlite3_exec(s_db.db, v29_sql, NULL, NULL, &errmsg);
+      if (rc != SQLITE_OK) {
+         LOG_ERROR("auth_db: v29 migration (phone tables) failed: %s", errmsg ? errmsg : "unknown");
+         sqlite3_free(errmsg);
+         errmsg = NULL;
+      } else {
+         LOG_INFO("auth_db: added phone_call_log and phone_sms_log tables (v29)");
       }
    }
 

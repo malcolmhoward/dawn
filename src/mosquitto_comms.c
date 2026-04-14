@@ -43,6 +43,9 @@
 #include "logging.h"
 #include "mosquitto_comms.h"
 #include "tools/hud_discovery.h"
+#ifdef DAWN_ENABLE_PHONE_TOOL
+#include "tools/phone_service.h"
+#endif
 #include "tools/tool_registry.h"
 #include "tts/text_to_speech.h"
 #include "tts/tts_preprocessing.h"
@@ -356,6 +359,14 @@ void on_connect(struct mosquitto *mosq, void *obj, int reason_code) {
       LOG_WARNING("Component status initialization failed");
    }
 
+   /* Subscribe to ECHO modem topics for phone service */
+#ifdef DAWN_ENABLE_PHONE_TOOL
+   mosquitto_subscribe(mosq, NULL, "echo/events", 1);
+   mosquitto_subscribe(mosq, NULL, "echo/response", 1);
+   mosquitto_subscribe(mosq, NULL, "echo/status", 1);
+   LOG_INFO("Subscribed to echo/events, echo/response, echo/status");
+#endif
+
    /* Initialize HUD discovery (subscribes to hud/discovery/# and requests state) */
    if (hud_discovery_init(mosq) != 0) {
       LOG_WARNING("HUD discovery initialization failed - using defaults");
@@ -577,6 +588,31 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
       component_status_handle_message(msg->topic, (const char *)msg->payload, msg->payloadlen);
       return;
    }
+
+   /* Route ECHO modem daemon messages to phone service */
+#ifdef DAWN_ENABLE_PHONE_TOOL
+   if (strcmp(msg->topic, "echo/events") == 0 || strcmp(msg->topic, "echo/status") == 0) {
+      phone_service_handle_event((const char *)msg->payload, msg->payloadlen);
+      return;
+   }
+   if (strcmp(msg->topic, "echo/response") == 0) {
+      /* Deliver response to waiting command_router slot by request_id */
+      struct json_object *resp_json = json_tokener_parse((const char *)msg->payload);
+      if (resp_json) {
+         struct json_object *j_reqid, *j_status;
+         if (json_object_object_get_ex(resp_json, "request_id", &j_reqid)) {
+            const char *rid = json_object_get_string(j_reqid);
+            const char *status = "success";
+            if (json_object_object_get_ex(resp_json, "status", &j_status)) {
+               status = json_object_get_string(j_status);
+            }
+            command_router_deliver(rid, status);
+         }
+         json_object_put(resp_json);
+      }
+      return;
+   }
+#endif
 
    /* Check for HUD discovery messages (hud/discovery/#) */
    if (strncmp(msg->topic, "hud/discovery/", 14) == 0) {

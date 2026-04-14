@@ -44,6 +44,92 @@ static bool is_valid_field_type(const char *ft) {
           (strcmp(ft, "email") == 0 || strcmp(ft, "phone") == 0 || strcmp(ft, "address") == 0);
 }
 
+/**
+ * @brief Validate and normalize a contact value based on field type.
+ *
+ * For email: checks user@domain.tld format.
+ * For phone: strips formatting, normalizes to E.164 (+1 prepended for 10-digit US numbers).
+ * For address: no validation.
+ *
+ * @param field_type  "email", "phone", or "address"
+ * @param value       Raw input value
+ * @param out         Output buffer for normalized value
+ * @param out_size    Size of output buffer
+ * @param err_msg     Output: error message if validation fails
+ * @return true if valid, false if rejected (err_msg set)
+ */
+static bool validate_contact_value(const char *field_type,
+                                   const char *value,
+                                   char *out,
+                                   size_t out_size,
+                                   const char **err_msg) {
+   snprintf(out, out_size, "%s", value);
+
+   if (strcmp(field_type, "email") == 0) {
+      const char *at = strchr(out, '@');
+      if (!at || at == out || *(at + 1) == '\0') {
+         *err_msg = "Invalid email format (expected user@domain.com)";
+         return false;
+      }
+      /* Require at least one char after the dot in domain */
+      const char *dot = strchr(at + 1, '.');
+      if (!dot || *(dot + 1) == '\0') {
+         *err_msg = "Invalid email format (expected user@domain.com)";
+         return false;
+      }
+      /* Normalize: lowercase the entire email */
+      for (char *p = out; *p; p++) {
+         if (*p >= 'A' && *p <= 'Z') {
+            *p = *p + ('a' - 'A');
+         }
+      }
+      return true;
+   }
+
+   if (strcmp(field_type, "phone") == 0) {
+      char stripped[MAX_CONTACT_VALUE_LEN + 1];
+      size_t j = 0;
+      for (size_t i = 0; out[i] && j < sizeof(stripped) - 1; i++) {
+         char c = out[i];
+         if (c == '+' || (c >= '0' && c <= '9')) {
+            stripped[j++] = c;
+         } else if (c == ' ' || c == '-' || c == '(' || c == ')' || c == '.') {
+            continue;
+         } else {
+            *err_msg = "Phone number contains invalid characters";
+            return false;
+         }
+      }
+      stripped[j] = '\0';
+
+      /* Reject + in non-leading positions */
+      for (size_t i = 1; i < j; i++) {
+         if (stripped[i] == '+') {
+            *err_msg = "Phone number contains '+' in invalid position";
+            return false;
+         }
+      }
+
+      if (stripped[0] == '+') {
+         if (j < 8 || j > 16) {
+            *err_msg = "Phone number must be 7-15 digits after +";
+            return false;
+         }
+         snprintf(out, out_size, "%s", stripped);
+      } else if (j == 11 && stripped[0] == '1') {
+         snprintf(out, out_size, "+%s", stripped);
+      } else if (j == 10) {
+         snprintf(out, out_size, "+1%s", stripped);
+      } else {
+         *err_msg = "Invalid phone number. Enter 10-digit US number or +country code with number.";
+         return false;
+      }
+      return true;
+   }
+
+   return true; /* address — no validation */
+}
+
 /* Serialize contact_result_t to JSON object */
 
 static json_object *contact_to_json(const contact_result_t *c) {
@@ -236,6 +322,17 @@ void handle_contacts_add(ws_connection_t *conn, json_object *payload) {
       goto done;
    }
 
+   /* Validate and normalize value by field type */
+   char normalized_value[MAX_CONTACT_VALUE_LEN + 1];
+   const char *val_err = NULL;
+   if (!validate_contact_value(field_type, value, normalized_value, sizeof(normalized_value),
+                               &val_err)) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error", json_object_new_string(val_err));
+      goto done;
+   }
+   value = normalized_value;
+
    /* Resolve entity: use explicit entity_id if provided, otherwise find/create by name */
    int64_t entity_id = -1;
    bool created = false;
@@ -394,6 +491,17 @@ void handle_contacts_update(ws_connection_t *conn, json_object *payload) {
                              json_object_new_string("Label exceeds maximum length (31)"));
       goto done;
    }
+
+   /* Validate and normalize value by field type */
+   char normalized_value[MAX_CONTACT_VALUE_LEN + 1];
+   const char *val_err = NULL;
+   if (!validate_contact_value(field_type, value, normalized_value, sizeof(normalized_value),
+                               &val_err)) {
+      json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
+      json_object_object_add(resp_payload, "error", json_object_new_string(val_err));
+      goto done;
+   }
+   value = normalized_value;
 
    if (contacts_update(conn->auth_user_id, contact_id, field_type, value, label) != 0) {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));

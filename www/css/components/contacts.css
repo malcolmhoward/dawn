@@ -201,6 +201,18 @@
    margin-top: 0.5rem;
 }
 
+#contact-modal-save {
+   min-width: 5.5rem;
+   text-align: center;
+}
+
+.contact-modal-actions .btn-saved {
+   background: var(--success, #22c55e);
+   border-color: var(--success, #22c55e);
+   pointer-events: none;
+   transition: background 0.2s;
+}
+
 .contact-entity-hint {
    font-size: 0.75rem;
    color: var(--text-secondary);

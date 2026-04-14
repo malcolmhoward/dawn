@@ -1718,6 +1718,7 @@ int memory_db_entity_search(int user_id, const char *keywords, memory_entity_t *
    sqlite3_bind_int(s_db.stmt_memory_entity_search, 1, user_id);
    sqlite3_bind_text(s_db.stmt_memory_entity_search, 2, pattern, -1, SQLITE_TRANSIENT);
    sqlite3_bind_int(s_db.stmt_memory_entity_search, 3, max);
+   sqlite3_bind_int(s_db.stmt_memory_entity_search, 4, 0); /* OFFSET — shared stmt has 4 params */
 
    int count = 0;
    while (count < max && sqlite3_step(s_db.stmt_memory_entity_search) == SQLITE_ROW) {

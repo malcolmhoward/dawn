@@ -361,6 +361,7 @@ Unit tests in `tests/` (standalone binaries, no framework):
 - `test_instruction_loader` — Two-step instruction loader file I/O, path traversal, edge cases (42 assertions)
 - `test_wake_word` — Wake word matching, normalization, command extraction
 - `test_document_extract` — Extension validation, Content-Type mapping, extraction, magic bytes, error codes (81 assertions)
+- `test_phone_db` — Phone call/SMS log CRUD, user isolation, retention cleanup, edge cases (26 assertions)
 
 Build and run: `make -C build-debug test_scheduler && ./build-debug/tests/test_scheduler`
 
@@ -496,6 +497,16 @@ Manual testing covers:
 - `include/audio/audio_utils.h`: Shared audio_apply_volume() inline function
 - `sound_assets/`: Sound effect files (ogg) played by DAWN on behalf of SPARK/MIRAGE
 
+**Phone (Call & SMS via ECHO modem daemon):**
+- `include/tools/phone_tool.h`: Phone tool registration header
+- `src/tools/phone_tool.c`: LLM tool interface (10 actions, two-step confirmation, contact resolution)
+- `include/tools/phone_service.h`: Phone service API (state machine, events, MQTT)
+- `src/tools/phone_service.c`: Call state machine, ECHO MQTT event handling, TTS, HUD, rate limiting
+- `include/tools/phone_db.h`: Phone DB types (call_log, sms_log) and CRUD declarations
+- `src/tools/phone_db.c`: SQLite operations for call/SMS logs (Pattern A, shared auth_db handle)
+- `tests/test_phone_db.c`: Phone DB unit tests (26 assertions)
+- `docs/PHONE_SMS_DESIGN.md`: Full design document (ECHO + DAWN integration, Phases 1-6)
+
 **Satellite (DAP2):**
 - `dawn_satellite/`: Standalone satellite binary for Raspberry Pi
 - `dawn_satellite/config/satellite.toml`: Default satellite configuration
@@ -573,6 +584,12 @@ Manual testing covers:
 - Server-side TTS audio pacing: sleep-based real-time delivery prevents mobile WebUI audio skips, syncs text + audio output (1s lookahead, per-connection state, stream reset detection)
 - TTS preprocessing: strip markdown header markers (# through ######) so headings are spoken as plain text
 - URL fetch timeout defaults reduced (document_index 30s→10s, FlareSolverr 60s→10s)
+- Phone call & SMS system: ECHO modem daemon (standalone, ~/code/The-OASIS-Project/echo/) + DAWN phone_tool.c, phone_service.c, phone_db.c
+- Phone tool: 10 actions (call, confirm_call, answer, hang_up, send_sms, confirm_sms, read_sms, call_log, sms_log, status), two-step confirmation, contact resolution, rate limiting
+- Phone DB: call_log + sms_log tables (schema v29), Pattern A shared auth_db handle, 26-assertion unit test
+- UCS2/emoji SMS: modem kept in UCS2 charset with AT+CSMP DCS=8, UTF-8↔UCS2 hex encoding in ECHO
+- Contacts validation: email format check, phone E.164 normalization (10-digit US → +1), client + server validation
+- Entity search fix: memory_db_entity_search missing OFFSET bind on shared prepared statement
 
 ## Development Lifecycle
 

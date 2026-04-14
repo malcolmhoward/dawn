@@ -495,6 +495,20 @@
                                   # Env: DAWN_PATHS_COMMANDS_CONFIG
 
 # =============================================================================
+# Phone (calls and SMS via ECHO modem daemon)
+# =============================================================================
+
+[phone]
+# enabled = true                    # Enable phone tool
+# confirm_outbound = true           # Require "confirm" before dialing or sending SMS
+# audio_device = ""                 # USB sound card device for call audio (e.g. "hw:2,0")
+# sms_retention_days = 90           # Auto-delete SMS logs older than N days
+# call_log_retention_days = 90      # Auto-delete call logs older than N days
+# rate_limit_sms_per_min = 5        # UX rate limit: max SMS per minute
+# rate_limit_calls_per_min = 3      # UX rate limit: max dial attempts per minute
+# rate_limit_sms_per_day = 30       # UX rate limit: max SMS per day
+
+# =============================================================================
 # Secrets (separate file)
 # =============================================================================
 # API keys and credentials should go in secrets.toml (mode 600 recommended)

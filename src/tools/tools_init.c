@@ -102,6 +102,9 @@
 #ifdef DAWN_ENABLE_RENDER_VISUAL_TOOL
 #include "tools/render_visual_tool.h"
 #endif
+#ifdef DAWN_ENABLE_PHONE_TOOL
+#include "tools/phone_tool.h"
+#endif
 
 #include "tools/plan_executor.h"
 
@@ -275,6 +278,12 @@ int tools_register_all(void) {
 #ifdef DAWN_ENABLE_RENDER_VISUAL_TOOL
    if (render_visual_tool_register() != 0) {
       LOG_WARNING("Failed to register render_visual tool");
+   }
+#endif
+
+#ifdef DAWN_ENABLE_PHONE_TOOL
+   if (phone_tool_register() != 0) {
+      LOG_WARNING("Failed to register phone tool");
    }
 #endif
 
