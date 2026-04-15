@@ -1,10 +1,10 @@
-# OASIS Communications Protocol (OCP) v1.0
+# OASIS Communications Protocol (OCP) v1.4
 
 A standardized messaging protocol for inter-component communication within The OASIS Project.
 
 ## Overview
 
-The OASIS Communications Protocol defines a consistent message format for request/response communication between OASIS components (Dawn, Mirage, and future modules). The protocol ensures proper correlation of requests with responses, standardized error handling, flexible data transport, and extensibility for future needs.
+The OASIS Communications Protocol defines a consistent message format for communication between OASIS components (Dawn, Echo, Mirage, Stat, and future modules). The protocol covers request/response correlation, unsolicited event notification, component status/keepalive, capability discovery, and flexible data transport.
 
 ## Design Principles
 
@@ -75,6 +75,43 @@ The OASIS Communications Protocol defines a consistent message format for reques
   }
 }
 ```
+
+### Event Message
+
+Events are unsolicited notifications — something happened, and the publishing component is informing subscribers. They differ from requests in that they are informational and do not expect a response.
+
+```json
+{
+  "device": "echo",
+  "event": "sms_received",
+  "msg_type": "event",
+  "timestamp": 1713100000000,
+  "sender": "+15551234567",
+  "body": "Hello"
+}
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `device` | Yes | Component that generated the event |
+| `event` | Yes | What happened (e.g., "sms_received", "call_connected", "modem_lost") |
+| `msg_type` | See below | `"event"` — required on shared topics, recommended on dedicated event topics |
+| `timestamp` | Recommended | Unix milliseconds when the event occurred |
+| Additional fields | No | Event-specific payload (top-level fields, or `data` block for binary) |
+
+**Key distinction**: `action` is a verb requesting behavior ("look", "dial", "play"). `event` is a noun reporting something that happened ("sms_received", "call_ended", "modem_lost"). Components MUST NOT reuse `action` for event names or `event` for commands.
+
+### Event vs Request
+
+| Aspect | Request | Event |
+|--------|---------|-------|
+| Field name | `action` | `event` |
+| Direction | Sender → target | Publisher → subscribers |
+| Response expected | Yes (if `request_id` present) | No |
+| Semantic | Imperative ("look", "dial") | Indicative ("sms_received", "call_ended") |
+| `msg_type` | `"request"` (implicit) | `"event"` |
+
+Events SHOULD be published on dedicated event topics (e.g., `echo/events`) rather than shared command topics. When published on a shared topic (e.g., `hud`), `msg_type: "event"` is REQUIRED to distinguish from commands.
 
 ## Data Transport
 
@@ -222,15 +259,21 @@ Components must echo the exact `request_id` received - no modification.
 
 ## Topic Conventions (MQTT)
 
-| Topic | Purpose | Subscribers |
-|-------|---------|-------------|
-| `dawn` | Commands to Dawn, responses from other components | Dawn |
-| `hud` | Commands to Mirage HUD | Mirage |
-| `hud/status` | Mirage presence (online/offline) | Dawn |
-| `hud/discovery/#` | HUD capability discovery | Dawn |
-| `dawn/status` | Dawn presence (online/offline) | Mirage |
-| `oasis/broadcast` | System-wide announcements | All components |
-| `oasis/<component>` | Future per-component topics | Specific component |
+| Topic | Purpose | Publisher | Subscribers |
+|-------|---------|-----------|-------------|
+| `dawn` | Commands to Dawn, responses from other components | Mirage, Echo | Dawn |
+| `hud` | Commands and events to Mirage HUD | Dawn | Mirage |
+| `hud/status` | Mirage presence (online/offline) | Mirage | Dawn |
+| `hud/discovery/#` | HUD capability discovery | Mirage | Dawn |
+| `dawn/status` | Dawn presence (online/offline) | Dawn | Mirage |
+| `echo/cmd` | Commands to Echo modem daemon | Dawn | Echo |
+| `echo/events` | Unsolicited events from Echo (calls, SMS) | Echo | Dawn |
+| `echo/response` | Command responses from Echo | Echo | Dawn |
+| `echo/status` | Echo presence (online/offline) | Echo | Dawn |
+| `echo/telemetry` | Modem metrics (signal, registration) | Echo | Dawn, Mirage |
+| `stat/telemetry` | System telemetry (battery, CPU, fan) | Stat | Mirage |
+| `stat/status` | Stat presence (online/offline) | Stat | Dawn, Mirage |
+| `oasis/broadcast` | System-wide announcements | Any | All components |
 
 Responses are sent to the topic associated with the requesting component.
 
@@ -286,7 +329,7 @@ Examples:
 {
   "device": "mirage",
   "msg_type": "discovery",
-  "timestamp": 1706644800,
+  "timestamp": 1706644800000,
   "<capability>": ["item1", "item2", "item3"]
 }
 ```
@@ -295,7 +338,7 @@ Examples:
 |-------|----------|-------------|
 | `device` | Yes | Component publishing the discovery |
 | `msg_type` | Yes | Must be `"discovery"` |
-| `timestamp` | Yes | Unix seconds when published |
+| `timestamp` | Yes | Unix milliseconds when published |
 | `<capability>` | Yes | Array of available items (field name matches capability) |
 
 ### Discovery Request Format
@@ -321,7 +364,7 @@ Publishers should subscribe to their request topic and republish all discovery m
 {
   "device": "mirage",
   "msg_type": "discovery",
-  "timestamp": 1706644800,
+  "timestamp": 1706644800000,
   "elements": ["armor_display", "detect", "map", "info"]
 }
 ```
@@ -331,7 +374,7 @@ Publishers should subscribe to their request topic and republish all discovery m
 {
   "device": "mirage",
   "msg_type": "discovery",
-  "timestamp": 1706644800,
+  "timestamp": 1706644800000,
   "huds": ["default", "armor", "environmental", "automotive"]
 }
 ```
@@ -390,17 +433,19 @@ Component status messages enable presence detection and health monitoring. This 
 Examples:
 - `hud/status` - Mirage HUD presence (Mirage publishes, Dawn subscribes)
 - `dawn/status` - Dawn AI assistant presence (Dawn publishes, Mirage subscribes)
-- `audio/status` - Audio subsystem presence (future)
-- `armor/status` - Armor systems presence (future)
+- `echo/status` - Echo modem daemon presence (Echo publishes, Dawn subscribes)
+- `stat/status` - Stat telemetry daemon presence (Stat publishes, Dawn/Mirage subscribe)
 
 ### Status Message Format
+
+All status messages (LWT, online, offline, heartbeat) MUST include the four required fields below.
 
 ```json
 {
   "device": "mirage",
   "msg_type": "status",
   "status": "online",
-  "timestamp": 1706644800,
+  "timestamp": 1706644800000,
   "version": "1.0.0"
 }
 ```
@@ -410,9 +455,9 @@ Examples:
 | `device` | Yes | Component name |
 | `msg_type` | Yes | Must be `"status"` |
 | `status` | Yes | `"online"` or `"offline"` |
-| `timestamp` | Yes | Unix seconds when published |
+| `timestamp` | Yes | Unix milliseconds when published |
 | `version` | No | Component version string |
-| `capabilities` | No | Array of supported features (future) |
+| `capabilities` | No | Array of supported features |
 
 ### Implementation: MQTT Last Will and Testament (LWT)
 
@@ -541,7 +586,7 @@ Both Dawn and Mirage publish their status, enabling mutual awareness:
   "device": "dawn",
   "msg_type": "status",
   "status": "online",
-  "timestamp": 1706644800,
+  "timestamp": 1706644800000,
   "version": "2.0.0",
   "capabilities": ["voice", "vision", "tools"]
 }
@@ -553,7 +598,7 @@ Both Dawn and Mirage publish their status, enabling mutual awareness:
   "device": "mirage",
   "msg_type": "status",
   "status": "online",
-  "timestamp": 1706644800,
+  "timestamp": 1706644800000,
   "version": "1.5.0",
   "capabilities": ["hud", "camera", "recording"]
 }
@@ -678,6 +723,30 @@ Response with structured data:
 }
 ```
 
+## Message Types (`msg_type`)
+
+The `msg_type` field identifies what kind of message is being sent. It is required on shared topics where multiple message types coexist (the field disambiguates), and on status and discovery topics (as specified in their respective sections). It is recommended on dedicated topics where the topic name already implies the type, as it aids debugging, logging, and tooling.
+
+| Value | Description | Status |
+|-------|-------------|--------|
+| `request` | Command or query (implicit default for messages with `action`) | Active |
+| `response` | Reply to a request | Active |
+| `event` | Unsolicited notification (see Event Message section) | Active |
+| `discovery` | Capability advertisement | Active |
+| `discovery_request` | Request for discovery republication | Active |
+| `status` | Component presence/health (online/offline) | Active |
+| `telemetry` | Periodic sensor/metrics data | Active |
+| `progress` | Intermediate status update | Future |
+
+### `msg_type` Requirements
+
+| Topic type | `msg_type` | Rationale |
+|------------|------------|-----------|
+| Shared topics (e.g., `hud`, `dawn`) | Required | Multiple message types coexist — type field disambiguates |
+| Dedicated topics (e.g., `echo/events`, `stat/telemetry`) | Recommended | Topic name implies type, but field aids tooling/logging |
+| Status topics (`*/status`) | Required | Specified in Component Status section |
+| Discovery topics (`*/discovery/*`) | Required | Specified in Discovery Messages section |
+
 ## Future Extensions
 
 These fields are reserved for future use:
@@ -686,22 +755,9 @@ These fields are reserved for future use:
 |-------|---------|
 | `ocp_version` | Protocol version for breaking changes |
 | `reply_to` | Explicit response topic override |
-| `msg_type` | Message type (see below) |
 | `correlation_id` | For multi-message sequences |
 | `ttl` | Time-to-live for message expiration |
 | `priority` | Message priority level |
-
-### Message Types (`msg_type`)
-
-| Value | Description |
-|-------|-------------|
-| `request` | Command or query (implicit default) |
-| `response` | Reply to a request |
-| `discovery` | Capability advertisement |
-| `discovery_request` | Request for discovery republication |
-| `status` | Component presence/health (online/offline) |
-| `progress` | Intermediate status update (future) |
-| `event` | Unsolicited notification (future) |
 
 ## Implementation Checklist
 
@@ -712,24 +768,52 @@ These fields are reserved for future use:
 - [x] Add `status` field to responses
 - [x] Send error responses instead of silence on failure
 - [x] Support inline base64 data responses (config-driven via `Vision Inline Data`)
-- [x] Add `timestamp` to outbound response messages
+- [x] Add `timestamp` (ms) to outbound response messages
 - [x] Add `checksum` to file reference responses
 - [x] Add `checksum` to inline data responses
+- [x] TTS command: use json-c for JSON construction, add `timestamp` (ms)
+- [x] Status/discovery timestamps in milliseconds
+- [x] Subscribe to `stat/telemetry` + `stat/status` (update from `stat` topic)
+- [x] Update stat parser: route on `type` field instead of `device`
 
 ### Dawn
 - [x] Use `command_router` as single path for correlated requests
 - [x] Generate unique `request_id` for outbound commands
 - [x] Add `status` and `error` handling to response parsing
 - [x] Support receiving both reference and inline data (viewing responses)
-- [x] Add `timestamp` to outbound request messages
+- [x] Add `timestamp` to outbound request messages (sync commands via `ocp_get_timestamp_ms()`)
 - [x] Validate `checksum` when present in file reference responses
 - [x] Validate `checksum` when present in inline data responses
+- [x] HUD event publishes: include `event` field + `msg_type: "event"` (required — shared `hud` topic)
+- [x] AI state publish: add `event` field, `msg_type: "event"`, `timestamp` (ms)
+- [x] Phone service: timestamps in milliseconds via `ocp_get_timestamp_ms()`
+- [x] MQTT-only tool publish: add `timestamp` (ms)
+
+### Echo (Modem Daemon)
+- [x] Response format: `device`, `action`, `request_id`, `status`, nested `error`
+- [x] Echo `request_id` in all responses
+- [x] Use `event` field in event messages (per v1.4 Event Message spec)
+- [x] Include `msg_type: "event"` in event messages
+- [x] Status messages: `device`, `msg_type: "status"`, `status`, `timestamp` (ms)
+- [x] LWT with `msg_type: "status"`, `timestamp: 0`
+- [x] Timestamps in Unix milliseconds
+
+### Stat (Telemetry Daemon)
+- [x] Use `device: "stat"` as component identity (not sub-type name)
+- [x] Include `msg_type: "telemetry"` in telemetry messages
+- [x] Include `type` field for sub-device discriminator (Battery, SystemMetrics, Fan, etc.)
+- [x] Include `timestamp` (ms) in all messages
+- [x] Publish on `stat/telemetry` topic
+- [x] Status messages on `stat/status`: `device`, `msg_type: "status"`, `status`, `timestamp`
+- [x] LWT with `msg_type: "status"`, `timestamp: 0`
 
 ### Future Components
-- [ ] Implement OCP request/response handling from the start
+- [ ] Implement OCP handling from the start (request/response, events, status)
 - [ ] Use consistent `request_id` format
 - [ ] Always respond (success or error) to requests with `request_id`
 - [ ] Support both data transport modes when appropriate
+- [ ] Use `msg_type` on all published messages
+- [ ] Timestamps in Unix milliseconds
 
 ### Discovery (HUD)
 - [ ] Mirage: Publish `hud/discovery/elements` on startup (retained)
@@ -769,3 +853,4 @@ These fields are reserved for future use:
 | 1.1 | 2025-12-27 | Added `timestamp` field (optional, for debugging). Standardized checksum to SHA256. Added `checksum` to file reference and inline data responses. Defined supported encodings: base64, utf8, none. Implemented in both Dawn (validation) and Mirage (generation). |
 | 1.2 | 2026-01-30 | Added Discovery Messages section for capability advertisement. Defined `msg_type` values: discovery, discovery_request. Standardized topic pattern `<component>/discovery/<capability>`. |
 | 1.3 | 2026-01-30 | Added Component Status (Keepalive) section. Defined MQTT LWT for immediate disconnect detection. Defined periodic heartbeat (30s publish, 90s timeout). Added `msg_type: status` with online/offline values. Standardized topic pattern `<component>/status`. |
+| 1.4 | 2026-04 | Added Event Message type with `event` field (distinct from `action` — indicative vs imperative). Promoted `msg_type` from future to standard field with required/recommended guidance per topic type. Added `telemetry` message type. Codified minimum required fields for Component Status messages. Added Echo and Stat topics to Topic Conventions. Added Echo and Stat to Implementation Checklist. Updated all examples to use millisecond timestamps. |

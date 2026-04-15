@@ -208,6 +208,8 @@ int command_execute(const char *device,
       if (value && value[0] != '\0') {
          json_object_object_add(cmd_json, "value", json_object_new_string(value));
       }
+      json_object_object_add(cmd_json, "msg_type", json_object_new_string("request"));
+      json_object_object_add(cmd_json, "timestamp", json_object_new_int64(ocp_get_timestamp_ms()));
 
       const char *cmd_str = json_object_to_json_string(cmd_json);
       int rc = mosquitto_publish(mosq, NULL, tool->topic, strlen(cmd_str), cmd_str, 0, false);

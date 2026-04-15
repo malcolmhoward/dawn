@@ -31,6 +31,7 @@
 #include <string.h>
 #include <time.h>
 
+#include "core/ocp_helpers.h"
 #include "llm/llm_tools.h"
 #include "logging.h"
 #include "tools/tool_registry.h"
@@ -386,7 +387,7 @@ void hud_discovery_request_update(struct mosquitto *mosq) {
    struct json_object *request = json_object_new_object();
    json_object_object_add(request, "device", json_object_new_string("dawn"));
    json_object_object_add(request, "msg_type", json_object_new_string("discovery_request"));
-   json_object_object_add(request, "timestamp", json_object_new_int64((int64_t)time(NULL)));
+   json_object_object_add(request, "timestamp", json_object_new_int64(ocp_get_timestamp_ms()));
 
    const char *payload = json_object_to_json_string(request);
 

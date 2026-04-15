@@ -62,6 +62,7 @@
 #include "core/command_router.h"
 #include "core/component_status.h"
 #include "core/embedding_engine.h"
+#include "core/ocp_helpers.h"
 #include "core/path_utils.h"
 #include "core/session_manager.h"
 #include "core/wake_word.h"
@@ -1085,6 +1086,9 @@ int publish_ai_state(dawn_state_t newState) {
    json_object_object_add(json, "device", json_object_new_string("ai"));
    json_object_object_add(json, "name", json_object_new_string(g_config.general.ai_name));
    json_object_object_add(json, "state", json_object_new_string(state_name));
+   json_object_object_add(json, "event", json_object_new_string("state_change"));
+   json_object_object_add(json, "msg_type", json_object_new_string("event"));
+   json_object_object_add(json, "timestamp", json_object_new_int64(ocp_get_timestamp_ms()));
 
    const char *json_str = json_object_to_json_string(json);
    rc = mosquitto_publish(mosq, NULL, "hud", strlen(json_str), json_str, 0, false);

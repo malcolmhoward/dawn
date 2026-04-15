@@ -34,6 +34,7 @@
 #include <time.h>
 
 #include "core/command_router.h"
+#include "core/ocp_helpers.h"
 #include "core/worker_pool.h"
 #include "logging.h"
 #include "memory/contacts_db.h"
@@ -257,7 +258,7 @@ static int publish_echo_cmd(const char *action,
       json_object_object_add(cmd, "value", json_object_new_string(value));
    }
    json_object_object_add(cmd, "request_id", json_object_new_string(request_id));
-   json_object_object_add(cmd, "timestamp", json_object_new_int64((int64_t)time(NULL)));
+   json_object_object_add(cmd, "timestamp", json_object_new_int64(ocp_get_timestamp_ms()));
 
    if (data_json && data_json[0]) {
       struct json_object *data = json_tokener_parse(data_json);
@@ -281,10 +282,10 @@ static int publish_echo_cmd(const char *action,
 /**
  * @brief Publish a HUD notification via MQTT using json-c for proper escaping.
  *
- * @param action_str  HUD action name.
+ * @param event_str   HUD event name (OCP v1.4: indicative, e.g. "incoming_call").
  * @param extra       Additional fields to merge (takes ownership, will be put). NULL for none.
  */
-static void publish_hud(const char *action_str, struct json_object *extra) {
+static void publish_hud(const char *event_str, struct json_object *extra) {
    struct mosquitto *mosq = worker_pool_get_mosq();
    if (!mosq) {
       if (extra) {
@@ -295,7 +296,8 @@ static void publish_hud(const char *action_str, struct json_object *extra) {
 
    struct json_object *obj = json_object_new_object();
    json_object_object_add(obj, "device", json_object_new_string("phone"));
-   json_object_object_add(obj, "action", json_object_new_string(action_str));
+   json_object_object_add(obj, "event", json_object_new_string(event_str));
+   json_object_object_add(obj, "msg_type", json_object_new_string("event"));
 
    /* Merge extra fields */
    if (extra) {
@@ -305,7 +307,7 @@ static void publish_hud(const char *action_str, struct json_object *extra) {
       json_object_put(extra);
    }
 
-   json_object_object_add(obj, "timestamp", json_object_new_int64((int64_t)time(NULL)));
+   json_object_object_add(obj, "timestamp", json_object_new_int64(ocp_get_timestamp_ms()));
 
    const char *json_str = json_object_to_json_string(obj);
    mosquitto_publish(mosq, NULL, "hud", (int)strlen(json_str), json_str, 0, false);
@@ -485,7 +487,31 @@ void phone_service_handle_event(const char *payload, int payload_len) {
       if (sms_id >= 0 && sms_index >= 0) {
          char idx_str[8];
          snprintf(idx_str, sizeof(idx_str), "%d", sms_index);
-         publish_echo_cmd("delete_sms", idx_str, "phone_svc_del", NULL);
+
+         pending_request_t *del_req = command_router_register(0);
+         if (del_req) {
+            if (publish_echo_cmd("delete_sms", idx_str, command_router_get_id(del_req), NULL) ==
+                0) {
+               char *del_result = command_router_wait(del_req, 10000);
+               if (del_result) {
+                  struct json_object *resp = json_tokener_parse(del_result);
+                  free(del_result);
+                  if (resp) {
+                     struct json_object *j_status;
+                     if (json_object_object_get_ex(resp, "status", &j_status) &&
+                         strcmp(json_object_get_string(j_status), "error") == 0) {
+                        LOG_WARNING("phone_service: failed to delete SMS index %d from SIM",
+                                    sms_index);
+                     }
+                     json_object_put(resp);
+                  }
+               } else {
+                  LOG_WARNING("phone_service: delete_sms timed out for index %d", sms_index);
+               }
+            } else {
+               command_router_cancel(del_req);
+            }
+         }
       }
 
       /* TTS announce */
@@ -622,15 +648,34 @@ int phone_service_call(int user_id, const char *name_or_number, char *result_buf
       return 1;
    }
 
-   /* Wait for response */
+   /* Wait for response (timeout is normal for async dial — result comes as URC) */
    char *result = command_router_wait(req, COMMAND_RESULT_TIMEOUT_MS);
    if (!result) {
       snprintf(result_buf, buf_size, "Dialing %s%s%s — waiting for connection",
                name[0] ? name : number, name[0] ? " at " : "", name[0] ? number : "");
    } else {
+      /* Check for error in ECHO response */
+      struct json_object *resp = json_tokener_parse(result);
+      free(result);
+      if (resp) {
+         struct json_object *j_status;
+         if (json_object_object_get_ex(resp, "status", &j_status) &&
+             strcmp(json_object_get_string(j_status), "error") == 0) {
+            const char *err_msg = "Dial failed";
+            struct json_object *j_error, *j_msg;
+            if (json_object_object_get_ex(resp, "error", &j_error) &&
+                json_object_object_get_ex(j_error, "message", &j_msg)) {
+               err_msg = json_object_get_string(j_msg);
+            }
+            snprintf(result_buf, buf_size, "Error: %s", err_msg);
+            json_object_put(resp);
+            clear_call_tracking();
+            return 1;
+         }
+         json_object_put(resp);
+      }
       snprintf(result_buf, buf_size, "Dialing %s%s%s", name[0] ? name : number,
                name[0] ? " at " : "", name[0] ? number : "");
-      free(result);
    }
 
    return 0;
@@ -657,7 +702,26 @@ int phone_service_answer(int user_id, char *result_buf, size_t buf_size) {
    }
 
    char *result = command_router_wait(req, COMMAND_RESULT_TIMEOUT_MS);
-   free(result);
+   if (result) {
+      struct json_object *resp = json_tokener_parse(result);
+      free(result);
+      if (resp) {
+         struct json_object *j_status;
+         if (json_object_object_get_ex(resp, "status", &j_status) &&
+             strcmp(json_object_get_string(j_status), "error") == 0) {
+            const char *err_msg = "Answer failed";
+            struct json_object *j_error, *j_msg;
+            if (json_object_object_get_ex(resp, "error", &j_error) &&
+                json_object_object_get_ex(j_error, "message", &j_msg)) {
+               err_msg = json_object_get_string(j_msg);
+            }
+            snprintf(result_buf, buf_size, "Error: %s", err_msg);
+            json_object_put(resp);
+            return 1;
+         }
+         json_object_put(resp);
+      }
+   }
 
    snprintf(result_buf, buf_size, "Call answered");
    return 0;
@@ -685,7 +749,26 @@ int phone_service_hangup(int user_id, char *result_buf, size_t buf_size) {
    }
 
    char *result = command_router_wait(req, COMMAND_RESULT_TIMEOUT_MS);
-   free(result);
+   if (result) {
+      struct json_object *resp = json_tokener_parse(result);
+      free(result);
+      if (resp) {
+         struct json_object *j_status;
+         if (json_object_object_get_ex(resp, "status", &j_status) &&
+             strcmp(json_object_get_string(j_status), "error") == 0) {
+            const char *err_msg = "Hangup failed";
+            struct json_object *j_error, *j_msg;
+            if (json_object_object_get_ex(resp, "error", &j_error) &&
+                json_object_object_get_ex(j_error, "message", &j_msg)) {
+               err_msg = json_object_get_string(j_msg);
+            }
+            snprintf(result_buf, buf_size, "Error: %s", err_msg);
+            json_object_put(resp);
+            return 1;
+         }
+         json_object_put(resp);
+      }
+   }
 
    snprintf(result_buf, buf_size, "Call ended");
    return 0;
@@ -761,7 +844,27 @@ int phone_service_send_sms(int user_id,
       snprintf(result_buf, buf_size, "SMS send timed out — check modem status");
       return 1;
    }
+
+   /* Check for error in ECHO response */
+   struct json_object *resp = json_tokener_parse(result);
    free(result);
+
+   if (resp) {
+      struct json_object *j_status;
+      if (json_object_object_get_ex(resp, "status", &j_status) &&
+          strcmp(json_object_get_string(j_status), "error") == 0) {
+         const char *err_msg = "SMS send failed";
+         struct json_object *j_error, *j_msg;
+         if (json_object_object_get_ex(resp, "error", &j_error) &&
+             json_object_object_get_ex(j_error, "message", &j_msg)) {
+            err_msg = json_object_get_string(j_msg);
+         }
+         snprintf(result_buf, buf_size, "Error: %s", err_msg);
+         json_object_put(resp);
+         return 1;
+      }
+      json_object_put(resp);
+   }
 
    /* Log outbound SMS */
    phone_db_sms_log_insert(user_id, PHONE_DIR_OUTGOING, number, name, body, time(NULL));

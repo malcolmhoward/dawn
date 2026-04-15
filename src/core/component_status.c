@@ -34,6 +34,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "core/ocp_helpers.h"
 #include "llm/llm_tools.h"
 #include "logging.h"
 #include "tools/hud_discovery.h"
@@ -68,7 +69,7 @@ static char *build_status_message(const char *status) {
    json_object_object_add(msg, "device", json_object_new_string("dawn"));
    json_object_object_add(msg, "msg_type", json_object_new_string("status"));
    json_object_object_add(msg, "status", json_object_new_string(status));
-   json_object_object_add(msg, "timestamp", json_object_new_int64((int64_t)time(NULL)));
+   json_object_object_add(msg, "timestamp", json_object_new_int64(ocp_get_timestamp_ms()));
 
 #ifdef VERSION_STRING
    json_object_object_add(msg, "version", json_object_new_string(VERSION_STRING));
