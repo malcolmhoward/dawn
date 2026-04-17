@@ -501,7 +501,8 @@ Manual testing covers:
 - `include/tools/phone_tool.h`: Phone tool registration header
 - `src/tools/phone_tool.c`: LLM tool interface (10 actions, two-step confirmation, contact resolution)
 - `include/tools/phone_service.h`: Phone service API (state machine, events, MQTT, config with user_id)
-- `src/tools/phone_service.c`: Call state machine, ECHO MQTT event handling, TTS, HUD with contact photos (base64), rate limiting
+- `src/tools/phone_service.c`: Call state machine, ECHO MQTT event handling, TTS, HUD with contact photos (base64), ringtone, LLM context injection, rate limiting
+- `src/audio/ringtone.c`: Iron Man NES pulse synthesis ringtone via audio_backend (pre-rendered, cached)
 - `include/tools/phone_db.h`: Phone DB types (call_log, sms_log) and CRUD declarations
 - `src/tools/phone_db.c`: SQLite operations for call/SMS logs (Pattern A, shared auth_db handle)
 - `tests/test_phone_db.c`: Phone DB unit tests (26 assertions)
@@ -562,8 +563,6 @@ Manual testing covers:
 - Visual rendering tool Phase 1 (inline SVG diagrams via LLM tool calling, sandboxed iframe, theme CSS, color ramps, design guidelines on disk)
 - LLM_TOOLS_ARGS_LEN bumped from 4KB to 16KB for large tool arguments (SVG code)
 - Visual rendering Phase 2: persistence, interactivity, and review fixes
-- Shared CSS split-button primitives (`.dawn-split-btn` / `.dawn-split-chevron` / `.dawn-split-menu` in `components.css`)
-- User badge module extraction (`www/js/ui/user-badge.js` from `dawn.js`)
 - Chart.js bundled locally (`www/js/vendor/chart.umd.js`, MIT license)
 - All 5 visual guideline modules: diagram, chart, interactive, art, mockup
 - Visual download button (SVG/HTML export matching copy-btn pattern)
@@ -606,6 +605,12 @@ Manual testing covers:
 - Phone HUD contact photos: base64-encoded photo in MQTT HUD messages (incoming_call, call_active, sms_received), entity_id tracking in call state machine, `phone_service_config_t.user_id` replacing hardcoded user IDs
 - Contacts modal accessibility: keyboard focus trap (Tab/Shift+Tab wrap), focus-visible outlines, ARIA roles, mobile touch targets, image error fallbacks
 - Service token Bearer auth: machine-to-machine image API access for MIRAGE, constant-time `sodium_memcmp` over padded buffer, rate-limit-before-auth (120/min, 32 IP slots), scoped access (blocks private uploads/MMS), min 32-char token, TLS warning
+- MIRAGE notification system: config-driven HUD popups for phone calls/SMS/images, state machine with fade, base64 photo decode, notification_group enum for O(1) dispatch, mutex-protected cross-thread state
+- Iron Man ringtone: NES pulse synthesis via audio_backend, pre-rendered static buffer, plays on each RING event
+- ECHO ring broadcast + voicemail detection: ring event on each RING URC, AT+CLCC watchdog after 10s silence, CMTI dedup, hangup publishes call_ended directly, ms timestamps
+- LLM phone context injection: system messages for incoming_call/call_active/call_ended/sms_received into local session, SMS body excluded for prompt injection safety
+- SMS fire-and-forget delete: fixes MQTT callback thread self-deadlock that caused 10s notification delay
+- Claude cache_control fix: limit to first system block only (prevents HTTP 400 when multiple system messages exceed 4-block API limit)
 
 ## Development Lifecycle
 

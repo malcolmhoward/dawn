@@ -1579,21 +1579,27 @@ static int create_schema(const char *db_path) {
       LOG_INFO("auth_db: created schema v%d", AUTH_DB_SCHEMA_VERSION);
    }
 
-   /* Update schema version (delete old rows first to handle PRIMARY KEY on version) */
-   rc = sqlite3_exec(s_db.db, "DELETE FROM schema_version", NULL, NULL, &errmsg);
-   if (rc != SQLITE_OK) {
-      LOG_WARNING("auth_db: failed to clear schema_version: %s", errmsg ? errmsg : "unknown");
-      sqlite3_free(errmsg);
-      errmsg = NULL;
-   }
-   rc = sqlite3_exec(s_db.db,
-                     "INSERT INTO schema_version (version) VALUES (" STRINGIFY(
-                         AUTH_DB_SCHEMA_VERSION) ")",
-                     NULL, NULL, &errmsg);
-   if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: failed to set schema version: %s", errmsg ? errmsg : "unknown");
-      sqlite3_free(errmsg);
-      return AUTH_DB_FAILURE;
+   /* Only update schema_version if we actually migrated or created fresh.
+    * Never downgrade — prevents old code from corrupting a newer DB. */
+   if (current_version < AUTH_DB_SCHEMA_VERSION) {
+      rc = sqlite3_exec(s_db.db, "DELETE FROM schema_version", NULL, NULL, &errmsg);
+      if (rc != SQLITE_OK) {
+         LOG_WARNING("auth_db: failed to clear schema_version: %s", errmsg ? errmsg : "unknown");
+         sqlite3_free(errmsg);
+         errmsg = NULL;
+      }
+      rc = sqlite3_exec(s_db.db,
+                        "INSERT INTO schema_version (version) VALUES (" STRINGIFY(
+                            AUTH_DB_SCHEMA_VERSION) ")",
+                        NULL, NULL, &errmsg);
+      if (rc != SQLITE_OK) {
+         LOG_ERROR("auth_db: failed to set schema version: %s", errmsg ? errmsg : "unknown");
+         sqlite3_free(errmsg);
+         return AUTH_DB_FAILURE;
+      }
+   } else if (current_version > AUTH_DB_SCHEMA_VERSION) {
+      LOG_WARNING("auth_db: database is newer (v%d) than code (v%d) — not downgrading",
+                  current_version, AUTH_DB_SCHEMA_VERSION);
    }
 
    return AUTH_DB_SUCCESS;
