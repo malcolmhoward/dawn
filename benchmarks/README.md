@@ -123,6 +123,25 @@ python3 benchmarks/run_benchmark.py \
     --raw
 ```
 
+### Granularity (LongMemEval)
+
+Session-level (default, ~48 docs per question, top-K=10) is faster but easier.
+Turn-level (~273 docs per question, top-K=5) matches the evaluation used by
+academic papers like RMM (Tan et al., ACL 2025).
+
+```bash
+# Turn-level with official scoring (comparable to published baselines)
+python3 benchmarks/run_benchmark.py \
+    --binary ./build-debug/tests/bench_retrieval \
+    --benchmark longmemeval \
+    --dataset ~/datasets/longmemeval/longmemeval_s_cleaned.json \
+    --granularity turn --turn-scoring official
+```
+
+Two scoring modes:
+- `official` (default): Any user turn from the answer session counts as correct. Matches the official LongMemEval evaluation code.
+- `strict`: Only turns annotated with `has_answer=true` count. Harder criterion, ~1.7 targets per question vs ~11 for official.
+
 ### Save results
 
 ```bash

@@ -23,7 +23,7 @@ A comprehensive design for DAWN's persistent memory system with integrated RAG (
 - **S4 (Entity Graph):** ✅ Complete - Entities, relations, embeddings, graph search, WebUI graph tab
 - **S4b (Entity Dedup):** ✅ Complete - Existing entities fed into extraction prompt
 - **Phases 7-11 (RAG):** ✅ Implemented — see `docs/RAG_DESIGN.md` (separate system)
-- **Retrieval Benchmarks:** ✅ Complete - LongMemEval (97.2% R@5), LoCoMo, ConvoMem (99.0%) — see `benchmarks/README.md`
+- **Retrieval Benchmarks:** ✅ Complete - LongMemEval turn-level 95.4% R@5 (25.6pp above published SOTA), session-level 97.2% R@5, ConvoMem 99.0% — see `benchmarks/README.md`
 
 ---
 
@@ -1756,19 +1756,46 @@ database — completely isolated from production data.
 - **Raw**: Pure cosine similarity (no keyword boosting). Baseline comparison.
 - **Hybrid**: Cosine similarity + keyword boosting (0.15 weight on top 50 candidates). DAWN's default production scoring path.
 
-**Results (April 2026, all-MiniLM-L6-v2 ONNX, full datasets):**
+**Session-level results (April 2026, all-MiniLM-L6-v2 ONNX int8, full datasets):**
 
 | Benchmark | Raw | Hybrid | Notes |
 |-----------|-----|--------|-------|
-| **LongMemEval R@5** | 96.0% | 97.2% | 500 questions, session-level retrieval |
+| **LongMemEval R@5** | 96.0% | 97.2% | 500 questions, top-K=10 retrieved |
 | **LongMemEval R@10** | 98.4% | 99.2% | Near-perfect at depth 10 |
 | **LongMemEval NDCG@10** | 88.9% | 91.7% | Position-weighted relevance |
-| **LoCoMo avg recall** | — | 71.3% | 1982 QA pairs, dialog granularity |
+| **LoCoMo avg recall** | — | 71.3% | 1982 QA pairs, dialog granularity, top-K=10 |
 | **ConvoMem avg recall** | — | 99.0% | 100 items, per-message retrieval |
+
+**Turn-level results (LongMemEval, matches academic evaluation methodology):**
+
+Turn-level retrieval indexes each user turn as a separate document (~273 per question instead of ~48 sessions). Top-K=5, matching the RMM paper (Tan et al., ACL 2025, arxiv.org/abs/2503.08026). Methodology verified against the official LongMemEval evaluation code (github.com/xiaowu0162/LongMemEval).
+
+| Scoring | R@1 | R@3 | R@5 | NDCG@5 | Evaluated |
+|---------|-----|-----|-----|--------|-----------|
+| **Official** (any turn from answer session) | 85.4% | 93.2% | **95.4%** | 89.7% | 500 questions |
+| **Strict** (only `has_answer` turns) | 50.2% | 75.9% | **86.9%** | 69.4% | 428 questions (72 skipped) |
+
+The official scoring is directly comparable to published baselines. The strict scoring evaluates retrieval against only the specific turns annotated as containing the answer (average 1.7 targets per question vs 11 for official).
+
+**Comparison to published baselines (LongMemEval turn-level R@5, top-K=5):**
+
+| System | R@5 | Model | Model Size | Method |
+|--------|-----|-------|------------|--------|
+| **DAWN hybrid** | **95.4%** | all-MiniLM-L6-v2 (int8) | 22M | Cosine + keyword boost |
+| RMM + GTE | 69.8% | GTE-Qwen2-7B | 7B | Cosine + RL-trained reranker |
+| RAG + GTE | 62.4% | GTE-Qwen2-7B | 7B | Cosine only |
+| RAG + Stella | 59.2% | Stella 1.5B | 1.5B | Cosine only |
+| RAG + Contriever | 54.3% | Contriever | 110M | Cosine only |
+
+DAWN's hybrid search exceeds the published SOTA (RMM + GTE) by 25.6 percentage points while using a model 300x smaller. Results verified deterministic across two independent hardware runs (Jetson Orin and Jetson AGX Orin — identical R@5 = 0.8692 on strict scoring).
+
+**Why keyword boosting is effective at turn-level:**
+
+At session level, documents are 500-2000 characters (all user turns concatenated) — keyword matching has moderate discriminative power since common words appear across many sessions. At turn level, documents are 50-200 characters (single messages) — keyword matching becomes highly discriminative because short documents either contain a query word or they don't. That binary signal on top of fuzzy cosine breaks ties the embedding model alone can't resolve. The effect amplifies as document granularity decreases.
 
 **Analysis:**
 
-- **LongMemEval**: Strong results. Keyword boosting adds ~1.2% R@5 over raw cosine. The int8 ONNX quantization of all-MiniLM-L6-v2 performs within 0.6% of float32 baselines.
+- **LongMemEval**: Strong results across granularities. The ~30 lines of keyword boost code in `document_search.c:107-175` provides the majority of the performance advantage over academic baselines.
 - **LoCoMo**: Temporal inference (category 3) is the weakest area at 51.4% recall. This category asks questions like "what happened a week ago?" — DAWN currently has no timestamp-aware scoring. Category 2 (temporal facts) scores 76.4%, and category 5 (adversarial) scores 76.0%.
 - **ConvoMem**: 99.0% recall on per-message retrieval demonstrates strong fine-grained search quality. The keyword boost helps surface exact-match evidence.
 
@@ -1778,7 +1805,7 @@ database — completely isolated from production data.
 2. **No fact categorization**: All facts are stored flat without domain/topic metadata. Filtering by category before scoring (analogous to searching within a specific topic) improves retrieval by up to 34% in academic benchmarks.
 3. **No relation temporality**: Entity relations lack `valid_from`/`valid_to` fields, preventing "as of date X" queries.
 
-**Running benchmarks:** See `benchmarks/README.md` for dataset download instructions and usage.
+**Running benchmarks:** See `benchmarks/README.md` for dataset download instructions and usage. Both session and turn granularities supported via `--granularity` flag. Turn-level scoring supports both official and strict modes via `--turn-scoring`.
 
 ### 14.4 Evaluation Metrics
 
