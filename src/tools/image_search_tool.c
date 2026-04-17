@@ -29,11 +29,15 @@
 #include <arpa/inet.h>
 #include <curl/curl.h>
 #include <json-c/json.h>
+#include <mosquitto.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
 #include "config/dawn_config.h"
+#include "core/ocp_helpers.h"
+#include "core/session_manager.h"
+#include "core/worker_pool.h"
 #include "image_store.h"
 #include "logging.h"
 #include "tools/curl_buffer.h"
@@ -669,6 +673,49 @@ static char *image_search_callback(const char *action, char *value, int *should_
    free(fetches);
 
    LOG_INFO("image_search: Returned %d/%d images for '%s'", cached_count, fetch_count, query);
+
+   /* Publish first result to HUD for local voice sessions (Iron Man suit display) */
+   if (cached_count > 0) {
+      session_t *session = session_get_command_context();
+      if (session && session->type == SESSION_TYPE_LOCAL) {
+         struct json_object *first = json_object_array_get_idx(result_array, 0);
+         if (first) {
+            const char *img_url = NULL;
+            const char *img_title = "";
+            const char *img_source = "";
+            struct json_object *j_tmp;
+            if (json_object_object_get_ex(first, "url", &j_tmp))
+               img_url = json_object_get_string(j_tmp);
+            if (json_object_object_get_ex(first, "title", &j_tmp))
+               img_title = json_object_get_string(j_tmp);
+            if (json_object_object_get_ex(first, "source", &j_tmp))
+               img_source = json_object_get_string(j_tmp);
+
+            if (img_url) {
+               struct mosquitto *mosq = worker_pool_get_mosq();
+               if (mosq) {
+                  struct json_object *hud = json_object_new_object();
+                  json_object_object_add(hud, "device", json_object_new_string("image"));
+                  json_object_object_add(hud, "action", json_object_new_string("display"));
+                  json_object_object_add(hud, "msg_type", json_object_new_string("request"));
+                  json_object_object_add(hud, "image_url", json_object_new_string(img_url));
+                  json_object_object_add(hud, "title",
+                                         json_object_new_string(img_title ? img_title : ""));
+                  json_object_object_add(hud, "source",
+                                         json_object_new_string(img_source ? img_source : ""));
+                  json_object_object_add(hud, "ttl", json_object_new_int(30));
+                  json_object_object_add(hud, "timestamp",
+                                         json_object_new_int64(ocp_get_timestamp_ms()));
+
+                  const char *hud_str = json_object_to_json_string(hud);
+                  mosquitto_publish(mosq, NULL, "hud", (int)strlen(hud_str), hud_str, 0, false);
+                  json_object_put(hud);
+                  LOG_INFO("image_search: Published first result to HUD for local session");
+               }
+            }
+         }
+      }
+   }
 
    const char *json_str = json_object_to_json_string_ext(result_array, JSON_C_TO_STRING_PLAIN);
    char *result = strdup(json_str ? json_str : "[]");

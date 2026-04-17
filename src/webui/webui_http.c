@@ -949,7 +949,7 @@ int callback_http(struct lws *wsi,
             /* Try Bearer token (machine-to-machine: MIRAGE, etc.)
              * Rate limit ALL Bearer attempts (valid or not) to throttle brute-force. */
             {
-               char auth_probe[16];
+               char auth_probe[512];
                int hlen = lws_hdr_copy(wsi, auth_probe, sizeof(auth_probe),
                                        WSI_TOKEN_HTTP_AUTHORIZATION);
                if (hlen > 7 && strncmp(auth_probe, "Bearer ", 7) == 0) {

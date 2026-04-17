@@ -611,6 +611,9 @@ Manual testing covers:
 - LLM phone context injection: system messages for incoming_call/call_active/call_ended/sms_received into local session, SMS body excluded for prompt injection safety
 - SMS fire-and-forget delete: fixes MQTT callback thread self-deadlock that caused 10s notification delay
 - Claude cache_control fix: limit to first system block only (prevents HTTP 400 when multiple system messages exceed 4-block API limit)
+- MIRAGE HTTP image fetch: async curl thread with Bearer auth, URL allowlist validation (`/api/images/img_<12 alnum>`), magic byte validation, 5MB cap, fetch-in-progress guard, shutdown join, auth header zeroed on return. Scale-to-fit centered rendering with lockless dirty-flag fast path and post-texture raw-data release.
+- Local voice image search → HUD: `image_search_tool` publishes first result to `hud` MQTT topic when session is `SESSION_TYPE_LOCAL` (Iron Man suit use case). WebUI/satellite sessions unaffected.
+- Bearer auth probe buffer fix (`webui_http.c`): 16 → 512 bytes. The 16-byte `lws_hdr_copy` target silently truncated full headers (returned -1), causing all Bearer auth attempts to fall through to the HTML auth redirect instead of the service token check.
 
 ## Development Lifecycle
 
