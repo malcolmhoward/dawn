@@ -196,17 +196,14 @@ These features are not required but extend what DAWN can do. Each links to its s
 | **[ARCHITECTURE.md](ARCHITECTURE.md)** | System architecture, data flow, and threading model |
 | **[CODING_STYLE_GUIDE.md](CODING_STYLE_GUIDE.md)** | Code formatting and development standards |
 | **[docs/LLM_INTEGRATION_GUIDE.md](docs/LLM_INTEGRATION_GUIDE.md)** | LLM setup for cloud and local providers |
-| **[docs/MEMORY_SYSTEM_DESIGN.md](docs/MEMORY_SYSTEM_DESIGN.md)** | Memory system architecture and design |
-| **[docs/SCHEDULER_DESIGN.md](docs/SCHEDULER_DESIGN.md)** | Scheduler system (timers, alarms, reminders) |
 | **[docs/HOMEASSISTANT_SETUP.md](docs/HOMEASSISTANT_SETUP.md)** | Home Assistant integration setup |
-| **[docs/USER_AUTH_DESIGN.md](docs/USER_AUTH_DESIGN.md)** | Authentication and user management |
 | **[docs/WEBSOCKET_PROTOCOL.md](docs/WEBSOCKET_PROTOCOL.md)** | WebSocket protocol reference (all message types) |
 | **[docs/DAP2_SATELLITE.md](docs/DAP2_SATELLITE.md)** | Satellite architecture and deployment guide |
 | **[dawn_satellite/README.md](dawn_satellite/README.md)** | Tier 1 satellite (RPi) build, config, and usage |
 | **[dawn_satellite_arduino/README.md](dawn_satellite_arduino/README.md)** | Tier 2 satellite (ESP32-S3, Arduino) setup |
 | **[docs/GOOGLE_OAUTH_SETUP.md](docs/GOOGLE_OAUTH_SETUP.md)** | Google OAuth 2.0 setup for Calendar and Email |
-| **[docs/TOOL_PLAN_EXECUTOR_DESIGN.md](docs/TOOL_PLAN_EXECUTOR_DESIGN.md)** | Plan executor DSL specification and design |
 | **[docs/TOOL_DEVELOPMENT_GUIDE.md](docs/TOOL_DEVELOPMENT_GUIDE.md)** | Guide for adding new LLM tools |
+| **[atlas archive](https://github.com/The-OASIS-Project/atlas/tree/main/dawn/archive)** | Historical design docs (memory, RAG, user auth, plan executor, scheduler, image search, CalDAV, email, etc.) |
 | **[services/llama-server/README.md](services/llama-server/README.md)** | Local LLM service setup |
 | **[test_recordings/BENCHMARK_RESULTS.md](test_recordings/BENCHMARK_RESULTS.md)** | ASR performance benchmarks |
 

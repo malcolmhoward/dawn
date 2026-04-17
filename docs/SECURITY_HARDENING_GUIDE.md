@@ -534,4 +534,4 @@ Tested via `tests/test_pentest.sh --section headers` and `curl -I` on 2026-03-10
 - **Security hardening commit** (2026-03-06): `a365088` — MQTT TLS, auth guards, CSP hardening, realloc bug fix
 - **Security headers + TLS pentest** (2026-03-10): `1857403` — HTTP security headers on all response paths, testssl.sh clean (LUCKY13 accepted)
 - **Manual pentest suite** (2026-03-10): `1857403` — 34 tests via `tests/test_pentest.sh`: auth (7), authz (3+2), xss (6), satellite (4), headers (4). All passed. See tables above.
-- **Deferred findings**: [docs/DEFERRED_REVIEW_FINDINGS.md](DEFERRED_REVIEW_FINDINGS.md) — 40 low-priority items
+- **Deferred low-priority findings**: tracked in `docs/TODO.md` Deferred section
