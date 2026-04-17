@@ -84,11 +84,11 @@ static char *tts_tool_callback(const char *action, char *value, int *should_resp
    }
 
    if (!value || value[0] == '\0') {
-      LOG_WARNING("TTS: empty or NULL text, ignoring");
+      OLOG_WARNING("TTS: empty or NULL text, ignoring");
       return NULL;
    }
 
-   LOG_INFO("TTS: \"%s\"", value);
+   OLOG_INFO("TTS: \"%s\"", value);
    text_to_speech(value);
    return NULL;
 }

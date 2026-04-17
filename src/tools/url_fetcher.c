@@ -183,7 +183,7 @@ int url_fetcher_init(void) {
    pthread_mutex_lock(&module_mutex);
 
    if (module_initialized) {
-      LOG_WARNING("url_fetcher: Module already initialized");
+      OLOG_WARNING("url_fetcher: Module already initialized");
       pthread_mutex_unlock(&module_mutex);
       return URL_FETCH_SUCCESS;
    }
@@ -204,8 +204,8 @@ int url_fetcher_init(void) {
    for (int i = 0; i < g_config.url_fetcher.whitelist_count; i++) {
       if (g_config.url_fetcher.whitelist[i] && g_config.url_fetcher.whitelist[i][0] != '\0') {
          if (url_whitelist_add(g_config.url_fetcher.whitelist[i]) == 0) {
-            LOG_INFO("url_fetcher: Loaded whitelist entry from config: %s",
-                     g_config.url_fetcher.whitelist[i]);
+            OLOG_INFO("url_fetcher: Loaded whitelist entry from config: %s",
+                      g_config.url_fetcher.whitelist[i]);
          }
       }
    }
@@ -320,7 +320,7 @@ int url_whitelist_add(const char *entry) {
    pthread_mutex_lock(&module_mutex);
 
    if (whitelist_count >= URL_FETCH_MAX_WHITELIST) {
-      LOG_WARNING("url_fetcher: Whitelist full (max %d entries)", URL_FETCH_MAX_WHITELIST);
+      OLOG_WARNING("url_fetcher: Whitelist full (max %d entries)", URL_FETCH_MAX_WHITELIST);
       pthread_mutex_unlock(&module_mutex);
       return URL_FETCH_ERROR_ALLOC;
    }
@@ -337,16 +337,16 @@ int url_whitelist_add(const char *entry) {
    if (strncmp(entry, "http://", 7) == 0 || strncmp(entry, "https://", 8) == 0) {
       // Full URL
       wl->type = WHITELIST_TYPE_URL;
-      LOG_INFO("url_fetcher: Added URL to whitelist: %s", entry);
+      OLOG_INFO("url_fetcher: Added URL to whitelist: %s", entry);
    } else if (strchr(entry, '/') != NULL) {
       // CIDR notation
       if (parse_cidr(entry, &wl->network, &wl->netmask)) {
          wl->type = WHITELIST_TYPE_CIDR_V4;
-         LOG_INFO("url_fetcher: Added CIDR to whitelist: %s", entry);
+         OLOG_INFO("url_fetcher: Added CIDR to whitelist: %s", entry);
       } else {
          // Might be a path-like hostname, treat as host
          wl->type = WHITELIST_TYPE_HOST;
-         LOG_INFO("url_fetcher: Added hostname to whitelist: %s", entry);
+         OLOG_INFO("url_fetcher: Added hostname to whitelist: %s", entry);
       }
    } else {
       // Check if it's an IP address or hostname
@@ -355,10 +355,10 @@ int url_whitelist_add(const char *entry) {
          wl->type = WHITELIST_TYPE_IP;
          wl->network = ntohl(addr.s_addr);
          wl->netmask = 0xFFFFFFFF;
-         LOG_INFO("url_fetcher: Added IP to whitelist: %s", entry);
+         OLOG_INFO("url_fetcher: Added IP to whitelist: %s", entry);
       } else {
          wl->type = WHITELIST_TYPE_HOST;
-         LOG_INFO("url_fetcher: Added hostname to whitelist: %s", entry);
+         OLOG_INFO("url_fetcher: Added hostname to whitelist: %s", entry);
       }
    }
 
@@ -381,7 +381,7 @@ int url_whitelist_remove(const char *entry) {
          }
          whitelist_count--;
          whitelist[whitelist_count].entry = NULL;
-         LOG_INFO("url_fetcher: Removed from whitelist: %s", entry);
+         OLOG_INFO("url_fetcher: Removed from whitelist: %s", entry);
          pthread_mutex_unlock(&module_mutex);
          return URL_FETCH_SUCCESS;
       }
@@ -407,7 +407,7 @@ static int is_whitelisted(const char *url, const char *host, const char *ip) {
          case WHITELIST_TYPE_URL:
             // URL prefix match (use cached entry_len)
             if (url && strncmp(url, wl->entry, wl->entry_len) == 0) {
-               LOG_INFO("url_fetcher: URL matches whitelist entry: %s", wl->entry);
+               OLOG_INFO("url_fetcher: URL matches whitelist entry: %s", wl->entry);
                return 1;
             }
             break;
@@ -415,7 +415,7 @@ static int is_whitelisted(const char *url, const char *host, const char *ip) {
          case WHITELIST_TYPE_HOST:
             // Hostname match (case-insensitive)
             if (host && strcasecmp(host, wl->entry) == 0) {
-               LOG_INFO("url_fetcher: Host matches whitelist entry: %s", wl->entry);
+               OLOG_INFO("url_fetcher: Host matches whitelist entry: %s", wl->entry);
                return 1;
             }
             break;
@@ -423,7 +423,7 @@ static int is_whitelisted(const char *url, const char *host, const char *ip) {
          case WHITELIST_TYPE_IP:
             // Exact IP match
             if (ip && ip_matches_cidr(ip, wl->network, wl->netmask)) {
-               LOG_INFO("url_fetcher: IP matches whitelist entry: %s", wl->entry);
+               OLOG_INFO("url_fetcher: IP matches whitelist entry: %s", wl->entry);
                return 1;
             }
             break;
@@ -431,7 +431,7 @@ static int is_whitelisted(const char *url, const char *host, const char *ip) {
          case WHITELIST_TYPE_CIDR_V4:
             // CIDR match
             if (ip && ip_matches_cidr(ip, wl->network, wl->netmask)) {
-               LOG_INFO("url_fetcher: IP matches whitelist CIDR: %s", wl->entry);
+               OLOG_INFO("url_fetcher: IP matches whitelist CIDR: %s", wl->entry);
                return 1;
             }
             break;
@@ -523,8 +523,8 @@ static int flaresolverr_is_available(void) {
    pthread_mutex_unlock(&module_mutex);
 
    if (!available) {
-      LOG_INFO("url_fetcher: FlareSolverr not available at %s (cached for %ds)",
-               flaresolverr_get_endpoint(), FLARESOLVERR_AVAILABILITY_CACHE_TTL_SEC);
+      OLOG_INFO("url_fetcher: FlareSolverr not available at %s (cached for %ds)",
+                flaresolverr_get_endpoint(), FLARESOLVERR_AVAILABILITY_CACHE_TTL_SEC);
    }
 
    return available;
@@ -787,7 +787,7 @@ static int flaresolverr_fetch(const char *url, char **out_html, size_t *out_size
             escaped_url, flaresolverr_get_timeout() * 1000);
    free(escaped_url);
 
-   LOG_INFO("url_fetcher: Trying FlareSolverr fallback for %s", url);
+   OLOG_INFO("url_fetcher: Trying FlareSolverr fallback for %s", url);
 
    // Initialize CURL
    CURL *curl = curl_easy_init();
@@ -819,13 +819,13 @@ static int flaresolverr_fetch(const char *url, char **out_html, size_t *out_size
    free(request_body);
 
    if (res != CURLE_OK) {
-      LOG_WARNING("url_fetcher: FlareSolverr request failed: %s", curl_easy_strerror(res));
+      OLOG_WARNING("url_fetcher: FlareSolverr request failed: %s", curl_easy_strerror(res));
       curl_buffer_free(&buffer);
       return URL_FETCH_ERROR_NETWORK;
    }
 
    if (!buffer.data || buffer.size == 0) {
-      LOG_WARNING("url_fetcher: FlareSolverr returned empty response");
+      OLOG_WARNING("url_fetcher: FlareSolverr returned empty response");
       curl_buffer_free(&buffer);
       return URL_FETCH_ERROR_EMPTY;
    }
@@ -840,7 +840,7 @@ static int flaresolverr_fetch(const char *url, char **out_html, size_t *out_size
        strcmp(status, "ok") != 0) {
       char message[256];
       json_extract_string(buffer.data, "message", message, sizeof(message));
-      LOG_WARNING("url_fetcher: FlareSolverr failed: %s", message);
+      OLOG_WARNING("url_fetcher: FlareSolverr failed: %s", message);
       curl_buffer_free(&buffer);
       return URL_FETCH_ERROR_HTTP;
    }
@@ -853,7 +853,7 @@ static int flaresolverr_fetch(const char *url, char **out_html, size_t *out_size
    }
 
    if (http_status != 200) {
-      LOG_WARNING("url_fetcher: FlareSolverr got HTTP %d for %s", http_status, url);
+      OLOG_WARNING("url_fetcher: FlareSolverr got HTTP %d for %s", http_status, url);
       curl_buffer_free(&buffer);
       return URL_FETCH_ERROR_HTTP;
    }
@@ -861,7 +861,7 @@ static int flaresolverr_fetch(const char *url, char **out_html, size_t *out_size
    // Extract the HTML response - search within solution object for efficiency
    const char *response_key = solution_start ? strstr(solution_start, "\"response\":") : NULL;
    if (!response_key) {
-      LOG_WARNING("url_fetcher: FlareSolverr response missing 'response' field");
+      OLOG_WARNING("url_fetcher: FlareSolverr response missing 'response' field");
       curl_buffer_free(&buffer);
       return URL_FETCH_ERROR_EMPTY;
    }
@@ -873,7 +873,7 @@ static int flaresolverr_fetch(const char *url, char **out_html, size_t *out_size
       html_start++;
 
    if (*html_start != '"') {
-      LOG_WARNING("url_fetcher: FlareSolverr response format error");
+      OLOG_WARNING("url_fetcher: FlareSolverr response format error");
       curl_buffer_free(&buffer);
       return URL_FETCH_ERROR_EMPTY;
    }
@@ -893,12 +893,12 @@ static int flaresolverr_fetch(const char *url, char **out_html, size_t *out_size
    curl_buffer_free(&buffer);
 
    if (html_len < 10) {
-      LOG_WARNING("url_fetcher: FlareSolverr returned too little content");
+      OLOG_WARNING("url_fetcher: FlareSolverr returned too little content");
       free(html);
       return URL_FETCH_ERROR_EMPTY;
    }
 
-   LOG_INFO("url_fetcher: FlareSolverr success - got %zu bytes of HTML", html_len);
+   OLOG_INFO("url_fetcher: FlareSolverr success - got %zu bytes of HTML", html_len);
 
    *out_html = html;
    if (out_size)
@@ -954,9 +954,9 @@ static int try_flaresolverr_fallback(const char *url,
       return URL_FETCH_ERROR_EMPTY;
    }
 
-   LOG_INFO("url_fetcher: FlareSolverr fallback extracted %zu bytes of markdown", extracted_len);
-   LOG_INFO("url_fetcher: Content preview:\n%.2000s%s", extracted,
-            extracted_len > 2000 ? "\n... (truncated)" : "");
+   OLOG_INFO("url_fetcher: FlareSolverr fallback extracted %zu bytes of markdown", extracted_len);
+   OLOG_INFO("url_fetcher: Content preview:\n%.2000s%s", extracted,
+             extracted_len > 2000 ? "\n... (truncated)" : "");
 
    *out_content = extracted;
    if (out_size) {
@@ -1269,7 +1269,7 @@ int url_fetch_content_with_base(const char *url,
       *out_size = 0;
 
    if (!url_is_valid(url)) {
-      LOG_WARNING("url_fetcher: Invalid URL: %s", url);
+      OLOG_WARNING("url_fetcher: Invalid URL: %s", url);
       return URL_FETCH_ERROR_INVALID_URL;
    }
 
@@ -1280,17 +1280,17 @@ int url_fetch_content_with_base(const char *url,
    int port = 80;
 
    if (url_is_blocked_with_resolve(url, resolved_ip, host, sizeof(host), &port)) {
-      LOG_WARNING("url_fetcher: Blocked URL (private/internal address): %s", url);
+      OLOG_WARNING("url_fetcher: Blocked URL (private/internal address): %s", url);
       return URL_FETCH_ERROR_BLOCKED_URL;
    }
 
-   LOG_INFO("url_fetcher: Fetching %s (resolved to %s:%d)", url,
-            resolved_ip[0] ? resolved_ip : "unresolved", port);
+   OLOG_INFO("url_fetcher: Fetching %s (resolved to %s:%d)", url,
+             resolved_ip[0] ? resolved_ip : "unresolved", port);
 
    // Create CURL handle once and reuse across retries (saves ~100-200us per retry)
    CURL *curl = curl_easy_init();
    if (!curl) {
-      LOG_ERROR("url_fetcher: Failed to create CURL handle");
+      OLOG_ERROR("url_fetcher: Failed to create CURL handle");
       return URL_FETCH_ERROR_NETWORK;
    }
 
@@ -1300,7 +1300,7 @@ int url_fetch_content_with_base(const char *url,
       char resolve_entry[600];
       snprintf(resolve_entry, sizeof(resolve_entry), "%s:%d:%s", host, port, resolved_ip);
       resolve_list = curl_slist_append(resolve_list, resolve_entry);
-      LOG_INFO("url_fetcher: DNS pinned: %s", resolve_entry);
+      OLOG_INFO("url_fetcher: DNS pinned: %s", resolve_entry);
    }
 
    // Build headers list once (reused across retries)
@@ -1320,8 +1320,8 @@ int url_fetch_content_with_base(const char *url,
       if (retry_count > 0) {
          // Exponential backoff: 500ms, 1000ms, 2000ms
          int delay_ms = URL_FETCH_RETRY_DELAY_MS * (1 << (retry_count - 1));
-         LOG_WARNING("url_fetcher: Retry %d/%d for %s (delay %dms)", retry_count,
-                     URL_FETCH_MAX_RETRIES, url, delay_ms);
+         OLOG_WARNING("url_fetcher: Retry %d/%d for %s (delay %dms)", retry_count,
+                      URL_FETCH_MAX_RETRIES, url, delay_ms);
          usleep(delay_ms * 1000);
 
          // Reset CURL handle for retry (preserves connection pool)
@@ -1351,8 +1351,9 @@ int url_fetch_content_with_base(const char *url,
          // Check if this was a buffer truncation (response too large)
          // We can still use the partial content we received
          if (res == CURLE_WRITE_ERROR && buffer.truncated && buffer.data && buffer.size > 0) {
-            LOG_WARNING("url_fetcher: Response truncated at %zuKB (max %zuKB) on attempt %d for %s",
-                        buffer.size / 1024, URL_FETCH_MAX_SIZE / 1024, retry_count + 1, url);
+            OLOG_WARNING(
+                "url_fetcher: Response truncated at %zuKB (max %zuKB) on attempt %d for %s",
+                buffer.size / 1024, URL_FETCH_MAX_SIZE / 1024, retry_count + 1, url);
             // Get HTTP code and content type before breaking (needed for post-loop checks)
             curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
             curl_easy_getinfo(curl, CURLINFO_CONTENT_TYPE, &content_type);
@@ -1362,8 +1363,8 @@ int url_fetch_content_with_base(const char *url,
             res = CURLE_OK;
             break;
          }
-         LOG_WARNING("url_fetcher: Network error on attempt %d: %s", retry_count + 1,
-                     curl_easy_strerror(res));
+         OLOG_WARNING("url_fetcher: Network error on attempt %d: %s", retry_count + 1,
+                      curl_easy_strerror(res));
          curl_buffer_free(&buffer);
          if (is_retryable_curl_error(res) && retry_count < URL_FETCH_MAX_RETRIES) {
             continue;  // Retry with same handle
@@ -1376,12 +1377,12 @@ int url_fetch_content_with_base(const char *url,
 
          // HTTP/2 errors are often server-side blocking — try FlareSolverr
          if ((res == CURLE_HTTP2_STREAM || res == CURLE_HTTP2) && flaresolverr_is_enabled()) {
-            LOG_INFO("url_fetcher: HTTP/2 error, trying FlareSolverr fallback");
+            OLOG_INFO("url_fetcher: HTTP/2 error, trying FlareSolverr fallback");
             if (try_flaresolverr_fallback(url, base_url, out_content, out_size) ==
                 URL_FETCH_SUCCESS) {
                return URL_FETCH_SUCCESS;
             }
-            LOG_WARNING("url_fetcher: FlareSolverr fallback failed for HTTP/2 error");
+            OLOG_WARNING("url_fetcher: FlareSolverr fallback failed for HTTP/2 error");
          }
 
          return URL_FETCH_ERROR_NETWORK;
@@ -1392,7 +1393,8 @@ int url_fetch_content_with_base(const char *url,
 
       // Check for retryable HTTP errors
       if (is_retryable_http_code(http_code) && retry_count < URL_FETCH_MAX_RETRIES) {
-         LOG_WARNING("url_fetcher: HTTP %ld on attempt %d, will retry", http_code, retry_count + 1);
+         OLOG_WARNING("url_fetcher: HTTP %ld on attempt %d, will retry", http_code,
+                      retry_count + 1);
          curl_buffer_free(&buffer);
          continue;  // Retry with same handle
       }
@@ -1404,8 +1406,8 @@ int url_fetch_content_with_base(const char *url,
    // Final error checking after all retries exhausted
    // NOTE: Must be done BEFORE curl_easy_cleanup() since content_type points to CURL's internal memory
    if (res != CURLE_OK) {
-      LOG_ERROR("url_fetcher: Network error after %d retries: %s", retry_count,
-                curl_easy_strerror(res));
+      OLOG_ERROR("url_fetcher: Network error after %d retries: %s", retry_count,
+                 curl_easy_strerror(res));
       curl_slist_free_all(headers);
       if (resolve_list)
          curl_slist_free_all(resolve_list);
@@ -1413,19 +1415,19 @@ int url_fetch_content_with_base(const char *url,
 
       // For redirect loops (often caused by JS-based paywalls), try FlareSolverr
       if (res == CURLE_TOO_MANY_REDIRECTS) {
-         LOG_INFO("url_fetcher: Redirect loop detected, trying FlareSolverr fallback");
+         OLOG_INFO("url_fetcher: Redirect loop detected, trying FlareSolverr fallback");
          if (try_flaresolverr_fallback(url, base_url, out_content, out_size) == URL_FETCH_SUCCESS) {
             return URL_FETCH_SUCCESS;
          }
-         LOG_WARNING("url_fetcher: FlareSolverr fallback failed for redirect loop");
+         OLOG_WARNING("url_fetcher: FlareSolverr fallback failed for redirect loop");
       }
 
       return URL_FETCH_ERROR_NETWORK;
    }
 
    if (http_code < 200 || http_code >= 300) {
-      LOG_WARNING("url_fetcher: HTTP error %ld for %s after %d attempts", http_code, url,
-                  retry_count + 1);
+      OLOG_WARNING("url_fetcher: HTTP error %ld for %s after %d attempts", http_code, url,
+                   retry_count + 1);
       curl_buffer_free(&buffer);
       curl_slist_free_all(headers);
       if (resolve_list)
@@ -1435,11 +1437,11 @@ int url_fetch_content_with_base(const char *url,
       // If we got 401/403, try FlareSolverr as fallback (bot protection)
       // Note: Some sites like Reuters use 401 Unauthorized instead of 403 for bot blocking
       if (http_code == 401 || http_code == 403) {
-         LOG_INFO("url_fetcher: HTTP %ld, trying FlareSolverr fallback", http_code);
+         OLOG_INFO("url_fetcher: HTTP %ld, trying FlareSolverr fallback", http_code);
          if (try_flaresolverr_fallback(url, base_url, out_content, out_size) == URL_FETCH_SUCCESS) {
             return URL_FETCH_SUCCESS;
          }
-         LOG_WARNING("url_fetcher: FlareSolverr fallback failed for %s", url);
+         OLOG_WARNING("url_fetcher: FlareSolverr fallback failed for %s", url);
       }
 
       return URL_FETCH_ERROR_HTTP;
@@ -1448,7 +1450,7 @@ int url_fetch_content_with_base(const char *url,
    // Validate Content-Type (must be done before curl_easy_cleanup since content_type
    // points to CURL's internal memory which is freed by cleanup)
    if (content_type && !is_allowed_content_type(content_type)) {
-      LOG_WARNING("url_fetcher: Invalid Content-Type '%s' for %s", content_type, url);
+      OLOG_WARNING("url_fetcher: Invalid Content-Type '%s' for %s", content_type, url);
       curl_buffer_free(&buffer);
       curl_slist_free_all(headers);
       if (resolve_list)
@@ -1458,7 +1460,7 @@ int url_fetch_content_with_base(const char *url,
    }
 
    if (!buffer.data || buffer.size == 0) {
-      LOG_WARNING("url_fetcher: Empty response from %s", url);
+      OLOG_WARNING("url_fetcher: Empty response from %s", url);
       curl_buffer_free(&buffer);
       curl_slist_free_all(headers);
       if (resolve_list)
@@ -1467,8 +1469,8 @@ int url_fetch_content_with_base(const char *url,
       return URL_FETCH_ERROR_EMPTY;
    }
 
-   LOG_INFO("url_fetcher: Downloaded %zu bytes from %s (Content-Type: %s)", buffer.size, url,
-            content_type ? content_type : "unknown");
+   OLOG_INFO("url_fetcher: Downloaded %zu bytes from %s (Content-Type: %s)", buffer.size, url,
+             content_type ? content_type : "unknown");
 
    // Cleanup CURL resources now (after we're done with content_type pointer)
    curl_slist_free_all(headers);
@@ -1519,11 +1521,11 @@ int url_fetch_content_with_base(const char *url,
 
    if (result != URL_FETCH_SUCCESS) {
       // If content extraction failed (likely JS-rendered page), try FlareSolverr
-      LOG_INFO("url_fetcher: Direct fetch failed with %d, trying FlareSolverr fallback", result);
+      OLOG_INFO("url_fetcher: Direct fetch failed with %d, trying FlareSolverr fallback", result);
       if (try_flaresolverr_fallback(url, base_url, out_content, out_size) == URL_FETCH_SUCCESS) {
          return URL_FETCH_SUCCESS;
       }
-      LOG_WARNING("url_fetcher: FlareSolverr fallback also failed");
+      OLOG_WARNING("url_fetcher: FlareSolverr fallback also failed");
       return result;
    }
 
@@ -1532,8 +1534,8 @@ int url_fetch_content_with_base(const char *url,
    // If extraction succeeded but returned empty/minimal content, try FlareSolverr
    // (Many JS-rendered pages return valid HTML with no text content)
    if (extracted_len < 100) {
-      LOG_INFO("url_fetcher: Extracted only %zu bytes, trying FlareSolverr fallback",
-               extracted_len);
+      OLOG_INFO("url_fetcher: Extracted only %zu bytes, trying FlareSolverr fallback",
+                extracted_len);
       char *flare_content = NULL;
       size_t flare_len = 0;
       if (try_flaresolverr_fallback(url, base_url, &flare_content, &flare_len) ==
@@ -1542,18 +1544,18 @@ int url_fetch_content_with_base(const char *url,
          extracted = flare_content;
          extracted_len = flare_len;
       } else {
-         LOG_WARNING("url_fetcher: FlareSolverr fallback failed, using minimal content");
+         OLOG_WARNING("url_fetcher: FlareSolverr fallback failed, using minimal content");
          // Keep original extracted content even if minimal
       }
    }
 
-   LOG_INFO("url_fetcher: Extracted %zu bytes of markdown content%s", extracted_len,
-            was_truncated ? " (truncated)" : "");
+   OLOG_INFO("url_fetcher: Extracted %zu bytes of markdown content%s", extracted_len,
+             was_truncated ? " (truncated)" : "");
 
    // Log a preview of the content for debugging (truncate at 2000 chars)
    if (extracted_len > 0) {
-      LOG_INFO("url_fetcher: Content preview:\n%.2000s%s", extracted,
-               extracted_len > 2000 ? "\n... (truncated)" : "");
+      OLOG_INFO("url_fetcher: Content preview:\n%.2000s%s", extracted,
+                extracted_len > 2000 ? "\n... (truncated)" : "");
    }
 
    // Add truncation notice if content was cut off

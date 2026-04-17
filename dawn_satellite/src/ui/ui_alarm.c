@@ -37,11 +37,11 @@
 #include "ui_util.h"
 
 /* Log macros (satellite style) */
-#ifndef LOG_INFO
-#define LOG_INFO(fmt, ...) fprintf(stderr, "[INFO] alarm: " fmt "\n", ##__VA_ARGS__)
+#ifndef OLOG_INFO
+#define OLOG_INFO(fmt, ...) fprintf(stderr, "[INFO] alarm: " fmt "\n", ##__VA_ARGS__)
 #endif
-#ifndef LOG_WARNING
-#define LOG_WARNING(fmt, ...) fprintf(stderr, "[WARN] alarm: " fmt "\n", ##__VA_ARGS__)
+#ifndef OLOG_WARNING
+#define OLOG_WARNING(fmt, ...) fprintf(stderr, "[WARN] alarm: " fmt "\n", ##__VA_ARGS__)
 #endif
 
 /* Font paths */
@@ -119,7 +119,7 @@ static void *chime_sound_thread(void *arg) {
 
       /* If we exited due to timeout (not user dismiss), auto-dismiss overlay */
       if (!atomic_load(&a->sound_stop)) {
-         LOG_INFO("alarm sound timed out after %ds — dismissing overlay", ALARM_TIMEOUT_S);
+         OLOG_INFO("alarm sound timed out after %ds — dismissing overlay", ALARM_TIMEOUT_S);
          pthread_mutex_lock(&a->mutex);
          a->state = ALARM_STATE_IDLE;
          pthread_mutex_unlock(&a->mutex);
@@ -184,7 +184,7 @@ int ui_alarm_init(ui_alarm_t *a, SDL_Renderer *r, int w, int h, const char *font
    a->btn_font = ui_try_load_font(font_dir, "SourceSans3-SemiBold.ttf", FALLBACK_BODY_FONT, 20);
 
    if (!a->title_font || !a->label_font || !a->btn_font) {
-      LOG_WARNING("Failed to load alarm overlay fonts");
+      OLOG_WARNING("Failed to load alarm overlay fonts");
       return 1;
    }
 
@@ -198,7 +198,7 @@ int ui_alarm_init(ui_alarm_t *a, SDL_Renderer *r, int w, int h, const char *font
    dawn_alarm_tone_generate(&a->alarm_tone);
    atomic_init(&a->sound_stop, 0);
 
-   LOG_INFO("initialized (%dx%d)", w, h);
+   OLOG_INFO("initialized (%dx%d)", w, h);
    return 0;
 }
 
@@ -242,8 +242,8 @@ void ui_alarm_trigger(ui_alarm_t *a, int64_t event_id, const char *label, const 
    a->state = ALARM_STATE_ACTIVE;
 
    pthread_mutex_unlock(&a->mutex);
-   LOG_INFO("triggered: [%s] %s (id=%lld)", type ? type : "?", label ? label : "?",
-            (long long)event_id);
+   OLOG_INFO("triggered: [%s] %s (id=%lld)", type ? type : "?", label ? label : "?",
+             (long long)event_id);
 
    /* Start chime sound if overlay just activated */
    if (was_idle && a->audio_pb) {
@@ -259,7 +259,7 @@ void ui_alarm_dismiss(ui_alarm_t *a) {
    pthread_mutex_lock(&a->mutex);
    a->state = ALARM_STATE_IDLE;
    pthread_mutex_unlock(&a->mutex);
-   LOG_INFO("dismissed");
+   OLOG_INFO("dismissed");
 }
 
 bool ui_alarm_is_active(const ui_alarm_t *a) {
@@ -411,7 +411,7 @@ bool ui_alarm_handle_tap(ui_alarm_t *a, int x, int y) {
    SDL_Point p = { x, y };
 
    if (SDL_PointInRect(&p, &a->dismiss_btn)) {
-      LOG_INFO("dismiss tapped (event_id=%lld)", (long long)a->event_id);
+      OLOG_INFO("dismiss tapped (event_id=%lld)", (long long)a->event_id);
       if (a->on_dismiss) {
          a->on_dismiss(a->event_id, a->cb_userdata);
       }
@@ -420,7 +420,7 @@ bool ui_alarm_handle_tap(ui_alarm_t *a, int x, int y) {
    }
 
    if (SDL_PointInRect(&p, &a->snooze_btn)) {
-      LOG_INFO("snooze tapped (event_id=%lld)", (long long)a->event_id);
+      OLOG_INFO("snooze tapped (event_id=%lld)", (long long)a->event_id);
       if (a->on_snooze) {
          a->on_snooze(a->event_id, 0, a->cb_userdata); /* 0 = use default */
       }

@@ -73,7 +73,7 @@ static int build_base_url(char *buf, size_t buf_size) {
    const char *scheme = plex->ssl ? "https" : "http";
    int n = snprintf(buf, buf_size, "%s://%s:%d", scheme, plex->host, plex->port);
    if (n < 0 || (size_t)n >= buf_size) {
-      LOG_ERROR("Plex: base URL too long");
+      OLOG_ERROR("Plex: base URL too long");
       return FAILURE;
    }
    return SUCCESS;
@@ -142,7 +142,7 @@ static bool is_valid_rating_key(const char *key) {
 /** Perform an API GET request and parse JSON response (mutex-protected) */
 static json_object *api_get(const char *endpoint) {
    if (!s_api_curl) {
-      LOG_ERROR("Plex: client not initialized");
+      OLOG_ERROR("Plex: client not initialized");
       return NULL;
    }
 
@@ -154,7 +154,7 @@ static json_object *api_get(const char *endpoint) {
    char url[1024];
    int n = snprintf(url, sizeof(url), "%s%s", base_url, endpoint);
    if (n < 0 || (size_t)n >= sizeof(url)) {
-      LOG_ERROR("Plex: URL too long for endpoint %s", endpoint);
+      OLOG_ERROR("Plex: URL too long for endpoint %s", endpoint);
       return NULL;
    }
 
@@ -196,24 +196,24 @@ static json_object *api_get(const char *endpoint) {
    /* headers are cached — do not free */
 
    if (res != CURLE_OK) {
-      LOG_ERROR("Plex API: CURL error for %s: %s", endpoint, curl_easy_strerror(res));
+      OLOG_ERROR("Plex API: CURL error for %s: %s", endpoint, curl_easy_strerror(res));
       curl_buffer_free(&buffer);
       return NULL;
    }
 
    if (http_code == 401) {
-      LOG_ERROR("Plex API: authentication failed (401) — check plex_token in secrets.toml");
+      OLOG_ERROR("Plex API: authentication failed (401) — check plex_token in secrets.toml");
       curl_buffer_free(&buffer);
       return NULL;
    }
    if (http_code < 200 || http_code >= 300) {
-      LOG_ERROR("Plex API: HTTP %ld for %s", http_code, endpoint);
+      OLOG_ERROR("Plex API: HTTP %ld for %s", http_code, endpoint);
       curl_buffer_free(&buffer);
       return NULL;
    }
 
    if (!buffer.data || buffer.size == 0) {
-      LOG_ERROR("Plex API: empty response for %s", endpoint);
+      OLOG_ERROR("Plex API: empty response for %s", endpoint);
       curl_buffer_free(&buffer);
       return NULL;
    }
@@ -222,7 +222,7 @@ static json_object *api_get(const char *endpoint) {
    curl_buffer_free(&buffer);
 
    if (!root) {
-      LOG_ERROR("Plex API: invalid JSON for %s", endpoint);
+      OLOG_ERROR("Plex API: invalid JSON for %s", endpoint);
       return NULL;
    }
 
@@ -383,13 +383,13 @@ int plex_client_init(void) {
 
    s_api_curl = curl_easy_init();
    if (!s_api_curl) {
-      LOG_ERROR("Plex: failed to create API CURL handle");
+      OLOG_ERROR("Plex: failed to create API CURL handle");
       return FAILURE;
    }
 
    s_download_curl = curl_easy_init();
    if (!s_download_curl) {
-      LOG_ERROR("Plex: failed to create download CURL handle");
+      OLOG_ERROR("Plex: failed to create download CURL handle");
       curl_easy_cleanup(s_api_curl);
       s_api_curl = NULL;
       return FAILURE;
@@ -401,8 +401,8 @@ int plex_client_init(void) {
       uuid_t uuid;
       uuid_generate(uuid);
       uuid_unparse_lower(uuid, mutable_config->music.plex.client_identifier);
-      LOG_INFO("Plex: generated client identifier: %s",
-               mutable_config->music.plex.client_identifier);
+      OLOG_INFO("Plex: generated client identifier: %s",
+                mutable_config->music.plex.client_identifier);
    }
 
    /* Clean up orphaned temp files from previous runs */
@@ -410,7 +410,7 @@ int plex_client_init(void) {
 
    s_section_id = 0; /* Reset cached section */
 
-   LOG_INFO("Plex client initialized");
+   OLOG_INFO("Plex client initialized");
    return SUCCESS;
 }
 
@@ -426,7 +426,7 @@ void plex_client_cleanup(void) {
    invalidate_api_headers();
    s_section_id = 0;
 
-   LOG_INFO("Plex client cleaned up");
+   OLOG_INFO("Plex client cleaned up");
 }
 
 bool plex_client_is_configured(void) {
@@ -448,7 +448,7 @@ int plex_client_discover_section(int *section_id_out) {
    /* Navigate: MediaContainer.Directory[] */
    json_object *container;
    if (!json_object_object_get_ex(root, "MediaContainer", &container)) {
-      LOG_ERROR("Plex: no MediaContainer in /library/sections response");
+      OLOG_ERROR("Plex: no MediaContainer in /library/sections response");
       json_object_put(root);
       return FAILURE;
    }
@@ -456,7 +456,7 @@ int plex_client_discover_section(int *section_id_out) {
    json_object *dirs;
    if (!json_object_object_get_ex(container, "Directory", &dirs) ||
        !json_object_is_type(dirs, json_type_array)) {
-      LOG_ERROR("Plex: no Directory array in /library/sections");
+      OLOG_ERROR("Plex: no Directory array in /library/sections");
       json_object_put(root);
       return FAILURE;
    }
@@ -470,14 +470,14 @@ int plex_client_discover_section(int *section_id_out) {
          if (key > 0) {
             *section_id_out = key;
             const char *title = json_get_string(dir, "title");
-            LOG_INFO("Plex: discovered music section '%s' (id=%d)", title, key);
+            OLOG_INFO("Plex: discovered music section '%s' (id=%d)", title, key);
             json_object_put(root);
             return SUCCESS;
          }
       }
    }
 
-   LOG_ERROR("Plex: no music library section found");
+   OLOG_ERROR("Plex: no music library section found");
    json_object_put(root);
    return FAILURE;
 }
@@ -537,14 +537,14 @@ int plex_client_download_track(const char *part_key, char *out_path, size_t out_
       return FAILURE;
 
    if (!s_download_curl) {
-      LOG_ERROR("Plex: download CURL handle not initialized");
+      OLOG_ERROR("Plex: download CURL handle not initialized");
       return FAILURE;
    }
 
    /* Validate Part.key starts with expected path */
    if (strncmp(part_key, "/library/parts/", 15) != 0 &&
        strncmp(part_key, "/library/metadata/", 18) != 0) {
-      LOG_ERROR("Plex: invalid Part.key: %s", part_key);
+      OLOG_ERROR("Plex: invalid Part.key: %s", part_key);
       return FAILURE;
    }
 
@@ -557,7 +557,7 @@ int plex_client_download_track(const char *part_key, char *out_path, size_t out_
    char url[2048];
    int n = snprintf(url, sizeof(url), "%s%s", base_url, part_key);
    if (n < 0 || (size_t)n >= sizeof(url)) {
-      LOG_ERROR("Plex: download URL too long");
+      OLOG_ERROR("Plex: download URL too long");
       return FAILURE;
    }
 
@@ -588,11 +588,11 @@ int plex_client_download_track(const char *part_key, char *out_path, size_t out_
    /* headers are cached — do not free */
 
    if (result != 0) {
-      LOG_ERROR("Plex: failed to download track: %s", part_key);
+      OLOG_ERROR("Plex: failed to download track: %s", part_key);
       return FAILURE;
    }
 
-   LOG_INFO("Plex: downloaded track to %s", out_path);
+   OLOG_INFO("Plex: downloaded track to %s", out_path);
    return SUCCESS;
 }
 
@@ -604,7 +604,7 @@ int plex_client_scrobble(const char *rating_key) {
    if (!rating_key || !rating_key[0])
       return FAILURE;
    if (!is_valid_rating_key(rating_key)) {
-      LOG_WARNING("Plex: invalid rating_key (non-numeric): %s", rating_key);
+      OLOG_WARNING("Plex: invalid rating_key (non-numeric): %s", rating_key);
       return FAILURE;
    }
 
@@ -615,7 +615,7 @@ int plex_client_scrobble(const char *rating_key) {
    json_object *root = api_get(endpoint);
    if (!root) {
       /* Scrobble is fire-and-forget, but report the failure */
-      LOG_WARNING("Plex: scrobble failed for key %s", rating_key);
+      OLOG_WARNING("Plex: scrobble failed for key %s", rating_key);
       return FAILURE;
    }
    json_object_put(root);
@@ -677,7 +677,7 @@ int plex_client_test_connection(char *server_name_out, size_t name_size) {
          strncpy(server_name_out, name, name_size - 1);
          server_name_out[name_size - 1] = '\0';
       }
-      LOG_INFO("Plex: connected to server '%s'", json_get_string(container, "friendlyName"));
+      OLOG_INFO("Plex: connected to server '%s'", json_get_string(container, "friendlyName"));
    }
 
    json_object_put(root);
@@ -696,7 +696,7 @@ void plex_client_cleanup_temp_files(void) {
    if (glob(pattern, GLOB_NOSORT, NULL, &globbuf) == 0) {
       for (size_t i = 0; i < globbuf.gl_pathc; i++) {
          if (unlink(globbuf.gl_pathv[i]) == 0) {
-            LOG_INFO("Plex: cleaned up orphaned temp file: %s", globbuf.gl_pathv[i]);
+            OLOG_INFO("Plex: cleaned up orphaned temp file: %s", globbuf.gl_pathv[i]);
          }
       }
       globfree(&globbuf);

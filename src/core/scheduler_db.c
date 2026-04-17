@@ -202,7 +202,7 @@ int64_t scheduler_db_insert(sched_event_t *event) {
    sqlite3_stmt *stmt = NULL;
    int rc = sqlite3_prepare_v2(s_db.db, sql, -1, &stmt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("scheduler_db: prepare insert failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("scheduler_db: prepare insert failed: %s", sqlite3_errmsg(s_db.db));
       AUTH_DB_UNLOCK();
       return -1;
    }
@@ -239,7 +239,7 @@ int64_t scheduler_db_insert(sched_event_t *event) {
       id = sqlite3_last_insert_rowid(s_db.db);
       event->id = id;
    } else {
-      LOG_ERROR("scheduler_db: insert failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("scheduler_db: insert failed: %s", sqlite3_errmsg(s_db.db));
    }
 
    sqlite3_finalize(stmt);
@@ -298,7 +298,7 @@ int64_t scheduler_db_insert_checked(sched_event_t *event, int max_per_user, int 
    sqlite3_stmt *stmt = NULL;
    rc = sqlite3_prepare_v2(s_db.db, sql, -1, &stmt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("scheduler_db: prepare insert failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("scheduler_db: prepare insert failed: %s", sqlite3_errmsg(s_db.db));
       AUTH_DB_UNLOCK();
       return -1;
    }
@@ -335,7 +335,7 @@ int64_t scheduler_db_insert_checked(sched_event_t *event, int max_per_user, int 
       id = sqlite3_last_insert_rowid(s_db.db);
       event->id = id;
    } else {
-      LOG_ERROR("scheduler_db: insert failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("scheduler_db: insert failed: %s", sqlite3_errmsg(s_db.db));
    }
 
    sqlite3_finalize(stmt);

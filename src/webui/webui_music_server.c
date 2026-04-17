@@ -82,7 +82,7 @@ static int callback_music_websocket(struct lws *wsi,
 
    switch (reason) {
       case LWS_CALLBACK_ESTABLISHED:
-         LOG_INFO("Music server: New connection");
+         OLOG_INFO("Music server: New connection");
          memset(conn, 0, sizeof(*conn));
          conn->wsi = wsi;
          conn->authenticated = false;
@@ -93,14 +93,14 @@ static int callback_music_websocket(struct lws *wsi,
          if (!conn->authenticated) {
             /* Reject binary frames before auth (prevents reading past buffer) */
             if (lws_frame_is_binary(wsi)) {
-               LOG_WARNING("Music server: Unexpected binary frame before auth");
+               OLOG_WARNING("Music server: Unexpected binary frame before auth");
                return -1;
             }
 
             /* Parse auth message */
             struct json_object *msg = json_tokener_parse((const char *)in);
             if (!msg) {
-               LOG_WARNING("Music server: Invalid JSON in auth message");
+               OLOG_WARNING("Music server: Invalid JSON in auth message");
                return -1;
             }
 
@@ -127,7 +127,7 @@ static int callback_music_websocket(struct lws *wsi,
                      /* Register this wsi with the session's music state */
                      webui_music_set_stream_wsi(session, wsi);
 
-                     LOG_INFO("Music server: Authenticated session %u", session->session_id);
+                     OLOG_INFO("Music server: Authenticated session %u", session->session_id);
 
                      /* Send auth success */
                      const char *response = "{\"type\":\"auth_ok\"}";
@@ -136,7 +136,7 @@ static int callback_music_websocket(struct lws *wsi,
                      memcpy(&buf[LWS_PRE], response, response_len);
                      lws_write(wsi, &buf[LWS_PRE], response_len, LWS_WRITE_TEXT);
                   } else {
-                     LOG_WARNING("Music server: Invalid token");
+                     OLOG_WARNING("Music server: Invalid token");
                      const char *response =
                          "{\"type\":\"auth_failed\",\"reason\":\"invalid_token\"}";
                      unsigned char buf[LWS_PRE + 64];
@@ -162,7 +162,7 @@ static int callback_music_websocket(struct lws *wsi,
          break;
 
       case LWS_CALLBACK_CLOSED:
-         LOG_INFO("Music server: Connection closed");
+         OLOG_INFO("Music server: Connection closed");
          if (conn->authenticated && conn->session) {
             /* Clear the stream wsi from the session */
             webui_music_set_stream_wsi(conn->session, NULL);
@@ -200,14 +200,14 @@ static struct lws_protocols s_music_protocols[] = {
 static void *music_server_thread_func(void *arg) {
    (void)arg;
 
-   LOG_INFO("Music server: Thread started");
+   OLOG_INFO("Music server: Thread started");
 
    while (atomic_load(&s_music_server_running)) {
       /* Process events with short timeout for responsiveness */
       lws_service(s_music_lws_context, 10);
    }
 
-   LOG_INFO("Music server: Thread exiting");
+   OLOG_INFO("Music server: Thread exiting");
    return NULL;
 }
 
@@ -219,7 +219,7 @@ int webui_music_server_init(int port) {
    pthread_mutex_lock(&s_music_mutex);
 
    if (s_music_lws_context) {
-      LOG_WARNING("Music server: Already initialized");
+      OLOG_WARNING("Music server: Already initialized");
       pthread_mutex_unlock(&s_music_mutex);
       return 0;
    }
@@ -245,11 +245,11 @@ int webui_music_server_init(int port) {
          info.ssl_cert_filepath = g_config.webui.ssl_cert_path;
          info.ssl_private_key_filepath = g_config.webui.ssl_key_path;
          info.alpn = "http/1.1";
-         LOG_INFO("Music server: HTTPS enabled (sharing cert with main server)");
+         OLOG_INFO("Music server: HTTPS enabled (sharing cert with main server)");
       }
    }
 
-   LOG_INFO("Music server: Initializing on port %d", port);
+   OLOG_INFO("Music server: Initializing on port %d", port);
 
    /* Match main server log level (errors and warnings only) */
    lws_set_log_level(LLL_ERR | LLL_WARN, NULL);
@@ -257,7 +257,7 @@ int webui_music_server_init(int port) {
    /* Create context */
    s_music_lws_context = lws_create_context(&info);
    if (!s_music_lws_context) {
-      LOG_ERROR("Music server: Failed to create libwebsockets context");
+      OLOG_ERROR("Music server: Failed to create libwebsockets context");
       pthread_mutex_unlock(&s_music_mutex);
       return -1;
    }
@@ -267,7 +267,7 @@ int webui_music_server_init(int port) {
 
    /* Start server thread */
    if (pthread_create(&s_music_server_thread, NULL, music_server_thread_func, NULL) != 0) {
-      LOG_ERROR("Music server: Failed to create server thread");
+      OLOG_ERROR("Music server: Failed to create server thread");
       lws_context_destroy(s_music_lws_context);
       s_music_lws_context = NULL;
       atomic_store(&s_music_server_running, false);
@@ -275,7 +275,7 @@ int webui_music_server_init(int port) {
       return -1;
    }
 
-   LOG_INFO("Music server: Started on port %d", port);
+   OLOG_INFO("Music server: Started on port %d", port);
    pthread_mutex_unlock(&s_music_mutex);
    return 0;
 }
@@ -288,7 +288,7 @@ void webui_music_server_shutdown(void) {
       return;
    }
 
-   LOG_INFO("Music server: Shutting down");
+   OLOG_INFO("Music server: Shutting down");
 
    /* Signal thread to stop */
    atomic_store(&s_music_server_running, false);
@@ -308,7 +308,7 @@ void webui_music_server_shutdown(void) {
    s_music_lws_context = NULL;
    s_music_port = 0;
 
-   LOG_INFO("Music server: Shutdown complete");
+   OLOG_INFO("Music server: Shutdown complete");
    pthread_mutex_unlock(&s_music_mutex);
 }
 

@@ -173,7 +173,7 @@ int audio_playback_init(audio_playback_t *ctx, const char *device) {
    /* Open PCM device for playback */
    err = snd_pcm_open(&handle, ctx->device, SND_PCM_STREAM_PLAYBACK, 0);
    if (err < 0) {
-      LOG_ERROR("Cannot open playback device '%s': %s", ctx->device, snd_strerror(err));
+      OLOG_ERROR("Cannot open playback device '%s': %s", ctx->device, snd_strerror(err));
       return -1;
    }
 
@@ -183,7 +183,7 @@ int audio_playback_init(audio_playback_t *ctx, const char *device) {
 
    err = snd_pcm_hw_params_any(handle, hw_params);
    if (err < 0) {
-      LOG_ERROR("Cannot initialize hw params: %s", snd_strerror(err));
+      OLOG_ERROR("Cannot initialize hw params: %s", snd_strerror(err));
       snd_pcm_close(handle);
       return -1;
    }
@@ -191,7 +191,7 @@ int audio_playback_init(audio_playback_t *ctx, const char *device) {
    /* Set access type - interleaved */
    err = snd_pcm_hw_params_set_access(handle, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED);
    if (err < 0) {
-      LOG_ERROR("Cannot set access type: %s", snd_strerror(err));
+      OLOG_ERROR("Cannot set access type: %s", snd_strerror(err));
       snd_pcm_close(handle);
       return -1;
    }
@@ -199,7 +199,7 @@ int audio_playback_init(audio_playback_t *ctx, const char *device) {
    /* Set format - 16-bit signed little-endian */
    err = snd_pcm_hw_params_set_format(handle, hw_params, SND_PCM_FORMAT_S16_LE);
    if (err < 0) {
-      LOG_ERROR("Cannot set format: %s", snd_strerror(err));
+      OLOG_ERROR("Cannot set format: %s", snd_strerror(err));
       snd_pcm_close(handle);
       return -1;
    }
@@ -207,7 +207,7 @@ int audio_playback_init(audio_playback_t *ctx, const char *device) {
    /* Set channels - stereo for I2S DAC */
    err = snd_pcm_hw_params_set_channels(handle, hw_params, AUDIO_PLAYBACK_CHANNELS);
    if (err < 0) {
-      LOG_ERROR("Cannot set channels: %s", snd_strerror(err));
+      OLOG_ERROR("Cannot set channels: %s", snd_strerror(err));
       snd_pcm_close(handle);
       return -1;
    }
@@ -216,13 +216,13 @@ int audio_playback_init(audio_playback_t *ctx, const char *device) {
    unsigned int rate = AUDIO_PLAYBACK_RATE;
    err = snd_pcm_hw_params_set_rate_near(handle, hw_params, &rate, 0);
    if (err < 0) {
-      LOG_ERROR("Cannot set sample rate: %s", snd_strerror(err));
+      OLOG_ERROR("Cannot set sample rate: %s", snd_strerror(err));
       snd_pcm_close(handle);
       return -1;
    }
 
    if (rate != AUDIO_PLAYBACK_RATE) {
-      LOG_INFO("Requested %u Hz, got %u Hz", AUDIO_PLAYBACK_RATE, rate);
+      OLOG_INFO("Requested %u Hz, got %u Hz", AUDIO_PLAYBACK_RATE, rate);
    }
    ctx->sample_rate = rate;
    ctx->channels = AUDIO_PLAYBACK_CHANNELS;
@@ -231,7 +231,7 @@ int audio_playback_init(audio_playback_t *ctx, const char *device) {
    snd_pcm_uframes_t period_size = ALSA_PERIOD_SIZE;
    err = snd_pcm_hw_params_set_period_size_near(handle, hw_params, &period_size, 0);
    if (err < 0) {
-      LOG_ERROR("Cannot set period size: %s", snd_strerror(err));
+      OLOG_ERROR("Cannot set period size: %s", snd_strerror(err));
       snd_pcm_close(handle);
       return -1;
    }
@@ -241,7 +241,7 @@ int audio_playback_init(audio_playback_t *ctx, const char *device) {
    snd_pcm_uframes_t buffer_size = period_size * ALSA_BUFFER_PERIODS;
    err = snd_pcm_hw_params_set_buffer_size_near(handle, hw_params, &buffer_size);
    if (err < 0) {
-      LOG_ERROR("Cannot set buffer size: %s", snd_strerror(err));
+      OLOG_ERROR("Cannot set buffer size: %s", snd_strerror(err));
       snd_pcm_close(handle);
       return -1;
    }
@@ -249,7 +249,7 @@ int audio_playback_init(audio_playback_t *ctx, const char *device) {
    /* Apply hardware parameters */
    err = snd_pcm_hw_params(handle, hw_params);
    if (err < 0) {
-      LOG_ERROR("Cannot apply hw params: %s", snd_strerror(err));
+      OLOG_ERROR("Cannot apply hw params: %s", snd_strerror(err));
       snd_pcm_close(handle);
       return -1;
    }
@@ -262,7 +262,7 @@ int audio_playback_init(audio_playback_t *ctx, const char *device) {
    snd_pcm_sw_params_set_start_threshold(handle, sw_params, buffer_size / 2);
    err = snd_pcm_sw_params(handle, sw_params);
    if (err < 0) {
-      LOG_WARNING("Cannot set sw params: %s (using defaults)", snd_strerror(err));
+      OLOG_WARNING("Cannot set sw params: %s (using defaults)", snd_strerror(err));
    }
 
    ctx->handle = handle;
@@ -273,8 +273,8 @@ int audio_playback_init(audio_playback_t *ctx, const char *device) {
    /* Pre-compute Goertzel DFT coefficients for spectrum visualization */
    init_goertzel_tables(ctx->sample_rate);
 
-   LOG_INFO("Playback initialized: %s @ %u Hz stereo, %zu frame periods", ctx->device,
-            ctx->sample_rate, ctx->period_size);
+   OLOG_INFO("Playback initialized: %s @ %u Hz stereo, %zu frame periods", ctx->device,
+             ctx->sample_rate, ctx->period_size);
 
    return 0;
 }
@@ -288,7 +288,7 @@ void audio_playback_cleanup(audio_playback_t *ctx) {
       ctx->initialized = 0;
       pthread_mutex_unlock(&ctx->alsa_mutex);
       pthread_mutex_destroy(&ctx->alsa_mutex);
-      LOG_INFO("Playback cleaned up");
+      OLOG_INFO("Playback cleaned up");
    }
 }
 
@@ -346,7 +346,7 @@ int audio_playback_play(audio_playback_t *ctx,
       int err = snd_pcm_prepare(handle);
       if (err < 0) {
          pthread_mutex_unlock(&ctx->alsa_mutex);
-         LOG_ERROR("Cannot prepare for playback: %s", snd_strerror(err));
+         OLOG_ERROR("Cannot prepare for playback: %s", snd_strerror(err));
          return -1;
       }
    }
@@ -360,14 +360,14 @@ int audio_playback_play(audio_playback_t *ctx,
    /* Calculate total output frames */
    size_t out_frames = (size_t)((double)num_samples * (out_rate / in_rate) + 0.5);
 
-   LOG_INFO("Playing %zu samples @ %u Hz -> %zu frames @ %u Hz", num_samples, sample_rate,
-            out_frames, ctx->sample_rate);
+   OLOG_INFO("Playing %zu samples @ %u Hz -> %zu frames @ %u Hz", num_samples, sample_rate,
+             out_frames, ctx->sample_rate);
 
    /* Allocate output buffer (stereo) */
    size_t chunk_size = ctx->period_size;
    int16_t *out_buf = malloc(chunk_size * 2 * sizeof(int16_t)); /* Stereo */
    if (!out_buf) {
-      LOG_ERROR("Failed to allocate output buffer");
+      OLOG_ERROR("Failed to allocate output buffer");
       return -1;
    }
 
@@ -377,7 +377,7 @@ int audio_playback_play(audio_playback_t *ctx,
    while (produced < out_frames) {
       /* Check stop flag */
       if (stop_flag && atomic_load(stop_flag)) {
-         LOG_INFO("Playback stopped by flag");
+         OLOG_INFO("Playback stopped by flag");
          break;
       }
 
@@ -434,7 +434,7 @@ int audio_playback_play(audio_playback_t *ctx,
       pthread_mutex_lock(&ctx->alsa_mutex);
       snd_pcm_sframes_t frames = snd_pcm_writei(handle, out_buf, n);
       if (frames == -EPIPE) {
-         LOG_ERROR("Buffer underrun, recovering...");
+         OLOG_ERROR("Buffer underrun, recovering...");
          snd_pcm_prepare(handle);
          pthread_mutex_unlock(&ctx->alsa_mutex);
          continue;
@@ -446,7 +446,7 @@ int audio_playback_play(audio_playback_t *ctx,
             usleep(1000);
             continue;
          } else {
-            LOG_ERROR("Write error: %s", snd_strerror(frames));
+            OLOG_ERROR("Write error: %s", snd_strerror(frames));
             free(out_buf);
             return -1;
          }
@@ -474,7 +474,7 @@ int audio_playback_play(audio_playback_t *ctx,
    for (int k = 0; k < SPECTRUM_BINS; k++) {
       ctx->spectrum[k] = 0.0f;
    }
-   LOG_INFO("Playback complete: %zu frames", produced);
+   OLOG_INFO("Playback complete: %zu frames", produced);
    return 0;
 }
 
@@ -492,7 +492,7 @@ int audio_playback_play_wav(audio_playback_t *ctx,
    unsigned int channels;
 
    if (audio_parse_wav(wav_data, wav_size, &pcm_data, &pcm_size, &sample_rate, &channels) != 0) {
-      LOG_ERROR("Failed to parse WAV data");
+      OLOG_ERROR("Failed to parse WAV data");
       return -1;
    }
 
@@ -501,12 +501,12 @@ int audio_playback_play_wav(audio_playback_t *ctx,
 
    /* Handle stereo input by taking just left channel */
    if (channels == 2) {
-      LOG_INFO("Converting stereo to mono");
+      OLOG_INFO("Converting stereo to mono");
       /* For stereo, samples are interleaved L R L R... */
       /* We'll just use the left channel (every other sample) */
       int16_t *mono = malloc(num_samples / 2 * sizeof(int16_t));
       if (!mono) {
-         LOG_ERROR("Failed to allocate mono buffer");
+         OLOG_ERROR("Failed to allocate mono buffer");
          return -1;
       }
 
@@ -566,19 +566,19 @@ int audio_playback_play_stereo(audio_playback_t *ctx,
       pthread_mutex_lock(&ctx->alsa_mutex);
       snd_pcm_sframes_t frames = snd_pcm_writei(handle, buf, n);
       if (frames == -EPIPE) {
-         LOG_WARNING("Stereo playback underrun, recovering...");
+         OLOG_WARNING("Stereo playback underrun, recovering...");
          snd_pcm_prepare(handle);
          pthread_mutex_unlock(&ctx->alsa_mutex);
          continue;
       }
       if (frames == -EBADFD) {
-         LOG_WARNING("Stereo playback: bad state, re-preparing");
+         OLOG_WARNING("Stereo playback: bad state, re-preparing");
          snd_pcm_prepare(handle);
          pthread_mutex_unlock(&ctx->alsa_mutex);
          continue;
       }
       if (frames == -ESTRPIPE) {
-         LOG_WARNING("Stereo playback: suspended, resuming");
+         OLOG_WARNING("Stereo playback: suspended, resuming");
          while (snd_pcm_resume(handle) == -EAGAIN)
             usleep(100000);
          snd_pcm_prepare(handle);
@@ -592,7 +592,7 @@ int audio_playback_play_stereo(audio_playback_t *ctx,
             usleep(1000);
             continue;
          }
-         LOG_ERROR("Stereo write error: %s", snd_strerror(frames));
+         OLOG_ERROR("Stereo write error: %s", snd_strerror(frames));
          return -1;
       }
 

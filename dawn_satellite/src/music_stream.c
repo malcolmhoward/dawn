@@ -141,7 +141,7 @@ static void parse_opus_frames(music_stream_t *stream, const uint8_t *data, size_
 
       int ret = music_playback_push_opus(stream->playback, data + offset, (int)frame_len);
       if (ret < 0) {
-         LOG_WARNING("Music stream: Opus decode error, skipping frame (%u bytes)", frame_len);
+         OLOG_WARNING("Music stream: Opus decode error, skipping frame (%u bytes)", frame_len);
       }
 
       offset += frame_len;
@@ -165,7 +165,7 @@ static int callback_music_ws(struct lws *wsi,
       case LWS_CALLBACK_CLIENT_ESTABLISHED:
          if (!stream)
             break;
-         LOG_INFO("Music stream: connected to %s:%u", stream->host, stream->port);
+         OLOG_INFO("Music stream: connected to %s:%u", stream->host, stream->port);
          atomic_store(&stream->connected, true);
          stream->reconnect_delay_ms = 2000; /* Reset backoff on success */
          send_auth(stream);
@@ -189,9 +189,9 @@ static int callback_music_ws(struct lws *wsi,
                   if (type && strcmp(type, "auth_ok") == 0) {
                      atomic_store(&stream->authenticated, true);
                      music_playback_set_dedicated_producer(stream->playback, true);
-                     LOG_INFO("Music stream: authenticated");
+                     OLOG_INFO("Music stream: authenticated");
                   } else if (type && strcmp(type, "auth_failed") == 0) {
-                     LOG_ERROR("Music stream: authentication failed");
+                     OLOG_ERROR("Music stream: authentication failed");
                      snprintf(stream->error, sizeof(stream->error), "Auth failed");
                   }
                }
@@ -211,7 +211,7 @@ static int callback_music_ws(struct lws *wsi,
                   memcpy(stream->rx_buf + stream->rx_len, in, len);
                   stream->rx_len += len;
                } else {
-                  LOG_WARNING("Music stream: binary message too large, dropping");
+                  OLOG_WARNING("Music stream: binary message too large, dropping");
                   stream->rx_len = 0;
                }
                if (lws_is_final_fragment(wsi) && stream->rx_len > 0) {
@@ -228,7 +228,7 @@ static int callback_music_ws(struct lws *wsi,
          break;
 
       case LWS_CALLBACK_CLIENT_CONNECTION_ERROR:
-         LOG_ERROR("Music stream: connection error: %s", in ? (char *)in : "unknown");
+         OLOG_ERROR("Music stream: connection error: %s", in ? (char *)in : "unknown");
          if (stream) {
             atomic_store(&stream->connected, false);
             atomic_store(&stream->authenticated, false);
@@ -239,7 +239,7 @@ static int callback_music_ws(struct lws *wsi,
 
       case LWS_CALLBACK_CLIENT_CLOSED:
       case LWS_CALLBACK_CLOSED:
-         LOG_INFO("Music stream: connection closed");
+         OLOG_INFO("Music stream: connection closed");
          if (stream) {
             atomic_store(&stream->connected, false);
             atomic_store(&stream->authenticated, false);
@@ -265,7 +265,7 @@ static int attempt_reconnect(music_stream_t *stream);
 static void *music_service_thread(void *arg) {
    music_stream_t *stream = (music_stream_t *)arg;
 
-   LOG_INFO("Music stream service thread started");
+   OLOG_INFO("Music stream service thread started");
 
    while (atomic_load(&stream->service_running)) {
       if (stream->lws_ctx) {
@@ -281,8 +281,8 @@ static void *music_service_thread(void *arg) {
          time_t now = time(NULL);
          time_t elapsed_ms = (now - stream->last_disconnect) * 1000;
          if (elapsed_ms >= (time_t)stream->reconnect_delay_ms) {
-            LOG_INFO("Music stream: attempting reconnect (delay=%u ms)",
-                     stream->reconnect_delay_ms);
+            OLOG_INFO("Music stream: attempting reconnect (delay=%u ms)",
+                      stream->reconnect_delay_ms);
             if (attempt_reconnect(stream) != 0) {
                /* Exponential backoff: 2s -> 4s -> 8s -> ... max 30s */
                stream->reconnect_delay_ms *= 2;
@@ -294,7 +294,7 @@ static void *music_service_thread(void *arg) {
       }
    }
 
-   LOG_INFO("Music stream service thread stopped");
+   OLOG_INFO("Music stream service thread stopped");
    return NULL;
 }
 
@@ -321,7 +321,7 @@ static int do_connect(music_stream_t *stream) {
 
       stream->lws_ctx = lws_create_context(&ctx_info);
       if (!stream->lws_ctx) {
-         LOG_ERROR("Music stream: failed to create LWS context");
+         OLOG_ERROR("Music stream: failed to create LWS context");
          return -1;
       }
    }
@@ -347,11 +347,12 @@ static int do_connect(music_stream_t *stream) {
 
    stream->wsi = lws_client_connect_via_info(&conn_info);
    if (!stream->wsi) {
-      LOG_ERROR("Music stream: failed to initiate connection to %s:%u", stream->host, stream->port);
+      OLOG_ERROR("Music stream: failed to initiate connection to %s:%u", stream->host,
+                 stream->port);
       return -1;
    }
 
-   LOG_INFO("Music stream: connecting to %s:%u...", stream->host, stream->port);
+   OLOG_INFO("Music stream: connecting to %s:%u...", stream->host, stream->port);
    return 0;
 }
 
@@ -397,7 +398,7 @@ music_stream_t *music_stream_create(const char *host,
 
    pthread_mutex_init(&stream->mutex, NULL);
 
-   LOG_INFO("Music stream created for %s://%s:%u", use_ssl ? "wss" : "ws", host, stream->port);
+   OLOG_INFO("Music stream created for %s://%s:%u", use_ssl ? "wss" : "ws", host, stream->port);
    return stream;
 }
 
@@ -409,7 +410,7 @@ void music_stream_destroy(music_stream_t *stream) {
    pthread_mutex_destroy(&stream->mutex);
    free(stream);
 
-   LOG_INFO("Music stream destroyed");
+   OLOG_INFO("Music stream destroyed");
 }
 
 int music_stream_connect(music_stream_t *stream) {
@@ -431,7 +432,7 @@ int music_stream_connect(music_stream_t *stream) {
    }
 
    if (!atomic_load(&stream->connected)) {
-      LOG_ERROR("Music stream: connection timeout");
+      OLOG_ERROR("Music stream: connection timeout");
       /* Clean up LWS context on timeout */
       if (stream->lws_ctx) {
          lws_context_destroy(stream->lws_ctx);
@@ -449,7 +450,7 @@ int music_stream_connect(music_stream_t *stream) {
    }
 
    if (!atomic_load(&stream->authenticated)) {
-      LOG_ERROR("Music stream: auth timeout");
+      OLOG_ERROR("Music stream: auth timeout");
       /* Clean up LWS context on auth timeout */
       if (stream->lws_ctx) {
          lws_context_destroy(stream->lws_ctx);
@@ -463,7 +464,7 @@ int music_stream_connect(music_stream_t *stream) {
    /* Start service thread for ongoing message handling */
    atomic_store(&stream->service_running, true);
    if (pthread_create(&stream->service_thread, NULL, music_service_thread, stream) != 0) {
-      LOG_ERROR("Music stream: failed to create service thread");
+      OLOG_ERROR("Music stream: failed to create service thread");
       return -1;
    }
 

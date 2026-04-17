@@ -211,7 +211,7 @@ int llm_context_init(void) {
    }
 
    if (pthread_mutex_init(&s_state.mutex, NULL) != 0) {
-      LOG_ERROR("llm_context: Failed to initialize mutex");
+      OLOG_ERROR("llm_context: Failed to initialize mutex");
       return 1;
    }
 
@@ -224,7 +224,7 @@ int llm_context_init(void) {
    memset(s_session_tokens, 0, sizeof(s_session_tokens));
 
    s_state.initialized = true;
-   LOG_INFO("llm_context: Initialized (default local context: %d)", s_state.local_context_size);
+   OLOG_INFO("llm_context: Initialized (default local context: %d)", s_state.local_context_size);
 
    return 0;
 }
@@ -236,7 +236,7 @@ void llm_context_cleanup(void) {
 
    pthread_mutex_destroy(&s_state.mutex);
    s_state.initialized = false;
-   LOG_INFO("llm_context: Cleaned up");
+   OLOG_INFO("llm_context: Cleaned up");
 }
 
 void llm_compaction_result_free(llm_compaction_result_t *result) {
@@ -287,7 +287,7 @@ int llm_context_query_local(const char *endpoint) {
 
    CURL *curl = curl_easy_init();
    if (!curl) {
-      LOG_WARNING("llm_context: Failed to init CURL for /props query");
+      OLOG_WARNING("llm_context: Failed to init CURL for /props query");
       return LLM_CONTEXT_DEFAULT_LOCAL;
    }
 
@@ -304,7 +304,7 @@ int llm_context_query_local(const char *endpoint) {
    curl_easy_cleanup(curl);
 
    if (res != CURLE_OK) {
-      LOG_WARNING("llm_context: Failed to query %s: %s", url, curl_easy_strerror(res));
+      OLOG_WARNING("llm_context: Failed to query %s: %s", url, curl_easy_strerror(res));
       curl_buffer_free(&response);
       return LLM_CONTEXT_DEFAULT_LOCAL;
    }
@@ -319,7 +319,7 @@ int llm_context_query_local(const char *endpoint) {
    curl_buffer_free(&response);
 
    if (!root) {
-      LOG_WARNING("llm_context: Failed to parse /props response");
+      OLOG_WARNING("llm_context: Failed to parse /props response");
       return LLM_CONTEXT_DEFAULT_LOCAL;
    }
 
@@ -344,7 +344,7 @@ int llm_context_query_local(const char *endpoint) {
 
    json_object_put(root);
 
-   LOG_INFO("llm_context: Local LLM context size: %d tokens", context_size);
+   OLOG_INFO("llm_context: Local LLM context size: %d tokens", context_size);
    return context_size;
 }
 
@@ -355,7 +355,7 @@ void llm_context_refresh_local(void) {
    s_state.local_context_queried_at = 0;
    s_state.local_context_generation++;
    pthread_mutex_unlock(&s_state.mutex);
-   LOG_INFO("llm_context: Local context cache invalidated, will re-query on next use");
+   OLOG_INFO("llm_context: Local context cache invalidated, will re-query on next use");
 }
 
 int llm_context_get_size(llm_type_t type, cloud_provider_t provider, const char *model) {
@@ -391,18 +391,18 @@ int llm_context_get_size(llm_type_t type, cloud_provider_t provider, const char 
          /* If state was invalidated while we were doing HTTP, discard result —
           * the next caller will re-query with the updated config */
          if (s_state.local_context_generation != gen_before) {
-            LOG_INFO("llm_context: Discarding stale TTL refresh (generation changed)");
+            OLOG_INFO("llm_context: Discarding stale TTL refresh (generation changed)");
          } else if (new_size == LLM_CONTEXT_DEFAULT_LOCAL &&
                     old_size != LLM_CONTEXT_DEFAULT_LOCAL && ttl_expired) {
             /* Server-down tolerance: keep old value during brief restart */
-            LOG_WARNING("llm_context: Local server unreachable during TTL refresh, "
-                        "keeping cached context size %d",
-                        old_size);
+            OLOG_WARNING("llm_context: Local server unreachable during TTL refresh, "
+                         "keeping cached context size %d",
+                         old_size);
             s_state.local_context_queried_at = now;
          } else {
             if (ttl_expired && new_size != old_size) {
-               LOG_WARNING("llm_context: Local context size changed: %d -> %d tokens", old_size,
-                           new_size);
+               OLOG_WARNING("llm_context: Local context size changed: %d -> %d tokens", old_size,
+                            new_size);
             }
             s_state.local_context_size = new_size;
             s_state.local_context_queried = true;
@@ -516,13 +516,13 @@ void llm_context_update_usage(uint32_t session_id,
          s_state.local_context_size = refreshed;
          s_state.local_context_queried_at = time(NULL);
          pthread_mutex_unlock(&s_state.mutex);
-         LOG_INFO("llm_context: Refreshed Ollama runtime context: %d tokens", refreshed);
+         OLOG_INFO("llm_context: Refreshed Ollama runtime context: %d tokens", refreshed);
       } else {
          /* HTTP call failed — release the claim so a future call retries */
          pthread_mutex_lock(&s_state.mutex);
          s_state.local_context_authoritative = false;
          pthread_mutex_unlock(&s_state.mutex);
-         LOG_WARNING("llm_context: Ollama context refresh failed, will retry");
+         OLOG_WARNING("llm_context: Ollama context refresh failed, will retry");
       }
    }
 
@@ -540,12 +540,12 @@ void llm_context_update_usage(uint32_t session_id,
    s_state.last_context_size = context_size;
    pthread_mutex_unlock(&s_state.mutex);
 
-   LOG_INFO("Context: %d/%d tokens (%.1f%%), threshold: %.0f%%", prompt_tokens, context_size,
-            usage_pct, threshold_pct);
+   OLOG_INFO("Context: %d/%d tokens (%.1f%%), threshold: %.0f%%", prompt_tokens, context_size,
+             usage_pct, threshold_pct);
 
    if (usage_pct >= threshold_pct) {
-      LOG_WARNING("Context usage (%.1f%%) exceeds threshold (%.0f%%) - compaction recommended",
-                  usage_pct, threshold_pct);
+      OLOG_WARNING("Context usage (%.1f%%) exceeds threshold (%.0f%%) - compaction recommended",
+                   usage_pct, threshold_pct);
    }
 
 #ifdef ENABLE_MULTI_CLIENT
@@ -702,9 +702,10 @@ bool llm_context_needs_compaction_for_switch(uint32_t session_id,
    bool needs_compaction = (estimated_tokens > threshold_tokens);
 
    if (needs_compaction) {
-      LOG_INFO("llm_context: Compaction needed for switch - estimated %d tokens, target context %d "
-               "(threshold %d)",
-               estimated_tokens, target_context, threshold_tokens);
+      OLOG_INFO(
+          "llm_context: Compaction needed for switch - estimated %d tokens, target context %d "
+          "(threshold %d)",
+          estimated_tokens, target_context, threshold_tokens);
    }
 
    return needs_compaction;
@@ -742,10 +743,10 @@ bool llm_context_needs_compaction(uint32_t session_id,
       }
    }
 
-   LOG_INFO("llm_context: Compaction check for session %u: tracked=%d, current=%d, max=%d, "
-            "usage=%.1f%%, needs_compaction=%s",
-            session_id, tracked_tokens, usage.current_tokens, usage.max_tokens,
-            usage.usage_percent * 100.0f, usage.needs_compaction ? "YES" : "NO");
+   OLOG_INFO("llm_context: Compaction check for session %u: tracked=%d, current=%d, max=%d, "
+             "usage=%.1f%%, needs_compaction=%s",
+             session_id, tracked_tokens, usage.current_tokens, usage.max_tokens,
+             usage.usage_percent * 100.0f, usage.needs_compaction ? "YES" : "NO");
 
    return usage.needs_compaction;
 }
@@ -757,7 +758,7 @@ int llm_context_save_conversation(uint32_t session_id,
                                   size_t filename_len) {
    /* Check if logging is enabled */
    if (!g_config.llm.conversation_logging) {
-      LOG_INFO("llm_context: Conversation logging disabled, skipping save");
+      OLOG_INFO("llm_context: Conversation logging disabled, skipping save");
       return 1;
    }
 
@@ -778,7 +779,7 @@ int llm_context_save_conversation(uint32_t session_id,
 
    /* Create logs directory if needed */
    if (!path_ensure_parent_dir(filename)) {
-      LOG_WARNING("llm_context: Could not create logs directory");
+      OLOG_WARNING("llm_context: Could not create logs directory");
    }
 
    /* Write JSON to file */
@@ -787,14 +788,14 @@ int llm_context_save_conversation(uint32_t session_id,
 
    FILE *fp = fopen(filename, "w");
    if (!fp) {
-      LOG_ERROR("llm_context: Failed to open %s for writing", filename);
+      OLOG_ERROR("llm_context: Failed to open %s for writing", filename);
       return -1;
    }
 
    fprintf(fp, "%s\n", json_str);
    fclose(fp);
 
-   LOG_INFO("llm_context: Conversation saved to %s", filename);
+   OLOG_INFO("llm_context: Conversation saved to %s", filename);
 
    if (filename_out && filename_len > 0) {
       safe_strncpy(filename_out, filename, filename_len);
@@ -878,7 +879,7 @@ int llm_context_compact(uint32_t session_id,
    int history_len = json_object_array_length(history);
    if (history_len < 4) {
       /* Too few messages to compact */
-      LOG_INFO("llm_context: History too short to compact (%d messages)", history_len);
+      OLOG_INFO("llm_context: History too short to compact (%d messages)", history_len);
       return 0;
    }
 
@@ -928,8 +929,8 @@ int llm_context_compact(uint32_t session_id,
        * The assistant responses that followed already incorporate the information,
        * so raw tool output (often large JSON) is dead weight. This is a mechanical
        * in-place transformation — no LLM summarization call needed. */
-      LOG_WARNING("llm_context: Tool-heavy conversation — stripping tool result content "
-                  "(fallback compaction)");
+      OLOG_WARNING("llm_context: Tool-heavy conversation — stripping tool result content "
+                   "(fallback compaction)");
 
       int stripped = 0;
       for (int i = start_idx; i < history_len; i++) {
@@ -980,10 +981,10 @@ int llm_context_compact(uint32_t session_id,
       }
 
       if (stripped > 0) {
-         LOG_INFO("llm_context: Stripped %d tool result(s), saved %d tokens (%d -> %d)", stripped,
-                  saved, result->tokens_before, result->tokens_after);
+         OLOG_INFO("llm_context: Stripped %d tool result(s), saved %d tokens (%d -> %d)", stripped,
+                   saved, result->tokens_before, result->tokens_after);
       } else {
-         LOG_INFO("llm_context: No tool results to strip");
+         OLOG_INFO("llm_context: No tool results to strip");
       }
       return 0;
    }
@@ -1007,8 +1008,8 @@ int llm_context_compact(uint32_t session_id,
    json_object_put(to_summarize);
 
    /* Call LLM to generate summary */
-   LOG_INFO("llm_context: Requesting summary of %d messages from %s", result->messages_summarized,
-            type == LLM_LOCAL ? "local LLM" : "cloud LLM");
+   OLOG_INFO("llm_context: Requesting summary of %d messages from %s", result->messages_summarized,
+             type == LLM_LOCAL ? "local LLM" : "cloud LLM");
 
    /* Create minimal conversation for summary request */
    struct json_object *summary_request = json_object_new_array();
@@ -1035,7 +1036,7 @@ int llm_context_compact(uint32_t session_id,
    json_object_put(summary_request);
 
    if (!summary) {
-      LOG_ERROR("llm_context: Failed to generate summary");
+      OLOG_ERROR("llm_context: Failed to generate summary");
 #ifdef ENABLE_WEBUI
       /* Notify WebUI session about compaction failure */
       session_t *session = session_get(session_id);
@@ -1094,8 +1095,8 @@ int llm_context_compact(uint32_t session_id,
    result->tokens_after = llm_context_estimate_tokens(history);
    result->performed = true;
 
-   LOG_INFO("llm_context: Compaction complete - %d messages summarized, %d -> %d tokens",
-            result->messages_summarized, result->tokens_before, result->tokens_after);
+   OLOG_INFO("llm_context: Compaction complete - %d messages summarized, %d -> %d tokens",
+             result->messages_summarized, result->tokens_before, result->tokens_after);
 
    return 0;
 }
@@ -1118,12 +1119,12 @@ int llm_context_compact_for_switch(uint32_t session_id,
    /* Check if compaction needed for target */
    if (!llm_context_needs_compaction_for_switch(session_id, history, target_type, target_provider,
                                                 target_model)) {
-      LOG_INFO("llm_context: No compaction needed for switch");
+      OLOG_INFO("llm_context: No compaction needed for switch");
       return 0;
    }
 
    /* Perform compaction using CURRENT provider (has larger context) */
-   LOG_INFO("llm_context: Performing pre-switch compaction using current provider");
+   OLOG_INFO("llm_context: Performing pre-switch compaction using current provider");
    return llm_context_compact(session_id, history, current_type, current_provider, current_model,
                               result);
 }
@@ -1147,7 +1148,7 @@ int llm_context_auto_compact(struct json_object *history, uint32_t session_id) {
       return 0;
    }
 
-   LOG_WARNING("llm_context: Auto-compacting conversation before LLM call");
+   OLOG_WARNING("llm_context: Auto-compacting conversation before LLM call");
 
    /* Notify local user via TTS before compaction (can take a few seconds) */
    if (session_id == 0) {
@@ -1159,8 +1160,8 @@ int llm_context_auto_compact(struct json_object *history, uint32_t session_id) {
    int rc = llm_context_compact(session_id, history, type, provider, model, &result);
 
    if (rc == 0 && result.performed) {
-      LOG_INFO("llm_context: Auto-compaction complete - %d tokens -> %d tokens",
-               result.tokens_before, result.tokens_after);
+      OLOG_INFO("llm_context: Auto-compaction complete - %d tokens -> %d tokens",
+                result.tokens_before, result.tokens_after);
       llm_compaction_result_free(&result);
       return 1; /* Compaction was performed */
    }
@@ -1183,8 +1184,8 @@ int llm_context_auto_compact_with_config(struct json_object *history,
       return 0;
    }
 
-   LOG_WARNING("llm_context: Auto-compacting conversation before LLM call (session %u)",
-               session_id);
+   OLOG_WARNING("llm_context: Auto-compacting conversation before LLM call (session %u)",
+                session_id);
 
    /* Notify user before compaction (can take a few seconds) */
    if (session_id == 0) {
@@ -1205,8 +1206,8 @@ int llm_context_auto_compact_with_config(struct json_object *history,
    int rc = llm_context_compact(session_id, history, type, provider, model, &result);
 
    if (rc == 0 && result.performed) {
-      LOG_INFO("llm_context: Auto-compaction complete - %d tokens -> %d tokens",
-               result.tokens_before, result.tokens_after);
+      OLOG_INFO("llm_context: Auto-compaction complete - %d tokens -> %d tokens",
+                result.tokens_before, result.tokens_after);
 
 #ifdef ENABLE_WEBUI
       /* Notify WebUI about compaction completion (for database continuation) */

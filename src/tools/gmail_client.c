@@ -171,7 +171,7 @@ static int gmail_api_get(CURL *curl, const char *token, const char *url, gmail_r
    curl_slist_free_all(headers);
 
    if (res != CURLE_OK) {
-      LOG_ERROR("gmail: API request failed: %s", curl_easy_strerror(res));
+      OLOG_ERROR("gmail: API request failed: %s", curl_easy_strerror(res));
       gmail_response_free(resp);
       return 1;
    }
@@ -179,7 +179,7 @@ static int gmail_api_get(CURL *curl, const char *token, const char *url, gmail_r
    long http_code = 0;
    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
    if (http_code < 200 || http_code >= 300) {
-      LOG_ERROR("gmail: API request returned HTTP %ld", http_code);
+      OLOG_ERROR("gmail: API request returned HTTP %ld", http_code);
       gmail_response_free(resp);
       return 1;
    }
@@ -216,7 +216,7 @@ static int gmail_api_post(CURL *curl,
    curl_slist_free_all(headers);
 
    if (res != CURLE_OK) {
-      LOG_ERROR("gmail: API POST failed: %s", curl_easy_strerror(res));
+      OLOG_ERROR("gmail: API POST failed: %s", curl_easy_strerror(res));
       gmail_response_free(resp);
       return 1;
    }
@@ -224,7 +224,7 @@ static int gmail_api_post(CURL *curl,
    long http_code = 0;
    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
    if (http_code < 200 || http_code >= 300) {
-      LOG_ERROR("gmail: API POST returned HTTP %ld", http_code);
+      OLOG_ERROR("gmail: API POST returned HTTP %ld", http_code);
       gmail_response_free(resp);
       return 1;
    }
@@ -1032,7 +1032,7 @@ static int gmail_batch_fetch_metadata(CURL *curl,
 
    char resp_boundary[256];
    if (extract_boundary(resp_ct, resp_boundary, sizeof(resp_boundary)) != 0) {
-      LOG_ERROR("gmail: batch response missing boundary");
+      OLOG_ERROR("gmail: batch response missing boundary");
       gmail_response_free(&resp);
       return 1;
    }
@@ -1112,7 +1112,7 @@ int gmail_read_message(const char *token,
       return 1;
 
    if (!is_valid_gmail_id(message_id)) {
-      LOG_ERROR("gmail: invalid message ID '%s'", message_id);
+      OLOG_ERROR("gmail: invalid message ID '%s'", message_id);
       return 1;
    }
 
@@ -1338,11 +1338,11 @@ int gmail_send(const char *token,
    free(b64_msg);
 
    if (rc != 0) {
-      LOG_ERROR("gmail: send failed");
+      OLOG_ERROR("gmail: send failed");
       return 1;
    }
 
-   LOG_INFO("gmail: message sent to %s", safe_to_addr);
+   OLOG_INFO("gmail: message sent to %s", safe_to_addr);
    return 0;
 }
 
@@ -1499,7 +1499,7 @@ int gmail_list_labels(const char *token, char *out, size_t out_len) {
 
 int gmail_trash_message(const char *token, const char *message_id) {
    if (!token || !token[0] || !is_valid_gmail_id(message_id)) {
-      LOG_ERROR("gmail_trash: invalid token or message_id");
+      OLOG_ERROR("gmail_trash: invalid token or message_id");
       return 1;
    }
 
@@ -1516,16 +1516,16 @@ int gmail_trash_message(const char *token, const char *message_id) {
    curl_easy_cleanup(curl);
 
    if (rc == 0)
-      LOG_INFO("gmail: trashed message %s", message_id);
+      OLOG_INFO("gmail: trashed message %s", message_id);
    else
-      LOG_ERROR("gmail: failed to trash message %s", message_id);
+      OLOG_ERROR("gmail: failed to trash message %s", message_id);
 
    return rc;
 }
 
 int gmail_archive_message(const char *token, const char *message_id) {
    if (!token || !token[0] || !is_valid_gmail_id(message_id)) {
-      LOG_ERROR("gmail_archive: invalid token or message_id");
+      OLOG_ERROR("gmail_archive: invalid token or message_id");
       return 1;
    }
 
@@ -1543,9 +1543,9 @@ int gmail_archive_message(const char *token, const char *message_id) {
    curl_easy_cleanup(curl);
 
    if (rc == 0)
-      LOG_INFO("gmail: archived message %s", message_id);
+      OLOG_INFO("gmail: archived message %s", message_id);
    else
-      LOG_ERROR("gmail: failed to archive message %s", message_id);
+      OLOG_ERROR("gmail: failed to archive message %s", message_id);
 
    return rc;
 }

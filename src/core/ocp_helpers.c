@@ -63,7 +63,7 @@ bool ocp_sha256_compute(const unsigned char *data, size_t len, char *hex_out) {
 
    EVP_MD_CTX *ctx = EVP_MD_CTX_new();
    if (!ctx) {
-      LOG_ERROR("ocp_sha256_compute: Failed to create EVP context");
+      OLOG_ERROR("ocp_sha256_compute: Failed to create EVP context");
       return false;
    }
 
@@ -72,7 +72,7 @@ bool ocp_sha256_compute(const unsigned char *data, size_t len, char *hex_out) {
 
    if (EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1 || EVP_DigestUpdate(ctx, data, len) != 1 ||
        EVP_DigestFinal_ex(ctx, hash, &hash_len) != 1) {
-      LOG_ERROR("ocp_sha256_compute: SHA256 computation failed");
+      OLOG_ERROR("ocp_sha256_compute: SHA256 computation failed");
       EVP_MD_CTX_free(ctx);
       return false;
    }
@@ -96,19 +96,19 @@ bool ocp_sha256_file(const char *filepath, char *hex_out) {
 
    FILE *f = fopen(filepath, "rb");
    if (!f) {
-      LOG_WARNING("ocp_sha256_file: Cannot open file: %s", filepath);
+      OLOG_WARNING("ocp_sha256_file: Cannot open file: %s", filepath);
       return false;
    }
 
    EVP_MD_CTX *ctx = EVP_MD_CTX_new();
    if (!ctx) {
-      LOG_ERROR("ocp_sha256_file: Failed to create EVP context");
+      OLOG_ERROR("ocp_sha256_file: Failed to create EVP context");
       fclose(f);
       return false;
    }
 
    if (EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1) {
-      LOG_ERROR("ocp_sha256_file: Failed to initialize SHA256");
+      OLOG_ERROR("ocp_sha256_file: Failed to initialize SHA256");
       EVP_MD_CTX_free(ctx);
       fclose(f);
       return false;
@@ -118,7 +118,7 @@ bool ocp_sha256_file(const char *filepath, char *hex_out) {
    size_t bytes_read;
    while ((bytes_read = fread(buffer, 1, sizeof(buffer), f)) > 0) {
       if (EVP_DigestUpdate(ctx, buffer, bytes_read) != 1) {
-         LOG_ERROR("ocp_sha256_file: Failed to update hash");
+         OLOG_ERROR("ocp_sha256_file: Failed to update hash");
          EVP_MD_CTX_free(ctx);
          fclose(f);
          return false;
@@ -130,7 +130,7 @@ bool ocp_sha256_file(const char *filepath, char *hex_out) {
    unsigned int hash_len = 0;
 
    if (EVP_DigestFinal_ex(ctx, hash, &hash_len) != 1) {
-      LOG_ERROR("ocp_sha256_file: Failed to finalize hash");
+      OLOG_ERROR("ocp_sha256_file: Failed to finalize hash");
       EVP_MD_CTX_free(ctx);
       return false;
    }
@@ -164,7 +164,7 @@ unsigned char *ocp_base64_decode(const char *input, size_t *out_len) {
 
    /* Integer overflow protection: ensure multiplication doesn't overflow */
    if (input_len > SIZE_MAX / 3) {
-      LOG_ERROR("ocp_base64_decode: Input too large, would overflow");
+      OLOG_ERROR("ocp_base64_decode: Input too large, would overflow");
       return NULL;
    }
 
@@ -172,7 +172,7 @@ unsigned char *ocp_base64_decode(const char *input, size_t *out_len) {
    size_t max_decoded_len = (input_len * 3) / 4 + 1;
    unsigned char *buffer = malloc(max_decoded_len);
    if (!buffer) {
-      LOG_ERROR("ocp_base64_decode: Memory allocation failed");
+      OLOG_ERROR("ocp_base64_decode: Memory allocation failed");
       return NULL;
    }
 
@@ -185,7 +185,7 @@ unsigned char *ocp_base64_decode(const char *input, size_t *out_len) {
 
    /* Check input_len fits in int for BIO_new_mem_buf */
    if (input_len > INT_MAX) {
-      LOG_ERROR("ocp_base64_decode: Input too large for BIO");
+      OLOG_ERROR("ocp_base64_decode: Input too large for BIO");
       BIO_free(b64);
       free(buffer);
       return NULL;
@@ -227,7 +227,7 @@ bool ocp_is_path_safe(const char *filepath, const char *allowed_base) {
 
    /* Resolve the base path first */
    if (realpath(allowed_base, resolved_base) == NULL) {
-      LOG_WARNING("ocp_is_path_safe: Cannot resolve base path: %s", allowed_base);
+      OLOG_WARNING("ocp_is_path_safe: Cannot resolve base path: %s", allowed_base);
       return false;
    }
 
@@ -280,20 +280,20 @@ bool ocp_validate_file_checksum(const char *filepath,
    }
 
    if (!filepath) {
-      LOG_WARNING("OCP: No filepath provided for checksum validation");
+      OLOG_WARNING("OCP: No filepath provided for checksum validation");
       return false; /* Fail-closed: checksum expected but no file */
    }
 
    /* Path safety check if base path provided */
    if (allowed_base_path && !ocp_is_path_safe(filepath, allowed_base_path)) {
-      LOG_WARNING("OCP: Path traversal attempt detected: %s", filepath);
+      OLOG_WARNING("OCP: Path traversal attempt detected: %s", filepath);
       return false;
    }
 
    /* Compute actual checksum */
    char actual[OCP_SHA256_HEX_LEN];
    if (!ocp_sha256_file(filepath, actual)) {
-      LOG_WARNING("OCP: Could not compute checksum for file: %s", filepath);
+      OLOG_WARNING("OCP: Could not compute checksum for file: %s", filepath);
       return false; /* Fail-closed: can't validate means reject */
    }
 
@@ -302,18 +302,18 @@ bool ocp_validate_file_checksum(const char *filepath,
    size_t actual_len = strlen(actual);
 
    if (expected_len != actual_len) {
-      LOG_WARNING("OCP: Checksum length mismatch for %s", filepath);
+      OLOG_WARNING("OCP: Checksum length mismatch for %s", filepath);
       return false;
    }
 
    /* CRYPTO_memcmp is constant-time */
    if (CRYPTO_memcmp(actual, expected_checksum, actual_len) != 0) {
-      LOG_WARNING("OCP: Checksum mismatch for %s (expected: %.16s..., actual: %.16s...)", filepath,
-                  expected_checksum, actual);
+      OLOG_WARNING("OCP: Checksum mismatch for %s (expected: %.16s..., actual: %.16s...)", filepath,
+                   expected_checksum, actual);
       return false;
    }
 
-   LOG_INFO("OCP: Checksum validated for %s", filepath);
+   OLOG_INFO("OCP: Checksum validated for %s", filepath);
    return true;
 }
 
@@ -326,7 +326,7 @@ bool ocp_validate_inline_checksum(const char *content,
    }
 
    if (!content || !encoding) {
-      LOG_WARNING("OCP: No content/encoding provided for checksum validation");
+      OLOG_WARNING("OCP: No content/encoding provided for checksum validation");
       return false; /* Fail-closed */
    }
 
@@ -345,12 +345,12 @@ bool ocp_validate_inline_checksum(const char *content,
       /* Hash the string bytes directly */
       computed = ocp_sha256_compute((const unsigned char *)content, strlen(content), actual);
    } else {
-      LOG_WARNING("OCP: Unknown encoding type: %s", encoding);
+      OLOG_WARNING("OCP: Unknown encoding type: %s", encoding);
       return false;
    }
 
    if (!computed) {
-      LOG_WARNING("OCP: Could not compute checksum for inline data");
+      OLOG_WARNING("OCP: Could not compute checksum for inline data");
       return false; /* Fail-closed */
    }
 
@@ -359,16 +359,16 @@ bool ocp_validate_inline_checksum(const char *content,
    size_t actual_len = strlen(actual);
 
    if (expected_len != actual_len) {
-      LOG_WARNING("OCP: Inline checksum length mismatch");
+      OLOG_WARNING("OCP: Inline checksum length mismatch");
       return false;
    }
 
    if (CRYPTO_memcmp(actual, expected_checksum, actual_len) != 0) {
-      LOG_WARNING("OCP: Inline data checksum mismatch (expected: %.16s..., actual: %.16s...)",
-                  expected_checksum, actual);
+      OLOG_WARNING("OCP: Inline data checksum mismatch (expected: %.16s..., actual: %.16s...)",
+                   expected_checksum, actual);
       return false;
    }
 
-   LOG_INFO("OCP: Inline data checksum validated");
+   OLOG_INFO("OCP: Inline data checksum validated");
    return true;
 }

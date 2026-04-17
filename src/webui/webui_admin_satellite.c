@@ -73,7 +73,7 @@ typedef struct {
 static int collect_satellites_callback(const satellite_mapping_t *mapping, void *ctx) {
    satellite_collect_ctx_t *collect = (satellite_collect_ctx_t *)ctx;
    if (collect->count >= collect->capacity) {
-      LOG_WARNING("Satellite list truncated at %d entries", collect->capacity);
+      OLOG_WARNING("Satellite list truncated at %d entries", collect->capacity);
       return 1; /* Stop iteration */
    }
    collect->mappings[collect->count] = *mapping;
@@ -215,8 +215,8 @@ void handle_update_satellite(ws_connection_t *conn, struct json_object *payload)
    send_json_response(conn, response);
    json_object_put(response);
 
-   LOG_INFO("Admin: Updated satellite %s (%s) user_id=%d ha_area='%s'", mapping.name, uuid,
-            mapping.user_id, mapping.ha_area);
+   OLOG_INFO("Admin: Updated satellite %s (%s) user_id=%d ha_area='%s'", mapping.name, uuid,
+             mapping.user_id, mapping.ha_area);
 }
 
 void handle_delete_satellite(ws_connection_t *conn, struct json_object *payload) {
@@ -258,5 +258,5 @@ void handle_delete_satellite(ws_connection_t *conn, struct json_object *payload)
    send_json_response(conn, response);
    json_object_put(response);
 
-   LOG_INFO("Admin: Deleted satellite mapping %s", uuid);
+   OLOG_INFO("Admin: Deleted satellite mapping %s", uuid);
 }

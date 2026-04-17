@@ -128,7 +128,7 @@ int conv_db_create(int user_id, const char *title, int64_t *conv_id_out) {
    sqlite3_reset(s_db.stmt_conv_create);
 
    if (rc != SQLITE_DONE) {
-      LOG_ERROR("conv_db_create: insert failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("conv_db_create: insert failed: %s", sqlite3_errmsg(s_db.db));
       AUTH_DB_UNLOCK();
       return AUTH_DB_FAILURE;
    }
@@ -137,7 +137,7 @@ int conv_db_create(int user_id, const char *title, int64_t *conv_id_out) {
 
    AUTH_DB_UNLOCK();
 
-   LOG_INFO("Created conversation %lld for user %d", (long long)*conv_id_out, user_id);
+   OLOG_INFO("Created conversation %lld for user %d", (long long)*conv_id_out, user_id);
    return AUTH_DB_SUCCESS;
 }
 
@@ -192,7 +192,7 @@ int conv_db_create_with_origin(int user_id,
    sqlite3_reset(s_db.stmt_conv_create_origin);
 
    if (rc != SQLITE_DONE) {
-      LOG_ERROR("conv_db_create_with_origin: insert failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("conv_db_create_with_origin: insert failed: %s", sqlite3_errmsg(s_db.db));
       AUTH_DB_UNLOCK();
       return AUTH_DB_FAILURE;
    }
@@ -201,8 +201,8 @@ int conv_db_create_with_origin(int user_id,
 
    AUTH_DB_UNLOCK();
 
-   LOG_INFO("Created %s conversation %lld for user %d", safe_origin, (long long)*conv_id_out,
-            user_id);
+   OLOG_INFO("Created %s conversation %lld for user %d", safe_origin, (long long)*conv_id_out,
+             user_id);
    return AUTH_DB_SUCCESS;
 }
 
@@ -218,7 +218,7 @@ int conv_db_reassign(int64_t conv_id, int new_user_id) {
    sqlite3_stmt *check_stmt;
    int rc = sqlite3_prepare_v2(s_db.db, check_sql, -1, &check_stmt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("conv_db_reassign: user check prepare failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("conv_db_reassign: user check prepare failed: %s", sqlite3_errmsg(s_db.db));
       AUTH_DB_UNLOCK();
       return AUTH_DB_FAILURE;
    }
@@ -226,7 +226,7 @@ int conv_db_reassign(int64_t conv_id, int new_user_id) {
    rc = sqlite3_step(check_stmt);
    sqlite3_finalize(check_stmt);
    if (rc != SQLITE_ROW) {
-      LOG_WARNING("conv_db_reassign: target user %d does not exist", new_user_id);
+      OLOG_WARNING("conv_db_reassign: target user %d does not exist", new_user_id);
       AUTH_DB_UNLOCK();
       return AUTH_DB_INVALID;
    }
@@ -243,7 +243,7 @@ int conv_db_reassign(int64_t conv_id, int new_user_id) {
    AUTH_DB_UNLOCK();
 
    if (rc != SQLITE_DONE) {
-      LOG_ERROR("conv_db_reassign: update failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("conv_db_reassign: update failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -251,7 +251,7 @@ int conv_db_reassign(int64_t conv_id, int new_user_id) {
       return AUTH_DB_NOT_FOUND;
    }
 
-   LOG_INFO("Reassigned conversation %lld to user %d", (long long)conv_id, new_user_id);
+   OLOG_INFO("Reassigned conversation %lld to user %d", (long long)conv_id, new_user_id);
    return AUTH_DB_SUCCESS;
 }
 
@@ -372,7 +372,8 @@ int conv_db_create_continuation(int user_id,
    sqlite3_stmt *stmt = NULL;
    int rc = sqlite3_prepare_v2(s_db.db, sql_archive, -1, &stmt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("conv_db_create_continuation: prepare archive failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("conv_db_create_continuation: prepare archive failed: %s",
+                 sqlite3_errmsg(s_db.db));
       AUTH_DB_UNLOCK();
       return AUTH_DB_FAILURE;
    }
@@ -384,7 +385,7 @@ int conv_db_create_continuation(int user_id,
 
    rc = sqlite3_step(stmt);
    if (rc != SQLITE_DONE) {
-      LOG_ERROR("conv_db_create_continuation: archive failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("conv_db_create_continuation: archive failed: %s", sqlite3_errmsg(s_db.db));
       sqlite3_finalize(stmt);
       AUTH_DB_UNLOCK();
       return AUTH_DB_FAILURE;
@@ -454,7 +455,7 @@ int conv_db_create_continuation(int user_id,
        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
    rc = sqlite3_prepare_v2(s_db.db, sql_create, -1, &stmt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("conv_db_create_continuation: prepare insert failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("conv_db_create_continuation: prepare insert failed: %s", sqlite3_errmsg(s_db.db));
       AUTH_DB_UNLOCK();
       return AUTH_DB_FAILURE;
    }
@@ -480,7 +481,7 @@ int conv_db_create_continuation(int user_id,
    sqlite3_finalize(stmt);
 
    if (rc != SQLITE_DONE) {
-      LOG_ERROR("conv_db_create_continuation: insert failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("conv_db_create_continuation: insert failed: %s", sqlite3_errmsg(s_db.db));
       AUTH_DB_UNLOCK();
       return AUTH_DB_FAILURE;
    }
@@ -489,8 +490,8 @@ int conv_db_create_continuation(int user_id,
 
    AUTH_DB_UNLOCK();
 
-   LOG_INFO("Created continuation conversation %lld from parent %lld for user %d",
-            (long long)*conv_id_out, (long long)parent_id, user_id);
+   OLOG_INFO("Created continuation conversation %lld from parent %lld for user %d",
+             (long long)*conv_id_out, (long long)parent_id, user_id);
    return AUTH_DB_SUCCESS;
 }
 
@@ -743,13 +744,13 @@ int conv_db_set_private(int64_t conv_id, int user_id, bool is_private) {
    AUTH_DB_UNLOCK();
 
    if (rc != SQLITE_DONE) {
-      LOG_ERROR("conv_db_set_private: update failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("conv_db_set_private: update failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    if (changes > 0) {
-      LOG_INFO("Conversation %lld privacy set to %s", (long long)conv_id,
-               is_private ? "private" : "public");
+      OLOG_INFO("Conversation %lld privacy set to %s", (long long)conv_id,
+                is_private ? "private" : "public");
    }
 
    /* No rows updated means either not found or forbidden */
@@ -809,7 +810,7 @@ int conv_db_delete(int64_t conv_id, int user_id) {
    }
 
    if (changes > 0) {
-      LOG_INFO("Deleted conversation %lld for user %d", (long long)conv_id, user_id);
+      OLOG_INFO("Deleted conversation %lld for user %d", (long long)conv_id, user_id);
       return AUTH_DB_SUCCESS;
    }
 
@@ -837,7 +838,7 @@ int conv_db_delete_admin(int64_t conv_id) {
    }
 
    if (changes > 0) {
-      LOG_INFO("Admin deleted conversation %lld", (long long)conv_id);
+      OLOG_INFO("Admin deleted conversation %lld", (long long)conv_id);
       return AUTH_DB_SUCCESS;
    }
 
@@ -1058,7 +1059,7 @@ int conv_db_lock_llm_settings(int64_t conv_id,
    sqlite3_stmt *stmt = NULL;
    int rc = sqlite3_prepare_v2(s_db.db, sql, -1, &stmt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare lock_llm_settings failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare lock_llm_settings failed: %s", sqlite3_errmsg(s_db.db));
       AUTH_DB_UNLOCK();
       return AUTH_DB_FAILURE;
    }
@@ -1076,7 +1077,7 @@ int conv_db_lock_llm_settings(int64_t conv_id,
    sqlite3_finalize(stmt);
 
    if (rc != SQLITE_DONE) {
-      LOG_ERROR("auth_db: lock_llm_settings step failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: lock_llm_settings step failed: %s", sqlite3_errmsg(s_db.db));
       AUTH_DB_UNLOCK();
       return AUTH_DB_FAILURE;
    }
@@ -1109,7 +1110,7 @@ int conv_db_update_llm_settings(int64_t conv_id,
    sqlite3_stmt *stmt = NULL;
    int rc = sqlite3_prepare_v2(s_db.db, sql, -1, &stmt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare update_llm_settings failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare update_llm_settings failed: %s", sqlite3_errmsg(s_db.db));
       AUTH_DB_UNLOCK();
       return AUTH_DB_FAILURE;
    }
@@ -1126,7 +1127,7 @@ int conv_db_update_llm_settings(int64_t conv_id,
    sqlite3_finalize(stmt);
 
    if (rc != SQLITE_DONE) {
-      LOG_ERROR("auth_db: update_llm_settings step failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: update_llm_settings step failed: %s", sqlite3_errmsg(s_db.db));
       AUTH_DB_UNLOCK();
       return AUTH_DB_FAILURE;
    }
@@ -1169,7 +1170,7 @@ int conv_db_add_message(int64_t conv_id, int user_id, const char *role, const ch
    sqlite3_reset(s_db.stmt_msg_add);
 
    if (rc != SQLITE_DONE) {
-      LOG_ERROR("conv_db_add_message: insert failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("conv_db_add_message: insert failed: %s", sqlite3_errmsg(s_db.db));
       AUTH_DB_UNLOCK();
       return AUTH_DB_FAILURE;
    }
@@ -1271,8 +1272,8 @@ int conv_db_get_messages_paginated(int64_t conv_id,
    sqlite3_stmt *count_stmt = NULL;
    int rc = sqlite3_prepare_v2(s_db.db, count_sql, -1, &count_stmt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("conv_db_get_messages_paginated: prepare count failed: %s",
-                sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("conv_db_get_messages_paginated: prepare count failed: %s",
+                 sqlite3_errmsg(s_db.db));
       AUTH_DB_UNLOCK();
       return AUTH_DB_FAILURE;
    }
@@ -1331,7 +1332,7 @@ int conv_db_get_messages_paginated(int64_t conv_id,
    sqlite3_stmt *stmt = NULL;
    rc = sqlite3_prepare_v2(s_db.db, sql, -1, &stmt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("conv_db_get_messages_paginated: prepare failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("conv_db_get_messages_paginated: prepare failed: %s", sqlite3_errmsg(s_db.db));
       AUTH_DB_UNLOCK();
       return AUTH_DB_FAILURE;
    }
@@ -1451,7 +1452,7 @@ int conv_db_find_continuation(int64_t parent_id, int user_id, int64_t *continuat
    sqlite3_stmt *stmt = NULL;
    int rc = sqlite3_prepare_v2(s_db.db, sql, -1, &stmt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare find_continuation failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare find_continuation failed: %s", sqlite3_errmsg(s_db.db));
       AUTH_DB_UNLOCK();
       return AUTH_DB_FAILURE;
    }

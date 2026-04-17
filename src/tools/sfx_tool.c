@@ -154,22 +154,22 @@ static void *sfx_playback_thread(void *arg) {
    int16_t *output_buffer = NULL;
    size_t output_buffer_frames = 0;
 
-   LOG_INFO("SFX: Playing %s (slot %d)", targs->filepath, slot_idx);
+   OLOG_INFO("SFX: Playing %s (slot %d)", targs->filepath, slot_idx);
 
    if (audio_backend_get_type() == AUDIO_BACKEND_NONE) {
-      LOG_ERROR("SFX: Audio backend not initialized");
+      OLOG_ERROR("SFX: Audio backend not initialized");
       goto cleanup;
    }
 
    decoder = audio_decoder_open(targs->filepath);
    if (!decoder) {
-      LOG_ERROR("SFX: Failed to open: %s", targs->filepath);
+      OLOG_ERROR("SFX: Failed to open: %s", targs->filepath);
       goto cleanup;
    }
 
    audio_decoder_info_t info;
    if (audio_decoder_get_info(decoder, &info) != AUDIO_DECODER_SUCCESS) {
-      LOG_ERROR("SFX: Failed to get audio info");
+      OLOG_ERROR("SFX: Failed to get audio info");
       goto cleanup;
    }
 
@@ -185,7 +185,7 @@ static void *sfx_playback_thread(void *arg) {
 
    playback_handle = audio_stream_playback_open(targs->sink_name, &params, &hw_params);
    if (!playback_handle) {
-      LOG_ERROR("SFX: Failed to open playback device");
+      OLOG_ERROR("SFX: Failed to open playback device");
       goto cleanup;
    }
 
@@ -194,7 +194,7 @@ static void *sfx_playback_thread(void *arg) {
 
    read_buffer = malloc(SFX_READ_BUFFER_FRAMES * SFX_MAX_CHANNELS * sizeof(int16_t));
    if (!read_buffer) {
-      LOG_ERROR("SFX: Failed to allocate read buffer");
+      OLOG_ERROR("SFX: Failed to allocate read buffer");
       goto cleanup;
    }
 
@@ -203,14 +203,14 @@ static void *sfx_playback_thread(void *arg) {
    if (audio_converter_needed_ex(&conv_params, actual_rate, actual_channels)) {
       converter = audio_converter_create_ex(&conv_params, actual_rate, actual_channels);
       if (!converter) {
-         LOG_ERROR("SFX: Failed to create converter");
+         OLOG_ERROR("SFX: Failed to create converter");
          goto cleanup;
       }
 
       output_buffer_frames = audio_converter_max_output_frames(converter, SFX_READ_BUFFER_FRAMES);
       output_buffer = malloc(output_buffer_frames * actual_channels * sizeof(int16_t));
       if (!output_buffer) {
-         LOG_ERROR("SFX: Failed to allocate output buffer");
+         OLOG_ERROR("SFX: Failed to allocate output buffer");
          goto cleanup;
       }
    }
@@ -220,7 +220,7 @@ static void *sfx_playback_thread(void *arg) {
       ssize_t frames_read = audio_decoder_read(decoder, read_buffer, SFX_READ_BUFFER_FRAMES);
 
       if (frames_read < 0) {
-         LOG_ERROR("SFX: Decode error in slot %d", slot_idx);
+         OLOG_ERROR("SFX: Decode error in slot %d", slot_idx);
          break;
       }
       if (frames_read == 0) {
@@ -236,7 +236,7 @@ static void *sfx_playback_thread(void *arg) {
          ssize_t converted = audio_converter_process(converter, read_buffer, (size_t)frames_read,
                                                      output_buffer, output_buffer_frames);
          if (converted < 0) {
-            LOG_ERROR("SFX: Conversion failed in slot %d", slot_idx);
+            OLOG_ERROR("SFX: Conversion failed in slot %d", slot_idx);
             break;
          }
          frames_written = audio_stream_playback_write(playback_handle, output_buffer,
@@ -251,7 +251,7 @@ static void *sfx_playback_thread(void *arg) {
          if (err == AUDIO_ERR_UNDERRUN) {
             audio_stream_playback_recover(playback_handle, err);
          } else {
-            LOG_ERROR("SFX: Write error in slot %d", slot_idx);
+            OLOG_ERROR("SFX: Write error in slot %d", slot_idx);
             break;
          }
       }
@@ -275,7 +275,7 @@ cleanup:
       audio_stream_playback_close(playback_handle);
    }
 
-   LOG_INFO("SFX: Slot %d finished (%s)", slot_idx, targs->filepath);
+   OLOG_INFO("SFX: Slot %d finished (%s)", slot_idx, targs->filepath);
 
    atomic_store(&slot->active, 0);
    free(targs);
@@ -357,13 +357,13 @@ static char *sfx_callback(const char *action, char *value, int *should_respond) 
       /* Rate limit */
       uint32_t now = get_time_ms();
       if (now - atomic_load(&sfx_last_play_ms) < SFX_MIN_INTERVAL_MS) {
-         LOG_WARNING("SFX: Rate limited (<%dms since last play)", SFX_MIN_INTERVAL_MS);
+         OLOG_WARNING("SFX: Rate limited (<%dms since last play)", SFX_MIN_INTERVAL_MS);
          return NULL;
       }
 
       /* Validate filename */
       if (!validate_sfx_filename(value)) {
-         LOG_ERROR("SFX: Invalid filename rejected: %s", value);
+         OLOG_ERROR("SFX: Invalid filename rejected: %s", value);
          return NULL;
       }
 
@@ -371,7 +371,7 @@ static char *sfx_callback(const char *action, char *value, int *should_respond) 
       char filepath[PATH_MAX];
       int n = snprintf(filepath, sizeof(filepath), "%s%s", sfx_config.sound_path, value);
       if (n < 0 || (size_t)n >= sizeof(filepath)) {
-         LOG_ERROR("SFX: Path too long");
+         OLOG_ERROR("SFX: Path too long");
          return NULL;
       }
 
@@ -381,15 +381,15 @@ static char *sfx_callback(const char *action, char *value, int *should_respond) 
       char resolved[PATH_MAX];
       char resolved_base[PATH_MAX];
       if (!realpath(filepath, resolved)) {
-         LOG_ERROR("SFX: File not found: %s", filepath);
+         OLOG_ERROR("SFX: File not found: %s", filepath);
          return NULL;
       }
       if (!realpath(sfx_config.sound_path, resolved_base)) {
-         LOG_ERROR("SFX: Sound path not found: %s", sfx_config.sound_path);
+         OLOG_ERROR("SFX: Sound path not found: %s", sfx_config.sound_path);
          return NULL;
       }
       if (strncmp(resolved, resolved_base, strlen(resolved_base)) != 0) {
-         LOG_ERROR("SFX: Path traversal blocked: %s", filepath);
+         OLOG_ERROR("SFX: Path traversal blocked: %s", filepath);
          return NULL;
       }
 
@@ -411,7 +411,7 @@ static char *sfx_callback(const char *action, char *value, int *should_respond) 
 
       if (slot_idx < 0) {
          pthread_mutex_unlock(&sfx_mutex);
-         LOG_WARNING("SFX: All %d slots busy, dropping: %s", SFX_MAX_CONCURRENT, value);
+         OLOG_WARNING("SFX: All %d slots busy, dropping: %s", SFX_MAX_CONCURRENT, value);
          return NULL;
       }
 
@@ -424,7 +424,7 @@ static char *sfx_callback(const char *action, char *value, int *should_respond) 
       if (!targs) {
          atomic_store(&slot->active, 0);
          pthread_mutex_unlock(&sfx_mutex);
-         LOG_ERROR("SFX: Failed to allocate thread args");
+         OLOG_ERROR("SFX: Failed to allocate thread args");
          return NULL;
       }
 
@@ -443,7 +443,7 @@ static char *sfx_callback(const char *action, char *value, int *should_respond) 
          atomic_store(&slot->active, 0);
          free(targs);
          pthread_mutex_unlock(&sfx_mutex);
-         LOG_ERROR("SFX: Failed to create thread: %d", rc);
+         OLOG_ERROR("SFX: Failed to create thread: %d", rc);
          return NULL;
       }
 
@@ -457,7 +457,7 @@ static char *sfx_callback(const char *action, char *value, int *should_respond) 
       for (int i = 0; i < SFX_MAX_CONCURRENT; i++) {
          if (atomic_load(&sfx_slots[i].active) && strcmp(sfx_slots[i].filename, value) == 0) {
             atomic_store(&sfx_slots[i].stop, 1);
-            LOG_INFO("SFX: Stopping slot %d (%s)", i, value);
+            OLOG_INFO("SFX: Stopping slot %d (%s)", i, value);
          }
       }
 
@@ -498,7 +498,7 @@ static void sfx_config_parser(toml_table_t *table, void *config) {
  * ============================================================================= */
 
 static void sfx_shutdown(void) {
-   LOG_INFO("SFX: Shutting down...");
+   OLOG_INFO("SFX: Shutting down...");
 
    /* Signal all active slots to stop */
    for (int i = 0; i < SFX_MAX_CONCURRENT; i++) {
@@ -515,7 +515,7 @@ static void sfx_shutdown(void) {
       }
    }
 
-   LOG_INFO("SFX: Shutdown complete");
+   OLOG_INFO("SFX: Shutdown complete");
 }
 
 /* =============================================================================

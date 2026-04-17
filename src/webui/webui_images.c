@@ -292,7 +292,7 @@ int webui_images_handle_upload_start(struct lws *wsi,
 
    /* Check image store is ready */
    if (!image_store_is_ready()) {
-      LOG_ERROR("webui_images: image store not initialized");
+      OLOG_ERROR("webui_images: image store not initialized");
       return send_json_error(wsi, HTTP_STATUS_SERVICE_UNAVAILABLE, "Image storage unavailable");
    }
 
@@ -368,8 +368,8 @@ int webui_images_handle_upload_body(struct lws *wsi,
 
    /* Check size limit (using snapshot from upload_start) */
    if (session->data_len + len > session->max_image_size) {
-      LOG_WARNING("webui_images: upload exceeds size limit (%zu + %zu > %zu)", session->data_len,
-                  len, session->max_image_size);
+      OLOG_WARNING("webui_images: upload exceeds size limit (%zu + %zu > %zu)", session->data_len,
+                   len, session->max_image_size);
       return -1;
    }
 
@@ -383,7 +383,7 @@ int webui_images_handle_upload_body(struct lws *wsi,
 
       unsigned char *new_data = realloc(session->data, new_cap);
       if (!new_data) {
-         LOG_ERROR("webui_images: failed to grow buffer");
+         OLOG_ERROR("webui_images: failed to grow buffer");
          return -1;
       }
       session->data = new_data;
@@ -421,14 +421,14 @@ int webui_images_handle_upload_complete(struct lws *wsi, http_image_session_t *s
 
    /* Validate MIME type */
    if (!image_store_validate_mime(mime_type)) {
-      LOG_WARNING("webui_images: rejected upload with mime type: %s", mime_type);
+      OLOG_WARNING("webui_images: rejected upload with mime type: %s", mime_type);
       webui_images_session_free(session);
       return send_json_error(wsi, HTTP_STATUS_UNSUPPORTED_MEDIA_TYPE, "Unsupported image type");
    }
 
    /* Validate magic bytes match declared MIME type */
    if (!validate_image_magic(image_data, image_len, mime_type)) {
-      LOG_WARNING("webui_images: magic bytes mismatch for %s", mime_type);
+      OLOG_WARNING("webui_images: magic bytes mismatch for %s", mime_type);
       webui_images_session_free(session);
       return send_json_error(wsi, HTTP_STATUS_BAD_REQUEST,
                              "Image data does not match declared type");
@@ -442,7 +442,7 @@ int webui_images_handle_upload_complete(struct lws *wsi, http_image_session_t *s
 
    switch (result) {
       case IMAGE_STORE_SUCCESS:
-         LOG_INFO("webui_images: uploaded %s (%zu bytes, %s)", image_id, image_len, mime_type);
+         OLOG_INFO("webui_images: uploaded %s (%zu bytes, %s)", image_id, image_len, mime_type);
          return send_upload_success(wsi, image_id, mime_type, image_len);
 
       case IMAGE_STORE_TOO_LARGE:

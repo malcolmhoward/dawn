@@ -589,7 +589,7 @@ static int create_schema(const char *db_path) {
    /* Execute schema SQL - all tables use IF NOT EXISTS for idempotency */
    int rc = sqlite3_exec(s_db.db, SCHEMA_SQL, NULL, NULL, &errmsg);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: schema creation failed: %s", errmsg ? errmsg : "unknown");
+      OLOG_ERROR("auth_db: schema creation failed: %s", errmsg ? errmsg : "unknown");
       sqlite3_free(errmsg);
       return AUTH_DB_FAILURE;
    }
@@ -602,11 +602,11 @@ static int create_schema(const char *db_path) {
                         NULL, NULL, &errmsg);
       if (rc != SQLITE_OK) {
          /* Column might already exist or table might not exist yet - not fatal */
-         LOG_INFO("auth_db: v3 migration note: %s (may be normal)", errmsg ? errmsg : "ok");
+         OLOG_INFO("auth_db: v3 migration note: %s (may be normal)", errmsg ? errmsg : "ok");
          sqlite3_free(errmsg);
          errmsg = NULL;
       } else {
-         LOG_INFO("auth_db: added persona_mode column to user_settings");
+         OLOG_INFO("auth_db: added persona_mode column to user_settings");
       }
    }
 
@@ -617,7 +617,7 @@ static int create_schema(const char *db_path) {
                         "ALTER TABLE conversations ADD COLUMN context_tokens INTEGER DEFAULT 0",
                         NULL, NULL, &errmsg);
       if (rc != SQLITE_OK) {
-         LOG_INFO("auth_db: v5 migration note (context_tokens): %s", errmsg ? errmsg : "ok");
+         OLOG_INFO("auth_db: v5 migration note (context_tokens): %s", errmsg ? errmsg : "ok");
          sqlite3_free(errmsg);
          errmsg = NULL;
       }
@@ -625,18 +625,18 @@ static int create_schema(const char *db_path) {
                         "ALTER TABLE conversations ADD COLUMN context_max INTEGER DEFAULT 0", NULL,
                         NULL, &errmsg);
       if (rc != SQLITE_OK) {
-         LOG_INFO("auth_db: v5 migration note (context_max): %s", errmsg ? errmsg : "ok");
+         OLOG_INFO("auth_db: v5 migration note (context_max): %s", errmsg ? errmsg : "ok");
          sqlite3_free(errmsg);
          errmsg = NULL;
       } else {
-         LOG_INFO("auth_db: added context columns to conversations");
+         OLOG_INFO("auth_db: added context columns to conversations");
       }
    }
 
    /* v6 migration: update messages table CHECK constraint to include 'tool' role
     * SQLite doesn't support ALTER TABLE to modify constraints, so we recreate the table */
    if (current_version >= 4 && current_version < 6) {
-      LOG_INFO("auth_db: migrating messages table to support 'tool' role");
+      OLOG_INFO("auth_db: migrating messages table to support 'tool' role");
       const char *migration_sql =
           "BEGIN TRANSACTION;"
           "CREATE TABLE messages_new ("
@@ -656,13 +656,13 @@ static int create_schema(const char *db_path) {
 
       rc = sqlite3_exec(s_db.db, migration_sql, NULL, NULL, &errmsg);
       if (rc != SQLITE_OK) {
-         LOG_ERROR("auth_db: v6 migration failed: %s", errmsg ? errmsg : "unknown");
+         OLOG_ERROR("auth_db: v6 migration failed: %s", errmsg ? errmsg : "unknown");
          sqlite3_free(errmsg);
          errmsg = NULL;
          /* Rollback on failure */
          sqlite3_exec(s_db.db, "ROLLBACK;", NULL, NULL, NULL);
       } else {
-         LOG_INFO("auth_db: migrated messages table to v6 (added 'tool' role)");
+         OLOG_INFO("auth_db: migrated messages table to v6 (added 'tool' role)");
       }
    }
 
@@ -674,7 +674,7 @@ static int create_schema(const char *db_path) {
                         "REFERENCES conversations(id) ON DELETE SET NULL",
                         NULL, NULL, &errmsg);
       if (rc != SQLITE_OK) {
-         LOG_INFO("auth_db: v7 migration note (continued_from): %s", errmsg ? errmsg : "ok");
+         OLOG_INFO("auth_db: v7 migration note (continued_from): %s", errmsg ? errmsg : "ok");
          sqlite3_free(errmsg);
          errmsg = NULL;
       }
@@ -682,7 +682,7 @@ static int create_schema(const char *db_path) {
                         "ALTER TABLE conversations ADD COLUMN compaction_summary TEXT DEFAULT NULL",
                         NULL, NULL, &errmsg);
       if (rc != SQLITE_OK) {
-         LOG_INFO("auth_db: v7 migration note (compaction_summary): %s", errmsg ? errmsg : "ok");
+         OLOG_INFO("auth_db: v7 migration note (compaction_summary): %s", errmsg ? errmsg : "ok");
          sqlite3_free(errmsg);
          errmsg = NULL;
       }
@@ -692,11 +692,11 @@ static int create_schema(const char *db_path) {
           "CREATE INDEX IF NOT EXISTS idx_conversations_continued ON conversations(continued_from)",
           NULL, NULL, &errmsg);
       if (rc != SQLITE_OK) {
-         LOG_INFO("auth_db: v7 migration note (index): %s", errmsg ? errmsg : "ok");
+         OLOG_INFO("auth_db: v7 migration note (index): %s", errmsg ? errmsg : "ok");
          sqlite3_free(errmsg);
          errmsg = NULL;
       } else {
-         LOG_INFO("auth_db: added continuation columns to conversations (v7)");
+         OLOG_INFO("auth_db: added continuation columns to conversations (v7)");
       }
    }
 
@@ -704,7 +704,7 @@ static int create_schema(const char *db_path) {
     * The table is created by SCHEMA_SQL with IF NOT EXISTS, so no explicit
     * migration is needed. Just log the upgrade for existing databases. */
    if (current_version >= 1 && current_version < 8) {
-      LOG_INFO("auth_db: added session_metrics table (v8)");
+      OLOG_INFO("auth_db: added session_metrics table (v8)");
    }
 
    /* v9 migration: add theme column to user_settings */
@@ -712,11 +712,11 @@ static int create_schema(const char *db_path) {
       rc = sqlite3_exec(s_db.db, "ALTER TABLE user_settings ADD COLUMN theme TEXT DEFAULT 'cyan'",
                         NULL, NULL, &errmsg);
       if (rc != SQLITE_OK) {
-         LOG_INFO("auth_db: v9 migration note (theme): %s", errmsg ? errmsg : "ok");
+         OLOG_INFO("auth_db: v9 migration note (theme): %s", errmsg ? errmsg : "ok");
          sqlite3_free(errmsg);
          errmsg = NULL;
       } else {
-         LOG_INFO("auth_db: added theme column to user_settings");
+         OLOG_INFO("auth_db: added theme column to user_settings");
       }
    }
 
@@ -726,7 +726,7 @@ static int create_schema(const char *db_path) {
       rc = sqlite3_exec(s_db.db, "ALTER TABLE sessions ADD COLUMN expires_at INTEGER", NULL, NULL,
                         &errmsg);
       if (rc != SQLITE_OK) {
-         LOG_INFO("auth_db: v10 migration note (expires_at): %s", errmsg ? errmsg : "ok");
+         OLOG_INFO("auth_db: v10 migration note (expires_at): %s", errmsg ? errmsg : "ok");
          sqlite3_free(errmsg);
          errmsg = NULL;
       } else {
@@ -737,18 +737,18 @@ static int create_schema(const char *db_path) {
                   AUTH_SESSION_TIMEOUT_SEC);
          rc = sqlite3_exec(s_db.db, update_sql, NULL, NULL, &errmsg);
          if (rc != SQLITE_OK) {
-            LOG_WARNING("auth_db: v10 migration (set defaults): %s", errmsg ? errmsg : "ok");
+            OLOG_WARNING("auth_db: v10 migration (set defaults): %s", errmsg ? errmsg : "ok");
             sqlite3_free(errmsg);
             errmsg = NULL;
          }
-         LOG_INFO("auth_db: added expires_at column to sessions (v10)");
+         OLOG_INFO("auth_db: added expires_at column to sessions (v10)");
       }
       /* Create index for efficient cleanup queries */
       rc = sqlite3_exec(s_db.db,
                         "CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at)",
                         NULL, NULL, &errmsg);
       if (rc != SQLITE_OK) {
-         LOG_INFO("auth_db: v10 migration (index): %s", errmsg ? errmsg : "ok");
+         OLOG_INFO("auth_db: v10 migration (index): %s", errmsg ? errmsg : "ok");
          sqlite3_free(errmsg);
          errmsg = NULL;
       }
@@ -766,17 +766,17 @@ static int create_schema(const char *db_path) {
       for (int i = 0; i < 5; i++) {
          rc = sqlite3_exec(s_db.db, cols[i], NULL, NULL, &errmsg);
          if (rc != SQLITE_OK) {
-            LOG_INFO("auth_db: v11 migration note: %s", errmsg ? errmsg : "ok");
+            OLOG_INFO("auth_db: v11 migration note: %s", errmsg ? errmsg : "ok");
             sqlite3_free(errmsg);
             errmsg = NULL;
          }
       }
-      LOG_INFO("auth_db: added LLM settings columns to conversations (v11)");
+      OLOG_INFO("auth_db: added LLM settings columns to conversations (v11)");
    }
 
    /* v12 migration: images table for vision uploads (now superseded by v13) */
    if (current_version >= 1 && current_version < 12) {
-      LOG_INFO("auth_db: added images table for vision uploads (v12)");
+      OLOG_INFO("auth_db: added images table for vision uploads (v12)");
    }
 
    /* v13 migration: add data BLOB column to images table
@@ -785,7 +785,7 @@ static int create_schema(const char *db_path) {
    if (current_version == 12) {
       rc = sqlite3_exec(s_db.db, "DROP TABLE IF EXISTS images", NULL, NULL, &errmsg);
       if (rc != SQLITE_OK) {
-         LOG_WARNING("auth_db: v13 migration - failed to drop images: %s", errmsg ? errmsg : "ok");
+         OLOG_WARNING("auth_db: v13 migration - failed to drop images: %s", errmsg ? errmsg : "ok");
          sqlite3_free(errmsg);
          errmsg = NULL;
       }
@@ -805,11 +805,11 @@ static int create_schema(const char *db_path) {
           "CREATE INDEX IF NOT EXISTS idx_images_created ON images(created_at);";
       rc = sqlite3_exec(s_db.db, images_sql, NULL, NULL, &errmsg);
       if (rc != SQLITE_OK) {
-         LOG_ERROR("auth_db: v13 migration - failed to create images: %s", errmsg ? errmsg : "ok");
+         OLOG_ERROR("auth_db: v13 migration - failed to create images: %s", errmsg ? errmsg : "ok");
          sqlite3_free(errmsg);
          return AUTH_DB_FAILURE;
       }
-      LOG_INFO("auth_db: migrated images table to include BLOB storage (v13)");
+      OLOG_INFO("auth_db: migrated images table to include BLOB storage (v13)");
    }
 
    /* v14 migration: add memory system tables
@@ -868,12 +868,12 @@ static int create_schema(const char *db_path) {
 
       rc = sqlite3_exec(s_db.db, memory_sql, NULL, NULL, &errmsg);
       if (rc != SQLITE_OK) {
-         LOG_ERROR("auth_db: v14 migration - failed to create memory tables: %s",
-                   errmsg ? errmsg : "unknown");
+         OLOG_ERROR("auth_db: v14 migration - failed to create memory tables: %s",
+                    errmsg ? errmsg : "unknown");
          sqlite3_free(errmsg);
          return AUTH_DB_FAILURE;
       }
-      LOG_INFO("auth_db: added memory system tables (v14)");
+      OLOG_INFO("auth_db: added memory system tables (v14)");
    }
 
    /* v15 migration: add deduplication and extraction tracking
@@ -888,11 +888,11 @@ static int create_schema(const char *db_path) {
 
       rc = sqlite3_exec(s_db.db, v15_sql, NULL, NULL, &errmsg);
       if (rc != SQLITE_OK) {
-         LOG_ERROR("auth_db: v15 migration failed: %s", errmsg ? errmsg : "unknown");
+         OLOG_ERROR("auth_db: v15 migration failed: %s", errmsg ? errmsg : "unknown");
          sqlite3_free(errmsg);
          return AUTH_DB_FAILURE;
       }
-      LOG_INFO("auth_db: added deduplication and extraction tracking (v15)");
+      OLOG_INFO("auth_db: added deduplication and extraction tracking (v15)");
    }
 
    /* v16 migration: add is_private flag to conversations for privacy mode */
@@ -901,11 +901,11 @@ static int create_schema(const char *db_path) {
 
       rc = sqlite3_exec(s_db.db, v16_sql, NULL, NULL, &errmsg);
       if (rc != SQLITE_OK) {
-         LOG_ERROR("auth_db: v16 migration failed: %s", errmsg ? errmsg : "unknown");
+         OLOG_ERROR("auth_db: v16 migration failed: %s", errmsg ? errmsg : "unknown");
          sqlite3_free(errmsg);
          return AUTH_DB_FAILURE;
       }
-      LOG_INFO("auth_db: added conversation privacy flag (v16)");
+      OLOG_INFO("auth_db: added conversation privacy flag (v16)");
    }
 
    /* v17 migration: add origin column to conversations for voice/webui distinction */
@@ -914,11 +914,11 @@ static int create_schema(const char *db_path) {
 
       rc = sqlite3_exec(s_db.db, v17_sql, NULL, NULL, &errmsg);
       if (rc != SQLITE_OK) {
-         LOG_ERROR("auth_db: v17 migration failed: %s", errmsg ? errmsg : "unknown");
+         OLOG_ERROR("auth_db: v17 migration failed: %s", errmsg ? errmsg : "unknown");
          sqlite3_free(errmsg);
          return AUTH_DB_FAILURE;
       }
-      LOG_INFO("auth_db: added conversation origin column (v17)");
+      OLOG_INFO("auth_db: added conversation origin column (v17)");
    }
 
    /* v18 migration: scheduler events table */
@@ -958,11 +958,11 @@ static int create_schema(const char *db_path) {
 
       rc = sqlite3_exec(s_db.db, v18_sql, NULL, NULL, &errmsg);
       if (rc != SQLITE_OK) {
-         LOG_ERROR("auth_db: v18 migration failed: %s", errmsg ? errmsg : "unknown");
+         OLOG_ERROR("auth_db: v18 migration failed: %s", errmsg ? errmsg : "unknown");
          sqlite3_free(errmsg);
          return AUTH_DB_FAILURE;
       }
-      LOG_INFO("auth_db: added scheduled_events table (v18)");
+      OLOG_INFO("auth_db: added scheduled_events table (v18)");
    }
 
    /* v19 migration: semantic memory embeddings + entity/relation tables */
@@ -1015,11 +1015,11 @@ static int create_schema(const char *db_path) {
 
       rc = sqlite3_exec(s_db.db, v19_sql, NULL, NULL, &errmsg);
       if (rc != SQLITE_OK) {
-         LOG_ERROR("auth_db: v19 migration failed: %s", errmsg ? errmsg : "unknown");
+         OLOG_ERROR("auth_db: v19 migration failed: %s", errmsg ? errmsg : "unknown");
          sqlite3_free(errmsg);
          return AUTH_DB_FAILURE;
       }
-      LOG_INFO("auth_db: added embedding columns and entity/relation tables (v19)");
+      OLOG_INFO("auth_db: added embedding columns and entity/relation tables (v19)");
    }
 
    /* v20 migration: satellite_mappings table for persistent satellite-to-user mappings */
@@ -1041,11 +1041,11 @@ static int create_schema(const char *db_path) {
 
       rc = sqlite3_exec(s_db.db, v20_sql, NULL, NULL, &errmsg);
       if (rc != SQLITE_OK) {
-         LOG_ERROR("auth_db: v20 migration failed: %s", errmsg ? errmsg : "unknown");
+         OLOG_ERROR("auth_db: v20 migration failed: %s", errmsg ? errmsg : "unknown");
          sqlite3_free(errmsg);
          return AUTH_DB_FAILURE;
       }
-      LOG_INFO("auth_db: added satellite_mappings table (v20)");
+      OLOG_INFO("auth_db: added satellite_mappings table (v20)");
    }
 
    /* v21 migration: fix satellite_mappings FK (DEFAULT 0 -> DEFAULT NULL, SET NULL) */
@@ -1074,11 +1074,11 @@ static int create_schema(const char *db_path) {
 
       rc = sqlite3_exec(s_db.db, v21_sql, NULL, NULL, &errmsg);
       if (rc != SQLITE_OK) {
-         LOG_ERROR("auth_db: v21 migration failed: %s", errmsg ? errmsg : "unknown");
+         OLOG_ERROR("auth_db: v21 migration failed: %s", errmsg ? errmsg : "unknown");
          sqlite3_free(errmsg);
          return AUTH_DB_FAILURE;
       }
-      LOG_INFO("auth_db: fixed satellite_mappings FK constraints (v21)");
+      OLOG_INFO("auth_db: fixed satellite_mappings FK constraints (v21)");
    }
 
    /* v22 migration: documents and document_chunks tables for RAG search */
@@ -1111,11 +1111,11 @@ static int create_schema(const char *db_path) {
 
       rc = sqlite3_exec(s_db.db, v22_sql, NULL, NULL, &errmsg);
       if (rc != SQLITE_OK) {
-         LOG_ERROR("auth_db: v22 migration failed: %s", errmsg ? errmsg : "unknown");
+         OLOG_ERROR("auth_db: v22 migration failed: %s", errmsg ? errmsg : "unknown");
          sqlite3_free(errmsg);
          return AUTH_DB_FAILURE;
       }
-      LOG_INFO("auth_db: added documents and document_chunks tables (v22)");
+      OLOG_INFO("auth_db: added documents and document_chunks tables (v22)");
    }
 
    /* v23 migration: calendar tables for CalDAV integration */
@@ -1192,11 +1192,11 @@ static int create_schema(const char *db_path) {
 
       rc = sqlite3_exec(s_db.db, v23_sql, NULL, NULL, &errmsg);
       if (rc != SQLITE_OK) {
-         LOG_ERROR("auth_db: v23 migration failed: %s", errmsg ? errmsg : "unknown");
+         OLOG_ERROR("auth_db: v23 migration failed: %s", errmsg ? errmsg : "unknown");
          sqlite3_free(errmsg);
          return AUTH_DB_FAILURE;
       }
-      LOG_INFO("auth_db: added calendar tables (v23)");
+      OLOG_INFO("auth_db: added calendar tables (v23)");
    }
 
    /* v24 migration: add read_only flag to calendar_accounts */
@@ -1204,11 +1204,11 @@ static int create_schema(const char *db_path) {
       const char *v24_sql = "ALTER TABLE calendar_accounts ADD COLUMN read_only INTEGER DEFAULT 0;";
       rc = sqlite3_exec(s_db.db, v24_sql, NULL, NULL, &errmsg);
       if (rc != SQLITE_OK) {
-         LOG_ERROR("auth_db: v24 migration failed: %s", errmsg ? errmsg : "unknown");
+         OLOG_ERROR("auth_db: v24 migration failed: %s", errmsg ? errmsg : "unknown");
          sqlite3_free(errmsg);
          return AUTH_DB_FAILURE;
       }
-      LOG_INFO("auth_db: added calendar read_only column (v24)");
+      OLOG_INFO("auth_db: added calendar read_only column (v24)");
    }
 
    /* v25 migration: OAuth token storage + calendar account OAuth support */
@@ -1231,7 +1231,8 @@ static int create_schema(const char *db_path) {
 
       rc = sqlite3_exec(s_db.db, v25_sql, NULL, NULL, &errmsg);
       if (rc != SQLITE_OK) {
-         LOG_ERROR("auth_db: v25 migration (oauth_tokens) failed: %s", errmsg ? errmsg : "unknown");
+         OLOG_ERROR("auth_db: v25 migration (oauth_tokens) failed: %s",
+                    errmsg ? errmsg : "unknown");
          sqlite3_free(errmsg);
          return AUTH_DB_FAILURE;
       }
@@ -1241,12 +1242,12 @@ static int create_schema(const char *db_path) {
           s_db.db, "ALTER TABLE calendar_accounts ADD COLUMN oauth_account_key TEXT DEFAULT ''",
           NULL, NULL, &errmsg);
       if (rc != SQLITE_OK) {
-         LOG_INFO("auth_db: v25 migration note (oauth_account_key): %s", errmsg ? errmsg : "ok");
+         OLOG_INFO("auth_db: v25 migration note (oauth_account_key): %s", errmsg ? errmsg : "ok");
          sqlite3_free(errmsg);
          errmsg = NULL;
       }
 
-      LOG_INFO("auth_db: added oauth_tokens table and calendar OAuth support (v25)");
+      OLOG_INFO("auth_db: added oauth_tokens table and calendar OAuth support (v25)");
    }
 
    /* v26 migration: contacts table + email_accounts table */
@@ -1292,13 +1293,13 @@ static int create_schema(const char *db_path) {
 
       rc = sqlite3_exec(s_db.db, v26_sql, NULL, NULL, &errmsg);
       if (rc != SQLITE_OK) {
-         LOG_ERROR("auth_db: v26 migration (contacts + email_accounts) failed: %s",
-                   errmsg ? errmsg : "unknown");
+         OLOG_ERROR("auth_db: v26 migration (contacts + email_accounts) failed: %s",
+                    errmsg ? errmsg : "unknown");
          sqlite3_free(errmsg);
          return AUTH_DB_FAILURE;
       }
 
-      LOG_INFO("auth_db: added contacts and email_accounts tables (v26)");
+      OLOG_INFO("auth_db: added contacts and email_accounts tables (v26)");
    }
 
    /* v27 migration: add title_locked column to conversations for auto-title feature */
@@ -1307,11 +1308,11 @@ static int create_schema(const char *db_path) {
                         "ALTER TABLE conversations ADD COLUMN title_locked INTEGER DEFAULT 0", NULL,
                         NULL, &errmsg);
       if (rc != SQLITE_OK) {
-         LOG_INFO("auth_db: v27 migration note (title_locked): %s", errmsg ? errmsg : "ok");
+         OLOG_INFO("auth_db: v27 migration note (title_locked): %s", errmsg ? errmsg : "ok");
          sqlite3_free(errmsg);
          errmsg = NULL;
       } else {
-         LOG_INFO("auth_db: added title_locked column to conversations (v27)");
+         OLOG_INFO("auth_db: added title_locked column to conversations (v27)");
       }
    }
 
@@ -1321,11 +1322,11 @@ static int create_schema(const char *db_path) {
           s_db.db, "ALTER TABLE scheduled_events ADD COLUMN source_client_type INTEGER DEFAULT 0",
           NULL, NULL, &errmsg);
       if (rc != SQLITE_OK) {
-         LOG_INFO("auth_db: v28 migration note (source_client_type): %s", errmsg ? errmsg : "ok");
+         OLOG_INFO("auth_db: v28 migration note (source_client_type): %s", errmsg ? errmsg : "ok");
          sqlite3_free(errmsg);
          errmsg = NULL;
       } else {
-         LOG_INFO("auth_db: added source_client_type to scheduled_events (v28)");
+         OLOG_INFO("auth_db: added source_client_type to scheduled_events (v28)");
       }
    }
 
@@ -1360,11 +1361,12 @@ static int create_schema(const char *db_path) {
 
       rc = sqlite3_exec(s_db.db, v29_sql, NULL, NULL, &errmsg);
       if (rc != SQLITE_OK) {
-         LOG_ERROR("auth_db: v29 migration (phone tables) failed: %s", errmsg ? errmsg : "unknown");
+         OLOG_ERROR("auth_db: v29 migration (phone tables) failed: %s",
+                    errmsg ? errmsg : "unknown");
          sqlite3_free(errmsg);
          errmsg = NULL;
       } else {
-         LOG_INFO("auth_db: added phone_call_log and phone_sms_log tables (v29)");
+         OLOG_INFO("auth_db: added phone_call_log and phone_sms_log tables (v29)");
       }
    }
 
@@ -1382,7 +1384,8 @@ static int create_schema(const char *db_path) {
 
       /* Create images directory */
       if (mkdir(images_dir, 0750) != 0 && errno != EEXIST) {
-         LOG_ERROR("auth_db: v30 migration - failed to create %s: %s", images_dir, strerror(errno));
+         OLOG_ERROR("auth_db: v30 migration - failed to create %s: %s", images_dir,
+                    strerror(errno));
          return AUTH_DB_FAILURE;
       }
 
@@ -1392,7 +1395,7 @@ static int create_schema(const char *db_path) {
                               "SELECT id, mime_type, data FROM images WHERE data IS NOT NULL", -1,
                               &export_stmt, NULL);
       if (rc != SQLITE_OK) {
-         LOG_ERROR("auth_db: v30 migration - prepare export failed: %s", sqlite3_errmsg(s_db.db));
+         OLOG_ERROR("auth_db: v30 migration - prepare export failed: %s", sqlite3_errmsg(s_db.db));
          return AUTH_DB_FAILURE;
       }
 
@@ -1428,8 +1431,8 @@ static int create_schema(const char *db_path) {
 
          int fd = open(tmppath, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, 0640);
          if (fd < 0) {
-            LOG_WARNING("auth_db: v30 migration - failed to create %s: %s", tmppath,
-                        strerror(errno));
+            OLOG_WARNING("auth_db: v30 migration - failed to create %s: %s", tmppath,
+                         strerror(errno));
             export_failed++;
             continue;
          }
@@ -1442,7 +1445,8 @@ static int create_schema(const char *db_path) {
             if (written < 0) {
                if (errno == EINTR)
                   continue;
-               LOG_WARNING("auth_db: v30 migration - write failed for %s: %s", id, strerror(errno));
+               OLOG_WARNING("auth_db: v30 migration - write failed for %s: %s", id,
+                            strerror(errno));
                write_ok = false;
                break;
             }
@@ -1460,7 +1464,7 @@ static int create_schema(const char *db_path) {
          close(fd);
 
          if (rename(tmppath, filepath) != 0) {
-            LOG_WARNING("auth_db: v30 migration - rename failed for %s: %s", id, strerror(errno));
+            OLOG_WARNING("auth_db: v30 migration - rename failed for %s: %s", id, strerror(errno));
             unlink(tmppath);
             export_failed++;
             continue;
@@ -1471,8 +1475,8 @@ static int create_schema(const char *db_path) {
       sqlite3_finalize(export_stmt);
 
       if (export_failed > 0) {
-         LOG_ERROR("auth_db: v30 migration - %d/%d images failed to export", export_failed,
-                   exported + export_failed);
+         OLOG_ERROR("auth_db: v30 migration - %d/%d images failed to export", export_failed,
+                    exported + export_failed);
          return AUTH_DB_FAILURE;
       }
 
@@ -1511,14 +1515,14 @@ static int create_schema(const char *db_path) {
 
       rc = sqlite3_exec(s_db.db, v30_images_sql, NULL, NULL, &errmsg);
       if (rc != SQLITE_OK) {
-         LOG_ERROR("auth_db: v30 migration (images table rebuild) failed: %s",
-                   errmsg ? errmsg : "unknown");
+         OLOG_ERROR("auth_db: v30 migration (images table rebuild) failed: %s",
+                    errmsg ? errmsg : "unknown");
          sqlite3_free(errmsg);
          sqlite3_exec(s_db.db, "ROLLBACK;", NULL, NULL, NULL);
          return AUTH_DB_FAILURE;
       }
 
-      LOG_INFO("auth_db: migrated %d images from BLOB to filesystem (v30)", exported);
+      OLOG_INFO("auth_db: migrated %d images from BLOB to filesystem (v30)", exported);
    }
 
    /* v30 migration: add image_id to phone_sms_log (for MMS attachments) */
@@ -1526,12 +1530,12 @@ static int create_schema(const char *db_path) {
       rc = sqlite3_exec(s_db.db, "ALTER TABLE phone_sms_log ADD COLUMN image_id TEXT DEFAULT NULL",
                         NULL, NULL, &errmsg);
       if (rc != SQLITE_OK) {
-         LOG_WARNING("auth_db: v30 migration (sms image_id) failed: %s",
-                     errmsg ? errmsg : "unknown");
+         OLOG_WARNING("auth_db: v30 migration (sms image_id) failed: %s",
+                      errmsg ? errmsg : "unknown");
          sqlite3_free(errmsg);
          errmsg = NULL;
       } else {
-         LOG_INFO("auth_db: added image_id column to phone_sms_log (v30)");
+         OLOG_INFO("auth_db: added image_id column to phone_sms_log (v30)");
       }
    }
 
@@ -1541,12 +1545,12 @@ static int create_schema(const char *db_path) {
                         "ALTER TABLE memory_entities ADD COLUMN photo_id TEXT DEFAULT NULL", NULL,
                         NULL, &errmsg);
       if (rc != SQLITE_OK) {
-         LOG_WARNING("auth_db: v31 migration (entity photo_id) failed: %s",
-                     errmsg ? errmsg : "unknown");
+         OLOG_WARNING("auth_db: v31 migration (entity photo_id) failed: %s",
+                      errmsg ? errmsg : "unknown");
          sqlite3_free(errmsg);
          errmsg = NULL;
       } else {
-         LOG_INFO("auth_db: added photo_id column to memory_entities (v31)");
+         OLOG_INFO("auth_db: added photo_id column to memory_entities (v31)");
       }
    }
 
@@ -1557,7 +1561,7 @@ static int create_schema(const char *db_path) {
                      "ON conversations(continued_from)",
                      NULL, NULL, &errmsg);
    if (rc != SQLITE_OK) {
-      LOG_WARNING("auth_db: could not create continuation index: %s", errmsg ? errmsg : "ok");
+      OLOG_WARNING("auth_db: could not create continuation index: %s", errmsg ? errmsg : "ok");
       sqlite3_free(errmsg);
       errmsg = NULL;
    }
@@ -1567,16 +1571,17 @@ static int create_schema(const char *db_path) {
                      "ON images(retention_policy)",
                      NULL, NULL, &errmsg);
    if (rc != SQLITE_OK) {
-      LOG_WARNING("auth_db: could not create retention index: %s", errmsg ? errmsg : "ok");
+      OLOG_WARNING("auth_db: could not create retention index: %s", errmsg ? errmsg : "ok");
       sqlite3_free(errmsg);
       errmsg = NULL;
    }
 
    /* Log migration if upgrading from an older version */
    if (current_version > 0 && current_version < AUTH_DB_SCHEMA_VERSION) {
-      LOG_INFO("auth_db: migrated schema from v%d to v%d", current_version, AUTH_DB_SCHEMA_VERSION);
+      OLOG_INFO("auth_db: migrated schema from v%d to v%d", current_version,
+                AUTH_DB_SCHEMA_VERSION);
    } else if (current_version == 0) {
-      LOG_INFO("auth_db: created schema v%d", AUTH_DB_SCHEMA_VERSION);
+      OLOG_INFO("auth_db: created schema v%d", AUTH_DB_SCHEMA_VERSION);
    }
 
    /* Only update schema_version if we actually migrated or created fresh.
@@ -1584,7 +1589,7 @@ static int create_schema(const char *db_path) {
    if (current_version < AUTH_DB_SCHEMA_VERSION) {
       rc = sqlite3_exec(s_db.db, "DELETE FROM schema_version", NULL, NULL, &errmsg);
       if (rc != SQLITE_OK) {
-         LOG_WARNING("auth_db: failed to clear schema_version: %s", errmsg ? errmsg : "unknown");
+         OLOG_WARNING("auth_db: failed to clear schema_version: %s", errmsg ? errmsg : "unknown");
          sqlite3_free(errmsg);
          errmsg = NULL;
       }
@@ -1593,13 +1598,13 @@ static int create_schema(const char *db_path) {
                             AUTH_DB_SCHEMA_VERSION) ")",
                         NULL, NULL, &errmsg);
       if (rc != SQLITE_OK) {
-         LOG_ERROR("auth_db: failed to set schema version: %s", errmsg ? errmsg : "unknown");
+         OLOG_ERROR("auth_db: failed to set schema version: %s", errmsg ? errmsg : "unknown");
          sqlite3_free(errmsg);
          return AUTH_DB_FAILURE;
       }
    } else if (current_version > AUTH_DB_SCHEMA_VERSION) {
-      LOG_WARNING("auth_db: database is newer (v%d) than code (v%d) — not downgrading",
-                  current_version, AUTH_DB_SCHEMA_VERSION);
+      OLOG_WARNING("auth_db: database is newer (v%d) than code (v%d) — not downgrading",
+                   current_version, AUTH_DB_SCHEMA_VERSION);
    }
 
    return AUTH_DB_SUCCESS;
@@ -1618,7 +1623,7 @@ static int prepare_statements(void) {
        "INSERT INTO users (username, password_hash, is_admin, created_at) VALUES (?, ?, ?, ?)", -1,
        &s_db.stmt_create_user, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare create_user failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare create_user failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -1628,13 +1633,13 @@ static int prepare_statements(void) {
        "last_login, failed_attempts, lockout_until FROM users WHERE username = ?",
        -1, &s_db.stmt_get_user, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare get_user failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare get_user failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "SELECT COUNT(*) FROM users", -1, &s_db.stmt_count_users, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare count_users failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare count_users failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -1642,28 +1647,28 @@ static int prepare_statements(void) {
        s_db.db, "UPDATE users SET failed_attempts = failed_attempts + 1 WHERE username = ?", -1,
        &s_db.stmt_inc_failed_attempts, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare inc_failed_attempts failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare inc_failed_attempts failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "UPDATE users SET failed_attempts = 0 WHERE username = ?", -1,
                            &s_db.stmt_reset_failed_attempts, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare reset_failed_attempts failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare reset_failed_attempts failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "UPDATE users SET last_login = ? WHERE username = ?", -1,
                            &s_db.stmt_update_last_login, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare update_last_login failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare update_last_login failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "UPDATE users SET lockout_until = ? WHERE username = ?", -1,
                            &s_db.stmt_set_lockout, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare set_lockout failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare set_lockout failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -1673,7 +1678,7 @@ static int prepare_statements(void) {
                            "expires_at, ip_address, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?)",
                            -1, &s_db.stmt_create_session, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare create_session failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare create_session failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -1683,28 +1688,28 @@ static int prepare_statements(void) {
                            "FROM sessions s JOIN users u ON s.user_id = u.id WHERE s.token = ?",
                            -1, &s_db.stmt_get_session, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare get_session failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare get_session failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "UPDATE sessions SET last_activity = ? WHERE token = ?", -1,
                            &s_db.stmt_update_session_activity, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare update_session_activity failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare update_session_activity failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM sessions WHERE token = ?", -1,
                            &s_db.stmt_delete_session, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare delete_session failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare delete_session failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM sessions WHERE user_id = ?", -1,
                            &s_db.stmt_delete_user_sessions, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare delete_user_sessions failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare delete_user_sessions failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -1712,7 +1717,7 @@ static int prepare_statements(void) {
                            "DELETE FROM sessions WHERE expires_at IS NOT NULL AND expires_at < ?",
                            -1, &s_db.stmt_delete_expired_sessions, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare delete_expired_sessions failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare delete_expired_sessions failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -1722,7 +1727,7 @@ static int prepare_statements(void) {
        "SELECT COUNT(*) FROM login_attempts WHERE ip_address = ? AND timestamp > ? AND success = 0",
        -1, &s_db.stmt_count_recent_failures, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare count_recent_failures failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare count_recent_failures failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -1731,14 +1736,14 @@ static int prepare_statements(void) {
        "INSERT INTO login_attempts (ip_address, username, timestamp, success) VALUES (?, ?, ?, ?)",
        -1, &s_db.stmt_log_attempt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare log_attempt failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare log_attempt failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM login_attempts WHERE timestamp < ?", -1,
                            &s_db.stmt_delete_old_attempts, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare delete_old_attempts failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare delete_old_attempts failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -1748,14 +1753,14 @@ static int prepare_statements(void) {
                            "VALUES (?, ?, ?, ?, ?)",
                            -1, &s_db.stmt_log_event, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare log_event failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare log_event failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM auth_log WHERE timestamp < ?", -1,
                            &s_db.stmt_delete_old_logs, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare delete_old_logs failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare delete_old_logs failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -1765,7 +1770,7 @@ static int prepare_statements(void) {
                            "theme FROM user_settings WHERE user_id = ?",
                            -1, &s_db.stmt_get_user_settings, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare get_user_settings failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare get_user_settings failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -1780,7 +1785,7 @@ static int prepare_statements(void) {
        "theme=excluded.theme, updated_at=excluded.updated_at",
        -1, &s_db.stmt_set_user_settings, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare set_user_settings failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare set_user_settings failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -1790,7 +1795,7 @@ static int prepare_statements(void) {
        "INSERT INTO conversations (user_id, title, created_at, updated_at) VALUES (?, ?, ?, ?)", -1,
        &s_db.stmt_conv_create, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare conv_create failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare conv_create failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -1802,7 +1807,7 @@ static int prepare_statements(void) {
        "FROM conversations WHERE id = ?",
        -1, &s_db.stmt_conv_get, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare conv_get failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare conv_get failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -1814,7 +1819,7 @@ static int prepare_statements(void) {
        "ORDER BY updated_at DESC LIMIT ? OFFSET ?",
        -1, &s_db.stmt_conv_list, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare conv_list failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare conv_list failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -1829,7 +1834,7 @@ static int prepare_statements(void) {
        "ORDER BY c.updated_at DESC LIMIT ? OFFSET ?",
        -1, &s_db.stmt_conv_list_all, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare conv_list_all failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare conv_list_all failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -1841,7 +1846,7 @@ static int prepare_statements(void) {
        "ORDER BY updated_at DESC LIMIT ? OFFSET ?",
        -1, &s_db.stmt_conv_search, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare conv_search failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare conv_search failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -1855,7 +1860,7 @@ static int prepare_statements(void) {
                            "ORDER BY c.updated_at DESC LIMIT ? OFFSET ?",
                            -1, &s_db.stmt_conv_search_content, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare conv_search_content failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare conv_search_content failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -1863,14 +1868,14 @@ static int prepare_statements(void) {
                            "UPDATE conversations SET title = ? WHERE id = ? AND user_id = ?", -1,
                            &s_db.stmt_conv_rename, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare conv_rename failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare conv_rename failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM conversations WHERE id = ? AND user_id = ?", -1,
                            &s_db.stmt_conv_delete, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare conv_delete failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare conv_delete failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -1878,14 +1883,14 @@ static int prepare_statements(void) {
    rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM conversations WHERE id = ?", -1,
                            &s_db.stmt_conv_delete_admin, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare conv_delete_admin failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare conv_delete_admin failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "SELECT COUNT(*) FROM conversations WHERE user_id = ?", -1,
                            &s_db.stmt_conv_count, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare conv_count failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare conv_count failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -1895,7 +1900,7 @@ static int prepare_statements(void) {
        "SELECT ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM conversations WHERE id = ? AND user_id = ?)",
        -1, &s_db.stmt_msg_add, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare msg_add failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare msg_add failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -1906,7 +1911,7 @@ static int prepare_statements(void) {
                            "WHERE m.conversation_id = ? AND c.user_id = ? ORDER BY m.id ASC",
                            -1, &s_db.stmt_msg_get, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare msg_get failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare msg_get failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -1916,7 +1921,7 @@ static int prepare_statements(void) {
                            "FROM messages WHERE conversation_id = ? ORDER BY id ASC",
                            -1, &s_db.stmt_msg_get_admin, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare msg_get_admin failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare msg_get_admin failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -1925,7 +1930,7 @@ static int prepare_statements(void) {
        "UPDATE conversations SET updated_at = ?, message_count = message_count + 1 WHERE id = ?",
        -1, &s_db.stmt_conv_update_meta, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare conv_update_meta failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare conv_update_meta failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -1934,7 +1939,7 @@ static int prepare_statements(void) {
                            "WHERE id = ? AND user_id = ?",
                            -1, &s_db.stmt_conv_update_context, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare conv_update_context failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare conv_update_context failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -1944,14 +1949,14 @@ static int prepare_statements(void) {
        "VALUES (?, ?, ?, ?, ?)",
        -1, &s_db.stmt_conv_create_origin, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare conv_create_origin failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare conv_create_origin failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "UPDATE conversations SET user_id = ? WHERE id = ?", -1,
                            &s_db.stmt_conv_reassign, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare conv_reassign failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare conv_reassign failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -1965,7 +1970,7 @@ static int prepare_statements(void) {
        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
        -1, &s_db.stmt_metrics_save, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare metrics_save failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare metrics_save failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -1979,14 +1984,14 @@ static int prepare_statements(void) {
        "WHERE id = ?",
        -1, &s_db.stmt_metrics_update, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare metrics_update failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare metrics_update failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM session_metrics WHERE started_at < ?", -1,
                            &s_db.stmt_metrics_delete_old, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare metrics_delete_old failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare metrics_delete_old failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -1998,7 +2003,7 @@ static int prepare_statements(void) {
                            ") VALUES (?, ?, ?, ?, ?, ?)",
                            -1, &s_db.stmt_provider_metrics_save, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare provider_metrics_save failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare provider_metrics_save failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2007,7 +2012,7 @@ static int prepare_statements(void) {
                            "DELETE FROM session_metrics_providers WHERE session_metrics_id = ?", -1,
                            &s_db.stmt_provider_metrics_delete, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare provider_metrics_delete failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare provider_metrics_delete failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2018,7 +2023,7 @@ static int prepare_statements(void) {
        "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
        -1, &s_db.stmt_image_create, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare image_create failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare image_create failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2028,7 +2033,7 @@ static int prepare_statements(void) {
        "created_at, last_accessed FROM images WHERE id = ?",
        -1, &s_db.stmt_image_get, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare image_get failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare image_get failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2037,21 +2042,21 @@ static int prepare_statements(void) {
        "SELECT filename, user_id, source, mime_type, last_accessed FROM images WHERE id = ?", -1,
        &s_db.stmt_image_get_file, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare image_get_file failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare image_get_file failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM images WHERE id = ? AND user_id = ?", -1,
                            &s_db.stmt_image_delete, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare image_delete failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare image_delete failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "UPDATE images SET last_accessed = ? WHERE id = ?", -1,
                            &s_db.stmt_image_update_access, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare image_update_access failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare image_update_access failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2060,14 +2065,14 @@ static int prepare_statements(void) {
                            "WHERE id = ? AND (? = 0 OR user_id = ?)",
                            -1, &s_db.stmt_image_update_retention, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare image_update_retention failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare image_update_retention failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "SELECT COUNT(*) FROM images WHERE user_id = ?", -1,
                            &s_db.stmt_image_count_user, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare image_count_user failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare image_count_user failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2078,7 +2083,7 @@ static int prepare_statements(void) {
        "ORDER BY created_at ASC LIMIT 100)",
        -1, &s_db.stmt_image_delete_old, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare image_delete_old failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare image_delete_old failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2086,14 +2091,14 @@ static int prepare_statements(void) {
                            "SELECT COALESCE(SUM(size), 0) FROM images WHERE retention_policy = 2",
                            -1, &s_db.stmt_image_cache_total_size, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare image_cache_total_size failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare image_cache_total_size failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM images WHERE id = ?", -1,
                            &s_db.stmt_image_delete_cache_lru, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare image_delete_cache_lru failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare image_delete_cache_lru failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2103,7 +2108,7 @@ static int prepare_statements(void) {
        "ORDER BY created_at ASC LIMIT 100",
        -1, &s_db.stmt_image_get_expired_ids, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare image_get_expired_ids failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare image_get_expired_ids failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2112,14 +2117,14 @@ static int prepare_statements(void) {
                            "ORDER BY COALESCE(last_accessed, created_at) ASC",
                            -1, &s_db.stmt_image_get_cache_lru_ids, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare image_get_cache_lru_ids failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare image_get_cache_lru_ids failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "SELECT COUNT(*), COALESCE(SUM(size), 0) FROM images", -1,
                            &s_db.stmt_image_stats, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare image_stats failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare image_stats failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2130,7 +2135,7 @@ static int prepare_statements(void) {
                            "VALUES (?, ?, ?, ?, ?, ?)",
                            -1, &s_db.stmt_memory_fact_create, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare memory_fact_create failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare memory_fact_create failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2140,7 +2145,7 @@ static int prepare_statements(void) {
        "access_count, superseded_by FROM memory_facts WHERE id = ?",
        -1, &s_db.stmt_memory_fact_get, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare memory_fact_get failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare memory_fact_get failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2152,7 +2157,7 @@ static int prepare_statements(void) {
        "ORDER BY confidence DESC LIMIT ? OFFSET ?",
        -1, &s_db.stmt_memory_fact_list, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare memory_fact_list failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare memory_fact_list failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2164,7 +2169,7 @@ static int prepare_statements(void) {
        "ORDER BY confidence DESC LIMIT ?",
        -1, &s_db.stmt_memory_fact_search, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare memory_fact_search failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare memory_fact_search failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2179,29 +2184,29 @@ static int prepare_statements(void) {
                            "WHERE id = ? AND user_id = ?",
                            -1, &s_db.stmt_memory_fact_update_access, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare memory_fact_update_access failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare memory_fact_update_access failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "UPDATE memory_facts SET confidence = ? WHERE id = ?", -1,
                            &s_db.stmt_memory_fact_update_confidence, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare memory_fact_update_confidence failed: %s",
-                sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare memory_fact_update_confidence failed: %s",
+                 sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "UPDATE memory_facts SET superseded_by = ? WHERE id = ?", -1,
                            &s_db.stmt_memory_fact_supersede, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare memory_fact_supersede failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare memory_fact_supersede failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM memory_facts WHERE id = ? AND user_id = ?", -1,
                            &s_db.stmt_memory_fact_delete, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare memory_fact_delete failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare memory_fact_delete failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2212,7 +2217,7 @@ static int prepare_statements(void) {
                            "ORDER BY confidence DESC LIMIT 5",
                            -1, &s_db.stmt_memory_fact_find_similar, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare memory_fact_find_similar failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare memory_fact_find_similar failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2221,7 +2226,7 @@ static int prepare_statements(void) {
                            "WHERE user_id = ? AND normalized_hash = ? AND superseded_by IS NULL",
                            -1, &s_db.stmt_memory_fact_find_by_hash, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare memory_fact_find_by_hash failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare memory_fact_find_by_hash failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2231,8 +2236,8 @@ static int prepare_statements(void) {
        "AND created_at < ?",
        -1, &s_db.stmt_memory_fact_prune_superseded, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare memory_fact_prune_superseded failed: %s",
-                sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare memory_fact_prune_superseded failed: %s",
+                 sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2241,7 +2246,7 @@ static int prepare_statements(void) {
                            "AND last_accessed < ? AND confidence < ?",
                            -1, &s_db.stmt_memory_fact_prune_stale, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare memory_fact_prune_stale failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare memory_fact_prune_stale failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2255,7 +2260,7 @@ static int prepare_statements(void) {
        "reinforcement_count=reinforcement_count+1",
        -1, &s_db.stmt_memory_pref_upsert, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare memory_pref_upsert failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare memory_pref_upsert failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2265,7 +2270,7 @@ static int prepare_statements(void) {
        "reinforcement_count FROM memory_preferences WHERE user_id = ? AND category = ?",
        -1, &s_db.stmt_memory_pref_get, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare memory_pref_get failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare memory_pref_get failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2276,7 +2281,7 @@ static int prepare_statements(void) {
        "LIMIT ? OFFSET ?",
        -1, &s_db.stmt_memory_pref_list, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare memory_pref_list failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare memory_pref_list failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2288,7 +2293,7 @@ static int prepare_statements(void) {
        "ORDER BY confidence DESC LIMIT ?",
        -1, &s_db.stmt_memory_pref_search, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare memory_pref_search failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare memory_pref_search failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2296,7 +2301,7 @@ static int prepare_statements(void) {
                            "DELETE FROM memory_preferences WHERE user_id = ? AND category = ?", -1,
                            &s_db.stmt_memory_pref_delete, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare memory_pref_delete failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare memory_pref_delete failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2307,7 +2312,7 @@ static int prepare_statements(void) {
        "created_at, message_count, duration_seconds) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
        -1, &s_db.stmt_memory_summary_create, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare memory_summary_create failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare memory_summary_create failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2318,15 +2323,15 @@ static int prepare_statements(void) {
        "WHERE user_id = ? AND consolidated = 0 ORDER BY created_at DESC LIMIT ? OFFSET ?",
        -1, &s_db.stmt_memory_summary_list, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare memory_summary_list failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare memory_summary_list failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "UPDATE memory_summaries SET consolidated = 1 WHERE id = ?", -1,
                            &s_db.stmt_memory_summary_mark_consolidated, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare memory_summary_mark_consolidated failed: %s",
-                sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare memory_summary_mark_consolidated failed: %s",
+                 sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2338,7 +2343,7 @@ static int prepare_statements(void) {
        "ORDER BY created_at DESC LIMIT ?",
        -1, &s_db.stmt_memory_summary_search, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare memory_summary_search failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare memory_summary_search failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2351,7 +2356,7 @@ static int prepare_statements(void) {
        "AND created_at >= ? ORDER BY confidence DESC LIMIT ?",
        -1, &s_db.stmt_memory_fact_search_since, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare memory_fact_search_since failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare memory_fact_search_since failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2363,7 +2368,8 @@ static int prepare_statements(void) {
        "AND created_at >= ? ORDER BY created_at DESC LIMIT ?",
        -1, &s_db.stmt_memory_summary_search_since, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare memory_summary_search_since failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare memory_summary_search_since failed: %s",
+                 sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2375,7 +2381,7 @@ static int prepare_statements(void) {
        "ORDER BY created_at DESC LIMIT ?",
        -1, &s_db.stmt_memory_fact_list_since, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare memory_fact_list_since failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare memory_fact_list_since failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2387,7 +2393,7 @@ static int prepare_statements(void) {
        "ORDER BY created_at DESC LIMIT ?",
        -1, &s_db.stmt_memory_summary_list_since, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare memory_summary_list_since failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare memory_summary_list_since failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2396,7 +2402,7 @@ static int prepare_statements(void) {
                            "SELECT last_extracted_msg_count FROM conversations WHERE id = ?", -1,
                            &s_db.stmt_conv_get_last_extracted, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare conv_get_last_extracted failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare conv_get_last_extracted failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2404,7 +2410,7 @@ static int prepare_statements(void) {
                            "UPDATE conversations SET last_extracted_msg_count = ? WHERE id = ?", -1,
                            &s_db.stmt_conv_set_last_extracted, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare conv_set_last_extracted failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare conv_set_last_extracted failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2414,7 +2420,7 @@ static int prepare_statements(void) {
                            "WHERE id = ? AND user_id = ?",
                            -1, &s_db.stmt_conv_set_private, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare conv_set_private failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare conv_set_private failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2424,7 +2430,7 @@ static int prepare_statements(void) {
                            "WHERE id = ? AND user_id = ? AND title_locked = 0",
                            -1, &s_db.stmt_conv_auto_title, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare conv_auto_title failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare conv_auto_title failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2433,7 +2439,7 @@ static int prepare_statements(void) {
                            "WHERE id = ? AND user_id = ?",
                            -1, &s_db.stmt_conv_set_title_locked, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare conv_set_title_locked failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare conv_set_title_locked failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2443,7 +2449,7 @@ static int prepare_statements(void) {
                            "WHERE id = ? AND user_id = ?",
                            -1, &s_db.stmt_memory_fact_update_embedding, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare fact_update_embedding failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare fact_update_embedding failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2453,7 +2459,7 @@ static int prepare_statements(void) {
                            "ORDER BY confidence DESC LIMIT ?",
                            -1, &s_db.stmt_memory_fact_get_embeddings, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare fact_get_embeddings failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare fact_get_embeddings failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2464,7 +2470,8 @@ static int prepare_statements(void) {
                            "ORDER BY created_at ASC LIMIT ?",
                            -1, &s_db.stmt_memory_fact_list_without_embedding, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare fact_list_without_embedding failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare fact_list_without_embedding failed: %s",
+                 sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2480,7 +2487,7 @@ static int prepare_statements(void) {
        "RETURNING id, mention_count",
        -1, &s_db.stmt_memory_entity_upsert, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare entity_upsert failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare entity_upsert failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2490,7 +2497,7 @@ static int prepare_statements(void) {
                            "WHERE user_id = ? AND canonical_name = ?",
                            -1, &s_db.stmt_memory_entity_get_by_name, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare entity_get_by_name failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare entity_get_by_name failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2499,7 +2506,7 @@ static int prepare_statements(void) {
                            "WHERE id = ? AND user_id = ?",
                            -1, &s_db.stmt_memory_entity_update_embedding, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare entity_update_embedding failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare entity_update_embedding failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2510,7 +2517,7 @@ static int prepare_statements(void) {
                            "ORDER BY mention_count DESC LIMIT ?",
                            -1, &s_db.stmt_memory_entity_get_embeddings, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare entity_get_embeddings failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare entity_get_embeddings failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2520,7 +2527,7 @@ static int prepare_statements(void) {
                            "VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%s','now'))",
                            -1, &s_db.stmt_memory_relation_create, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare relation_create failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare relation_create failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2532,7 +2539,7 @@ static int prepare_statements(void) {
                            "WHERE r.user_id = ? AND r.subject_entity_id = ? LIMIT ?",
                            -1, &s_db.stmt_memory_relation_list_by_subject, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare relation_list_by_subject failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare relation_list_by_subject failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2544,7 +2551,7 @@ static int prepare_statements(void) {
                            "WHERE r.user_id = ? AND r.object_entity_id = ? LIMIT ?",
                            -1, &s_db.stmt_memory_relation_list_by_object, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare relation_list_by_object failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare relation_list_by_object failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2556,14 +2563,14 @@ static int prepare_statements(void) {
                            "ORDER BY mention_count DESC LIMIT ? OFFSET ?",
                            -1, &s_db.stmt_memory_entity_search, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare entity_search failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare entity_search failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM memory_entities WHERE id = ? AND user_id = ?", -1,
                            &s_db.stmt_memory_entity_delete, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare entity_delete failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare entity_delete failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2572,7 +2579,7 @@ static int prepare_statements(void) {
                            "WHERE id = ? AND user_id = ?",
                            -1, &s_db.stmt_memory_entity_set_photo, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare entity_set_photo failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare entity_set_photo failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2581,7 +2588,7 @@ static int prepare_statements(void) {
                            "WHERE id = ? AND user_id = ?",
                            -1, &s_db.stmt_memory_entity_get_photo, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare entity_get_photo failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare entity_get_photo failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2590,7 +2597,7 @@ static int prepare_statements(void) {
                            "WHERE user_id = ? AND (subject_entity_id = ? OR object_entity_id = ?)",
                            -1, &s_db.stmt_memory_relation_delete_by_entity, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare relation_delete_by_entity failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare relation_delete_by_entity failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2603,7 +2610,7 @@ static int prepare_statements(void) {
        "tier=excluded.tier, last_seen=excluded.last_seen",
        -1, &s_db.stmt_satellite_upsert, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare satellite_upsert failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare satellite_upsert failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2613,21 +2620,21 @@ static int prepare_statements(void) {
        "FROM satellite_mappings WHERE uuid = ?",
        -1, &s_db.stmt_satellite_get, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare satellite_get failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare satellite_get failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM satellite_mappings WHERE uuid = ?", -1,
                            &s_db.stmt_satellite_delete, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare satellite_delete failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare satellite_delete failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "UPDATE satellite_mappings SET user_id = ? WHERE uuid = ?", -1,
                            &s_db.stmt_satellite_update_user, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare satellite_update_user failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare satellite_update_user failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2635,21 +2642,21 @@ static int prepare_statements(void) {
                            "UPDATE satellite_mappings SET location = ?, ha_area = ? WHERE uuid = ?",
                            -1, &s_db.stmt_satellite_update_location, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare satellite_update_location failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare satellite_update_location failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "UPDATE satellite_mappings SET enabled = ? WHERE uuid = ?", -1,
                            &s_db.stmt_satellite_set_enabled, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare satellite_set_enabled failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare satellite_set_enabled failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "UPDATE satellite_mappings SET last_seen = ? WHERE uuid = ?",
                            -1, &s_db.stmt_satellite_update_last_seen, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare satellite_update_last_seen failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare satellite_update_last_seen failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2659,7 +2666,7 @@ static int prepare_statements(void) {
        "FROM satellite_mappings ORDER BY name ASC",
        -1, &s_db.stmt_satellite_list, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare satellite_list failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare satellite_list failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2670,7 +2677,7 @@ static int prepare_statements(void) {
        "num_chunks, is_global, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
        -1, &s_db.stmt_doc_create, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare doc_create failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare doc_create failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2679,7 +2686,7 @@ static int prepare_statements(void) {
                            "num_chunks, is_global, created_at FROM documents WHERE id = ?",
                            -1, &s_db.stmt_doc_get, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare doc_get failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare doc_get failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2688,7 +2695,7 @@ static int prepare_statements(void) {
                            "AND (user_id = ? OR is_global = 1)",
                            -1, &s_db.stmt_doc_get_by_hash, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare doc_get_by_hash failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare doc_get_by_hash failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2699,7 +2706,7 @@ static int prepare_statements(void) {
                            "LIMIT ? OFFSET ?",
                            -1, &s_db.stmt_doc_list, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare doc_list failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare doc_list failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2711,28 +2718,28 @@ static int prepare_statements(void) {
                            "ORDER BY d.created_at DESC LIMIT ? OFFSET ?",
                            -1, &s_db.stmt_doc_list_all, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare doc_list_all failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare doc_list_all failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "UPDATE documents SET is_global = ? WHERE id = ?", -1,
                            &s_db.stmt_doc_update_global, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare doc_update_global failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare doc_update_global failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM documents WHERE id = ?", -1, &s_db.stmt_doc_delete,
                            NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare doc_delete failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare doc_delete failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "SELECT COUNT(*) FROM documents WHERE user_id = ?", -1,
                            &s_db.stmt_doc_count_user, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare doc_count_user failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare doc_count_user failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2742,7 +2749,7 @@ static int prepare_statements(void) {
        "embedding_norm) VALUES (?, ?, ?, ?, ?)",
        -1, &s_db.stmt_doc_chunk_create, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare doc_chunk_create failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare doc_chunk_create failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2754,7 +2761,7 @@ static int prepare_statements(void) {
                            "LIMIT ?",
                            -1, &s_db.stmt_doc_chunk_search, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare doc_chunk_search failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare doc_chunk_search failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2768,7 +2775,7 @@ static int prepare_statements(void) {
                            "THEN 0 ELSE 1 END, created_at DESC LIMIT 1",
                            -1, &s_db.stmt_doc_find_by_name, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare doc_find_by_name failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare doc_find_by_name failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2777,7 +2784,7 @@ static int prepare_statements(void) {
                            "WHERE document_id = ? ORDER BY chunk_index LIMIT ? OFFSET ?",
                            -1, &s_db.stmt_doc_chunk_read, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare doc_chunk_read failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare doc_chunk_read failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2791,7 +2798,7 @@ static int prepare_statements(void) {
        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
        -1, &s_db.stmt_cal_acct_create, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare cal_acct_create failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare cal_acct_create failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2802,7 +2809,7 @@ static int prepare_statements(void) {
                            "FROM calendar_accounts WHERE id = ?",
                            -1, &s_db.stmt_cal_acct_get, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare cal_acct_get failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare cal_acct_get failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2814,7 +2821,7 @@ static int prepare_statements(void) {
                            "WHERE user_id = ? ORDER BY name",
                            -1, &s_db.stmt_cal_acct_list, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare cal_acct_list failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare cal_acct_list failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2826,7 +2833,7 @@ static int prepare_statements(void) {
                            "WHERE enabled = 1 ORDER BY last_sync ASC",
                            -1, &s_db.stmt_cal_acct_list_enabled, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare cal_acct_list_enabled failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare cal_acct_list_enabled failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2836,21 +2843,21 @@ static int prepare_statements(void) {
                            "WHERE id=?",
                            -1, &s_db.stmt_cal_acct_update, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare cal_acct_update failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare cal_acct_update failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM calendar_accounts WHERE id = ?", -1,
                            &s_db.stmt_cal_acct_delete, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare cal_acct_delete failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare cal_acct_delete failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "UPDATE calendar_accounts SET last_sync = ? WHERE id = ?", -1,
                            &s_db.stmt_cal_acct_update_sync, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare cal_acct_update_sync failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare cal_acct_update_sync failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2859,21 +2866,21 @@ static int prepare_statements(void) {
                            "calendar_home_url = ? WHERE id = ?",
                            -1, &s_db.stmt_cal_acct_update_discovery, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare cal_acct_update_discovery failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare cal_acct_update_discovery failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "UPDATE calendar_accounts SET read_only = ? WHERE id = ?", -1,
                            &s_db.stmt_cal_acct_set_read_only, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare cal_acct_set_read_only failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare cal_acct_set_read_only failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "UPDATE calendar_accounts SET enabled = ? WHERE id = ?", -1,
                            &s_db.stmt_cal_acct_set_enabled, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare cal_acct_set_enabled failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare cal_acct_set_enabled failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2882,7 +2889,7 @@ static int prepare_statements(void) {
                            "color, is_active, ctag, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                            -1, &s_db.stmt_cal_cal_create, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare cal_cal_create failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare cal_cal_create failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2891,7 +2898,7 @@ static int prepare_statements(void) {
                            "is_active, ctag, created_at FROM calendar_calendars WHERE id = ?",
                            -1, &s_db.stmt_cal_cal_get, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare cal_cal_get failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare cal_cal_get failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2901,28 +2908,28 @@ static int prepare_statements(void) {
                            "WHERE account_id = ? ORDER BY display_name",
                            -1, &s_db.stmt_cal_cal_list, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare cal_cal_list failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare cal_cal_list failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "UPDATE calendar_calendars SET ctag = ? WHERE id = ?", -1,
                            &s_db.stmt_cal_cal_update_ctag, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare cal_cal_update_ctag failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare cal_cal_update_ctag failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "UPDATE calendar_calendars SET is_active = ? WHERE id = ?", -1,
                            &s_db.stmt_cal_cal_set_active, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare cal_cal_set_active failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare cal_cal_set_active failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM calendar_calendars WHERE id = ?", -1,
                            &s_db.stmt_cal_cal_delete, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare cal_cal_delete failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare cal_cal_delete failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2935,7 +2942,7 @@ static int prepare_statements(void) {
                            "ORDER BY c.display_name",
                            -1, &s_db.stmt_cal_cal_active_for_user, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare cal_cal_active_for_user failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare cal_cal_active_for_user failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2947,7 +2954,7 @@ static int prepare_statements(void) {
        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
        -1, &s_db.stmt_cal_evt_upsert, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare cal_evt_upsert failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare cal_evt_upsert failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2961,21 +2968,21 @@ static int prepare_statements(void) {
                            "WHERE e.uid = ? AND a.user_id = ? LIMIT 1",
                            -1, &s_db.stmt_cal_evt_get_by_uid, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare cal_evt_get_by_uid failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare cal_evt_get_by_uid failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM calendar_events WHERE id = ?", -1,
                            &s_db.stmt_cal_evt_delete, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare cal_evt_delete failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare cal_evt_delete failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM calendar_events WHERE calendar_id = ?", -1,
                            &s_db.stmt_cal_evt_delete_by_cal, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare cal_evt_delete_by_cal failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare cal_evt_delete_by_cal failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -2986,14 +2993,14 @@ static int prepare_statements(void) {
        "recurrence_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
        -1, &s_db.stmt_cal_occ_insert, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare cal_occ_insert failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare cal_occ_insert failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM calendar_occurrences WHERE event_id = ?", -1,
                            &s_db.stmt_cal_occ_delete_for_event, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare cal_occ_delete_for_event failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare cal_occ_delete_for_event failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -3009,7 +3016,7 @@ static int prepare_statements(void) {
                            "ORDER BY o.dtstart",
                            -1, &s_db.stmt_cal_occ_in_range, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare cal_occ_in_range failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare cal_occ_in_range failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -3025,7 +3032,7 @@ static int prepare_statements(void) {
                            "ORDER BY o.dtstart_date",
                            -1, &s_db.stmt_cal_occ_allday_in_range, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare cal_occ_allday_in_range failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare cal_occ_allday_in_range failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -3042,7 +3049,7 @@ static int prepare_statements(void) {
        "ORDER BY o.dtstart LIMIT ?",
        -1, &s_db.stmt_cal_occ_search, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare cal_occ_search failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare cal_occ_search failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -3058,7 +3065,7 @@ static int prepare_statements(void) {
                            "ORDER BY o.dtstart LIMIT 1",
                            -1, &s_db.stmt_cal_occ_next, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare cal_occ_next failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare cal_occ_next failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -3069,7 +3076,7 @@ static int prepare_statements(void) {
                            "scopes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                            -1, &s_db.stmt_oauth_store, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare oauth_store failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare oauth_store failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -3078,7 +3085,7 @@ static int prepare_statements(void) {
                            "WHERE user_id = ? AND provider = ? AND account_key = ?",
                            -1, &s_db.stmt_oauth_load, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare oauth_load failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare oauth_load failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -3087,7 +3094,7 @@ static int prepare_statements(void) {
                            "WHERE user_id = ? AND provider = ? AND account_key = ?",
                            -1, &s_db.stmt_oauth_delete, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare oauth_delete failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare oauth_delete failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -3096,7 +3103,7 @@ static int prepare_statements(void) {
                            "WHERE user_id = ? AND provider = ? AND account_key = ?",
                            -1, &s_db.stmt_oauth_exists, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare oauth_exists failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare oauth_exists failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -3105,7 +3112,7 @@ static int prepare_statements(void) {
                            "WHERE user_id = ? AND provider = ?",
                            -1, &s_db.stmt_oauth_list_accounts, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare oauth_list_accounts failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare oauth_list_accounts failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -3118,7 +3125,7 @@ static int prepare_statements(void) {
        "AND c.field_type LIKE ? ORDER BY e.name LIMIT ?",
        -1, &s_db.stmt_contacts_find, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare contacts_find failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare contacts_find failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -3129,14 +3136,14 @@ static int prepare_statements(void) {
        "(SELECT 1 FROM memory_entities WHERE id = ? AND user_id = ?)",
        -1, &s_db.stmt_contacts_add, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare contacts_add failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare contacts_add failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM contacts WHERE id = ? AND user_id = ?", -1,
                            &s_db.stmt_contacts_delete, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare contacts_delete failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare contacts_delete failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -3148,7 +3155,7 @@ static int prepare_statements(void) {
        "ORDER BY e.name LIMIT ? OFFSET ?",
        -1, &s_db.stmt_contacts_list, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare contacts_list failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare contacts_list failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -3157,14 +3164,14 @@ static int prepare_statements(void) {
        "UPDATE contacts SET field_type = ?, value = ?, label = ? WHERE id = ? AND user_id = ?", -1,
        &s_db.stmt_contacts_update, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare contacts_update failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare contacts_update failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "SELECT COUNT(*) FROM contacts WHERE user_id = ?", -1,
                            &s_db.stmt_contacts_count, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare contacts_count failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare contacts_count failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -3178,7 +3185,7 @@ static int prepare_statements(void) {
        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
        -1, &s_db.stmt_email_acct_create, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare email_acct_create failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare email_acct_create failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -3191,7 +3198,7 @@ static int prepare_statements(void) {
        "FROM email_accounts WHERE id = ?",
        -1, &s_db.stmt_email_acct_get, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare email_acct_get failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare email_acct_get failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -3204,7 +3211,7 @@ static int prepare_statements(void) {
        "FROM email_accounts WHERE user_id = ? ORDER BY name",
        -1, &s_db.stmt_email_acct_list, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare email_acct_list failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare email_acct_list failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -3216,28 +3223,28 @@ static int prepare_statements(void) {
        "max_recent=?, max_body_chars=? WHERE id=?",
        -1, &s_db.stmt_email_acct_update, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare email_acct_update failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare email_acct_update failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM email_accounts WHERE id = ?", -1,
                            &s_db.stmt_email_acct_delete, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare email_acct_delete failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare email_acct_delete failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "UPDATE email_accounts SET read_only = ? WHERE id = ?", -1,
                            &s_db.stmt_email_acct_set_read_only, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare email_acct_set_read_only failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare email_acct_set_read_only failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
    rc = sqlite3_prepare_v2(s_db.db, "UPDATE email_accounts SET enabled = ? WHERE id = ?", -1,
                            &s_db.stmt_email_acct_set_enabled, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare email_acct_set_enabled failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare email_acct_set_enabled failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -3639,17 +3646,17 @@ int auth_db_internal_verify_permissions(const char *path) {
       if (errno == ENOENT) {
          return AUTH_DB_SUCCESS;
       }
-      LOG_ERROR("auth_db: stat(%s) failed: %s", path, strerror(errno));
+      OLOG_ERROR("auth_db: stat(%s) failed: %s", path, strerror(errno));
       return AUTH_DB_FAILURE;
    }
 
    /* Check for world/group readable or writable */
    if ((st.st_mode & 0077) != 0) {
-      LOG_WARNING("auth_db: SECURITY: %s has unsafe permissions %04o, fixing to 0600", path,
-                  st.st_mode & 0777);
+      OLOG_WARNING("auth_db: SECURITY: %s has unsafe permissions %04o, fixing to 0600", path,
+                   st.st_mode & 0777);
 
       if (chmod(path, 0600) != 0) {
-         LOG_ERROR("auth_db: failed to fix permissions on %s: %s", path, strerror(errno));
+         OLOG_ERROR("auth_db: failed to fix permissions on %s: %s", path, strerror(errno));
          return AUTH_DB_FAILURE;
       }
    }
@@ -3688,7 +3695,7 @@ int auth_db_init(const char *db_path) {
    pthread_mutex_lock(&s_db.mutex);
 
    if (s_db.initialized) {
-      LOG_WARNING("auth_db_init: already initialized");
+      OLOG_WARNING("auth_db_init: already initialized");
       pthread_mutex_unlock(&s_db.mutex);
       return AUTH_DB_SUCCESS;
    }
@@ -3718,8 +3725,8 @@ int auth_db_init(const char *db_path) {
    umask(old_umask);
 
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db_init: failed to open %s: %s", path,
-                s_db.db ? sqlite3_errmsg(s_db.db) : "unknown");
+      OLOG_ERROR("auth_db_init: failed to open %s: %s", path,
+                 s_db.db ? sqlite3_errmsg(s_db.db) : "unknown");
       if (s_db.db) {
          sqlite3_close(s_db.db);
          s_db.db = NULL;
@@ -3740,7 +3747,7 @@ int auth_db_init(const char *db_path) {
    char *errmsg = NULL;
    rc = sqlite3_exec(s_db.db, "PRAGMA journal_mode=WAL", NULL, NULL, &errmsg);
    if (rc != SQLITE_OK) {
-      LOG_WARNING("auth_db: failed to enable WAL mode: %s", errmsg ? errmsg : "unknown");
+      OLOG_WARNING("auth_db: failed to enable WAL mode: %s", errmsg ? errmsg : "unknown");
       sqlite3_free(errmsg);
       /* Continue anyway - DELETE mode works too */
    }
@@ -3774,7 +3781,7 @@ int auth_db_init(const char *db_path) {
    s_db.initialized = true;
    s_db.last_cleanup = time(NULL);
 
-   LOG_INFO("auth_db_init: initialized at %s", path);
+   OLOG_INFO("auth_db_init: initialized at %s", path);
 
    pthread_mutex_unlock(&s_db.mutex);
    return AUTH_DB_SUCCESS;
@@ -3804,7 +3811,7 @@ void auth_db_shutdown(void) {
 
    s_db.initialized = false;
 
-   LOG_INFO("auth_db_shutdown: complete");
+   OLOG_INFO("auth_db_shutdown: complete");
 
    pthread_mutex_unlock(&s_db.mutex);
 }

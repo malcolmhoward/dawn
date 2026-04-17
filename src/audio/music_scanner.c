@@ -73,7 +73,7 @@ static int g_provider_count = 0;
 static void *scanner_thread_func(void *arg) {
    (void)arg;
 
-   LOG_INFO("Music scanner thread started (interval: %d min)", g_scan_interval_min);
+   OLOG_INFO("Music scanner thread started (interval: %d min)", g_scan_interval_min);
 
    pthread_mutex_lock(&g_scanner_mutex);
 
@@ -86,18 +86,18 @@ static void *scanner_thread_func(void *arg) {
 
       /* Phase 1: Local filesystem scan (if configured) */
       if (g_music_dir[0]) {
-         LOG_INFO("Starting local music scan: %s", g_music_dir);
+         OLOG_INFO("Starting local music scan: %s", g_music_dir);
          music_db_scan_stats_t stats;
          int result = music_db_scan(g_music_dir, &stats);
          if (result != 0) {
-            LOG_ERROR("Local music scan failed");
+            OLOG_ERROR("Local music scan failed");
          }
       }
 
       /* Phase 2: Remote source syncs (registered providers) */
       for (int i = 0; i < g_provider_count; i++) {
          if (g_providers[i]->is_configured()) {
-            LOG_INFO("Syncing %s source...", music_source_name(g_providers[i]->source));
+            OLOG_INFO("Syncing %s source...", music_source_name(g_providers[i]->source));
             g_providers[i]->sync();
          }
       }
@@ -109,8 +109,8 @@ static void *scanner_thread_func(void *arg) {
       pthread_mutex_lock(&g_scanner_mutex);
 
       g_initial_scan_complete = true;
-      LOG_INFO("Music scan cycle complete: %d tracks total (%.2fs)", music_db_get_track_count(),
-               scan_secs);
+      OLOG_INFO("Music scan cycle complete: %d tracks total (%.2fs)", music_db_get_track_count(),
+                scan_secs);
 
       /* Clear any pending rescan request that accumulated during this scan */
       g_rescan_requested = false;
@@ -137,7 +137,7 @@ static void *scanner_thread_func(void *arg) {
    }
 
    pthread_mutex_unlock(&g_scanner_mutex);
-   LOG_INFO("Music scanner thread exiting");
+   OLOG_INFO("Music scanner thread exiting");
    return NULL;
 }
 
@@ -149,15 +149,15 @@ int music_scanner_register_source(const music_source_provider_t *provider) {
    if (!provider)
       return -1;
    if (g_running) {
-      LOG_ERROR("music_scanner: cannot register provider while scanner is running");
+      OLOG_ERROR("music_scanner: cannot register provider while scanner is running");
       return -1;
    }
    if (g_provider_count >= MAX_PROVIDERS) {
-      LOG_ERROR("music_scanner: max providers (%d) reached", MAX_PROVIDERS);
+      OLOG_ERROR("music_scanner: max providers (%d) reached", MAX_PROVIDERS);
       return -1;
    }
    g_providers[g_provider_count++] = provider;
-   LOG_INFO("music_scanner: registered %s source provider", music_source_name(provider->source));
+   OLOG_INFO("music_scanner: registered %s source provider", music_source_name(provider->source));
    return 0;
 }
 
@@ -166,7 +166,7 @@ int music_scanner_start(const char *music_dir, int scan_interval_min, const char
    bool have_providers = (g_provider_count > 0);
 
    if (!have_local && !have_providers) {
-      LOG_ERROR("music_scanner_start: No music directory and no providers registered");
+      OLOG_ERROR("music_scanner_start: No music directory and no providers registered");
       return -1;
    }
 
@@ -175,31 +175,31 @@ int music_scanner_start(const char *music_dir, int scan_interval_min, const char
       /* Canonicalize path: expand tilde, resolve symlinks and ".." components */
       /* This prevents path traversal attacks via config (e.g., ~/Music/../../../etc) */
       if (!path_canonicalize(music_dir, canonical_dir, sizeof(canonical_dir))) {
-         LOG_ERROR("music_scanner_start: Cannot canonicalize path '%s' (does it exist?)",
-                   music_dir);
+         OLOG_ERROR("music_scanner_start: Cannot canonicalize path '%s' (does it exist?)",
+                    music_dir);
          return -1;
       }
 
       /* Validate music directory is accessible */
       struct stat st;
       if (stat(canonical_dir, &st) != 0) {
-         LOG_ERROR("music_scanner_start: Cannot access music directory '%s': %s", canonical_dir,
-                   strerror(errno));
+         OLOG_ERROR("music_scanner_start: Cannot access music directory '%s': %s", canonical_dir,
+                    strerror(errno));
          return -1;
       }
       if (!S_ISDIR(st.st_mode)) {
-         LOG_ERROR("music_scanner_start: Path is not a directory: %s", canonical_dir);
+         OLOG_ERROR("music_scanner_start: Path is not a directory: %s", canonical_dir);
          return -1;
       }
       if (access(canonical_dir, R_OK | X_OK) != 0) {
-         LOG_ERROR("music_scanner_start: No read/execute permission for directory '%s'",
-                   canonical_dir);
+         OLOG_ERROR("music_scanner_start: No read/execute permission for directory '%s'",
+                    canonical_dir);
          return -1;
       }
    }
 
    if (!music_db_is_initialized()) {
-      LOG_ERROR("music_scanner_start: Music database not initialized");
+      OLOG_ERROR("music_scanner_start: Music database not initialized");
       return -1;
    }
 
@@ -207,8 +207,8 @@ int music_scanner_start(const char *music_dir, int scan_interval_min, const char
    for (int i = 0; i < g_provider_count; i++) {
       if (g_providers[i]->is_configured()) {
          if (g_providers[i]->init(db_path) != 0) {
-            LOG_WARNING("music_scanner: failed to init %s provider",
-                        music_source_name(g_providers[i]->source));
+            OLOG_WARNING("music_scanner: failed to init %s provider",
+                         music_source_name(g_providers[i]->source));
          }
       }
    }
@@ -216,7 +216,7 @@ int music_scanner_start(const char *music_dir, int scan_interval_min, const char
    pthread_mutex_lock(&g_scanner_mutex);
 
    if (g_running) {
-      LOG_WARNING("Music scanner already running");
+      OLOG_WARNING("Music scanner already running");
       pthread_mutex_unlock(&g_scanner_mutex);
       return 0;
    }
@@ -232,8 +232,8 @@ int music_scanner_start(const char *music_dir, int scan_interval_min, const char
    if (scan_interval_min < 0) {
       scan_interval_min = MUSIC_SCANNER_DEFAULT_INTERVAL_MIN;
    } else if (scan_interval_min > 0 && scan_interval_min < MUSIC_SCANNER_MIN_INTERVAL_MIN) {
-      LOG_WARNING("Scan interval %d min too low, using minimum of %d min", scan_interval_min,
-                  MUSIC_SCANNER_MIN_INTERVAL_MIN);
+      OLOG_WARNING("Scan interval %d min too low, using minimum of %d min", scan_interval_min,
+                   MUSIC_SCANNER_MIN_INTERVAL_MIN);
       scan_interval_min = MUSIC_SCANNER_MIN_INTERVAL_MIN;
    }
    g_scan_interval_min = scan_interval_min;
@@ -245,15 +245,15 @@ int music_scanner_start(const char *music_dir, int scan_interval_min, const char
 
    int result = pthread_create(&g_scanner_thread, NULL, scanner_thread_func, NULL);
    if (result != 0) {
-      LOG_ERROR("Failed to create scanner thread: %d", result);
+      OLOG_ERROR("Failed to create scanner thread: %d", result);
       g_running = false;
       pthread_mutex_unlock(&g_scanner_mutex);
       return -1;
    }
 
    pthread_mutex_unlock(&g_scanner_mutex);
-   LOG_INFO("Music scanner started: %s (interval: %d min, providers: %d)",
-            have_local ? canonical_dir : "(no local dir)", scan_interval_min, g_provider_count);
+   OLOG_INFO("Music scanner started: %s (interval: %d min, providers: %d)",
+             have_local ? canonical_dir : "(no local dir)", scan_interval_min, g_provider_count);
    return 0;
 }
 
@@ -278,7 +278,7 @@ void music_scanner_stop(void) {
       g_providers[i]->cleanup();
    }
 
-   LOG_INFO("Music scanner stopped");
+   OLOG_INFO("Music scanner stopped");
 }
 
 bool music_scanner_is_running(void) {
@@ -294,7 +294,7 @@ void music_scanner_trigger_rescan(void) {
    if (g_running) {
       g_rescan_requested = true;
       pthread_cond_signal(&g_scanner_cond);
-      LOG_INFO("Music rescan requested");
+      OLOG_INFO("Music rescan requested");
    }
 
    pthread_mutex_unlock(&g_scanner_mutex);

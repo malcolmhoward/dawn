@@ -131,7 +131,7 @@ static int start_thread(tts_playback_queue_t *q) {
       atomic_store(&q->thread_running, true);
       return 0;
    }
-   LOG_ERROR("TTS queue: failed to create playback thread");
+   OLOG_ERROR("TTS queue: failed to create playback thread");
    return 1;
 }
 

@@ -251,7 +251,7 @@ static int send_doc_success(struct lws *wsi, document_upload_session_t *session,
    /* Build JSON response using json-c */
    json_object *resp = json_object_new_object();
    if (!resp) {
-      LOG_ERROR("webui_documents: json_object_new_object failed");
+      OLOG_ERROR("webui_documents: json_object_new_object failed");
       return send_doc_error(wsi, HTTP_STATUS_INTERNAL_SERVER_ERROR, "JSON construction failed");
    }
 
@@ -474,8 +474,8 @@ int webui_documents_handle_upload_body(struct lws *wsi,
 
    /* Check size limit (content + multipart overhead) */
    if (session->content_len + len > session->max_file_size + 1024) {
-      LOG_WARNING("webui_documents: upload exceeds size limit (%zu + %zu)", session->content_len,
-                  len);
+      OLOG_WARNING("webui_documents: upload exceeds size limit (%zu + %zu)", session->content_len,
+                   len);
       return -1;
    }
 
@@ -489,7 +489,7 @@ int webui_documents_handle_upload_body(struct lws *wsi,
 
       char *new_buf = realloc(session->content_buf, new_cap);
       if (!new_buf) {
-         LOG_ERROR("webui_documents: failed to grow buffer");
+         OLOG_ERROR("webui_documents: failed to grow buffer");
          return -1;
       }
       session->content_buf = new_buf;
@@ -517,8 +517,8 @@ int webui_documents_handle_upload_complete(struct lws *wsi, document_upload_sess
    /* Validate filename has an allowed extension */
    const char *ext = document_get_extension(session->filename);
    if (!document_extension_allowed(ext)) {
-      LOG_WARNING("webui_documents: rejected upload with extension: %s (file: %s)",
-                  ext ? ext : "(none)", session->filename);
+      OLOG_WARNING("webui_documents: rejected upload with extension: %s (file: %s)",
+                   ext ? ext : "(none)", session->filename);
       webui_documents_session_free(session);
       return send_doc_error(wsi, HTTP_STATUS_UNSUPPORTED_MEDIA_TYPE, "Unsupported file type");
    }
@@ -539,7 +539,7 @@ int webui_documents_handle_upload_complete(struct lws *wsi, document_upload_sess
                                                  &extract);
    if (extract_rc != DOC_EXTRACT_SUCCESS) {
       const char *err_msg = document_extract_error_string(extract_rc);
-      LOG_WARNING("webui_documents: extraction failed for %s: %s", session->filename, err_msg);
+      OLOG_WARNING("webui_documents: extraction failed for %s: %s", session->filename, err_msg);
       webui_documents_session_free(session);
       return send_doc_error(wsi, 422, err_msg);
    }
@@ -569,8 +569,8 @@ int webui_documents_handle_upload_complete(struct lws *wsi, document_upload_sess
    sanitize_utf8_for_json(session->content_buf);
    session->content_len = strlen(session->content_buf);
 
-   LOG_INFO("webui_documents: uploaded %s (%zu bytes, %s)", session->filename, session->content_len,
-            ext);
+   OLOG_INFO("webui_documents: uploaded %s (%zu bytes, %s)", session->filename,
+             session->content_len, ext);
 
    /* Send JSON response with extracted content */
    int result = send_doc_success(wsi, session, ext);

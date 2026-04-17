@@ -61,7 +61,7 @@ static bool validate_google_scopes(const char *scopes) {
          }
       }
       if (!valid) {
-         LOG_WARNING("oauth: rejected unknown scope: %s", token);
+         OLOG_WARNING("oauth: rejected unknown scope: %s", token);
          return false;
       }
       token = strtok_r(NULL, " ", &saveptr);
@@ -204,8 +204,8 @@ void handle_oauth_exchange_code(ws_connection_t *conn, json_object *payload) {
                snprintf(account_key, sizeof(account_key), "%s", tokens.email);
             } else {
                snprintf(account_key, sizeof(account_key), "google_%d", conn->auth_user_id);
-               LOG_WARNING("oauth: no email in token response, using fallback key '%s'",
-                           account_key);
+               OLOG_WARNING("oauth: no email in token response, using fallback key '%s'",
+                            account_key);
             }
 
             /* Store tokens — account creation is separate (frontend does it) */
@@ -258,8 +258,8 @@ void handle_oauth_disconnect(ws_connection_t *conn, json_object *payload) {
          const char *account_key = json_object_get_string(key_obj);
          int rc = oauth_revoke_and_delete(&google, conn->auth_user_id, account_key);
          if (rc != 0) {
-            LOG_WARNING("OAuth revocation failed for user %d key %s (tokens deleted locally)",
-                        conn->auth_user_id, account_key);
+            OLOG_WARNING("OAuth revocation failed for user %d key %s (tokens deleted locally)",
+                         conn->auth_user_id, account_key);
          }
          json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
       }

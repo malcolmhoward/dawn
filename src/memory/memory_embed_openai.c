@@ -47,7 +47,7 @@ static char s_api_key[256];
 
 static int openai_init(const char *endpoint, const char *model, const char *api_key) {
    if (!api_key || api_key[0] == '\0') {
-      LOG_ERROR("memory_embed_openai: API key required");
+      OLOG_ERROR("memory_embed_openai: API key required");
       return -1;
    }
 
@@ -68,14 +68,14 @@ static int openai_init(const char *endpoint, const char *model, const char *api_
    strncpy(s_api_key, api_key, sizeof(s_api_key) - 1);
    s_api_key[sizeof(s_api_key) - 1] = '\0';
 
-   LOG_INFO("memory_embed_openai: initialized (endpoint: %s, model: %s)", s_endpoint, s_model);
+   OLOG_INFO("memory_embed_openai: initialized (endpoint: %s, model: %s)", s_endpoint, s_model);
    return 0;
 }
 
 static void openai_cleanup(void) {
    /* Clear API key from memory */
    memset(s_api_key, 0, sizeof(s_api_key));
-   LOG_INFO("memory_embed_openai: cleanup");
+   OLOG_INFO("memory_embed_openai: cleanup");
 }
 
 static int openai_embed(const char *text, float *out, int max_dims, int *out_dims) {
@@ -125,7 +125,7 @@ static int openai_embed(const char *text, float *out, int max_dims, int *out_dim
    json_object_put(req);
 
    if (res != CURLE_OK) {
-      LOG_ERROR("memory_embed_openai: HTTP request failed: %s", curl_easy_strerror(res));
+      OLOG_ERROR("memory_embed_openai: HTTP request failed: %s", curl_easy_strerror(res));
       curl_buffer_free(&buf);
       return -1;
    }
@@ -135,7 +135,7 @@ static int openai_embed(const char *text, float *out, int max_dims, int *out_dim
    curl_buffer_free(&buf);
 
    if (!resp) {
-      LOG_ERROR("memory_embed_openai: failed to parse response");
+      OLOG_ERROR("memory_embed_openai: failed to parse response");
       return -1;
    }
 
@@ -146,7 +146,7 @@ static int openai_embed(const char *text, float *out, int max_dims, int *out_dim
       if (json_object_object_get_ex(resp, "error", &err_obj)) {
          struct json_object *msg;
          if (json_object_object_get_ex(err_obj, "message", &msg)) {
-            LOG_ERROR("memory_embed_openai: API error: %s", json_object_get_string(msg));
+            OLOG_ERROR("memory_embed_openai: API error: %s", json_object_get_string(msg));
          }
       }
       json_object_put(resp);

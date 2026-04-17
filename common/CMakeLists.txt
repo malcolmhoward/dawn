@@ -39,6 +39,7 @@ endif()
 set(DAWN_COMMON_SOURCES
     src/logging.c
     src/logging_common.c
+    src/logging_bridge.c
     src/audio/ring_buffer.c
     src/audio/chime.c
     src/utils/string_utils.c

@@ -291,7 +291,7 @@ static void on_state_callback(const char *state_str, void *user_data) {
    if (ctx) {
       ctx->last_server_activity = time(NULL);
    }
-   LOG_DEBUG("Server state: %s", state_str);
+   OLOG_DEBUG("Server state: %s", state_str);
 }
 
 /* =============================================================================
@@ -303,7 +303,7 @@ static bool ensure_asr_loaded(voice_ctx_t *ctx) {
    if (ctx->asr_loaded)
       return true;
 
-   LOG_INFO("Loading ASR model (%s): %s", ctx->asr_engine_name, ctx->asr_model_path);
+   OLOG_INFO("Loading ASR model (%s): %s", ctx->asr_engine_name, ctx->asr_model_path);
 
    asr_engine_type_t engine_type = ASR_ENGINE_WHISPER;
    if (strcmp(ctx->asr_engine_name, "vosk") == 0) {
@@ -322,12 +322,12 @@ static bool ensure_asr_loaded(voice_ctx_t *ctx) {
 
    ctx->asr = asr_engine_init(&asr_config);
    if (!ctx->asr) {
-      LOG_ERROR("Failed to load ASR model");
+      OLOG_ERROR("Failed to load ASR model");
       return false;
    }
 
    ctx->asr_loaded = true;
-   LOG_INFO("ASR model loaded (%s)", asr_engine_name(engine_type));
+   OLOG_INFO("ASR model loaded (%s)", asr_engine_name(engine_type));
    return true;
 }
 #elif defined(HAVE_ASR_WHISPER)
@@ -335,7 +335,7 @@ static bool ensure_asr_loaded(voice_ctx_t *ctx) {
    if (ctx->asr_loaded)
       return true;
 
-   LOG_INFO("Loading ASR model: %s", ctx->asr_model_path);
+   OLOG_INFO("Loading ASR model: %s", ctx->asr_model_path);
 
    asr_whisper_config_t asr_config = {
       .model_path = ctx->asr_model_path,
@@ -346,18 +346,18 @@ static bool ensure_asr_loaded(voice_ctx_t *ctx) {
 
    ctx->asr = asr_whisper_init(&asr_config);
    if (!ctx->asr) {
-      LOG_ERROR("Failed to load ASR model");
+      OLOG_ERROR("Failed to load ASR model");
       return false;
    }
 
    ctx->asr_loaded = true;
-   LOG_INFO("ASR model loaded");
+   OLOG_INFO("ASR model loaded");
    return true;
 }
 #else
 static bool ensure_asr_loaded(voice_ctx_t *ctx) {
    (void)ctx;
-   LOG_ERROR("ASR not available (built without ASR support)");
+   OLOG_ERROR("ASR not available (built without ASR support)");
    return false;
 }
 #endif
@@ -367,7 +367,7 @@ static bool ensure_tts_loaded(voice_ctx_t *ctx) {
    if (ctx->tts_loaded)
       return true;
 
-   LOG_INFO("Loading TTS model: %s", ctx->tts_model_path);
+   OLOG_INFO("Loading TTS model: %s", ctx->tts_model_path);
 
    tts_piper_config_t tts_config = {
       .model_path = ctx->tts_model_path,
@@ -379,18 +379,18 @@ static bool ensure_tts_loaded(voice_ctx_t *ctx) {
 
    ctx->tts = tts_piper_init(&tts_config);
    if (!ctx->tts) {
-      LOG_ERROR("Failed to load TTS model");
+      OLOG_ERROR("Failed to load TTS model");
       return false;
    }
 
    ctx->tts_loaded = true;
-   LOG_INFO("TTS model loaded");
+   OLOG_INFO("TTS model loaded");
    return true;
 }
 #else
 static bool ensure_tts_loaded(voice_ctx_t *ctx) {
    (void)ctx;
-   LOG_ERROR("TTS not available (built without HAVE_TTS_PIPER)");
+   OLOG_ERROR("TTS not available (built without HAVE_TTS_PIPER)");
    return false;
 }
 #endif
@@ -409,8 +409,8 @@ static void init_wake_words(voice_ctx_t *ctx) {
                ctx->ai_name);
       ctx->wakeWords[i] = ctx->wakeWordBuffers[i];
    }
-   LOG_INFO("Wake words configured for '%s' (e.g., '%s', '%s')", ctx->ai_name, ctx->wakeWords[0],
-            ctx->wakeWords[1]);
+   OLOG_INFO("Wake words configured for '%s' (e.g., '%s', '%s')", ctx->ai_name, ctx->wakeWords[0],
+             ctx->wakeWords[1]);
 }
 
 #ifdef HAVE_ASR_ENGINE
@@ -476,7 +476,7 @@ static bool check_wake_word(voice_ctx_t *ctx, const char *text, char **command_o
    for (size_t i = 0; i < NUM_WAKE_WORDS; i++) {
       char *match = strstr(normalized, ctx->wakeWords[i]);
       if (match != NULL) {
-         LOG_DEBUG("Wake word match: '%s' in '%s'", ctx->wakeWords[i], normalized);
+         OLOG_DEBUG("Wake word match: '%s' in '%s'", ctx->wakeWords[i], normalized);
 
          /* Calculate offset in normalized text where wake word ends */
          size_t norm_end_offset = (match - normalized) + strlen(ctx->wakeWords[i]);
@@ -510,7 +510,7 @@ static bool check_wake_word(voice_ctx_t *ctx, const char *text, char **command_o
                if (*command_out && (*command_out)[0] >= 'a' && (*command_out)[0] <= 'z') {
                   (*command_out)[0] -= 32;
                }
-               LOG_DEBUG("Command after wake word: '%s'", *command_out);
+               OLOG_DEBUG("Command after wake word: '%s'", *command_out);
             }
          }
 
@@ -536,7 +536,7 @@ static void on_sentence_complete(const char *sentence, void *userdata) {
 
    /* Skip if TTS not loaded or no playback handle */
    if (!ctx->tts || !ctx->playback) {
-      LOG_DEBUG("Sentence (no TTS): %s", sentence);
+      OLOG_DEBUG("Sentence (no TTS): %s", sentence);
       return;
    }
 
@@ -549,7 +549,7 @@ static void on_sentence_complete(const char *sentence, void *userdata) {
    }
    const char *tts_text = preprocessed;
 
-   LOG_INFO("TTS synth: %.60s%s", tts_text, strlen(tts_text) > 60 ? "..." : "");
+   OLOG_INFO("TTS synth: %.60s%s", tts_text, strlen(tts_text) > 60 ? "..." : "");
 
    /* Synthesize audio on WS thread (fast: ~50-100ms on Pi 4) */
    int16_t *audio = NULL;
@@ -570,7 +570,7 @@ static void on_sentence_complete(const char *sentence, void *userdata) {
       }
    }
 #else
-   LOG_DEBUG("Sentence (TTS disabled): %s", sentence);
+   OLOG_DEBUG("Sentence (TTS disabled): %s", sentence);
 #endif
 }
 #endif
@@ -604,13 +604,13 @@ static const char *time_of_day_greeting(void) {
 
 voice_ctx_t *voice_processing_init(const satellite_config_t *config) {
    if (!config) {
-      LOG_ERROR("NULL config");
+      OLOG_ERROR("NULL config");
       return NULL;
    }
 
    voice_ctx_t *ctx = calloc(1, sizeof(voice_ctx_t));
    if (!ctx) {
-      LOG_ERROR("Failed to allocate context");
+      OLOG_ERROR("Failed to allocate context");
       return NULL;
    }
 
@@ -648,7 +648,7 @@ voice_ctx_t *voice_processing_init(const satellite_config_t *config) {
    if (config->vad.enabled) {
       ctx->vad = vad_silero_init(config->vad.model_path, NULL);
       if (!ctx->vad) {
-         LOG_ERROR("Failed to initialize VAD");
+         OLOG_ERROR("Failed to initialize VAD");
          free(ctx);
          return NULL;
       }
@@ -656,12 +656,12 @@ voice_ctx_t *voice_processing_init(const satellite_config_t *config) {
       ctx->vad_threshold = config->vad.threshold;
       /* Calculate silence end frames from config (frames = ms / 32ms per frame) */
       ctx->silence_end_frames = config->vad.silence_duration_ms / 32;
-      LOG_INFO("VAD initialized (threshold=%.2f, silence_frames=%d)", config->vad.threshold,
-               ctx->silence_end_frames);
+      OLOG_INFO("VAD initialized (threshold=%.2f, silence_frames=%d)", config->vad.threshold,
+                ctx->silence_end_frames);
    }
 #else
    if (config->vad.enabled) {
-      LOG_ERROR("VAD requested but not built with HAVE_VAD_SILERO");
+      OLOG_ERROR("VAD requested but not built with HAVE_VAD_SILERO");
       free(ctx);
       return NULL;
    }
@@ -676,7 +676,7 @@ voice_ctx_t *voice_processing_init(const satellite_config_t *config) {
    ctx->audio_buffer_capacity = max_samples;
    ctx->audio_buffer = malloc(ctx->audio_buffer_capacity * sizeof(int16_t));
    if (!ctx->audio_buffer) {
-      LOG_ERROR("Failed to allocate audio buffer");
+      OLOG_ERROR("Failed to allocate audio buffer");
       vad_silero_cleanup(ctx->vad);
       free(ctx);
       return NULL;
@@ -686,7 +686,7 @@ voice_ctx_t *voice_processing_init(const satellite_config_t *config) {
 #ifdef HAVE_VAD_SILERO
    ctx->sentence_buf = sentence_buffer_create(on_sentence_complete, ctx);
    if (!ctx->sentence_buf) {
-      LOG_ERROR("Failed to create sentence buffer");
+      OLOG_ERROR("Failed to create sentence buffer");
       free(ctx->audio_buffer);
       if (ctx->vad)
          vad_silero_cleanup(ctx->vad);
@@ -699,7 +699,7 @@ voice_ctx_t *voice_processing_init(const satellite_config_t *config) {
 #if defined(HAVE_ASR_ENGINE) || defined(HAVE_ASR_WHISPER)
    if (config->asr.model_path[0]) {
       if (!ensure_asr_loaded(ctx)) {
-         LOG_ERROR("Failed to load ASR model - voice processing unavailable");
+         OLOG_ERROR("Failed to load ASR model - voice processing unavailable");
          sentence_buffer_free(ctx->sentence_buf);
          free(ctx->audio_buffer);
          if (ctx->vad)
@@ -712,9 +712,9 @@ voice_ctx_t *voice_processing_init(const satellite_config_t *config) {
 
 #ifdef HAVE_TTS_PIPER
    if (config->tts.model_path[0]) {
-      LOG_INFO("Loading TTS model: %s", ctx->tts_model_path);
+      OLOG_INFO("Loading TTS model: %s", ctx->tts_model_path);
       if (!ensure_tts_loaded(ctx)) {
-         LOG_ERROR("Failed to load TTS model - voice processing unavailable");
+         OLOG_ERROR("Failed to load TTS model - voice processing unavailable");
 #ifdef HAVE_ASR_ENGINE
          if (ctx->asr)
             asr_engine_cleanup(ctx->asr);
@@ -732,8 +732,8 @@ voice_ctx_t *voice_processing_init(const satellite_config_t *config) {
    }
 #endif
 
-   LOG_INFO("Voice processing initialized (buffer=%zus, ai_name=%s)",
-            ctx->audio_buffer_capacity / SAMPLE_RATE, ctx->ai_name);
+   OLOG_INFO("Voice processing initialized (buffer=%zus, ai_name=%s)",
+             ctx->audio_buffer_capacity / SAMPLE_RATE, ctx->ai_name);
 
    return ctx;
 }
@@ -781,7 +781,7 @@ void voice_processing_cleanup(voice_ctx_t *ctx) {
 
    free(ctx);
 
-   LOG_INFO("Voice processing cleaned up");
+   OLOG_INFO("Voice processing cleaned up");
 }
 
 voice_state_t voice_processing_get_state(const voice_ctx_t *ctx) {
@@ -929,11 +929,11 @@ static int speak_single_message(voice_ctx_t *ctx,
                                 const char *label) {
 #ifdef HAVE_TTS_PIPER
    if (!ctx->tts) {
-      LOG_ERROR("TTS not loaded, cannot speak %s", label);
+      OLOG_ERROR("TTS not loaded, cannot speak %s", label);
       return -1;
    }
 
-   LOG_INFO("Speaking %s: %s", label, message);
+   OLOG_INFO("Speaking %s: %s", label, message);
 
    int16_t *audio = NULL;
    size_t audio_len = 0;
@@ -957,13 +957,13 @@ static int speak_single_message(voice_ctx_t *ctx,
       return 0;
    }
 
-   LOG_ERROR("Failed to synthesize %s", label);
+   OLOG_ERROR("Failed to synthesize %s", label);
    return -1;
 #else
    (void)ctx;
    (void)sat_ctx;
    (void)message;
-   LOG_INFO("TTS not available, cannot speak %s", label);
+   OLOG_INFO("TTS not available, cannot speak %s", label);
    return -1;
 #endif
 }
@@ -1003,7 +1003,7 @@ int voice_processing_loop(voice_ctx_t *ctx,
                           ws_client_t *ws,
                           const satellite_config_t *config) {
    if (!ctx || !sat_ctx || !ws || !config) {
-      LOG_ERROR("Invalid parameters");
+      OLOG_ERROR("Invalid parameters");
       return 1;
    }
 
@@ -1020,7 +1020,7 @@ int voice_processing_loop(voice_ctx_t *ctx,
    if (!ctx->tts_queue && playback) {
       ctx->tts_queue = tts_playback_queue_create(playback, &ctx->tts_stop_flag);
       if (ctx->tts_queue) {
-         LOG_INFO("TTS playback queue created (pipelined mode)");
+         OLOG_INFO("TTS playback queue created (pipelined mode)");
       }
    }
 #endif
@@ -1029,18 +1029,18 @@ int voice_processing_loop(voice_ctx_t *ctx,
    ws_client_set_stream_callback(ws, on_stream_callback, ctx);
    ws_client_set_state_callback(ws, on_state_callback, ctx);
 
-   LOG_INFO("Starting voice processing loop (say '%s' or '%s' to activate)", ctx->wakeWords[0],
-            ctx->wakeWords[3]); /* e.g., "hello friday" or "hey friday" */
+   OLOG_INFO("Starting voice processing loop (say '%s' or '%s' to activate)", ctx->wakeWords[0],
+             ctx->wakeWords[3]); /* e.g., "hello friday" or "hey friday" */
 
    int16_t frame_buffer[VAD_FRAME_SAMPLES];
    int debug_frame_count = 0;
 
-   LOG_INFO("Entering main loop...");
-   LOG_INFO("capture=%p, playback=%p", (void *)capture, (void *)playback);
+   OLOG_INFO("Entering main loop...");
+   OLOG_INFO("capture=%p, playback=%p", (void *)capture, (void *)playback);
 
    /* Initial debug: check ring buffer state */
    size_t initial_bytes = audio_capture_bytes_available(capture);
-   LOG_INFO("Initial ring buffer state: %zu bytes available", initial_bytes);
+   OLOG_INFO("Initial ring buffer state: %zu bytes available", initial_bytes);
 
    while (ctx->running && ws_client_is_connected(ws)) {
       /* Debug: confirm loop is running */
@@ -1049,7 +1049,7 @@ int voice_processing_loop(voice_ctx_t *ctx,
       /* Check UI-triggered flags before state machine */
       if (atomic_exchange(&ctx->manual_wake_requested, false)) {
          if (ctx->state == VOICE_STATE_SILENCE && !atomic_load(&ctx->mic_muted)) {
-            LOG_INFO("Manual wake triggered from UI — awaiting speech");
+            OLOG_INFO("Manual wake triggered from UI — awaiting speech");
             ctx->audio_buffer_len = 0;
             ctx->speech_frame_count = 0;
             ctx->silence_frame_count = 0;
@@ -1061,7 +1061,7 @@ int voice_processing_loop(voice_ctx_t *ctx,
 
       if (atomic_exchange(&ctx->cancel_requested, false)) {
          if (ctx->state != VOICE_STATE_SILENCE) {
-            LOG_INFO("Cancel requested from UI (was %s)", voice_state_name(ctx->state));
+            OLOG_INFO("Cancel requested from UI (was %s)", voice_state_name(ctx->state));
             atomic_store(&ctx->tts_stop_flag, 1);
 #ifdef HAVE_TTS_PIPER
             if (ctx->tts_queue) {
@@ -1120,7 +1120,7 @@ int voice_processing_loop(voice_ctx_t *ctx,
                   ducked = 1;
                music_playback_set_volume(ctx->music_pb, ducked);
                ctx->music_ducked = true;
-               LOG_INFO("Music ducked: %d -> %d", ctx->music_pre_duck_volume, ducked);
+               OLOG_INFO("Music ducked: %d -> %d", ctx->music_pre_duck_volume, ducked);
             }
          }
 
@@ -1130,7 +1130,7 @@ int voice_processing_loop(voice_ctx_t *ctx,
             ws_client_send_music_control(ctx->ws, "pause", NULL);
             music_playback_stop(ctx->music_pb);
             ctx->music_was_playing = true;
-            LOG_INFO("Music paused on daemon for TTS");
+            OLOG_INFO("Music paused on daemon for TTS");
          }
 
          /* Resume daemon music when back in SILENCE */
@@ -1138,7 +1138,7 @@ int voice_processing_loop(voice_ctx_t *ctx,
             if (ctx->music_was_playing) {
                ws_client_send_music_control(ctx->ws, "play", NULL);
                ctx->music_was_playing = false;
-               LOG_INFO("Music resumed on daemon after TTS");
+               OLOG_INFO("Music resumed on daemon after TTS");
             }
             if (ctx->music_ducked) {
                double elapsed = (t1.tv_sec - ctx->music_last_voice.tv_sec) +
@@ -1151,10 +1151,10 @@ int voice_processing_loop(voice_ctx_t *ctx,
                      expected = 1;
                   if (current == expected) {
                      music_playback_set_volume(ctx->music_pb, ctx->music_pre_duck_volume);
-                     LOG_INFO("Music restored: %d (%.1fs)", ctx->music_pre_duck_volume, elapsed);
+                     OLOG_INFO("Music restored: %d (%.1fs)", ctx->music_pre_duck_volume, elapsed);
                   } else {
-                     LOG_INFO("Music duck restore skipped: volume changed externally (%d != %d)",
-                              current, expected);
+                     OLOG_INFO("Music duck restore skipped: volume changed externally (%d != %d)",
+                               current, expected);
                   }
                   ctx->music_ducked = false;
                }
@@ -1182,10 +1182,10 @@ int voice_processing_loop(voice_ctx_t *ctx,
 
             /* Timing debug every 100 iterations (~3 seconds) */
             if (debug_frame_count % 100 == 0) {
-               LOG_DEBUG("Loop %d: ws=%ldms, wait=%ldms, avail=%zu", debug_frame_count,
-                         (t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_nsec - t0.tv_nsec) / 1000000,
-                         (t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_nsec - t1.tv_nsec) / 1000000,
-                         available);
+               OLOG_DEBUG("Loop %d: ws=%ldms, wait=%ldms, avail=%zu", debug_frame_count,
+                          (t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_nsec - t0.tv_nsec) / 1000000,
+                          (t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_nsec - t1.tv_nsec) / 1000000,
+                          available);
             }
 
             if (available < VAD_FRAME_SAMPLES) {
@@ -1196,8 +1196,8 @@ int voice_processing_loop(voice_ctx_t *ctx,
             /* Read the audio frame */
             ssize_t samples = audio_capture_read(capture, frame_buffer, VAD_FRAME_SAMPLES);
             if (samples <= 0) {
-               LOG_ERROR("audio_capture_read returned %zd after wait reported %zu available",
-                         samples, available);
+               OLOG_ERROR("audio_capture_read returned %zd after wait reported %zu available",
+                          samples, available);
                continue;
             }
 
@@ -1219,7 +1219,7 @@ int voice_processing_loop(voice_ctx_t *ctx,
 
             /* Debug: print VAD status periodically (~3 seconds) */
             if (debug_frame_count % 100 == 0) {
-               LOG_DEBUG("VAD: prob=%.2f %s", speech_prob, is_speech ? "SPEECH" : "silence");
+               OLOG_DEBUG("VAD: prob=%.2f %s", speech_prob, is_speech ? "SPEECH" : "silence");
             }
 
             /* State machine transitions */
@@ -1252,7 +1252,7 @@ int voice_processing_loop(voice_ctx_t *ctx,
                if (is_speech) {
                   ctx->speech_frame_count++;
                   if (ctx->speech_frame_count >= SPEECH_START_FRAMES) {
-                     LOG_INFO("Speech detected, listening for wake word...");
+                     OLOG_INFO("Speech detected, listening for wake word...");
                      ctx->state = VOICE_STATE_WAKEWORD_LISTEN;
                      ctx->silence_frame_count = 0;
 
@@ -1274,8 +1274,9 @@ int voice_processing_loop(voice_ctx_t *ctx,
                                   ctx->preroll_write_pos * sizeof(int16_t));
                            ctx->audio_buffer_len = PREROLL_SAMPLES;
                         }
-                        LOG_INFO("Pre-roll: copied %zu samples (%.2fs) to audio buffer",
-                                 ctx->audio_buffer_len, ctx->audio_buffer_len / (float)SAMPLE_RATE);
+                        OLOG_INFO("Pre-roll: copied %zu samples (%.2fs) to audio buffer",
+                                  ctx->audio_buffer_len,
+                                  ctx->audio_buffer_len / (float)SAMPLE_RATE);
                      }
                      /* Reset pre-roll for next time */
                      ctx->preroll_write_pos = 0;
@@ -1320,14 +1321,14 @@ int voice_processing_loop(voice_ctx_t *ctx,
                if (ctx->awaiting_speech && is_speech) {
                   ctx->awaiting_speech = false;
                   ctx->silence_frame_count = 0;
-                  LOG_INFO("Speech detected after wake word");
+                  OLOG_INFO("Speech detected after wake word");
                }
 
                /* Timeout awaiting_speech after ~10 seconds (312 frames × 32ms) */
                if (ctx->awaiting_speech) {
                   ctx->silence_frame_count++;
                   if (ctx->silence_frame_count >= 312) {
-                     LOG_INFO("No speech after wake word (10s timeout), returning to silence");
+                     OLOG_INFO("No speech after wake word (10s timeout), returning to silence");
                      ctx->awaiting_speech = false;
                      ctx->state = VOICE_STATE_SILENCE;
                      ctx->speech_frame_count = 0;
@@ -1342,13 +1343,14 @@ int voice_processing_loop(voice_ctx_t *ctx,
                   if (ctx->silence_frame_count >= ctx->silence_end_frames) {
                      if (ctx->state == VOICE_STATE_WAKEWORD_LISTEN) {
                         /* Check for wake word */
-                        LOG_INFO("Silence detected, checking for wake word (buffer=%zu samples, "
-                                 "%.2fs)...",
-                                 ctx->audio_buffer_len, ctx->audio_buffer_len / (float)SAMPLE_RATE);
+                        OLOG_INFO("Silence detected, checking for wake word (buffer=%zu samples, "
+                                  "%.2fs)...",
+                                  ctx->audio_buffer_len,
+                                  ctx->audio_buffer_len / (float)SAMPLE_RATE);
                         ctx->state = VOICE_STATE_PROCESSING;
 
                         if (ctx->audio_buffer_len < SAMPLE_RATE / 4) { /* Less than 250ms */
-                           LOG_INFO("Audio buffer too short, returning to silence");
+                           OLOG_INFO("Audio buffer too short, returning to silence");
                            ctx->state = VOICE_STATE_SILENCE;
                            ctx->speech_frame_count = 0;
                            ctx->silence_frame_count = 0;
@@ -1356,14 +1358,14 @@ int voice_processing_loop(voice_ctx_t *ctx,
                         }
 
                         if (!ensure_asr_loaded(ctx)) {
-                           LOG_ERROR("ASR not available");
+                           OLOG_ERROR("ASR not available");
                            ctx->state = VOICE_STATE_SILENCE;
                            continue;
                         }
 
 #if defined(HAVE_ASR_ENGINE) || defined(HAVE_ASR_WHISPER)
                         /* Feed audio and get transcription */
-                        LOG_INFO("Running ASR on %zu samples...", ctx->audio_buffer_len);
+                        OLOG_INFO("Running ASR on %zu samples...", ctx->audio_buffer_len);
 #ifdef HAVE_ASR_ENGINE
                         /* For Whisper: feed entire buffer (Vosk already got it incrementally) */
                         if (asr_engine_get_type(ctx->asr) == ASR_ENGINE_WHISPER) {
@@ -1374,15 +1376,15 @@ int voice_processing_loop(voice_ctx_t *ctx,
                         asr_whisper_process(ctx->asr, ctx->audio_buffer, ctx->audio_buffer_len);
                         asr_whisper_result_t *result = asr_whisper_finalize(ctx->asr);
 #endif
-                        LOG_INFO("ASR complete: result=%p, text=%s", (void *)result,
-                                 result && result->text ? result->text : "(null)");
+                        OLOG_INFO("ASR complete: result=%p, text=%s", (void *)result,
+                                  result && result->text ? result->text : "(null)");
                         if (result && result->text && result->text[0]) {
                            printf("\n>>> Heard: %s\n\n", result->text);
                            fflush(stdout);
 
                            char *command_text = NULL;
                            if (check_wake_word(ctx, result->text, &command_text)) {
-                              LOG_INFO("Wake word detected!");
+                              OLOG_INFO("Wake word detected!");
 
                               if (command_text && command_text[0]) {
                                  /* Command was in the same phrase as wake word */
@@ -1418,7 +1420,7 @@ int voice_processing_loop(voice_ctx_t *ctx,
                                  free(command_text);
                               } else {
                                  /* Wake word only - greet and wait for command */
-                                 LOG_INFO("Wake word only — greeting, waiting for command...");
+                                 OLOG_INFO("Wake word only — greeting, waiting for command...");
 #ifdef HAVE_TTS_PIPER
                                  if (ctx->tts) {
                                     int16_t *greet_audio = NULL;
@@ -1443,7 +1445,7 @@ int voice_processing_loop(voice_ctx_t *ctx,
                                  ctx->awaiting_speech = true;
                               }
                            } else {
-                              LOG_DEBUG("No wake word, returning to silence");
+                              OLOG_DEBUG("No wake word, returning to silence");
                               ctx->state = VOICE_STATE_SILENCE;
                            }
 #ifdef HAVE_ASR_ENGINE
@@ -1470,7 +1472,7 @@ int voice_processing_loop(voice_ctx_t *ctx,
 #endif
                      } else {
                         /* Command recording complete - transcribe and send */
-                        LOG_INFO("Command complete, transcribing...");
+                        OLOG_INFO("Command complete, transcribing...");
                         ctx->state = VOICE_STATE_PROCESSING;
 
 #if defined(HAVE_ASR_ENGINE) || defined(HAVE_ASR_WHISPER)
@@ -1519,7 +1521,7 @@ int voice_processing_loop(voice_ctx_t *ctx,
                            asr_whisper_result_free(cmd_result);
 #endif
                         } else {
-                           LOG_INFO("Empty transcription, returning to silence");
+                           OLOG_INFO("Empty transcription, returning to silence");
                            ctx->state = VOICE_STATE_SILENCE;
                            if (cmd_result)
 #ifdef HAVE_ASR_ENGINE
@@ -1569,8 +1571,8 @@ int voice_processing_loop(voice_ctx_t *ctx,
 #endif
                /* Log response (protected access to buffer) */
                pthread_mutex_lock(&ctx->response_mutex);
-               LOG_INFO("Response complete: %.100s%s", ctx->response_buffer,
-                        ctx->response_len > 100 ? "..." : "");
+               OLOG_INFO("Response complete: %.100s%s", ctx->response_buffer,
+                         ctx->response_len > 100 ? "..." : "");
                pthread_mutex_unlock(&ctx->response_mutex);
 
                ctx->state = VOICE_STATE_SILENCE;
@@ -1592,9 +1594,9 @@ int voice_processing_loop(voice_ctx_t *ctx,
                int timeout_sec = 50;
                if (since_last_msg >= timeout_sec) {
                   int total_elapsed = (int)(now - ctx->waiting_start);
-                  LOG_WARNING("Response timeout: %ds since last server message (%ds total, "
-                              "partial=%s), returning to silence",
-                              since_last_msg, total_elapsed, has_partial ? "yes" : "no");
+                  OLOG_WARNING("Response timeout: %ds since last server message (%ds total, "
+                               "partial=%s), returning to silence",
+                               since_last_msg, total_elapsed, has_partial ? "yes" : "no");
                   ctx->state = VOICE_STATE_SILENCE;
                   ctx->speech_frame_count = 0;
                   ctx->silence_frame_count = 0;
@@ -1643,6 +1645,6 @@ int voice_processing_loop(voice_ctx_t *ctx,
    ctx->state = VOICE_STATE_SILENCE;
    ctx->ws = NULL;
 
-   LOG_INFO("Voice processing loop ended");
+   OLOG_INFO("Voice processing loop ended");
    return 0;
 }

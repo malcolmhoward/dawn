@@ -157,7 +157,7 @@ static ssize_t tts_convert_audio(const int16_t *in_samples,
 
       int err = src_process(tts_handle.resampler, &src_data);
       if (err) {
-         LOG_ERROR("Resampler error: %s", src_strerror(err));
+         OLOG_ERROR("Resampler error: %s", src_strerror(err));
          return -1;
       }
 
@@ -233,12 +233,12 @@ static ssize_t tts_convert_audio(const int16_t *in_samples,
  * @return 0 on success, 1 on failure
  */
 static int openPlaybackDevice(const char *pcm_device) {
-   LOG_INFO("TTS playback device: %s (backend: %s)", pcm_device,
-            audio_backend_type_name(audio_backend_get_type()));
+   OLOG_INFO("TTS playback device: %s (backend: %s)", pcm_device,
+             audio_backend_type_name(audio_backend_get_type()));
 
    // Guard: should not be called when audio backend is NONE (server mode)
    if (audio_backend_get_type() == AUDIO_BACKEND_NONE) {
-      LOG_WARNING("openPlaybackDevice called with no audio backend — skipping");
+      OLOG_WARNING("openPlaybackDevice called with no audio backend — skipping");
       return 1;
    }
 
@@ -260,8 +260,8 @@ static int openPlaybackDevice(const char *pcm_device) {
    tts_handle.playback_handle = audio_stream_playback_open(pcm_device, &params,
                                                            &tts_handle.hw_params);
    if (!tts_handle.playback_handle) {
-      LOG_ERROR("Failed to open playback device: %s", pcm_device);
-      LOG_ERROR("  Hint: Check device with: aplay -L. Set [audio] playback_device in dawn.toml");
+      OLOG_ERROR("Failed to open playback device: %s", pcm_device);
+      OLOG_ERROR("  Hint: Check device with: aplay -L. Set [audio] playback_device in dawn.toml");
       return 1;
    }
 
@@ -271,9 +271,9 @@ static int openPlaybackDevice(const char *pcm_device) {
    tts_handle.hw_channels = tts_handle.hw_params.channels;
    tts_handle.period_frames = tts_handle.hw_params.period_frames;
 
-   LOG_INFO("TTS playback: rate=%u ch=%u period=%zu buffer=%zu", tts_handle.hw_rate,
-            tts_handle.hw_channels, tts_handle.hw_params.period_frames,
-            tts_handle.hw_params.buffer_frames);
+   OLOG_INFO("TTS playback: rate=%u ch=%u period=%zu buffer=%zu", tts_handle.hw_rate,
+             tts_handle.hw_channels, tts_handle.hw_params.period_frames,
+             tts_handle.hw_params.buffer_frames);
 
    // Determine if conversion is needed (format, rate, or channels differ from TTS output)
    tts_handle.needs_conversion = (tts_handle.hw_format != AUDIO_FORMAT_S16_LE) ||
@@ -297,8 +297,8 @@ static int openPlaybackDevice(const char *pcm_device) {
             break;
       }
 
-      LOG_INFO("Audio conversion enabled: %dHz/%dch/S16 → %uHz/%uch/%s", DEFAULT_RATE,
-               DEFAULT_CHANNELS, tts_handle.hw_rate, tts_handle.hw_channels, format_name);
+      OLOG_INFO("Audio conversion enabled: %dHz/%dch/S16 → %uHz/%uch/%s", DEFAULT_RATE,
+                DEFAULT_CHANNELS, tts_handle.hw_rate, tts_handle.hw_channels, format_name);
 
       // Create resampler if rate differs
       tts_handle.resample_ratio = (double)tts_handle.hw_rate / (double)DEFAULT_RATE;
@@ -306,12 +306,12 @@ static int openPlaybackDevice(const char *pcm_device) {
          int error;
          tts_handle.resampler = src_new(SRC_SINC_FASTEST, 1, &error);
          if (!tts_handle.resampler) {
-            LOG_ERROR("Failed to create resampler: %s", src_strerror(error));
+            OLOG_ERROR("Failed to create resampler: %s", src_strerror(error));
             audio_stream_playback_close(tts_handle.playback_handle);
             tts_handle.playback_handle = NULL;
             return 1;
          }
-         LOG_INFO("Resampler created: ratio=%.4f", tts_handle.resample_ratio);
+         OLOG_INFO("Resampler created: ratio=%.4f", tts_handle.resample_ratio);
       } else {
          tts_handle.resampler = NULL;
       }
@@ -324,7 +324,7 @@ static int openPlaybackDevice(const char *pcm_device) {
       tts_handle.convert_out = (uint8_t *)malloc(tts_handle.convert_out_size);
 
       if (!tts_handle.resample_in || !tts_handle.resample_out || !tts_handle.convert_out) {
-         LOG_ERROR("Failed to allocate conversion buffers");
+         OLOG_ERROR("Failed to allocate conversion buffers");
          audio_stream_playback_close(tts_handle.playback_handle);
          tts_handle.playback_handle = NULL;
          return 1;
@@ -334,7 +334,7 @@ static int openPlaybackDevice(const char *pcm_device) {
       tts_handle.resample_in = NULL;
       tts_handle.resample_out = NULL;
       tts_handle.convert_out = NULL;
-      LOG_INFO("No audio conversion needed");
+      OLOG_INFO("No audio conversion needed");
    }
 
    return 0;
@@ -391,12 +391,12 @@ extern "C" {
  * @return Always returns NULL.
  */
 void *tts_thread_function(void *arg) {
-   LOG_INFO("tts_thread_function() started.");
+   OLOG_INFO("tts_thread_function() started.");
 
    while (!get_quit()) {
       pthread_mutex_lock(&tts_queue_mutex);
 
-      LOG_INFO("Waiting on text...");
+      OLOG_INFO("Waiting on text...");
       // Wait until there's text to process or the thread is signaled to exit
       while (tts_queue.empty() && tts_thread_running) {
          pthread_cond_wait(&tts_queue_cond, &tts_queue_mutex);
@@ -432,7 +432,7 @@ void *tts_thread_function(void *arg) {
              // Start calibration capture if pending (checked via calibration module API)
              if (aec_cal_is_pending()) {
                 aec_cal_start();
-                LOG_INFO("AEC calibration: started capture for greeting");
+                OLOG_INFO("AEC calibration: started capture for greeting");
              }
              // Start AEC recording for this TTS session (if enabled)
              if (aec_is_recording_enabled()) {
@@ -461,7 +461,7 @@ void *tts_thread_function(void *arg) {
                 while (tts_playback_state == TTS_PLAYBACK_PAUSE && !tts_stop_processing.load() &&
                        tts_thread_running.load()) {
                    if (!was_paused) {
-                      LOG_INFO("TTS playback is PAUSED.");
+                      OLOG_INFO("TTS playback is PAUSED.");
 #ifdef ENABLE_AEC
                       // Signal AEC that playback is paused - stop underflow counting
                       aec_signal_playback_stop();
@@ -474,10 +474,10 @@ void *tts_thread_function(void *arg) {
                 // Only log state transitions after being paused
                 if (was_paused) {
                    if (tts_playback_state == TTS_PLAYBACK_DISCARD) {
-                      LOG_WARNING("TTS unpaused to DISCARD.");
+                      OLOG_WARNING("TTS unpaused to DISCARD.");
                       tts_playback_state = TTS_PLAYBACK_IDLE;
                       audioBuffer.clear();
-                      LOG_WARNING("Emptying TTS queue.");
+                      OLOG_WARNING("Emptying TTS queue.");
                       while (!tts_queue.empty()) {
                          tts_queue.pop();
                       }
@@ -508,16 +508,16 @@ void *tts_thread_function(void *arg) {
                       tts_stop_processing.store(true);
                       return;
                    } else if (tts_playback_state == TTS_PLAYBACK_PLAY) {
-                      LOG_INFO("TTS unpaused to PLAY.");
+                      OLOG_INFO("TTS unpaused to PLAY.");
                       // Prepare stream after unpause to avoid underrun on first write
                       if (tts_handle.playback_handle) {
                          audio_stream_playback_recover(tts_handle.playback_handle,
                                                        AUDIO_ERR_UNDERRUN);
                       }
                    } else if (tts_playback_state == TTS_PLAYBACK_IDLE) {
-                      LOG_WARNING("TTS unpaused to IDLE.");
+                      OLOG_WARNING("TTS unpaused to IDLE.");
                    } else {
-                      LOG_ERROR("TTS unpaused to UNKNOWN.");
+                      OLOG_ERROR("TTS unpaused to UNKNOWN.");
                    }
                 }
 
@@ -551,7 +551,7 @@ void *tts_thread_function(void *arg) {
                                                                    (size_t)converted_frames);
                    } else {
                       frames_written = -AUDIO_ERR_IO;
-                      LOG_ERROR("Audio conversion failed");
+                      OLOG_ERROR("Audio conversion failed");
                    }
                 } else {
                    // No conversion needed - write directly
@@ -564,9 +564,9 @@ void *tts_thread_function(void *arg) {
                 if (frames_written < 0) {
                    int err = (int)(-frames_written);
                    if (err == AUDIO_ERR_UNDERRUN) {
-                      LOG_ERROR("Audio underrun occurred");
+                      OLOG_ERROR("Audio underrun occurred");
                    } else {
-                      LOG_ERROR("Audio write error: %s", audio_error_string((audio_error_t)err));
+                      OLOG_ERROR("Audio write error: %s", audio_error_string((audio_error_t)err));
                    }
                    // Attempt recovery
                    if (tts_handle.playback_handle) {
@@ -608,7 +608,7 @@ void *tts_thread_function(void *arg) {
                          // Rate-limited warning (once per 60 seconds)
                          time_t now = time(NULL);
                          if (now - g_last_resample_warning >= 60) {
-                            LOG_WARNING(
+                            OLOG_WARNING(
                                 "AEC resampler output too large (%zu > %d), skipping reference",
                                 out_max, RESAMPLER_MAX_SAMPLES);
                             g_last_resample_warning = now;
@@ -620,7 +620,7 @@ void *tts_thread_function(void *arg) {
                 // Check if discard happened during audio write (TOCTOU detection)
                 if (g_tts_discard_sequence.load(std::memory_order_acquire) != seq_before_write) {
                    // Discard occurred while we were writing - audio device already flushed
-                   LOG_INFO("TTS discarded during audio write - exiting playback");
+                   OLOG_INFO("TTS discarded during audio write - exiting playback");
                    tts_stop_processing.store(true);
                    return;
                 }
@@ -631,7 +631,7 @@ void *tts_thread_function(void *arg) {
              // Drain audio buffer to ensure all audio is played before returning
              if (tts_handle.playback_handle) {
                 if (audio_stream_playback_drain(tts_handle.playback_handle) != AUDIO_SUCCESS) {
-                   LOG_ERROR("Audio drain error");
+                   OLOG_ERROR("Audio drain error");
                 }
              }
              // Clear the audio buffer for the next request
@@ -646,13 +646,14 @@ void *tts_thread_function(void *arg) {
                 int cal_result = aec_cal_finish(&measured_delay_ms);
                 if (cal_result == AEC_CAL_SUCCESS) {
                    float correlation = aec_cal_get_last_correlation();
-                   LOG_INFO("AEC calibration: SUCCESS - measured delay = %d ms", measured_delay_ms);
+                   OLOG_INFO("AEC calibration: SUCCESS - measured delay = %d ms",
+                             measured_delay_ms);
                    aec_set_delay_hint(measured_delay_ms);
                    metrics_record_aec_calibration(true, measured_delay_ms, correlation);
                    metrics_update_aec_enabled(true);  // AEC confirmed working
                 } else {
-                   LOG_WARNING("AEC calibration: failed (error %d), using default delay",
-                               cal_result);
+                   OLOG_WARNING("AEC calibration: failed (error %d), using default delay",
+                                cal_result);
                    metrics_record_aec_calibration(false, 0, 0.0f);
                 }
              }
@@ -680,7 +681,7 @@ void *tts_thread_function(void *arg) {
       bool queue_empty = tts_queue.empty();
       pthread_mutex_unlock(&tts_queue_mutex);
       if (queue_empty && !tts_stop_processing.load() && !is_llm_processing()) {
-         LOG_INFO("TTS complete - done speaking");
+         OLOG_INFO("TTS complete - done speaking");
       }
 
       tts_stop_processing.store(false);
@@ -700,17 +701,17 @@ void *tts_thread_function(void *arg) {
 void initialize_text_to_speech(char *pcm_device) {
    // Check if already initialized
    if (tts_handle.is_initialized) {
-      LOG_WARNING("Text-to-Speech system already initialized");
+      OLOG_WARNING("Text-to-Speech system already initialized");
       return;
    }
 
    // Validate input
    if (!pcm_device) {
-      LOG_ERROR("Invalid PCM device parameter");
+      OLOG_ERROR("Invalid PCM device parameter");
       return;
    }
 
-   LOG_INFO("Initializing Text-to-Speech system...");
+   OLOG_INFO("Initializing Text-to-Speech system...");
 
    // Store device name (with bounds checking)
    strncpy(tts_handle.pcm_playback_device, pcm_device, MAX_WORD_LENGTH);
@@ -728,11 +729,11 @@ void initialize_text_to_speech(char *pcm_device) {
    try {
       loadVoice(tts_handle.config, model_path, model_json_path, tts_handle.voice, speakerIdOpt,
                 false);
-      LOG_INFO("Loaded TTS voice model: %s", g_config.tts.voice_model);
+      OLOG_INFO("Loaded TTS voice model: %s", g_config.tts.voice_model);
    } catch (const std::exception &e) {
-      LOG_ERROR("Failed to load voice model '%s': %s", g_config.tts.voice_model, e.what());
-      LOG_ERROR("  Hint: Check [tts] voice_model path in dawn.toml. Default voices are in the "
-                "models/ directory");
+      OLOG_ERROR("Failed to load voice model '%s': %s", g_config.tts.voice_model, e.what());
+      OLOG_ERROR("  Hint: Check [tts] voice_model path in dawn.toml. Default voices are in the "
+                 "models/ directory");
       return;
    }
 
@@ -740,7 +741,7 @@ void initialize_text_to_speech(char *pcm_device) {
    try {
       initialize(tts_handle.config);
    } catch (const std::exception &e) {
-      LOG_ERROR("Failed to initialize TTS engine: %s", e.what());
+      OLOG_ERROR("Failed to initialize TTS engine: %s", e.what());
       return;
    }
 
@@ -756,9 +757,9 @@ void initialize_text_to_speech(char *pcm_device) {
    if (audio_backend_get_type() != AUDIO_BACKEND_NONE) {
       int rc = openPlaybackDevice(tts_handle.pcm_playback_device);
       if (rc) {
-         LOG_ERROR("Error creating audio playback device");
-         LOG_ERROR("  Hint: Check that playback device is available and not in use. List devices: "
-                   "aplay -L");
+         OLOG_ERROR("Error creating audio playback device");
+         OLOG_ERROR("  Hint: Check that playback device is available and not in use. List devices: "
+                    "aplay -L");
          // Cleanup Piper
          terminate(tts_handle.config);
          // Cleanup synchronization primitives
@@ -767,14 +768,14 @@ void initialize_text_to_speech(char *pcm_device) {
          return;
       }
    } else {
-      LOG_INFO("TTS: No local playback device (server mode) — audio output via WebSocket only");
+      OLOG_INFO("TTS: No local playback device (server mode) — audio output via WebSocket only");
    }
 
    // Start the worker thread
    tts_thread_running = true;
    int thread_result = pthread_create(&tts_thread, NULL, tts_thread_function, NULL);
    if (thread_result != 0) {
-      LOG_ERROR("Failed to create TTS worker thread: %s", strerror(thread_result));
+      OLOG_ERROR("Failed to create TTS worker thread: %s", strerror(thread_result));
       tts_thread_running = false;
 
       // Cleanup audio device using unified backend API
@@ -799,13 +800,13 @@ void initialize_text_to_speech(char *pcm_device) {
    // Create resampler for AEC reference (22050Hz TTS -> 48000Hz AEC native rate)
    g_tts_thread_resampler = resampler_create(DEFAULT_RATE, AEC_SAMPLE_RATE, 1);
    if (!g_tts_thread_resampler) {
-      LOG_WARNING("Failed to create TTS resampler for AEC - echo cancellation may be limited");
+      OLOG_WARNING("Failed to create TTS resampler for AEC - echo cancellation may be limited");
    } else {
-      LOG_INFO("TTS resampler initialized for AEC (%d -> %d Hz)", DEFAULT_RATE, AEC_SAMPLE_RATE);
+      OLOG_INFO("TTS resampler initialized for AEC (%d -> %d Hz)", DEFAULT_RATE, AEC_SAMPLE_RATE);
    }
 #endif
 
-   LOG_INFO("Text-to-Speech system initialized successfully");
+   OLOG_INFO("Text-to-Speech system initialized successfully");
 }
 
 /**
@@ -818,7 +819,7 @@ void initialize_text_to_speech(char *pcm_device) {
  */
 void text_to_speech(char *text) {
    if (!tts_handle.is_initialized) {
-      LOG_WARNING("TTS not yet initialized — dropping speech request");
+      OLOG_WARNING("TTS not yet initialized — dropping speech request");
       return;
    }
 
@@ -838,12 +839,12 @@ int text_to_speech_to_pcm(const char *text,
                           size_t *pcm_samples_out,
                           uint32_t *sample_rate_out) {
    if (!text || !pcm_data_out || !pcm_samples_out) {
-      LOG_ERROR("Invalid parameters for PCM generation");
+      OLOG_ERROR("Invalid parameters for PCM generation");
       return -1;
    }
 
    if (!tts_handle.is_initialized) {
-      LOG_ERROR("TTS not initialized for PCM generation");
+      OLOG_ERROR("TTS not initialized for PCM generation");
       return -1;
    }
 
@@ -854,12 +855,12 @@ int text_to_speech_to_pcm(const char *text,
    int original_state = tts_playback_state;
 
    try {
-      LOG_INFO("Generating PCM audio: \"%s\"", text);
+      OLOG_INFO("Generating PCM audio: \"%s\"", text);
 
       // Pause local TTS to prevent conflicts (mutex already held)
       if (tts_playback_state == TTS_PLAYBACK_PLAY) {
          tts_playback_state = TTS_PLAYBACK_PAUSE;
-         LOG_INFO("Paused local TTS for PCM generation");
+         OLOG_INFO("Paused local TTS for PCM generation");
       }
 
       // Preprocess text for better TTS output
@@ -879,18 +880,18 @@ int text_to_speech_to_pcm(const char *text,
       // Record TTS timing metrics (inferSeconds is in seconds, convert to ms)
       double tts_time_ms = result.inferSeconds * 1000.0;
       metrics_record_tts_timing(tts_time_ms);
-      LOG_INFO("TTS PCM synthesis completed: %.1f ms (RTF: %.3f)", tts_time_ms,
-               result.realTimeFactor);
+      OLOG_INFO("TTS PCM synthesis completed: %.1f ms (RTF: %.3f)", tts_time_ms,
+                result.realTimeFactor);
 
       // Restore local TTS state (mutex already held)
       tts_playback_state = original_state;
       if (original_state == TTS_PLAYBACK_PLAY) {
          pthread_cond_signal(&tts_cond);
-         LOG_INFO("Resumed local TTS after PCM generation");
+         OLOG_INFO("Resumed local TTS after PCM generation");
       }
 
       if (audioBuffer.empty()) {
-         LOG_ERROR("Generated PCM data is empty");
+         OLOG_ERROR("Generated PCM data is empty");
          pthread_mutex_unlock(&tts_mutex);
          return -1;
       }
@@ -900,7 +901,7 @@ int text_to_speech_to_pcm(const char *text,
       *pcm_data_out = (int16_t *)malloc(*pcm_samples_out * sizeof(int16_t));
 
       if (!*pcm_data_out) {
-         LOG_ERROR("Failed to allocate PCM buffer (%zu samples)", *pcm_samples_out);
+         OLOG_ERROR("Failed to allocate PCM buffer (%zu samples)", *pcm_samples_out);
          pthread_mutex_unlock(&tts_mutex);
          return -1;
       }
@@ -912,14 +913,14 @@ int text_to_speech_to_pcm(const char *text,
          *sample_rate_out = tts_handle.voice.synthesisConfig.sampleRate;
       }
 
-      LOG_INFO("PCM generated: %zu samples at %d Hz", *pcm_samples_out,
-               tts_handle.voice.synthesisConfig.sampleRate);
+      OLOG_INFO("PCM generated: %zu samples at %d Hz", *pcm_samples_out,
+                tts_handle.voice.synthesisConfig.sampleRate);
 
       pthread_mutex_unlock(&tts_mutex);
       return 0;
 
    } catch (const std::exception &e) {
-      LOG_ERROR("TTS PCM generation failed: %s", e.what());
+      OLOG_ERROR("TTS PCM generation failed: %s", e.what());
 
       // Restore TTS state on error (mutex already held)
       tts_playback_state = original_state;
@@ -956,7 +957,7 @@ static void create_wav_header(WAVHeader *header,
 // Network WAV generation - wraps text_to_speech_to_pcm with WAV header
 int text_to_speech_to_wav(const char *text, uint8_t **wav_data_out, size_t *wav_size_out) {
    if (!text || !wav_data_out || !wav_size_out) {
-      LOG_ERROR("Invalid parameters for WAV generation");
+      OLOG_ERROR("Invalid parameters for WAV generation");
       return -1;
    }
 
@@ -967,7 +968,7 @@ int text_to_speech_to_wav(const char *text, uint8_t **wav_data_out, size_t *wav_
 
    int result = text_to_speech_to_pcm(text, &pcm_data, &pcm_samples, &sample_rate);
    if (result != 0 || !pcm_data || pcm_samples == 0) {
-      LOG_ERROR("PCM generation failed for WAV wrapper");
+      OLOG_ERROR("PCM generation failed for WAV wrapper");
       return -1;
    }
 
@@ -978,7 +979,7 @@ int text_to_speech_to_wav(const char *text, uint8_t **wav_data_out, size_t *wav_
    // Allocate WAV buffer
    uint8_t *wav_data = (uint8_t *)malloc(wav_size);
    if (!wav_data) {
-      LOG_ERROR("Failed to allocate WAV buffer (%zu bytes)", wav_size);
+      OLOG_ERROR("Failed to allocate WAV buffer (%zu bytes)", wav_size);
       free(pcm_data);
       return -1;
    }
@@ -997,8 +998,8 @@ int text_to_speech_to_wav(const char *text, uint8_t **wav_data_out, size_t *wav_
    *wav_data_out = wav_data;
    *wav_size_out = wav_size;
 
-   LOG_INFO("WAV generated: %zu bytes (header: %zu, PCM: %zu)", wav_size, sizeof(WAVHeader),
-            pcm_bytes);
+   OLOG_INFO("WAV generated: %zu bytes (header: %zu, PCM: %zu)", wav_size, sizeof(WAVHeader),
+             pcm_bytes);
 
    return 0;
 }
@@ -1037,7 +1038,7 @@ int tts_wait_for_completion(int timeout_ms) {
          int elapsed_ms = (int)((now.tv_sec - start_time.tv_sec) * 1000 +
                                 (now.tv_nsec - start_time.tv_nsec) / 1000000);
          if (elapsed_ms >= timeout_ms) {
-            LOG_WARNING("TTS wait timeout after %d ms", elapsed_ms);
+            OLOG_WARNING("TTS wait timeout after %d ms", elapsed_ms);
             return -1;
          }
       }
@@ -1069,7 +1070,7 @@ void tts_speak_greeting_with_calibration(const char *greeting) {
    if (!aec_cal_is_initialized()) {
       int cal_init = aec_cal_init(AEC_SAMPLE_RATE, 200);  // Max 200ms delay search
       if (cal_init != AEC_CAL_SUCCESS) {
-         LOG_WARNING("AEC calibration init failed (%d), speaking without calibration", cal_init);
+         OLOG_WARNING("AEC calibration init failed (%d), speaking without calibration", cal_init);
          text_to_speech((char *)greeting);
          return;
       }
@@ -1077,7 +1078,7 @@ void tts_speak_greeting_with_calibration(const char *greeting) {
 
    // Request calibration via calibration module API (decouples TTS from calibration state)
    aec_cal_set_pending();
-   LOG_INFO("AEC calibration: queued for next TTS playback");
+   OLOG_INFO("AEC calibration: queued for next TTS playback");
 #endif
 
    // Queue the greeting for playback

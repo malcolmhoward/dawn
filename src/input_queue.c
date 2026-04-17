@@ -104,7 +104,7 @@ int input_queue_push(input_source_t source, const char *text) {
 
    /* Validate source */
    if (source < 0 || source >= INPUT_SOURCE_COUNT) {
-      LOG_ERROR("Invalid input source: %d", (int)source);
+      OLOG_ERROR("Invalid input source: %d", (int)source);
       return 0;
    }
 
@@ -133,17 +133,17 @@ int input_queue_push(input_source_t source, const char *text) {
 
    /* Log AFTER releasing mutex to avoid blocking while holding lock */
    if (dropped_source != INPUT_SOURCE_COUNT) {
-      LOG_WARNING("Input queue full, dropped oldest item from %s",
-                  input_source_name(dropped_source));
+      OLOG_WARNING("Input queue full, dropped oldest item from %s",
+                   input_source_name(dropped_source));
    }
 
    if (truncated) {
-      LOG_WARNING("Input from %s truncated from %zu to %d chars", input_source_name(source),
-                  text_len, INPUT_QUEUE_MAX_TEXT);
+      OLOG_WARNING("Input from %s truncated from %zu to %d chars", input_source_name(source),
+                   text_len, INPUT_QUEUE_MAX_TEXT);
    }
 
-   LOG_INFO("Input queued from %s: %.50s%s", input_source_name(source), text,
-            text_len > 50 ? "..." : "");
+   OLOG_INFO("Input queued from %s: %.50s%s", input_source_name(source), text,
+             text_len > 50 ? "..." : "");
 
    return 1;
 }
@@ -164,5 +164,5 @@ void input_queue_clear(void) {
 
    pthread_mutex_unlock(&g_queue_mutex);
 
-   LOG_INFO("Input queue cleared");
+   OLOG_INFO("Input queue cleared");
 }

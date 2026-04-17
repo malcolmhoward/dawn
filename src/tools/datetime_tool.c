@@ -119,7 +119,7 @@ static char *date_tool_callback(const char *action, char *value, int *should_res
 
       result = malloc(256);
       if (!result) {
-         LOG_ERROR("date_tool: malloc failed");
+         OLOG_ERROR("date_tool: malloc failed");
          *should_respond = 0;
          return NULL;
       }
@@ -144,7 +144,7 @@ static char *date_tool_callback(const char *action, char *value, int *should_res
       /* AI modes: return raw data */
       result = malloc(128);
       if (!result) {
-         LOG_ERROR("date_tool: malloc failed");
+         OLOG_ERROR("date_tool: malloc failed");
          *should_respond = 0;
          return NULL;
       }
@@ -175,7 +175,7 @@ static char *time_tool_callback(const char *action, char *value, int *should_res
 
       result = malloc(256);
       if (!result) {
-         LOG_ERROR("time_tool: malloc failed");
+         OLOG_ERROR("time_tool: malloc failed");
          *should_respond = 0;
          return NULL;
       }
@@ -207,7 +207,7 @@ static char *time_tool_callback(const char *action, char *value, int *should_res
       /* AI modes: return raw data */
       result = malloc(96);
       if (!result) {
-         LOG_ERROR("time_tool: malloc failed");
+         OLOG_ERROR("time_tool: malloc failed");
          *should_respond = 0;
          return NULL;
       }

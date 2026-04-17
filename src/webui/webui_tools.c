@@ -74,7 +74,7 @@ void handle_get_tools_config(ws_connection_t *conn) {
    send_json_response(conn, response);
    json_object_put(response);
 
-   LOG_INFO("WebUI: Sent tools config (%d tools)", count);
+   OLOG_INFO("WebUI: Sent tools config (%d tools)", count);
 }
 
 /**
@@ -142,7 +142,7 @@ void handle_set_tools_config(ws_connection_t *conn, struct json_object *payload)
 
          /* Validate tool name before processing */
          if (!is_valid_tool_name(name)) {
-            LOG_WARNING("WebUI: Skipping invalid tool name: '%s'", name ? name : "(null)");
+            OLOG_WARNING("WebUI: Skipping invalid tool name: '%s'", name ? name : "(null)");
             skipped++;
             continue;
          }
@@ -194,14 +194,14 @@ void handle_set_tools_config(ws_connection_t *conn, struct json_object *payload)
     * This affects both native tool schemas and legacy <command> tag prompts. */
    if (updated > 0) {
       invalidate_system_instructions();
-      LOG_INFO("WebUI: Tool states changed, prompt cache invalidated");
+      OLOG_INFO("WebUI: Tool states changed, prompt cache invalidated");
 
       /* Update current session's system prompt */
       if (conn->session) {
          char *new_prompt = build_user_prompt(conn->auth_user_id);
          if (new_prompt) {
             session_update_system_prompt(conn->session, new_prompt);
-            LOG_INFO("WebUI: Updated session prompt for tool state changes");
+            OLOG_INFO("WebUI: Updated session prompt for tool state changes");
             free(new_prompt);
          }
       }
@@ -222,5 +222,5 @@ void handle_set_tools_config(ws_connection_t *conn, struct json_object *payload)
    send_json_response(conn, response);
    json_object_put(response);
 
-   LOG_INFO("WebUI: Updated %d tool enable states", updated);
+   OLOG_INFO("WebUI: Updated %d tool enable states", updated);
 }

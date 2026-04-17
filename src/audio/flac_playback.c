@@ -131,26 +131,26 @@ void *playFlacAudio(void *arg) {
 
    /* Check that audio backend is initialized */
    if (audio_backend_get_type() == AUDIO_BACKEND_NONE) {
-      LOG_ERROR("Audio backend not initialized. Call audio_backend_init() first.");
+      OLOG_ERROR("Audio backend not initialized. Call audio_backend_init() first.");
       goto cleanup;
    }
 
    /* Open audio file with decoder (auto-detects format by extension) */
    decoder = audio_decoder_open(args->file_name);
    if (!decoder) {
-      LOG_ERROR("Failed to open audio file: %s", args->file_name);
+      OLOG_ERROR("Failed to open audio file: %s", args->file_name);
       goto cleanup;
    }
 
    /* Get audio file info */
    audio_decoder_info_t info;
    if (audio_decoder_get_info(decoder, &info) != AUDIO_DECODER_SUCCESS) {
-      LOG_ERROR("Failed to get audio file info");
+      OLOG_ERROR("Failed to get audio file info");
       goto cleanup;
    }
 
-   LOG_INFO("Audio file: %s (%s)", args->file_name, audio_decoder_format_name(info.format));
-   LOG_INFO("  Format: %uHz %uch %ubps", info.sample_rate, info.channels, info.bits_per_sample);
+   OLOG_INFO("Audio file: %s (%s)", args->file_name, audio_decoder_format_name(info.format));
+   OLOG_INFO("  Format: %uHz %uch %ubps", info.sample_rate, info.channels, info.bits_per_sample);
 
    /* Cache sample rate for pause/resume (avoids re-opening decoder on pause) */
    s_current_sample_rate = info.sample_rate;
@@ -167,12 +167,12 @@ void *playFlacAudio(void *arg) {
                                     .buffer_frames = 4096 };
    audio_hw_params_t hw_params;
 
-   LOG_INFO("Opening playback device: %s (backend: %s)", args->sink_name,
-            audio_backend_type_name(audio_backend_get_type()));
+   OLOG_INFO("Opening playback device: %s (backend: %s)", args->sink_name,
+             audio_backend_type_name(audio_backend_get_type()));
 
    playback_handle = audio_stream_playback_open(args->sink_name, &params, &hw_params);
    if (!playback_handle) {
-      LOG_ERROR("Failed to open audio device %s for playback", args->sink_name);
+      OLOG_ERROR("Failed to open audio device %s for playback", args->sink_name);
       goto cleanup;
    }
 
@@ -180,13 +180,13 @@ void *playFlacAudio(void *arg) {
    unsigned int actual_rate = hw_params.sample_rate;
    unsigned int actual_channels = hw_params.channels;
 
-   LOG_INFO("Playback: requested=%uHz/%uch actual=%uHz/%uch", output_rate, output_channels,
-            actual_rate, actual_channels);
+   OLOG_INFO("Playback: requested=%uHz/%uch actual=%uHz/%uch", output_rate, output_channels,
+             actual_rate, actual_channels);
 
    /* Allocate read buffer for decoded samples */
    read_buffer = malloc(READ_BUFFER_FRAMES * PLAYBACK_MAX_CHANNELS * sizeof(int16_t));
    if (!read_buffer) {
-      LOG_ERROR("Failed to allocate read buffer");
+      OLOG_ERROR("Failed to allocate read buffer");
       goto cleanup;
    }
 
@@ -196,7 +196,7 @@ void *playFlacAudio(void *arg) {
    if (audio_converter_needed_ex(&conv_params, actual_rate, actual_channels)) {
       converter = audio_converter_create_ex(&conv_params, actual_rate, actual_channels);
       if (!converter) {
-         LOG_ERROR("Failed to create audio converter");
+         OLOG_ERROR("Failed to create audio converter");
          goto cleanup;
       }
 
@@ -204,7 +204,7 @@ void *playFlacAudio(void *arg) {
       output_buffer_frames = audio_converter_max_output_frames(converter, READ_BUFFER_FRAMES);
       output_buffer = malloc(output_buffer_frames * actual_channels * sizeof(int16_t));
       if (!output_buffer) {
-         LOG_ERROR("Failed to allocate output buffer");
+         OLOG_ERROR("Failed to allocate output buffer");
          goto cleanup;
       }
    }
@@ -215,7 +215,7 @@ void *playFlacAudio(void *arg) {
    if (args->start_time > 0) {
       uint64_t start_sample = (uint64_t)args->start_time * info.sample_rate;
       if (audio_decoder_seek(decoder, start_sample) != AUDIO_DECODER_SUCCESS) {
-         LOG_WARNING("Failed to seek to start time %u seconds", args->start_time);
+         OLOG_WARNING("Failed to seek to start time %u seconds", args->start_time);
          s_current_position = 0; /* Reset position on seek failure */
       } else {
          s_current_position = start_sample;
@@ -230,15 +230,15 @@ void *playFlacAudio(void *arg) {
       ssize_t frames_read = audio_decoder_read(decoder, read_buffer, READ_BUFFER_FRAMES);
 
       if (frames_read < 0) {
-         LOG_ERROR("Audio decode error: %s",
-                   audio_decoder_error_string((audio_decoder_error_t)(-frames_read)));
+         OLOG_ERROR("Audio decode error: %s",
+                    audio_decoder_error_string((audio_decoder_error_t)(-frames_read)));
          break;
       }
 
       if (frames_read == 0) {
          /* EOF - song finished naturally */
          song_finished_naturally = 1;
-         LOG_INFO("Audio playback completed");
+         OLOG_INFO("Audio playback completed");
          break;
       }
 
@@ -255,7 +255,7 @@ void *playFlacAudio(void *arg) {
                                                             (size_t)frames_read, output_buffer,
                                                             output_buffer_frames);
          if (converted_frames < 0) {
-            LOG_ERROR("Audio conversion failed");
+            OLOG_ERROR("Audio conversion failed");
             break;
          }
 
@@ -269,10 +269,10 @@ void *playFlacAudio(void *arg) {
       if (frames_written < 0) {
          int err = (int)(-frames_written);
          if (err == AUDIO_ERR_UNDERRUN) {
-            LOG_WARNING("Audio underrun during playback, recovering...");
+            OLOG_WARNING("Audio underrun during playback, recovering...");
             audio_stream_playback_recover(playback_handle, err);
          } else {
-            LOG_ERROR("Audio write error: %s", audio_error_string((audio_error_t)err));
+            OLOG_ERROR("Audio write error: %s", audio_error_string((audio_error_t)err));
             break;
          }
       }
@@ -281,7 +281,7 @@ void *playFlacAudio(void *arg) {
    int stopped_by_user = (getMusicPlay() == 0);
 
    if (stopped_by_user) {
-      LOG_INFO("Playback stopped by user");
+      OLOG_INFO("Playback stopped by user");
    }
 
 cleanup:

@@ -162,7 +162,7 @@ static void register_connection(ws_connection_t *conn) {
       }
    }
    /* Registry full - shouldn't happen if MAX_ACTIVE_CONNECTIONS >= max_clients */
-   LOG_WARNING("WebUI: Connection registry full, cannot track connection");
+   OLOG_WARNING("WebUI: Connection registry full, cannot track connection");
    pthread_mutex_unlock(&s_conn_registry_mutex);
 }
 
@@ -187,8 +187,8 @@ static void cleanup_expired_tokens(void) {
    time_t now = time(NULL);
    for (int i = 0; i < MAX_TOKEN_MAPPINGS; i++) {
       if (s_token_map[i].in_use && (now - s_token_map[i].created) > AUTH_COOKIE_MAX_AGE) {
-         LOG_INFO("WebUI: Expiring token slot %d (age %lds)", i,
-                  (long)(now - s_token_map[i].created));
+         OLOG_INFO("WebUI: Expiring token slot %d (age %lds)", i,
+                   (long)(now - s_token_map[i].created));
          explicit_bzero(s_token_map[i].token, sizeof(s_token_map[i].token));
          s_token_map[i].in_use = false;
       }
@@ -261,7 +261,7 @@ void unregister_tokens_for_session(uint32_t session_id) {
 
    for (int i = 0; i < MAX_TOKEN_MAPPINGS; i++) {
       if (s_token_map[i].in_use && s_token_map[i].session_id == session_id) {
-         LOG_INFO("WebUI: Clearing token slot %d for destroyed session %u", i, session_id);
+         OLOG_INFO("WebUI: Clearing token slot %d for destroyed session %u", i, session_id);
          explicit_bzero(s_token_map[i].token, sizeof(s_token_map[i].token));
          s_token_map[i].in_use = false;
       }
@@ -283,7 +283,8 @@ session_t *lookup_session_by_token(const char *token) {
           sodium_memcmp(s_token_map[i].token, token, WEBUI_SESSION_TOKEN_LEN - 1) == 0) {
          /* Check token age against AUTH_COOKIE_MAX_AGE */
          if ((time(NULL) - s_token_map[i].created) > AUTH_COOKIE_MAX_AGE) {
-            LOG_INFO("WebUI: Token %.4s... expired (session %u)", token, s_token_map[i].session_id);
+            OLOG_INFO("WebUI: Token %.4s... expired (session %u)", token,
+                      s_token_map[i].session_id);
             explicit_bzero(s_token_map[i].token, sizeof(s_token_map[i].token));
             s_token_map[i].in_use = false;
             pthread_mutex_unlock(&s_token_mutex);
@@ -297,7 +298,7 @@ session_t *lookup_session_by_token(const char *token) {
          session_t *session = session_get_for_reconnect(session_id);
          if (session) {
             /* Session exists - reconnect handler will clear disconnected flag */
-            LOG_INFO("WebUI: Found existing session %u for token %.4s...", session_id, token);
+            OLOG_INFO("WebUI: Found existing session %u for token %.4s...", session_id, token);
             return session;
          }
 
@@ -309,8 +310,8 @@ session_t *lookup_session_by_token(const char *token) {
          }
          pthread_mutex_unlock(&s_token_mutex);
 
-         LOG_INFO("WebUI: Token %.4s... mapped to session %u but session destroyed (cleaned up)",
-                  token, session_id);
+         OLOG_INFO("WebUI: Token %.4s... mapped to session %u but session destroyed (cleaned up)",
+                   token, session_id);
          return NULL;
       }
    }
@@ -431,7 +432,7 @@ bool is_path_within_www(const char *filepath, const char *www_path) {
 
    /* Resolve the www base path */
    if (realpath(www_path, resolved_www) == NULL) {
-      LOG_ERROR("WebUI: Cannot resolve www path: %s", www_path);
+      OLOG_ERROR("WebUI: Cannot resolve www path: %s", www_path);
       return false;
    }
 
@@ -581,20 +582,20 @@ static bool check_image_magic(const unsigned char *data, size_t len, const char 
 static int validate_image_data(const char *base64_data, size_t base64_len, const char *mime_type) {
    /* Step 1: MIME type whitelist (no allocation) */
    if (!is_vision_mime_allowed(mime_type)) {
-      LOG_WARNING("WebUI Vision: Rejected MIME type: %s", mime_type ? mime_type : "(null)");
+      OLOG_WARNING("WebUI Vision: Rejected MIME type: %s", mime_type ? mime_type : "(null)");
       return 1;
    }
 
    /* Step 2: Size check (no allocation) - prevents memory amplification */
    if (base64_len > WEBUI_MAX_BASE64_SIZE) {
-      LOG_WARNING("WebUI Vision: Base64 data too large: %zu > %zu", base64_len,
-                  (size_t)WEBUI_MAX_BASE64_SIZE);
+      OLOG_WARNING("WebUI Vision: Base64 data too large: %zu > %zu", base64_len,
+                   (size_t)WEBUI_MAX_BASE64_SIZE);
       return 2;
    }
 
    /* Step 3: Validate base64 character set (no allocation) */
    if (!is_valid_base64_charset(base64_data, base64_len)) {
-      LOG_WARNING("WebUI Vision: Invalid base64 characters");
+      OLOG_WARNING("WebUI Vision: Invalid base64 characters");
       return 3;
    }
 
@@ -609,7 +610,7 @@ static int validate_image_data(const char *base64_data, size_t base64_len, const
       size_t decoded_len = 0;
       unsigned char *decoded = ocp_base64_decode(prefix, &decoded_len);
       if (!decoded) {
-         LOG_WARNING("WebUI Vision: Failed to decode base64 prefix");
+         OLOG_WARNING("WebUI Vision: Failed to decode base64 prefix");
          return 5;
       }
 
@@ -617,7 +618,7 @@ static int validate_image_data(const char *base64_data, size_t base64_len, const
       free(decoded);
 
       if (!magic_ok) {
-         LOG_WARNING("WebUI Vision: Magic bytes don't match MIME type %s", mime_type);
+         OLOG_WARNING("WebUI Vision: Magic bytes don't match MIME type %s", mime_type);
          return 4;
       }
    }
@@ -646,7 +647,7 @@ int generate_session_token(char token_out[WEBUI_SESSION_TOKEN_LEN]) {
    if (getrandom(random_bytes, 16, 0) != 16) {
       /* Security: fail instead of using weak random - getrandom should never fail on modern Linux
        */
-      LOG_ERROR("getrandom() failed - cannot generate secure session token");
+      OLOG_ERROR("getrandom() failed - cannot generate secure session token");
       token_out[0] = '\0';
       return 1;
    }
@@ -667,7 +668,7 @@ void queue_response(ws_response_t *resp) {
    int next_tail = (s_queue_tail + 1) % WEBUI_RESPONSE_QUEUE_SIZE;
    if (next_tail == s_queue_head) {
       /* Queue full - free oldest entry's heap allocations, then drop it */
-      LOG_WARNING("WebUI: Response queue full, dropping oldest entry");
+      OLOG_WARNING("WebUI: Response queue full, dropping oldest entry");
       free_response(&s_response_queue[s_queue_head]);
       s_queue_head = (s_queue_head + 1) % WEBUI_RESPONSE_QUEUE_SIZE;
    }
@@ -680,8 +681,8 @@ void queue_response(ws_response_t *resp) {
                    ? (s_queue_tail - s_queue_head)
                    : (WEBUI_RESPONSE_QUEUE_SIZE - s_queue_head + s_queue_tail);
    if (count > (WEBUI_RESPONSE_QUEUE_SIZE * 3 / 4) && (count % 128 == 0)) {
-      LOG_WARNING("WebUI: Response queue at %d%% (%d/%d entries)",
-                  (count * 100) / WEBUI_RESPONSE_QUEUE_SIZE, count, WEBUI_RESPONSE_QUEUE_SIZE);
+      OLOG_WARNING("WebUI: Response queue at %d%% (%d/%d entries)",
+                   (count * 100) / WEBUI_RESPONSE_QUEUE_SIZE, count, WEBUI_RESPONSE_QUEUE_SIZE);
    }
 
    pthread_mutex_unlock(&s_queue_mutex);
@@ -793,8 +794,8 @@ int send_json_message(struct lws *wsi, const char *json) {
             type_buf[type_end - type_start] = '\0';
          }
       }
-      LOG_INFO("WebUI: Large message via send_json_message: type=%s, size=%zu bytes", type_buf,
-               len);
+      OLOG_INFO("WebUI: Large message via send_json_message: type=%s, size=%zu bytes", type_buf,
+                len);
    }
 
    /* For messages that fit in the stack buffer, use the fast path */
@@ -804,7 +805,7 @@ int send_json_message(struct lws *wsi, const char *json) {
 
       int written = lws_write(wsi, &buf[LWS_PRE], len, LWS_WRITE_TEXT);
       if (written < (int)len) {
-         LOG_ERROR("WebUI: lws_write failed (wrote %d of %zu)", written, len);
+         OLOG_ERROR("WebUI: lws_write failed (wrote %d of %zu)", written, len);
          return -1;
       }
       return 0;
@@ -813,7 +814,7 @@ int send_json_message(struct lws *wsi, const char *json) {
    /* Large messages (e.g. transcript with attached documents): heap-allocate */
    unsigned char *buf = malloc(LWS_PRE + len);
    if (!buf) {
-      LOG_ERROR("WebUI: Failed to allocate send buffer (%zu bytes)", LWS_PRE + len);
+      OLOG_ERROR("WebUI: Failed to allocate send buffer (%zu bytes)", LWS_PRE + len);
       return -1;
    }
 
@@ -822,7 +823,7 @@ int send_json_message(struct lws *wsi, const char *json) {
    free(buf);
 
    if (written < (int)len) {
-      LOG_ERROR("WebUI: lws_write failed (wrote %d of %zu)", written, len);
+      OLOG_ERROR("WebUI: lws_write failed (wrote %d of %zu)", written, len);
       return -1;
    }
 
@@ -831,7 +832,7 @@ int send_json_message(struct lws *wsi, const char *json) {
 
 int send_binary_message(struct lws *wsi, uint8_t msg_type, const uint8_t *data, size_t len) {
    if (!wsi) {
-      LOG_ERROR("WebUI: send_binary_message called with NULL wsi");
+      OLOG_ERROR("WebUI: send_binary_message called with NULL wsi");
       return -1;
    }
 
@@ -839,7 +840,7 @@ int send_binary_message(struct lws *wsi, uint8_t msg_type, const uint8_t *data, 
    size_t total_len = 1 + len;
    unsigned char *buf = malloc(LWS_PRE + total_len);
    if (!buf) {
-      LOG_ERROR("WebUI: Failed to allocate binary send buffer (%zu bytes)", LWS_PRE + total_len);
+      OLOG_ERROR("WebUI: Failed to allocate binary send buffer (%zu bytes)", LWS_PRE + total_len);
       return -1;
    }
 
@@ -852,12 +853,12 @@ int send_binary_message(struct lws *wsi, uint8_t msg_type, const uint8_t *data, 
    free(buf);
 
    if (written < 0) {
-      LOG_ERROR("WebUI: lws_write binary failed with error %d", written);
+      OLOG_ERROR("WebUI: lws_write binary failed with error %d", written);
       return -1;
    }
 
    if (written < (int)total_len) {
-      LOG_ERROR("WebUI: lws_write binary partial write (%d of %zu)", written, total_len);
+      OLOG_ERROR("WebUI: lws_write binary partial write (%d of %zu)", written, total_len);
       return -1;
    }
 
@@ -867,7 +868,7 @@ int send_binary_message(struct lws *wsi, uint8_t msg_type, const uint8_t *data, 
 void send_audio_impl(struct lws *wsi, const uint8_t *data, size_t len) {
    int ret = send_binary_message(wsi, WS_BIN_AUDIO_OUT, data, len);
    if (ret != 0) {
-      LOG_ERROR("WebUI: Failed to send audio chunk (%zu bytes)", len);
+      OLOG_ERROR("WebUI: Failed to send audio chunk (%zu bytes)", len);
    }
 }
 
@@ -907,7 +908,7 @@ bool check_opus_capability(struct json_object *payload) {
    int len = json_object_array_length(audio_codecs);
    /* Defensive bound: no client should send more than 16 codecs */
    if (len > 16) {
-      LOG_WARNING("WebUI: Too many audio codecs in capability list (%d), ignoring", len);
+      OLOG_WARNING("WebUI: Too many audio codecs in capability list (%d), ignoring", len);
       return false;
    }
 
@@ -1699,8 +1700,8 @@ char *build_user_prompt(int user_id) {
       }
       combined[prefix_len + base_len + suffix_len + memory_len] = '\0';
 
-      LOG_INFO("Built REPLACE prompt for user_id=%d (%zu + %zu + %zu + %zu bytes)", user_id,
-               prefix_len, base_len, suffix_len, memory_len);
+      OLOG_INFO("Built REPLACE prompt for user_id=%d (%zu + %zu + %zu + %zu bytes)", user_id,
+                prefix_len, base_len, suffix_len, memory_len);
 
       return combined;
    }
@@ -1740,8 +1741,8 @@ char *build_user_prompt(int user_id) {
    }
    combined[base_len + context_len + memory_len] = '\0';
 
-   LOG_INFO("Built APPEND prompt for user_id=%d (%zu + %zu + %zu bytes)", user_id, base_len,
-            context_len, memory_len);
+   OLOG_INFO("Built APPEND prompt for user_id=%d (%zu + %zu + %zu bytes)", user_id, base_len,
+             context_len, memory_len);
 
    return combined;
 }
@@ -1777,7 +1778,7 @@ static void handle_get_metrics(ws_connection_t *conn);
 void send_json_response(ws_connection_t *conn, json_object *response) {
    const char *json_str = json_object_to_json_string(response);
    if (!json_str) {
-      LOG_ERROR("WebUI: Failed to serialize JSON response");
+      OLOG_ERROR("WebUI: Failed to serialize JSON response");
       return;
    }
 
@@ -1786,7 +1787,7 @@ void send_json_response(ws_connection_t *conn, json_object *response) {
    resp.type = WS_RESP_JSON;
    resp.generic_json.json = strdup(json_str);
    if (!resp.generic_json.json) {
-      LOG_ERROR("WebUI: Failed to allocate JSON response string");
+      OLOG_ERROR("WebUI: Failed to allocate JSON response string");
       return;
    }
    queue_response(&resp);
@@ -2016,12 +2017,12 @@ static bool handle_smart_home_message(ws_connection_t *conn,
          st_error_t err = smartthings_exchange_code(code, redirect_uri, state);
          if (err == ST_OK) {
             json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
-            LOG_INFO("WebUI: SmartThings OAuth authorization successful");
+            OLOG_INFO("WebUI: SmartThings OAuth authorization successful");
          } else {
             json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
             json_object_object_add(resp_payload, "error",
                                    json_object_new_string(smartthings_error_str(err)));
-            LOG_WARNING("WebUI: SmartThings OAuth failed: %s", smartthings_error_str(err));
+            OLOG_WARNING("WebUI: SmartThings OAuth failed: %s", smartthings_error_str(err));
          }
       } else {
          json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
@@ -2044,7 +2045,7 @@ static bool handle_smart_home_message(ws_connection_t *conn,
 
       smartthings_disconnect();
       json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
-      LOG_INFO("WebUI: SmartThings disconnected");
+      OLOG_INFO("WebUI: SmartThings disconnected");
 
       json_object_object_add(response, "payload", resp_payload);
       send_json_response(conn, response);
@@ -2232,7 +2233,7 @@ static void handle_always_on_enable(ws_connection_t *conn, struct json_object *p
    }
 
    if (!always_on_valid_sample_rate(sample_rate)) {
-      LOG_WARNING("WebUI: Invalid always-on sample rate %u", sample_rate);
+      OLOG_WARNING("WebUI: Invalid always-on sample rate %u", sample_rate);
       send_error_impl(conn->wsi, "INVALID_SAMPLE_RATE", "Unsupported sample rate");
       return;
    }
@@ -2244,8 +2245,8 @@ static void handle_always_on_enable(ws_connection_t *conn, struct json_object *p
       return;
    }
 
-   LOG_INFO("WebUI: Always-on enabled for user %d (sample_rate=%u)", conn->auth_user_id,
-            sample_rate);
+   OLOG_INFO("WebUI: Always-on enabled for user %d (sample_rate=%u)", conn->auth_user_id,
+             sample_rate);
    send_always_on_state(conn->wsi, "listening");
 }
 
@@ -2255,7 +2256,7 @@ static void handle_always_on_disable(ws_connection_t *conn) {
       return;
    }
 
-   LOG_INFO("WebUI: Always-on disabled for user %d", conn->auth_user_id);
+   OLOG_INFO("WebUI: Always-on disabled for user %d", conn->auth_user_id);
    always_on_destroy(conn->always_on);
    conn->always_on = NULL;
    send_always_on_state(conn->wsi, "disabled");
@@ -2265,13 +2266,13 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
    /* Null-terminate for JSON parsing */
    char *json_str = strndup(data, len);
    if (!json_str) {
-      LOG_ERROR("WebUI: Failed to allocate JSON string");
+      OLOG_ERROR("WebUI: Failed to allocate JSON string");
       return;
    }
 
    struct json_object *root = json_tokener_parse(json_str);
    if (!root) {
-      LOG_WARNING("WebUI: Invalid JSON received: %.*s", (int)len, data);
+      OLOG_WARNING("WebUI: Invalid JSON received: %.*s", (int)len, data);
       free(json_str);
       return;
    }
@@ -2279,7 +2280,7 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
    /* Get message type */
    struct json_object *type_obj;
    if (!json_object_object_get_ex(root, "type", &type_obj)) {
-      LOG_WARNING("WebUI: JSON missing 'type' field");
+      OLOG_WARNING("WebUI: JSON missing 'type' field");
       json_object_put(root);
       free(json_str);
       return;
@@ -2308,8 +2309,8 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                    json_object_is_type(images_obj, json_type_array)) {
                   int array_len = json_object_array_length(images_obj);
                   if (array_len > max_vision_images) {
-                     LOG_WARNING("WebUI: Too many images (%d), limiting to %d", array_len,
-                                 max_vision_images);
+                     OLOG_WARNING("WebUI: Too many images (%d), limiting to %d", array_len,
+                                  max_vision_images);
                      array_len = max_vision_images;
                   }
 
@@ -2356,7 +2357,7 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                   }
 
                   if (vision_image_count > 0) {
-                     LOG_INFO("WebUI: %d vision image(s) attached", vision_image_count);
+                     OLOG_INFO("WebUI: %d vision image(s) attached", vision_image_count);
                   }
                }
 
@@ -2427,7 +2428,7 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
       }
 
       /* Request application restart */
-      LOG_INFO("WebUI: Restart requested by client '%s'", conn->username);
+      OLOG_INFO("WebUI: Restart requested by client '%s'", conn->username);
 
       /* Send confirmation response before initiating restart */
       struct json_object *response = json_object_new_object();
@@ -2465,7 +2466,7 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
             if (new_type) {
                if (strcmp(new_type, "local") == 0) {
                   llm_set_type(LLM_LOCAL);
-                  LOG_INFO("WebUI: Switched to local LLM");
+                  OLOG_INFO("WebUI: Switched to local LLM");
                } else if (strcmp(new_type, "cloud") == 0) {
                   /* When switching to cloud, ensure we have a valid provider selected.
                    * Prefer OpenAI if available, otherwise Claude, otherwise Gemini. */
@@ -2481,7 +2482,7 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                      success = 0;
                      error_msg = "No cloud API key configured in secrets.toml";
                   } else {
-                     LOG_INFO("WebUI: Switched to cloud LLM");
+                     OLOG_INFO("WebUI: Switched to cloud LLM");
                   }
                }
             }
@@ -2503,7 +2504,7 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                   success = 0;
                   error_msg = "API key not configured for this provider";
                } else {
-                  LOG_INFO("WebUI: Switched cloud provider to %s", new_provider);
+                  OLOG_INFO("WebUI: Switched cloud provider to %s", new_provider);
                }
             }
          }
@@ -2577,18 +2578,18 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                   if (config.cloud_provider == CLOUD_PROVIDER_NONE) {
                      config.cloud_provider = llm_detect_available_provider();
                      if (config.cloud_provider != CLOUD_PROVIDER_NONE) {
-                        LOG_INFO("WebUI: Auto-selected %s (API key available)",
-                                 cloud_provider_to_string(config.cloud_provider));
+                        OLOG_INFO("WebUI: Auto-selected %s (API key available)",
+                                  cloud_provider_to_string(config.cloud_provider));
                      } else {
-                        LOG_WARNING("WebUI: No cloud API keys found — configure in "
-                                    "Settings or secrets.toml");
+                        OLOG_WARNING("WebUI: No cloud API keys found — configure in "
+                                     "Settings or secrets.toml");
                      }
                   }
                } else if (strcmp(new_type, "reset") == 0) {
                   /* Reset to defaults from dawn.toml */
                   session_clear_llm_config(conn->session);
-                  LOG_INFO("WebUI: Session %u LLM config reset to defaults",
-                           conn->session->session_id);
+                  OLOG_INFO("WebUI: Session %u LLM config reset to defaults",
+                            conn->session->session_id);
                   has_changes = false; /* Already handled */
                }
             }
@@ -2621,7 +2622,7 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                   has_changes = true;
                   strncpy(config.model, new_model, sizeof(config.model) - 1);
                   config.model[sizeof(config.model) - 1] = '\0';
-                  LOG_INFO("WebUI: Session model set to '%s'", config.model);
+                  OLOG_INFO("WebUI: Session model set to '%s'", config.model);
 
                   /* Infer provider from model name if not explicitly set
                    * (handles old conversations and frontend bugs).
@@ -2631,17 +2632,17 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                           strncmp(new_model, "o3-", 3) == 0) &&
                          llm_has_openai_key()) {
                         config.cloud_provider = CLOUD_PROVIDER_OPENAI;
-                        LOG_INFO("WebUI: Inferred OpenAI provider from model '%s'", new_model);
+                        OLOG_INFO("WebUI: Inferred OpenAI provider from model '%s'", new_model);
                      } else if (strncmp(new_model, "claude-", 7) == 0 && llm_has_claude_key()) {
                         config.cloud_provider = CLOUD_PROVIDER_CLAUDE;
-                        LOG_INFO("WebUI: Inferred Claude provider from model '%s'", new_model);
+                        OLOG_INFO("WebUI: Inferred Claude provider from model '%s'", new_model);
                      } else if (strncmp(new_model, "gemini-", 7) == 0 && llm_has_gemini_key()) {
                         config.cloud_provider = CLOUD_PROVIDER_GEMINI;
-                        LOG_INFO("WebUI: Inferred Gemini provider from model '%s'", new_model);
+                        OLOG_INFO("WebUI: Inferred Gemini provider from model '%s'", new_model);
                      }
                   }
                } else {
-                  LOG_WARNING("WebUI: Rejected invalid model name from client");
+                  OLOG_WARNING("WebUI: Rejected invalid model name from client");
                }
             }
          }
@@ -2658,9 +2659,9 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                   has_changes = true;
                   strncpy(config.tool_mode, new_tool_mode, sizeof(config.tool_mode) - 1);
                   config.tool_mode[sizeof(config.tool_mode) - 1] = '\0';
-                  LOG_INFO("WebUI: Session tool_mode set to '%s'", config.tool_mode);
+                  OLOG_INFO("WebUI: Session tool_mode set to '%s'", config.tool_mode);
                } else {
-                  LOG_WARNING("WebUI: Rejected invalid tool_mode '%s' from client", new_tool_mode);
+                  OLOG_WARNING("WebUI: Rejected invalid tool_mode '%s' from client", new_tool_mode);
                }
             }
          }
@@ -2678,10 +2679,10 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                   strncpy(config.thinking_mode, new_thinking_mode,
                           sizeof(config.thinking_mode) - 1);
                   config.thinking_mode[sizeof(config.thinking_mode) - 1] = '\0';
-                  LOG_INFO("WebUI: Session thinking_mode set to '%s'", config.thinking_mode);
+                  OLOG_INFO("WebUI: Session thinking_mode set to '%s'", config.thinking_mode);
                } else {
-                  LOG_WARNING("WebUI: Rejected invalid thinking_mode '%s' from client",
-                              new_thinking_mode);
+                  OLOG_WARNING("WebUI: Rejected invalid thinking_mode '%s' from client",
+                               new_thinking_mode);
                }
             }
          }
@@ -2697,10 +2698,10 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                   has_changes = true;
                   strncpy(config.reasoning_effort, new_effort, sizeof(config.reasoning_effort) - 1);
                   config.reasoning_effort[sizeof(config.reasoning_effort) - 1] = '\0';
-                  LOG_INFO("WebUI: Session reasoning_effort set to '%s'", config.reasoning_effort);
+                  OLOG_INFO("WebUI: Session reasoning_effort set to '%s'", config.reasoning_effort);
                } else {
-                  LOG_WARNING("WebUI: Rejected invalid reasoning_effort '%s' from client",
-                              new_effort);
+                  OLOG_WARNING("WebUI: Rejected invalid reasoning_effort '%s' from client",
+                               new_effort);
                }
             }
          }
@@ -2712,8 +2713,8 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                success = 0;
                error_msg = "API key not configured for requested provider";
             } else {
-               LOG_INFO("WebUI: Session %u LLM config updated (type=%d, provider=%d)",
-                        conn->session->session_id, config.type, config.cloud_provider);
+               OLOG_INFO("WebUI: Session %u LLM config updated (type=%d, provider=%d)",
+                         conn->session->session_id, config.type, config.cloud_provider);
 
                /* If local model or LLM type changed, context size may differ */
                if (config.type == LLM_LOCAL &&
@@ -2727,8 +2728,8 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                   char *new_prompt = build_remote_prompt_for_mode(config.tool_mode);
                   if (new_prompt) {
                      session_update_system_prompt(conn->session, new_prompt);
-                     LOG_INFO("WebUI: Updated session prompt for tool_mode change to '%s'",
-                              config.tool_mode);
+                     OLOG_INFO("WebUI: Updated session prompt for tool_mode change to '%s'",
+                               config.tool_mode);
                      free(new_prompt);
                   }
                }
@@ -2832,7 +2833,7 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                      session_release(conn->session);
                      session_destroy(abandoned_id);
                      unregister_tokens_for_session(abandoned_id);
-                     LOG_INFO("WebUI: Destroyed abandoned session %u", abandoned_id);
+                     OLOG_INFO("WebUI: Destroyed abandoned session %u", abandoned_id);
                   }
                   conn->session = existing;
                   existing->client_data = conn;
@@ -2847,16 +2848,16 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                      conn->tts_enabled = json_object_get_boolean(tts_obj);
                   }
 
-                  LOG_INFO("WebUI: Reconnected to session %u with token %.4s... "
-                           "(opus: %s, tts: %s)",
-                           existing->session_id, token, conn->use_opus ? "yes" : "no",
-                           conn->tts_enabled ? "yes" : "no");
+                  OLOG_INFO("WebUI: Reconnected to session %u with token %.4s... "
+                            "(opus: %s, tts: %s)",
+                            existing->session_id, token, conn->use_opus ? "yes" : "no",
+                            conn->tts_enabled ? "yes" : "no");
 
                   /* Queue init messages (one lws_write per callback) */
                   queue_init_messages(conn, token);
                } else {
                   /* Token not found or session expired - create new session */
-                  LOG_INFO("WebUI: Token %.4s... not found, creating new session", token);
+                  OLOG_INFO("WebUI: Token %.4s... not found, creating new session", token);
                   if (!conn->session) {
                      conn->session = session_create(SESSION_TYPE_WEBUI, -1);
                      if (conn->session) {
@@ -2869,7 +2870,7 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                         free(prompt);
                         conn->session->client_data = conn;
                         if (generate_session_token(conn->session_token) != 0) {
-                           LOG_ERROR("WebUI: Failed to generate session token");
+                           OLOG_ERROR("WebUI: Failed to generate session token");
                            session_destroy(conn->session->session_id);
                            conn->session = NULL;
                            return;
@@ -2888,9 +2889,9 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                      if (json_object_object_get_ex(payload, "tts_enabled", &tts_obj)) {
                         conn->tts_enabled = json_object_get_boolean(tts_obj);
                      }
-                     LOG_INFO("WebUI: Session %u capabilities synced (opus: %s, tts: %s)",
-                              conn->session->session_id, conn->use_opus ? "yes" : "no",
-                              conn->tts_enabled ? "yes" : "no");
+                     OLOG_INFO("WebUI: Session %u capabilities synced (opus: %s, tts: %s)",
+                               conn->session->session_id, conn->use_opus ? "yes" : "no",
+                               conn->tts_enabled ? "yes" : "no");
                   }
                }
             }
@@ -2905,21 +2906,21 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
          if (json_object_object_get_ex(payload, "tts_enabled", &tts_obj)) {
             conn->tts_enabled = json_object_get_boolean(tts_obj);
          }
-         LOG_INFO("WebUI: Session %u init capabilities synced (opus: %s, tts: %s)",
-                  conn->session ? conn->session->session_id : 0, conn->use_opus ? "yes" : "no",
-                  conn->tts_enabled ? "yes" : "no");
+         OLOG_INFO("WebUI: Session %u init capabilities synced (opus: %s, tts: %s)",
+                   conn->session ? conn->session->session_id : 0, conn->use_opus ? "yes" : "no",
+                   conn->tts_enabled ? "yes" : "no");
       }
    } else if (strcmp(type, "capabilities_update") == 0) {
       /* Client capability update (e.g., Opus codec became available after connect) */
       if (payload && conn->session) {
          conn->use_opus = check_opus_capability(payload);
-         LOG_INFO("WebUI: Session %u capabilities updated (opus: %s)", conn->session->session_id,
-                  conn->use_opus ? "yes" : "no");
+         OLOG_INFO("WebUI: Session %u capabilities updated (opus: %s)", conn->session->session_id,
+                   conn->use_opus ? "yes" : "no");
       } else if (payload) {
          /* Session not yet created - just store capability, session will read it later */
          conn->use_opus = check_opus_capability(payload);
-         LOG_INFO("WebUI: Connection capabilities updated before session (opus: %s)",
-                  conn->use_opus ? "yes" : "no");
+         OLOG_INFO("WebUI: Connection capabilities updated before session (opus: %s)",
+                   conn->use_opus ? "yes" : "no");
       }
    } else if (handle_smart_home_message(conn, type, payload)) {
       /* Handled by smart home dispatch (SmartThings / Home Assistant) */
@@ -3223,8 +3224,8 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
          struct json_object *enabled_obj;
          if (json_object_object_get_ex(payload, "enabled", &enabled_obj)) {
             conn->tts_enabled = json_object_get_boolean(enabled_obj);
-            LOG_INFO("WebUI: TTS %s for session %u", conn->tts_enabled ? "enabled" : "disabled",
-                     conn->session ? conn->session->session_id : 0);
+            OLOG_INFO("WebUI: TTS %s for session %u", conn->tts_enabled ? "enabled" : "disabled",
+                      conn->session ? conn->session->session_id : 0);
          }
       }
    }
@@ -3355,9 +3356,9 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
       }
    } else if (strncmp(type, "smartthings_", sizeof("smartthings_") - 1) == 0 ||
               strncmp(type, "ha_", sizeof("ha_") - 1) == 0) {
-      LOG_DEBUG("WebUI: Ignoring %s message (feature not compiled in)", type);
+      OLOG_DEBUG("WebUI: Ignoring %s message (feature not compiled in)", type);
    } else {
-      LOG_WARNING("WebUI: Unknown message type: %s", type);
+      OLOG_WARNING("WebUI: Unknown message type: %s", type);
    }
 
    json_object_put(root);
@@ -3366,7 +3367,7 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
 
 static void handle_cancel_message(ws_connection_t *conn) {
    if (conn->session) {
-      LOG_INFO("WebUI: Cancel requested for session %u", conn->session->session_id);
+      OLOG_INFO("WebUI: Cancel requested for session %u", conn->session->session_id);
       conn->session->disconnected = true; /* Signal worker to abort */
       /* Note: llm_request_interrupt() is NOT called here because it uses a global flag
        * that would affect all users. Instead, session_manager.c sets the TLS cancel flag
@@ -3419,16 +3420,16 @@ static int callback_websocket(struct lws *wsi,
             conn->auth_session_token[sizeof(conn->auth_session_token) - 1] = '\0';
             strncpy(conn->username, auth_session.username, sizeof(conn->username) - 1);
             conn->username[sizeof(conn->username) - 1] = '\0';
-            LOG_INFO("WebUI: WebSocket authenticated as user '%s' (id=%d)", conn->username,
-                     conn->auth_user_id);
+            OLOG_INFO("WebUI: WebSocket authenticated as user '%s' (id=%d)", conn->username,
+                      conn->auth_user_id);
          } else {
-            LOG_INFO("WebUI: WebSocket connection established (unauthenticated)");
+            OLOG_INFO("WebUI: WebSocket connection established (unauthenticated)");
          }
 
          /* Register in connection registry for proactive notifications */
          register_connection(conn);
 
-         LOG_INFO("WebUI: WebSocket connection established, awaiting init message");
+         OLOG_INFO("WebUI: WebSocket connection established, awaiting init message");
          break;
       }
 
@@ -3438,8 +3439,8 @@ static int callback_websocket(struct lws *wsi,
          /* WebSocket disconnected.
           * Atomic load: maintenance thread may have NULLed conn->session. */
          session_t *closing_session = conn_get_session(conn);
-         LOG_INFO("WebUI: WebSocket client disconnecting (session %u)",
-                  closing_session ? closing_session->session_id : 0);
+         OLOG_INFO("WebUI: WebSocket client disconnecting (session %u)",
+                   closing_session ? closing_session->session_id : 0);
 
          if (closing_session) {
             /* Mark session as disconnected (aborts any pending LLM calls) */
@@ -3448,9 +3449,9 @@ static int callback_websocket(struct lws *wsi,
 
             /* Release our reference to the session.
              * Session manager will clean it up when ref_count reaches 0. */
-            LOG_INFO("WebUI: Releasing session reference...");
+            OLOG_INFO("WebUI: Releasing session reference...");
             session_release(closing_session);
-            LOG_INFO("WebUI: Session reference released");
+            OLOG_INFO("WebUI: Session reference released");
             conn->session = NULL;
          }
 
@@ -3493,7 +3494,7 @@ static int callback_websocket(struct lws *wsi,
             conn->counted = false;
          }
 
-         LOG_INFO("WebUI: WebSocket client disconnected (total: %d)", s_client_count);
+         OLOG_INFO("WebUI: WebSocket client disconnected (total: %d)", s_client_count);
          break;
       }
 
@@ -3507,7 +3508,7 @@ static int callback_websocket(struct lws *wsi,
              * If already authenticated, auto-create a new session so the user
              * doesn't have to log in again. */
             if (conn->authenticated) {
-               LOG_INFO("WebUI: Session expired for authenticated connection, auto-creating");
+               OLOG_INFO("WebUI: Session expired for authenticated connection, auto-creating");
                if (!webui_conn_create_session(conn)) {
                   break; /* Error already sent to client */
                }
@@ -3520,7 +3521,7 @@ static int callback_websocket(struct lws *wsi,
                 */
                char *json_str = strndup((const char *)in, len);
                if (!json_str) {
-                  LOG_ERROR("WebUI: Failed to allocate init message buffer");
+                  OLOG_ERROR("WebUI: Failed to allocate init message buffer");
                   return -1;
                }
 
@@ -3528,7 +3529,7 @@ static int callback_websocket(struct lws *wsi,
                free(json_str);
 
                if (!root) {
-                  LOG_WARNING("WebUI: Invalid JSON in init message");
+                  OLOG_WARNING("WebUI: Invalid JSON in init message");
                   return -1;
                }
 
@@ -3541,7 +3542,7 @@ static int callback_websocket(struct lws *wsi,
                struct json_object *payload = NULL;
                json_object_object_get_ex(root, "payload", &payload);
 
-               LOG_INFO("WebUI: Init message received, type=%s", type ? type : "(null)");
+               OLOG_INFO("WebUI: Init message received, type=%s", type ? type : "(null)");
 
                bool is_reconnect = false;
                session_t *existing_session = NULL;
@@ -3577,7 +3578,7 @@ static int callback_websocket(struct lws *wsi,
                            pthread_mutex_unlock(&s_mutex);
                            conn->counted = true;
 
-                           LOG_INFO(
+                           OLOG_INFO(
                                "WebUI: Reconnected to session %u with token %.4s... (total: %d, "
                                "opus: %s, tts: %s)",
                                existing_session->session_id, token, s_client_count,
@@ -3595,8 +3596,8 @@ static int callback_websocket(struct lws *wsi,
                   pthread_mutex_lock(&s_mutex);
                   if (s_client_count >= g_config.webui.max_clients) {
                      pthread_mutex_unlock(&s_mutex);
-                     LOG_WARNING("WebUI: Satellite rejected - max clients reached (%d)",
-                                 g_config.webui.max_clients);
+                     OLOG_WARNING("WebUI: Satellite rejected - max clients reached (%d)",
+                                  g_config.webui.max_clients);
                      send_error_impl(wsi, "MAX_CLIENTS",
                                      "Maximum clients reached. Please try again later.");
                      json_object_put(root);
@@ -3620,7 +3621,7 @@ static int callback_websocket(struct lws *wsi,
                      conn->authenticated = true;
                   }
                   if (!conn->session) {
-                     LOG_ERROR("WebUI: Failed to create satellite session");
+                     OLOG_ERROR("WebUI: Failed to create satellite session");
                      pthread_mutex_lock(&s_mutex);
                      s_client_count--;
                      pthread_mutex_unlock(&s_mutex);
@@ -3637,8 +3638,8 @@ static int callback_websocket(struct lws *wsi,
                   pthread_mutex_lock(&s_mutex);
                   if (s_client_count >= g_config.webui.max_clients) {
                      pthread_mutex_unlock(&s_mutex);
-                     LOG_WARNING("WebUI: Connection rejected - max clients reached (%d)",
-                                 g_config.webui.max_clients);
+                     OLOG_WARNING("WebUI: Connection rejected - max clients reached (%d)",
+                                  g_config.webui.max_clients);
                      send_error_impl(wsi, "MAX_CLIENTS",
                                      "Maximum WebUI clients reached. Please try again later.");
                      json_object_put(root);
@@ -3650,7 +3651,7 @@ static int callback_websocket(struct lws *wsi,
 
                   conn->session = session_create(SESSION_TYPE_WEBUI, -1);
                   if (!conn->session) {
-                     LOG_ERROR("WebUI: Failed to create session");
+                     OLOG_ERROR("WebUI: Failed to create session");
                      send_error_impl(wsi, "SESSION_LIMIT", "Maximum sessions reached");
                      pthread_mutex_lock(&s_mutex);
                      s_client_count--;
@@ -3680,7 +3681,7 @@ static int callback_websocket(struct lws *wsi,
                   }
 
                   if (generate_session_token(conn->session_token) != 0) {
-                     LOG_ERROR("WebUI: Failed to generate session token");
+                     OLOG_ERROR("WebUI: Failed to generate session token");
                      session_destroy(conn->session->session_id);
                      conn->session = NULL;
                      pthread_mutex_lock(&s_mutex);
@@ -3692,10 +3693,10 @@ static int callback_websocket(struct lws *wsi,
                   }
                   register_token(conn->session_token, conn->session->session_id);
 
-                  LOG_INFO("WebUI: New session %u created (token %.4s..., total: %d, opus: %s, "
-                           "tts: %s)",
-                           conn->session->session_id, conn->session_token, s_client_count,
-                           conn->use_opus ? "yes" : "no", conn->tts_enabled ? "yes" : "no");
+                  OLOG_INFO("WebUI: New session %u created (token %.4s..., total: %d, opus: %s, "
+                            "tts: %s)",
+                            conn->session->session_id, conn->session_token, s_client_count,
+                            conn->use_opus ? "yes" : "no", conn->tts_enabled ? "yes" : "no");
 
                   queue_init_messages(conn, conn->session_token);
                }
@@ -3727,14 +3728,14 @@ static int callback_websocket(struct lws *wsi,
                      while (new_capacity < conn->audio_buffer_len + data_len)
                         new_capacity *= 2;
                      if (new_capacity > WEBUI_AUDIO_MAX_CAPACITY) {
-                        LOG_WARNING("WebUI: Fragment would exceed max audio capacity (%d bytes)",
-                                    WEBUI_AUDIO_MAX_CAPACITY);
+                        OLOG_WARNING("WebUI: Fragment would exceed max audio capacity (%d bytes)",
+                                     WEBUI_AUDIO_MAX_CAPACITY);
                         send_error_impl(conn->wsi, "BUFFER_FULL", "Recording too long");
                         conn->in_binary_fragment = false;
                      } else {
                         uint8_t *new_buffer = realloc(conn->audio_buffer, new_capacity);
                         if (!new_buffer) {
-                           LOG_ERROR("WebUI: Failed to expand audio buffer in fragment");
+                           OLOG_ERROR("WebUI: Failed to expand audio buffer in fragment");
                            send_error_impl(conn->wsi, "BUFFER_ERROR",
                                            "Audio buffer allocation failed");
                            conn->in_binary_fragment = false;
@@ -3748,8 +3749,8 @@ static int callback_websocket(struct lws *wsi,
                       conn->audio_buffer_len + data_len <= conn->audio_buffer_capacity) {
                      memcpy(conn->audio_buffer + conn->audio_buffer_len, data, data_len);
                      conn->audio_buffer_len += data_len;
-                     LOG_INFO("WebUI: Fragment continuation, added %zu bytes (total: %zu)",
-                              data_len, conn->audio_buffer_len);
+                     OLOG_INFO("WebUI: Fragment continuation, added %zu bytes (total: %zu)",
+                               data_len, conn->audio_buffer_len);
                   }
                }
 
@@ -3793,7 +3794,7 @@ static int callback_websocket(struct lws *wsi,
                }
             }
 #else
-            LOG_WARNING("WebUI: Audio not enabled, ignoring binary message (%zu bytes)", len);
+            OLOG_WARNING("WebUI: Audio not enabled, ignoring binary message (%zu bytes)", len);
 #endif
          } else {
             /* Text message (JSON control) - handle fragmentation */
@@ -3803,7 +3804,7 @@ static int callback_websocket(struct lws *wsi,
             } else {
                /* Check for integer overflow before calculating needed size */
                if (len > SIZE_MAX - conn->text_buffer_len - 1) {
-                  LOG_ERROR("WebUI: Text buffer size overflow detected");
+                  OLOG_ERROR("WebUI: Text buffer size overflow detected");
                   conn->text_buffer_len = 0;
                   break;
                }
@@ -3818,14 +3819,14 @@ static int callback_websocket(struct lws *wsi,
                      new_cap *= 2;
                   }
                   if (new_cap > WEBUI_TEXT_BUFFER_MAX_CAP) {
-                     LOG_ERROR("WebUI: Text message too large (>%d bytes), dropping",
-                               WEBUI_TEXT_BUFFER_MAX_CAP);
+                     OLOG_ERROR("WebUI: Text message too large (>%d bytes), dropping",
+                                WEBUI_TEXT_BUFFER_MAX_CAP);
                      conn->text_buffer_len = 0; /* Reset for next message */
                      break;
                   }
                   char *new_buf = realloc(conn->text_buffer, new_cap);
                   if (!new_buf) {
-                     LOG_ERROR("WebUI: Failed to allocate text buffer (%zu bytes)", new_cap);
+                     OLOG_ERROR("WebUI: Failed to allocate text buffer (%zu bytes)", new_cap);
                      conn->text_buffer_len = 0;
                      break;
                   }
@@ -3895,7 +3896,7 @@ static struct lws_protocols s_protocols[] = {
 static void *webui_thread_func(void *arg) {
    (void)arg;
 
-   LOG_INFO("WebUI: Server thread started");
+   OLOG_INFO("WebUI: Server thread started");
 
    while (s_running) {
       /* Process events with 5ms timeout (fast for music streaming ~50fps).
@@ -3931,7 +3932,7 @@ static void *webui_thread_func(void *arg) {
       }
    }
 
-   LOG_INFO("WebUI: Server thread exiting");
+   OLOG_INFO("WebUI: Server thread exiting");
    return NULL;
 }
 
@@ -4108,7 +4109,7 @@ static void send_state_with_tools(session_t *session, const char *state) {
                           } };
 
    if (!resp.state.state) {
-      LOG_ERROR("WebUI: Failed to allocate state response");
+      OLOG_ERROR("WebUI: Failed to allocate state response");
       free(tools_json);
       return;
    }
@@ -4263,7 +4264,7 @@ int webui_server_init(int port, const char *www_path) {
    pthread_mutex_lock(&s_mutex);
    if (s_running) {
       pthread_mutex_unlock(&s_mutex);
-      LOG_WARNING("WebUI: Server already running");
+      OLOG_WARNING("WebUI: Server already running");
       return WEBUI_ERROR_ALREADY_RUNNING;
    }
    pthread_mutex_unlock(&s_mutex);
@@ -4311,23 +4312,23 @@ int webui_server_init(int port, const char *www_path) {
    bool use_https = g_config.webui.https;
    if (use_https) {
       if (g_config.webui.ssl_cert_path[0] == '\0' || g_config.webui.ssl_key_path[0] == '\0') {
-         LOG_ERROR("WebUI: HTTPS enabled but ssl_cert_path or ssl_key_path not set");
-         LOG_ERROR("  Hint: Set ssl_cert_path and ssl_key_path in dawn.toml [webui], or run "
-                   "./generate_ssl_cert.sh");
+         OLOG_ERROR("WebUI: HTTPS enabled but ssl_cert_path or ssl_key_path not set");
+         OLOG_ERROR("  Hint: Set ssl_cert_path and ssl_key_path in dawn.toml [webui], or run "
+                    "./generate_ssl_cert.sh");
          return WEBUI_ERROR_SOCKET;
       }
 
       /* Verify certificate files exist */
       if (access(g_config.webui.ssl_cert_path, R_OK) != 0) {
-         LOG_ERROR("WebUI: Cannot read SSL certificate: %s", g_config.webui.ssl_cert_path);
-         LOG_ERROR("  Hint: Check file exists and permissions. Regenerate with "
-                   "./generate_ssl_cert.sh --renew if expired");
+         OLOG_ERROR("WebUI: Cannot read SSL certificate: %s", g_config.webui.ssl_cert_path);
+         OLOG_ERROR("  Hint: Check file exists and permissions. Regenerate with "
+                    "./generate_ssl_cert.sh --renew if expired");
          return WEBUI_ERROR_SOCKET;
       }
       if (access(g_config.webui.ssl_key_path, R_OK) != 0) {
-         LOG_ERROR("WebUI: Cannot read SSL private key: %s", g_config.webui.ssl_key_path);
-         LOG_ERROR("  Hint: Check file exists and permissions. Key should be readable by the DAWN "
-                   "process user");
+         OLOG_ERROR("WebUI: Cannot read SSL private key: %s", g_config.webui.ssl_key_path);
+         OLOG_ERROR("  Hint: Check file exists and permissions. Key should be readable by the DAWN "
+                    "process user");
          return WEBUI_ERROR_SOCKET;
       }
 
@@ -4340,11 +4341,11 @@ int webui_server_init(int port, const char *www_path) {
        * OVERSIZED_PAYLOAD errors with large conversation messages. */
       info.alpn = "http/1.1";
 
-      LOG_INFO("WebUI: HTTPS enabled with cert: %s (HTTP/1.1 only)", g_config.webui.ssl_cert_path);
+      OLOG_INFO("WebUI: HTTPS enabled with cert: %s (HTTP/1.1 only)", g_config.webui.ssl_cert_path);
    }
 
-   LOG_INFO("WebUI: Initializing %s server on port %d, serving from: %s",
-            use_https ? "HTTPS" : "HTTP", port, s_www_path);
+   OLOG_INFO("WebUI: Initializing %s server on port %d, serving from: %s",
+             use_https ? "HTTPS" : "HTTP", port, s_www_path);
 
    /* Suppress noisy LWS lifecycle logs (connection tags, accept gate, netlink).
     * Only show errors and warnings — everything else is handled by DAWN's own logging. */
@@ -4353,7 +4354,7 @@ int webui_server_init(int port, const char *www_path) {
    /* Create context */
    s_lws_context = lws_create_context(&info);
    if (!s_lws_context) {
-      LOG_ERROR("WebUI: Failed to create libwebsockets context");
+      OLOG_ERROR("WebUI: Failed to create libwebsockets context");
       return WEBUI_ERROR_SOCKET;
    }
 
@@ -4364,13 +4365,13 @@ int webui_server_init(int port, const char *www_path) {
    /* Initialize audio subsystem (optional - continues if not available) */
 #ifdef ENABLE_WEBUI_AUDIO
    if (webui_audio_init() != WEBUI_AUDIO_SUCCESS) {
-      LOG_WARNING("WebUI: Audio subsystem not available, voice input disabled");
+      OLOG_WARNING("WebUI: Audio subsystem not available, voice input disabled");
    }
 #endif
 
    /* Initialize music streaming subsystem (optional) */
    if (webui_music_init() != 0) {
-      LOG_WARNING("WebUI: Music streaming subsystem not available");
+      OLOG_WARNING("WebUI: Music streaming subsystem not available");
    }
 
    /* Register tool execution callback for debug display */
@@ -4378,7 +4379,7 @@ int webui_server_init(int port, const char *www_path) {
 
    /* Start server thread */
    if (pthread_create(&s_webui_thread, NULL, webui_thread_func, NULL) != 0) {
-      LOG_ERROR("WebUI: Failed to create server thread");
+      OLOG_ERROR("WebUI: Failed to create server thread");
       webui_music_cleanup();
 #ifdef ENABLE_WEBUI_AUDIO
       webui_audio_cleanup();
@@ -4389,16 +4390,16 @@ int webui_server_init(int port, const char *www_path) {
       return WEBUI_ERROR_THREAD;
    }
 
-   LOG_INFO("WebUI: Server started successfully on port %d", port);
+   OLOG_INFO("WebUI: Server started successfully on port %d", port);
 
    /* Warn if satellite registration is open (no pre-shared key configured) */
    const secrets_config_t *secrets = config_get_secrets();
    if (!secrets || !secrets->satellite_registration_key[0]) {
-      LOG_WARNING("WebUI: Satellite registration is OPEN (no registration key set)");
-      LOG_WARNING("WebUI: Any device on the network can register as a satellite.");
-      LOG_WARNING("WebUI: Generate a key with: ./generate_ssl_cert.sh --gen-key");
+      OLOG_WARNING("WebUI: Satellite registration is OPEN (no registration key set)");
+      OLOG_WARNING("WebUI: Any device on the network can register as a satellite.");
+      OLOG_WARNING("WebUI: Generate a key with: ./generate_ssl_cert.sh --gen-key");
    } else {
-      LOG_INFO("WebUI: Satellite registration key is active");
+      OLOG_INFO("WebUI: Satellite registration key is active");
    }
 
    return WEBUI_SUCCESS;
@@ -4411,7 +4412,7 @@ void webui_server_shutdown(void) {
       return;
    }
 
-   LOG_INFO("WebUI: Shutting down server...");
+   OLOG_INFO("WebUI: Shutting down server...");
    s_running = 0;
    pthread_mutex_unlock(&s_mutex);
 
@@ -4421,14 +4422,14 @@ void webui_server_shutdown(void) {
       int wait_ms = 0;
       while (atomic_load(&g_active_satellite_workers) > 0 && wait_ms < 5000) {
          if (wait_ms == 0)
-            LOG_INFO("WebUI: Waiting for %d satellite workers to finish...",
-                     atomic_load(&g_active_satellite_workers));
+            OLOG_INFO("WebUI: Waiting for %d satellite workers to finish...",
+                      atomic_load(&g_active_satellite_workers));
          usleep(50000); /* 50ms */
          wait_ms += 50;
       }
       int remaining = atomic_load(&g_active_satellite_workers);
       if (remaining > 0)
-         LOG_WARNING("WebUI: %d satellite workers still active after 5s timeout", remaining);
+         OLOG_WARNING("WebUI: %d satellite workers still active after 5s timeout", remaining);
    }
 
    /* Wake up lws_service() to process shutdown */
@@ -4437,21 +4438,21 @@ void webui_server_shutdown(void) {
    }
 
    /* Wait for thread to exit with timeout */
-   LOG_INFO("WebUI: Waiting for server thread to exit (max 2 seconds)...");
+   OLOG_INFO("WebUI: Waiting for server thread to exit (max 2 seconds)...");
    struct timespec ts;
    clock_gettime(CLOCK_REALTIME, &ts);
    ts.tv_sec += 2;
 
    int join_result = pthread_timedjoin_np(s_webui_thread, NULL, &ts);
    if (join_result == ETIMEDOUT) {
-      LOG_WARNING("WebUI: Server thread did not exit in time, cancelling...");
+      OLOG_WARNING("WebUI: Server thread did not exit in time, cancelling...");
       pthread_cancel(s_webui_thread);
       pthread_join(s_webui_thread, NULL);
-      LOG_INFO("WebUI: Server thread cancelled and joined");
+      OLOG_INFO("WebUI: Server thread cancelled and joined");
    } else if (join_result != 0) {
-      LOG_ERROR("WebUI: pthread_timedjoin_np failed: %d", join_result);
+      OLOG_ERROR("WebUI: pthread_timedjoin_np failed: %d", join_result);
    } else {
-      LOG_INFO("WebUI: Server thread exited cleanly");
+      OLOG_INFO("WebUI: Server thread exited cleanly");
    }
 
    /* Destroy context */
@@ -4471,7 +4472,7 @@ void webui_server_shutdown(void) {
    s_port = 0;
    s_client_count = 0;
 
-   LOG_INFO("WebUI: Server shutdown complete");
+   OLOG_INFO("WebUI: Server shutdown complete");
 }
 
 bool webui_server_is_running(void) {
@@ -4549,7 +4550,7 @@ void webui_send_transcript_ex(session_t *session,
    if (!resp.transcript.role || !resp.transcript.text) {
       free(resp.transcript.role);
       free(resp.transcript.text);
-      LOG_ERROR("WebUI: Failed to allocate transcript response");
+      OLOG_ERROR("WebUI: Failed to allocate transcript response");
       return;
    }
 
@@ -4573,7 +4574,7 @@ void webui_send_state_with_detail(session_t *session, const char *state, const c
                           } };
 
    if (!resp.state.state) {
-      LOG_ERROR("WebUI: Failed to allocate state response");
+      OLOG_ERROR("WebUI: Failed to allocate state response");
       return;
    }
 
@@ -4633,7 +4634,7 @@ void webui_send_error(session_t *session, const char *code, const char *message)
    if (!resp.error.code || !resp.error.message) {
       free(resp.error.code);
       free(resp.error.message);
-      LOG_ERROR("WebUI: Failed to allocate error response");
+      OLOG_ERROR("WebUI: Failed to allocate error response");
       return;
    }
 
@@ -4695,7 +4696,7 @@ void webui_send_audio(session_t *session, const uint8_t *data, size_t len) {
 
       uint8_t *chunk_copy = malloc(chunk_len);
       if (!chunk_copy) {
-         LOG_ERROR("WebUI: Failed to allocate audio chunk buffer");
+         OLOG_ERROR("WebUI: Failed to allocate audio chunk buffer");
          return;
       }
       memcpy(chunk_copy, data + offset, chunk_len);
@@ -4771,7 +4772,7 @@ void webui_send_stream_start(session_t *session) {
                           } };
 
    queue_response(&resp);
-   LOG_INFO("WebUI: Stream start id=%u for session %u", sid, session->session_id);
+   OLOG_INFO("WebUI: Stream start id=%u for session %u", sid, session->session_id);
 }
 
 /* Command tag filter uses shared constants from core/text_filter.h */
@@ -4970,8 +4971,8 @@ void webui_send_stream_end(session_t *session, const char *reason) {
    resp.stream.text[sizeof(resp.stream.text) - 1] = '\0';
 
    queue_response(&resp);
-   LOG_INFO("WebUI: Stream end id=%u reason=%s for session %u", session->current_stream_id, r,
-            session->session_id);
+   OLOG_INFO("WebUI: Stream end id=%u reason=%s for session %u", session->current_stream_id, r,
+             session->session_id);
 }
 
 /* =============================================================================
@@ -4995,8 +4996,8 @@ void webui_send_thinking_start(session_t *session, const char *provider) {
    resp.stream.text[sizeof(resp.stream.text) - 1] = '\0';
 
    queue_response(&resp);
-   LOG_INFO("WebUI: Thinking start id=%u provider=%s for session %u", session->current_stream_id, p,
-            session->session_id);
+   OLOG_INFO("WebUI: Thinking start id=%u provider=%s for session %u", session->current_stream_id,
+             p, session->session_id);
 }
 
 void webui_send_thinking_delta(session_t *session, const char *text) {
@@ -5036,8 +5037,8 @@ void webui_send_thinking_end(session_t *session, bool has_content) {
    resp.stream.text[1] = '\0';
 
    queue_response(&resp);
-   LOG_INFO("WebUI: Thinking end id=%u has_content=%s for session %u", session->current_stream_id,
-            has_content ? "true" : "false", session->session_id);
+   OLOG_INFO("WebUI: Thinking end id=%u has_content=%s for session %u", session->current_stream_id,
+             has_content ? "true" : "false", session->session_id);
 }
 
 void webui_send_reasoning_summary(session_t *session, int reasoning_tokens) {
@@ -5059,8 +5060,8 @@ void webui_send_reasoning_summary(session_t *session, int reasoning_tokens) {
    snprintf(resp.stream.text, sizeof(resp.stream.text), "%d", reasoning_tokens);
 
    queue_response(&resp);
-   LOG_INFO("WebUI: Reasoning summary id=%u tokens=%d for session %u", session->current_stream_id,
-            reasoning_tokens, session->session_id);
+   OLOG_INFO("WebUI: Reasoning summary id=%u tokens=%d for session %u", session->current_stream_id,
+             reasoning_tokens, session->session_id);
 }
 
 void webui_send_session_json(session_t *session, const char *json_str) {
@@ -5073,7 +5074,7 @@ void webui_send_session_json(session_t *session, const char *json_str) {
    resp.type = WS_RESP_JSON;
    resp.generic_json.json = strdup(json_str);
    if (!resp.generic_json.json) {
-      LOG_ERROR("WebUI: Failed to allocate JSON response string");
+      OLOG_ERROR("WebUI: Failed to allocate JSON response string");
       return;
    }
    queue_response(&resp);
@@ -5087,7 +5088,7 @@ void webui_send_conversation_reset(session_t *session) {
    ws_response_t resp = { .session = session, .type = WS_RESP_CONVERSATION_RESET };
 
    queue_response(&resp);
-   LOG_INFO("WebUI: Conversation reset notification for session %u", session->session_id);
+   OLOG_INFO("WebUI: Conversation reset notification for session %u", session->session_id);
 }
 
 /* =============================================================================
@@ -5120,8 +5121,8 @@ void webui_detach_session(session_t *session) {
    pthread_mutex_unlock(&s_conn_registry_mutex);
 
    if (detached > 0) {
-      LOG_INFO("WebUI: Detached %d connection(s) from expiring session %u", detached,
-               session->session_id);
+      OLOG_INFO("WebUI: Detached %d connection(s) from expiring session %u", detached,
+                session->session_id);
 
       /* Release the references that the connections held.
        * This unblocks session_destroy's ref_count wait. */
@@ -5225,7 +5226,7 @@ char *webui_process_commands(const char *llm_response, session_t *session) {
 
    struct mosquitto *mosq = worker_pool_get_mosq();
    if (!mosq) {
-      LOG_WARNING("WebUI: No MQTT connection, cannot process commands");
+      OLOG_WARNING("WebUI: No MQTT connection, cannot process commands");
       return NULL;
    }
 
@@ -5244,7 +5245,7 @@ char *webui_process_commands(const char *llm_response, session_t *session) {
    while ((cmd_start = strstr(search_ptr, "<command>")) != NULL && num_results < MAX_TOOL_RESULTS) {
       const char *cmd_end = strstr(cmd_start, "</command>");
       if (!cmd_end) {
-         LOG_WARNING("WebUI: Unclosed <command> tag");
+         OLOG_WARNING("WebUI: Unclosed <command> tag");
          break;
       }
 
@@ -5254,7 +5255,7 @@ char *webui_process_commands(const char *llm_response, session_t *session) {
 
       char *cmd_json = malloc(json_len + 1);
       if (!cmd_json) {
-         LOG_ERROR("WebUI: Failed to allocate command JSON");
+         OLOG_ERROR("WebUI: Failed to allocate command JSON");
          break;
       }
       memcpy(cmd_json, json_start, json_len);
@@ -5272,12 +5273,12 @@ char *webui_process_commands(const char *llm_response, session_t *session) {
          }
       }
 
-      LOG_INFO("WebUI: Processing command: %s", cmd_json);
+      OLOG_INFO("WebUI: Processing command: %s", cmd_json);
 
       /* Parse JSON to extract device/action */
       struct json_object *parsed_json = json_tokener_parse(cmd_json);
       if (!parsed_json) {
-         LOG_WARNING("WebUI: Invalid command JSON: %s", cmd_json);
+         OLOG_WARNING("WebUI: Invalid command JSON: %s", cmd_json);
          free(cmd_json);
          search_ptr = cmd_end + strlen("</command>");
          continue;
@@ -5288,7 +5289,7 @@ char *webui_process_commands(const char *llm_response, session_t *session) {
       struct json_object *action_obj = NULL;
 
       if (!json_object_object_get_ex(parsed_json, "device", &device_obj) || !device_obj) {
-         LOG_WARNING("WebUI: Skipping malformed command - missing 'device' field: %s", cmd_json);
+         OLOG_WARNING("WebUI: Skipping malformed command - missing 'device' field: %s", cmd_json);
          json_object_put(parsed_json);
          free(cmd_json);
          search_ptr = cmd_end + strlen("</command>");
@@ -5297,7 +5298,7 @@ char *webui_process_commands(const char *llm_response, session_t *session) {
 
       const char *device_name = json_object_get_string(device_obj);
       if (!device_name || device_name[0] == '\0') {
-         LOG_WARNING("WebUI: Skipping malformed command - empty 'device' field: %s", cmd_json);
+         OLOG_WARNING("WebUI: Skipping malformed command - empty 'device' field: %s", cmd_json);
          json_object_put(parsed_json);
          free(cmd_json);
          search_ptr = cmd_end + strlen("</command>");
@@ -5316,7 +5317,7 @@ char *webui_process_commands(const char *llm_response, session_t *session) {
       /* Register pending request */
       pending_request_t *req = command_router_register(WEBUI_WORKER_ID);
       if (!req) {
-         LOG_ERROR("WebUI: Failed to register pending request");
+         OLOG_ERROR("WebUI: Failed to register pending request");
          json_object_put(parsed_json);
          free(cmd_json);
          search_ptr = cmd_end + strlen("</command>");
@@ -5324,7 +5325,7 @@ char *webui_process_commands(const char *llm_response, session_t *session) {
       }
 
       const char *request_id = command_router_get_id(req);
-      LOG_INFO("WebUI: Registered request %s", request_id);
+      OLOG_INFO("WebUI: Registered request %s", request_id);
 
       /* Add request_id, session_id, and timestamp to command JSON (OCP v1.1) */
       json_object_object_add(parsed_json, "request_id", json_object_new_string(request_id));
@@ -5343,14 +5344,14 @@ char *webui_process_commands(const char *llm_response, session_t *session) {
       int rc = mosquitto_publish(mosq, NULL, APPLICATION_NAME, strlen(cmd_with_id), cmd_with_id, 0,
                                  false);
       if (rc != MOSQ_ERR_SUCCESS) {
-         LOG_ERROR("WebUI: MQTT publish failed: %d", rc);
+         OLOG_ERROR("WebUI: MQTT publish failed: %d", rc);
          command_router_cancel(req);
          json_object_put(parsed_json);
          free(cmd_json);
          search_ptr = cmd_end + strlen("</command>");
          continue;
       }
-      LOG_INFO("WebUI: Published command to %s", APPLICATION_NAME);
+      OLOG_INFO("WebUI: Published command to %s", APPLICATION_NAME);
 
       /* Wait for result */
       char *callback_result = command_router_wait(req, COMMAND_RESULT_TIMEOUT_MS);
@@ -5359,13 +5360,13 @@ char *webui_process_commands(const char *llm_response, session_t *session) {
       tool_results[num_results] = malloc(TOOL_RESULT_MSG_SIZE);
       if (tool_results[num_results]) {
          if (callback_result && strlen(callback_result) > 0) {
-            LOG_INFO("WebUI: Received callback result: %.50s%s", callback_result,
-                     strlen(callback_result) > 50 ? "..." : "");
+            OLOG_INFO("WebUI: Received callback result: %.50s%s", callback_result,
+                      strlen(callback_result) > 50 ? "..." : "");
             snprintf(tool_results[num_results], TOOL_RESULT_MSG_SIZE,
                      "[Tool Result: %s.%s returned: %s]", device_name, action_name,
                      callback_result);
          } else {
-            LOG_WARNING("WebUI: No callback result (timeout or empty)");
+            OLOG_WARNING("WebUI: No callback result (timeout or empty)");
             snprintf(tool_results[num_results], TOOL_RESULT_MSG_SIZE,
                      "[Tool Result: %s.%s completed successfully]", device_name, action_name);
          }
@@ -5400,7 +5401,7 @@ char *webui_process_commands(const char *llm_response, session_t *session) {
 
    char *combined_results = malloc(total_len);
    if (!combined_results) {
-      LOG_ERROR("WebUI: Failed to allocate combined results");
+      OLOG_ERROR("WebUI: Failed to allocate combined results");
       for (int i = 0; i < num_results; i++) {
          free(tool_results[i]);
       }
@@ -5421,7 +5422,7 @@ char *webui_process_commands(const char *llm_response, session_t *session) {
    }
    *ptr = '\0';
 
-   LOG_INFO("WebUI: Sending tool results to LLM: %s", combined_results);
+   OLOG_INFO("WebUI: Sending tool results to LLM: %s", combined_results);
 
    /* Make follow-up LLM call with tool results */
    char *final_response = session_llm_call(session, combined_results);
@@ -5429,12 +5430,12 @@ char *webui_process_commands(const char *llm_response, session_t *session) {
    free(combined_results);
 
    if (!final_response) {
-      LOG_ERROR("WebUI: Follow-up LLM call failed");
+      OLOG_ERROR("WebUI: Follow-up LLM call failed");
       return NULL;
    }
 
-   LOG_INFO("WebUI: LLM final response: %.50s%s", final_response,
-            strlen(final_response) > 50 ? "..." : "");
+   OLOG_INFO("WebUI: LLM final response: %.50s%s", final_response,
+             strlen(final_response) > 50 ? "..." : "");
 
    return final_response;
 }
@@ -5471,7 +5472,7 @@ static void *text_worker_thread(void *arg) {
 
    /* Check if session is still valid or if this request was superseded */
    if (!session || REQUEST_SUPERSEDED(session, expected_gen)) {
-      LOG_INFO("WebUI: Session disconnected or request superseded, aborting text processing");
+      OLOG_INFO("WebUI: Session disconnected or request superseded, aborting text processing");
       text_worker_cleanup(work, session, text);
       return NULL;
    }
@@ -5481,10 +5482,10 @@ static void *text_worker_thread(void *arg) {
       for (int i = 0; i < work->vision_image_count; i++) {
          total_bytes += work->vision_image_sizes[i];
       }
-      LOG_INFO("WebUI: Processing text+vision for session %u: %s (%d images, %zu total bytes)",
-               session->session_id, text, work->vision_image_count, total_bytes);
+      OLOG_INFO("WebUI: Processing text+vision for session %u: %s (%d images, %zu total bytes)",
+                session->session_id, text, work->vision_image_count, total_bytes);
    } else {
-      LOG_INFO("WebUI: Processing text input for session %u: %s", session->session_id, text);
+      OLOG_INFO("WebUI: Processing text input for session %u: %s", session->session_id, text);
    }
 
    /* Clear stale pending_visual from a previous turn that may not have
@@ -5557,7 +5558,7 @@ static void *text_worker_thread(void *arg) {
    /* Check if request was superseded during LLM call */
    if (REQUEST_SUPERSEDED(session, expected_gen)) {
       /* Request superseded - don't try to send response */
-      LOG_INFO("WebUI: Session %u request superseded during LLM call", session->session_id);
+      OLOG_INFO("WebUI: Session %u request superseded during LLM call", session->session_id);
       session_release(session);
       free(response);
       free(text);
@@ -5578,7 +5579,7 @@ static void *text_worker_thread(void *arg) {
    /* Check for command tags and process them */
    char *final_response = response;
    if (strstr(response, "<command>")) {
-      LOG_INFO("WebUI: Response contains commands, processing...");
+      OLOG_INFO("WebUI: Response contains commands, processing...");
 
       /* Note: Don't send intermediate response here - streaming already delivered it */
 
@@ -5587,8 +5588,8 @@ static void *text_worker_thread(void *arg) {
       if (processed) {
          /* Check if request was superseded after command processing */
          if (REQUEST_SUPERSEDED(session, expected_gen)) {
-            LOG_INFO("WebUI: Session %u request superseded during command processing",
-                     session->session_id);
+            OLOG_INFO("WebUI: Session %u request superseded during command processing",
+                      session->session_id);
             session_release(session);
             free(response);
             free(processed);
@@ -5605,13 +5606,14 @@ static void *text_worker_thread(void *arg) {
          while (strstr(processed, "<command>") && !REQUEST_SUPERSEDED(session, expected_gen)) {
             follow_up_iterations++;
             if (follow_up_iterations > MAX_FOLLOW_UP_ITERATIONS) {
-               LOG_WARNING("WebUI: Command loop limit reached (%d iterations), breaking",
-                           MAX_FOLLOW_UP_ITERATIONS);
+               OLOG_WARNING("WebUI: Command loop limit reached (%d iterations), breaking",
+                            MAX_FOLLOW_UP_ITERATIONS);
                break;
             }
 
-            LOG_INFO("WebUI: Follow-up response contains more commands, processing... (iter %d/%d)",
-                     follow_up_iterations, MAX_FOLLOW_UP_ITERATIONS);
+            OLOG_INFO(
+                "WebUI: Follow-up response contains more commands, processing... (iter %d/%d)",
+                follow_up_iterations, MAX_FOLLOW_UP_ITERATIONS);
             /* Note: Don't send transcript - streaming already delivered it */
 
             char *next_processed = webui_process_commands(processed, session);
@@ -5629,8 +5631,8 @@ static void *text_worker_thread(void *arg) {
 
             /* Generate TTS for the command result (follow-up response) */
             if (tts_enabled && strlen(processed) > 0) {
-               LOG_INFO("WebUI: Generating TTS for command result: %.60s%s", processed,
-                        strlen(processed) > 60 ? "..." : "");
+               OLOG_INFO("WebUI: Generating TTS for command result: %.60s%s", processed,
+                         strlen(processed) > 60 ? "..." : "");
                webui_sentence_audio_callback(processed, session);
             }
          } else {
@@ -5704,8 +5706,8 @@ int webui_process_text_input_with_vision(session_t *session,
    /* Validate image count */
    const int max_vision_images = g_config.vision.max_images;
    if (vision_image_count > max_vision_images) {
-      LOG_WARNING("WebUI: Too many images (%d), limiting to %d", vision_image_count,
-                  max_vision_images);
+      OLOG_WARNING("WebUI: Too many images (%d), limiting to %d", vision_image_count,
+                   max_vision_images);
       vision_image_count = max_vision_images;
    }
 
@@ -5718,7 +5720,7 @@ int webui_process_text_input_with_vision(session_t *session,
    /* Create work item */
    text_work_t *work = calloc(1, sizeof(text_work_t));
    if (!work) {
-      LOG_ERROR("WebUI: Failed to allocate text work item");
+      OLOG_ERROR("WebUI: Failed to allocate text work item");
       return 1;
    }
 
@@ -5726,7 +5728,7 @@ int webui_process_text_input_with_vision(session_t *session,
    work->text = strdup(text);
    work->request_gen = new_gen; /* Capture generation for this request */
    if (!work->text) {
-      LOG_ERROR("WebUI: Failed to allocate text copy");
+      OLOG_ERROR("WebUI: Failed to allocate text copy");
       free(work);
       return 1;
    }
@@ -5740,7 +5742,7 @@ int webui_process_text_input_with_vision(session_t *session,
 
          work->vision_images[work->vision_image_count] = strdup(vision_images[i]);
          if (!work->vision_images[work->vision_image_count]) {
-            LOG_ERROR("WebUI: Failed to allocate vision image %d copy", i);
+            OLOG_ERROR("WebUI: Failed to allocate vision image %d copy", i);
             /* Free previously allocated images */
             for (int j = 0; j < work->vision_image_count; j++) {
                free(work->vision_images[j]);
@@ -5772,7 +5774,7 @@ int webui_process_text_input_with_vision(session_t *session,
    pthread_attr_destroy(&attr);
 
    if (ret != 0) {
-      LOG_ERROR("WebUI: Failed to create text worker thread");
+      OLOG_ERROR("WebUI: Failed to create text worker thread");
       session_release(session);
       free(work->text);
       for (int i = 0; i < work->vision_image_count; i++) {
@@ -5809,8 +5811,8 @@ int webui_force_logout_by_auth_token(const char *auth_token_prefix) {
       if (conn && conn->wsi && conn->authenticated) {
          /* Check if auth token prefix matches */
          if (strncmp(conn->auth_session_token, auth_token_prefix, AUTH_TOKEN_PREFIX_LEN) == 0) {
-            LOG_INFO("WebUI: Forcing logout for connection with auth token %.4s...",
-                     auth_token_prefix);
+            OLOG_INFO("WebUI: Forcing logout for connection with auth token %.4s...",
+                      auth_token_prefix);
             send_force_logout_impl(conn->wsi, "Session revoked");
             /* Mark as unauthenticated to prevent further requests */
             conn->authenticated = false;
@@ -5822,7 +5824,7 @@ int webui_force_logout_by_auth_token(const char *auth_token_prefix) {
    pthread_mutex_unlock(&s_conn_registry_mutex);
 
    if (count > 0) {
-      LOG_INFO("WebUI: Sent force_logout to %d connection(s)", count);
+      OLOG_INFO("WebUI: Sent force_logout to %d connection(s)", count);
    }
 
    return count;
@@ -5900,7 +5902,7 @@ void scheduler_broadcast_notification(const sched_event_t *event, const char *te
    json_object_put(root);
 
    if (sent > 0) {
-      LOG_INFO("Scheduler: Broadcast notification to %d client(s): %s", sent, text);
+      OLOG_INFO("Scheduler: Broadcast notification to %d client(s): %s", sent, text);
    }
 }
 
@@ -5967,7 +5969,7 @@ void scheduler_broadcast_briefing_notification(const sched_event_t *event,
    json_object_put(root);
 
    if (sent > 0) {
-      LOG_INFO("Scheduler: Broadcast briefing notification to %d client(s)", sent);
+      OLOG_INFO("Scheduler: Broadcast briefing notification to %d client(s)", sent);
    }
 }
 
@@ -6010,8 +6012,8 @@ int scheduler_route_tts_to_user(int user_id,
                continue;
             satellite_send_response(s, text);
             delivered++;
-            LOG_INFO("scheduler: TTS routed to satellite %s for user %d", s->identity.uuid,
-                     user_id);
+            OLOG_INFO("scheduler: TTS routed to satellite %s for user %d", s->identity.uuid,
+                      user_id);
          }
       } else {
          /* WebUI: pick the most recently active session to avoid multi-tab echo */
@@ -6033,8 +6035,8 @@ int scheduler_route_tts_to_user(int user_id,
    if (best_webui) {
       scheduler_send_tts_to_session(best_webui, text);
       delivered++;
-      LOG_INFO("scheduler: TTS routed to WebUI session %u for user %d", best_webui->session_id,
-               user_id);
+      OLOG_INFO("scheduler: TTS routed to WebUI session %u for user %d", best_webui->session_id,
+                user_id);
       session_release(best_webui);
    }
 
@@ -6083,7 +6085,7 @@ void webui_broadcast_conversation_renamed(int user_id, int64_t conv_id, const ch
    json_object_put(root);
 
    if (sent > 0) {
-      LOG_INFO("WebUI: Broadcast conversation rename to %d client(s): %s", sent, title);
+      OLOG_INFO("WebUI: Broadcast conversation rename to %d client(s): %s", sent, title);
    }
 }
 
@@ -6129,7 +6131,7 @@ void webui_broadcast_memory_notice(int user_id, const char *level, const char *m
    json_object_put(root);
 
    if (sent > 0) {
-      LOG_INFO("WebUI: Broadcast memory notice (%s) to %d client(s)", level, sent);
+      OLOG_INFO("WebUI: Broadcast memory notice (%s) to %d client(s)", level, sent);
    }
 }
 
@@ -6207,7 +6209,7 @@ void webui_force_disconnect_satellite(const char *uuid) {
       ws_connection_t *conn = s_active_connections[i];
       if (conn && conn->is_satellite && conn->session && conn->wsi &&
           strcmp(conn->session->identity.uuid, uuid) == 0) {
-         LOG_INFO("WebUI: Force-disconnecting satellite %s (disabled by admin)", uuid);
+         OLOG_INFO("WebUI: Force-disconnecting satellite %s (disabled by admin)", uuid);
          lws_close_reason(conn->wsi, LWS_CLOSE_STATUS_POLICY_VIOLATION, (unsigned char *)"disabled",
                           8);
          lws_set_timeout(conn->wsi, PENDING_TIMEOUT_CLOSE_SEND, 3);
@@ -6372,15 +6374,15 @@ static bool webui_conn_create_session(ws_connection_t *conn) {
 
    /* Generate and register a new session token */
    if (generate_session_token(conn->session_token) != 0) {
-      LOG_ERROR("WebUI: Failed to generate session token");
+      OLOG_ERROR("WebUI: Failed to generate session token");
       session_destroy(conn->session->session_id);
       conn->session = NULL;
       return false;
    }
    register_token(conn->session_token, conn->session->session_id);
 
-   LOG_INFO("WebUI: Auto-created session %u for connection (user %d, token %.4s...)",
-            conn->session->session_id, conn->auth_user_id, conn->session_token);
+   OLOG_INFO("WebUI: Auto-created session %u for connection (user %d, token %.4s...)",
+             conn->session->session_id, conn->auth_user_id, conn->session_token);
 
    /* Send new session token and init messages so the client updates seamlessly */
    queue_init_messages(conn, conn->session_token);
@@ -6398,8 +6400,8 @@ static bool webui_conn_create_session(ws_connection_t *conn) {
                                                            conn->active_conversation_id, NULL);
             if (count >= 0) {
                restored = true;
-               LOG_INFO("WebUI: Restored conversation %lld (%d messages) into new session %u",
-                        (long long)conn->active_conversation_id, count, conn->session->session_id);
+               OLOG_INFO("WebUI: Restored conversation %lld (%d messages) into new session %u",
+                         (long long)conn->active_conversation_id, count, conn->session->session_id);
             }
          }
          conv_free(&conv);
@@ -6433,7 +6435,7 @@ static void handle_text_message(ws_connection_t *conn,
    /* Auto-create session if expired (user is still authenticated).
     * Atomic load: maintenance thread may have NULLed conn->session. */
    if (!conn_get_session(conn)) {
-      LOG_INFO("WebUI: Session expired for authenticated connection, creating new session");
+      OLOG_INFO("WebUI: Session expired for authenticated connection, creating new session");
       if (!webui_conn_create_session(conn)) {
          return;
       }
@@ -6444,10 +6446,10 @@ static void handle_text_message(ws_connection_t *conn,
       for (int i = 0; i < vision_image_count; i++) {
          total_bytes += vision_image_sizes[i];
       }
-      LOG_INFO("WebUI: Text+Vision input from session %u: %s (%d images, %zu total bytes)",
-               conn->session->session_id, text, vision_image_count, total_bytes);
+      OLOG_INFO("WebUI: Text+Vision input from session %u: %s (%d images, %zu total bytes)",
+                conn->session->session_id, text, vision_image_count, total_bytes);
    } else {
-      LOG_INFO("WebUI: Text input from session %u: %s", conn->session->session_id, text);
+      OLOG_INFO("WebUI: Text input from session %u: %s", conn->session->session_id, text);
    }
 
    int ret = webui_process_text_input_with_vision(conn->session, text, vision_images,

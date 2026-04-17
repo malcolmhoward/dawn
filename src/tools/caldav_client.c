@@ -209,20 +209,20 @@ static caldav_error_t do_propfind(CURL *curl,
    curl_slist_free_all(headers);
 
    if (res != CURLE_OK) {
-      LOG_ERROR("caldav: PROPFIND %s failed: %s", url, curl_easy_strerror(res));
+      OLOG_ERROR("caldav: PROPFIND %s failed: %s", url, curl_easy_strerror(res));
       return CALDAV_ERR_NETWORK;
    }
 
    long status = 0;
    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
    if (status >= 300) {
-      LOG_WARNING("caldav: PROPFIND %s Depth:%s -> HTTP %ld", url, depth, status);
+      OLOG_WARNING("caldav: PROPFIND %s Depth:%s -> HTTP %ld", url, depth, status);
       if (resp->data && resp->size > 0) {
          char snippet[201];
          size_t n = resp->size < 200 ? resp->size : 200;
          memcpy(snippet, resp->data, n);
          snippet[n] = '\0';
-         LOG_WARNING("caldav: response: %.200s", snippet);
+         OLOG_WARNING("caldav: response: %.200s", snippet);
       }
    }
    return http_status_to_error(status);
@@ -361,7 +361,7 @@ static caldav_error_t discover_principal(CURL *curl,
 
    if (href[0]) {
       resolve_href(base_url, href, principal_out, principal_len);
-      LOG_INFO("caldav: principal URL: %s", principal_out);
+      OLOG_INFO("caldav: principal URL: %s", principal_out);
    }
    return CALDAV_OK;
 }
@@ -405,7 +405,7 @@ static caldav_error_t discover_calendar_home(CURL *curl,
 
    if (href[0]) {
       resolve_href(principal_url, href, home_out, home_len);
-      LOG_INFO("caldav: calendar-home-set: %s", home_out);
+      OLOG_INFO("caldav: calendar-home-set: %s", home_out);
       return CALDAV_OK;
    }
 
@@ -555,7 +555,7 @@ caldav_error_t caldav_discover(const char *base_url,
 
    if (err != CALDAV_OK || !principal_url[0]) {
       /* Fallback: try base URL directly as calendar-home (Radicale-style) */
-      LOG_INFO("caldav: no principal found, trying base URL as calendar-home");
+      OLOG_INFO("caldav: no principal found, trying base URL as calendar-home");
       err = discover_collections(curl, base_url, &resp, &result->calendars,
                                  &result->calendar_count);
       if (err == CALDAV_OK) {
@@ -700,7 +700,7 @@ caldav_error_t caldav_fetch_events(const char *calendar_url,
    curl_slist_free_all(headers);
 
    if (cres != CURLE_OK) {
-      LOG_ERROR("caldav: REPORT %s failed: %s", calendar_url, curl_easy_strerror(cres));
+      OLOG_ERROR("caldav: REPORT %s failed: %s", calendar_url, curl_easy_strerror(cres));
       curl_easy_cleanup(curl);
       curl_buf_free(&resp);
       return CALDAV_ERR_NETWORK;
@@ -952,7 +952,7 @@ caldav_error_t caldav_create_event(const char *calendar_url,
    curl_slist_free_all(headers);
 
    if (cres != CURLE_OK) {
-      LOG_ERROR("caldav: PUT create %s failed: %s", url, curl_easy_strerror(cres));
+      OLOG_ERROR("caldav: PUT create %s failed: %s", url, curl_easy_strerror(cres));
       curl_easy_cleanup(curl);
       curl_buf_free(&resp);
       return CALDAV_ERR_NETWORK;
@@ -1016,7 +1016,7 @@ caldav_error_t caldav_update_event(const char *href,
    curl_slist_free_all(headers);
 
    if (cres != CURLE_OK) {
-      LOG_ERROR("caldav: PUT update %s failed: %s", href, curl_easy_strerror(cres));
+      OLOG_ERROR("caldav: PUT update %s failed: %s", href, curl_easy_strerror(cres));
       curl_easy_cleanup(curl);
       curl_buf_free(&resp);
       return CALDAV_ERR_NETWORK;
@@ -1065,7 +1065,7 @@ caldav_error_t caldav_delete_event(const char *href, const caldav_auth_t *auth, 
    curl_slist_free_all(headers);
 
    if (cres != CURLE_OK) {
-      LOG_ERROR("caldav: DELETE %s failed: %s", href, curl_easy_strerror(cres));
+      OLOG_ERROR("caldav: DELETE %s failed: %s", href, curl_easy_strerror(cres));
       curl_easy_cleanup(curl);
       curl_buf_free(&resp);
       return CALDAV_ERR_NETWORK;

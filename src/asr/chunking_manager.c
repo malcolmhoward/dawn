@@ -57,20 +57,20 @@ struct chunking_manager {
 
 chunking_manager_t *chunking_manager_init(asr_context_t *asr_ctx) {
    if (!asr_ctx) {
-      LOG_ERROR("chunking_manager_init: NULL ASR context");
+      OLOG_ERROR("chunking_manager_init: NULL ASR context");
       return NULL;
    }
 
    // Defensive: Chunking only for Whisper (Issue #3: runtime assertion)
    asr_engine_type_t engine = asr_get_engine_type(asr_ctx);
    if (engine != ASR_ENGINE_WHISPER) {
-      LOG_ERROR("Chunking manager initialized for non-Whisper engine (%d), this is a bug", engine);
+      OLOG_ERROR("Chunking manager initialized for non-Whisper engine (%d), this is a bug", engine);
       return NULL;
    }
 
    chunking_manager_t *cm = (chunking_manager_t *)calloc(1, sizeof(chunking_manager_t));
    if (!cm) {
-      LOG_ERROR("chunking_manager_init: Failed to allocate manager struct");
+      OLOG_ERROR("chunking_manager_init: Failed to allocate manager struct");
       return NULL;
    }
 
@@ -83,36 +83,36 @@ chunking_manager_t *chunking_manager_init(asr_context_t *asr_ctx) {
    cm->chunks_capacity = INITIAL_CHUNKS_CAPACITY;
    cm->chunk_texts = (char **)calloc(cm->chunks_capacity, sizeof(char *));
    if (!cm->chunk_texts) {
-      LOG_ERROR("chunking_manager_init: Failed to allocate chunk array");
+      OLOG_ERROR("chunking_manager_init: Failed to allocate chunk array");
       free(cm);
       return NULL;
    }
 
    cm->num_chunks = 0;
 
-   LOG_INFO("Chunking manager initialized (capacity: %zu samples, %.1fs)", cm->buffer_capacity,
-            cm->buffer_capacity / 16000.0f);
+   OLOG_INFO("Chunking manager initialized (capacity: %zu samples, %.1fs)", cm->buffer_capacity,
+             cm->buffer_capacity / 16000.0f);
 
    return cm;
 }
 
 int chunking_manager_add_audio(chunking_manager_t *cm, const int16_t *audio, size_t samples) {
    if (!cm || !audio) {
-      LOG_ERROR("chunking_manager_add_audio: NULL parameter");
+      OLOG_ERROR("chunking_manager_add_audio: NULL parameter");
       return FAILURE;
    }
 
    // Check if adding would overflow buffer (Decision #4: auto-finalize)
    if (cm->buffer_samples + samples > cm->buffer_capacity) {
-      LOG_WARNING("Buffer near capacity (%zu/%zu samples), forcing chunk", cm->buffer_samples,
-                  cm->buffer_capacity);
+      OLOG_WARNING("Buffer near capacity (%zu/%zu samples), forcing chunk", cm->buffer_samples,
+                   cm->buffer_capacity);
 
       char *chunk_text = NULL;
       int result = chunking_manager_finalize_chunk(cm, &chunk_text);
 
       if (result == FAILURE) {
          // CRITICAL: Circuit breaker to prevent infinite loop
-         LOG_ERROR("Chunk finalization failed, DISCARDING buffer to prevent hang");
+         OLOG_ERROR("Chunk finalization failed, DISCARDING buffer to prevent hang");
          cm->buffer_samples = 0;  // Reset buffer even on failure
          return FAILURE;
       }
@@ -121,9 +121,9 @@ int chunking_manager_add_audio(chunking_manager_t *cm, const int16_t *audio, siz
 
       // Check buffer pressure after finalization (Issue #4: buffer monitoring)
       if (cm->buffer_samples > cm->buffer_capacity * 0.8f) {
-         LOG_WARNING("Buffer pressure high after auto-finalize (%zu/%zu samples), "
-                     "may indicate inference latency issue",
-                     cm->buffer_samples, cm->buffer_capacity);
+         OLOG_WARNING("Buffer pressure high after auto-finalize (%zu/%zu samples), "
+                      "may indicate inference latency issue",
+                      cm->buffer_samples, cm->buffer_capacity);
       }
    }
 
@@ -135,7 +135,7 @@ int chunking_manager_add_audio(chunking_manager_t *cm, const int16_t *audio, siz
    if (partial_result) {
       asr_result_free(partial_result);  // Whisper returns empty partials, discard
    } else {
-      LOG_ERROR("chunking_manager_add_audio: asr_process_partial() returned NULL");
+      OLOG_ERROR("chunking_manager_add_audio: asr_process_partial() returned NULL");
    }
 
    return SUCCESS;
@@ -143,39 +143,39 @@ int chunking_manager_add_audio(chunking_manager_t *cm, const int16_t *audio, siz
 
 int chunking_manager_finalize_chunk(chunking_manager_t *cm, char **chunk_text_out) {
    if (!cm) {
-      LOG_ERROR("chunking_manager_finalize_chunk: NULL manager");
+      OLOG_ERROR("chunking_manager_finalize_chunk: NULL manager");
       return FAILURE;
    }
 
    if (!chunk_text_out) {
-      LOG_ERROR("chunking_manager_finalize_chunk: NULL output pointer");
+      OLOG_ERROR("chunking_manager_finalize_chunk: NULL output pointer");
       return FAILURE;
    }
 
    // Re-entrance protection (Issue #7: concurrent finalization)
    if (cm->finalization_in_progress) {
-      LOG_WARNING("Finalization already in progress, skipping");
+      OLOG_WARNING("Finalization already in progress, skipping");
       *chunk_text_out = NULL;
       return SUCCESS;  // Not a failure, just a no-op
    }
 
    // Nothing to finalize
    if (cm->buffer_samples == 0) {
-      LOG_INFO("No audio to finalize (buffer empty)");
+      OLOG_INFO("No audio to finalize (buffer empty)");
       *chunk_text_out = NULL;
       return SUCCESS;
    }
 
    cm->finalization_in_progress = 1;
 
-   LOG_INFO("Finalizing chunk (%zu samples, %.2fs)", cm->buffer_samples,
-            cm->buffer_samples / 16000.0f);
+   OLOG_INFO("Finalizing chunk (%zu samples, %.2fs)", cm->buffer_samples,
+             cm->buffer_samples / 16000.0f);
 
    // Process audio through ASR
    asr_result_t *result = asr_finalize(cm->asr_ctx);
 
    if (!result) {
-      LOG_ERROR("asr_finalize() returned NULL");
+      OLOG_ERROR("asr_finalize() returned NULL");
       cm->finalization_in_progress = 0;
       cm->buffer_samples = 0;  // Discard buffer on ASR failure
       *chunk_text_out = NULL;
@@ -187,7 +187,7 @@ int chunking_manager_finalize_chunk(chunking_manager_t *cm, char **chunk_text_ou
    if (result->text && strlen(result->text) > 0) {
       chunk_text = strdup(result->text);
       if (!chunk_text) {
-         LOG_ERROR("Failed to allocate chunk text");
+         OLOG_ERROR("Failed to allocate chunk text");
          asr_result_free(result);
          cm->finalization_in_progress = 0;
          cm->buffer_samples = 0;
@@ -195,12 +195,12 @@ int chunking_manager_finalize_chunk(chunking_manager_t *cm, char **chunk_text_ou
          return FAILURE;
       }
 
-      LOG_INFO("Chunk %zu finalized: \"%s\"", cm->num_chunks, chunk_text);
+      OLOG_INFO("Chunk %zu finalized: \"%s\"", cm->num_chunks, chunk_text);
 
       // Filter out [BLANK_AUDIO] chunks (silence/noise detected by Whisper)
       // Return to caller but don't store in chunk array to avoid contaminating real speech
       if (strstr(chunk_text, "[BLANK_AUDIO]") != NULL) {
-         LOG_INFO("Chunk contains [BLANK_AUDIO], skipping storage (not adding to concatenation)");
+         OLOG_INFO("Chunk contains [BLANK_AUDIO], skipping storage (not adding to concatenation)");
          cm->finalization_in_progress = 0;
          cm->buffer_samples = 0;
          *chunk_text_out = chunk_text;  // Still return to caller for logging
@@ -214,8 +214,8 @@ int chunking_manager_finalize_chunk(chunking_manager_t *cm, char **chunk_text_ou
          size_t new_capacity = cm->chunks_capacity * 2;
          char **new_array = (char **)realloc(cm->chunk_texts, new_capacity * sizeof(char *));
          if (!new_array) {
-            LOG_ERROR("Failed to grow chunk array (capacity %zu → %zu)", cm->chunks_capacity,
-                      new_capacity);
+            OLOG_ERROR("Failed to grow chunk array (capacity %zu → %zu)", cm->chunks_capacity,
+                       new_capacity);
             free(chunk_text);
             asr_result_free(result);
             cm->finalization_in_progress = 0;
@@ -225,13 +225,13 @@ int chunking_manager_finalize_chunk(chunking_manager_t *cm, char **chunk_text_ou
          }
          cm->chunk_texts = new_array;
          cm->chunks_capacity = new_capacity;
-         LOG_INFO("Chunk array grown to capacity %zu", new_capacity);
+         OLOG_INFO("Chunk array grown to capacity %zu", new_capacity);
       }
 
       // Store chunk text internally
       cm->chunk_texts[cm->num_chunks] = strdup(chunk_text);
       if (!cm->chunk_texts[cm->num_chunks]) {
-         LOG_ERROR("Failed to store chunk text internally");
+         OLOG_ERROR("Failed to store chunk text internally");
          free(chunk_text);
          asr_result_free(result);
          cm->finalization_in_progress = 0;
@@ -242,7 +242,7 @@ int chunking_manager_finalize_chunk(chunking_manager_t *cm, char **chunk_text_ou
 
       cm->num_chunks++;
    } else {
-      LOG_INFO("Chunk finalized with empty text (silence or noise)");
+      OLOG_INFO("Chunk finalized with empty text (silence or noise)");
       chunk_text = NULL;
    }
 
@@ -262,12 +262,12 @@ int chunking_manager_finalize_chunk(chunking_manager_t *cm, char **chunk_text_ou
 
 char *chunking_manager_get_full_text(chunking_manager_t *cm) {
    if (!cm) {
-      LOG_ERROR("chunking_manager_get_full_text: NULL manager");
+      OLOG_ERROR("chunking_manager_get_full_text: NULL manager");
       return NULL;
    }
 
    if (cm->num_chunks == 0) {
-      LOG_INFO("No chunks to concatenate");
+      OLOG_INFO("No chunks to concatenate");
       return NULL;
    }
 
@@ -284,7 +284,7 @@ char *chunking_manager_get_full_text(chunking_manager_t *cm) {
    // Allocate concatenated string
    char *full_text = (char *)calloc(total_length, sizeof(char));
    if (!full_text) {
-      LOG_ERROR("Failed to allocate full text buffer (%zu bytes)", total_length);
+      OLOG_ERROR("Failed to allocate full text buffer (%zu bytes)", total_length);
       return NULL;
    }
 
@@ -306,7 +306,7 @@ char *chunking_manager_get_full_text(chunking_manager_t *cm) {
 
    full_text[offset] = '\0';
 
-   LOG_INFO("Concatenated %zu chunks: \"%s\"", cm->num_chunks, full_text);
+   OLOG_INFO("Concatenated %zu chunks: \"%s\"", cm->num_chunks, full_text);
 
    // Reset chunk accumulator for next utterance
    chunking_manager_reset(cm);
@@ -319,7 +319,7 @@ void chunking_manager_reset(chunking_manager_t *cm) {
       return;
    }
 
-   LOG_INFO("Resetting chunking manager (%zu chunks accumulated)", cm->num_chunks);
+   OLOG_INFO("Resetting chunking manager (%zu chunks accumulated)", cm->num_chunks);
 
    // Free accumulated chunk texts
    for (size_t i = 0; i < cm->num_chunks; i++) {
@@ -342,7 +342,7 @@ void chunking_manager_cleanup(chunking_manager_t *cm) {
       return;
    }
 
-   LOG_INFO("Cleaning up chunking manager");
+   OLOG_INFO("Cleaning up chunking manager");
 
    // Free chunk texts
    if (cm->chunk_texts) {

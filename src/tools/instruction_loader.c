@@ -86,8 +86,8 @@ static int read_file_into(const char *path, char *buf, size_t buf_size, size_t *
    /* Check if file fits in remaining buffer space */
    size_t remaining = buf_size - *offset - 1; /* -1 for null terminator */
    if (file_size > remaining) {
-      LOG_WARNING("Instruction file too large: %s (%zu bytes, %zu remaining)", path, file_size,
-                  remaining);
+      OLOG_WARNING("Instruction file too large: %s (%zu bytes, %zu remaining)", path, file_size,
+                   remaining);
       return -1;
    }
 
@@ -121,12 +121,12 @@ int instruction_loader_load(const char *tool_name, const char *modules, char **o
    *output = NULL;
 
    if (!tool_name || tool_name[0] == '\0') {
-      LOG_ERROR("instruction_loader: tool_name is empty");
+      OLOG_ERROR("instruction_loader: tool_name is empty");
       return 1;
    }
 
    if (!is_safe_module_name(tool_name)) {
-      LOG_ERROR("instruction_loader: invalid tool_name '%s'", tool_name);
+      OLOG_ERROR("instruction_loader: invalid tool_name '%s'", tool_name);
       return 1;
    }
 
@@ -185,7 +185,7 @@ int instruction_loader_load(const char *tool_name, const char *modules, char **o
 
    char *buf = (char *)malloc(total_size);
    if (!buf) {
-      LOG_ERROR("instruction_loader: failed to allocate %zu bytes", total_size);
+      OLOG_ERROR("instruction_loader: failed to allocate %zu bytes", total_size);
       return 1;
    }
 
@@ -194,7 +194,7 @@ int instruction_loader_load(const char *tool_name, const char *modules, char **o
    /* Always load _core.md first if it exists */
    snprintf(path, sizeof(path), "%s/%s/_core.md", base_dir, tool_name);
    if (read_file_into(path, buf, total_size, &offset) == 0 && offset > 0) {
-      LOG_INFO("instruction_loader: loaded _core.md (%zu bytes)", offset);
+      OLOG_INFO("instruction_loader: loaded _core.md (%zu bytes)", offset);
    }
 
    /* Parse and load each requested module */
@@ -227,7 +227,7 @@ int instruction_loader_load(const char *tool_name, const char *modules, char **o
          }
 
          if (!is_safe_module_name(module)) {
-            LOG_WARNING("instruction_loader: skipping invalid module name '%s'", module);
+            OLOG_WARNING("instruction_loader: skipping invalid module name '%s'", module);
             module = strtok_r(NULL, ",", &saveptr);
             continue;
          }
@@ -240,9 +240,9 @@ int instruction_loader_load(const char *tool_name, const char *modules, char **o
          snprintf(path, sizeof(path), "%s/%s/%s.md", base_dir, tool_name, module);
          size_t before = offset;
          if (read_file_into(path, buf, total_size, &offset) == 0) {
-            LOG_INFO("instruction_loader: loaded %s.md (%zu bytes)", module, offset - before);
+            OLOG_INFO("instruction_loader: loaded %s.md (%zu bytes)", module, offset - before);
          } else {
-            LOG_WARNING("instruction_loader: module not found: %s/%s", tool_name, module);
+            OLOG_WARNING("instruction_loader: module not found: %s/%s", tool_name, module);
             /* Remove the separator we added */
             offset = before > SEPARATOR_LEN ? before - SEPARATOR_LEN : before;
          }
@@ -257,8 +257,8 @@ int instruction_loader_load(const char *tool_name, const char *modules, char **o
    buf[offset] = '\0';
 
    if (offset == 0) {
-      LOG_WARNING("instruction_loader: no content loaded for tool '%s' modules '%s'", tool_name,
-                  modules ? modules : "(none)");
+      OLOG_WARNING("instruction_loader: no content loaded for tool '%s' modules '%s'", tool_name,
+                   modules ? modules : "(none)");
       free(buf);
       return 1;
    }
@@ -267,6 +267,6 @@ int instruction_loader_load(const char *tool_name, const char *modules, char **o
    char *result = (char *)realloc(buf, offset + 1);
    *output = result ? result : buf;
 
-   LOG_INFO("instruction_loader: loaded %zu bytes total for %s", offset, tool_name);
+   OLOG_INFO("instruction_loader: loaded %zu bytes total for %s", offset, tool_name);
    return 0;
 }

@@ -68,8 +68,8 @@ struct audio_converter {
 
 audio_converter_t *audio_converter_create(const audio_converter_params_t *params) {
    if (!params || params->sample_rate == 0 || params->channels == 0 || params->channels > 2) {
-      LOG_ERROR("audio_converter: invalid params (rate=%u, ch=%u)",
-                params ? params->sample_rate : 0, params ? params->channels : 0);
+      OLOG_ERROR("audio_converter: invalid params (rate=%u, ch=%u)",
+                 params ? params->sample_rate : 0, params ? params->channels : 0);
       return NULL;
    }
 
@@ -79,7 +79,7 @@ audio_converter_t *audio_converter_create(const audio_converter_params_t *params
 
    audio_converter_t *conv = calloc(1, sizeof(audio_converter_t));
    if (!conv) {
-      LOG_ERROR("audio_converter: allocation failed");
+      OLOG_ERROR("audio_converter: allocation failed");
       return NULL;
    }
 
@@ -96,7 +96,7 @@ audio_converter_t *audio_converter_create(const audio_converter_params_t *params
       /* Use SRC_SINC_FASTEST for good quality with low CPU */
       conv->resampler = src_new(SRC_SINC_FASTEST, params->channels, &error);
       if (!conv->resampler) {
-         LOG_ERROR("audio_converter: failed to create resampler: %s", src_strerror(error));
+         OLOG_ERROR("audio_converter: failed to create resampler: %s", src_strerror(error));
          free(conv);
          return NULL;
       }
@@ -113,15 +113,15 @@ audio_converter_t *audio_converter_create(const audio_converter_params_t *params
    conv->float_out = malloc(conv->float_out_size * sizeof(float));
 
    if (!conv->float_in || !conv->float_out) {
-      LOG_ERROR("audio_converter: buffer allocation failed");
+      OLOG_ERROR("audio_converter: buffer allocation failed");
       audio_converter_destroy(conv);
       return NULL;
    }
 
-   LOG_INFO("audio_converter: created %uHz/%uch -> %uHz/%uch (ratio=%.4f, resample=%d, "
-            "channel_conv=%d)",
-            params->sample_rate, params->channels, output_rate, output_channels, conv->ratio,
-            conv->needs_resample, conv->needs_channel_conv);
+   OLOG_INFO("audio_converter: created %uHz/%uch -> %uHz/%uch (ratio=%.4f, resample=%d, "
+             "channel_conv=%d)",
+             params->sample_rate, params->channels, output_rate, output_channels, conv->ratio,
+             conv->needs_resample, conv->needs_channel_conv);
 
    return conv;
 }
@@ -130,20 +130,20 @@ audio_converter_t *audio_converter_create_ex(const audio_converter_params_t *par
                                              unsigned int output_rate,
                                              unsigned int output_channels) {
    if (!params || params->sample_rate == 0 || params->channels == 0 || params->channels > 2) {
-      LOG_ERROR("audio_converter: invalid params (rate=%u, ch=%u)",
-                params ? params->sample_rate : 0, params ? params->channels : 0);
+      OLOG_ERROR("audio_converter: invalid params (rate=%u, ch=%u)",
+                 params ? params->sample_rate : 0, params ? params->channels : 0);
       return NULL;
    }
 
    if (output_rate == 0 || output_channels == 0 || output_channels > 2) {
-      LOG_ERROR("audio_converter: invalid output params (rate=%u, ch=%u)", output_rate,
-                output_channels);
+      OLOG_ERROR("audio_converter: invalid output params (rate=%u, ch=%u)", output_rate,
+                 output_channels);
       return NULL;
    }
 
    audio_converter_t *conv = calloc(1, sizeof(audio_converter_t));
    if (!conv) {
-      LOG_ERROR("audio_converter: allocation failed");
+      OLOG_ERROR("audio_converter: allocation failed");
       return NULL;
    }
 
@@ -160,7 +160,7 @@ audio_converter_t *audio_converter_create_ex(const audio_converter_params_t *par
       /* Use SRC_SINC_FASTEST for good quality with low CPU */
       conv->resampler = src_new(SRC_SINC_FASTEST, params->channels, &error);
       if (!conv->resampler) {
-         LOG_ERROR("audio_converter: failed to create resampler: %s", src_strerror(error));
+         OLOG_ERROR("audio_converter: failed to create resampler: %s", src_strerror(error));
          free(conv);
          return NULL;
       }
@@ -177,15 +177,15 @@ audio_converter_t *audio_converter_create_ex(const audio_converter_params_t *par
    conv->float_out = malloc(conv->float_out_size * sizeof(float));
 
    if (!conv->float_in || !conv->float_out) {
-      LOG_ERROR("audio_converter: buffer allocation failed");
+      OLOG_ERROR("audio_converter: buffer allocation failed");
       audio_converter_destroy(conv);
       return NULL;
    }
 
-   LOG_INFO("audio_converter: created %uHz/%uch -> %uHz/%uch (ratio=%.4f, resample=%d, "
-            "channel_conv=%d)",
-            params->sample_rate, params->channels, output_rate, output_channels, conv->ratio,
-            conv->needs_resample, conv->needs_channel_conv);
+   OLOG_INFO("audio_converter: created %uHz/%uch -> %uHz/%uch (ratio=%.4f, resample=%d, "
+             "channel_conv=%d)",
+             params->sample_rate, params->channels, output_rate, output_channels, conv->ratio,
+             conv->needs_resample, conv->needs_channel_conv);
 
    return conv;
 }
@@ -221,8 +221,8 @@ ssize_t audio_converter_process(audio_converter_t *conv,
    }
 
    if (input_frames > AUDIO_CONV_MAX_INPUT_FRAMES) {
-      LOG_ERROR("audio_converter: input too large (%zu > %d)", input_frames,
-                AUDIO_CONV_MAX_INPUT_FRAMES);
+      OLOG_ERROR("audio_converter: input too large (%zu > %d)", input_frames,
+                 AUDIO_CONV_MAX_INPUT_FRAMES);
       return -1;
    }
 
@@ -247,7 +247,7 @@ ssize_t audio_converter_process(audio_converter_t *conv,
 
       int error = src_process(conv->resampler, &src_data);
       if (error) {
-         LOG_ERROR("audio_converter: resample error: %s", src_strerror(error));
+         OLOG_ERROR("audio_converter: resample error: %s", src_strerror(error));
          return -1;
       }
 
@@ -260,8 +260,8 @@ ssize_t audio_converter_process(audio_converter_t *conv,
    unsigned int output_channels = conv->output_channels;
 
    if (output_max_frames < resampled_frames) {
-      LOG_ERROR("audio_converter: output buffer too small (%zu < %zu)", output_max_frames,
-                resampled_frames);
+      OLOG_ERROR("audio_converter: output buffer too small (%zu < %zu)", output_max_frames,
+                 resampled_frames);
       return -1;
    }
 
@@ -294,8 +294,8 @@ ssize_t audio_converter_process(audio_converter_t *conv,
       output_frames = resampled_frames;
    } else {
       /* Unsupported channel configuration */
-      LOG_ERROR("audio_converter: unsupported channel config %u->%u", conv->input_channels,
-                output_channels);
+      OLOG_ERROR("audio_converter: unsupported channel config %u->%u", conv->input_channels,
+                 output_channels);
       return -1;
    }
 

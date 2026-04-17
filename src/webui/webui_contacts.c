@@ -684,16 +684,16 @@ void handle_entity_set_photo(ws_connection_t *conn, json_object *payload) {
          int ret_rc = image_store_update_retention(photo_id, conn->auth_user_id,
                                                    IMAGE_RETAIN_PERMANENT);
          if (ret_rc != IMAGE_STORE_SUCCESS) {
-            LOG_WARNING("webui_contacts: failed to upgrade retention for %s (rc=%d)", photo_id,
-                        ret_rc);
+            OLOG_WARNING("webui_contacts: failed to upgrade retention for %s (rc=%d)", photo_id,
+                         ret_rc);
          }
       }
       if (old_photo_id[0] && (!photo_id || strcmp(old_photo_id, photo_id) != 0)) {
          int ret_rc = image_store_update_retention(old_photo_id, conn->auth_user_id,
                                                    IMAGE_RETAIN_DEFAULT);
          if (ret_rc != IMAGE_STORE_SUCCESS) {
-            LOG_WARNING("webui_contacts: failed to downgrade retention for %s (rc=%d)",
-                        old_photo_id, ret_rc);
+            OLOG_WARNING("webui_contacts: failed to downgrade retention for %s (rc=%d)",
+                         old_photo_id, ret_rc);
          }
       }
 

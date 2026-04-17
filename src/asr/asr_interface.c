@@ -208,7 +208,7 @@ int asr_start_recording(void) {
    g_asr_post_file = fopen(post_filename, "wb");
 
    if (!g_asr_pre_file || !g_asr_post_file) {
-      LOG_ERROR("Failed to open ASR recording files");
+      OLOG_ERROR("Failed to open ASR recording files");
       if (g_asr_pre_file) {
          fclose(g_asr_pre_file);
          g_asr_pre_file = NULL;
@@ -228,7 +228,7 @@ int asr_start_recording(void) {
    g_asr_post_samples = 0;
    g_asr_recording_active = true;
 
-   LOG_INFO("ASR recording started: %s, %s", pre_filename, post_filename);
+   OLOG_INFO("ASR recording started: %s, %s", pre_filename, post_filename);
    pthread_mutex_unlock(&g_asr_recording_mutex);
    return 0;
 }
@@ -257,7 +257,7 @@ void asr_stop_recording(void) {
 
    float pre_duration = (float)g_asr_pre_samples / ASR_RECORDING_SAMPLE_RATE;
    float post_duration = (float)g_asr_post_samples / ASR_RECORDING_SAMPLE_RATE;
-   LOG_INFO("ASR recording stopped: pre=%.2fs, post=%.2fs", pre_duration, post_duration);
+   OLOG_INFO("ASR recording stopped: pre=%.2fs, post=%.2fs", pre_duration, post_duration);
 
    g_asr_recording_active = false;
    pthread_mutex_unlock(&g_asr_recording_mutex);
@@ -378,8 +378,8 @@ static float normalize_audio_for_asr(norm_state_t *state,
    // Log normalization (only occasionally to avoid spam)
    static int norm_log_counter = 0;
    if (avg_gain > 1.1f && ++norm_log_counter >= 50) {
-      LOG_INFO("ASR: Audio normalized (envelope=%.1f%%, avg_gain=%.1fx)",
-               (state->envelope / 32767.0f) * 100, avg_gain);
+      OLOG_INFO("ASR: Audio normalized (envelope=%.1f%%, avg_gain=%.1fx)",
+                (state->envelope / 32767.0f) * 100, avg_gain);
       norm_log_counter = 0;
    }
 
@@ -412,14 +412,14 @@ struct asr_context {
 
 asr_context_t *asr_init(asr_engine_type_t engine_type, const char *model_path, int sample_rate) {
    if (!model_path) {
-      LOG_ERROR("ASR: model_path cannot be NULL");
-      LOG_ERROR("  Hint: Set [asr] model_path in dawn.toml or run ./setup_models.sh");
+      OLOG_ERROR("ASR: model_path cannot be NULL");
+      OLOG_ERROR("  Hint: Set [asr] model_path in dawn.toml or run ./setup_models.sh");
       return NULL;
    }
 
    asr_context_t *ctx = (asr_context_t *)calloc(1, sizeof(asr_context_t));
    if (!ctx) {
-      LOG_ERROR("ASR: Failed to allocate context");
+      OLOG_ERROR("ASR: Failed to allocate context");
       return NULL;
    }
 
@@ -428,20 +428,20 @@ asr_context_t *asr_init(asr_engine_type_t engine_type, const char *model_path, i
    switch (engine_type) {
 #ifdef ENABLE_VOSK
       case ASR_ENGINE_VOSK:
-         LOG_INFO("ASR: Initializing Vosk engine (model: %s, sample_rate: %d)", model_path,
-                  sample_rate);
+         OLOG_INFO("ASR: Initializing Vosk engine (model: %s, sample_rate: %d)", model_path,
+                   sample_rate);
          ctx->engine_context = asr_vosk_init(model_path, sample_rate);
          if (!ctx->engine_context) {
-            LOG_ERROR("ASR: Vosk initialization failed");
-            LOG_ERROR("  Hint: Check that the Vosk model directory exists at the configured path");
+            OLOG_ERROR("ASR: Vosk initialization failed");
+            OLOG_ERROR("  Hint: Check that the Vosk model directory exists at the configured path");
             free(ctx);
             return NULL;
          }
          break;
 #else
       case ASR_ENGINE_WHISPER: {
-         LOG_INFO("ASR: Initializing Whisper engine (model: %s, sample_rate: %d)", model_path,
-                  sample_rate);
+         OLOG_INFO("ASR: Initializing Whisper engine (model: %s, sample_rate: %d)", model_path,
+                   sample_rate);
          asr_whisper_config_t wcfg = asr_whisper_default_config();
          wcfg.model_path = model_path;
          wcfg.sample_rate = sample_rate;
@@ -450,9 +450,9 @@ asr_context_t *asr_init(asr_engine_type_t engine_type, const char *model_path, i
 #endif
          ctx->whisper_ctx = asr_whisper_init(&wcfg);
          if (!ctx->whisper_ctx) {
-            LOG_ERROR("ASR: Whisper initialization failed");
-            LOG_ERROR("  Hint: Run ./setup_models.sh to download Whisper models. Check [asr] "
-                      "model_path in dawn.toml");
+            OLOG_ERROR("ASR: Whisper initialization failed");
+            OLOG_ERROR("  Hint: Run ./setup_models.sh to download Whisper models. Check [asr] "
+                       "model_path in dawn.toml");
             free(ctx);
             return NULL;
          }
@@ -462,7 +462,7 @@ asr_context_t *asr_init(asr_engine_type_t engine_type, const char *model_path, i
 #endif
 
       default:
-         LOG_ERROR("ASR: Unknown engine type: %d", engine_type);
+         OLOG_ERROR("ASR: Unknown engine type: %d", engine_type);
          free(ctx);
          return NULL;
    }
@@ -471,7 +471,7 @@ asr_context_t *asr_init(asr_engine_type_t engine_type, const char *model_path, i
    ctx->norm_state.current_gain = 1.0f;
    ctx->norm_state.envelope = 0.0f;
 
-   LOG_INFO("ASR: %s engine initialized successfully", asr_engine_name(engine_type));
+   OLOG_INFO("ASR: %s engine initialized successfully", asr_engine_name(engine_type));
    return ctx;
 }
 
@@ -479,7 +479,7 @@ asr_result_t *asr_process_partial(asr_context_t *ctx,
                                   const int16_t *audio_data,
                                   size_t num_samples) {
    if (!ctx || !audio_data) {
-      LOG_ERROR("ASR: Invalid parameters to asr_process_partial");
+      OLOG_ERROR("ASR: Invalid parameters to asr_process_partial");
       return NULL;
    }
 
@@ -493,8 +493,8 @@ asr_result_t *asr_process_partial(asr_context_t *ctx,
       normalize_audio_for_asr(&ctx->norm_state, audio_data, g_norm_buffer, num_samples);
       normalized_audio = g_norm_buffer;
    } else {
-      LOG_WARNING("ASR: Audio chunk too large for normalization (%zu > %d), using raw audio",
-                  num_samples, NORM_BUFFER_SIZE);
+      OLOG_WARNING("ASR: Audio chunk too large for normalization (%zu > %d), using raw audio",
+                   num_samples, NORM_BUFFER_SIZE);
    }
 #endif
 
@@ -510,7 +510,7 @@ asr_result_t *asr_process_partial(asr_context_t *ctx,
 
 asr_result_t *asr_finalize(asr_context_t *ctx) {
    if (!ctx) {
-      LOG_ERROR("ASR: Invalid context in asr_finalize");
+      OLOG_ERROR("ASR: Invalid context in asr_finalize");
       return NULL;
    }
 
@@ -530,7 +530,7 @@ asr_result_t *asr_finalize(asr_context_t *ctx) {
 
 int asr_reset(asr_context_t *ctx) {
    if (!ctx) {
-      LOG_ERROR("ASR: Invalid context in asr_reset");
+      OLOG_ERROR("ASR: Invalid context in asr_reset");
       return ASR_FAILURE;
    }
 
@@ -572,7 +572,7 @@ void asr_cleanup(asr_context_t *ctx) {
       return;
    }
 
-   LOG_INFO("ASR: Cleaning up %s engine", asr_engine_name(ctx->engine_type));
+   OLOG_INFO("ASR: Cleaning up %s engine", asr_engine_name(ctx->engine_type));
 
 #ifdef ENABLE_VOSK
    if (ctx->engine_context) {
@@ -603,7 +603,7 @@ const char *asr_engine_name(asr_engine_type_t engine_type) {
 
 asr_engine_type_t asr_get_engine_type(asr_context_t *ctx) {
    if (!ctx) {
-      LOG_ERROR("ASR: asr_get_engine_type() called with NULL context");
+      OLOG_ERROR("ASR: asr_get_engine_type() called with NULL context");
       return (asr_engine_type_t)-1;
    }
    return ctx->engine_type;

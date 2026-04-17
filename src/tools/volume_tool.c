@@ -174,7 +174,7 @@ static char *volume_tool_callback(const char *action, char *value, int *should_r
    }
 
    float vol = parse_volume_level(value);
-   LOG_INFO("Volume: %s -> %.2f", value, vol);
+   OLOG_INFO("Volume: %s -> %.2f", value, vol);
 
    if (vol < 0.0f) {
       if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {

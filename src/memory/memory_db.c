@@ -200,7 +200,7 @@ int64_t memory_db_fact_create(int user_id,
    sqlite3_reset(stmt);
 
    if (rc != SQLITE_DONE) {
-      LOG_ERROR("memory_db: fact_create failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("memory_db: fact_create failed: %s", sqlite3_errmsg(s_db.db));
       AUTH_DB_UNLOCK();
       return -1;
    }
@@ -208,8 +208,8 @@ int64_t memory_db_fact_create(int user_id,
    int64_t id = sqlite3_last_insert_rowid(s_db.db);
    AUTH_DB_UNLOCK();
 
-   LOG_INFO("memory_db: created fact %ld for user %d (hash=%u)", (long)id, user_id,
-            normalized_hash);
+   OLOG_INFO("memory_db: created fact %ld for user %d (hash=%u)", (long)id, user_id,
+             normalized_hash);
    return id;
 }
 
@@ -441,12 +441,12 @@ int memory_db_fact_prune_superseded(int user_id, int retention_days) {
    AUTH_DB_UNLOCK();
 
    if (rc != SQLITE_DONE) {
-      LOG_ERROR("memory_db: prune_superseded failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("memory_db: prune_superseded failed: %s", sqlite3_errmsg(s_db.db));
       return -1;
    }
 
    if (deleted > 0) {
-      LOG_INFO("memory_db: pruned %d superseded facts for user %d", deleted, user_id);
+      OLOG_INFO("memory_db: pruned %d superseded facts for user %d", deleted, user_id);
    }
    return deleted;
 }
@@ -469,12 +469,12 @@ int memory_db_fact_prune_stale(int user_id, int stale_days, float min_confidence
    AUTH_DB_UNLOCK();
 
    if (rc != SQLITE_DONE) {
-      LOG_ERROR("memory_db: prune_stale failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("memory_db: prune_stale failed: %s", sqlite3_errmsg(s_db.db));
       return -1;
    }
 
    if (deleted > 0) {
-      LOG_INFO("memory_db: pruned %d stale facts for user %d", deleted, user_id);
+      OLOG_INFO("memory_db: pruned %d stale facts for user %d", deleted, user_id);
    }
    return deleted;
 }
@@ -634,11 +634,11 @@ int memory_db_pref_upsert(int user_id,
    AUTH_DB_UNLOCK();
 
    if (rc != SQLITE_DONE) {
-      LOG_ERROR("memory_db: pref_upsert failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("memory_db: pref_upsert failed: %s", sqlite3_errmsg(s_db.db));
       return MEMORY_DB_FAILURE;
    }
 
-   LOG_INFO("memory_db: upserted preference %s=%s for user %d", category, value, user_id);
+   OLOG_INFO("memory_db: upserted preference %s=%s for user %d", category, value, user_id);
    return MEMORY_DB_SUCCESS;
 }
 
@@ -776,7 +776,7 @@ int64_t memory_db_summary_create(int user_id,
    sqlite3_reset(stmt);
 
    if (rc != SQLITE_DONE) {
-      LOG_ERROR("memory_db: summary_create failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("memory_db: summary_create failed: %s", sqlite3_errmsg(s_db.db));
       AUTH_DB_UNLOCK();
       return -1;
    }
@@ -784,7 +784,7 @@ int64_t memory_db_summary_create(int user_id,
    int64_t id = sqlite3_last_insert_rowid(s_db.db);
    AUTH_DB_UNLOCK();
 
-   LOG_INFO("memory_db: created summary %ld for user %d", (long)id, user_id);
+   OLOG_INFO("memory_db: created summary %ld for user %d", (long)id, user_id);
    return id;
 }
 
@@ -871,7 +871,7 @@ int memory_db_summary_delete(int64_t summary_id, int user_id) {
    int rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM memory_summaries WHERE id = ? AND user_id = ?",
                                -1, &stmt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("memory_db: summary_delete prepare failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("memory_db: summary_delete prepare failed: %s", sqlite3_errmsg(s_db.db));
       AUTH_DB_UNLOCK();
       return MEMORY_DB_FAILURE;
    }
@@ -911,8 +911,8 @@ int memory_db_delete_user_memories(int user_id) {
    rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM memory_relations WHERE user_id = ?", -1, &stmt,
                            NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("memory_db: delete_user_memories (relations) prepare failed: %s",
-                sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("memory_db: delete_user_memories (relations) prepare failed: %s",
+                 sqlite3_errmsg(s_db.db));
       AUTH_DB_UNLOCK();
       return MEMORY_DB_FAILURE;
    }
@@ -920,7 +920,7 @@ int memory_db_delete_user_memories(int user_id) {
    rc = sqlite3_step(stmt);
    sqlite3_finalize(stmt);
    if (rc != SQLITE_DONE) {
-      LOG_ERROR("memory_db: delete_user_memories (relations) failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("memory_db: delete_user_memories (relations) failed: %s", sqlite3_errmsg(s_db.db));
       AUTH_DB_UNLOCK();
       return MEMORY_DB_FAILURE;
    }
@@ -929,8 +929,8 @@ int memory_db_delete_user_memories(int user_id) {
    rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM memory_entities WHERE user_id = ?", -1, &stmt,
                            NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("memory_db: delete_user_memories (entities) prepare failed: %s",
-                sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("memory_db: delete_user_memories (entities) prepare failed: %s",
+                 sqlite3_errmsg(s_db.db));
       AUTH_DB_UNLOCK();
       return MEMORY_DB_FAILURE;
    }
@@ -938,7 +938,7 @@ int memory_db_delete_user_memories(int user_id) {
    rc = sqlite3_step(stmt);
    sqlite3_finalize(stmt);
    if (rc != SQLITE_DONE) {
-      LOG_ERROR("memory_db: delete_user_memories (entities) failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("memory_db: delete_user_memories (entities) failed: %s", sqlite3_errmsg(s_db.db));
       AUTH_DB_UNLOCK();
       return MEMORY_DB_FAILURE;
    }
@@ -946,8 +946,8 @@ int memory_db_delete_user_memories(int user_id) {
    /* Delete facts */
    rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM memory_facts WHERE user_id = ?", -1, &stmt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("memory_db: delete_user_memories (facts) prepare failed: %s",
-                sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("memory_db: delete_user_memories (facts) prepare failed: %s",
+                 sqlite3_errmsg(s_db.db));
       AUTH_DB_UNLOCK();
       return MEMORY_DB_FAILURE;
    }
@@ -955,7 +955,7 @@ int memory_db_delete_user_memories(int user_id) {
    rc = sqlite3_step(stmt);
    sqlite3_finalize(stmt);
    if (rc != SQLITE_DONE) {
-      LOG_ERROR("memory_db: delete_user_memories (facts) failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("memory_db: delete_user_memories (facts) failed: %s", sqlite3_errmsg(s_db.db));
       AUTH_DB_UNLOCK();
       return MEMORY_DB_FAILURE;
    }
@@ -964,8 +964,8 @@ int memory_db_delete_user_memories(int user_id) {
    rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM memory_preferences WHERE user_id = ?", -1, &stmt,
                            NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("memory_db: delete_user_memories (prefs) prepare failed: %s",
-                sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("memory_db: delete_user_memories (prefs) prepare failed: %s",
+                 sqlite3_errmsg(s_db.db));
       AUTH_DB_UNLOCK();
       return MEMORY_DB_FAILURE;
    }
@@ -973,7 +973,7 @@ int memory_db_delete_user_memories(int user_id) {
    rc = sqlite3_step(stmt);
    sqlite3_finalize(stmt);
    if (rc != SQLITE_DONE) {
-      LOG_ERROR("memory_db: delete_user_memories (prefs) failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("memory_db: delete_user_memories (prefs) failed: %s", sqlite3_errmsg(s_db.db));
       AUTH_DB_UNLOCK();
       return MEMORY_DB_FAILURE;
    }
@@ -982,8 +982,8 @@ int memory_db_delete_user_memories(int user_id) {
    rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM memory_summaries WHERE user_id = ?", -1, &stmt,
                            NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("memory_db: delete_user_memories (summaries) prepare failed: %s",
-                sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("memory_db: delete_user_memories (summaries) prepare failed: %s",
+                 sqlite3_errmsg(s_db.db));
       AUTH_DB_UNLOCK();
       return MEMORY_DB_FAILURE;
    }
@@ -991,13 +991,13 @@ int memory_db_delete_user_memories(int user_id) {
    rc = sqlite3_step(stmt);
    sqlite3_finalize(stmt);
    if (rc != SQLITE_DONE) {
-      LOG_ERROR("memory_db: delete_user_memories (summaries) failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("memory_db: delete_user_memories (summaries) failed: %s", sqlite3_errmsg(s_db.db));
       AUTH_DB_UNLOCK();
       return MEMORY_DB_FAILURE;
    }
 
    AUTH_DB_UNLOCK();
-   LOG_INFO("memory_db: deleted all memories for user %d", user_id);
+   OLOG_INFO("memory_db: deleted all memories for user %d", user_id);
    return MEMORY_DB_SUCCESS;
 }
 
@@ -1102,7 +1102,7 @@ int memory_db_apply_fact_decay(int user_id,
        "WHERE user_id = ? AND superseded_by IS NULL AND last_accessed IS NOT NULL",
        -1, &stmt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("memory_db: apply_fact_decay prepare failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("memory_db: apply_fact_decay prepare failed: %s", sqlite3_errmsg(s_db.db));
       AUTH_DB_UNLOCK();
       return -1;
    }
@@ -1120,7 +1120,7 @@ int memory_db_apply_fact_decay(int user_id,
    AUTH_DB_UNLOCK();
 
    if (rc != SQLITE_DONE) {
-      LOG_ERROR("memory_db: apply_fact_decay failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("memory_db: apply_fact_decay failed: %s", sqlite3_errmsg(s_db.db));
       return -1;
    }
 
@@ -1139,7 +1139,7 @@ int memory_db_apply_pref_decay(int user_id, float pref_rate, float pref_floor) {
        " WHERE user_id = ?",
        -1, &stmt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("memory_db: apply_pref_decay prepare failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("memory_db: apply_pref_decay prepare failed: %s", sqlite3_errmsg(s_db.db));
       AUTH_DB_UNLOCK();
       return -1;
    }
@@ -1155,7 +1155,7 @@ int memory_db_apply_pref_decay(int user_id, float pref_rate, float pref_floor) {
    AUTH_DB_UNLOCK();
 
    if (rc != SQLITE_DONE) {
-      LOG_ERROR("memory_db: apply_pref_decay failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("memory_db: apply_pref_decay failed: %s", sqlite3_errmsg(s_db.db));
       return -1;
    }
 
@@ -1179,10 +1179,10 @@ int memory_db_prune_low_confidence(int user_id, float threshold) {
       sqlite3_bind_double(log_stmt, 2, (double)threshold);
 
       while (sqlite3_step(log_stmt) == SQLITE_ROW) {
-         LOG_INFO("memory_decay: pruning fact %ld (%.2f, %s): %.60s",
-                  (long)sqlite3_column_int64(log_stmt, 0), sqlite3_column_double(log_stmt, 2),
-                  (const char *)sqlite3_column_text(log_stmt, 3),
-                  (const char *)sqlite3_column_text(log_stmt, 1));
+         OLOG_INFO("memory_decay: pruning fact %ld (%.2f, %s): %.60s",
+                   (long)sqlite3_column_int64(log_stmt, 0), sqlite3_column_double(log_stmt, 2),
+                   (const char *)sqlite3_column_text(log_stmt, 3),
+                   (const char *)sqlite3_column_text(log_stmt, 1));
       }
       sqlite3_finalize(log_stmt);
    }
@@ -1194,7 +1194,7 @@ int memory_db_prune_low_confidence(int user_id, float threshold) {
        "DELETE FROM memory_facts WHERE user_id = ? AND confidence < ? AND superseded_by IS NULL",
        -1, &stmt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("memory_db: prune_low_confidence prepare failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("memory_db: prune_low_confidence prepare failed: %s", sqlite3_errmsg(s_db.db));
       sqlite3_exec(s_db.db, "ROLLBACK", NULL, NULL, NULL);
       AUTH_DB_UNLOCK();
       return -1;
@@ -1208,7 +1208,7 @@ int memory_db_prune_low_confidence(int user_id, float threshold) {
    sqlite3_finalize(stmt);
 
    if (rc != SQLITE_DONE) {
-      LOG_ERROR("memory_db: prune_low_confidence failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("memory_db: prune_low_confidence failed: %s", sqlite3_errmsg(s_db.db));
       sqlite3_exec(s_db.db, "ROLLBACK", NULL, NULL, NULL);
       AUTH_DB_UNLOCK();
       return -1;
@@ -1230,7 +1230,7 @@ int memory_db_prune_old_summaries(int user_id, int retention_days) {
                                "DELETE FROM memory_summaries WHERE user_id = ? AND created_at < ?",
                                -1, &stmt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("memory_db: prune_old_summaries prepare failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("memory_db: prune_old_summaries prepare failed: %s", sqlite3_errmsg(s_db.db));
       AUTH_DB_UNLOCK();
       return -1;
    }
@@ -1245,12 +1245,12 @@ int memory_db_prune_old_summaries(int user_id, int retention_days) {
    AUTH_DB_UNLOCK();
 
    if (rc != SQLITE_DONE) {
-      LOG_ERROR("memory_db: prune_old_summaries failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("memory_db: prune_old_summaries failed: %s", sqlite3_errmsg(s_db.db));
       return -1;
    }
 
    if (deleted > 0) {
-      LOG_INFO("memory_db: pruned %d old summaries for user %d", deleted, user_id);
+      OLOG_INFO("memory_db: pruned %d old summaries for user %d", deleted, user_id);
    }
    return deleted;
 }
@@ -1268,7 +1268,7 @@ int memory_db_get_all_user_ids(int *out_ids, int max_ids) {
                                "UNION SELECT user_id FROM memory_preferences",
                                -1, &stmt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("memory_db: get_all_user_ids prepare failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("memory_db: get_all_user_ids prepare failed: %s", sqlite3_errmsg(s_db.db));
       AUTH_DB_UNLOCK();
       return -1;
    }
@@ -1310,8 +1310,8 @@ int memory_db_fact_update_embedding(int user_id,
    AUTH_DB_UNLOCK();
 
    if (rc != SQLITE_DONE) {
-      LOG_ERROR("memory_db: update_embedding failed for fact %ld: %s", (long)fact_id,
-                sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("memory_db: update_embedding failed for fact %ld: %s", (long)fact_id,
+                 sqlite3_errmsg(s_db.db));
       return MEMORY_DB_FAILURE;
    }
 
@@ -1444,7 +1444,7 @@ int64_t memory_db_entity_upsert(int user_id,
          *out_created = (mention_count == 1);
       }
    } else {
-      LOG_ERROR("memory_db: entity upsert failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("memory_db: entity upsert failed: %s", sqlite3_errmsg(s_db.db));
    }
 
    sqlite3_reset(s_db.stmt_memory_entity_upsert);
@@ -1472,7 +1472,7 @@ int memory_db_entity_get_by_name(int user_id,
    } else if (rc == SQLITE_DONE) {
       result = MEMORY_DB_NOT_FOUND;
    } else {
-      LOG_ERROR("memory_db: entity_get_by_name failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("memory_db: entity_get_by_name failed: %s", sqlite3_errmsg(s_db.db));
       result = MEMORY_DB_FAILURE;
    }
 
@@ -1750,7 +1750,7 @@ int memory_db_entity_set_photo(int user_id, int64_t entity_id, const char *photo
    sqlite3_reset(stmt);
 
    if (rc != SQLITE_DONE) {
-      LOG_ERROR("memory_db: entity_set_photo failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("memory_db: entity_set_photo failed: %s", sqlite3_errmsg(s_db.db));
       AUTH_DB_UNLOCK();
       return MEMORY_DB_FAILURE;
    }
@@ -1804,8 +1804,8 @@ int memory_db_entity_delete(int64_t entity_id, int user_id) {
    int rel_rc = sqlite3_step(rel_stmt);
    sqlite3_reset(rel_stmt);
    if (rel_rc != SQLITE_DONE) {
-      LOG_ERROR("memory_db: relation delete failed for entity %ld: %s", (long)entity_id,
-                sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("memory_db: relation delete failed for entity %ld: %s", (long)entity_id,
+                 sqlite3_errmsg(s_db.db));
       AUTH_DB_UNLOCK();
       return MEMORY_DB_FAILURE;
    }
@@ -1977,12 +1977,12 @@ int memory_db_entity_merge(int user_id, int64_t source_id, int64_t target_id) {
    sqlite3_exec(s_db.db, "COMMIT", NULL, NULL, NULL);
    AUTH_DB_UNLOCK();
 
-   LOG_INFO("memory_db: merged entity %lld into %lld for user %d", (long long)source_id,
-            (long long)target_id, user_id);
+   OLOG_INFO("memory_db: merged entity %lld into %lld for user %d", (long long)source_id,
+             (long long)target_id, user_id);
    return MEMORY_DB_SUCCESS;
 
 merge_fail:
-   LOG_ERROR("memory_db: entity merge failed at step rc=%d: %s", rc, sqlite3_errmsg(s_db.db));
+   OLOG_ERROR("memory_db: entity merge failed at step rc=%d: %s", rc, sqlite3_errmsg(s_db.db));
    sqlite3_exec(s_db.db, "ROLLBACK", NULL, NULL, NULL);
    AUTH_DB_UNLOCK();
    return MEMORY_DB_FAILURE;

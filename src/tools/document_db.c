@@ -104,7 +104,7 @@ int64_t document_db_create(int user_id,
    if (rc == SQLITE_DONE) {
       doc_id = sqlite3_last_insert_rowid(s_db.db);
    } else {
-      LOG_ERROR("document_db: create failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("document_db: create failed: %s", sqlite3_errmsg(s_db.db));
    }
 
    sqlite3_reset(stmt);
@@ -221,7 +221,7 @@ int document_db_update_global(int64_t doc_id, bool is_global) {
    if (sqlite3_step(stmt) == SQLITE_DONE) {
       result = (sqlite3_changes(s_db.db) > 0) ? 0 : -1;
    } else {
-      LOG_ERROR("document_db: update_global failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("document_db: update_global failed: %s", sqlite3_errmsg(s_db.db));
    }
 
    sqlite3_reset(stmt);
@@ -240,7 +240,7 @@ int document_db_delete(int64_t doc_id) {
    if (sqlite3_step(stmt) == SQLITE_DONE) {
       result = (sqlite3_changes(s_db.db) > 0) ? 0 : -1;
    } else {
-      LOG_ERROR("document_db: delete failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("document_db: delete failed: %s", sqlite3_errmsg(s_db.db));
    }
 
    sqlite3_reset(stmt);
@@ -393,7 +393,7 @@ int64_t document_db_chunk_create(int64_t document_id,
    if (rc == SQLITE_DONE) {
       chunk_id = sqlite3_last_insert_rowid(s_db.db);
    } else {
-      LOG_ERROR("document_db: chunk_create failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("document_db: chunk_create failed: %s", sqlite3_errmsg(s_db.db));
    }
 
    sqlite3_reset(stmt);

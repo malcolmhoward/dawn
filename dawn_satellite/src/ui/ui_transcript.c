@@ -201,15 +201,15 @@ int ui_transcript_init(ui_transcript_t *t,
                                    BODY_FONT_SIZE);
 
    if (!t->label_font) {
-      LOG_WARNING("Failed to load label font, transcript text disabled");
+      OLOG_WARNING("Failed to load label font, transcript text disabled");
    }
    if (!t->body_font) {
-      LOG_WARNING("Failed to load body font, transcript text disabled");
+      OLOG_WARNING("Failed to load body font, transcript text disabled");
    }
 
    /* Initialize markdown font set for styled AI responses */
    if (md_fonts_init(&t->md_fonts, font_dir, BODY_FONT_SIZE) != 0) {
-      LOG_WARNING("Markdown fonts init failed, AI responses will render as plain text");
+      OLOG_WARNING("Markdown fonts init failed, AI responses will render as plain text");
    }
 
    return 0;

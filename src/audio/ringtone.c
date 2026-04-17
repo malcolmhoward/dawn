@@ -215,7 +215,7 @@ static int ensure_melody_rendered(void) {
 
    s_melody_pcm = malloc(total * sizeof(int16_t));
    if (!s_melody_pcm) {
-      LOG_ERROR("ringtone: failed to allocate %zu bytes for melody", total * sizeof(int16_t));
+      OLOG_ERROR("ringtone: failed to allocate %zu bytes for melody", total * sizeof(int16_t));
       return 1;
    }
 
@@ -234,8 +234,8 @@ static int ensure_melody_rendered(void) {
    }
 
    s_melody_pcm_samples = total;
-   LOG_INFO("ringtone: pre-rendered %zu samples (%.1fs)", total,
-            (double)total / RINGTONE_SAMPLE_RATE);
+   OLOG_INFO("ringtone: pre-rendered %zu samples (%.1fs)", total,
+             (double)total / RINGTONE_SAMPLE_RATE);
    return 0;
 }
 
@@ -263,7 +263,7 @@ int ironman_ringtone_play(void) {
    audio_stream_playback_handle_t *pb = audio_stream_playback_open(g_config.audio.playback_device,
                                                                    &params, &hw_params);
    if (!pb) {
-      LOG_ERROR("ringtone: failed to open playback device");
+      OLOG_ERROR("ringtone: failed to open playback device");
       return 1;
    }
 
@@ -271,7 +271,7 @@ int ironman_ringtone_play(void) {
    if (written < 0) {
       int recovered = audio_stream_playback_recover(pb, (int)(-written));
       if (recovered != 0) {
-         LOG_ERROR("ringtone: playback write failed");
+         OLOG_ERROR("ringtone: playback write failed");
          audio_stream_playback_close(pb);
          return 1;
       }

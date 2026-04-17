@@ -114,7 +114,7 @@ static void ring_read(music_playback_t *ctx, int16_t *data, size_t n) {
 
 music_playback_t *music_playback_create(audio_playback_t *audio) {
    if (!audio || !audio->initialized) {
-      LOG_ERROR("Music playback: audio context not initialized");
+      OLOG_ERROR("Music playback: audio context not initialized");
       return NULL;
    }
 
@@ -125,15 +125,15 @@ music_playback_t *music_playback_create(audio_playback_t *audio) {
    int opus_err;
    ctx->decoder = opus_decoder_create(48000, 2, &opus_err);
    if (opus_err != OPUS_OK || !ctx->decoder) {
-      LOG_ERROR("Music playback: opus_decoder_create failed: %s", opus_strerror(opus_err));
+      OLOG_ERROR("Music playback: opus_decoder_create failed: %s", opus_strerror(opus_err));
       free(ctx);
       return NULL;
    }
 
    ctx->ring = malloc(RING_SIZE * sizeof(int16_t));
    if (!ctx->ring) {
-      LOG_ERROR("Music playback: failed to allocate ring buffer (%zu KB)",
-                RING_SIZE * sizeof(int16_t) / 1024);
+      OLOG_ERROR("Music playback: failed to allocate ring buffer (%zu KB)",
+                 RING_SIZE * sizeof(int16_t) / 1024);
       opus_decoder_destroy(ctx->decoder);
       free(ctx);
       return NULL;
@@ -147,8 +147,8 @@ music_playback_t *music_playback_create(audio_playback_t *audio) {
    atomic_store(&ctx->ring_tail, 0);
    atomic_store(&ctx->dedicated_producer, false);
 
-   LOG_INFO("Music playback engine created (ring buffer + LWS drain, %.1fs capacity)",
-            (float)RING_SIZE / (48000.0f * 2));
+   OLOG_INFO("Music playback engine created (ring buffer + LWS drain, %.1fs capacity)",
+             (float)RING_SIZE / (48000.0f * 2));
    return ctx;
 }
 
@@ -161,7 +161,7 @@ void music_playback_destroy(music_playback_t *ctx) {
    free(ctx->ring);
    free(ctx);
 
-   LOG_INFO("Music playback engine destroyed");
+   OLOG_INFO("Music playback engine destroyed");
 }
 
 int music_playback_push_opus(music_playback_t *ctx, const uint8_t *opus_data, int opus_len) {
@@ -176,7 +176,7 @@ int music_playback_push_opus(music_playback_t *ctx, const uint8_t *opus_data, in
    int16_t pcm[OPUS_DECODE_BUF_SAMPLES];
    int frames = opus_decode(ctx->decoder, opus_data, opus_len, pcm, OPUS_MAX_FRAME_SAMPLES, 0);
    if (frames <= 0) {
-      LOG_WARNING("Music playback: opus_decode error: %s", opus_strerror(frames));
+      OLOG_WARNING("Music playback: opus_decode error: %s", opus_strerror(frames));
       return -1;
    }
 
@@ -184,7 +184,7 @@ int music_playback_push_opus(music_playback_t *ctx, const uint8_t *opus_data, in
 
    /* Check ring space — drop frame if full (never block) */
    if (ring_free(ctx) < n_samples) {
-      LOG_WARNING("Music playback: ring buffer full, dropping frame (%d frames)", frames);
+      OLOG_WARNING("Music playback: ring buffer full, dropping frame (%d frames)", frames);
       return 0;
    }
 
@@ -262,7 +262,7 @@ void music_playback_stop(music_playback_t *ctx) {
    atomic_store(&ctx->stop_flag, 0);
    opus_decoder_ctl(ctx->decoder, OPUS_RESET_STATE);
 
-   LOG_INFO("Music playback stopped");
+   OLOG_INFO("Music playback stopped");
 }
 
 void music_playback_flush(music_playback_t *ctx) {
@@ -293,7 +293,7 @@ void music_playback_pause(music_playback_t *ctx) {
    audio_playback_stop(ctx->audio);
    atomic_store(&ctx->stop_flag, 0);
 
-   LOG_INFO("Music playback paused (ring data preserved)");
+   OLOG_INFO("Music playback paused (ring data preserved)");
 }
 
 void music_playback_resume(music_playback_t *ctx) {
@@ -306,7 +306,7 @@ void music_playback_resume(music_playback_t *ctx) {
    audio_playback_prepare(ctx->audio);
    atomic_store(&ctx->state, MUSIC_PB_PLAYING);
 
-   LOG_INFO("Music playback resumed");
+   OLOG_INFO("Music playback resumed");
 }
 
 void music_playback_set_volume(music_playback_t *ctx, int volume) {

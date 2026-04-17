@@ -41,7 +41,7 @@ int gpio_init(gpio_control_t *ctx, const char *chip_path) {
    /* Open GPIO chip */
    struct gpiod_chip *chip = gpiod_chip_open(path);
    if (!chip) {
-      LOG_ERROR("Cannot open GPIO chip '%s'", path);
+      OLOG_ERROR("Cannot open GPIO chip '%s'", path);
       return -1;
    }
    ctx->chip = chip;
@@ -49,14 +49,14 @@ int gpio_init(gpio_control_t *ctx, const char *chip_path) {
    /* Request button input line with pull-up */
    struct gpiod_line *button = gpiod_chip_get_line(chip, GPIO_BUTTON_PIN);
    if (!button) {
-      LOG_ERROR("Cannot get button line (GPIO %d)", GPIO_BUTTON_PIN);
+      OLOG_ERROR("Cannot get button line (GPIO %d)", GPIO_BUTTON_PIN);
       gpiod_chip_close(chip);
       return -1;
    }
 
    if (gpiod_line_request_input_flags(button, "dawn-satellite",
                                       GPIOD_LINE_REQUEST_FLAG_BIAS_PULL_UP) < 0) {
-      LOG_ERROR("Cannot request button input");
+      OLOG_ERROR("Cannot request button input");
       gpiod_chip_close(chip);
       return -1;
    }
@@ -68,7 +68,7 @@ int gpio_init(gpio_control_t *ctx, const char *chip_path) {
    struct gpiod_line *led_b = gpiod_chip_get_line(chip, GPIO_LED_BLUE_PIN);
 
    if (!led_r || !led_g || !led_b) {
-      LOG_ERROR("Cannot get LED lines");
+      OLOG_ERROR("Cannot get LED lines");
       gpiod_chip_close(chip);
       return -1;
    }
@@ -76,7 +76,7 @@ int gpio_init(gpio_control_t *ctx, const char *chip_path) {
    if (gpiod_line_request_output(led_r, "dawn-satellite", 0) < 0 ||
        gpiod_line_request_output(led_g, "dawn-satellite", 0) < 0 ||
        gpiod_line_request_output(led_b, "dawn-satellite", 0) < 0) {
-      LOG_ERROR("Cannot request LED outputs");
+      OLOG_ERROR("Cannot request LED outputs");
       gpiod_chip_close(chip);
       return -1;
    }
@@ -87,8 +87,8 @@ int gpio_init(gpio_control_t *ctx, const char *chip_path) {
    ctx->initialized = 1;
    ctx->led_state = LED_STATE_OFF;
 
-   LOG_INFO("GPIO initialized: button=%d, LEDs=%d/%d/%d", GPIO_BUTTON_PIN, GPIO_LED_RED_PIN,
-            GPIO_LED_GREEN_PIN, GPIO_LED_BLUE_PIN);
+   OLOG_INFO("GPIO initialized: button=%d, LEDs=%d/%d/%d", GPIO_BUTTON_PIN, GPIO_LED_RED_PIN,
+             GPIO_LED_GREEN_PIN, GPIO_LED_BLUE_PIN);
 
    return 0;
 }
@@ -99,7 +99,7 @@ void gpio_cleanup(gpio_control_t *ctx) {
       gpiod_chip_close((struct gpiod_chip *)ctx->chip);
       ctx->chip = NULL;
       ctx->initialized = 0;
-      LOG_INFO("GPIO cleaned up");
+      OLOG_INFO("GPIO cleaned up");
    }
 }
 
@@ -110,7 +110,7 @@ int gpio_button_read(gpio_control_t *ctx) {
 
    int value = gpiod_line_get_value((struct gpiod_line *)ctx->button_line);
    if (value < 0) {
-      LOG_ERROR("Cannot read button value");
+      OLOG_ERROR("Cannot read button value");
       return -1;
    }
 
@@ -135,7 +135,7 @@ int gpio_button_wait(gpio_control_t *ctx, int timeout_ms) {
    };
 
    if (gpiod_line_request(line, &config, 0) < 0) {
-      LOG_ERROR("Cannot request button for edge detection");
+      OLOG_ERROR("Cannot request button for edge detection");
       /* Re-request as input */
       gpiod_line_request_input_flags(line, "dawn-satellite", GPIOD_LINE_REQUEST_FLAG_BIAS_PULL_UP);
       return -1;
@@ -152,7 +152,7 @@ int gpio_button_wait(gpio_control_t *ctx, int timeout_ms) {
    gpiod_line_request_input_flags(line, "dawn-satellite", GPIOD_LINE_REQUEST_FLAG_BIAS_PULL_UP);
 
    if (ret < 0) {
-      LOG_ERROR("Button wait error");
+      OLOG_ERROR("Button wait error");
       return -1;
    }
 
@@ -215,7 +215,7 @@ int gpio_init(gpio_control_t *ctx, const char *chip_path) {
       memset(ctx, 0, sizeof(gpio_control_t));
       ctx->initialized = 0;
    }
-   LOG_INFO("GPIO disabled (libgpiod not available)");
+   OLOG_INFO("GPIO disabled (libgpiod not available)");
    return 0; /* Not an error, just disabled */
 }
 

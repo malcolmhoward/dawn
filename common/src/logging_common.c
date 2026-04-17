@@ -24,13 +24,20 @@
 #include "logging_common.h"
 
 #include <stdarg.h>
+#include <stdatomic.h>
 #include <stdio.h>
 
-/* Global logging callback - set by application */
-static dawn_log_callback_t g_log_callback = NULL;
+/*
+ * Callback pointer.  Atomic so an install called after worker threads
+ * have started (e.g., from a test harness or future hot-reload) does not
+ * race against concurrent log_message calls on other threads.  Release on
+ * store pairs with acquire on load to publish any state the callback
+ * implementation needs.
+ */
+static _Atomic(dawn_log_callback_t) g_log_callback = NULL;
 
 void dawn_common_set_logger(dawn_log_callback_t callback) {
-   g_log_callback = callback;
+   atomic_store_explicit(&g_log_callback, callback, memory_order_release);
 }
 
 void dawn_common_log(dawn_log_level_t level,
@@ -39,13 +46,14 @@ void dawn_common_log(dawn_log_level_t level,
                      const char *func,
                      const char *fmt,
                      ...) {
-   if (!g_log_callback) {
+   dawn_log_callback_t cb = atomic_load_explicit(&g_log_callback, memory_order_acquire);
+   if (!cb) {
       /* No callback registered - discard log message */
       return;
    }
 
    va_list args;
    va_start(args, fmt);
-   g_log_callback(level, file, line, func, fmt, args);
+   cb(level, file, line, func, fmt, args);
    va_end(args);
 }

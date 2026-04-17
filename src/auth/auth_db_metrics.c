@@ -70,7 +70,7 @@ int auth_db_save_session_metrics(session_metrics_t *metrics) {
       sqlite3_reset(s_db.stmt_metrics_update);
 
       if (rc != SQLITE_DONE) {
-         LOG_ERROR("auth_db: failed to update session metrics: %s", sqlite3_errmsg(s_db.db));
+         OLOG_ERROR("auth_db: failed to update session metrics: %s", sqlite3_errmsg(s_db.db));
          AUTH_DB_UNLOCK();
          return AUTH_DB_FAILURE;
       }
@@ -107,7 +107,7 @@ int auth_db_save_session_metrics(session_metrics_t *metrics) {
       sqlite3_reset(s_db.stmt_metrics_save);
 
       if (rc != SQLITE_DONE) {
-         LOG_ERROR("auth_db: failed to save session metrics: %s", sqlite3_errmsg(s_db.db));
+         OLOG_ERROR("auth_db: failed to save session metrics: %s", sqlite3_errmsg(s_db.db));
          AUTH_DB_UNLOCK();
          return AUTH_DB_FAILURE;
       }
@@ -115,8 +115,8 @@ int auth_db_save_session_metrics(session_metrics_t *metrics) {
       /* Get the inserted row ID */
       metrics->id = sqlite3_last_insert_rowid(s_db.db);
 
-      LOG_INFO("auth_db: created session metrics (id=%lld, session=%u, type=%s)",
-               (long long)metrics->id, metrics->session_id, metrics->session_type);
+      OLOG_INFO("auth_db: created session metrics (id=%lld, session=%u, type=%s)",
+                (long long)metrics->id, metrics->session_id, metrics->session_type);
    }
 
    AUTH_DB_UNLOCK();
@@ -138,7 +138,7 @@ int auth_db_save_provider_metrics(int64_t session_metrics_id,
    int rc = sqlite3_step(s_db.stmt_provider_metrics_delete);
    sqlite3_reset(s_db.stmt_provider_metrics_delete);
    if (rc != SQLITE_DONE) {
-      LOG_WARNING("auth_db: failed to delete old provider metrics: %s", sqlite3_errmsg(s_db.db));
+      OLOG_WARNING("auth_db: failed to delete old provider metrics: %s", sqlite3_errmsg(s_db.db));
    }
 
    int saved = 0;
@@ -162,16 +162,16 @@ int auth_db_save_provider_metrics(int64_t session_metrics_id,
       sqlite3_reset(s_db.stmt_provider_metrics_save);
 
       if (rc != SQLITE_DONE) {
-         LOG_WARNING("auth_db: failed to save provider metrics for %s: %s", p->provider,
-                     sqlite3_errmsg(s_db.db));
+         OLOG_WARNING("auth_db: failed to save provider metrics for %s: %s", p->provider,
+                      sqlite3_errmsg(s_db.db));
       } else {
          saved++;
       }
    }
 
    if (saved > 0) {
-      LOG_INFO("auth_db: saved %d provider metrics for session_metrics_id=%lld", saved,
-               (long long)session_metrics_id);
+      OLOG_INFO("auth_db: saved %d provider metrics for session_metrics_id=%lld", saved,
+                (long long)session_metrics_id);
    }
 
    AUTH_DB_UNLOCK();
@@ -227,7 +227,7 @@ int auth_db_list_session_metrics(const session_metrics_filter_t *filter,
    sqlite3_stmt *stmt = NULL;
    int rc = sqlite3_prepare_v2(s_db.db, sql, -1, &stmt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: failed to prepare metrics query: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: failed to prepare metrics query: %s", sqlite3_errmsg(s_db.db));
       AUTH_DB_UNLOCK();
       return AUTH_DB_FAILURE;
    }
@@ -334,7 +334,7 @@ int auth_db_get_metrics_aggregate(const session_metrics_filter_t *filter,
    sqlite3_stmt *stmt = NULL;
    int rc = sqlite3_prepare_v2(s_db.db, sql, -1, &stmt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: failed to prepare metrics aggregate query: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: failed to prepare metrics aggregate query: %s", sqlite3_errmsg(s_db.db));
       AUTH_DB_UNLOCK();
       return AUTH_DB_FAILURE;
    }
@@ -394,15 +394,15 @@ int auth_db_cleanup_session_metrics(int retention_days) {
    sqlite3_reset(s_db.stmt_metrics_delete_old);
 
    if (rc != SQLITE_DONE) {
-      LOG_ERROR("auth_db: failed to cleanup old metrics: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: failed to cleanup old metrics: %s", sqlite3_errmsg(s_db.db));
       AUTH_DB_UNLOCK();
       return -1;
    }
 
    int deleted = sqlite3_changes(s_db.db);
    if (deleted > 0) {
-      LOG_INFO("auth_db: cleaned up %d old session metrics (older than %d days)", deleted,
-               retention_days);
+      OLOG_INFO("auth_db: cleaned up %d old session metrics (older than %d days)", deleted,
+                retention_days);
    }
 
    AUTH_DB_UNLOCK();

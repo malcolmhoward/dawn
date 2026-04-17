@@ -61,7 +61,7 @@ static int parse_vosk_json(const char *json_str,
 
    struct json_object *parsed_json = json_tokener_parse(json_str);
    if (!parsed_json) {
-      LOG_ERROR("Vosk: Failed to parse JSON response");
+      OLOG_ERROR("Vosk: Failed to parse JSON response");
       return ASR_FAILURE;
    }
 
@@ -74,7 +74,7 @@ static int parse_vosk_json(const char *json_str,
       if (text) {
          *out_text = strdup(text);
          if (!*out_text) {
-            LOG_ERROR("Vosk: Failed to allocate memory for text");
+            OLOG_ERROR("Vosk: Failed to allocate memory for text");
             json_object_put(parsed_json);
             return ASR_ERR_OUT_OF_MEMORY;
          }
@@ -116,13 +116,13 @@ static int parse_vosk_json(const char *json_str,
 
 void *asr_vosk_init(const char *model_path, int sample_rate) {
    if (!model_path) {
-      LOG_ERROR("Vosk: model_path cannot be NULL");
+      OLOG_ERROR("Vosk: model_path cannot be NULL");
       return NULL;
    }
 
    vosk_context_t *ctx = (vosk_context_t *)calloc(1, sizeof(vosk_context_t));
    if (!ctx) {
-      LOG_ERROR("Vosk: Failed to allocate context");
+      OLOG_ERROR("Vosk: Failed to allocate context");
       return NULL;
    }
 
@@ -135,7 +135,7 @@ void *asr_vosk_init(const char *model_path, int sample_rate) {
    // Load model
    ctx->model = vosk_model_new(model_path);
    if (!ctx->model) {
-      LOG_ERROR("Vosk: Failed to load model from: %s", model_path);
+      OLOG_ERROR("Vosk: Failed to load model from: %s", model_path);
       free(ctx);
       return NULL;
    }
@@ -143,19 +143,20 @@ void *asr_vosk_init(const char *model_path, int sample_rate) {
    // Create recognizer
    ctx->recognizer = vosk_recognizer_new(ctx->model, (float)sample_rate);
    if (!ctx->recognizer) {
-      LOG_ERROR("Vosk: Failed to create recognizer");
+      OLOG_ERROR("Vosk: Failed to create recognizer");
       vosk_model_free(ctx->model);
       free(ctx);
       return NULL;
    }
 
-   LOG_INFO("Vosk: Initialized successfully (model: %s, sample_rate: %d)", model_path, sample_rate);
+   OLOG_INFO("Vosk: Initialized successfully (model: %s, sample_rate: %d)", model_path,
+             sample_rate);
    return ctx;
 }
 
 asr_result_t *asr_vosk_process_partial(void *ctx, const int16_t *audio, size_t samples) {
    if (!ctx || !audio) {
-      LOG_ERROR("Vosk: Invalid parameters to process_partial");
+      OLOG_ERROR("Vosk: Invalid parameters to process_partial");
       return NULL;
    }
 
@@ -170,7 +171,7 @@ asr_result_t *asr_vosk_process_partial(void *ctx, const int16_t *audio, size_t s
    // Get partial result
    const char *json_result = vosk_recognizer_partial_result(vosk_ctx->recognizer);
    if (!json_result) {
-      LOG_ERROR("Vosk: vosk_recognizer_partial_result() returned NULL");
+      OLOG_ERROR("Vosk: vosk_recognizer_partial_result() returned NULL");
       return NULL;
    }
 
@@ -182,14 +183,14 @@ asr_result_t *asr_vosk_process_partial(void *ctx, const int16_t *audio, size_t s
    char *text = NULL;
    float confidence = -1.0f;
    if (parse_vosk_json(json_result, 1, &text, &confidence) != 0) {
-      LOG_ERROR("Vosk: Failed to parse partial result JSON");
+      OLOG_ERROR("Vosk: Failed to parse partial result JSON");
       return NULL;
    }
 
    // Create result structure
    asr_result_t *result = (asr_result_t *)calloc(1, sizeof(asr_result_t));
    if (!result) {
-      LOG_ERROR("Vosk: Failed to allocate result structure");
+      OLOG_ERROR("Vosk: Failed to allocate result structure");
       free(text);
       return NULL;
    }
@@ -204,7 +205,7 @@ asr_result_t *asr_vosk_process_partial(void *ctx, const int16_t *audio, size_t s
 
 asr_result_t *asr_vosk_finalize(void *ctx) {
    if (!ctx) {
-      LOG_ERROR("Vosk: Invalid context in finalize");
+      OLOG_ERROR("Vosk: Invalid context in finalize");
       return NULL;
    }
 
@@ -216,7 +217,7 @@ asr_result_t *asr_vosk_finalize(void *ctx) {
    // Get final result
    const char *json_result = vosk_recognizer_final_result(vosk_ctx->recognizer);
    if (!json_result) {
-      LOG_ERROR("Vosk: vosk_recognizer_final_result() returned NULL");
+      OLOG_ERROR("Vosk: vosk_recognizer_final_result() returned NULL");
       return NULL;
    }
 
@@ -228,14 +229,14 @@ asr_result_t *asr_vosk_finalize(void *ctx) {
    char *text = NULL;
    float confidence = -1.0f;
    if (parse_vosk_json(json_result, 0, &text, &confidence) != 0) {
-      LOG_ERROR("Vosk: Failed to parse final result JSON");
+      OLOG_ERROR("Vosk: Failed to parse final result JSON");
       return NULL;
    }
 
    // Create result structure
    asr_result_t *result = (asr_result_t *)calloc(1, sizeof(asr_result_t));
    if (!result) {
-      LOG_ERROR("Vosk: Failed to allocate result structure");
+      OLOG_ERROR("Vosk: Failed to allocate result structure");
       free(text);
       return NULL;
    }
@@ -245,8 +246,8 @@ asr_result_t *asr_vosk_finalize(void *ctx) {
    result->is_partial = 0;
    result->processing_time = processing_time;
 
-   LOG_INFO("Vosk: Final result: \"%s\" (confidence: %.2f)", result->text ? result->text : "(null)",
-            result->confidence);
+   OLOG_INFO("Vosk: Final result: \"%s\" (confidence: %.2f)",
+             result->text ? result->text : "(null)", result->confidence);
 
    // Record ASR timing metrics (Vosk doesn't provide RTF, use 0)
    metrics_record_asr_timing(processing_time, 0.0);
@@ -256,14 +257,14 @@ asr_result_t *asr_vosk_finalize(void *ctx) {
 
 int asr_vosk_reset(void *ctx) {
    if (!ctx) {
-      LOG_ERROR("Vosk: Invalid context in reset");
+      OLOG_ERROR("Vosk: Invalid context in reset");
       return ASR_FAILURE;
    }
 
    vosk_context_t *vosk_ctx = (vosk_context_t *)ctx;
    vosk_recognizer_reset(vosk_ctx->recognizer);
 
-   LOG_INFO("Vosk: Reset recognizer for new utterance");
+   OLOG_INFO("Vosk: Reset recognizer for new utterance");
    return ASR_SUCCESS;
 }
 
@@ -284,5 +285,5 @@ void asr_vosk_cleanup(void *ctx) {
 
    free(vosk_ctx);
 
-   LOG_INFO("Vosk: Cleanup complete");
+   OLOG_INFO("Vosk: Cleanup complete");
 }

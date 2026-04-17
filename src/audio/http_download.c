@@ -54,7 +54,7 @@ int http_download_to_temp(CURL *curl,
    const char *sfx = suffix ? suffix : "";
    int written = snprintf(out_path, out_path_size, "%sXXXXXX%s", prefix ? prefix : "/tmp/dl_", sfx);
    if (written < 0 || (size_t)written >= out_path_size) {
-      LOG_ERROR("http_download: path buffer too small");
+      OLOG_ERROR("http_download: path buffer too small");
       return 1;
    }
 
@@ -62,18 +62,18 @@ int http_download_to_temp(CURL *curl,
    int suffixlen = (int)strlen(sfx);
    int fd = mkstemps(out_path, suffixlen);
    if (fd < 0) {
-      LOG_ERROR("http_download: mkstemps failed: %s", strerror(errno));
+      OLOG_ERROR("http_download: mkstemps failed: %s", strerror(errno));
       return 1;
    }
 
    /* Restrictive permissions */
    if (fchmod(fd, 0600) != 0) {
-      LOG_WARNING("http_download: fchmod failed: %s", strerror(errno));
+      OLOG_WARNING("http_download: fchmod failed: %s", strerror(errno));
    }
 
    FILE *fp = fdopen(fd, "wb");
    if (!fp) {
-      LOG_ERROR("http_download: fdopen failed: %s", strerror(errno));
+      OLOG_ERROR("http_download: fdopen failed: %s", strerror(errno));
       close(fd);
       unlink(out_path);
       return 1;
@@ -106,9 +106,9 @@ int http_download_to_temp(CURL *curl,
 
    if (res != CURLE_OK) {
       if (res == CURLE_FILESIZE_EXCEEDED) {
-         LOG_ERROR("http_download: file exceeds size limit (%lld bytes)", (long long)max_size);
+         OLOG_ERROR("http_download: file exceeds size limit (%lld bytes)", (long long)max_size);
       } else {
-         LOG_ERROR("http_download: CURL error: %s", curl_easy_strerror(res));
+         OLOG_ERROR("http_download: CURL error: %s", curl_easy_strerror(res));
       }
       unlink(out_path);
       return 1;
@@ -118,7 +118,7 @@ int http_download_to_temp(CURL *curl,
    long http_code = 0;
    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
    if (http_code < 200 || http_code >= 300) {
-      LOG_ERROR("http_download: HTTP %ld for %s", http_code, url);
+      OLOG_ERROR("http_download: HTTP %ld for %s", http_code, url);
       unlink(out_path);
       return 1;
    }
@@ -127,7 +127,7 @@ int http_download_to_temp(CURL *curl,
    double dl_size = 0;
    curl_easy_getinfo(curl, CURLINFO_SIZE_DOWNLOAD, &dl_size);
    if (dl_size > 100 * 1024 * 1024) {
-      LOG_WARNING("http_download: large file downloaded (%.1f MB)", dl_size / (1024 * 1024));
+      OLOG_WARNING("http_download: large file downloaded (%.1f MB)", dl_size / (1024 * 1024));
    }
 
    return 0;

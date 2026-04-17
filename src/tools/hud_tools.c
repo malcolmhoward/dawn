@@ -48,7 +48,7 @@ static char *mqtt_only_stub_callback(const char *action, char *value, int *shoul
    (void)action;
    (void)value;
 
-   LOG_WARNING("MQTT-only HUD tool callback called directly - should use MQTT execution");
+   OLOG_WARNING("MQTT-only HUD tool callback called directly - should use MQTT execution");
    *should_respond = 1;
    return strdup("HUD tool requires MQTT execution path. HUD hardware not directly accessible.");
 }

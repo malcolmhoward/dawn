@@ -128,7 +128,7 @@ static char *perform_search(const char *query,
                             search_type_t type,
                             const char *type_name,
                             const char *time_range) {
-   LOG_INFO("search_tool: Performing %s search for '%s'", type_name, query);
+   OLOG_INFO("search_tool: Performing %s search for '%s'", type_name, query);
 
    search_response_t *response = web_search_query_typed(query, SEARXNG_MAX_RESULTS, type,
                                                         time_range);
@@ -137,7 +137,7 @@ static char *perform_search(const char *query,
    }
 
    if (response->error) {
-      LOG_ERROR("search_tool: Search error: %s", response->error);
+      OLOG_ERROR("search_tool: Search error: %s", response->error);
       char *result = malloc(256);
       if (result) {
          snprintf(result, 256, "Search failed: %s", response->error);
@@ -150,13 +150,13 @@ static char *perform_search(const char *query,
    bool fell_back = false;
    if (response->count == 0 && type == SEARCH_TYPE_NEWS) {
       web_search_free_response(response);
-      LOG_INFO("search_tool: News returned 0 results, falling back to web search");
+      OLOG_INFO("search_tool: News returned 0 results, falling back to web search");
       response = web_search_query_typed(query, SEARXNG_MAX_RESULTS, SEARCH_TYPE_WEB, NULL);
       if (!response) {
          return strdup("Search request failed.");
       }
       if (response->error) {
-         LOG_ERROR("search_tool: Web fallback error: %s", response->error);
+         OLOG_ERROR("search_tool: Web fallback error: %s", response->error);
          char *result = malloc(256);
          if (result) {
             snprintf(result, 256, "Search failed: %s", response->error);
@@ -182,7 +182,7 @@ static char *perform_search(const char *query,
             }
          }
          web_search_format_for_llm(response, result + offset, SEARCH_RESULT_BUFFER_SIZE - offset);
-         LOG_INFO("search_tool: Returning %d %s results", response->count, type_name);
+         OLOG_INFO("search_tool: Returning %d %s results", response->count, type_name);
       }
 
       /* Sanitize result to remove invalid UTF-8/control chars before sending to LLM */
@@ -211,7 +211,7 @@ static char *search_tool_callback(const char *action, char *value, int *should_r
    if (!web_search_is_initialized()) {
       const char *endpoint = g_config.search.endpoint[0] != '\0' ? g_config.search.endpoint : NULL;
       if (web_search_init(endpoint) != 0) {
-         LOG_ERROR("search_tool: Failed to initialize web search module");
+         OLOG_ERROR("search_tool: Failed to initialize web search module");
          return strdup("Web search service is not available.");
       }
    }
@@ -241,7 +241,7 @@ static char *search_tool_callback(const char *action, char *value, int *should_r
    }
 
    /* Fallback to web search for unknown categories */
-   LOG_WARNING("search_tool: Unknown category '%s', defaulting to web search", action);
+   OLOG_WARNING("search_tool: Unknown category '%s', defaulting to web search", action);
    return perform_search(query, SEARCH_TYPE_WEB, "web", time_range);
 }
 

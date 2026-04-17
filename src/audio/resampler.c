@@ -45,13 +45,13 @@ struct resampler_t {
 
 resampler_t *resampler_create(int src_rate, int dst_rate, int channels) {
    if (src_rate <= 0 || dst_rate <= 0 || channels <= 0) {
-      LOG_ERROR("Invalid resampler parameters: src=%d dst=%d ch=%d", src_rate, dst_rate, channels);
+      OLOG_ERROR("Invalid resampler parameters: src=%d dst=%d ch=%d", src_rate, dst_rate, channels);
       return NULL;
    }
 
    resampler_t *rs = calloc(1, sizeof(resampler_t));
    if (!rs) {
-      LOG_ERROR("Failed to allocate resampler");
+      OLOG_ERROR("Failed to allocate resampler");
       return NULL;
    }
 
@@ -63,7 +63,7 @@ resampler_t *resampler_create(int src_rate, int dst_rate, int channels) {
    // Critical for ASR - prevents aliasing artifacts that cause "underwater" audio
    rs->src_state = src_new(SRC_SINC_BEST_QUALITY, channels, &error);
    if (!rs->src_state) {
-      LOG_ERROR("Failed to create SRC state: %s", src_strerror(error));
+      OLOG_ERROR("Failed to create SRC state: %s", src_strerror(error));
       free(rs);
       return NULL;
    }
@@ -77,7 +77,7 @@ resampler_t *resampler_create(int src_rate, int dst_rate, int channels) {
    rs->out_float = malloc(rs->buffer_capacity * sizeof(float));
 
    if (!rs->in_float || !rs->out_float) {
-      LOG_ERROR("Failed to allocate resampler buffers (%zu samples)", rs->buffer_capacity);
+      OLOG_ERROR("Failed to allocate resampler buffers (%zu samples)", rs->buffer_capacity);
       src_delete(rs->src_state);
       free(rs->in_float);
       free(rs->out_float);
@@ -85,8 +85,8 @@ resampler_t *resampler_create(int src_rate, int dst_rate, int channels) {
       return NULL;
    }
 
-   LOG_INFO("Resampler created: %d -> %d Hz (ratio %.4f, buffer %zu samples)", src_rate, dst_rate,
-            rs->ratio, rs->buffer_capacity);
+   OLOG_INFO("Resampler created: %d -> %d Hz (ratio %.4f, buffer %zu samples)", src_rate, dst_rate,
+             rs->ratio, rs->buffer_capacity);
    return rs;
 }
 
@@ -113,14 +113,14 @@ size_t resampler_process(resampler_t *rs,
 
    // Enforce maximum to prevent buffer overflow
    if (in_samples > RESAMPLER_MAX_SAMPLES) {
-      LOG_ERROR("Resampler input too large: %zu > %d", in_samples, RESAMPLER_MAX_SAMPLES);
+      OLOG_ERROR("Resampler input too large: %zu > %d", in_samples, RESAMPLER_MAX_SAMPLES);
       return 0;
    }
 
    // Verify output buffer is sufficient
    size_t required_out = resampler_get_output_size(rs, in_samples);
    if (out_samples_max < required_out) {
-      LOG_ERROR("Resampler output buffer too small: %zu < %zu", out_samples_max, required_out);
+      OLOG_ERROR("Resampler output buffer too small: %zu < %zu", out_samples_max, required_out);
       return 0;
    }
 
@@ -137,7 +137,7 @@ size_t resampler_process(resampler_t *rs,
 
    int error = src_process(rs->src_state, &src_data);
    if (error) {
-      LOG_ERROR("Resampler error: %s", src_strerror(error));
+      OLOG_ERROR("Resampler error: %s", src_strerror(error));
       return 0;
    }
 
@@ -155,7 +155,7 @@ size_t resampler_get_output_size(resampler_t *rs, size_t in_samples) {
 
    // Guard against integer overflow (max ratio ~2.18x, so /4 is conservative)
    if (in_samples > SIZE_MAX / 4) {
-      LOG_ERROR("Resampler: Input size %zu too large, overflow risk", in_samples);
+      OLOG_ERROR("Resampler: Input size %zu too large, overflow risk", in_samples);
       return 0;
    }
 

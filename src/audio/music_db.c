@@ -218,7 +218,7 @@ static int exec_sql(const char *sql) {
    char *err_msg = NULL;
    int rc = sqlite3_exec(g_db, sql, NULL, NULL, &err_msg);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("SQL error: %s (query: %s)", err_msg, sql);
+      OLOG_ERROR("SQL error: %s (query: %s)", err_msg, sql);
       sqlite3_free(err_msg);
       return -1;
    }
@@ -284,7 +284,7 @@ static int insert_track(const char *path, time_t mtime, const audio_metadata_t *
 
    rc = sqlite3_prepare_v2(g_db, SQL_INSERT_OR_REPLACE, -1, &stmt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("Failed to prepare insert statement: %s", sqlite3_errmsg(g_db));
+      OLOG_ERROR("Failed to prepare insert statement: %s", sqlite3_errmsg(g_db));
       return -1;
    }
 
@@ -299,7 +299,7 @@ static int insert_track(const char *path, time_t mtime, const audio_metadata_t *
    sqlite3_finalize(stmt);
 
    if (rc != SQLITE_DONE) {
-      LOG_ERROR("Failed to insert track: %s", sqlite3_errmsg(g_db));
+      OLOG_ERROR("Failed to insert track: %s", sqlite3_errmsg(g_db));
       return -1;
    }
 
@@ -342,7 +342,7 @@ static void scan_directory_recursive(const char *dir_path,
                                      int max_seen,
                                      int depth) {
    if (depth >= MAX_DIRECTORY_DEPTH) {
-      LOG_WARNING("Max directory depth reached at: %s", dir_path);
+      OLOG_WARNING("Max directory depth reached at: %s", dir_path);
       return;
    }
 
@@ -440,7 +440,7 @@ int music_db_init(const char *db_path) {
    pthread_mutex_lock(&g_db_mutex);
 
    if (g_initialized) {
-      LOG_WARNING("Music database already initialized");
+      OLOG_WARNING("Music database already initialized");
       pthread_mutex_unlock(&g_db_mutex);
       return 0;
    }
@@ -448,21 +448,21 @@ int music_db_init(const char *db_path) {
    /* Expand tilde in path (e.g., ~/.config/dawn/music.db) */
    char expanded_path[MUSIC_DB_PATH_MAX];
    if (!path_expand_tilde(db_path, expanded_path, sizeof(expanded_path))) {
-      LOG_ERROR("Failed to expand database path: %s", db_path);
+      OLOG_ERROR("Failed to expand database path: %s", db_path);
       pthread_mutex_unlock(&g_db_mutex);
       return -1;
    }
 
    /* Ensure parent directory exists */
    if (!path_ensure_parent_dir(expanded_path)) {
-      LOG_ERROR("Failed to create database directory for: %s", expanded_path);
+      OLOG_ERROR("Failed to create database directory for: %s", expanded_path);
       pthread_mutex_unlock(&g_db_mutex);
       return -1;
    }
 
    int rc = sqlite3_open(expanded_path, &g_db);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("Failed to open music database '%s': %s", expanded_path, sqlite3_errmsg(g_db));
+      OLOG_ERROR("Failed to open music database '%s': %s", expanded_path, sqlite3_errmsg(g_db));
       sqlite3_close(g_db);
       g_db = NULL;
       pthread_mutex_unlock(&g_db_mutex);
@@ -472,7 +472,7 @@ int music_db_init(const char *db_path) {
    /* Create tables and indexes */
    if (exec_sql(SQL_CREATE_TABLE) != 0 || exec_sql(SQL_CREATE_INDEX_ALBUM) != 0 ||
        exec_sql(SQL_CREATE_INDEX_TITLE) != 0) {
-      LOG_ERROR("Failed to create music database schema");
+      OLOG_ERROR("Failed to create music database schema");
       sqlite3_close(g_db);
       g_db = NULL;
       pthread_mutex_unlock(&g_db_mutex);
@@ -495,7 +495,7 @@ int music_db_init(const char *db_path) {
          sqlite3_exec(g_db, migrations[i], NULL, NULL, &err);
          if (err) {
             if (!strstr(err, "duplicate column"))
-               LOG_WARNING("Schema migration: %s", err);
+               OLOG_WARNING("Schema migration: %s", err);
             sqlite3_free(err);
          }
       }
@@ -524,7 +524,7 @@ int music_db_init(const char *db_path) {
    sqlite3_busy_timeout(g_db, 5000);
 
    g_initialized = true;
-   LOG_INFO("Music database initialized: %s", expanded_path);
+   OLOG_INFO("Music database initialized: %s", expanded_path);
 
    pthread_mutex_unlock(&g_db_mutex);
    return 0;
@@ -540,7 +540,7 @@ void music_db_cleanup(void) {
    g_initialized = false;
 
    pthread_mutex_unlock(&g_db_mutex);
-   LOG_INFO("Music database closed");
+   OLOG_INFO("Music database closed");
 }
 
 bool music_db_is_initialized(void) {
@@ -555,7 +555,7 @@ int music_db_scan(const char *music_dir, music_db_scan_stats_t *stats) {
    pthread_mutex_lock(&g_db_mutex);
 
    if (!g_initialized) {
-      LOG_ERROR("Music database not initialized");
+      OLOG_ERROR("Music database not initialized");
       pthread_mutex_unlock(&g_db_mutex);
       return -1;
    }
@@ -571,7 +571,7 @@ int music_db_scan(const char *music_dir, music_db_scan_stats_t *stats) {
    int seen_count = 0;
 
    if (!seen_paths) {
-      LOG_ERROR("Failed to allocate seen paths array");
+      OLOG_ERROR("Failed to allocate seen paths array");
       pthread_mutex_unlock(&g_db_mutex);
       return -1;
    }
@@ -584,8 +584,8 @@ int music_db_scan(const char *music_dir, music_db_scan_stats_t *stats) {
 
    /* Warn if we hit the tracking limit */
    if (seen_count >= max_seen) {
-      LOG_WARNING("File tracking limit reached (%d files). Some deleted files may persist in DB.",
-                  max_seen);
+      OLOG_WARNING("File tracking limit reached (%d files). Some deleted files may persist in DB.",
+                   max_seen);
    }
 
    /* Remove files that no longer exist */
@@ -647,9 +647,9 @@ int music_db_scan(const char *music_dir, music_db_scan_stats_t *stats) {
       *stats = local_stats;
    }
 
-   LOG_INFO("Music scan complete: %d scanned, %d added, %d updated, %d removed, %d unchanged",
-            local_stats.files_scanned, local_stats.files_added, local_stats.files_updated,
-            local_stats.files_removed, local_stats.files_skipped);
+   OLOG_INFO("Music scan complete: %d scanned, %d added, %d updated, %d removed, %d unchanged",
+             local_stats.files_scanned, local_stats.files_added, local_stats.files_updated,
+             local_stats.files_removed, local_stats.files_skipped);
 
    return 0;
 }
@@ -713,7 +713,7 @@ int music_db_search(const char *pattern, music_search_result_t *results, int max
    /* Validate pattern: reject overly short or broad searches to prevent DoS */
    size_t len = strlen(pattern);
    if (len > AUDIO_METADATA_STRING_MAX) {
-      LOG_WARNING("music_db_search: Pattern too long (%zu chars)", len);
+      OLOG_WARNING("music_db_search: Pattern too long (%zu chars)", len);
       return -1;
    }
 
@@ -725,7 +725,7 @@ int music_db_search(const char *pattern, music_search_result_t *results, int max
       }
    }
    if (content_chars < 2) {
-      LOG_WARNING("music_db_search: Pattern too broad (need at least 2 characters)");
+      OLOG_WARNING("music_db_search: Pattern too broad (need at least 2 characters)");
       return 0; /* Return empty results rather than error */
    }
 
@@ -776,7 +776,7 @@ int music_db_search(const char *pattern, music_search_result_t *results, int max
    sqlite3_stmt *stmt = NULL;
    int rc = sqlite3_prepare_v2(g_db, SQL_SEARCH, -1, &stmt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("Failed to prepare search: %s", sqlite3_errmsg(g_db));
+      OLOG_ERROR("Failed to prepare search: %s", sqlite3_errmsg(g_db));
       pthread_mutex_unlock(&g_db_mutex);
       return -1;
    }
@@ -894,7 +894,7 @@ int music_db_list_paged(music_search_result_t *results, int max_results, int off
    sqlite3_stmt *stmt = NULL;
    int rc = sqlite3_prepare_v2(g_db, SQL_LIST_PAGED, -1, &stmt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("music_db_list_paged: prepare failed: %s", sqlite3_errmsg(g_db));
+      OLOG_ERROR("music_db_list_paged: prepare failed: %s", sqlite3_errmsg(g_db));
       pthread_mutex_unlock(&g_db_mutex);
       return 0;
    }
@@ -955,7 +955,7 @@ int music_db_list_artists(char (*artists)[AUDIO_METADATA_STRING_MAX], int max_ar
    sqlite3_stmt *stmt = NULL;
    int rc = sqlite3_prepare_v2(g_db, SQL_LIST_ARTISTS, -1, &stmt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("music_db_list_artists: prepare failed: %s", sqlite3_errmsg(g_db));
+      OLOG_ERROR("music_db_list_artists: prepare failed: %s", sqlite3_errmsg(g_db));
       pthread_mutex_unlock(&g_db_mutex);
       return -1;
    }
@@ -995,7 +995,7 @@ int music_db_list_albums(char (*albums)[AUDIO_METADATA_STRING_MAX], int max_albu
    sqlite3_stmt *stmt = NULL;
    int rc = sqlite3_prepare_v2(g_db, SQL_LIST_ALBUMS, -1, &stmt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("music_db_list_albums: prepare failed: %s", sqlite3_errmsg(g_db));
+      OLOG_ERROR("music_db_list_albums: prepare failed: %s", sqlite3_errmsg(g_db));
       pthread_mutex_unlock(&g_db_mutex);
       return -1;
    }
@@ -1035,7 +1035,7 @@ int music_db_list_artists_with_stats(music_artist_info_t *artists, int max_artis
    sqlite3_stmt *stmt = NULL;
    int rc = sqlite3_prepare_v2(g_db, SQL_LIST_ARTISTS_WITH_STATS, -1, &stmt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("music_db_list_artists_with_stats: prepare failed: %s", sqlite3_errmsg(g_db));
+      OLOG_ERROR("music_db_list_artists_with_stats: prepare failed: %s", sqlite3_errmsg(g_db));
       pthread_mutex_unlock(&g_db_mutex);
       return -1;
    }
@@ -1077,7 +1077,7 @@ int music_db_list_albums_with_stats(music_album_info_t *albums, int max_albums, 
    sqlite3_stmt *stmt = NULL;
    int rc = sqlite3_prepare_v2(g_db, SQL_LIST_ALBUMS_WITH_STATS, -1, &stmt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("music_db_list_albums_with_stats: prepare failed: %s", sqlite3_errmsg(g_db));
+      OLOG_ERROR("music_db_list_albums_with_stats: prepare failed: %s", sqlite3_errmsg(g_db));
       pthread_mutex_unlock(&g_db_mutex);
       return -1;
    }
@@ -1122,7 +1122,7 @@ int music_db_get_by_artist(const char *artist, music_search_result_t *results, i
    sqlite3_stmt *stmt = NULL;
    int rc = sqlite3_prepare_v2(g_db, SQL_GET_BY_ARTIST, -1, &stmt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("music_db_get_by_artist: prepare failed: %s", sqlite3_errmsg(g_db));
+      OLOG_ERROR("music_db_get_by_artist: prepare failed: %s", sqlite3_errmsg(g_db));
       pthread_mutex_unlock(&g_db_mutex);
       return -1;
    }
@@ -1181,7 +1181,7 @@ int music_db_get_by_album(const char *album, music_search_result_t *results, int
    sqlite3_stmt *stmt = NULL;
    int rc = sqlite3_prepare_v2(g_db, SQL_GET_BY_ALBUM, -1, &stmt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("music_db_get_by_album: prepare failed: %s", sqlite3_errmsg(g_db));
+      OLOG_ERROR("music_db_get_by_album: prepare failed: %s", sqlite3_errmsg(g_db));
       pthread_mutex_unlock(&g_db_mutex);
       return -1;
    }

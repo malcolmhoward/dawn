@@ -96,21 +96,21 @@ static char *url_tool_callback(const char *action, char *value, int *should_resp
    *should_respond = 1; /* Always return results to LLM */
 
    if (value == NULL || strlen(value) == 0) {
-      LOG_WARNING("url_tool: No URL provided");
+      OLOG_WARNING("url_tool: No URL provided");
       return strdup("Please provide a URL to fetch.");
    }
 
    /* Support both "get" action and NULL/empty action (for direct calls) */
    if (action != NULL && action[0] != '\0' && strcmp(action, "get") != 0) {
-      LOG_WARNING("url_tool: Unknown action '%s'", action);
+      OLOG_WARNING("url_tool: Unknown action '%s'", action);
       return strdup("Unknown URL action. Use: get");
    }
 
-   LOG_INFO("url_tool: Fetching URL '%s'", value);
+   OLOG_INFO("url_tool: Fetching URL '%s'", value);
 
    /* Validate URL */
    if (!url_is_valid(value)) {
-      LOG_WARNING("url_tool: Invalid URL '%s'", value);
+      OLOG_WARNING("url_tool: Invalid URL '%s'", value);
       return strdup("Invalid URL. Must start with http:// or https://");
    }
 
@@ -121,7 +121,7 @@ static char *url_tool_callback(const char *action, char *value, int *should_resp
 
    if (result != URL_FETCH_SUCCESS) {
       const char *err = url_fetch_error_string(result);
-      LOG_WARNING("url_tool: Fetch failed: %s", err);
+      OLOG_WARNING("url_tool: Fetch failed: %s", err);
       char *msg = malloc(256);
       if (msg) {
          snprintf(msg, 256, "Failed to fetch URL: %s", err);
@@ -130,7 +130,7 @@ static char *url_tool_callback(const char *action, char *value, int *should_resp
       return strdup("Failed to fetch URL.");
    }
 
-   LOG_INFO("url_tool: Extracted %zu bytes of content", content_size);
+   OLOG_INFO("url_tool: Extracted %zu bytes of content", content_size);
 
    /* Skip summarizer for JSON content — TF-IDF sentence splitting destroys
     * JSON structure. The LLM can parse raw JSON directly.
@@ -163,13 +163,13 @@ static char *url_tool_callback(const char *action, char *value, int *should_resp
       }
       /* If summarizer failed with no output, keep original content */
    } else {
-      LOG_INFO("url_tool: JSON content detected, skipping summarizer");
+      OLOG_INFO("url_tool: JSON content detected, skipping summarizer");
    }
 
    /* Hard limit on content size */
    if (content && strlen(content) > URL_CONTENT_MAX_CHARS) {
-      LOG_WARNING("url_tool: Content too large (%zu bytes), truncating to %d", strlen(content),
-                  URL_CONTENT_MAX_CHARS);
+      OLOG_WARNING("url_tool: Content too large (%zu bytes), truncating to %d", strlen(content),
+                   URL_CONTENT_MAX_CHARS);
       /* Allocate space for truncated content + truncation notice */
       char *truncated = malloc(URL_CONTENT_MAX_CHARS + 100);
       if (truncated) {

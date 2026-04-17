@@ -111,8 +111,8 @@ static float compute_correlation_at_lag(const int16_t *ref,
 
 int aec_cal_init(int sample_rate, int max_delay_ms) {
    if (sample_rate <= 0 || max_delay_ms <= 0) {
-      LOG_ERROR("AEC calibration: invalid parameters (rate=%d, max_delay=%d)", sample_rate,
-                max_delay_ms);
+      OLOG_ERROR("AEC calibration: invalid parameters (rate=%d, max_delay=%d)", sample_rate,
+                 max_delay_ms);
       return AEC_CAL_ERR_INVALID_PARAM;
    }
 
@@ -123,8 +123,8 @@ int aec_cal_init(int sample_rate, int max_delay_ms) {
     * Total: greeting + delay <= 2000ms, so max_delay <= 1500ms
     * We use a conservative 500ms limit to ensure good results. */
    if (max_delay_ms > AEC_CAL_MAX_DELAY_LIMIT_MS) {
-      LOG_ERROR("AEC calibration: max_delay_ms (%d) exceeds limit (%d)", max_delay_ms,
-                AEC_CAL_MAX_DELAY_LIMIT_MS);
+      OLOG_ERROR("AEC calibration: max_delay_ms (%d) exceeds limit (%d)", max_delay_ms,
+                 AEC_CAL_MAX_DELAY_LIMIT_MS);
       return AEC_CAL_ERR_INVALID_PARAM;
    }
 
@@ -143,9 +143,9 @@ int aec_cal_init(int sample_rate, int max_delay_ms) {
    g_cal.mic_buffer = (int16_t *)malloc(g_cal.mic_buffer_size * sizeof(int16_t));
 
    if (!g_cal.ref_buffer || !g_cal.mic_buffer) {
-      LOG_ERROR("AEC calibration: failed to allocate buffers (ref=%zu, mic=%zu KB)",
-                g_cal.ref_buffer_size * sizeof(int16_t) / 1024,
-                g_cal.mic_buffer_size * sizeof(int16_t) / 1024);
+      OLOG_ERROR("AEC calibration: failed to allocate buffers (ref=%zu, mic=%zu KB)",
+                 g_cal.ref_buffer_size * sizeof(int16_t) / 1024,
+                 g_cal.mic_buffer_size * sizeof(int16_t) / 1024);
       free(g_cal.ref_buffer);
       free(g_cal.mic_buffer);
       g_cal.ref_buffer = NULL;
@@ -154,14 +154,14 @@ int aec_cal_init(int sample_rate, int max_delay_ms) {
    }
 
    if (pthread_mutex_init(&g_cal.ref_mutex, NULL) != 0) {
-      LOG_ERROR("AEC calibration: failed to init ref mutex");
+      OLOG_ERROR("AEC calibration: failed to init ref mutex");
       free(g_cal.ref_buffer);
       free(g_cal.mic_buffer);
       return AEC_CAL_ERR_OUT_OF_MEMORY;
    }
 
    if (pthread_mutex_init(&g_cal.mic_mutex, NULL) != 0) {
-      LOG_ERROR("AEC calibration: failed to init mic mutex");
+      OLOG_ERROR("AEC calibration: failed to init mic mutex");
       pthread_mutex_destroy(&g_cal.ref_mutex);
       free(g_cal.ref_buffer);
       free(g_cal.mic_buffer);
@@ -174,8 +174,9 @@ int aec_cal_init(int sample_rate, int max_delay_ms) {
    atomic_store(&g_cal.is_active, false);
    atomic_store(&g_cal.is_initialized, true);
 
-   LOG_INFO("AEC calibration: initialized (rate=%dHz, max_delay=%dms, buffers=%zu KB)", sample_rate,
-            max_delay_ms, (g_cal.ref_buffer_size + g_cal.mic_buffer_size) * sizeof(int16_t) / 1024);
+   OLOG_INFO("AEC calibration: initialized (rate=%dHz, max_delay=%dms, buffers=%zu KB)",
+             sample_rate, max_delay_ms,
+             (g_cal.ref_buffer_size + g_cal.mic_buffer_size) * sizeof(int16_t) / 1024);
 
    return AEC_CAL_SUCCESS;
 }
@@ -195,7 +196,7 @@ void aec_cal_start(void) {
    pthread_mutex_unlock(&g_cal.mic_mutex);
 
    atomic_store(&g_cal.is_active, true);
-   LOG_INFO("AEC calibration: started capture");
+   OLOG_INFO("AEC calibration: started capture");
 }
 
 void aec_cal_add_reference(const int16_t *samples, size_t num_samples) {
@@ -242,7 +243,7 @@ int aec_cal_finish(int *delay_ms) {
    *delay_ms = 0;
 
    if (!atomic_load(&g_cal.is_active)) {
-      LOG_WARNING("AEC calibration: finish called but not active");
+      OLOG_WARNING("AEC calibration: finish called but not active");
       return AEC_CAL_ERR_NOT_ACTIVE;
    }
 
@@ -257,7 +258,7 @@ int aec_cal_finish(int *delay_ms) {
    size_t mic_count = g_cal.mic_count;
    pthread_mutex_unlock(&g_cal.mic_mutex);
 
-   LOG_INFO("AEC calibration: analyzing %zu ref samples, %zu mic samples", ref_count, mic_count);
+   OLOG_INFO("AEC calibration: analyzing %zu ref samples, %zu mic samples", ref_count, mic_count);
 
    /* Calculate RMS levels for diagnostic logging.
     *
@@ -279,14 +280,14 @@ int aec_cal_finish(int *delay_ms) {
    }
    double ref_rms = sqrt(ref_sum_sq / check_samples);
    double mic_rms = sqrt(mic_sum_sq / check_samples);
-   LOG_INFO("AEC calibration: RMS levels - ref=%.1f, mic=%.1f (checked %zu samples)", ref_rms,
-            mic_rms, check_samples);
+   OLOG_INFO("AEC calibration: RMS levels - ref=%.1f, mic=%.1f (checked %zu samples)", ref_rms,
+             mic_rms, check_samples);
 
    /* Need at least 100ms of reference audio */
    size_t min_samples = (size_t)(g_cal.sample_rate / 10);
    if (ref_count < min_samples) {
-      LOG_WARNING("AEC calibration: insufficient reference data (%zu < %zu)", ref_count,
-                  min_samples);
+      OLOG_WARNING("AEC calibration: insufficient reference data (%zu < %zu)", ref_count,
+                   min_samples);
       return AEC_CAL_ERR_INSUFFICIENT_DATA;
    }
 
@@ -311,18 +312,18 @@ int aec_cal_finish(int *delay_ms) {
       if (ref_count > delay_margin + min_samples) {
          /* Reduce reference to allow full delay search */
          usable_ref_count = ref_count - delay_margin;
-         LOG_INFO(
+         OLOG_INFO(
              "AEC calibration: mic_count >= ref_count (%zu >= %zu), using %zu ref for full search",
              mic_count, ref_count, usable_ref_count);
       } else {
          /* Reference too short to reduce, use as-is but search range limited */
          usable_ref_count = ref_count;
-         LOG_INFO("AEC calibration: short reference, limited search range");
+         OLOG_INFO("AEC calibration: short reference, limited search range");
       }
    } else { /* mic_count < ref_count */
       /* Mic capture lagged - use reduced reference length */
-      LOG_INFO("AEC calibration: mic capture lagged (mic=%zu, ref=%zu), adjusting", mic_count,
-               ref_count);
+      OLOG_INFO("AEC calibration: mic capture lagged (mic=%zu, ref=%zu), adjusting", mic_count,
+                ref_count);
       /* Need at least 50% of original reference for reliable correlation.
        * Reduced from 80% to handle mic capture pipeline latency - the mic
        * thread may lag behind TTS playback by 700ms+ depending on:
@@ -331,23 +332,23 @@ int aec_cal_finish(int *delay_ms) {
        * - Thread scheduling delays
        * Cross-correlation can still find delay with 1+ seconds of audio. */
       if (mic_count < (ref_count / 2)) {
-         LOG_WARNING("AEC calibration: insufficient mic data (%zu < 50%% of %zu)", mic_count,
-                     ref_count);
+         OLOG_WARNING("AEC calibration: insufficient mic data (%zu < 50%% of %zu)", mic_count,
+                      ref_count);
          return AEC_CAL_ERR_INSUFFICIENT_DATA;
       }
       /* Use mic_count minus delay search margin as reference length */
       if (mic_count <= delay_margin) {
-         LOG_WARNING("AEC calibration: mic data too short for delay search");
+         OLOG_WARNING("AEC calibration: mic data too short for delay search");
          return AEC_CAL_ERR_INSUFFICIENT_DATA;
       }
       usable_ref_count = mic_count - delay_margin;
       if (usable_ref_count < min_samples) {
-         LOG_WARNING("AEC calibration: usable reference too short (%zu < %zu)", usable_ref_count,
-                     min_samples);
+         OLOG_WARNING("AEC calibration: usable reference too short (%zu < %zu)", usable_ref_count,
+                      min_samples);
          return AEC_CAL_ERR_INSUFFICIENT_DATA;
       }
       effective_mic_count = mic_count;
-      LOG_INFO("AEC calibration: using %zu of %zu reference samples", usable_ref_count, ref_count);
+      OLOG_INFO("AEC calibration: using %zu of %zu reference samples", usable_ref_count, ref_count);
    }
 
    /* Limit search range to what we can actually correlate */
@@ -356,7 +357,7 @@ int aec_cal_finish(int *delay_ms) {
       max_lag = g_cal.max_delay_samples;
    }
    if (max_lag <= 0) {
-      LOG_WARNING("AEC calibration: not enough mic data for correlation (max_lag=%d)", max_lag);
+      OLOG_WARNING("AEC calibration: not enough mic data for correlation (max_lag=%d)", max_lag);
       return AEC_CAL_ERR_INSUFFICIENT_DATA;
    }
 
@@ -371,13 +372,13 @@ int aec_cal_finish(int *delay_ms) {
     * searching there finds false peaks from DC offset or crosstalk. */
    int min_lag = (g_cal.sample_rate * AEC_CAL_MIN_DELAY_MS) / 1000;
    if (min_lag >= max_lag) {
-      LOG_WARNING("AEC calibration: search range too small (min=%d, max=%d samples)", min_lag,
-                  max_lag);
+      OLOG_WARNING("AEC calibration: search range too small (min=%d, max=%d samples)", min_lag,
+                   max_lag);
       return AEC_CAL_ERR_INSUFFICIENT_DATA;
    }
 
-   LOG_INFO("AEC calibration: searching delay range %d-%d ms (%d-%d samples)", AEC_CAL_MIN_DELAY_MS,
-            (max_lag * 1000) / g_cal.sample_rate, min_lag, max_lag);
+   OLOG_INFO("AEC calibration: searching delay range %d-%d ms (%d-%d samples)",
+             AEC_CAL_MIN_DELAY_MS, (max_lag * 1000) / g_cal.sample_rate, min_lag, max_lag);
 
    /* Step through lags - use coarse search first, then refine */
    int step = (max_lag > 1000) ? 10 : 1;
@@ -415,8 +416,8 @@ int aec_cal_finish(int *delay_ms) {
 
    /* Check correlation quality */
    if (best_corr < AEC_CAL_MIN_CORRELATION) {
-      LOG_WARNING("AEC calibration: weak correlation (%.3f < %.3f) - possibly muted speakers",
-                  best_corr, AEC_CAL_MIN_CORRELATION);
+      OLOG_WARNING("AEC calibration: weak correlation (%.3f < %.3f) - possibly muted speakers",
+                   best_corr, AEC_CAL_MIN_CORRELATION);
       return AEC_CAL_ERR_LOW_CORRELATION;
    }
 
@@ -424,9 +425,9 @@ int aec_cal_finish(int *delay_ms) {
    if (second_best_corr > 0 && second_best_corr > (best_corr * AEC_CAL_AMBIGUITY_RATIO)) {
       int best_lag_ms = (best_lag * 1000) / g_cal.sample_rate;
       int second_lag_ms = (second_best_lag * 1000) / g_cal.sample_rate;
-      LOG_WARNING("AEC calibration: ambiguous peaks (%.3f@%dms vs %.3f@%dms) - reverberant room, "
-                  "using best",
-                  best_corr, best_lag_ms, second_best_corr, second_lag_ms);
+      OLOG_WARNING("AEC calibration: ambiguous peaks (%.3f@%dms vs %.3f@%dms) - reverberant room, "
+                   "using best",
+                   best_corr, best_lag_ms, second_best_corr, second_lag_ms);
       /* Continue anyway - approximate delay is better than default */
    }
 
@@ -435,13 +436,13 @@ int aec_cal_finish(int *delay_ms) {
 
    /* Sanity check - delay should be reasonable */
    if (measured_delay < 0 || measured_delay > g_cal.max_delay_ms) {
-      LOG_WARNING("AEC calibration: delay out of range (%d ms)", measured_delay);
+      OLOG_WARNING("AEC calibration: delay out of range (%d ms)", measured_delay);
       return AEC_CAL_ERR_OUT_OF_RANGE;
    }
 
    *delay_ms = measured_delay;
-   LOG_INFO("AEC calibration: SUCCESS - measured delay = %d ms (correlation = %.3f)",
-            measured_delay, best_corr);
+   OLOG_INFO("AEC calibration: SUCCESS - measured delay = %d ms (correlation = %.3f)",
+             measured_delay, best_corr);
 
    return AEC_CAL_SUCCESS;
 }
@@ -484,7 +485,7 @@ void aec_cal_cleanup(void) {
 
    atomic_store(&g_cal.is_initialized, false);
 
-   LOG_INFO("AEC calibration: cleaned up");
+   OLOG_INFO("AEC calibration: cleaned up");
 }
 
 void aec_cal_set_pending(void) {

@@ -1715,14 +1715,14 @@ int ui_music_init(ui_music_t *m,
    m->browse_tracks_cap = 500;
    m->browse_tracks = calloc(m->browse_tracks_cap, sizeof(music_track_t));
    if (!m->browse_tracks) {
-      LOG_ERROR("Music panel: failed to allocate browse tracks buffer");
+      OLOG_ERROR("Music panel: failed to allocate browse tracks buffer");
       return 1;
    }
 
    m->browse_items_cap = 500;
    m->browse_items = calloc(m->browse_items_cap, sizeof(music_browse_item_t));
    if (!m->browse_items) {
-      LOG_ERROR("Music panel: failed to allocate browse items buffer");
+      OLOG_ERROR("Music panel: failed to allocate browse items buffer");
       free(m->browse_tracks);
       m->browse_tracks = NULL;
       return 1;
@@ -1734,9 +1734,9 @@ int ui_music_init(ui_music_t *m,
                                    BODY_FONT_SIZE);
 
    if (!m->label_font)
-      LOG_WARNING("Music panel: failed to load label font");
+      OLOG_WARNING("Music panel: failed to load label font");
    if (!m->body_font)
-      LOG_WARNING("Music panel: failed to load body font");
+      OLOG_WARNING("Music panel: failed to load body font");
 
    return 0;
 }

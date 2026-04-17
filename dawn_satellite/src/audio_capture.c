@@ -62,13 +62,13 @@ static void *capture_thread_func(void *arg) {
    size_t buffer_bytes = ctx->period_size * ctx->channels * sizeof(int16_t);
    int16_t *buffer = (int16_t *)malloc(buffer_bytes);
    if (!buffer) {
-      LOG_ERROR("Failed to allocate capture buffer");
+      OLOG_ERROR("Failed to allocate capture buffer");
       atomic_store(&ctx->running, false);
       return NULL;
    }
 
-   LOG_INFO("Capture thread started (period=%zu frames, buffer=%zu bytes)", ctx->period_size,
-            buffer_bytes);
+   OLOG_INFO("Capture thread started (period=%zu frames, buffer=%zu bytes)", ctx->period_size,
+             buffer_bytes);
 
    while (atomic_load(&ctx->running)) {
       /* Read one period from ALSA (blocking) */
@@ -81,27 +81,27 @@ static void *capture_thread_func(void *arg) {
       } else if (frames < 0) {
          if (frames == -EPIPE) {
             /* Buffer overrun - recover */
-            LOG_ERROR("Capture overrun, recovering...");
+            OLOG_ERROR("Capture overrun, recovering...");
             snd_pcm_prepare(ctx->handle);
          } else if (frames == -EAGAIN) {
             /* No data available (shouldn't happen in blocking mode) */
             usleep(1000);
          } else if (frames == -ESTRPIPE) {
             /* Suspended - wait for resume */
-            LOG_ERROR("Capture suspended, waiting...");
+            OLOG_ERROR("Capture suspended, waiting...");
             while (snd_pcm_resume(ctx->handle) == -EAGAIN) {
                usleep(100000);
             }
             snd_pcm_prepare(ctx->handle);
          } else {
-            LOG_ERROR("Read error: %s", snd_strerror(frames));
+            OLOG_ERROR("Read error: %s", snd_strerror(frames));
             usleep(10000);
          }
       }
    }
 
    free(buffer);
-   LOG_INFO("Capture thread stopped");
+   OLOG_INFO("Capture thread stopped");
    return NULL;
 }
 
@@ -121,7 +121,7 @@ int audio_capture_init(audio_capture_t **ctx_out, const char *device) {
    /* Open PCM device for capture (blocking mode for thread) */
    err = snd_pcm_open(&ctx->handle, ctx->device, SND_PCM_STREAM_CAPTURE, 0);
    if (err < 0) {
-      LOG_ERROR("Cannot open capture device '%s': %s", ctx->device, snd_strerror(err));
+      OLOG_ERROR("Cannot open capture device '%s': %s", ctx->device, snd_strerror(err));
       free(ctx);
       return -1;
    }
@@ -132,28 +132,28 @@ int audio_capture_init(audio_capture_t **ctx_out, const char *device) {
 
    err = snd_pcm_hw_params_any(ctx->handle, hw_params);
    if (err < 0) {
-      LOG_ERROR("Cannot initialize hw params: %s", snd_strerror(err));
+      OLOG_ERROR("Cannot initialize hw params: %s", snd_strerror(err));
       goto error;
    }
 
    /* Set access type - interleaved */
    err = snd_pcm_hw_params_set_access(ctx->handle, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED);
    if (err < 0) {
-      LOG_ERROR("Cannot set access type: %s", snd_strerror(err));
+      OLOG_ERROR("Cannot set access type: %s", snd_strerror(err));
       goto error;
    }
 
    /* Set format - 16-bit signed little-endian */
    err = snd_pcm_hw_params_set_format(ctx->handle, hw_params, SND_PCM_FORMAT_S16_LE);
    if (err < 0) {
-      LOG_ERROR("Cannot set format: %s", snd_strerror(err));
+      OLOG_ERROR("Cannot set format: %s", snd_strerror(err));
       goto error;
    }
 
    /* Set channels - mono */
    err = snd_pcm_hw_params_set_channels(ctx->handle, hw_params, AUDIO_CHANNELS);
    if (err < 0) {
-      LOG_ERROR("Cannot set channels: %s", snd_strerror(err));
+      OLOG_ERROR("Cannot set channels: %s", snd_strerror(err));
       goto error;
    }
 
@@ -161,12 +161,12 @@ int audio_capture_init(audio_capture_t **ctx_out, const char *device) {
    unsigned int rate = AUDIO_SAMPLE_RATE;
    err = snd_pcm_hw_params_set_rate_near(ctx->handle, hw_params, &rate, 0);
    if (err < 0) {
-      LOG_ERROR("Cannot set sample rate: %s", snd_strerror(err));
+      OLOG_ERROR("Cannot set sample rate: %s", snd_strerror(err));
       goto error;
    }
 
    if (rate != AUDIO_SAMPLE_RATE) {
-      LOG_INFO("Requested %u Hz, got %u Hz", AUDIO_SAMPLE_RATE, rate);
+      OLOG_INFO("Requested %u Hz, got %u Hz", AUDIO_SAMPLE_RATE, rate);
    }
    ctx->sample_rate = rate;
    ctx->channels = AUDIO_CHANNELS;
@@ -175,7 +175,7 @@ int audio_capture_init(audio_capture_t **ctx_out, const char *device) {
    snd_pcm_uframes_t period_size = 512;
    err = snd_pcm_hw_params_set_period_size_near(ctx->handle, hw_params, &period_size, 0);
    if (err < 0) {
-      LOG_ERROR("Cannot set period size: %s", snd_strerror(err));
+      OLOG_ERROR("Cannot set period size: %s", snd_strerror(err));
       goto error;
    }
    ctx->period_size = period_size;
@@ -184,28 +184,28 @@ int audio_capture_init(audio_capture_t **ctx_out, const char *device) {
    snd_pcm_uframes_t buffer_size = period_size * 4;
    err = snd_pcm_hw_params_set_buffer_size_near(ctx->handle, hw_params, &buffer_size);
    if (err < 0) {
-      LOG_ERROR("Cannot set buffer size: %s", snd_strerror(err));
+      OLOG_ERROR("Cannot set buffer size: %s", snd_strerror(err));
       goto error;
    }
 
    /* Apply hardware parameters */
    err = snd_pcm_hw_params(ctx->handle, hw_params);
    if (err < 0) {
-      LOG_ERROR("Cannot apply hw params: %s", snd_strerror(err));
+      OLOG_ERROR("Cannot apply hw params: %s", snd_strerror(err));
       goto error;
    }
 
    /* Create ring buffer */
    ctx->ring_buffer = ring_buffer_create(RING_BUFFER_SIZE);
    if (!ctx->ring_buffer) {
-      LOG_ERROR("Failed to create ring buffer");
+      OLOG_ERROR("Failed to create ring buffer");
       goto error;
    }
 
    /* Prepare the device */
    err = snd_pcm_prepare(ctx->handle);
    if (err < 0) {
-      LOG_ERROR("Cannot prepare device: %s", snd_strerror(err));
+      OLOG_ERROR("Cannot prepare device: %s", snd_strerror(err));
       ring_buffer_free(ctx->ring_buffer);
       goto error;
    }
@@ -213,16 +213,16 @@ int audio_capture_init(audio_capture_t **ctx_out, const char *device) {
    /* Start capture thread */
    atomic_init(&ctx->running, true);
    if (pthread_create(&ctx->thread, NULL, capture_thread_func, ctx) != 0) {
-      LOG_ERROR("Failed to create capture thread");
+      OLOG_ERROR("Failed to create capture thread");
       ring_buffer_free(ctx->ring_buffer);
       goto error;
    }
 
    ctx->initialized = 1;
 
-   LOG_INFO("Capture initialized: %s @ %u Hz, %zu frame periods (threaded)", ctx->device,
-            ctx->sample_rate, ctx->period_size);
-   LOG_INFO("Ring buffer at %p (capacity %zu bytes)", (void *)ctx->ring_buffer, RING_BUFFER_SIZE);
+   OLOG_INFO("Capture initialized: %s @ %u Hz, %zu frame periods (threaded)", ctx->device,
+             ctx->sample_rate, ctx->period_size);
+   OLOG_INFO("Ring buffer at %p (capacity %zu bytes)", (void *)ctx->ring_buffer, RING_BUFFER_SIZE);
 
    *ctx_out = ctx;
    return 0;
@@ -255,7 +255,7 @@ void audio_capture_cleanup(audio_capture_t *ctx) {
    }
 
    free(ctx);
-   LOG_INFO("Capture cleaned up");
+   OLOG_INFO("Capture cleaned up");
 }
 
 ssize_t audio_capture_read(audio_capture_t *ctx, int16_t *buffer, size_t max_samples) {
@@ -307,7 +307,7 @@ int audio_create_wav(const int16_t *samples,
 
    uint8_t *buffer = malloc(total_size);
    if (!buffer) {
-      LOG_ERROR("Failed to allocate WAV buffer");
+      OLOG_ERROR("Failed to allocate WAV buffer");
       return -1;
    }
 
@@ -333,7 +333,7 @@ int audio_create_wav(const int16_t *samples,
    *wav_data = buffer;
    *wav_size = total_size;
 
-   LOG_INFO("Created WAV: %zu bytes, %zu samples", total_size, num_samples);
+   OLOG_INFO("Created WAV: %zu bytes, %zu samples", total_size, num_samples);
    return 0;
 }
 
@@ -349,24 +349,24 @@ int audio_parse_wav(const uint8_t *wav_data,
 
    /* Validate WAV header */
    if (memcmp(wav_data, "RIFF", 4) != 0) {
-      LOG_ERROR("Invalid WAV: missing RIFF header");
+      OLOG_ERROR("Invalid WAV: missing RIFF header");
       return -1;
    }
 
    if (memcmp(wav_data + 8, "WAVE", 4) != 0) {
-      LOG_ERROR("Invalid WAV: missing WAVE format");
+      OLOG_ERROR("Invalid WAV: missing WAVE format");
       return -1;
    }
 
    const wav_header_t *header = (const wav_header_t *)wav_data;
 
    if (header->audio_format != 1) {
-      LOG_ERROR("Unsupported WAV format: %u (expected PCM)", header->audio_format);
+      OLOG_ERROR("Unsupported WAV format: %u (expected PCM)", header->audio_format);
       return -1;
    }
 
    if (header->bits_per_sample != 16) {
-      LOG_ERROR("Unsupported bit depth: %u (expected 16)", header->bits_per_sample);
+      OLOG_ERROR("Unsupported bit depth: %u (expected 16)", header->bits_per_sample);
       return -1;
    }
 
@@ -378,7 +378,7 @@ int audio_parse_wav(const uint8_t *wav_data,
    if (channels)
       *channels = header->num_channels;
 
-   LOG_INFO("Parsed WAV: %u Hz, %u ch, %zu bytes PCM", header->sample_rate, header->num_channels,
-            *pcm_size);
+   OLOG_INFO("Parsed WAV: %u Hz, %u ch, %zu bytes PCM", header->sample_rate, header->num_channels,
+             *pcm_size);
    return 0;
 }

@@ -62,7 +62,7 @@ static const char *s_cancel_words[] = { "stop",     "stop it",    "cancel",    "
 
 void wake_word_init(const char *ai_name) {
    if (!ai_name || ai_name[0] == '\0') {
-      LOG_ERROR("wake_word_init: ai_name is empty");
+      OLOG_ERROR("wake_word_init: ai_name is empty");
       return;
    }
 
@@ -72,8 +72,8 @@ void wake_word_init(const char *ai_name) {
    }
    s_num_wake_words = NUM_WAKE_PREFIXES;
 
-   LOG_INFO("Wake words configured for '%s' (e.g., '%s', '%s')", ai_name, s_wake_words[0],
-            s_wake_words[1]);
+   OLOG_INFO("Wake words configured for '%s' (e.g., '%s', '%s')", ai_name, s_wake_words[0],
+             s_wake_words[1]);
 }
 
 char *wake_word_normalize(const char *input) {

@@ -142,9 +142,9 @@ void handle_music_subscribe(ws_connection_t *conn, struct json_object *payload) 
    /* Send current state (send_state manages its own locking) */
    webui_music_send_state(conn, state);
 
-   LOG_INFO("WebUI music: Client subscribed (quality: %s, bitrate: %s)",
-            QUALITY_NAMES[state->quality],
-            state->bitrate_mode == MUSIC_BITRATE_VBR ? "VBR" : "CBR");
+   OLOG_INFO("WebUI music: Client subscribed (quality: %s, bitrate: %s)",
+             QUALITY_NAMES[state->quality],
+             state->bitrate_mode == MUSIC_BITRATE_VBR ? "VBR" : "CBR");
 }
 
 void handle_music_unsubscribe(ws_connection_t *conn) {
@@ -165,7 +165,7 @@ void handle_music_unsubscribe(ws_connection_t *conn) {
 
    webui_music_stop_streaming(state);
 
-   LOG_INFO("WebUI music: Client unsubscribed");
+   OLOG_INFO("WebUI music: Client unsubscribed");
 }
 
 void handle_music_control(ws_connection_t *conn, struct json_object *payload) {
@@ -190,7 +190,7 @@ void handle_music_control(ws_connection_t *conn, struct json_object *payload) {
    }
 
    const char *action = json_object_get_string(action_obj);
-   LOG_INFO("WebUI music: Control action '%s'", action);
+   OLOG_INFO("WebUI music: Control action '%s'", action);
 
    if (strcmp(action, "play") == 0) {
       /* Play specific track by path, or search query */
@@ -697,7 +697,7 @@ void handle_music_control(ws_connection_t *conn, struct json_object *payload) {
       webui_music_broadcast_queue_state(uq, conn);
 
       free(tracks);
-      LOG_INFO("WebUI music: Added %d tracks by '%s' to queue", added, artist_name);
+      OLOG_INFO("WebUI music: Added %d tracks by '%s' to queue", added, artist_name);
 
    } else if (strcmp(action, "add_album") == 0) {
       /* Add all tracks from an album to queue */
@@ -736,7 +736,7 @@ void handle_music_control(ws_connection_t *conn, struct json_object *payload) {
       webui_music_broadcast_queue_state(uq, conn);
 
       free(tracks);
-      LOG_INFO("WebUI music: Added %d tracks from album '%s' to queue", added, album_name);
+      OLOG_INFO("WebUI music: Added %d tracks from album '%s' to queue", added, album_name);
 
    } else if (strcmp(action, "volume") == 0) {
       /* Set music volume for this session */
@@ -754,7 +754,7 @@ void handle_music_control(ws_connection_t *conn, struct json_object *payload) {
 
       /* Send updated state so client confirms the value */
       webui_music_send_state(conn, state);
-      LOG_INFO("WebUI music: Volume set to %.0f%%", level * 100.0);
+      OLOG_INFO("WebUI music: Volume set to %.0f%%", level * 100.0);
 
    } else {
       webui_music_send_error(conn, "UNKNOWN_ACTION", "Unknown control action");
@@ -1232,7 +1232,7 @@ int webui_music_execute_tool(ws_connection_t *conn,
       state = (session_music_state_t *)conn->music_state;
    }
 
-   LOG_INFO("WebUI music tool: action='%s' query='%s'", action, query ? query : "(none)");
+   OLOG_INFO("WebUI music tool: action='%s' query='%s'", action, query ? query : "(none)");
 
    if (strcmp(action, "play") == 0) {
       if (!query || query[0] == '\0') {
@@ -1584,7 +1584,7 @@ char *webui_volume_execute_tool(ws_connection_t *conn,
    }
 
    conn->volume = vol;
-   LOG_INFO("WebUI volume tool: set to %.0f%% for session", vol * 100.0f);
+   OLOG_INFO("WebUI volume tool: set to %.0f%% for session", vol * 100.0f);
 
    /* Send state update to client so slider syncs */
    session_music_state_t *state = (session_music_state_t *)conn->music_state;

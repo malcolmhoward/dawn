@@ -155,7 +155,7 @@ static user_music_queue_t *find_or_create_user_queue(int user_id) {
       bool evicted = false;
       for (int i = 0; i < s_user_queue_count; i++) {
          if (s_user_queues[i] && s_user_queues[i]->ref_count == 0) {
-            LOG_INFO("WebUI music: Evicting idle queue for user %d", s_user_queues[i]->user_id);
+            OLOG_INFO("WebUI music: Evicting idle queue for user %d", s_user_queues[i]->user_id);
             pthread_mutex_destroy(&s_user_queues[i]->queue_mutex);
             free(s_user_queues[i]);
             /* Compact array */
@@ -168,7 +168,7 @@ static user_music_queue_t *find_or_create_user_queue(int user_id) {
          }
       }
       if (!evicted) {
-         LOG_ERROR("WebUI music: User queue registry full (%d), all in use", MAX_USER_QUEUES);
+         OLOG_ERROR("WebUI music: User queue registry full (%d), all in use", MAX_USER_QUEUES);
          pthread_mutex_unlock(&s_user_queues_mutex);
          return NULL;
       }
@@ -191,8 +191,8 @@ static user_music_queue_t *find_or_create_user_queue(int user_id) {
    s_user_queues[s_user_queue_count++] = uq;
    pthread_mutex_unlock(&s_user_queues_mutex);
 
-   LOG_INFO("WebUI music: Created shared queue for user %d (%d tracks restored)", user_id,
-            uq->queue_length);
+   OLOG_INFO("WebUI music: Created shared queue for user %d (%d tracks restored)", user_id,
+             uq->queue_length);
    return uq;
 }
 
@@ -300,7 +300,7 @@ bool wait_decoder_idle(session_music_state_t *state, int timeout_ms) {
    pthread_mutex_unlock(&state->state_mutex);
 
    if (!idle) {
-      LOG_WARNING("WebUI music: Timeout waiting for decoder to become idle");
+      OLOG_WARNING("WebUI music: Timeout waiting for decoder to become idle");
    }
 
    return idle;
@@ -324,29 +324,29 @@ bool webui_music_is_path_valid(const char *path) {
    /* Plex paths: validate prefix, source config, and Part.key format */
    if (strncmp(path, "plex:", 5) == 0) {
       if (!plex_client_is_configured()) {
-         LOG_WARNING("WebUI music: Plex path rejected (Plex not configured): %s", path);
+         OLOG_WARNING("WebUI music: Plex path rejected (Plex not configured): %s", path);
          return false;
       }
       const char *part_key = path + 5;
       /* Validate Part.key starts with expected Plex API path */
       if (strncmp(part_key, "/library/parts/", 15) != 0 &&
           strncmp(part_key, "/library/metadata/", 18) != 0) {
-         LOG_WARNING("WebUI music: Invalid Plex part key: %s", part_key);
+         OLOG_WARNING("WebUI music: Invalid Plex part key: %s", part_key);
          return false;
       }
       /* No authority injection */
       if (strchr(part_key, '@') != NULL) {
-         LOG_WARNING("WebUI music: Authority injection in Plex path: %s", path);
+         OLOG_WARNING("WebUI music: Authority injection in Plex path: %s", path);
          return false;
       }
       /* No query string or fragment injection */
       if (strchr(part_key, '?') != NULL || strchr(part_key, '#') != NULL) {
-         LOG_WARNING("WebUI music: Query/fragment injection in Plex path: %s", path);
+         OLOG_WARNING("WebUI music: Query/fragment injection in Plex path: %s", path);
          return false;
       }
       /* No path traversal in the Part.key */
       if (contains_path_traversal(part_key)) {
-         LOG_WARNING("WebUI music: Path traversal in Plex path: %s", path);
+         OLOG_WARNING("WebUI music: Path traversal in Plex path: %s", path);
          return false;
       }
       return true;
@@ -356,13 +356,13 @@ bool webui_music_is_path_valid(const char *path) {
 
    /* Quick check for obvious traversal patterns */
    if (contains_path_traversal(path)) {
-      LOG_WARNING("WebUI music: Path traversal detected in: %s", path);
+      OLOG_WARNING("WebUI music: Path traversal detected in: %s", path);
       return false;
    }
 
    /* Check if music directory is configured */
    if (g_config.paths.music_dir[0] == '\0') {
-      LOG_WARNING("WebUI music: No music directory configured");
+      OLOG_WARNING("WebUI music: No music directory configured");
       return false;
    }
 
@@ -371,27 +371,27 @@ bool webui_music_is_path_valid(const char *path) {
 
    /* Resolve the music library base path */
    if (realpath(g_config.paths.music_dir, resolved_music_dir) == NULL) {
-      LOG_ERROR("WebUI music: Cannot resolve music directory: %s", g_config.paths.music_dir);
+      OLOG_ERROR("WebUI music: Cannot resolve music directory: %s", g_config.paths.music_dir);
       return false;
    }
 
    /* Resolve the requested file path */
    if (realpath(path, resolved_path) == NULL) {
       /* File doesn't exist - not valid for playback */
-      LOG_WARNING("WebUI music: Cannot resolve path: %s", path);
+      OLOG_WARNING("WebUI music: Cannot resolve path: %s", path);
       return false;
    }
 
    /* Ensure resolved path starts with resolved music directory */
    size_t music_dir_len = strlen(resolved_music_dir);
    if (strncmp(resolved_path, resolved_music_dir, music_dir_len) != 0) {
-      LOG_WARNING("WebUI music: Path outside music library: %s", path);
+      OLOG_WARNING("WebUI music: Path outside music library: %s", path);
       return false;
    }
 
    /* Ensure it's either exact match or followed by '/' */
    if (resolved_path[music_dir_len] != '\0' && resolved_path[music_dir_len] != '/') {
-      LOG_WARNING("WebUI music: Path prefix mismatch: %s", path);
+      OLOG_WARNING("WebUI music: Path prefix mismatch: %s", path);
       return false;
    }
 
@@ -423,15 +423,15 @@ static int queue_music_data(ws_connection_t *conn, const uint8_t *data, size_t l
       static _Atomic int drop_count = 0;
       int drops = atomic_fetch_add(&drop_count, 1) + 1;
       if (drops % 50 == 1)
-         LOG_WARNING("WebUI music: Backpressure dropping frames (queue %d%%, dropped %d)",
-                     queue_fill, drops);
+         OLOG_WARNING("WebUI music: Backpressure dropping frames (queue %d%%, dropped %d)",
+                      queue_fill, drops);
       return 0; /* Not an error, just backpressure */
    }
 
    /* Allocate copy of data for queue (will be freed after send) */
    uint8_t *data_copy = malloc(len);
    if (!data_copy) {
-      LOG_ERROR("WebUI music: Failed to allocate music data copy (%zu bytes)", len);
+      OLOG_ERROR("WebUI music: Failed to allocate music data copy (%zu bytes)", len);
       return -1;
    }
    memcpy(data_copy, data, len);
@@ -477,7 +477,7 @@ int webui_music_configure_encoder(session_music_state_t *state, music_quality_t 
    state->encoder = opus_encoder_create(OPUS_SAMPLE_RATE, 2, /* stereo output */
                                         OPUS_APPLICATION_AUDIO, &err);
    if (err != OPUS_OK || !state->encoder) {
-      LOG_ERROR("WebUI music: Failed to create Opus encoder: %s", opus_strerror(err));
+      OLOG_ERROR("WebUI music: Failed to create Opus encoder: %s", opus_strerror(err));
       return 1;
    }
 
@@ -490,8 +490,8 @@ int webui_music_configure_encoder(session_music_state_t *state, music_quality_t 
    opus_encoder_ctl(state->encoder, OPUS_SET_VBR(state->bitrate_mode == MUSIC_BITRATE_VBR ? 1 : 0));
 
    state->quality = quality;
-   LOG_INFO("WebUI music: Encoder configured for %s quality (%d kbps)", QUALITY_NAMES[quality],
-            QUALITY_BITRATES[quality] / 1000);
+   OLOG_INFO("WebUI music: Encoder configured for %s quality (%d kbps)", QUALITY_NAMES[quality],
+             QUALITY_BITRATES[quality] / 1000);
 
    return 0;
 }
@@ -592,7 +592,7 @@ void webui_music_send_state(ws_connection_t *conn, session_music_state_t *state)
    const char *json_str = json_object_to_json_string(response);
    char *json_copy = strdup(json_str);
    if (!json_copy) {
-      LOG_ERROR("WebUI music: strdup failed for state update");
+      OLOG_ERROR("WebUI music: strdup failed for state update");
       json_object_put(response);
       return;
    }
@@ -644,7 +644,7 @@ void webui_music_send_error(ws_connection_t *conn, const char *code, const char 
    const char *json_str = json_object_to_json_string(response);
    char *json_copy = strdup(json_str);
    if (!json_copy) {
-      LOG_ERROR("WebUI music: strdup failed for error message");
+      OLOG_ERROR("WebUI music: strdup failed for error message");
       json_object_put(response);
       return;
    }
@@ -707,7 +707,7 @@ static void *music_stream_thread(void *arg) {
    session_music_state_t *state = (session_music_state_t *)arg;
    ws_connection_t *conn = state->conn;
 
-   LOG_INFO("WebUI music: Streaming thread started");
+   OLOG_INFO("WebUI music: Streaming thread started");
    atomic_fetch_add(&s_active_streams, 1);
 
    /* Buffers for audio processing
@@ -744,8 +744,8 @@ static void *music_stream_thread(void *arg) {
          state->quality = new_quality;
          state->bitrate_mode = new_bitrate_mode;
          if (webui_music_configure_encoder(state, new_quality) == 0) {
-            LOG_INFO("WebUI music: Reconfigured encoder to %s %s", QUALITY_NAMES[new_quality],
-                     new_bitrate_mode == MUSIC_BITRATE_VBR ? "VBR" : "CBR");
+            OLOG_INFO("WebUI music: Reconfigured encoder to %s %s", QUALITY_NAMES[new_quality],
+                      new_bitrate_mode == MUSIC_BITRATE_VBR ? "VBR" : "CBR");
          }
       }
 
@@ -753,8 +753,8 @@ static void *music_stream_thread(void *arg) {
       pthread_mutex_lock(&state->state_mutex);
       if (!state->decoder || !state->playing || state->paused) {
          if (was_sending) {
-            LOG_INFO("WebUI music: Streaming paused (decoder=%p playing=%d paused=%d)",
-                     (void *)state->decoder, state->playing, state->paused);
+            OLOG_INFO("WebUI music: Streaming paused (decoder=%p playing=%d paused=%d)",
+                      (void *)state->decoder, state->playing, state->paused);
             was_sending = false;
          }
          pthread_mutex_unlock(&state->state_mutex);
@@ -762,7 +762,7 @@ static void *music_stream_thread(void *arg) {
          continue;
       }
       if (!was_sending) {
-         LOG_INFO("WebUI music: Streaming resumed");
+         OLOG_INFO("WebUI music: Streaming resumed");
          was_sending = true;
          /* Reset pacing so we don't fast-forward after a pause */
          stream_start_time = 0;
@@ -786,7 +786,7 @@ static void *music_stream_thread(void *arg) {
          atomic_store(&state->decoder_busy, false);
          pthread_mutex_lock(&state->state_mutex);
          pthread_cond_signal(&state->decoder_idle_cond);
-         LOG_INFO("WebUI music: Track finished (read returned %zd)", frames_read);
+         OLOG_INFO("WebUI music: Track finished (read returned %zd)", frames_read);
 
          audio_decoder_close(state->decoder);
          state->decoder = NULL;
@@ -876,7 +876,7 @@ static void *music_stream_thread(void *arg) {
          /* Open next track */
          state->decoder = audio_decoder_open(next_path);
          if (!state->decoder) {
-            LOG_ERROR("WebUI music: Failed to open next track: %s", next_path);
+            OLOG_ERROR("WebUI music: Failed to open next track: %s", next_path);
             state->playing = false;
             pthread_mutex_unlock(&state->state_mutex);
             webui_music_send_error(conn, "DECODE_ERROR", "Failed to open next track");
@@ -948,7 +948,7 @@ static void *music_stream_thread(void *arg) {
          state->resample_accum_count += samples;
       } else {
          /* Buffer overflow - this shouldn't happen with proper sizing */
-         LOG_WARNING("WebUI music: Resample accumulator overflow, dropping samples");
+         OLOG_WARNING("WebUI music: Resample accumulator overflow, dropping samples");
       }
       pthread_mutex_unlock(&state->state_mutex);
 
@@ -978,7 +978,7 @@ static void *music_stream_thread(void *arg) {
                                             opus_buffer + 2, sizeof(opus_buffer) - 2);
 
          if (opus_bytes < 0) {
-            LOG_WARNING("WebUI music: Opus encode error: %s", opus_strerror(opus_bytes));
+            OLOG_WARNING("WebUI music: Opus encode error: %s", opus_strerror(opus_bytes));
             break;
          }
 
@@ -1021,7 +1021,7 @@ static void *music_stream_thread(void *arg) {
       }
    }
 
-   LOG_INFO("WebUI music: Streaming thread stopped");
+   OLOG_INFO("WebUI music: Streaming thread stopped");
    atomic_fetch_sub(&s_active_streams, 1);
    atomic_store(&state->streaming, false);
 
@@ -1051,7 +1051,7 @@ int webui_music_start_streaming(session_music_state_t *state) {
    pthread_attr_destroy(&attr);
 
    if (ret != 0) {
-      LOG_ERROR("WebUI music: Failed to create streaming thread");
+      OLOG_ERROR("WebUI music: Failed to create streaming thread");
       atomic_store(&state->streaming, false);
       return 1;
    }
@@ -1112,7 +1112,7 @@ int webui_music_start_playback(session_music_state_t *state, const char *path) {
       const char *part_key = path + 5;
       if (plex_client_download_track(part_key, local_path, sizeof(local_path)) != 0) {
          pthread_mutex_unlock(&state->state_mutex);
-         LOG_ERROR("WebUI music: Plex download failed for: %s", path);
+         OLOG_ERROR("WebUI music: Plex download failed for: %s", path);
          return 1;
       }
       /* Remember temp file for cleanup */
@@ -1127,7 +1127,7 @@ int webui_music_start_playback(session_music_state_t *state, const char *path) {
    state->decoder = audio_decoder_open(local_path);
    if (!state->decoder) {
       pthread_mutex_unlock(&state->state_mutex);
-      LOG_ERROR("WebUI music: Failed to open: %s", path);
+      OLOG_ERROR("WebUI music: Failed to open: %s", path);
       /* Clean up temp file on failure */
       if (state->temp_file[0]) {
          unlink(state->temp_file);
@@ -1152,8 +1152,8 @@ int webui_music_start_playback(session_music_state_t *state, const char *path) {
    state->source_format = info.format;
    state->position_frames = 0;
 
-   LOG_INFO("WebUI music: Playing %s (%s %d Hz, %d ch)", path,
-            audio_decoder_format_name(info.format), info.sample_rate, info.channels);
+   OLOG_INFO("WebUI music: Playing %s (%s %d Hz, %d ch)", path,
+             audio_decoder_format_name(info.format), info.sample_rate, info.channels);
 
    /* Create resampler if needed */
    if (state->resampler) {
@@ -1162,7 +1162,7 @@ int webui_music_start_playback(session_music_state_t *state, const char *path) {
    if (info.sample_rate != OPUS_SAMPLE_RATE) {
       state->resampler = resampler_create(info.sample_rate, OPUS_SAMPLE_RATE, info.channels);
       if (!state->resampler) {
-         LOG_ERROR("WebUI music: Failed to create resampler");
+         OLOG_ERROR("WebUI music: Failed to create resampler");
          audio_decoder_close(state->decoder);
          state->decoder = NULL;
          pthread_mutex_unlock(&state->state_mutex);
@@ -1213,7 +1213,7 @@ int webui_music_init(void) {
 
    /* Check if music database is available */
    if (!music_db_is_initialized()) {
-      LOG_WARNING("WebUI music: Music database not initialized - library features unavailable");
+      OLOG_WARNING("WebUI music: Music database not initialized - library features unavailable");
    }
 
    /* Initialize queue persistence DB */
@@ -1221,21 +1221,21 @@ int webui_music_init(void) {
       char queue_db_path[512];
       snprintf(queue_db_path, sizeof(queue_db_path), "%s/music.db", g_config.paths.data_dir);
       if (music_queue_db_init(queue_db_path) != 0) {
-         LOG_WARNING("WebUI music: Queue DB init failed — queue persistence unavailable");
+         OLOG_WARNING("WebUI music: Queue DB init failed — queue persistence unavailable");
       }
    }
 
    /* Initialize Plex client if configured (for download/scrobble support) */
    if (plex_client_is_configured()) {
       if (plex_client_init() != 0) {
-         LOG_WARNING("WebUI music: Plex client init failed — Plex features unavailable");
+         OLOG_WARNING("WebUI music: Plex client init failed — Plex features unavailable");
       }
    }
 
    s_initialized = true;
-   LOG_INFO("WebUI music streaming initialized (default quality: %s, bitrate: %s)",
-            QUALITY_NAMES[s_config.default_quality],
-            s_config.bitrate_mode == MUSIC_BITRATE_VBR ? "VBR" : "CBR");
+   OLOG_INFO("WebUI music streaming initialized (default quality: %s, bitrate: %s)",
+             QUALITY_NAMES[s_config.default_quality],
+             s_config.bitrate_mode == MUSIC_BITRATE_VBR ? "VBR" : "CBR");
 
    pthread_mutex_unlock(&s_music_mutex);
    return 0;
@@ -1266,7 +1266,7 @@ void webui_music_cleanup(void) {
    plex_client_cleanup();
 
    s_initialized = false;
-   LOG_INFO("WebUI music streaming cleaned up");
+   OLOG_INFO("WebUI music streaming cleaned up");
 
    pthread_mutex_unlock(&s_music_mutex);
 }
@@ -1278,7 +1278,7 @@ bool webui_music_is_available(void) {
 int webui_music_session_init(ws_connection_t *conn) {
    session_music_state_t *state = calloc(1, sizeof(session_music_state_t));
    if (!state) {
-      LOG_ERROR("WebUI music: Failed to allocate session state");
+      OLOG_ERROR("WebUI music: Failed to allocate session state");
       return 1;
    }
 
@@ -1300,7 +1300,7 @@ int webui_music_session_init(ws_connection_t *conn) {
       /* Unauthenticated or satellite — create private queue */
       uq = create_private_queue();
       if (!uq) {
-         LOG_ERROR("WebUI music: Failed to allocate private queue");
+         OLOG_ERROR("WebUI music: Failed to allocate private queue");
          pthread_mutex_destroy(&state->state_mutex);
          pthread_mutex_destroy(&state->write_mutex);
          free(state);
@@ -1315,7 +1315,7 @@ int webui_music_session_init(ws_connection_t *conn) {
    state->resample_accum_size = 48000 / 10 * 2; /* 100ms stereo */
    state->resample_accum = malloc(state->resample_accum_size * sizeof(int16_t));
    if (!state->resample_accum) {
-      LOG_ERROR("WebUI music: Failed to allocate resample buffer");
+      OLOG_ERROR("WebUI music: Failed to allocate resample buffer");
       release_user_queue(state->shared_queue);
       pthread_mutex_destroy(&state->state_mutex);
       pthread_mutex_destroy(&state->write_mutex);
@@ -1335,8 +1335,8 @@ int webui_music_session_init(ws_connection_t *conn) {
    }
 
    conn->music_state = state;
-   LOG_INFO("WebUI music: Session initialized (user_id=%d, shared=%s)", conn->auth_user_id,
-            conn->auth_user_id > 0 ? "yes" : "no");
+   OLOG_INFO("WebUI music: Session initialized (user_id=%d, shared=%s)", conn->auth_user_id,
+             conn->auth_user_id > 0 ? "yes" : "no");
 
    return 0;
 }
@@ -1387,7 +1387,7 @@ void webui_music_session_cleanup(ws_connection_t *conn) {
    free(state);
    conn->music_state = NULL;
 
-   LOG_INFO("WebUI music: Session cleaned up");
+   OLOG_INFO("WebUI music: Session cleaned up");
 }
 
 /* Message handlers are in webui_music_handlers.c */
@@ -1473,7 +1473,7 @@ void webui_music_set_stream_wsi(session_t *session, struct lws *wsi) {
     * before any music_subscribe/control message arrives from the client) */
    if (!conn->music_state && wsi) {
       if (webui_music_session_init(conn) != 0) {
-         LOG_ERROR("WebUI music: Failed to init session for stream wsi");
+         OLOG_ERROR("WebUI music: Failed to init session for stream wsi");
          return;
       }
    }
@@ -1488,8 +1488,8 @@ void webui_music_set_stream_wsi(session_t *session, struct lws *wsi) {
    state->write_pending_len = 0; /* Clear any stale pending data */
    pthread_mutex_unlock(&state->write_mutex);
 
-   LOG_INFO("WebUI music: %s music stream wsi for session %u", wsi ? "Set" : "Cleared",
-            session->session_id);
+   OLOG_INFO("WebUI music: %s music stream wsi for session %u", wsi ? "Set" : "Cleared",
+             session->session_id);
 }
 
 int webui_music_write_pending(session_t *session, struct lws *wsi) {
@@ -1514,7 +1514,7 @@ int webui_music_write_pending(session_t *session, struct lws *wsi) {
                            LWS_WRITE_BINARY);
 
    if (written < 0) {
-      LOG_WARNING("WebUI music: lws_write failed");
+      OLOG_WARNING("WebUI music: lws_write failed");
       state->write_pending_len = 0;
       pthread_mutex_unlock(&state->write_mutex);
       return -1;

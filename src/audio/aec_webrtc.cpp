@@ -420,7 +420,7 @@ class DawnEchoControlFactory : public webrtc::EchoControlFactory {
       // Render levels - lower threshold to detect quieter reference
       config.render_levels.active_render_limit = 50.f;  // Default 100
 
-      LOG_INFO(
+      OLOG_INFO(
           "AEC3 factory: sample_rate=%dHz, INTERNAL estimator, search_range=%zu blocks (%zums)",
           sample_rate_hz, config.delay.num_filters, config.delay.num_filters * 4);
 
@@ -531,8 +531,8 @@ int aec_init(const aec_config_t *config) {
 
    // Validate configuration
    if (g_config.ref_buffer_ms < AEC_MIN_REF_BUFFER_MS) {
-      LOG_WARNING("AEC ref_buffer_ms (%zu) below minimum (%d), using minimum",
-                  g_config.ref_buffer_ms, AEC_MIN_REF_BUFFER_MS);
+      OLOG_WARNING("AEC ref_buffer_ms (%zu) below minimum (%d), using minimum",
+                   g_config.ref_buffer_ms, AEC_MIN_REF_BUFFER_MS);
       g_config.ref_buffer_ms = AEC_MIN_REF_BUFFER_MS;
    }
 
@@ -547,7 +547,7 @@ int aec_init(const aec_config_t *config) {
    std::lock_guard<std::mutex> lock(g_aec_mutex);
 
    if (g_initialized.load()) {
-      LOG_WARNING("AEC already initialized");
+      OLOG_WARNING("AEC already initialized");
       return 0;
    }
 
@@ -558,7 +558,7 @@ int aec_init(const aec_config_t *config) {
    g_apm = builder.Create();
 
    if (!g_apm) {
-      LOG_ERROR("Failed to create AudioProcessing instance");
+      OLOG_ERROR("Failed to create AudioProcessing instance");
       return 1;
    }
 
@@ -576,13 +576,13 @@ int aec_init(const aec_config_t *config) {
 
    int init_result = g_apm->Initialize(processing_config);
    if (init_result != 0) {
-      LOG_ERROR("Failed to initialize AudioProcessing at %dHz: error %d", AEC_SAMPLE_RATE,
-                init_result);
+      OLOG_ERROR("Failed to initialize AudioProcessing at %dHz: error %d", AEC_SAMPLE_RATE,
+                 init_result);
       delete g_apm;
       g_apm = nullptr;
       return 1;
    }
-   LOG_INFO("AEC: AudioProcessing initialized at %dHz", AEC_SAMPLE_RATE);
+   OLOG_INFO("AEC: AudioProcessing initialized at %dHz", AEC_SAMPLE_RATE);
 
    // Configure AEC3
    webrtc::AudioProcessing::Config apm_config;
@@ -626,9 +626,9 @@ int aec_init(const aec_config_t *config) {
    // WebRTC AEC3's internal delay estimator will find the correlation
    // between reference and mic signals automatically
    g_ref_buffer = new DelayLineBuffer(0);  // No delay - immediate pass-through
-   LOG_INFO("AEC: FIFO buffer created (no delay - AEC3 internal estimator)");
+   OLOG_INFO("AEC: FIFO buffer created (no delay - AEC3 internal estimator)");
    if (!g_ref_buffer) {
-      LOG_ERROR("Failed to create AEC delay line buffer");
+      OLOG_ERROR("Failed to create AEC delay line buffer");
       delete g_apm;
       g_apm = nullptr;
       return 1;
@@ -643,23 +643,23 @@ int aec_init(const aec_config_t *config) {
 
       // Validate and clamp gate timing parameters to safe ranges
       if (g_config.gate_attack_ms < 0.1f || g_config.gate_attack_ms > 1000.0f) {
-         LOG_WARNING("AEC gate: attack_ms out of range (%.1f), clamping to 0.1-1000ms",
-                     g_config.gate_attack_ms);
+         OLOG_WARNING("AEC gate: attack_ms out of range (%.1f), clamping to 0.1-1000ms",
+                      g_config.gate_attack_ms);
          g_config.gate_attack_ms = fmaxf(0.1f, fminf(g_config.gate_attack_ms, 1000.0f));
       }
       if (g_config.gate_hold_ms < 0.0f || g_config.gate_hold_ms > 5000.0f) {
-         LOG_WARNING("AEC gate: hold_ms out of range (%.1f), clamping to 0-5000ms",
-                     g_config.gate_hold_ms);
+         OLOG_WARNING("AEC gate: hold_ms out of range (%.1f), clamping to 0-5000ms",
+                      g_config.gate_hold_ms);
          g_config.gate_hold_ms = fmaxf(0.0f, fminf(g_config.gate_hold_ms, 5000.0f));
       }
       if (g_config.gate_release_ms < 1.0f || g_config.gate_release_ms > 5000.0f) {
-         LOG_WARNING("AEC gate: release_ms out of range (%.1f), clamping to 1-5000ms",
-                     g_config.gate_release_ms);
+         OLOG_WARNING("AEC gate: release_ms out of range (%.1f), clamping to 1-5000ms",
+                      g_config.gate_release_ms);
          g_config.gate_release_ms = fmaxf(1.0f, fminf(g_config.gate_release_ms, 5000.0f));
       }
       if (g_config.gate_range_db > 0.0f || g_config.gate_range_db < -96.0f) {
-         LOG_WARNING("AEC gate: range_db out of range (%.1f), clamping to -96 to 0dB",
-                     g_config.gate_range_db);
+         OLOG_WARNING("AEC gate: range_db out of range (%.1f), clamping to -96 to 0dB",
+                      g_config.gate_range_db);
          g_config.gate_range_db = fmaxf(-96.0f, fminf(g_config.gate_range_db, 0.0f));
       }
 
@@ -690,12 +690,12 @@ int aec_init(const aec_config_t *config) {
       g_gate.target_gain = g_gate.range_linear;
       g_gate.hold_samples = 0;
 
-      LOG_INFO("AEC gate: threshold=%d, attack=%.1fms, hold=%.0fms, release=%.0fms, range=%.1fdB",
-               g_gate.threshold, g_config.gate_attack_ms, g_config.gate_hold_ms,
-               g_config.gate_release_ms, g_config.gate_range_db);
+      OLOG_INFO("AEC gate: threshold=%d, attack=%.1fms, hold=%.0fms, release=%.0fms, range=%.1fdB",
+                g_gate.threshold, g_config.gate_attack_ms, g_config.gate_hold_ms,
+                g_config.gate_release_ms, g_config.gate_range_db);
    } else {
       g_gate.threshold = 0;  // Gate disabled
-      LOG_INFO("AEC gate: disabled");
+      OLOG_INFO("AEC gate: disabled");
    }
 
    // Reset state
@@ -707,10 +707,10 @@ int aec_init(const aec_config_t *config) {
    g_active.store(true);
    g_initialized.store(true);
 
-   LOG_INFO("AEC3 initialized: %dHz (native capture), %zu samples/frame, "
-            "delay_hint=%zums, mobile=%d, NS=%d",
-            AEC_SAMPLE_RATE, (size_t)AEC_FRAME_SAMPLES, g_acoustic_delay_ms, g_config.mobile_mode,
-            g_config.enable_noise_suppression);
+   OLOG_INFO("AEC3 initialized: %dHz (native capture), %zu samples/frame, "
+             "delay_hint=%zums, mobile=%d, NS=%d",
+             AEC_SAMPLE_RATE, (size_t)AEC_FRAME_SAMPLES, g_acoustic_delay_ms, g_config.mobile_mode,
+             g_config.enable_noise_suppression);
 
    return 0;
 }
@@ -730,16 +730,16 @@ void aec_cleanup(void) {
    // Note: No reference resampler to clean up - TTS sends 48kHz directly
 
    if (g_ref_buffer) {
-      LOG_INFO("AEC buffer stats: read=%llu, empty=%llu",
-               (unsigned long long)g_ref_buffer->get_frames_read(),
-               (unsigned long long)g_ref_buffer->get_frames_empty());
+      OLOG_INFO("AEC buffer stats: read=%llu, empty=%llu",
+                (unsigned long long)g_ref_buffer->get_frames_read(),
+                (unsigned long long)g_ref_buffer->get_frames_empty());
       delete g_ref_buffer;
       g_ref_buffer = nullptr;
    }
 
-   LOG_INFO("AEC cleaned up (processed: %llu frames, passed through: %llu frames)",
-            (unsigned long long)g_frames_processed.load(),
-            (unsigned long long)g_frames_passed_through.load());
+   OLOG_INFO("AEC cleaned up (processed: %llu frames, passed through: %llu frames)",
+             (unsigned long long)g_frames_processed.load(),
+             (unsigned long long)g_frames_passed_through.load());
 }
 
 bool aec_is_enabled(void) {
@@ -822,7 +822,7 @@ void aec_process(const int16_t *mic_in, int16_t *clean_out, size_t num_samples) 
 
    // Validate sample count
    if (num_samples > AEC_MAX_SAMPLES) {
-      LOG_ERROR("AEC input too large: %zu > %d", num_samples, AEC_MAX_SAMPLES);
+      OLOG_ERROR("AEC input too large: %zu > %d", num_samples, AEC_MAX_SAMPLES);
       // Output silence for safety
       memset(clean_out, 0, AEC_MAX_SAMPLES * sizeof(int16_t));
       return;
@@ -944,12 +944,12 @@ void aec_process(const int16_t *mic_in, int16_t *clean_out, size_t num_samples) 
                                   ? (float)apm_stats.divergent_filter_fraction.value()
                                   : 0.0f;
 
-            LOG_INFO("AEC3@48k: ERL=%.1fdB ERLE=%.1fdB delay=%dms atten=%.1fdB div=%.2f "
-                     "queued=%zu read=%llu empty=%llu "
-                     "mic=%.0f ref=%.0f out=%.0f",
-                     erl, erle, delay, attenuation_db, divergent, buf_frames,
-                     (unsigned long long)read_count, (unsigned long long)empty_count, in_rms,
-                     ref_rms, out_rms);
+            OLOG_INFO("AEC3@48k: ERL=%.1fdB ERLE=%.1fdB delay=%dms atten=%.1fdB div=%.2f "
+                      "queued=%zu read=%llu empty=%llu "
+                      "mic=%.0f ref=%.0f out=%.0f",
+                      erl, erle, delay, attenuation_db, divergent, buf_frames,
+                      (unsigned long long)read_count, (unsigned long long)empty_count, in_rms,
+                      ref_rms, out_rms);
          }
       }
 
@@ -1044,12 +1044,12 @@ void aec_process(const int16_t *mic_in, int16_t *clean_out, size_t num_samples) 
 
          int errors = g_consecutive_errors.fetch_add(1) + 1;
          if (errors == 1 || errors % 100 == 0) {
-            LOG_WARNING("AEC ProcessStream failed (consecutive errors: %d)", errors);
+            OLOG_WARNING("AEC ProcessStream failed (consecutive errors: %d)", errors);
          }
 
          if (errors >= AEC_MAX_CONSECUTIVE_ERRORS) {
-            LOG_ERROR("AEC disabled after %d consecutive errors - call aec_reset() to re-enable",
-                      errors);
+            OLOG_ERROR("AEC disabled after %d consecutive errors - call aec_reset() to re-enable",
+                       errors);
             g_active.store(false);
          }
       }
@@ -1131,8 +1131,8 @@ int aec_get_stats(aec_stats_t *stats) {
             float divergent = apm_stats.divergent_filter_fraction.has_value()
                                   ? (float)apm_stats.divergent_filter_fraction.value()
                                   : 0.0f;
-            LOG_INFO("AEC3 stats: ERL=%.1fdB ERLE=%.1fdB delay=%dms divergent=%.2f residual=%.2f",
-                     erl, stats->erle_db, delay, divergent, stats->residual_echo_likelihood);
+            OLOG_INFO("AEC3 stats: ERL=%.1fdB ERLE=%.1fdB delay=%dms divergent=%.2f residual=%.2f",
+                      erl, stats->erle_db, delay, divergent, stats->residual_echo_likelihood);
          }
       }
    }
@@ -1215,17 +1215,17 @@ void aec_reset(void) {
    // Note: WebRTC AEC3 state reset support varies by version
    // Some versions have Initialize() method, others don't expose reset
 
-   LOG_INFO("AEC state reset - echo cancellation re-enabled");
+   OLOG_INFO("AEC state reset - echo cancellation re-enabled");
 }
 
 // ============================================================================
 void aec_set_delay_hint(int delay_ms) {
    if (delay_ms < 0) {
-      LOG_WARNING("AEC: ignoring negative delay hint (%d ms)", delay_ms);
+      OLOG_WARNING("AEC: ignoring negative delay hint (%d ms)", delay_ms);
       return;
    }
    if (delay_ms > 500) {
-      LOG_WARNING("AEC: clamping excessive delay hint (%d ms) to 500ms", delay_ms);
+      OLOG_WARNING("AEC: clamping excessive delay hint (%d ms) to 500ms", delay_ms);
       delay_ms = 500;
    }
 
@@ -1233,7 +1233,7 @@ void aec_set_delay_hint(int delay_ms) {
    g_acoustic_delay_ms = (size_t)delay_ms;
 
    if ((size_t)delay_ms != old_delay) {
-      LOG_INFO("AEC: delay hint updated %zu ms -> %d ms", old_delay, delay_ms);
+      OLOG_INFO("AEC: delay hint updated %zu ms -> %d ms", old_delay, delay_ms);
    }
 
    // Note: The delay hint is used in set_stream_delay_ms() during aec_process().
@@ -1246,7 +1246,7 @@ void aec_signal_playback_stop(void) {
    // The internal delay estimator handles reference/mic alignment automatically
    // This function exists for API compatibility with backends that need it (e.g., Speex)
    if (g_initialized.load()) {
-      LOG_INFO("AEC: Playback stop signaled (no action needed for WebRTC)");
+      OLOG_INFO("AEC: Playback stop signaled (no action needed for WebRTC)");
    }
 }
 
@@ -1256,13 +1256,13 @@ void aec_signal_playback_stop(void) {
 void aec_set_recording_dir(const char *dir) {
    if (dir) {
       g_recording_dir = dir;
-      LOG_INFO("AEC recording directory set to: %s", dir);
+      OLOG_INFO("AEC recording directory set to: %s", dir);
    }
 }
 
 void aec_enable_recording(bool enable) {
    g_recording_enabled.store(enable);
-   LOG_INFO("AEC recording %s", enable ? "enabled" : "disabled");
+   OLOG_INFO("AEC recording %s", enable ? "enabled" : "disabled");
 
    // If disabling, stop any active recording
    if (!enable && g_recording_active.load()) {
@@ -1284,7 +1284,7 @@ int aec_start_recording(void) {
    }
 
    if (g_recording_active.load()) {
-      LOG_WARNING("AEC recording already active");
+      OLOG_WARNING("AEC recording already active");
       return 0;
    }
 
@@ -1304,15 +1304,15 @@ int aec_start_recording(void) {
    // Open all three files
    bool success = true;
    if (!g_mic_recorder.open(mic_file.c_str())) {
-      LOG_ERROR("Failed to open mic recording: %s", mic_file.c_str());
+      OLOG_ERROR("Failed to open mic recording: %s", mic_file.c_str());
       success = false;
    }
    if (!g_ref_recorder.open(ref_file.c_str())) {
-      LOG_ERROR("Failed to open ref recording: %s", ref_file.c_str());
+      OLOG_ERROR("Failed to open ref recording: %s", ref_file.c_str());
       success = false;
    }
    if (!g_out_recorder.open(out_file.c_str())) {
-      LOG_ERROR("Failed to open out recording: %s", out_file.c_str());
+      OLOG_ERROR("Failed to open out recording: %s", out_file.c_str());
       success = false;
    }
 
@@ -1324,8 +1324,8 @@ int aec_start_recording(void) {
    }
 
    g_recording_active.store(true);
-   LOG_INFO("AEC recording started: %s/aec_*_%s.wav", g_recording_dir.c_str(),
-            g_current_session.c_str());
+   OLOG_INFO("AEC recording started: %s/aec_*_%s.wav", g_recording_dir.c_str(),
+             g_current_session.c_str());
 
    return 0;
 }
@@ -1350,9 +1350,10 @@ void aec_stop_recording(void) {
    float ref_secs = (float)ref_samples / AEC_SAMPLE_RATE;
    float out_secs = (float)out_samples / AEC_SAMPLE_RATE;
 
-   LOG_INFO("AEC recording stopped: mic=%.2fs, ref=%.2fs, out=%.2fs", mic_secs, ref_secs, out_secs);
-   LOG_INFO("  Files: %s/aec_{mic,ref,out}_%s.wav", g_recording_dir.c_str(),
-            g_current_session.c_str());
+   OLOG_INFO("AEC recording stopped: mic=%.2fs, ref=%.2fs, out=%.2fs", mic_secs, ref_secs,
+             out_secs);
+   OLOG_INFO("  Files: %s/aec_{mic,ref,out}_%s.wav", g_recording_dir.c_str(),
+             g_current_session.c_str());
 }
 
 }  // extern "C"

@@ -674,7 +674,7 @@ static int batch_fetch_headers(CURL *curl,
 
    CURLcode res = curl_easy_perform(curl);
    if (res != CURLE_OK) {
-      LOG_WARNING("email: batch UID FETCH failed: %s", curl_easy_strerror(res));
+      OLOG_WARNING("email: batch UID FETCH failed: %s", curl_easy_strerror(res));
       buf_free(&buf);
       return 1;
    }
@@ -817,7 +817,7 @@ int email_fetch_recent(const email_conn_t *conn,
 
    CURLcode res = curl_easy_perform(curl);
    if (res != CURLE_OK) {
-      LOG_ERROR("email: IMAP SEARCH failed: %s", curl_easy_strerror(res));
+      OLOG_ERROR("email: IMAP SEARCH failed: %s", curl_easy_strerror(res));
       buf_free(&buf);
       curl_easy_cleanup(curl);
       return 1;
@@ -874,7 +874,7 @@ int email_read_message(const email_conn_t *conn,
    curl_easy_cleanup(curl);
 
    if (res != CURLE_OK || !buf.data) {
-      LOG_ERROR("email: IMAP FETCH uid=%u failed: %s", uid, curl_easy_strerror(res));
+      OLOG_ERROR("email: IMAP FETCH uid=%u failed: %s", uid, curl_easy_strerror(res));
       buf_free(&buf);
       return 1;
    }
@@ -999,7 +999,7 @@ int email_search(const email_conn_t *conn,
 
    CURLcode res = curl_easy_perform(curl);
    if (res != CURLE_OK) {
-      LOG_ERROR("email: IMAP SEARCH failed: %s", curl_easy_strerror(res));
+      OLOG_ERROR("email: IMAP SEARCH failed: %s", curl_easy_strerror(res));
       buf_free(&buf);
       curl_easy_cleanup(curl);
       return 1;
@@ -1120,11 +1120,11 @@ int email_send(const email_conn_t *conn,
    curl_easy_cleanup(curl);
 
    if (res != CURLE_OK) {
-      LOG_ERROR("email: SMTP send failed: %s", curl_easy_strerror(res));
+      OLOG_ERROR("email: SMTP send failed: %s", curl_easy_strerror(res));
       return 1;
    }
 
-   LOG_INFO("email: sent to %s, subject '%s'", safe_to_addr, safe_subject);
+   OLOG_INFO("email: sent to %s, subject '%s'", safe_to_addr, safe_subject);
    return 0;
 }
 
@@ -1156,7 +1156,7 @@ int email_test_connection(const email_conn_t *conn, bool *imap_ok, bool *smtp_ok
       CURLcode res = curl_easy_perform(curl);
       *imap_ok = (res == CURLE_OK);
       if (!*imap_ok) {
-         LOG_WARNING("email: IMAP test failed: %s", curl_easy_strerror(res));
+         OLOG_WARNING("email: IMAP test failed: %s", curl_easy_strerror(res));
       }
       buf_free(&buf);
       curl_easy_cleanup(curl);
@@ -1172,7 +1172,7 @@ test_smtp:
       CURLcode res = curl_easy_perform(curl);
       *smtp_ok = (res == CURLE_OK);
       if (!*smtp_ok) {
-         LOG_WARNING("email: SMTP test failed: %s", curl_easy_strerror(res));
+         OLOG_WARNING("email: SMTP test failed: %s", curl_easy_strerror(res));
       }
       curl_easy_cleanup(curl);
    }
@@ -1299,7 +1299,7 @@ int email_list_folders(const email_conn_t *conn, char *out, size_t out_len) {
    curl_easy_cleanup(curl);
 
    if (res != CURLE_OK || !buf.data) {
-      LOG_ERROR("email: IMAP LIST failed: %s", curl_easy_strerror(res));
+      OLOG_ERROR("email: IMAP LIST failed: %s", curl_easy_strerror(res));
       buf_free(&buf);
       return 1;
    }
@@ -1422,7 +1422,7 @@ static int imap_move_message(const email_conn_t *conn,
    buf_free(&buf);
 
    if (res != CURLE_OK) {
-      LOG_ERROR("email_imap: COPY failed for UID %u: %s", uid, curl_easy_strerror(res));
+      OLOG_ERROR("email_imap: COPY failed for UID %u: %s", uid, curl_easy_strerror(res));
       goto cleanup;
    }
 
@@ -1437,8 +1437,8 @@ static int imap_move_message(const email_conn_t *conn,
    buf_free(&buf);
 
    if (res != CURLE_OK) {
-      LOG_WARNING("email_imap: STORE \\Deleted failed for UID %u (message copied to %s): %s", uid,
-                  dest_folder, curl_easy_strerror(res));
+      OLOG_WARNING("email_imap: STORE \\Deleted failed for UID %u (message copied to %s): %s", uid,
+                   dest_folder, curl_easy_strerror(res));
       /* COPY succeeded, so this is a partial success — message exists in both folders */
       rc = 0;
       goto cleanup;
@@ -1453,8 +1453,8 @@ static int imap_move_message(const email_conn_t *conn,
    buf_free(&buf);
 
    if (res != CURLE_OK) {
-      LOG_WARNING("email_imap: EXPUNGE failed for UID %u (flagged but not removed): %s", uid,
-                  curl_easy_strerror(res));
+      OLOG_WARNING("email_imap: EXPUNGE failed for UID %u (flagged but not removed): %s", uid,
+                   curl_easy_strerror(res));
    }
 
    rc = 0;
@@ -1467,7 +1467,7 @@ cleanup:
 
 int email_trash_message(const email_conn_t *conn, const char *folder, uint32_t uid, bool is_gmail) {
    const char *trash_folder = is_gmail ? "[Gmail]/Trash" : "Trash";
-   LOG_INFO("email_imap: trashing UID %u from %s to %s", uid, folder, trash_folder);
+   OLOG_INFO("email_imap: trashing UID %u from %s to %s", uid, folder, trash_folder);
    return imap_move_message(conn, folder, uid, trash_folder);
 }
 
@@ -1476,6 +1476,6 @@ int email_archive_message(const email_conn_t *conn,
                           uint32_t uid,
                           bool is_gmail) {
    const char *archive_folder = is_gmail ? "[Gmail]/All Mail" : "Archive";
-   LOG_INFO("email_imap: archiving UID %u from %s to %s", uid, folder, archive_folder);
+   OLOG_INFO("email_imap: archiving UID %u from %s to %s", uid, folder, archive_folder);
    return imap_move_message(conn, folder, uid, archive_folder);
 }

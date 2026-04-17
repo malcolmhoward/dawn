@@ -70,12 +70,12 @@ static int16_t *load_wav_file(const char *filepath, size_t *out_samples, int *ou
 
    SNDFILE *sndfile = sf_open(filepath, SFM_READ, &sfinfo);
    if (!sndfile) {
-      LOG_ERROR("Failed to open WAV file: %s", filepath);
+      OLOG_ERROR("Failed to open WAV file: %s", filepath);
       return NULL;
    }
 
    if (sfinfo.channels != 1) {
-      LOG_ERROR("Only mono audio supported (file has %d channels)", sfinfo.channels);
+      OLOG_ERROR("Only mono audio supported (file has %d channels)", sfinfo.channels);
       sf_close(sndfile);
       return NULL;
    }
@@ -85,22 +85,22 @@ static int16_t *load_wav_file(const char *filepath, size_t *out_samples, int *ou
 
    int16_t *buffer = (int16_t *)malloc(sfinfo.frames * sizeof(int16_t));
    if (!buffer) {
-      LOG_ERROR("Failed to allocate audio buffer");
+      OLOG_ERROR("Failed to allocate audio buffer");
       sf_close(sndfile);
       return NULL;
    }
 
    sf_count_t read = sf_read_short(sndfile, buffer, sfinfo.frames);
    if (read != sfinfo.frames) {
-      LOG_ERROR("Failed to read all samples (got %ld, expected %ld)", read, sfinfo.frames);
+      OLOG_ERROR("Failed to read all samples (got %ld, expected %ld)", read, sfinfo.frames);
       free(buffer);
       sf_close(sndfile);
       return NULL;
    }
 
    sf_close(sndfile);
-   LOG_INFO("Loaded WAV: %s (%zu samples, %d Hz, %.2f seconds)", filepath, *out_samples,
-            *out_sample_rate, (double)*out_samples / *out_sample_rate);
+   OLOG_INFO("Loaded WAV: %s (%zu samples, %d Hz, %.2f seconds)", filepath, *out_samples,
+             *out_sample_rate, (double)*out_samples / *out_sample_rate);
    return buffer;
 }
 
@@ -125,7 +125,7 @@ static benchmark_result_t run_engine_benchmark(asr_engine_type_t engine,
    gettimeofday(&load_end, NULL);
 
    if (!ctx) {
-      LOG_ERROR("%s: Failed to initialize", result.engine_name);
+      OLOG_ERROR("%s: Failed to initialize", result.engine_name);
       result.success = 0;
       return result;
    }
@@ -360,7 +360,7 @@ int main(int argc, char **argv) {
    benchmark_result_t results[2];
    for (int i = 0; i < num_engines; i++) {
       if (!csv_output) {
-         LOG_INFO("Running %s benchmark...", asr_engine_name(engines[i]));
+         OLOG_INFO("Running %s benchmark...", asr_engine_name(engines[i]));
       }
       results[i] = run_engine_benchmark(engines[i], model_paths[i], audio, samples, sample_rate);
    }

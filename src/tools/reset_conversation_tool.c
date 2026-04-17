@@ -84,8 +84,8 @@ static char *reset_conversation_tool_callback(const char *action,
    }
 
    bool is_local = (session == local_session);
-   LOG_INFO("Resetting conversation context for %s session via reset_conversation tool.",
-            is_local ? "local" : "remote");
+   OLOG_INFO("Resetting conversation context for %s session via reset_conversation tool.",
+             is_local ? "local" : "remote");
 
    /* For local session, use the legacy reset which handles global state */
    if (is_local) {

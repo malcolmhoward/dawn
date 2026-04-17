@@ -89,7 +89,7 @@ int calendar_encrypt_password(const char *plaintext, calendar_account_t *acct) {
    size_t out_written = 0;
    if (crypto_store_encrypt(plaintext, pt_len, acct->encrypted_password,
                             sizeof(acct->encrypted_password), &out_written) != 0) {
-      LOG_ERROR("calendar: failed to encrypt password");
+      OLOG_ERROR("calendar: failed to encrypt password");
       return 1;
    }
 
@@ -111,7 +111,7 @@ int calendar_decrypt_password(const calendar_account_t *acct, char *out, size_t 
    size_t dec_written = 0;
    if (crypto_store_decrypt(acct->encrypted_password, (size_t)acct->encrypted_password_len, out,
                             out_len - 1, &dec_written) != 0) {
-      LOG_ERROR("calendar: decryption failed (wrong key or corrupt data)");
+      OLOG_ERROR("calendar: decryption failed (wrong key or corrupt data)");
       return 1;
    }
 
@@ -155,14 +155,14 @@ static int build_auth_for_account(const calendar_account_t *acct,
 
       if (oauth_get_access_token(&google, acct->user_id, acct->oauth_account_key, tok_buf,
                                  tok_len) != 0) {
-         LOG_ERROR("calendar: failed to get OAuth token for '%s'", acct->name);
+         OLOG_ERROR("calendar: failed to get OAuth token for '%s'", acct->name);
          return 1;
       }
       auth->bearer_token = tok_buf;
    } else {
       /* Basic auth: decrypt password */
       if (get_account_password(acct, pw_buf, pw_len) != 0) {
-         LOG_ERROR("calendar: failed to decrypt password for '%s'", acct->name);
+         OLOG_ERROR("calendar: failed to decrypt password for '%s'", acct->name);
          return 1;
       }
       auth->username = acct->username;
@@ -177,7 +177,7 @@ static int build_auth_for_account(const calendar_account_t *acct,
 
 int calendar_service_init(const calendar_config_t *config) {
    if (!config || !config->enabled) {
-      LOG_INFO("calendar: service disabled");
+      OLOG_INFO("calendar: service disabled");
       return 0;
    }
 
@@ -193,7 +193,7 @@ int calendar_service_init(const calendar_config_t *config) {
    /* Start background sync thread */
    atomic_store(&s_cal.sync_running, true);
    if (pthread_create(&s_cal.sync_thread, NULL, sync_thread_func, NULL) != 0) {
-      LOG_ERROR("calendar: failed to create sync thread");
+      OLOG_ERROR("calendar: failed to create sync thread");
       atomic_store(&s_cal.sync_running, false);
       s_cal.initialized = false;
       pthread_mutex_unlock(&s_cal.mutex);
@@ -201,7 +201,7 @@ int calendar_service_init(const calendar_config_t *config) {
    }
 
    pthread_mutex_unlock(&s_cal.mutex);
-   LOG_INFO("calendar: service initialized (sync every %ds)", config->sync_interval_sec);
+   OLOG_INFO("calendar: service initialized (sync every %ds)", config->sync_interval_sec);
    return 0;
 }
 
@@ -219,7 +219,7 @@ void calendar_service_shutdown(void) {
    /* Wait for sync thread to exit (max ~sync_interval seconds) */
    pthread_join(thread, NULL);
 
-   LOG_INFO("calendar: service shut down");
+   OLOG_INFO("calendar: service shut down");
 }
 
 bool calendar_service_available(void) {
@@ -241,7 +241,7 @@ int calendar_service_add_account(int user_id,
    bool is_oauth = auth_type && strcmp(auth_type, "oauth") == 0;
 
    if (!is_oauth && (!password || !password[0])) {
-      LOG_ERROR("calendar: password is required for basic auth account creation");
+      OLOG_ERROR("calendar: password is required for basic auth account creation");
       return 1;
    }
 
@@ -251,13 +251,13 @@ int calendar_service_add_account(int user_id,
    for (int i = 0; i < count; i++) {
       if (is_oauth && oauth_account_key && oauth_account_key[0] &&
           strcmp(existing[i].oauth_account_key, oauth_account_key) == 0) {
-         LOG_INFO("calendar: account with OAuth key '%s' already exists, skipping",
-                  oauth_account_key);
+         OLOG_INFO("calendar: account with OAuth key '%s' already exists, skipping",
+                   oauth_account_key);
          return 2; /* Duplicate */
       }
       if (!is_oauth && username && caldav_url && strcmp(existing[i].username, username) == 0 &&
           strcmp(existing[i].caldav_url, caldav_url) == 0) {
-         LOG_INFO("calendar: account '%s@%s' already exists, skipping", username, caldav_url);
+         OLOG_INFO("calendar: account '%s@%s' already exists, skipping", username, caldav_url);
          return 2; /* Duplicate */
       }
    }
@@ -278,27 +278,27 @@ int calendar_service_add_account(int user_id,
    } else {
       snprintf(acct.auth_type, sizeof(acct.auth_type), "basic");
       if (calendar_encrypt_password(password, &acct) != 0) {
-         LOG_ERROR("calendar: failed to encrypt password for account '%s'", name);
+         OLOG_ERROR("calendar: failed to encrypt password for account '%s'", name);
          return 1;
       }
    }
 
    int64_t id = calendar_db_account_create(&acct);
    if (id < 0) {
-      LOG_ERROR("calendar: failed to create account '%s'", name);
+      OLOG_ERROR("calendar: failed to create account '%s'", name);
       return 1;
    }
 
-   LOG_INFO("calendar: added %s account '%s' (id=%lld)", is_oauth ? "OAuth" : "basic", name,
-            (long long)id);
+   OLOG_INFO("calendar: added %s account '%s' (id=%lld)", is_oauth ? "OAuth" : "basic", name,
+             (long long)id);
 
    /* Discover calendars and run initial sync */
    if (calendar_service_test_connection(id) == 0) {
       calendar_service_sync_now(id);
    } else {
-      LOG_WARNING("calendar: initial discovery failed for '%s', calendars will be discovered on "
-                  "next test",
-                  name);
+      OLOG_WARNING("calendar: initial discovery failed for '%s', calendars will be discovered on "
+                   "next test",
+                   name);
    }
 
    return 0;
@@ -323,14 +323,14 @@ int calendar_service_remove_account(int64_t account_id) {
       sodium_memzero(email_accts, sizeof(email_accts));
 
       if (email_uses_account) {
-         LOG_INFO("calendar: keeping OAuth token for '%s' (still used by email)",
-                  acct.oauth_account_key);
+         OLOG_INFO("calendar: keeping OAuth token for '%s' (still used by email)",
+                   acct.oauth_account_key);
       } else {
          oauth_provider_config_t google;
          if (oauth_build_google_provider(GOOGLE_CALENDAR_SCOPE, &google) == 0) {
             int revoke_rc = oauth_revoke_and_delete(&google, acct.user_id, acct.oauth_account_key);
             if (revoke_rc != 0) {
-               LOG_WARNING(
+               OLOG_WARNING(
                    "calendar: OAuth token cleanup failed for account %lld (continuing removal)",
                    (long long)account_id);
             }
@@ -344,10 +344,10 @@ int calendar_service_remove_account(int64_t account_id) {
 
    int rc = calendar_db_account_delete(account_id);
    if (rc != 0) {
-      LOG_ERROR("calendar: failed to remove account %lld", (long long)account_id);
+      OLOG_ERROR("calendar: failed to remove account %lld", (long long)account_id);
       return 1;
    }
-   LOG_INFO("calendar: removed account %lld", (long long)account_id);
+   OLOG_INFO("calendar: removed account %lld", (long long)account_id);
    return 0;
 }
 
@@ -367,14 +367,14 @@ static int google_caldav_test(const calendar_account_t *acct,
    /* Validate oauth_account_key looks like an email (reject path traversal, injection) */
    const char *key = acct->oauth_account_key;
    if (!key || !key[0] || strlen(key) > 254) {
-      LOG_ERROR("calendar: invalid OAuth account key");
+      OLOG_ERROR("calendar: invalid OAuth account key");
       return 1;
    }
    for (const char *p = key; *p; p++) {
       /* Allow alphanumeric, @, ., -, _, + (valid email chars) */
       if (!isalnum((unsigned char)*p) && *p != '@' && *p != '.' && *p != '-' && *p != '_' &&
           *p != '+') {
-         LOG_ERROR("calendar: OAuth account key contains invalid character: 0x%02x", *p);
+         OLOG_ERROR("calendar: OAuth account key contains invalid character: 0x%02x", *p);
          return 1;
       }
    }
@@ -385,7 +385,8 @@ static int google_caldav_test(const calendar_account_t *acct,
 
    caldav_error_t err = caldav_discover(home_url, auth, disc);
    if (err != CALDAV_OK) {
-      LOG_ERROR("calendar: Google CalDAV discovery failed for '%s': %s", key, caldav_strerror(err));
+      OLOG_ERROR("calendar: Google CalDAV discovery failed for '%s': %s", key,
+                 caldav_strerror(err));
       return 1;
    }
 
@@ -398,15 +399,15 @@ static int google_caldav_test(const calendar_account_t *acct,
       snprintf(disc->calendar_home_url, sizeof(disc->calendar_home_url), "%s", home_url);
    }
 
-   LOG_INFO("calendar: Google CalDAV connected for '%s', found %d calendars", key,
-            disc->calendar_count);
+   OLOG_INFO("calendar: Google CalDAV connected for '%s', found %d calendars", key,
+             disc->calendar_count);
    return 0;
 }
 
 int calendar_service_test_connection(int64_t account_id) {
    calendar_account_t acct;
    if (calendar_db_account_get(account_id, &acct) != 0) {
-      LOG_ERROR("calendar: account %lld not found", (long long)account_id);
+      OLOG_ERROR("calendar: account %lld not found", (long long)account_id);
       return 1;
    }
 
@@ -429,7 +430,7 @@ int calendar_service_test_connection(int64_t account_id) {
       caldav_error_t err = caldav_discover(acct.caldav_url, &auth, &disc);
       rc = (err != CALDAV_OK) ? 1 : 0;
       if (rc != 0)
-         LOG_ERROR("calendar: discovery failed for '%s': %s", acct.name, caldav_strerror(err));
+         OLOG_ERROR("calendar: discovery failed for '%s': %s", acct.name, caldav_strerror(err));
    }
 
    sodium_memzero(password, sizeof(password));
@@ -474,15 +475,15 @@ int calendar_service_test_connection(int64_t account_id) {
 
       int64_t cal_id = calendar_db_calendar_create(&cal);
       if (cal_id < 0)
-         LOG_WARNING("calendar: failed to create calendar '%s'", ci->display_name);
+         OLOG_WARNING("calendar: failed to create calendar '%s'", ci->display_name);
       else
-         LOG_INFO("calendar: discovered calendar '%s' (id=%lld)", ci->display_name,
-                  (long long)cal_id);
+         OLOG_INFO("calendar: discovered calendar '%s' (id=%lld)", ci->display_name,
+                   (long long)cal_id);
    }
 
    int found_count = disc.calendar_count;
    caldav_discovery_free(&disc);
-   LOG_INFO("calendar: connection test OK for '%s', found %d calendars", acct.name, found_count);
+   OLOG_INFO("calendar: connection test OK for '%s', found %d calendars", acct.name, found_count);
    return 0;
 }
 
@@ -516,7 +517,7 @@ static void expand_rrule(int64_t event_id,
    /* Parse the RRULE string */
    struct icalrecurrencetype recur = icalrecurrencetype_from_string(ce->rrule);
    if (recur.freq == ICAL_NO_RECURRENCE) {
-      LOG_WARNING("calendar: invalid RRULE '%s' for event '%s'", ce->rrule, ce->uid);
+      OLOG_WARNING("calendar: invalid RRULE '%s' for event '%s'", ce->rrule, ce->uid);
       return;
    }
 
@@ -586,7 +587,7 @@ static void expand_rrule(int64_t event_id,
    }
 
    icalrecur_iterator_free(iter);
-   LOG_INFO("calendar: expanded RRULE for '%s': %d occurrences", ce->summary, count);
+   OLOG_INFO("calendar: expanded RRULE for '%s': %d occurrences", ce->summary, count);
 }
 #endif /* HAVE_LIBICAL */
 
@@ -605,7 +606,7 @@ int calendar_service_sync_now(int64_t account_id) {
    calendar_calendar_t cals[32];
    int cal_count = calendar_db_calendar_list(account_id, cals, 32);
    if (cal_count <= 0) {
-      LOG_WARNING("calendar: no calendars for account '%s'", acct.name);
+      OLOG_WARNING("calendar: no calendars for account '%s'", acct.name);
       sodium_memzero(password, sizeof(password));
       sodium_memzero(token, sizeof(token));
       return 1;
@@ -624,7 +625,7 @@ int calendar_service_sync_now(int64_t account_id) {
       char new_ctag[128] = { 0 };
       caldav_error_t err = caldav_get_ctag(cals[i].caldav_path, &auth, new_ctag, sizeof(new_ctag));
       if (err != CALDAV_OK) {
-         LOG_WARNING("calendar: ctag check failed for '%s'", cals[i].display_name);
+         OLOG_WARNING("calendar: ctag check failed for '%s'", cals[i].display_name);
          continue;
       }
 
@@ -636,8 +637,8 @@ int calendar_service_sync_now(int64_t account_id) {
       caldav_event_list_t events = { 0 };
       err = caldav_fetch_events(cals[i].caldav_path, &auth, range_start, range_end, &events);
       if (err != CALDAV_OK) {
-         LOG_WARNING("calendar: fetch failed for '%s': %s", cals[i].display_name,
-                     caldav_strerror(err));
+         OLOG_WARNING("calendar: fetch failed for '%s': %s", cals[i].display_name,
+                      caldav_strerror(err));
          continue;
       }
 
@@ -692,7 +693,7 @@ int calendar_service_sync_now(int64_t account_id) {
    sodium_memzero(password, sizeof(password));
    sodium_memzero(token, sizeof(token));
    calendar_db_account_update_sync(account_id, now);
-   LOG_INFO("calendar: synced %d calendars for '%s'", synced, acct.name);
+   OLOG_INFO("calendar: synced %d calendars for '%s'", synced, acct.name);
    return 0;
 }
 
@@ -754,11 +755,11 @@ int calendar_service_today(int user_id,
    time_t day_end = day_start + 86399;
 
    /* Query timed events */
-   LOG_INFO("calendar: today query user=%d cal_count=%d day_start=%lld day_end=%lld", user_id,
-            cal_count, (long long)day_start, (long long)day_end);
+   OLOG_INFO("calendar: today query user=%d cal_count=%d day_start=%lld day_end=%lld", user_id,
+             cal_count, (long long)day_start, (long long)day_end);
    int count = calendar_db_occurrences_in_range(cal_ids, cal_count, day_start, day_end, out,
                                                 max_count);
-   LOG_INFO("calendar: today timed results=%d", count);
+   OLOG_INFO("calendar: today timed results=%d", count);
 
    /* Query all-day events for today's date */
    char date_str[16];
@@ -892,7 +893,7 @@ int calendar_service_add(int user_id,
    calendar_calendar_t cals[32];
    int cal_count = calendar_db_active_calendars_for_user(user_id, cals, 32);
    if (cal_count <= 0) {
-      LOG_ERROR("calendar: no active calendars for user %d", user_id);
+      OLOG_ERROR("calendar: no active calendars for user %d", user_id);
       return 1;
    }
 
@@ -1008,7 +1009,7 @@ int calendar_service_add(int user_id,
    sodium_memzero(password, sizeof(password));
    sodium_memzero(token, sizeof(token));
    if (err != CALDAV_OK) {
-      LOG_ERROR("calendar: create event failed: %s", caldav_strerror(err));
+      OLOG_ERROR("calendar: create event failed: %s", caldav_strerror(err));
       return 1;
    }
 
@@ -1053,18 +1054,18 @@ int calendar_service_add(int user_id,
       if (location)
          snprintf(occ.location, sizeof(occ.location), "%s", location);
       int64_t occ_id = calendar_db_occurrence_insert(&occ);
-      LOG_INFO("calendar: cached event_id=%lld occ_id=%lld cal_id=%lld all_day=%d "
-               "dtstart=%lld dtend=%lld dtstart_date='%s' dtend_date='%s'",
-               (long long)event_id, (long long)occ_id, (long long)evt.calendar_id, all_day,
-               (long long)start, (long long)end, evt.dtstart_date, evt.dtend_date);
+      OLOG_INFO("calendar: cached event_id=%lld occ_id=%lld cal_id=%lld all_day=%d "
+                "dtstart=%lld dtend=%lld dtstart_date='%s' dtend_date='%s'",
+                (long long)event_id, (long long)occ_id, (long long)evt.calendar_id, all_day,
+                (long long)start, (long long)end, evt.dtstart_date, evt.dtend_date);
    } else {
-      LOG_ERROR("calendar: event upsert failed, no occurrence cached");
+      OLOG_ERROR("calendar: event upsert failed, no occurrence cached");
    }
 
    if (uid_out && uid_out_len > 0)
       snprintf(uid_out, uid_out_len, "%s", uid);
 
-   LOG_INFO("calendar: created event '%s' (uid=%s)", summary, uid);
+   OLOG_INFO("calendar: created event '%s' (uid=%s)", summary, uid);
    return 0;
 }
 
@@ -1079,7 +1080,7 @@ int calendar_service_update(int user_id,
    calendar_event_t evt = { 0 };
    evt.calendar_id = user_id; /* overloaded for get_by_uid */
    if (calendar_db_event_get_by_uid(uid, &evt) != 0) {
-      LOG_ERROR("calendar: event '%s' not found for user %d", uid, user_id);
+      OLOG_ERROR("calendar: event '%s' not found for user %d", uid, user_id);
       return 1;
    }
 
@@ -1097,7 +1098,7 @@ int calendar_service_update(int user_id,
    }
 
    if (acct.read_only) {
-      LOG_WARNING("calendar: account '%s' is read-only, cannot modify event", acct.name);
+      OLOG_WARNING("calendar: account '%s' is read-only, cannot modify event", acct.name);
       if (evt.raw_ical)
          free(evt.raw_ical);
       return 2;
@@ -1195,7 +1196,7 @@ int calendar_service_update(int user_id,
    sodium_memzero(password, sizeof(password));
    sodium_memzero(token_buf, sizeof(token_buf));
    if (err != CALDAV_OK) {
-      LOG_ERROR("calendar: update event failed: %s", caldav_strerror(err));
+      OLOG_ERROR("calendar: update event failed: %s", caldav_strerror(err));
       if (evt.raw_ical)
          free(evt.raw_ical);
       return 1;
@@ -1223,7 +1224,7 @@ int calendar_service_update(int user_id,
       calendar_db_occurrence_insert(&occ);
    }
 
-   LOG_INFO("calendar: updated event '%s'", evt.summary);
+   OLOG_INFO("calendar: updated event '%s'", evt.summary);
    return 0;
 }
 
@@ -1231,7 +1232,7 @@ int calendar_service_delete(int user_id, const char *uid) {
    calendar_event_t evt = { 0 };
    evt.calendar_id = user_id; /* overloaded */
    if (calendar_db_event_get_by_uid(uid, &evt) != 0) {
-      LOG_ERROR("calendar: event '%s' not found", uid);
+      OLOG_ERROR("calendar: event '%s' not found", uid);
       return 1;
    }
 
@@ -1248,7 +1249,7 @@ int calendar_service_delete(int user_id, const char *uid) {
    }
 
    if (acct.read_only) {
-      LOG_WARNING("calendar: account '%s' is read-only, cannot delete event", acct.name);
+      OLOG_WARNING("calendar: account '%s' is read-only, cannot delete event", acct.name);
       free(evt.raw_ical);
       return 2;
    }
@@ -1269,7 +1270,7 @@ int calendar_service_delete(int user_id, const char *uid) {
    sodium_memzero(password, sizeof(password));
    sodium_memzero(token_buf, sizeof(token_buf));
    if (err != CALDAV_OK && err != CALDAV_ERR_NOT_FOUND) {
-      LOG_ERROR("calendar: delete event failed: %s", caldav_strerror(err));
+      OLOG_ERROR("calendar: delete event failed: %s", caldav_strerror(err));
       free(evt.raw_ical);
       return 1;
    }
@@ -1279,7 +1280,7 @@ int calendar_service_delete(int user_id, const char *uid) {
    calendar_db_event_delete(evt.id);
 
    free(evt.raw_ical);
-   LOG_INFO("calendar: deleted event '%s'", uid);
+   OLOG_INFO("calendar: deleted event '%s'", uid);
    return 0;
 }
 
@@ -1321,7 +1322,7 @@ int calendar_service_get_access_summary(int user_id,
 
 static void *sync_thread_func(void *arg) {
    (void)arg;
-   LOG_INFO("calendar: sync thread started");
+   OLOG_INFO("calendar: sync thread started");
 
    bool first_run = true;
 
@@ -1356,9 +1357,9 @@ static void *sync_thread_func(void *arg) {
       }
 
       if (synced > 0)
-         LOG_INFO("calendar: background sync completed %d/%d accounts", synced, acct_count);
+         OLOG_INFO("calendar: background sync completed %d/%d accounts", synced, acct_count);
    }
 
-   LOG_INFO("calendar: sync thread exiting");
+   OLOG_INFO("calendar: sync thread exiting");
    return NULL;
 }

@@ -104,7 +104,7 @@ static char *viewing_tool_callback(const char *action, char *value, int *should_
    (void)action;
    (void)value;
 
-   LOG_WARNING("viewing_tool_callback called directly - should use MQTT execution");
+   OLOG_WARNING("viewing_tool_callback called directly - should use MQTT execution");
    *should_respond = 1;
    return strdup("Viewing tool requires MQTT execution path. Vision hardware not directly "
                  "accessible.");

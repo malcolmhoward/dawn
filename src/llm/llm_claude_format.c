@@ -327,7 +327,7 @@ static json_object *create_claude_image_block(const char *vision_image) {
    json_object_object_add(source_obj, "data", json_object_new_string(vision_image));
    json_object_object_add(image_obj, "source", source_obj);
 
-   LOG_INFO("Claude: Created image block with detected media_type=%s", media_type);
+   OLOG_INFO("Claude: Created image block with detected media_type=%s", media_type);
 
    return image_obj;
 }
@@ -357,11 +357,11 @@ static json_object *convert_content_block_to_claude(json_object *block) {
          json_object *fixed_block = json_object_new_object();
          json_object_object_add(fixed_block, "type", json_object_new_string("text"));
          json_object_object_add(fixed_block, "text", json_object_get(text_obj));
-         LOG_WARNING("Claude: Fixed content block missing type (had text field)");
+         OLOG_WARNING("Claude: Fixed content block missing type (had text field)");
          return fixed_block;
       }
       // Unknown format - skip it to avoid Claude API errors
-      LOG_WARNING("Claude: Skipping content block with no type field");
+      OLOG_WARNING("Claude: Skipping content block with no type field");
       return NULL;
    }
 
@@ -374,13 +374,13 @@ static json_object *convert_content_block_to_claude(json_object *block) {
    // This is an OpenAI image_url block - convert to Claude format
    json_object *image_url_obj;
    if (!json_object_object_get_ex(block, "image_url", &image_url_obj)) {
-      LOG_WARNING("Claude: image_url block missing image_url field");
+      OLOG_WARNING("Claude: image_url block missing image_url field");
       return NULL;
    }
 
    json_object *url_obj;
    if (!json_object_object_get_ex(image_url_obj, "url", &url_obj)) {
-      LOG_WARNING("Claude: image_url block missing url field");
+      OLOG_WARNING("Claude: image_url block missing url field");
       return NULL;
    }
 
@@ -392,7 +392,7 @@ static json_object *convert_content_block_to_claude(json_object *block) {
    // Parse data URL: data:image/jpeg;base64,<data>
    const char *data_prefix = "data:";
    if (strncmp(url, data_prefix, strlen(data_prefix)) != 0) {
-      LOG_WARNING("Claude: image_url is not a data URL: %.50s...", url);
+      OLOG_WARNING("Claude: image_url is not a data URL: %.50s...", url);
       return NULL;
    }
 
@@ -402,7 +402,7 @@ static json_object *convert_content_block_to_claude(json_object *block) {
    const char *comma = strchr(after_data, ',');
 
    if (!semicolon || !comma || comma < semicolon) {
-      LOG_WARNING("Claude: Invalid data URL format");
+      OLOG_WARNING("Claude: Invalid data URL format");
       return NULL;
    }
 
@@ -428,7 +428,7 @@ static json_object *convert_content_block_to_claude(json_object *block) {
    json_object_object_add(source_obj, "data", json_object_new_string(base64_data));
    json_object_object_add(image_obj, "source", source_obj);
 
-   LOG_INFO("Claude: Converted OpenAI image_url to Claude image (media_type=%s)", media_type);
+   OLOG_INFO("Claude: Converted OpenAI image_url to Claude image (media_type=%s)", media_type);
    return image_obj;
 }
 
@@ -490,7 +490,7 @@ static void add_vision_to_claude_messages(json_object *messages_array,
       json_object_object_add(last_msg, "content", content_array);
    } else {
       // Create a new user message with the vision images
-      LOG_INFO("Claude: Adding vision as new user message (last message not suitable)");
+      OLOG_INFO("Claude: Adding vision as new user message (last message not suitable)");
 
       json_object *new_user_msg = json_object_new_object();
       json_object_object_add(new_user_msg, "role", json_object_new_string("user"));
@@ -538,7 +538,7 @@ json_object *convert_to_claude_format(struct json_object *openai_conversation,
    const char *thinking_mode = llm_get_current_thinking_mode();
    bool thinking_enabled = false;
    int thinking_budget = 0;
-   LOG_INFO("Claude: thinking_mode='%s', model='%s'", thinking_mode, model_name);
+   OLOG_INFO("Claude: thinking_mode='%s', model='%s'", thinking_mode, model_name);
 
    if (strcmp(thinking_mode, "disabled") != 0) {
       // Check if model supports thinking (Claude 3.5+)
@@ -567,7 +567,7 @@ json_object *convert_to_claude_format(struct json_object *openai_conversation,
          }
          p++;
       }
-      LOG_INFO("Claude: version detected %d.%d, model_supports=%d", major, minor, model_supports);
+      OLOG_INFO("Claude: version detected %d.%d, model_supports=%d", major, minor, model_supports);
 
       if (model_supports || strcmp(thinking_mode, "enabled") == 0) {
          thinking_enabled = true;
@@ -591,7 +591,7 @@ json_object *convert_to_claude_format(struct json_object *openai_conversation,
       if (has_existing_thinking) {
          // History has both thinking blocks AND tool_use without thinking
          // Keep thinking enabled - disabling would cause "cannot contain thinking" error
-         LOG_WARNING("Claude: History has mixed thinking state, keeping thinking enabled");
+         OLOG_WARNING("Claude: History has mixed thinking state, keeping thinking enabled");
       } else {
          // Safe to disable - no thinking blocks in history
          thinking_enabled = false;
@@ -603,8 +603,8 @@ json_object *convert_to_claude_format(struct json_object *openai_conversation,
          if (session && session->type == SESSION_TYPE_WEBUI &&
              session->session_id != last_notified_session) {
             last_notified_session = session->session_id;
-            LOG_INFO("Claude: Auto-disabled thinking for session %u (incompatible history)",
-                     session->session_id);
+            OLOG_INFO("Claude: Auto-disabled thinking for session %u (incompatible history)",
+                      session->session_id);
             webui_send_error(session, "INFO_THINKING_DISABLED",
                              "Extended thinking auto-disabled: conversation history from "
                              "previous provider is incompatible. Start a new conversation "
@@ -619,8 +619,8 @@ json_object *convert_to_claude_format(struct json_object *openai_conversation,
    if (thinking_enabled && max_tokens <= thinking_budget) {
       // Ensure max_tokens > budget_tokens, add buffer for response
       max_tokens = thinking_budget + 4096;
-      LOG_INFO("Claude: Adjusted max_tokens to %d (budget %d + 4096 response buffer)", max_tokens,
-               thinking_budget);
+      OLOG_INFO("Claude: Adjusted max_tokens to %d (budget %d + 4096 response buffer)", max_tokens,
+                thinking_budget);
    }
    json_object_object_add(claude_request, "max_tokens", json_object_new_int(max_tokens));
 
@@ -630,7 +630,7 @@ json_object *convert_to_claude_format(struct json_object *openai_conversation,
       json_object_object_add(thinking, "type", json_object_new_string("enabled"));
       json_object_object_add(thinking, "budget_tokens", json_object_new_int(thinking_budget));
       json_object_object_add(claude_request, "thinking", thinking);
-      LOG_INFO("Claude: Extended thinking enabled (budget: %d tokens)", thinking_budget);
+      OLOG_INFO("Claude: Extended thinking enabled (budget: %d tokens)", thinking_budget);
    }
 
    // Add tools if native tool calling is enabled
@@ -639,8 +639,8 @@ json_object *convert_to_claude_format(struct json_object *openai_conversation,
       struct json_object *tools = llm_tools_get_claude_format_filtered(is_remote);
       if (tools) {
          json_object_object_add(claude_request, "tools", tools);
-         LOG_INFO("Claude: Added %d tools to request (%s session)",
-                  llm_tools_get_enabled_count_filtered(is_remote), is_remote ? "remote" : "local");
+         OLOG_INFO("Claude: Added %d tools to request (%s session)",
+                   llm_tools_get_enabled_count_filtered(is_remote), is_remote ? "remote" : "local");
       }
    }
 
@@ -669,8 +669,8 @@ json_object *convert_to_claude_format(struct json_object *openai_conversation,
 
       // Sanity bound to prevent integer overflow in allocation calculation
       if (result_count > 10000) {
-         LOG_WARNING("Claude: Excessive tool results in history (%d), capping at 10000",
-                     result_count);
+         OLOG_WARNING("Claude: Excessive tool results in history (%d), capping at 10000",
+                      result_count);
          result_count = 10000;
       }
 
@@ -707,7 +707,7 @@ json_object *convert_to_claude_format(struct json_object *openai_conversation,
 
             if (!json_object_object_get_ex(block, "type", &type_obj)) {
                // Skip malformed blocks without type - Claude requires type field
-               LOG_WARNING("Claude: Skipping content block without type field");
+               OLOG_WARNING("Claude: Skipping content block without type field");
                continue;
             }
 
@@ -724,7 +724,7 @@ json_object *convert_to_claude_format(struct json_object *openai_conversation,
                      json_object_array_add(filtered_content, json_object_get(block));
                      has_tool_use = 1;
                   } else {
-                     LOG_WARNING("Claude: Skipping orphaned tool_use %s", tool_id);
+                     OLOG_WARNING("Claude: Skipping orphaned tool_use %s", tool_id);
                   }
                }
             } else {
@@ -781,7 +781,7 @@ json_object *convert_to_claude_format(struct json_object *openai_conversation,
             // Check if this tool call has a matching result (only filter on iteration 0)
             if (tool_result_ids &&
                 !has_matching_tool_result(call_id, tool_result_ids, tool_result_count)) {
-               LOG_WARNING("Claude: Skipping tool_use %s (no matching tool_result)", call_id);
+               OLOG_WARNING("Claude: Skipping tool_use %s (no matching tool_result)", call_id);
                continue;
             }
 
@@ -840,7 +840,7 @@ json_object *convert_to_claude_format(struct json_object *openai_conversation,
 
          // Handle orphaned tool messages (restored from DB without tool_call_id)
          if (!tool_call_id || strlen(tool_call_id) == 0) {
-            LOG_WARNING(
+            OLOG_WARNING(
                 "Claude: Orphaned tool message without tool_call_id, converting to summary");
             // Convert to assistant summary to preserve context
             if (result_content && strlen(result_content) > 0) {
@@ -873,8 +873,8 @@ json_object *convert_to_claude_format(struct json_object *openai_conversation,
 
                         char combined[4096];
                         if (needed > sizeof(combined)) {
-                           LOG_WARNING("Claude: Combined content truncated from %zu to %zu bytes",
-                                       needed, sizeof(combined));
+                           OLOG_WARNING("Claude: Combined content truncated from %zu to %zu bytes",
+                                        needed, sizeof(combined));
                         }
                         snprintf(combined, sizeof(combined), "%s\n%s", existing ? existing : "",
                                  summary);

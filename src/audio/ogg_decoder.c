@@ -83,7 +83,7 @@ extern const struct audio_decoder_vtable *ogg_get_vtable(void);
 audio_decoder_t *ogg_decoder_open(const char *path) {
    ogg_decoder_handle_t *handle = calloc(1, sizeof(ogg_decoder_handle_t));
    if (!handle) {
-      LOG_ERROR("Failed to allocate Ogg decoder handle");
+      OLOG_ERROR("Failed to allocate Ogg decoder handle");
       return NULL;
    }
 
@@ -115,7 +115,7 @@ audio_decoder_t *ogg_decoder_open(const char *path) {
             err_str = "Unknown error";
             break;
       }
-      LOG_ERROR("Failed to open Ogg file '%s': %s (%d)", path, err_str, err);
+      OLOG_ERROR("Failed to open Ogg file '%s': %s (%d)", path, err_str, err);
       free(handle);
       return NULL;
    }
@@ -124,7 +124,7 @@ audio_decoder_t *ogg_decoder_open(const char *path) {
    /* Get stream info */
    vorbis_info *vi = ov_info(&handle->vf, -1);
    if (!vi) {
-      LOG_ERROR("Failed to get Ogg stream info");
+      OLOG_ERROR("Failed to get Ogg stream info");
       ov_clear(&handle->vf);
       free(handle);
       return NULL;
@@ -136,8 +136,8 @@ audio_decoder_t *ogg_decoder_open(const char *path) {
    /* Get total samples (returns -1 for unseekable streams) */
    handle->total_samples = ov_pcm_total(&handle->vf, -1);
 
-   LOG_INFO("Ogg: %ldHz %dch, %s samples", handle->sample_rate, handle->channels,
-            handle->total_samples >= 0 ? "known" : "unknown");
+   OLOG_INFO("Ogg: %ldHz %dch, %s samples", handle->sample_rate, handle->channels,
+             handle->total_samples >= 0 ? "known" : "unknown");
 
    return (audio_decoder_t *)handle;
 }
@@ -214,18 +214,18 @@ ssize_t ogg_decoder_read(audio_decoder_t *dec, int16_t *buffer, size_t max_frame
          switch (result) {
             case OV_HOLE:
                /* Interruption in data - skip and continue */
-               LOG_WARNING("Ogg: Data hole in stream, continuing");
+               OLOG_WARNING("Ogg: Data hole in stream, continuing");
                continue;
             case OV_EBADLINK:
-               LOG_ERROR("Ogg: Bad link in stream");
+               OLOG_ERROR("Ogg: Bad link in stream");
                handle->error = true;
                break;
             case OV_EINVAL:
-               LOG_ERROR("Ogg: Invalid argument");
+               OLOG_ERROR("Ogg: Invalid argument");
                handle->error = true;
                break;
             default:
-               LOG_ERROR("Ogg: Unknown read error %ld", result);
+               OLOG_ERROR("Ogg: Unknown read error %ld", result);
                handle->error = true;
                break;
          }
@@ -275,7 +275,7 @@ int ogg_decoder_seek(audio_decoder_t *dec, uint64_t sample_pos) {
             err_str = "Unknown error";
             break;
       }
-      LOG_WARNING("Ogg seek failed: %s (%d)", err_str, result);
+      OLOG_WARNING("Ogg seek failed: %s (%d)", err_str, result);
       return AUDIO_DECODER_ERR_SEEK;
    }
 

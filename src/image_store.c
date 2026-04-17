@@ -78,7 +78,7 @@ static int generate_image_id(char *out) {
    unsigned char random_bytes[12];
 
    if (getrandom(random_bytes, sizeof(random_bytes), 0) != sizeof(random_bytes)) {
-      LOG_ERROR("Image store: getrandom failed");
+      OLOG_ERROR("Image store: getrandom failed");
       return IMAGE_STORE_FAILURE;
    }
 
@@ -150,7 +150,7 @@ static int write_file_atomic(const char *final_path,
 
    int fd = open(tmppath, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, 0640);
    if (fd < 0) {
-      LOG_ERROR("Image store: failed to create temp file %s: %s", tmppath, strerror(errno));
+      OLOG_ERROR("Image store: failed to create temp file %s: %s", tmppath, strerror(errno));
       return IMAGE_STORE_FAILURE;
    }
 
@@ -161,7 +161,7 @@ static int write_file_atomic(const char *final_path,
       if (written < 0) {
          if (errno == EINTR)
             continue;
-         LOG_ERROR("Image store: write failed for %s: %s", tmppath, strerror(errno));
+         OLOG_ERROR("Image store: write failed for %s: %s", tmppath, strerror(errno));
          close(fd);
          unlink(tmppath);
          return IMAGE_STORE_FAILURE;
@@ -171,12 +171,12 @@ static int write_file_atomic(const char *final_path,
    }
 
    if (fsync(fd) != 0) {
-      LOG_WARNING("Image store: fsync failed for %s: %s", tmppath, strerror(errno));
+      OLOG_WARNING("Image store: fsync failed for %s: %s", tmppath, strerror(errno));
    }
    close(fd);
 
    if (rename(tmppath, final_path) != 0) {
-      LOG_ERROR("Image store: rename failed %s -> %s: %s", tmppath, final_path, strerror(errno));
+      OLOG_ERROR("Image store: rename failed %s -> %s: %s", tmppath, final_path, strerror(errno));
       unlink(tmppath);
       return IMAGE_STORE_FAILURE;
    }
@@ -195,7 +195,7 @@ int image_store_init(const image_store_config_t *config) {
 
    /* Check that auth_db is ready */
    if (!auth_db_is_ready()) {
-      LOG_ERROR("Image store: auth_db not initialized");
+      OLOG_ERROR("Image store: auth_db not initialized");
       return IMAGE_STORE_FAILURE;
    }
 
@@ -219,34 +219,34 @@ int image_store_init(const image_store_config_t *config) {
    }
 
    if (s_store.images_dir[0] == '\0') {
-      LOG_ERROR("Image store: no data_dir configured");
+      OLOG_ERROR("Image store: no data_dir configured");
       return IMAGE_STORE_FAILURE;
    }
 
    /* Verify path leaves room for filename: images_dir + '/' + filename (max 32) */
    if (strlen(s_store.images_dir) + 1 + IMAGE_FILENAME_MAX >= IMAGE_PATH_MAX) {
-      LOG_ERROR("Image store: data_dir path too long (%zu chars)", strlen(s_store.images_dir));
+      OLOG_ERROR("Image store: data_dir path too long (%zu chars)", strlen(s_store.images_dir));
       return IMAGE_STORE_FAILURE;
    }
 
    /* Create images directory if needed */
    if (mkdir(s_store.images_dir, 0750) != 0 && errno != EEXIST) {
-      LOG_ERROR("Image store: failed to create %s: %s", s_store.images_dir, strerror(errno));
+      OLOG_ERROR("Image store: failed to create %s: %s", s_store.images_dir, strerror(errno));
       return IMAGE_STORE_FAILURE;
    }
 
    s_store.initialized = true;
-   LOG_INFO("Image store initialized: dir=%s, max_size=%zu, max_per_user=%d, "
-            "retention=%d days, cache=%d MB",
-            s_store.images_dir, s_store.max_size, s_store.max_per_user, s_store.retention_days,
-            s_store.cache_size_mb);
+   OLOG_INFO("Image store initialized: dir=%s, max_size=%zu, max_per_user=%d, "
+             "retention=%d days, cache=%d MB",
+             s_store.images_dir, s_store.max_size, s_store.max_per_user, s_store.retention_days,
+             s_store.cache_size_mb);
 
    return IMAGE_STORE_SUCCESS;
 }
 
 void image_store_shutdown(void) {
    s_store.initialized = false;
-   LOG_INFO("Image store shutdown");
+   OLOG_INFO("Image store shutdown");
 }
 
 bool image_store_is_ready(void) {
@@ -373,13 +373,14 @@ int image_store_save_ex(int user_id,
    AUTH_DB_UNLOCK();
 
    if (rc != SQLITE_DONE) {
-      LOG_ERROR("Image store: failed to save metadata for %s: %s", id_out, sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("Image store: failed to save metadata for %s: %s", id_out,
+                 sqlite3_errmsg(s_db.db));
       unlink(filepath); /* Clean up orphan file */
       return IMAGE_STORE_FAILURE;
    }
 
-   LOG_INFO("Image store: saved %s (%zu bytes, %s, source=%d, retention=%d)", id_out, size,
-            mime_type, (int)source, (int)retention);
+   OLOG_INFO("Image store: saved %s (%zu bytes, %s, source=%d, retention=%d)", id_out, size,
+             mime_type, (int)source, (int)retention);
    return IMAGE_STORE_SUCCESS;
 }
 
@@ -597,11 +598,11 @@ int image_store_delete(const char *id, int user_id) {
       char filepath[IMAGE_PATH_MAX];
       build_filepath(filename_buf, filepath, sizeof(filepath));
       if (unlink(filepath) != 0 && errno != ENOENT) {
-         LOG_WARNING("Image store: failed to unlink %s: %s", filepath, strerror(errno));
+         OLOG_WARNING("Image store: failed to unlink %s: %s", filepath, strerror(errno));
       }
    }
 
-   LOG_INFO("Image store: deleted %s", id);
+   OLOG_INFO("Image store: deleted %s", id);
    return IMAGE_STORE_SUCCESS;
 }
 
@@ -676,7 +677,7 @@ int image_store_cleanup(void) {
          char filepath[IMAGE_PATH_MAX];
          build_filepath(filenames[i], filepath, sizeof(filepath));
          if (unlink(filepath) != 0 && errno != ENOENT) {
-            LOG_WARNING("Image store: cleanup failed to unlink %s: %s", filepath, strerror(errno));
+            OLOG_WARNING("Image store: cleanup failed to unlink %s: %s", filepath, strerror(errno));
          }
       }
 
@@ -737,8 +738,8 @@ int image_store_cleanup(void) {
          char filepath[IMAGE_PATH_MAX];
          build_filepath(cache_filenames[i], filepath, sizeof(filepath));
          if (unlink(filepath) != 0 && errno != ENOENT) {
-            LOG_WARNING("Image store: cache cleanup failed to unlink %s: %s", filepath,
-                        strerror(errno));
+            OLOG_WARNING("Image store: cache cleanup failed to unlink %s: %s", filepath,
+                         strerror(errno));
          }
       }
    } else {
@@ -746,7 +747,7 @@ int image_store_cleanup(void) {
    }
 
    if (total_deleted > 0) {
-      LOG_INFO("Image store: cleaned up %d images", total_deleted);
+      OLOG_INFO("Image store: cleaned up %d images", total_deleted);
    }
 
    return total_deleted;

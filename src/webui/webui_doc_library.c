@@ -166,10 +166,11 @@ void handle_doc_library_delete(ws_connection_t *conn, json_object *payload) {
          } else {
             json_object_object_add(resp_payload, "id", json_object_new_int64(doc_id));
             if (doc.user_id != conn->auth_user_id) {
-               LOG_INFO("doc_library: admin user %d deleted document %lld (%s) owned by user %d",
-                        conn->auth_user_id, (long long)doc_id, doc.filename, doc.user_id);
+               OLOG_INFO("doc_library: admin user %d deleted document %lld (%s) owned by user %d",
+                         conn->auth_user_id, (long long)doc_id, doc.filename, doc.user_id);
             } else {
-               LOG_INFO("doc_library: deleted document %lld (%s)", (long long)doc_id, doc.filename);
+               OLOG_INFO("doc_library: deleted document %lld (%s)", (long long)doc_id,
+                         doc.filename);
             }
          }
       }
@@ -285,9 +286,9 @@ void handle_doc_library_toggle_global(ws_connection_t *conn, json_object *payloa
          } else {
             json_object_object_add(resp_payload, "id", json_object_new_int64(doc_id));
             json_object_object_add(resp_payload, "is_global", json_object_new_boolean(new_global));
-            LOG_INFO("doc_library: user %d toggled document %lld (%s) global=%s",
-                     conn->auth_user_id, (long long)doc_id, doc.filename,
-                     new_global ? "true" : "false");
+            OLOG_INFO("doc_library: user %d toggled document %lld (%s) global=%s",
+                      conn->auth_user_id, (long long)doc_id, doc.filename,
+                      new_global ? "true" : "false");
          }
       }
    }

@@ -14,172 +14,136 @@
  *
  * By contributing to this project, you agree to license your contributions
  * under the GPLv3 (or any later version) or any future licenses chosen by
- * the project author(s). Contributions include any modifications,
- * enhancements, or additions to the project. These contributions become
- * part of the project and are adopted by the project author(s).
- */
-
-/**
- * @file logging.h
- * @brief Logging system for recording messages with varying severity levels.
+ * the project author(s).
  *
- * This header defines the logging system, including log levels, initialization,
- * and functions for logging messages with contextual information such as file name,
- * line number, and function name.
+ * Unified OASIS logging interface (canonical — kept byte-identical across
+ * DAWN, ECHO, MIRAGE, STAT).
+ *
+ * Usage contract:
+ *   - Call init_logging() or init_syslog() once at startup, before any
+ *     thread that logs is spawned.
+ *   - Call close_logging() once at shutdown, after all logging threads
+ *     have joined.
+ *   - Format strings passed to OLOG_* must be compile-time literals; only
+ *     arguments may be user-controlled data (passed via %s).
+ *   - log_message() is NOT async-signal-safe: do not call from signal
+ *     handlers.
  */
 
-#ifndef DAWN_COMMON_LOGGING_H
-#define DAWN_COMMON_LOGGING_H
+#ifndef OASIS_LOGGING_H
+#define OASIS_LOGGING_H
 
-#include <stdarg.h> /* For va_list */
-#include <stdio.h>  /* For FILE */
+#include <stdarg.h>
+#include <stdio.h>
 
-/**
- * @brief Log level enumeration for specifying the severity of log messages.
+/*
+ * Log levels.  Numeric values match syslog(3) priorities so syslog dispatch
+ * is a zero-cost pass-through.  <syslog.h> is NOT pulled in here — its
+ * ~25 LOG_* macros would pollute every TU that includes this header.  A
+ * _Static_assert in logging.c verifies these values match syslog at
+ * compile time.
  */
 typedef enum {
-   LOG_INFO,    /**< Informational messages that represent normal operation. */
-   LOG_WARNING, /**< Warning messages indicating potential issues. */
-   LOG_ERROR,   /**< Error messages indicating failures or critical issues. */
+   LOGLEVEL_ERROR = 3,   /* matches syslog LOG_ERR */
+   LOGLEVEL_WARNING = 4, /* matches syslog LOG_WARNING */
+   LOGLEVEL_INFO = 6,    /* matches syslog LOG_INFO */
 } log_level_t;
+
+/* Logging modes for init_logging(). */
+#define LOG_TO_CONSOLE 0
+#define LOG_TO_FILE 1
+#define LOG_TO_SYSLOG 2 /* Reserved constant; use init_syslog() to enter this mode. */
+
+/* Maximum formatted message length (bytes, including NUL). */
+#define MAX_LOG_LENGTH 1024
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /**
- * @brief Logs a formatted message with a specified log level and context information.
+ * @brief Core logging function.  Called via the OLOG_* macros; direct use is
+ *        permitted but rare.
  *
- * This function logs a message with the given format and arguments, including the file name,
- * line number, and function name for context. It supports variable arguments similar to `printf`.
- *
- * @param level The log level indicating the severity of the message (e.g., `LOG_INFO`,
- * `LOG_WARNING`, `LOG_ERROR`).
- * @param file  The name of the source file where the log function was called (usually `__FILE__`).
- * @param line  The line number in the source file where the log function was called (usually
- * `__LINE__`).
- * @param func  The name of the function where the log function was called (usually `__func__`).
- * @param fmt   The format string for the log message, similar to `printf`.
- * @param ...   Additional arguments for the format string.
+ * @param level Severity (LOGLEVEL_INFO / LOGLEVEL_WARNING / LOGLEVEL_ERROR).
+ * @param file  Source filename (usually __FILE__).
+ * @param line  Source line number (usually __LINE__).
+ * @param fmt   printf-style format string (must be a literal).
+ * @param ...   Format arguments.
  */
-void log_message(log_level_t level,
-                 const char *file,
-                 int line,
-                 const char *func,
-                 const char *fmt,
-                 ...);
+void log_message(log_level_t level, const char *file, int line, const char *fmt, ...);
+
+/**
+ * @brief va_list variant of log_message().  Used by callers that already
+ *        have a va_list (e.g., callback bridges) to avoid a redundant
+ *        vsnprintf.
+ */
+void log_message_v(log_level_t level, const char *file, int line, const char *fmt, va_list args);
+
+/**
+ * @brief Initialise console or file logging.  Call once at startup.
+ *
+ * @param filename Log file path.  Ignored when mode == LOG_TO_CONSOLE.
+ * @param mode     LOG_TO_CONSOLE or LOG_TO_FILE.
+ * @return         0 on success, non-zero on failure.
+ */
+int init_logging(const char *filename, int mode);
+
+/**
+ * @brief Switch logging output to syslog.  Call once at startup.
+ *
+ * @param ident Syslog identifier (typically the daemon name).  Must remain
+ *              valid for the lifetime of the process (stored by syslog).
+ * @return      0 on success.
+ */
+int init_syslog(const char *ident);
+
+/**
+ * @brief Close any open log file and/or syslog connection.  Call once at
+ *        shutdown, after all logging threads have joined.
+ */
+void close_logging(void);
+
+/**
+ * @brief Suppress console output (for TUI or headless modes).
+ *
+ * Safe to call from any thread after init; value is read atomically in
+ * log_message().
+ *
+ * @param suppress 1 to suppress, 0 to restore.
+ */
+void logging_suppress_console(int suppress);
 
 #ifdef __cplusplus
 }
 #endif
 
-/**
- * @brief Initializes the logging system.
- *
- * This function initializes the logging system and sets up logging to either a file or the console.
- * It should be called before any logging functions are used.
- *
- * @param filename The name of the log file to write to. If `NULL` or empty, and LOG_TO_FILE, error.
- * @param to_file  An integer flag indicating where to log messages:
- *                 - `LOG_TO_CONSOLE` (0): Log messages to the console (stdout/stderr).
- *                 - `LOG_TO_FILE` (1): Log messages to the specified file.
- *
- * @return Returns `0` on success, or a non-zero error code on failure.
+/*
+ * Convenience macros.  OLOG_* is the canonical namespace; the "O" prefix
+ * avoids collision with syslog(3)'s LOG_INFO / LOG_WARNING / LOG_ERR
+ * preprocessor constants on TUs that include <syslog.h> directly.
  */
-int init_logging(const char *filename, int to_file);
+#define OLOG_INFO(fmt, ...) log_message(LOGLEVEL_INFO, __FILE__, __LINE__, fmt, ##__VA_ARGS__)
+#define OLOG_WARNING(fmt, ...) log_message(LOGLEVEL_WARNING, __FILE__, __LINE__, fmt, ##__VA_ARGS__)
+#define OLOG_ERROR(fmt, ...) log_message(LOGLEVEL_ERROR, __FILE__, __LINE__, fmt, ##__VA_ARGS__)
 
-/**
- * @brief Closes the logging system.
- *
- * This function closes the logging system and releases any resources allocated during
- * initialization. It should be called when logging is no longer needed, typically at the end of the
- * application.
- */
-void close_logging(void);
-
-/**
- * @brief Suppress console logging (for TUI mode).
- *
- * When enabled, log messages will only go to file (if configured).
- * Console output is suppressed to avoid interfering with TUI display.
- *
- * @param suppress 1 to suppress console logging, 0 to enable
- */
-void logging_suppress_console(int suppress);
-
-/**
- * @def LOG_TO_CONSOLE
- * @brief Macro indicating that logs should be output to the console.
- */
-#define LOG_TO_CONSOLE 0
-
-/**
- * @def LOG_TO_FILE
- * @brief Macro indicating that logs should be output to a file.
- */
-#define LOG_TO_FILE 1
-
-/**
- * @def MAX_LOG_LENGTH
- * @brief Maximum length of each line of the log messages
- */
-#define MAX_LOG_LENGTH 1024
-
-/**
- * @brief Macro for logging informational messages.
- *
- * This macro simplifies logging of informational messages by automatically including the file name,
- * line number, and function name where the macro is called.
- *
- * @param fmt  The format string for the log message.
- * @param ...  Additional arguments for the format string.
- */
-#define LOG_INFO(fmt, ...) log_message(LOG_INFO, __FILE__, __LINE__, __func__, fmt, ##__VA_ARGS__)
-
-/**
- * @brief Macro for logging warning messages.
- *
- * This macro simplifies logging of warning messages by automatically including the file name,
- * line number, and function name where the macro is called.
- *
- * @param fmt  The format string for the log message.
- * @param ...  Additional arguments for the format string.
- */
-#define LOG_WARNING(fmt, ...) \
-   log_message(LOG_WARNING, __FILE__, __LINE__, __func__, fmt, ##__VA_ARGS__)
-
-/**
- * @brief Macro for logging error messages.
- *
- * This macro simplifies logging of error messages by automatically including the file name,
- * line number, and function name where the macro is called.
- *
- * @param fmt  The format string for the log message.
- * @param ...  Additional arguments for the format string.
- */
-#define LOG_ERROR(fmt, ...) log_message(LOG_ERROR, __FILE__, __LINE__, __func__, fmt, ##__VA_ARGS__)
-
-/**
- * @brief Macro for logging debug messages (only in debug builds).
+/*
+ * Debug logging — compiled to a no-op in release builds.  Message level is
+ * INFO; intent is developer-only tracing that should not ship.
  */
 #ifdef DEBUG
-#define LOG_DEBUG(fmt, ...) log_message(LOG_INFO, __FILE__, __LINE__, __func__, fmt, ##__VA_ARGS__)
+#define OLOG_DEBUG(fmt, ...) log_message(LOGLEVEL_INFO, __FILE__, __LINE__, fmt, ##__VA_ARGS__)
 #else
-#define LOG_DEBUG(fmt, ...) \
-   do {                     \
+#define OLOG_DEBUG(fmt, ...) \
+   do {                      \
    } while (0)
 #endif
 
-/**
- * @brief Macro for safely logging credential/API key status
- *
- * This macro prevents accidental logging of actual credentials by converting
- * any non-NULL pointer to a safe status string. Use this instead of directly
- * logging API keys or tokens.
- *
- * @param key  Pointer to credential (API key, token, etc.)
- * @return     "(configured)" if key is non-NULL, "(not configured)" otherwise
+/*
+ * Credential-safe status helper.  Prevents accidental logging of the raw
+ * credential value by substituting a status string.  Use wherever API keys,
+ * OAuth tokens, or passwords would otherwise end up in a format string.
  */
 #define LOG_CREDENTIAL_STATUS(key) ((key) ? "(configured)" : "(not configured)")
 
-#endif /* DAWN_COMMON_LOGGING_H */
+#endif /* OASIS_LOGGING_H */

@@ -134,7 +134,7 @@ static bool validate_single_image_marker(const char *marker_start, const char **
    }
 
    if (!has_safe_prefix) {
-      LOG_WARNING("WebUI: Rejected message with unsafe image data URI prefix");
+      OLOG_WARNING("WebUI: Rejected message with unsafe image data URI prefix");
       return false;
    }
 
@@ -147,8 +147,8 @@ static bool validate_single_image_marker(const char *marker_start, const char **
 
    size_t base64_len = end - base64_start;
    if (base64_len > WEBUI_MAX_THUMBNAIL_BASE64) {
-      LOG_WARNING("WebUI: Rejected oversized thumbnail (%zu > %d bytes)", base64_len,
-                  WEBUI_MAX_THUMBNAIL_BASE64);
+      OLOG_WARNING("WebUI: Rejected oversized thumbnail (%zu > %d bytes)", base64_len,
+                   WEBUI_MAX_THUMBNAIL_BASE64);
       return false;
    }
 
@@ -156,7 +156,7 @@ static bool validate_single_image_marker(const char *marker_start, const char **
    for (size_t i = 0; i < base64_len; i++) {
       unsigned char c = (unsigned char)base64_start[i];
       if (!BASE64_VALID[c]) {
-         LOG_WARNING("WebUI: Rejected thumbnail with invalid base64 character at position %zu", i);
+         OLOG_WARNING("WebUI: Rejected thumbnail with invalid base64 character at position %zu", i);
          return false;
       }
    }
@@ -193,7 +193,7 @@ static bool validate_image_marker(const char *content) {
       const char *marker_end = NULL;
 
       if (!validate_single_image_marker(marker_start, &marker_end)) {
-         LOG_WARNING("WebUI: Rejected invalid image marker #%d in message", marker_count + 1);
+         OLOG_WARNING("WebUI: Rejected invalid image marker #%d in message", marker_count + 1);
          return false;
       }
 
@@ -201,8 +201,8 @@ static bool validate_image_marker(const char *content) {
 
       /* Limit total markers to prevent DoS (matches vision.max_images cap) */
       if (marker_count > WEBUI_MAX_VISION_IMAGES_CAP) {
-         LOG_WARNING("WebUI: Rejected message with too many image markers (%d > %d)", marker_count,
-                     WEBUI_MAX_VISION_IMAGES_CAP);
+         OLOG_WARNING("WebUI: Rejected message with too many image markers (%d > %d)", marker_count,
+                      WEBUI_MAX_VISION_IMAGES_CAP);
          return false;
       }
 
@@ -323,8 +323,8 @@ static bool should_skip_memory_extraction(ws_connection_t *conn) {
    if (db_private > 0) {
       /* Update cached state to match database */
       conn->active_conversation_private = true;
-      LOG_INFO("WebUI: privacy check found stale cache, conversation %lld is private",
-               (long long)conn->active_conversation_id);
+      OLOG_INFO("WebUI: privacy check found stale cache, conversation %lld is private",
+                (long long)conn->active_conversation_id);
       return true;
    }
 
@@ -349,8 +349,8 @@ void handle_new_conversation(ws_connection_t *conn, struct json_object *payload)
          if (msg_count >= 2) {
             memory_extraction_fallback_t fb;
             memory_extraction_build_fallback(conn->session, &fb);
-            LOG_INFO("WebUI: Triggering memory extraction for conversation %lld before new",
-                     (long long)conn->active_conversation_id);
+            OLOG_INFO("WebUI: Triggering memory extraction for conversation %lld before new",
+                      (long long)conn->active_conversation_id);
             memory_trigger_extraction(conn->auth_user_id, conn->active_conversation_id, NULL,
                                       old_history, msg_count, 0, &fb);
          }
@@ -446,8 +446,8 @@ void handle_clear_session(ws_connection_t *conn) {
          if (msg_count >= 2) {
             memory_extraction_fallback_t fb;
             memory_extraction_build_fallback(conn->session, &fb);
-            LOG_INFO("WebUI: Triggering memory extraction for conversation %lld before clear",
-                     (long long)conn->active_conversation_id);
+            OLOG_INFO("WebUI: Triggering memory extraction for conversation %lld before clear",
+                      (long long)conn->active_conversation_id);
             memory_trigger_extraction(conn->auth_user_id, conn->active_conversation_id, NULL,
                                       old_history, msg_count, 0, &fb);
          }
@@ -472,8 +472,8 @@ void handle_clear_session(ws_connection_t *conn) {
    send_json_response(conn, response);
    json_object_put(response);
 
-   LOG_INFO("WebUI: Session history cleared for user '%s'",
-            conn->username ? conn->username : "unknown");
+   OLOG_INFO("WebUI: Session history cleared for user '%s'",
+             conn->username ? conn->username : "unknown");
 }
 
 /**
@@ -525,8 +525,8 @@ void handle_continue_conversation(ws_connection_t *conn, struct json_object *pay
                              json_object_new_int64(new_conv_id));
       json_object_object_add(resp_payload, "summary", json_object_new_string(summary));
 
-      LOG_INFO("WebUI: Conversation %lld continued as %lld for user %s", (long long)old_conv_id,
-               (long long)new_conv_id, conn->username);
+      OLOG_INFO("WebUI: Conversation %lld continued as %lld for user %s", (long long)old_conv_id,
+                (long long)new_conv_id, conn->username);
 
       auth_db_log_event("CONVERSATION_CONTINUED", conn->username, conn->client_ip,
                         "Context compacted");
@@ -651,8 +651,8 @@ void handle_load_conversation(ws_connection_t *conn, struct json_object *payload
          if (msg_count >= 2) {
             memory_extraction_fallback_t fb;
             memory_extraction_build_fallback(conn->session, &fb);
-            LOG_INFO("WebUI: Triggering memory extraction for conversation %lld before switch",
-                     (long long)conn->active_conversation_id);
+            OLOG_INFO("WebUI: Triggering memory extraction for conversation %lld before switch",
+                      (long long)conn->active_conversation_id);
             memory_trigger_extraction(conn->auth_user_id, conn->active_conversation_id, NULL,
                                       old_history, msg_count, 0, &fb);
          }
@@ -754,13 +754,13 @@ void handle_load_conversation(ws_connection_t *conn, struct json_object *payload
             if (existing_count <= 1) {
                int restored = webui_restore_conversation_context(conn, &conv, conv_id, all_msgs);
                if (restored >= 0) {
-                  LOG_INFO("WebUI: Restored %d messages to session %u context", restored,
-                           conn->session->session_id);
+                  OLOG_INFO("WebUI: Restored %d messages to session %u context", restored,
+                            conn->session->session_id);
                }
             } else {
-               LOG_INFO("WebUI: Skipped redundant restore for session %u "
-                        "(already has %d messages)",
-                        conn->session->session_id, existing_count);
+               OLOG_INFO("WebUI: Skipped redundant restore for session %u "
+                         "(already has %d messages)",
+                         conn->session->session_id, existing_count);
             }
          }
 
@@ -770,7 +770,7 @@ void handle_load_conversation(ws_connection_t *conn, struct json_object *payload
          }
 
          if (conv.is_archived && !is_load_more) {
-            LOG_INFO("WebUI: Loaded archived conversation %lld (read-only)", (long long)conv.id);
+            OLOG_INFO("WebUI: Loaded archived conversation %lld (read-only)", (long long)conv.id);
          }
 
          /* Build response */
@@ -1295,8 +1295,8 @@ void handle_lock_conversation_llm(ws_connection_t *conn, struct json_object *pay
    if (result == AUTH_DB_SUCCESS) {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
       json_object_object_add(resp_payload, "locked", json_object_new_boolean(1));
-      LOG_INFO("WebUI: Locked LLM settings for conversation %lld (user %d)", (long long)conv_id,
-               conn->auth_user_id);
+      OLOG_INFO("WebUI: Locked LLM settings for conversation %lld (user %d)", (long long)conv_id,
+                conn->auth_user_id);
    } else if (result == AUTH_DB_NOT_FOUND) {
       /* Conversation already has messages - settings already locked */
       json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
@@ -1361,8 +1361,8 @@ void handle_reassign_conversation(ws_connection_t *conn, struct json_object *pay
       json_object_object_add(resp_payload, "new_user_id", json_object_new_int(new_user_id));
       json_object_object_add(resp_payload, "message",
                              json_object_new_string("Conversation reassigned successfully"));
-      LOG_INFO("WebUI: Admin %s reassigned conversation %lld to user %d", conn->username,
-               (long long)conv_id, new_user_id);
+      OLOG_INFO("WebUI: Admin %s reassigned conversation %lld to user %d", conn->username,
+                (long long)conv_id, new_user_id);
    } else if (result == AUTH_DB_NOT_FOUND) {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
       json_object_object_add(resp_payload, "error",
@@ -1565,8 +1565,8 @@ void handle_export_conversation(ws_connection_t *conn, struct json_object *paylo
    send_json_response(conn, response);
    json_object_put(response);
 
-   LOG_INFO("WebUI: Exported conversation %lld (%d messages) for user %s", (long long)conv_id,
-            conv.message_count, conn->username);
+   OLOG_INFO("WebUI: Exported conversation %lld (%d messages) for user %s", (long long)conv_id,
+             conv.message_count, conn->username);
 
    conv_free(&conv);
    __atomic_store_n(&s_export_in_progress, 0, __ATOMIC_SEQ_CST);

@@ -200,7 +200,7 @@ static bool route_tts_announcement(const sched_event_t *event, const char *text)
                if (!session->disconnected && session->tier == DAP2_TIER_1) {
                   satellite_send_response(session, text);
                   delivered = true;
-                  LOG_INFO("scheduler: announced to source satellite %s", event->source_uuid);
+                  OLOG_INFO("scheduler: announced to source satellite %s", event->source_uuid);
                }
                session_release(session);
             }
@@ -236,8 +236,8 @@ static bool route_tts_announcement(const sched_event_t *event, const char *text)
    }
 
    if (!delivered) {
-      LOG_WARNING("scheduler: no active session for user %d, TTS not delivered for event %lld",
-                  event->user_id, (long long)event->id);
+      OLOG_WARNING("scheduler: no active session for user %d, TTS not delivered for event %lld",
+                   event->user_id, (long long)event->id);
    }
 
    /* Announce everywhere if requested — uses connection registry (not session_get) */
@@ -269,8 +269,8 @@ static void announce_event(const sched_event_t *event) {
    char announcement[512];
    generate_announcement_text(event, announcement, sizeof(announcement));
 
-   LOG_INFO("scheduler: announcing event %lld (%s): %s", (long long)event->id,
-            sched_event_type_to_str(event->event_type), announcement);
+   OLOG_INFO("scheduler: announcing event %lld (%s): %s", (long long)event->id,
+             sched_event_type_to_str(event->event_type), announcement);
 
    route_tts_announcement(event, announcement);
 
@@ -295,43 +295,43 @@ static void announce_event(const sched_event_t *event) {
  */
 static int scheduler_execute_task(sched_event_t *event) {
    if (!event->tool_name[0]) {
-      LOG_WARNING("scheduler: task %lld has no tool_name", (long long)event->id);
+      OLOG_WARNING("scheduler: task %lld has no tool_name", (long long)event->id);
       return -1;
    }
 
    /* Look up tool metadata */
    const tool_metadata_t *meta = tool_registry_find(event->tool_name);
    if (!meta) {
-      LOG_WARNING("scheduler: tool '%s' not found (task %lld)", event->tool_name,
-                  (long long)event->id);
+      OLOG_WARNING("scheduler: tool '%s' not found (task %lld)", event->tool_name,
+                   (long long)event->id);
       return -1;
    }
 
    /* Validate SCHEDULABLE capability */
    if (!(meta->capabilities & TOOL_CAP_SCHEDULABLE)) {
-      LOG_WARNING("scheduler: tool '%s' not schedulable (task %lld)", event->tool_name,
-                  (long long)event->id);
+      OLOG_WARNING("scheduler: tool '%s' not schedulable (task %lld)", event->tool_name,
+                   (long long)event->id);
       return -1;
    }
 
    /* Check if tool is enabled at runtime */
    if (!tool_registry_is_enabled(event->tool_name)) {
-      LOG_WARNING("scheduler: tool '%s' disabled (task %lld)", event->tool_name,
-                  (long long)event->id);
+      OLOG_WARNING("scheduler: tool '%s' disabled (task %lld)", event->tool_name,
+                   (long long)event->id);
       return -1;
    }
 
    /* Get callback */
    tool_callback_fn callback = meta->callback;
    if (!callback) {
-      LOG_WARNING("scheduler: tool '%s' has no callback (task %lld)", event->tool_name,
-                  (long long)event->id);
+      OLOG_WARNING("scheduler: tool '%s' has no callback (task %lld)", event->tool_name,
+                   (long long)event->id);
       return -1;
    }
 
    /* Execute the tool */
-   LOG_INFO("scheduler: executing task %lld: %s(%s, %s)", (long long)event->id, event->tool_name,
-            event->tool_action, event->tool_value);
+   OLOG_INFO("scheduler: executing task %lld: %s(%s, %s)", (long long)event->id, event->tool_name,
+             event->tool_action, event->tool_value);
 
    char value_buf[SCHED_TOOL_VALUE_MAX];
    snprintf(value_buf, sizeof(value_buf), "%s", event->tool_value);
@@ -340,7 +340,7 @@ static int scheduler_execute_task(sched_event_t *event) {
    char *result = callback(event->tool_action, value_buf, &should_respond);
 
    if (result) {
-      LOG_INFO("scheduler: task %lld result: %.200s", (long long)event->id, result);
+      OLOG_INFO("scheduler: task %lld result: %.200s", (long long)event->id, result);
       free(result);
    }
 
@@ -372,7 +372,7 @@ typedef struct {
  * Announce briefing result via TTS (reuses shared routing, no WebUI broadcast here)
  */
 static void announce_briefing(const sched_event_t *event, const char *text, bool is_fallback) {
-   LOG_INFO("scheduler: announcing briefing %lld: %.200s", (long long)event->id, text);
+   OLOG_INFO("scheduler: announcing briefing %lld: %.200s", (long long)event->id, text);
 
    /* Only cap TTS for raw tool result fallback — LLM summaries are already concise */
    if (is_fallback) {
@@ -465,15 +465,15 @@ static void *briefing_thread_func(void *arg) {
    int64_t conv_id = 0;
    bool conv_created = false;
 
-   LOG_INFO("scheduler: briefing thread started for event %lld '%s'", (long long)event->id,
-            event->name);
+   OLOG_INFO("scheduler: briefing thread started for event %lld '%s'", (long long)event->id,
+             event->name);
 
    /* Step 1: Execute the tool (same validation as scheduler_execute_task) */
    const tool_metadata_t *meta = tool_registry_find(event->tool_name);
    if (!meta || !(meta->capabilities & TOOL_CAP_SCHEDULABLE) ||
        !tool_registry_is_enabled(event->tool_name) || !meta->callback) {
-      LOG_ERROR("scheduler: briefing %lld tool '%s' unavailable", (long long)event->id,
-                event->tool_name);
+      OLOG_ERROR("scheduler: briefing %lld tool '%s' unavailable", (long long)event->id,
+                 event->tool_name);
       goto fail;
    }
 
@@ -485,11 +485,11 @@ static void *briefing_thread_func(void *arg) {
    }
 
    if (!tool_result) {
-      LOG_ERROR("scheduler: briefing %lld tool returned NULL", (long long)event->id);
+      OLOG_ERROR("scheduler: briefing %lld tool returned NULL", (long long)event->id);
       goto fail;
    }
 
-   LOG_INFO("scheduler: briefing %lld tool result: %.200s", (long long)event->id, tool_result);
+   OLOG_INFO("scheduler: briefing %lld tool result: %.200s", (long long)event->id, tool_result);
 
    /* Step 2: Create conversation */
    {
@@ -497,9 +497,9 @@ static void *briefing_thread_func(void *arg) {
       snprintf(title, sizeof(title), "Briefing: %s", event->name[0] ? event->name : "Scheduled");
       int rc = conv_db_create_with_origin(event->user_id, title, "briefing", &conv_id);
       if (rc != 0) {
-         LOG_WARNING("scheduler: briefing %lld failed to create conversation (rc=%d), "
-                     "falling back to raw result",
-                     (long long)event->id, rc);
+         OLOG_WARNING("scheduler: briefing %lld failed to create conversation (rc=%d), "
+                      "falling back to raw result",
+                      (long long)event->id, rc);
          /* Fall through — announce raw tool result */
       } else {
          conv_created = true;
@@ -516,8 +516,8 @@ static void *briefing_thread_func(void *arg) {
          conv_db_add_message(conv_id, event->user_id, "user", user_msg);
          free(user_msg);
       } else {
-         LOG_WARNING("scheduler: briefing %lld failed to allocate user message",
-                     (long long)event->id);
+         OLOG_WARNING("scheduler: briefing %lld failed to allocate user message",
+                      (long long)event->id);
       }
    }
 
@@ -598,7 +598,7 @@ fail:
 static void start_briefing_thread(const sched_event_t *event) {
    briefing_context_t *ctx = malloc(sizeof(briefing_context_t));
    if (!ctx) {
-      LOG_ERROR("scheduler: failed to allocate briefing context");
+      OLOG_ERROR("scheduler: failed to allocate briefing context");
       return;
    }
    memcpy(&ctx->event, event, sizeof(sched_event_t));
@@ -609,7 +609,7 @@ static void start_briefing_thread(const sched_event_t *event) {
    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
 
    if (pthread_create(&tid, &attr, briefing_thread_func, ctx) != 0) {
-      LOG_ERROR("scheduler: failed to create briefing thread");
+      OLOG_ERROR("scheduler: failed to create briefing thread");
       free(ctx);
    }
    pthread_attr_destroy(&attr);
@@ -692,7 +692,7 @@ static void *alarm_sound_thread(void *arg) {
       write_scaled_pcm(pb, chime_buf.pcm, chime_buf.samples, vol_scale);
    } else if (!pb) {
       /* Fallback: sleep for approximate duration if audio backend unavailable */
-      LOG_WARNING("scheduler: audio playback unavailable, sleeping for chime duration");
+      OLOG_WARNING("scheduler: audio playback unavailable, sleeping for chime duration");
       if (is_alarm) {
          while (!alarm_sound_stop && (time(NULL) - sound_start) < timeout_sec)
             usleep(500000);
@@ -720,8 +720,9 @@ static void *alarm_sound_thread(void *arg) {
          memset(&ringing_event, 0, sizeof(ringing_event));
       }
       pthread_mutex_unlock(&ringing_mutex);
-      LOG_INFO("scheduler: auto-dismissed %s %lld after chime",
-               event->event_type == SCHED_EVENT_TIMER ? "timer" : "reminder", (long long)event->id);
+      OLOG_INFO("scheduler: auto-dismissed %s %lld after chime",
+                event->event_type == SCHED_EVENT_TIMER ? "timer" : "reminder",
+                (long long)event->id);
 
 #ifdef ENABLE_WEBUI
       sched_event_t updated;
@@ -739,7 +740,7 @@ static void *alarm_sound_thread(void *arg) {
          memset(&ringing_event, 0, sizeof(ringing_event));
       }
       pthread_mutex_unlock(&ringing_mutex);
-      LOG_INFO("scheduler: alarm %lld timed out after %ds", (long long)event->id, timeout_sec);
+      OLOG_INFO("scheduler: alarm %lld timed out after %ds", (long long)event->id, timeout_sec);
 
 #ifdef ENABLE_WEBUI
       /* Notify WebUI of timeout */
@@ -776,7 +777,7 @@ static void start_alarm_sound(const sched_event_t *event) {
    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
 
    if (pthread_create(&sound_tid, &attr, alarm_sound_thread, event_copy) != 0) {
-      LOG_ERROR("scheduler: failed to create alarm sound thread");
+      OLOG_ERROR("scheduler: failed to create alarm sound thread");
       free(event_copy);
    }
    pthread_attr_destroy(&attr);
@@ -890,7 +891,7 @@ static time_t calculate_next_recurrence(const sched_event_t *event) {
          return mktime(&tm_next);
    }
 
-   LOG_WARNING("scheduler: could not find next recurrence for event %lld", (long long)event->id);
+   OLOG_WARNING("scheduler: could not find next recurrence for event %lld", (long long)event->id);
    return 0;
 }
 
@@ -921,14 +922,14 @@ static void schedule_next_occurrence(const sched_event_t *fired_event) {
    if (new_id > 0) {
       struct tm tm_next;
       localtime_r(&next_fire, &tm_next);
-      LOG_INFO(
+      OLOG_INFO(
           "scheduler: scheduled next recurrence for '%s' at %04d-%02d-%02d %02d:%02d (id=%lld)",
           next.name, tm_next.tm_year + 1900, tm_next.tm_mon + 1, tm_next.tm_mday, tm_next.tm_hour,
           tm_next.tm_min, (long long)new_id);
 
       scheduler_notify_new_event();
    } else {
-      LOG_ERROR("scheduler: failed to insert next recurrence for '%s'", fired_event->name);
+      OLOG_ERROR("scheduler: failed to insert next recurrence for '%s'", fired_event->name);
    }
 }
 
@@ -1012,7 +1013,7 @@ static void recover_missed_events(void) {
    if (count == 0)
       return;
 
-   LOG_INFO("scheduler: recovering %d missed events from downtime", count);
+   OLOG_INFO("scheduler: recovering %d missed events from downtime", count);
 
    for (int i = 0; i < count; i++) {
       sched_event_t *e = &events[i];
@@ -1021,8 +1022,8 @@ static void recover_missed_events(void) {
          case SCHED_EVENT_TIMER:
          case SCHED_EVENT_REMINDER:
             /* Fire immediately with "missed" prefix */
-            LOG_INFO("scheduler: firing missed %s '%s' (was due at %lld)",
-                     sched_event_type_to_str(e->event_type), e->name, (long long)e->fire_at);
+            OLOG_INFO("scheduler: firing missed %s '%s' (was due at %lld)",
+                      sched_event_type_to_str(e->event_type), e->name, (long long)e->fire_at);
             fire_event(e);
             break;
 
@@ -1030,11 +1031,11 @@ static void recover_missed_events(void) {
             if (e->recurrence != SCHED_RECUR_ONCE) {
                /* Recurring: skip to next occurrence */
                scheduler_db_update_status(e->id, SCHED_STATUS_MISSED);
-               LOG_INFO("scheduler: skipped missed recurring alarm '%s'", e->name);
+               OLOG_INFO("scheduler: skipped missed recurring alarm '%s'", e->name);
                schedule_next_occurrence(e);
             } else {
                scheduler_db_update_status(e->id, SCHED_STATUS_MISSED);
-               LOG_INFO("scheduler: marked one-shot alarm '%s' as missed", e->name);
+               OLOG_INFO("scheduler: marked one-shot alarm '%s' as missed", e->name);
             }
             break;
 
@@ -1044,16 +1045,16 @@ static void recover_missed_events(void) {
             time_t age = time(NULL) - e->fire_at;
 
             if (should_execute && age <= sched_cfg->missed_task_max_age_sec) {
-               LOG_INFO("scheduler: executing missed task '%s' (age=%lds, policy: execute)",
-                        e->name, (long)age);
+               OLOG_INFO("scheduler: executing missed task '%s' (age=%lds, policy: execute)",
+                         e->name, (long)age);
                fire_event(e);
             } else {
                scheduler_db_update_status(e->id, SCHED_STATUS_MISSED);
                if (should_execute) {
-                  LOG_INFO("scheduler: skipped missed task '%s' (age=%lds > max %ds)", e->name,
-                           (long)age, sched_cfg->missed_task_max_age_sec);
+                  OLOG_INFO("scheduler: skipped missed task '%s' (age=%lds > max %ds)", e->name,
+                            (long)age, sched_cfg->missed_task_max_age_sec);
                } else {
-                  LOG_INFO("scheduler: skipped missed task '%s' (policy: skip)", e->name);
+                  OLOG_INFO("scheduler: skipped missed task '%s' (policy: skip)", e->name);
                }
             }
             break;
@@ -1062,7 +1063,7 @@ static void recover_missed_events(void) {
          case SCHED_EVENT_BRIEFING: {
             /* Missed briefings are always stale — skip and schedule next */
             scheduler_db_update_status(e->id, SCHED_STATUS_MISSED);
-            LOG_INFO("scheduler: skipped missed briefing '%s' (stale data)", e->name);
+            OLOG_INFO("scheduler: skipped missed briefing '%s' (stale data)", e->name);
             schedule_next_occurrence(e);
             break;
          }
@@ -1077,7 +1078,7 @@ static void recover_missed_events(void) {
 static void *scheduler_thread_func(void *arg) {
    (void)arg;
 
-   LOG_INFO("scheduler: thread started");
+   OLOG_INFO("scheduler: thread started");
 
    /* Wait 30s for subsystem init before recovery */
    for (int i = 0; i < 30 && !scheduler_shutdown_flag; i++)
@@ -1089,7 +1090,7 @@ static void *scheduler_thread_func(void *arg) {
    /* Clean up old events */
    int deleted = scheduler_db_cleanup_old_events(g_config.scheduler.event_retention_days);
    if (deleted > 0)
-      LOG_INFO("scheduler: cleaned up %d old events", deleted);
+      OLOG_INFO("scheduler: cleaned up %d old events", deleted);
 
    /* Recover missed events */
    if (g_config.scheduler.missed_event_recovery)
@@ -1130,7 +1131,7 @@ static void *scheduler_thread_func(void *arg) {
       fire_due_events();
    }
 
-   LOG_INFO("scheduler: thread exiting");
+   OLOG_INFO("scheduler: thread exiting");
    return NULL;
 }
 
@@ -1140,7 +1141,7 @@ static void *scheduler_thread_func(void *arg) {
 
 int scheduler_init(void) {
    if (!g_config.scheduler.enabled) {
-      LOG_INFO("scheduler: disabled in config");
+      OLOG_INFO("scheduler: disabled in config");
       return 0;
    }
 
@@ -1160,12 +1161,12 @@ int scheduler_init(void) {
    scheduler_running = true;
 
    if (pthread_create(&scheduler_thread_id, NULL, scheduler_thread_func, NULL) != 0) {
-      LOG_ERROR("scheduler: failed to create thread");
+      OLOG_ERROR("scheduler: failed to create thread");
       scheduler_running = false;
       return 1;
    }
 
-   LOG_INFO("scheduler: initialized");
+   OLOG_INFO("scheduler: initialized");
    return 0;
 }
 
@@ -1173,7 +1174,7 @@ void scheduler_shutdown(void) {
    if (!scheduler_running)
       return;
 
-   LOG_INFO("scheduler: shutting down");
+   OLOG_INFO("scheduler: shutting down");
 
    scheduler_shutdown_flag = true;
    alarm_sound_stop = true;
@@ -1197,7 +1198,7 @@ void scheduler_shutdown(void) {
 
    pthread_cond_destroy(&scheduler_cond);
 
-   LOG_INFO("scheduler: shutdown complete");
+   OLOG_INFO("scheduler: shutdown complete");
 }
 
 void scheduler_notify_new_event(void) {
@@ -1246,7 +1247,7 @@ int scheduler_dismiss(int64_t event_id) {
    /* Optimistic update: only dismiss if still ringing in DB */
    int result = scheduler_db_dismiss(id);
    if (result == 0) {
-      LOG_INFO("scheduler: dismissed event %lld", (long long)id);
+      OLOG_INFO("scheduler: dismissed event %lld", (long long)id);
 
       /* Schedule next occurrence for recurring events */
       sched_event_t dismissed;
@@ -1281,12 +1282,12 @@ int scheduler_snooze(int64_t event_id, int snooze_minutes) {
 
    /* Check max snooze count */
    if (current_snooze >= max_snooze) {
-      LOG_WARNING("scheduler: max snooze count (%d) reached for event %lld", max_snooze,
-                  (long long)id);
+      OLOG_WARNING("scheduler: max snooze count (%d) reached for event %lld", max_snooze,
+                   (long long)id);
       /* Already cleared ringing state, just dismiss in DB */
       scheduler_stop_alarm_sound();
       scheduler_db_dismiss(id);
-      LOG_INFO("scheduler: dismissed event %lld (max snooze reached)", (long long)id);
+      OLOG_INFO("scheduler: dismissed event %lld (max snooze reached)", (long long)id);
 
 #ifdef ENABLE_WEBUI
       sched_event_t updated;
@@ -1310,7 +1311,7 @@ int scheduler_snooze(int64_t event_id, int snooze_minutes) {
    if (result == 0) {
       /* Wake scheduler to recalculate next fire time */
       scheduler_notify_new_event();
-      LOG_INFO("scheduler: snoozed event %lld for %d minutes", (long long)id, snooze_minutes);
+      OLOG_INFO("scheduler: snoozed event %lld for %d minutes", (long long)id, snooze_minutes);
 
 #ifdef ENABLE_WEBUI
       sched_event_t updated;

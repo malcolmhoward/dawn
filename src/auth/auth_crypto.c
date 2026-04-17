@@ -45,19 +45,19 @@ static unsigned char s_csrf_secret[crypto_auth_KEYBYTES];
 
 int auth_crypto_init(void) {
    if (s_initialized) {
-      LOG_WARNING("auth_crypto_init: already initialized");
+      OLOG_WARNING("auth_crypto_init: already initialized");
       return AUTH_CRYPTO_SUCCESS;
    }
 
    /* Initialize libsodium */
    if (sodium_init() < 0) {
-      LOG_ERROR("auth_crypto_init: sodium_init() failed");
+      OLOG_ERROR("auth_crypto_init: sodium_init() failed");
       return AUTH_CRYPTO_FAILURE;
    }
 
    /* Initialize hash semaphore */
    if (sem_init(&s_hash_semaphore, 0, AUTH_CONCURRENT_HASH_LIMIT) != 0) {
-      LOG_ERROR("auth_crypto_init: sem_init() failed: %s", strerror(errno));
+      OLOG_ERROR("auth_crypto_init: sem_init() failed: %s", strerror(errno));
       return AUTH_CRYPTO_FAILURE;
    }
 
@@ -67,11 +67,11 @@ int auth_crypto_init(void) {
    s_initialized = true;
 
 #ifdef PLATFORM_RPI
-   LOG_INFO("auth_crypto_init: initialized (Pi mode: %dMB/%d iterations)",
-            AUTH_MEMLIMIT / (1024 * 1024), AUTH_OPSLIMIT);
+   OLOG_INFO("auth_crypto_init: initialized (Pi mode: %dMB/%d iterations)",
+             AUTH_MEMLIMIT / (1024 * 1024), AUTH_OPSLIMIT);
 #else
-   LOG_INFO("auth_crypto_init: initialized (Jetson mode: %dMB/%d iterations)",
-            AUTH_MEMLIMIT / (1024 * 1024), AUTH_OPSLIMIT);
+   OLOG_INFO("auth_crypto_init: initialized (Jetson mode: %dMB/%d iterations)",
+             AUTH_MEMLIMIT / (1024 * 1024), AUTH_OPSLIMIT);
 #endif
 
    return AUTH_CRYPTO_SUCCESS;
@@ -89,17 +89,17 @@ void auth_crypto_shutdown(void) {
 
    s_initialized = false;
 
-   LOG_INFO("auth_crypto_shutdown: complete");
+   OLOG_INFO("auth_crypto_shutdown: complete");
 }
 
 int auth_hash_password(const char *password, char hash_out[AUTH_HASH_LEN]) {
    if (!s_initialized) {
-      LOG_ERROR("auth_hash_password: not initialized");
+      OLOG_ERROR("auth_hash_password: not initialized");
       return AUTH_CRYPTO_FAILURE;
    }
 
    if (!password || !hash_out) {
-      LOG_ERROR("auth_hash_password: NULL argument");
+      OLOG_ERROR("auth_hash_password: NULL argument");
       return AUTH_CRYPTO_FAILURE;
    }
 
@@ -109,17 +109,17 @@ int auth_hash_password(const char *password, char hash_out[AUTH_HASH_LEN]) {
    /* Try to acquire hash slot with timeout */
    struct timespec timeout;
    if (clock_gettime(CLOCK_REALTIME, &timeout) != 0) {
-      LOG_ERROR("auth_hash_password: clock_gettime() failed");
+      OLOG_ERROR("auth_hash_password: clock_gettime() failed");
       return AUTH_CRYPTO_FAILURE;
    }
    timeout.tv_sec += AUTH_HASH_TIMEOUT_SEC;
 
    if (sem_timedwait(&s_hash_semaphore, &timeout) != 0) {
       if (errno == ETIMEDOUT) {
-         LOG_WARNING("auth_hash_password: semaphore timeout - system under load");
+         OLOG_WARNING("auth_hash_password: semaphore timeout - system under load");
          return AUTH_CRYPTO_BUSY;
       }
-      LOG_ERROR("auth_hash_password: sem_timedwait() failed: %s", strerror(errno));
+      OLOG_ERROR("auth_hash_password: sem_timedwait() failed: %s", strerror(errno));
       return AUTH_CRYPTO_FAILURE;
    }
 
@@ -131,7 +131,7 @@ int auth_hash_password(const char *password, char hash_out[AUTH_HASH_LEN]) {
    sem_post(&s_hash_semaphore);
 
    if (result != 0) {
-      LOG_ERROR("auth_hash_password: crypto_pwhash_str() failed (OOM likely)");
+      OLOG_ERROR("auth_hash_password: crypto_pwhash_str() failed (OOM likely)");
       sodium_memzero(hash_out, AUTH_HASH_LEN);
       return AUTH_CRYPTO_OOM;
    }
@@ -141,12 +141,12 @@ int auth_hash_password(const char *password, char hash_out[AUTH_HASH_LEN]) {
 
 bool auth_verify_password(const char *stored_hash, const char *password) {
    if (!s_initialized) {
-      LOG_ERROR("auth_verify_password: not initialized");
+      OLOG_ERROR("auth_verify_password: not initialized");
       return false;
    }
 
    if (!stored_hash || !password) {
-      LOG_ERROR("auth_verify_password: NULL argument");
+      OLOG_ERROR("auth_verify_password: NULL argument");
       return false;
    }
 
@@ -162,12 +162,12 @@ bool auth_verify_password(const char *stored_hash, const char *password) {
 
 int auth_generate_token(char token_out[AUTH_TOKEN_LEN]) {
    if (!s_initialized) {
-      LOG_ERROR("auth_generate_token: not initialized");
+      OLOG_ERROR("auth_generate_token: not initialized");
       return AUTH_CRYPTO_FAILURE;
    }
 
    if (!token_out) {
-      LOG_ERROR("auth_generate_token: NULL argument");
+      OLOG_ERROR("auth_generate_token: NULL argument");
       return AUTH_CRYPTO_FAILURE;
    }
 
@@ -215,12 +215,12 @@ void auth_secure_zero(void *buf, size_t len) {
 
 int auth_generate_csrf_token(char token_out[AUTH_CSRF_TOKEN_LEN]) {
    if (!s_initialized) {
-      LOG_ERROR("auth_generate_csrf_token: not initialized");
+      OLOG_ERROR("auth_generate_csrf_token: not initialized");
       return AUTH_CRYPTO_FAILURE;
    }
 
    if (!token_out) {
-      LOG_ERROR("auth_generate_csrf_token: NULL argument");
+      OLOG_ERROR("auth_generate_csrf_token: NULL argument");
       return AUTH_CRYPTO_FAILURE;
    }
 
@@ -262,7 +262,7 @@ int auth_generate_csrf_token(char token_out[AUTH_CSRF_TOKEN_LEN]) {
 
 bool auth_verify_csrf_token(const char *token) {
    if (!s_initialized) {
-      LOG_ERROR("auth_verify_csrf_token: not initialized");
+      OLOG_ERROR("auth_verify_csrf_token: not initialized");
       return false;
    }
 
@@ -273,7 +273,7 @@ bool auth_verify_csrf_token(const char *token) {
    /* Check token length */
    size_t token_len = strlen(token);
    if (token_len != AUTH_CSRF_TOKEN_LEN - 1) {
-      LOG_WARNING("auth_verify_csrf_token: invalid token length");
+      OLOG_WARNING("auth_verify_csrf_token: invalid token length");
       return false;
    }
 
@@ -281,7 +281,7 @@ bool auth_verify_csrf_token(const char *token) {
    unsigned char binary_token[CSRF_BINARY_LEN];
    if (sodium_hex2bin(binary_token, sizeof(binary_token), token, token_len, NULL, NULL, NULL) !=
        0) {
-      LOG_WARNING("auth_verify_csrf_token: invalid hex encoding");
+      OLOG_WARNING("auth_verify_csrf_token: invalid hex encoding");
       return false;
    }
 
@@ -292,7 +292,7 @@ bool auth_verify_csrf_token(const char *token) {
    /* Verify HMAC (constant-time) */
    if (crypto_auth_verify(received_mac, msg, CSRF_TIMESTAMP_LEN + CSRF_NONCE_LEN, s_csrf_secret) !=
        0) {
-      LOG_WARNING("auth_verify_csrf_token: HMAC verification failed");
+      OLOG_WARNING("auth_verify_csrf_token: HMAC verification failed");
       sodium_memzero(binary_token, sizeof(binary_token));
       return false;
    }
@@ -305,7 +305,7 @@ bool auth_verify_csrf_token(const char *token) {
 
    uint64_t now = (uint64_t)time(NULL);
    if (timestamp > now || (now - timestamp) > AUTH_CSRF_TIMEOUT_SEC) {
-      LOG_WARNING("auth_verify_csrf_token: token expired");
+      OLOG_WARNING("auth_verify_csrf_token: token expired");
       sodium_memzero(binary_token, sizeof(binary_token));
       return false;
    }
@@ -319,7 +319,7 @@ bool auth_verify_csrf_token(const char *token) {
 bool auth_verify_csrf_token_extract_nonce(const char *token,
                                           unsigned char nonce_out[AUTH_CSRF_NONCE_SIZE]) {
    if (!s_initialized) {
-      LOG_ERROR("auth_verify_csrf_token_extract_nonce: not initialized");
+      OLOG_ERROR("auth_verify_csrf_token_extract_nonce: not initialized");
       return false;
    }
 
@@ -330,7 +330,7 @@ bool auth_verify_csrf_token_extract_nonce(const char *token,
    /* Check token length */
    size_t token_len = strlen(token);
    if (token_len != AUTH_CSRF_TOKEN_LEN - 1) {
-      LOG_WARNING("auth_verify_csrf_token_extract_nonce: invalid token length");
+      OLOG_WARNING("auth_verify_csrf_token_extract_nonce: invalid token length");
       return false;
    }
 
@@ -338,7 +338,7 @@ bool auth_verify_csrf_token_extract_nonce(const char *token,
    unsigned char binary_token[CSRF_BINARY_LEN];
    if (sodium_hex2bin(binary_token, sizeof(binary_token), token, token_len, NULL, NULL, NULL) !=
        0) {
-      LOG_WARNING("auth_verify_csrf_token_extract_nonce: invalid hex encoding");
+      OLOG_WARNING("auth_verify_csrf_token_extract_nonce: invalid hex encoding");
       return false;
    }
 
@@ -350,7 +350,7 @@ bool auth_verify_csrf_token_extract_nonce(const char *token,
    /* Verify HMAC (constant-time) */
    if (crypto_auth_verify(received_mac, msg, CSRF_TIMESTAMP_LEN + CSRF_NONCE_LEN, s_csrf_secret) !=
        0) {
-      LOG_WARNING("auth_verify_csrf_token_extract_nonce: HMAC verification failed");
+      OLOG_WARNING("auth_verify_csrf_token_extract_nonce: HMAC verification failed");
       sodium_memzero(binary_token, sizeof(binary_token));
       return false;
    }
@@ -364,7 +364,7 @@ bool auth_verify_csrf_token_extract_nonce(const char *token,
 
    uint64_t now = (uint64_t)time(NULL);
    if (timestamp > now || (now - timestamp) > AUTH_CSRF_TIMEOUT_SEC) {
-      LOG_WARNING("auth_verify_csrf_token_extract_nonce: token expired");
+      OLOG_WARNING("auth_verify_csrf_token_extract_nonce: token expired");
       sodium_memzero(binary_token, sizeof(binary_token));
       return false;
    }

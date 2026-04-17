@@ -78,9 +78,9 @@ static void migrate_key_file(const char *new_path) {
    if (stat(old_path, &st) == 0 && stat(new_path, &st) != 0) {
       /* Old key exists, new one doesn't — rename it */
       if (rename(old_path, new_path) == 0) {
-         LOG_INFO("crypto_store: migrated caldav.key → dawn.key");
+         OLOG_INFO("crypto_store: migrated caldav.key → dawn.key");
       } else {
-         LOG_WARNING("crypto_store: failed to rename caldav.key: %s", strerror(errno));
+         OLOG_WARNING("crypto_store: failed to rename caldav.key: %s", strerror(errno));
       }
    }
 }
@@ -91,7 +91,7 @@ static void migrate_key_file(const char *new_path) {
 
 static void crypto_init_once(void) {
    if (sodium_init() < 0) {
-      LOG_ERROR("crypto_store: sodium_init failed");
+      OLOG_ERROR("crypto_store: sodium_init failed");
       s_crypto_error = 1;
       return;
    }
@@ -111,7 +111,7 @@ static void crypto_init_once(void) {
          s_crypto_ready = true;
          return;
       }
-      LOG_WARNING("crypto_store: key file truncated, regenerating");
+      OLOG_WARNING("crypto_store: key file truncated, regenerating");
    }
 
    /* Generate new key */
@@ -121,19 +121,19 @@ static void crypto_init_once(void) {
    fp = fopen(key_path, "wb");
    umask(old_umask);
    if (!fp) {
-      LOG_ERROR("crypto_store: cannot write key file: %s", strerror(errno));
+      OLOG_ERROR("crypto_store: cannot write key file: %s", strerror(errno));
       s_crypto_error = 1;
       return;
    }
    if (fwrite(s_crypto_key, 1, sizeof(s_crypto_key), fp) != sizeof(s_crypto_key)) {
-      LOG_ERROR("crypto_store: short write to key file");
+      OLOG_ERROR("crypto_store: short write to key file");
       fclose(fp);
       s_crypto_error = 1;
       return;
    }
    fclose(fp);
    sodium_mlock(s_crypto_key, sizeof(s_crypto_key));
-   LOG_INFO("crypto_store: generated new encryption key");
+   OLOG_INFO("crypto_store: generated new encryption key");
    s_crypto_ready = true;
 }
 
@@ -162,8 +162,8 @@ int crypto_store_encrypt(const void *plaintext,
 
    size_t needed = crypto_secretbox_NONCEBYTES + crypto_secretbox_MACBYTES + pt_len;
    if (needed > out_len) {
-      LOG_ERROR("crypto_store: output buffer too small (%zu needed, %zu available)", needed,
-                out_len);
+      OLOG_ERROR("crypto_store: output buffer too small (%zu needed, %zu available)", needed,
+                 out_len);
       return 1;
    }
 
@@ -173,7 +173,7 @@ int crypto_store_encrypt(const void *plaintext,
    randombytes_buf(nonce, crypto_secretbox_NONCEBYTES);
    if (crypto_secretbox_easy(ct, (const unsigned char *)plaintext, pt_len, nonce, s_crypto_key) !=
        0) {
-      LOG_ERROR("crypto_store: encryption failed");
+      OLOG_ERROR("crypto_store: encryption failed");
       return 1;
    }
 
@@ -193,7 +193,7 @@ int crypto_store_decrypt(const unsigned char *ciphertext,
       return 1;
 
    if (ct_len <= crypto_secretbox_NONCEBYTES + crypto_secretbox_MACBYTES) {
-      LOG_ERROR("crypto_store: ciphertext too short");
+      OLOG_ERROR("crypto_store: ciphertext too short");
       return 1;
    }
 
@@ -203,13 +203,13 @@ int crypto_store_decrypt(const unsigned char *ciphertext,
    size_t pt_len = ct_data_len - crypto_secretbox_MACBYTES;
 
    if (pt_len > out_len) {
-      LOG_ERROR("crypto_store: output buffer too small for decrypted data");
+      OLOG_ERROR("crypto_store: output buffer too small for decrypted data");
       return 1;
    }
 
    if (crypto_secretbox_open_easy((unsigned char *)out, ct, ct_data_len, nonce, s_crypto_key) !=
        0) {
-      LOG_ERROR("crypto_store: decryption failed (wrong key or corrupt data)");
+      OLOG_ERROR("crypto_store: decryption failed (wrong key or corrupt data)");
       return 1;
    }
 

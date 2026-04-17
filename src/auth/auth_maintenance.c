@@ -51,10 +51,10 @@ static void *maintenance_thread_func(void *arg) {
 
    /* Lower thread priority - nice(10) for background work */
    if (nice(10) == -1) {
-      LOG_WARNING("auth_maintenance: failed to set nice level");
+      OLOG_WARNING("auth_maintenance: failed to set nice level");
    }
 
-   LOG_INFO("auth_maintenance: thread started (interval=%ds)", AUTH_MAINTENANCE_INTERVAL_SEC);
+   OLOG_INFO("auth_maintenance: thread started (interval=%ds)", AUTH_MAINTENANCE_INTERVAL_SEC);
 
    while (s_running) {
       /* Sleep in small increments for responsive shutdown */
@@ -69,21 +69,21 @@ static void *maintenance_thread_func(void *arg) {
       /* Run cleanup of expired data */
       int cleanup_result = auth_db_run_cleanup();
       if (cleanup_result != AUTH_DB_SUCCESS) {
-         LOG_WARNING("auth_maintenance: cleanup failed");
+         OLOG_WARNING("auth_maintenance: cleanup failed");
       }
 
       /* Clean up old images past retention period */
       if (image_store_is_ready()) {
          int deleted = image_store_cleanup();
          if (deleted > 0) {
-            LOG_INFO("auth_maintenance: cleaned %d old images", deleted);
+            OLOG_INFO("auth_maintenance: cleaned %d old images", deleted);
          }
       }
 
       /* Passive WAL checkpoint (non-blocking) */
       int checkpoint_result = auth_db_checkpoint_passive();
       if (checkpoint_result != AUTH_DB_SUCCESS) {
-         LOG_WARNING("auth_maintenance: checkpoint failed");
+         OLOG_WARNING("auth_maintenance: checkpoint failed");
       }
 
       /* Save and clear idle session conversations (satellites, WebUI) */
@@ -97,7 +97,7 @@ static void *maintenance_thread_func(void *arg) {
       memory_run_nightly_decay();
    }
 
-   LOG_INFO("auth_maintenance: thread stopped");
+   OLOG_INFO("auth_maintenance: thread stopped");
    return NULL;
 }
 
@@ -106,7 +106,7 @@ int auth_maintenance_start(void) {
 
    if (s_running) {
       pthread_mutex_unlock(&s_mutex);
-      LOG_WARNING("auth_maintenance: already running");
+      OLOG_WARNING("auth_maintenance: already running");
       return 0;
    }
 
@@ -116,7 +116,7 @@ int auth_maintenance_start(void) {
    if (rc != 0) {
       s_running = false;
       pthread_mutex_unlock(&s_mutex);
-      LOG_ERROR("auth_maintenance: failed to create thread: %d", rc);
+      OLOG_ERROR("auth_maintenance: failed to create thread: %d", rc);
       return -1;
    }
 

@@ -144,8 +144,8 @@ int try_tool_registry_match(const char *input,
             out_topic[topic_size - 1] = '\0';
          }
 
-         LOG_INFO("TREG MATCH: \"%s\" → tool=%s, action=%s, value=%s", input, tool->name, action,
-                  value[0] ? value : "(none)");
+         OLOG_INFO("TREG MATCH: \"%s\" → tool=%s, action=%s, value=%s", input, tool->name, action,
+                   value[0] ? value : "(none)");
 
          return 1;
       }

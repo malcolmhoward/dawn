@@ -127,11 +127,11 @@ static int secure_compare(const char *a, const char *b, size_t len);
 
 int admin_socket_init(void) {
    if (s_thread_running) {
-      LOG_WARNING("Admin socket already running");
+      OLOG_WARNING("Admin socket already running");
       return 0;
    }
 
-   LOG_INFO("Initializing admin socket...");
+   OLOG_INFO("Initializing admin socket...");
 
    /* Load any existing lockout state from previous run */
    load_lockout_state();
@@ -141,7 +141,7 @@ int admin_socket_init(void) {
    bool skip_token = (user_count > 0);
 
    if (skip_token) {
-      LOG_INFO("Admin user(s) exist, skipping setup token generation");
+      OLOG_INFO("Admin user(s) exist, skipping setup token generation");
       /* Mark token as invalid so validation fails */
       pthread_mutex_lock(&s_token_mutex);
       s_token_state.valid = false;
@@ -149,21 +149,21 @@ int admin_socket_init(void) {
    } else {
       /* Generate setup token using getrandom() - no fallback */
       if (generate_setup_token() != 0) {
-         LOG_ERROR("Failed to generate setup token - entropy failure");
+         OLOG_ERROR("Failed to generate setup token - entropy failure");
          return 1;
       }
    }
 
    /* Create shutdown pipe for reliable signal delivery */
    if (pipe(s_shutdown_pipe) != 0) {
-      LOG_ERROR("Failed to create shutdown pipe: %s", strerror(errno));
+      OLOG_ERROR("Failed to create shutdown pipe: %s", strerror(errno));
       return 1;
    }
 
    /* Create listening socket (abstract namespace on Linux) */
    s_listen_fd = create_listening_socket();
    if (s_listen_fd < 0) {
-      LOG_ERROR("Failed to create admin socket");
+      OLOG_ERROR("Failed to create admin socket");
       close(s_shutdown_pipe[0]);
       close(s_shutdown_pipe[1]);
       s_shutdown_pipe[0] = s_shutdown_pipe[1] = -1;
@@ -175,7 +175,7 @@ int admin_socket_init(void) {
 
    /* Start listener thread */
    if (pthread_create(&s_listener_thread, NULL, listener_thread_func, NULL) != 0) {
-      LOG_ERROR("Failed to create admin socket listener thread");
+      OLOG_ERROR("Failed to create admin socket listener thread");
       close(s_listen_fd);
       s_listen_fd = -1;
       close(s_shutdown_pipe[0]);
@@ -203,7 +203,7 @@ int admin_socket_init(void) {
       fflush(stderr);
    }
 
-   LOG_INFO("Admin socket initialized successfully");
+   OLOG_INFO("Admin socket initialized successfully");
    return 0;
 }
 
@@ -212,7 +212,7 @@ void admin_socket_shutdown(void) {
       return;
    }
 
-   LOG_INFO("Stopping admin socket...");
+   OLOG_INFO("Stopping admin socket...");
 
    /* Signal shutdown */
    s_shutdown_requested = true;
@@ -222,7 +222,7 @@ void admin_socket_shutdown(void) {
       char byte = 1;
       ssize_t written = write(s_shutdown_pipe[1], &byte, 1);
       if (written != 1) {
-         LOG_WARNING("Shutdown pipe write failed: %s", strerror(errno));
+         OLOG_WARNING("Shutdown pipe write failed: %s", strerror(errno));
       }
    }
 
@@ -234,7 +234,7 @@ void admin_socket_shutdown(void) {
 
    int join_result = pthread_timedjoin_np(s_listener_thread, NULL, &timeout);
    if (join_result == ETIMEDOUT) {
-      LOG_WARNING("Admin socket thread did not exit in time, cancelling...");
+      OLOG_WARNING("Admin socket thread did not exit in time, cancelling...");
       pthread_cancel(s_listener_thread);
       pthread_join(s_listener_thread, NULL);
    }
@@ -266,7 +266,7 @@ void admin_socket_shutdown(void) {
    s_token_state.valid = false;
    pthread_mutex_unlock(&s_token_mutex);
 
-   LOG_INFO("Admin socket stopped");
+   OLOG_INFO("Admin socket stopped");
 }
 
 bool admin_socket_is_running(void) {
@@ -297,7 +297,7 @@ int admin_socket_get_setup_token(char *buf, size_t buflen) {
 static int create_listening_socket(void) {
    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
    if (fd < 0) {
-      LOG_ERROR("Failed to create Unix socket: %s", strerror(errno));
+      OLOG_ERROR("Failed to create Unix socket: %s", strerror(errno));
       return -1;
    }
 
@@ -315,19 +315,19 @@ static int create_listening_socket(void) {
                         strlen(ADMIN_SOCKET_ABSTRACT_NAME);
 
    if (bind(fd, (struct sockaddr *)&addr, addr_len) != 0) {
-      LOG_ERROR("Failed to bind admin socket: %s", strerror(errno));
+      OLOG_ERROR("Failed to bind admin socket: %s", strerror(errno));
       close(fd);
       return -1;
    }
 
    /* Only allow one connection at a time */
    if (listen(fd, ADMIN_MAX_CONNECTIONS) != 0) {
-      LOG_ERROR("Failed to listen on admin socket: %s", strerror(errno));
+      OLOG_ERROR("Failed to listen on admin socket: %s", strerror(errno));
       close(fd);
       return -1;
    }
 
-   LOG_INFO("Admin socket listening (abstract: @%s)", ADMIN_SOCKET_ABSTRACT_NAME);
+   OLOG_INFO("Admin socket listening (abstract: @%s)", ADMIN_SOCKET_ABSTRACT_NAME);
    return fd;
 }
 
@@ -342,8 +342,8 @@ static int generate_setup_token(void) {
    /* Use getrandom() with no fallback - fail closed on entropy failure */
    ssize_t ret = getrandom(entropy, sizeof(entropy), 0);
    if (ret != sizeof(entropy)) {
-      LOG_ERROR("getrandom() failed: %s (got %zd bytes, expected %zu)", strerror(errno), ret,
-                sizeof(entropy));
+      OLOG_ERROR("getrandom() failed: %s (got %zd bytes, expected %zu)", strerror(errno), ret,
+                 sizeof(entropy));
       return 1;
    }
 
@@ -418,20 +418,20 @@ static int load_lockout_state(void) {
    }
 
    s_token_state.failed_attempts = state.attempt_count;
-   LOG_INFO("Loaded lockout state: %d failed attempts", s_token_state.failed_attempts);
+   OLOG_INFO("Loaded lockout state: %d failed attempts", s_token_state.failed_attempts);
    return 0;
 }
 
 static int save_lockout_state(void) {
    /* Create directory if needed */
    if (!path_ensure_parent_dir_mode(SETUP_TOKEN_LOCKOUT_FILE, 0700)) {
-      LOG_WARNING("Failed to create lockout state directory");
+      OLOG_WARNING("Failed to create lockout state directory");
       return 1;
    }
 
    int fd = open(SETUP_TOKEN_LOCKOUT_FILE, O_WRONLY | O_CREAT | O_TRUNC, 0600);
    if (fd < 0) {
-      LOG_WARNING("Failed to save lockout state: %s", strerror(errno));
+      OLOG_WARNING("Failed to save lockout state: %s", strerror(errno));
       return 1;
    }
 
@@ -447,7 +447,7 @@ static int save_lockout_state(void) {
    close(fd);
 
    if (written != sizeof(state)) {
-      LOG_WARNING("Failed to write complete lockout state");
+      OLOG_WARNING("Failed to write complete lockout state");
       return 1;
    }
 
@@ -464,7 +464,7 @@ static int validate_peer_credentials(int client_fd) {
    socklen_t len = sizeof(cred);
 
    if (getsockopt(client_fd, SOL_SOCKET, SO_PEERCRED, &cred, &len) != 0) {
-      LOG_ERROR("Failed to get peer credentials: %s", strerror(errno));
+      OLOG_ERROR("Failed to get peer credentials: %s", strerror(errno));
       return 1;
    }
 
@@ -473,7 +473,7 @@ static int validate_peer_credentials(int client_fd) {
    gid_t daemon_gid = getgid();
 
    if (cred.uid == 0 || cred.uid == daemon_uid) {
-      LOG_INFO("Admin socket client authenticated: uid=%d, pid=%d", cred.uid, cred.pid);
+      OLOG_INFO("Admin socket client authenticated: uid=%d, pid=%d", cred.uid, cred.pid);
       return 0;
    }
 
@@ -499,8 +499,8 @@ static int validate_peer_credentials(int client_fd) {
 
       for (int i = 0; i < ngroups; i++) {
          if (groups[i] == daemon_gid) {
-            LOG_INFO("Admin socket client authenticated via group: uid=%d, gid=%d, pid=%d",
-                     cred.uid, daemon_gid, cred.pid);
+            OLOG_INFO("Admin socket client authenticated via group: uid=%d, gid=%d, pid=%d",
+                      cred.uid, daemon_gid, cred.pid);
             if (groups != groups_stack)
                free(groups);
             return 0;
@@ -511,7 +511,7 @@ static int validate_peer_credentials(int client_fd) {
          free(groups);
    }
 
-   LOG_WARNING(
+   OLOG_WARNING(
        "Admin socket connection rejected: unauthorized UID %d (expected 0, %d, or group %d)",
        cred.uid, daemon_uid, daemon_gid);
    return 1;
@@ -587,14 +587,14 @@ static int handle_validate_token(int client_fd, const char *payload, uint16_t pa
    /* Check rate limit first */
    if (s_token_state.failed_attempts >= SETUP_TOKEN_MAX_ATTEMPTS) {
       pthread_mutex_unlock(&s_token_mutex);
-      LOG_WARNING("Setup token rate limited");
+      OLOG_WARNING("Setup token rate limited");
       return send_response(client_fd, ADMIN_RESP_RATE_LIMITED);
    }
 
    /* Check if token is still valid */
    if (!s_token_state.valid) {
       pthread_mutex_unlock(&s_token_mutex);
-      LOG_WARNING("Setup token not available");
+      OLOG_WARNING("Setup token not available");
       return send_response(client_fd, ADMIN_RESP_FAILURE);
    }
 
@@ -602,14 +602,14 @@ static int handle_validate_token(int client_fd, const char *payload, uint16_t pa
    time_t now = time(NULL);
    if (now > s_token_state.expires_at) {
       pthread_mutex_unlock(&s_token_mutex);
-      LOG_WARNING("Setup token expired");
+      OLOG_WARNING("Setup token expired");
       return send_response(client_fd, ADMIN_RESP_FAILURE);
    }
 
    /* Check if already used */
    if (s_token_state.used) {
       pthread_mutex_unlock(&s_token_mutex);
-      LOG_INFO("Setup token already used");
+      OLOG_INFO("Setup token already used");
       return send_response(client_fd, ADMIN_RESP_FAILURE);
    }
 
@@ -619,7 +619,7 @@ static int handle_validate_token(int client_fd, const char *payload, uint16_t pa
       s_token_state.failed_attempts++;
       save_lockout_state();
       pthread_mutex_unlock(&s_token_mutex);
-      LOG_WARNING("Invalid token length: %u (expected %zu)", payload_len, expected_len);
+      OLOG_WARNING("Invalid token length: %u (expected %zu)", payload_len, expected_len);
       return send_response(client_fd, ADMIN_RESP_FAILURE);
    }
 
@@ -628,8 +628,8 @@ static int handle_validate_token(int client_fd, const char *payload, uint16_t pa
       s_token_state.failed_attempts++;
       save_lockout_state();
       pthread_mutex_unlock(&s_token_mutex);
-      LOG_WARNING("Invalid setup token attempt (%d/%d)", s_token_state.failed_attempts,
-                  SETUP_TOKEN_MAX_ATTEMPTS);
+      OLOG_WARNING("Invalid setup token attempt (%d/%d)", s_token_state.failed_attempts,
+                   SETUP_TOKEN_MAX_ATTEMPTS);
       return send_response(client_fd, ADMIN_RESP_FAILURE);
    }
 
@@ -637,7 +637,7 @@ static int handle_validate_token(int client_fd, const char *payload, uint16_t pa
    s_token_state.used = true;
    pthread_mutex_unlock(&s_token_mutex);
 
-   LOG_INFO("Setup token validated successfully");
+   OLOG_INFO("Setup token validated successfully");
    return send_response(client_fd, ADMIN_RESP_SUCCESS);
 }
 
@@ -652,7 +652,7 @@ static int handle_validate_token(int client_fd, const char *payload, uint16_t pa
 static int handle_create_user(int client_fd, const char *payload, uint16_t payload_len) {
    /* Minimum payload size: header struct */
    if (payload_len < sizeof(admin_create_user_payload_t)) {
-      LOG_WARNING("CREATE_USER payload too small: %u", payload_len);
+      OLOG_WARNING("CREATE_USER payload too small: %u", payload_len);
       return send_response(client_fd, ADMIN_RESP_FAILURE);
    }
 
@@ -660,12 +660,12 @@ static int handle_create_user(int client_fd, const char *payload, uint16_t paylo
 
    /* Validate lengths */
    if (hdr->username_len == 0 || hdr->username_len > ADMIN_USERNAME_MAX_LEN) {
-      LOG_WARNING("CREATE_USER invalid username length: %u", hdr->username_len);
+      OLOG_WARNING("CREATE_USER invalid username length: %u", hdr->username_len);
       return send_response(client_fd, ADMIN_RESP_FAILURE);
    }
 
    if (hdr->password_len < ADMIN_PASSWORD_MIN_LEN || hdr->password_len > ADMIN_PASSWORD_MAX_LEN) {
-      LOG_WARNING("CREATE_USER invalid password length: %u", hdr->password_len);
+      OLOG_WARNING("CREATE_USER invalid password length: %u", hdr->password_len);
       return send_response(client_fd, ADMIN_RESP_FAILURE);
    }
 
@@ -673,8 +673,8 @@ static int handle_create_user(int client_fd, const char *payload, uint16_t paylo
    size_t expected_len = sizeof(admin_create_user_payload_t) + hdr->username_len +
                          hdr->password_len;
    if (payload_len != expected_len) {
-      LOG_WARNING("CREATE_USER payload size mismatch: got %u, expected %zu", payload_len,
-                  expected_len);
+      OLOG_WARNING("CREATE_USER payload size mismatch: got %u, expected %zu", payload_len,
+                   expected_len);
       return send_response(client_fd, ADMIN_RESP_FAILURE);
    }
 
@@ -697,7 +697,7 @@ static int handle_create_user(int client_fd, const char *payload, uint16_t paylo
    if (s_token_state.failed_attempts >= SETUP_TOKEN_MAX_ATTEMPTS) {
       pthread_mutex_unlock(&s_token_mutex);
       auth_secure_zero(password, sizeof(password));
-      LOG_WARNING("CREATE_USER rate limited");
+      OLOG_WARNING("CREATE_USER rate limited");
       return send_response(client_fd, ADMIN_RESP_RATE_LIMITED);
    }
 
@@ -705,7 +705,7 @@ static int handle_create_user(int client_fd, const char *payload, uint16_t paylo
    if (!s_token_state.valid) {
       pthread_mutex_unlock(&s_token_mutex);
       auth_secure_zero(password, sizeof(password));
-      LOG_WARNING("CREATE_USER: setup token not available");
+      OLOG_WARNING("CREATE_USER: setup token not available");
       return send_response(client_fd, ADMIN_RESP_FAILURE);
    }
 
@@ -714,7 +714,7 @@ static int handle_create_user(int client_fd, const char *payload, uint16_t paylo
    if (now > s_token_state.expires_at) {
       pthread_mutex_unlock(&s_token_mutex);
       auth_secure_zero(password, sizeof(password));
-      LOG_WARNING("CREATE_USER: setup token expired");
+      OLOG_WARNING("CREATE_USER: setup token expired");
       return send_response(client_fd, ADMIN_RESP_FAILURE);
    }
 
@@ -722,7 +722,7 @@ static int handle_create_user(int client_fd, const char *payload, uint16_t paylo
    if (s_token_state.used) {
       pthread_mutex_unlock(&s_token_mutex);
       auth_secure_zero(password, sizeof(password));
-      LOG_INFO("CREATE_USER: setup token already used");
+      OLOG_INFO("CREATE_USER: setup token already used");
       return send_response(client_fd, ADMIN_RESP_FAILURE);
    }
 
@@ -737,8 +737,8 @@ static int handle_create_user(int client_fd, const char *payload, uint16_t paylo
       save_lockout_state();
       pthread_mutex_unlock(&s_token_mutex);
       auth_secure_zero(password, sizeof(password));
-      LOG_WARNING("CREATE_USER: invalid token (%d/%d)", s_token_state.failed_attempts,
-                  SETUP_TOKEN_MAX_ATTEMPTS);
+      OLOG_WARNING("CREATE_USER: invalid token (%d/%d)", s_token_state.failed_attempts,
+                   SETUP_TOKEN_MAX_ATTEMPTS);
       return send_response(client_fd, ADMIN_RESP_FAILURE);
    }
 
@@ -752,7 +752,7 @@ static int handle_create_user(int client_fd, const char *payload, uint16_t paylo
 
    if (hash_result != AUTH_CRYPTO_SUCCESS) {
       pthread_mutex_unlock(&s_token_mutex);
-      LOG_ERROR("CREATE_USER: password hashing failed: %d", hash_result);
+      OLOG_ERROR("CREATE_USER: password hashing failed: %d", hash_result);
       return send_response(client_fd, ADMIN_RESP_SERVICE_ERROR);
    }
 
@@ -765,9 +765,9 @@ static int handle_create_user(int client_fd, const char *payload, uint16_t paylo
    if (db_result != AUTH_DB_SUCCESS) {
       pthread_mutex_unlock(&s_token_mutex);
       if (db_result == AUTH_DB_DUPLICATE) {
-         LOG_WARNING("CREATE_USER: username already exists: %s", username);
+         OLOG_WARNING("CREATE_USER: username already exists: %s", username);
       } else {
-         LOG_ERROR("CREATE_USER: database error: %d", db_result);
+         OLOG_ERROR("CREATE_USER: database error: %d", db_result);
       }
       return send_response(client_fd, ADMIN_RESP_FAILURE);
    }
@@ -781,7 +781,7 @@ static int handle_create_user(int client_fd, const char *payload, uint16_t paylo
 
    pthread_mutex_unlock(&s_token_mutex);
 
-   LOG_INFO("CREATE_USER: user '%s' created successfully (admin=%d)", username, is_admin);
+   OLOG_INFO("CREATE_USER: user '%s' created successfully (admin=%d)", username, is_admin);
    return send_response(client_fd, ADMIN_RESP_SUCCESS);
 }
 
@@ -997,7 +997,7 @@ static int handle_delete_user(int client_fd, const char *payload, uint16_t paylo
    /* Verify admin auth */
    size_t auth_size = 0;
    if (verify_admin_auth(payload, payload_len, &auth_size) != 0) {
-      LOG_WARNING("DELETE_USER: admin auth failed");
+      OLOG_WARNING("DELETE_USER: admin auth failed");
       return send_response(client_fd, ADMIN_RESP_UNAUTHORIZED);
    }
 
@@ -1006,7 +1006,7 @@ static int handle_delete_user(int client_fd, const char *payload, uint16_t paylo
    uint16_t target_len = payload_len - (uint16_t)auth_size;
 
    if (target_len == 0 || target_len > ADMIN_USERNAME_MAX_LEN) {
-      LOG_WARNING("DELETE_USER: invalid target username length");
+      OLOG_WARNING("DELETE_USER: invalid target username length");
       return send_response(client_fd, ADMIN_RESP_FAILURE);
    }
 
@@ -1017,18 +1017,18 @@ static int handle_delete_user(int client_fd, const char *payload, uint16_t paylo
    int rc = auth_db_delete_user(target);
 
    if (rc == AUTH_DB_LAST_ADMIN) {
-      LOG_WARNING("DELETE_USER: cannot delete last admin: %s", target);
+      OLOG_WARNING("DELETE_USER: cannot delete last admin: %s", target);
       return send_response(client_fd, ADMIN_RESP_LAST_ADMIN);
    } else if (rc == AUTH_DB_NOT_FOUND) {
-      LOG_WARNING("DELETE_USER: user not found: %s", target);
+      OLOG_WARNING("DELETE_USER: user not found: %s", target);
       return send_response(client_fd, ADMIN_RESP_NOT_FOUND);
    } else if (rc != AUTH_DB_SUCCESS) {
-      LOG_ERROR("DELETE_USER: database error: %d", rc);
+      OLOG_ERROR("DELETE_USER: database error: %d", rc);
       return send_response(client_fd, ADMIN_RESP_SERVICE_ERROR);
    }
 
    auth_db_log_event("USER_DELETED", target, NULL, NULL);
-   LOG_INFO("DELETE_USER: user '%s' deleted", target);
+   OLOG_INFO("DELETE_USER: user '%s' deleted", target);
    return send_response(client_fd, ADMIN_RESP_SUCCESS);
 }
 
@@ -1036,7 +1036,7 @@ static int handle_change_password(int client_fd, const char *payload, uint16_t p
    /* Verify admin auth */
    size_t auth_size = 0;
    if (verify_admin_auth(payload, payload_len, &auth_size) != 0) {
-      LOG_WARNING("CHANGE_PASSWORD: admin auth failed");
+      OLOG_WARNING("CHANGE_PASSWORD: admin auth failed");
       return send_response(client_fd, ADMIN_RESP_UNAUTHORIZED);
    }
 
@@ -1045,7 +1045,7 @@ static int handle_change_password(int client_fd, const char *payload, uint16_t p
    uint16_t rest_len = payload_len - (uint16_t)auth_size;
 
    if (rest_len < 2) {
-      LOG_WARNING("CHANGE_PASSWORD: payload too short");
+      OLOG_WARNING("CHANGE_PASSWORD: payload too short");
       return send_response(client_fd, ADMIN_RESP_FAILURE);
    }
 
@@ -1053,17 +1053,17 @@ static int handle_change_password(int client_fd, const char *payload, uint16_t p
    uint8_t new_pass_len = (uint8_t)rest[1];
 
    if (target_uname_len == 0 || target_uname_len > ADMIN_USERNAME_MAX_LEN) {
-      LOG_WARNING("CHANGE_PASSWORD: invalid username length");
+      OLOG_WARNING("CHANGE_PASSWORD: invalid username length");
       return send_response(client_fd, ADMIN_RESP_FAILURE);
    }
 
    if (new_pass_len < ADMIN_PASSWORD_MIN_LEN || new_pass_len > ADMIN_PASSWORD_MAX_LEN) {
-      LOG_WARNING("CHANGE_PASSWORD: invalid password length");
+      OLOG_WARNING("CHANGE_PASSWORD: invalid password length");
       return send_response(client_fd, ADMIN_RESP_FAILURE);
    }
 
    if (rest_len != 2 + target_uname_len + new_pass_len) {
-      LOG_WARNING("CHANGE_PASSWORD: payload size mismatch");
+      OLOG_WARNING("CHANGE_PASSWORD: payload size mismatch");
       return send_response(client_fd, ADMIN_RESP_FAILURE);
    }
 
@@ -1077,7 +1077,7 @@ static int handle_change_password(int client_fd, const char *payload, uint16_t p
    char new_hash[AUTH_HASH_LEN];
    if (auth_hash_password(new_password, new_hash) != 0) {
       auth_secure_zero(new_password, sizeof(new_password));
-      LOG_ERROR("CHANGE_PASSWORD: failed to hash password");
+      OLOG_ERROR("CHANGE_PASSWORD: failed to hash password");
       return send_response(client_fd, ADMIN_RESP_SERVICE_ERROR);
    }
    auth_secure_zero(new_password, sizeof(new_password));
@@ -1086,15 +1086,15 @@ static int handle_change_password(int client_fd, const char *payload, uint16_t p
    int rc = auth_db_update_password(target, new_hash);
 
    if (rc == AUTH_DB_NOT_FOUND) {
-      LOG_WARNING("CHANGE_PASSWORD: user not found: %s", target);
+      OLOG_WARNING("CHANGE_PASSWORD: user not found: %s", target);
       return send_response(client_fd, ADMIN_RESP_NOT_FOUND);
    } else if (rc != AUTH_DB_SUCCESS) {
-      LOG_ERROR("CHANGE_PASSWORD: database error: %d", rc);
+      OLOG_ERROR("CHANGE_PASSWORD: database error: %d", rc);
       return send_response(client_fd, ADMIN_RESP_SERVICE_ERROR);
    }
 
    auth_db_log_event("PASSWORD_CHANGED", target, NULL, NULL);
-   LOG_INFO("CHANGE_PASSWORD: password changed for '%s'", target);
+   OLOG_INFO("CHANGE_PASSWORD: password changed for '%s'", target);
    return send_response(client_fd, ADMIN_RESP_SUCCESS);
 }
 
@@ -1102,7 +1102,7 @@ static int handle_unlock_user(int client_fd, const char *payload, uint16_t paylo
    /* Verify admin auth */
    size_t auth_size = 0;
    if (verify_admin_auth(payload, payload_len, &auth_size) != 0) {
-      LOG_WARNING("UNLOCK_USER: admin auth failed");
+      OLOG_WARNING("UNLOCK_USER: admin auth failed");
       return send_response(client_fd, ADMIN_RESP_UNAUTHORIZED);
    }
 
@@ -1111,7 +1111,7 @@ static int handle_unlock_user(int client_fd, const char *payload, uint16_t paylo
    uint16_t target_len = payload_len - (uint16_t)auth_size;
 
    if (target_len == 0 || target_len > ADMIN_USERNAME_MAX_LEN) {
-      LOG_WARNING("UNLOCK_USER: invalid target username length");
+      OLOG_WARNING("UNLOCK_USER: invalid target username length");
       return send_response(client_fd, ADMIN_RESP_FAILURE);
    }
 
@@ -1122,15 +1122,15 @@ static int handle_unlock_user(int client_fd, const char *payload, uint16_t paylo
    int rc = auth_db_unlock_user(target);
 
    if (rc == AUTH_DB_NOT_FOUND) {
-      LOG_WARNING("UNLOCK_USER: user not found: %s", target);
+      OLOG_WARNING("UNLOCK_USER: user not found: %s", target);
       return send_response(client_fd, ADMIN_RESP_NOT_FOUND);
    } else if (rc != AUTH_DB_SUCCESS) {
-      LOG_ERROR("UNLOCK_USER: database error: %d", rc);
+      OLOG_ERROR("UNLOCK_USER: database error: %d", rc);
       return send_response(client_fd, ADMIN_RESP_SERVICE_ERROR);
    }
 
    auth_db_log_event("USER_UNLOCKED", target, NULL, NULL);
-   LOG_INFO("UNLOCK_USER: user '%s' unlocked", target);
+   OLOG_INFO("UNLOCK_USER: user '%s' unlocked", target);
    return send_response(client_fd, ADMIN_RESP_SUCCESS);
 }
 
@@ -1630,7 +1630,7 @@ static int handle_unblock_ip(int client_fd, const char *payload, uint16_t payloa
    /* Verify admin auth */
    size_t auth_size = 0;
    if (verify_admin_auth(payload, payload_len, &auth_size) != 0) {
-      LOG_WARNING("UNBLOCK_IP: admin auth failed");
+      OLOG_WARNING("UNBLOCK_IP: admin auth failed");
       return send_response(client_fd, ADMIN_RESP_UNAUTHORIZED);
    }
 
@@ -1642,12 +1642,12 @@ static int handle_unblock_ip(int client_fd, const char *payload, uint16_t payloa
    bool clear_all = false;
 
    if (ip_len == 0) {
-      LOG_WARNING("UNBLOCK_IP: no IP address provided");
+      OLOG_WARNING("UNBLOCK_IP: no IP address provided");
       return send_response(client_fd, ADMIN_RESP_FAILURE);
    }
 
    if (ip_len >= AUTH_IP_MAX) {
-      LOG_WARNING("UNBLOCK_IP: IP address too long");
+      OLOG_WARNING("UNBLOCK_IP: IP address too long");
       return send_response(client_fd, ADMIN_RESP_FAILURE);
    }
 
@@ -1662,7 +1662,7 @@ static int handle_unblock_ip(int client_fd, const char *payload, uint16_t payloa
    int deleted = auth_db_clear_login_attempts(clear_all ? NULL : ip_address);
 
    if (deleted < 0) {
-      LOG_ERROR("UNBLOCK_IP: database error");
+      OLOG_ERROR("UNBLOCK_IP: database error");
       return send_response(client_fd, ADMIN_RESP_SERVICE_ERROR);
    }
 
@@ -1673,10 +1673,10 @@ static int handle_unblock_ip(int client_fd, const char *payload, uint16_t payloa
 
    if (clear_all) {
       auth_db_log_event("IP_UNBLOCKED", NULL, NULL, "All IPs unblocked");
-      LOG_INFO("UNBLOCK_IP: cleared %d login attempts (all IPs)", deleted);
+      OLOG_INFO("UNBLOCK_IP: cleared %d login attempts (all IPs)", deleted);
    } else {
       auth_db_log_event("IP_UNBLOCKED", NULL, ip_address, NULL);
-      LOG_INFO("UNBLOCK_IP: cleared %d login attempts for IP '%s'", deleted, ip_address);
+      OLOG_INFO("UNBLOCK_IP: cleared %d login attempts for IP '%s'", deleted, ip_address);
    }
 
    return send_response(client_fd, ADMIN_RESP_SUCCESS);
@@ -1842,7 +1842,7 @@ static int handle_get_metrics_totals(int client_fd, const char *payload, uint16_
 
    ssize_t written = write(client_fd, data, sizeof(data));
    if (written != sizeof(data)) {
-      LOG_ERROR("Failed to write metrics totals: %zd/%zu", written, sizeof(data));
+      OLOG_ERROR("Failed to write metrics totals: %zd/%zu", written, sizeof(data));
       return -1;
    }
    return 0;
@@ -2045,13 +2045,13 @@ static int handle_delete_conversation(int client_fd, const char *payload, uint16
    /* Verify admin auth */
    size_t auth_size = 0;
    if (verify_admin_auth(payload, payload_len, &auth_size) != 0) {
-      LOG_WARNING("DELETE_CONVERSATION: admin auth failed");
+      OLOG_WARNING("DELETE_CONVERSATION: admin auth failed");
       return send_response(client_fd, ADMIN_RESP_UNAUTHORIZED);
    }
 
    /* Extract conv_id */
    if (payload_len < auth_size + 8) {
-      LOG_WARNING("DELETE_CONVERSATION: payload too short");
+      OLOG_WARNING("DELETE_CONVERSATION: payload too short");
       return send_response(client_fd, ADMIN_RESP_FAILURE);
    }
 
@@ -2062,15 +2062,15 @@ static int handle_delete_conversation(int client_fd, const char *payload, uint16
    int rc = conv_db_delete_admin(conv_id);
 
    if (rc == AUTH_DB_NOT_FOUND) {
-      LOG_WARNING("DELETE_CONVERSATION: conversation %lld not found", (long long)conv_id);
+      OLOG_WARNING("DELETE_CONVERSATION: conversation %lld not found", (long long)conv_id);
       return send_response(client_fd, ADMIN_RESP_NOT_FOUND);
    } else if (rc != AUTH_DB_SUCCESS) {
-      LOG_ERROR("DELETE_CONVERSATION: database error: %d", rc);
+      OLOG_ERROR("DELETE_CONVERSATION: database error: %d", rc);
       return send_response(client_fd, ADMIN_RESP_SERVICE_ERROR);
    }
 
    auth_db_log_event("CONVERSATION_DELETED", NULL, NULL, "Deleted conversation");
-   LOG_INFO("DELETE_CONVERSATION: conversation %lld deleted", (long long)conv_id);
+   OLOG_INFO("DELETE_CONVERSATION: conversation %lld deleted", (long long)conv_id);
    return send_response(client_fd, ADMIN_RESP_SUCCESS);
 }
 
@@ -2227,21 +2227,21 @@ static int handle_client(int client_fd) {
    admin_msg_header_t header;
    ssize_t n = read(client_fd, &header, sizeof(header));
    if (n != sizeof(header)) {
-      LOG_WARNING("Failed to read admin message header");
+      OLOG_WARNING("Failed to read admin message header");
       return 1;
    }
 
    /* Validate protocol version */
    if (header.version != ADMIN_PROTOCOL_VERSION) {
-      LOG_WARNING("Protocol version mismatch: got 0x%02x, expected 0x%02x", header.version,
-                  ADMIN_PROTOCOL_VERSION);
+      OLOG_WARNING("Protocol version mismatch: got 0x%02x, expected 0x%02x", header.version,
+                   ADMIN_PROTOCOL_VERSION);
       send_response(client_fd, ADMIN_RESP_VERSION_MISMATCH);
       return 1;
    }
 
    /* Validate payload length */
    if (header.payload_len > ADMIN_MSG_MAX_PAYLOAD) {
-      LOG_WARNING("Payload too large: %u (max %d)", header.payload_len, ADMIN_MSG_MAX_PAYLOAD);
+      OLOG_WARNING("Payload too large: %u (max %d)", header.payload_len, ADMIN_MSG_MAX_PAYLOAD);
       send_response(client_fd, ADMIN_RESP_FAILURE);
       return 1;
    }
@@ -2251,7 +2251,7 @@ static int handle_client(int client_fd) {
    if (header.payload_len > 0) {
       n = read(client_fd, payload, header.payload_len);
       if (n != header.payload_len) {
-         LOG_WARNING("Failed to read payload: got %zd, expected %u", n, header.payload_len);
+         OLOG_WARNING("Failed to read payload: got %zd, expected %u", n, header.payload_len);
          return 1;
       }
    }
@@ -2341,7 +2341,7 @@ static int handle_client(int client_fd) {
          return handle_music_rescan(client_fd);
 
       default:
-         LOG_WARNING("Unknown message type: 0x%02x", header.msg_type);
+         OLOG_WARNING("Unknown message type: 0x%02x", header.msg_type);
          send_response(client_fd, ADMIN_RESP_FAILURE);
          return 1;
    }
@@ -2355,7 +2355,7 @@ static int handle_client(int client_fd) {
 static void *listener_thread_func(void *arg) {
    (void)arg;
 
-   LOG_INFO("Admin socket listener thread running");
+   OLOG_INFO("Admin socket listener thread running");
 
    pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
    pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, NULL);
@@ -2387,7 +2387,7 @@ static void *listener_thread_func(void *arg) {
          if (errno == EINTR || errno == EBADF || s_shutdown_requested) {
             continue;
          }
-         LOG_ERROR("Admin socket select() failed: %s", strerror(errno));
+         OLOG_ERROR("Admin socket select() failed: %s", strerror(errno));
          break;
       }
 
@@ -2398,7 +2398,7 @@ static void *listener_thread_func(void *arg) {
 
       /* Check shutdown pipe */
       if (FD_ISSET(pipe_fd, &read_fds)) {
-         LOG_INFO("Admin socket received shutdown signal");
+         OLOG_INFO("Admin socket received shutdown signal");
          break;
       }
 
@@ -2412,7 +2412,7 @@ static void *listener_thread_func(void *arg) {
             if (errno == EINTR || s_shutdown_requested) {
                continue;
             }
-            LOG_ERROR("Admin socket accept failed: %s", strerror(errno));
+            OLOG_ERROR("Admin socket accept failed: %s", strerror(errno));
             continue;
          }
 
@@ -2422,6 +2422,6 @@ static void *listener_thread_func(void *arg) {
       }
    }
 
-   LOG_INFO("Admin socket listener thread exiting");
+   OLOG_INFO("Admin socket listener thread exiting");
    return NULL;
 }

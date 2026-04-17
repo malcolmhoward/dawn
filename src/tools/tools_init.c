@@ -114,193 +114,193 @@
 /* ========== Registration ========== */
 
 int tools_register_all(void) {
-   LOG_INFO("Registering modular tools...");
+   OLOG_INFO("Registering modular tools...");
 
 #ifdef DAWN_ENABLE_SHUTDOWN_TOOL
    if (shutdown_tool_register() != 0) {
-      LOG_WARNING("Failed to register shutdown tool");
+      OLOG_WARNING("Failed to register shutdown tool");
    }
 #endif
 
 #ifdef DAWN_ENABLE_MUSIC_TOOL
    if (music_tool_register() != 0) {
-      LOG_WARNING("Failed to register music tool");
+      OLOG_WARNING("Failed to register music tool");
    }
 #endif
 
 #ifdef DAWN_ENABLE_CALCULATOR_TOOL
    if (calculator_tool_register() != 0) {
-      LOG_WARNING("Failed to register calculator tool");
+      OLOG_WARNING("Failed to register calculator tool");
    }
 #endif
 
 #ifdef DAWN_ENABLE_WEATHER_TOOL
    if (weather_tool_register() != 0) {
-      LOG_WARNING("Failed to register weather tool");
+      OLOG_WARNING("Failed to register weather tool");
    }
 #endif
 
 #ifdef DAWN_ENABLE_SEARCH_TOOL
    if (search_tool_register() != 0) {
-      LOG_WARNING("Failed to register search tool");
+      OLOG_WARNING("Failed to register search tool");
    }
 #endif
 
 #ifdef DAWN_ENABLE_URL_TOOL
    if (url_tool_register() != 0) {
-      LOG_WARNING("Failed to register url_fetch tool");
+      OLOG_WARNING("Failed to register url_fetch tool");
    }
 #endif
 
 #ifdef DAWN_ENABLE_SMARTTHINGS_TOOL
    if (smartthings_tool_register() != 0) {
-      LOG_WARNING("Failed to register smartthings tool");
+      OLOG_WARNING("Failed to register smartthings tool");
    }
 #endif
 
 #ifdef DAWN_ENABLE_HOMEASSISTANT_TOOL
    if (homeassistant_tool_register() != 0) {
-      LOG_WARNING("Failed to register home_assistant tool");
+      OLOG_WARNING("Failed to register home_assistant tool");
    }
 #endif
 
 #ifdef DAWN_ENABLE_MEMORY_TOOL
    if (memory_tool_register() != 0) {
-      LOG_WARNING("Failed to register memory tool");
+      OLOG_WARNING("Failed to register memory tool");
    }
 #endif
 
 #ifdef DAWN_ENABLE_DATETIME_TOOL
    if (date_tool_register() != 0) {
-      LOG_WARNING("Failed to register date tool");
+      OLOG_WARNING("Failed to register date tool");
    }
    if (time_tool_register() != 0) {
-      LOG_WARNING("Failed to register time tool");
+      OLOG_WARNING("Failed to register time tool");
    }
 #endif
 
 #ifdef DAWN_ENABLE_VOLUME_TOOL
    if (volume_tool_register() != 0) {
-      LOG_WARNING("Failed to register volume tool");
+      OLOG_WARNING("Failed to register volume tool");
    }
 #endif
 
 #ifdef DAWN_ENABLE_LLM_STATUS_TOOL
    if (llm_status_tool_register() != 0) {
-      LOG_WARNING("Failed to register llm_status tool");
+      OLOG_WARNING("Failed to register llm_status tool");
    }
 #endif
 
 #ifdef DAWN_ENABLE_SWITCH_LLM_TOOL
    if (switch_llm_tool_register() != 0) {
-      LOG_WARNING("Failed to register switch_llm tool");
+      OLOG_WARNING("Failed to register switch_llm tool");
    }
 #endif
 
 #ifdef DAWN_ENABLE_RESET_CONVERSATION_TOOL
    if (reset_conversation_tool_register() != 0) {
-      LOG_WARNING("Failed to register reset_conversation tool");
+      OLOG_WARNING("Failed to register reset_conversation tool");
    }
 #endif
 
 #ifdef DAWN_ENABLE_VIEWING_TOOL
    if (viewing_tool_register() != 0) {
-      LOG_WARNING("Failed to register viewing tool");
+      OLOG_WARNING("Failed to register viewing tool");
    }
 #endif
 
 #ifdef DAWN_ENABLE_HUD_TOOLS
    if (hud_control_tool_register() != 0) {
-      LOG_WARNING("Failed to register hud_control tool");
+      OLOG_WARNING("Failed to register hud_control tool");
    }
    if (hud_mode_tool_register() != 0) {
-      LOG_WARNING("Failed to register hud_mode tool");
+      OLOG_WARNING("Failed to register hud_mode tool");
    }
    if (faceplate_tool_register() != 0) {
-      LOG_WARNING("Failed to register faceplate tool");
+      OLOG_WARNING("Failed to register faceplate tool");
    }
    if (recording_tool_register() != 0) {
-      LOG_WARNING("Failed to register recording tool");
+      OLOG_WARNING("Failed to register recording tool");
    }
    if (visual_offset_tool_register() != 0) {
-      LOG_WARNING("Failed to register visual_offset tool");
+      OLOG_WARNING("Failed to register visual_offset tool");
    }
 #endif
 
 #ifdef DAWN_ENABLE_AUDIO_TOOLS
    if (voice_amplifier_tool_register() != 0) {
-      LOG_WARNING("Failed to register voice_amplifier tool");
+      OLOG_WARNING("Failed to register voice_amplifier tool");
    }
    if (audio_device_tool_register() != 0) {
-      LOG_WARNING("Failed to register audio_device tool");
+      OLOG_WARNING("Failed to register audio_device tool");
    }
 #endif
 
 #ifdef DAWN_ENABLE_SCHEDULER_TOOL
    if (scheduler_tool_register() != 0) {
-      LOG_WARNING("Failed to register scheduler tool");
+      OLOG_WARNING("Failed to register scheduler tool");
    }
 #endif
 
 #ifdef DAWN_ENABLE_TTS_TOOL
    if (tts_tool_register() != 0) {
-      LOG_WARNING("Failed to register tts tool");
+      OLOG_WARNING("Failed to register tts tool");
    }
 #endif
 
 #ifdef DAWN_ENABLE_SFX_TOOL
    if (sfx_tool_register() != 0) {
-      LOG_WARNING("Failed to register sfx tool");
+      OLOG_WARNING("Failed to register sfx tool");
    }
 #endif
 
 #ifdef DAWN_ENABLE_DOCUMENT_SEARCH_TOOL
    if (document_search_tool_register() != 0) {
-      LOG_WARNING("Failed to register document_search tool");
+      OLOG_WARNING("Failed to register document_search tool");
    }
    if (document_read_tool_register() != 0) {
-      LOG_WARNING("Failed to register document_read tool");
+      OLOG_WARNING("Failed to register document_read tool");
    }
    if (document_index_tool_register() != 0) {
-      LOG_WARNING("Failed to register document_index tool");
+      OLOG_WARNING("Failed to register document_index tool");
    }
 #endif
 
 #ifdef DAWN_ENABLE_CALENDAR_TOOL
    if (calendar_tool_register() != 0) {
-      LOG_WARNING("Failed to register calendar tool");
+      OLOG_WARNING("Failed to register calendar tool");
    }
 #endif
 
 #ifdef DAWN_ENABLE_EMAIL_TOOL
    if (email_tool_register() != 0) {
-      LOG_WARNING("Failed to register email tool");
+      OLOG_WARNING("Failed to register email tool");
    }
 #endif
 
 #ifdef DAWN_ENABLE_RENDER_VISUAL_TOOL
    if (render_visual_tool_register() != 0) {
-      LOG_WARNING("Failed to register render_visual tool");
+      OLOG_WARNING("Failed to register render_visual tool");
    }
 #endif
 
 #ifdef DAWN_ENABLE_PHONE_TOOL
    if (phone_tool_register() != 0) {
-      LOG_WARNING("Failed to register phone tool");
+      OLOG_WARNING("Failed to register phone tool");
    }
 #endif
 
 #ifdef DAWN_ENABLE_IMAGE_SEARCH_TOOL
    if (image_search_tool_register() != 0) {
-      LOG_WARNING("Failed to register image_search tool");
+      OLOG_WARNING("Failed to register image_search tool");
    }
 #endif
 
    /* Plan executor (always available — meta-tool, no external deps) */
    if (plan_executor_tool_register() != 0) {
-      LOG_WARNING("Failed to register plan_executor tool");
+      OLOG_WARNING("Failed to register plan_executor tool");
    }
 
-   LOG_INFO("Tool registration complete");
+   OLOG_INFO("Tool registration complete");
    return 0;
 }

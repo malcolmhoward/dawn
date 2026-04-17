@@ -176,7 +176,7 @@ static void generate_crypto_random_hex(char *buf, size_t num_bytes) {
    }
 
    /* Fail closed: refuse to generate a secret with weak randomness */
-   LOG_ERROR("Cannot generate secure session secret - /dev/urandom unavailable");
+   OLOG_ERROR("Cannot generate secure session secret - /dev/urandom unavailable");
    buf[0] = '\0';
 }
 
@@ -207,26 +207,26 @@ static bool constant_time_compare(const char *a, const char *b) {
 static session_t *session_alloc(void) {
    session_t *session = calloc(1, sizeof(session_t));
    if (!session) {
-      LOG_ERROR("Failed to allocate session");
+      OLOG_ERROR("Failed to allocate session");
       return NULL;
    }
 
    // Initialize mutexes
    if (pthread_mutex_init(&session->history_mutex, NULL) != 0) {
-      LOG_ERROR("Failed to init history_mutex");
+      OLOG_ERROR("Failed to init history_mutex");
       free(session);
       return NULL;
    }
 
    if (pthread_mutex_init(&session->fd_mutex, NULL) != 0) {
-      LOG_ERROR("Failed to init fd_mutex");
+      OLOG_ERROR("Failed to init fd_mutex");
       pthread_mutex_destroy(&session->history_mutex);
       free(session);
       return NULL;
    }
 
    if (pthread_mutex_init(&session->ref_mutex, NULL) != 0) {
-      LOG_ERROR("Failed to init ref_mutex");
+      OLOG_ERROR("Failed to init ref_mutex");
       pthread_mutex_destroy(&session->fd_mutex);
       pthread_mutex_destroy(&session->history_mutex);
       free(session);
@@ -234,7 +234,7 @@ static session_t *session_alloc(void) {
    }
 
    if (pthread_cond_init(&session->ref_zero_cond, NULL) != 0) {
-      LOG_ERROR("Failed to init ref_zero_cond");
+      OLOG_ERROR("Failed to init ref_zero_cond");
       pthread_mutex_destroy(&session->ref_mutex);
       pthread_mutex_destroy(&session->fd_mutex);
       pthread_mutex_destroy(&session->history_mutex);
@@ -243,7 +243,7 @@ static session_t *session_alloc(void) {
    }
 
    if (pthread_mutex_init(&session->llm_config_mutex, NULL) != 0) {
-      LOG_ERROR("Failed to init llm_config_mutex");
+      OLOG_ERROR("Failed to init llm_config_mutex");
       pthread_cond_destroy(&session->ref_zero_cond);
       pthread_mutex_destroy(&session->ref_mutex);
       pthread_mutex_destroy(&session->fd_mutex);
@@ -253,7 +253,7 @@ static session_t *session_alloc(void) {
    }
 
    if (pthread_mutex_init(&session->metrics_mutex, NULL) != 0) {
-      LOG_ERROR("Failed to init metrics_mutex");
+      OLOG_ERROR("Failed to init metrics_mutex");
       pthread_mutex_destroy(&session->llm_config_mutex);
       pthread_cond_destroy(&session->ref_zero_cond);
       pthread_mutex_destroy(&session->ref_mutex);
@@ -264,7 +264,7 @@ static session_t *session_alloc(void) {
    }
 
    if (pthread_mutex_init(&session->tools_mutex, NULL) != 0) {
-      LOG_ERROR("Failed to init tools_mutex");
+      OLOG_ERROR("Failed to init tools_mutex");
       pthread_mutex_destroy(&session->metrics_mutex);
       pthread_mutex_destroy(&session->llm_config_mutex);
       pthread_cond_destroy(&session->ref_zero_cond);
@@ -286,7 +286,7 @@ static session_t *session_alloc(void) {
    // Initialize conversation history as empty JSON array
    session->conversation_history = json_object_new_array();
    if (!session->conversation_history) {
-      LOG_ERROR("Failed to create conversation history array");
+      OLOG_ERROR("Failed to create conversation history array");
       pthread_mutex_destroy(&session->tools_mutex);
       pthread_mutex_destroy(&session->metrics_mutex);
       pthread_mutex_destroy(&session->llm_config_mutex);
@@ -369,7 +369,7 @@ static session_t *find_session_by_ip_unlocked(const char *ip) {
 
 int session_manager_init(void) {
    if (initialized) {
-      LOG_WARNING("Session manager already initialized");
+      OLOG_WARNING("Session manager already initialized");
       return 0;
    }
 
@@ -379,7 +379,7 @@ int session_manager_init(void) {
    // Create local session (session_id = 0)
    session_t *local = session_alloc();
    if (!local) {
-      LOG_ERROR("Failed to create local session");
+      OLOG_ERROR("Failed to create local session");
       return 1;
    }
 
@@ -393,7 +393,7 @@ int session_manager_init(void) {
    sessions[0] = local;
    initialized = true;
 
-   LOG_INFO("Session manager initialized with local session");
+   OLOG_INFO("Session manager initialized with local session");
    return 0;
 }
 
@@ -419,8 +419,8 @@ void session_manager_cleanup(void) {
             pthread_mutex_unlock(&sessions[i]->ref_mutex);
          }
 
-         LOG_INFO("Destroying session %u (type=%s)", sessions[i]->session_id,
-                  session_type_name(sessions[i]->type));
+         OLOG_INFO("Destroying session %u (type=%s)", sessions[i]->session_id,
+                   session_type_name(sessions[i]->type));
          session_free(sessions[i]);
          sessions[i] = NULL;
       }
@@ -429,7 +429,7 @@ void session_manager_cleanup(void) {
    initialized = false;
    pthread_rwlock_unlock(&session_manager_rwlock);
 
-   LOG_INFO("Session manager cleanup complete");
+   OLOG_INFO("Session manager cleanup complete");
 }
 
 // =============================================================================
@@ -438,7 +438,7 @@ void session_manager_cleanup(void) {
 
 session_t *session_create(session_type_t type, int client_fd) {
    if (!initialized) {
-      LOG_ERROR("Session manager not initialized");
+      OLOG_ERROR("Session manager not initialized");
       return NULL;
    }
 
@@ -447,7 +447,7 @@ session_t *session_create(session_type_t type, int client_fd) {
    int slot = find_free_slot();
    if (slot < 0) {
       pthread_rwlock_unlock(&session_manager_rwlock);
-      LOG_WARNING("Max sessions reached (%d), rejecting new client", MAX_SESSIONS);
+      OLOG_WARNING("Max sessions reached (%d), rejecting new client", MAX_SESSIONS);
       return NULL;
    }
 
@@ -468,8 +468,8 @@ session_t *session_create(session_type_t type, int client_fd) {
 
    pthread_rwlock_unlock(&session_manager_rwlock);
 
-   LOG_INFO("Created session %u (type=%s, fd=%d)", session->session_id, session_type_name(type),
-            client_fd);
+   OLOG_INFO("Created session %u (type=%s, fd=%d)", session->session_id, session_type_name(type),
+             client_fd);
 
    return session;
 }
@@ -558,12 +558,12 @@ session_t *session_create_dap2(int client_fd,
                                const dap2_identity_t *identity,
                                const dap2_capabilities_t *capabilities) {
    if (!initialized) {
-      LOG_ERROR("Session manager not initialized");
+      OLOG_ERROR("Session manager not initialized");
       return NULL;
    }
 
    if (!identity || strlen(identity->uuid) == 0) {
-      LOG_ERROR("DAP2 session requires valid identity with UUID");
+      OLOG_ERROR("DAP2 session requires valid identity with UUID");
       return NULL;
    }
 
@@ -601,8 +601,8 @@ session_t *session_create_dap2(int client_fd,
 
          pthread_rwlock_unlock(&session_manager_rwlock);
 
-         LOG_INFO("DAP2 secure reconnection: session %u (uuid=%s, name=%s, history=%d msgs)",
-                  session_id, identity->uuid, identity->name, history_len);
+         OLOG_INFO("DAP2 secure reconnection: session %u (uuid=%s, name=%s, history=%d msgs)",
+                   session_id, identity->uuid, identity->name, history_len);
 
          return existing;
       } else if (has_valid_secret && !existing->disconnected) {
@@ -624,23 +624,23 @@ session_t *session_create_dap2(int client_fd,
 
          pthread_rwlock_unlock(&session_manager_rwlock);
 
-         LOG_INFO("DAP2 secure reconnection (active): session %u reclaimed "
-                  "(uuid=%s, name=%s, history=%d msgs)",
-                  session_id, identity->uuid, identity->name, history_len);
+         OLOG_INFO("DAP2 secure reconnection (active): session %u reclaimed "
+                   "(uuid=%s, name=%s, history=%d msgs)",
+                   session_id, identity->uuid, identity->name, history_len);
 
          return existing;
       } else if (!has_valid_secret && !existing->disconnected) {
          /* Existing active session, but client has no/wrong secret
           * This could be: (1) client restart without saved secret, or (2) hijack attempt
           * Create new session - old session will timeout eventually */
-         LOG_WARNING("DAP2: UUID %s has active session but client lacks valid secret - "
-                     "creating new session (possible restart or hijack attempt)",
-                     identity->uuid);
+         OLOG_WARNING("DAP2: UUID %s has active session but client lacks valid secret - "
+                      "creating new session (possible restart or hijack attempt)",
+                      identity->uuid);
       } else if (!has_valid_secret && existing->disconnected) {
          /* Session disconnected but client has no/wrong secret - reject hijack */
-         LOG_WARNING("DAP2: UUID %s has disconnected session but client lacks valid secret - "
-                     "creating new session to prevent hijacking",
-                     identity->uuid);
+         OLOG_WARNING("DAP2: UUID %s has disconnected session but client lacks valid secret - "
+                      "creating new session to prevent hijacking",
+                      identity->uuid);
       }
       /* Fall through to create new session */
    }
@@ -649,7 +649,7 @@ session_t *session_create_dap2(int client_fd,
    int slot = find_free_slot();
    if (slot < 0) {
       pthread_rwlock_unlock(&session_manager_rwlock);
-      LOG_WARNING("Max sessions reached (%d), rejecting DAP2 client", MAX_SESSIONS);
+      OLOG_WARNING("Max sessions reached (%d), rejecting DAP2 client", MAX_SESSIONS);
       return NULL;
    }
 
@@ -687,8 +687,8 @@ session_t *session_create_dap2(int client_fd,
     * the DB mapping lookup determines the HA area. */
    session_init_system_prompt(session, get_remote_command_prompt());
 
-   LOG_INFO("Created DAP2 session %u (tier=%d, uuid=%s, name=%s, location=%s)", session->session_id,
-            tier, identity->uuid, identity->name, identity->location);
+   OLOG_INFO("Created DAP2 session %u (tier=%d, uuid=%s, name=%s, location=%s)",
+             session->session_id, tier, identity->uuid, identity->name, identity->location);
 
    return session;
 }
@@ -707,12 +707,12 @@ char *session_get_reconnect_secret(session_t *session) {
 
 session_t *session_get_or_create_dap(int client_fd, const char *client_ip) {
    if (!initialized) {
-      LOG_ERROR("Session manager not initialized");
+      OLOG_ERROR("Session manager not initialized");
       return NULL;
    }
 
    if (!client_ip || strlen(client_ip) == 0) {
-      LOG_ERROR("DAP1 session requires valid client IP");
+      OLOG_ERROR("DAP1 session requires valid client IP");
       return NULL;
    }
 
@@ -739,8 +739,8 @@ session_t *session_get_or_create_dap(int client_fd, const char *client_ip) {
 
       pthread_rwlock_unlock(&session_manager_rwlock);
 
-      LOG_INFO("DAP1 reconnection: session %u (ip=%s, history=%d messages)", session_id, client_ip,
-               history_len);
+      OLOG_INFO("DAP1 reconnection: session %u (ip=%s, history=%d messages)", session_id, client_ip,
+                history_len);
 
       return existing;
    }
@@ -749,7 +749,7 @@ session_t *session_get_or_create_dap(int client_fd, const char *client_ip) {
    int slot = find_free_slot();
    if (slot < 0) {
       pthread_rwlock_unlock(&session_manager_rwlock);
-      LOG_WARNING("Max sessions reached (%d), rejecting DAP1 client", MAX_SESSIONS);
+      OLOG_WARNING("Max sessions reached (%d), rejecting DAP1 client", MAX_SESSIONS);
       return NULL;
    }
 
@@ -777,7 +777,7 @@ session_t *session_get_or_create_dap(int client_fd, const char *client_ip) {
    // Initialize with remote command prompt (excludes HUD/helmet commands)
    session_init_system_prompt(session, get_remote_command_prompt());
 
-   LOG_INFO("Created DAP1 session %u (ip=%s)", session->session_id, client_ip);
+   OLOG_INFO("Created DAP1 session %u (ip=%s)", session->session_id, client_ip);
 
    return session;
 }
@@ -911,7 +911,7 @@ void session_destroy(uint32_t session_id) {
 
    // Don't allow destroying local session
    if (session_id == LOCAL_SESSION_ID) {
-      LOG_WARNING("Cannot destroy local session");
+      OLOG_WARNING("Cannot destroy local session");
       return;
    }
 
@@ -930,7 +930,7 @@ void session_destroy(uint32_t session_id) {
 
    if (!session) {
       pthread_rwlock_unlock(&session_manager_rwlock);
-      LOG_WARNING("Session %u not found for destruction", session_id);
+      OLOG_WARNING("Session %u not found for destruction", session_id);
       return;
    }
 
@@ -951,7 +951,7 @@ void session_destroy(uint32_t session_id) {
    // Phase 2: Wait for ref_count to reach 0 (with timeout to prevent shutdown hang)
    pthread_mutex_lock(&session->ref_mutex);
    while (session->ref_count > 0) {
-      LOG_INFO("Waiting for session %u ref_count (current=%d)", session_id, session->ref_count);
+      OLOG_INFO("Waiting for session %u ref_count (current=%d)", session_id, session->ref_count);
 
       struct timespec timeout;
       clock_gettime(CLOCK_REALTIME, &timeout);
@@ -959,8 +959,9 @@ void session_destroy(uint32_t session_id) {
 
       int rc = pthread_cond_timedwait(&session->ref_zero_cond, &session->ref_mutex, &timeout);
       if (rc == ETIMEDOUT) {
-         LOG_WARNING("Session %u: ref_count wait timed out (ref_count=%d), proceeding with destroy",
-                     session_id, session->ref_count);
+         OLOG_WARNING(
+             "Session %u: ref_count wait timed out (ref_count=%d), proceeding with destroy",
+             session_id, session->ref_count);
          break;
       }
    }
@@ -996,8 +997,8 @@ void session_destroy(uint32_t session_id) {
       }
 
       auth_db_save_session_metrics(&db_metrics);
-      LOG_INFO("Session %u: Final metrics saved (queries=%u, cloud=%u, local=%u)", session_id,
-               m->queries_total, m->queries_cloud, m->queries_local);
+      OLOG_INFO("Session %u: Final metrics saved (queries=%u, cloud=%u, local=%u)", session_id,
+                m->queries_total, m->queries_cloud, m->queries_local);
    }
    pthread_mutex_unlock(&session->metrics_mutex);
 
@@ -1029,7 +1030,7 @@ void session_destroy(uint32_t session_id) {
       pthread_mutex_unlock(&session->history_mutex);
    }
 
-   LOG_INFO("Destroying session %u (type=%s)", session_id, session_type_name(session->type));
+   OLOG_INFO("Destroying session %u (type=%s)", session_id, session_type_name(session->type));
    session_free(session);
 }
 
@@ -1059,8 +1060,8 @@ void session_cleanup_expired(void) {
 
    // Destroy expired sessions
    for (int i = 0; i < expired_count; i++) {
-      LOG_INFO("Session %u expired (idle > %d seconds)", expired_ids[i],
-               g_config.network.session_timeout_sec);
+      OLOG_INFO("Session %u expired (idle > %d seconds)", expired_ids[i],
+                g_config.network.session_timeout_sec);
       session_destroy(expired_ids[i]);
    }
 }
@@ -1106,11 +1107,11 @@ void session_check_idle_conversations(void) {
    /* Save and clear idle conversations */
    for (int i = 0; i < idle_count; i++) {
       session_t *s = idle_sessions[i];
-      LOG_INFO("Session %u: Idle timeout after %d minutes, saving conversation", s->session_id,
-               g_config.memory.conversation_idle_timeout_min);
+      OLOG_INFO("Session %u: Idle timeout after %d minutes, saving conversation", s->session_id,
+                g_config.memory.conversation_idle_timeout_min);
       int64_t conv_id = session_save_voice_conversation(s);
       if (conv_id > 0) {
-         LOG_INFO("Session %u: Saved as conversation %lld", s->session_id, (long long)conv_id);
+         OLOG_INFO("Session %u: Saved as conversation %lld", s->session_id, (long long)conv_id);
       }
       session_release(s);
    }
@@ -1130,18 +1131,18 @@ void session_add_message(session_t *session, const char *role, const char *conte
    /* Guard against corrupted or NULL history — recover by creating a fresh array */
    if (!session->conversation_history ||
        !json_object_is_type(session->conversation_history, json_type_array)) {
-      LOG_ERROR("Session %u: conversation_history is %s (expected array), recreating",
-                session->session_id,
-                session->conversation_history
-                    ? json_type_to_name(json_object_get_type(session->conversation_history))
-                    : "NULL");
+      OLOG_ERROR("Session %u: conversation_history is %s (expected array), recreating",
+                 session->session_id,
+                 session->conversation_history
+                     ? json_type_to_name(json_object_get_type(session->conversation_history))
+                     : "NULL");
       if (session->conversation_history) {
          json_object_put(session->conversation_history);
       }
       session->conversation_history = json_object_new_array();
       if (!session->conversation_history) {
          pthread_mutex_unlock(&session->history_mutex);
-         LOG_ERROR("Session %u: Failed to recreate conversation history", session->session_id);
+         OLOG_ERROR("Session %u: Failed to recreate conversation history", session->session_id);
          return;
       }
    }
@@ -1149,7 +1150,7 @@ void session_add_message(session_t *session, const char *role, const char *conte
    struct json_object *message = json_object_new_object();
    if (!message) {
       pthread_mutex_unlock(&session->history_mutex);
-      LOG_ERROR("Failed to create message object");
+      OLOG_ERROR("Failed to create message object");
       return;
    }
 
@@ -1159,8 +1160,8 @@ void session_add_message(session_t *session, const char *role, const char *conte
    json_object_array_add(session->conversation_history, message);
 
    int count = json_object_array_length(session->conversation_history);
-   LOG_INFO("Session %u: Added %s message to history (now %d messages)", session->session_id, role,
-            count);
+   OLOG_INFO("Session %u: Added %s message to history (now %d messages)", session->session_id, role,
+             count);
 
    pthread_mutex_unlock(&session->history_mutex);
 }
@@ -1185,8 +1186,8 @@ void session_add_message_with_images(session_t *session,
    /* Guard against corrupted or NULL history */
    if (!session->conversation_history ||
        !json_object_is_type(session->conversation_history, json_type_array)) {
-      LOG_ERROR("Session %u: conversation_history corrupt in add_message_with_images, recreating",
-                session->session_id);
+      OLOG_ERROR("Session %u: conversation_history corrupt in add_message_with_images, recreating",
+                 session->session_id);
       if (session->conversation_history) {
          json_object_put(session->conversation_history);
       }
@@ -1200,7 +1201,7 @@ void session_add_message_with_images(session_t *session,
    struct json_object *message = json_object_new_object();
    if (!message) {
       pthread_mutex_unlock(&session->history_mutex);
-      LOG_ERROR("Failed to create message object");
+      OLOG_ERROR("Failed to create message object");
       return;
    }
 
@@ -1211,7 +1212,7 @@ void session_add_message_with_images(session_t *session,
    if (!content) {
       json_object_put(message);
       pthread_mutex_unlock(&session->history_mutex);
-      LOG_ERROR("Failed to create content array");
+      OLOG_ERROR("Failed to create content array");
       return;
    }
 
@@ -1249,8 +1250,8 @@ void session_add_message_with_images(session_t *session,
    json_object_object_add(message, "content", content);
    json_object_array_add(session->conversation_history, message);
 
-   LOG_INFO("Session %u: Added message with %d images to history", session->session_id,
-            vision_image_count);
+   OLOG_INFO("Session %u: Added message with %d images to history", session->session_id,
+             vision_image_count);
 
    pthread_mutex_unlock(&session->history_mutex);
 }
@@ -1286,7 +1287,7 @@ void session_clear_history(session_t *session) {
    // Create new empty array
    session->conversation_history = json_object_new_array();
    if (!session->conversation_history) {
-      LOG_ERROR("Failed to create new conversation history array");
+      OLOG_ERROR("Failed to create new conversation history array");
    }
 
    // Clear visual guideline cache — LLM no longer has them in context
@@ -1383,7 +1384,7 @@ int64_t session_save_voice_conversation(session_t *session) {
    int64_t conv_id = -1;
    int rc = conv_db_create_with_origin(user_id, title, "voice", &conv_id);
    if (rc != AUTH_DB_SUCCESS) {
-      LOG_ERROR("Session %u: Failed to create voice conversation: %d", session->session_id, rc);
+      OLOG_ERROR("Session %u: Failed to create voice conversation: %d", session->session_id, rc);
       pthread_mutex_unlock(&session->history_mutex);
       return -1;
    }
@@ -1442,8 +1443,8 @@ int64_t session_save_voice_conversation(session_t *session) {
       session_init_system_prompt(session, system_prompt);
    }
 
-   LOG_INFO("Session %u: Saved voice conversation %lld (%d messages, user %d)", session->session_id,
-            (long long)conv_id, msg_count, user_id);
+   OLOG_INFO("Session %u: Saved voice conversation %lld (%d messages, user %d)",
+             session->session_id, (long long)conv_id, msg_count, user_id);
 
    return conv_id;
 }
@@ -1463,7 +1464,7 @@ void session_init_system_prompt(session_t *session, const char *system_prompt) {
    // Create new array with system message
    session->conversation_history = json_object_new_array();
    if (!session->conversation_history) {
-      LOG_ERROR("Failed to create conversation history array");
+      OLOG_ERROR("Failed to create conversation history array");
       pthread_mutex_unlock(&session->history_mutex);
       return;
    }
@@ -1478,8 +1479,8 @@ void session_init_system_prompt(session_t *session, const char *system_prompt) {
 
    pthread_mutex_unlock(&session->history_mutex);
 
-   LOG_INFO("Session %u: Initialized with system prompt (%zu chars)", session->session_id,
-            strlen(system_prompt));
+   OLOG_INFO("Session %u: Initialized with system prompt (%zu chars)", session->session_id,
+             strlen(system_prompt));
 }
 
 void session_update_system_prompt(session_t *session, const char *system_prompt) {
@@ -1516,8 +1517,8 @@ void session_update_system_prompt(session_t *session, const char *system_prompt)
       /* Update existing system message's content */
       json_object_object_del(system_msg, "content");
       json_object_object_add(system_msg, "content", json_object_new_string(system_prompt));
-      LOG_INFO("Session %u: Updated system prompt (%zu chars)", session->session_id,
-               strlen(system_prompt));
+      OLOG_INFO("Session %u: Updated system prompt (%zu chars)", session->session_id,
+                strlen(system_prompt));
    } else {
       /* No system message found - insert at beginning */
       struct json_object *new_msg = json_object_new_object();
@@ -1525,8 +1526,8 @@ void session_update_system_prompt(session_t *session, const char *system_prompt)
          json_object_object_add(new_msg, "role", json_object_new_string("system"));
          json_object_object_add(new_msg, "content", json_object_new_string(system_prompt));
          json_object_array_put_idx(session->conversation_history, 0, new_msg);
-         LOG_INFO("Session %u: Inserted system prompt at start (%zu chars)", session->session_id,
-                  strlen(system_prompt));
+         OLOG_INFO("Session %u: Inserted system prompt at start (%zu chars)", session->session_id,
+                   strlen(system_prompt));
       }
    }
 
@@ -1606,7 +1607,7 @@ static int llm_call_prepare(session_t *session,
    // Get conversation history
    ctx->history = session_get_history(session);
    if (!ctx->history) {
-      LOG_ERROR("Session %u: Failed to get conversation history", session->session_id);
+      OLOG_ERROR("Session %u: Failed to get conversation history", session->session_id);
       return 1;
    }
 
@@ -1614,7 +1615,7 @@ static int llm_call_prepare(session_t *session,
 
    // Check for cancellation before LLM call
    if (session->disconnected) {
-      LOG_INFO("Session %u disconnected before LLM call", session->session_id);
+      OLOG_INFO("Session %u disconnected before LLM call", session->session_id);
       return 2;
    }
 
@@ -1624,8 +1625,8 @@ static int llm_call_prepare(session_t *session,
 
    int resolve_rc = llm_resolve_config(&session_config, &ctx->resolved_config);
    if (resolve_rc != 0) {
-      LOG_ERROR("Session %u: Failed to resolve LLM config (type=%d, provider=%d)",
-                session->session_id, session_config.type, session_config.cloud_provider);
+      OLOG_ERROR("Session %u: Failed to resolve LLM config (type=%d, provider=%d)",
+                 session->session_id, session_config.type, session_config.cloud_provider);
       return 3;
    }
 
@@ -1686,7 +1687,7 @@ static char *llm_call_finalize(session_t *session, char *response, llm_call_ctx_
       }
       // Fallback for non-streaming LLMs
       if (response && !session->stream_had_content && session->cmd_tag_filter.nesting_depth == 0) {
-         LOG_INFO("Session %u: LLM didn't stream, sending full transcript", session->session_id);
+         OLOG_INFO("Session %u: LLM didn't stream, sending full transcript", session->session_id);
          webui_send_transcript(session, "assistant", response);
       }
    }
@@ -1697,13 +1698,13 @@ static char *llm_call_finalize(session_t *session, char *response, llm_call_ctx_
 
    // Check for cancellation after LLM call
    if (session->disconnected) {
-      LOG_INFO("Session %u disconnected during LLM call", session->session_id);
+      OLOG_INFO("Session %u disconnected during LLM call", session->session_id);
       free(response);
       return NULL;
    }
 
    if (!response) {
-      LOG_ERROR("Session %u: LLM call failed", session->session_id);
+      OLOG_ERROR("Session %u: LLM call failed", session->session_id);
       return NULL;
    }
 
@@ -1711,12 +1712,12 @@ static char *llm_call_finalize(session_t *session, char *response, llm_call_ctx_
    if (*response) {
       session_add_message(session, "assistant", response);
    } else {
-      LOG_WARNING("Session %u: LLM returned empty response, not adding to history",
-                  session->session_id);
+      OLOG_WARNING("Session %u: LLM returned empty response, not adding to history",
+                   session->session_id);
    }
 
-   LOG_INFO("Session %u: LLM response received (%.50s%s)", session->session_id, response,
-            strlen(response) > 50 ? "..." : "");
+   OLOG_INFO("Session %u: LLM response received (%.50s%s)", session->session_id, response,
+             strlen(response) > 50 ? "..." : "");
 
    return response;
 }
@@ -1727,7 +1728,7 @@ char *session_llm_call(session_t *session, const char *user_text) {
    }
 
    if (session->disconnected) {
-      LOG_INFO("Session %u disconnected, aborting LLM call", session->session_id);
+      OLOG_INFO("Session %u disconnected, aborting LLM call", session->session_id);
       return NULL;
    }
 
@@ -1737,8 +1738,8 @@ char *session_llm_call(session_t *session, const char *user_text) {
       return NULL;
    }
 
-   LOG_INFO("Session %u: Calling LLM with %d messages in history", session->session_id,
-            json_object_array_length(ctx.history));
+   OLOG_INFO("Session %u: Calling LLM with %d messages in history", session->session_id,
+             json_object_array_length(ctx.history));
 
    /* Initialize streaming metrics before LLM call */
    session->stream_start_ms = get_time_ms();
@@ -1876,7 +1877,7 @@ char *session_llm_call_with_tts(session_t *session,
    }
 
    if (session->disconnected) {
-      LOG_INFO("Session %u disconnected, aborting LLM call", session->session_id);
+      OLOG_INFO("Session %u disconnected, aborting LLM call", session->session_id);
       return NULL;
    }
 
@@ -1886,8 +1887,8 @@ char *session_llm_call_with_tts(session_t *session,
       return NULL;
    }
 
-   LOG_INFO("Session %u: Calling LLM (TTS streaming) with %d messages in history",
-            session->session_id, json_object_array_length(ctx.history));
+   OLOG_INFO("Session %u: Calling LLM (TTS streaming) with %d messages in history",
+             session->session_id, json_object_array_length(ctx.history));
 
    /* Initialize streaming metrics before LLM call */
    session->stream_start_ms = get_time_ms();
@@ -1904,7 +1905,7 @@ char *session_llm_call_with_tts(session_t *session,
    // Create sentence buffer for TTS
    stream_ctx.sentence_buffer = sentence_buffer_create(combined_sentence_callback, &stream_ctx);
    if (!stream_ctx.sentence_buffer) {
-      LOG_ERROR("Session %u: Failed to create sentence buffer", session->session_id);
+      OLOG_ERROR("Session %u: Failed to create sentence buffer", session->session_id);
       llm_call_cleanup(&ctx);
       return NULL;
    }
@@ -1942,7 +1943,7 @@ char *session_llm_call_with_tts_vision_no_add(session_t *session,
    }
 
    if (session->disconnected) {
-      LOG_INFO("Session %u disconnected, aborting LLM call", session->session_id);
+      OLOG_INFO("Session %u disconnected, aborting LLM call", session->session_id);
       return NULL;
    }
 
@@ -1961,12 +1962,12 @@ char *session_llm_call_with_tts_vision_no_add(session_t *session,
             total_bytes += vision_image_sizes[i];
          }
       }
-      LOG_INFO("Session %u: Calling LLM (%s) with %d messages + %d images (%zu bytes)",
-               session->session_id, mode, json_object_array_length(ctx.history), vision_image_count,
-               total_bytes);
+      OLOG_INFO("Session %u: Calling LLM (%s) with %d messages + %d images (%zu bytes)",
+                session->session_id, mode, json_object_array_length(ctx.history),
+                vision_image_count, total_bytes);
    } else {
-      LOG_INFO("Session %u: Calling LLM (%s) with %d messages in history", session->session_id,
-               mode, json_object_array_length(ctx.history));
+      OLOG_INFO("Session %u: Calling LLM (%s) with %d messages in history", session->session_id,
+                mode, json_object_array_length(ctx.history));
    }
 
    /* Initialize streaming metrics before LLM call */
@@ -1989,7 +1990,7 @@ char *session_llm_call_with_tts_vision_no_add(session_t *session,
 
       stream_ctx.sentence_buffer = sentence_buffer_create(combined_sentence_callback, &stream_ctx);
       if (!stream_ctx.sentence_buffer) {
-         LOG_ERROR("Session %u: Failed to create sentence buffer", session->session_id);
+         OLOG_ERROR("Session %u: Failed to create sentence buffer", session->session_id);
          llm_set_cancel_flag(NULL);
          llm_call_cleanup(&ctx);
          return NULL;
@@ -2039,14 +2040,14 @@ int session_set_llm_config(session_t *session, const session_llm_config_t *confi
          cloud_provider_t fallback = llm_detect_available_provider();
 
          if (fallback == CLOUD_PROVIDER_NONE) {
-            LOG_WARNING("Session %u: No cloud provider has an API key configured",
-                        session->session_id);
+            OLOG_WARNING("Session %u: No cloud provider has an API key configured",
+                         session->session_id);
             return 1;
          }
 
-         LOG_INFO("Session %u: %s provider unavailable, falling back to %s", session->session_id,
-                  cloud_provider_to_string(config->cloud_provider),
-                  cloud_provider_to_string(fallback));
+         OLOG_INFO("Session %u: %s provider unavailable, falling back to %s", session->session_id,
+                   cloud_provider_to_string(config->cloud_provider),
+                   cloud_provider_to_string(fallback));
          memcpy(&fallback_config, config, sizeof(session_llm_config_t));
          fallback_config.cloud_provider = fallback;
          fallback_config.model[0] =
@@ -2059,8 +2060,8 @@ int session_set_llm_config(session_t *session, const session_llm_config_t *confi
    memcpy(&session->llm_config, config, sizeof(session_llm_config_t));
    pthread_mutex_unlock(&session->llm_config_mutex);
 
-   LOG_INFO("Session %u: LLM config updated (type=%d, provider=%d)", session->session_id,
-            config->type, config->cloud_provider);
+   OLOG_INFO("Session %u: LLM config updated (type=%d, provider=%d)", session->session_id,
+             config->type, config->cloud_provider);
 
    return 0;
 }
@@ -2084,7 +2085,7 @@ void session_clear_llm_config(session_t *session) {
    llm_get_default_config(&session->llm_config);
    pthread_mutex_unlock(&session->llm_config_mutex);
 
-   LOG_INFO("Session %u: LLM config reset to defaults", session->session_id);
+   OLOG_INFO("Session %u: LLM config reset to defaults", session->session_id);
 }
 
 // =============================================================================
@@ -2144,10 +2145,10 @@ void session_set_command_context(session_t *session) {
    /* Debug logging for context transitions - helps trace command routing issues */
 #ifdef DEBUG_COMMAND_CONTEXT
    if (session) {
-      LOG_INFO("Command context set: session %u (%s)", session->session_id,
-               session_type_name(session->type));
+      OLOG_INFO("Command context set: session %u (%s)", session->session_id,
+                session_type_name(session->type));
    } else if (tl_command_context) {
-      LOG_INFO("Command context cleared (was session %u)", tl_command_context->session_id);
+      OLOG_INFO("Command context cleared (was session %u)", tl_command_context->session_id);
    }
 #endif
    tl_command_context = session;
@@ -2189,8 +2190,8 @@ static session_provider_tokens_t *find_or_create_provider(session_t *session,
       return p;
    }
 
-   LOG_WARNING("Session %u: Max providers (%d) reached, can't add '%s'", session->session_id,
-               SESSION_MAX_PROVIDERS, provider);
+   OLOG_WARNING("Session %u: Max providers (%d) reached, can't add '%s'", session->session_id,
+                SESSION_MAX_PROVIDERS, provider);
    return NULL;
 }
 
@@ -2240,8 +2241,8 @@ static void persist_session_metrics(session_t *session) {
       // Store returned ID for subsequent UPDATEs
       if (m->db_id < 0) {
          m->db_id = db_metrics.id;
-         LOG_INFO("Session %u: Created metrics row (id=%lld)", session->session_id,
-                  (long long)m->db_id);
+         OLOG_INFO("Session %u: Created metrics row (id=%lld)", session->session_id,
+                   (long long)m->db_id);
       }
 
       // Save per-provider metrics (delete existing + re-insert)

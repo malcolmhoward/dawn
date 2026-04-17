@@ -102,8 +102,8 @@ static bool is_rate_limited(const char *client_ip) {
    /* Same IP within window - check count */
    if (++entry->count > RATE_LIMIT_MAX_REGISTRATIONS) {
       pthread_mutex_unlock(&g_rate_limit_mutex);
-      LOG_WARNING("Rate limit exceeded for IP %s (bucket %d): %d registrations in %lds", client_ip,
-                  bucket, entry->count, (long)(now - entry->window_start));
+      OLOG_WARNING("Rate limit exceeded for IP %s (bucket %d): %d registrations in %lds", client_ip,
+                   bucket, entry->count, (long)(now - entry->window_start));
       return true;
    }
 
@@ -133,7 +133,7 @@ void satellite_send_response(session_t *session, const char *text) {
    if (!resp.transcript.role || !resp.transcript.text) {
       free(resp.transcript.role);
       free(resp.transcript.text);
-      LOG_ERROR("Satellite: Failed to allocate response");
+      OLOG_ERROR("Satellite: Failed to allocate response");
       return;
    }
 
@@ -160,8 +160,8 @@ void satellite_send_stream_start(session_t *session) {
                           } };
 
    queue_response(&resp);
-   LOG_INFO("Satellite: Stream start id=%u for session %u (satellite %s)", sid, session->session_id,
-            session->identity.name);
+   OLOG_INFO("Satellite: Stream start id=%u for session %u (satellite %s)", sid,
+             session->session_id, session->identity.name);
 }
 
 void satellite_send_stream_end(session_t *session, const char *reason) {
@@ -182,8 +182,8 @@ void satellite_send_stream_end(session_t *session, const char *reason) {
    resp.stream.text[sizeof(resp.stream.text) - 1] = '\0';
 
    queue_response(&resp);
-   LOG_INFO("Satellite: Stream end id=%u reason=%s for session %u", session->current_stream_id, r,
-            session->session_id);
+   OLOG_INFO("Satellite: Stream end id=%u reason=%s for session %u", session->current_stream_id, r,
+             session->session_id);
 }
 
 void satellite_send_error(session_t *session, const char *code, const char *message) {
@@ -201,7 +201,7 @@ void satellite_send_error(session_t *session, const char *code, const char *mess
    if (!resp.error.code || !resp.error.message) {
       free(resp.error.code);
       free(resp.error.message);
-      LOG_ERROR("Satellite: Failed to allocate error response");
+      OLOG_ERROR("Satellite: Failed to allocate error response");
       return;
    }
 
@@ -222,7 +222,7 @@ void satellite_send_state(session_t *session, const char *state) {
                           } };
 
    if (!resp.state.state) {
-      LOG_ERROR("Satellite: Failed to allocate state response");
+      OLOG_ERROR("Satellite: Failed to allocate state response");
       return;
    }
 
@@ -278,11 +278,11 @@ static void *satellite_worker_thread(void *arg) {
 
    /* Check if session is still valid or if this request was superseded */
    if (!session || REQUEST_SUPERSEDED(session, expected_gen)) {
-      LOG_INFO("Satellite: Session disconnected or request superseded, aborting");
+      OLOG_INFO("Satellite: Session disconnected or request superseded, aborting");
       goto cleanup;
    }
 
-   LOG_INFO("Satellite: Processing query from %s (len=%zu)", session->identity.name, strlen(text));
+   OLOG_INFO("Satellite: Processing query from %s (len=%zu)", session->identity.name, strlen(text));
 
    /* Send "thinking" state with detail */
    webui_send_state_with_detail(session, "thinking", "Processing your request...");
@@ -300,7 +300,7 @@ static void *satellite_worker_thread(void *arg) {
 
    /* Check if request was superseded during LLM call */
    if (REQUEST_SUPERSEDED(session, expected_gen)) {
-      LOG_INFO("Satellite: Request superseded during LLM call");
+      OLOG_INFO("Satellite: Request superseded during LLM call");
       goto cleanup;
    }
 
@@ -312,7 +312,7 @@ static void *satellite_worker_thread(void *arg) {
 
    /* Check for command tags and process them using the existing infrastructure */
    if (strstr(response, "<command>")) {
-      LOG_INFO("Satellite: Response contains commands, processing...");
+      OLOG_INFO("Satellite: Response contains commands, processing...");
 
       char *processed = webui_process_commands(response, session);
       if (processed && !REQUEST_SUPERSEDED(session, expected_gen) && !session->disconnected) {
@@ -323,12 +323,13 @@ static void *satellite_worker_thread(void *arg) {
          while (strstr(processed, "<command>") && !REQUEST_SUPERSEDED(session, expected_gen) &&
                 !session->disconnected) {
             if (++iterations > MAX_ITERATIONS) {
-               LOG_WARNING("Satellite: Command loop limit reached (%d iterations)", MAX_ITERATIONS);
+               OLOG_WARNING("Satellite: Command loop limit reached (%d iterations)",
+                            MAX_ITERATIONS);
                break;
             }
 
-            LOG_INFO("Satellite: Follow-up contains more commands, processing (iter %d/%d)",
-                     iterations, MAX_ITERATIONS);
+            OLOG_INFO("Satellite: Follow-up contains more commands, processing (iter %d/%d)",
+                      iterations, MAX_ITERATIONS);
 
             char *next_processed = webui_process_commands(processed, session);
             free(processed);
@@ -381,7 +382,7 @@ cleanup:
 
 void handle_satellite_register(ws_connection_t *conn, struct json_object *payload) {
    if (!conn || !payload) {
-      LOG_WARNING("Satellite: Invalid register request");
+      OLOG_WARNING("Satellite: Invalid register request");
       return;
    }
 
@@ -435,7 +436,7 @@ void handle_satellite_register(ws_connection_t *conn, struct json_object *payloa
          }
 
          if (!provided_key || provided_key[0] == '\0') {
-            LOG_WARNING("Satellite: Registration rejected — no key provided (uuid=%s)", uuid);
+            OLOG_WARNING("Satellite: Registration rejected — no key provided (uuid=%s)", uuid);
             send_error_impl(conn->wsi, "registration_key_required",
                             "Server requires a registration key. "
                             "Set registration_key in satellite config.");
@@ -445,7 +446,7 @@ void handle_satellite_register(ws_connection_t *conn, struct json_object *payloa
          size_t key_len = strlen(secrets->satellite_registration_key);
          if (strlen(provided_key) != key_len ||
              sodium_memcmp(provided_key, secrets->satellite_registration_key, key_len) != 0) {
-            LOG_WARNING("Satellite: Registration rejected — invalid key (uuid=%s)", uuid);
+            OLOG_WARNING("Satellite: Registration rejected — invalid key (uuid=%s)", uuid);
             send_error_impl(conn->wsi, "invalid_registration_key",
                             "Registration key does not match. "
                             "Check satellite_registration_key in secrets.toml.");
@@ -497,8 +498,8 @@ void handle_satellite_register(ws_connection_t *conn, struct json_object *payloa
    /* Validate tier matches declared capabilities to prevent resource abuse.
     * Tier 2 relies on server-side ASR+TTS, so must NOT claim local capabilities. */
    if (tier == 2 && (caps.local_asr || caps.local_tts)) {
-      LOG_WARNING("Satellite: Tier 2 registration rejected — claims local_asr=%d local_tts=%d",
-                  caps.local_asr, caps.local_tts);
+      OLOG_WARNING("Satellite: Tier 2 registration rejected — claims local_asr=%d local_tts=%d",
+                   caps.local_asr, caps.local_tts);
       send_error_impl(conn->wsi, "INVALID_MESSAGE",
                       "Tier 2 satellites must not declare local_asr or local_tts");
       return;
@@ -563,7 +564,7 @@ void handle_satellite_register(ws_connection_t *conn, struct json_object *payloa
       if (db_rc == AUTH_DB_SUCCESS) {
          /* Existing mapping found */
          if (!mapping.enabled) {
-            LOG_WARNING("Satellite: Disabled satellite rejected (uuid=%s)", uuid);
+            OLOG_WARNING("Satellite: Disabled satellite rejected (uuid=%s)", uuid);
             send_error_impl(conn->wsi, "SATELLITE_DISABLED",
                             "This satellite has been disabled by an administrator.");
             session_destroy(session->session_id);
@@ -585,8 +586,8 @@ void handle_satellite_register(ws_connection_t *conn, struct json_object *payloa
                free(user_prompt);
             }
 
-            LOG_INFO("Satellite: Applied user mapping user_id=%d for %s (%s)", mapping.user_id,
-                     identity.name, uuid);
+            OLOG_INFO("Satellite: Applied user mapping user_id=%d for %s (%s)", mapping.user_id,
+                      identity.name, uuid);
          }
 
          /* Append satellite context (room + HA area) */
@@ -620,16 +621,16 @@ void handle_satellite_register(ws_connection_t *conn, struct json_object *payloa
          /* No user mapping yet — use default room context */
          session_append_satellite_context(session, identity.location, NULL);
 
-         LOG_INFO("Satellite: Auto-registered new satellite %s (%s)", identity.name, uuid);
+         OLOG_INFO("Satellite: Auto-registered new satellite %s (%s)", identity.name, uuid);
       }
    }
 
    /* Get reconnect secret for client to save */
    char *session_secret = session_get_reconnect_secret(session);
 
-   LOG_INFO("Satellite: Registered '%s' (%s) tier=%d location='%s' session=%u user=%d",
-            identity.name, identity.uuid, tier, identity.location, session->session_id,
-            conn->auth_user_id);
+   OLOG_INFO("Satellite: Registered '%s' (%s) tier=%d location='%s' session=%u user=%d",
+             identity.name, identity.uuid, tier, identity.location, session->session_id,
+             conn->auth_user_id);
 
    /* Send registration acknowledgment with reconnect secret
     * SECURITY: Client MUST save this secret and provide it on reconnection.
@@ -668,7 +669,7 @@ void handle_satellite_register(ws_connection_t *conn, struct json_object *payloa
 
 void handle_satellite_query(ws_connection_t *conn, struct json_object *payload) {
    if (!conn || !payload) {
-      LOG_WARNING("Satellite: Invalid query request");
+      OLOG_WARNING("Satellite: Invalid query request");
       return;
    }
 
@@ -725,8 +726,8 @@ void handle_satellite_query(ws_connection_t *conn, struct json_object *payload) 
    int prev = atomic_fetch_add(&g_active_satellite_workers, 1);
    if (prev >= MAX_SATELLITE_WORKERS) {
       atomic_fetch_sub(&g_active_satellite_workers, 1);
-      LOG_WARNING("Satellite: Worker limit reached (%d), rejecting query from %s",
-                  MAX_SATELLITE_WORKERS, session->identity.name);
+      OLOG_WARNING("Satellite: Worker limit reached (%d), rejecting query from %s",
+                   MAX_SATELLITE_WORKERS, session->identity.name);
       send_error_impl(conn->wsi, "BUSY", "Server busy processing other requests");
       session_release(session);
       free(work->text);
@@ -747,7 +748,7 @@ void handle_satellite_query(ws_connection_t *conn, struct json_object *payload) 
 
    if (ret != 0) {
       atomic_fetch_sub(&g_active_satellite_workers, 1);
-      LOG_ERROR("Satellite: Failed to create worker thread: %d", ret);
+      OLOG_ERROR("Satellite: Failed to create worker thread: %d", ret);
       session_release(session);
       free(work->text);
       free(work);
@@ -755,8 +756,8 @@ void handle_satellite_query(ws_connection_t *conn, struct json_object *payload) 
       return;
    }
 
-   LOG_INFO("Satellite: Query queued for %s: %.50s%s", session->identity.name, text,
-            strlen(text) > 50 ? "..." : "");
+   OLOG_INFO("Satellite: Query queued for %s: %.50s%s", session->identity.name, text,
+             strlen(text) > 50 ? "..." : "");
 }
 
 void handle_satellite_ping(ws_connection_t *conn) {
@@ -781,13 +782,13 @@ void handle_satellite_ping(ws_connection_t *conn) {
 
 void handle_satellite_volume_state(ws_connection_t *conn, struct json_object *payload) {
    if (!conn || !conn->is_satellite) {
-      LOG_WARNING("Satellite: volume_state rejected (not a satellite connection)");
+      OLOG_WARNING("Satellite: volume_state rejected (not a satellite connection)");
       return;
    }
 
    struct json_object *level_obj;
    if (!json_object_object_get_ex(payload, "level", &level_obj)) {
-      LOG_WARNING("Satellite: volume_state missing 'level'");
+      OLOG_WARNING("Satellite: volume_state missing 'level'");
       return;
    }
 
@@ -798,8 +799,8 @@ void handle_satellite_volume_state(ws_connection_t *conn, struct json_object *pa
       level = 100;
 
    conn->volume = (float)level / 100.0f;
-   LOG_INFO("Satellite: Volume state updated to %d%% for %s", level,
-            conn->session ? conn->session->identity.name : "(unknown)");
+   OLOG_INFO("Satellite: Volume state updated to %d%% for %s", level,
+             conn->session ? conn->session->identity.name : "(unknown)");
 }
 
 char *satellite_volume_execute_tool(ws_connection_t *conn,
@@ -851,8 +852,8 @@ char *satellite_volume_execute_tool(ws_connection_t *conn,
       free(json_copy);
    }
 
-   LOG_INFO("Satellite: Volume set to %d%% for %s", level_int,
-            conn->session ? conn->session->identity.name : "(unknown)");
+   OLOG_INFO("Satellite: Volume set to %d%% for %s", level_int,
+             conn->session ? conn->session->identity.name : "(unknown)");
 
    char *result = malloc(64);
    if (result)

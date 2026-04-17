@@ -145,7 +145,7 @@ static void hash_insert(hash_entry_t *table, size_t size, const char *key, int v
          return;
       }
    }
-   LOG_WARNING("tool_registry: Hash table full, could not insert '%s'", key);
+   OLOG_WARNING("tool_registry: Hash table full, could not insert '%s'", key);
 }
 
 /**
@@ -196,7 +196,7 @@ static bool validate_dangerous_tool(const tool_metadata_t *metadata) {
    }
 
    if (!metadata->config || !metadata->config_parser) {
-      LOG_ERROR("tool_registry: Dangerous tool '%s' must have config and parser", metadata->name);
+      OLOG_ERROR("tool_registry: Dangerous tool '%s' must have config and parser", metadata->name);
       return false;
    }
 
@@ -222,8 +222,8 @@ static bool validate_secret_requirements(const tool_metadata_t *metadata) {
    }
 
    if (has_secrets && !(metadata->capabilities & TOOL_CAP_SECRETS)) {
-      LOG_ERROR("tool_registry: Tool '%s' requires secrets but lacks TOOL_CAP_SECRETS",
-                metadata->name);
+      OLOG_ERROR("tool_registry: Tool '%s' requires secrets but lacks TOOL_CAP_SECRETS",
+                 metadata->name);
       return false;
    }
 
@@ -274,7 +274,7 @@ int tool_registry_init(void) {
 
    s_initialized = true;
    s_available = true;
-   LOG_INFO("Tool registry initialized");
+   OLOG_INFO("Tool registry initialized");
 
    pthread_mutex_unlock(&s_registry_mutex);
    return 0;
@@ -288,7 +288,7 @@ int tool_registry_init_tools(void) {
    pthread_mutex_lock(&s_registry_mutex);
 
    if (!s_initialized) {
-      LOG_ERROR("tool_registry: Cannot init tools - registry not initialized");
+      OLOG_ERROR("tool_registry: Cannot init tools - registry not initialized");
       pthread_mutex_unlock(&s_registry_mutex);
       return 1;
    }
@@ -301,11 +301,11 @@ int tool_registry_init_tools(void) {
       }
 
       if (entry->metadata.init) {
-         LOG_INFO("Initializing tool: %s", entry->metadata.name);
+         OLOG_INFO("Initializing tool: %s", entry->metadata.name);
          int rc = entry->metadata.init();
          if (rc != 0) {
-            LOG_ERROR("tool_registry: Failed to initialize tool '%s': %d", entry->metadata.name,
-                      rc);
+            OLOG_ERROR("tool_registry: Failed to initialize tool '%s': %d", entry->metadata.name,
+                       rc);
             failures++;
          } else {
             entry->initialized = true;
@@ -327,8 +327,8 @@ int tool_registry_init_tools(void) {
       total_variations += patterns * name_variations;
    }
 
-   LOG_INFO("tool_registry: %d tools initialized, %d direct command variations", s_tool_count,
-            total_variations);
+   OLOG_INFO("tool_registry: %d tools initialized, %d direct command variations", s_tool_count,
+             total_variations);
 
    pthread_mutex_unlock(&s_registry_mutex);
    return failures;
@@ -337,7 +337,7 @@ int tool_registry_init_tools(void) {
 void tool_registry_lock(void) {
    pthread_mutex_lock(&s_registry_mutex);
    s_locked = true;
-   LOG_INFO("Tool registry locked - no further registrations allowed");
+   OLOG_INFO("Tool registry locked - no further registrations allowed");
    pthread_mutex_unlock(&s_registry_mutex);
 }
 
@@ -360,7 +360,7 @@ void tool_registry_shutdown(void) {
    for (int i = s_tool_count - 1; i >= 0; i--) {
       tool_entry_t *entry = &s_tools[i];
       if (entry->registered && entry->initialized && entry->metadata.cleanup) {
-         LOG_INFO("Cleaning up tool: %s", entry->metadata.name);
+         OLOG_INFO("Cleaning up tool: %s", entry->metadata.name);
          entry->metadata.cleanup();
          entry->initialized = false;
       }
@@ -379,7 +379,7 @@ void tool_registry_shutdown(void) {
 
    hash_init();
 
-   LOG_INFO("Tool registry shutdown complete");
+   OLOG_INFO("Tool registry shutdown complete");
 
    pthread_mutex_unlock(&s_registry_mutex);
 }
@@ -390,33 +390,33 @@ void tool_registry_shutdown(void) {
 
 int tool_registry_register(const tool_metadata_t *metadata) {
    if (!metadata || !metadata->name || !metadata->callback) {
-      LOG_ERROR("tool_registry: Invalid registration - missing name or callback");
+      OLOG_ERROR("tool_registry: Invalid registration - missing name or callback");
       return 1;
    }
 
    pthread_mutex_lock(&s_registry_mutex);
 
    if (!s_initialized) {
-      LOG_ERROR("tool_registry: Cannot register - registry not initialized");
+      OLOG_ERROR("tool_registry: Cannot register - registry not initialized");
       pthread_mutex_unlock(&s_registry_mutex);
       return 1;
    }
 
    if (s_locked) {
-      LOG_ERROR("tool_registry: Cannot register '%s' - registry is locked", metadata->name);
+      OLOG_ERROR("tool_registry: Cannot register '%s' - registry is locked", metadata->name);
       pthread_mutex_unlock(&s_registry_mutex);
       return 1;
    }
 
    if (s_tool_count >= TOOL_MAX_REGISTERED) {
-      LOG_ERROR("tool_registry: Maximum tool count (%d) reached", TOOL_MAX_REGISTERED);
+      OLOG_ERROR("tool_registry: Maximum tool count (%d) reached", TOOL_MAX_REGISTERED);
       pthread_mutex_unlock(&s_registry_mutex);
       return 1;
    }
 
    /* Check for duplicate name */
    if (hash_lookup(s_name_hash, HASH_BUCKETS, metadata->name) >= 0) {
-      LOG_ERROR("tool_registry: Tool '%s' already registered", metadata->name);
+      OLOG_ERROR("tool_registry: Tool '%s' already registered", metadata->name);
       pthread_mutex_unlock(&s_registry_mutex);
       return 1;
    }
@@ -467,7 +467,7 @@ int tool_registry_register(const tool_metadata_t *metadata) {
    }
 
    s_tool_count++;
-   LOG_INFO("Registered tool: %s (caps=0x%x)", metadata->name, metadata->capabilities);
+   OLOG_INFO("Registered tool: %s (caps=0x%x)", metadata->name, metadata->capabilities);
 
    pthread_mutex_unlock(&s_registry_mutex);
    return 0;
@@ -585,7 +585,7 @@ int tool_registry_parse_configs(const char *config_path) {
    /* Open and parse the config file */
    FILE *fp = fopen(config_path, "r");
    if (!fp) {
-      LOG_WARNING("tool_registry: Cannot open config file: %s", config_path);
+      OLOG_WARNING("tool_registry: Cannot open config file: %s", config_path);
       return 1;
    }
 
@@ -594,7 +594,7 @@ int tool_registry_parse_configs(const char *config_path) {
    fclose(fp);
 
    if (!root) {
-      LOG_ERROR("tool_registry: Failed to parse config: %s", errbuf);
+      OLOG_ERROR("tool_registry: Failed to parse config: %s", errbuf);
       return 1;
    }
 
@@ -620,8 +620,8 @@ int tool_registry_parse_configs(const char *config_path) {
          /* Convention: config struct's first field is 'bool enabled' for dangerous tools */
          bool *enabled_ptr = (bool *)entry->metadata.config;
          entry->enabled = *enabled_ptr;
-         LOG_INFO("Dangerous tool '%s' enabled=%s (from config)", entry->metadata.name,
-                  entry->enabled ? "true" : "false");
+         OLOG_INFO("Dangerous tool '%s' enabled=%s (from config)", entry->metadata.name,
+                   entry->enabled ? "true" : "false");
       }
    }
 
@@ -662,13 +662,13 @@ const char *tool_registry_get_secret(const char *tool_name, const char *secret_n
    /* Find the tool */
    const tool_metadata_t *meta = tool_registry_lookup(tool_name);
    if (!meta) {
-      LOG_WARNING("tool_registry: Unknown tool '%s' requesting secret", tool_name);
+      OLOG_WARNING("tool_registry: Unknown tool '%s' requesting secret", tool_name);
       return NULL;
    }
 
    /* Verify tool declared this secret */
    if (!tool_declared_secret(meta, secret_name)) {
-      LOG_WARNING("tool_registry: Tool '%s' did not declare secret '%s'", tool_name, secret_name);
+      OLOG_WARNING("tool_registry: Tool '%s' did not declare secret '%s'", tool_name, secret_name);
       return NULL;
    }
 
@@ -699,7 +699,7 @@ const char *tool_registry_get_secret(const char *tool_name, const char *secret_n
       return secrets->home_assistant_token[0] ? secrets->home_assistant_token : NULL;
    }
 
-   LOG_WARNING("tool_registry: Unknown secret name '%s'", secret_name);
+   OLOG_WARNING("tool_registry: Unknown secret name '%s'", secret_name);
    return NULL;
 }
 
@@ -727,7 +727,7 @@ const char *tool_registry_get_config_string(const char *path) {
       return config->general.ai_name[0] ? config->general.ai_name : NULL;
    }
 
-   LOG_WARNING("tool_registry: Unknown config path '%s'", path);
+   OLOG_WARNING("tool_registry: Unknown config path '%s'", path);
    return NULL;
 }
 
@@ -1202,7 +1202,7 @@ int tool_registry_update_param_enum(const char *tool_name,
    }
 
    if (count > TOOL_PARAM_ENUM_MAX) {
-      LOG_ERROR("tool_registry: Enum count %d exceeds max %d", count, TOOL_PARAM_ENUM_MAX);
+      OLOG_ERROR("tool_registry: Enum count %d exceeds max %d", count, TOOL_PARAM_ENUM_MAX);
       return 4;
    }
 
@@ -1216,7 +1216,7 @@ int tool_registry_update_param_enum(const char *tool_name,
    /* Find the tool by name */
    int tool_idx = hash_lookup(s_name_hash, HASH_BUCKETS, tool_name);
    if (tool_idx < 0 || !s_tools[tool_idx].registered) {
-      LOG_ERROR("tool_registry: Tool '%s' not found for enum update", tool_name);
+      OLOG_ERROR("tool_registry: Tool '%s' not found for enum update", tool_name);
       pthread_mutex_unlock(&s_registry_mutex);
       return 1;
    }
@@ -1234,15 +1234,15 @@ int tool_registry_update_param_enum(const char *tool_name,
    }
 
    if (param_idx < 0) {
-      LOG_ERROR("tool_registry: Parameter '%s' not found in tool '%s'", param_name, tool_name);
+      OLOG_ERROR("tool_registry: Parameter '%s' not found in tool '%s'", param_name, tool_name);
       pthread_mutex_unlock(&s_registry_mutex);
       return 2;
    }
 
    const treg_param_t *orig_param = &meta->params[param_idx];
    if (orig_param->type != TOOL_PARAM_TYPE_ENUM) {
-      LOG_ERROR("tool_registry: Parameter '%s' in tool '%s' is not enum type", param_name,
-                tool_name);
+      OLOG_ERROR("tool_registry: Parameter '%s' in tool '%s' is not enum type", param_name,
+                 tool_name);
       pthread_mutex_unlock(&s_registry_mutex);
       return 3;
    }
@@ -1252,7 +1252,7 @@ int tool_registry_update_param_enum(const char *tool_name,
    if (override_idx < 0) {
       override_idx = alloc_enum_override();
       if (override_idx < 0) {
-         LOG_ERROR("tool_registry: Enum override slots exhausted");
+         OLOG_ERROR("tool_registry: Enum override slots exhausted");
          pthread_mutex_unlock(&s_registry_mutex);
          return 4;
       }
@@ -1275,8 +1275,8 @@ int tool_registry_update_param_enum(const char *tool_name,
             override->value_ptrs[valid_count] = override->values[valid_count];
             valid_count++;
          } else {
-            LOG_WARNING("tool_registry: Rejected invalid enum value for %s.%s", tool_name,
-                        param_name);
+            OLOG_WARNING("tool_registry: Rejected invalid enum value for %s.%s", tool_name,
+                         param_name);
          }
       }
    }
@@ -1295,8 +1295,8 @@ int tool_registry_update_param_enum(const char *tool_name,
    /* Invalidate schema cache */
    s_cache_valid = false;
 
-   LOG_INFO("tool_registry: Updated enum for %s.%s with %d values (%d sanitized)", tool_name,
-            param_name, valid_count, count - valid_count);
+   OLOG_INFO("tool_registry: Updated enum for %s.%s with %d values (%d sanitized)", tool_name,
+             param_name, valid_count, count - valid_count);
 
    pthread_mutex_unlock(&s_registry_mutex);
    return 0;
@@ -1310,7 +1310,7 @@ void tool_registry_invalidate_cache(void) {
    /* Also invalidate LLM tools cache for coherence */
    llm_tools_invalidate_cache();
 
-   LOG_INFO("tool_registry: Schema cache invalidated (including LLM tools)");
+   OLOG_INFO("tool_registry: Schema cache invalidated (including LLM tools)");
 }
 
 bool tool_registry_is_cache_valid(void) {

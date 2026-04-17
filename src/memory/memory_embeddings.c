@@ -154,7 +154,7 @@ static int cache_load(int user_id) {
    s_cache.valid = true;
    atomic_store(&s_cache.dirty, false);
 
-   LOG_INFO("memory_embeddings: loaded %d embeddings into cache for user %d", loaded, user_id);
+   OLOG_INFO("memory_embeddings: loaded %d embeddings into cache for user %d", loaded, user_id);
    return 0;
 }
 
@@ -286,8 +286,8 @@ static int entity_cache_load(int user_id) {
    s_entity_cache.valid = true;
    atomic_store(&s_entity_cache.dirty, false);
 
-   LOG_INFO("memory_embeddings: loaded %d entity embeddings into cache for user %d", loaded,
-            user_id);
+   OLOG_INFO("memory_embeddings: loaded %d entity embeddings into cache for user %d", loaded,
+             user_id);
    return 0;
 }
 
@@ -531,7 +531,7 @@ static void *backfill_thread_fn(void *arg) {
    int user_id = s_backfill_user_id;
    int dims = embedding_engine_dims();
 
-   LOG_INFO("memory_embeddings: backfill started for user %d", user_id);
+   OLOG_INFO("memory_embeddings: backfill started for user %d", user_id);
 
    int total_embedded = 0;
    int batch_size = 50;
@@ -557,7 +557,7 @@ static void *backfill_thread_fn(void *arg) {
       }
    }
 
-   LOG_INFO("memory_embeddings: backfill complete, embedded %d facts", total_embedded);
+   OLOG_INFO("memory_embeddings: backfill complete, embedded %d facts", total_embedded);
    atomic_store(&s_backfill_running, false);
    return NULL;
 }
@@ -567,7 +567,7 @@ void memory_embeddings_start_backfill(int user_id) {
       return;
 
    if (atomic_load(&s_backfill_running)) {
-      LOG_INFO("memory_embeddings: backfill already running");
+      OLOG_INFO("memory_embeddings: backfill already running");
       return;
    }
 
@@ -576,7 +576,7 @@ void memory_embeddings_start_backfill(int user_id) {
    atomic_store(&s_backfill_running, true);
 
    if (pthread_create(&s_backfill_thread, NULL, backfill_thread_fn, NULL) != 0) {
-      LOG_ERROR("memory_embeddings: failed to create backfill thread");
+      OLOG_ERROR("memory_embeddings: failed to create backfill thread");
       atomic_store(&s_backfill_running, false);
    }
 }

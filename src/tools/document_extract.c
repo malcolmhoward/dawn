@@ -108,13 +108,13 @@ static int extract_pdf_text(const char *data,
                             doc_extract_result_t *out) {
    /* Validate magic bytes: PDF starts with %PDF- */
    if (data_len < 5 || memcmp(data, "%PDF-", 5) != 0) {
-      LOG_WARNING("document_extract: PDF magic bytes not found");
+      OLOG_WARNING("document_extract: PDF magic bytes not found");
       return DOC_EXTRACT_ERROR_CORRUPT;
    }
 
    fz_context *ctx = fz_new_context(NULL, NULL, DOC_MUPDF_MEM_LIMIT);
    if (!ctx) {
-      LOG_ERROR("document_extract: fz_new_context failed");
+      OLOG_ERROR("document_extract: fz_new_context failed");
       return DOC_EXTRACT_ERROR_ALLOC;
    }
 
@@ -180,7 +180,7 @@ static int extract_pdf_text(const char *data,
          fz_drop_stream(ctx, stm);
    }
    fz_catch(ctx) {
-      LOG_ERROR("document_extract: PDF extraction failed: %s", fz_caught_message(ctx));
+      OLOG_ERROR("document_extract: PDF extraction failed: %s", fz_caught_message(ctx));
       free(result);
       out->text = NULL;
       out->text_len = 0;
@@ -270,7 +270,7 @@ static int extract_docx_text(const char *data,
                              doc_extract_result_t *out) {
    /* Validate magic bytes: ZIP starts with PK\x03\x04 */
    if (data_len < 4 || memcmp(data, "PK\x03\x04", 4) != 0) {
-      LOG_WARNING("document_extract: DOCX magic bytes not found (not a ZIP)");
+      OLOG_WARNING("document_extract: DOCX magic bytes not found (not a ZIP)");
       return DOC_EXTRACT_ERROR_CORRUPT;
    }
 
@@ -279,14 +279,15 @@ static int extract_docx_text(const char *data,
 
    zip_source_t *src = zip_source_buffer_create(data, data_len, 0, &zerr);
    if (!src) {
-      LOG_ERROR("document_extract: zip_source_buffer_create failed: %s", zip_error_strerror(&zerr));
+      OLOG_ERROR("document_extract: zip_source_buffer_create failed: %s",
+                 zip_error_strerror(&zerr));
       zip_error_fini(&zerr);
       return DOC_EXTRACT_ERROR_CORRUPT;
    }
 
    zip_t *za = zip_open_from_source(src, ZIP_RDONLY, &zerr);
    if (!za) {
-      LOG_ERROR("document_extract: zip_open_from_source failed: %s", zip_error_strerror(&zerr));
+      OLOG_ERROR("document_extract: zip_open_from_source failed: %s", zip_error_strerror(&zerr));
       zip_source_free(src);
       zip_error_fini(&zerr);
       return DOC_EXTRACT_ERROR_CORRUPT;
@@ -295,7 +296,7 @@ static int extract_docx_text(const char *data,
 
    zip_file_t *zf = zip_fopen(za, "word/document.xml", 0);
    if (!zf) {
-      LOG_WARNING("document_extract: word/document.xml not found in DOCX");
+      OLOG_WARNING("document_extract: word/document.xml not found in DOCX");
       zip_close(za);
       return DOC_EXTRACT_ERROR_CORRUPT;
    }
@@ -336,14 +337,14 @@ static int extract_docx_text(const char *data,
    free(xml_buf);
 
    if (!xmldoc) {
-      LOG_ERROR("document_extract: DOCX XML parse failed");
+      OLOG_ERROR("document_extract: DOCX XML parse failed");
       xmlFreeParserCtxt(parser);
       return DOC_EXTRACT_ERROR_CORRUPT;
    }
 
    /* Reject DTDs entirely (legitimate DOCX never has one — XXE prevention) */
    if (xmldoc->intSubset) {
-      LOG_WARNING("document_extract: DOCX XML contains DTD, rejecting (XXE prevention)");
+      OLOG_WARNING("document_extract: DOCX XML contains DTD, rejecting (XXE prevention)");
       xmlFreeDoc(xmldoc);
       xmlFreeParserCtxt(parser);
       return DOC_EXTRACT_ERROR_CORRUPT;

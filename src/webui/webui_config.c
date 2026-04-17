@@ -248,7 +248,7 @@ void handle_get_config(ws_connection_t *conn) {
    }
 
    json_object_put(response);
-   LOG_INFO("WebUI: Sent configuration to client");
+   OLOG_INFO("WebUI: Sent configuration to client");
 }
 
 /* Helper to safely copy string from JSON to config field */
@@ -384,8 +384,8 @@ static void apply_config_from_json(dawn_config_t *config, struct json_object *pa
              strcmp(config->llm.cloud.provider, "openai") != 0 &&
              strcmp(config->llm.cloud.provider, "claude") != 0 &&
              strcmp(config->llm.cloud.provider, "gemini") != 0) {
-            LOG_WARNING("WebUI: Invalid cloud.provider '%s', using 'openai'",
-                        config->llm.cloud.provider);
+            OLOG_WARNING("WebUI: Invalid cloud.provider '%s', using 'openai'",
+                         config->llm.cloud.provider);
             strncpy(config->llm.cloud.provider, "openai", sizeof(config->llm.cloud.provider) - 1);
          }
          JSON_TO_CONFIG_STR(cloud, "endpoint", config->llm.cloud.endpoint);
@@ -417,7 +417,7 @@ static void apply_config_from_json(dawn_config_t *config, struct json_object *pa
             if (idx >= 0 && idx < config->llm.cloud.openai_models_count) {
                config->llm.cloud.openai_default_model_idx = idx;
             } else if (config->llm.cloud.openai_models_count > 0) {
-               LOG_WARNING("WebUI: openai_default_model_idx %d out of range, using 0", idx);
+               OLOG_WARNING("WebUI: openai_default_model_idx %d out of range, using 0", idx);
                config->llm.cloud.openai_default_model_idx = 0;
             }
          }
@@ -447,7 +447,7 @@ static void apply_config_from_json(dawn_config_t *config, struct json_object *pa
             if (idx >= 0 && idx < config->llm.cloud.claude_models_count) {
                config->llm.cloud.claude_default_model_idx = idx;
             } else if (config->llm.cloud.claude_models_count > 0) {
-               LOG_WARNING("WebUI: claude_default_model_idx %d out of range, using 0", idx);
+               OLOG_WARNING("WebUI: claude_default_model_idx %d out of range, using 0", idx);
                config->llm.cloud.claude_default_model_idx = 0;
             }
          }
@@ -477,7 +477,7 @@ static void apply_config_from_json(dawn_config_t *config, struct json_object *pa
             if (idx >= 0 && idx < config->llm.cloud.gemini_models_count) {
                config->llm.cloud.gemini_default_model_idx = idx;
             } else if (config->llm.cloud.gemini_models_count > 0) {
-               LOG_WARNING("WebUI: gemini_default_model_idx %d out of range, using 0", idx);
+               OLOG_WARNING("WebUI: gemini_default_model_idx %d out of range, using 0", idx);
                config->llm.cloud.gemini_default_model_idx = 0;
             }
          }
@@ -497,7 +497,7 @@ static void apply_config_from_json(dawn_config_t *config, struct json_object *pa
          if (config->llm.tools.mode[0] != '\0' && strcmp(config->llm.tools.mode, "native") != 0 &&
              strcmp(config->llm.tools.mode, "command_tags") != 0 &&
              strcmp(config->llm.tools.mode, "disabled") != 0) {
-            LOG_WARNING("WebUI: Invalid tools.mode '%s', using 'native'", config->llm.tools.mode);
+            OLOG_WARNING("WebUI: Invalid tools.mode '%s', using 'native'", config->llm.tools.mode);
             strncpy(config->llm.tools.mode, "native", sizeof(config->llm.tools.mode) - 1);
          }
       }
@@ -845,7 +845,7 @@ static void apply_config_from_json(dawn_config_t *config, struct json_object *pa
             if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
                   (*p >= '0' && *p <= '9') || *p == '.' || *p == '-' || *p == ':' || *p == '[' ||
                   *p == ']')) {
-               LOG_WARNING("Config: invalid character '%c' in plex.host, clearing", *p);
+               OLOG_WARNING("Config: invalid character '%c' in plex.host, clearing", *p);
                config->music.plex.host[0] = '\0';
                break;
             }
@@ -886,7 +886,7 @@ void handle_set_config(ws_connection_t *conn, struct json_object *payload) {
 
    /* Create backup before modifying */
    if (config_backup_file(config_path) != 0) {
-      LOG_WARNING("WebUI: Failed to create config backup");
+      OLOG_WARNING("WebUI: Failed to create config backup");
       /* Continue anyway - backup is optional */
    }
 
@@ -915,7 +915,7 @@ void handle_set_config(ws_connection_t *conn, struct json_object *payload) {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
       json_object_object_add(resp_payload, "message",
                              json_object_new_string("Configuration saved successfully"));
-      LOG_INFO("WebUI: Configuration saved to %s", config_path);
+      OLOG_INFO("WebUI: Configuration saved to %s", config_path);
 
       /* Apply runtime changes for LLM type if it was updated */
       struct json_object *llm_section = NULL;
@@ -969,8 +969,8 @@ void handle_set_config(ws_connection_t *conn, struct json_object *payload) {
          llm_local_invalidate_cache();
          llm_local_invalidate_models_cache();
          llm_context_refresh_local();
-         LOG_INFO("WebUI: Local LLM endpoint changed, invalidated provider, models, and context "
-                  "cache");
+         OLOG_INFO("WebUI: Local LLM endpoint changed, invalidated provider, models, and context "
+                   "cache");
       }
 
 #ifdef DAWN_ENABLE_HOMEASSISTANT_TOOL
@@ -1004,7 +1004,7 @@ void handle_set_config(ws_connection_t *conn, struct json_object *payload) {
 
                /* Send updated HA status to requesting client */
                handle_ha_status(conn);
-               LOG_INFO("WebUI: Home Assistant config updated");
+               OLOG_INFO("WebUI: Home Assistant config updated");
             }
          }
       }
@@ -1013,15 +1013,15 @@ void handle_set_config(ws_connection_t *conn, struct json_object *payload) {
       /* If tool calling mode changed, rebuild system prompt for current session */
       if (tools_mode_changed) {
          invalidate_system_instructions();
-         LOG_INFO("Tool calling mode changed (mode=%s), rebuilding prompt",
-                  g_config.llm.tools.mode);
+         OLOG_INFO("Tool calling mode changed (mode=%s), rebuilding prompt",
+                   g_config.llm.tools.mode);
 
          /* Update current session's system prompt so change takes effect immediately */
          if (conn->session) {
             char *new_prompt = build_user_prompt(conn->auth_user_id);
             if (new_prompt) {
                session_update_system_prompt(conn->session, new_prompt);
-               LOG_INFO("WebUI: Updated session prompt for tools mode change");
+               OLOG_INFO("WebUI: Updated session prompt for tools mode change");
                free(new_prompt);
             }
          }
@@ -1030,7 +1030,7 @@ void handle_set_config(ws_connection_t *conn, struct json_object *payload) {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
       json_object_object_add(resp_payload, "error",
                              json_object_new_string("Failed to write configuration file"));
-      LOG_ERROR("WebUI: Failed to save configuration");
+      OLOG_ERROR("WebUI: Failed to save configuration");
    }
 
    json_object_object_add(response, "payload", resp_payload);
@@ -1169,12 +1169,12 @@ void handle_set_secrets(ws_connection_t *conn, struct json_object *payload) {
       /* Refresh LLM providers to pick up new API keys immediately */
       llm_refresh_providers();
 
-      LOG_INFO("WebUI: Secrets saved to %s", secrets_path);
+      OLOG_INFO("WebUI: Secrets saved to %s", secrets_path);
    } else {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
       json_object_object_add(resp_payload, "error",
                              json_object_new_string("Failed to write secrets file"));
-      LOG_ERROR("WebUI: Failed to save secrets");
+      OLOG_ERROR("WebUI: Failed to save secrets");
    }
 
    json_object_object_add(response, "payload", resp_payload);
@@ -1226,13 +1226,13 @@ static size_t run_whitelisted_command(const char *cmd, char *output, size_t outp
 
    /* Security check: only run whitelisted commands */
    if (!is_command_whitelisted(cmd)) {
-      LOG_ERROR("WebUI: Blocked non-whitelisted command: %.50s...", cmd ? cmd : "(null)");
+      OLOG_ERROR("WebUI: Blocked non-whitelisted command: %.50s...", cmd ? cmd : "(null)");
       return 0;
    }
 
    FILE *fp = popen(cmd, "r");
    if (!fp) {
-      LOG_WARNING("WebUI: popen failed for command");
+      OLOG_WARNING("WebUI: popen failed for command");
       return 0;
    }
 
@@ -1450,7 +1450,7 @@ void handle_get_audio_devices(ws_connection_t *conn, struct json_object *payload
    }
 
    json_object_put(response);
-   LOG_INFO("WebUI: Sent audio devices for backend '%s'", backend);
+   OLOG_INFO("WebUI: Sent audio devices for backend '%s'", backend);
 }
 /**
  * @brief Validate that a resolved path is within allowed directories
@@ -1513,7 +1513,7 @@ static json_object *scan_models_directory(void) {
    }
 
    if (!asr_valid) {
-      LOG_WARNING("WebUI: ASR models path outside allowed directories: %s", asr_path);
+      OLOG_WARNING("WebUI: ASR models path outside allowed directories: %s", asr_path);
    }
 
    /* Scan ASR models directory for ggml-*.bin files */
@@ -1542,7 +1542,7 @@ static json_object *scan_models_directory(void) {
          }
          closedir(asr_dir);
       } else {
-         LOG_WARNING("WebUI: Could not open ASR models path: %s", asr_path);
+         OLOG_WARNING("WebUI: Could not open ASR models path: %s", asr_path);
       }
    }
 
@@ -1564,7 +1564,7 @@ static json_object *scan_models_directory(void) {
    }
 
    if (!tts_valid) {
-      LOG_WARNING("WebUI: TTS models path outside allowed directories: %s", tts_path);
+      OLOG_WARNING("WebUI: TTS models path outside allowed directories: %s", tts_path);
    }
 
    /* Scan TTS models directory for *.onnx files (excluding VAD models) */
@@ -1592,7 +1592,7 @@ static json_object *scan_models_directory(void) {
          }
          closedir(tts_dir);
       } else {
-         LOG_WARNING("WebUI: Could not open TTS models path: %s", tts_path);
+         OLOG_WARNING("WebUI: Could not open TTS models path: %s", tts_path);
       }
    }
 
@@ -1602,8 +1602,8 @@ static json_object *scan_models_directory(void) {
    json_object_object_add(payload, "tts_path", json_object_new_string(config->tts.models_path));
    json_object_object_add(response, "payload", payload);
 
-   LOG_INFO("WebUI: Scanned models (%zu ASR, %zu TTS)", json_object_array_length(asr_models),
-            json_object_array_length(tts_voices));
+   OLOG_INFO("WebUI: Scanned models (%zu ASR, %zu TTS)", json_object_array_length(asr_models),
+             json_object_array_length(tts_voices));
 
    return response;
 }
@@ -1630,7 +1630,7 @@ void handle_list_models(ws_connection_t *conn) {
        (now - s_discovery_cache.models_cache_time) < MODEL_CACHE_TTL) {
       /* Return cached response */
       send_json_response(conn, s_discovery_cache.models_response);
-      LOG_INFO("WebUI: Sent cached model list");
+      OLOG_INFO("WebUI: Sent cached model list");
       pthread_mutex_unlock(&s_discovery_cache.cache_mutex);
       return;
    }
@@ -1712,14 +1712,14 @@ static json_object *scan_network_interfaces(void) {
       }
       freeifaddrs(ifaddr);
    } else {
-      LOG_WARNING("WebUI: getifaddrs failed: %s", strerror(errno));
+      OLOG_WARNING("WebUI: getifaddrs failed: %s", strerror(errno));
       /* Continue with just 0.0.0.0 and 127.0.0.1 */
    }
 
    json_object_object_add(payload, "addresses", addresses);
    json_object_object_add(response, "payload", payload);
 
-   LOG_INFO("WebUI: Scanned interfaces (%d addresses)", seen_count);
+   OLOG_INFO("WebUI: Scanned interfaces (%d addresses)", seen_count);
    return response;
 }
 
@@ -1746,7 +1746,7 @@ void handle_list_interfaces(ws_connection_t *conn) {
        (now - s_discovery_cache.interfaces_cache_time) < MODEL_CACHE_TTL) {
       /* Return cached response */
       send_json_response(conn, s_discovery_cache.interfaces_response);
-      LOG_INFO("WebUI: Sent cached interface list");
+      OLOG_INFO("WebUI: Sent cached interface list");
       pthread_mutex_unlock(&s_discovery_cache.cache_mutex);
       return;
    }
@@ -1824,7 +1824,7 @@ void handle_list_llm_models(ws_connection_t *conn) {
     * Config/session settings are not meaningful since llama.cpp can't switch models */
    if (provider == LOCAL_PROVIDER_LLAMA_CPP && count > 0) {
       current_model = models[0].name;
-      LOG_INFO("WebUI: llama.cpp actual loaded model: %s", current_model);
+      OLOG_INFO("WebUI: llama.cpp actual loaded model: %s", current_model);
    }
    /* For Ollama and others: priority is session > config > first available */
    else {
@@ -1861,6 +1861,6 @@ void handle_list_llm_models(ws_connection_t *conn) {
    send_json_response(conn, response);
    json_object_put(response);
 
-   LOG_INFO("WebUI: Sent local LLM models list (%zu models from %s)", count,
-            llm_local_provider_name(provider));
+   OLOG_INFO("WebUI: Sent local LLM models list (%zu models from %s)", count,
+             llm_local_provider_name(provider));
 }

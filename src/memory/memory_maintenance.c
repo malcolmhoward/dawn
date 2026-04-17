@@ -107,7 +107,7 @@ void memory_run_nightly_decay(void) {
 
    last_run = now;
 
-   LOG_INFO("memory_decay: completed — %d users, %d facts decayed, %d pruned, %d summaries "
-            "cleaned",
-            user_count, total_decayed, total_pruned, total_summaries);
+   OLOG_INFO("memory_decay: completed — %d users, %d facts decayed, %d pruned, %d summaries "
+             "cleaned",
+             user_count, total_decayed, total_pruned, total_summaries);
 }

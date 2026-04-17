@@ -99,7 +99,7 @@ int64_t phone_db_call_log_insert(int user_id,
    sqlite3_stmt *stmt;
    int rc = sqlite3_prepare_v2(s_db.db, sql, -1, &stmt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("phone_db: call_log insert prepare failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("phone_db: call_log insert prepare failed: %s", sqlite3_errmsg(s_db.db));
       pthread_mutex_unlock(&s_db.mutex);
       return -1;
    }
@@ -117,7 +117,7 @@ int64_t phone_db_call_log_insert(int user_id,
    if (rc == SQLITE_DONE) {
       row_id = sqlite3_last_insert_rowid(s_db.db);
    } else {
-      LOG_ERROR("phone_db: call_log insert failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("phone_db: call_log insert failed: %s", sqlite3_errmsg(s_db.db));
    }
 
    sqlite3_finalize(stmt);
@@ -137,7 +137,7 @@ int phone_db_call_log_update(int64_t id, int duration_sec, int status) {
    sqlite3_stmt *stmt;
    int rc = sqlite3_prepare_v2(s_db.db, sql, -1, &stmt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("phone_db: call_log update prepare failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("phone_db: call_log update prepare failed: %s", sqlite3_errmsg(s_db.db));
       pthread_mutex_unlock(&s_db.mutex);
       return 1;
    }
@@ -149,7 +149,7 @@ int phone_db_call_log_update(int64_t id, int duration_sec, int status) {
    rc = sqlite3_step(stmt);
    int result = (rc == SQLITE_DONE) ? 0 : 1;
    if (rc != SQLITE_DONE) {
-      LOG_ERROR("phone_db: call_log update failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("phone_db: call_log update failed: %s", sqlite3_errmsg(s_db.db));
    }
 
    sqlite3_finalize(stmt);
@@ -171,7 +171,7 @@ int phone_db_call_log_recent(int user_id, phone_call_log_t *out, int max) {
    sqlite3_stmt *stmt;
    int rc = sqlite3_prepare_v2(s_db.db, sql, -1, &stmt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("phone_db: call_log query prepare failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("phone_db: call_log query prepare failed: %s", sqlite3_errmsg(s_db.db));
       pthread_mutex_unlock(&s_db.mutex);
       return -1;
    }
@@ -213,7 +213,7 @@ int64_t phone_db_sms_log_insert(int user_id,
    sqlite3_stmt *stmt;
    int rc = sqlite3_prepare_v2(s_db.db, sql, -1, &stmt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("phone_db: sms_log insert prepare failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("phone_db: sms_log insert prepare failed: %s", sqlite3_errmsg(s_db.db));
       pthread_mutex_unlock(&s_db.mutex);
       return -1;
    }
@@ -230,7 +230,7 @@ int64_t phone_db_sms_log_insert(int user_id,
    if (rc == SQLITE_DONE) {
       row_id = sqlite3_last_insert_rowid(s_db.db);
    } else {
-      LOG_ERROR("phone_db: sms_log insert failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("phone_db: sms_log insert failed: %s", sqlite3_errmsg(s_db.db));
    }
 
    sqlite3_finalize(stmt);
@@ -252,7 +252,7 @@ int phone_db_sms_get_unread(int user_id, phone_sms_log_t *out, int max) {
    sqlite3_stmt *stmt;
    int rc = sqlite3_prepare_v2(s_db.db, sql, -1, &stmt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("phone_db: sms unread query failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("phone_db: sms unread query failed: %s", sqlite3_errmsg(s_db.db));
       pthread_mutex_unlock(&s_db.mutex);
       return -1;
    }
@@ -285,7 +285,7 @@ int phone_db_sms_log_recent(int user_id, phone_sms_log_t *out, int max) {
    sqlite3_stmt *stmt;
    int rc = sqlite3_prepare_v2(s_db.db, sql, -1, &stmt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("phone_db: sms recent query failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("phone_db: sms recent query failed: %s", sqlite3_errmsg(s_db.db));
       pthread_mutex_unlock(&s_db.mutex);
       return -1;
    }
@@ -347,7 +347,7 @@ int phone_db_cleanup(int call_retention_days, int sms_retention_days) {
       if (rc == SQLITE_OK) {
          sqlite3_bind_int64(stmt, 1, (int64_t)call_cutoff);
          if (sqlite3_step(stmt) != SQLITE_DONE) {
-            LOG_ERROR("phone_db: call cleanup failed: %s", sqlite3_errmsg(s_db.db));
+            OLOG_ERROR("phone_db: call cleanup failed: %s", sqlite3_errmsg(s_db.db));
             result = 1;
          }
          sqlite3_finalize(stmt);
@@ -362,7 +362,7 @@ int phone_db_cleanup(int call_retention_days, int sms_retention_days) {
       if (rc == SQLITE_OK) {
          sqlite3_bind_int64(stmt, 1, (int64_t)sms_cutoff);
          if (sqlite3_step(stmt) != SQLITE_DONE) {
-            LOG_ERROR("phone_db: sms cleanup failed: %s", sqlite3_errmsg(s_db.db));
+            OLOG_ERROR("phone_db: sms cleanup failed: %s", sqlite3_errmsg(s_db.db));
             result = 1;
          }
          sqlite3_finalize(stmt);

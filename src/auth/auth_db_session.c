@@ -203,7 +203,7 @@ int auth_db_get_session(const char *token, auth_session_t *session_out) {
       return AUTH_DB_NOT_FOUND;
    }
 
-   LOG_ERROR("auth_db_get_session: failed: %s", sqlite3_errmsg(s_db.db));
+   OLOG_ERROR("auth_db_get_session: failed: %s", sqlite3_errmsg(s_db.db));
    return AUTH_DB_FAILURE;
 }
 

@@ -128,7 +128,7 @@ static void record_loaded_modules(char *buf, size_t buf_size, const char *module
                /* Overwrite trailing comma, append "module," */
                snprintf(buf + cur_len - 1, buf_size - cur_len + 1, ",%s,", mod);
             } else {
-               LOG_WARNING("render_visual: module cache full, skipping '%s'", mod);
+               OLOG_WARNING("render_visual: module cache full, skipping '%s'", mod);
             }
          }
       }
@@ -152,7 +152,7 @@ static char *load_guidelines_callback(const char *action, char *value, int *shou
    /* Check session cache — return short message if modules already in context */
    session_t *session = session_get_command_context();
    if (session && modules_already_loaded(session->visual_modules_loaded, value)) {
-      LOG_INFO("render_visual: guidelines already loaded for '%s', returning cache hint", value);
+      OLOG_INFO("render_visual: guidelines already loaded for '%s', returning cache hint", value);
       return strdup("Guidelines already loaded in this conversation. "
                     "Refer to the instructions provided above.");
    }
@@ -292,7 +292,7 @@ static char *render_visual_callback(const char *action, char *value, int *should
 
    json_object_put(json);
 
-   LOG_INFO("render_visual: generated %s visual '%s' (%zu bytes code)", type, title, code_len);
+   OLOG_INFO("render_visual: generated %s visual '%s' (%zu bytes code)", type, title, code_len);
    return result;
 }
 
@@ -388,16 +388,16 @@ static const tool_metadata_t render_visual_metadata = {
 int render_visual_tool_register(void) {
    int rc = tool_registry_register(&load_guidelines_metadata);
    if (rc != 0) {
-      LOG_ERROR("Failed to register render_visual_load_guidelines tool");
+      OLOG_ERROR("Failed to register render_visual_load_guidelines tool");
       return rc;
    }
 
    rc = tool_registry_register(&render_visual_metadata);
    if (rc != 0) {
-      LOG_ERROR("Failed to register render_visual tool");
+      OLOG_ERROR("Failed to register render_visual tool");
       return rc;
    }
 
-   LOG_INFO("Visual rendering tool registered (two-step pattern)");
+   OLOG_INFO("Visual rendering tool registered (two-step pattern)");
    return 0;
 }

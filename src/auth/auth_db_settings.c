@@ -87,7 +87,7 @@ int auth_db_get_user_settings(int user_id, auth_user_settings_t *settings_out) {
       }
    } else if (rc != SQLITE_DONE) {
       /* Unexpected error */
-      LOG_ERROR("auth_db: get_user_settings failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: get_user_settings failed: %s", sqlite3_errmsg(s_db.db));
       sqlite3_reset(s_db.stmt_get_user_settings);
       AUTH_DB_UNLOCK();
       return AUTH_DB_FAILURE;
@@ -123,7 +123,7 @@ int auth_db_set_user_settings(int user_id, const auth_user_settings_t *settings)
    AUTH_DB_UNLOCK();
 
    if (rc != SQLITE_DONE) {
-      LOG_ERROR("auth_db: set_user_settings failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: set_user_settings failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 

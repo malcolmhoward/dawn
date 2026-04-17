@@ -155,7 +155,7 @@ int auth_db_get_stats(auth_db_stats_t *stats) {
    int rc = sqlite3_prepare_v2(s_db.db, sql, -1, &stmt, NULL);
    if (rc != SQLITE_OK) {
       pthread_mutex_unlock(&s_db.mutex);
-      LOG_ERROR("Failed to prepare stats query: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("Failed to prepare stats query: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -277,7 +277,7 @@ int auth_db_backup(const char *dest_path) {
 
    /* Validate path against allowlist */
    if (validate_backup_path(dest_path) != 0) {
-      LOG_WARNING("Backup path not in allowed directories: %s", dest_path);
+      OLOG_WARNING("Backup path not in allowed directories: %s", dest_path);
       return AUTH_DB_FAILURE;
    }
 
@@ -295,7 +295,7 @@ int auth_db_backup(const char *dest_path) {
    umask(old_umask);
 
    if (fd < 0) {
-      LOG_WARNING("Failed to create backup file: %s (%s)", dest_path, strerror(errno));
+      OLOG_WARNING("Failed to create backup file: %s (%s)", dest_path, strerror(errno));
       pthread_mutex_unlock(&s_db.mutex);
       return AUTH_DB_FAILURE;
    }
@@ -305,7 +305,7 @@ int auth_db_backup(const char *dest_path) {
    sqlite3 *dest_db = NULL;
    int rc = sqlite3_open(dest_path, &dest_db);
    if (rc != SQLITE_OK) {
-      LOG_WARNING("Failed to open backup database: %s", sqlite3_errmsg(dest_db));
+      OLOG_WARNING("Failed to open backup database: %s", sqlite3_errmsg(dest_db));
       unlink(dest_path);
       sqlite3_close(dest_db);
       pthread_mutex_unlock(&s_db.mutex);
@@ -315,7 +315,7 @@ int auth_db_backup(const char *dest_path) {
    /* Start backup */
    sqlite3_backup *backup = sqlite3_backup_init(dest_db, "main", s_db.db, "main");
    if (!backup) {
-      LOG_WARNING("Failed to initialize backup: %s", sqlite3_errmsg(dest_db));
+      OLOG_WARNING("Failed to initialize backup: %s", sqlite3_errmsg(dest_db));
       sqlite3_close(dest_db);
       unlink(dest_path);
       pthread_mutex_unlock(&s_db.mutex);
@@ -334,7 +334,7 @@ int auth_db_backup(const char *dest_path) {
 
    int result = AUTH_DB_SUCCESS;
    if (rc != SQLITE_DONE) {
-      LOG_WARNING("Backup failed: %s", sqlite3_errmsg(dest_db));
+      OLOG_WARNING("Backup failed: %s", sqlite3_errmsg(dest_db));
       unlink(dest_path);
       result = AUTH_DB_FAILURE;
    }

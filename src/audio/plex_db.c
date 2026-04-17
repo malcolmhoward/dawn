@@ -225,7 +225,7 @@ static int bulk_insert_tracks(plex_track_t *tracks, int count) {
    sqlite3_stmt *stmt = NULL;
    int rc = sqlite3_prepare_v2(g_plex_db, SQL_UPSERT, -1, &stmt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("Plex sync: failed to prepare insert: %s", sqlite3_errmsg(g_plex_db));
+      OLOG_ERROR("Plex sync: failed to prepare insert: %s", sqlite3_errmsg(g_plex_db));
       pthread_mutex_unlock(&g_plex_db_mutex);
       return -1;
    }
@@ -256,7 +256,7 @@ static int bulk_insert_tracks(plex_track_t *tracks, int count) {
       if (rc == SQLITE_DONE) {
          inserted++;
       } else {
-         LOG_WARNING("Plex sync: insert failed for '%s': %s", t->path, sqlite3_errmsg(g_plex_db));
+         OLOG_WARNING("Plex sync: insert failed for '%s': %s", t->path, sqlite3_errmsg(g_plex_db));
       }
 
       sqlite3_reset(stmt);
@@ -278,7 +278,7 @@ static int bulk_insert_tracks(plex_track_t *tracks, int count) {
             current_gen);
    sqlite3_exec(g_plex_db, delete_sql, NULL, NULL, &err_msg);
    if (err_msg) {
-      LOG_WARNING("Plex sync: stale deletion error: %s", err_msg);
+      OLOG_WARNING("Plex sync: stale deletion error: %s", err_msg);
       sqlite3_free(err_msg);
    }
 
@@ -294,7 +294,7 @@ static int plex_init(const char *db_path) {
    /* Ensure API client is ready before first sync.
     * plex_client_init() is idempotent — safe if webui_music_init() calls it later. */
    if (plex_client_init() != 0) {
-      LOG_ERROR("Plex sync: failed to initialize Plex API client");
+      OLOG_ERROR("Plex sync: failed to initialize Plex API client");
       return -1;
    }
 
@@ -308,15 +308,15 @@ static int plex_init(const char *db_path) {
    /* Expand tilde in path */
    char expanded_path[MUSIC_DB_PATH_MAX];
    if (!path_expand_tilde(db_path, expanded_path, sizeof(expanded_path))) {
-      LOG_ERROR("Plex sync: failed to expand database path: %s", db_path);
+      OLOG_ERROR("Plex sync: failed to expand database path: %s", db_path);
       pthread_mutex_unlock(&g_plex_db_mutex);
       return -1;
    }
 
    int rc = sqlite3_open(expanded_path, &g_plex_db);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("Plex sync: failed to open database '%s': %s", expanded_path,
-                sqlite3_errmsg(g_plex_db));
+      OLOG_ERROR("Plex sync: failed to open database '%s': %s", expanded_path,
+                 sqlite3_errmsg(g_plex_db));
       sqlite3_close(g_plex_db);
       g_plex_db = NULL;
       pthread_mutex_unlock(&g_plex_db_mutex);
@@ -333,7 +333,7 @@ static int plex_init(const char *db_path) {
    g_sync_gen = 0;
    g_last_scanned_at = 0;
 
-   LOG_INFO("Plex sync: database handle opened: %s", expanded_path);
+   OLOG_INFO("Plex sync: database handle opened: %s", expanded_path);
    pthread_mutex_unlock(&g_plex_db_mutex);
    return 0;
 }
@@ -349,7 +349,7 @@ static void plex_cleanup(void) {
    g_initial_sync_complete = false;
 
    pthread_mutex_unlock(&g_plex_db_mutex);
-   LOG_INFO("Plex sync: database handle closed");
+   OLOG_INFO("Plex sync: database handle closed");
 }
 
 static int plex_sync(void) {
@@ -360,7 +360,7 @@ static int plex_sync(void) {
    time_t scanned_at = 0;
    if (plex_client_get_library_updated_at(&scanned_at) == 0) {
       if (scanned_at > 0 && scanned_at == g_last_scanned_at && g_initial_sync_complete) {
-         LOG_INFO("Plex sync: library unchanged (scannedAt=%ld), skipping", (long)scanned_at);
+         OLOG_INFO("Plex sync: library unchanged (scannedAt=%ld), skipping", (long)scanned_at);
          return 0;
       }
    }
@@ -370,7 +370,7 @@ static int plex_sync(void) {
    int capacity = 4096; /* Initial allocation */
    plex_track_t *tracks = malloc(capacity * sizeof(plex_track_t));
    if (!tracks) {
-      LOG_ERROR("Plex sync: failed to allocate track array");
+      OLOG_ERROR("Plex sync: failed to allocate track array");
       return -1;
    }
 
@@ -379,7 +379,7 @@ static int plex_sync(void) {
    while (fetching) {
       json_object *page = plex_client_list_all_tracks(offset, PLEX_SYNC_PAGE_SIZE);
       if (!page) {
-         LOG_ERROR("Plex sync: failed to fetch page at offset %d", offset);
+         OLOG_ERROR("Plex sync: failed to fetch page at offset %d", offset);
          break;
       }
 
@@ -443,7 +443,7 @@ static int plex_sync(void) {
       if (page_extracted < PLEX_SYNC_PAGE_SIZE) {
          fetching = false; /* Last page */
       } else if (total_tracks >= PLEX_DB_MAX_TRACKS) {
-         LOG_WARNING("Plex sync: track limit reached (%d), stopping fetch", PLEX_DB_MAX_TRACKS);
+         OLOG_WARNING("Plex sync: track limit reached (%d), stopping fetch", PLEX_DB_MAX_TRACKS);
          fetching = false;
       } else {
          offset += PLEX_SYNC_PAGE_SIZE;
@@ -451,7 +451,7 @@ static int plex_sync(void) {
    }
 
    if (total_tracks == 0) {
-      LOG_WARNING("Plex sync: no tracks fetched from Plex API");
+      OLOG_WARNING("Plex sync: no tracks fetched from Plex API");
       free(tracks);
       return -1;
    }
@@ -461,7 +461,7 @@ static int plex_sync(void) {
    free(tracks);
 
    if (inserted < 0) {
-      LOG_ERROR("Plex sync: bulk insert failed");
+      OLOG_ERROR("Plex sync: bulk insert failed");
       return -1;
    }
 
@@ -473,7 +473,7 @@ static int plex_sync(void) {
    double sync_secs = (sync_end.tv_sec - sync_start.tv_sec) +
                       (sync_end.tv_nsec - sync_start.tv_nsec) / 1e9;
 
-   LOG_INFO("Plex sync: %d tracks synced (%.2fs)", inserted, sync_secs);
+   OLOG_INFO("Plex sync: %d tracks synced (%.2fs)", inserted, sync_secs);
    return 0;
 }
 

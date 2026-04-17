@@ -100,35 +100,35 @@ static char *calculator_tool_callback(const char *action, char *value, int *shou
    *should_respond = 1; /* Always return results to LLM */
 
    if (value == NULL || strlen(value) == 0) {
-      LOG_WARNING("calculator_tool_callback: No value provided");
+      OLOG_WARNING("calculator_tool_callback: No value provided");
       return strdup("Please provide a value for the calculator.");
    }
 
    if (strcmp(action, "evaluate") == 0) {
-      LOG_INFO("calculator_tool_callback: Evaluating '%s'", value);
+      OLOG_INFO("calculator_tool_callback: Evaluating '%s'", value);
       calc_result_t result = calculator_evaluate(value);
       char *formatted = calculator_format_result(&result);
       if (formatted) {
-         LOG_INFO("calculator_tool_callback: Result = %s", formatted);
+         OLOG_INFO("calculator_tool_callback: Result = %s", formatted);
          return formatted;
       }
       return strdup("Failed to evaluate expression.");
    }
 
    if (strcmp(action, "convert") == 0) {
-      LOG_INFO("calculator_tool_callback: Converting '%s'", value);
+      OLOG_INFO("calculator_tool_callback: Converting '%s'", value);
       char *result = calculator_convert(value);
       return result ? result : strdup("Failed to convert units.");
    }
 
    if (strcmp(action, "base") == 0) {
-      LOG_INFO("calculator_tool_callback: Base converting '%s'", value);
+      OLOG_INFO("calculator_tool_callback: Base converting '%s'", value);
       char *result = calculator_base_convert(value);
       return result ? result : strdup("Failed to convert base.");
    }
 
    if (strcmp(action, "random") == 0) {
-      LOG_INFO("calculator_tool_callback: Random number '%s'", value);
+      OLOG_INFO("calculator_tool_callback: Random number '%s'", value);
       char *result = calculator_random(value);
       return result ? result : strdup("Failed to generate random number.");
    }

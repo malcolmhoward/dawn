@@ -207,7 +207,7 @@ int oauth_build_google_provider(const char *scopes, oauth_provider_config_t *out
    extern dawn_config_t g_config;
 
    if (g_secrets.google_client_id[0] == '\0' || g_secrets.google_client_secret[0] == '\0') {
-      LOG_ERROR("Google OAuth not configured — set google_client_id/secret in secrets.toml");
+      OLOG_ERROR("Google OAuth not configured — set google_client_id/secret in secrets.toml");
       return 1;
    }
 
@@ -267,7 +267,7 @@ int oauth_get_auth_url(const oauth_provider_config_t *provider,
    /* Check per-user limit */
    if (count_user_pending(user_id) >= OAUTH_MAX_PER_USER) {
       pthread_mutex_unlock(&s_pending_mutex);
-      LOG_WARNING("oauth: user %d already has %d pending flows", user_id, OAUTH_MAX_PER_USER);
+      OLOG_WARNING("oauth: user %d already has %d pending flows", user_id, OAUTH_MAX_PER_USER);
       return 1;
    }
 
@@ -281,7 +281,7 @@ int oauth_get_auth_url(const oauth_provider_config_t *provider,
    }
    if (slot < 0) {
       pthread_mutex_unlock(&s_pending_mutex);
-      LOG_WARNING("oauth: all %d pending slots full", OAUTH_MAX_PENDING);
+      OLOG_WARNING("oauth: all %d pending slots full", OAUTH_MAX_PENDING);
       return 1;
    }
 
@@ -331,7 +331,7 @@ int oauth_get_auth_url(const oauth_provider_config_t *provider,
                           provider->auth_endpoint, enc_client_id, enc_redirect, enc_scopes, state,
                           enc_challenge);
    if (written < 0 || (size_t)written >= url_len) {
-      LOG_ERROR("oauth: auth URL truncated");
+      OLOG_ERROR("oauth: auth URL truncated");
       return 1;
    }
 
@@ -378,7 +378,7 @@ static void oauth_fetch_google_email(const char *access_token, char *email_out, 
    sodium_memzero(auth_header, sizeof(auth_header));
 
    if (cres != CURLE_OK || http_code != 200) {
-      LOG_WARNING("oauth: failed to fetch Google userinfo (HTTP %ld)", http_code);
+      OLOG_WARNING("oauth: failed to fetch Google userinfo (HTTP %ld)", http_code);
       if (resp.data) {
          sodium_memzero(resp.data, resp.size);
          free(resp.data);
@@ -431,7 +431,7 @@ int oauth_exchange_code(const oauth_provider_config_t *provider,
 
    if (found < 0) {
       pthread_mutex_unlock(&s_pending_mutex);
-      LOG_ERROR("oauth: invalid or expired state token");
+      OLOG_ERROR("oauth: invalid or expired state token");
       return 1;
    }
 
@@ -455,7 +455,7 @@ int oauth_exchange_code(const oauth_provider_config_t *provider,
                           "&client_id=%s&client_secret=%s&code_verifier=%s",
                           enc_code, enc_redirect, enc_client_id, enc_client_secret, enc_verifier);
    if (written < 0 || (size_t)written >= sizeof(post_body)) {
-      LOG_ERROR("oauth: POST body truncated");
+      OLOG_ERROR("oauth: POST body truncated");
       sodium_memzero(code_verifier, sizeof(code_verifier));
       return 1;
    }
@@ -465,7 +465,7 @@ int oauth_exchange_code(const oauth_provider_config_t *provider,
    /* HTTP POST to token endpoint */
    CURL *curl = curl_easy_init();
    if (!curl) {
-      LOG_ERROR("oauth: curl_easy_init failed");
+      OLOG_ERROR("oauth: curl_easy_init failed");
       return 1;
    }
 
@@ -490,7 +490,7 @@ int oauth_exchange_code(const oauth_provider_config_t *provider,
    sodium_memzero(enc_verifier, sizeof(enc_verifier));
 
    if (cres != CURLE_OK || http_code != 200) {
-      LOG_ERROR("oauth: token exchange failed (HTTP %ld, curl %d)", http_code, cres);
+      OLOG_ERROR("oauth: token exchange failed (HTTP %ld, curl %d)", http_code, cres);
       if (resp.data) {
          sodium_memzero(resp.data, resp.size);
          free(resp.data);
@@ -503,7 +503,7 @@ int oauth_exchange_code(const oauth_provider_config_t *provider,
    sodium_memzero(resp.data, resp.size);
    free(resp.data);
    if (!root) {
-      LOG_ERROR("oauth: failed to parse token response JSON");
+      OLOG_ERROR("oauth: failed to parse token response JSON");
       return 1;
    }
 
@@ -523,7 +523,7 @@ int oauth_exchange_code(const oauth_provider_config_t *provider,
    json_object_put(root);
 
    if (!out_tokens->access_token[0]) {
-      LOG_ERROR("oauth: no access_token in response");
+      OLOG_ERROR("oauth: no access_token in response");
       return 1;
    }
 
@@ -533,9 +533,9 @@ int oauth_exchange_code(const oauth_provider_config_t *provider,
                                sizeof(out_tokens->email));
    }
 
-   LOG_INFO("oauth: token exchange successful for provider '%s'%s%s%s", provider->provider,
-            out_tokens->email[0] ? " (" : "", out_tokens->email[0] ? out_tokens->email : "",
-            out_tokens->email[0] ? ")" : "");
+   OLOG_INFO("oauth: token exchange successful for provider '%s'%s%s%s", provider->provider,
+             out_tokens->email[0] ? " (" : "", out_tokens->email[0] ? out_tokens->email : "",
+             out_tokens->email[0] ? ")" : "");
    return 0;
 }
 
@@ -583,10 +583,10 @@ int oauth_refresh(const oauth_provider_config_t *provider, oauth_token_set_t *to
    sodium_memzero(enc_refresh, sizeof(enc_refresh));
 
    if (cres != CURLE_OK || http_code != 200) {
-      LOG_ERROR("oauth: refresh failed (HTTP %ld, curl %d)", http_code, cres);
+      OLOG_ERROR("oauth: refresh failed (HTTP %ld, curl %d)", http_code, cres);
       if (resp.data) {
-         LOG_ERROR("oauth: server response: %.*s", (int)(resp.size < 512 ? resp.size : 512),
-                   resp.data);
+         OLOG_ERROR("oauth: server response: %.*s", (int)(resp.size < 512 ? resp.size : 512),
+                    resp.data);
          sodium_memzero(resp.data, resp.size);
          free(resp.data);
       }
@@ -597,7 +597,7 @@ int oauth_refresh(const oauth_provider_config_t *provider, oauth_token_set_t *to
    sodium_memzero(resp.data, resp.size);
    free(resp.data);
    if (!root) {
-      LOG_ERROR("oauth: failed to parse refresh response");
+      OLOG_ERROR("oauth: failed to parse refresh response");
       return 1;
    }
 
@@ -709,7 +709,7 @@ int oauth_store_tokens(int user_id,
 
    int result = (sqlite3_step(st) == SQLITE_DONE) ? 0 : 1;
    if (result != 0)
-      LOG_ERROR("oauth: failed to store tokens: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("oauth: failed to store tokens: %s", sqlite3_errmsg(s_db.db));
    sqlite3_reset(st);
 
    AUTH_DB_UNLOCK();
@@ -825,7 +825,7 @@ int oauth_get_access_token(const oauth_provider_config_t *provider,
    time_t now = time(NULL);
    if (tokens.expires_at > 0 && (tokens.expires_at - now) < OAUTH_REFRESH_MARGIN_SEC) {
       if (oauth_refresh(provider, &tokens) != 0) {
-         LOG_ERROR("oauth: refresh failed for account '%s'", account_key);
+         OLOG_ERROR("oauth: refresh failed for account '%s'", account_key);
          sodium_memzero(&tokens, sizeof(tokens));
          pthread_mutex_unlock(&s_acct_mutexes[midx]);
          return 1;
@@ -833,7 +833,7 @@ int oauth_get_access_token(const oauth_provider_config_t *provider,
 
       /* Store refreshed tokens */
       oauth_store_tokens(user_id, provider->provider, account_key, &tokens);
-      LOG_INFO("oauth: refreshed token for '%s'", account_key);
+      OLOG_INFO("oauth: refreshed token for '%s'", account_key);
    }
 
    snprintf(token_buf, token_len, "%s", tokens.access_token);
@@ -887,11 +887,11 @@ int oauth_revoke_and_delete(const oauth_provider_config_t *provider,
          }
 
          if (cres != CURLE_OK || http_code != 200) {
-            LOG_WARNING("oauth: revocation failed (HTTP %ld) — delete locally anyway. "
-                        "User can revoke manually at myaccount.google.com/permissions",
-                        http_code);
+            OLOG_WARNING("oauth: revocation failed (HTTP %ld) — delete locally anyway. "
+                         "User can revoke manually at myaccount.google.com/permissions",
+                         http_code);
          } else {
-            LOG_INFO("oauth: revoked token at provider for '%s'", account_key);
+            OLOG_INFO("oauth: revoked token at provider for '%s'", account_key);
          }
       }
 

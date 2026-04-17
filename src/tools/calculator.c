@@ -202,18 +202,18 @@ calc_result_t calculator_evaluate(const char *expression) {
       snprintf(res.error, sizeof(res.error),
                "Parse error at position %d. Check for mismatched parentheses or unknown functions.",
                error_pos);
-      LOG_WARNING("Calculator: Failed to parse '%s' at position %d", expression, error_pos);
+      OLOG_WARNING("Calculator: Failed to parse '%s' at position %d", expression, error_pos);
    } else if (isnan(res.result)) {
       res.success = 0;
       snprintf(res.error, sizeof(res.error), "Result is undefined (NaN)");
-      LOG_WARNING("Calculator: Expression '%s' resulted in NaN", expression);
+      OLOG_WARNING("Calculator: Expression '%s' resulted in NaN", expression);
    } else if (isinf(res.result)) {
       res.success = 0;
       snprintf(res.error, sizeof(res.error), "Result is infinite");
-      LOG_WARNING("Calculator: Expression '%s' resulted in infinity", expression);
+      OLOG_WARNING("Calculator: Expression '%s' resulted in infinity", expression);
    } else {
       res.success = 1;
-      LOG_INFO("Calculator: '%s' = %g", expression, res.result);
+      OLOG_INFO("Calculator: '%s' = %g", expression, res.result);
    }
 
    return res;
@@ -268,7 +268,7 @@ char *calculator_convert(const char *value_str) {
       result = value * from->to_base / to->to_base;
    }
 
-   LOG_INFO("Calculator: Convert %.4g %s to %s = %.6g", value, from_unit, to_unit, result);
+   OLOG_INFO("Calculator: Convert %.4g %s to %s = %.6g", value, from_unit, to_unit, result);
    snprintf(buf, RESULT_BUFFER_SIZE, "%.6g %s", result, to_unit);
    return buf;
 }
@@ -350,7 +350,7 @@ char *calculator_base_convert(const char *value_str) {
       return buf;
    }
 
-   LOG_INFO("Calculator: Base convert %s (base %d) to %s = %s", input, from_base, to_base, buf);
+   OLOG_INFO("Calculator: Base convert %s (base %d) to %s = %s", input, from_base, to_base, buf);
    return buf;
 }
 
@@ -402,12 +402,12 @@ char *calculator_random(const char *value_str) {
       }
    }
    if (range_clamped) {
-      LOG_WARNING("Calculator: Random range clamped to RAND_MAX (%d)", RAND_MAX);
+      OLOG_WARNING("Calculator: Random range clamped to RAND_MAX (%d)", RAND_MAX);
    }
 
    long long result = min_val + (long long)(rand() % range);
 
-   LOG_INFO("Calculator: Random %lld to %lld = %lld", min_val, max_val, result);
+   OLOG_INFO("Calculator: Random %lld to %lld = %lld", min_val, max_val, result);
    snprintf(buf, RESULT_BUFFER_SIZE, "%lld", result);
    return buf;
 }
@@ -415,7 +415,7 @@ char *calculator_random(const char *value_str) {
 char *calculator_format_result(calc_result_t *result) {
    char *buf = malloc(RESULT_BUFFER_SIZE);
    if (buf == NULL) {
-      LOG_ERROR("Calculator: Failed to allocate result buffer");
+      OLOG_ERROR("Calculator: Failed to allocate result buffer");
       return NULL;
    }
 

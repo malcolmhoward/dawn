@@ -191,8 +191,8 @@ int document_index_text(int user_id,
 
    chunk_result_free(&chunks);
 
-   LOG_INFO("document_index_pipeline: indexed '%s' — %d chunks embedded, %d failed%s", filename,
-            embedded_count, failed_count, is_global ? " [GLOBAL]" : "");
+   OLOG_INFO("document_index_pipeline: indexed '%s' — %d chunks embedded, %d failed%s", filename,
+             embedded_count, failed_count, is_global ? " [GLOBAL]" : "");
 
    out->doc_id = doc_id;
    out->num_chunks = embedded_count;

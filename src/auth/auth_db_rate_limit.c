@@ -100,7 +100,7 @@ int auth_db_clear_login_attempts(const char *ip_address) {
       rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM login_attempts WHERE ip_address = ?", -1, &stmt,
                               NULL);
       if (rc != SQLITE_OK) {
-         LOG_ERROR("auth_db: prepare clear_login_attempts failed: %s", sqlite3_errmsg(s_db.db));
+         OLOG_ERROR("auth_db: prepare clear_login_attempts failed: %s", sqlite3_errmsg(s_db.db));
          AUTH_DB_UNLOCK();
          return -1;
       }
@@ -109,7 +109,8 @@ int auth_db_clear_login_attempts(const char *ip_address) {
       /* Delete all attempts */
       rc = sqlite3_prepare_v2(s_db.db, "DELETE FROM login_attempts", -1, &stmt, NULL);
       if (rc != SQLITE_OK) {
-         LOG_ERROR("auth_db: prepare clear_all_login_attempts failed: %s", sqlite3_errmsg(s_db.db));
+         OLOG_ERROR("auth_db: prepare clear_all_login_attempts failed: %s",
+                    sqlite3_errmsg(s_db.db));
          AUTH_DB_UNLOCK();
          return -1;
       }
@@ -123,8 +124,8 @@ int auth_db_clear_login_attempts(const char *ip_address) {
 
    AUTH_DB_UNLOCK();
 
-   LOG_INFO("auth_db: Cleared %d login attempts for IP: %s", deleted,
-            ip_address ? ip_address : "all");
+   OLOG_INFO("auth_db: Cleared %d login attempts for IP: %s", deleted,
+             ip_address ? ip_address : "all");
    return deleted;
 }
 
@@ -146,7 +147,7 @@ int auth_db_list_blocked_ips(time_t since, auth_ip_status_callback_t callback, v
    sqlite3_stmt *stmt = NULL;
    int rc = sqlite3_prepare_v2(s_db.db, sql, -1, &stmt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("auth_db: prepare list_blocked_ips failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db: prepare list_blocked_ips failed: %s", sqlite3_errmsg(s_db.db));
       AUTH_DB_UNLOCK();
       return AUTH_DB_FAILURE;
    }

@@ -135,7 +135,7 @@ int metrics_init(void) {
    memset(&g_metrics, 0, sizeof(dawn_metrics_t));
 
    if (pthread_mutex_init(&g_metrics.mutex, NULL) != 0) {
-      LOG_ERROR("Failed to initialize metrics mutex");
+      OLOG_ERROR("Failed to initialize metrics mutex");
       return 1;
    }
 
@@ -146,7 +146,7 @@ int metrics_init(void) {
    g_metrics.current_cloud_provider = CLOUD_PROVIDER_NONE;
 
    g_initialized = 1;
-   LOG_INFO("Metrics system initialized");
+   OLOG_INFO("Metrics system initialized");
 
    return 0;
 }
@@ -158,7 +158,7 @@ void metrics_cleanup(void) {
 
    pthread_mutex_destroy(&g_metrics.mutex);
    g_initialized = 0;
-   LOG_INFO("Metrics system cleaned up");
+   OLOG_INFO("Metrics system cleaned up");
 }
 
 void metrics_reset(void) {
@@ -232,7 +232,7 @@ void metrics_reset(void) {
 
    pthread_mutex_unlock(&g_metrics.mutex);
 
-   LOG_INFO("Metrics reset");
+   OLOG_INFO("Metrics reset");
 }
 
 /* ============================================================================
@@ -661,7 +661,7 @@ int metrics_export_json(const char *filepath) {
 
    FILE *fp = fopen(filepath, "w");
    if (fp == NULL) {
-      LOG_ERROR("Failed to open metrics export file: %s", filepath);
+      OLOG_ERROR("Failed to open metrics export file: %s", filepath);
       return 1;
    }
 
@@ -762,7 +762,7 @@ int metrics_export_json(const char *filepath) {
    fprintf(fp, "}\n");
 
    fclose(fp);
-   LOG_INFO("Metrics exported to %s", filepath);
+   OLOG_INFO("Metrics exported to %s", filepath);
 
    return 0;
 }

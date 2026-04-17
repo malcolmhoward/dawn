@@ -90,8 +90,8 @@ static int dap_parse_header(const uint8_t *header,
 
    /* Check protocol version */
    if (header[4] != DAP_PROTOCOL_VERSION) {
-      LOG_ERROR("Protocol version mismatch: got 0x%02X, expected 0x%02X", header[4],
-                DAP_PROTOCOL_VERSION);
+      OLOG_ERROR("Protocol version mismatch: got 0x%02X, expected 0x%02X", header[4],
+                 DAP_PROTOCOL_VERSION);
       return DAP_ERROR_PROTOCOL;
    }
 
@@ -107,12 +107,12 @@ static int dap_set_socket_timeout(int fd, int timeout_sec) {
    tv.tv_usec = 0;
 
    if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
-      LOG_ERROR("Failed to set receive timeout: %s", strerror(errno));
+      OLOG_ERROR("Failed to set receive timeout: %s", strerror(errno));
       return DAP_ERROR;
    }
 
    if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) < 0) {
-      LOG_ERROR("Failed to set send timeout: %s", strerror(errno));
+      OLOG_ERROR("Failed to set send timeout: %s", strerror(errno));
       return DAP_ERROR;
    }
 
@@ -127,20 +127,20 @@ static int dap_read_exact(int fd, uint8_t *buf, size_t n, int timeout_sec) {
    while (total < n) {
       int ret = poll(&pfd, 1, timeout_ms);
       if (ret < 0) {
-         LOG_ERROR("Poll error: %s", strerror(errno));
+         OLOG_ERROR("Poll error: %s", strerror(errno));
          return DAP_ERROR;
       }
       if (ret == 0) {
-         LOG_ERROR("Read timeout after %d seconds", timeout_sec);
+         OLOG_ERROR("Read timeout after %d seconds", timeout_sec);
          return DAP_ERROR_TIMEOUT;
       }
 
       ssize_t bytes = recv(fd, buf + total, n - total, 0);
       if (bytes <= 0) {
          if (bytes == 0) {
-            LOG_ERROR("Connection closed by server");
+            OLOG_ERROR("Connection closed by server");
          } else {
-            LOG_ERROR("Recv error: %s", strerror(errno));
+            OLOG_ERROR("Recv error: %s", strerror(errno));
          }
          return DAP_ERROR;
       }
@@ -157,9 +157,9 @@ static int dap_write_exact(int fd, const uint8_t *buf, size_t n) {
       ssize_t bytes = send(fd, buf + total, n - total, 0);
       if (bytes <= 0) {
          if (errno == EPIPE) {
-            LOG_ERROR("Connection closed (broken pipe)");
+            OLOG_ERROR("Connection closed (broken pipe)");
          } else {
-            LOG_ERROR("Send error: %s", strerror(errno));
+            OLOG_ERROR("Send error: %s", strerror(errno));
          }
          return DAP_ERROR;
       }
@@ -192,7 +192,7 @@ int dap_client_init(dap_client_t *client, const char *server_ip, uint16_t port) 
    client->socket_fd = -1;
    client->connected = 0;
 
-   LOG_INFO("Client initialized for %s:%u", client->server_ip, client->server_port);
+   OLOG_INFO("Client initialized for %s:%u", client->server_ip, client->server_port);
    return DAP_SUCCESS;
 }
 
@@ -213,21 +213,21 @@ static int dap_perform_handshake(dap_client_t *client) {
    dap_build_header(header, sizeof(magic), DAP_PACKET_HANDSHAKE, checksum);
 
    if (dap_write_exact(client->socket_fd, header, DAP_PACKET_HEADER_SIZE) != DAP_SUCCESS) {
-      LOG_ERROR("Failed to send handshake header");
+      OLOG_ERROR("Failed to send handshake header");
       return DAP_ERROR_HANDSHAKE;
    }
 
    if (dap_write_exact(client->socket_fd, magic, sizeof(magic)) != DAP_SUCCESS) {
-      LOG_ERROR("Failed to send handshake magic bytes");
+      OLOG_ERROR("Failed to send handshake magic bytes");
       return DAP_ERROR_HANDSHAKE;
    }
 
-   LOG_DEBUG("Handshake sent, waiting for ACK...");
+   OLOG_DEBUG("Handshake sent, waiting for ACK...");
 
    /* Wait for ACK with timeout */
    uint8_t resp_header[DAP_PACKET_HEADER_SIZE];
    if (dap_read_exact(client->socket_fd, resp_header, DAP_PACKET_HEADER_SIZE, 5) != DAP_SUCCESS) {
-      LOG_ERROR("Failed to receive handshake response");
+      OLOG_ERROR("Failed to receive handshake response");
       return DAP_ERROR_HANDSHAKE;
    }
 
@@ -236,16 +236,16 @@ static int dap_perform_handshake(dap_client_t *client) {
    uint16_t resp_checksum;
 
    if (dap_parse_header(resp_header, &resp_len, &resp_type, &resp_checksum) != DAP_SUCCESS) {
-      LOG_ERROR("Invalid handshake response header");
+      OLOG_ERROR("Invalid handshake response header");
       return DAP_ERROR_HANDSHAKE;
    }
 
    if (resp_type != DAP_PACKET_ACK) {
-      LOG_ERROR("Handshake not acknowledged (got type 0x%02X)", resp_type);
+      OLOG_ERROR("Handshake not acknowledged (got type 0x%02X)", resp_type);
       return DAP_ERROR_HANDSHAKE;
    }
 
-   LOG_INFO("Handshake successful");
+   OLOG_INFO("Handshake successful");
    client->send_sequence = 0;
    client->receive_sequence = 0;
 
@@ -257,7 +257,7 @@ int dap_client_connect(dap_client_t *client) {
       return DAP_ERROR;
 
    if (client->connected) {
-      LOG_DEBUG("Already connected");
+      OLOG_DEBUG("Already connected");
       return DAP_SUCCESS;
    }
 
@@ -267,18 +267,18 @@ int dap_client_connect(dap_client_t *client) {
    server_addr.sin_port = htons(client->server_port);
 
    if (inet_pton(AF_INET, client->server_ip, &server_addr.sin_addr) <= 0) {
-      LOG_ERROR("Invalid server IP: %s", client->server_ip);
+      OLOG_ERROR("Invalid server IP: %s", client->server_ip);
       return DAP_ERROR_CONNECT;
    }
 
    for (int attempt = 1; attempt <= DAP_MAX_CONNECT_ATTEMPTS; attempt++) {
-      LOG_INFO("Connection attempt %d/%d to %s:%u", attempt, DAP_MAX_CONNECT_ATTEMPTS,
-               client->server_ip, client->server_port);
+      OLOG_INFO("Connection attempt %d/%d to %s:%u", attempt, DAP_MAX_CONNECT_ATTEMPTS,
+                client->server_ip, client->server_port);
 
       /* Create socket */
       client->socket_fd = socket(AF_INET, SOCK_STREAM, 0);
       if (client->socket_fd < 0) {
-         LOG_ERROR("Socket creation failed: %s", strerror(errno));
+         OLOG_ERROR("Socket creation failed: %s", strerror(errno));
          continue;
       }
 
@@ -295,7 +295,7 @@ int dap_client_connect(dap_client_t *client) {
 
       int ret = connect(client->socket_fd, (struct sockaddr *)&server_addr, sizeof(server_addr));
       if (ret < 0 && errno != EINPROGRESS) {
-         LOG_ERROR("Connect failed: %s", strerror(errno));
+         OLOG_ERROR("Connect failed: %s", strerror(errno));
          close(client->socket_fd);
          client->socket_fd = -1;
          usleep(500000); /* 500ms delay before retry */
@@ -307,7 +307,7 @@ int dap_client_connect(dap_client_t *client) {
       ret = poll(&pfd, 1, DAP_CONNECT_TIMEOUT_MS);
 
       if (ret <= 0) {
-         LOG_ERROR("Connection timeout");
+         OLOG_ERROR("Connection timeout");
          close(client->socket_fd);
          client->socket_fd = -1;
          continue;
@@ -318,7 +318,7 @@ int dap_client_connect(dap_client_t *client) {
       socklen_t len = sizeof(error);
       getsockopt(client->socket_fd, SOL_SOCKET, SO_ERROR, &error, &len);
       if (error != 0) {
-         LOG_ERROR("Connection error: %s", strerror(error));
+         OLOG_ERROR("Connection error: %s", strerror(error));
          close(client->socket_fd);
          client->socket_fd = -1;
          continue;
@@ -327,7 +327,7 @@ int dap_client_connect(dap_client_t *client) {
       /* Restore blocking mode */
       fcntl(client->socket_fd, F_SETFL, flags);
 
-      LOG_INFO("Connected to server");
+      OLOG_INFO("Connected to server");
 
       /* Perform handshake */
       if (dap_perform_handshake(client) == DAP_SUCCESS) {
@@ -341,7 +341,7 @@ int dap_client_connect(dap_client_t *client) {
       usleep(500000);
    }
 
-   LOG_ERROR("All connection attempts failed");
+   OLOG_ERROR("All connection attempts failed");
    return DAP_ERROR_CONNECT;
 }
 
@@ -350,7 +350,7 @@ void dap_client_disconnect(dap_client_t *client) {
       close(client->socket_fd);
       client->socket_fd = -1;
       client->connected = 0;
-      LOG_INFO("Disconnected from server");
+      OLOG_INFO("Disconnected from server");
    }
 }
 
@@ -361,7 +361,7 @@ int dap_client_is_connected(dap_client_t *client) {
 static int dap_send_chunked(dap_client_t *client, const uint8_t *data, size_t size) {
    size_t total_sent = 0;
 
-   LOG_INFO("Sending %zu bytes in chunks", size);
+   OLOG_INFO("Sending %zu bytes in chunks", size);
 
    while (total_sent < size) {
       size_t remaining = size - total_sent;
@@ -388,7 +388,7 @@ static int dap_send_chunked(dap_client_t *client, const uint8_t *data, size_t si
             int delay_ms = 100 * (1 << retry);
             if (delay_ms > 2000)
                delay_ms = 2000;
-            LOG_DEBUG("Retry %d after %d ms", retry, delay_ms);
+            OLOG_DEBUG("Retry %d after %d ms", retry, delay_ms);
             usleep(delay_ms * 1000);
          }
 
@@ -404,7 +404,7 @@ static int dap_send_chunked(dap_client_t *client, const uint8_t *data, size_t si
          uint8_t ack_header[DAP_PACKET_HEADER_SIZE];
          if (dap_read_exact(client->socket_fd, ack_header, DAP_PACKET_HEADER_SIZE, 2) !=
              DAP_SUCCESS) {
-            LOG_DEBUG("ACK timeout, retrying...");
+            OLOG_DEBUG("ACK timeout, retrying...");
             continue;
          }
 
@@ -417,12 +417,12 @@ static int dap_send_chunked(dap_client_t *client, const uint8_t *data, size_t si
          if (ack_type == DAP_PACKET_ACK) {
             sent = 1;
          } else if (ack_type == DAP_PACKET_NACK) {
-            LOG_DEBUG("Received NACK, retrying...");
+            OLOG_DEBUG("Received NACK, retrying...");
          }
       }
 
       if (!sent) {
-         LOG_ERROR("Failed to send chunk after %d retries", DAP_MAX_RETRIES);
+         OLOG_ERROR("Failed to send chunk after %d retries", DAP_MAX_RETRIES);
          return DAP_ERROR_SEND;
       }
 
@@ -432,11 +432,11 @@ static int dap_send_chunked(dap_client_t *client, const uint8_t *data, size_t si
       /* Progress logging for large transfers */
       if (size > 50000) {
          int percent = (int)((total_sent * 100) / size);
-         LOG_INFO("Sent %zu/%zu bytes (%d%%)", total_sent, size, percent);
+         OLOG_INFO("Sent %zu/%zu bytes (%d%%)", total_sent, size, percent);
       }
    }
 
-   LOG_INFO("Send complete: %zu bytes", total_sent);
+   OLOG_INFO("Send complete: %zu bytes", total_sent);
    return DAP_SUCCESS;
 }
 
@@ -445,13 +445,13 @@ static int dap_receive_chunked(dap_client_t *client, uint8_t **data, size_t *siz
    size_t buf_size = 1024 * 1024; /* 1MB initial buffer */
    uint8_t *buffer = malloc(buf_size);
    if (!buffer) {
-      LOG_ERROR("Failed to allocate receive buffer");
+      OLOG_ERROR("Failed to allocate receive buffer");
       return DAP_ERROR_MEMORY;
    }
 
    size_t total_received = 0;
 
-   LOG_INFO("Waiting for response (up to %d seconds)...", DAP_AI_RESPONSE_TIMEOUT_SEC);
+   OLOG_INFO("Waiting for response (up to %d seconds)...", DAP_AI_RESPONSE_TIMEOUT_SEC);
 
    while (1) {
       /* Read header with longer timeout for first packet (AI processing) */
@@ -475,7 +475,7 @@ static int dap_receive_chunked(dap_client_t *client, uint8_t **data, size_t *siz
       }
 
       if (data_len > DAP_PACKET_MAX_SIZE) {
-         LOG_ERROR("Packet too large: %u bytes", data_len);
+         OLOG_ERROR("Packet too large: %u bytes", data_len);
          dap_send_nack(client->socket_fd);
          free(buffer);
          return DAP_ERROR_PROTOCOL;
@@ -490,7 +490,7 @@ static int dap_receive_chunked(dap_client_t *client, uint8_t **data, size_t *siz
 
       uint16_t packet_seq = ((uint16_t)seq[0] << 8) | seq[1];
       if (packet_seq != client->receive_sequence) {
-         LOG_ERROR("Sequence mismatch: expected %u, got %u", client->receive_sequence, packet_seq);
+         OLOG_ERROR("Sequence mismatch: expected %u, got %u", client->receive_sequence, packet_seq);
          dap_send_nack(client->socket_fd);
          continue;
       }
@@ -500,7 +500,7 @@ static int dap_receive_chunked(dap_client_t *client, uint8_t **data, size_t *siz
          buf_size *= 2;
          uint8_t *new_buf = realloc(buffer, buf_size);
          if (!new_buf) {
-            LOG_ERROR("Failed to expand receive buffer");
+            OLOG_ERROR("Failed to expand receive buffer");
             free(buffer);
             return DAP_ERROR_MEMORY;
          }
@@ -516,8 +516,8 @@ static int dap_receive_chunked(dap_client_t *client, uint8_t **data, size_t *siz
       /* Verify checksum */
       uint16_t actual_checksum = dap_calculate_checksum(buffer + total_received, data_len);
       if (actual_checksum != expected_checksum) {
-         LOG_ERROR("Checksum mismatch: expected 0x%04X, got 0x%04X", expected_checksum,
-                   actual_checksum);
+         OLOG_ERROR("Checksum mismatch: expected 0x%04X, got 0x%04X", expected_checksum,
+                    actual_checksum);
          dap_send_nack(client->socket_fd);
          continue;
       }
@@ -528,7 +528,7 @@ static int dap_receive_chunked(dap_client_t *client, uint8_t **data, size_t *siz
       total_received += data_len;
       client->receive_sequence++;
 
-      LOG_DEBUG("Received chunk: %u bytes (total: %zu)", data_len, total_received);
+      OLOG_DEBUG("Received chunk: %u bytes (total: %zu)", data_len, total_received);
 
       /* Check for end of data */
       if (packet_type == DAP_PACKET_DATA_END) {
@@ -536,7 +536,7 @@ static int dap_receive_chunked(dap_client_t *client, uint8_t **data, size_t *siz
       }
    }
 
-   LOG_INFO("Receive complete: %zu bytes", total_received);
+   OLOG_INFO("Receive complete: %zu bytes", total_received);
 
    *data = buffer;
    *size = total_received;
@@ -553,7 +553,7 @@ int dap_client_transact(dap_client_t *client,
    }
 
    if (!client->connected) {
-      LOG_ERROR("Not connected to server");
+      OLOG_ERROR("Not connected to server");
       return DAP_ERROR_CONNECT;
    }
 
@@ -564,14 +564,14 @@ int dap_client_transact(dap_client_t *client,
    /* Send audio data */
    int ret = dap_send_chunked(client, audio_data, audio_size);
    if (ret != DAP_SUCCESS) {
-      LOG_ERROR("Failed to send audio data");
+      OLOG_ERROR("Failed to send audio data");
       return ret;
    }
 
    /* Receive response */
    ret = dap_receive_chunked(client, response_data, response_size);
    if (ret != DAP_SUCCESS) {
-      LOG_ERROR("Failed to receive response");
+      OLOG_ERROR("Failed to receive response");
       return ret;
    }
 

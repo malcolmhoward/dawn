@@ -113,32 +113,32 @@ static void check_sensitive_file_permissions(const char *path, const char *file_
 
    /* Check for world-readable/writable (most critical) */
    if (st.st_mode & S_IROTH) {
-      LOG_WARNING("========================================");
-      LOG_WARNING("SECURITY WARNING: %s is world-readable!", file_description);
-      LOG_WARNING("File: %s", path);
-      LOG_WARNING("This exposes sensitive data to all users on the system.");
-      LOG_WARNING("Fix with: chmod 600 %s", path);
-      LOG_WARNING("========================================");
+      OLOG_WARNING("========================================");
+      OLOG_WARNING("SECURITY WARNING: %s is world-readable!", file_description);
+      OLOG_WARNING("File: %s", path);
+      OLOG_WARNING("This exposes sensitive data to all users on the system.");
+      OLOG_WARNING("Fix with: chmod 600 %s", path);
+      OLOG_WARNING("========================================");
    }
 
    if (st.st_mode & S_IWOTH) {
-      LOG_WARNING("========================================");
-      LOG_WARNING("SECURITY WARNING: %s is world-writable!", file_description);
-      LOG_WARNING("File: %s", path);
-      LOG_WARNING("Any user on the system can modify this file!");
-      LOG_WARNING("Fix with: chmod 600 %s", path);
-      LOG_WARNING("========================================");
+      OLOG_WARNING("========================================");
+      OLOG_WARNING("SECURITY WARNING: %s is world-writable!", file_description);
+      OLOG_WARNING("File: %s", path);
+      OLOG_WARNING("Any user on the system can modify this file!");
+      OLOG_WARNING("Fix with: chmod 600 %s", path);
+      OLOG_WARNING("========================================");
    }
 
    /* Check for group-readable/writable (less critical but still a concern) */
    if (st.st_mode & S_IRGRP) {
-      LOG_WARNING("Security notice: %s is group-readable (%s)", file_description, path);
-      LOG_WARNING("Consider: chmod 600 %s", path);
+      OLOG_WARNING("Security notice: %s is group-readable (%s)", file_description, path);
+      OLOG_WARNING("Consider: chmod 600 %s", path);
    }
 
    if (st.st_mode & S_IWGRP) {
-      LOG_WARNING("Security notice: %s is group-writable (%s)", file_description, path);
-      LOG_WARNING("Consider: chmod 600 %s", path);
+      OLOG_WARNING("Security notice: %s is group-writable (%s)", file_description, path);
+      OLOG_WARNING("Consider: chmod 600 %s", path);
    }
 }
 
@@ -171,7 +171,7 @@ static void warn_unknown_keys(toml_table_t *table,
          }
       }
       if (!found) {
-         LOG_WARNING("Unknown config key [%s].%s (typo?)", section, key);
+         OLOG_WARNING("Unknown config key [%s].%s (typo?)", section, key);
       }
    }
 }
@@ -257,7 +257,7 @@ static void parse_audio_named_devices(toml_table_t *audio_table, audio_config_t 
 
       /* Validate required fields */
       if (nd->name[0] == '\0' || nd->device[0] == '\0') {
-         LOG_WARNING("Skipping audio.named_devices[%d]: missing name or device", i);
+         OLOG_WARNING("Skipping audio.named_devices[%d]: missing name or device", i);
          continue;
       }
 
@@ -269,13 +269,13 @@ static void parse_audio_named_devices(toml_table_t *audio_table, audio_config_t 
          } else if (strcmp(type_val.u.s, "playback") == 0) {
             nd->type = AUDIO_DEV_TYPE_PLAYBACK;
          } else {
-            LOG_WARNING("audio.named_devices[%d].type invalid '%s', defaulting to playback", i,
-                        type_val.u.s);
+            OLOG_WARNING("audio.named_devices[%d].type invalid '%s', defaulting to playback", i,
+                         type_val.u.s);
             nd->type = AUDIO_DEV_TYPE_PLAYBACK;
          }
          free(type_val.u.s);
       } else {
-         LOG_WARNING("audio.named_devices[%d] missing type, defaulting to playback", i);
+         OLOG_WARNING("audio.named_devices[%d] missing type, defaulting to playback", i);
          nd->type = AUDIO_DEV_TYPE_PLAYBACK;
       }
 
@@ -297,7 +297,7 @@ static void parse_audio_named_devices(toml_table_t *audio_table, audio_config_t 
    }
 
    if (config->named_device_count > 0) {
-      LOG_INFO("Parsed %d named audio devices from config", config->named_device_count);
+      OLOG_INFO("Parsed %d named audio devices from config", config->named_device_count);
    }
 }
 
@@ -438,7 +438,7 @@ static void parse_llm_cloud(toml_table_t *table, llm_cloud_config_t *config) {
       /* Check range before cast to avoid integer overflow */
       if (openai_idx.u.i < 0 || openai_idx.u.i > INT_MAX ||
           (int)openai_idx.u.i >= config->openai_models_count) {
-         LOG_WARNING("llm.cloud.openai_default_model_idx out of range, defaulting to 0");
+         OLOG_WARNING("llm.cloud.openai_default_model_idx out of range, defaulting to 0");
          config->openai_default_model_idx = 0;
       } else {
          config->openai_default_model_idx = (int)openai_idx.u.i;
@@ -465,7 +465,7 @@ static void parse_llm_cloud(toml_table_t *table, llm_cloud_config_t *config) {
       /* Check range before cast to avoid integer overflow */
       if (claude_idx.u.i < 0 || claude_idx.u.i > INT_MAX ||
           (int)claude_idx.u.i >= config->claude_models_count) {
-         LOG_WARNING("llm.cloud.claude_default_model_idx out of range, defaulting to 0");
+         OLOG_WARNING("llm.cloud.claude_default_model_idx out of range, defaulting to 0");
          config->claude_default_model_idx = 0;
       } else {
          config->claude_default_model_idx = (int)claude_idx.u.i;
@@ -492,7 +492,7 @@ static void parse_llm_cloud(toml_table_t *table, llm_cloud_config_t *config) {
       /* Check range before cast to avoid integer overflow */
       if (gemini_idx.u.i < 0 || gemini_idx.u.i > INT_MAX ||
           (int)gemini_idx.u.i >= config->gemini_models_count) {
-         LOG_WARNING("llm.cloud.gemini_default_model_idx out of range, defaulting to 0");
+         OLOG_WARNING("llm.cloud.gemini_default_model_idx out of range, defaulting to 0");
          config->gemini_default_model_idx = 0;
       } else {
          config->gemini_default_model_idx = (int)gemini_idx.u.i;
@@ -529,7 +529,7 @@ static void parse_llm_tools(toml_table_t *table, llm_tools_config_t *config) {
    if (config->mode[0] != '\0') {
       if (strcmp(config->mode, "native") != 0 && strcmp(config->mode, "command_tags") != 0 &&
           strcmp(config->mode, "disabled") != 0) {
-         LOG_WARNING("Invalid llm.tools.mode '%s', using 'native'", config->mode);
+         OLOG_WARNING("Invalid llm.tools.mode '%s', using 'native'", config->mode);
          safe_strncpy(config->mode, "native", sizeof(config->mode));
       }
    } else {
@@ -554,7 +554,7 @@ static void parse_llm_tools(toml_table_t *table, llm_tools_config_t *config) {
             free(val.u.s);
          }
       }
-      LOG_INFO("Parsed %d tools in llm.tools.local_enabled", config->local_enabled_count);
+      OLOG_INFO("Parsed %d tools in llm.tools.local_enabled", config->local_enabled_count);
    }
 
    /* Parse remote_enabled array */
@@ -570,7 +570,7 @@ static void parse_llm_tools(toml_table_t *table, llm_tools_config_t *config) {
             free(val.u.s);
          }
       }
-      LOG_INFO("Parsed %d tools in llm.tools.remote_enabled", config->remote_enabled_count);
+      OLOG_INFO("Parsed %d tools in llm.tools.remote_enabled", config->remote_enabled_count);
    }
 }
 
@@ -591,7 +591,7 @@ static void parse_llm_thinking(toml_table_t *table, llm_thinking_config_t *confi
    /* Validate mode (disabled, auto, enabled) */
    if (config->mode[0] != '\0' && strcmp(config->mode, "disabled") != 0 &&
        strcmp(config->mode, "auto") != 0 && strcmp(config->mode, "enabled") != 0) {
-      LOG_WARNING("llm.thinking.mode invalid '%s', defaulting to 'disabled'", config->mode);
+      OLOG_WARNING("llm.thinking.mode invalid '%s', defaulting to 'disabled'", config->mode);
       strncpy(config->mode, "disabled", sizeof(config->mode) - 1);
       config->mode[sizeof(config->mode) - 1] = '\0';
    }
@@ -600,24 +600,24 @@ static void parse_llm_thinking(toml_table_t *table, llm_thinking_config_t *confi
    if (config->reasoning_effort[0] != '\0' && strcmp(config->reasoning_effort, "low") != 0 &&
        strcmp(config->reasoning_effort, "medium") != 0 &&
        strcmp(config->reasoning_effort, "high") != 0) {
-      LOG_WARNING("llm.thinking.reasoning_effort invalid '%s', defaulting to 'medium'",
-                  config->reasoning_effort);
+      OLOG_WARNING("llm.thinking.reasoning_effort invalid '%s', defaulting to 'medium'",
+                   config->reasoning_effort);
       strncpy(config->reasoning_effort, "medium", sizeof(config->reasoning_effort) - 1);
       config->reasoning_effort[sizeof(config->reasoning_effort) - 1] = '\0';
    }
 
    /* Validate budget values (minimum 1024 tokens for Claude compatibility) */
    if (config->budget_low > 0 && config->budget_low < 1024) {
-      LOG_WARNING("llm.thinking.budget_low too low (%d), clamping to 1024", config->budget_low);
+      OLOG_WARNING("llm.thinking.budget_low too low (%d), clamping to 1024", config->budget_low);
       config->budget_low = 1024;
    }
    if (config->budget_medium > 0 && config->budget_medium < 1024) {
-      LOG_WARNING("llm.thinking.budget_medium too low (%d), clamping to 1024",
-                  config->budget_medium);
+      OLOG_WARNING("llm.thinking.budget_medium too low (%d), clamping to 1024",
+                   config->budget_medium);
       config->budget_medium = 1024;
    }
    if (config->budget_high > 0 && config->budget_high < 1024) {
-      LOG_WARNING("llm.thinking.budget_high too low (%d), clamping to 1024", config->budget_high);
+      OLOG_WARNING("llm.thinking.budget_high too low (%d), clamping to 1024", config->budget_high);
       config->budget_high = 1024;
    }
 }
@@ -699,8 +699,8 @@ static void parse_search(toml_table_t *table, search_config_t *config) {
    if (filters_arr) {
       int count = toml_array_nelem(filters_arr);
       if (count > SEARCH_MAX_TITLE_FILTERS) {
-         LOG_WARNING("search.title_filters has %d entries, max is %d - truncating", count,
-                     SEARCH_MAX_TITLE_FILTERS);
+         OLOG_WARNING("search.title_filters has %d entries, max is %d - truncating", count,
+                      SEARCH_MAX_TITLE_FILTERS);
          count = SEARCH_MAX_TITLE_FILTERS;
       }
 
@@ -717,7 +717,7 @@ static void parse_search(toml_table_t *table, search_config_t *config) {
             free(d.u.s);
          }
       }
-      LOG_INFO("Parsed %d title filters in search.title_filters", config->title_filters_count);
+      OLOG_INFO("Parsed %d title filters in search.title_filters", config->title_filters_count);
    }
 }
 
@@ -833,8 +833,8 @@ static void parse_webui(toml_table_t *table, webui_config_t *config) {
    /* Validate export format */
    if (config->export_format[0] != '\0' && strcmp(config->export_format, "json") != 0 &&
        strcmp(config->export_format, "html") != 0) {
-      LOG_WARNING("Config: Invalid webui.export_format '%s', defaulting to 'json'",
-                  config->export_format);
+      OLOG_WARNING("Config: Invalid webui.export_format '%s', defaulting to 'json'",
+                   config->export_format);
       snprintf(config->export_format, sizeof(config->export_format), "json");
    }
 
@@ -1184,7 +1184,7 @@ static void parse_music(toml_table_t *table, music_config_t *config) {
       for (char *p = config->plex.host; *p; p++) {
          if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || (*p >= '0' && *p <= '9') ||
                *p == '.' || *p == '-' || *p == ':' || *p == '[' || *p == ']')) {
-            LOG_WARNING("Config: invalid character in music.plex.host, clearing");
+            OLOG_WARNING("Config: invalid character in music.plex.host, clearing");
             config->plex.host[0] = '\0';
             break;
          }
@@ -1200,9 +1200,9 @@ static void parse_music(toml_table_t *table, music_config_t *config) {
       PARSE_STRING(plex, "client_identifier", config->plex.client_identifier);
 
       if (!config->plex.ssl_verify && config->plex.ssl) {
-         LOG_WARNING("Plex: ssl_verify=false with ssl=true — TLS certificate "
-                     "verification is disabled. Consider adding the Plex server "
-                     "certificate to DAWN's trust store instead.");
+         OLOG_WARNING("Plex: ssl_verify=false with ssl=true — TLS certificate "
+                      "verification is disabled. Consider adding the Plex server "
+                      "certificate to DAWN's trust store instead.");
       }
    }
 
@@ -1309,13 +1309,13 @@ int config_file_readable(const char *path) {
 
 int config_parse_file(const char *path, dawn_config_t *config) {
    if (!path || !config) {
-      LOG_ERROR("config_parse_file: NULL argument");
+      OLOG_ERROR("config_parse_file: NULL argument");
       return FAILURE;
    }
 
    FILE *fp = fopen(path, "r");
    if (!fp) {
-      LOG_ERROR("Failed to open config file: %s", path);
+      OLOG_ERROR("Failed to open config file: %s", path);
       return FAILURE;
    }
 
@@ -1324,7 +1324,7 @@ int config_parse_file(const char *path, dawn_config_t *config) {
    fclose(fp);
 
    if (!root) {
-      LOG_ERROR("Failed to parse config file %s: %s", path, errbuf);
+      OLOG_ERROR("Failed to parse config file %s: %s", path, errbuf);
       return FAILURE;
    }
 
@@ -1357,13 +1357,13 @@ int config_parse_file(const char *path, dawn_config_t *config) {
 
    toml_free(root);
 
-   LOG_INFO("Loaded configuration from: %s", path);
+   OLOG_INFO("Loaded configuration from: %s", path);
    return SUCCESS;
 }
 
 int config_parse_secrets(const char *path, secrets_config_t *secrets) {
    if (!path || !secrets) {
-      LOG_ERROR("config_parse_secrets: NULL argument");
+      OLOG_ERROR("config_parse_secrets: NULL argument");
       return FAILURE;
    }
 
@@ -1372,7 +1372,7 @@ int config_parse_secrets(const char *path, secrets_config_t *secrets) {
 
    FILE *fp = fopen(path, "r");
    if (!fp) {
-      LOG_WARNING("Secrets file not found: %s", path);
+      OLOG_WARNING("Secrets file not found: %s", path);
       return FAILURE;
    }
 
@@ -1381,7 +1381,7 @@ int config_parse_secrets(const char *path, secrets_config_t *secrets) {
    fclose(fp);
 
    if (!root) {
-      LOG_ERROR("Failed to parse secrets file %s: %s", path, errbuf);
+      OLOG_ERROR("Failed to parse secrets file %s: %s", path, errbuf);
       return FAILURE;
    }
 
@@ -1426,7 +1426,7 @@ int config_parse_secrets(const char *path, secrets_config_t *secrets) {
 
       PARSE_STRING(secrets_section, "service_token", secrets->service_token);
       if (secrets->service_token[0] && strlen(secrets->service_token) < 32) {
-         LOG_WARNING("config: service_token is too short (min 32 chars) — ignoring");
+         OLOG_WARNING("config: service_token is too short (min 32 chars) — ignoring");
          secrets->service_token[0] = '\0';
       }
    }
@@ -1443,7 +1443,7 @@ int config_parse_secrets(const char *path, secrets_config_t *secrets) {
 
    toml_free(root);
 
-   LOG_INFO("Loaded secrets from: %s", path);
+   OLOG_INFO("Loaded secrets from: %s", path);
    return SUCCESS;
 }
 
@@ -1475,11 +1475,11 @@ int config_load_from_search(const char *explicit_path, dawn_config_t *config) {
          if (result == SUCCESS) {
             strncpy(s_loaded_config_path, explicit_path, sizeof(s_loaded_config_path) - 1);
             s_loaded_config_path[sizeof(s_loaded_config_path) - 1] = '\0';
-            LOG_INFO("Config loaded: %s", s_loaded_config_path);
+            OLOG_INFO("Config loaded: %s", s_loaded_config_path);
          }
          return result;
       } else {
-         LOG_ERROR("Specified config file not found: %s", explicit_path);
+         OLOG_ERROR("Specified config file not found: %s", explicit_path);
          return FAILURE;
       }
    }
@@ -1489,7 +1489,7 @@ int config_load_from_search(const char *explicit_path, dawn_config_t *config) {
       result = config_parse_file("./dawn.toml", config);
       if (result == SUCCESS) {
          strncpy(s_loaded_config_path, "./dawn.toml", sizeof(s_loaded_config_path) - 1);
-         LOG_INFO("Config loaded: %s", s_loaded_config_path);
+         OLOG_INFO("Config loaded: %s", s_loaded_config_path);
       }
       return result;
    }
@@ -1504,7 +1504,7 @@ int config_load_from_search(const char *explicit_path, dawn_config_t *config) {
          if (result == SUCCESS) {
             strncpy(s_loaded_config_path, path, sizeof(s_loaded_config_path) - 1);
             s_loaded_config_path[sizeof(s_loaded_config_path) - 1] = '\0';
-            LOG_INFO("Config loaded: %s", s_loaded_config_path);
+            OLOG_INFO("Config loaded: %s", s_loaded_config_path);
          }
          return result;
       }
@@ -1515,13 +1515,13 @@ int config_load_from_search(const char *explicit_path, dawn_config_t *config) {
       result = config_parse_file("/etc/dawn/config.toml", config);
       if (result == SUCCESS) {
          strncpy(s_loaded_config_path, "/etc/dawn/config.toml", sizeof(s_loaded_config_path) - 1);
-         LOG_INFO("Config loaded: %s", s_loaded_config_path);
+         OLOG_INFO("Config loaded: %s", s_loaded_config_path);
       }
       return result;
    }
 
    /* No config file found - use defaults (not an error) */
-   LOG_INFO("No config file found, using defaults");
+   OLOG_INFO("No config file found, using defaults");
    return SUCCESS;
 }
 
@@ -1536,7 +1536,7 @@ int config_load_secrets_from_search(secrets_config_t *secrets) {
       result = config_parse_secrets("./secrets.toml", secrets);
       if (result == SUCCESS) {
          strncpy(s_loaded_secrets_path, "./secrets.toml", sizeof(s_loaded_secrets_path) - 1);
-         LOG_INFO("Secrets loaded: %s", s_loaded_secrets_path);
+         OLOG_INFO("Secrets loaded: %s", s_loaded_secrets_path);
       }
       return result;
    }
@@ -1551,7 +1551,7 @@ int config_load_secrets_from_search(secrets_config_t *secrets) {
          if (result == SUCCESS) {
             strncpy(s_loaded_secrets_path, path, sizeof(s_loaded_secrets_path) - 1);
             s_loaded_secrets_path[sizeof(s_loaded_secrets_path) - 1] = '\0';
-            LOG_INFO("Secrets loaded: %s", s_loaded_secrets_path);
+            OLOG_INFO("Secrets loaded: %s", s_loaded_secrets_path);
          }
          return result;
       }
@@ -1563,13 +1563,13 @@ int config_load_secrets_from_search(secrets_config_t *secrets) {
       if (result == SUCCESS) {
          strncpy(s_loaded_secrets_path, "/etc/dawn/secrets.toml",
                  sizeof(s_loaded_secrets_path) - 1);
-         LOG_INFO("Secrets loaded: %s", s_loaded_secrets_path);
+         OLOG_INFO("Secrets loaded: %s", s_loaded_secrets_path);
       }
       return result;
    }
 
    /* Secrets file not found - not an error, secrets are optional */
-   LOG_INFO("No secrets file found");
+   OLOG_INFO("No secrets file found");
    return SUCCESS;
 }
 
@@ -1600,14 +1600,14 @@ int config_backup_file(const char *path) {
    char backup_path[CONFIG_PATH_MAX];
    int len = snprintf(backup_path, sizeof(backup_path), "%s.bak", path);
    if (len < 0 || (size_t)len >= sizeof(backup_path)) {
-      LOG_ERROR("Backup path too long for: %s", path);
+      OLOG_ERROR("Backup path too long for: %s", path);
       return 1;
    }
 
    /* Read original file */
    FILE *src = fopen(path, "rb");
    if (!src) {
-      LOG_ERROR("Failed to open file for backup: %s", path);
+      OLOG_ERROR("Failed to open file for backup: %s", path);
       return 1;
    }
 
@@ -1617,14 +1617,14 @@ int config_backup_file(const char *path) {
     * should always be owner-only (0600) regardless of original perms. */
    int fd = open(backup_path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
    if (fd < 0) {
-      LOG_ERROR("Failed to create backup file: %s", backup_path);
+      OLOG_ERROR("Failed to create backup file: %s", backup_path);
       fclose(src);
       return 1;
    }
 
    FILE *dst = fdopen(fd, "wb");
    if (!dst) {
-      LOG_ERROR("Failed to open backup file stream: %s", backup_path);
+      OLOG_ERROR("Failed to open backup file stream: %s", backup_path);
       close(fd);
       fclose(src);
       return 1;
@@ -1635,7 +1635,7 @@ int config_backup_file(const char *path) {
    size_t bytes;
    while ((bytes = fread(buffer, 1, sizeof(buffer), src)) > 0) {
       if (fwrite(buffer, 1, bytes, dst) != bytes) {
-         LOG_ERROR("Failed to write backup file: %s", backup_path);
+         OLOG_ERROR("Failed to write backup file: %s", backup_path);
          fclose(src);
          fclose(dst);
          return 1;
@@ -1645,6 +1645,6 @@ int config_backup_file(const char *path) {
    fclose(src);
    fclose(dst);
 
-   LOG_INFO("Created backup: %s", backup_path);
+   OLOG_INFO("Created backup: %s", backup_path);
    return 0;
 }

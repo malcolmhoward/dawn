@@ -158,14 +158,14 @@ int weather_service_init(void) {
 
    if (module_initialized) {
       pthread_mutex_unlock(&module_mutex);
-      LOG_WARNING("weather_service: Already initialized");
+      OLOG_WARNING("weather_service: Already initialized");
       return 0;
    }
 
    // Note: curl_global_init() is called in main() - not here
    module_initialized = 1;
    pthread_mutex_unlock(&module_mutex);
-   LOG_INFO("weather_service: Initialized");
+   OLOG_INFO("weather_service: Initialized");
    return 0;
 }
 
@@ -180,7 +180,7 @@ void weather_service_cleanup(void) {
    // Note: curl_global_cleanup() is called in main() - not here
    module_initialized = 0;
    pthread_mutex_unlock(&module_mutex);
-   LOG_INFO("weather_service: Cleanup complete");
+   OLOG_INFO("weather_service: Cleanup complete");
 }
 
 int weather_service_is_initialized(void) {
@@ -300,7 +300,7 @@ static int geocode_location(const char *location,
                             char **resolved_name) {
    CURL *curl = curl_easy_init();
    if (!curl) {
-      LOG_ERROR("Failed to initialize curl for geocoding");
+      OLOG_ERROR("Failed to initialize curl for geocoding");
       return 1;
    }
 
@@ -331,7 +331,7 @@ static int geocode_location(const char *location,
       // Expand US state abbreviation to full name (e.g., "GA" -> "Georgia")
       const char *expanded = expand_state_abbrev(state_filter);
       if (expanded) {
-         LOG_INFO("Geocoding: Expanded state '%s' to '%s'", state_filter, expanded);
+         OLOG_INFO("Geocoding: Expanded state '%s' to '%s'", state_filter, expanded);
          strncpy(state_filter, expanded, sizeof(state_filter) - 1);
          state_filter[sizeof(state_filter) - 1] = '\0';
       }
@@ -352,8 +352,8 @@ static int geocode_location(const char *location,
       return 1;
    }
 
-   LOG_INFO("Geocoding: city='%s', state_filter='%s'", city_start,
-            state_filter[0] ? state_filter : "(none)");
+   OLOG_INFO("Geocoding: city='%s', state_filter='%s'", city_start,
+             state_filter[0] ? state_filter : "(none)");
 
    // Request multiple results so we can filter by state
    char url[512];
@@ -370,7 +370,7 @@ static int geocode_location(const char *location,
    curl_easy_cleanup(curl);
 
    if (res != CURLE_OK) {
-      LOG_ERROR("Geocoding request failed: %s", curl_easy_strerror(res));
+      OLOG_ERROR("Geocoding request failed: %s", curl_easy_strerror(res));
       curl_buffer_free(&buffer);
       return 1;
    }
@@ -380,14 +380,14 @@ static int geocode_location(const char *location,
    curl_buffer_free(&buffer);
 
    if (!root) {
-      LOG_ERROR("Failed to parse geocoding response");
+      OLOG_ERROR("Failed to parse geocoding response");
       return 1;
    }
 
    struct json_object *results;
    if (!json_object_object_get_ex(root, "results", &results) ||
        json_object_array_length(results) == 0) {
-      LOG_ERROR("No geocoding results found for: %s", location);
+      OLOG_ERROR("No geocoding results found for: %s", location);
       json_object_put(root);
       return 1;
    }
@@ -407,15 +407,15 @@ static int geocode_location(const char *location,
             // Check if state filter matches admin1 (case-insensitive, partial match)
             if (admin1 && str_contains_ci(admin1, state_filter)) {
                best_result = result;
-               LOG_INFO("Matched result %zu: admin1='%s' matches filter '%s'", i, admin1,
-                        state_filter);
+               OLOG_INFO("Matched result %zu: admin1='%s' matches filter '%s'", i, admin1,
+                         state_filter);
                break;
             }
          }
       }
 
       if (!best_result) {
-         LOG_WARNING("No results matched state filter '%s', using first result", state_filter);
+         OLOG_WARNING("No results matched state filter '%s', using first result", state_filter);
       }
    }
 
@@ -450,7 +450,7 @@ static int geocode_location(const char *location,
    }
    *resolved_name = strdup(name_buf);
 
-   LOG_INFO("Resolved location: %s (lat=%.4f, lon=%.4f)", *resolved_name, *latitude, *longitude);
+   OLOG_INFO("Resolved location: %s (lat=%.4f, lon=%.4f)", *resolved_name, *latitude, *longitude);
 
    json_object_put(root);
    return 0;

@@ -153,11 +153,11 @@ int contacts_add(int user_id,
    AUTH_DB_UNLOCK();
 
    if (rc != SQLITE_DONE) {
-      LOG_ERROR("contacts_add: insert failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("contacts_add: insert failed: %s", sqlite3_errmsg(s_db.db));
       return 1;
    }
    if (changes == 0) {
-      LOG_ERROR("contacts_add: entity %lld not owned by user %d", (long long)entity_id, user_id);
+      OLOG_ERROR("contacts_add: entity %lld not owned by user %d", (long long)entity_id, user_id);
       return 1;
    }
    return 0;
@@ -222,7 +222,7 @@ int contacts_update(int user_id,
 
    int changes = sqlite3_changes(s_db.db);
    if (rc != SQLITE_DONE || changes == 0) {
-      LOG_ERROR("contacts_update: update failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("contacts_update: update failed: %s", sqlite3_errmsg(s_db.db));
       AUTH_DB_UNLOCK();
       return 1;
    }

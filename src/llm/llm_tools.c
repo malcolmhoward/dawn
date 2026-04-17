@@ -63,14 +63,14 @@ static unsigned char *read_file(const char *filename, size_t *length) {
    *length = 0;
    FILE *file = fopen(filename, "rb");
    if (!file) {
-      LOG_ERROR("File opening failed: %s", filename);
+      OLOG_ERROR("File opening failed: %s", filename);
       return NULL;
    }
 
    fseek(file, 0, SEEK_END);
    long size = ftell(file);
    if (size == -1) {
-      LOG_ERROR("Failed to determine file size: %s", filename);
+      OLOG_ERROR("Failed to determine file size: %s", filename);
       fclose(file);
       return NULL;
    }
@@ -79,25 +79,25 @@ static unsigned char *read_file(const char *filename, size_t *length) {
    /* Reject files over 20 MB to prevent OOM on embedded targets */
 #define MAX_IMAGE_FILE_SIZE (20 * 1024 * 1024)
    if (*length > MAX_IMAGE_FILE_SIZE) {
-      LOG_ERROR("File too large (%zu bytes, max %d): %s", *length, MAX_IMAGE_FILE_SIZE, filename);
+      OLOG_ERROR("File too large (%zu bytes, max %d): %s", *length, MAX_IMAGE_FILE_SIZE, filename);
       fclose(file);
       *length = 0;
       return NULL;
    }
 
-   LOG_INFO("Reading file: %zu bytes", *length);
+   OLOG_INFO("Reading file: %zu bytes", *length);
    fseek(file, 0, SEEK_SET);
 
    unsigned char *content = malloc(*length);
    if (!content) {
-      LOG_ERROR("Memory allocation failed");
+      OLOG_ERROR("Memory allocation failed");
       fclose(file);
       return NULL;
    }
 
    size_t read_length = fread(content, 1, *length, file);
    if (*length != read_length) {
-      LOG_ERROR("Failed to read the total size. Expected: %zu, Read: %zu", *length, read_length);
+      OLOG_ERROR("Failed to read the total size. Expected: %zu, Read: %zu", *length, read_length);
       free(content);
       fclose(file);
       return NULL;
@@ -109,7 +109,7 @@ static unsigned char *read_file(const char *filename, size_t *length) {
 
 static char *base64_encode(const unsigned char *buffer, size_t length) {
    if (buffer == NULL || length == 0) {
-      LOG_ERROR("Invalid input to base64_encode.");
+      OLOG_ERROR("Invalid input to base64_encode.");
       return NULL;
    }
 
@@ -118,13 +118,13 @@ static char *base64_encode(const unsigned char *buffer, size_t length) {
 
    b64 = BIO_new(BIO_f_base64());
    if (b64 == NULL) {
-      LOG_ERROR("Failed to create Base64 BIO.");
+      OLOG_ERROR("Failed to create Base64 BIO.");
       return NULL;
    }
 
    bio = BIO_new(BIO_s_mem());
    if (bio == NULL) {
-      LOG_ERROR("Failed to create memory BIO.");
+      OLOG_ERROR("Failed to create memory BIO.");
       BIO_free_all(b64);
       return NULL;
    }
@@ -133,27 +133,27 @@ static char *base64_encode(const unsigned char *buffer, size_t length) {
    BIO_set_flags(bio, BIO_FLAGS_BASE64_NO_NL);
 
    if (BIO_write(bio, buffer, length) <= 0) {
-      LOG_ERROR("Failed to write data to BIO.");
+      OLOG_ERROR("Failed to write data to BIO.");
       BIO_free_all(bio);
       return NULL;
    }
 
    if (BIO_flush(bio) <= 0) {
-      LOG_ERROR("Failed to flush BIO.");
+      OLOG_ERROR("Failed to flush BIO.");
       BIO_free_all(bio);
       return NULL;
    }
 
    BIO_get_mem_ptr(bio, &bufferPtr);
    if (bufferPtr == NULL || bufferPtr->data == NULL) {
-      LOG_ERROR("Failed to get pointer to BIO memory.");
+      OLOG_ERROR("Failed to get pointer to BIO memory.");
       BIO_free_all(bio);
       return NULL;
    }
 
    char *b64text = malloc(bufferPtr->length + 1);
    if (b64text == NULL) {
-      LOG_ERROR("Memory allocation failed for Base64 text.");
+      OLOG_ERROR("Memory allocation failed for Base64 text.");
       BIO_free_all(bio);
       return NULL;
    }
@@ -310,7 +310,7 @@ static bool get_tool_parallel_safe(const char *tool_name) {
 static void *tool_exec_thread(void *arg) {
    tool_exec_task_t *task = (tool_exec_task_t *)arg;
 
-   LOG_INFO("Thread started for tool '%s'", task->call->name);
+   OLOG_INFO("Thread started for tool '%s'", task->call->name);
 
    /* Propagate session context to this thread */
    session_set_command_context(task->session);
@@ -340,20 +340,20 @@ static bool validate_file_path(const char *path) {
 
    /* Reject relative paths */
    if (path[0] != '/') {
-      LOG_WARNING("Rejected relative path: %s", path);
+      OLOG_WARNING("Rejected relative path: %s", path);
       return false;
    }
 
    /* Reject path traversal attempts (check before resolving) */
    if (strstr(path, "..") != NULL) {
-      LOG_WARNING("Rejected path with traversal: %s", path);
+      OLOG_WARNING("Rejected path with traversal: %s", path);
       return false;
    }
 
    /* Resolve symlinks to get canonical path - prevents symlink attacks */
    char resolved[PATH_MAX];
    if (realpath(path, resolved) == NULL) {
-      LOG_WARNING("Could not resolve path (file may not exist): %s", path);
+      OLOG_WARNING("Could not resolve path (file may not exist): %s", path);
       return false;
    }
 
@@ -361,7 +361,7 @@ static bool validate_file_path(const char *path) {
    /* Build allowed prefixes using $HOME instead of hardcoded /home/jetson */
    const char *home = getenv("HOME");
    if (!home || home[0] == '\0') {
-      LOG_WARNING("$HOME not set — rejecting file view request for security");
+      OLOG_WARNING("$HOME not set — rejecting file view request for security");
       return false;
    }
    char home_recordings[PATH_MAX];
@@ -377,7 +377,7 @@ static bool validate_file_path(const char *path) {
       }
    }
 
-   LOG_WARNING("Rejected path outside allowed directories: %s (resolved: %s)", path, resolved);
+   OLOG_WARNING("Rejected path outside allowed directories: %s (resolved: %s)", path, resolved);
    return false;
 }
 
@@ -441,7 +441,7 @@ static bool extract_vision_image(const char *data,
 
    if (is_base64_image_data(data)) {
       /* Data is already base64-encoded image */
-      LOG_INFO("Vision data is inline base64 (%zu bytes)", strlen(data));
+      OLOG_INFO("Vision data is inline base64 (%zu bytes)", strlen(data));
       base64_image = strdup(data);
       if (!base64_image) {
          if (error_buf) {
@@ -451,7 +451,7 @@ static bool extract_vision_image(const char *data,
       }
    } else {
       /* Data is a file path - validate, read, and encode */
-      LOG_INFO("Vision data is file path: %s", data);
+      OLOG_INFO("Vision data is file path: %s", data);
 
       /* Validate path for security */
       if (!validate_file_path(data)) {
@@ -481,7 +481,7 @@ static bool extract_vision_image(const char *data,
          }
          return false;
       }
-      LOG_INFO("Image file encoded: %zu bytes base64", strlen(base64_image));
+      OLOG_INFO("Image file encoded: %zu bytes base64", strlen(base64_image));
    }
 
    *image_out = base64_image;
@@ -553,7 +553,7 @@ static bool execute_viewing_sync(const char *action,
       tool_result->vision_image_size = vision_size;
       snprintf(tool_result->result, LLM_TOOLS_RESULT_LEN,
                "Image captured successfully. Please analyze and respond to the user's request.");
-      LOG_INFO("Vision image stored in tool result: %zu bytes", vision_size);
+      OLOG_INFO("Vision image stored in tool result: %zu bytes", vision_size);
    }
    return success;
 }
@@ -594,7 +594,7 @@ static void generate_tool_from_treg(const tool_metadata_t *meta, void *user_data
    }
 
    if (s_tool_count >= LLM_TOOLS_MAX_TOOLS) {
-      LOG_ERROR("Maximum tool count (%d) reached, skipping '%s'", LLM_TOOLS_MAX_TOOLS, meta->name);
+      OLOG_ERROR("Maximum tool count (%d) reached, skipping '%s'", LLM_TOOLS_MAX_TOOLS, meta->name);
       return;
    }
 
@@ -656,7 +656,7 @@ void llm_tools_init(void) {
    tool_registry_foreach(generate_tool_from_treg, NULL);
 
    s_initialized = true;
-   LOG_INFO("Initialized %d LLM tools from tool_registry", s_tool_count);
+   OLOG_INFO("Initialized %d LLM tools from tool_registry", s_tool_count);
 
    /* Refresh availability based on current config */
    llm_tools_refresh();
@@ -670,7 +670,7 @@ void llm_tools_init(void) {
                             s_tools[i].name);
       }
    }
-   LOG_INFO("Enabled tools: %s", enabled_list);
+   OLOG_INFO("Enabled tools: %s", enabled_list);
 }
 
 /* =============================================================================
@@ -723,8 +723,8 @@ void llm_tools_refresh(void) {
       }
    }
 
-   LOG_INFO("Refreshed tool availability: %d enabled (HUD %s)", s_enabled_count,
-            hud_available ? "available" : "unavailable");
+   OLOG_INFO("Refreshed tool availability: %d enabled (HUD %s)", s_enabled_count,
+             hud_available ? "available" : "unavailable");
 }
 
 void llm_tools_cleanup(void) {
@@ -1064,14 +1064,14 @@ int llm_tools_set_enabled(const char *tool_name, bool enabled_local, bool enable
          s_token_estimate_remote = -1;
 
          pthread_mutex_unlock(&s_tools_mutex);
-         LOG_INFO("Tool '%s' enable state updated: local=%d, remote=%d", tool_name, enabled_local,
-                  enabled_remote);
+         OLOG_INFO("Tool '%s' enable state updated: local=%d, remote=%d", tool_name, enabled_local,
+                   enabled_remote);
          return 0; /* SUCCESS */
       }
    }
    pthread_mutex_unlock(&s_tools_mutex);
 
-   LOG_WARNING("Tool '%s' not found", tool_name);
+   OLOG_WARNING("Tool '%s' not found", tool_name);
    return 1; /* FAILURE - tool not found */
 }
 
@@ -1116,7 +1116,7 @@ void llm_tools_apply_config(const char **local_list,
                             int remote_count,
                             bool remote_configured) {
    if (!s_initialized) {
-      LOG_WARNING("llm_tools_apply_config called before initialization - config ignored");
+      OLOG_WARNING("llm_tools_apply_config called before initialization - config ignored");
       return;
    }
 
@@ -1174,9 +1174,9 @@ void llm_tools_apply_config(const char **local_list,
    s_token_estimate_remote = -1;
    pthread_mutex_unlock(&s_tools_mutex);
 
-   LOG_INFO("Applied tool config: local=%d tools, remote=%d tools",
-            llm_tools_get_enabled_count_filtered(false),
-            llm_tools_get_enabled_count_filtered(true));
+   OLOG_INFO("Applied tool config: local=%d tools, remote=%d tools",
+             llm_tools_get_enabled_count_filtered(false),
+             llm_tools_get_enabled_count_filtered(true));
 }
 
 int llm_tools_get_enabled_count_filtered(bool is_remote_session) {
@@ -1219,7 +1219,7 @@ void llm_tools_invalidate_cache(void) {
    s_token_estimate_local = -1;
    s_token_estimate_remote = -1;
    pthread_mutex_unlock(&s_tools_mutex);
-   LOG_INFO("LLM tools schema cache invalidated");
+   OLOG_INFO("LLM tools schema cache invalidated");
 }
 
 /* =============================================================================
@@ -1319,8 +1319,8 @@ static int llm_tools_execute_from_treg(const tool_call_t *call,
       if (json_object_object_length(remaining) > 0) {
          const char *remaining_str = json_object_to_json_string(remaining);
          safe_strncpy(value_buf, remaining_str, sizeof(value_buf));
-         LOG_INFO("Tool '%s': LLM sent flat args, reconstructed value from remaining fields",
-                  call->name);
+         OLOG_INFO("Tool '%s': LLM sent flat args, reconstructed value from remaining fields",
+                   call->name);
       }
       json_object_put(remaining);
    }
@@ -1344,8 +1344,8 @@ static int llm_tools_execute_from_treg(const tool_call_t *call,
       }
    }
 
-   LOG_INFO("Executing tool '%s' (treg) -> device='%s', action='%s', value='%s'", call->name,
-            effective_device, action_name, value_buf);
+   OLOG_INFO("Executing tool '%s' (treg) -> device='%s', action='%s', value='%s'", call->name,
+             effective_device, action_name, value_buf);
 
    /* Notify callback that tool execution is starting */
    notify_tool_execution(call->name, call->arguments, NULL, false);
@@ -1404,7 +1404,7 @@ static int llm_tools_execute_from_treg(const tool_call_t *call,
             /* Large result — store in result_extended, copy truncated preview to result[] */
             result->result_extended = cb_result; /* Transfer ownership */
             safe_strncpy(result->result, cb_result, LLM_TOOLS_RESULT_LEN);
-            LOG_INFO("Tool '%s' result stored in result_extended (%zu bytes)", call->name, cb_len);
+            OLOG_INFO("Tool '%s' result stored in result_extended (%zu bytes)", call->name, cb_len);
          } else {
             safe_strncpy(result->result, cb_result, LLM_TOOLS_RESULT_LEN);
             free(cb_result);
@@ -1527,7 +1527,7 @@ int llm_tools_execute_all(const tool_call_list_t *calls, tool_result_list_t *res
       }
    }
 
-   LOG_INFO("Tool execution: %d parallel-safe, %d sequential", parallel_count, sequential_count);
+   OLOG_INFO("Tool execution: %d parallel-safe, %d sequential", parallel_count, sequential_count);
 
    /* Execute parallel-safe tools concurrently */
    if (parallel_count > 0) {
@@ -1555,11 +1555,11 @@ int llm_tools_execute_all(const tool_call_list_t *calls, tool_result_list_t *res
          int rc = pthread_create(&threads[i], &thread_attr, tool_exec_thread, &tasks[i]);
          if (rc == 0) {
             thread_spawned[i] = true;
-            LOG_INFO("Spawned thread %d for tool '%s'", i, calls->calls[idx].name);
+            OLOG_INFO("Spawned thread %d for tool '%s'", i, calls->calls[idx].name);
          } else {
             /* Fallback to sequential if thread creation fails */
-            LOG_WARNING("pthread_create failed for tool '%s' (error=%d), executing sequentially",
-                        calls->calls[idx].name, rc);
+            OLOG_WARNING("pthread_create failed for tool '%s' (error=%d), executing sequentially",
+                         calls->calls[idx].name, rc);
             tasks[i].return_code = llm_tools_execute(tasks[i].call, tasks[i].result);
          }
       }
@@ -1599,8 +1599,8 @@ int llm_tools_execute_all(const tool_call_list_t *calls, tool_result_list_t *res
    clock_gettime(CLOCK_MONOTONIC, &end_time);
    long elapsed_ms = (end_time.tv_sec - start_time.tv_sec) * 1000 +
                      (end_time.tv_nsec - start_time.tv_nsec) / 1000000;
-   LOG_INFO("Tool execution: %d tools completed in %ldms (%d parallel, %d sequential)", total_calls,
-            elapsed_ms, parallel_count, sequential_count);
+   OLOG_INFO("Tool execution: %d tools completed in %ldms (%d parallel, %d sequential)",
+             total_calls, elapsed_ms, parallel_count, sequential_count);
 
    return failures > 0 ? 1 : 0;
 }
@@ -1812,8 +1812,8 @@ int llm_tools_parse_openai_response(struct json_object *response, tool_call_list
 
       const char *args_str = json_object_get_string(args_obj);
       if (args_str && strlen(args_str) >= LLM_TOOLS_ARGS_LEN) {
-         LOG_WARNING("Tool '%s' arguments truncated from %zu to %d bytes", call->name,
-                     strlen(args_str), LLM_TOOLS_ARGS_LEN - 1);
+         OLOG_WARNING("Tool '%s' arguments truncated from %zu to %d bytes", call->name,
+                      strlen(args_str), LLM_TOOLS_ARGS_LEN - 1);
       }
       safe_strncpy(call->arguments, args_str ? args_str : "", LLM_TOOLS_ARGS_LEN);
    }
@@ -1947,8 +1947,8 @@ int llm_get_effective_budget_tokens(void) {
       int max_budget = context_size / 2; /* 50% limit */
 
       if (budget > max_budget) {
-         LOG_WARNING("Thinking budget %d exceeds 50%% of context (%d tokens), clamping to %d",
-                     budget, context_size, max_budget);
+         OLOG_WARNING("Thinking budget %d exceeds 50%% of context (%d tokens), clamping to %d",
+                      budget, context_size, max_budget);
          budget = max_budget;
       }
    }
@@ -2245,8 +2245,8 @@ bool llm_tools_is_duplicate_call(struct json_object *history,
    }
 
    if (is_dup) {
-      LOG_INFO("Duplicate tool call detected: %s with args %s", tool_name,
-               tool_args ? tool_args : "(none)");
+      OLOG_INFO("Duplicate tool call detected: %s with args %s", tool_name,
+                tool_args ? tool_args : "(none)");
    }
    return is_dup;
 }

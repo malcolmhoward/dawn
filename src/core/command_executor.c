@@ -127,7 +127,7 @@ int command_execute_sync(const char *device,
       return 1;
    }
 
-   LOG_INFO("command_executor: Sync command sent (request_id=%s), waiting...", request_id);
+   OLOG_INFO("command_executor: Sync command sent (request_id=%s), waiting...", request_id);
 
    /* Wait for response via command_router */
    char *response = command_router_wait(req, timeout_ms);
@@ -144,7 +144,7 @@ int command_execute_sync(const char *device,
    result->result = response; /* Takes ownership */
    result->should_respond = true;
 
-   LOG_INFO("command_executor: Sync response received for '%s'", device);
+   OLOG_INFO("command_executor: Sync response received for '%s'", device);
    return 0;
 }
 
@@ -172,7 +172,7 @@ int command_execute(const char *device,
    /* Look up in tool_registry */
    const tool_metadata_t *tool = tool_registry_find(device);
    if (!tool) {
-      LOG_WARNING("command_execute: Unknown device '%s'", device);
+      OLOG_WARNING("command_execute: Unknown device '%s'", device);
       result->success = false;
       char errbuf[256];
       snprintf(errbuf, sizeof(errbuf), "Unknown device: %s", device);
@@ -227,7 +227,7 @@ int command_execute(const char *device,
       result->result = NULL; /* Fire-and-forget has no response */
       result->should_respond = false;
 
-      LOG_INFO("command_execute: MQTT published to '%s' for tool '%s'", tool->topic, device);
+      OLOG_INFO("command_execute: MQTT published to '%s' for tool '%s'", tool->topic, device);
       return 0;
    }
 
@@ -245,13 +245,13 @@ int command_execute(const char *device,
       result->should_respond = (should_respond != 0);
       result->result = cb_result; /* Takes ownership (may be NULL) */
 
-      LOG_INFO("command_execute: Tool callback for '%s' -> %s", device,
-               result->result ? result->result : "(no result)");
+      OLOG_INFO("command_execute: Tool callback for '%s' -> %s", device,
+                result->result ? result->result : "(no result)");
       return 0;
    }
 
    /* Tool has no callback and is not mqtt_only - this shouldn't happen */
-   LOG_WARNING("command_execute: Tool '%s' has no callback or topic", device);
+   OLOG_WARNING("command_execute: Tool '%s' has no callback or topic", device);
    result->success = false;
    result->result = strdup("Tool has no execution path configured");
    return 1;

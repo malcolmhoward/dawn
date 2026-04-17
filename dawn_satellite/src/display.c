@@ -139,14 +139,14 @@ int display_init(display_t *ctx, const char *fb_device) {
    /* Open framebuffer device */
    ctx->fd = open(dev, O_RDWR);
    if (ctx->fd < 0) {
-      LOG_ERROR("Cannot open framebuffer '%s': %m", dev);
+      OLOG_ERROR("Cannot open framebuffer '%s': %m", dev);
       return -1;
    }
 
    /* Get fixed screen info */
    struct fb_fix_screeninfo finfo;
    if (ioctl(ctx->fd, FBIOGET_FSCREENINFO, &finfo) < 0) {
-      LOG_ERROR("Cannot get fixed screen info: %m");
+      OLOG_ERROR("Cannot get fixed screen info: %m");
       close(ctx->fd);
       return -1;
    }
@@ -154,7 +154,7 @@ int display_init(display_t *ctx, const char *fb_device) {
    /* Get variable screen info */
    struct fb_var_screeninfo vinfo;
    if (ioctl(ctx->fd, FBIOGET_VSCREENINFO, &vinfo) < 0) {
-      LOG_ERROR("Cannot get variable screen info: %m");
+      OLOG_ERROR("Cannot get variable screen info: %m");
       close(ctx->fd);
       return -1;
    }
@@ -168,15 +168,15 @@ int display_init(display_t *ctx, const char *fb_device) {
    ctx->framebuffer = (uint16_t *)mmap(NULL, ctx->fb_size, PROT_READ | PROT_WRITE, MAP_SHARED,
                                        ctx->fd, 0);
    if (ctx->framebuffer == MAP_FAILED) {
-      LOG_ERROR("Cannot mmap framebuffer: %m");
+      OLOG_ERROR("Cannot mmap framebuffer: %m");
       close(ctx->fd);
       return -1;
    }
 
    ctx->initialized = 1;
 
-   LOG_INFO("Display initialized: %s (%ux%u, %u bpp)", dev, ctx->width, ctx->height,
-            vinfo.bits_per_pixel);
+   OLOG_INFO("Display initialized: %s (%ux%u, %u bpp)", dev, ctx->width, ctx->height,
+             vinfo.bits_per_pixel);
 
    /* Clear to black */
    display_clear(ctx, COLOR_BLACK);
@@ -193,7 +193,7 @@ void display_cleanup(display_t *ctx) {
          close(ctx->fd);
       }
       ctx->initialized = 0;
-      LOG_INFO("Display cleaned up");
+      OLOG_INFO("Display cleaned up");
    }
 }
 

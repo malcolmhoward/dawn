@@ -129,7 +129,7 @@ static int set_realtime_priority(void) {
    int max_priority = sched_get_priority_max(SCHED_FIFO);
 
    if (max_priority == -1) {
-      LOG_WARNING("Failed to get max realtime priority: %s", strerror(errno));
+      OLOG_WARNING("Failed to get max realtime priority: %s", strerror(errno));
       return 1;
    }
 
@@ -137,12 +137,12 @@ static int set_realtime_priority(void) {
    param.sched_priority = (max_priority > 90) ? 90 : max_priority;
 
    if (pthread_setschedparam(pthread_self(), SCHED_FIFO, &param) != 0) {
-      LOG_WARNING("Failed to set realtime priority (try: sudo setcap cap_sys_nice=ep ./dawn): %s",
-                  strerror(errno));
+      OLOG_WARNING("Failed to set realtime priority (try: sudo setcap cap_sys_nice=ep ./dawn): %s",
+                   strerror(errno));
       return 1;
    }
 
-   LOG_INFO("Audio capture thread running with SCHED_FIFO priority %d", param.sched_priority);
+   OLOG_INFO("Audio capture thread running with SCHED_FIFO priority %d", param.sched_priority);
    return 0;
 }
 
@@ -163,18 +163,18 @@ static void *capture_thread_func(void *arg) {
    // Allocate capture buffer
    char *buffer = (char *)malloc(ctx->buffer_size);
    if (!buffer) {
-      LOG_ERROR("Failed to allocate capture buffer of %zu bytes", ctx->buffer_size);
+      OLOG_ERROR("Failed to allocate capture buffer of %zu bytes", ctx->buffer_size);
       atomic_store(&ctx->running, false);
       return NULL;
    }
 
-   LOG_INFO("Audio capture thread started (buffer=%zu bytes, device=%s, backend=%s, AEC=%s)",
-            ctx->buffer_size, ctx->pcm_device, audio_backend_type_name(audio_backend_get_type()),
+   OLOG_INFO("Audio capture thread started (buffer=%zu bytes, device=%s, backend=%s, AEC=%s)",
+             ctx->buffer_size, ctx->pcm_device, audio_backend_type_name(audio_backend_get_type()),
 #ifdef ENABLE_AEC
-            (aec_is_enabled() && ctx->aec_buffer && !ctx->aec_rate_mismatch) ? "enabled"
-                                                                             : "disabled"
+             (aec_is_enabled() && ctx->aec_buffer && !ctx->aec_rate_mismatch) ? "enabled"
+                                                                              : "disabled"
 #else
-            "not compiled"
+             "not compiled"
 #endif
    );
 
@@ -245,15 +245,15 @@ static void *capture_thread_func(void *arg) {
          int err = (int)(-rc);
 
          if (err == AUDIO_ERR_OVERRUN) {
-            LOG_WARNING("Audio capture overrun, recovering");
+            OLOG_WARNING("Audio capture overrun, recovering");
             audio_stream_capture_recover(ctx->capture_handle, err);
             continue;
          } else if (err == AUDIO_ERR_SUSPENDED) {
-            LOG_WARNING("Audio capture suspended, recovering");
+            OLOG_WARNING("Audio capture suspended, recovering");
             audio_stream_capture_recover(ctx->capture_handle, err);
             continue;
          } else {
-            LOG_ERROR("Audio capture read error: %s", audio_error_string((audio_error_t)err));
+            OLOG_ERROR("Audio capture read error: %s", audio_error_string((audio_error_t)err));
             // Continue trying despite error
             usleep(10000);  // 10ms delay before retry
          }
@@ -262,7 +262,7 @@ static void *capture_thread_func(void *arg) {
    }
 
    free(buffer);
-   LOG_INFO("Audio capture thread stopped");
+   OLOG_INFO("Audio capture thread stopped");
 
    return NULL;
 }
@@ -271,20 +271,20 @@ audio_capture_context_t *audio_capture_start(const char *pcm_device,
                                              size_t ring_buffer_size,
                                              int use_realtime_priority) {
    if (!pcm_device) {
-      LOG_ERROR("PCM device name cannot be NULL");
+      OLOG_ERROR("PCM device name cannot be NULL");
       return NULL;
    }
 
    // Check that audio backend has been initialized
    if (audio_backend_get_type() == AUDIO_BACKEND_NONE) {
-      LOG_ERROR("Audio backend not initialized. Call audio_backend_init() first.");
+      OLOG_ERROR("Audio backend not initialized. Call audio_backend_init() first.");
       return NULL;
    }
 
    audio_capture_context_t *ctx = (audio_capture_context_t *)calloc(
        1, sizeof(audio_capture_context_t));
    if (!ctx) {
-      LOG_ERROR("Failed to allocate capture context");
+      OLOG_ERROR("Failed to allocate capture context");
       return NULL;
    }
 
@@ -296,7 +296,7 @@ audio_capture_context_t *audio_capture_start(const char *pcm_device,
    // Create ring buffer
    ctx->ring_buffer = ring_buffer_create(ring_buffer_size);
    if (!ctx->ring_buffer) {
-      LOG_ERROR("Failed to create ring buffer");
+      OLOG_ERROR("Failed to create ring buffer");
       free(ctx->pcm_device);
       free(ctx);
       return NULL;
@@ -312,7 +312,7 @@ audio_capture_context_t *audio_capture_start(const char *pcm_device,
    // Open capture device using audio_backend abstraction
    ctx->capture_handle = audio_stream_capture_open(pcm_device, &params, &ctx->hw_params);
    if (!ctx->capture_handle) {
-      LOG_ERROR("Failed to open capture device: %s", pcm_device);
+      OLOG_ERROR("Failed to open capture device: %s", pcm_device);
       ring_buffer_free(ctx->ring_buffer);
       free(ctx->pcm_device);
       free(ctx);
@@ -323,9 +323,9 @@ audio_capture_context_t *audio_capture_start(const char *pcm_device,
    ctx->frames = ctx->hw_params.period_frames;
    ctx->buffer_size = ctx->frames * ctx->hw_params.channels * 2;  // 2 bytes per sample (S16_LE)
 
-   LOG_INFO("Audio capture opened: rate=%u ch=%u period=%zu buffer=%zu (backend=%s)",
-            ctx->hw_params.sample_rate, ctx->hw_params.channels, ctx->hw_params.period_frames,
-            ctx->hw_params.buffer_frames, audio_backend_type_name(audio_backend_get_type()));
+   OLOG_INFO("Audio capture opened: rate=%u ch=%u period=%zu buffer=%zu (backend=%s)",
+             ctx->hw_params.sample_rate, ctx->hw_params.channels, ctx->hw_params.period_frames,
+             ctx->hw_params.buffer_frames, audio_backend_type_name(audio_backend_get_type()));
 
    // Calculate input buffer size in samples (for resampler allocation)
    size_t input_samples = ctx->buffer_size / sizeof(int16_t);
@@ -333,7 +333,7 @@ audio_capture_context_t *audio_capture_start(const char *pcm_device,
    // Create resampler for 48kHz → 16kHz downsampling (always needed for ASR)
    ctx->downsample_resampler = resampler_create(CAPTURE_RATE, ASR_RATE, 1);
    if (!ctx->downsample_resampler) {
-      LOG_ERROR("Failed to create 48kHz→16kHz resampler");
+      OLOG_ERROR("Failed to create 48kHz→16kHz resampler");
    }
 
    // Pre-allocate ASR buffer for 16kHz output
@@ -346,7 +346,7 @@ audio_capture_context_t *audio_capture_start(const char *pcm_device,
    }
    ctx->asr_buffer = (int16_t *)malloc(ctx->asr_buffer_size * sizeof(int16_t));
    if (!ctx->asr_buffer) {
-      LOG_WARNING("Failed to allocate ASR buffer");
+      OLOG_WARNING("Failed to allocate ASR buffer");
    }
 
 #ifdef ENABLE_AEC
@@ -357,28 +357,28 @@ audio_capture_context_t *audio_capture_start(const char *pcm_device,
    }
    ctx->aec_buffer = (int16_t *)malloc(ctx->aec_buffer_size * sizeof(int16_t));
    if (!ctx->aec_buffer) {
-      LOG_WARNING("Failed to allocate AEC buffer - continuing without AEC");
+      OLOG_WARNING("Failed to allocate AEC buffer - continuing without AEC");
    }
 
    // Runtime sample rate validation for AEC
    ctx->aec_rate_mismatch = 0;
    if (ctx->hw_params.sample_rate != AEC_SAMPLE_RATE) {
-      LOG_WARNING("AEC requires %d Hz but device is %u Hz - AEC disabled for this session",
-                  AEC_SAMPLE_RATE, ctx->hw_params.sample_rate);
+      OLOG_WARNING("AEC requires %d Hz but device is %u Hz - AEC disabled for this session",
+                   AEC_SAMPLE_RATE, ctx->hw_params.sample_rate);
       ctx->aec_rate_mismatch = 1;
    }
 
-   LOG_INFO("Audio capture: %dHz → AEC → %dHz for ASR (buffers: aec=%zu, asr=%zu samples)",
-            CAPTURE_RATE, ASR_RATE, ctx->aec_buffer_size, ctx->asr_buffer_size);
+   OLOG_INFO("Audio capture: %dHz → AEC → %dHz for ASR (buffers: aec=%zu, asr=%zu samples)",
+             CAPTURE_RATE, ASR_RATE, ctx->aec_buffer_size, ctx->asr_buffer_size);
 #else
-   LOG_INFO("Audio capture: %dHz → %dHz for ASR (no AEC, buffer=%zu samples)", CAPTURE_RATE,
-            ASR_RATE, ctx->asr_buffer_size);
+   OLOG_INFO("Audio capture: %dHz → %dHz for ASR (no AEC, buffer=%zu samples)", CAPTURE_RATE,
+             ASR_RATE, ctx->asr_buffer_size);
 #endif
 
    // Start capture thread
    atomic_store(&ctx->running, true);
    if (pthread_create(&ctx->thread, NULL, capture_thread_func, ctx) != 0) {
-      LOG_ERROR("Failed to create capture thread: %s", strerror(errno));
+      OLOG_ERROR("Failed to create capture thread: %s", strerror(errno));
       audio_stream_capture_close(ctx->capture_handle);
       ring_buffer_free(ctx->ring_buffer);
       free(ctx->pcm_device);
@@ -386,7 +386,7 @@ audio_capture_context_t *audio_capture_start(const char *pcm_device,
       return NULL;
    }
 
-   LOG_INFO("Audio capture started successfully");
+   OLOG_INFO("Audio capture started successfully");
    return ctx;
 }
 
@@ -395,7 +395,7 @@ void audio_capture_stop(audio_capture_context_t *ctx) {
       return;
    }
 
-   LOG_INFO("Stopping audio capture thread...");
+   OLOG_INFO("Stopping audio capture thread...");
 
    // Signal thread to stop
    atomic_store(&ctx->running, false);
@@ -438,7 +438,7 @@ void audio_capture_stop(audio_capture_context_t *ctx) {
    // Free context
    free(ctx);
 
-   LOG_INFO("Audio capture stopped and resources freed");
+   OLOG_INFO("Audio capture stopped and resources freed");
 }
 
 size_t audio_capture_read(audio_capture_context_t *ctx, char *data, size_t len) {
@@ -486,14 +486,14 @@ void mic_set_recording_dir(const char *dir) {
       strncpy(g_mic_recording_dir, dir, sizeof(g_mic_recording_dir) - 1);
       g_mic_recording_dir[sizeof(g_mic_recording_dir) - 1] = '\0';
    }
-   LOG_INFO("Mic recording directory set to: %s", g_mic_recording_dir);
+   OLOG_INFO("Mic recording directory set to: %s", g_mic_recording_dir);
    pthread_mutex_unlock(&g_mic_recording_mutex);
 }
 
 void mic_enable_recording(bool enable) {
    pthread_mutex_lock(&g_mic_recording_mutex);
    g_mic_recording_enabled = enable;
-   LOG_INFO("Mic recording %s", enable ? "enabled" : "disabled");
+   OLOG_INFO("Mic recording %s", enable ? "enabled" : "disabled");
 
    // If disabling while recording is active, stop it
    if (!enable && g_mic_recording_active) {
@@ -527,7 +527,7 @@ int mic_start_recording(void) {
    }
 
    if (g_mic_recording_active) {
-      LOG_WARNING("Mic recording already active");
+      OLOG_WARNING("Mic recording already active");
       pthread_mutex_unlock(&g_mic_recording_mutex);
       return 1;
    }
@@ -546,7 +546,7 @@ int mic_start_recording(void) {
    // Open file
    g_mic_recording_file = fopen(filename, "wb");
    if (!g_mic_recording_file) {
-      LOG_ERROR("Failed to open mic recording file: %s", filename);
+      OLOG_ERROR("Failed to open mic recording file: %s", filename);
       pthread_mutex_unlock(&g_mic_recording_mutex);
       return 1;
    }
@@ -556,7 +556,7 @@ int mic_start_recording(void) {
    g_mic_recording_samples = 0;
    g_mic_recording_active = true;
 
-   LOG_INFO("Mic recording started: %s", filename);
+   OLOG_INFO("Mic recording started: %s", filename);
    pthread_mutex_unlock(&g_mic_recording_mutex);
    return 0;
 }
@@ -575,7 +575,7 @@ void mic_stop_recording(void) {
    g_mic_recording_file = NULL;
 
    float duration_secs = (float)g_mic_recording_samples / MIC_RECORDING_SAMPLE_RATE;
-   LOG_INFO("Mic recording stopped: %.2f seconds captured", duration_secs);
+   OLOG_INFO("Mic recording stopped: %.2f seconds captured", duration_secs);
 
    g_mic_recording_active = false;
    pthread_mutex_unlock(&g_mic_recording_mutex);

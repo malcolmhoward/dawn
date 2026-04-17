@@ -208,7 +208,7 @@ static char *image_search_callback(const char *action, char *value, int *should_
    if (count > IMAGE_SEARCH_MAX_COUNT)
       count = IMAGE_SEARCH_MAX_COUNT;
 
-   LOG_INFO("image_search: query='%s' count=%d", query, count);
+   OLOG_INFO("image_search: query='%s' count=%d", query, count);
 
    /* Lazy-init web search module (same pattern as search_tool.c) */
    if (!web_search_is_initialized()) {
@@ -226,7 +226,7 @@ static char *image_search_callback(const char *action, char *value, int *should_
 
    struct json_object *results_array = NULL;
    if (!json_object_object_get_ex(root, "results", &results_array)) {
-      LOG_WARNING("image_search: No 'results' field in SearXNG response");
+      OLOG_WARNING("image_search: No 'results' field in SearXNG response");
       json_object_put(root);
       return strdup("[]");
    }
@@ -264,7 +264,7 @@ static char *image_search_callback(const char *action, char *value, int *should_
       char host[256] = "";
       int port = 0;
       if (url_is_blocked_with_resolve(img_src, resolved_ip, host, sizeof(host), &port)) {
-         LOG_INFO("image_search: SSRF blocked: %s", img_src);
+         OLOG_INFO("image_search: SSRF blocked: %s", img_src);
          continue;
       }
 
@@ -310,8 +310,8 @@ static char *image_search_callback(const char *action, char *value, int *should_
 
    json_object_put(root);
 
-   LOG_INFO("image_search: %d URLs passed SSRF check (from %d SearXNG results)", fetch_count,
-            result_count);
+   OLOG_INFO("image_search: %d URLs passed SSRF check (from %d SearXNG results)", fetch_count,
+             result_count);
 
    if (fetch_count == 0) {
       free(fetches);
@@ -415,11 +415,11 @@ static char *image_search_callback(const char *action, char *value, int *should_
             /* Validate scheme before processing redirect */
             if (redir_url && strncmp(redir_url, "http://", 7) != 0 &&
                 strncmp(redir_url, "https://", 8) != 0) {
-               LOG_INFO("image_search: Rejected non-HTTP redirect: %s", redir_url);
+               OLOG_INFO("image_search: Rejected non-HTTP redirect: %s", redir_url);
                f->valid = false;
             } else if (redir_url && strlen(redir_url) >= sizeof(redirects[0].url)) {
-               LOG_INFO("image_search: Redirect URL too long (%zu bytes), skipping",
-                        strlen(redir_url));
+               OLOG_INFO("image_search: Redirect URL too long (%zu bytes), skipping",
+                         strlen(redir_url));
                f->valid = false;
             } else if (redir_url) {
                /* Find the fetch index for this handle */
@@ -436,8 +436,8 @@ static char *image_search_callback(const char *action, char *value, int *should_
                   redirects[redirect_count].url[sizeof(redirects[0].url) - 1] = '\0';
                   redirect_count++;
                   f->valid = false; /* Mark as needing retry */
-                  LOG_INFO("image_search: %ld redirect for %s -> %s", http_code, f->img_src,
-                           redir_url);
+                  OLOG_INFO("image_search: %ld redirect for %s -> %s", http_code, f->img_src,
+                            redir_url);
                }
             } else {
                f->valid = false;
@@ -486,7 +486,7 @@ static char *image_search_callback(const char *action, char *value, int *should_
                              now_ts.tv_nsec < deadline_ts.tv_nsec);
 
       if (time_remaining) {
-         LOG_INFO("image_search: Following %d redirects with SSRF re-check", redirect_count);
+         OLOG_INFO("image_search: Following %d redirects with SSRF re-check", redirect_count);
 
          int redir_added = 0;
          for (int r = 0; r < redirect_count; r++) {
@@ -499,13 +499,13 @@ static char *image_search_callback(const char *action, char *value, int *should_
             int port = 0;
             if (url_is_blocked_with_resolve(redirects[r].url, resolved_ip, host, sizeof(host),
                                             &port)) {
-               LOG_INFO("image_search: Redirect SSRF blocked: %s", redirects[r].url);
+               OLOG_INFO("image_search: Redirect SSRF blocked: %s", redirects[r].url);
                continue;
             }
 
             /* Fail-closed: if DNS resolution returned no IP, skip (prevents TOCTOU) */
             if (resolved_ip[0] == '\0') {
-               LOG_INFO("image_search: Redirect DNS failed, skipping: %s", redirects[r].url);
+               OLOG_INFO("image_search: Redirect DNS failed, skipping: %s", redirects[r].url);
                continue;
             }
 
@@ -621,7 +621,7 @@ static char *image_search_callback(const char *action, char *value, int *should_
       /* Validate magic bytes */
       const char *mime = detect_mime_from_magic(f->buffer.data, f->buffer.size);
       if (!mime) {
-         LOG_INFO("image_search: Skipping %s (unrecognized format)", f->img_src);
+         OLOG_INFO("image_search: Skipping %s (unrecognized format)", f->img_src);
          curl_buffer_free(&f->buffer);
          continue;
       }
@@ -631,7 +631,7 @@ static char *image_search_callback(const char *action, char *value, int *should_
       size_t fetched_size = f->buffer.size;
       int uid = tool_get_current_user_id();
       if (uid <= 0) {
-         LOG_WARNING("image_search: No valid user context, skipping cache for %s", f->img_src);
+         OLOG_WARNING("image_search: No valid user context, skipping cache for %s", f->img_src);
          curl_buffer_free(&f->buffer);
          continue;
       }
@@ -640,7 +640,7 @@ static char *image_search_callback(const char *action, char *value, int *should_
       curl_buffer_free(&f->buffer);
 
       if (rc != IMAGE_STORE_SUCCESS) {
-         LOG_WARNING("image_search: Failed to cache image from %s (rc=%d)", f->img_src, rc);
+         OLOG_WARNING("image_search: Failed to cache image from %s (rc=%d)", f->img_src, rc);
          continue;
       }
 
@@ -666,13 +666,13 @@ static char *image_search_callback(const char *action, char *value, int *should_
       json_object_array_add(result_array, obj);
       cached_count++;
 
-      LOG_INFO("image_search: Cached %s (%zu bytes, %s) as %s", f->img_src, fetched_size, mime,
-               image_id);
+      OLOG_INFO("image_search: Cached %s (%zu bytes, %s) as %s", f->img_src, fetched_size, mime,
+                image_id);
    }
 
    free(fetches);
 
-   LOG_INFO("image_search: Returned %d/%d images for '%s'", cached_count, fetch_count, query);
+   OLOG_INFO("image_search: Returned %d/%d images for '%s'", cached_count, fetch_count, query);
 
    /* Publish first result to HUD for local voice sessions (Iron Man suit display) */
    if (cached_count > 0) {
@@ -710,7 +710,7 @@ static char *image_search_callback(const char *action, char *value, int *should_
                   const char *hud_str = json_object_to_json_string(hud);
                   mosquitto_publish(mosq, NULL, "hud", (int)strlen(hud_str), hud_str, 0, false);
                   json_object_put(hud);
-                  LOG_INFO("image_search: Published first result to HUD for local session");
+                  OLOG_INFO("image_search: Published first result to HUD for local session");
                }
             }
          }

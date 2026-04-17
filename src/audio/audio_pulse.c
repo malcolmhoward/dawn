@@ -212,7 +212,7 @@ audio_stream_capture_handle_t *pulse_capture_open(const char *device,
 
    audio_stream_capture_handle_t *handle = alloc_capture_handle();
    if (!handle) {
-      LOG_ERROR("PulseAudio: No free capture handles available");
+      OLOG_ERROR("PulseAudio: No free capture handles available");
       return NULL;
    }
 
@@ -236,7 +236,7 @@ audio_stream_capture_handle_t *pulse_capture_open(const char *device,
       pa_device = device;
    }
 
-   LOG_INFO("PulseAudio: Opening capture device: %s", pa_device ? pa_device : "(default)");
+   OLOG_INFO("PulseAudio: Opening capture device: %s", pa_device ? pa_device : "(default)");
 
    handle->pa = pa_simple_new(NULL,             /* Server name (NULL = default) */
                               "DAWN",           /* Application name */
@@ -249,7 +249,7 @@ audio_stream_capture_handle_t *pulse_capture_open(const char *device,
                               &error);
 
    if (!handle->pa) {
-      LOG_ERROR("PulseAudio: Cannot open capture: %s", pa_strerror(error));
+      OLOG_ERROR("PulseAudio: Cannot open capture: %s", pa_strerror(error));
       free_capture_handle(handle);
       return NULL;
    }
@@ -267,8 +267,8 @@ audio_stream_capture_handle_t *pulse_capture_open(const char *device,
       *hw_params = handle->hw_params;
    }
 
-   LOG_INFO("PulseAudio capture: rate=%u ch=%u format=%d", handle->hw_params.sample_rate,
-            handle->hw_params.channels, handle->hw_params.format);
+   OLOG_INFO("PulseAudio capture: rate=%u ch=%u format=%d", handle->hw_params.sample_rate,
+             handle->hw_params.channels, handle->hw_params.format);
 
    return handle;
 }
@@ -282,7 +282,7 @@ ssize_t pulse_capture_read(audio_stream_capture_handle_t *handle, void *buffer, 
    size_t bytes = frames * handle->bytes_per_frame;
 
    if (pa_simple_read(handle->pa, buffer, bytes, &error) < 0) {
-      LOG_ERROR("PulseAudio capture read failed: %s", pa_strerror(error));
+      OLOG_ERROR("PulseAudio capture read failed: %s", pa_strerror(error));
       return -AUDIO_ERR_IO;
    }
 
@@ -339,7 +339,7 @@ void pulse_capture_close(audio_stream_capture_handle_t *handle) {
    }
 
    free_capture_handle(handle);
-   LOG_INFO("PulseAudio capture closed");
+   OLOG_INFO("PulseAudio capture closed");
 }
 
 /* =============================================================================
@@ -353,7 +353,7 @@ audio_stream_playback_handle_t *pulse_playback_open(const char *device,
 
    audio_stream_playback_handle_t *handle = alloc_playback_handle();
    if (!handle) {
-      LOG_ERROR("PulseAudio: No free playback handles available");
+      OLOG_ERROR("PulseAudio: No free playback handles available");
       return NULL;
    }
 
@@ -377,7 +377,7 @@ audio_stream_playback_handle_t *pulse_playback_open(const char *device,
       pa_device = device;
    }
 
-   LOG_INFO("PulseAudio: Opening playback device: %s", pa_device ? pa_device : "(default)");
+   OLOG_INFO("PulseAudio: Opening playback device: %s", pa_device ? pa_device : "(default)");
 
    handle->pa = pa_simple_new(NULL,               /* Server name (NULL = default) */
                               "DAWN",             /* Application name */
@@ -390,7 +390,7 @@ audio_stream_playback_handle_t *pulse_playback_open(const char *device,
                               &error);
 
    if (!handle->pa) {
-      LOG_ERROR("PulseAudio: Cannot open playback: %s", pa_strerror(error));
+      OLOG_ERROR("PulseAudio: Cannot open playback: %s", pa_strerror(error));
       free_playback_handle(handle);
       return NULL;
    }
@@ -408,8 +408,8 @@ audio_stream_playback_handle_t *pulse_playback_open(const char *device,
       *hw_params = handle->hw_params;
    }
 
-   LOG_INFO("PulseAudio playback: rate=%u ch=%u format=%d", handle->hw_params.sample_rate,
-            handle->hw_params.channels, handle->hw_params.format);
+   OLOG_INFO("PulseAudio playback: rate=%u ch=%u format=%d", handle->hw_params.sample_rate,
+             handle->hw_params.channels, handle->hw_params.format);
 
    return handle;
 }
@@ -425,7 +425,7 @@ ssize_t pulse_playback_write(audio_stream_playback_handle_t *handle,
    size_t bytes = frames * handle->bytes_per_frame;
 
    if (pa_simple_write(handle->pa, buffer, bytes, &error) < 0) {
-      LOG_ERROR("PulseAudio playback write failed: %s", pa_strerror(error));
+      OLOG_ERROR("PulseAudio playback write failed: %s", pa_strerror(error));
       return -AUDIO_ERR_IO;
    }
 
@@ -455,7 +455,7 @@ int pulse_playback_drain(audio_stream_playback_handle_t *handle) {
 
    int error = 0;
    if (pa_simple_drain(handle->pa, &error) < 0) {
-      LOG_ERROR("PulseAudio playback drain failed: %s", pa_strerror(error));
+      OLOG_ERROR("PulseAudio playback drain failed: %s", pa_strerror(error));
       return AUDIO_ERR_IO;
    }
 
@@ -469,7 +469,7 @@ int pulse_playback_drop(audio_stream_playback_handle_t *handle) {
 
    int error = 0;
    if (pa_simple_flush(handle->pa, &error) < 0) {
-      LOG_ERROR("PulseAudio playback flush failed: %s", pa_strerror(error));
+      OLOG_ERROR("PulseAudio playback flush failed: %s", pa_strerror(error));
       return AUDIO_ERR_IO;
    }
 
@@ -499,12 +499,12 @@ void pulse_playback_close(audio_stream_playback_handle_t *handle) {
       if (handle->drain_on_close) {
          int error = 0;
          if (pa_simple_drain(handle->pa, &error) < 0) {
-            LOG_WARNING("PulseAudio playback: drain on close failed: %s", pa_strerror(error));
+            OLOG_WARNING("PulseAudio playback: drain on close failed: %s", pa_strerror(error));
          }
       }
       pa_simple_free(handle->pa);
    }
 
    free_playback_handle(handle);
-   LOG_INFO("PulseAudio playback closed");
+   OLOG_INFO("PulseAudio playback closed");
 }

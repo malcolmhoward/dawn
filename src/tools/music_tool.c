@@ -207,7 +207,7 @@ static void stop_current_playback(void) {
 static char *start_playback_at(unsigned int start_time) {
    PlaybackArgs *args = malloc(sizeof(PlaybackArgs));
    if (!args) {
-      LOG_ERROR("Failed to allocate PlaybackArgs");
+      OLOG_ERROR("Failed to allocate PlaybackArgs");
       return NULL;
    }
 
@@ -215,10 +215,10 @@ static char *start_playback_at(unsigned int start_time) {
    args->file_name = s_playlist.filenames[s_current_track];
    args->start_time = start_time;
 
-   LOG_INFO("Playing from %us: %s on %s", start_time, args->file_name, args->sink_name);
+   OLOG_INFO("Playing from %us: %s on %s", start_time, args->file_name, args->sink_name);
 
    if (pthread_create(&s_music_thread, NULL, playFlacAudio, args)) {
-      LOG_ERROR("Error creating music thread");
+      OLOG_ERROR("Error creating music thread");
       free(args);
       return NULL;
    }
@@ -234,7 +234,7 @@ static char *start_playback_at(unsigned int start_time) {
 static char *start_playback(bool report_result) {
    PlaybackArgs *args = malloc(sizeof(PlaybackArgs));
    if (!args) {
-      LOG_ERROR("Failed to allocate PlaybackArgs");
+      OLOG_ERROR("Failed to allocate PlaybackArgs");
       return report_result ? strdup("Failed to start music playback") : NULL;
    }
 
@@ -242,10 +242,10 @@ static char *start_playback(bool report_result) {
    args->file_name = s_playlist.filenames[s_current_track];
    args->start_time = 0;
 
-   LOG_INFO("Playing: %s %s %d", args->sink_name, args->file_name, args->start_time);
+   OLOG_INFO("Playing: %s %s %d", args->sink_name, args->file_name, args->start_time);
 
    if (pthread_create(&s_music_thread, NULL, playFlacAudio, args)) {
-      LOG_ERROR("Error creating music thread");
+      OLOG_ERROR("Error creating music thread");
       free(args);
       return report_result ? strdup("Failed to start music playback") : NULL;
    }
@@ -274,14 +274,14 @@ static char *start_playback(bool report_result) {
  */
 static int search_music_database(const char *query, Playlist *playlist) {
    if (!music_db_is_initialized()) {
-      LOG_WARNING("Music database not initialized - search unavailable");
+      OLOG_WARNING("Music database not initialized - search unavailable");
       return 0;
    }
 
    /* Allocate results on heap to avoid ~300KB stack usage */
    music_search_result_t *results = malloc(MAX_PLAYLIST_LENGTH * sizeof(music_search_result_t));
    if (!results) {
-      LOG_ERROR("Failed to allocate search results buffer");
+      OLOG_ERROR("Failed to allocate search results buffer");
       return -1;
    }
 
@@ -339,7 +339,7 @@ static char *music_tool_callback_inner(const char *action, char *value, int *sho
 
       if (ret == 0) {
          /* WebUI handled successfully */
-         LOG_INFO("Music: Routed '%s' to WebUI session", action);
+         OLOG_INFO("Music: Routed '%s' to WebUI session", action);
          if (direct_mode) {
             *should_respond = 0;
             free(webui_result);
@@ -348,7 +348,7 @@ static char *music_tool_callback_inner(const char *action, char *value, int *sho
          return webui_result ? webui_result : strdup("OK");
       } else if (ret > 0) {
          /* WebUI handler returned error */
-         LOG_WARNING("Music: WebUI handler failed for '%s'", action);
+         OLOG_WARNING("Music: WebUI handler failed for '%s'", action);
          if (direct_mode) {
             *should_respond = 0;
             free(webui_result);
@@ -358,7 +358,7 @@ static char *music_tool_callback_inner(const char *action, char *value, int *sho
       }
       /* ret == -1 means not handled, fall through to local handler */
       free(webui_result);
-      LOG_INFO("Music: WebUI deferred '%s' to local handler", action);
+      OLOG_INFO("Music: WebUI deferred '%s' to local handler", action);
    }
 #endif
 
@@ -373,7 +373,7 @@ static char *music_tool_callback_inner(const char *action, char *value, int *sho
       }
 
       if ((strlen(value) + 8) > MAX_FILENAME_LENGTH) {
-         LOG_ERROR("\"%s\" is too long to search for.", value);
+         OLOG_ERROR("\"%s\" is too long to search for.", value);
          if (direct_mode) {
             *should_respond = 0;
             return NULL;
@@ -396,11 +396,11 @@ static char *music_tool_callback_inner(const char *action, char *value, int *sho
 
       /* Search by artist, title, album via database */
       search_music_database(value, &s_playlist);
-      LOG_INFO("Search found %d results for: %s", s_playlist.count, value);
+      OLOG_INFO("Search found %d results for: %s", s_playlist.count, value);
 
-      LOG_INFO("New playlist (%d tracks):", s_playlist.count);
+      OLOG_INFO("New playlist (%d tracks):", s_playlist.count);
       for (int i = 0; i < s_playlist.count; i++) {
-         LOG_INFO("\t%s", s_playlist.filenames[i]);
+         OLOG_INFO("\t%s", s_playlist.filenames[i]);
       }
 
       if (s_playlist.count > 0) {
@@ -420,7 +420,7 @@ static char *music_tool_callback_inner(const char *action, char *value, int *sho
          }
          return result;
       } else {
-         LOG_WARNING("No music matching that description was found.");
+         OLOG_WARNING("No music matching that description was found.");
          if (direct_mode) {
             *should_respond = 0;
             return NULL;
@@ -433,7 +433,7 @@ static char *music_tool_callback_inner(const char *action, char *value, int *sho
       }
 
    } else if (strcmp(action, "stop") == 0) {
-      LOG_INFO("Stopping music playback.");
+      OLOG_INFO("Stopping music playback.");
       stop_current_playback();
 
       if (direct_mode) {
@@ -518,8 +518,8 @@ static char *music_tool_callback_inner(const char *action, char *value, int *sho
          s_paused_sample_rate = audio_playback_get_sample_rate();
 
          stop_current_playback();
-         LOG_INFO("Paused at position %llu samples (rate: %u Hz)",
-                  (unsigned long long)s_paused_position, s_paused_sample_rate);
+         OLOG_INFO("Paused at position %llu samples (rate: %u Hz)",
+                   (unsigned long long)s_paused_position, s_paused_sample_rate);
       } else {
          stop_current_playback();
       }
@@ -539,8 +539,8 @@ static char *music_tool_callback_inner(const char *action, char *value, int *sho
          unsigned int start_seconds = 0;
          if (s_paused_position > 0 && s_paused_sample_rate > 0) {
             start_seconds = (unsigned int)(s_paused_position / s_paused_sample_rate);
-            LOG_INFO("Resuming from %u seconds (position: %llu samples)", start_seconds,
-                     (unsigned long long)s_paused_position);
+            OLOG_INFO("Resuming from %u seconds (position: %llu samples)", start_seconds,
+                      (unsigned long long)s_paused_position);
          }
 
          /* Clear paused state after using it */
@@ -939,7 +939,8 @@ void set_music_directory(const char *path) {
    /* Deprecated: Music directory is now configured in dawn.toml [paths] section */
    /* The database-backed scanner uses that config value automatically */
    if (path) {
-      LOG_WARNING("set_music_directory() is deprecated - configure [paths] music_dir in dawn.toml");
+      OLOG_WARNING(
+          "set_music_directory() is deprecated - configure [paths] music_dir in dawn.toml");
    }
 }
 

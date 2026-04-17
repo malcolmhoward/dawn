@@ -884,7 +884,7 @@ static void draw_help_overlay(void) {
 int tui_init(tui_theme_t theme) {
    /* Check if stdout is a TTY */
    if (!isatty(STDOUT_FILENO)) {
-      LOG_WARNING("TUI: stdout is not a TTY, TUI disabled");
+      OLOG_WARNING("TUI: stdout is not a TTY, TUI disabled");
       return 1;
    }
 
@@ -897,7 +897,7 @@ int tui_init(tui_theme_t theme) {
    /* Initialize ncurses */
    if (initscr() == NULL) {
       restore_stderr(); /* Restore on failure */
-      LOG_ERROR("TUI: Failed to initialize ncurses");
+      OLOG_ERROR("TUI: Failed to initialize ncurses");
       return 1;
    }
 
@@ -908,8 +908,8 @@ int tui_init(tui_theme_t theme) {
    if (g_term_cols < TUI_MIN_COLS || g_term_rows < TUI_MIN_ROWS) {
       endwin();
       restore_stderr(); /* Restore on failure */
-      LOG_WARNING("TUI: Terminal too small (%dx%d), need at least %dx%d", g_term_cols, g_term_rows,
-                  TUI_MIN_COLS, TUI_MIN_ROWS);
+      OLOG_WARNING("TUI: Terminal too small (%dx%d), need at least %dx%d", g_term_cols, g_term_rows,
+                   TUI_MIN_COLS, TUI_MIN_ROWS);
       return 1;
    }
 
@@ -933,7 +933,7 @@ int tui_init(tui_theme_t theme) {
 
    /* Note: stderr already redirected at start of function */
 
-   LOG_INFO("TUI initialized (%dx%d)", g_term_cols, g_term_rows);
+   OLOG_INFO("TUI initialized (%dx%d)", g_term_cols, g_term_rows);
    return 0;
 }
 
@@ -953,7 +953,7 @@ void tui_cleanup(void) {
 
    g_tui_initialized = 0;
    g_tui_mode = TUI_MODE_OFF;
-   LOG_INFO("TUI cleaned up");
+   OLOG_INFO("TUI cleaned up");
 }
 
 int tui_is_active(void) {
@@ -977,7 +977,7 @@ void tui_toggle_debug_mode(void) {
       restore_stderr();
       /* Re-enable console logging for debug mode */
       logging_suppress_console(0);
-      LOG_INFO("Switched to debug log mode (press D to return to TUI)");
+      OLOG_INFO("Switched to debug log mode (press D to return to TUI)");
    } else if (g_tui_mode == TUI_MODE_DEBUG_LOG) {
       /* Suppress console logging again */
       logging_suppress_console(1);
@@ -1269,8 +1269,8 @@ void tui_handle_resize(void) {
 
    if (!tui_check_terminal_size()) {
       /* Terminal too small - switch to debug mode */
-      LOG_WARNING("TUI: Terminal resized to %dx%d (too small), switching to debug mode",
-                  g_term_cols, g_term_rows);
+      OLOG_WARNING("TUI: Terminal resized to %dx%d (too small), switching to debug mode",
+                   g_term_cols, g_term_rows);
       tui_toggle_debug_mode();
    } else {
       /* Redraw with new size */

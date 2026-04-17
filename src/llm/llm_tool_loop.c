@@ -95,7 +95,7 @@ static void append_openai_tool_history(struct json_object *history,
                                 json_object_new_string(response->tool_calls.thought_signature));
          json_object_object_add(extra_content, "google", google_obj);
          json_object_object_add(tc, "extra_content", extra_content);
-         LOG_INFO("Tool loop: Including Gemini thought_signature in follow-up request");
+         OLOG_INFO("Tool loop: Including Gemini thought_signature in follow-up request");
       }
 
       json_object_array_add(tc_array, tc);
@@ -199,7 +199,7 @@ static void append_closing_message(struct json_object *history,
    }
 
    json_object_array_add(history, closing_msg);
-   LOG_INFO("Tool loop: Added closing assistant message to complete history");
+   OLOG_INFO("Tool loop: Added closing assistant message to complete history");
 }
 
 /**
@@ -255,7 +255,7 @@ static bool resolve_provider_switch(llm_tool_loop_params_t *params) {
          new_fn = (llm_single_shot_fn)llm_openai_streaming_single_shot;
          new_format = LLM_HISTORY_OPENAI;
          switched = true;
-         LOG_INFO("Tool loop: Provider switched to OpenAI/local");
+         OLOG_INFO("Tool loop: Provider switched to OpenAI/local");
       }
    } else if (current_config.cloud_provider == CLOUD_PROVIDER_CLAUDE) {
       if (params->history_format == LLM_HISTORY_OPENAI) {
@@ -263,7 +263,7 @@ static bool resolve_provider_switch(llm_tool_loop_params_t *params) {
          new_fn = (llm_single_shot_fn)llm_claude_streaming_single_shot;
          new_format = LLM_HISTORY_CLAUDE;
          switched = true;
-         LOG_INFO("Tool loop: Provider switched to Claude");
+         OLOG_INFO("Tool loop: Provider switched to Claude");
       }
    }
 
@@ -288,7 +288,7 @@ static bool resolve_provider_switch(llm_tool_loop_params_t *params) {
 
 char *llm_tool_iteration_loop(llm_tool_loop_params_t *params) {
    if (!params || !params->provider_fn || !params->conversation_history) {
-      LOG_ERROR("Tool loop: Invalid parameters");
+      OLOG_ERROR("Tool loop: Invalid parameters");
       return NULL;
    }
 
@@ -313,7 +313,7 @@ char *llm_tool_iteration_loop(llm_tool_loop_params_t *params) {
       /* Step 2: Gate cloud calls through rate limiter */
       if (params->llm_type != LLM_LOCAL) {
          if (llm_rate_limit_wait()) {
-            LOG_WARNING("Tool loop: rate limit wait interrupted at iteration %d", iteration);
+            OLOG_WARNING("Tool loop: rate limit wait interrupted at iteration %d", iteration);
             return NULL;
          }
       }
@@ -329,7 +329,7 @@ char *llm_tool_iteration_loop(llm_tool_loop_params_t *params) {
                                    iteration, &result);
 
       if (rc != 0) {
-         LOG_ERROR("Tool loop: Provider call failed at iteration %d", iteration);
+         OLOG_ERROR("Tool loop: Provider call failed at iteration %d", iteration);
          llm_tool_response_free(&result);
          return NULL;
       }
@@ -353,12 +353,12 @@ char *llm_tool_iteration_loop(llm_tool_loop_params_t *params) {
          ((text_chunk_cb)params->chunk_callback)("\n\n", params->callback_userdata);
       }
 
-      LOG_INFO("Tool loop: %d tool call(s) at iteration %d/%d", result.tool_calls.count, iteration,
-               LLM_TOOLS_MAX_ITERATIONS);
+      OLOG_INFO("Tool loop: %d tool call(s) at iteration %d/%d", result.tool_calls.count, iteration,
+                LLM_TOOLS_MAX_ITERATIONS);
 
       for (int i = 0; i < result.tool_calls.count; i++) {
-         LOG_INFO("  Tool call [%d]: id=%s name=%s args=%s", i, result.tool_calls.calls[i].id,
-                  result.tool_calls.calls[i].name, result.tool_calls.calls[i].arguments);
+         OLOG_INFO("  Tool call [%d]: id=%s name=%s args=%s", i, result.tool_calls.calls[i].id,
+                   result.tool_calls.calls[i].name, result.tool_calls.calls[i].arguments);
       }
 
       /* Step 5: Check for duplicate tool calls (prevents infinite loops) */
@@ -366,7 +366,7 @@ char *llm_tool_iteration_loop(llm_tool_loop_params_t *params) {
           llm_tools_is_duplicate_call(params->conversation_history, result.tool_calls.calls[0].name,
                                       result.tool_calls.calls[0].arguments,
                                       params->history_format)) {
-         LOG_WARNING("Tool loop: Duplicate tool call detected, forcing text response");
+         OLOG_WARNING("Tool loop: Duplicate tool call detected, forcing text response");
 
          /* Add a hint to use existing results */
          json_object *hint_msg = json_object_new_object();
@@ -381,7 +381,7 @@ char *llm_tool_iteration_loop(llm_tool_loop_params_t *params) {
          llm_tool_response_free(&result);
 
          /* Make one more call with tools disabled (iteration = MAX forces no tools) */
-         LOG_INFO("Tool loop: Making final call without tools to force text response");
+         OLOG_INFO("Tool loop: Making final call without tools to force text response");
          memset(&result, 0, sizeof(result));
          rc = params->provider_fn(params->conversation_history, "", NULL, NULL, 0, params->base_url,
                                   params->api_key, params->model, params->chunk_callback,
@@ -401,7 +401,7 @@ char *llm_tool_iteration_loop(llm_tool_loop_params_t *params) {
       /* Step 6: Execute tools */
       tool_result_list_t *results = calloc(1, sizeof(tool_result_list_t));
       if (!results) {
-         LOG_ERROR("Tool loop: Failed to allocate tool results");
+         OLOG_ERROR("Tool loop: Failed to allocate tool results");
          llm_tool_response_free(&result);
          return NULL;
       }
@@ -410,8 +410,8 @@ char *llm_tool_iteration_loop(llm_tool_loop_params_t *params) {
       /* Log tool results */
       for (int i = 0; i < results->count; i++) {
          const char *content = tool_result_content(&results->results[i]);
-         LOG_INFO("  Tool result [%d] id=%s result=%.200s%s", i, results->results[i].tool_call_id,
-                  content, strlen(content) > 200 ? "..." : "");
+         OLOG_INFO("  Tool result [%d] id=%s result=%.200s%s", i, results->results[i].tool_call_id,
+                   content, strlen(content) > 200 ? "..." : "");
       }
 
       /* Step 7: Check follow-up context BEFORE appending to history.
@@ -421,7 +421,7 @@ char *llm_tool_iteration_loop(llm_tool_loop_params_t *params) {
       llm_tools_prepare_followup(results, &followup);
 
       if (followup.skip_followup) {
-         LOG_INFO("Tool loop: Skipping follow-up (tool requested no follow-up)");
+         OLOG_INFO("Tool loop: Skipping follow-up (tool requested no follow-up)");
          s_did_skip_followup = true;
 
          /* Send through chunk callback so TTS receives it */
@@ -445,7 +445,7 @@ char *llm_tool_iteration_loop(llm_tool_loop_params_t *params) {
 
       /* Step 8b: All-silent check — tools handled their own output */
       if (followup.all_silent) {
-         LOG_INFO("Tool loop: All tools silent (should_respond=false), skipping follow-up");
+         OLOG_INFO("Tool loop: All tools silent (should_respond=false), skipping follow-up");
          append_closing_message(params->conversation_history,
                                 "[Tool execution completed without follow-up response]",
                                 params->history_format);
@@ -457,8 +457,8 @@ char *llm_tool_iteration_loop(llm_tool_loop_params_t *params) {
 
       /* Step 9: Check iteration limit — force a final text response with what we have */
       if (iteration >= LLM_TOOLS_MAX_ITERATIONS) {
-         LOG_WARNING("Tool loop: Max iterations (%d) reached, forcing text response",
-                     LLM_TOOLS_MAX_ITERATIONS);
+         OLOG_WARNING("Tool loop: Max iterations (%d) reached, forcing text response",
+                      LLM_TOOLS_MAX_ITERATIONS);
 
          /* Inject a system hint telling the LLM to respond with what it has */
          json_object *hint_msg = json_object_new_object();
@@ -475,7 +475,7 @@ char *llm_tool_iteration_loop(llm_tool_loop_params_t *params) {
          llm_tool_response_free(&result);
 
          /* Make one final call with tools disabled */
-         LOG_INFO("Tool loop: Making final call without tools to present gathered results");
+         OLOG_INFO("Tool loop: Making final call without tools to present gathered results");
          memset(&result, 0, sizeof(result));
          int final_rc = params->provider_fn(params->conversation_history, "", NULL, NULL, 0,
                                             params->base_url, params->api_key, params->model,
@@ -502,7 +502,7 @@ char *llm_tool_iteration_loop(llm_tool_loop_params_t *params) {
             loop_vision_image = results->results[i].vision_image;
             loop_vision_size = results->results[i].vision_image_size;
             results->results[i].vision_image = NULL; /* Prevent double-free */
-            LOG_INFO("Tool loop: Including vision from tool result (%zu bytes)", loop_vision_size);
+            OLOG_INFO("Tool loop: Including vision from tool result (%zu bytes)", loop_vision_size);
             break;
          }
       }
@@ -522,7 +522,7 @@ char *llm_tool_iteration_loop(llm_tool_loop_params_t *params) {
 
       /* Step 11: Check interrupt */
       if (llm_is_interrupt_requested()) {
-         LOG_INFO("Tool loop: Interrupted by user");
+         OLOG_INFO("Tool loop: Interrupted by user");
          free_tool_result_resources(results);
          free(results);
          llm_tool_response_free(&result);
@@ -543,7 +543,7 @@ char *llm_tool_iteration_loop(llm_tool_loop_params_t *params) {
    }
 
    /* Should not reach here (loop exits via returns) */
-   LOG_ERROR("Tool loop: Fell through iteration loop unexpectedly");
+   OLOG_ERROR("Tool loop: Fell through iteration loop unexpectedly");
    free(loop_vision_image);
    return NULL;
 }

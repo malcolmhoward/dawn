@@ -348,15 +348,15 @@ static void process_extraction_response(int user_id,
                                         int message_count,
                                         int duration_seconds) {
    if (!response_text) {
-      LOG_WARNING("memory_extraction: NULL response from LLM");
+      OLOG_WARNING("memory_extraction: NULL response from LLM");
       return;
    }
 
    /* Extract JSON from response (handles markdown blocks, preamble text, etc.) */
    struct json_object *root = extract_json_from_response(response_text);
    if (!root) {
-      LOG_WARNING("memory_extraction: Failed to parse LLM response as JSON");
-      LOG_WARNING("memory_extraction: Response preview: %.200s...", response_text);
+      OLOG_WARNING("memory_extraction: Failed to parse LLM response as JSON");
+      OLOG_WARNING("memory_extraction: Response preview: %.200s...", response_text);
       return;
    }
 
@@ -386,7 +386,7 @@ static void process_extraction_response(int user_id,
 
             if (similar_count == 0) {
                int64_t fact_id = memory_db_fact_create(user_id, text, confidence, source);
-               LOG_INFO("memory_extraction: stored fact: %s", text);
+               OLOG_INFO("memory_extraction: stored fact: %s", text);
                /* Embed the new fact for semantic search */
                if (fact_id > 0 && memory_embeddings_available()) {
                   memory_embeddings_embed_and_store(user_id, fact_id, text);
@@ -421,7 +421,7 @@ static void process_extraction_response(int user_id,
             }
 
             memory_db_pref_upsert(user_id, category, value, confidence, "inferred");
-            LOG_INFO("memory_extraction: stored preference: %s=%s", category, value);
+            OLOG_INFO("memory_extraction: stored preference: %s=%s", category, value);
          }
       }
    }
@@ -448,7 +448,7 @@ static void process_extraction_response(int user_id,
                int64_t new_id = memory_db_fact_create(user_id, new_fact, 0.9f, "explicit");
                if (new_id > 0) {
                   memory_db_fact_supersede(similar[0].id, new_id);
-                  LOG_INFO("memory_extraction: corrected fact: %s -> %s", old_fact, new_fact);
+                  OLOG_INFO("memory_extraction: corrected fact: %s -> %s", old_fact, new_fact);
                   /* Embed the corrected fact */
                   if (memory_embeddings_available()) {
                      memory_embeddings_embed_and_store(user_id, new_id, new_fact);
@@ -504,8 +504,8 @@ static void process_extraction_response(int user_id,
          if (eid < 0)
             continue;
 
-         LOG_INFO("memory_extraction: entity: %s (%s) id=%ld %s", ent_name, ent_type, (long)eid,
-                  was_created ? "[new]" : "[updated]");
+         OLOG_INFO("memory_extraction: entity: %s (%s) id=%ld %s", ent_name, ent_type, (long)eid,
+                   was_created ? "[new]" : "[updated]");
 
          /* Embed only newly created entities */
          if (was_created && memory_embeddings_available()) {
@@ -519,8 +519,8 @@ static void process_extraction_response(int user_id,
             entity_map[entity_map_count].id = eid;
             entity_map_count++;
          } else {
-            LOG_WARNING("memory_extraction: entity map full (max %d), skipping '%s'",
-                        ENTITY_MAP_MAX, ent_name);
+            OLOG_WARNING("memory_extraction: entity map full (max %d), skipping '%s'",
+                         ENTITY_MAP_MAX, ent_name);
          }
       }
    }
@@ -585,7 +585,7 @@ static void process_extraction_response(int user_id,
          memory_db_relation_create(user_id, subj_id, rel_type, obj_entity_id,
                                    (obj_entity_id == 0) ? obj_name : NULL, 0, 0.8f);
          relations_stored++;
-         LOG_INFO("memory_extraction: relation: (%s, %s, %s)", subj_name, rel_type, obj_name);
+         OLOG_INFO("memory_extraction: relation: (%s, %s, %s)", subj_name, rel_type, obj_name);
       }
    }
 
@@ -618,7 +618,7 @@ static void process_extraction_response(int user_id,
 
       memory_db_summary_create(user_id, session_id, summary, topics, "neutral", message_count,
                                duration_seconds);
-      LOG_INFO("memory_extraction: stored summary for session %s", session_id);
+      OLOG_INFO("memory_extraction: stored summary for session %s", session_id);
    }
 
    /* Process title — auto-rename conversation if not locked (atomic check-and-set) */
@@ -636,8 +636,8 @@ static void process_extraction_response(int user_id,
 #ifdef ENABLE_WEBUI
             webui_broadcast_conversation_renamed(user_id, conversation_id, safe_title);
 #endif
-            LOG_INFO("memory_extraction: auto-titled conversation %lld: %s",
-                     (long long)conversation_id, safe_title);
+            OLOG_INFO("memory_extraction: auto-titled conversation %lld: %s",
+                      (long long)conversation_id, safe_title);
          }
       }
    }
@@ -668,7 +668,7 @@ void memory_extraction_build_fallback(session_t *session, memory_extraction_fall
 static void *extraction_thread(void *arg) {
    extraction_context_t *ctx = (extraction_context_t *)arg;
 
-   LOG_INFO("memory_extraction: starting for user %d, session %s", ctx->user_id, ctx->session_id);
+   OLOG_INFO("memory_extraction: starting for user %d, session %s", ctx->user_id, ctx->session_id);
 
    /* Build existing profile */
    char *existing_profile = build_existing_profile(ctx->user_id);
@@ -678,7 +678,7 @@ static void *extraction_thread(void *arg) {
                         strlen(existing_profile) + 100;
    char *prompt = malloc(prompt_size);
    if (!prompt) {
-      LOG_ERROR("memory_extraction: failed to allocate prompt");
+      OLOG_ERROR("memory_extraction: failed to allocate prompt");
       goto cleanup;
    }
 
@@ -730,9 +730,9 @@ static void *extraction_thread(void *arg) {
       extraction_config.endpoint = NULL; /* Use default */
    } else {
       /* Default to local if unknown - warn with valid options */
-      LOG_WARNING("memory_extraction: unknown provider '%s' in config "
-                  "(valid: local, ollama, openai, claude) - falling back to local",
-                  provider);
+      OLOG_WARNING("memory_extraction: unknown provider '%s' in config "
+                   "(valid: local, ollama, openai, claude) - falling back to local",
+                   provider);
       extraction_config.type = LLM_LOCAL;
       extraction_config.cloud_provider = CLOUD_PROVIDER_NONE;
       strncpy(endpoint_buf, g_config.llm.local.endpoint, sizeof(endpoint_buf) - 1);
@@ -745,8 +745,8 @@ static void *extraction_thread(void *arg) {
    strncpy(extraction_config.thinking_mode, "disabled",
            sizeof(extraction_config.thinking_mode) - 1);
 
-   LOG_INFO("memory_extraction: using provider=%s, model=%s", provider,
-            model ? model : "(default)");
+   OLOG_INFO("memory_extraction: using provider=%s, model=%s", provider,
+             model ? model : "(default)");
 
    /* Set per-request timeout for extraction (thread-local, no global mutation) */
    extraction_config.timeout_ms = g_config.memory.extraction_timeout_ms;
@@ -765,8 +765,8 @@ static void *extraction_thread(void *arg) {
                           extraction_config.endpoint && ctx->fallback.endpoint[0] != '\0' &&
                           strcmp(extraction_config.endpoint, ctx->fallback.endpoint) == 0);
       if (!same_config) {
-         LOG_WARNING("memory_extraction: primary model failed, retrying with session model %s",
-                     ctx->fallback.model);
+         OLOG_WARNING("memory_extraction: primary model failed, retrying with session model %s",
+                      ctx->fallback.model);
 
          llm_resolved_config_t fallback_config = { 0 };
          fallback_config.type = ctx->fallback.type;
@@ -809,7 +809,7 @@ static void *extraction_thread(void *arg) {
                   "Memory extraction used fallback model \"%s\" "
                   "(configured model \"%s\" unavailable)",
                   ctx->fallback.model, model ? model : "(default)");
-         LOG_WARNING("memory_extraction: %s", notice);
+         OLOG_WARNING("memory_extraction: %s", notice);
 #ifdef ENABLE_WEBUI
          webui_broadcast_memory_notice(ctx->user_id, "warning", notice);
 #endif
@@ -818,8 +818,8 @@ static void *extraction_thread(void *arg) {
       /* Update extraction high-water mark on success */
       if (ctx->conversation_id > 0) {
          memory_db_set_last_extracted(ctx->conversation_id, ctx->message_count);
-         LOG_INFO("memory_extraction: updated high-water mark to %d for conversation %ld",
-                  ctx->message_count, (long)ctx->conversation_id);
+         OLOG_INFO("memory_extraction: updated high-water mark to %d for conversation %ld",
+                   ctx->message_count, (long)ctx->conversation_id);
       }
 
       /* Run fact pruning if enabled */
@@ -830,13 +830,13 @@ static void *extraction_thread(void *arg) {
                                                        g_config.memory.prune_stale_days,
                                                        g_config.memory.prune_stale_min_confidence);
          if (pruned_superseded > 0 || pruned_stale > 0) {
-            LOG_INFO("memory_extraction: pruned %d superseded, %d stale facts for user %d",
-                     pruned_superseded > 0 ? pruned_superseded : 0,
-                     pruned_stale > 0 ? pruned_stale : 0, ctx->user_id);
+            OLOG_INFO("memory_extraction: pruned %d superseded, %d stale facts for user %d",
+                      pruned_superseded > 0 ? pruned_superseded : 0,
+                      pruned_stale > 0 ? pruned_stale : 0, ctx->user_id);
          }
       }
    } else {
-      LOG_WARNING("memory_extraction: LLM returned no response");
+      OLOG_WARNING("memory_extraction: LLM returned no response");
       char notice[256];
       snprintf(notice, sizeof(notice),
                "Memory extraction failed — model \"%s\" unavailable. "
@@ -861,7 +861,7 @@ cleanup:
    extraction_slot_release_locked(saved_user_id);
    pthread_mutex_unlock(&s_extraction_mutex);
 
-   LOG_INFO("memory_extraction: completed for user %d", saved_user_id);
+   OLOG_INFO("memory_extraction: completed for user %d", saved_user_id);
    return NULL;
 }
 
@@ -889,8 +889,8 @@ int memory_trigger_extraction(int user_id,
    if (conversation_id > 0) {
       int is_private = conv_db_is_private(conversation_id, user_id);
       if (is_private > 0) {
-         LOG_INFO("memory_extraction: skipping - conversation %lld is private (DB check)",
-                  (long long)conversation_id);
+         OLOG_INFO("memory_extraction: skipping - conversation %lld is private (DB check)",
+                   (long long)conversation_id);
          return 0;
       }
       /* is_private == -1 means error or not found, proceed with extraction */
@@ -899,7 +899,7 @@ int memory_trigger_extraction(int user_id,
 
    /* Skip if too few messages */
    if (message_count < 2) {
-      LOG_INFO("memory_extraction: skipping - too few messages (%d)", message_count);
+      OLOG_INFO("memory_extraction: skipping - too few messages (%d)", message_count);
       return 0;
    }
 
@@ -913,8 +913,8 @@ int memory_trigger_extraction(int user_id,
 
       /* Skip if no new messages since last extraction */
       if (message_count <= last_extracted) {
-         LOG_INFO("memory_extraction: skipping - no new messages (count=%d, last=%d)",
-                  message_count, last_extracted);
+         OLOG_INFO("memory_extraction: skipping - no new messages (count=%d, last=%d)",
+                   message_count, last_extracted);
          return 0;
       }
    }
@@ -930,10 +930,10 @@ int memory_trigger_extraction(int user_id,
       pthread_mutex_unlock(&s_extraction_mutex);
 
       if (user_active) {
-         LOG_INFO("memory_extraction: already in progress for user %d", user_id);
+         OLOG_INFO("memory_extraction: already in progress for user %d", user_id);
       } else {
-         LOG_INFO("memory_extraction: at capacity (%d/%d), skipping user %d",
-                  s_extraction_state.count, max_concurrent, user_id);
+         OLOG_INFO("memory_extraction: at capacity (%d/%d), skipping user %d",
+                   s_extraction_state.count, max_concurrent, user_id);
       }
       return 0;
    }
@@ -1004,8 +1004,8 @@ int memory_trigger_extraction(int user_id,
       return 1;
    }
 
-   LOG_INFO("memory_extraction: extracting %d new messages (last=%d, total=%d)", new_messages,
-            last_extracted, message_count);
+   OLOG_INFO("memory_extraction: extracting %d new messages (last=%d, total=%d)", new_messages,
+             last_extracted, message_count);
 
    /* Spawn detached extraction thread */
    pthread_t thread;
@@ -1017,7 +1017,7 @@ int memory_trigger_extraction(int user_id,
    pthread_attr_destroy(&attr);
 
    if (rc != 0) {
-      LOG_ERROR("memory_extraction: failed to create thread: %d", rc);
+      OLOG_ERROR("memory_extraction: failed to create thread: %d", rc);
       free(ctx->conversation_json);
       free(ctx);
       pthread_mutex_lock(&s_extraction_mutex);
@@ -1026,7 +1026,7 @@ int memory_trigger_extraction(int user_id,
       return 1;
    }
 
-   LOG_INFO("memory_extraction: triggered for user %d", user_id);
+   OLOG_INFO("memory_extraction: triggered for user %d", user_id);
    return 0;
 }
 

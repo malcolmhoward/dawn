@@ -94,7 +94,7 @@ int md_fonts_init(md_fonts_t *fonts, const char *font_dir, int body_size) {
       fonts->fonts[MD_STYLE_NORMAL] = TTF_OpenFont(FALLBACK_BODY_FONT, body_size);
    }
    if (!fonts->fonts[MD_STYLE_NORMAL]) {
-      LOG_WARNING("md_fonts: no regular font found");
+      OLOG_WARNING("md_fonts: no regular font found");
       return 1;
    }
 
@@ -102,7 +102,7 @@ int md_fonts_init(md_fonts_t *fonts, const char *font_dir, int body_size) {
    fonts->fonts[MD_STYLE_BOLD] = ui_try_load_font(font_dir, "SourceSans3-Bold.ttf", NULL,
                                                   body_size);
    if (fonts->fonts[MD_STYLE_BOLD]) {
-      LOG_INFO("md_fonts: Bold font loaded (real)");
+      OLOG_INFO("md_fonts: Bold font loaded (real)");
    } else {
       fonts->fonts[MD_STYLE_BOLD] = ui_try_load_font(font_dir, "SourceSans3-Regular.ttf", NULL,
                                                      body_size);
@@ -110,7 +110,7 @@ int md_fonts_init(md_fonts_t *fonts, const char *font_dir, int body_size) {
          fonts->fonts[MD_STYLE_BOLD] = TTF_OpenFont(FALLBACK_BODY_FONT, body_size);
       if (fonts->fonts[MD_STYLE_BOLD]) {
          TTF_SetFontStyle(fonts->fonts[MD_STYLE_BOLD], TTF_STYLE_BOLD);
-         LOG_INFO("md_fonts: Bold font (synthesized)");
+         OLOG_INFO("md_fonts: Bold font (synthesized)");
       }
    }
 
@@ -118,7 +118,7 @@ int md_fonts_init(md_fonts_t *fonts, const char *font_dir, int body_size) {
    fonts->fonts[MD_STYLE_ITALIC] = ui_try_load_font(font_dir, "SourceSans3-Italic.ttf", NULL,
                                                     body_size);
    if (fonts->fonts[MD_STYLE_ITALIC]) {
-      LOG_INFO("md_fonts: Italic font loaded (real)");
+      OLOG_INFO("md_fonts: Italic font loaded (real)");
    } else {
       fonts->fonts[MD_STYLE_ITALIC] = ui_try_load_font(font_dir, "SourceSans3-Regular.ttf", NULL,
                                                        body_size);
@@ -126,7 +126,7 @@ int md_fonts_init(md_fonts_t *fonts, const char *font_dir, int body_size) {
          fonts->fonts[MD_STYLE_ITALIC] = TTF_OpenFont(FALLBACK_BODY_FONT, body_size);
       if (fonts->fonts[MD_STYLE_ITALIC]) {
          TTF_SetFontStyle(fonts->fonts[MD_STYLE_ITALIC], TTF_STYLE_ITALIC);
-         LOG_INFO("md_fonts: Italic font (synthesized)");
+         OLOG_INFO("md_fonts: Italic font (synthesized)");
       }
    }
 
@@ -134,7 +134,7 @@ int md_fonts_init(md_fonts_t *fonts, const char *font_dir, int body_size) {
    fonts->fonts[MD_STYLE_BOLD_ITALIC] = ui_try_load_font(font_dir, "SourceSans3-BoldItalic.ttf",
                                                          NULL, body_size);
    if (fonts->fonts[MD_STYLE_BOLD_ITALIC]) {
-      LOG_INFO("md_fonts: BoldItalic font loaded (real)");
+      OLOG_INFO("md_fonts: BoldItalic font loaded (real)");
    } else {
       fonts->fonts[MD_STYLE_BOLD_ITALIC] = ui_try_load_font(font_dir, "SourceSans3-Regular.ttf",
                                                             NULL, body_size);
@@ -142,7 +142,7 @@ int md_fonts_init(md_fonts_t *fonts, const char *font_dir, int body_size) {
          fonts->fonts[MD_STYLE_BOLD_ITALIC] = TTF_OpenFont(FALLBACK_BODY_FONT, body_size);
       if (fonts->fonts[MD_STYLE_BOLD_ITALIC]) {
          TTF_SetFontStyle(fonts->fonts[MD_STYLE_BOLD_ITALIC], TTF_STYLE_BOLD | TTF_STYLE_ITALIC);
-         LOG_INFO("md_fonts: BoldItalic font (synthesized)");
+         OLOG_INFO("md_fonts: BoldItalic font (synthesized)");
       }
    }
 
@@ -155,7 +155,7 @@ int md_fonts_init(md_fonts_t *fonts, const char *font_dir, int body_size) {
    if (!fonts->fonts[MD_STYLE_CODE]) {
       /* Last resort: reuse regular font for code */
       fonts->fonts[MD_STYLE_CODE] = fonts->fonts[MD_STYLE_NORMAL];
-      LOG_WARNING("md_fonts: no mono font, using regular for code spans");
+      OLOG_WARNING("md_fonts: no mono font, using regular for code spans");
    }
 
    /* Compute line_height as max across all fonts */
@@ -406,7 +406,7 @@ static int md_parse_and_split(const char *text, const md_fonts_t *fonts) {
    }
 
    if (*p && wc >= MD_MAX_WORDS - 1) {
-      LOG_WARNING("md_parse: text truncated at %d words", wc);
+      OLOG_WARNING("md_parse: text truncated at %d words", wc);
    }
 
    return wc;
@@ -473,7 +473,7 @@ SDL_Texture *md_render_text(SDL_Renderer *renderer,
    int total_w = (max_w < wrap_width) ? max_w : wrap_width;
    int total_h = lines * lh;
    if (total_h > MD_MAX_SURFACE_H) {
-      LOG_WARNING("md_render: clamping surface height from %d to %d", total_h, MD_MAX_SURFACE_H);
+      OLOG_WARNING("md_render: clamping surface height from %d to %d", total_h, MD_MAX_SURFACE_H);
       total_h = MD_MAX_SURFACE_H;
    }
 

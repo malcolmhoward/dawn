@@ -61,7 +61,7 @@ int memory_build_context(int user_id, char *buffer, size_t buffer_size, int toke
    memory_preference_t prefs[MAX_CONTEXT_PREFS];
    int pref_count = memory_db_pref_list(user_id, prefs, MAX_CONTEXT_PREFS, 0);
    if (pref_count < 0) {
-      LOG_WARNING("memory_context: failed to load preferences for user %d", user_id);
+      OLOG_WARNING("memory_context: failed to load preferences for user %d", user_id);
       pref_count = 0;
    }
 
@@ -69,7 +69,7 @@ int memory_build_context(int user_id, char *buffer, size_t buffer_size, int toke
    memory_fact_t facts[MAX_CONTEXT_FACTS];
    int fact_count = memory_db_fact_list(user_id, facts, MAX_CONTEXT_FACTS, 0);
    if (fact_count < 0) {
-      LOG_WARNING("memory_context: failed to load facts for user %d", user_id);
+      OLOG_WARNING("memory_context: failed to load facts for user %d", user_id);
       fact_count = 0;
    }
 
@@ -77,7 +77,7 @@ int memory_build_context(int user_id, char *buffer, size_t buffer_size, int toke
    memory_summary_t summaries[MAX_CONTEXT_SUMMARIES];
    int summary_count = memory_db_summary_list(user_id, summaries, MAX_CONTEXT_SUMMARIES, 0);
    if (summary_count < 0) {
-      LOG_WARNING("memory_context: failed to load summaries for user %d", user_id);
+      OLOG_WARNING("memory_context: failed to load summaries for user %d", user_id);
       summary_count = 0;
    }
 
@@ -93,7 +93,7 @@ int memory_build_context(int user_id, char *buffer, size_t buffer_size, int toke
 
    /* Check if we have any content */
    if (pref_count == 0 && fact_count == 0 && valid_summaries == 0) {
-      LOG_INFO("memory_context: no memories found for user %d", user_id);
+      OLOG_INFO("memory_context: no memories found for user %d", user_id);
       return 0;
    }
 
@@ -187,9 +187,9 @@ int memory_build_context(int user_id, char *buffer, size_t buffer_size, int toke
           "--- END USER MEMORY ---\n");
    }
 
-   LOG_INFO("memory_context: built context for user %d (%zu chars, %d prefs, %d facts, %d "
-            "summaries)",
-            user_id, offset, pref_count, fact_count, valid_summaries);
+   OLOG_INFO("memory_context: built context for user %d (%zu chars, %d prefs, %d facts, %d "
+             "summaries)",
+             user_id, offset, pref_count, fact_count, valid_summaries);
 
    return (int)offset;
 }

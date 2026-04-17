@@ -122,8 +122,8 @@ static char *truncate_with_notice(const char *text, size_t max_len, size_t origi
       }
    }
 
-   LOG_INFO("search_summarizer: Truncating at %s boundary (pos %zu of %zu)", boundary_type,
-            best_break, original_len);
+   OLOG_INFO("search_summarizer: Truncating at %s boundary (pos %zu of %zu)", boundary_type,
+             best_break, original_len);
 
    // Allocate result
    size_t result_len = best_break + notice_len + 1;
@@ -161,7 +161,7 @@ int search_summarizer_init(const summarizer_config_t *config) {
 
    if (g_initialized) {
       pthread_mutex_unlock(&g_mutex);
-      LOG_WARNING("search_summarizer: Already initialized");
+      OLOG_WARNING("search_summarizer: Already initialized");
       return SUMMARIZER_SUCCESS;
    }
 
@@ -184,13 +184,13 @@ int search_summarizer_init(const summarizer_config_t *config) {
                                  g_config.threshold_bytes);
 
    if (g_config.backend == SUMMARIZER_BACKEND_TFIDF) {
-      LOG_INFO("search_summarizer: Initialized (backend=%s, threshold=%zu, target_ratio=%.2f)",
-               search_summarizer_backend_name(g_config.backend), g_config.threshold_bytes,
-               g_config.target_ratio);
+      OLOG_INFO("search_summarizer: Initialized (backend=%s, threshold=%zu, target_ratio=%.2f)",
+                search_summarizer_backend_name(g_config.backend), g_config.threshold_bytes,
+                g_config.target_ratio);
    } else {
-      LOG_INFO("search_summarizer: Initialized (backend=%s, threshold=%zu, target_words=%zu)",
-               search_summarizer_backend_name(g_config.backend), g_config.threshold_bytes,
-               g_config.target_summary_words);
+      OLOG_INFO("search_summarizer: Initialized (backend=%s, threshold=%zu, target_words=%zu)",
+                search_summarizer_backend_name(g_config.backend), g_config.threshold_bytes,
+                g_config.target_summary_words);
    }
 
    return SUMMARIZER_SUCCESS;
@@ -200,7 +200,7 @@ void search_summarizer_cleanup(void) {
    pthread_mutex_lock(&g_mutex);
    g_initialized = 0;
    pthread_mutex_unlock(&g_mutex);
-   LOG_INFO("search_summarizer: Cleanup complete");
+   OLOG_INFO("search_summarizer: Cleanup complete");
 }
 
 int search_summarizer_is_initialized(void) {
@@ -258,7 +258,7 @@ summarizer_backend_t search_summarizer_parse_backend(const char *str) {
 static int summarize_with_local_llm(const char *prompt, char **out_summary) {
    CURL *curl = curl_easy_init();
    if (!curl) {
-      LOG_ERROR("search_summarizer: Failed to create CURL handle");
+      OLOG_ERROR("search_summarizer: Failed to create CURL handle");
       return SUMMARIZER_ERROR_BACKEND;
    }
 
@@ -294,7 +294,7 @@ static int summarize_with_local_llm(const char *prompt, char **out_summary) {
    curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)SUMMARIZER_LOCAL_TIMEOUT_SEC);
    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L);
 
-   LOG_INFO("search_summarizer: Sending %zu byte prompt to local LLM", strlen(prompt));
+   OLOG_INFO("search_summarizer: Sending %zu byte prompt to local LLM", strlen(prompt));
 
    CURLcode res = curl_easy_perform(curl);
 
@@ -302,7 +302,7 @@ static int summarize_with_local_llm(const char *prompt, char **out_summary) {
    json_object_put(root);
 
    if (res != CURLE_OK) {
-      LOG_ERROR("search_summarizer: Local LLM request failed: %s", curl_easy_strerror(res));
+      OLOG_ERROR("search_summarizer: Local LLM request failed: %s", curl_easy_strerror(res));
       curl_easy_cleanup(curl);
       curl_buffer_free(&buffer);
       return SUMMARIZER_ERROR_BACKEND;
@@ -313,7 +313,7 @@ static int summarize_with_local_llm(const char *prompt, char **out_summary) {
    curl_easy_cleanup(curl);
 
    if (http_code != 200) {
-      LOG_ERROR("search_summarizer: Local LLM HTTP error %ld", http_code);
+      OLOG_ERROR("search_summarizer: Local LLM HTTP error %ld", http_code);
       curl_buffer_free(&buffer);
       return SUMMARIZER_ERROR_BACKEND;
    }
@@ -323,7 +323,7 @@ static int summarize_with_local_llm(const char *prompt, char **out_summary) {
    curl_buffer_free(&buffer);
 
    if (!resp_root) {
-      LOG_ERROR("search_summarizer: Failed to parse local LLM response");
+      OLOG_ERROR("search_summarizer: Failed to parse local LLM response");
       return SUMMARIZER_ERROR_BACKEND;
    }
 
@@ -335,7 +335,7 @@ static int summarize_with_local_llm(const char *prompt, char **out_summary) {
 
    if (!json_object_object_get_ex(resp_root, "choices", &choices) ||
        json_object_array_length(choices) == 0) {
-      LOG_ERROR("search_summarizer: No choices in local LLM response");
+      OLOG_ERROR("search_summarizer: No choices in local LLM response");
       json_object_put(resp_root);
       return SUMMARIZER_ERROR_BACKEND;
    }
@@ -343,14 +343,14 @@ static int summarize_with_local_llm(const char *prompt, char **out_summary) {
    first_choice = json_object_array_get_idx(choices, 0);
    if (!json_object_object_get_ex(first_choice, "message", &message) ||
        !json_object_object_get_ex(message, "content", &content)) {
-      LOG_ERROR("search_summarizer: Missing content in local LLM response");
+      OLOG_ERROR("search_summarizer: Missing content in local LLM response");
       json_object_put(resp_root);
       return SUMMARIZER_ERROR_BACKEND;
    }
 
    const char *summary_text = json_object_get_string(content);
    if (!summary_text || strlen(summary_text) == 0) {
-      LOG_ERROR("search_summarizer: Empty summary from local LLM");
+      OLOG_ERROR("search_summarizer: Empty summary from local LLM");
       json_object_put(resp_root);
       return SUMMARIZER_ERROR_BACKEND;
    }
@@ -362,7 +362,7 @@ static int summarize_with_local_llm(const char *prompt, char **out_summary) {
       return SUMMARIZER_ERROR_ALLOC;
    }
 
-   LOG_INFO("search_summarizer: Local LLM produced %zu byte summary", strlen(*out_summary));
+   OLOG_INFO("search_summarizer: Local LLM produced %zu byte summary", strlen(*out_summary));
    return SUMMARIZER_SUCCESS;
 }
 
@@ -405,12 +405,12 @@ static int summarize_with_default_llm(const char *prompt, char **out_summary) {
    json_object_put(conversation);
 
    if (!response) {
-      LOG_ERROR("search_summarizer: Cloud LLM request failed");
+      OLOG_ERROR("search_summarizer: Cloud LLM request failed");
       return SUMMARIZER_ERROR_BACKEND;
    }
 
    *out_summary = response;
-   LOG_INFO("search_summarizer: Default LLM produced %zu byte summary", strlen(*out_summary));
+   OLOG_INFO("search_summarizer: Default LLM produced %zu byte summary", strlen(*out_summary));
    return SUMMARIZER_SUCCESS;
 }
 
@@ -457,7 +457,7 @@ int search_summarizer_process(const char *search_results,
    *out_result = NULL;
 
    if (!g_initialized) {
-      LOG_ERROR("search_summarizer: Not initialized");
+      OLOG_ERROR("search_summarizer: Not initialized");
       return SUMMARIZER_ERROR_NOT_INIT;
    }
 
@@ -477,8 +477,8 @@ int search_summarizer_process(const char *search_results,
    }
 
    if (input_size <= g_config.threshold_bytes) {
-      LOG_INFO("search_summarizer: Input %zu bytes under threshold %zu, passing through",
-               input_size, g_config.threshold_bytes);
+      OLOG_INFO("search_summarizer: Input %zu bytes under threshold %zu, passing through",
+                input_size, g_config.threshold_bytes);
       *out_result = strdup(search_results);
       if (!*out_result) {
          return SUMMARIZER_ERROR_ALLOC;
@@ -486,8 +486,9 @@ int search_summarizer_process(const char *search_results,
       return SUMMARIZER_SUCCESS;
    }
 
-   LOG_INFO("search_summarizer: Input %zu bytes exceeds threshold %zu, summarizing with %s backend",
-            input_size, g_config.threshold_bytes, search_summarizer_backend_name(g_config.backend));
+   OLOG_INFO(
+       "search_summarizer: Input %zu bytes exceeds threshold %zu, summarizing with %s backend",
+       input_size, g_config.threshold_bytes, search_summarizer_backend_name(g_config.backend));
 
    // Notify user that summarization is starting (may take a while for local LLM)
    notify_summarization_starting();
@@ -501,13 +502,13 @@ int search_summarizer_process(const char *search_results,
                                TFIDF_MIN_SENTENCES);
 
       if (result != TFIDF_SUCCESS) {
-         LOG_ERROR("search_summarizer: TF-IDF summarization failed: %s",
-                   tfidf_error_string(result));
+         OLOG_ERROR("search_summarizer: TF-IDF summarization failed: %s",
+                    tfidf_error_string(result));
          result = SUMMARIZER_ERROR_BACKEND;
       } else {
          result = SUMMARIZER_SUCCESS;
          /* TODO: Remove this debug log after quality verification */
-         LOG_INFO("search_summarizer: TF-IDF output:\n%s", summary);
+         OLOG_INFO("search_summarizer: TF-IDF output:\n%s", summary);
       }
    } else {
       // Build the summarization prompt for LLM backends
@@ -517,11 +518,11 @@ int search_summarizer_process(const char *search_results,
       if (!prompt) {
          if (g_config.failure_policy == SUMMARIZER_ON_FAILURE_PASSTHROUGH) {
             if (input_size > SUMMARIZER_MAX_PASSTHROUGH_BYTES) {
-               LOG_WARNING("search_summarizer: Allocation failed, truncating for passthrough");
+               OLOG_WARNING("search_summarizer: Allocation failed, truncating for passthrough");
                *out_result = truncate_with_notice(search_results, SUMMARIZER_MAX_PASSTHROUGH_BYTES,
                                                   input_size);
             } else {
-               LOG_WARNING("search_summarizer: Allocation failed, passing through raw results");
+               OLOG_WARNING("search_summarizer: Allocation failed, passing through raw results");
                *out_result = strdup(search_results);
             }
             return *out_result ? SUMMARIZER_SUCCESS : SUMMARIZER_ERROR_ALLOC;
@@ -545,13 +546,13 @@ int search_summarizer_process(const char *search_results,
    if (result != SUMMARIZER_SUCCESS) {
       if (g_config.failure_policy == SUMMARIZER_ON_FAILURE_PASSTHROUGH) {
          if (input_size > SUMMARIZER_MAX_PASSTHROUGH_BYTES) {
-            LOG_WARNING(
+            OLOG_WARNING(
                 "search_summarizer: Backend failed, truncating %zu bytes to %d for passthrough",
                 input_size, SUMMARIZER_MAX_PASSTHROUGH_BYTES);
             *out_result = truncate_with_notice(search_results, SUMMARIZER_MAX_PASSTHROUGH_BYTES,
                                                input_size);
          } else {
-            LOG_WARNING("search_summarizer: Backend failed, passing through raw results");
+            OLOG_WARNING("search_summarizer: Backend failed, passing through raw results");
             *out_result = strdup(search_results);
          }
          return *out_result ? SUMMARIZER_SUCCESS : SUMMARIZER_ERROR_ALLOC;
@@ -583,9 +584,9 @@ int search_summarizer_process(const char *search_results,
 
    *out_result = final_result;
    size_t output_size = strlen(final_result);
-   LOG_INFO("search_summarizer: Reduced %zu bytes to %zu bytes (%.1f%% reduction)", input_size,
-            output_size, (1.0 - (double)output_size / input_size) * 100.0);
-   LOG_INFO("search_summarizer: Summary:\n%s", final_result);
+   OLOG_INFO("search_summarizer: Reduced %zu bytes to %zu bytes (%.1f%% reduction)", input_size,
+             output_size, (1.0 - (double)output_size / input_size) * 100.0);
+   OLOG_INFO("search_summarizer: Summary:\n%s", final_result);
 
    // Record stats for TUI
    metrics_record_summarization(input_size, output_size);

@@ -61,7 +61,7 @@ int auth_db_create_user(const char *username, const char *password_hash, bool is
    if (rc == SQLITE_CONSTRAINT) {
       return AUTH_DB_DUPLICATE;
    } else if (rc != SQLITE_DONE) {
-      LOG_ERROR("auth_db_create_user: failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("auth_db_create_user: failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -114,7 +114,7 @@ int auth_db_get_user(const char *username, auth_user_t *user_out) {
       return AUTH_DB_NOT_FOUND;
    }
 
-   LOG_ERROR("auth_db_get_user: failed: %s", sqlite3_errmsg(s_db.db));
+   OLOG_ERROR("auth_db_get_user: failed: %s", sqlite3_errmsg(s_db.db));
    return AUTH_DB_FAILURE;
 }
 

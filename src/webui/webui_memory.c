@@ -184,7 +184,7 @@ void handle_delete_memory_fact(ws_connection_t *conn, struct json_object *payloa
    if (result == MEMORY_DB_SUCCESS) {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
       json_object_object_add(resp_payload, "message", json_object_new_string("Fact deleted"));
-      LOG_INFO("WebUI: User %d deleted memory fact %lld", conn->auth_user_id, (long long)fact_id);
+      OLOG_INFO("WebUI: User %d deleted memory fact %lld", conn->auth_user_id, (long long)fact_id);
    } else if (result == MEMORY_DB_NOT_FOUND) {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
       json_object_object_add(resp_payload, "error", json_object_new_string("Fact not found"));
@@ -302,7 +302,7 @@ void handle_delete_memory_preference(ws_connection_t *conn, struct json_object *
    if (result == MEMORY_DB_SUCCESS) {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
       json_object_object_add(resp_payload, "message", json_object_new_string("Preference deleted"));
-      LOG_INFO("WebUI: User %d deleted memory preference '%s'", conn->auth_user_id, category);
+      OLOG_INFO("WebUI: User %d deleted memory preference '%s'", conn->auth_user_id, category);
    } else if (result == MEMORY_DB_NOT_FOUND) {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
       json_object_object_add(resp_payload, "error", json_object_new_string("Preference not found"));
@@ -424,8 +424,8 @@ void handle_delete_memory_summary(ws_connection_t *conn, struct json_object *pay
    if (result == MEMORY_DB_SUCCESS) {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
       json_object_object_add(resp_payload, "message", json_object_new_string("Summary deleted"));
-      LOG_INFO("WebUI: User %d deleted memory summary %lld", conn->auth_user_id,
-               (long long)summary_id);
+      OLOG_INFO("WebUI: User %d deleted memory summary %lld", conn->auth_user_id,
+                (long long)summary_id);
    } else if (result == MEMORY_DB_NOT_FOUND) {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
       json_object_object_add(resp_payload, "error", json_object_new_string("Summary not found"));
@@ -599,8 +599,8 @@ void handle_delete_memory_entity(ws_connection_t *conn, struct json_object *payl
    if (result == MEMORY_DB_SUCCESS) {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
       json_object_object_add(resp_payload, "message", json_object_new_string("Entity deleted"));
-      LOG_INFO("WebUI: User %d deleted memory entity %lld", conn->auth_user_id,
-               (long long)entity_id);
+      OLOG_INFO("WebUI: User %d deleted memory entity %lld", conn->auth_user_id,
+                (long long)entity_id);
    } else if (result == MEMORY_DB_NOT_FOUND) {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
       json_object_object_add(resp_payload, "error", json_object_new_string("Entity not found"));
@@ -662,8 +662,8 @@ void handle_merge_memory_entities(ws_connection_t *conn, struct json_object *pay
    if (result == MEMORY_DB_SUCCESS) {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
       json_object_object_add(resp_payload, "message", json_object_new_string("Entities merged"));
-      LOG_INFO("WebUI: User %d merged entity %lld into %lld", conn->auth_user_id,
-               (long long)source_id, (long long)target_id);
+      OLOG_INFO("WebUI: User %d merged entity %lld into %lld", conn->auth_user_id,
+                (long long)source_id, (long long)target_id);
    } else if (result == MEMORY_DB_NOT_FOUND) {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
       json_object_object_add(resp_payload, "error",
@@ -816,7 +816,7 @@ void handle_delete_all_memories(ws_connection_t *conn, struct json_object *paylo
       json_object_object_add(resp_payload, "success", json_object_new_boolean(1));
       json_object_object_add(resp_payload, "message",
                              json_object_new_string("All memories deleted"));
-      LOG_INFO("WebUI: User %d deleted all memories", conn->auth_user_id);
+      OLOG_INFO("WebUI: User %d deleted all memories", conn->auth_user_id);
    } else {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
       json_object_object_add(resp_payload, "error",
@@ -1055,8 +1055,8 @@ void handle_export_memories(ws_connection_t *conn, struct json_object *payload) 
    send_json_response(conn, response);
    json_object_put(response);
 
-   LOG_INFO("WebUI: User %d exported memories (format=%s)", conn->auth_user_id,
-            is_text ? "text" : "json");
+   OLOG_INFO("WebUI: User %d exported memories (format=%s)", conn->auth_user_id,
+             is_text ? "text" : "json");
 }
 
 /* =============================================================================
@@ -1364,7 +1364,7 @@ void handle_import_memories(ws_connection_t *conn, struct json_object *payload) 
    json_object_put(response);
 
    if (commit) {
-      LOG_INFO("WebUI: User %d imported memories (format=%s, facts=%d, prefs=%d, dupes=%d)",
-               conn->auth_user_id, format, imported_facts, imported_prefs, skipped_dupes);
+      OLOG_INFO("WebUI: User %d imported memories (format=%s, facts=%d, prefs=%d, dupes=%d)",
+                conn->auth_user_id, format, imported_facts, imported_prefs, skipped_dupes);
    }
 }

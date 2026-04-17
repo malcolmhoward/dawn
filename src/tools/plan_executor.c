@@ -686,13 +686,13 @@ static int plan_step_sleep(plan_context_t *ctx, struct json_object *step) {
    if (seconds > PLAN_MAX_SLEEP_S)
       seconds = PLAN_MAX_SLEEP_S;
 
-   LOG_INFO("plan_executor: sleeping %d seconds", seconds);
+   OLOG_INFO("plan_executor: sleeping %d seconds", seconds);
    plan_send_progress("step_start", ctx->call_index, "sleep", 0, 0, 0, NULL);
 
    /* Sleep in 1-second intervals to check for timeout */
    for (int i = 0; i < seconds; i++) {
       if (check_timeout(ctx)) {
-         LOG_WARNING("plan_executor: timeout during sleep at %d/%d seconds", i, seconds);
+         OLOG_WARNING("plan_executor: timeout during sleep at %d/%d seconds", i, seconds);
          snprintf(ctx->error, sizeof(ctx->error), "Plan timeout (%ds) exceeded during sleep",
                   ctx->timeout_s);
          return PLAN_ERR_TIMEOUT;
@@ -783,7 +783,7 @@ static int plan_step_call(plan_context_t *ctx, struct json_object *step) {
          plan_vars_set(ctx, store_name, err_msg);
          plan_vars_set_success(ctx, store_name, false);
       }
-      LOG_WARNING("plan_executor: unknown tool '%s'", tool_name);
+      OLOG_WARNING("plan_executor: unknown tool '%s'", tool_name);
       plan_send_progress("step_error", current_index, NULL, 0, 0, 0, "unknown tool");
       ctx->total_tool_calls++;
       ctx->call_index++;
@@ -798,7 +798,7 @@ static int plan_step_call(plan_context_t *ctx, struct json_object *step) {
          plan_vars_set(ctx, store_name, err_msg);
          plan_vars_set_success(ctx, store_name, false);
       }
-      LOG_WARNING("plan_executor: tool '%s' not allowed in plans", tool_name);
+      OLOG_WARNING("plan_executor: tool '%s' not allowed in plans", tool_name);
       plan_send_progress("step_error", current_index, NULL, 0, 0, 0, "not allowed in plans");
       ctx->total_tool_calls++;
       ctx->call_index++;
@@ -813,7 +813,7 @@ static int plan_step_call(plan_context_t *ctx, struct json_object *step) {
          plan_vars_set(ctx, store_name, err_msg);
          plan_vars_set_success(ctx, store_name, false);
       }
-      LOG_WARNING("plan_executor: tool '%s' is disabled", tool_name);
+      OLOG_WARNING("plan_executor: tool '%s' is disabled", tool_name);
       plan_send_progress("step_error", current_index, NULL, 0, 0, 0, "tool disabled");
       ctx->total_tool_calls++;
       ctx->call_index++;

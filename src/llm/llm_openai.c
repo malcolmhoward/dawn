@@ -210,7 +210,7 @@ static struct json_object *convert_content_block_to_openai(struct json_object *b
    // This is a Claude image block - convert to OpenAI format
    struct json_object *source_obj;
    if (!json_object_object_get_ex(block, "source", &source_obj)) {
-      LOG_WARNING("OpenAI: Claude image block missing source field");
+      OLOG_WARNING("OpenAI: Claude image block missing source field");
       return NULL;
    }
 
@@ -226,7 +226,7 @@ static struct json_object *convert_content_block_to_openai(struct json_object *b
    }
 
    if (!data) {
-      LOG_WARNING("OpenAI: Claude image block missing data");
+      OLOG_WARNING("OpenAI: Claude image block missing data");
       return NULL;
    }
 
@@ -248,7 +248,7 @@ static struct json_object *convert_content_block_to_openai(struct json_object *b
 
    free(data_url);
 
-   LOG_INFO("OpenAI: Converted Claude image to OpenAI image_url (media_type=%s)", media_type);
+   OLOG_INFO("OpenAI: Converted Claude image to OpenAI image_url (media_type=%s)", media_type);
    return image_obj;
 }
 
@@ -343,7 +343,7 @@ static struct json_object *filter_orphaned_tool_messages(struct json_object *his
       return json_object_get(history);
    }
 
-   LOG_WARNING("OpenAI: Filtering orphaned tool messages from restored conversation");
+   OLOG_WARNING("OpenAI: Filtering orphaned tool messages from restored conversation");
 
    struct json_object *filtered = json_object_new_array();
    int orphan_count = 0;
@@ -402,7 +402,7 @@ static struct json_object *filter_orphaned_tool_messages(struct json_object *his
    }
 
    if (orphan_count > 0) {
-      LOG_INFO("OpenAI: Filtered %d orphaned tool-related messages", orphan_count);
+      OLOG_INFO("OpenAI: Filtered %d orphaned tool-related messages", orphan_count);
    }
 
    return filtered;
@@ -542,7 +542,7 @@ static struct json_object *strip_vision_content(struct json_object *history) {
       return json_object_get(history);
    }
 
-   LOG_INFO("Stripping vision content from history (target LLM doesn't support vision)");
+   OLOG_INFO("Stripping vision content from history (target LLM doesn't support vision)");
 
    struct json_object *sanitized = json_object_new_array();
 
@@ -761,22 +761,22 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
       if (tools) {
          json_object_object_add(root, "tools", tools);
          json_object_object_add(root, "tool_choice", json_object_new_string("auto"));
-         LOG_INFO("OpenAI: Added %d tools to request (%s session)",
-                  llm_tools_get_enabled_count_filtered(is_remote), is_remote ? "remote" : "local");
+         OLOG_INFO("OpenAI: Added %d tools to request (%s session)",
+                   llm_tools_get_enabled_count_filtered(is_remote), is_remote ? "remote" : "local");
       }
    }
 
    payload = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN |
                                                       JSON_C_TO_STRING_NOSLASHESCAPE);
 
-   LOG_INFO("OpenAI request payload: %zu bytes (~%zu tokens est)", strlen(payload),
-            strlen(payload) / 4);
+   OLOG_INFO("OpenAI request payload: %zu bytes (~%zu tokens est)", strlen(payload),
+             strlen(payload) / 4);
 
    curl_buffer_init(&chunk);
 
    // Check connection (fast-fail enables fallback to local in llm_interface.c)
    if (!llm_check_connection(base_url, 4)) {
-      LOG_ERROR("Pre-flight connection check failed (cloud unreachable)");
+      OLOG_ERROR("Pre-flight connection check failed (cloud unreachable)");
       json_object_put(root);
       return NULL;
    }
@@ -821,11 +821,11 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
       res = curl_easy_perform(curl_handle);
       if (res != CURLE_OK) {
          if (res == CURLE_ABORTED_BY_CALLBACK) {
-            LOG_INFO("LLM transfer interrupted by user");
+            OLOG_INFO("LLM transfer interrupted by user");
          } else if (res == CURLE_OPERATION_TIMEDOUT) {
-            LOG_ERROR("LLM request timed out (limit: %dms)", effective_timeout);
+            OLOG_ERROR("LLM request timed out (limit: %dms)", effective_timeout);
          } else {
-            LOG_ERROR("curl_easy_perform() failed: %s", curl_easy_strerror(res));
+            OLOG_ERROR("curl_easy_perform() failed: %s", curl_easy_strerror(res));
          }
          curl_easy_cleanup(curl_handle);
          curl_slist_free_all(headers);
@@ -840,15 +840,15 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
 
       if (http_code != 200) {
          if (http_code == 401) {
-            LOG_ERROR("OpenAI API: Invalid or missing API key (HTTP 401)");
+            OLOG_ERROR("OpenAI API: Invalid or missing API key (HTTP 401)");
          } else if (http_code == 403) {
-            LOG_ERROR("OpenAI API: Access forbidden (HTTP 403) - check API key permissions");
+            OLOG_ERROR("OpenAI API: Access forbidden (HTTP 403) - check API key permissions");
          } else if (http_code == 429) {
-            LOG_ERROR("OpenAI API: Rate limit exceeded (HTTP 429)");
+            OLOG_ERROR("OpenAI API: Rate limit exceeded (HTTP 429)");
          } else if (http_code >= 500) {
-            LOG_ERROR("OpenAI API: Server error (HTTP %ld)", http_code);
+            OLOG_ERROR("OpenAI API: Server error (HTTP %ld)", http_code);
          } else if (http_code != 0) {
-            LOG_ERROR("OpenAI API: Request failed (HTTP %ld)", http_code);
+            OLOG_ERROR("OpenAI API: Request failed (HTTP %ld)", http_code);
          }
          curl_easy_cleanup(curl_handle);
          curl_slist_free_all(headers);
@@ -863,7 +863,7 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
 
    parsed_json = json_tokener_parse(chunk.data);
    if (!parsed_json) {
-      LOG_ERROR("Failed to parse JSON response.");
+      OLOG_ERROR("Failed to parse JSON response.");
       curl_buffer_free(&chunk);
       json_object_put(root);
       return NULL;
@@ -871,7 +871,7 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
 
    if (!json_object_object_get_ex(parsed_json, "choices", &choices) ||
        json_object_get_type(choices) != json_type_array || json_object_array_length(choices) < 1) {
-      LOG_ERROR("Error in parsing response: 'choices' missing or invalid.");
+      OLOG_ERROR("Error in parsing response: 'choices' missing or invalid.");
       json_object_put(parsed_json);
       curl_buffer_free(&chunk);
       json_object_put(root);
@@ -880,7 +880,7 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
 
    first_choice = json_object_array_get_idx(choices, 0);
    if (!first_choice) {
-      LOG_ERROR("Error: 'choices' array is empty.");
+      OLOG_ERROR("Error: 'choices' array is empty.");
       json_object_put(parsed_json);
       curl_buffer_free(&chunk);
       json_object_put(root);
@@ -889,7 +889,7 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
 
    if (!json_object_object_get_ex(first_choice, "message", &message) ||
        !json_object_object_get_ex(message, "content", &content)) {
-      LOG_ERROR("Error: 'message' or 'content' field missing.");
+      OLOG_ERROR("Error: 'message' or 'content' field missing.");
       json_object_put(parsed_json);
       curl_buffer_free(&chunk);
       json_object_put(root);
@@ -906,7 +906,7 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
    if (json_object_object_get_ex(parsed_json, "usage", &usage_obj)) {
       if (json_object_object_get_ex(usage_obj, "total_tokens", &total_tokens_obj)) {
          total_tokens = json_object_get_int(total_tokens_obj);
-         LOG_WARNING("Total tokens: %d", total_tokens);
+         OLOG_WARNING("Total tokens: %d", total_tokens);
       }
 
       // Extract input/output tokens
@@ -927,7 +927,7 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
                                        &cached_tokens_obj)) {
             cached_tokens = json_object_get_int(cached_tokens_obj);
             if (cached_tokens > 0) {
-               LOG_INFO("OpenAI cache hit: %d tokens cached (50%% savings)", cached_tokens);
+               OLOG_INFO("OpenAI cache hit: %d tokens cached (50%% savings)", cached_tokens);
             }
          }
       }
@@ -951,13 +951,13 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
       if (json_object_object_get_ex(message, "tool_calls", &tool_calls) &&
           json_object_get_type(tool_calls) == json_type_array &&
           json_object_array_length(tool_calls) > 0) {
-         LOG_WARNING("OpenAI: LLM returned tool call instead of content (non-streaming API "
-                     "doesn't support tool execution)");
+         OLOG_WARNING("OpenAI: LLM returned tool call instead of content (non-streaming API "
+                      "doesn't support tool execution)");
          // Return a fallback message instead of failing
          response = strdup("I apologize, but I was unable to complete that request directly. "
                            "Please try rephrasing your question.");
       } else {
-         LOG_ERROR("Error: 'content' field is empty or null with no tool calls.");
+         OLOG_ERROR("Error: 'content' field is empty or null with no tool calls.");
          json_object_put(parsed_json);
          curl_buffer_free(&chunk);
          json_object_put(root);
@@ -968,9 +968,9 @@ char *llm_openai_chat_completion(struct json_object *conversation_history,
    }
 
    if ((finish_reason != NULL) && (strcmp(json_object_get_string(finish_reason), "stop") != 0)) {
-      LOG_WARNING("OpenAI returned with finish_reason: %s", json_object_get_string(finish_reason));
+      OLOG_WARNING("OpenAI returned with finish_reason: %s", json_object_get_string(finish_reason));
    } else {
-      LOG_INFO("Response finished properly.");
+      OLOG_INFO("Response finished properly.");
    }
 
    json_object_put(parsed_json);
@@ -1090,10 +1090,10 @@ static void add_local_thinking_params(json_object *root) {
       /* Ollama native: "think" boolean parameter */
       if (strcmp(thinking_mode, "disabled") != 0 && !llm_tools_suppressed()) {
          json_object_object_add(root, "think", json_object_new_boolean(1));
-         LOG_INFO("Local LLM (Ollama): Thinking enabled (think: true)");
+         OLOG_INFO("Local LLM (Ollama): Thinking enabled (think: true)");
       } else {
          json_object_object_add(root, "think", json_object_new_boolean(0));
-         LOG_INFO("Local LLM (Ollama): Thinking disabled (think: false)");
+         OLOG_INFO("Local LLM (Ollama): Thinking disabled (think: false)");
       }
    } else {
       /* llama.cpp / generic: thinking object + reasoning_budget + template kwargs */
@@ -1114,9 +1114,9 @@ static void add_local_thinking_params(json_object *root) {
          json_object_object_add(template_kwargs, "enable_thinking", json_object_new_boolean(1));
          json_object_object_add(root, "chat_template_kwargs", template_kwargs);
 
-         LOG_INFO("Local LLM (llama.cpp): Extended thinking enabled (budget: %d tokens, "
-                  "forced_open: true, chat_template_kwargs.enable_thinking: true)",
-                  budget);
+         OLOG_INFO("Local LLM (llama.cpp): Extended thinking enabled (budget: %d tokens, "
+                   "forced_open: true, chat_template_kwargs.enable_thinking: true)",
+                   budget);
       } else if (strcmp(thinking_mode, "disabled") == 0) {
          /* Explicitly disable reasoning for llama.cpp reasoning models */
          json_object_object_add(root, "reasoning_budget", json_object_new_int(0));
@@ -1125,7 +1125,7 @@ static void add_local_thinking_params(json_object *root) {
          json_object_object_add(template_kwargs, "enable_thinking", json_object_new_boolean(0));
          json_object_object_add(root, "chat_template_kwargs", template_kwargs);
 
-         LOG_INFO("Local LLM (llama.cpp): Reasoning explicitly disabled (reasoning_budget: 0)");
+         OLOG_INFO("Local LLM (llama.cpp): Reasoning explicitly disabled (reasoning_budget: 0)");
       }
    }
 }
@@ -1246,7 +1246,7 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
             // extension, so we can't get visible thinking content. The model still does
             // internal reasoning based on reasoning_effort level.
             json_object_object_add(root, "reasoning_effort", json_object_new_string(effort));
-            LOG_INFO("Cloud LLM: Reasoning effort set to '%s' for model %s", effort, model_name);
+            OLOG_INFO("Cloud LLM: Reasoning effort set to '%s' for model %s", effort, model_name);
          }
       }
    }
@@ -1259,15 +1259,16 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
             total_bytes += vision_image_sizes[i];
          }
       }
-      LOG_INFO("OpenAI streaming: %d vision images provided (%zu total bytes)", vision_image_count,
-               total_bytes);
+      OLOG_INFO("OpenAI streaming: %d vision images provided (%zu total bytes)", vision_image_count,
+                total_bytes);
       int msg_count = json_object_array_length(converted_history);
       if (msg_count > 0) {
          json_object *last_msg = json_object_array_get_idx(converted_history, msg_count - 1);
          json_object *role_obj;
          if (json_object_object_get_ex(last_msg, "role", &role_obj) &&
              strcmp(json_object_get_string(role_obj), "user") == 0) {
-            LOG_INFO("OpenAI streaming: Adding %d images to last user message", vision_image_count);
+            OLOG_INFO("OpenAI streaming: Adding %d images to last user message",
+                      vision_image_count);
             // Last message is user message - add vision content
             json_object *content_array = json_object_new_array();
             json_object *text_obj = json_object_new_object();
@@ -1300,8 +1301,8 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
          } else {
             /* Last message is not user (e.g., tool result after viewing command).
              * Create a new user message with the vision images. */
-            LOG_INFO("OpenAI streaming: Adding vision as new user message (last was role=%s)",
-                     role_obj ? json_object_get_string(role_obj) : "null");
+            OLOG_INFO("OpenAI streaming: Adding vision as new user message (last was role=%s)",
+                      role_obj ? json_object_get_string(role_obj) : "null");
 
             json_object *new_user_msg = json_object_new_object();
             json_object_object_add(new_user_msg, "role", json_object_new_string("user"));
@@ -1341,7 +1342,7 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
 
             /* Append the new user message to history */
             json_object_array_add(converted_history, new_user_msg);
-            LOG_INFO("OpenAI streaming: Vision user message added to history");
+            OLOG_INFO("OpenAI streaming: Vision user message added to history");
          }
       }
    }
@@ -1367,29 +1368,29 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
       if (tools) {
          json_object_object_add(root, "tools", tools);
          json_object_object_add(root, "tool_choice", json_object_new_string("auto"));
-         LOG_INFO("OpenAI streaming: Added %d tools to request (%s session)",
-                  llm_tools_get_enabled_count_filtered(is_remote), is_remote ? "remote" : "local");
+         OLOG_INFO("OpenAI streaming: Added %d tools to request (%s session)",
+                   llm_tools_get_enabled_count_filtered(is_remote), is_remote ? "remote" : "local");
       }
    } else if (iteration >= MAX_TOOL_ITERATIONS) {
-      LOG_INFO("OpenAI streaming: Skipping tools (forcing text response at iteration %d)",
-               iteration);
+      OLOG_INFO("OpenAI streaming: Skipping tools (forcing text response at iteration %d)",
+                iteration);
    }
 
    payload = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN |
                                                       JSON_C_TO_STRING_NOSLASHESCAPE);
 
-   LOG_INFO("OpenAI streaming request payload: %zu bytes (~%zu tokens est)", strlen(payload),
-            strlen(payload) / 4);
+   OLOG_INFO("OpenAI streaming request payload: %zu bytes (~%zu tokens est)", strlen(payload),
+             strlen(payload) / 4);
 
    // Log request details for debugging (use actual model_name that was added to JSON)
-   LOG_INFO("OpenAI streaming iter %d: url=%s model=%s api_key=%s", iteration, base_url,
-            (model_name && model_name[0]) ? model_name : "(server default)",
-            LOG_CREDENTIAL_STATUS(api_key));
+   OLOG_INFO("OpenAI streaming iter %d: url=%s model=%s api_key=%s", iteration, base_url,
+             (model_name && model_name[0]) ? model_name : "(server default)",
+             LOG_CREDENTIAL_STATUS(api_key));
 
    // Debug: Log conversation state on follow-up iterations
    if (iteration > 0) {
       int msg_count = json_object_array_length(converted_history);
-      LOG_INFO("OpenAI streaming iter %d: %d messages in history", iteration, msg_count);
+      OLOG_INFO("OpenAI streaming iter %d: %d messages in history", iteration, msg_count);
       // Log last 3 messages (roles and content types)
       for (int i = msg_count > 3 ? msg_count - 3 : 0; i < msg_count; i++) {
          json_object *msg = json_object_array_get_idx(converted_history, i);
@@ -1400,15 +1401,15 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
          }
          if (json_object_object_get_ex(msg, "content", &content_obj)) {
             const char *content = json_object_get_string(content_obj);
-            LOG_INFO("  [%d] role=%s content=%.100s%s", i, role, content ? content : "(null)",
-                     (content && strlen(content) > 100) ? "..." : "");
+            OLOG_INFO("  [%d] role=%s content=%.100s%s", i, role, content ? content : "(null)",
+                      (content && strlen(content) > 100) ? "..." : "");
          } else {
             // Check for tool_calls (assistant message)
             json_object *tc_obj;
             if (json_object_object_get_ex(msg, "tool_calls", &tc_obj)) {
-               LOG_INFO("  [%d] role=%s (has tool_calls)", i, role);
+               OLOG_INFO("  [%d] role=%s (has tool_calls)", i, role);
             } else {
-               LOG_INFO("  [%d] role=%s (no content)", i, role);
+               OLOG_INFO("  [%d] role=%s (no content)", i, role);
             }
          }
       }
@@ -1416,7 +1417,7 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
 
    // Check connection (fast-fail enables fallback to local in llm_interface.c)
    if (!llm_check_connection(base_url, 4)) {
-      LOG_ERROR("Pre-flight connection check failed (cloud unreachable)");
+      OLOG_ERROR("Pre-flight connection check failed (cloud unreachable)");
       json_object_put(root);
       return NULL;
    }
@@ -1439,7 +1440,7 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
    stream_ctx = llm_stream_create(stream_llm_type, stream_provider, chunk_callback,
                                   callback_userdata);
    if (!stream_ctx) {
-      LOG_ERROR("Failed to create LLM stream context");
+      OLOG_ERROR("Failed to create LLM stream context");
       json_object_put(root);
       return NULL;
    }
@@ -1447,7 +1448,7 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
    // Create SSE parser
    sse_parser = sse_parser_create(openai_sse_event_handler, &streaming_ctx);
    if (!sse_parser) {
-      LOG_ERROR("Failed to create SSE parser");
+      OLOG_ERROR("Failed to create SSE parser");
       llm_stream_free(stream_ctx);
       json_object_put(root);
       return NULL;
@@ -1498,14 +1499,14 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
          const char *error_msg = NULL;
 
          if (res == CURLE_ABORTED_BY_CALLBACK) {
-            LOG_INFO("LLM transfer interrupted by user");
+            OLOG_INFO("LLM transfer interrupted by user");
             /* User cancellation - don't send as error */
          } else if (res == CURLE_OPERATION_TIMEDOUT) {
-            LOG_ERROR("LLM stream timed out (no data for 60 seconds)");
+            OLOG_ERROR("LLM stream timed out (no data for 60 seconds)");
             error_code = "LLM_TIMEOUT";
             error_msg = "Request timed out - AI server may be overloaded";
          } else {
-            LOG_ERROR("curl_easy_perform() failed: %s", curl_easy_strerror(res));
+            OLOG_ERROR("curl_easy_perform() failed: %s", curl_easy_strerror(res));
             error_code = "LLM_CONNECTION_ERROR";
             error_msg = curl_easy_strerror(res);
          }
@@ -1537,25 +1538,25 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
          /* Determine error code based on HTTP status */
          const char *error_code;
          if (http_code == 401) {
-            LOG_ERROR("OpenAI API: Invalid or missing API key (HTTP 401)");
+            OLOG_ERROR("OpenAI API: Invalid or missing API key (HTTP 401)");
             error_code = "LLM_AUTH_ERROR";
          } else if (http_code == 403) {
-            LOG_ERROR("OpenAI API: Access forbidden (HTTP 403) - check API key permissions");
+            OLOG_ERROR("OpenAI API: Access forbidden (HTTP 403) - check API key permissions");
             error_code = "LLM_ACCESS_ERROR";
          } else if (http_code == 429) {
-            LOG_ERROR("OpenAI API: Rate limit exceeded (HTTP 429)");
+            OLOG_ERROR("OpenAI API: Rate limit exceeded (HTTP 429)");
             error_code = "LLM_RATE_LIMIT";
          } else if (http_code >= 500) {
-            LOG_ERROR("OpenAI API: Server error (HTTP %ld)", http_code);
+            OLOG_ERROR("OpenAI API: Server error (HTTP %ld)", http_code);
             error_code = "LLM_SERVER_ERROR";
          } else {
-            LOG_ERROR("OpenAI API: Request failed (HTTP %ld)", http_code);
+            OLOG_ERROR("OpenAI API: Request failed (HTTP %ld)", http_code);
             error_code = "LLM_ERROR";
          }
 
          /* Log raw response body for debugging */
          if (streaming_ctx.raw_buffer && streaming_ctx.raw_size > 0) {
-            LOG_ERROR("OpenAI API error response: %s", streaming_ctx.raw_buffer);
+            OLOG_ERROR("OpenAI API error response: %s", streaming_ctx.raw_buffer);
          }
 
 #ifdef ENABLE_WEBUI
@@ -1584,13 +1585,13 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
    if (llm_stream_has_tool_calls(stream_ctx)) {
       const tool_call_list_t *tool_calls = llm_stream_get_tool_calls(stream_ctx);
       if (tool_calls && tool_calls->count > 0) {
-         LOG_INFO("OpenAI streaming: Executing %d tool call(s) at iteration %d", tool_calls->count,
-                  iteration);
+         OLOG_INFO("OpenAI streaming: Executing %d tool call(s) at iteration %d", tool_calls->count,
+                   iteration);
 
          // Debug: Log the tool calls OpenAI is requesting
          for (int i = 0; i < tool_calls->count; i++) {
-            LOG_INFO("  Tool call [%d]: id=%s name=%s args=%s", i, tool_calls->calls[i].id,
-                     tool_calls->calls[i].name, tool_calls->calls[i].arguments);
+            OLOG_INFO("  Tool call [%d]: id=%s name=%s args=%s", i, tool_calls->calls[i].id,
+                      tool_calls->calls[i].name, tool_calls->calls[i].arguments);
          }
 
          // Check for duplicate tool calls (prevents infinite loops with weak models)
@@ -1598,7 +1599,7 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
          if (tool_calls->count > 0 &&
              llm_tools_is_duplicate_call(conversation_history, tool_calls->calls[0].name,
                                          tool_calls->calls[0].arguments, LLM_HISTORY_OPENAI)) {
-            LOG_WARNING("OpenAI streaming: Duplicate tool call detected, forcing text response");
+            OLOG_WARNING("OpenAI streaming: Duplicate tool call detected, forcing text response");
 
             // Add a system hint to use existing results and make one more call without tools
             json_object *hint_msg = json_object_new_object();
@@ -1617,7 +1618,7 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
             free(streaming_ctx.raw_buffer);
 
             // Make one more call with tools disabled to force a text response
-            LOG_INFO("OpenAI streaming: Making final call without tools to force text response");
+            OLOG_INFO("OpenAI streaming: Making final call without tools to force text response");
 
             // Get fresh config
             llm_resolved_config_t config;
@@ -1641,7 +1642,7 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
          // with up to MAX_TOOL_ITERATIONS levels of recursion)
          tool_result_list_t *results = calloc(1, sizeof(tool_result_list_t));
          if (!results) {
-            LOG_ERROR("OpenAI streaming: Failed to allocate tool results");
+            OLOG_ERROR("OpenAI streaming: Failed to allocate tool results");
             sse_parser_free(sse_parser);
             llm_stream_free(stream_ctx);
             json_object_put(root);
@@ -1678,7 +1679,7 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
                                       json_object_new_string(tool_calls->thought_signature));
                json_object_object_add(extra_content, "google", google_obj);
                json_object_object_add(tc, "extra_content", extra_content);
-               LOG_INFO("OpenAI streaming: Including thought_signature in follow-up request");
+               OLOG_INFO("OpenAI streaming: Including thought_signature in follow-up request");
             }
 
             json_object_array_add(tc_array, tc);
@@ -1697,7 +1698,7 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
 
          // Check if we should skip follow-up (e.g., LLM was switched)
          if (llm_tools_should_skip_followup(results)) {
-            LOG_INFO("OpenAI streaming: Skipping follow-up call (tool requested no follow-up)");
+            OLOG_INFO("OpenAI streaming: Skipping follow-up call (tool requested no follow-up)");
             char *direct_response = llm_tools_get_direct_response(results);
 
             // Add synthetic assistant message to complete the tool call sequence
@@ -1708,7 +1709,7 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
                json_object_object_add(closing_msg, "content",
                                       json_object_new_string(direct_response));
                json_object_array_add(conversation_history, closing_msg);
-               LOG_INFO("OpenAI streaming: Added closing assistant message to complete history");
+               OLOG_INFO("OpenAI streaming: Added closing assistant message to complete history");
             }
 
             // Send through chunk callback so TTS receives it
@@ -1729,8 +1730,9 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
 
          // Check iteration limit — force a final text response with what we have
          if (iteration >= MAX_TOOL_ITERATIONS) {
-            LOG_WARNING("OpenAI streaming: Max tool iterations (%d) reached, forcing text response",
-                        MAX_TOOL_ITERATIONS);
+            OLOG_WARNING(
+                "OpenAI streaming: Max tool iterations (%d) reached, forcing text response",
+                MAX_TOOL_ITERATIONS);
 
             // Inject a system hint telling the LLM to respond with what it has
             json_object *hint_msg = json_object_new_object();
@@ -1752,22 +1754,22 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
             free(results);
 
             // Make one final call with tools disabled
-            LOG_INFO("OpenAI streaming: Making final call without tools to present results");
+            OLOG_INFO("OpenAI streaming: Making final call without tools to present results");
             return llm_openai_streaming_internal(conversation_history, "", NULL, NULL, 0, base_url,
                                                  api_key, model, chunk_callback, callback_userdata,
                                                  MAX_TOOL_ITERATIONS);
          }
 
          // Make another call to get final response
-         LOG_INFO("OpenAI streaming: Making follow-up call after tool execution (iteration %d/%d)",
-                  iteration + 1, MAX_TOOL_ITERATIONS);
+         OLOG_INFO("OpenAI streaming: Making follow-up call after tool execution (iteration %d/%d)",
+                   iteration + 1, MAX_TOOL_ITERATIONS);
 
          // Debug: Log tool results that were added
-         LOG_INFO("OpenAI streaming: Tool results added to history:");
+         OLOG_INFO("OpenAI streaming: Tool results added to history:");
          for (int i = 0; i < results->count; i++) {
-            LOG_INFO("  [%d] id=%s result=%.200s%s", i, results->results[i].tool_call_id,
-                     results->results[i].result,
-                     strlen(results->results[i].result) > 200 ? "..." : "");
+            OLOG_INFO("  [%d] id=%s result=%.200s%s", i, results->results[i].tool_call_id,
+                      results->results[i].result,
+                      strlen(results->results[i].result) > 200 ? "..." : "");
          }
 
          // Check for vision data in tool results (session-isolated)
@@ -1777,8 +1779,8 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
             if (results->results[i].vision_image && results->results[i].vision_image_size > 0) {
                result_vision = results->results[i].vision_image;
                result_vision_size = results->results[i].vision_image_size;
-               LOG_INFO("OpenAI streaming: Including vision from tool result (%zu bytes)",
-                        result_vision_size);
+               OLOG_INFO("OpenAI streaming: Including vision from tool result (%zu bytes)",
+                         result_vision_size);
                break;
             }
          }
@@ -1800,7 +1802,7 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
          if (config_valid && current_config.type != LLM_LOCAL &&
              current_config.cloud_provider == CLOUD_PROVIDER_CLAUDE) {
             // Provider switched to Claude - hand off to Claude code path
-            LOG_INFO("OpenAI streaming: Provider switched to Claude, handing off");
+            OLOG_INFO("OpenAI streaming: Provider switched to Claude, handing off");
 
             // Convert conversation history from OpenAI to Claude format
             // Claude will handle the vision data if present
@@ -1822,7 +1824,7 @@ static char *llm_openai_streaming_internal(struct json_object *conversation_hist
             const char *fresh_model = model_buf_followup[0] ? model_buf_followup : model;
 
             if (config_valid && fresh_url != base_url) {
-               LOG_INFO("OpenAI streaming: Credentials refreshed to %s", fresh_url);
+               OLOG_INFO("OpenAI streaming: Credentials refreshed to %s", fresh_url);
             }
 
             // Pass tool result vision as a single-item array
@@ -2062,12 +2064,12 @@ int llm_openai_streaming_single_shot(struct json_object *conversation_history,
    payload = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN |
                                                       JSON_C_TO_STRING_NOSLASHESCAPE);
 
-   LOG_INFO("OpenAI single-shot iter %d: url=%s model=%s", iteration, base_url,
-            (model_name && model_name[0]) ? model_name : "(server default)");
+   OLOG_INFO("OpenAI single-shot iter %d: url=%s model=%s", iteration, base_url,
+             (model_name && model_name[0]) ? model_name : "(server default)");
 
    /* Connection check (fast-fail enables fallback to local in llm_interface.c) */
    if (!llm_check_connection(base_url, 4)) {
-      LOG_ERROR("Pre-flight connection check failed (cloud unreachable)");
+      OLOG_ERROR("Pre-flight connection check failed (cloud unreachable)");
       json_object_put(root);
       return 1;
    }
@@ -2086,14 +2088,14 @@ int llm_openai_streaming_single_shot(struct json_object *conversation_history,
    stream_ctx = llm_stream_create(stream_llm_type, stream_provider, chunk_callback,
                                   callback_userdata);
    if (!stream_ctx) {
-      LOG_ERROR("Failed to create LLM stream context");
+      OLOG_ERROR("Failed to create LLM stream context");
       json_object_put(root);
       return 1;
    }
 
    sse_parser = sse_parser_create(openai_sse_event_handler, &streaming_ctx);
    if (!sse_parser) {
-      LOG_ERROR("Failed to create SSE parser");
+      OLOG_ERROR("Failed to create SSE parser");
       llm_stream_free(stream_ctx);
       json_object_put(root);
       return 1;
@@ -2113,7 +2115,7 @@ int llm_openai_streaming_single_shot(struct json_object *conversation_history,
    for (int attempt = 0; attempt < max_attempts; attempt++) {
       curl_handle = curl_easy_init();
       if (!curl_handle) {
-         LOG_ERROR("Failed to initialize CURL");
+         OLOG_ERROR("Failed to initialize CURL");
          sse_parser_free(sse_parser);
          llm_stream_free(stream_ctx);
          json_object_put(root);
@@ -2155,8 +2157,8 @@ int llm_openai_streaming_single_shot(struct json_object *conversation_history,
          }
 
          if (retryable && attempt < max_attempts - 1) {
-            LOG_WARNING("CURL connect failed (%s), retrying in 1s... (attempt %d/%d)",
-                        curl_easy_strerror(res), attempt + 1, max_attempts);
+            OLOG_WARNING("CURL connect failed (%s), retrying in 1s... (attempt %d/%d)",
+                         curl_easy_strerror(res), attempt + 1, max_attempts);
             curl_easy_cleanup(curl_handle);
             curl_slist_free_all(headers);
             curl_handle = NULL;
@@ -2177,9 +2179,9 @@ int llm_openai_streaming_single_shot(struct json_object *conversation_history,
          }
 
          if (res == CURLE_ABORTED_BY_CALLBACK) {
-            LOG_INFO("LLM transfer interrupted by user");
+            OLOG_INFO("LLM transfer interrupted by user");
          } else {
-            LOG_ERROR("curl_easy_perform() failed: %s", curl_easy_strerror(res));
+            OLOG_ERROR("curl_easy_perform() failed: %s", curl_easy_strerror(res));
          }
 #ifdef ENABLE_WEBUI
          if (res != CURLE_ABORTED_BY_CALLBACK) {
@@ -2208,7 +2210,7 @@ int llm_openai_streaming_single_shot(struct json_object *conversation_history,
    curl_easy_getinfo(curl_handle, CURLINFO_RESPONSE_CODE, &http_code);
 
    if (http_code != 200) {
-      LOG_ERROR("OpenAI API: Request failed (HTTP %ld)", http_code);
+      OLOG_ERROR("OpenAI API: Request failed (HTTP %ld)", http_code);
 #ifdef ENABLE_WEBUI
       session_t *session = session_get_command_context();
       if (session && session->type == SESSION_TYPE_WEBUI) {

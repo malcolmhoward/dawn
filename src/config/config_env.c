@@ -46,67 +46,67 @@
       (dst)[sizeof(dst) - 1] = '\0';          \
    } while (0)
 
-#define ENV_STRING(env_name, dest)                          \
-   do {                                                     \
-      const char *val = getenv(env_name);                   \
-      if (val) {                                            \
-         SAFE_COPY(dest, val);                              \
-         LOG_INFO("Config override: %s=%s", env_name, val); \
-      }                                                     \
+#define ENV_STRING(env_name, dest)                           \
+   do {                                                      \
+      const char *val = getenv(env_name);                    \
+      if (val) {                                             \
+         SAFE_COPY(dest, val);                               \
+         OLOG_INFO("Config override: %s=%s", env_name, val); \
+      }                                                      \
    } while (0)
 
 /* Like ENV_STRING but redacts value in logs - use for API keys and secrets */
-#define ENV_SECRET(env_name, dest)                             \
+#define ENV_SECRET(env_name, dest)                              \
+   do {                                                         \
+      const char *val = getenv(env_name);                       \
+      if (val) {                                                \
+         SAFE_COPY(dest, val);                                  \
+         OLOG_INFO("Config override: %s=[REDACTED]", env_name); \
+      }                                                         \
+   } while (0)
+
+#define ENV_INT(env_name, dest)                                                               \
+   do {                                                                                       \
+      const char *val = getenv(env_name);                                                     \
+      if (val) {                                                                              \
+         char *end_;                                                                          \
+         errno = 0;                                                                           \
+         long v_ = strtol(val, &end_, 10);                                                    \
+         if (*end_ != '\0' || errno != 0 || v_ < INT_MIN || v_ > INT_MAX) {                   \
+            OLOG_WARNING("Config override: %s=%s (invalid integer, ignored)", env_name, val); \
+         } else {                                                                             \
+            dest = (int)v_;                                                                   \
+            OLOG_INFO("Config override: %s=%d", env_name, dest);                              \
+         }                                                                                    \
+      }                                                                                       \
+   } while (0)
+
+#define ENV_FLOAT(env_name, dest)                               \
+   do {                                                         \
+      const char *val = getenv(env_name);                       \
+      if (val) {                                                \
+         dest = (float)atof(val);                               \
+         OLOG_INFO("Config override: %s=%.2f", env_name, dest); \
+      }                                                         \
+   } while (0)
+
+#define ENV_BOOL(env_name, dest)                                                 \
+   do {                                                                          \
+      const char *val = getenv(env_name);                                        \
+      if (val) {                                                                 \
+         dest = (strcmp(val, "1") == 0 || strcasecmp(val, "true") == 0 ||        \
+                 strcasecmp(val, "yes") == 0);                                   \
+         OLOG_INFO("Config override: %s=%s", env_name, dest ? "true" : "false"); \
+      }                                                                          \
+   } while (0)
+
+#define ENV_SIZE_T(env_name, dest)                             \
    do {                                                        \
       const char *val = getenv(env_name);                      \
       if (val) {                                               \
-         SAFE_COPY(dest, val);                                 \
-         LOG_INFO("Config override: %s=[REDACTED]", env_name); \
+         dest = (size_t)atol(val);                             \
+         OLOG_INFO("Config override: %s=%zu", env_name, dest); \
       }                                                        \
-   } while (0)
-
-#define ENV_INT(env_name, dest)                                                              \
-   do {                                                                                      \
-      const char *val = getenv(env_name);                                                    \
-      if (val) {                                                                             \
-         char *end_;                                                                         \
-         errno = 0;                                                                          \
-         long v_ = strtol(val, &end_, 10);                                                   \
-         if (*end_ != '\0' || errno != 0 || v_ < INT_MIN || v_ > INT_MAX) {                  \
-            LOG_WARNING("Config override: %s=%s (invalid integer, ignored)", env_name, val); \
-         } else {                                                                            \
-            dest = (int)v_;                                                                  \
-            LOG_INFO("Config override: %s=%d", env_name, dest);                              \
-         }                                                                                   \
-      }                                                                                      \
-   } while (0)
-
-#define ENV_FLOAT(env_name, dest)                              \
-   do {                                                        \
-      const char *val = getenv(env_name);                      \
-      if (val) {                                               \
-         dest = (float)atof(val);                              \
-         LOG_INFO("Config override: %s=%.2f", env_name, dest); \
-      }                                                        \
-   } while (0)
-
-#define ENV_BOOL(env_name, dest)                                                \
-   do {                                                                         \
-      const char *val = getenv(env_name);                                       \
-      if (val) {                                                                \
-         dest = (strcmp(val, "1") == 0 || strcasecmp(val, "true") == 0 ||       \
-                 strcasecmp(val, "yes") == 0);                                  \
-         LOG_INFO("Config override: %s=%s", env_name, dest ? "true" : "false"); \
-      }                                                                         \
-   } while (0)
-
-#define ENV_SIZE_T(env_name, dest)                            \
-   do {                                                       \
-      const char *val = getenv(env_name);                     \
-      if (val) {                                              \
-         dest = (size_t)atol(val);                            \
-         LOG_INFO("Config override: %s=%zu", env_name, dest); \
-      }                                                       \
    } while (0)
 
 /* =============================================================================
@@ -1555,7 +1555,7 @@ int config_write_toml(const dawn_config_t *config, const char *path) {
 
    FILE *fp = fopen(path, "w");
    if (!fp) {
-      LOG_ERROR("Failed to open config file for writing: %s (%s)", path, strerror(errno));
+      OLOG_ERROR("Failed to open config file for writing: %s (%s)", path, strerror(errno));
       return 1;
    }
 
@@ -1640,22 +1640,23 @@ int config_write_toml(const dawn_config_t *config, const char *path) {
     * Model names are expected to be ASCII alphanumeric (e.g., "gpt-4o", "gemini-2.5-flash"),
     * so escape failures are unlikely. We log a warning but continue with unescaped value
     * to avoid breaking config save for the entire file. */
-#define WRITE_MODEL_ARRAY(array_name, idx_key, array, count, idx_var)                              \
-   do {                                                                                            \
-      if ((count) > 0) {                                                                           \
-         fprintf(fp, "%s = [\n", array_name);                                                      \
-         for (int i = 0; i < (count); i++) {                                                       \
-            char *escaped = toml_escape_string((array)[i]);                                        \
-            if (!escaped) {                                                                        \
-               LOG_WARNING("Failed to escape model name '%s', using unescaped value", (array)[i]); \
-            }                                                                                      \
-            fprintf(fp, "    \"%s\"%s\n", escaped ? escaped : (array)[i],                          \
-                    i < (count)-1 ? "," : "");                                                     \
-            free(escaped);                                                                         \
-         }                                                                                         \
-         fprintf(fp, "]\n");                                                                       \
-      }                                                                                            \
-      fprintf(fp, "%s = %d\n", idx_key, idx_var);                                                  \
+#define WRITE_MODEL_ARRAY(array_name, idx_key, array, count, idx_var)                  \
+   do {                                                                                \
+      if ((count) > 0) {                                                               \
+         fprintf(fp, "%s = [\n", array_name);                                          \
+         for (int i = 0; i < (count); i++) {                                           \
+            char *escaped = toml_escape_string((array)[i]);                            \
+            if (!escaped) {                                                            \
+               OLOG_WARNING("Failed to escape model name '%s', using unescaped value", \
+                            (array)[i]);                                               \
+            }                                                                          \
+            fprintf(fp, "    \"%s\"%s\n", escaped ? escaped : (array)[i],              \
+                    i < (count)-1 ? "," : "");                                         \
+            free(escaped);                                                             \
+         }                                                                             \
+         fprintf(fp, "]\n");                                                           \
+      }                                                                                \
+      fprintf(fp, "%s = %d\n", idx_key, idx_var);                                      \
    } while (0)
 
    WRITE_MODEL_ARRAY("openai_models", "openai_default_model_idx", config->llm.cloud.openai_models,
@@ -1913,7 +1914,7 @@ int config_write_toml(const dawn_config_t *config, const char *path) {
    tool_registry_write_configs(fp);
 
    fclose(fp);
-   LOG_INFO("Configuration written to %s", path);
+   OLOG_INFO("Configuration written to %s", path);
    return 0;
 }
 
@@ -1924,12 +1925,12 @@ int secrets_write_toml(const secrets_config_t *secrets, const char *path) {
    /* Open with restrictive permissions from the start (no TOCTOU window) */
    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
    if (fd < 0) {
-      LOG_ERROR("Failed to open secrets file for writing: %s (%s)", path, strerror(errno));
+      OLOG_ERROR("Failed to open secrets file for writing: %s (%s)", path, strerror(errno));
       return 1;
    }
    FILE *fp = fdopen(fd, "w");
    if (!fp) {
-      LOG_ERROR("Failed to fdopen secrets file: %s (%s)", path, strerror(errno));
+      OLOG_ERROR("Failed to fdopen secrets file: %s (%s)", path, strerror(errno));
       close(fd);
       return 1;
    }
@@ -1941,18 +1942,18 @@ int secrets_write_toml(const secrets_config_t *secrets, const char *path) {
    fprintf(fp, "[secrets]\n");
 
    /* Helper macro to write escaped string, with error handling for allocation failure */
-#define WRITE_SECRET(key, value)                                                 \
-   do {                                                                          \
-      if ((value)[0]) {                                                          \
-         char *escaped = toml_escape_string(value);                              \
-         if (!escaped) {                                                         \
-            LOG_ERROR("Failed to allocate memory for escaping secret: %s", key); \
-            fclose(fp);                                                          \
-            return 1;                                                            \
-         }                                                                       \
-         fprintf(fp, "%s = \"%s\"\n", key, escaped);                             \
-         free(escaped);                                                          \
-      }                                                                          \
+#define WRITE_SECRET(key, value)                                                  \
+   do {                                                                           \
+      if ((value)[0]) {                                                           \
+         char *escaped = toml_escape_string(value);                               \
+         if (!escaped) {                                                          \
+            OLOG_ERROR("Failed to allocate memory for escaping secret: %s", key); \
+            fclose(fp);                                                           \
+            return 1;                                                             \
+         }                                                                        \
+         fprintf(fp, "%s = \"%s\"\n", key, escaped);                              \
+         free(escaped);                                                           \
+      }                                                                           \
    } while (0)
 
    WRITE_SECRET("openai_api_key", secrets->openai_api_key);
@@ -1990,6 +1991,6 @@ int secrets_write_toml(const secrets_config_t *secrets, const char *path) {
 
    fclose(fp); /* Also closes the underlying fd */
 
-   LOG_INFO("Secrets written to %s", path);
+   OLOG_INFO("Secrets written to %s", path);
    return 0;
 }

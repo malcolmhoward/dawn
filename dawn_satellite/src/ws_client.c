@@ -183,7 +183,7 @@ static int callback_ws(struct lws *wsi,
 
    switch (reason) {
       case LWS_CALLBACK_CLIENT_ESTABLISHED:
-         LOG_INFO("Connected to daemon");
+         OLOG_INFO("Connected to daemon");
          if (client) {
             pthread_mutex_lock(&client->mutex);
             client->state = WS_STATE_CONNECTED;
@@ -223,8 +223,8 @@ static int callback_ws(struct lws *wsi,
             /* Expand buffer if needed (capped to prevent OOM from rogue messages).
              * Overflow-safe check: use subtraction to avoid size_t wraparound. */
             if (client->rx_len > WS_RX_BUFFER_MAX - len - 1) {
-               LOG_ERROR("Message too large (%zu + %zu bytes > %d max), dropping", client->rx_len,
-                         len, WS_RX_BUFFER_MAX);
+               OLOG_ERROR("Message too large (%zu + %zu bytes > %d max), dropping", client->rx_len,
+                          len, WS_RX_BUFFER_MAX);
                client->rx_len = 0;
                pthread_mutex_unlock(&client->mutex);
                return -1;
@@ -236,7 +236,7 @@ static int callback_ws(struct lws *wsi,
                   new_cap = needed;
                char *new_buf = realloc(client->rx_buffer, new_cap);
                if (!new_buf) {
-                  LOG_ERROR("Failed to expand receive buffer");
+                  OLOG_ERROR("Failed to expand receive buffer");
                   pthread_mutex_unlock(&client->mutex);
                   return -1;
                }
@@ -284,7 +284,7 @@ static int callback_ws(struct lws *wsi,
                free(buf);
 
                if (n < 0) {
-                  LOG_ERROR("Write failed");
+                  OLOG_ERROR("Write failed");
                }
             }
 
@@ -298,7 +298,7 @@ static int callback_ws(struct lws *wsi,
          break;
 
       case LWS_CALLBACK_CLIENT_CONNECTION_ERROR:
-         LOG_ERROR("Connection error: %s", in ? (char *)in : "unknown");
+         OLOG_ERROR("Connection error: %s", in ? (char *)in : "unknown");
          if (client) {
             pthread_mutex_lock(&client->mutex);
             client->state = WS_STATE_ERROR;
@@ -310,7 +310,7 @@ static int callback_ws(struct lws *wsi,
 
       case LWS_CALLBACK_CLIENT_CLOSED:
       case LWS_CALLBACK_CLOSED:
-         LOG_INFO("Connection closed");
+         OLOG_INFO("Connection closed");
          if (client) {
             pthread_mutex_lock(&client->mutex);
             client->state = WS_STATE_DISCONNECTED;
@@ -337,13 +337,13 @@ static void handle_message(ws_client_t *client, const char *msg, size_t len) {
 
    struct json_object *root = json_tokener_parse(msg);
    if (!root) {
-      LOG_ERROR("Failed to parse JSON: %.100s", msg);
+      OLOG_ERROR("Failed to parse JSON: %.100s", msg);
       return;
    }
 
    struct json_object *type_obj;
    if (!json_object_object_get_ex(root, "type", &type_obj)) {
-      LOG_ERROR("Message missing 'type' field");
+      OLOG_ERROR("Message missing 'type' field");
       json_object_put(root);
       return;
    }
@@ -353,7 +353,7 @@ static void handle_message(ws_client_t *client, const char *msg, size_t len) {
    json_object_object_get_ex(root, "payload", &payload);
 
    if (strcmp(type, "satellite_pong") != 0)
-      LOG_DEBUG("Received message type: %s", type);
+      OLOG_DEBUG("Received message type: %s", type);
 
    if (strcmp(type, "satellite_register_ack") == 0) {
       if (payload) {
@@ -383,7 +383,7 @@ static void handle_message(ws_client_t *client, const char *msg, size_t len) {
                           sizeof(client->identity.reconnect_secret) - 1);
                   client->identity.reconnect_secret[sizeof(client->identity.reconnect_secret) - 1] =
                       '\0';
-                  LOG_INFO("Received reconnect secret (stored)");
+                  OLOG_INFO("Received reconnect secret (stored)");
                }
             }
 
@@ -394,18 +394,18 @@ static void handle_message(ws_client_t *client, const char *msg, size_t len) {
                if (token && token[0]) {
                   strncpy(client->session_token, token, sizeof(client->session_token) - 1);
                   client->session_token[sizeof(client->session_token) - 1] = '\0';
-                  LOG_INFO("Received session token: %.8s...", token);
+                  OLOG_INFO("Received session token: %.8s...", token);
                }
             }
 
-            LOG_INFO("Registered successfully, session_id=%u", session_id);
+            OLOG_INFO("Registered successfully, session_id=%u", session_id);
          } else {
             struct json_object *msg_obj;
             const char *err_msg = "Unknown error";
             if (json_object_object_get_ex(payload, "message", &msg_obj)) {
                err_msg = json_object_get_string(msg_obj);
             }
-            LOG_ERROR("Registration failed: %s", err_msg);
+            OLOG_ERROR("Registration failed: %s", err_msg);
          }
       }
    } else if (strcmp(type, "satellite_pong") == 0) {
@@ -415,7 +415,7 @@ static void handle_message(ws_client_t *client, const char *msg, size_t len) {
          struct json_object *state_obj, *detail_obj;
          if (json_object_object_get_ex(payload, "state", &state_obj)) {
             const char *state = json_object_get_string(state_obj);
-            LOG_DEBUG("State: %s", state);
+            OLOG_DEBUG("State: %s", state);
 
             /* Store detail if present; clear only on idle (not on every state) */
             if (json_object_object_get_ex(payload, "detail", &detail_obj)) {
@@ -440,7 +440,7 @@ static void handle_message(ws_client_t *client, const char *msg, size_t len) {
          }
       }
    } else if (strcmp(type, "stream_start") == 0) {
-      LOG_DEBUG("Stream start");
+      OLOG_DEBUG("Stream start");
    } else if (strcmp(type, "stream_delta") == 0) {
       if (payload) {
          struct json_object *delta_obj;
@@ -457,7 +457,7 @@ static void handle_message(ws_client_t *client, const char *msg, size_t len) {
          }
       }
    } else if (strcmp(type, "stream_end") == 0) {
-      LOG_DEBUG("Stream end");
+      OLOG_DEBUG("Stream end");
       ws_stream_callback_t stream_cb = client->stream_cb;
       void *stream_cb_data = client->stream_cb_data;
       if (stream_cb) {
@@ -481,9 +481,9 @@ static void handle_message(ws_client_t *client, const char *msg, size_t len) {
          /* NOT_FOUND is typically a harmless race (e.g. dismiss for already-dismissed
           * timer). Log as warning instead of error. */
          if (code && strcmp(code, "NOT_FOUND") == 0) {
-            LOG_WARNING("Server: [%s]: %s", code, message);
+            OLOG_WARNING("Server: [%s]: %s", code, message);
          } else {
-            LOG_ERROR("Error [%s]: %s", code, message);
+            OLOG_ERROR("Error [%s]: %s", code, message);
          }
          snprintf(client->error_msg, sizeof(client->error_msg), "[%s] %s", code, message);
       }
@@ -549,7 +549,7 @@ static void handle_message(ws_client_t *client, const char *msg, size_t len) {
       }
    } else if (strcmp(type, "music_error") == 0) {
       if (payload) {
-         LOG_WARNING("Music error: %s", json_get_string(payload, "message"));
+         OLOG_WARNING("Music error: %s", json_get_string(payload, "message"));
       }
    } else if (strcmp(type, "scheduler_notification") == 0) {
       if (payload && client->alarm_notify_cb) {
@@ -579,7 +579,7 @@ static void handle_message(ws_client_t *client, const char *msg, size_t len) {
             if (level > 100)
                level = 100;
 
-            LOG_INFO("Volume set from daemon: %d%%", level);
+            OLOG_INFO("Volume set from daemon: %d%%", level);
 
             /* Invoke volume callback (sdl_ui sets this to set_master_volume) */
             if (client->volume_set_cb) {
@@ -603,7 +603,7 @@ static void handle_message(ws_client_t *client, const char *msg, size_t len) {
          }
       }
    } else {
-      LOG_DEBUG("Unknown message type: %s", type);
+      OLOG_DEBUG("Unknown message type: %s", type);
    }
 
    json_object_put(root);
@@ -801,7 +801,7 @@ static int send_json(ws_client_t *client, struct json_object *obj) {
 
    if (client->tx_count >= WS_TX_QUEUE_SIZE) {
       /* Queue full — drop oldest message to make room */
-      LOG_WARNING("TX queue full, dropping oldest message");
+      OLOG_WARNING("TX queue full, dropping oldest message");
       free(client->tx_queue[client->tx_head].data);
       client->tx_queue[client->tx_head].data = NULL;
       client->tx_head = (client->tx_head + 1) % WS_TX_QUEUE_SIZE;
@@ -861,7 +861,7 @@ ws_client_t *ws_client_create(const char *host,
 
    pthread_mutex_init(&client->mutex, NULL);
 
-   LOG_INFO("Client created for %s://%s:%u", use_ssl ? "wss" : "ws", host, client->port);
+   OLOG_INFO("Client created for %s://%s:%u", use_ssl ? "wss" : "ws", host, client->port);
    return client;
 }
 
@@ -892,7 +892,7 @@ static void *ws_service_thread(void *arg) {
    ws_client_t *client = (ws_client_t *)arg;
    time_t last_ping = time(NULL);
 
-   LOG_INFO("WebSocket service thread started");
+   OLOG_INFO("WebSocket service thread started");
 
    while (client->service_running && client->lws_ctx) {
       /* Service with 100ms timeout - this blocks but doesn't affect main voice loop */
@@ -906,7 +906,7 @@ static void *ws_service_thread(void *arg) {
       }
    }
 
-   LOG_INFO("WebSocket service thread stopped");
+   OLOG_INFO("WebSocket service thread stopped");
    return NULL;
 }
 
@@ -933,7 +933,7 @@ int ws_client_connect(ws_client_t *client) {
    /* Set CA certificate path for SSL verification */
    if (client->use_ssl && client->ssl_verify && client->ca_cert_path[0]) {
       ctx_info.client_ssl_ca_filepath = client->ca_cert_path;
-      LOG_INFO("SSL: using CA cert: %s", client->ca_cert_path);
+      OLOG_INFO("SSL: using CA cert: %s", client->ca_cert_path);
    }
 
    /* Disable TCP keepalive to prevent 1-second blocking in lws_service */
@@ -944,7 +944,7 @@ int ws_client_connect(ws_client_t *client) {
 
    client->lws_ctx = lws_create_context(&ctx_info);
    if (!client->lws_ctx) {
-      LOG_ERROR("Failed to create lws context");
+      OLOG_ERROR("Failed to create lws context");
       return -1;
    }
 
@@ -964,13 +964,13 @@ int ws_client_connect(ws_client_t *client) {
           * If ca_cert_path is set on the context, lws validates against it.
           * Otherwise falls back to system CA bundle. */
          conn_info.ssl_connection = LCCSCF_USE_SSL;
-         LOG_INFO("SSL enabled with certificate verification%s",
-                  client->ca_cert_path[0] ? " (private CA)" : " (system CA)");
+         OLOG_INFO("SSL enabled with certificate verification%s",
+                   client->ca_cert_path[0] ? " (private CA)" : " (system CA)");
       } else {
          /* Development mode: skip verification (NOT FOR PRODUCTION) */
          conn_info.ssl_connection = LCCSCF_USE_SSL | LCCSCF_ALLOW_SELFSIGNED |
                                     LCCSCF_SKIP_SERVER_CERT_HOSTNAME_CHECK;
-         LOG_WARNING("SSL certificate verification DISABLED — development only!");
+         OLOG_WARNING("SSL certificate verification DISABLED — development only!");
       }
    }
 
@@ -978,14 +978,14 @@ int ws_client_connect(ws_client_t *client) {
 
    client->wsi = lws_client_connect_via_info(&conn_info);
    if (!client->wsi) {
-      LOG_ERROR("Failed to initiate connection");
+      OLOG_ERROR("Failed to initiate connection");
       lws_context_destroy(client->lws_ctx);
       client->lws_ctx = NULL;
       client->state = WS_STATE_DISCONNECTED;
       return -1;
    }
 
-   LOG_INFO("Connecting to %s:%u...", client->host, client->port);
+   OLOG_INFO("Connecting to %s:%u...", client->host, client->port);
 
    /* Wait for connection with timeout */
    int timeout_ms = 5000;
@@ -996,7 +996,7 @@ int ws_client_connect(ws_client_t *client) {
    }
 
    if (client->state != WS_STATE_CONNECTED) {
-      LOG_ERROR("Connection timeout or failed");
+      OLOG_ERROR("Connection timeout or failed");
       lws_context_destroy(client->lws_ctx);
       client->lws_ctx = NULL;
       client->wsi = NULL;
@@ -1007,7 +1007,7 @@ int ws_client_connect(ws_client_t *client) {
    /* Start background service thread */
    client->service_running = true;
    if (pthread_create(&client->service_thread, NULL, ws_service_thread, client) != 0) {
-      LOG_ERROR("Failed to create WebSocket service thread");
+      OLOG_ERROR("Failed to create WebSocket service thread");
       lws_context_destroy(client->lws_ctx);
       client->lws_ctx = NULL;
       client->wsi = NULL;
@@ -1063,7 +1063,7 @@ int ws_client_register(ws_client_t *client,
    }
 
    if (client->state != WS_STATE_CONNECTED) {
-      LOG_ERROR("Not connected");
+      OLOG_ERROR("Not connected");
       return -1;
    }
 
@@ -1092,7 +1092,7 @@ int ws_client_register(ws_client_t *client,
    if (identity->reconnect_secret[0]) {
       json_object_object_add(payload, "reconnect_secret",
                              json_object_new_string(identity->reconnect_secret));
-      LOG_INFO("Sending reconnect_secret for session reclamation");
+      OLOG_INFO("Sending reconnect_secret for session reclamation");
    }
 
    struct json_object *caps_obj = json_object_new_object();
@@ -1107,11 +1107,11 @@ int ws_client_register(ws_client_t *client,
    json_object_put(msg);
 
    if (ret < 0) {
-      LOG_ERROR("Failed to send registration");
+      OLOG_ERROR("Failed to send registration");
       return -1;
    }
 
-   LOG_INFO("Registration sent for '%s'", identity->name);
+   OLOG_INFO("Registration sent for '%s'", identity->name);
 
    /* Wait for registration response
     * NOTE: Don't call lws_service() here - the background service thread
@@ -1124,7 +1124,7 @@ int ws_client_register(ws_client_t *client,
    }
 
    if (!client->registered) {
-      LOG_ERROR("Registration timeout or failed");
+      OLOG_ERROR("Registration timeout or failed");
       return -1;
    }
 
@@ -1150,7 +1150,7 @@ int ws_client_send_query(ws_client_t *client, const char *text) {
    }
 
    if (!client->registered) {
-      LOG_ERROR("Not registered");
+      OLOG_ERROR("Not registered");
       return -1;
    }
 
@@ -1165,11 +1165,11 @@ int ws_client_send_query(ws_client_t *client, const char *text) {
    json_object_put(msg);
 
    if (ret < 0) {
-      LOG_ERROR("Failed to send query");
+      OLOG_ERROR("Failed to send query");
       return -1;
    }
 
-   LOG_INFO("Query sent: %.50s%s", text, strlen(text) > 50 ? "..." : "");
+   OLOG_INFO("Query sent: %.50s%s", text, strlen(text) > 50 ? "..." : "");
    return 0;
 }
 
@@ -1251,7 +1251,7 @@ void ws_client_generate_uuid(char *uuid) {
       FILE *f = fopen("/dev/urandom", "r");
       if (!f || fread(bytes, 1, sizeof(bytes), f) != sizeof(bytes)) {
          /* Last resort: time-based seed (weak entropy — log a warning) */
-         LOG_WARNING("UUID: CSPRNG unavailable, falling back to rand()");
+         OLOG_WARNING("UUID: CSPRNG unavailable, falling back to rand()");
          srand((unsigned int)time(NULL) ^ (unsigned int)getpid());
          for (int i = 0; i < 16; i++)
             bytes[i] = (uint8_t)(rand() & 0xFF);
@@ -1383,7 +1383,7 @@ int ws_client_send_music_control(ws_client_t *client, const char *action, const 
    int ret = send_json(client, msg);
    json_object_put(msg);
 
-   LOG_INFO("Music control: %s", action);
+   OLOG_INFO("Music control: %s", action);
    return ret;
 }
 
@@ -1402,7 +1402,7 @@ int ws_client_send_music_seek(ws_client_t *client, float position_sec) {
    int ret = send_json(client, msg);
    json_object_put(msg);
 
-   LOG_INFO("Music seek: %.1fs", position_sec);
+   OLOG_INFO("Music seek: %.1fs", position_sec);
    return ret;
 }
 
@@ -1428,7 +1428,7 @@ int ws_client_send_music_library(ws_client_t *client, const char *type, const ch
    int ret = send_json(client, msg);
    json_object_put(msg);
 
-   LOG_INFO("Music library browse: %s", type);
+   OLOG_INFO("Music library browse: %s", type);
    return ret;
 }
 
@@ -1459,7 +1459,7 @@ int ws_client_send_music_library_paged(ws_client_t *client,
    int ret = send_json(client, msg);
    json_object_put(msg);
 
-   LOG_INFO("Music library browse: %s (offset=%d limit=%d)", type, offset, limit);
+   OLOG_INFO("Music library browse: %s (offset=%d limit=%d)", type, offset, limit);
    return ret;
 }
 
@@ -1486,7 +1486,7 @@ int ws_client_send_music_queue(ws_client_t *client,
    int ret = send_json(client, msg);
    json_object_put(msg);
 
-   LOG_INFO("Music queue: %s", action);
+   OLOG_INFO("Music queue: %s", action);
    return ret;
 }
 
@@ -1508,7 +1508,7 @@ int ws_client_send_music_queue_bulk(ws_client_t *client, const char *action, con
    int ret = send_json(client, msg);
    json_object_put(msg);
 
-   LOG_INFO("Music queue: %s '%s'", action, name);
+   OLOG_INFO("Music queue: %s '%s'", action, name);
    return ret;
 }
 
@@ -1539,7 +1539,7 @@ int ws_client_send_music_subscribe(ws_client_t *client) {
    int ret = send_json(client, msg);
    json_object_put(msg);
 
-   LOG_INFO("Music subscribe sent");
+   OLOG_INFO("Music subscribe sent");
    return ret;
 }
 
@@ -1576,7 +1576,7 @@ int ws_client_send_alarm_action(ws_client_t *client,
    int ret = send_json(client, msg);
    json_object_put(msg);
 
-   LOG_INFO("Alarm action sent: %s (event_id=%lld)", action, (long long)event_id);
+   OLOG_INFO("Alarm action sent: %s (event_id=%lld)", action, (long long)event_id);
    return ret;
 }
 

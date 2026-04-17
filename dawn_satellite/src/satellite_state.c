@@ -85,7 +85,7 @@ void satellite_set_error(satellite_ctx_t *ctx, int code, const char *fmt, ...) {
    vsnprintf(ctx->error_msg, sizeof(ctx->error_msg), fmt, args);
    va_end(args);
 
-   LOG_ERROR("Error %d: %s", code, ctx->error_msg);
+   OLOG_ERROR("Error %d: %s", code, ctx->error_msg);
 }
 
 int satellite_init(satellite_ctx_t *ctx) {
@@ -150,7 +150,7 @@ int satellite_init(satellite_ctx_t *ctx) {
    ctx->state = STATE_IDLE;
    ctx->running = 1;
 
-   LOG_INFO("Satellite context initialized");
+   OLOG_INFO("Satellite context initialized");
    return 0;
 }
 
@@ -202,7 +202,7 @@ void satellite_cleanup(satellite_ctx_t *ctx) {
       free(ctx->response_buffer);
    }
 
-   LOG_INFO("Satellite context cleaned up");
+   OLOG_INFO("Satellite context cleaned up");
 }
 
 void satellite_set_server(satellite_ctx_t *ctx, const char *ip, uint16_t port) {
@@ -216,7 +216,7 @@ void satellite_set_server(satellite_ctx_t *ctx, const char *ip, uint16_t port) {
       ctx->server_port = port;
    }
 
-   LOG_INFO("Server set to %s:%u", ctx->server_ip, ctx->server_port);
+   OLOG_INFO("Server set to %s:%u", ctx->server_ip, ctx->server_port);
 }
 
 void satellite_set_audio_devices(satellite_ctx_t *ctx,
@@ -232,7 +232,7 @@ void satellite_set_audio_devices(satellite_ctx_t *ctx,
       strncpy(ctx->playback_device, playback_device, sizeof(ctx->playback_device) - 1);
    }
 
-   LOG_INFO("Audio devices: capture=%s, playback=%s", ctx->capture_device, ctx->playback_device);
+   OLOG_INFO("Audio devices: capture=%s, playback=%s", ctx->capture_device, ctx->playback_device);
 }
 
 satellite_state_t satellite_get_state(satellite_ctx_t *ctx) {
@@ -247,7 +247,7 @@ satellite_state_t satellite_process_event(satellite_ctx_t *ctx, satellite_event_
    satellite_state_t old_state = ctx->state;
    satellite_state_t new_state = old_state;
 
-   LOG_INFO("Event %s in state %s", satellite_event_name(event), satellite_state_name(old_state));
+   OLOG_INFO("Event %s in state %s", satellite_event_name(event), satellite_state_name(old_state));
 
    switch (old_state) {
       case STATE_IDLE:
@@ -383,14 +383,14 @@ satellite_state_t satellite_process_event(satellite_ctx_t *ctx, satellite_event_
          break;
 
       default:
-         LOG_ERROR("Unknown state: %d", old_state);
+         OLOG_ERROR("Unknown state: %d", old_state);
          new_state = STATE_ERROR;
          break;
    }
 
    if (new_state != old_state) {
-      LOG_INFO("State transition: %s -> %s", satellite_state_name(old_state),
-               satellite_state_name(new_state));
+      OLOG_INFO("State transition: %s -> %s", satellite_state_name(old_state),
+                satellite_state_name(new_state));
       ctx->prev_state = old_state;
       ctx->state = new_state;
 
@@ -516,9 +516,9 @@ void satellite_set_mode(satellite_ctx_t *ctx, satellite_mode_t mode) {
       ctx->state = STATE_IDLE;
    }
 
-   LOG_INFO("Mode set to %s, initial state: %s",
-            mode == MODE_VOICE_ACTIVATED ? "VOICE_ACTIVATED" : "BUTTON_TRIGGERED",
-            satellite_state_name(ctx->state));
+   OLOG_INFO("Mode set to %s, initial state: %s",
+             mode == MODE_VOICE_ACTIVATED ? "VOICE_ACTIVATED" : "BUTTON_TRIGGERED",
+             satellite_state_name(ctx->state));
 }
 
 void satellite_set_local_models(satellite_ctx_t *ctx,
@@ -546,7 +546,7 @@ void satellite_set_local_models(satellite_ctx_t *ctx,
       strncpy(ctx->espeak_data_path, espeak_data, sizeof(ctx->espeak_data_path) - 1);
    }
 
-   LOG_INFO("Local models configured");
+   OLOG_INFO("Local models configured");
 }
 
 void satellite_set_wake_word(satellite_ctx_t *ctx, const char *wake_word) {
@@ -554,7 +554,7 @@ void satellite_set_wake_word(satellite_ctx_t *ctx, const char *wake_word) {
       return;
 
    strncpy(ctx->wake_word, wake_word, sizeof(ctx->wake_word) - 1);
-   LOG_INFO("Wake word set to: %s", ctx->wake_word);
+   OLOG_INFO("Wake word set to: %s", ctx->wake_word);
 }
 
 /* Local processing initialization and cleanup */
@@ -574,17 +574,17 @@ int satellite_init_local_processing(satellite_ctx_t *ctx) {
    if (!ctx)
       return -1;
 
-   LOG_INFO("Initializing local processing...");
+   OLOG_INFO("Initializing local processing...");
 
 #ifdef ENABLE_LOCAL_VAD
    if (ctx->vad_model_path[0]) {
       ctx->vad_ctx = vad_silero_init(ctx->vad_model_path, NULL);
       if (!ctx->vad_ctx) {
-         LOG_ERROR("Failed to initialize VAD");
+         OLOG_ERROR("Failed to initialize VAD");
          return -1;
       }
       ctx->vad_threshold = 0.5f; /* Default threshold */
-      LOG_INFO("VAD initialized: %s", ctx->vad_model_path);
+      OLOG_INFO("VAD initialized: %s", ctx->vad_model_path);
    }
 #endif
 
@@ -597,11 +597,11 @@ int satellite_init_local_processing(satellite_ctx_t *ctx) {
 
       ctx->asr_ctx = asr_whisper_init(&asr_config);
       if (!ctx->asr_ctx) {
-         LOG_ERROR("Failed to initialize ASR");
+         OLOG_ERROR("Failed to initialize ASR");
          satellite_cleanup_local_processing(ctx);
          return -1;
       }
-      LOG_INFO("ASR initialized: %s", ctx->asr_model_path);
+      OLOG_INFO("ASR initialized: %s", ctx->asr_model_path);
    }
 #endif
 
@@ -616,15 +616,15 @@ int satellite_init_local_processing(satellite_ctx_t *ctx) {
 
       ctx->tts_ctx = tts_piper_init(&tts_config);
       if (!ctx->tts_ctx) {
-         LOG_ERROR("Failed to initialize TTS");
+         OLOG_ERROR("Failed to initialize TTS");
          satellite_cleanup_local_processing(ctx);
          return -1;
       }
-      LOG_INFO("TTS initialized: %s", ctx->tts_model_path);
+      OLOG_INFO("TTS initialized: %s", ctx->tts_model_path);
    }
 #endif
 
-   LOG_INFO("Local processing initialized successfully");
+   OLOG_INFO("Local processing initialized successfully");
    return 0;
 }
 
@@ -653,5 +653,5 @@ void satellite_cleanup_local_processing(satellite_ctx_t *ctx) {
    }
 #endif
 
-   LOG_INFO("Local processing cleaned up");
+   OLOG_INFO("Local processing cleaned up");
 }

@@ -95,7 +95,7 @@ static int parse_string_array(struct json_object *array,
 
    int count = (int)json_object_array_length(array);
    if (count > max_items) {
-      LOG_WARNING("HUD discovery: Truncating array from %d to %d items", count, max_items);
+      OLOG_WARNING("HUD discovery: Truncating array from %d to %d items", count, max_items);
       count = max_items;
    }
 
@@ -131,13 +131,13 @@ static void update_hud_control_elements(void) {
    int rc = tool_registry_update_param_enum("hud_control", "element", s_element_ptrs,
                                             s_element_count);
    if (rc == 0) {
-      LOG_INFO("HUD discovery: Updated hud_control with %d elements", s_element_count);
+      OLOG_INFO("HUD discovery: Updated hud_control with %d elements", s_element_count);
       /* Refresh tool availability (enables armor tools now that HUD is valid) */
       llm_tools_refresh();
       /* Invalidate schema cache so it regenerates with new enum values */
       llm_tools_invalidate_cache();
    } else {
-      LOG_WARNING("HUD discovery: Failed to update hud_control elements (rc=%d)", rc);
+      OLOG_WARNING("HUD discovery: Failed to update hud_control elements (rc=%d)", rc);
    }
 }
 
@@ -151,13 +151,13 @@ static void update_hud_mode_modes(void) {
 
    int rc = tool_registry_update_param_enum("hud_mode", "mode", s_mode_ptrs, s_mode_count);
    if (rc == 0) {
-      LOG_INFO("HUD discovery: Updated hud_mode with %d modes", s_mode_count);
+      OLOG_INFO("HUD discovery: Updated hud_mode with %d modes", s_mode_count);
       /* Refresh tool availability (enables armor tools now that HUD is valid) */
       llm_tools_refresh();
       /* Invalidate schema cache so it regenerates with new enum values */
       llm_tools_invalidate_cache();
    } else {
-      LOG_WARNING("HUD discovery: Failed to update hud_mode modes (rc=%d)", rc);
+      OLOG_WARNING("HUD discovery: Failed to update hud_mode modes (rc=%d)", rc);
    }
 }
 
@@ -168,7 +168,7 @@ static void process_elements_discovery(struct json_object *root) {
    struct json_object *elements_array = NULL;
 
    if (!json_object_object_get_ex(root, "elements", &elements_array)) {
-      LOG_WARNING("HUD discovery: Elements message missing 'elements' field");
+      OLOG_WARNING("HUD discovery: Elements message missing 'elements' field");
       return;
    }
 
@@ -195,7 +195,7 @@ static void process_modes_discovery(struct json_object *root) {
 
    /* Check for "huds" field (HUD screens/modes) */
    if (!json_object_object_get_ex(root, "huds", &modes_array)) {
-      LOG_WARNING("HUD discovery: Modes message missing 'huds' field");
+      OLOG_WARNING("HUD discovery: Modes message missing 'huds' field");
       return;
    }
 
@@ -259,11 +259,11 @@ int hud_discovery_init(struct mosquitto *mosq) {
    /* Subscribe to discovery topics */
    int rc = mosquitto_subscribe(mosq, NULL, HUD_DISCOVERY_TOPIC_WILDCARD, 0);
    if (rc != MOSQ_ERR_SUCCESS) {
-      LOG_ERROR("HUD discovery: Failed to subscribe to %s: %s", HUD_DISCOVERY_TOPIC_WILDCARD,
-                mosquitto_strerror(rc));
+      OLOG_ERROR("HUD discovery: Failed to subscribe to %s: %s", HUD_DISCOVERY_TOPIC_WILDCARD,
+                 mosquitto_strerror(rc));
       return 1;
    }
-   LOG_INFO("HUD discovery: Subscribed to %s", HUD_DISCOVERY_TOPIC_WILDCARD);
+   OLOG_INFO("HUD discovery: Subscribed to %s", HUD_DISCOVERY_TOPIC_WILDCARD);
 
    /* Discovery request is triggered by component_status when HUD comes online */
 
@@ -285,7 +285,7 @@ void hud_discovery_shutdown(void) {
 
    pthread_mutex_unlock(&s_discovery_mutex);
 
-   LOG_INFO("HUD discovery: Shutdown complete");
+   OLOG_INFO("HUD discovery: Shutdown complete");
 }
 
 /* =============================================================================
@@ -300,7 +300,7 @@ void hud_discovery_handle_message(const char *topic, const char *payload, int pa
    /* Parse JSON payload */
    struct json_object *root = json_tokener_parse(payload);
    if (!root) {
-      LOG_WARNING("HUD discovery: Failed to parse JSON from %s", topic);
+      OLOG_WARNING("HUD discovery: Failed to parse JSON from %s", topic);
       return;
    }
 
@@ -394,9 +394,9 @@ void hud_discovery_request_update(struct mosquitto *mosq) {
    int rc = mosquitto_publish(mosq, NULL, HUD_DISCOVERY_TOPIC_REQUEST, (int)strlen(payload),
                               payload, 0, false);
    if (rc != MOSQ_ERR_SUCCESS) {
-      LOG_WARNING("HUD discovery: Failed to publish request: %s", mosquitto_strerror(rc));
+      OLOG_WARNING("HUD discovery: Failed to publish request: %s", mosquitto_strerror(rc));
    } else {
-      LOG_INFO("HUD discovery: Sent discovery request");
+      OLOG_INFO("HUD discovery: Sent discovery request");
    }
 
    json_object_put(request);
@@ -425,5 +425,5 @@ void hud_discovery_apply_defaults(void) {
    update_hud_control_elements();
    update_hud_mode_modes();
 
-   LOG_INFO("HUD discovery: Applied default values");
+   OLOG_INFO("HUD discovery: Applied default values");
 }

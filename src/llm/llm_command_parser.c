@@ -209,7 +209,7 @@ void invalidate_system_instructions(void) {
    system_instructions_initialized = 0;
    prompt_initialized = 0;
    remote_prompt_initialized = 0;
-   LOG_INFO("System instructions cache invalidated - will rebuild on next LLM call");
+   OLOG_INFO("System instructions cache invalidated - will rebuild on next LLM call");
 }
 
 /* =============================================================================
@@ -521,9 +521,9 @@ const char *get_system_instructions(void) {
    system_instructions_initialized = 1;
 
    if (strcmp(mode, "native") == 0) {
-      LOG_INFO("Built system instructions for native tool calling (%d bytes)", len);
+      OLOG_INFO("Built system instructions for native tool calling (%d bytes)", len);
    } else {
-      LOG_INFO("Built dynamic system instructions (%d bytes)", len);
+      OLOG_INFO("Built dynamic system instructions (%d bytes)", len);
    }
 
    return system_instructions_buffer;
@@ -637,7 +637,7 @@ static const char *get_persona_description(void) {
       snprintf(dynamic_persona, sizeof(dynamic_persona),
                AI_PERSONA_NAME_TEMPLATE " " AI_PERSONA_TRAITS, capitalized_name);
       persona_built = 1;
-      LOG_INFO("Built dynamic persona with AI name: %s", capitalized_name);
+      OLOG_INFO("Built dynamic persona with AI name: %s", capitalized_name);
    }
 
    return dynamic_persona;
@@ -673,11 +673,11 @@ static void initialize_command_prompt(void) {
    prompt_initialized = 1;
 
    if (strcmp(tools_mode, "native") == 0) {
-      LOG_INFO("AI prompt initialized (native tools mode). Length: %d", prompt_len);
+      OLOG_INFO("AI prompt initialized (native tools mode). Length: %d", prompt_len);
    } else if (strcmp(tools_mode, "disabled") == 0) {
-      LOG_INFO("AI prompt initialized (tools disabled). Length: %d", prompt_len);
+      OLOG_INFO("AI prompt initialized (tools disabled). Length: %d", prompt_len);
    } else {
-      LOG_INFO("AI prompt initialized (command_tags mode). Length: %d", prompt_len);
+      OLOG_INFO("AI prompt initialized (command_tags mode). Length: %d", prompt_len);
    }
 }
 
@@ -718,11 +718,11 @@ static void initialize_remote_command_prompt(void) {
    remote_prompt_initialized = 1;
 
    if (strcmp(tools_mode, "native") == 0) {
-      LOG_INFO("Remote AI prompt initialized (native tools mode). Length: %d", prompt_len);
+      OLOG_INFO("Remote AI prompt initialized (native tools mode). Length: %d", prompt_len);
    } else if (strcmp(tools_mode, "disabled") == 0) {
-      LOG_INFO("Remote AI prompt initialized (tools disabled). Length: %d", prompt_len);
+      OLOG_INFO("Remote AI prompt initialized (tools disabled). Length: %d", prompt_len);
    } else {
-      LOG_INFO("Remote AI prompt initialized (command_tags mode). Length: %d", prompt_len);
+      OLOG_INFO("Remote AI prompt initialized (command_tags mode). Length: %d", prompt_len);
    }
 }
 
@@ -749,7 +749,7 @@ char *build_remote_prompt_for_mode(const char *tool_mode) {
    /* Allocate output buffer */
    char *prompt = malloc(PROMPT_BUFFER_SIZE);
    if (!prompt) {
-      LOG_ERROR("Failed to allocate prompt buffer");
+      OLOG_ERROR("Failed to allocate prompt buffer");
       return NULL;
    }
 
@@ -766,7 +766,7 @@ char *build_remote_prompt_for_mode(const char *tool_mode) {
    /* Add localization context */
    len += snprintf(prompt + len, remaining - len, "%s", get_localization_context());
 
-   LOG_INFO("Built prompt for %s mode. Length: %d", tool_mode, len);
+   OLOG_INFO("Built prompt for %s mode. Length: %d", tool_mode, len);
    return prompt;
 }
 
@@ -810,7 +810,7 @@ int parse_llm_response_for_commands(const char *llm_response, struct mosquitto *
             strncpy(command, cmd_start, cmd_len);
             command[cmd_len] = '\0';
 
-            LOG_INFO("LLM command extracted: %s", command);
+            OLOG_INFO("LLM command extracted: %s", command);
 
             // Parse JSON
             struct json_object *cmd_json = json_tokener_parse(command);
@@ -825,30 +825,30 @@ int parse_llm_response_for_commands(const char *llm_response, struct mosquitto *
                   int rc = command_execute_json(cmd_json, mosq, &exec_result);
 
                   if (rc == 0 && exec_result.success) {
-                     LOG_INFO("LLM COMMAND EXECUTED: device=%s via unified executor", device);
+                     OLOG_INFO("LLM COMMAND EXECUTED: device=%s via unified executor", device);
                      metrics_log_activity("LLM CMD: %s", command);
                      commands_found++;
 
                      /* If command returned data, log it (could be used for response) */
                      if (exec_result.result && exec_result.should_respond) {
-                        LOG_INFO("  Command result: %.100s%s", exec_result.result,
-                                 strlen(exec_result.result) > 100 ? "..." : "");
+                        OLOG_INFO("  Command result: %.100s%s", exec_result.result,
+                                  strlen(exec_result.result) > 100 ? "..." : "");
                      }
                   } else {
                      /* Command failed - could be unknown device or execution error */
-                     LOG_WARNING("LLM COMMAND FAILED: device='%s' - %s", device,
-                                 exec_result.result ? exec_result.result : "unknown error");
+                     OLOG_WARNING("LLM COMMAND FAILED: device='%s' - %s", device,
+                                  exec_result.result ? exec_result.result : "unknown error");
                      metrics_log_activity("LLM CMD FAILED: %s", device);
                   }
 
                   cmd_exec_result_free(&exec_result);
                } else {
-                  LOG_WARNING("LLM COMMAND REJECTED: No device field in command JSON");
+                  OLOG_WARNING("LLM COMMAND REJECTED: No device field in command JSON");
                }
 
                json_object_put(cmd_json);
             } else {
-               LOG_ERROR("Failed to parse command JSON: %s", command);
+               OLOG_ERROR("Failed to parse command JSON: %s", command);
             }
 
             free(command);

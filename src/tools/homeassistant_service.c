@@ -320,7 +320,7 @@ static ha_error_t do_api_request(const char *method,
    secure_zero(auth_header, sizeof(auth_header));
 
    if (res != CURLE_OK) {
-      LOG_ERROR("Home Assistant: CURL error: %s (url: %s)", curl_easy_strerror(res), path);
+      OLOG_ERROR("Home Assistant: CURL error: %s (url: %s)", curl_easy_strerror(res), path);
       result = HA_ERR_NETWORK;
    } else {
       long http_code = 0;
@@ -329,14 +329,14 @@ static ha_error_t do_api_request(const char *method,
          *http_code_out = http_code;
 
       if (http_code == 401) {
-         LOG_ERROR("Home Assistant: Authentication failed (401)");
+         OLOG_ERROR("Home Assistant: Authentication failed (401)");
          result = HA_ERR_NOT_CONNECTED;
          __atomic_store_n(&s_ha.connected, false, __ATOMIC_RELEASE);
       } else if (http_code == 429) {
-         LOG_WARNING("Home Assistant: Rate limited (429)");
+         OLOG_WARNING("Home Assistant: Rate limited (429)");
          result = HA_ERR_RATE_LIMITED;
       } else if (http_code >= 400) {
-         LOG_ERROR("Home Assistant: API error %ld for %s", http_code, path);
+         OLOG_ERROR("Home Assistant: API error %ld for %s", http_code, path);
          result = HA_ERR_API;
       }
    }
@@ -381,11 +381,11 @@ static ha_error_t call_service_json(const char *domain,
                                     const char *entity_id,
                                     json_object *data) {
    if (!is_valid_service_name(domain) || !is_valid_service_name(service)) {
-      LOG_ERROR("Home Assistant: Invalid domain/service name");
+      OLOG_ERROR("Home Assistant: Invalid domain/service name");
       return HA_ERR_INVALID_PARAM;
    }
    if (entity_id && !is_valid_entity_id(entity_id)) {
-      LOG_ERROR("Home Assistant: Invalid entity_id format");
+      OLOG_ERROR("Home Assistant: Invalid entity_id format");
       return HA_ERR_INVALID_PARAM;
    }
 
@@ -416,8 +416,8 @@ static ha_error_t call_service_json(const char *domain,
    json_object_put(body);
 
    if (err == HA_OK) {
-      LOG_INFO("Home Assistant: Called %s/%s on %s", domain, service,
-               entity_id ? entity_id : "(no entity)");
+      OLOG_INFO("Home Assistant: Called %s/%s on %s", domain, service,
+                entity_id ? entity_id : "(no entity)");
    }
 
    return err;
@@ -433,7 +433,7 @@ ha_error_t homeassistant_init(const char *url, const char *token) {
 
    /* Validate URL scheme */
    if (strncmp(url, "http://", 7) != 0 && strncmp(url, "https://", 8) != 0) {
-      LOG_ERROR("Home Assistant: URL must start with http:// or https://");
+      OLOG_ERROR("Home Assistant: URL must start with http:// or https://");
       return HA_ERR_INVALID_PARAM;
    }
 
@@ -464,10 +464,10 @@ ha_error_t homeassistant_init(const char *url, const char *token) {
    /* Test connection */
    ha_error_t err = homeassistant_test_connection();
    if (err == HA_OK) {
-      LOG_INFO("Home Assistant: Initialized successfully (%s)", s_ha.base_url);
+      OLOG_INFO("Home Assistant: Initialized successfully (%s)", s_ha.base_url);
    } else {
-      LOG_WARNING("Home Assistant: Init succeeded but connection test failed: %s",
-                  homeassistant_error_str(err));
+      OLOG_WARNING("Home Assistant: Init succeeded but connection test failed: %s",
+                   homeassistant_error_str(err));
    }
 
    return HA_OK; /* Init succeeded even if connection test failed */
@@ -481,7 +481,7 @@ void homeassistant_cleanup(void) {
    s_ha.entity_cache.count = 0;
    s_ha.area_cache.count = 0;
    pthread_rwlock_unlock(&s_ha.rwlock);
-   LOG_INFO("Home Assistant: Cleaned up");
+   OLOG_INFO("Home Assistant: Cleaned up");
 }
 
 bool homeassistant_is_configured(void) {
@@ -606,7 +606,7 @@ static bool fetch_area_data(ha_area_cache_t *out) {
                                    &http_code);
    if (err != HA_OK) {
       curl_buffer_free(&response);
-      LOG_INFO("Home Assistant: Area template query failed (will continue without areas)");
+      OLOG_INFO("Home Assistant: Area template query failed (will continue without areas)");
       out->count = 0;
       out->cached_at = now;
       return true;
@@ -618,7 +618,7 @@ static bool fetch_area_data(ha_area_cache_t *out) {
    if (!root || !json_object_is_type(root, json_type_array)) {
       if (root)
          json_object_put(root);
-      LOG_INFO("Home Assistant: Area template returned non-array (will continue without areas)");
+      OLOG_INFO("Home Assistant: Area template returned non-array (will continue without areas)");
       out->count = 0;
       out->cached_at = now;
       return true;
@@ -654,7 +654,7 @@ static bool fetch_area_data(ha_area_cache_t *out) {
    }
 
    out->cached_at = now;
-   LOG_INFO("Home Assistant: Cached %d entity-area assignments", out->count);
+   OLOG_INFO("Home Assistant: Cached %d entity-area assignments", out->count);
    return true;
 }
 
@@ -857,10 +857,10 @@ static ha_error_t fetch_entities(void) {
    json_object_put(root);
 
    if (s_ha.entity_cache.count >= HA_MAX_ENTITIES) {
-      LOG_WARNING("Home Assistant: Entity cache full (%d entities, max %d)",
-                  s_ha.entity_cache.count, HA_MAX_ENTITIES);
+      OLOG_WARNING("Home Assistant: Entity cache full (%d entities, max %d)",
+                   s_ha.entity_cache.count, HA_MAX_ENTITIES);
    } else {
-      LOG_INFO("Home Assistant: Cached %d entities", s_ha.entity_cache.count);
+      OLOG_INFO("Home Assistant: Cached %d entities", s_ha.entity_cache.count);
    }
 
    return HA_OK;
@@ -996,13 +996,13 @@ ha_error_t homeassistant_find_entity(const char *name,
    pthread_rwlock_unlock(&s_ha.rwlock);
 
    if (best_score < 40 || !best_match) {
-      LOG_WARNING("Home Assistant: No entity matching '%s' (domain: %s, best score: %d)", name,
-                  homeassistant_domain_str(domain_hint), best_score);
+      OLOG_WARNING("Home Assistant: No entity matching '%s' (domain: %s, best score: %d)", name,
+                   homeassistant_domain_str(domain_hint), best_score);
       return HA_ERR_ENTITY_NOT_FOUND;
    }
 
-   LOG_INFO("Home Assistant: Matched '%s' → '%s' (%s, score: %d)", name, best_match->friendly_name,
-            best_match->entity_id, best_score);
+   OLOG_INFO("Home Assistant: Matched '%s' → '%s' (%s, score: %d)", name, best_match->friendly_name,
+             best_match->entity_id, best_score);
    *entity = best_match;
    return HA_OK;
 }

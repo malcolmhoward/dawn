@@ -158,7 +158,7 @@ void handle_create_user(ws_connection_t *conn, struct json_object *payload) {
       snprintf(details, sizeof(details), "Created user '%s' (admin=%s) by '%s'", username,
                is_admin ? "yes" : "no", conn->username);
       auth_db_log_event("USER_CREATED", username, conn->client_ip, details);
-      LOG_INFO("WebUI: %s", details);
+      OLOG_INFO("WebUI: %s", details);
    } else if (result == AUTH_DB_DUPLICATE) {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
       json_object_object_add(resp_payload, "error",
@@ -219,7 +219,7 @@ void handle_delete_user(ws_connection_t *conn, struct json_object *payload) {
       char details[256];
       snprintf(details, sizeof(details), "Deleted by '%s'", conn->username);
       auth_db_log_event("USER_DELETED", username, conn->client_ip, details);
-      LOG_INFO("WebUI: User '%s' deleted by '%s'", username, conn->username);
+      OLOG_INFO("WebUI: User '%s' deleted by '%s'", username, conn->username);
    } else if (result == AUTH_DB_NOT_FOUND) {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
       json_object_object_add(resp_payload, "error", json_object_new_string("User not found"));
@@ -344,7 +344,7 @@ void handle_change_password(ws_connection_t *conn, struct json_object *payload) 
       char details[256];
       snprintf(details, sizeof(details), "Password changed by '%s'", conn->username);
       auth_db_log_event("PASSWORD_CHANGED", username, conn->client_ip, details);
-      LOG_INFO("WebUI: Password changed for '%s' by '%s'", username, conn->username);
+      OLOG_INFO("WebUI: Password changed for '%s' by '%s'", username, conn->username);
    } else if (result == AUTH_DB_NOT_FOUND) {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
       json_object_object_add(resp_payload, "error", json_object_new_string("User not found"));
@@ -397,7 +397,7 @@ void handle_unlock_user(ws_connection_t *conn, struct json_object *payload) {
       char details[256];
       snprintf(details, sizeof(details), "Unlocked by '%s'", conn->username);
       auth_db_log_event("USER_UNLOCKED", username, conn->client_ip, details);
-      LOG_INFO("WebUI: User '%s' unlocked by '%s'", username, conn->username);
+      OLOG_INFO("WebUI: User '%s' unlocked by '%s'", username, conn->username);
    } else if (result == AUTH_DB_NOT_FOUND) {
       json_object_object_add(resp_payload, "success", json_object_new_boolean(0));
       json_object_object_add(resp_payload, "error", json_object_new_string("User not found"));

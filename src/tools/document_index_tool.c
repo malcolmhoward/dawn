@@ -492,7 +492,7 @@ static char *doc_index_callback(const char *action, char *value, int *should_res
          size_t fs_size = 0;
          int fs_rc = url_fetch_content(url_start, &fs_content, &fs_size);
          if (fs_rc == URL_FETCH_SUCCESS && fs_content && fs_size > 0) {
-            LOG_INFO("document_index: FlareSolverr fallback succeeded for [%s]", url_start);
+            OLOG_INFO("document_index: FlareSolverr fallback succeeded for [%s]", url_start);
             /* Cap FlareSolverr content at configured max extracted size */
             size_t max_extract = (size_t)g_config.documents.max_extracted_size_kb * 1024;
             if (fs_size > max_extract) {
@@ -548,7 +548,7 @@ static char *doc_index_callback(const char *action, char *value, int *should_res
          size_t fs_size = 0;
          int fs_rc = url_fetch_content(url_start, &fs_content, &fs_size);
          if (fs_rc == URL_FETCH_SUCCESS && fs_content && fs_size > 0) {
-            LOG_INFO("document_index: FlareSolverr fallback succeeded for [%s]", url_start);
+            OLOG_INFO("document_index: FlareSolverr fallback succeeded for [%s]", url_start);
             size_t max_extract = (size_t)g_config.documents.max_extracted_size_kb * 1024;
             if (fs_size > max_extract) {
                fs_content[max_extract] = '\0';
@@ -599,11 +599,11 @@ index_document:
          *hash = '\0';
 
       if (idx_rc == DOC_INDEX_SUCCESS) {
-         LOG_INFO("document_index: user %d indexed [%s] as '%s' (%d chunks%s)", user_id, safe_url,
-                  filename, idx_result.num_chunks, used_flaresolverr ? ", via FlareSolverr" : "");
+         OLOG_INFO("document_index: user %d indexed [%s] as '%s' (%d chunks%s)", user_id, safe_url,
+                   filename, idx_result.num_chunks, used_flaresolverr ? ", via FlareSolverr" : "");
       } else {
-         LOG_INFO("document_index: user %d failed to index [%s]: %s", user_id, safe_url,
-                  idx_result.error_msg);
+         OLOG_INFO("document_index: user %d failed to index [%s]: %s", user_id, safe_url,
+                   idx_result.error_msg);
       }
    }
 

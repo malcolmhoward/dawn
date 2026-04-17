@@ -62,7 +62,7 @@ int web_search_init(const char *searxng_url) {
 
    if (module_initialized) {
       pthread_mutex_unlock(&module_mutex);
-      LOG_WARNING("web_search: Already initialized");
+      OLOG_WARNING("web_search: Already initialized");
       return 0;
    }
 
@@ -75,7 +75,7 @@ int web_search_init(const char *searxng_url) {
 
    if (!searxng_base_url) {
       pthread_mutex_unlock(&module_mutex);
-      LOG_ERROR("web_search: Failed to allocate URL string");
+      OLOG_ERROR("web_search: Failed to allocate URL string");
       return 1;
    }
 
@@ -84,7 +84,7 @@ int web_search_init(const char *searxng_url) {
 
    module_initialized = 1;
    pthread_mutex_unlock(&module_mutex);
-   LOG_INFO("web_search: Initialized with URL %s", searxng_base_url);
+   OLOG_INFO("web_search: Initialized with URL %s", searxng_base_url);
    return 0;
 }
 
@@ -104,7 +104,7 @@ void web_search_cleanup(void) {
    // Note: curl_global_cleanup() is called in main() - not here
    module_initialized = 0;
    pthread_mutex_unlock(&module_mutex);
-   LOG_INFO("web_search: Cleanup complete");
+   OLOG_INFO("web_search: Cleanup complete");
 }
 
 int web_search_is_initialized(void) {
@@ -343,8 +343,8 @@ static bool should_filter_title(const char *title) {
    for (int i = 0; i < config->search.title_filters_count; i++) {
       if (config->search.title_filters[i][0] != '\0') {
          if (strcasestr(title, config->search.title_filters[i]) != NULL) {
-            LOG_INFO("web_search: Filtering result with title containing '%s': %s",
-                     config->search.title_filters[i], title);
+            OLOG_INFO("web_search: Filtering result with title containing '%s': %s",
+                      config->search.title_filters[i], title);
             return true;
          }
       }
@@ -393,14 +393,15 @@ static void parse_results_array(struct json_object *results_array,
 
    // Cap total_count to prevent memory exhaustion from malicious responses
    if (total_count > MAX_RESULTS_TO_PROCESS) {
-      LOG_WARNING("web_search: Capping results from %d to %d", total_count, MAX_RESULTS_TO_PROCESS);
+      OLOG_WARNING("web_search: Capping results from %d to %d", total_count,
+                   MAX_RESULTS_TO_PROCESS);
       total_count = MAX_RESULTS_TO_PROCESS;
    }
 
    // Allocate temporary storage for all results (before dedup/rerank)
    scored_result_t *temp_results = calloc(total_count, sizeof(scored_result_t));
    if (!temp_results) {
-      LOG_ERROR("web_search: Failed to allocate temp results array");
+      OLOG_ERROR("web_search: Failed to allocate temp results array");
       response->error = strdup("Memory allocation failed");
       return;
    }
@@ -414,7 +415,7 @@ static void parse_results_array(struct json_object *results_array,
    int unique_hosts = 0;
 
    if (!host_counts) {
-      LOG_ERROR("web_search: Failed to allocate host counts");
+      OLOG_ERROR("web_search: Failed to allocate host counts");
       free(temp_results);
       response->error = strdup("Memory allocation failed");
       return;
@@ -523,7 +524,7 @@ static void parse_results_array(struct json_object *results_array,
          free_result_fields(&temp_results[i].result);
       }
       free(temp_results);
-      LOG_ERROR("web_search: Failed to allocate final results array");
+      OLOG_ERROR("web_search: Failed to allocate final results array");
       response->error = strdup("Memory allocation failed");
       return;
    }
@@ -558,7 +559,7 @@ static void parse_infoboxes_array(struct json_object *infoboxes_array,
 
    response->results = calloc(infobox_count, sizeof(search_result_t));
    if (!response->results) {
-      LOG_ERROR("web_search: Failed to allocate infobox results array");
+      OLOG_ERROR("web_search: Failed to allocate infobox results array");
       response->error = strdup("Memory allocation failed");
       return;
    }
@@ -608,12 +609,12 @@ search_response_t *web_search_query_typed(const char *query,
                                           search_type_t type,
                                           const char *time_range) {
    if (!module_initialized) {
-      LOG_ERROR("web_search: Module not initialized");
+      OLOG_ERROR("web_search: Module not initialized");
       return NULL;
    }
 
    if (!query || query[0] == '\0') {
-      LOG_ERROR("web_search: Empty query");
+      OLOG_ERROR("web_search: Empty query");
       return NULL;
    }
 
@@ -624,14 +625,14 @@ search_response_t *web_search_query_typed(const char *query,
    // Allocate response structure
    search_response_t *response = calloc(1, sizeof(search_response_t));
    if (!response) {
-      LOG_ERROR("web_search: Failed to allocate response");
+      OLOG_ERROR("web_search: Failed to allocate response");
       return NULL;
    }
 
    // Create CURL handle
    CURL *curl = curl_easy_init();
    if (!curl) {
-      LOG_ERROR("web_search: Failed to create CURL handle");
+      OLOG_ERROR("web_search: Failed to create CURL handle");
       response->error = strdup("Failed to initialize HTTP client");
       return response;
    }
@@ -639,7 +640,7 @@ search_response_t *web_search_query_typed(const char *query,
    // URL-encode the query
    char *encoded_query = curl_easy_escape(curl, query, 0);
    if (!encoded_query) {
-      LOG_ERROR("web_search: Failed to encode query");
+      OLOG_ERROR("web_search: Failed to encode query");
       curl_easy_cleanup(curl);
       response->error = strdup("Failed to encode search query");
       return response;
@@ -721,7 +722,7 @@ search_response_t *web_search_query_typed(const char *query,
    }
 
    curl_free(encoded_query);
-   LOG_INFO("web_search: Querying [%s] %s", type_str, url);
+   OLOG_INFO("web_search: Querying [%s] %s", type_str, url);
 
    // Set up response buffer with web search max capacity (512KB)
    curl_buffer_t buffer;
@@ -738,7 +739,7 @@ search_response_t *web_search_query_typed(const char *query,
    // Perform request
    CURLcode res = curl_easy_perform(curl);
    if (res != CURLE_OK) {
-      LOG_ERROR("web_search: Request failed: %s", curl_easy_strerror(res));
+      OLOG_ERROR("web_search: Request failed: %s", curl_easy_strerror(res));
       curl_easy_cleanup(curl);
       curl_buffer_free(&buffer);
       response->error = strdup(curl_easy_strerror(res));
@@ -751,7 +752,7 @@ search_response_t *web_search_query_typed(const char *query,
    curl_easy_cleanup(curl);
 
    if (http_code != 200) {
-      LOG_ERROR("web_search: HTTP error %ld", http_code);
+      OLOG_ERROR("web_search: HTTP error %ld", http_code);
       curl_buffer_free(&buffer);
       char err_msg[64];
       snprintf(err_msg, sizeof(err_msg), "HTTP error %ld", http_code);
@@ -761,8 +762,8 @@ search_response_t *web_search_query_typed(const char *query,
 
    // Warn if response was truncated (but continue with partial data)
    if (buffer.truncated) {
-      LOG_WARNING("web_search: Response truncated at %zu bytes (exceeded max capacity)",
-                  buffer.size);
+      OLOG_WARNING("web_search: Response truncated at %zu bytes (exceeded max capacity)",
+                   buffer.size);
    }
 
    // Parse JSON response
@@ -770,7 +771,7 @@ search_response_t *web_search_query_typed(const char *query,
    curl_buffer_free(&buffer);
 
    if (!root) {
-      LOG_ERROR("web_search: Failed to parse JSON response");
+      OLOG_ERROR("web_search: Failed to parse JSON response");
       response->error = strdup("Invalid JSON response from search service");
       return response;
    }
@@ -783,7 +784,7 @@ search_response_t *web_search_query_typed(const char *query,
          parse_infoboxes_array(infoboxes_array, response, max_results);
          if (response->count > 0) {
             json_object_put(root);
-            LOG_INFO("web_search: Found %d infobox results", response->count);
+            OLOG_INFO("web_search: Found %d infobox results", response->count);
             return response;
          }
       }
@@ -793,7 +794,7 @@ search_response_t *web_search_query_typed(const char *query,
    // Extract results array (standard path for WEB and NEWS, fallback for FACTS)
    struct json_object *results_array = NULL;
    if (!json_object_object_get_ex(root, "results", &results_array)) {
-      LOG_WARNING("web_search: No 'results' field in response");
+      OLOG_WARNING("web_search: No 'results' field in response");
       json_object_put(root);
       if (type == SEARCH_TYPE_FACTS) {
          response->error = strdup("No Wikipedia data found for this query");
@@ -805,7 +806,7 @@ search_response_t *web_search_query_typed(const char *query,
 
    int result_count = json_object_array_length(results_array);
    if (result_count == 0) {
-      LOG_INFO("web_search: No results found for query");
+      OLOG_INFO("web_search: No results found for query");
       json_object_put(root);
       return response;  // No error, just empty results
    }
@@ -821,8 +822,8 @@ search_response_t *web_search_query_typed(const char *query,
    if (needs_news_supplement && response->count < max_results && supplement_depth == 0) {
       supplement_depth++;
       int news_slots = max_results - response->count;
-      LOG_INFO("web_search: Supplementing %s results with %d news slots (time_range=%s)", type_str,
-               news_slots, time_range);
+      OLOG_INFO("web_search: Supplementing %s results with %d news slots (time_range=%s)", type_str,
+                news_slots, time_range);
 
       search_response_t *news = web_search_query_typed(query, news_slots, SEARCH_TYPE_NEWS,
                                                        time_range);
@@ -846,8 +847,8 @@ search_response_t *web_search_query_typed(const char *query,
                memset(&news->results[i], 0, sizeof(search_result_t));
             }
             response->count = merged_count;
-            LOG_INFO("web_search: Merged %d news results (total: %d)", news_to_add,
-                     response->count);
+            OLOG_INFO("web_search: Merged %d news results (total: %d)", news_to_add,
+                      response->count);
          }
       }
       if (news) {
@@ -856,7 +857,7 @@ search_response_t *web_search_query_typed(const char *query,
       supplement_depth--;
    }
 
-   LOG_INFO("web_search: Found %d results (deduplicated, reranked)", response->count);
+   OLOG_INFO("web_search: Found %d results (deduplicated, reranked)", response->count);
    return response;
 }
 
@@ -866,12 +867,12 @@ search_response_t *web_search_query(const char *query, int max_results) {
 
 struct json_object *web_search_query_images_raw(const char *query, int max_results) {
    if (!module_initialized) {
-      LOG_ERROR("web_search: Module not initialized");
+      OLOG_ERROR("web_search: Module not initialized");
       return NULL;
    }
 
    if (!query || query[0] == '\0') {
-      LOG_ERROR("web_search: Empty query");
+      OLOG_ERROR("web_search: Empty query");
       return NULL;
    }
 
@@ -881,13 +882,13 @@ struct json_object *web_search_query_images_raw(const char *query, int max_resul
 
    CURL *curl = curl_easy_init();
    if (!curl) {
-      LOG_ERROR("web_search: Failed to create CURL handle");
+      OLOG_ERROR("web_search: Failed to create CURL handle");
       return NULL;
    }
 
    char *encoded_query = curl_easy_escape(curl, query, 0);
    if (!encoded_query) {
-      LOG_ERROR("web_search: Failed to encode query");
+      OLOG_ERROR("web_search: Failed to encode query");
       curl_easy_cleanup(curl);
       return NULL;
    }
@@ -896,7 +897,7 @@ struct json_object *web_search_query_images_raw(const char *query, int max_resul
    snprintf(url, sizeof(url), "%s/search?q=%s&format=json&categories=images&safesearch=1",
             searxng_base_url, encoded_query);
    curl_free(encoded_query);
-   LOG_INFO("web_search: Image query: %s", url);
+   OLOG_INFO("web_search: Image query: %s", url);
 
    curl_buffer_t buffer;
    curl_buffer_init_with_max(&buffer, CURL_BUFFER_MAX_WEB_SEARCH);
@@ -910,7 +911,7 @@ struct json_object *web_search_query_images_raw(const char *query, int max_resul
 
    CURLcode res = curl_easy_perform(curl);
    if (res != CURLE_OK) {
-      LOG_ERROR("web_search: Image search request failed: %s", curl_easy_strerror(res));
+      OLOG_ERROR("web_search: Image search request failed: %s", curl_easy_strerror(res));
       curl_easy_cleanup(curl);
       curl_buffer_free(&buffer);
       return NULL;
@@ -921,7 +922,7 @@ struct json_object *web_search_query_images_raw(const char *query, int max_resul
    curl_easy_cleanup(curl);
 
    if (http_code != 200) {
-      LOG_ERROR("web_search: Image search HTTP error %ld", http_code);
+      OLOG_ERROR("web_search: Image search HTTP error %ld", http_code);
       curl_buffer_free(&buffer);
       return NULL;
    }
@@ -930,7 +931,7 @@ struct json_object *web_search_query_images_raw(const char *query, int max_resul
    curl_buffer_free(&buffer);
 
    if (!root) {
-      LOG_ERROR("web_search: Failed to parse image search JSON response");
+      OLOG_ERROR("web_search: Failed to parse image search JSON response");
       return NULL;
    }
 

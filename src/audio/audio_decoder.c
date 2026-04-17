@@ -90,7 +90,7 @@ static const char *g_all_extensions[16] = { NULL }; /* Large enough for all form
 
 int audio_decoder_init(void) {
    if (g_initialized) {
-      LOG_WARNING("Audio decoder subsystem already initialized");
+      OLOG_WARNING("Audio decoder subsystem already initialized");
       return AUDIO_DECODER_SUCCESS;
    }
 
@@ -98,7 +98,7 @@ int audio_decoder_init(void) {
 #ifdef DAWN_ENABLE_MP3
    int mp3_result = mp3_decoder_lib_init();
    if (mp3_result != AUDIO_DECODER_SUCCESS) {
-      LOG_WARNING("MP3 decoder initialization failed, MP3 support disabled");
+      OLOG_WARNING("MP3 decoder initialization failed, MP3 support disabled");
    }
 #endif
 
@@ -123,7 +123,7 @@ int audio_decoder_init(void) {
 
    /* Build combined extension list */
    for (size_t i = 0; g_decoders[i] != NULL; i++) {
-      LOG_INFO("Registered audio decoder: %s", g_decoders[i]->name);
+      OLOG_INFO("Registered audio decoder: %s", g_decoders[i]->name);
 
       /* Add all extensions from this decoder */
       for (const char **ext = g_decoders[i]->extensions; *ext != NULL; ext++) {
@@ -135,7 +135,7 @@ int audio_decoder_init(void) {
    g_all_extensions[ext_idx] = NULL; /* Terminate */
 
    g_initialized = true;
-   LOG_INFO("Audio decoder initialized: %zu formats, %zu extensions", g_decoder_count, ext_idx);
+   OLOG_INFO("Audio decoder initialized: %zu formats, %zu extensions", g_decoder_count, ext_idx);
 
    return AUDIO_DECODER_SUCCESS;
 }
@@ -157,7 +157,7 @@ void audio_decoder_cleanup(void) {
    g_decoder_count = 0;
    g_initialized = false;
 
-   LOG_INFO("Audio decoder subsystem cleaned up");
+   OLOG_INFO("Audio decoder subsystem cleaned up");
 }
 
 /* =============================================================================
@@ -227,28 +227,28 @@ audio_format_type_t audio_decoder_detect_format(const char *path) {
 
 audio_decoder_t *audio_decoder_open(const char *path) {
    if (!g_initialized) {
-      LOG_ERROR("Audio decoder not initialized");
+      OLOG_ERROR("Audio decoder not initialized");
       return NULL;
    }
 
    if (!path) {
-      LOG_ERROR("audio_decoder_open: NULL path");
+      OLOG_ERROR("audio_decoder_open: NULL path");
       return NULL;
    }
 
    const char *ext = get_extension(path);
    if (!ext) {
-      LOG_ERROR("audio_decoder_open: No file extension in '%s'", path);
+      OLOG_ERROR("audio_decoder_open: No file extension in '%s'", path);
       return NULL;
    }
 
    const audio_decoder_vtable_t *vtable = find_decoder_for_extension(ext);
    if (!vtable) {
-      LOG_ERROR("audio_decoder_open: Unsupported format '%s'", ext);
+      OLOG_ERROR("audio_decoder_open: Unsupported format '%s'", ext);
       return NULL;
    }
 
-   LOG_INFO("Opening '%s' with %s decoder", path, vtable->name);
+   OLOG_INFO("Opening '%s' with %s decoder", path, vtable->name);
    return vtable->open(path);
 }
 
@@ -307,7 +307,7 @@ int audio_decoder_get_metadata(const char *path, audio_metadata_t *metadata) {
    memset(metadata, 0, sizeof(*metadata));
 
    if (!g_initialized) {
-      LOG_WARNING("Audio decoder not initialized, cannot get metadata");
+      OLOG_WARNING("Audio decoder not initialized, cannot get metadata");
       return AUDIO_DECODER_ERR_NOT_INIT;
    }
 
@@ -329,7 +329,7 @@ int audio_decoder_get_metadata(const char *path, audio_metadata_t *metadata) {
 #endif
 
       default:
-         LOG_WARNING("No metadata parser for format: %s", audio_decoder_format_name(format));
+         OLOG_WARNING("No metadata parser for format: %s", audio_decoder_format_name(format));
          return AUDIO_DECODER_ERR_FORMAT;
    }
 }

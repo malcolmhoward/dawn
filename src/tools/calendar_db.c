@@ -189,7 +189,7 @@ int64_t calendar_db_account_create(const calendar_account_t *acct) {
    if (sqlite3_step(st) == SQLITE_DONE) {
       result = sqlite3_last_insert_rowid(s_db.db);
    } else {
-      LOG_ERROR("calendar_db: account create failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("calendar_db: account create failed: %s", sqlite3_errmsg(s_db.db));
    }
    sqlite3_reset(st);
 
@@ -266,7 +266,7 @@ int calendar_db_account_update(const calendar_account_t *acct) {
 
    int result = (sqlite3_step(st) == SQLITE_DONE) ? 0 : 1;
    if (result != 0)
-      LOG_ERROR("calendar_db: account update failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("calendar_db: account update failed: %s", sqlite3_errmsg(s_db.db));
    sqlite3_reset(st);
 
    AUTH_DB_UNLOCK();
@@ -330,7 +330,7 @@ int calendar_db_account_set_read_only(int64_t id, bool read_only) {
 
    int result = (sqlite3_step(st) == SQLITE_DONE) ? 0 : 1;
    if (result != 0)
-      LOG_ERROR("calendar_db: set_read_only failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("calendar_db: set_read_only failed: %s", sqlite3_errmsg(s_db.db));
    sqlite3_reset(st);
 
    AUTH_DB_UNLOCK();
@@ -347,7 +347,7 @@ int calendar_db_account_set_enabled(int64_t id, bool enabled) {
 
    int result = (sqlite3_step(st) == SQLITE_DONE) ? 0 : 1;
    if (result != 0)
-      LOG_ERROR("calendar_db: set_enabled failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("calendar_db: set_enabled failed: %s", sqlite3_errmsg(s_db.db));
    sqlite3_reset(st);
 
    AUTH_DB_UNLOCK();
@@ -375,7 +375,7 @@ int64_t calendar_db_calendar_create(const calendar_calendar_t *cal) {
    if (sqlite3_step(st) == SQLITE_DONE) {
       result = sqlite3_last_insert_rowid(s_db.db);
    } else {
-      LOG_ERROR("calendar_db: calendar create failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("calendar_db: calendar create failed: %s", sqlite3_errmsg(s_db.db));
    }
    sqlite3_reset(st);
 
@@ -513,7 +513,7 @@ int64_t calendar_db_event_upsert(const calendar_event_t *event) {
    if (sqlite3_step(st) == SQLITE_DONE) {
       result = sqlite3_last_insert_rowid(s_db.db);
    } else {
-      LOG_ERROR("calendar_db: event upsert failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("calendar_db: event upsert failed: %s", sqlite3_errmsg(s_db.db));
    }
    sqlite3_reset(st);
 
@@ -597,7 +597,7 @@ int64_t calendar_db_occurrence_insert(const calendar_occurrence_t *occ) {
    if (sqlite3_step(st) == SQLITE_DONE) {
       result = sqlite3_last_insert_rowid(s_db.db);
    } else {
-      LOG_ERROR("calendar_db: occurrence insert failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("calendar_db: occurrence insert failed: %s", sqlite3_errmsg(s_db.db));
    }
    sqlite3_reset(st);
 

@@ -105,7 +105,7 @@ char *llm_claude_chat_completion(struct json_object *conversation_history,
 
    // Check connection
    if (!llm_check_connection(base_url, 4)) {
-      LOG_ERROR("Pre-flight connection check failed (cloud unreachable)");
+      OLOG_ERROR("Pre-flight connection check failed (cloud unreachable)");
       json_object_put(request);
       return NULL;
    }
@@ -113,7 +113,7 @@ char *llm_claude_chat_completion(struct json_object *conversation_history,
    // Setup CURL
    curl_handle = curl_easy_init();
    if (!curl_handle) {
-      LOG_ERROR("Failed to initialize CURL");
+      OLOG_ERROR("Failed to initialize CURL");
       json_object_put(request);
       return NULL;
    }
@@ -152,11 +152,11 @@ char *llm_claude_chat_completion(struct json_object *conversation_history,
    res = curl_easy_perform(curl_handle);
    if (res != CURLE_OK) {
       if (res == CURLE_ABORTED_BY_CALLBACK) {
-         LOG_INFO("LLM transfer interrupted by user");
+         OLOG_INFO("LLM transfer interrupted by user");
       } else if (res == CURLE_OPERATION_TIMEDOUT) {
-         LOG_ERROR("LLM request timed out (limit: %dms)", effective_timeout);
+         OLOG_ERROR("LLM request timed out (limit: %dms)", effective_timeout);
       } else {
-         LOG_ERROR("CURL failed: %s", curl_easy_strerror(res));
+         OLOG_ERROR("CURL failed: %s", curl_easy_strerror(res));
       }
       curl_easy_cleanup(curl_handle);
       curl_slist_free_all(headers);
@@ -171,15 +171,15 @@ char *llm_claude_chat_completion(struct json_object *conversation_history,
 
    if (http_code != 200) {
       if (http_code == 401) {
-         LOG_ERROR("Claude API: Invalid or missing API key (HTTP 401)");
+         OLOG_ERROR("Claude API: Invalid or missing API key (HTTP 401)");
       } else if (http_code == 403) {
-         LOG_ERROR("Claude API: Access forbidden (HTTP 403) - check API key permissions");
+         OLOG_ERROR("Claude API: Access forbidden (HTTP 403) - check API key permissions");
       } else if (http_code == 429) {
-         LOG_ERROR("Claude API: Rate limit exceeded (HTTP 429)");
+         OLOG_ERROR("Claude API: Rate limit exceeded (HTTP 429)");
       } else if (http_code >= 500) {
-         LOG_ERROR("Claude API: Server error (HTTP %ld)", http_code);
+         OLOG_ERROR("Claude API: Server error (HTTP %ld)", http_code);
       } else if (http_code != 0) {
-         LOG_ERROR("Claude API: Request failed (HTTP %ld)", http_code);
+         OLOG_ERROR("Claude API: Request failed (HTTP %ld)", http_code);
       }
       curl_easy_cleanup(curl_handle);
       curl_slist_free_all(headers);
@@ -195,7 +195,7 @@ char *llm_claude_chat_completion(struct json_object *conversation_history,
    // Parse Claude response
    json_object *parsed = json_tokener_parse(chunk.data);
    if (!parsed) {
-      LOG_ERROR("Failed to parse Claude response");
+      OLOG_ERROR("Failed to parse Claude response");
       curl_buffer_free(&chunk);
       return NULL;
    }
@@ -205,7 +205,7 @@ char *llm_claude_chat_completion(struct json_object *conversation_history,
    if (!json_object_object_get_ex(parsed, "content", &content_array) ||
        json_object_get_type(content_array) != json_type_array ||
        json_object_array_length(content_array) < 1) {
-      LOG_ERROR("Invalid Claude response format: missing content array");
+      OLOG_ERROR("Invalid Claude response format: missing content array");
       json_object_put(parsed);
       curl_buffer_free(&chunk);
       return NULL;
@@ -213,7 +213,7 @@ char *llm_claude_chat_completion(struct json_object *conversation_history,
 
    first_content = json_object_array_get_idx(content_array, 0);
    if (!first_content) {
-      LOG_ERROR("Empty content array in Claude response");
+      OLOG_ERROR("Empty content array in Claude response");
       json_object_put(parsed);
       curl_buffer_free(&chunk);
       return NULL;
@@ -223,7 +223,7 @@ char *llm_claude_chat_completion(struct json_object *conversation_history,
    if (json_object_object_get_ex(first_content, "type", &type_obj)) {
       const char *content_type = json_object_get_string(type_obj);
       if (strcmp(content_type, "text") != 0) {
-         LOG_ERROR("First content block is not text: %s", content_type);
+         OLOG_ERROR("First content block is not text: %s", content_type);
          json_object_put(parsed);
          curl_buffer_free(&chunk);
          return NULL;
@@ -231,7 +231,7 @@ char *llm_claude_chat_completion(struct json_object *conversation_history,
    }
 
    if (!json_object_object_get_ex(first_content, "text", &text_obj)) {
-      LOG_ERROR("No text in Claude response");
+      OLOG_ERROR("No text in Claude response");
       json_object_put(parsed);
       curl_buffer_free(&chunk);
       return NULL;
@@ -251,8 +251,8 @@ char *llm_claude_chat_completion(struct json_object *conversation_history,
           json_object_object_get_ex(usage_obj, "output_tokens", &output_tokens_obj)) {
          input_tokens = json_object_get_int(input_tokens_obj);
          output_tokens = json_object_get_int(output_tokens_obj);
-         LOG_WARNING("Total tokens: %d input + %d output = %d", input_tokens, output_tokens,
-                     input_tokens + output_tokens);
+         OLOG_WARNING("Total tokens: %d input + %d output = %d", input_tokens, output_tokens,
+                      input_tokens + output_tokens);
       }
 
       // Log cache creation
@@ -260,7 +260,7 @@ char *llm_claude_chat_completion(struct json_object *conversation_history,
                                     &cache_creation_obj)) {
          int cache_created = json_object_get_int(cache_creation_obj);
          if (cache_created > 0) {
-            LOG_INFO("Claude cache created: %d tokens", cache_created);
+            OLOG_INFO("Claude cache created: %d tokens", cache_created);
          }
       }
 
@@ -268,7 +268,7 @@ char *llm_claude_chat_completion(struct json_object *conversation_history,
       if (json_object_object_get_ex(usage_obj, "cache_read_input_tokens", &cache_read_obj)) {
          cached_tokens = json_object_get_int(cache_read_obj);
          if (cached_tokens > 0) {
-            LOG_INFO("Claude cache hit: %d tokens (90%% cost savings!)", cached_tokens);
+            OLOG_INFO("Claude cache hit: %d tokens (90%% cost savings!)", cached_tokens);
          }
       }
 
@@ -282,9 +282,9 @@ char *llm_claude_chat_completion(struct json_object *conversation_history,
    if (json_object_object_get_ex(parsed, "stop_reason", &stop_reason_obj)) {
       const char *stop_reason = json_object_get_string(stop_reason_obj);
       if (strcmp(stop_reason, "end_turn") == 0) {
-         LOG_INFO("Response finished properly.");
+         OLOG_INFO("Response finished properly.");
       } else {
-         LOG_WARNING("Claude stopped with reason: %s", stop_reason);
+         OLOG_WARNING("Claude stopped with reason: %s", stop_reason);
       }
    }
 
@@ -420,13 +420,13 @@ static char *llm_claude_streaming_internal(struct json_object *conversation_hist
    claude_streaming_context_t streaming_ctx;
 
    if (!api_key) {
-      LOG_ERROR("Claude API key is required");
+      OLOG_ERROR("Claude API key is required");
       return NULL;
    }
 
    // Check connection
    if (!llm_check_connection(base_url, 4)) {
-      LOG_ERROR("Pre-flight connection check failed (cloud unreachable)");
+      OLOG_ERROR("Pre-flight connection check failed (cloud unreachable)");
       return NULL;
    }
 
@@ -434,7 +434,7 @@ static char *llm_claude_streaming_internal(struct json_object *conversation_hist
    request = convert_to_claude_format(conversation_history, input_text, vision_images,
                                       vision_image_sizes, vision_image_count, model, iteration);
    if (!request) {
-      LOG_ERROR("Failed to convert conversation to Claude format");
+      OLOG_ERROR("Failed to convert conversation to Claude format");
       return NULL;
    }
 
@@ -448,7 +448,7 @@ static char *llm_claude_streaming_internal(struct json_object *conversation_hist
    stream_ctx = llm_stream_create(LLM_CLOUD, CLOUD_PROVIDER_CLAUDE, chunk_callback,
                                   callback_userdata);
    if (!stream_ctx) {
-      LOG_ERROR("Failed to create LLM stream context");
+      OLOG_ERROR("Failed to create LLM stream context");
       json_object_put(request);
       return NULL;
    }
@@ -456,7 +456,7 @@ static char *llm_claude_streaming_internal(struct json_object *conversation_hist
    // Create SSE parser
    sse_parser = sse_parser_create(claude_sse_event_handler, &streaming_ctx);
    if (!sse_parser) {
-      LOG_ERROR("Failed to create SSE parser");
+      OLOG_ERROR("Failed to create SSE parser");
       llm_stream_free(stream_ctx);
       json_object_put(request);
       return NULL;
@@ -469,7 +469,7 @@ static char *llm_claude_streaming_internal(struct json_object *conversation_hist
 
    curl_handle = curl_easy_init();
    if (!curl_handle) {
-      LOG_ERROR("Failed to initialize CURL");
+      OLOG_ERROR("Failed to initialize CURL");
       sse_parser_free(sse_parser);
       llm_stream_free(stream_ctx);
       curl_buffer_free(&streaming_ctx.raw_response);
@@ -509,14 +509,14 @@ static char *llm_claude_streaming_internal(struct json_object *conversation_hist
       const char *error_msg = NULL;
 
       if (res == CURLE_ABORTED_BY_CALLBACK) {
-         LOG_INFO("LLM transfer interrupted by user");
+         OLOG_INFO("LLM transfer interrupted by user");
          /* User cancellation - don't send as error */
       } else if (res == CURLE_OPERATION_TIMEDOUT) {
-         LOG_ERROR("LLM stream timed out (no data for 60 seconds)");
+         OLOG_ERROR("LLM stream timed out (no data for 60 seconds)");
          error_code = "LLM_TIMEOUT";
          error_msg = "Request timed out - AI server may be overloaded";
       } else {
-         LOG_ERROR("CURL failed: %s", curl_easy_strerror(res));
+         OLOG_ERROR("CURL failed: %s", curl_easy_strerror(res));
          error_code = "LLM_CONNECTION_ERROR";
          error_msg = curl_easy_strerror(res);
       }
@@ -548,28 +548,28 @@ static char *llm_claude_streaming_internal(struct json_object *conversation_hist
       /* Determine error code based on HTTP status */
       const char *error_code;
       if (http_code == 401) {
-         LOG_ERROR("Claude API: Invalid or missing API key (HTTP 401)");
+         OLOG_ERROR("Claude API: Invalid or missing API key (HTTP 401)");
          error_code = "LLM_AUTH_ERROR";
       } else if (http_code == 403) {
-         LOG_ERROR("Claude API: Access forbidden (HTTP 403) - check API key permissions");
+         OLOG_ERROR("Claude API: Access forbidden (HTTP 403) - check API key permissions");
          error_code = "LLM_ACCESS_ERROR";
       } else if (http_code == 429) {
-         LOG_ERROR("Claude API: Rate limit exceeded (HTTP 429)");
+         OLOG_ERROR("Claude API: Rate limit exceeded (HTTP 429)");
          error_code = "LLM_RATE_LIMIT";
       } else if (http_code >= 500) {
-         LOG_ERROR("Claude API: Server error (HTTP %ld)", http_code);
+         OLOG_ERROR("Claude API: Server error (HTTP %ld)", http_code);
          error_code = "LLM_SERVER_ERROR";
       } else if (http_code == 400) {
-         LOG_ERROR("Claude API: Bad request (HTTP 400) - check tool format and message structure");
+         OLOG_ERROR("Claude API: Bad request (HTTP 400) - check tool format and message structure");
          error_code = "LLM_BAD_REQUEST";
          /* Log the raw response which contains error details */
          if (streaming_ctx.raw_response.data && streaming_ctx.raw_response.size > 0) {
-            LOG_ERROR("Claude error response: %s", streaming_ctx.raw_response.data);
+            OLOG_ERROR("Claude error response: %s", streaming_ctx.raw_response.data);
          }
          /* Log a sample of the request for debugging */
-         LOG_WARNING("Claude request payload (first 1000 chars): %.1000s", payload);
+         OLOG_WARNING("Claude request payload (first 1000 chars): %.1000s", payload);
       } else {
-         LOG_ERROR("Claude API: Request failed (HTTP %ld)", http_code);
+         OLOG_ERROR("Claude API: Request failed (HTTP %ld)", http_code);
          error_code = "LLM_ERROR";
       }
 
@@ -597,7 +597,7 @@ static char *llm_claude_streaming_internal(struct json_object *conversation_hist
 
    // Debug: Log raw response info before cleanup
    if (streaming_ctx.raw_response.size == 0) {
-      LOG_WARNING("Claude: No data received from API (raw_response empty)");
+      OLOG_WARNING("Claude: No data received from API (raw_response empty)");
    }
 
    curl_buffer_free(&streaming_ctx.raw_response);
@@ -606,13 +606,13 @@ static char *llm_claude_streaming_internal(struct json_object *conversation_hist
    if (llm_stream_has_tool_calls(stream_ctx)) {
       const tool_call_list_t *tool_calls = llm_stream_get_tool_calls(stream_ctx);
       if (tool_calls && tool_calls->count > 0) {
-         LOG_INFO("Claude streaming: Executing %d tool call(s)", tool_calls->count);
+         OLOG_INFO("Claude streaming: Executing %d tool call(s)", tool_calls->count);
 
          // Execute tools (heap-allocated: ~66KB, too large for 512KB satellite worker stack
          // with up to MAX_TOOL_ITERATIONS levels of recursion)
          tool_result_list_t *results = calloc(1, sizeof(tool_result_list_t));
          if (!results) {
-            LOG_ERROR("Claude streaming: Failed to allocate tool results");
+            OLOG_ERROR("Claude streaming: Failed to allocate tool results");
             sse_parser_free(sse_parser);
             llm_stream_free(stream_ctx);
             json_object_put(request);
@@ -677,7 +677,7 @@ static char *llm_claude_streaming_internal(struct json_object *conversation_hist
 
          // Check if we should skip follow-up (e.g., LLM was switched)
          if (llm_tools_should_skip_followup(results)) {
-            LOG_INFO("Claude streaming: Skipping follow-up call (tool requested no follow-up)");
+            OLOG_INFO("Claude streaming: Skipping follow-up call (tool requested no follow-up)");
             char *direct_response = llm_tools_get_direct_response(results);
 
             // Add synthetic assistant message to complete the tool call sequence
@@ -693,7 +693,7 @@ static char *llm_claude_streaming_internal(struct json_object *conversation_hist
                json_object_array_add(content_array, text_block);
                json_object_object_add(closing_msg, "content", content_array);
                json_object_array_add(conversation_history, closing_msg);
-               LOG_INFO("Claude streaming: Added closing assistant message to complete history");
+               OLOG_INFO("Claude streaming: Added closing assistant message to complete history");
             }
 
             // Send through chunk callback so TTS receives it
@@ -714,8 +714,9 @@ static char *llm_claude_streaming_internal(struct json_object *conversation_hist
 
          // Check iteration limit — force a final text response with what we have
          if (iteration >= MAX_TOOL_ITERATIONS) {
-            LOG_WARNING("Claude streaming: Max tool iterations (%d) reached, forcing text response",
-                        MAX_TOOL_ITERATIONS);
+            OLOG_WARNING(
+                "Claude streaming: Max tool iterations (%d) reached, forcing text response",
+                MAX_TOOL_ITERATIONS);
 
             // Inject a system hint telling the LLM to respond with what it has
             json_object *hint_msg = json_object_new_object();
@@ -737,7 +738,7 @@ static char *llm_claude_streaming_internal(struct json_object *conversation_hist
             free(results);
 
             // Make one final call with tools disabled
-            LOG_INFO("Claude streaming: Making final call without tools to present results");
+            OLOG_INFO("Claude streaming: Making final call without tools to present results");
             return llm_claude_streaming_internal(conversation_history, "", NULL, NULL, 0, base_url,
                                                  api_key, model, chunk_callback, callback_userdata,
                                                  MAX_TOOL_ITERATIONS);
@@ -750,8 +751,8 @@ static char *llm_claude_streaming_internal(struct json_object *conversation_hist
             if (results->results[i].vision_image && results->results[i].vision_image_size > 0) {
                result_vision = results->results[i].vision_image;
                result_vision_size = results->results[i].vision_image_size;
-               LOG_INFO("Claude streaming: Including vision from tool result (%zu bytes)",
-                        result_vision_size);
+               OLOG_INFO("Claude streaming: Including vision from tool result (%zu bytes)",
+                         result_vision_size);
                break;
             }
          }
@@ -762,8 +763,8 @@ static char *llm_claude_streaming_internal(struct json_object *conversation_hist
          char model_buf_followup[LLM_MODEL_NAME_MAX] =
              "";  // Buffer for model (resolved ptr may dangle)
 
-         LOG_INFO("Claude streaming: Making follow-up call after tool execution (iteration %d/%d)",
-                  iteration + 1, MAX_TOOL_ITERATIONS);
+         OLOG_INFO("Claude streaming: Making follow-up call after tool execution (iteration %d/%d)",
+                   iteration + 1, MAX_TOOL_ITERATIONS);
 
          // Resolve config once and reuse for both provider check and credentials
          bool config_valid = (llm_get_current_resolved_config(&current_config) == 0);
@@ -782,7 +783,7 @@ static char *llm_claude_streaming_internal(struct json_object *conversation_hist
          if (config_valid && (current_config.type == LLM_LOCAL ||
                               current_config.cloud_provider == CLOUD_PROVIDER_OPENAI)) {
             // Provider switched to OpenAI or local - hand off to OpenAI code path
-            LOG_INFO("Claude streaming: Provider switched to OpenAI/local, handing off");
+            OLOG_INFO("Claude streaming: Provider switched to OpenAI/local, handing off");
 
             // OpenAI will handle the vision data if present
             // Use copied model buffer to avoid dangling pointer
@@ -820,9 +821,9 @@ static char *llm_claude_streaming_internal(struct json_object *conversation_hist
 
    // Debug: Log if response is empty (helps diagnose streaming issues)
    if (!response || !*response) {
-      LOG_WARNING(
+      OLOG_WARNING(
           "Claude: Stream completed but response is empty (no text content, no tool calls)");
-      LOG_WARNING("Claude: has_tool_calls=%d", llm_stream_has_tool_calls(stream_ctx) ? 1 : 0);
+      OLOG_WARNING("Claude: has_tool_calls=%d", llm_stream_has_tool_calls(stream_ctx) ? 1 : 0);
    }
 
    // Cleanup
@@ -876,12 +877,12 @@ int llm_claude_streaming_single_shot(struct json_object *conversation_history,
    memset(result, 0, sizeof(*result));
 
    if (!api_key) {
-      LOG_ERROR("Claude API key is required");
+      OLOG_ERROR("Claude API key is required");
       return 1;
    }
 
    if (!llm_check_connection(base_url, 4)) {
-      LOG_ERROR("Pre-flight connection check failed (cloud unreachable)");
+      OLOG_ERROR("Pre-flight connection check failed (cloud unreachable)");
       return 1;
    }
 
@@ -889,7 +890,7 @@ int llm_claude_streaming_single_shot(struct json_object *conversation_history,
    request = convert_to_claude_format(conversation_history, input_text, vision_images,
                                       vision_image_sizes, vision_image_count, model, iteration);
    if (!request) {
-      LOG_ERROR("Failed to convert conversation to Claude format");
+      OLOG_ERROR("Failed to convert conversation to Claude format");
       return 1;
    }
 
@@ -898,20 +899,20 @@ int llm_claude_streaming_single_shot(struct json_object *conversation_history,
    payload = json_object_to_json_string_ext(request, JSON_C_TO_STRING_PLAIN |
                                                          JSON_C_TO_STRING_NOSLASHESCAPE);
 
-   LOG_INFO("Claude single-shot iter %d: url=%s", iteration, base_url);
+   OLOG_INFO("Claude single-shot iter %d: url=%s", iteration, base_url);
 
    /* Create streaming context */
    stream_ctx = llm_stream_create(LLM_CLOUD, CLOUD_PROVIDER_CLAUDE, chunk_callback,
                                   callback_userdata);
    if (!stream_ctx) {
-      LOG_ERROR("Failed to create LLM stream context");
+      OLOG_ERROR("Failed to create LLM stream context");
       json_object_put(request);
       return 1;
    }
 
    sse_parser = sse_parser_create(claude_sse_event_handler, &streaming_ctx);
    if (!sse_parser) {
-      LOG_ERROR("Failed to create SSE parser");
+      OLOG_ERROR("Failed to create SSE parser");
       llm_stream_free(stream_ctx);
       json_object_put(request);
       return 1;
@@ -926,7 +927,7 @@ int llm_claude_streaming_single_shot(struct json_object *conversation_history,
    for (int attempt = 0; attempt < max_attempts; attempt++) {
       curl_handle = curl_easy_init();
       if (!curl_handle) {
-         LOG_ERROR("Failed to initialize CURL");
+         OLOG_ERROR("Failed to initialize CURL");
          sse_parser_free(sse_parser);
          llm_stream_free(stream_ctx);
          curl_buffer_free(&streaming_ctx.raw_response);
@@ -967,8 +968,8 @@ int llm_claude_streaming_single_shot(struct json_object *conversation_history,
          }
 
          if (retryable && attempt < max_attempts - 1) {
-            LOG_WARNING("CURL connect failed (%s), retrying in 1s... (attempt %d/%d)",
-                        curl_easy_strerror(res), attempt + 1, max_attempts);
+            OLOG_WARNING("CURL connect failed (%s), retrying in 1s... (attempt %d/%d)",
+                         curl_easy_strerror(res), attempt + 1, max_attempts);
             curl_easy_cleanup(curl_handle);
             curl_slist_free_all(headers);
             curl_handle = NULL;
@@ -987,9 +988,9 @@ int llm_claude_streaming_single_shot(struct json_object *conversation_history,
          }
 
          if (res == CURLE_ABORTED_BY_CALLBACK) {
-            LOG_INFO("LLM transfer interrupted by user");
+            OLOG_INFO("LLM transfer interrupted by user");
          } else {
-            LOG_ERROR("CURL failed: %s", curl_easy_strerror(res));
+            OLOG_ERROR("CURL failed: %s", curl_easy_strerror(res));
          }
 #ifdef ENABLE_WEBUI
          if (res != CURLE_ABORTED_BY_CALLBACK) {
@@ -1018,9 +1019,9 @@ int llm_claude_streaming_single_shot(struct json_object *conversation_history,
    curl_easy_getinfo(curl_handle, CURLINFO_RESPONSE_CODE, &http_code);
 
    if (http_code != 200) {
-      LOG_ERROR("Claude API: Request failed (HTTP %ld)", http_code);
+      OLOG_ERROR("Claude API: Request failed (HTTP %ld)", http_code);
       if (http_code == 400 && streaming_ctx.raw_response.data) {
-         LOG_ERROR("Claude error response: %s", streaming_ctx.raw_response.data);
+         OLOG_ERROR("Claude error response: %s", streaming_ctx.raw_response.data);
       }
 #ifdef ENABLE_WEBUI
       session_t *session = session_get_command_context();

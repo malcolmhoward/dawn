@@ -138,7 +138,7 @@ int neopixel_init(neopixel_t *ctx, const char *spi_device, int num_leds) {
    /* Open SPI device */
    ctx->spi_fd = open(dev, O_RDWR);
    if (ctx->spi_fd < 0) {
-      LOG_ERROR("Cannot open SPI device '%s'", dev);
+      OLOG_ERROR("Cannot open SPI device '%s'", dev);
       return -1;
    }
 
@@ -150,7 +150,7 @@ int neopixel_init(neopixel_t *ctx, const char *spi_device, int num_leds) {
    if (ioctl(ctx->spi_fd, SPI_IOC_WR_MODE, &mode) < 0 ||
        ioctl(ctx->spi_fd, SPI_IOC_WR_BITS_PER_WORD, &bits) < 0 ||
        ioctl(ctx->spi_fd, SPI_IOC_WR_MAX_SPEED_HZ, &speed) < 0) {
-      LOG_ERROR("Cannot configure SPI");
+      OLOG_ERROR("Cannot configure SPI");
       close(ctx->spi_fd);
       return -1;
    }
@@ -158,7 +158,7 @@ int neopixel_init(neopixel_t *ctx, const char *spi_device, int num_leds) {
    /* Allocate pixel data buffer (GRB format, 3 bytes per LED) */
    ctx->pixel_data = calloc(num_leds * 3, 1);
    if (!ctx->pixel_data) {
-      LOG_ERROR("Cannot allocate pixel buffer");
+      OLOG_ERROR("Cannot allocate pixel buffer");
       close(ctx->spi_fd);
       return -1;
    }
@@ -167,7 +167,7 @@ int neopixel_init(neopixel_t *ctx, const char *spi_device, int num_leds) {
    ctx->spi_buffer_size = (num_leds * SPI_BYTES_PER_LED) + RESET_BYTES;
    ctx->spi_buffer = calloc(ctx->spi_buffer_size, 1);
    if (!ctx->spi_buffer) {
-      LOG_ERROR("Cannot allocate SPI buffer");
+      OLOG_ERROR("Cannot allocate SPI buffer");
       free(ctx->pixel_data);
       close(ctx->spi_fd);
       return -1;
@@ -176,7 +176,7 @@ int neopixel_init(neopixel_t *ctx, const char *spi_device, int num_leds) {
    ctx->initialized = 1;
    ctx->last_update = get_time_ms();
 
-   LOG_INFO("NeoPixel initialized: %d LEDs on %s", num_leds, dev);
+   OLOG_INFO("NeoPixel initialized: %d LEDs on %s", num_leds, dev);
 
    /* Clear all LEDs */
    neopixel_clear(ctx);
@@ -210,7 +210,7 @@ void neopixel_cleanup(neopixel_t *ctx) {
    }
 
    ctx->initialized = 0;
-   LOG_INFO("NeoPixel cleaned up");
+   OLOG_INFO("NeoPixel cleaned up");
 }
 
 void neopixel_set_pixel(neopixel_t *ctx, int index, uint8_t r, uint8_t g, uint8_t b) {
@@ -277,7 +277,7 @@ int neopixel_show(neopixel_t *ctx) {
    };
 
    if (ioctl(ctx->spi_fd, SPI_IOC_MESSAGE(1), &tr) < 0) {
-      LOG_ERROR("SPI transfer failed");
+      OLOG_ERROR("SPI transfer failed");
       return -1;
    }
 

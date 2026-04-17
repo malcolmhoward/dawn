@@ -143,25 +143,25 @@ static char *shutdown_tool_callback(const char *action, char *value, int *should
 
    /* Security check 1: Must be explicitly enabled in config */
    if (!s_config.enabled) {
-      LOG_WARNING("Shutdown command rejected: shutdown.enabled = false in config");
+      OLOG_WARNING("Shutdown command rejected: shutdown.enabled = false in config");
       return strdup("Shutdown command is disabled. Enable it in settings first.");
    }
 
    /* Security check 2: If passphrase is configured, it must match */
    if (s_config.passphrase[0] != '\0') {
       if (value == NULL || constant_time_compare(value, s_config.passphrase) != 0) {
-         LOG_WARNING("Shutdown command rejected: incorrect or missing passphrase");
+         OLOG_WARNING("Shutdown command rejected: incorrect or missing passphrase");
          return strdup("Shutdown command rejected: incorrect passphrase.");
       }
-      LOG_INFO("Shutdown passphrase verified");
+      OLOG_INFO("Shutdown passphrase verified");
    }
 
    /* All security checks passed - execute shutdown */
-   LOG_INFO("Shutdown command authorized, initiating system shutdown");
+   OLOG_INFO("Shutdown command authorized, initiating system shutdown");
 
    int ret = system("sudo shutdown -h now");
    if (ret != 0) {
-      LOG_ERROR("Shutdown command failed with return code: %d", ret);
+      OLOG_ERROR("Shutdown command failed with return code: %d", ret);
       return strdup("Shutdown command failed to execute.");
    }
 

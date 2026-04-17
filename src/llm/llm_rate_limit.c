@@ -81,8 +81,8 @@ static void expire_old_entries(rate_limiter_t *lim) {
 
 void llm_rate_limit_init(int max_rpm) {
    if (max_rpm > LLM_RATE_LIMIT_MAX_SLOTS) {
-      LOG_WARNING("Rate limit RPM %d exceeds max slots %d, clamping", max_rpm,
-                  LLM_RATE_LIMIT_MAX_SLOTS);
+      OLOG_WARNING("Rate limit RPM %d exceeds max slots %d, clamping", max_rpm,
+                   LLM_RATE_LIMIT_MAX_SLOTS);
       max_rpm = LLM_RATE_LIMIT_MAX_SLOTS;
    }
 
@@ -94,9 +94,9 @@ void llm_rate_limit_init(int max_rpm) {
    pthread_mutex_unlock(&s_limiter.mutex);
 
    if (max_rpm > 0) {
-      LOG_INFO("LLM rate limiter initialized: %d RPM", max_rpm);
+      OLOG_INFO("LLM rate limiter initialized: %d RPM", max_rpm);
    } else {
-      LOG_INFO("LLM rate limiter disabled");
+      OLOG_INFO("LLM rate limiter disabled");
    }
 }
 
@@ -125,8 +125,8 @@ int llm_rate_limit_wait(void) {
          continue;
       }
 
-      LOG_WARNING("Rate limit: %d/%d RPM, waiting %.1fs for slot", s_limiter.count, current_rpm,
-                  wait_sec);
+      OLOG_WARNING("Rate limit: %d/%d RPM, waiting %.1fs for slot", s_limiter.count, current_rpm,
+                   wait_sec);
 
       pthread_mutex_unlock(&s_limiter.mutex);
 
@@ -137,7 +137,7 @@ int llm_rate_limit_wait(void) {
       clock_gettime(CLOCK_MONOTONIC, &sleep_start);
       while (1) {
          if (llm_is_interrupt_requested()) {
-            LOG_INFO("Rate limit wait interrupted");
+            OLOG_INFO("Rate limit wait interrupted");
             return 1;
          }
          nanosleep(&sleep_ts, NULL);
@@ -166,8 +166,8 @@ int llm_rate_limit_wait(void) {
 
 void llm_rate_limit_set_rpm(int max_rpm) {
    if (max_rpm > LLM_RATE_LIMIT_MAX_SLOTS) {
-      LOG_WARNING("Rate limit RPM %d exceeds max slots %d, clamping", max_rpm,
-                  LLM_RATE_LIMIT_MAX_SLOTS);
+      OLOG_WARNING("Rate limit RPM %d exceeds max slots %d, clamping", max_rpm,
+                   LLM_RATE_LIMIT_MAX_SLOTS);
       max_rpm = LLM_RATE_LIMIT_MAX_SLOTS;
    }
 
@@ -175,9 +175,9 @@ void llm_rate_limit_set_rpm(int max_rpm) {
 
    if (old_rpm != max_rpm) {
       if (max_rpm > 0) {
-         LOG_INFO("LLM rate limit updated: %d -> %d RPM", old_rpm, max_rpm);
+         OLOG_INFO("LLM rate limit updated: %d -> %d RPM", old_rpm, max_rpm);
       } else {
-         LOG_INFO("LLM rate limit disabled (was %d RPM)", old_rpm);
+         OLOG_INFO("LLM rate limit disabled (was %d RPM)", old_rpm);
       }
    }
 }

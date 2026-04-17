@@ -202,14 +202,15 @@ static bool contains_blocked_pattern(const char *text) {
    char *normalized = normalize_for_matching(text);
    if (!normalized) {
       /* If normalization fails, be conservative and block */
-      LOG_WARNING("memory_callback: normalization failed, blocking for safety");
+      OLOG_WARNING("memory_callback: normalization failed, blocking for safety");
       return true;
    }
 
    bool found = false;
    for (int i = 0; MEMORY_BLOCKED_PATTERNS[i] != NULL; i++) {
       if (strstr(normalized, MEMORY_BLOCKED_PATTERNS[i]) != NULL) {
-         LOG_WARNING("memory_callback: blocked pattern detected: '%s'", MEMORY_BLOCKED_PATTERNS[i]);
+         OLOG_WARNING("memory_callback: blocked pattern detected: '%s'",
+                      MEMORY_BLOCKED_PATTERNS[i]);
          found = true;
          break;
       }
@@ -690,8 +691,8 @@ static char *memory_action_remember(int user_id, const char *fact_text) {
                if (new_conf > 1.0f)
                   new_conf = 1.0f;
                memory_db_fact_update_confidence(hash_matches[i].id, new_conf);
-               LOG_INFO("memory_callback: duplicate detected (hash match), reinforced fact %ld",
-                        (long)hash_matches[i].id);
+               OLOG_INFO("memory_callback: duplicate detected (hash match), reinforced fact %ld",
+                         (long)hash_matches[i].id);
                return strdup("I already know that. Increased my confidence in this fact.");
             }
          }
@@ -712,8 +713,8 @@ static char *memory_action_remember(int user_id, const char *fact_text) {
             if (new_conf > 1.0f)
                new_conf = 1.0f;
             memory_db_fact_update_confidence(similar[i].id, new_conf);
-            LOG_INFO("memory_callback: duplicate detected (Jaccard=%.2f), reinforced fact %ld",
-                     similarity, (long)similar[i].id);
+            OLOG_INFO("memory_callback: duplicate detected (Jaccard=%.2f), reinforced fact %ld",
+                      similarity, (long)similar[i].id);
             return strdup(
                 "I already know something similar. Increased my confidence in that fact.");
          }
@@ -883,8 +884,8 @@ char *memoryCallback(const char *actionName, char *value, int *should_respond) {
       return strdup("Invalid memory action.");
    }
 
-   LOG_INFO("memory_callback: action='%s', value='%s', user_id=%d", actionName,
-            value ? value : "(null)", user_id);
+   OLOG_INFO("memory_callback: action='%s', value='%s', user_id=%d", actionName,
+             value ? value : "(null)", user_id);
 
    if (strcmp(actionName, "search") == 0) {
       /* Extract base keywords and optional time_range from encoded value */
@@ -1101,9 +1102,9 @@ char *memoryCallback(const char *actionName, char *value, int *should_respond) {
          return result ? result : strdup("Entities merged successfully.");
       } else if (rc == MEMORY_DB_NOT_FOUND) {
          /* Race: entity deleted between lookup and merge */
-         LOG_WARNING("memory_callback: merge_entities race — entity vanished between lookup and "
-                     "merge (source='%s', target='%s')",
-                     source_name, target_name);
+         OLOG_WARNING("memory_callback: merge_entities race — entity vanished between lookup and "
+                      "merge (source='%s', target='%s')",
+                      source_name, target_name);
          return strdup("Error: one or both entities no longer exist (may have been deleted)");
       } else {
          return strdup("Error: merge operation failed");

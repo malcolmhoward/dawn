@@ -500,7 +500,7 @@ int ui_screensaver_init(ui_screensaver_t *ss,
                                      TRACK_FONT_SIZE);
 
    if (!ss->clock_font) {
-      LOG_WARNING("Screensaver: Failed to load clock font");
+      OLOG_WARNING("Screensaver: Failed to load clock font");
    }
 
    /* Pre-render "D.A.W.N." watermark texture (bold, 32pt, static) */
@@ -523,8 +523,8 @@ int ui_screensaver_init(ui_screensaver_t *ss,
    ss->cached_time[0] = '\0';
    ss->cached_date[0] = '\0';
 
-   LOG_INFO("Screensaver: initialized (enabled=%s, timeout=%.0fs)", enabled ? "yes" : "no",
-            timeout_sec);
+   OLOG_INFO("Screensaver: initialized (enabled=%s, timeout=%.0fs)", enabled ? "yes" : "no",
+             timeout_sec);
    return 0;
 }
 
@@ -846,13 +846,13 @@ void ui_screensaver_toggle_manual(ui_screensaver_t *ss, double time_sec) {
       ss->state = SCREENSAVER_FADING_IN;
       ss->fade_start = time_sec;
       ss->visualizer_mode = true;
-      LOG_INFO("Screensaver: manual visualizer activated");
+      OLOG_INFO("Screensaver: manual visualizer activated");
    } else {
       /* Deactivate */
       ss->state = SCREENSAVER_FADING_OUT;
       ss->fade_start = time_sec;
       ss->manual = false;
-      LOG_INFO("Screensaver: manual visualizer deactivated");
+      OLOG_INFO("Screensaver: manual visualizer deactivated");
    }
 }
 

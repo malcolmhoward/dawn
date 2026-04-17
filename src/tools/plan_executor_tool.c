@@ -60,8 +60,8 @@ static void plan_executor_parse_config(toml_table_t *table, void *config) {
       if (val >= 5 && val <= 300) {
          cfg->timeout_seconds = val;
       } else {
-         LOG_WARNING("plan_executor: timeout_seconds %d out of range [5-300], using default %d",
-                     val, PLAN_TIMEOUT_DEFAULT_S);
+         OLOG_WARNING("plan_executor: timeout_seconds %d out of range [5-300], using default %d",
+                      val, PLAN_TIMEOUT_DEFAULT_S);
       }
    }
 }
@@ -133,7 +133,7 @@ static char *plan_executor_callback(const char *action, char *value, int *should
       return strdup("Error: empty plan");
    }
 
-   LOG_INFO("plan_executor: received plan (%zu bytes)", strlen(value));
+   OLOG_INFO("plan_executor: received plan (%zu bytes)", strlen(value));
 
    /* Parse the plan JSON */
    struct json_object *plan = NULL;
@@ -141,7 +141,7 @@ static char *plan_executor_callback(const char *action, char *value, int *should
    if (rc != PLAN_OK || !plan) {
       char err[256];
       snprintf(err, sizeof(err), "Error: plan parse failed (code %d)", rc);
-      LOG_WARNING("plan_executor: %s", err);
+      OLOG_WARNING("plan_executor: %s", err);
       return strdup(err);
    }
 
@@ -175,7 +175,7 @@ static char *plan_executor_callback(const char *action, char *value, int *should
             snprintf(result, len, "[Plan error: %s]", ctx.error);
          }
       }
-      LOG_WARNING("plan_executor: failed (code %d): %s", rc, ctx.error);
+      OLOG_WARNING("plan_executor: failed (code %d): %s", rc, ctx.error);
 
       /* Notify: plan error — use json-c to safely escape error text */
       {
@@ -201,8 +201,8 @@ static char *plan_executor_callback(const char *action, char *value, int *should
       } else {
          result = strdup("Plan executed successfully (no output).");
       }
-      LOG_INFO("plan_executor: completed — %d steps, %d tool calls", ctx.total_steps_executed,
-               ctx.total_tool_calls);
+      OLOG_INFO("plan_executor: completed — %d steps, %d tool calls", ctx.total_steps_executed,
+                ctx.total_tool_calls);
 
       /* Notify: plan done */
       char notify[256];

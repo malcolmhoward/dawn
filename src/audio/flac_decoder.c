@@ -107,8 +107,8 @@ static void flac_metadata_callback(const FLAC__StreamDecoder *decoder,
       handle->total_samples = info->total_samples;
       handle->metadata_received = true;
 
-      LOG_INFO("FLAC: %uHz %uch %ubps, %llu samples", info->sample_rate, info->channels,
-               info->bits_per_sample, (unsigned long long)info->total_samples);
+      OLOG_INFO("FLAC: %uHz %uch %ubps, %llu samples", info->sample_rate, info->channels,
+                info->bits_per_sample, (unsigned long long)info->total_samples);
    }
 }
 
@@ -121,7 +121,7 @@ static void flac_error_callback(const FLAC__StreamDecoder *decoder,
    flac_decoder_handle_t *handle = (flac_decoder_handle_t *)client_data;
    handle->error = true;
 
-   LOG_ERROR("FLAC decode error: %s", FLAC__StreamDecoderErrorStatusString[status]);
+   OLOG_ERROR("FLAC decode error: %s", FLAC__StreamDecoderErrorStatusString[status]);
 }
 
 /**
@@ -138,16 +138,16 @@ static FLAC__StreamDecoderWriteStatus flac_write_callback(const FLAC__StreamDeco
 
    /* Validate block size fits in buffer */
    if (frame->header.blocksize > handle->buffer_frames) {
-      LOG_ERROR("FLAC block size %u exceeds buffer %zu", frame->header.blocksize,
-                handle->buffer_frames);
+      OLOG_ERROR("FLAC block size %u exceeds buffer %zu", frame->header.blocksize,
+                 handle->buffer_frames);
       handle->error = true;
       return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
    }
 
    /* Validate channel count */
    if (frame->header.channels > FLAC_MAX_CHANNELS) {
-      LOG_ERROR("FLAC has %u channels, max supported is %d", frame->header.channels,
-                FLAC_MAX_CHANNELS);
+      OLOG_ERROR("FLAC has %u channels, max supported is %d", frame->header.channels,
+                 FLAC_MAX_CHANNELS);
       handle->error = true;
       return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
    }
@@ -189,7 +189,7 @@ static FLAC__StreamDecoderWriteStatus flac_write_callback(const FLAC__StreamDeco
 audio_decoder_t *flac_decoder_open(const char *path) {
    flac_decoder_handle_t *handle = calloc(1, sizeof(flac_decoder_handle_t));
    if (!handle) {
-      LOG_ERROR("Failed to allocate FLAC decoder handle");
+      OLOG_ERROR("Failed to allocate FLAC decoder handle");
       return NULL;
    }
 
@@ -201,7 +201,7 @@ audio_decoder_t *flac_decoder_open(const char *path) {
    handle->buffer_frames = FLAC_BUFFER_FRAMES;
    handle->buffer = malloc(FLAC_BUFFER_FRAMES * FLAC_MAX_CHANNELS * sizeof(int16_t));
    if (!handle->buffer) {
-      LOG_ERROR("Failed to allocate FLAC sample buffer");
+      OLOG_ERROR("Failed to allocate FLAC sample buffer");
       free(handle);
       return NULL;
    }
@@ -209,7 +209,7 @@ audio_decoder_t *flac_decoder_open(const char *path) {
    /* Create FLAC decoder */
    handle->flac = FLAC__stream_decoder_new();
    if (!handle->flac) {
-      LOG_ERROR("Failed to create FLAC decoder");
+      OLOG_ERROR("Failed to create FLAC decoder");
       free(handle->buffer);
       free(handle);
       return NULL;
@@ -221,7 +221,7 @@ audio_decoder_t *flac_decoder_open(const char *path) {
        handle);
 
    if (init_status != FLAC__STREAM_DECODER_INIT_STATUS_OK) {
-      LOG_ERROR("FLAC init failed: %s", FLAC__StreamDecoderInitStatusString[init_status]);
+      OLOG_ERROR("FLAC init failed: %s", FLAC__StreamDecoderInitStatusString[init_status]);
       FLAC__stream_decoder_delete(handle->flac);
       free(handle->buffer);
       free(handle);
@@ -230,7 +230,7 @@ audio_decoder_t *flac_decoder_open(const char *path) {
 
    /* Process until we get metadata (reads stream info) */
    if (!FLAC__stream_decoder_process_until_end_of_metadata(handle->flac)) {
-      LOG_ERROR("Failed to read FLAC metadata");
+      OLOG_ERROR("Failed to read FLAC metadata");
       FLAC__stream_decoder_finish(handle->flac);
       FLAC__stream_decoder_delete(handle->flac);
       free(handle->buffer);
@@ -239,7 +239,7 @@ audio_decoder_t *flac_decoder_open(const char *path) {
    }
 
    if (!handle->metadata_received) {
-      LOG_ERROR("No FLAC metadata received");
+      OLOG_ERROR("No FLAC metadata received");
       FLAC__stream_decoder_finish(handle->flac);
       FLAC__stream_decoder_delete(handle->flac);
       free(handle->buffer);

@@ -60,12 +60,12 @@ static int ollama_init(const char *endpoint, const char *model, const char *api_
    }
    s_model[sizeof(s_model) - 1] = '\0';
 
-   LOG_INFO("memory_embed_ollama: initialized (endpoint: %s, model: %s)", s_endpoint, s_model);
+   OLOG_INFO("memory_embed_ollama: initialized (endpoint: %s, model: %s)", s_endpoint, s_model);
    return 0;
 }
 
 static void ollama_cleanup(void) {
-   LOG_INFO("memory_embed_ollama: cleanup");
+   OLOG_INFO("memory_embed_ollama: cleanup");
 }
 
 static int ollama_embed(const char *text, float *out, int max_dims, int *out_dims) {
@@ -111,7 +111,7 @@ static int ollama_embed(const char *text, float *out, int max_dims, int *out_dim
    json_object_put(req);
 
    if (res != CURLE_OK) {
-      LOG_ERROR("memory_embed_ollama: HTTP request failed: %s", curl_easy_strerror(res));
+      OLOG_ERROR("memory_embed_ollama: HTTP request failed: %s", curl_easy_strerror(res));
       curl_buffer_free(&buf);
       return -1;
    }
@@ -121,13 +121,13 @@ static int ollama_embed(const char *text, float *out, int max_dims, int *out_dim
    curl_buffer_free(&buf);
 
    if (!resp) {
-      LOG_ERROR("memory_embed_ollama: failed to parse response");
+      OLOG_ERROR("memory_embed_ollama: failed to parse response");
       return -1;
    }
 
    struct json_object *embeddings_arr;
    if (!json_object_object_get_ex(resp, "embeddings", &embeddings_arr)) {
-      LOG_ERROR("memory_embed_ollama: no 'embeddings' in response");
+      OLOG_ERROR("memory_embed_ollama: no 'embeddings' in response");
       json_object_put(resp);
       return -1;
    }

@@ -56,7 +56,7 @@ static void record_ttft_if_first_token(llm_stream_context_t *ctx) {
    double ttft_ms = (now.tv_sec - ctx->stream_start_time.tv_sec) * 1000.0 +
                     (now.tv_usec - ctx->stream_start_time.tv_usec) / 1000.0;
 
-   LOG_INFO("LLM TTFT: %.1f ms", ttft_ms);
+   OLOG_INFO("LLM TTFT: %.1f ms", ttft_ms);
    metrics_record_llm_ttft(ttft_ms);
 }
 
@@ -73,8 +73,8 @@ static int append_to_accumulated(llm_stream_context_t *ctx, const char *text) {
 
    // Prevent runaway memory allocation from excessively long LLM responses
    if (needed > MAX_ACCUMULATED_SIZE) {
-      LOG_ERROR("Accumulated response size limit exceeded: %zu bytes, maximum %zu bytes (%.1f MB)",
-                needed, MAX_ACCUMULATED_SIZE, MAX_ACCUMULATED_SIZE / (1024.0 * 1024.0));
+      OLOG_ERROR("Accumulated response size limit exceeded: %zu bytes, maximum %zu bytes (%.1f MB)",
+                 needed, MAX_ACCUMULATED_SIZE, MAX_ACCUMULATED_SIZE / (1024.0 * 1024.0));
       return 0;
    }
 
@@ -92,7 +92,7 @@ static int append_to_accumulated(llm_stream_context_t *ctx, const char *text) {
 
       char *new_buffer = realloc(ctx->accumulated_response, new_capacity);
       if (!new_buffer) {
-         LOG_ERROR("Failed to reallocate accumulated response buffer");
+         OLOG_ERROR("Failed to reallocate accumulated response buffer");
          return 0;
       }
 
@@ -122,7 +122,7 @@ static int append_to_thinking(llm_stream_context_t *ctx, const char *text) {
    if (!ctx->accumulated_thinking) {
       ctx->accumulated_thinking = malloc(DEFAULT_THINKING_CAPACITY);
       if (!ctx->accumulated_thinking) {
-         LOG_ERROR("Failed to allocate thinking buffer");
+         OLOG_ERROR("Failed to allocate thinking buffer");
          return 0;
       }
       ctx->accumulated_thinking[0] = '\0';
@@ -134,7 +134,7 @@ static int append_to_thinking(llm_stream_context_t *ctx, const char *text) {
 
    // Prevent runaway memory allocation
    if (needed > MAX_THINKING_SIZE) {
-      LOG_WARNING("Thinking content size limit exceeded: %zu bytes", needed);
+      OLOG_WARNING("Thinking content size limit exceeded: %zu bytes", needed);
       return 0;
    }
 
@@ -150,7 +150,7 @@ static int append_to_thinking(llm_stream_context_t *ctx, const char *text) {
 
       char *new_buffer = realloc(ctx->accumulated_thinking, new_capacity);
       if (!new_buffer) {
-         LOG_ERROR("Failed to reallocate thinking buffer");
+         OLOG_ERROR("Failed to reallocate thinking buffer");
          return 0;
       }
 
@@ -220,13 +220,13 @@ static void handle_think_open(llm_stream_context_t *ctx,
                               int has_ws_session,
                               session_t *ws_session) {
    if (ctx->inside_think_tag) {
-      LOG_WARNING("LLM: Nested <think> tag ignored (already inside think block)");
+      OLOG_WARNING("LLM: Nested <think> tag ignored (already inside think block)");
       return;
    }
    ctx->thinking_active = 1;
    ctx->has_thinking = 1;
    ctx->inside_think_tag = 1;
-   LOG_INFO("LLM: Inline <think> tag detected");
+   OLOG_INFO("LLM: Inline <think> tag detected");
    if (has_ws_session) {
       webui_send_thinking_start(ws_session, "local");
    }
@@ -239,12 +239,12 @@ static void handle_think_close(llm_stream_context_t *ctx,
                                int has_ws_session,
                                session_t *ws_session) {
    if (!ctx->inside_think_tag) {
-      LOG_WARNING("LLM: Stray </think> tag ignored (not inside think block)");
+      OLOG_WARNING("LLM: Stray </think> tag ignored (not inside think block)");
       return;
    }
    ctx->inside_think_tag = 0;
    ctx->thinking_active = 0;
-   LOG_INFO("LLM: Inline </think> tag closed");
+   OLOG_INFO("LLM: Inline </think> tag closed");
    if (has_ws_session) {
       webui_send_thinking_end(ws_session, ctx->thinking_size > 0);
    }
@@ -390,7 +390,7 @@ static void parse_openai_chunk(llm_stream_context_t *ctx, const char *event_data
    // Parse JSON
    json_object *chunk = json_tokener_parse(event_data);
    if (!chunk) {
-      LOG_WARNING("Failed to parse OpenAI chunk JSON");
+      OLOG_WARNING("Failed to parse OpenAI chunk JSON");
       return;
    }
 
@@ -415,7 +415,7 @@ static void parse_openai_chunk(llm_stream_context_t *ctx, const char *event_data
                if (!ctx->thinking_active) {
                   ctx->thinking_active = 1;
                   ctx->has_thinking = 1;
-                  LOG_INFO("LLM: Reasoning content detected (llama.cpp)");
+                  OLOG_INFO("LLM: Reasoning content detected (llama.cpp)");
 
                   // Send thinking_start to WebUI
                   if (has_ws_session) {
@@ -446,7 +446,7 @@ static void parse_openai_chunk(llm_stream_context_t *ctx, const char *event_data
                // If we were in thinking mode (from reasoning_content), transition
                if (ctx->thinking_active && !ctx->inside_think_tag) {
                   ctx->thinking_active = 0;
-                  LOG_INFO("LLM: Transitioned from reasoning to response");
+                  OLOG_INFO("LLM: Transitioned from reasoning to response");
 
                   // Send thinking_end to WebUI
                   if (has_ws_session) {
@@ -548,10 +548,10 @@ static void parse_openai_chunk(llm_stream_context_t *ctx, const char *event_data
                                 LLM_TOOLS_THOUGHT_SIG_LEN - 1);
                         ctx->tool_calls.thought_signature[LLM_TOOLS_THOUGHT_SIG_LEN - 1] = '\0';
                         if (sig_len >= LLM_TOOLS_THOUGHT_SIG_LEN) {
-                           LOG_WARNING("Gemini thought_signature truncated: %zu -> %d bytes",
-                                       sig_len, LLM_TOOLS_THOUGHT_SIG_LEN - 1);
+                           OLOG_WARNING("Gemini thought_signature truncated: %zu -> %d bytes",
+                                        sig_len, LLM_TOOLS_THOUGHT_SIG_LEN - 1);
                         } else {
-                           LOG_INFO("Captured Gemini thought_signature (%zu bytes)", sig_len);
+                           OLOG_INFO("Captured Gemini thought_signature (%zu bytes)", sig_len);
                         }
                      }
                   }
@@ -564,10 +564,10 @@ static void parse_openai_chunk(llm_stream_context_t *ctx, const char *event_data
                                 LLM_TOOLS_THOUGHT_SIG_LEN - 1);
                         ctx->tool_calls.thought_signature[LLM_TOOLS_THOUGHT_SIG_LEN - 1] = '\0';
                         if (sig_len >= LLM_TOOLS_THOUGHT_SIG_LEN) {
-                           LOG_WARNING("Gemini thought_signature truncated: %zu -> %d bytes",
-                                       sig_len, LLM_TOOLS_THOUGHT_SIG_LEN - 1);
+                           OLOG_WARNING("Gemini thought_signature truncated: %zu -> %d bytes",
+                                        sig_len, LLM_TOOLS_THOUGHT_SIG_LEN - 1);
                         } else {
-                           LOG_INFO("Captured Gemini thought_signature (%zu bytes)", sig_len);
+                           OLOG_INFO("Captured Gemini thought_signature (%zu bytes)", sig_len);
                         }
                      }
                   }
@@ -583,7 +583,7 @@ static void parse_openai_chunk(llm_stream_context_t *ctx, const char *event_data
             const char *reason = json_object_get_string(finish_reason);
             if (reason) {
                strncpy(ctx->finish_reason, reason, sizeof(ctx->finish_reason) - 1);
-               LOG_INFO("Stream finish_reason: %s", reason);
+               OLOG_INFO("Stream finish_reason: %s", reason);
             }
             ctx->stream_complete = 1;
 
@@ -593,7 +593,7 @@ static void parse_openai_chunk(llm_stream_context_t *ctx, const char *event_data
                   strncpy(ctx->tool_calls.calls[i].arguments,
                           ctx->provider.openai.tool_args_buffer[i], LLM_TOOLS_ARGS_LEN - 1);
                }
-               LOG_INFO("Stream completed with %d tool call(s)", ctx->tool_calls.count);
+               OLOG_INFO("Stream completed with %d tool call(s)", ctx->tool_calls.count);
             }
          }
       }
@@ -664,7 +664,7 @@ static void parse_openai_chunk(llm_stream_context_t *ctx, const char *event_data
          if (json_object_object_get_ex(completion_details, "reasoning_tokens", &reasoning_obj)) {
             ctx->reasoning_tokens = json_object_get_int(reasoning_obj);
             if (ctx->reasoning_tokens > 0) {
-               LOG_INFO("OpenAI reasoning tokens: %d", ctx->reasoning_tokens);
+               OLOG_INFO("OpenAI reasoning tokens: %d", ctx->reasoning_tokens);
             }
          }
       }
@@ -691,16 +691,16 @@ static void parse_openai_chunk(llm_stream_context_t *ctx, const char *event_data
                float accurate_rate = (float)output_tokens * 1000.0f / (float)duration_ms;
                ctx->tokens_per_second = accurate_rate;
                ctx->tokens_generated = output_tokens;
-               LOG_INFO("Stream rate: %.1f tok/s (%d tokens in %.0fms)", accurate_rate,
-                        output_tokens, duration_ms);
+               OLOG_INFO("Stream rate: %.1f tok/s (%d tokens in %.0fms)", accurate_rate,
+                         output_tokens, duration_ms);
                // Send accurate final metrics to WebUI
                // TTFT was already sent during streaming, just update token rate
                webui_send_metrics_update(ws_session, "thinking", 0, accurate_rate, -1);
             }
          }
 
-         LOG_INFO("Stream usage: %d input, %d output, %d cached tokens", input_tokens,
-                  output_tokens, cached_tokens);
+         OLOG_INFO("Stream usage: %d input, %d output, %d cached tokens", input_tokens,
+                   output_tokens, cached_tokens);
       }
    }
 
@@ -718,7 +718,7 @@ static void parse_openai_chunk(llm_stream_context_t *ctx, const char *event_data
 static void parse_claude_event(llm_stream_context_t *ctx, const char *event_data) {
    json_object *event = json_tokener_parse(event_data);
    if (!event) {
-      LOG_WARNING("Failed to parse Claude event JSON");
+      OLOG_WARNING("Failed to parse Claude event JSON");
       return;
    }
 
@@ -761,7 +761,7 @@ static void parse_claude_event(llm_stream_context_t *ctx, const char *event_data
                ctx->provider.claude.thinking_block_active = 1;
                ctx->thinking_active = 1;
                ctx->has_thinking = 1;
-               LOG_INFO("Claude: Starting thinking block (extended thinking)");
+               OLOG_INFO("Claude: Starting thinking block (extended thinking)");
 
                // Send thinking_start to WebUI
                if (has_ws_session) {
@@ -790,8 +790,8 @@ static void parse_claude_event(llm_stream_context_t *ctx, const char *event_data
                   ctx->provider.claude.tool_name[LLM_TOOLS_NAME_LEN - 1] = '\0';
                }
 
-               LOG_INFO("Claude: Starting tool_use block: %s (id=%s)",
-                        ctx->provider.claude.tool_name, ctx->provider.claude.tool_id);
+               OLOG_INFO("Claude: Starting tool_use block: %s (id=%s)",
+                         ctx->provider.claude.tool_name, ctx->provider.claude.tool_id);
 
                /* Visual progress: notify frontend when render_visual starts */
                if (strcmp(ctx->provider.claude.tool_name, "render_visual") == 0) {
@@ -900,8 +900,8 @@ static void parse_claude_event(llm_stream_context_t *ctx, const char *event_data
                            new_cap *= 2;
                         char *new_buf = realloc(ctx->provider.claude.thinking_signature, new_cap);
                         if (!new_buf) {
-                           LOG_ERROR("Claude: Failed to allocate signature buffer (%zu bytes)",
-                                     new_cap);
+                           OLOG_ERROR("Claude: Failed to allocate signature buffer (%zu bytes)",
+                                      new_cap);
                         } else {
                            ctx->provider.claude.thinking_signature = new_buf;
                            ctx->provider.claude.thinking_signature_cap = new_cap;
@@ -927,8 +927,8 @@ static void parse_claude_event(llm_stream_context_t *ctx, const char *event_data
       if (ctx->provider.claude.thinking_block_active) {
          ctx->provider.claude.thinking_block_active = 0;
          ctx->thinking_active = 0;
-         LOG_INFO("Claude: Thinking block completed (%zu bytes, signature %zu bytes)",
-                  ctx->thinking_size, ctx->provider.claude.thinking_signature_len);
+         OLOG_INFO("Claude: Thinking block completed (%zu bytes, signature %zu bytes)",
+                   ctx->thinking_size, ctx->provider.claude.thinking_signature_len);
 
          // Send thinking_end to WebUI
          if (has_ws_session) {
@@ -955,9 +955,9 @@ static void parse_claude_event(llm_stream_context_t *ctx, const char *event_data
             ctx->tool_calls.count++;
             ctx->has_tool_calls = 1;
 
-            LOG_INFO("Claude: Completed tool_use: %s with args: %.100s%s",
-                     ctx->provider.claude.tool_name, ctx->provider.claude.tool_args,
-                     strlen(ctx->provider.claude.tool_args) > 100 ? "..." : "");
+            OLOG_INFO("Claude: Completed tool_use: %s with args: %.100s%s",
+                      ctx->provider.claude.tool_name, ctx->provider.claude.tool_args,
+                      strlen(ctx->provider.claude.tool_args) > 100 ? "..." : "");
          }
 
          ctx->provider.claude.tool_block_active = 0;
@@ -977,7 +977,7 @@ static void parse_claude_event(llm_stream_context_t *ctx, const char *event_data
             if (stop_reason) {
                strncpy(ctx->finish_reason, stop_reason, sizeof(ctx->finish_reason) - 1);
                ctx->finish_reason[sizeof(ctx->finish_reason) - 1] = '\0';
-               LOG_INFO("Claude stream stop_reason: %s", stop_reason);
+               OLOG_INFO("Claude stream stop_reason: %s", stop_reason);
             }
          }
       }
@@ -1007,14 +1007,14 @@ static void parse_claude_event(llm_stream_context_t *ctx, const char *event_data
                   float accurate_rate = (float)output_tokens * 1000.0f / (float)duration_ms;
                   ctx->tokens_per_second = accurate_rate;
                   ctx->tokens_generated = output_tokens;
-                  LOG_INFO("Claude rate: %.1f tok/s (%d tokens in %.0fms)", accurate_rate,
-                           output_tokens, duration_ms);
+                  OLOG_INFO("Claude rate: %.1f tok/s (%d tokens in %.0fms)", accurate_rate,
+                            output_tokens, duration_ms);
                   webui_send_metrics_update(ws_session, "thinking", 0, accurate_rate, -1);
                }
             }
 
-            LOG_INFO("Claude usage: %d input, %d output tokens", ctx->provider.claude.input_tokens,
-                     output_tokens);
+            OLOG_INFO("Claude usage: %d input, %d output tokens", ctx->provider.claude.input_tokens,
+                      output_tokens);
          }
       }
    } else if (strcmp(type, "message_stop") == 0) {
@@ -1022,7 +1022,7 @@ static void parse_claude_event(llm_stream_context_t *ctx, const char *event_data
 
       // Log completion with tool calls if any
       if (ctx->has_tool_calls) {
-         LOG_INFO("Claude stream completed with %d tool call(s)", ctx->tool_calls.count);
+         OLOG_INFO("Claude stream completed with %d tool call(s)", ctx->tool_calls.count);
       }
    }
    // Note: ping and error events are ignored
@@ -1035,19 +1035,19 @@ llm_stream_context_t *llm_stream_create(llm_type_t llm_type,
                                         text_chunk_callback callback,
                                         void *userdata) {
    if (!callback) {
-      LOG_ERROR("LLM stream callback cannot be NULL");
+      OLOG_ERROR("LLM stream callback cannot be NULL");
       return NULL;
    }
 
    llm_stream_context_t *ctx = calloc(1, sizeof(llm_stream_context_t));
    if (!ctx) {
-      LOG_ERROR("Failed to allocate LLM stream context");
+      OLOG_ERROR("Failed to allocate LLM stream context");
       return NULL;
    }
 
    ctx->accumulated_response = malloc(DEFAULT_ACCUMULATED_CAPACITY);
    if (!ctx->accumulated_response) {
-      LOG_ERROR("Failed to allocate accumulated response buffer");
+      OLOG_ERROR("Failed to allocate accumulated response buffer");
       free(ctx);
       return NULL;
    }
@@ -1107,8 +1107,8 @@ char *llm_stream_get_response(llm_stream_context_t *ctx) {
        * present — an empty response with tool_use is normal (the LLM chose to
        * call tools instead of responding with text). */
       if (ctx && ctx->accumulated_thinking && ctx->thinking_size > 0 && !ctx->has_tool_calls) {
-         LOG_WARNING("LLM: Empty response but has thinking content (%zu bytes), using as response",
-                     ctx->thinking_size);
+         OLOG_WARNING("LLM: Empty response but has thinking content (%zu bytes), using as response",
+                      ctx->thinking_size);
          return strdup(ctx->accumulated_thinking);
       }
       return NULL;

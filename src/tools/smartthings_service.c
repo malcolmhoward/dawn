@@ -173,7 +173,7 @@ static int get_token_file_path(char *path, size_t size) {
    }
 
    /* Refuse to use /tmp - too insecure for tokens */
-   LOG_ERROR("SmartThings: Cannot determine secure token storage path");
+   OLOG_ERROR("SmartThings: Cannot determine secure token storage path");
    path[0] = '\0';
    return 1;
 }
@@ -223,20 +223,20 @@ static int load_tokens_from_file(void) {
 
    json_object_put(root);
 
-   LOG_INFO("SmartThings: Loaded tokens from %s", s_state.token_file_path);
+   OLOG_INFO("SmartThings: Loaded tokens from %s", s_state.token_file_path);
    return 0;
 }
 
 static int save_tokens_to_file(void) {
    if (!s_state.token_file_path[0]) {
-      LOG_ERROR("SmartThings: No token file path configured");
+      OLOG_ERROR("SmartThings: No token file path configured");
       return 1;
    }
 
    /* Create config directory if needed using secure path from token_file_path */
    mode_t old_umask = umask(0077);
    if (!path_ensure_parent_dir_mode(s_state.token_file_path, 0700)) {
-      LOG_ERROR("smartthings: failed to create directory for token file");
+      OLOG_ERROR("smartthings: failed to create directory for token file");
       umask(old_umask);
       return 1;
    }
@@ -252,7 +252,7 @@ static int save_tokens_to_file(void) {
    /* Open with O_NOFOLLOW, O_CREAT, O_EXCL for security */
    int fd = open(tmp_path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
    if (fd < 0) {
-      LOG_ERROR("SmartThings: Failed to create token file: %s", strerror(errno));
+      OLOG_ERROR("SmartThings: Failed to create token file: %s", strerror(errno));
       return 1;
    }
 
@@ -271,19 +271,19 @@ static int save_tokens_to_file(void) {
    json_object_put(root);
 
    if (written < 0 || (size_t)written != len) {
-      LOG_ERROR("SmartThings: Failed to write token file: %s", strerror(errno));
+      OLOG_ERROR("SmartThings: Failed to write token file: %s", strerror(errno));
       unlink(tmp_path);
       return 1;
    }
 
    /* Atomic rename */
    if (rename(tmp_path, s_state.token_file_path) != 0) {
-      LOG_ERROR("SmartThings: Failed to save token file: %s", strerror(errno));
+      OLOG_ERROR("SmartThings: Failed to save token file: %s", strerror(errno));
       unlink(tmp_path);
       return 1;
    }
 
-   LOG_INFO("SmartThings: Saved tokens to %s", s_state.token_file_path);
+   OLOG_INFO("SmartThings: Saved tokens to %s", s_state.token_file_path);
    return 0;
 }
 
@@ -372,7 +372,7 @@ static st_error_t do_api_request(const char *method,
          if (response->data)
             response->data[0] = '\0';
 
-         LOG_INFO("SmartThings: Retrying request (attempt %d/%d)", attempt + 1, API_MAX_RETRIES);
+         OLOG_INFO("SmartThings: Retrying request (attempt %d/%d)", attempt + 1, API_MAX_RETRIES);
          backoff_sleep(attempt - 1);
       }
 
@@ -385,9 +385,9 @@ static st_error_t do_api_request(const char *method,
       }
 
       if (res != CURLE_OK) {
-         LOG_WARNING("SmartThings: Request failed: %s", curl_easy_strerror(res));
+         OLOG_WARNING("SmartThings: Request failed: %s", curl_easy_strerror(res));
       } else {
-         LOG_WARNING("SmartThings: Server error %ld, will retry", *http_code);
+         OLOG_WARNING("SmartThings: Server error %ld, will retry", *http_code);
       }
    }
 
@@ -395,8 +395,8 @@ static st_error_t do_api_request(const char *method,
    /* Note: Don't cleanup curl handle - it's reused */
 
    if (res != CURLE_OK) {
-      LOG_ERROR("SmartThings: CURL error after %d attempts: %s", API_MAX_RETRIES,
-                curl_easy_strerror(res));
+      OLOG_ERROR("SmartThings: CURL error after %d attempts: %s", API_MAX_RETRIES,
+                 curl_easy_strerror(res));
       return ST_ERR_NETWORK;
    }
 
@@ -406,7 +406,7 @@ static st_error_t do_api_request(const char *method,
       return ST_ERR_RATE_LIMITED;
    } else if (*http_code >= 400) {
       /* Don't log response body - may contain sensitive info */
-      LOG_ERROR("SmartThings: API error %ld", *http_code);
+      OLOG_ERROR("SmartThings: API error %ld", *http_code);
       return ST_ERR_API;
    }
 
@@ -426,7 +426,7 @@ static st_error_t refresh_access_token(void) {
       return ST_ERR_NOT_AUTHENTICATED;
    }
 
-   LOG_INFO("SmartThings: Refreshing access token...");
+   OLOG_INFO("SmartThings: Refreshing access token...");
 
    CURL *curl = get_curl_handle();
    if (!curl)
@@ -471,14 +471,14 @@ static st_error_t refresh_access_token(void) {
    secure_zero(post_data, sizeof(post_data));
 
    if (res != CURLE_OK) {
-      LOG_ERROR("SmartThings: Token refresh failed: %s", curl_easy_strerror(res));
+      OLOG_ERROR("SmartThings: Token refresh failed: %s", curl_easy_strerror(res));
       response_buffer_free(&response);
       return ST_ERR_NETWORK;
    }
 
    if (http_code != 200) {
       /* Don't log response body - may contain sensitive error details */
-      LOG_ERROR("SmartThings: Token refresh failed (HTTP %ld)", http_code);
+      OLOG_ERROR("SmartThings: Token refresh failed (HTTP %ld)", http_code);
       response_buffer_free(&response);
       return ST_ERR_TOKEN_EXPIRED;
    }
@@ -488,7 +488,7 @@ static st_error_t refresh_access_token(void) {
    response_buffer_free(&response);
 
    if (!root) {
-      LOG_ERROR("SmartThings: Failed to parse token response");
+      OLOG_ERROR("SmartThings: Failed to parse token response");
       return ST_ERR_API;
    }
 
@@ -513,7 +513,7 @@ static st_error_t refresh_access_token(void) {
    /* Persist tokens */
    save_tokens_to_file();
 
-   LOG_INFO("SmartThings: Token refreshed, expires in %d seconds", expires_in);
+   OLOG_INFO("SmartThings: Token refreshed, expires in %d seconds", expires_in);
    return ST_OK;
 }
 
@@ -691,7 +691,7 @@ static st_error_t send_simple_command(const char *device_id,
 
    /* Security: Validate device_id is a valid UUID format (prevents URL injection) */
    if (!is_valid_device_id(device_id)) {
-      LOG_ERROR("SmartThings: Invalid device ID format");
+      OLOG_ERROR("SmartThings: Invalid device ID format");
       return ST_ERR_INVALID_PARAM;
    }
 
@@ -719,7 +719,7 @@ static st_error_t send_simple_command(const char *device_id,
    response_buffer_free(&response);
 
    if (err == ST_OK) {
-      LOG_INFO("SmartThings: Sent %s.%s to device %s", capability, command, device_id);
+      OLOG_INFO("SmartThings: Sent %s.%s to device %s", capability, command, device_id);
    }
 
    return err;
@@ -734,7 +734,7 @@ static st_error_t send_device_command(const char *device_id,
 
    /* Security: Validate device_id is a valid UUID format (prevents URL injection) */
    if (!is_valid_device_id(device_id)) {
-      LOG_ERROR("SmartThings: Invalid device ID format");
+      OLOG_ERROR("SmartThings: Invalid device ID format");
       return ST_ERR_INVALID_PARAM;
    }
 
@@ -776,7 +776,7 @@ static st_error_t send_device_command(const char *device_id,
    response_buffer_free(&response);
 
    if (err == ST_OK) {
-      LOG_INFO("SmartThings: Sent %s.%s to device %s", capability, command, device_id);
+      OLOG_INFO("SmartThings: Sent %s.%s to device %s", capability, command, device_id);
    }
 
    return err;
@@ -791,7 +791,7 @@ st_error_t smartthings_init(void) {
 
    const secrets_config_t *secrets = config_get_secrets();
    if (!secrets) {
-      LOG_INFO("SmartThings: Not configured (no secrets)");
+      OLOG_INFO("SmartThings: Not configured (no secrets)");
       return ST_ERR_NOT_CONFIGURED;
    }
 
@@ -805,7 +805,7 @@ st_error_t smartthings_init(void) {
               sizeof(s_state.tokens.access_token) - 1);
       s_state.tokens.token_expiry = INT64_MAX; /* PAT doesn't expire (from our perspective) */
       s_state.initialized = true;
-      LOG_INFO("SmartThings: Initialized with Personal Access Token");
+      OLOG_INFO("SmartThings: Initialized with Personal Access Token");
 
       /* Invalidate cached system instructions so LLM prompt includes SmartThings */
       invalidate_system_instructions();
@@ -818,7 +818,7 @@ st_error_t smartthings_init(void) {
 
       /* Get secure token file path */
       if (get_token_file_path(s_state.token_file_path, sizeof(s_state.token_file_path)) != 0) {
-         LOG_WARNING(
+         OLOG_WARNING(
              "SmartThings: Cannot determine token storage path, OAuth2 tokens won't persist");
       }
 
@@ -828,7 +828,7 @@ st_error_t smartthings_init(void) {
       }
 
       s_state.initialized = true;
-      LOG_INFO("SmartThings: Initialized with OAuth2 credentials");
+      OLOG_INFO("SmartThings: Initialized with OAuth2 credentials");
 
       /* Invalidate cached system instructions so LLM prompt includes SmartThings */
       if (s_state.tokens.access_token[0]) {
@@ -837,7 +837,7 @@ st_error_t smartthings_init(void) {
       return ST_OK;
    }
 
-   LOG_INFO("SmartThings: Not configured (no PAT or OAuth2 credentials)");
+   OLOG_INFO("SmartThings: Not configured (no PAT or OAuth2 credentials)");
    return ST_ERR_NOT_CONFIGURED;
 }
 
@@ -864,7 +864,7 @@ void smartthings_cleanup(void) {
    memset(&s_state.device_cache, 0, sizeof(s_state.device_cache));
    s_state.token_file_path[0] = '\0';
 
-   LOG_INFO("SmartThings: Service cleaned up");
+   OLOG_INFO("SmartThings: Service cleaned up");
 }
 
 bool smartthings_is_configured(void) {
@@ -930,7 +930,7 @@ static st_error_t generate_oauth_state(char *state_buf, size_t buf_size) {
    unsigned char random_bytes[16];
    ssize_t result = getrandom(random_bytes, sizeof(random_bytes), 0);
    if (result != sizeof(random_bytes)) {
-      LOG_ERROR("SmartThings: Failed to generate random state");
+      OLOG_ERROR("SmartThings: Failed to generate random state");
       return ST_ERR_MEMORY;
    }
 
@@ -974,7 +974,7 @@ st_error_t smartthings_get_auth_url(const char *redirect_uri, char *url_buf, siz
    curl_free(encoded_state);
    /* Note: Don't cleanup curl handle - it's reused */
 
-   LOG_INFO("SmartThings: Generated OAuth URL with CSRF state");
+   OLOG_INFO("SmartThings: Generated OAuth URL with CSRF state");
    return ST_OK;
 }
 
@@ -987,7 +987,7 @@ st_error_t smartthings_exchange_code(const char *auth_code,
    /* CSRF protection: Verify state matches what we generated */
    if (state && s_state.pending_oauth_state[0]) {
       if (strcmp(state, s_state.pending_oauth_state) != 0) {
-         LOG_ERROR("SmartThings: OAuth state mismatch - possible CSRF attack");
+         OLOG_ERROR("SmartThings: OAuth state mismatch - possible CSRF attack");
          secure_zero(s_state.pending_oauth_state, sizeof(s_state.pending_oauth_state));
          return ST_ERR_INVALID_PARAM;
       }
@@ -1000,7 +1000,7 @@ st_error_t smartthings_exchange_code(const char *auth_code,
       return ST_ERR_NOT_CONFIGURED;
    }
 
-   LOG_INFO("SmartThings: Exchanging auth code for tokens...");
+   OLOG_INFO("SmartThings: Exchanging auth code for tokens...");
 
    CURL *curl = get_curl_handle();
    if (!curl)
@@ -1047,14 +1047,14 @@ st_error_t smartthings_exchange_code(const char *auth_code,
    secure_zero(post_data, sizeof(post_data));
 
    if (res != CURLE_OK) {
-      LOG_ERROR("SmartThings: Code exchange failed: %s", curl_easy_strerror(res));
+      OLOG_ERROR("SmartThings: Code exchange failed: %s", curl_easy_strerror(res));
       response_buffer_free(&response);
       return ST_ERR_NETWORK;
    }
 
    if (http_code != 200) {
       /* Don't log response body - may contain sensitive error details */
-      LOG_ERROR("SmartThings: Code exchange failed (HTTP %ld)", http_code);
+      OLOG_ERROR("SmartThings: Code exchange failed (HTTP %ld)", http_code);
       response_buffer_free(&response);
       return ST_ERR_API;
    }
@@ -1064,7 +1064,7 @@ st_error_t smartthings_exchange_code(const char *auth_code,
    response_buffer_free(&response);
 
    if (!root) {
-      LOG_ERROR("SmartThings: Failed to parse token response");
+      OLOG_ERROR("SmartThings: Failed to parse token response");
       return ST_ERR_API;
    }
 
@@ -1091,7 +1091,7 @@ st_error_t smartthings_exchange_code(const char *auth_code,
    save_tokens_to_file();
    pthread_rwlock_unlock(&s_state.rwlock);
 
-   LOG_INFO("SmartThings: Successfully authenticated");
+   OLOG_INFO("SmartThings: Successfully authenticated");
 
    /* Invalidate cached system instructions so LLM prompt includes SmartThings */
    invalidate_system_instructions();
@@ -1115,7 +1115,7 @@ st_error_t smartthings_disconnect(void) {
 
    pthread_rwlock_unlock(&s_state.rwlock);
 
-   LOG_INFO("SmartThings: Disconnected");
+   OLOG_INFO("SmartThings: Disconnected");
 
    /* Invalidate cached system instructions so LLM prompt removes SmartThings */
    invalidate_system_instructions();
@@ -1183,7 +1183,7 @@ st_error_t smartthings_refresh_devices(const st_device_list_t **list) {
    response_buffer_free(&response);
 
    if (!root) {
-      LOG_ERROR("SmartThings: Failed to parse device list");
+      OLOG_ERROR("SmartThings: Failed to parse device list");
       return ST_ERR_API;
    }
 
@@ -1241,7 +1241,7 @@ st_error_t smartthings_refresh_devices(const st_device_list_t **list) {
    *list = &s_state.device_cache;
    pthread_rwlock_unlock(&s_state.rwlock);
 
-   LOG_INFO("SmartThings: Loaded %d devices", s_state.device_cache.count);
+   OLOG_INFO("SmartThings: Loaded %d devices", s_state.device_cache.count);
    return ST_OK;
 }
 
@@ -1275,14 +1275,14 @@ st_error_t smartthings_find_device(const char *friendly_name, const st_device_t 
    pthread_rwlock_unlock(&s_state.rwlock);
 
    if (best_score < 40 || !best_match) {
-      LOG_WARNING("SmartThings: No device matching '%s' (best score: %d)", friendly_name,
-                  best_score);
+      OLOG_WARNING("SmartThings: No device matching '%s' (best score: %d)", friendly_name,
+                   best_score);
       return ST_ERR_DEVICE_NOT_FOUND;
    }
 
    *device = best_match;
-   LOG_INFO("SmartThings: Matched '%s' to device '%s' (score: %d)", friendly_name,
-            best_match->label, best_score);
+   OLOG_INFO("SmartThings: Matched '%s' to device '%s' (score: %d)", friendly_name,
+             best_match->label, best_score);
    return ST_OK;
 }
 

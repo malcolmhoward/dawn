@@ -200,14 +200,14 @@ void webui_security_headers_init(void) {
                         : "");
 
    if (n >= (int)sizeof(s_static_security_headers)) {
-      LOG_ERROR("WebUI: Security headers string truncated (%d >= %zu)", n,
-                sizeof(s_static_security_headers));
+      OLOG_ERROR("WebUI: Security headers string truncated (%d >= %zu)", n,
+                 sizeof(s_static_security_headers));
       n = (int)sizeof(s_static_security_headers) - 1;
    }
    s_static_security_headers_len = n;
 
-   LOG_INFO("WebUI: Security headers initialized (%d bytes, HSTS=%s)",
-            s_static_security_headers_len, g_config.webui.https ? "on" : "off");
+   OLOG_INFO("WebUI: Security headers initialized (%d bytes, HSTS=%s)",
+             s_static_security_headers_len, g_config.webui.https ? "on" : "off");
 }
 
 /* =============================================================================
@@ -499,8 +499,8 @@ static int handle_auth_login(struct lws *wsi, struct http_session_data *pss) {
 
    /* Check IP-based rate limiting - in-memory fast-path first, then database */
    if (rate_limiter_check(&s_login_rate, normalized_ip)) {
-      LOG_WARNING("WebUI: Rate limited IP (in-memory): %s (normalized: %s)", client_ip,
-                  normalized_ip);
+      OLOG_WARNING("WebUI: Rate limited IP (in-memory): %s (normalized: %s)", client_ip,
+                   normalized_ip);
       auth_db_log_event("RATE_LIMITED", NULL, client_ip, "Too many failed attempts");
       snprintf(response, sizeof(response),
                "{\"success\":false,\"error\":\"Too many attempts. Try again later.\"}");
@@ -512,8 +512,8 @@ static int handle_auth_login(struct lws *wsi, struct http_session_data *pss) {
    time_t window_start = time(NULL) - RATE_LIMIT_WINDOW_SEC;
    int recent_failures = auth_db_count_recent_failures(normalized_ip, window_start);
    if (recent_failures >= RATE_LIMIT_MAX_ATTEMPTS) {
-      LOG_WARNING("WebUI: Rate limited IP (database): %s (normalized: %s)", client_ip,
-                  normalized_ip);
+      OLOG_WARNING("WebUI: Rate limited IP (database): %s (normalized: %s)", client_ip,
+                   normalized_ip);
       auth_db_log_event("RATE_LIMITED", NULL, client_ip, "Too many failed attempts");
       snprintf(response, sizeof(response),
                "{\"success\":false,\"error\":\"Too many attempts. Try again later.\"}");
@@ -533,7 +533,7 @@ static int handle_auth_login(struct lws *wsi, struct http_session_data *pss) {
    struct json_object *csrf_obj;
    if (!json_object_object_get_ex(req, "csrf_token", &csrf_obj)) {
       json_object_put(req);
-      LOG_WARNING("WebUI: Login attempt without CSRF token from %s", client_ip);
+      OLOG_WARNING("WebUI: Login attempt without CSRF token from %s", client_ip);
       snprintf(response, sizeof(response), "{\"success\":false,\"error\":\"Missing CSRF token\"}");
       send_auth_response(wsi, HTTP_STATUS_BAD_REQUEST, response, NULL, 0);
       return -1;
@@ -543,7 +543,7 @@ static int handle_auth_login(struct lws *wsi, struct http_session_data *pss) {
    unsigned char csrf_nonce[AUTH_CSRF_NONCE_SIZE];
    if (!auth_verify_csrf_token_extract_nonce(csrf_token, csrf_nonce)) {
       json_object_put(req);
-      LOG_WARNING("WebUI: Invalid CSRF token from %s", client_ip);
+      OLOG_WARNING("WebUI: Invalid CSRF token from %s", client_ip);
       auth_db_log_event("CSRF_FAILED", NULL, client_ip, "Invalid or expired CSRF token");
       snprintf(response, sizeof(response),
                "{\"success\":false,\"error\":\"Invalid or expired token. Please refresh.\"}");
@@ -554,7 +554,7 @@ static int handle_auth_login(struct lws *wsi, struct http_session_data *pss) {
    /* Check for CSRF token replay (single-use enforcement) */
    if (csrf_is_nonce_used(csrf_nonce)) {
       json_object_put(req);
-      LOG_WARNING("WebUI: CSRF token replay attempt from %s", client_ip);
+      OLOG_WARNING("WebUI: CSRF token replay attempt from %s", client_ip);
       auth_db_log_event("CSRF_REPLAY", NULL, client_ip, "CSRF token reuse detected");
       snprintf(response, sizeof(response),
                "{\"success\":false,\"error\":\"Token already used. Please refresh.\"}");
@@ -592,7 +592,7 @@ static int handle_auth_login(struct lws *wsi, struct http_session_data *pss) {
        * to prevent timing attacks that could enumerate valid usernames */
       (void)auth_verify_password(DUMMY_PASSWORD_HASH, password);
       json_object_put(req);
-      LOG_WARNING("WebUI: Login failed - user not found: %s from %s", username, client_ip);
+      OLOG_WARNING("WebUI: Login failed - user not found: %s from %s", username, client_ip);
       auth_db_log_attempt(normalized_ip, username, false);
       snprintf(response, sizeof(response), "{\"success\":false,\"error\":\"Invalid credentials\"}");
       send_auth_response(wsi, HTTP_STATUS_UNAUTHORIZED, response, NULL, 0);
@@ -603,7 +603,7 @@ static int handle_auth_login(struct lws *wsi, struct http_session_data *pss) {
    time_t now = time(NULL);
    if (user.lockout_until > now) {
       json_object_put(req);
-      LOG_WARNING("WebUI: Login failed - account locked: %s from %s", username, client_ip);
+      OLOG_WARNING("WebUI: Login failed - account locked: %s from %s", username, client_ip);
       auth_db_log_attempt(normalized_ip, username, false);
       snprintf(response, sizeof(response),
                "{\"success\":false,\"error\":\"Account temporarily locked\"}");
@@ -613,7 +613,7 @@ static int handle_auth_login(struct lws *wsi, struct http_session_data *pss) {
       /* Lockout expired - reset failed attempts counter */
       auth_db_reset_failed_attempts(username);
       auth_db_set_lockout(username, 0);
-      LOG_INFO("WebUI: Lockout expired, reset failed attempts: %s", username);
+      OLOG_INFO("WebUI: Lockout expired, reset failed attempts: %s", username);
    }
 
    /* Verify password - auth_verify_password returns bool (true=success) */
@@ -630,12 +630,12 @@ static int handle_auth_login(struct lws *wsi, struct http_session_data *pss) {
             auth_db_set_lockout(username, lockout_until);
             auth_db_log_event("ACCOUNT_LOCKED", username, client_ip,
                               "Too many failed login attempts");
-            LOG_WARNING("WebUI: Account locked due to %d failed attempts: %s",
-                        updated_user.failed_attempts, username);
+            OLOG_WARNING("WebUI: Account locked due to %d failed attempts: %s",
+                         updated_user.failed_attempts, username);
          }
       }
 
-      LOG_WARNING("WebUI: Login failed - wrong password: %s from %s", username, client_ip);
+      OLOG_WARNING("WebUI: Login failed - wrong password: %s from %s", username, client_ip);
       snprintf(response, sizeof(response), "{\"success\":false,\"error\":\"Invalid credentials\"}");
       send_auth_response(wsi, HTTP_STATUS_UNAUTHORIZED, response, NULL, 0);
       return -1;
@@ -646,7 +646,7 @@ static int handle_auth_login(struct lws *wsi, struct http_session_data *pss) {
    /* Generate session token */
    char session_token[AUTH_TOKEN_LEN];
    if (auth_generate_token(session_token) != AUTH_CRYPTO_SUCCESS) {
-      LOG_ERROR("WebUI: Failed to generate session token");
+      OLOG_ERROR("WebUI: Failed to generate session token");
       snprintf(response, sizeof(response), "{\"success\":false,\"error\":\"Server error\"}");
       send_auth_response(wsi, HTTP_STATUS_INTERNAL_SERVER_ERROR, response, NULL, 0);
       return -1;
@@ -662,7 +662,7 @@ static int handle_auth_login(struct lws *wsi, struct http_session_data *pss) {
    /* Create session in database */
    if (auth_db_create_session(user.id, session_token, client_ip, user_agent, remember_me) !=
        AUTH_DB_SUCCESS) {
-      LOG_ERROR("WebUI: Failed to create session for user: %s", username);
+      OLOG_ERROR("WebUI: Failed to create session for user: %s", username);
       snprintf(response, sizeof(response), "{\"success\":false,\"error\":\"Server error\"}");
       send_auth_response(wsi, HTTP_STATUS_INTERNAL_SERVER_ERROR, response, NULL, 0);
       auth_secure_zero(session_token, sizeof(session_token));
@@ -676,8 +676,8 @@ static int handle_auth_login(struct lws *wsi, struct http_session_data *pss) {
    auth_db_log_attempt(normalized_ip, username, true);
    auth_db_log_event("LOGIN_SUCCESS", username, client_ip, "WebUI login successful");
 
-   LOG_INFO("WebUI: User logged in: %s from %s%s", username, client_ip,
-            remember_me ? " (remember me)" : "");
+   OLOG_INFO("WebUI: User logged in: %s from %s%s", username, client_ip,
+             remember_me ? " (remember me)" : "");
 
    /* Send success response with session cookie
     * remember_me: persistent cookie for 30 days; otherwise session cookie */
@@ -717,7 +717,7 @@ static bool is_same_origin_request(struct lws *wsi) {
       if (strcmp(origin, expected_https) == 0 || strcmp(origin, expected_http) == 0) {
          return true;
       }
-      LOG_WARNING("CSRF: Origin mismatch - expected %s, got %s", host, origin);
+      OLOG_WARNING("CSRF: Origin mismatch - expected %s, got %s", host, origin);
       return false;
    }
 
@@ -732,7 +732,7 @@ static bool is_same_origin_request(struct lws *wsi) {
           strncmp(referer, expected_http, strlen(expected_http)) == 0) {
          return true;
       }
-      LOG_WARNING("CSRF: Referer mismatch - expected %s, got %s", host, referer);
+      OLOG_WARNING("CSRF: Referer mismatch - expected %s, got %s", host, referer);
       return false;
    }
 
@@ -748,7 +748,7 @@ static bool is_same_origin_request(struct lws *wsi) {
 static int handle_auth_logout(struct lws *wsi) {
    /* CSRF protection: verify request is same-origin */
    if (!is_same_origin_request(wsi)) {
-      LOG_WARNING("WebUI: Blocked cross-origin logout attempt");
+      OLOG_WARNING("WebUI: Blocked cross-origin logout attempt");
       lws_return_http_status(wsi, HTTP_STATUS_FORBIDDEN, NULL);
       return -1;
    }
@@ -761,7 +761,7 @@ static int handle_auth_logout(struct lws *wsi) {
          lws_get_peer_simple(wsi, client_ip, sizeof(client_ip));
          auth_db_log_event("logout", session.username, client_ip, "WebUI logout");
          auth_db_delete_session(token);
-         LOG_INFO("WebUI: User logged out: %s", session.username);
+         OLOG_INFO("WebUI: User logged out: %s", session.username);
       }
    }
 
@@ -809,7 +809,7 @@ static int handle_auth_csrf(struct lws *wsi) {
 
    /* Check CSRF endpoint rate limiting (prevent DoS via token generation) */
    if (rate_limiter_check(&s_csrf_rate, normalized_ip)) {
-      LOG_WARNING("WebUI: CSRF rate limited: %s", normalized_ip);
+      OLOG_WARNING("WebUI: CSRF rate limited: %s", normalized_ip);
       send_nocache_json_response(wsi, HTTP_STATUS_TOO_MANY_REQUESTS,
                                  "{\"error\":\"Too many requests\"}");
       return -1;
@@ -818,7 +818,7 @@ static int handle_auth_csrf(struct lws *wsi) {
    char csrf_token[AUTH_CSRF_TOKEN_LEN];
 
    if (auth_generate_csrf_token(csrf_token) != AUTH_CRYPTO_SUCCESS) {
-      LOG_ERROR("WebUI: Failed to generate CSRF token");
+      OLOG_ERROR("WebUI: Failed to generate CSRF token");
       send_nocache_json_response(wsi, HTTP_STATUS_INTERNAL_SERVER_ERROR,
                                  "{\"error\":\"Failed to generate token\"}");
       return -1;
@@ -958,13 +958,13 @@ int callback_http(struct lws *wsi,
                   char norm_ip[RATE_LIMIT_IP_SIZE];
                   rate_limiter_normalize_ip(peer_ip, norm_ip, sizeof(norm_ip));
                   if (rate_limiter_check(&s_service_rate, norm_ip)) {
-                     LOG_WARNING("webui_http: Bearer rate limit exceeded from %s", peer_ip);
+                     OLOG_WARNING("webui_http: Bearer rate limit exceeded from %s", peer_ip);
                      lws_return_http_status(wsi, HTTP_STATUS_TOO_MANY_REQUESTS, NULL);
                      return -1;
                   }
                   if (is_service_token_authenticated(wsi)) {
                      if (!lws_is_ssl(wsi)) {
-                        LOG_WARNING("webui_http: Bearer token used without TLS from %s", peer_ip);
+                        OLOG_WARNING("webui_http: Bearer token used without TLS from %s", peer_ip);
                      }
                      /* user_id=0: service token can access non-private images (generated,
                       * search, document) but not private uploads or MMS */
@@ -1168,7 +1168,7 @@ int callback_http(struct lws *wsi,
 
          /* Prevent directory traversal - check for patterns including URL-encoded */
          if (contains_path_traversal(path)) {
-            LOG_WARNING("WebUI: Directory traversal attempt blocked: %s", path);
+            OLOG_WARNING("WebUI: Directory traversal attempt blocked: %s", path);
             lws_return_http_status(wsi, HTTP_STATUS_FORBIDDEN, NULL);
             return -1;
          }
@@ -1178,7 +1178,7 @@ int callback_http(struct lws *wsi,
 
          /* Second layer: verify resolved path is within www directory */
          if (!is_path_within_www(filepath, s_www_path)) {
-            LOG_WARNING("WebUI: Path escape attempt blocked: %s", filepath);
+            OLOG_WARNING("WebUI: Path escape attempt blocked: %s", filepath);
             lws_return_http_status(wsi, HTTP_STATUS_FORBIDDEN, NULL);
             return -1;
          }
@@ -1192,7 +1192,7 @@ int callback_http(struct lws *wsi,
          n = lws_serve_http_file(wsi, filepath, mime_type, sec_hdrs, sec_hdr_len);
          if (n < 0) {
             /* File not found or error */
-            LOG_WARNING("WebUI: File not found: %s", filepath);
+            OLOG_WARNING("WebUI: File not found: %s", filepath);
             lws_return_http_status(wsi, HTTP_STATUS_NOT_FOUND, NULL);
             return -1;
          }
@@ -1227,8 +1227,8 @@ int callback_http(struct lws *wsi,
          if (pss->large_body) {
             const size_t max_body = (size_t)g_config.documents.max_extracted_size_kb * 1024 + 1024;
             if (pss->large_body_len + len > max_body) {
-               LOG_WARNING("webui_http: large POST body exceeds limit (%zu + %zu > %zu)",
-                           pss->large_body_len, len, max_body);
+               OLOG_WARNING("webui_http: large POST body exceeds limit (%zu + %zu > %zu)",
+                            pss->large_body_len, len, max_body);
                return -1;
             }
             /* Grow buffer if needed */
@@ -1240,7 +1240,7 @@ int callback_http(struct lws *wsi,
                   new_cap = max_body + 1;
                char *new_buf = realloc(pss->large_body, new_cap);
                if (!new_buf) {
-                  LOG_ERROR("webui_http: failed to grow large POST body buffer");
+                  OLOG_ERROR("webui_http: failed to grow large POST body buffer");
                   return -1;
                }
                pss->large_body = new_buf;
@@ -1347,11 +1347,11 @@ void webui_clear_login_rate_limit(const char *ip_address) {
       char normalized_ip[RATE_LIMIT_IP_SIZE];
       rate_limiter_normalize_ip(ip_address, normalized_ip, sizeof(normalized_ip));
       rate_limiter_reset(&s_login_rate, normalized_ip);
-      LOG_INFO("WebUI: Cleared in-memory rate limit for IP: %s (normalized: %s)", ip_address,
-               normalized_ip);
+      OLOG_INFO("WebUI: Cleared in-memory rate limit for IP: %s (normalized: %s)", ip_address,
+                normalized_ip);
    } else {
       rate_limiter_clear_all(&s_login_rate);
-      LOG_INFO("WebUI: Cleared all in-memory rate limits");
+      OLOG_INFO("WebUI: Cleared all in-memory rate limits");
    }
 }
 #endif /* ENABLE_AUTH */

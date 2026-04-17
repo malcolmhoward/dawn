@@ -235,7 +235,7 @@ int llm_local_provider_init(void) {
    }
 
    if (pthread_mutex_init(&s_state.mutex, NULL) != 0) {
-      LOG_ERROR("llm_local_provider: Failed to initialize mutex");
+      OLOG_ERROR("llm_local_provider: Failed to initialize mutex");
       return 1;
    }
 
@@ -249,7 +249,7 @@ int llm_local_provider_init(void) {
    memset(s_state.models, 0, sizeof(s_state.models));
 
    s_state.initialized = true;
-   LOG_INFO("llm_local_provider: Initialized");
+   OLOG_INFO("llm_local_provider: Initialized");
 
    return 0;
 }
@@ -261,7 +261,7 @@ void llm_local_provider_cleanup(void) {
 
    pthread_mutex_destroy(&s_state.mutex);
    s_state.initialized = false;
-   LOG_INFO("llm_local_provider: Cleaned up");
+   OLOG_INFO("llm_local_provider: Cleaned up");
 }
 
 /* =============================================================================
@@ -294,7 +294,7 @@ void llm_local_invalidate_cache(void) {
    s_state.provider_detected = false;
    s_state.context_cached = false;
    pthread_mutex_unlock(&s_state.mutex);
-   LOG_INFO("llm_local_provider: Cache invalidated");
+   OLOG_INFO("llm_local_provider: Cache invalidated");
 }
 
 local_provider_t llm_local_detect_provider(const char *endpoint) {
@@ -332,8 +332,8 @@ local_provider_t llm_local_detect_provider(const char *endpoint) {
          s_state.provider_detected = true;
          pthread_mutex_unlock(&s_state.mutex);
 
-         LOG_INFO("llm_local_provider: Using config override: %s",
-                  llm_local_provider_name(override));
+         OLOG_INFO("llm_local_provider: Using config override: %s",
+                   llm_local_provider_name(override));
          return override;
       }
    }
@@ -349,22 +349,22 @@ local_provider_t llm_local_detect_provider(const char *endpoint) {
     * Must check before /api/tags because llama.cpp may have Ollama compatibility. */
    if (probe_endpoint(base_url, "/props", LLM_LOCAL_PROBE_TIMEOUT_MS)) {
       detected = LOCAL_PROVIDER_LLAMA_CPP;
-      LOG_INFO("llm_local_provider: Detected llama.cpp at %s (via /props)", base_url);
+      OLOG_INFO("llm_local_provider: Detected llama.cpp at %s (via /props)", base_url);
    }
    /* Try llama.cpp /slots - newer llama.cpp builds disable /props for remote connections
     * but /slots is always available and unique to llama.cpp */
    else if (probe_endpoint(base_url, "/slots", LLM_LOCAL_PROBE_TIMEOUT_MS)) {
       detected = LOCAL_PROVIDER_LLAMA_CPP;
-      LOG_INFO("llm_local_provider: Detected llama.cpp at %s (via /slots)", base_url);
+      OLOG_INFO("llm_local_provider: Detected llama.cpp at %s (via /slots)", base_url);
    }
    /* Try Ollama /api/tags */
    else if (probe_endpoint(base_url, "/api/tags", LLM_LOCAL_PROBE_TIMEOUT_MS)) {
       detected = LOCAL_PROVIDER_OLLAMA;
-      LOG_INFO("llm_local_provider: Detected Ollama at %s", base_url);
+      OLOG_INFO("llm_local_provider: Detected Ollama at %s", base_url);
    }
    /* Fallback to generic */
    else {
-      LOG_INFO("llm_local_provider: Using generic OpenAI-compatible mode for %s", base_url);
+      OLOG_INFO("llm_local_provider: Using generic OpenAI-compatible mode for %s", base_url);
    }
 
    /* Cache result */
@@ -648,31 +648,33 @@ int llm_local_query_context_size(const char *endpoint, const char *model) {
    if (provider == LOCAL_PROVIDER_OLLAMA && model && model[0] != '\0') {
       /* Prefer /api/ps (runtime context from Ollama settings panel) over /api/show (model max) */
       if (try_ollama_ps_context(base_url, model, &context_size) == 0) {
-         LOG_INFO("llm_local_provider: Ollama runtime context for %s: %d tokens (from /api/ps)",
-                  model, context_size);
+         OLOG_INFO("llm_local_provider: Ollama runtime context for %s: %d tokens (from /api/ps)",
+                   model, context_size);
          return context_size;
       }
       if (try_ollama_show_context(base_url, model, &context_size) == 0) {
-         LOG_INFO("llm_local_provider: Ollama model context for %s: %d tokens (from /api/show)",
-                  model, context_size);
+         OLOG_INFO("llm_local_provider: Ollama model context for %s: %d tokens (from /api/show)",
+                   model, context_size);
          return context_size;
       }
    }
 
    /* Try llama.cpp /props (works for llama.cpp and as fallback) */
    if (try_llamacpp_context(base_url, &context_size) == 0) {
-      LOG_INFO("llm_local_provider: llama.cpp context size: %d tokens (from /props)", context_size);
+      OLOG_INFO("llm_local_provider: llama.cpp context size: %d tokens (from /props)",
+                context_size);
       return context_size;
    }
 
    /* Try llama.cpp /slots — newer builds disable /props for remote connections */
    if (try_llamacpp_slots_context(base_url, &context_size) == 0) {
-      LOG_INFO("llm_local_provider: llama.cpp context size: %d tokens (from /slots)", context_size);
+      OLOG_INFO("llm_local_provider: llama.cpp context size: %d tokens (from /slots)",
+                context_size);
       return context_size;
    }
 
-   LOG_WARNING("llm_local_provider: Failed to query context size, using default %d",
-               LLM_CONTEXT_DEFAULT_LOCAL);
+   OLOG_WARNING("llm_local_provider: Failed to query context size, using default %d",
+                LLM_CONTEXT_DEFAULT_LOCAL);
    return LLM_CONTEXT_DEFAULT_LOCAL;
 }
 
@@ -700,7 +702,7 @@ void llm_local_invalidate_models_cache(void) {
    s_state.model_count = 0;
    s_state.models_fetched_at = 0;
    pthread_mutex_unlock(&s_state.mutex);
-   LOG_INFO("llm_local_provider: Model cache invalidated");
+   OLOG_INFO("llm_local_provider: Model cache invalidated");
 }
 
 /**
@@ -842,8 +844,8 @@ int llm_local_list_models(const char *endpoint,
       s_state.models_fetched_at = now;
       pthread_mutex_unlock(&s_state.mutex);
 
-      LOG_INFO("llm_local_provider: Found %d models from %s", count,
-               llm_local_provider_name(provider));
+      OLOG_INFO("llm_local_provider: Found %d models from %s", count,
+                llm_local_provider_name(provider));
 
       *out_count = (size_t)count;
       return 0;

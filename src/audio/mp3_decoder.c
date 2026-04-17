@@ -82,7 +82,7 @@ audio_decoder_t *mp3_decoder_open(const char *path) {
 
    mp3_decoder_handle_t *handle = calloc(1, sizeof(mp3_decoder_handle_t));
    if (!handle) {
-      LOG_ERROR("Failed to allocate MP3 decoder handle");
+      OLOG_ERROR("Failed to allocate MP3 decoder handle");
       return NULL;
    }
 
@@ -93,7 +93,7 @@ audio_decoder_t *mp3_decoder_open(const char *path) {
    /* Create mpg123 handle */
    handle->mpg = mpg123_new(NULL, &err);
    if (!handle->mpg) {
-      LOG_ERROR("Failed to create mpg123 handle: %s", mpg123_plain_strerror(err));
+      OLOG_ERROR("Failed to create mpg123 handle: %s", mpg123_plain_strerror(err));
       free(handle);
       return NULL;
    }
@@ -109,7 +109,7 @@ audio_decoder_t *mp3_decoder_open(const char *path) {
    /* Open the file */
    err = mpg123_open(handle->mpg, path);
    if (err != MPG123_OK) {
-      LOG_ERROR("Failed to open MP3 file '%s': %s", path, mpg123_strerror(handle->mpg));
+      OLOG_ERROR("Failed to open MP3 file '%s': %s", path, mpg123_strerror(handle->mpg));
       mpg123_delete(handle->mpg);
       free(handle);
       return NULL;
@@ -118,7 +118,7 @@ audio_decoder_t *mp3_decoder_open(const char *path) {
    /* Get format info */
    err = mpg123_getformat(handle->mpg, &handle->sample_rate, &handle->channels, &handle->encoding);
    if (err != MPG123_OK) {
-      LOG_ERROR("Failed to get MP3 format: %s", mpg123_strerror(handle->mpg));
+      OLOG_ERROR("Failed to get MP3 format: %s", mpg123_strerror(handle->mpg));
       mpg123_close(handle->mpg);
       mpg123_delete(handle->mpg);
       free(handle);
@@ -128,8 +128,8 @@ audio_decoder_t *mp3_decoder_open(const char *path) {
    /* Get total length if available (VBR files may not have accurate length) */
    handle->total_samples = mpg123_length(handle->mpg);
 
-   LOG_INFO("MP3: %ldHz %dch, %s samples", handle->sample_rate, handle->channels,
-            handle->total_samples >= 0 ? "known" : "unknown");
+   OLOG_INFO("MP3: %ldHz %dch, %s samples", handle->sample_rate, handle->channels,
+             handle->total_samples >= 0 ? "known" : "unknown");
 
    return (audio_decoder_t *)handle;
 }
@@ -190,7 +190,7 @@ ssize_t mp3_decoder_read(audio_decoder_t *dec, int16_t *buffer, size_t max_frame
       handle->eof = true;
       /* Return whatever we got */
    } else if (err != MPG123_OK && err != MPG123_NEW_FORMAT) {
-      LOG_ERROR("MP3 decode error: %s", mpg123_strerror(handle->mpg));
+      OLOG_ERROR("MP3 decode error: %s", mpg123_strerror(handle->mpg));
       handle->error = true;
       if (bytes_read == 0) {
          return -AUDIO_DECODER_ERR_READ;
@@ -212,7 +212,7 @@ int mp3_decoder_seek(audio_decoder_t *dec, uint64_t sample_pos) {
 
    off_t result = mpg123_seek(handle->mpg, (off_t)sample_pos, SEEK_SET);
    if (result < 0) {
-      LOG_WARNING("MP3 seek failed: %s", mpg123_strerror(handle->mpg));
+      OLOG_WARNING("MP3 seek failed: %s", mpg123_strerror(handle->mpg));
       return AUDIO_DECODER_ERR_SEEK;
    }
 
@@ -390,12 +390,12 @@ int mp3_decoder_lib_init(void) {
 
    int err = mpg123_init();
    if (err != MPG123_OK) {
-      LOG_ERROR("Failed to initialize mpg123 library: %s", mpg123_plain_strerror(err));
+      OLOG_ERROR("Failed to initialize mpg123 library: %s", mpg123_plain_strerror(err));
       return AUDIO_DECODER_ERR_NOT_INIT;
    }
 
    g_mp3_initialized = true;
-   LOG_INFO("mpg123 library initialized");
+   OLOG_INFO("mpg123 library initialized");
    return AUDIO_DECODER_SUCCESS;
 }
 
@@ -408,7 +408,7 @@ void mp3_decoder_lib_cleanup(void) {
    if (g_mp3_initialized) {
       mpg123_exit();
       g_mp3_initialized = false;
-      LOG_INFO("mpg123 library cleaned up");
+      OLOG_INFO("mpg123 library cleaned up");
    }
 }
 

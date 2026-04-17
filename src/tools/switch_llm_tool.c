@@ -156,9 +156,9 @@ static void compact_before_switch(session_t *session,
                                            current->cloud_provider, current->model, entry->type,
                                            target_provider, NULL, &compact_result);
    if (rc == 0 && compact_result.performed) {
-      LOG_INFO("Pre-switch compaction: %d messages summarized, %d -> %d tokens",
-               compact_result.messages_summarized, compact_result.tokens_before,
-               compact_result.tokens_after);
+      OLOG_INFO("Pre-switch compaction: %d messages summarized, %d -> %d tokens",
+                compact_result.messages_summarized, compact_result.tokens_before,
+                compact_result.tokens_after);
    }
    llm_compaction_result_free(&compact_result);
 }
@@ -206,7 +206,7 @@ static char *switch_llm_tool_callback(const char *action, char *value, int *shou
    /* Compact conversation if switching to a provider with smaller context window */
    compact_before_switch(session, &config, entry);
 
-   LOG_INFO("Setting AI to %s via switch_llm tool.", entry->label);
+   OLOG_INFO("Setting AI to %s via switch_llm tool.", entry->label);
    config.type = entry->type;
    if (entry->provider != CLOUD_PROVIDER_NONE) {
       config.cloud_provider = entry->provider;

@@ -91,7 +91,7 @@ static int vocab_lookup(const char *word) {
 static int vocab_load(const char *path) {
    FILE *fp = fopen(path, "r");
    if (!fp) {
-      LOG_ERROR("memory_embed_onnx: cannot open vocab: %s", path);
+      OLOG_ERROR("memory_embed_onnx: cannot open vocab: %s", path);
       return -1;
    }
 
@@ -124,7 +124,7 @@ static int vocab_load(const char *path) {
 
    fclose(fp);
    s_vocab_size = id;
-   LOG_INFO("memory_embed_onnx: loaded vocab with %d entries", s_vocab_size);
+   OLOG_INFO("memory_embed_onnx: loaded vocab with %d entries", s_vocab_size);
    return 0;
 }
 
@@ -312,7 +312,7 @@ static int onnx_init(const char *endpoint, const char *model, const char *api_ke
    /* Get ONNX Runtime API */
    s_onnx.ort = OrtGetApiBase()->GetApi(ORT_API_VERSION);
    if (!s_onnx.ort) {
-      LOG_ERROR("memory_embed_onnx: failed to get ONNX Runtime API");
+      OLOG_ERROR("memory_embed_onnx: failed to get ONNX Runtime API");
       vocab_free();
       return -1;
    }
@@ -321,7 +321,7 @@ static int onnx_init(const char *endpoint, const char *model, const char *api_ke
    OrtStatus *status = s_onnx.ort->CreateEnv(ORT_LOGGING_LEVEL_WARNING, "memory_embed",
                                              &s_onnx.env);
    if (status != NULL) {
-      LOG_ERROR("memory_embed_onnx: create env failed: %s", s_onnx.ort->GetErrorMessage(status));
+      OLOG_ERROR("memory_embed_onnx: create env failed: %s", s_onnx.ort->GetErrorMessage(status));
       s_onnx.ort->ReleaseStatus(status);
       vocab_free();
       return -1;
@@ -331,8 +331,8 @@ static int onnx_init(const char *endpoint, const char *model, const char *api_ke
    OrtSessionOptions *opts;
    status = s_onnx.ort->CreateSessionOptions(&opts);
    if (status != NULL) {
-      LOG_ERROR("memory_embed_onnx: create session options failed: %s",
-                s_onnx.ort->GetErrorMessage(status));
+      OLOG_ERROR("memory_embed_onnx: create session options failed: %s",
+                 s_onnx.ort->GetErrorMessage(status));
       s_onnx.ort->ReleaseStatus(status);
       s_onnx.ort->ReleaseEnv(s_onnx.env);
       vocab_free();
@@ -350,7 +350,7 @@ static int onnx_init(const char *endpoint, const char *model, const char *api_ke
    s_onnx.ort->ReleaseSessionOptions(opts);
 
    if (status != NULL) {
-      LOG_ERROR("memory_embed_onnx: load model failed: %s", s_onnx.ort->GetErrorMessage(status));
+      OLOG_ERROR("memory_embed_onnx: load model failed: %s", s_onnx.ort->GetErrorMessage(status));
       s_onnx.ort->ReleaseStatus(status);
       s_onnx.ort->ReleaseEnv(s_onnx.env);
       vocab_free();
@@ -361,8 +361,8 @@ static int onnx_init(const char *endpoint, const char *model, const char *api_ke
    status = s_onnx.ort->CreateCpuMemoryInfo(OrtArenaAllocator, OrtMemTypeDefault,
                                             &s_onnx.memory_info);
    if (status != NULL) {
-      LOG_ERROR("memory_embed_onnx: create memory info failed: %s",
-                s_onnx.ort->GetErrorMessage(status));
+      OLOG_ERROR("memory_embed_onnx: create memory info failed: %s",
+                 s_onnx.ort->GetErrorMessage(status));
       s_onnx.ort->ReleaseStatus(status);
       s_onnx.ort->ReleaseSession(s_onnx.session);
       s_onnx.ort->ReleaseEnv(s_onnx.env);
@@ -371,7 +371,7 @@ static int onnx_init(const char *endpoint, const char *model, const char *api_ke
    }
 
    s_onnx.initialized = true;
-   LOG_INFO("memory_embed_onnx: ONNX provider initialized (model: %s)", MODEL_PATH);
+   OLOG_INFO("memory_embed_onnx: ONNX provider initialized (model: %s)", MODEL_PATH);
    return 0;
 }
 
@@ -388,7 +388,7 @@ static void onnx_cleanup(void) {
 
    vocab_free();
    s_onnx.initialized = false;
-   LOG_INFO("memory_embed_onnx: cleanup complete");
+   OLOG_INFO("memory_embed_onnx: cleanup complete");
 }
 
 /**
@@ -465,7 +465,7 @@ static int onnx_embed(const char *text, float *out, int max_dims, int *out_dims)
    s_onnx.ort->ReleaseValue(input_tensors[2]);
 
    if (status != NULL) {
-      LOG_ERROR("memory_embed_onnx: inference failed: %s", s_onnx.ort->GetErrorMessage(status));
+      OLOG_ERROR("memory_embed_onnx: inference failed: %s", s_onnx.ort->GetErrorMessage(status));
       s_onnx.ort->ReleaseStatus(status);
       return -1;
    }

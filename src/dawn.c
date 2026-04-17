@@ -76,7 +76,7 @@
 #include "llm/llm_tool_loop.h"
 #include "llm/llm_tools.h"
 #include "logging.h"
-/* logging_bridge is now built into init_logging() in common/src/logging.c */
+#include "logging_bridge.h"
 #include "mosquitto_comms.h"
 #include "state_machine.h"
 #include "text_to_command_nuevo.h"
@@ -196,8 +196,8 @@ static void init_wake_words(void) {
                g_config.general.ai_name);
       wakeWords[i] = wakeWordBuffers[i];
    }
-   LOG_INFO("Wake words configured for '%s' (e.g., '%s', '%s')", g_config.general.ai_name,
-            wakeWords[0], wakeWords[1]);
+   OLOG_INFO("Wake words configured for '%s' (e.g., '%s', '%s')", g_config.general.ai_name,
+             wakeWords[0], wakeWords[1]);
 }
 
 // Array of words/phrases used to signal the end of an interaction with the AI.
@@ -284,7 +284,7 @@ static char s_saved_argv_storage[MAX_SAVED_ARGC][MAX_SAVED_ARG_LEN];  // String 
  */
 static void dawn_save_argv(int argc, char *argv[]) {
    if (argc > MAX_SAVED_ARGC) {
-      LOG_WARNING("Too many arguments (%d > %d), truncating for restart", argc, MAX_SAVED_ARGC);
+      OLOG_WARNING("Too many arguments (%d > %d), truncating for restart", argc, MAX_SAVED_ARGC);
       argc = MAX_SAVED_ARGC;
    }
 
@@ -294,7 +294,7 @@ static void dawn_save_argv(int argc, char *argv[]) {
    for (int i = 0; i < argc; i++) {
       size_t len = strlen(argv[i]);
       if (len >= MAX_SAVED_ARG_LEN) {
-         LOG_WARNING("Argument %d too long (%zu >= %d), truncating", i, len, MAX_SAVED_ARG_LEN);
+         OLOG_WARNING("Argument %d too long (%zu >= %d), truncating", i, len, MAX_SAVED_ARG_LEN);
          len = MAX_SAVED_ARG_LEN - 1;
       }
       memcpy(s_saved_argv_storage[i], argv[i], len);
@@ -303,7 +303,7 @@ static void dawn_save_argv(int argc, char *argv[]) {
    }
    s_saved_argv[argc] = NULL;  // NULL terminate for execve()
 
-   LOG_INFO("Saved %d command-line arguments for potential restart", argc);
+   OLOG_INFO("Saved %d command-line arguments for potential restart", argc);
 }
 
 /**
@@ -316,7 +316,7 @@ static void dawn_save_argv(int argc, char *argv[]) {
  * Thread-safe: Uses sig_atomic_t for the flag.
  */
 void dawn_request_restart(void) {
-   LOG_INFO("Restart requested - will restart after cleanup");
+   OLOG_INFO("Restart requested - will restart after cleanup");
    g_restart_requested = 1;
    quit = 1;  // Trigger main loop exit
 }
@@ -566,8 +566,8 @@ char *setPcmPlaybackDevice(const char *actionName, char *value, int *should_resp
 
    /* Handle NULL value (e.g., from "get" action without a value) */
    if (value == NULL) {
-      LOG_WARNING("setPcmPlaybackDevice called with NULL value (action: %s)",
-                  actionName ? actionName : "NULL");
+      OLOG_WARNING("setPcmPlaybackDevice called with NULL value (action: %s)",
+                   actionName ? actionName : "NULL");
       snprintf(return_buffer, MAX_COMMAND_LENGTH, "Current audio playback device: %s",
                pcm_playback_device);
       return return_buffer;
@@ -592,7 +592,7 @@ char *setPcmPlaybackDevice(const char *actionName, char *value, int *should_resp
       }
 
       if (match) {
-         LOG_INFO("Setting audio playback device to \"%s\"", d->device);
+         OLOG_INFO("Setting audio playback device to \"%s\"", d->device);
          strncpy(pcm_playback_device, d->device, MAX_WORD_LENGTH);
          pcm_playback_device[MAX_WORD_LENGTH] = '\0';
 
@@ -609,9 +609,9 @@ char *setPcmPlaybackDevice(const char *actionName, char *value, int *should_resp
    }
 
    /* Device not found */
-   LOG_ERROR("Requested audio playback device not found: %s", value);
-   LOG_ERROR("  Hint: List available devices with: aplay -L");
-   LOG_ERROR("  Hint: Set in dawn.toml [audio] playback_device or WebUI Settings > Audio");
+   OLOG_ERROR("Requested audio playback device not found: %s", value);
+   OLOG_ERROR("  Hint: List available devices with: aplay -L");
+   OLOG_ERROR("  Hint: Set in dawn.toml [audio] playback_device or WebUI Settings > Audio");
 
    if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
       snprintf(speech, MAX_COMMAND_LENGTH, "Sorry sir. A playback device called %s was not found.",
@@ -637,8 +637,8 @@ char *setPcmCaptureDevice(const char *actionName, char *value, int *should_respo
 
    /* Handle NULL value (e.g., from "get" action without a value) */
    if (value == NULL) {
-      LOG_WARNING("setPcmCaptureDevice called with NULL value (action: %s)",
-                  actionName ? actionName : "NULL");
+      OLOG_WARNING("setPcmCaptureDevice called with NULL value (action: %s)",
+                   actionName ? actionName : "NULL");
       snprintf(return_buffer, MAX_COMMAND_LENGTH, "Current audio capture device: %s",
                pcm_capture_device);
       return return_buffer;
@@ -663,7 +663,7 @@ char *setPcmCaptureDevice(const char *actionName, char *value, int *should_respo
       }
 
       if (match) {
-         LOG_INFO("Setting audio capture device to \"%s\"", d->device);
+         OLOG_INFO("Setting audio capture device to \"%s\"", d->device);
          strncpy(pcm_capture_device, d->device, MAX_WORD_LENGTH);
          pcm_capture_device[MAX_WORD_LENGTH] = '\0';
 
@@ -680,9 +680,9 @@ char *setPcmCaptureDevice(const char *actionName, char *value, int *should_respo
    }
 
    /* Device not found */
-   LOG_ERROR("Requested audio capture device not found: %s", value);
-   LOG_ERROR("  Hint: List available devices with: arecord -L");
-   LOG_ERROR("  Hint: Set in dawn.toml [audio] capture_device or WebUI Settings > Audio");
+   OLOG_ERROR("Requested audio capture device not found: %s", value);
+   OLOG_ERROR("  Hint: List available devices with: arecord -L");
+   OLOG_ERROR("  Hint: Set in dawn.toml [audio] capture_device or WebUI Settings > Audio");
 
    if (command_processing_mode == CMD_MODE_DIRECT_ONLY) {
       snprintf(speech, MAX_COMMAND_LENGTH, "Sorry sir. A capture device called %s was not found.",
@@ -753,7 +753,7 @@ char *getTextResponse(const char *input) {
    // Parse the JSON data
    parsed_json = json_tokener_parse(input);
    if (parsed_json == NULL) {
-      LOG_ERROR("Error: Unable to process text response.\n");
+      OLOG_ERROR("Error: Unable to process text response.\n");
       return NULL;
    }
 
@@ -761,14 +761,14 @@ char *getTextResponse(const char *input) {
    if (json_object_object_get_ex(parsed_json, "text", &text_object)) {
       const char *input_text = json_object_get_string(text_object);
       if (input_text == NULL) {
-         LOG_ERROR("Error: Unable to get string from input text.\n");
+         OLOG_ERROR("Error: Unable to get string from input text.\n");
          json_object_put(parsed_json);
          return NULL;
       }
 
       return_text = malloc((strlen(input_text) + 1) * sizeof(char));
       if (return_text == NULL) {
-         LOG_ERROR("malloc() failed in getTextResponse().\n");
+         OLOG_ERROR("malloc() failed in getTextResponse().\n");
          json_object_put(parsed_json);
          return NULL;
       }
@@ -777,9 +777,9 @@ char *getTextResponse(const char *input) {
       strcpy(return_text, input_text);
 
       // Debugging: Print the extracted text
-      LOG_INFO("Input Text: %s\n", return_text);
+      OLOG_INFO("Input Text: %s\n", return_text);
    } else {
-      LOG_ERROR("Error: 'text' field not found in JSON.\n");
+      OLOG_ERROR("Error: 'text' field not found in JSON.\n");
    }
 
    // Cleanup and return
@@ -883,13 +883,13 @@ int capture_buffer(audioControl *myAudioControls,
    *ret_buff_size = 0;
 
    if (!audio_capture_ctx) {
-      LOG_ERROR("Audio capture thread not initialized");
+      OLOG_ERROR("Audio capture thread not initialized");
       return 1;
    }
 
    // Check if capture thread is still running
    if (!audio_capture_is_running(audio_capture_ctx)) {
-      LOG_ERROR("Audio capture thread has stopped unexpectedly");
+      OLOG_ERROR("Audio capture thread has stopped unexpectedly");
       return 1;
    }
 
@@ -897,8 +897,8 @@ int capture_buffer(audioControl *myAudioControls,
    // Timeout of 2 seconds to prevent indefinite blocking
    size_t available = audio_capture_wait_for_data(audio_capture_ctx, max_buff_size, 2000);
    if (available < max_buff_size) {
-      LOG_WARNING("Timeout waiting for audio data (got %zu bytes, needed %u)", available,
-                  max_buff_size);
+      OLOG_WARNING("Timeout waiting for audio data (got %zu bytes, needed %u)", available,
+                   max_buff_size);
       // Read whatever is available
       if (available > 0) {
          *ret_buff_size = audio_capture_read(audio_capture_ctx, max_buff, available);
@@ -935,11 +935,11 @@ static pthread_mutex_t conversation_mutex = PTHREAD_MUTEX_INITIALIZER;
 void reset_conversation(void) {
    pthread_mutex_lock(&conversation_mutex);
 
-   LOG_INFO("Resetting conversation context...");
+   OLOG_INFO("Resetting conversation context...");
 
    session_t *local_session = session_get_local();
    if (!local_session) {
-      LOG_ERROR("Failed to get local session for reset");
+      OLOG_ERROR("Failed to get local session for reset");
       pthread_mutex_unlock(&conversation_mutex);
       return;
    }
@@ -963,7 +963,7 @@ void reset_conversation(void) {
    /* Reset metrics */
    metrics_reset();
 
-   LOG_INFO("Conversation reset complete - fresh context ready");
+   OLOG_INFO("Conversation reset complete - fresh context ready");
    metrics_log_activity("Conversation reset - fresh context");
 
    pthread_mutex_unlock(&conversation_mutex);
@@ -1039,12 +1039,12 @@ static int check_and_process_input_queue(char **command_text_out,
       return 0;
    }
 
-   LOG_INFO("Text input from %s: %s", input_source_name(input.source), input.text);
+   OLOG_INFO("Text input from %s: %s", input_source_name(input.source), input.text);
 
    *command_text_out = strdup(input.text);
    if (*command_text_out == NULL) {
-      LOG_ERROR("Failed to allocate memory for text input from %s",
-                input_source_name(input.source));
+      OLOG_ERROR("Failed to allocate memory for text input from %s",
+                 input_source_name(input.source));
       return 0;
    }
 
@@ -1072,14 +1072,14 @@ int publish_ai_state(dawn_state_t newState) {
 
    const char *state_name = dawn_state_name(newState);
    if (strcmp(state_name, "UNKNOWN") == 0) {
-      LOG_ERROR("Unknown state: %d", newState);
+      OLOG_ERROR("Unknown state: %d", newState);
       return 1;
    }
 
    // Build JSON using json-c
    struct json_object *json = json_object_new_object();
    if (!json) {
-      LOG_ERROR("Error creating JSON object for AI state.");
+      OLOG_ERROR("Error creating JSON object for AI state.");
       return 1;
    }
 
@@ -1093,7 +1093,7 @@ int publish_ai_state(dawn_state_t newState) {
    const char *json_str = json_object_to_json_string(json);
    rc = mosquitto_publish(mosq, NULL, "hud", strlen(json_str), json_str, 0, false);
    if (rc != MOSQ_ERR_SUCCESS) {
-      LOG_ERROR("Error publishing: %s\n", mosquitto_strerror(rc));
+      OLOG_ERROR("Error publishing: %s\n", mosquitto_strerror(rc));
       json_object_put(json);
       return 1;
    }
@@ -1241,7 +1241,7 @@ void *llm_worker_thread(void *arg) {
 
    pthread_mutex_unlock(&llm_mutex);
 
-   LOG_INFO("LLM worker thread finished");
+   OLOG_INFO("LLM worker thread finished");
    return NULL;
 }
 
@@ -1389,7 +1389,7 @@ int main(int argc, char *argv[]) {
    // Save argv early for potential restart via execve()
    dawn_save_argv(argc, argv);
 
-   LOG_INFO("%s Version %s: %s\n", APP_NAME, VERSION_NUMBER, GIT_SHA);
+   OLOG_INFO("%s Version %s: %s\n", APP_NAME, VERSION_NUMBER, GIT_SHA);
 
    // Initialize curl globally and register cleanup handler
    curl_global_init(CURL_GLOBAL_DEFAULT);
@@ -1427,49 +1427,49 @@ int main(int argc, char *argv[]) {
          case 'L':
             command_processing_mode = CMD_MODE_LLM_ONLY;
             cli_overrides |= CLI_OVERRIDE_COMMAND_MODE;
-            LOG_INFO("LLM-only command processing enabled (CLI override)");
+            OLOG_INFO("LLM-only command processing enabled (CLI override)");
             break;
          case 'C':
             command_processing_mode = CMD_MODE_DIRECT_FIRST;
             cli_overrides |= CLI_OVERRIDE_COMMAND_MODE;
-            LOG_INFO("Commands-first with LLM fallback enabled (CLI override)");
+            OLOG_INFO("Commands-first with LLM fallback enabled (CLI override)");
             break;
          case 'D':
             command_processing_mode = CMD_MODE_DIRECT_ONLY;
             cli_overrides |= CLI_OVERRIDE_COMMAND_MODE;
-            LOG_INFO("Direct commands only mode enabled (CLI override)");
+            OLOG_INFO("Direct commands only mode enabled (CLI override)");
             break;
          case 'm':
             if (strcasecmp(optarg, "cloud") == 0) {
                llm_type_override = LLM_CLOUD;
-               LOG_INFO("Using cloud LLM by default");
+               OLOG_INFO("Using cloud LLM by default");
             } else if (strcasecmp(optarg, "local") == 0) {
                llm_type_override = LLM_LOCAL;
-               LOG_INFO("Using local LLM by default");
+               OLOG_INFO("Using local LLM by default");
             } else {
-               LOG_ERROR("Unknown LLM type: %s. Using auto-detection.", optarg);
+               OLOG_ERROR("Unknown LLM type: %s. Using auto-detection.", optarg);
             }
             break;
          case 'P':
             cloud_provider_override = optarg;
-            LOG_INFO("Cloud provider override: %s", cloud_provider_override);
+            OLOG_INFO("Cloud provider override: %s", cloud_provider_override);
             break;
          case 'W':
             whisper_model = optarg;
             cli_overrides |= CLI_OVERRIDE_WHISPER_MODEL;
-            LOG_INFO("Whisper model set to: %s (CLI override)", whisper_model);
+            OLOG_INFO("Whisper model set to: %s (CLI override)", whisper_model);
             break;
          case 'w':
             whisper_path = optarg;
             cli_overrides |= CLI_OVERRIDE_WHISPER_PATH;
-            LOG_INFO("Whisper models path set to: %s (CLI override)", whisper_path);
+            OLOG_INFO("Whisper models path set to: %s (CLI override)", whisper_path);
             break;
          case 'A':
 #ifdef ENABLE_VOSK
             if (strcmp(optarg, "vosk") == 0) {
                asr_engine = ASR_ENGINE_VOSK;
                asr_model_path = "../models/vosk-model";  // Relative to build/
-               LOG_INFO("Using Vosk ASR engine");
+               OLOG_INFO("Using Vosk ASR engine");
             } else
 #endif
                 if (strcmp(optarg, "whisper") == 0) {
@@ -1478,29 +1478,29 @@ int main(int argc, char *argv[]) {
                snprintf(whisper_full_path, sizeof(whisper_full_path), "%s/ggml-%s.bin",
                         whisper_path, whisper_model);
                asr_model_path = whisper_full_path;
-               LOG_INFO("Using Whisper ASR engine with model: %s", asr_model_path);
+               OLOG_INFO("Using Whisper ASR engine with model: %s", asr_model_path);
             } else {
 #ifdef ENABLE_VOSK
-               LOG_ERROR("Unknown ASR engine: %s. Using Whisper (default).", optarg);
+               OLOG_ERROR("Unknown ASR engine: %s. Using Whisper (default).", optarg);
 #else
-               LOG_ERROR("Unknown ASR engine: %s (Vosk support not compiled in). Using Whisper.",
-                         optarg);
+               OLOG_ERROR("Unknown ASR engine: %s (Vosk support not compiled in). Using Whisper.",
+                          optarg);
 #endif
             }
             break;
          case 'M':
 #ifdef DAWN_ENABLE_MUSIC_TOOL
             set_music_directory(optarg);
-            LOG_INFO("Music directory set to: %s", optarg);
+            OLOG_INFO("Music directory set to: %s", optarg);
 #else
-            LOG_WARNING("Music tool not compiled in, -M ignored");
+            OLOG_WARNING("Music tool not compiled in, -M ignored");
 #endif
             break;
 #ifdef ENABLE_TUI
          case 'T':
             enable_tui = 1;
             cli_overrides |= CLI_OVERRIDE_TUI;
-            LOG_INFO("TUI mode enabled via CLI");
+            OLOG_INFO("TUI mode enabled via CLI");
             break;
          case 't':
             if (strcasecmp(optarg, "green") == 0) {
@@ -1510,10 +1510,10 @@ int main(int argc, char *argv[]) {
             } else if (strcasecmp(optarg, "bw") == 0) {
                tui_theme = TUI_THEME_BW;
             } else {
-               LOG_WARNING("Unknown TUI theme: %s. Using green.", optarg);
+               OLOG_WARNING("Unknown TUI theme: %s. Using green.", optarg);
                tui_theme = TUI_THEME_GREEN;
             }
-            LOG_INFO("TUI theme set to: %s", optarg);
+            OLOG_INFO("TUI theme set to: %s", optarg);
             break;
 #endif
          case 'r':
@@ -1524,7 +1524,7 @@ int main(int argc, char *argv[]) {
                mic_set_recording_dir(optarg);
                cli_overrides |= CLI_OVERRIDE_RECORD_PATH;
             }
-            LOG_INFO("Mic recording enabled via CLI (dir: %s)", optarg ? optarg : "/tmp");
+            OLOG_INFO("Mic recording enabled via CLI (dir: %s)", optarg ? optarg : "/tmp");
             break;
          case 'a':
             // Enable ASR recording, optionally with a directory
@@ -1535,7 +1535,7 @@ int main(int argc, char *argv[]) {
                asr_set_recording_dir(optarg);
                cli_overrides |= CLI_OVERRIDE_RECORD_PATH;
             }
-            LOG_INFO("ASR recording enabled via CLI (dir: %s)", optarg ? optarg : "/tmp");
+            OLOG_INFO("ASR recording enabled via CLI (dir: %s)", optarg ? optarg : "/tmp");
             break;
 #ifdef ENABLE_AEC
          case 'R':
@@ -1546,24 +1546,24 @@ int main(int argc, char *argv[]) {
                aec_set_recording_dir(optarg);
                cli_overrides |= CLI_OVERRIDE_RECORD_PATH;
             }
-            LOG_INFO("AEC recording enabled via CLI (dir: %s)", optarg ? optarg : "/tmp");
+            OLOG_INFO("AEC recording enabled via CLI (dir: %s)", optarg ? optarg : "/tmp");
             break;
 #endif
          case 'B':
             g_bargein_user_disabled = 1;
-            LOG_INFO("Barge-in disabled: speech during TTS will be ignored");
+            OLOG_INFO("Barge-in disabled: speech during TTS will be ignored");
             break;
          case 256:  // --summarize-backend
             summarizer_config.backend = search_summarizer_parse_backend(optarg);
             cli_overrides |= CLI_OVERRIDE_SUMMARIZER_BACKEND;
-            LOG_INFO("Search summarization backend: %s (CLI override)",
-                     search_summarizer_backend_name(summarizer_config.backend));
+            OLOG_INFO("Search summarization backend: %s (CLI override)",
+                      search_summarizer_backend_name(summarizer_config.backend));
             break;
          case 257:  // --summarize-threshold
             summarizer_config.threshold_bytes = (size_t)atol(optarg);
             cli_overrides |= CLI_OVERRIDE_SUMMARIZER_THRESHOLD;
-            LOG_INFO("Search summarization threshold: %zu bytes (CLI override)",
-                     summarizer_config.threshold_bytes);
+            OLOG_INFO("Search summarization threshold: %zu bytes (CLI override)",
+                      summarizer_config.threshold_bytes);
             break;
          case 258:  // --config
             config_path = optarg;
@@ -1577,13 +1577,13 @@ int main(int argc, char *argv[]) {
          case 260:  // --audio-backend
             audio_backend_type = audio_backend_parse_type(optarg);
             cli_overrides |= CLI_OVERRIDE_AUDIO_BACKEND;
-            LOG_INFO("Audio backend set to: %s (CLI override)",
-                     audio_backend_type_name(audio_backend_type));
+            OLOG_INFO("Audio backend set to: %s (CLI override)",
+                      audio_backend_type_name(audio_backend_type));
             break;
          case 262:  // --server
             server_mode = 1;
             strncpy(g_config.general.mode, "server", sizeof(g_config.general.mode) - 1);
-            LOG_INFO("Server mode: ENABLED (no local audio capture/playback)");
+            OLOG_INFO("Server mode: ENABLED (no local audio capture/playback)");
             break;
          case '?':
             display_help(argc, argv);
@@ -1620,7 +1620,7 @@ int main(int argc, char *argv[]) {
    if (g_config.localization.timezone[0] != '\0') {
       setenv("TZ", g_config.localization.timezone, 1);
       tzset();
-      LOG_INFO("Timezone set to %s", g_config.localization.timezone);
+      OLOG_INFO("Timezone set to %s", g_config.localization.timezone);
    }
 
    // Step 3: Load secrets file (search default locations)
@@ -1645,11 +1645,11 @@ int main(int argc, char *argv[]) {
    // Apply ASR config (CLI overrides take precedence)
    if (!(cli_overrides & CLI_OVERRIDE_WHISPER_MODEL) && g_config.asr.model[0] != '\0') {
       whisper_model = g_config.asr.model;
-      LOG_INFO("Whisper model from config: %s", whisper_model);
+      OLOG_INFO("Whisper model from config: %s", whisper_model);
    }
    if (!(cli_overrides & CLI_OVERRIDE_WHISPER_PATH) && g_config.asr.models_path[0] != '\0') {
       whisper_path = g_config.asr.models_path;
-      LOG_INFO("Whisper models path from config: %s", whisper_path);
+      OLOG_INFO("Whisper models path from config: %s", whisper_path);
    }
 
    // Reconstruct Whisper path if either model or path came from config
@@ -1663,14 +1663,14 @@ int main(int argc, char *argv[]) {
    // Apply TUI config (CLI overrides take precedence)
    if (!(cli_overrides & CLI_OVERRIDE_TUI) && g_config.tui.enabled) {
       enable_tui = 1;
-      LOG_INFO("TUI mode enabled from config");
+      OLOG_INFO("TUI mode enabled from config");
    }
 #endif
 
    // Apply log file config (CLI overrides take precedence)
    if (!(cli_overrides & CLI_OVERRIDE_LOG_FILE) && g_config.general.log_file[0] != '\0') {
       log_filename = g_config.general.log_file;
-      LOG_INFO("Log file from config: %s", log_filename);
+      OLOG_INFO("Log file from config: %s", log_filename);
    }
 
    // Apply debug recording config (CLI overrides take precedence)
@@ -1681,33 +1681,33 @@ int main(int argc, char *argv[]) {
 #ifdef ENABLE_AEC
       aec_set_recording_dir(g_config.debug.record_path);
 #endif
-      LOG_INFO("Debug recording path from config: %s", g_config.debug.record_path);
+      OLOG_INFO("Debug recording path from config: %s", g_config.debug.record_path);
    }
    // Enable recordings from config if CLI didn't set them
    if (!(cli_overrides & CLI_OVERRIDE_MIC_RECORD) && g_config.debug.mic_record) {
       mic_enable_recording(true);
-      LOG_INFO("Mic recording enabled from config");
+      OLOG_INFO("Mic recording enabled from config");
    }
    if (!(cli_overrides & CLI_OVERRIDE_ASR_RECORD) && g_config.debug.asr_record) {
       asr_enable_recording(true);
-      LOG_INFO("ASR recording enabled from config");
+      OLOG_INFO("ASR recording enabled from config");
    }
 #ifdef ENABLE_AEC
    if (!(cli_overrides & CLI_OVERRIDE_AEC_RECORD) && g_config.debug.aec_record) {
       aec_enable_recording(true);
-      LOG_INFO("AEC recording enabled from config");
+      OLOG_INFO("AEC recording enabled from config");
    }
 #endif
    // Apply audio backend from config if CLI didn't set it
    if (!(cli_overrides & CLI_OVERRIDE_AUDIO_BACKEND) && g_config.audio.backend[0] != '\0') {
       audio_backend_type = audio_backend_parse_type(g_config.audio.backend);
-      LOG_INFO("Audio backend from config: %s", audio_backend_type_name(audio_backend_type));
+      OLOG_INFO("Audio backend from config: %s", audio_backend_type_name(audio_backend_type));
    }
 
    // Apply server mode from config (CLI --server takes precedence)
    if (!server_mode && strcmp(g_config.general.mode, "server") == 0) {
       server_mode = 1;
-      LOG_INFO("Server mode: ENABLED (from config [general] mode = \"server\")");
+      OLOG_INFO("Server mode: ENABLED (from config [general] mode = \"server\")");
    }
 
    // Apply search summarizer settings from config if CLI didn't set them
@@ -1715,34 +1715,34 @@ int main(int argc, char *argv[]) {
        g_config.search.summarizer.backend[0] != '\0') {
       summarizer_config.backend = search_summarizer_parse_backend(
           g_config.search.summarizer.backend);
-      LOG_INFO("Search summarizer backend from config: %s",
-               search_summarizer_backend_name(summarizer_config.backend));
+      OLOG_INFO("Search summarizer backend from config: %s",
+                search_summarizer_backend_name(summarizer_config.backend));
    }
    if (!(cli_overrides & CLI_OVERRIDE_SUMMARIZER_THRESHOLD) &&
        g_config.search.summarizer.threshold_bytes > 0) {
       summarizer_config.threshold_bytes = g_config.search.summarizer.threshold_bytes;
-      LOG_INFO("Search summarizer threshold from config: %zu bytes",
-               summarizer_config.threshold_bytes);
+      OLOG_INFO("Search summarizer threshold from config: %zu bytes",
+                summarizer_config.threshold_bytes);
    }
    if (g_config.search.summarizer.target_words > 0) {
       summarizer_config.target_summary_words = g_config.search.summarizer.target_words;
-      LOG_INFO("Search summarizer target words from config: %zu",
-               summarizer_config.target_summary_words);
+      OLOG_INFO("Search summarizer target words from config: %zu",
+                summarizer_config.target_summary_words);
    }
    if (g_config.search.summarizer.target_ratio > 0.0f) {
       summarizer_config.target_ratio = g_config.search.summarizer.target_ratio;
-      LOG_INFO("Search summarizer target ratio from config: %.2f", summarizer_config.target_ratio);
+      OLOG_INFO("Search summarizer target ratio from config: %.2f", summarizer_config.target_ratio);
    }
 
    // Apply CLI LLM type override to g_config (needed for validation)
    if (llm_type_override == LLM_LOCAL) {
       strncpy(g_config.llm.type, "local", sizeof(g_config.llm.type) - 1);
       g_config.llm.type[sizeof(g_config.llm.type) - 1] = '\0';
-      LOG_INFO("LLM type set to 'local' (CLI override)");
+      OLOG_INFO("LLM type set to 'local' (CLI override)");
    } else if (llm_type_override == LLM_CLOUD) {
       strncpy(g_config.llm.type, "cloud", sizeof(g_config.llm.type) - 1);
       g_config.llm.type[sizeof(g_config.llm.type) - 1] = '\0';
-      LOG_INFO("LLM type set to 'cloud' (CLI override)");
+      OLOG_INFO("LLM type set to 'cloud' (CLI override)");
    }
 
    // Step 5: Handle --dump-config (print effective config and exit)
@@ -1779,9 +1779,9 @@ int main(int argc, char *argv[]) {
       }
 
       if (!has_api_key) {
-         LOG_WARNING("Cloud LLM provider '%s' requires API key in secrets.toml - falling back to "
-                     "local LLM",
-                     provider);
+         OLOG_WARNING("Cloud LLM provider '%s' requires API key in secrets.toml - falling back to "
+                      "local LLM",
+                      provider);
          strncpy(g_config.llm.type, "local", sizeof(g_config.llm.type) - 1);
          g_config.llm.type[sizeof(g_config.llm.type) - 1] = '\0';
          // Also update the runtime override so llm_init uses local
@@ -1822,19 +1822,20 @@ int main(int argc, char *argv[]) {
       }
    }
 
-   // Note: init_logging() automatically bridges DAWN_LOG_* from common library
+   /* Route DAWN_LOG_* from the common library through log_message(). */
+   logging_bridge_install();
 
 #ifdef ENABLE_TUI
    // Initialize TUI if enabled
    if (enable_tui) {
       if (tui_init(tui_theme) != 0) {
-         LOG_WARNING("TUI initialization failed, falling back to console mode");
+         OLOG_WARNING("TUI initialization failed, falling back to console mode");
          enable_tui = 0;
       } else {
-         LOG_INFO("TUI initialized with %s theme", tui_theme == TUI_THEME_GREEN  ? "green"
-                                                   : tui_theme == TUI_THEME_BLUE ? "blue"
-                                                   : tui_theme == TUI_THEME_BW   ? "black/white"
-                                                                                 : "unknown");
+         OLOG_INFO("TUI initialized with %s theme", tui_theme == TUI_THEME_GREEN  ? "green"
+                                                    : tui_theme == TUI_THEME_BLUE ? "blue"
+                                                    : tui_theme == TUI_THEME_BW   ? "black/white"
+                                                                                  : "unknown");
          // Suppress console logging to avoid interfering with TUI
          logging_suppress_console(1);
       }
@@ -1855,7 +1856,7 @@ int main(int argc, char *argv[]) {
    // Graceful degradation: continue without tools if init fails
    bool tools_available = true;
    if (tool_registry_init() != 0) {
-      LOG_ERROR("Tool registry init failed - operating in degraded mode (no commands)");
+      OLOG_ERROR("Tool registry init failed - operating in degraded mode (no commands)");
       tools_available = false;
    }
 
@@ -1868,19 +1869,19 @@ int main(int argc, char *argv[]) {
       const char *loaded_config_path = config_get_loaded_path();
       if (loaded_config_path && strcmp(loaded_config_path, "(none - using defaults)") != 0) {
          if (tool_registry_parse_configs(loaded_config_path) != 0) {
-            LOG_WARNING("Tool config parsing failed - tools using defaults");
+            OLOG_WARNING("Tool config parsing failed - tools using defaults");
          }
       }
 
       // Initialize all registered tools (calls each tool's init function)
       if (tool_registry_init_tools() != 0) {
-         LOG_WARNING("Tool initialization failed - some tools may be unavailable");
+         OLOG_WARNING("Tool initialization failed - some tools may be unavailable");
       }
 
       // Lock registry to prevent further registrations during runtime
       tool_registry_lock();
    } else {
-      LOG_WARNING("Commands/tools disabled - voice interaction still available");
+      OLOG_WARNING("Commands/tools disabled - voice interaction still available");
    }
 
    // Initialize LLM system early - must happen before prompt is built
@@ -1896,19 +1897,19 @@ int main(int argc, char *argv[]) {
 
    // Initialize session manager (creates local session)
    if (session_manager_init() != 0) {
-      LOG_ERROR("Failed to initialize session manager");
+      OLOG_ERROR("Failed to initialize session manager");
       return 1;
    }
 
    // Initialize command router for worker thread request/response
    if (command_router_init() != 0) {
-      LOG_ERROR("Failed to initialize command router");
+      OLOG_ERROR("Failed to initialize command router");
       return 1;
    }
 
    session_t *local_session = session_get_local();
    if (!local_session) {
-      LOG_ERROR("Failed to get local session");
+      OLOG_ERROR("Failed to get local session");
       return 1;
    }
 
@@ -1918,11 +1919,11 @@ int main(int argc, char *argv[]) {
        command_processing_mode == CMD_MODE_DIRECT_FIRST) {
       // LLM modes get the enhanced prompt with command information
       system_prompt = get_local_command_prompt();
-      LOG_INFO("Using enhanced system prompt for LLM command processing");
+      OLOG_INFO("Using enhanced system prompt for LLM command processing");
    } else {
       // Direct-only mode: use persona + system instructions for consistent behavior
       system_prompt = get_direct_mode_prompt();
-      LOG_INFO("Using standard system prompt for direct command processing");
+      OLOG_INFO("Using standard system prompt for direct command processing");
    }
 
    session_init_system_prompt(local_session, system_prompt);
@@ -1935,27 +1936,28 @@ int main(int argc, char *argv[]) {
    // In server mode, use AUDIO_BACKEND_NONE — no local audio hardware needed
    if (server_mode) {
       audio_backend_type = AUDIO_BACKEND_NONE;
-      LOG_INFO("Server mode: using null audio backend (no local audio hardware)");
+      OLOG_INFO("Server mode: using null audio backend (no local audio hardware)");
    }
    int audio_init_result = audio_backend_init(audio_backend_type);
    if (audio_init_result != AUDIO_SUCCESS) {
       if (server_mode) {
-         LOG_WARNING("Audio backend init failed in server mode — continuing without audio");
+         OLOG_WARNING("Audio backend init failed in server mode — continuing without audio");
       } else {
-         LOG_ERROR("Failed to initialize audio backend: %s", audio_error_string(audio_init_result));
-         LOG_ERROR("  Hint: Check PulseAudio is running (pulseaudio --check) or try [audio] "
-                   "backend = \"alsa\" in dawn.toml");
+         OLOG_ERROR("Failed to initialize audio backend: %s",
+                    audio_error_string(audio_init_result));
+         OLOG_ERROR("  Hint: Check PulseAudio is running (pulseaudio --check) or try [audio] "
+                    "backend = \"alsa\" in dawn.toml");
          return 1;
       }
    }
-   LOG_INFO("Audio backend initialized: %s", audio_backend_type_name(audio_backend_get_type()));
+   OLOG_INFO("Audio backend initialized: %s", audio_backend_type_name(audio_backend_get_type()));
 
    if (!server_mode) {
       // Initialize audio decoder subsystem (FLAC, MP3, Ogg Vorbis)
       if (audio_decoder_init() != AUDIO_DECODER_SUCCESS) {
-         LOG_ERROR("Failed to initialize audio decoder subsystem");
-         LOG_ERROR("  Hint: Ensure audio libraries are installed: sudo apt install libmpg123-dev "
-                   "libvorbis-dev libflac-dev");
+         OLOG_ERROR("Failed to initialize audio decoder subsystem");
+         OLOG_ERROR("  Hint: Ensure audio libraries are installed: sudo apt install libmpg123-dev "
+                    "libvorbis-dev libflac-dev");
          return 1;
       }
 
@@ -1971,37 +1973,37 @@ int main(int argc, char *argv[]) {
          // Uses paths.music_dir with tilde expansion handled by scanner
          if (music_scanner_start(g_config.paths.music_dir, g_config.music.scan_interval_minutes,
                                  music_db_path) != 0) {
-            LOG_WARNING("Music scanner failed to start");
+            OLOG_WARNING("Music scanner failed to start");
          }
       } else {
-         LOG_WARNING("Music database init failed");
+         OLOG_WARNING("Music database init failed");
       }
 
       // Start dedicated audio capture thread with ring buffer
       // Ring buffer size: 262144 bytes = ~8 seconds of audio at 16kHz mono 16-bit
       // Increased to prevent audio loss during Vosk processing which can take 100-500ms
       // Realtime priority: enabled (requires cap_sys_nice capability or root)
-      LOG_INFO("Starting audio capture thread...");
+      OLOG_INFO("Starting audio capture thread...");
       audio_capture_ctx = audio_capture_start(pcm_capture_device, 262144, 1);
       if (!audio_capture_ctx) {
-         LOG_ERROR("Failed to start audio capture thread");
-         LOG_ERROR("  Hint: Check that capture device '%s' exists and isn't in use by another "
-                   "application",
-                   pcm_capture_device);
+         OLOG_ERROR("Failed to start audio capture thread");
+         OLOG_ERROR("  Hint: Check that capture device '%s' exists and isn't in use by another "
+                    "application",
+                    pcm_capture_device);
          return 1;
       }
    } else {
-      LOG_INFO("Server mode: skipping audio decoder, music scanner, and audio capture");
+      OLOG_INFO("Server mode: skipping audio decoder, music scanner, and audio capture");
    }
 
    myAudioControls.full_buff_size = DEFAULT_FRAMES * DEFAULT_CHANNELS * sizeof(int16_t);
 
-   LOG_INFO("max_buff_size: %u, full_buff_size: %u\n", max_buff_size,
-            myAudioControls.full_buff_size);
+   OLOG_INFO("max_buff_size: %u, full_buff_size: %u\n", max_buff_size,
+             myAudioControls.full_buff_size);
 
    max_buff = (char *)malloc(max_buff_size);
    if (max_buff == NULL) {
-      LOG_ERROR("malloc() failed on max_buff.\n");
+      OLOG_ERROR("malloc() failed on max_buff.\n");
 
       if (audio_capture_ctx) {
          audio_capture_stop(audio_capture_ctx);
@@ -2011,11 +2013,11 @@ int main(int argc, char *argv[]) {
       return 1;
    }
 
-   LOG_INFO("Init ASR: %s", asr_engine_name(asr_engine));
+   OLOG_INFO("Init ASR: %s", asr_engine_name(asr_engine));
    // Initialize ASR engine (Vosk or Whisper)
    asr_context_t *asr_ctx = asr_init(asr_engine, asr_model_path, DEFAULT_RATE);
    if (asr_ctx == NULL) {
-      LOG_ERROR("Error initializing ASR engine: %s\n", asr_engine_name(asr_engine));
+      OLOG_ERROR("Error initializing ASR engine: %s\n", asr_engine_name(asr_engine));
 
       free(max_buff);
 
@@ -2033,7 +2035,7 @@ int main(int argc, char *argv[]) {
    if (asr_engine == ASR_ENGINE_WHISPER && g_config.vad.chunking.enabled) {
       chunk_mgr = chunking_manager_init(asr_ctx);
       if (!chunk_mgr) {
-         LOG_ERROR("Failed to initialize chunking manager");
+         OLOG_ERROR("Failed to initialize chunking manager");
          asr_cleanup(asr_ctx);
          free(max_buff);
          if (audio_capture_ctx) {
@@ -2042,29 +2044,29 @@ int main(int argc, char *argv[]) {
          }
          return 1;
       }
-      LOG_INFO("Chunking enabled via config");
+      OLOG_INFO("Chunking enabled via config");
    } else if (asr_engine == ASR_ENGINE_WHISPER) {
-      LOG_INFO("Chunking disabled via config");
+      OLOG_INFO("Chunking disabled via config");
    }
 
 #ifdef DAWN_ENABLE_SMARTTHINGS_TOOL
    /* SmartThings service initialization */
    st_error_t st_err = smartthings_init();
    if (st_err == ST_OK) {
-      LOG_INFO("SmartThings service initialized");
+      OLOG_INFO("SmartThings service initialized");
    } else if (st_err != ST_ERR_NOT_CONFIGURED) {
-      LOG_WARNING("SmartThings init failed: %s", smartthings_error_str(st_err));
+      OLOG_WARNING("SmartThings init failed: %s", smartthings_error_str(st_err));
    }
 #endif
 
    /* MQTT Setup - conditionally enabled via config */
    if (g_config.mqtt.enabled) {
-      LOG_INFO("Init mosquitto.");
+      OLOG_INFO("Init mosquitto.");
       mosquitto_lib_init();
 
       mosq = mosquitto_new(NULL, true, NULL);
       if (mosq == NULL) {
-         LOG_ERROR("Error: Out of memory.\n");
+         OLOG_ERROR("Error: Out of memory.\n");
          return 1;
       }
 
@@ -2082,18 +2084,18 @@ int main(int argc, char *argv[]) {
                                         g_secrets.mqtt_password[0] != '\0' ? g_secrets.mqtt_password
                                                                            : NULL);
          if (rc != MOSQ_ERR_SUCCESS) {
-            LOG_ERROR("Failed to set MQTT credentials: %s", mosquitto_strerror(rc));
-            LOG_ERROR("  Hint: Check mqtt_username/mqtt_password in secrets.toml");
+            OLOG_ERROR("Failed to set MQTT credentials: %s", mosquitto_strerror(rc));
+            OLOG_ERROR("  Hint: Check mqtt_username/mqtt_password in secrets.toml");
          } else {
-            LOG_INFO("MQTT authentication configured for user: %s", g_secrets.mqtt_username);
+            OLOG_INFO("MQTT authentication configured for user: %s", g_secrets.mqtt_username);
          }
       } else {
          /* SECURITY WARNING: MQTT running without authentication */
-         LOG_WARNING("========================================");
-         LOG_WARNING("MQTT SECURITY WARNING: No authentication configured!");
-         LOG_WARNING("Anyone on the network can send commands to DAWN.");
-         LOG_WARNING("Configure mqtt_username/mqtt_password in secrets.toml");
-         LOG_WARNING("========================================");
+         OLOG_WARNING("========================================");
+         OLOG_WARNING("MQTT SECURITY WARNING: No authentication configured!");
+         OLOG_WARNING("Anyone on the network can send commands to DAWN.");
+         OLOG_WARNING("Configure mqtt_username/mqtt_password in secrets.toml");
+         OLOG_WARNING("========================================");
       }
 
       /* Configure MQTT TLS if enabled */
@@ -2108,16 +2110,17 @@ int main(int argc, char *argv[]) {
          bool tls_ok = true;
          for (int i = 0; i < 3; i++) {
             if (paths[i] && access(paths[i], R_OK) != 0) {
-               LOG_ERROR("MQTT TLS %s not readable: %s (%s)", labels[i], paths[i], strerror(errno));
-               LOG_ERROR("  Hint: Check file path and permissions in dawn.toml [mqtt]");
+               OLOG_ERROR("MQTT TLS %s not readable: %s (%s)", labels[i], paths[i],
+                          strerror(errno));
+               OLOG_ERROR("  Hint: Check file path and permissions in dawn.toml [mqtt]");
                tls_ok = false;
             }
          }
 
          if (!tls_ok) {
-            LOG_ERROR("MQTT disabled — TLS certificate files not accessible");
-            LOG_ERROR("  Hint: Verify TLS cert paths in dawn.toml [mqtt] or set tls = false to "
-                      "disable TLS");
+            OLOG_ERROR("MQTT disabled — TLS certificate files not accessible");
+            OLOG_ERROR("  Hint: Verify TLS cert paths in dawn.toml [mqtt] or set tls = false to "
+                       "disable TLS");
             mosquitto_destroy(mosq);
             mosq = NULL;
             goto mqtt_disabled;
@@ -2125,29 +2128,29 @@ int main(int argc, char *argv[]) {
 
          rc = mosquitto_tls_set(mosq, ca, NULL, cert, key, NULL);
          if (rc != MOSQ_ERR_SUCCESS) {
-            LOG_ERROR("MQTT disabled — TLS setup failed: %s", mosquitto_strerror(rc));
+            OLOG_ERROR("MQTT disabled — TLS setup failed: %s", mosquitto_strerror(rc));
             mosquitto_destroy(mosq);
             mosq = NULL;
             goto mqtt_disabled;
          }
-         LOG_INFO("MQTT TLS enabled (CA: %s)", ca ? ca : "system default");
+         OLOG_INFO("MQTT TLS enabled (CA: %s)", ca ? ca : "system default");
       }
 
       /* Set Last Will and Testament for immediate disconnect detection */
       if (component_status_set_lwt(mosq) != 0) {
-         LOG_WARNING("Failed to set LWT - status notifications may be delayed");
+         OLOG_WARNING("Failed to set LWT - status notifications may be delayed");
       }
 
       /* Connect to MQTT server (broker from config). */
       rc = mosquitto_connect(mosq, g_config.mqtt.broker, g_config.mqtt.port, 60);
       if (rc != MOSQ_ERR_SUCCESS) {
          mosquitto_destroy(mosq);
-         LOG_ERROR("Error on mosquitto_connect(): %s\n", mosquitto_strerror(rc));
-         LOG_ERROR("  Hint: Check Mosquitto is running: sudo systemctl status mosquitto");
-         LOG_ERROR("  Hint: Verify [mqtt] broker and port in dawn.toml (default: 127.0.0.1:1883)");
+         OLOG_ERROR("Error on mosquitto_connect(): %s\n", mosquitto_strerror(rc));
+         OLOG_ERROR("  Hint: Check Mosquitto is running: sudo systemctl status mosquitto");
+         OLOG_ERROR("  Hint: Verify [mqtt] broker and port in dawn.toml (default: 127.0.0.1:1883)");
          return 1;
       } else {
-         LOG_INFO("Connected to local MQTT server.\n");
+         OLOG_INFO("Connected to local MQTT server.\n");
       }
 
       /* Start processing MQTT events. */
@@ -2156,41 +2159,41 @@ int main(int argc, char *argv[]) {
       /* Make MQTT available for command processing (WebUI, worker pool) */
       worker_pool_set_mosq(mosq);
    } else {
-      LOG_INFO("MQTT disabled by config");
+      OLOG_INFO("MQTT disabled by config");
    }
 mqtt_disabled:
 
    // TTS engine init — always needed (WebUI and satellites use TTS via WebSocket)
-   LOG_INFO("Init text to speech.");
+   OLOG_INFO("Init text to speech.");
    initialize_text_to_speech(pcm_playback_device);
 
    if (!server_mode) {
 #ifdef ENABLE_AEC
       // Initialize AEC (must be after TTS which creates the resampler)
-      LOG_INFO("Init AEC for echo cancellation.");
+      OLOG_INFO("Init AEC for echo cancellation.");
       aec_config_t aec_config = aec_get_default_config();
 
       // Auto-detect platform for mobile mode
 #ifdef PLATFORM_RPI
       aec_config.mobile_mode = true;
-      LOG_INFO("AEC: Using mobile mode for Raspberry Pi");
+      OLOG_INFO("AEC: Using mobile mode for Raspberry Pi");
 #endif
 
       if (aec_init(&aec_config) != 0) {
-         LOG_WARNING("AEC initialization failed - continuing without echo cancellation");
+         OLOG_WARNING("AEC initialization failed - continuing without echo cancellation");
       }
 #endif
 
       // Initialize Silero VAD (model path relative to working directory, same as Whisper)
-      LOG_INFO("Init Silero VAD for voice activity detection.");
+      OLOG_INFO("Init Silero VAD for voice activity detection.");
       char vad_model_path[512];
       snprintf(vad_model_path, sizeof(vad_model_path), "models/silero_vad_16k_op15.onnx");
       vad_ctx = vad_silero_init(vad_model_path, NULL);  // Option B: separate OrtEnv
       if (!vad_ctx) {
-         LOG_WARNING("Failed to initialize Silero VAD - proceeding without VAD");
+         OLOG_WARNING("Failed to initialize Silero VAD - proceeding without VAD");
       } else {
          vad_silero_set_probability_callback(vad_ctx, vad_metrics_callback, NULL);
-         LOG_INFO("Silero VAD initialized successfully (opset15 model, 0.311ms inference)");
+         OLOG_INFO("Silero VAD initialized successfully (opset15 model, 0.311ms inference)");
       }
 
       // Speak greeting with AEC delay calibration (uses boot greeting to measure acoustic delay)
@@ -2198,51 +2201,51 @@ mqtt_disabled:
 
       // Wait for greeting to complete before enabling barge-in
       // This prevents VAD from interrupting the greeting during calibration
-      LOG_INFO("Waiting for boot greeting to complete...");
+      OLOG_INFO("Waiting for boot greeting to complete...");
       int tts_result = tts_wait_for_completion(10000);  // 10 second timeout
       if (tts_result == 0) {
-         LOG_INFO("Boot greeting completed successfully");
+         OLOG_INFO("Boot greeting completed successfully");
       } else {
-         LOG_WARNING("Boot greeting wait timed out - continuing anyway");
+         OLOG_WARNING("Boot greeting wait timed out - continuing anyway");
       }
 
       // Flush audio buffer to discard any speech captured during greeting
       if (audio_capture_ctx) {
          audio_capture_clear(audio_capture_ctx);
-         LOG_INFO("Audio buffer cleared after boot greeting");
+         OLOG_INFO("Audio buffer cleared after boot greeting");
       }
    } else {
-      LOG_INFO("Server mode: skipping AEC, VAD, and boot greeting");
+      OLOG_INFO("Server mode: skipping AEC, VAD, and boot greeting");
    }
 
    // Reset VAD state to clear any detections from greeting playback
    if (vad_ctx) {
       vad_silero_reset(vad_ctx);
-      LOG_INFO("VAD state reset after boot greeting");
+      OLOG_INFO("VAD state reset after boot greeting");
    }
 
    // Enable barge-in now that greeting is complete
    // Priority: CLI (--no-bargein) > config (audio.bargein.enabled)
    if (g_bargein_user_disabled) {
       g_bargein_disabled = 1;
-      LOG_INFO("Barge-in disabled by CLI option");
+      OLOG_INFO("Barge-in disabled by CLI option");
    } else if (!g_config.audio.bargein.enabled) {
       g_bargein_disabled = 1;
-      LOG_INFO("Barge-in disabled by config file");
+      OLOG_INFO("Barge-in disabled by config file");
    } else {
       g_bargein_disabled = 0;
-      LOG_INFO("Barge-in enabled after boot greeting");
+      OLOG_INFO("Barge-in enabled after boot greeting");
    }
 
    // Register the signal handler for SIGINT.
    if (signal(SIGINT, signal_handler) == SIG_ERR) {
-      LOG_ERROR("Error: Unable to register signal handler.\n");
+      OLOG_ERROR("Error: Unable to register signal handler.\n");
       exit(EXIT_FAILURE);
    }
 
    // Initialize metrics system (before LLM so config is tracked)
    if (metrics_init() != 0) {
-      LOG_WARNING("Failed to initialize metrics system - continuing without metrics");
+      OLOG_WARNING("Failed to initialize metrics system - continuing without metrics");
    }
 
    // Initialize search summarizer
@@ -2264,9 +2267,9 @@ mqtt_disabled:
    /* Initialize worker pool for WebUI/satellite audio processing */
 #ifdef ENABLE_WEBUI
    if (g_config.webui.enabled) {
-      LOG_INFO("Initializing worker pool (%d workers)...", g_config.network.workers);
+      OLOG_INFO("Initializing worker pool (%d workers)...", g_config.network.workers);
       if (worker_pool_init(asr_engine, asr_model_path) != 0) {
-         LOG_WARNING("Failed to init worker pool - voice input disabled");
+         OLOG_WARNING("Failed to init worker pool - voice input disabled");
       }
    }
 #endif
@@ -2274,18 +2277,18 @@ mqtt_disabled:
 #ifdef ENABLE_WEBUI
    /* Initialize WebUI server if enabled */
    if (g_config.webui.enabled) {
-      LOG_INFO("Initializing WebUI server...");
+      OLOG_INFO("Initializing WebUI server...");
       if (webui_server_init(0, NULL) == WEBUI_SUCCESS) {
-         LOG_INFO("WebUI server started on port %d", webui_server_get_port());
+         OLOG_INFO("WebUI server started on port %d", webui_server_get_port());
 
          /* Start dedicated music streaming server (port = main + 1) */
          if (webui_music_server_init(0) == 0) {
-            LOG_INFO("Music streaming server started on port %d", webui_music_server_get_port());
+            OLOG_INFO("Music streaming server started on port %d", webui_music_server_get_port());
          } else {
-            LOG_WARNING("Failed to start music streaming server - music will use main socket");
+            OLOG_WARNING("Failed to start music streaming server - music will use main socket");
          }
       } else {
-         LOG_WARNING("Failed to start WebUI server - continuing without WebUI");
+         OLOG_WARNING("Failed to start WebUI server - continuing without WebUI");
       }
    }
 #endif
@@ -2294,18 +2297,18 @@ mqtt_disabled:
    char expanded_data_dir[CONFIG_PATH_MAX];
    char auth_db_path[CONFIG_PATH_MAX + 16];
    if (!path_expand_tilde(g_config.paths.data_dir, expanded_data_dir, sizeof(expanded_data_dir))) {
-      LOG_ERROR("Failed to expand data_dir path: %s", g_config.paths.data_dir);
+      OLOG_ERROR("Failed to expand data_dir path: %s", g_config.paths.data_dir);
    }
    snprintf(auth_db_path, sizeof(auth_db_path), "%s/auth.db", expanded_data_dir);
    if (auth_db_init(auth_db_path) != AUTH_DB_SUCCESS) {
-      LOG_ERROR("Failed to initialize database - memory system disabled");
-      LOG_ERROR("  Hint: Check file permissions on %s", expanded_data_dir);
+      OLOG_ERROR("Failed to initialize database - memory system disabled");
+      OLOG_ERROR("  Hint: Check file permissions on %s", expanded_data_dir);
    }
 
    /* Initialize memory embeddings (non-fatal — falls back to keyword search) */
    if (g_config.memory.enabled && g_config.memory.embedding_provider[0] != '\0') {
       if (memory_embeddings_init() != 0) {
-         LOG_WARNING("Memory embeddings init failed - semantic search disabled");
+         OLOG_WARNING("Memory embeddings init failed - semantic search disabled");
       } else if (g_config.memory.embedding_backfill_on_startup) {
          memory_embeddings_start_backfill(g_config.memory.default_voice_user_id);
       }
@@ -2315,7 +2318,7 @@ mqtt_disabled:
    /* Initialize auth subsystem AFTER database is ready.
     * Order: crypto -> admin socket -> maintenance (per architecture review) */
    if (auth_crypto_init() != AUTH_CRYPTO_SUCCESS) {
-      LOG_ERROR("Failed to initialize auth crypto - authentication disabled");
+      OLOG_ERROR("Failed to initialize auth crypto - authentication disabled");
    } else {
       /* Initialize image storage (depends on auth_db for metadata) */
       image_store_config_t img_config = {
@@ -2326,17 +2329,17 @@ mqtt_disabled:
          .data_dir = expanded_data_dir,
       };
       if (image_store_init(&img_config) != IMAGE_STORE_SUCCESS) {
-         LOG_WARNING("Failed to initialize image store - vision uploads disabled");
+         OLOG_WARNING("Failed to initialize image store - vision uploads disabled");
       }
 
       /* Initialize admin socket for dawn-admin CLI communication */
       if (admin_socket_init() != 0) {
-         LOG_WARNING("Failed to initialize admin socket - CLI management disabled");
+         OLOG_WARNING("Failed to initialize admin socket - CLI management disabled");
       }
 
       /* Start background maintenance thread for auth database cleanup */
       if (auth_maintenance_start() != 0) {
-         LOG_WARNING("Failed to start auth maintenance thread");
+         OLOG_WARNING("Failed to start auth maintenance thread");
       }
    }
 #endif
@@ -2346,17 +2349,17 @@ mqtt_disabled:
       // Server mode: no local audio state machine
       // WebUI, satellites, MQTT, scheduler, etc. run on their own threads
       // Main thread just waits for shutdown signal
-      LOG_INFO("Server mode active — WebUI and satellite connections ready");
-      LOG_INFO("Access WebUI at http%s://%s:%d", g_config.webui.https ? "s" : "",
-               g_config.webui.bind_address[0] ? g_config.webui.bind_address : "0.0.0.0",
-               g_config.webui.port);
+      OLOG_INFO("Server mode active — WebUI and satellite connections ready");
+      OLOG_INFO("Access WebUI at http%s://%s:%d", g_config.webui.https ? "s" : "",
+                g_config.webui.bind_address[0] ? g_config.webui.bind_address : "0.0.0.0",
+                g_config.webui.port);
       while (!quit) {
          sleep(1);
       }
       goto server_shutdown;
    }
 
-   LOG_INFO("Listening...\n");
+   OLOG_INFO("Listening...\n");
    while (!quit) {
 #ifdef ENABLE_TUI
       // TUI update and input handling (runs at roughly 10-20 Hz based on loop timing)
@@ -2374,7 +2377,7 @@ mqtt_disabled:
       static int prev_llm_processing = 0;  // Track previous state
       if (prev_llm_processing == 1 && llm_processing == 0) {
          // LLM just completed - process the response
-         LOG_INFO("LLM thread completed - processing response");
+         OLOG_INFO("LLM thread completed - processing response");
 
          // Record pipeline completion time (ASR to LLM response complete)
          struct timeval pipeline_end_time;
@@ -2382,7 +2385,7 @@ mqtt_disabled:
          double pipeline_ms = (pipeline_end_time.tv_sec - pipeline_start_time.tv_sec) * 1000.0 +
                               (pipeline_end_time.tv_usec - pipeline_start_time.tv_usec) / 1000.0;
          metrics_record_pipeline_total(pipeline_ms);
-         LOG_INFO("Pipeline time (ASR to LLM complete): %.1f ms", pipeline_ms);
+         OLOG_INFO("Pipeline time (ASR to LLM complete): %.1f ms", pipeline_ms);
 
          pthread_mutex_lock(&llm_mutex);
          char *response_text = llm_response_text;
@@ -2394,7 +2397,7 @@ mqtt_disabled:
 
          // Check if response was interrupted
          if (response_text == NULL && llm_is_interrupt_requested()) {
-            LOG_INFO("LLM was interrupted - discarding partial response");
+            OLOG_INFO("LLM was interrupted - discarding partial response");
             llm_clear_interrupt();
 
             // Remove the user message from conversation history (last item)
@@ -2404,7 +2407,7 @@ mqtt_disabled:
             }
          } else if (response_text != NULL) {
             // Process successful response
-            LOG_WARNING("AI: %s\n", response_text);
+            OLOG_WARNING("AI: %s\n", response_text);
 
             // Update TUI with full LLM response (including commands for debugging)
             metrics_set_last_ai_response(response_text);
@@ -2422,7 +2425,7 @@ mqtt_disabled:
                   cmds_processed = parse_llm_response_for_commands(response_text, mosq);
                }
                if (cmds_processed > 0) {
-                  LOG_INFO("Processed %d commands from LLM response", cmds_processed);
+                  OLOG_INFO("Processed %d commands from LLM response", cmds_processed);
                }
                if (tts_response) {
                   // Remove command tags
@@ -2491,7 +2494,7 @@ mqtt_disabled:
 #endif
          } else if (llm_response_silent) {
             // Tool handled its own output (skip_followup with no text response)
-            LOG_INFO("Tool completed silently (no text response expected)");
+            OLOG_INFO("Tool completed silently (no text response expected)");
             pthread_mutex_lock(&tts_mutex);
             if (tts_playback_state == TTS_PLAYBACK_PAUSE) {
                tts_playback_state = TTS_PLAYBACK_DISCARD;
@@ -2507,7 +2510,7 @@ mqtt_disabled:
             }
             pthread_mutex_unlock(&tts_mutex);
 
-            LOG_ERROR("LLM error - no response");
+            OLOG_ERROR("LLM error - no response");
             text_to_speech("I'm sorry but I'm currently unavailable boss.");
          }
       }
@@ -2538,11 +2541,11 @@ mqtt_disabled:
                   time_t timeout_sec = g_config.memory.conversation_idle_timeout_min * 60;
 
                   if (idle_sec >= timeout_sec) {
-                     LOG_INFO("Session 0: Idle timeout after %d minutes, saving conversation",
-                              g_config.memory.conversation_idle_timeout_min);
+                     OLOG_INFO("Session 0: Idle timeout after %d minutes, saving conversation",
+                               g_config.memory.conversation_idle_timeout_min);
                      int64_t conv_id = session_save_voice_conversation(local_session);
                      if (conv_id > 0) {
-                        LOG_INFO("Session 0: Saved as conversation %lld", (long long)conv_id);
+                        OLOG_INFO("Session 0: Saved as conversation %lld", (long long)conv_id);
                         /* Update global pointer to the new history */
                         conversation_history = local_session->conversation_history;
                      }
@@ -2631,17 +2634,17 @@ mqtt_disabled:
                   aec_stats_counter = 0;
                   aec_stats_t stats;
                   if (aec_get_stats(&stats) == 0 && stats.is_active) {
-                     LOG_INFO("AEC Stats: delay=%dms, processed=%llu, passed=%llu, errors=%d, "
-                              "avg_time=%.1fus",
-                              stats.estimated_delay_ms, (unsigned long long)stats.frames_processed,
-                              (unsigned long long)stats.frames_passed_through,
-                              stats.consecutive_errors, stats.avg_processing_time_us);
+                     OLOG_INFO("AEC Stats: delay=%dms, processed=%llu, passed=%llu, errors=%d, "
+                               "avg_time=%.1fus",
+                               stats.estimated_delay_ms, (unsigned long long)stats.frames_processed,
+                               (unsigned long long)stats.frames_passed_through,
+                               stats.consecutive_errors, stats.avg_processing_time_us);
                   }
                }
 #endif
 
                if (vad_speech_prob < 0.0f) {
-                  LOG_ERROR("SILENCE: VAD processing failed - assuming silence");
+                  OLOG_ERROR("SILENCE: VAD processing failed - assuming silence");
                   speech_detected = 0;  // Assume silence on error
                   tts_vad_debounce = 0;
                } else {
@@ -2707,27 +2710,27 @@ mqtt_disabled:
                         // During TTS (or cooldown): require consecutive detections (debounce)
                         tts_vad_debounce++;
 #ifdef ENABLE_AEC
-                        LOG_INFO(
+                        OLOG_INFO(
                             "TTS_VAD: prob=%.3f debounce=%d/%d ERLE=%.1fdB echo_likelihood=%.2f"
                             " tts_playing=%d",
                             vad_speech_prob, tts_vad_debounce, VAD_TTS_DEBOUNCE_COUNT, erle_db,
                             echo_likelihood, tts_playing_now);
 #else
-                        LOG_INFO("TTS_VAD: prob=%.3f debounce=%d/%d tts_playing=%d",
-                                 vad_speech_prob, tts_vad_debounce, VAD_TTS_DEBOUNCE_COUNT,
-                                 tts_playing_now);
+                        OLOG_INFO("TTS_VAD: prob=%.3f debounce=%d/%d tts_playing=%d",
+                                  vad_speech_prob, tts_vad_debounce, VAD_TTS_DEBOUNCE_COUNT,
+                                  tts_playing_now);
 #endif
                         if (tts_vad_debounce >= VAD_TTS_DEBOUNCE_COUNT) {
                            speech_detected = 1;
 #ifdef ENABLE_AEC
-                           LOG_INFO("SILENCE: TTS barge-in confirmed (debounce=%d, VAD=%.3f, "
-                                    "ERLE=%.1fdB, echo_likelihood=%.2f, startup=%ldms)",
-                                    tts_vad_debounce, vad_speech_prob, erle_db, echo_likelihood,
-                                    startup_elapsed_ms);
+                           OLOG_INFO("SILENCE: TTS barge-in confirmed (debounce=%d, VAD=%.3f, "
+                                     "ERLE=%.1fdB, echo_likelihood=%.2f, startup=%ldms)",
+                                     tts_vad_debounce, vad_speech_prob, erle_db, echo_likelihood,
+                                     startup_elapsed_ms);
 #else
-                           LOG_INFO("SILENCE: TTS barge-in confirmed (debounce=%d, VAD=%.3f, "
-                                    "startup=%ldms)",
-                                    tts_vad_debounce, vad_speech_prob, startup_elapsed_ms);
+                           OLOG_INFO("SILENCE: TTS barge-in confirmed (debounce=%d, VAD=%.3f, "
+                                     "startup=%ldms)",
+                                     tts_vad_debounce, vad_speech_prob, startup_elapsed_ms);
 #endif
                            metrics_record_bargein();
                         }
@@ -2738,8 +2741,8 @@ mqtt_disabled:
                   } else {
                      // Below threshold - reset debounce counter
                      if (tts_is_active && tts_vad_debounce > 0) {
-                        LOG_INFO("TTS_VAD: prob=%.3f RESET (was %d)", vad_speech_prob,
-                                 tts_vad_debounce);
+                        OLOG_INFO("TTS_VAD: prob=%.3f RESET (was %d)", vad_speech_prob,
+                                  tts_vad_debounce);
                      }
                      tts_vad_debounce = 0;
                   }
@@ -2747,8 +2750,8 @@ mqtt_disabled:
             } else {
                // VAD not available - log error
                if (vad_debug_counter++ % 50 == 0) {
-                  LOG_ERROR("SILENCE: VAD unavailable - vad_ctx=%p, buff_size=%u, need=%zu",
-                            vad_ctx, buff_size, VAD_SAMPLE_SIZE * sizeof(int16_t));
+                  OLOG_ERROR("SILENCE: VAD unavailable - vad_ctx=%p, buff_size=%u, need=%zu",
+                             vad_ctx, buff_size, VAD_SAMPLE_SIZE * sizeof(int16_t));
                }
                speech_detected = 0;  // Assume silence if VAD unavailable
             }
@@ -2762,8 +2765,8 @@ mqtt_disabled:
                   float ducked_volume = music_pre_duck_volume * MUSIC_DUCK_FACTOR;
                   setMusicVolume(ducked_volume);
                   music_ducked = 1;
-                  LOG_INFO("Music ducked: %.2f -> %.2f (speech detected)", music_pre_duck_volume,
-                           ducked_volume);
+                  OLOG_INFO("Music ducked: %.2f -> %.2f (speech detected)", music_pre_duck_volume,
+                            ducked_volume);
                }
             } else if (music_ducked && getMusicPlay()) {
                // Check if cooldown has elapsed since last speech
@@ -2774,8 +2777,8 @@ mqtt_disabled:
                if (elapsed >= MUSIC_DUCK_RESTORE_DELAY) {
                   // Restore original volume
                   setMusicVolume(music_pre_duck_volume);
-                  LOG_INFO("Music restored: %.2f (%.1fs since speech)", music_pre_duck_volume,
-                           elapsed);
+                  OLOG_INFO("Music restored: %.2f (%.1fs since speech)", music_pre_duck_volume,
+                            elapsed);
                   music_ducked = 0;
                }
             } else if (music_ducked && !getMusicPlay()) {
@@ -2784,9 +2787,9 @@ mqtt_disabled:
             }
 
             if (speech_detected) {
-               LOG_INFO("SILENCE: Speech detected (VAD: %.3f), transitioning to %s (pre-roll: %zu "
-                        "bytes)\n",
-                        vad_speech_prob, dawn_state_name(silenceNextState), preroll_valid_bytes);
+               OLOG_INFO("SILENCE: Speech detected (VAD: %.3f), transitioning to %s (pre-roll: %zu "
+                         "bytes)\n",
+                         vad_speech_prob, dawn_state_name(silenceNextState), preroll_valid_bytes);
                recState = silenceNextState;
 
                // Reset VAD state for new interaction (critical for preventing state accumulation)
@@ -2833,7 +2836,7 @@ mqtt_disabled:
                asr_result = asr_process_partial(asr_ctx, (const int16_t *)max_buff,
                                                 buff_size / sizeof(int16_t));
                if (asr_result == NULL) {
-                  LOG_ERROR("asr_process_partial() returned NULL!\n");
+                  OLOG_ERROR("asr_process_partial() returned NULL!\n");
                } else {
                   asr_result_free(asr_result);
                   asr_result = NULL;
@@ -2867,11 +2870,11 @@ mqtt_disabled:
                                                     VAD_SAMPLE_SIZE);
 
                if (ww_vad_debug_counter++ % 50 == 0) {
-                  LOG_INFO("WAKEWORD_LISTEN: VAD=%.3f", vad_speech_prob);
+                  OLOG_INFO("WAKEWORD_LISTEN: VAD=%.3f", vad_speech_prob);
                }
 
                if (vad_speech_prob < 0.0f) {
-                  LOG_ERROR("WAKEWORD_LISTEN: VAD processing failed - assuming silence");
+                  OLOG_ERROR("WAKEWORD_LISTEN: VAD processing failed - assuming silence");
                   is_silence = 1;  // Assume silence on error
                } else {
                   is_silence = (vad_speech_prob < g_config.vad.silence_threshold);
@@ -2884,14 +2887,14 @@ mqtt_disabled:
                                                                 (const int16_t *)max_buff,
                                                                 buff_size / sizeof(int16_t));
                         if (result != 0) {
-                           LOG_ERROR("WAKEWORD_LISTEN: chunking_manager_add_audio() failed");
+                           OLOG_ERROR("WAKEWORD_LISTEN: chunking_manager_add_audio() failed");
                         }
                      } else if (asr_engine == ASR_ENGINE_VOSK) {
                         // Vosk: Direct streaming path
                         asr_result = asr_process_partial(asr_ctx, (const int16_t *)max_buff,
                                                          buff_size / sizeof(int16_t));
                         if (asr_result == NULL) {
-                           LOG_ERROR("asr_process_partial() returned NULL!\n");
+                           OLOG_ERROR("asr_process_partial() returned NULL!\n");
                         } else {
                            // Record what ASR is hearing for TUI display
                            if (asr_result->text && strlen(asr_result->text) > 0) {
@@ -2906,8 +2909,9 @@ mqtt_disabled:
             } else {
                // VAD not available - log error
                if (ww_vad_debug_counter++ % 50 == 0) {
-                  LOG_ERROR("WAKEWORD_LISTEN: VAD unavailable - vad_ctx=%p, buff_size=%u, need=%zu",
-                            vad_ctx, buff_size, VAD_SAMPLE_SIZE * sizeof(int16_t));
+                  OLOG_ERROR(
+                      "WAKEWORD_LISTEN: VAD unavailable - vad_ctx=%p, buff_size=%u, need=%zu",
+                      vad_ctx, buff_size, VAD_SAMPLE_SIZE * sizeof(int16_t));
                }
                is_silence = 1;  // Assume silence if VAD unavailable
             }
@@ -2927,16 +2931,16 @@ mqtt_disabled:
                // Detect natural pauses (silence after sufficient speech)
                if (is_silence && speech_duration >= g_config.vad.chunking.min_duration &&
                    silence_duration >= g_config.vad.chunking.pause_duration) {
-                  LOG_INFO("WAKEWORD_LISTEN: Pause detected (%.1fs) after %.1fs speech - "
-                           "finalizing chunk",
-                           silence_duration, speech_duration);
+                  OLOG_INFO("WAKEWORD_LISTEN: Pause detected (%.1fs) after %.1fs speech - "
+                            "finalizing chunk",
+                            silence_duration, speech_duration);
                   should_finalize_chunk = 1;
                }
 
                // Force chunk on max duration
                if (speech_duration >= g_config.vad.chunking.max_duration) {
-                  LOG_INFO("WAKEWORD_LISTEN: Max chunk duration reached (%.1fs) - forcing chunk",
-                           speech_duration);
+                  OLOG_INFO("WAKEWORD_LISTEN: Max chunk duration reached (%.1fs) - forcing chunk",
+                            speech_duration);
                   should_finalize_chunk = 1;
                }
 
@@ -2947,8 +2951,8 @@ mqtt_disabled:
 
                   if (result == 0) {
                      if (chunk_text) {
-                        LOG_INFO("WAKEWORD_LISTEN: Chunk %zu finalized: \"%s\"",
-                                 chunking_manager_get_num_chunks(chunk_mgr) - 1, chunk_text);
+                        OLOG_INFO("WAKEWORD_LISTEN: Chunk %zu finalized: \"%s\"",
+                                  chunking_manager_get_num_chunks(chunk_mgr) - 1, chunk_text);
                         // Update TUI with what was heard
                         metrics_set_last_asr_text(chunk_text, 0);
                         free(chunk_text);
@@ -2956,7 +2960,7 @@ mqtt_disabled:
                      // Reset speech duration after successful chunk
                      speech_duration = 0.0f;
                   } else {
-                     LOG_ERROR("WAKEWORD_LISTEN: Chunk finalization failed");
+                     OLOG_ERROR("WAKEWORD_LISTEN: Chunk finalization failed");
                   }
                }
             }
@@ -2970,9 +2974,9 @@ mqtt_disabled:
 
             // Check for maximum recording duration (safety limit for buffer)
             if (recording_duration >= g_config.vad.max_recording_duration) {
-               LOG_WARNING("WAKEWORD_LISTEN: Max recording duration reached (%.1fs), forcing "
-                           "finalization to prevent buffer overflow.\n",
-                           recording_duration);
+               OLOG_WARNING("WAKEWORD_LISTEN: Max recording duration reached (%.1fs), forcing "
+                            "finalization to prevent buffer overflow.\n",
+                            recording_duration);
                recording_duration = 0.0f;
                silence_duration = 0.0f;
                speech_duration = 0.0f;
@@ -2985,10 +2989,11 @@ mqtt_disabled:
                   // Whisper: Finalize any pending audio then get concatenated text
                   if (chunking_manager_get_buffer_usage(chunk_mgr) > 0) {
                      char *pending_chunk = NULL;
-                     LOG_INFO("WAKEWORD_LISTEN: Finalizing pending audio at max duration");
+                     OLOG_INFO("WAKEWORD_LISTEN: Finalizing pending audio at max duration");
                      int result = chunking_manager_finalize_chunk(chunk_mgr, &pending_chunk);
                      if (result == 0 && pending_chunk) {
-                        LOG_INFO("WAKEWORD_LISTEN: Pending chunk finalized: \"%s\"", pending_chunk);
+                        OLOG_INFO("WAKEWORD_LISTEN: Pending chunk finalized: \"%s\"",
+                                  pending_chunk);
                         free(pending_chunk);
                      }
                   }
@@ -2996,9 +3001,9 @@ mqtt_disabled:
                   size_t num_chunks = chunking_manager_get_num_chunks(chunk_mgr);
                   input_text = chunking_manager_get_full_text(chunk_mgr);
                   if (input_text) {
-                     LOG_WARNING("Input (from %zu chunks): %s\n", num_chunks, input_text);
+                     OLOG_WARNING("Input (from %zu chunks): %s\n", num_chunks, input_text);
                   } else {
-                     LOG_WARNING("Input: (no chunks at max duration timeout)\n");
+                     OLOG_WARNING("Input: (no chunks at max duration timeout)\n");
                   }
                   should_check_wake_word =
                       1;  // Set flag even with NULL input to trigger state transition
@@ -3007,9 +3012,10 @@ mqtt_disabled:
                   asr_result = asr_finalize(asr_ctx);
                   if (asr_result && asr_result->text) {
                      input_text = strdup(asr_result->text);
-                     LOG_WARNING("Input: %s\n", input_text);
+                     OLOG_WARNING("Input: %s\n", input_text);
                   } else {
-                     LOG_WARNING("Input: (Vosk finalize returned NULL or empty at max duration)\n");
+                     OLOG_WARNING(
+                         "Input: (Vosk finalize returned NULL or empty at max duration)\n");
                   }
                   if (asr_result) {
                      asr_result_free(asr_result);
@@ -3027,7 +3033,7 @@ mqtt_disabled:
                // Reset pre-roll buffer
                preroll_write_pos = 0;
                preroll_valid_bytes = 0;
-               LOG_WARNING(
+               OLOG_WARNING(
                    "WAKEWORD_LISTEN: Speech ended (%.1fs silence), checking for wake word.\n",
                    g_config.vad.end_of_speech_duration);
 
@@ -3037,11 +3043,12 @@ mqtt_disabled:
                   // This ensures short utterances (< VAD_MIN_CHUNK_DURATION) are transcribed
                   if (chunking_manager_get_buffer_usage(chunk_mgr) > 0) {
                      char *pending_chunk = NULL;
-                     LOG_INFO(
+                     OLOG_INFO(
                          "WAKEWORD_LISTEN: Finalizing pending audio buffer before get_full_text");
                      int result = chunking_manager_finalize_chunk(chunk_mgr, &pending_chunk);
                      if (result == 0 && pending_chunk) {
-                        LOG_INFO("WAKEWORD_LISTEN: Pending chunk finalized: \"%s\"", pending_chunk);
+                        OLOG_INFO("WAKEWORD_LISTEN: Pending chunk finalized: \"%s\"",
+                                  pending_chunk);
                         free(pending_chunk);
                      }
                   }
@@ -3049,9 +3056,9 @@ mqtt_disabled:
                   size_t num_chunks = chunking_manager_get_num_chunks(chunk_mgr);
                   input_text = chunking_manager_get_full_text(chunk_mgr);
                   if (input_text) {
-                     LOG_WARNING("Input (from %zu chunks): %s\n", num_chunks, input_text);
+                     OLOG_WARNING("Input (from %zu chunks): %s\n", num_chunks, input_text);
                   } else {
-                     LOG_WARNING("Input: (no chunks finalized)\n");
+                     OLOG_WARNING("Input: (no chunks finalized)\n");
                   }
                   should_check_wake_word =
                       1;  // Set flag even with NULL input to trigger state transition
@@ -3059,9 +3066,9 @@ mqtt_disabled:
                   // Vosk: Direct finalization
                   asr_result = asr_finalize(asr_ctx);
                   if (asr_result == NULL) {
-                     LOG_ERROR("asr_finalize() returned NULL!\n");
+                     OLOG_ERROR("asr_finalize() returned NULL!\n");
                   } else {
-                     LOG_WARNING("Input: %s\n", asr_result->text ? asr_result->text : "");
+                     OLOG_WARNING("Input: %s\n", asr_result->text ? asr_result->text : "");
                      if (asr_result->text) {
                         input_text = strdup(asr_result->text);
                         metrics_set_last_user_command(asr_result->text);
@@ -3101,7 +3108,7 @@ mqtt_disabled:
                   if (tts_playback_state == TTS_PLAYBACK_PAUSE) {
                      for (i = 0; i < numCancelWords; i++) {
                         if (normalized_text && strcmp(normalized_text, cancelWords[i]) == 0) {
-                           LOG_WARNING("Cancel word detected.\n");
+                           OLOG_WARNING("Cancel word detected.\n");
 
                            tts_playback_state = TTS_PLAYBACK_DISCARD;
                            pthread_cond_signal(&tts_cond);
@@ -3122,11 +3129,11 @@ mqtt_disabled:
                      char *found_ptr = normalized_text ? strstr(normalized_text, wakeWords[i])
                                                        : NULL;
                      if (found_ptr != NULL) {
-                        LOG_WARNING("Wake word detected.\n");
+                        OLOG_WARNING("Wake word detected.\n");
 
                         // Check if LLM is currently processing - if so, interrupt it
                         if (llm_processing) {
-                           LOG_INFO(
+                           OLOG_INFO(
                                "Wake word detected during LLM processing - requesting interrupt");
                            llm_request_interrupt();
                         }
@@ -3176,19 +3183,20 @@ mqtt_disabled:
                   if (i < numWakeWords) {
                      // Skip whitespace and punctuation to see if there's actual command text
                      const char *check_ptr = next_char_ptr;
-                     LOG_INFO("Wake word found. next_char_ptr='%s'",
-                              next_char_ptr ? next_char_ptr : "(null)");
+                     OLOG_INFO("Wake word found. next_char_ptr='%s'",
+                               next_char_ptr ? next_char_ptr : "(null)");
                      while (*check_ptr != '\0' &&
                             (*check_ptr == ' ' || *check_ptr == '.' || *check_ptr == ',' ||
                              *check_ptr == '!' || *check_ptr == '?')) {
                         check_ptr++;
                      }
-                     LOG_INFO("After skip, check_ptr='%s' (len=%zu)", check_ptr, strlen(check_ptr));
+                     OLOG_INFO("After skip, check_ptr='%s' (len=%zu)", check_ptr,
+                               strlen(check_ptr));
 
                      if (*check_ptr == '\0') {
                         // No command after wake word - transition to DAWN_STATE_COMMAND_RECORDING
-                        LOG_WARNING("Wake word detected with no command, transitioning to "
-                                    "COMMAND_RECORDING.\n");
+                        OLOG_WARNING("Wake word detected with no command, transitioning to "
+                                     "COMMAND_RECORDING.\n");
                         text_to_speech("Hello sir.");
 
                         commandTimeout = 0;
@@ -3258,7 +3266,7 @@ mqtt_disabled:
                } else {
                   // No content to process, transition back to DAWN_STATE_SILENCE to avoid infinite
                   // loop
-                  LOG_INFO(
+                  OLOG_INFO(
                       "WAKEWORD_LISTEN: No content to process, returning to DAWN_STATE_SILENCE.\n");
                   silenceNextState = DAWN_STATE_WAKEWORD_LISTEN;
                   recState = DAWN_STATE_SILENCE;
@@ -3288,18 +3296,18 @@ mqtt_disabled:
                                                     VAD_SAMPLE_SIZE);
 
                if (cmd_vad_debug_counter++ % 50 == 0) {
-                  LOG_INFO("COMMAND_RECORDING: VAD=%.3f", vad_speech_prob);
+                  OLOG_INFO("COMMAND_RECORDING: VAD=%.3f", vad_speech_prob);
                }
 
                if (vad_speech_prob < 0.0f) {
-                  LOG_ERROR("COMMAND_RECORDING: VAD processing failed - assuming silence");
+                  OLOG_ERROR("COMMAND_RECORDING: VAD processing failed - assuming silence");
                   cmd_speech_detected = 0;
                } else {
                   cmd_speech_detected = (vad_speech_prob >= g_config.vad.speech_threshold);
                }
             } else {
                if (cmd_vad_debug_counter++ % 50 == 0) {
-                  LOG_ERROR(
+                  OLOG_ERROR(
                       "COMMAND_RECORDING: VAD unavailable - vad_ctx=%p, buff_size=%u, need=%zu",
                       vad_ctx, buff_size, VAD_SAMPLE_SIZE * sizeof(int16_t));
                }
@@ -3312,7 +3320,7 @@ mqtt_disabled:
                int result = chunking_manager_add_audio(chunk_mgr, (const int16_t *)max_buff,
                                                        buff_size / sizeof(int16_t));
                if (result != 0) {
-                  LOG_ERROR("COMMAND_RECORDING: chunking_manager_add_audio() failed");
+                  OLOG_ERROR("COMMAND_RECORDING: chunking_manager_add_audio() failed");
                }
                // NO direct ASR calls in Whisper mode - chunking_manager owns ASR interactions
             } else if (asr_engine == ASR_ENGINE_VOSK) {
@@ -3323,7 +3331,7 @@ mqtt_disabled:
                   asr_result = asr_process_partial(asr_ctx, (const int16_t *)max_buff,
                                                    buff_size / sizeof(int16_t));
                   if (asr_result == NULL) {
-                     LOG_ERROR("asr_process_partial() returned NULL!\n");
+                     OLOG_ERROR("asr_process_partial() returned NULL!\n");
                   } else {
                      size_t current_length = asr_result->text ? strlen(asr_result->text) : 0;
                      // Record what ASR is hearing for TUI display
@@ -3355,16 +3363,16 @@ mqtt_disabled:
                // Detect natural pauses for chunking (silence after sufficient speech)
                if (!cmd_speech_detected && speech_duration >= g_config.vad.chunking.min_duration &&
                    silence_duration >= g_config.vad.chunking.pause_duration) {
-                  LOG_INFO("COMMAND_RECORDING: Pause detected (%.1fs) after %.1fs speech - "
-                           "finalizing chunk",
-                           silence_duration, speech_duration);
+                  OLOG_INFO("COMMAND_RECORDING: Pause detected (%.1fs) after %.1fs speech - "
+                            "finalizing chunk",
+                            silence_duration, speech_duration);
                   should_finalize_chunk = 1;
                }
 
                // Force chunk on max duration (even if speech continues)
                if (speech_duration >= g_config.vad.chunking.max_duration) {
-                  LOG_INFO("COMMAND_RECORDING: Max chunk duration reached (%.1fs) - forcing chunk",
-                           speech_duration);
+                  OLOG_INFO("COMMAND_RECORDING: Max chunk duration reached (%.1fs) - forcing chunk",
+                            speech_duration);
                   should_finalize_chunk = 1;
                }
 
@@ -3375,8 +3383,8 @@ mqtt_disabled:
 
                   if (result == 0) {
                      if (chunk_text) {
-                        LOG_INFO("COMMAND_RECORDING: Chunk %zu finalized: \"%s\"",
-                                 chunking_manager_get_num_chunks(chunk_mgr) - 1, chunk_text);
+                        OLOG_INFO("COMMAND_RECORDING: Chunk %zu finalized: \"%s\"",
+                                  chunking_manager_get_num_chunks(chunk_mgr) - 1, chunk_text);
                         // Update TUI with what was heard
                         metrics_set_last_asr_text(chunk_text, 0);
                         free(chunk_text);
@@ -3384,7 +3392,7 @@ mqtt_disabled:
                      // Reset speech duration after successful chunk finalization
                      speech_duration = 0.0f;
                   } else {
-                     LOG_ERROR("COMMAND_RECORDING: Chunk finalization failed");
+                     OLOG_ERROR("COMMAND_RECORDING: Chunk finalization failed");
                   }
                }
             }
@@ -3401,7 +3409,7 @@ mqtt_disabled:
 
             if (commandTimeout >= DEFAULT_COMMAND_TIMEOUT) {
                commandTimeout = 0;
-               LOG_WARNING("COMMAND_RECORDING: Command processing.\n");
+               OLOG_WARNING("COMMAND_RECORDING: Command processing.\n");
 
                // ENGINE-AWARE FINALIZATION (Architecture Review Issue #3)
                if (asr_engine == ASR_ENGINE_WHISPER && chunk_mgr) {
@@ -3409,11 +3417,11 @@ mqtt_disabled:
                   // This ensures short commands (< VAD_MIN_CHUNK_DURATION) are transcribed
                   if (chunking_manager_get_buffer_usage(chunk_mgr) > 0) {
                      char *pending_chunk = NULL;
-                     LOG_INFO("COMMAND_RECORDING: Finalizing pending audio buffer");
+                     OLOG_INFO("COMMAND_RECORDING: Finalizing pending audio buffer");
                      int result = chunking_manager_finalize_chunk(chunk_mgr, &pending_chunk);
                      if (result == 0 && pending_chunk) {
-                        LOG_INFO("COMMAND_RECORDING: Pending chunk finalized: \"%s\"",
-                                 pending_chunk);
+                        OLOG_INFO("COMMAND_RECORDING: Pending chunk finalized: \"%s\"",
+                                  pending_chunk);
                         free(pending_chunk);
                      }
                   }
@@ -3422,10 +3430,10 @@ mqtt_disabled:
                   command_text = chunking_manager_get_full_text(chunk_mgr);
 
                   if (command_text) {
-                     LOG_WARNING("Input (from %zu chunks): %s\n", num_chunks, command_text);
+                     OLOG_WARNING("Input (from %zu chunks): %s\n", num_chunks, command_text);
                      metrics_set_last_user_command(command_text);
                   } else {
-                     LOG_WARNING("Input: (no chunks finalized)\n");
+                     OLOG_WARNING("Input: (no chunks finalized)\n");
                   }
 
                   // chunking_manager_get_full_text() internally calls reset(), so we're ready
@@ -3435,9 +3443,9 @@ mqtt_disabled:
                   // Vosk mode: Direct ASR finalization (unchanged)
                   asr_result = asr_finalize(asr_ctx);
                   if (asr_result == NULL) {
-                     LOG_ERROR("asr_finalize() returned NULL!\n");
+                     OLOG_ERROR("asr_finalize() returned NULL!\n");
                   } else {
-                     LOG_WARNING("Input: %s\n", asr_result->text ? asr_result->text : "");
+                     OLOG_WARNING("Input: %s\n", asr_result->text ? asr_result->text : "");
 
                      if (asr_result->text) {
                         command_text = strdup(asr_result->text);
@@ -3466,7 +3474,7 @@ mqtt_disabled:
             if (!command_text || strlen(command_text) == 0 ||
                 strspn(command_text, " \t\n\r") == strlen(command_text) ||
                 strstr(command_text, "[BLANK_AUDIO]") != NULL) {
-               LOG_INFO("Ignoring empty or invalid command\n");
+               OLOG_INFO("Ignoring empty or invalid command\n");
                if (command_text) {
                   free(command_text);
                   command_text = NULL;
@@ -3525,8 +3533,8 @@ mqtt_disabled:
                      json_object_put(cmd_json);
 
                      if (rc != 0 || !exec_result.success) {
-                        LOG_ERROR("TREG command execution failed: %s",
-                                  exec_result.result ? exec_result.result : "unknown error");
+                        OLOG_ERROR("TREG command execution failed: %s",
+                                   exec_result.result ? exec_result.result : "unknown error");
                      } else {
                         metrics_log_activity("TREG executed: %s",
                                              exec_result.result ? exec_result.result : "OK");
@@ -3573,8 +3581,8 @@ mqtt_disabled:
             if (command_processing_mode == CMD_MODE_LLM_ONLY ||
                 (command_processing_mode == CMD_MODE_DIRECT_FIRST && !direct_command_found) ||
                 (command_processing_mode == CMD_MODE_DIRECT_ONLY && !direct_command_found)) {
-               LOG_WARNING("Processing with LLM (mode: %d, direct found: %d).\n",
-                           command_processing_mode, direct_command_found);
+               OLOG_WARNING("Processing with LLM (mode: %d, direct found: %d).\n",
+                            command_processing_mode, direct_command_found);
 
                int ignoreCount = 0;
 
@@ -3582,7 +3590,7 @@ mqtt_disabled:
                if (command_processing_mode == CMD_MODE_DIRECT_ONLY && !direct_command_found) {
                   for (ignoreCount = 0; ignoreCount < numIgnoreWords; ignoreCount++) {
                      if (strcmp(command_text, ignoreWords[ignoreCount]) == 0) {
-                        LOG_WARNING("Ignore word detected.\n");
+                        OLOG_WARNING("Ignore word detected.\n");
 
                         pthread_mutex_lock(&tts_mutex);
                         if (tts_playback_state == TTS_PLAYBACK_PAUSE) {
@@ -3598,7 +3606,7 @@ mqtt_disabled:
 
                if (ignoreCount < numIgnoreWords &&
                    command_processing_mode == CMD_MODE_DIRECT_ONLY) {
-                  LOG_WARNING("Input ignored. Found in ignore list.\n");
+                  OLOG_WARNING("Input ignored. Found in ignore list.\n");
                   silenceNextState = DAWN_STATE_WAKEWORD_LISTEN;
                   recState = DAWN_STATE_SILENCE;
 
@@ -3612,7 +3620,7 @@ mqtt_disabled:
                   // Check if an LLM thread is already running (from a previous request or
                   // interrupt)
                   if (llm_processing) {
-                     LOG_WARNING(
+                     OLOG_WARNING(
                          "LLM thread already running - ignoring new request (say command again "
                          "after response completes)");
 
@@ -3642,7 +3650,7 @@ mqtt_disabled:
                   // Check for thinking trigger phrases and enable extended thinking for this
                   // request
                   if (llm_check_thinking_trigger(command_text)) {
-                     LOG_INFO(
+                     OLOG_INFO(
                          "Voice trigger detected - enabling extended thinking for this request");
                      session_llm_config_t trigger_config;
                      session_get_llm_config(local_session, &trigger_config);
@@ -3677,7 +3685,7 @@ mqtt_disabled:
                   // Spawn worker thread
                   int thread_result = pthread_create(&llm_thread, NULL, llm_worker_thread, NULL);
                   if (thread_result != 0) {
-                     LOG_ERROR("Failed to create LLM thread: %d", thread_result);
+                     OLOG_ERROR("Failed to create LLM thread: %d", thread_result);
                      pthread_mutex_lock(&llm_mutex);
                      llm_processing = 0;
                      if (llm_request_text) {
@@ -3688,7 +3696,7 @@ mqtt_disabled:
 
                      text_to_speech("I'm sorry but I'm currently unavailable boss.");
                   } else {
-                     LOG_INFO("LLM thread spawned - continuing audio processing");
+                     OLOG_INFO("LLM thread spawned - continuing audio processing");
                   }
 
                   // Return to listening state - audio processing continues while LLM works
@@ -3705,22 +3713,22 @@ mqtt_disabled:
 
             break;  // DAWN_STATE_PROCESS_COMMAND case end
          default:
-            LOG_ERROR("I really shouldn't be here.\n");
+            OLOG_ERROR("I really shouldn't be here.\n");
       }
    }
 
 server_shutdown:
-   LOG_INFO("Quit.\n");
+   OLOG_INFO("Quit.\n");
 
    // Stop heartbeat immediately — no dependencies on other subsystems
-   LOG_INFO("Shutdown: stopping heartbeat");
+   OLOG_INFO("Shutdown: stopping heartbeat");
    component_status_publish_offline(mosq);
    component_status_shutdown();
 
    // Ensure LLM thread is stopped before cleanup
    // This prevents resource leaks if restart was requested during LLM processing
    if (llm_processing) {
-      LOG_INFO("Shutdown: waiting for LLM thread...");
+      OLOG_INFO("Shutdown: waiting for LLM thread...");
       llm_request_interrupt();
 
       // Wait for thread with timeout (5 seconds max for responsive restart)
@@ -3730,13 +3738,13 @@ server_shutdown:
 
       int join_result = pthread_timedjoin_np(llm_thread, NULL, &timeout);
       if (join_result == 0) {
-         LOG_INFO("Shutdown: LLM thread completed");
+         OLOG_INFO("Shutdown: LLM thread completed");
       } else if (join_result == ETIMEDOUT) {
-         LOG_WARNING("Shutdown: LLM thread timed out, cancelling");
+         OLOG_WARNING("Shutdown: LLM thread timed out, cancelling");
          pthread_cancel(llm_thread);
          pthread_join(llm_thread, NULL);
       } else {
-         LOG_ERROR("Shutdown: error joining LLM thread: %d", join_result);
+         OLOG_ERROR("Shutdown: error joining LLM thread: %d", join_result);
       }
       llm_processing = 0;
    }
@@ -3744,43 +3752,43 @@ server_shutdown:
 #ifdef ENABLE_MULTI_CLIENT
    /* Save any non-empty voice conversation before shutdown */
    if (local_session && session_has_messages(local_session)) {
-      LOG_INFO("Shutdown: saving Session 0 voice conversation");
+      OLOG_INFO("Shutdown: saving Session 0 voice conversation");
       int64_t conv_id = session_save_voice_conversation(local_session);
       if (conv_id > 0) {
-         LOG_INFO("Shutdown: saved as conversation %lld", (long long)conv_id);
+         OLOG_INFO("Shutdown: saved as conversation %lld", (long long)conv_id);
       }
    }
 #endif
 
 #ifdef ENABLE_AUTH
    /* Shutdown auth subsystem in reverse initialization order */
-   LOG_INFO("Shutdown: auth_maintenance_stop");
+   OLOG_INFO("Shutdown: auth_maintenance_stop");
    auth_maintenance_stop();
-   LOG_INFO("Shutdown: admin_socket_shutdown");
+   OLOG_INFO("Shutdown: admin_socket_shutdown");
    admin_socket_shutdown();
-   LOG_INFO("Shutdown: image_store_shutdown");
+   OLOG_INFO("Shutdown: image_store_shutdown");
    image_store_shutdown();
-   LOG_INFO("Shutdown: auth_crypto_shutdown");
+   OLOG_INFO("Shutdown: auth_crypto_shutdown");
    auth_crypto_shutdown();
 #endif
-   LOG_INFO("Shutdown: memory_embeddings_cleanup");
+   OLOG_INFO("Shutdown: memory_embeddings_cleanup");
    memory_embeddings_cleanup();
-   LOG_INFO("Shutdown: embedding_engine_cleanup");
+   OLOG_INFO("Shutdown: embedding_engine_cleanup");
    embedding_engine_cleanup();
-   LOG_INFO("Shutdown: auth_db_shutdown");
+   OLOG_INFO("Shutdown: auth_db_shutdown");
    auth_db_shutdown();
 
-   LOG_INFO("Shutdown: cleanup_text_to_speech");
+   OLOG_INFO("Shutdown: cleanup_text_to_speech");
    cleanup_text_to_speech();
 
    // Cleanup Silero VAD
    if (vad_ctx) {
-      LOG_INFO("Shutdown: cleaning up Silero VAD");
+      OLOG_INFO("Shutdown: cleaning up Silero VAD");
       vad_silero_cleanup(vad_ctx);
       vad_ctx = NULL;
    }
 
-   LOG_INFO("Shutdown: disconnecting MQTT");
+   OLOG_INFO("Shutdown: disconnecting MQTT");
    mosquitto_disconnect(mosq);
    mosquitto_loop_stop(mosq, false);
    mosquitto_lib_cleanup();
@@ -3801,46 +3809,46 @@ server_shutdown:
    // NOTE: session_manager_cleanup() moved to after webui_server_shutdown()
    // WebSocket sessions hold references that are only released when WebUI shuts down
 
-   LOG_INFO("Shutdown: command_router");
+   OLOG_INFO("Shutdown: command_router");
    command_router_shutdown();
 
-   LOG_INFO("Shutdown: llm_rate_limit");
+   OLOG_INFO("Shutdown: llm_rate_limit");
    llm_rate_limit_cleanup();
 
-   LOG_INFO("Shutdown: tool_registry");
+   OLOG_INFO("Shutdown: tool_registry");
    tool_registry_shutdown();
 
    // Cleanup chunking manager (if initialized)
    if (chunk_mgr) {
-      LOG_INFO("Shutdown: chunking_manager");
+      OLOG_INFO("Shutdown: chunking_manager");
       chunking_manager_cleanup(chunk_mgr);
    }
 
    // Stop ASR recording if active and cleanup ASR
-   LOG_INFO("Shutdown: ASR");
+   OLOG_INFO("Shutdown: ASR");
    asr_stop_recording();
    asr_cleanup(asr_ctx);
 
 #ifdef ENABLE_AEC
-   LOG_INFO("Shutdown: AEC");
+   OLOG_INFO("Shutdown: AEC");
    aec_cleanup();
 #endif
 
    // Stop audio capture thread and clean up resources
    if (audio_capture_ctx) {
-      LOG_INFO("Shutdown: audio_capture");
+      OLOG_INFO("Shutdown: audio_capture");
       audio_capture_stop(audio_capture_ctx);
       audio_capture_ctx = NULL;
    }
 
-   LOG_INFO("Shutdown: music_scanner");
+   OLOG_INFO("Shutdown: music_scanner");
    music_scanner_stop();
    music_db_cleanup();
 
-   LOG_INFO("Shutdown: audio_decoder");
+   OLOG_INFO("Shutdown: audio_decoder");
    audio_decoder_cleanup();
 
-   LOG_INFO("Shutdown: audio_backend");
+   OLOG_INFO("Shutdown: audio_backend");
    audio_backend_cleanup();
 
    free(max_buff);
@@ -3854,15 +3862,15 @@ server_shutdown:
 
 #ifdef ENABLE_WEBUI
    if (webui_music_server_is_running()) {
-      LOG_INFO("Shutdown: webui_music_server");
+      OLOG_INFO("Shutdown: webui_music_server");
       webui_music_server_shutdown();
    }
    if (webui_server_is_running()) {
-      LOG_INFO("Shutdown: webui_server");
+      OLOG_INFO("Shutdown: webui_server");
       webui_server_shutdown();
    }
    if (worker_pool_is_initialized()) {
-      LOG_INFO("Shutdown: worker_pool");
+      OLOG_INFO("Shutdown: worker_pool");
       worker_pool_shutdown();
    }
 #endif

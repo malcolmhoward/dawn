@@ -40,8 +40,8 @@ static int ensure_capacity(char **buffer, size_t *capacity, size_t required) {
 
    // Prevent runaway memory allocation from malicious or buggy streams
    if (required > MAX_BUFFER_SIZE) {
-      LOG_ERROR("Buffer size limit exceeded: requested %zu bytes, maximum %zu bytes (%.1f MB)",
-                required, MAX_BUFFER_SIZE, MAX_BUFFER_SIZE / (1024.0 * 1024.0));
+      OLOG_ERROR("Buffer size limit exceeded: requested %zu bytes, maximum %zu bytes (%.1f MB)",
+                 required, MAX_BUFFER_SIZE, MAX_BUFFER_SIZE / (1024.0 * 1024.0));
       return 0;
    }
 
@@ -57,7 +57,7 @@ static int ensure_capacity(char **buffer, size_t *capacity, size_t required) {
 
    char *new_buffer = realloc(*buffer, new_capacity);
    if (!new_buffer) {
-      LOG_ERROR("Failed to reallocate buffer from %zu to %zu bytes", *capacity, new_capacity);
+      OLOG_ERROR("Failed to reallocate buffer from %zu to %zu bytes", *capacity, new_capacity);
       return 0;
    }
 
@@ -86,13 +86,13 @@ static int append_to_buffer(char **buffer,
 
 sse_parser_t *sse_parser_create(sse_event_callback callback, void *userdata) {
    if (!callback) {
-      LOG_ERROR("SSE parser callback cannot be NULL");
+      OLOG_ERROR("SSE parser callback cannot be NULL");
       return NULL;
    }
 
    sse_parser_t *parser = calloc(1, sizeof(sse_parser_t));
    if (!parser) {
-      LOG_ERROR("Failed to allocate SSE parser");
+      OLOG_ERROR("Failed to allocate SSE parser");
       return NULL;
    }
 
@@ -101,7 +101,7 @@ sse_parser_t *sse_parser_create(sse_event_callback callback, void *userdata) {
    parser->current_event_data = malloc(DEFAULT_EVENT_CAPACITY);
 
    if (!parser->buffer || !parser->current_event_type || !parser->current_event_data) {
-      LOG_ERROR("Failed to allocate SSE parser buffers");
+      OLOG_ERROR("Failed to allocate SSE parser buffers");
       sse_parser_free(parser);
       return NULL;
    }

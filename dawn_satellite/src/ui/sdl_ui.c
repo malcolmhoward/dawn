@@ -871,7 +871,7 @@ static void handle_gesture(sdl_ui_t *ui, touch_gesture_t gesture, double time_se
             bool muted = !voice_processing_is_muted(ui->voice_ctx);
             voice_processing_set_mute(ui->voice_ctx, muted);
             ui->mute_btn.tap_time = time_sec;
-            LOG_INFO("UI: Mic %s", muted ? "muted" : "unmuted");
+            OLOG_INFO("UI: Mic %s", muted ? "muted" : "unmuted");
             break;
          }
 
@@ -931,7 +931,7 @@ static void handle_gesture(sdl_ui_t *ui, touch_gesture_t gesture, double time_se
             if (state == VOICE_STATE_SILENCE) {
                voice_processing_trigger_wake(ui->voice_ctx);
                ui->orb.tap_pulse_time = time_sec;
-               LOG_INFO("UI: Orb tapped — manual wake");
+               OLOG_INFO("UI: Orb tapped — manual wake");
             }
          }
          break;
@@ -943,7 +943,7 @@ static void handle_gesture(sdl_ui_t *ui, touch_gesture_t gesture, double time_se
                 state == VOICE_STATE_PROCESSING) {
                voice_processing_cancel(ui->voice_ctx);
                ui->orb.cancel_flash_time = time_sec;
-               LOG_INFO("UI: Orb long-pressed — cancel");
+               OLOG_INFO("UI: Orb long-pressed — cancel");
             }
          }
          break;
@@ -994,13 +994,13 @@ static int sdl_init_on_thread(sdl_ui_t *ui) {
 
    /* Initialize SDL */
    if (SDL_Init(SDL_INIT_VIDEO) < 0) {
-      LOG_ERROR("SDL_Init failed: %s", SDL_GetError());
+      OLOG_ERROR("SDL_Init failed: %s", SDL_GetError());
       return -1;
    }
 
    /* Initialize SDL_ttf */
    if (TTF_Init() < 0) {
-      LOG_ERROR("TTF_Init failed: %s", TTF_GetError());
+      OLOG_ERROR("TTF_Init failed: %s", TTF_GetError());
       SDL_Quit();
       return -1;
    }
@@ -1011,20 +1011,20 @@ static int sdl_init_on_thread(sdl_ui_t *ui) {
    Uint32 fs_flag = SDL_WINDOW_FULLSCREEN_DESKTOP;
    if (driver && strcmp(driver, "KMSDRM") == 0) {
       fs_flag = SDL_WINDOW_FULLSCREEN;
-      LOG_INFO("SDL UI: KMSDRM detected, using SDL_WINDOW_FULLSCREEN (%dx%d)", ui->width,
-               ui->height);
+      OLOG_INFO("SDL UI: KMSDRM detected, using SDL_WINDOW_FULLSCREEN (%dx%d)", ui->width,
+                ui->height);
    }
 
    ui->window = SDL_CreateWindow("DAWN Satellite", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
                                  ui->width, ui->height, fs_flag | SDL_WINDOW_ALLOW_HIGHDPI);
    if (!ui->window) {
-      LOG_WARNING("Fullscreen failed, trying windowed: %s", SDL_GetError());
+      OLOG_WARNING("Fullscreen failed, trying windowed: %s", SDL_GetError());
       ui->window = SDL_CreateWindow("DAWN Satellite", SDL_WINDOWPOS_CENTERED,
                                     SDL_WINDOWPOS_CENTERED, ui->width, ui->height,
                                     SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE);
    }
    if (!ui->window) {
-      LOG_ERROR("SDL_CreateWindow failed: %s", SDL_GetError());
+      OLOG_ERROR("SDL_CreateWindow failed: %s", SDL_GetError());
       TTF_Quit();
       SDL_Quit();
       return -1;
@@ -1036,11 +1036,11 @@ static int sdl_init_on_thread(sdl_ui_t *ui) {
    /* Create hardware-accelerated renderer */
    ui->renderer = SDL_CreateRenderer(ui->window, -1, SDL_RENDERER_ACCELERATED);
    if (!ui->renderer) {
-      LOG_WARNING("HW renderer failed, trying software: %s", SDL_GetError());
+      OLOG_WARNING("HW renderer failed, trying software: %s", SDL_GetError());
       ui->renderer = SDL_CreateRenderer(ui->window, -1, SDL_RENDERER_SOFTWARE);
    }
    if (!ui->renderer) {
-      LOG_ERROR("SDL_CreateRenderer failed: %s", SDL_GetError());
+      OLOG_ERROR("SDL_CreateRenderer failed: %s", SDL_GetError());
       SDL_DestroyWindow(ui->window);
       TTF_Quit();
       SDL_Quit();
@@ -1057,8 +1057,8 @@ static int sdl_init_on_thread(sdl_ui_t *ui) {
 
    int phys_w, phys_h;
    SDL_GetRendererOutputSize(ui->renderer, &phys_w, &phys_h);
-   LOG_INFO("SDL UI: logical=%dx%d physical=%dx%d scale=%.2fx", ui->width, ui->height, phys_w,
-            phys_h, (float)phys_w / ui->width);
+   OLOG_INFO("SDL UI: logical=%dx%d physical=%dx%d scale=%.2fx", ui->width, ui->height, phys_w,
+             phys_h, (float)phys_w / ui->width);
 
    /* Initialize orb rendering (pre-generate glow textures) */
    ui_orb_init(&ui->orb, ui->renderer);
@@ -1068,7 +1068,7 @@ static int sdl_init_on_thread(sdl_ui_t *ui) {
    int transcript_w = ui->width - transcript_x;
    if (ui_transcript_init(&ui->transcript, ui->renderer, transcript_x, 0, transcript_w, ui->height,
                           ui->font_dir, ui->ai_name) != 0) {
-      LOG_WARNING("Transcript init failed, continuing without text");
+      OLOG_WARNING("Transcript init failed, continuing without text");
    }
 
    ui->last_state = VOICE_STATE_SILENCE;
@@ -1079,7 +1079,7 @@ static int sdl_init_on_thread(sdl_ui_t *ui) {
    int music_x = ui->width - music_w;
    if (ui_music_init(&ui->music, ui->renderer, music_x, 0, music_w, ui->height, ui->font_dir) !=
        0) {
-      LOG_WARNING("Music panel init failed, continuing without music UI");
+      OLOG_WARNING("Music panel init failed, continuing without music UI");
    }
    if (ui->ws_client) {
       ui_music_set_ws_client(&ui->music, ui->ws_client);
@@ -1092,9 +1092,9 @@ static int sdl_init_on_thread(sdl_ui_t *ui) {
 
    /* Probe sysfs backlight for brightness slider */
    if (backlight_init() == 0) {
-      LOG_INFO("SDL UI: Backlight control available (sysfs)");
+      OLOG_INFO("SDL UI: Backlight control available (sysfs)");
    } else {
-      LOG_INFO("SDL UI: No sysfs backlight, using software dimming overlay");
+      OLOG_INFO("SDL UI: No sysfs backlight, using software dimming overlay");
    }
 
    /* Initialize settings panel sliders (renderer + fonts are ready) */
@@ -1184,8 +1184,8 @@ static int sdl_init_on_thread(sdl_ui_t *ui) {
    /* Initialize alarm overlay */
    ui_alarm_init(&ui->alarm, ui->renderer, ui->width, ui->height, ui->font_dir);
 
-   LOG_INFO("SDL UI initialized (%dx%d, driver=%s)", ui->width, ui->height,
-            SDL_GetCurrentVideoDriver());
+   OLOG_INFO("SDL UI initialized (%dx%d, driver=%s)", ui->width, ui->height,
+             SDL_GetCurrentVideoDriver());
 
    return 0;
 }
@@ -1334,7 +1334,7 @@ static void sdl_cleanup_on_thread(sdl_ui_t *ui) {
 
    TTF_Quit();
    SDL_Quit();
-   LOG_INFO("SDL UI cleaned up");
+   OLOG_INFO("SDL UI cleaned up");
 }
 
 /* =============================================================================
@@ -1570,7 +1570,7 @@ static void *render_thread_func(void *arg) {
    }
    atomic_store(&ui->init_result, 1);
 
-   LOG_INFO("SDL UI render thread started");
+   OLOG_INFO("SDL UI render thread started");
    ui->start_time = ui_get_time_sec();
 
    /* Register event watcher for live redraw during X11 modal resize/move */
@@ -1601,9 +1601,10 @@ static void *render_thread_func(void *arg) {
                SDL_SetWindowFullscreen(ui->window, SDL_WINDOW_FULLSCREEN_DESKTOP);
                SDL_ShowCursor(SDL_DISABLE);
             }
-            LOG_INFO("SDL UI: toggled fullscreen (now %s)",
-                     (SDL_GetWindowFlags(ui->window) & SDL_WINDOW_FULLSCREEN_DESKTOP) ? "fullscreen"
-                                                                                      : "windowed");
+            OLOG_INFO("SDL UI: toggled fullscreen (now %s)",
+                      (SDL_GetWindowFlags(ui->window) & SDL_WINDOW_FULLSCREEN_DESKTOP)
+                          ? "fullscreen"
+                          : "windowed");
             continue;
          }
 
@@ -1825,7 +1826,7 @@ static void *render_thread_func(void *arg) {
       }
    }
 
-   LOG_INFO("SDL UI render thread exiting");
+   OLOG_INFO("SDL UI render thread exiting");
 
    /* Cleanup all SDL resources on this thread */
    sdl_cleanup_on_thread(ui);
@@ -1839,13 +1840,13 @@ static void *render_thread_func(void *arg) {
 
 sdl_ui_t *sdl_ui_init(const sdl_ui_config_t *config) {
    if (!config || !config->voice_ctx) {
-      LOG_ERROR("SDL UI: NULL config or voice context");
+      OLOG_ERROR("SDL UI: NULL config or voice context");
       return NULL;
    }
 
    sdl_ui_t *ui = calloc(1, sizeof(sdl_ui_t));
    if (!ui) {
-      LOG_ERROR("SDL UI: allocation failed");
+      OLOG_ERROR("SDL UI: allocation failed");
       return NULL;
    }
 
@@ -1877,7 +1878,7 @@ int sdl_ui_start(sdl_ui_t *ui) {
    atomic_store(&ui->init_result, 0);
 
    if (pthread_create(&ui->render_thread, NULL, render_thread_func, ui) != 0) {
-      LOG_ERROR("Failed to create render thread");
+      OLOG_ERROR("Failed to create render thread");
       ui->running = false;
       return 1;
    }
@@ -1890,7 +1891,7 @@ int sdl_ui_start(sdl_ui_t *ui) {
    }
 
    if (atomic_load(&ui->init_result) < 0) {
-      LOG_ERROR("SDL UI: init failed on render thread");
+      OLOG_ERROR("SDL UI: init failed on render thread");
       ui->running = false;
       pthread_join(ui->render_thread, NULL);
       ui->thread_started = false;

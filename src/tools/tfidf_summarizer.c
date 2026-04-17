@@ -1066,7 +1066,7 @@ int tfidf_summarize(const char *input_text,
       return TFIDF_ERROR_NO_SENTENCES;
    }
 
-   LOG_INFO("tfidf_summarize: Found %d sentences in input", num_sentences);
+   OLOG_INFO("tfidf_summarize: Found %d sentences in input", num_sentences);
 
    /* Apply quality filters - mark low-quality sentences with score = -1 */
    int filtered_count = 0;
@@ -1079,8 +1079,8 @@ int tfidf_summarize(const char *input_text,
 
    int valid_sentences = num_sentences - filtered_count;
    if (filtered_count > 0) {
-      LOG_INFO("tfidf_summarize: Filtered %d sentences (fragments/charts), %d remain",
-               filtered_count, valid_sentences);
+      OLOG_INFO("tfidf_summarize: Filtered %d sentences (fragments/charts), %d remain",
+                filtered_count, valid_sentences);
    }
 
    /* If very few valid sentences, return all valid ones */
@@ -1090,7 +1090,7 @@ int tfidf_summarize(const char *input_text,
       for (int i = 0; i < num_sentences; i++) {
          if (sentences[i].score >= 0.0f) {
             if (output_size > SIZE_MAX - sentences[i].length - 2) {
-               LOG_ERROR("tfidf_summarize: Output size overflow in early return");
+               OLOG_ERROR("tfidf_summarize: Output size overflow in early return");
                free(sentences);
                return TFIDF_ERROR_ALLOC;
             }
@@ -1108,7 +1108,7 @@ int tfidf_summarize(const char *input_text,
          if (sentences[i].score >= 0.0f) {
             size_t space_needed = sentences[i].length + (p > output ? 1 : 0);
             if (p + space_needed > output_end) {
-               LOG_ERROR("tfidf_summarize: Buffer overflow prevented in early return");
+               OLOG_ERROR("tfidf_summarize: Buffer overflow prevented in early return");
                break;
             }
             if (p > output) {
@@ -1165,8 +1165,8 @@ int tfidf_summarize(const char *input_text,
       num_to_keep = valid_sentences;
    }
 
-   LOG_INFO("tfidf_summarize: Selecting %d of %d valid sentences using MMR (%.0f%%)", num_to_keep,
-            valid_sentences, (float)num_to_keep / valid_sentences * 100);
+   OLOG_INFO("tfidf_summarize: Selecting %d of %d valid sentences using MMR (%.0f%%)", num_to_keep,
+             valid_sentences, (float)num_to_keep / valid_sentences * 100);
 
    /* Build vocabulary index for dense vector representation */
    hash_entry_t **vocab_table = hash_table_create();
@@ -1178,12 +1178,12 @@ int tfidf_summarize(const char *input_text,
    int vocab_size = build_vocabulary(doc_freq_table, vocab_table);
 
    if (vocab_size > MAX_VOCAB_SIZE) {
-      LOG_WARNING("tfidf_summarize: Vocabulary too large (%d > %d), capping for MMR", vocab_size,
-                  MAX_VOCAB_SIZE);
+      OLOG_WARNING("tfidf_summarize: Vocabulary too large (%d > %d), capping for MMR", vocab_size,
+                   MAX_VOCAB_SIZE);
       vocab_size = MAX_VOCAB_SIZE;
    }
 
-   LOG_INFO("tfidf_summarize: Vocabulary size: %d unique words", vocab_size);
+   OLOG_INFO("tfidf_summarize: Vocabulary size: %d unique words", vocab_size);
 
    /* Build dense TF-IDF vectors for fast cosine similarity */
    build_all_dense_vectors(sentences, num_sentences, doc_freq_table, vocab_table, vocab_size);
@@ -1204,7 +1204,7 @@ int tfidf_summarize(const char *input_text,
    for (int i = 0; i < num_sentences; i++) {
       if (sentences[i].selected) {
          if (output_size > SIZE_MAX - sentences[i].length - 2) {
-            LOG_ERROR("tfidf_summarize: Output size overflow");
+            OLOG_ERROR("tfidf_summarize: Output size overflow");
             free(sentences);
             return TFIDF_ERROR_ALLOC;
          }
@@ -1225,7 +1225,7 @@ int tfidf_summarize(const char *input_text,
       if (sentences[i].selected) {
          size_t space_needed = sentences[i].length + (p > output ? 1 : 0);
          if (p + space_needed > output_end) {
-            LOG_ERROR("tfidf_summarize: Buffer overflow prevented");
+            OLOG_ERROR("tfidf_summarize: Buffer overflow prevented");
             break;
          }
          if (p > output) {
@@ -1240,8 +1240,8 @@ int tfidf_summarize(const char *input_text,
    free(sentences);
    *output_summary = output;
 
-   LOG_INFO("tfidf_summarize: Produced %zu byte summary from %zu byte input", strlen(output),
-            strlen(input_text));
+   OLOG_INFO("tfidf_summarize: Produced %zu byte summary from %zu byte input", strlen(output),
+             strlen(input_text));
 
    return TFIDF_SUCCESS;
 }

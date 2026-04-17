@@ -79,7 +79,7 @@ int email_service_init(void) {
    memset(s_email.pending_trash, 0, sizeof(s_email.pending_trash));
    s_email.initialized = true;
 
-   LOG_INFO("email_service: initialized");
+   OLOG_INFO("email_service: initialized");
    return 0;
 }
 
@@ -104,7 +104,7 @@ void email_service_shutdown(void) {
    pthread_mutex_destroy(&s_email.draft_mutex);
    pthread_mutex_destroy(&s_email.pending_trash_mutex);
    s_email.initialized = false;
-   LOG_INFO("email_service: shutdown");
+   OLOG_INFO("email_service: shutdown");
 }
 
 bool email_service_available(void) {
@@ -139,11 +139,11 @@ static int build_conn_for_account(const email_account_t *acct, email_conn_t *con
 
    /* Enforce TLS for non-loopback servers */
    if (!acct->imap_ssl && !is_loopback(acct->imap_server)) {
-      LOG_ERROR("email: refusing plaintext IMAP to non-loopback server %s", acct->imap_server);
+      OLOG_ERROR("email: refusing plaintext IMAP to non-loopback server %s", acct->imap_server);
       return 1;
    }
    if (!acct->smtp_ssl && !is_loopback(acct->smtp_server)) {
-      LOG_ERROR("email: refusing plaintext SMTP to non-loopback server %s", acct->smtp_server);
+      OLOG_ERROR("email: refusing plaintext SMTP to non-loopback server %s", acct->smtp_server);
       return 1;
    }
 
@@ -165,18 +165,18 @@ static int build_conn_for_account(const email_account_t *acct, email_conn_t *con
    if (strcmp(acct->auth_type, "oauth") == 0) {
       oauth_provider_config_t google;
       if (oauth_build_google_provider(GOOGLE_EMAIL_SCOPE, &google) != 0) {
-         LOG_ERROR("email: failed to build Google OAuth provider");
+         OLOG_ERROR("email: failed to build Google OAuth provider");
          return 1;
       }
       if (oauth_get_access_token(&google, acct->user_id, acct->oauth_account_key,
                                  conn->bearer_token, sizeof(conn->bearer_token)) != 0) {
-         LOG_ERROR("email: failed to get OAuth access token for %s", acct->name);
+         OLOG_ERROR("email: failed to get OAuth access token for %s", acct->name);
          return 1;
       }
    } else {
       /* App password — decrypt */
       if (email_decrypt_password(acct, conn->password, sizeof(conn->password)) != 0) {
-         LOG_ERROR("email: failed to decrypt password for %s", acct->name);
+         OLOG_ERROR("email: failed to decrypt password for %s", acct->name);
          return 1;
       }
    }
@@ -345,7 +345,7 @@ static void normalize_folder(const char *folder, const email_account_t *acct, fo
 static int get_gmail_token(const email_account_t *acct, char *token, size_t len) {
    oauth_provider_config_t google;
    if (oauth_build_google_provider(GOOGLE_EMAIL_SCOPE, &google) != 0) {
-      LOG_ERROR("email: failed to build Google OAuth provider for Gmail API");
+      OLOG_ERROR("email: failed to build Google OAuth provider for Gmail API");
       return 1;
    }
    return oauth_get_access_token(&google, acct->user_id, acct->oauth_account_key, token, len);
@@ -379,12 +379,13 @@ int email_service_add_account(int user_id,
    for (int i = 0; i < count; i++) {
       if (is_oauth && oauth_account_key && oauth_account_key[0] &&
           strcmp(existing[i].oauth_account_key, oauth_account_key) == 0) {
-         LOG_INFO("email: account with OAuth key '%s' already exists, skipping", oauth_account_key);
+         OLOG_INFO("email: account with OAuth key '%s' already exists, skipping",
+                   oauth_account_key);
          return 2; /* Duplicate */
       }
       if (!is_oauth && username && imap_server && strcmp(existing[i].username, username) == 0 &&
           strcmp(existing[i].imap_server, imap_server) == 0) {
-         LOG_INFO("email: account '%s@%s' already exists, skipping", username, imap_server);
+         OLOG_INFO("email: account '%s@%s' already exists, skipping", username, imap_server);
          return 2; /* Duplicate */
       }
    }
@@ -437,15 +438,15 @@ int email_service_remove_account(int64_t account_id) {
       }
 
       if (calendar_uses_account) {
-         LOG_INFO("email: keeping OAuth token for '%s' (still used by calendar)",
-                  acct.oauth_account_key);
+         OLOG_INFO("email: keeping OAuth token for '%s' (still used by calendar)",
+                   acct.oauth_account_key);
       } else {
          oauth_provider_config_t google;
          if (oauth_build_google_provider(GOOGLE_EMAIL_SCOPE, &google) == 0) {
             int revoke_rc = oauth_revoke_and_delete(&google, acct.user_id, acct.oauth_account_key);
             if (revoke_rc != 0)
-               LOG_WARNING("email: OAuth revocation failed for '%s' (tokens deleted locally)",
-                           acct.oauth_account_key);
+               OLOG_WARNING("email: OAuth revocation failed for '%s' (tokens deleted locally)",
+                            acct.oauth_account_key);
          }
       }
    }
@@ -619,14 +620,14 @@ static int read_single_account(email_account_t *acct,
    }
 
    if (!validate_folder_name(imap_folder)) {
-      LOG_ERROR("email: invalid folder name in message_id '%s'", message_id);
+      OLOG_ERROR("email: invalid folder name in message_id '%s'", message_id);
       return 1;
    }
 
    char *endptr = NULL;
    unsigned long uid_val = strtoul(uid_str, &endptr, 10);
    if (!endptr || *endptr != '\0' || uid_val == 0 || uid_val > UINT32_MAX) {
-      LOG_ERROR("email: invalid IMAP UID '%s'", uid_str);
+      OLOG_ERROR("email: invalid IMAP UID '%s'", uid_str);
       return 1;
    }
 
@@ -779,8 +780,8 @@ int email_service_create_draft(int user_id,
                                size_t draft_id_len) {
    /* Validate field lengths */
    if (!body || strlen(body) > EMAIL_MAX_BODY_LEN) {
-      LOG_WARNING("email: draft body too long (%zu > %d)", body ? strlen(body) : 0,
-                  EMAIL_MAX_BODY_LEN);
+      OLOG_WARNING("email: draft body too long (%zu > %d)", body ? strlen(body) : 0,
+                   EMAIL_MAX_BODY_LEN);
       return 1;
    }
    if (!subject || strlen(subject) > EMAIL_MAX_SUBJECT_LEN)
@@ -886,7 +887,7 @@ int email_service_confirm_send(int user_id, const char *draft_id) {
 
    /* Check throttle */
    if (is_throttled(user_id)) {
-      LOG_WARNING("email: confirm_send throttled for user %d", user_id);
+      OLOG_WARNING("email: confirm_send throttled for user %d", user_id);
       return 3;
    }
 
@@ -913,8 +914,8 @@ int email_service_confirm_send(int user_id, const char *draft_id) {
    if (found->user_id != user_id) {
       pthread_mutex_unlock(&s_email.draft_mutex);
       record_confirm_failure(user_id);
-      LOG_WARNING("email: confirm_send user mismatch (draft=%d, caller=%d)", found->user_id,
-                  user_id);
+      OLOG_WARNING("email: confirm_send user mismatch (draft=%d, caller=%d)", found->user_id,
+                   user_id);
       return 2;
    }
 
@@ -1150,7 +1151,7 @@ int email_service_confirm_trash(int user_id, const char *pending_id) {
       return 2;
 
    if (is_throttled(user_id)) {
-      LOG_WARNING("email: confirm_trash throttled for user %d", user_id);
+      OLOG_WARNING("email: confirm_trash throttled for user %d", user_id);
       return 3;
    }
 
@@ -1176,8 +1177,8 @@ int email_service_confirm_trash(int user_id, const char *pending_id) {
    if (found->user_id != user_id) {
       pthread_mutex_unlock(&s_email.pending_trash_mutex);
       record_confirm_failure(user_id);
-      LOG_WARNING("email: confirm_trash user mismatch (pending=%d, caller=%d)", found->user_id,
-                  user_id);
+      OLOG_WARNING("email: confirm_trash user mismatch (pending=%d, caller=%d)", found->user_id,
+                   user_id);
       return 2;
    }
 

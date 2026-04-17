@@ -73,8 +73,8 @@ static void set_state(always_on_ctx_t *ctx, always_on_state_t new_state) {
    always_on_state_t old = atomic_load(&ctx->state);
    atomic_store(&ctx->state, new_state);
    ctx->state_entry_ms = now_ms();
-   LOG_INFO("Always-on state: %s -> %s", always_on_state_name(old),
-            always_on_state_name(new_state));
+   OLOG_INFO("Always-on state: %s -> %s", always_on_state_name(old),
+             always_on_state_name(new_state));
 }
 
 /**
@@ -91,7 +91,7 @@ static void buffer_write(always_on_ctx_t *ctx, const uint8_t *data, size_t len) 
       size_t overflow = (ctx->valid_len + len) - ALWAYS_ON_BUFFER_SIZE;
       ctx->read_pos = (ctx->read_pos + overflow) % ALWAYS_ON_BUFFER_SIZE;
       ctx->valid_len -= overflow;
-      LOG_WARNING("Always-on: buffer overflow, dropped %zu bytes of oldest audio", overflow);
+      OLOG_WARNING("Always-on: buffer overflow, dropped %zu bytes of oldest audio", overflow);
    }
 
    /* Write with wrap-around */
@@ -257,7 +257,7 @@ static void *wake_check_worker(void *arg) {
 
    /* Check if context was destroyed (disconnect during WAKE_PENDING) */
    if (always_on_get_state(ctx) == ALWAYS_ON_DISABLED) {
-      LOG_INFO("Always-on: wake check worker aborted (context disabled)");
+      OLOG_INFO("Always-on: wake check worker aborted (context disabled)");
       free(work->pcm_data);
       free(work);
       always_on_release(ctx);
@@ -265,14 +265,14 @@ static void *wake_check_worker(void *arg) {
    }
 
    /* Use the proven 48kHz→16kHz resample + transcribe pipeline */
-   LOG_INFO("Always-on: ASR input: %zu samples (%.1f sec at 48kHz)", work->pcm_samples,
-            (float)work->pcm_samples / 48000.0f);
+   OLOG_INFO("Always-on: ASR input: %zu samples (%.1f sec at 48kHz)", work->pcm_samples,
+             (float)work->pcm_samples / 48000.0f);
 
    char *transcript_str = NULL;
    int asr_ret = webui_audio_pcm48k_to_text(work->pcm_data, work->pcm_samples, &transcript_str);
 
    const char *transcript = (asr_ret == 0 && transcript_str) ? transcript_str : "";
-   LOG_INFO("Always-on: wake check transcript: \"%s\"", transcript);
+   OLOG_INFO("Always-on: wake check transcript: \"%s\"", transcript);
 
    /* Check for wake word */
    wake_word_result_t ww = wake_word_check(transcript);
@@ -307,7 +307,7 @@ static void dispatch_wake_check(always_on_ctx_t *ctx, ws_connection_t *conn) {
    int16_t *pcm_data = extract_buffered_audio(ctx, &pcm_samples);
 
    if (!pcm_data || pcm_samples == 0) {
-      LOG_WARNING("Always-on: no audio to check for wake word");
+      OLOG_WARNING("Always-on: no audio to check for wake word");
       vad_silero_reset(ctx->vad_ctx);
       set_state(ctx, ALWAYS_ON_LISTENING);
       return;
@@ -315,7 +315,7 @@ static void dispatch_wake_check(always_on_ctx_t *ctx, ws_connection_t *conn) {
 
    wake_check_work_t *work = malloc(sizeof(wake_check_work_t));
    if (!work) {
-      LOG_ERROR("Always-on: failed to allocate wake check work");
+      OLOG_ERROR("Always-on: failed to allocate wake check work");
       free(pcm_data);
       vad_silero_reset(ctx->vad_ctx);
       set_state(ctx, ALWAYS_ON_LISTENING);
@@ -343,7 +343,7 @@ static void dispatch_wake_check(always_on_ctx_t *ctx, ws_connection_t *conn) {
    pthread_attr_destroy(&attr);
 
    if (ret != 0) {
-      LOG_ERROR("Always-on: failed to create wake check thread: %d", ret);
+      OLOG_ERROR("Always-on: failed to create wake check thread: %d", ret);
       atomic_fetch_sub(&ctx->refcount, 1); /* Undo retain */
       free(pcm_data);
       free(work);
@@ -361,7 +361,7 @@ static void *cmd_transcribe_worker(void *arg) {
    always_on_ctx_t *ctx = work->ctx;
 
    if (always_on_get_state(ctx) == ALWAYS_ON_DISABLED) {
-      LOG_INFO("Always-on: cmd transcribe worker aborted (context disabled)");
+      OLOG_INFO("Always-on: cmd transcribe worker aborted (context disabled)");
       free(work->pcm_data);
       session_release(work->session);
       free(work);
@@ -373,7 +373,7 @@ static void *cmd_transcribe_worker(void *arg) {
    int asr_ret = webui_audio_pcm48k_to_text(work->pcm_data, work->pcm_samples, &transcript);
 
    if (asr_ret == 0 && transcript) {
-      LOG_INFO("Always-on: command transcript: \"%s\"", transcript);
+      OLOG_INFO("Always-on: command transcript: \"%s\"", transcript);
    }
 
    /* Store result under mutex for thread safety */
@@ -403,7 +403,7 @@ static void dispatch_cmd_transcribe(always_on_ctx_t *ctx, ws_connection_t *conn)
    int16_t *pcm_data = extract_buffered_audio(ctx, &pcm_samples);
 
    if (!pcm_data || pcm_samples == 0 || !conn->session) {
-      LOG_WARNING("Always-on: no audio or session for command transcribe");
+      OLOG_WARNING("Always-on: no audio or session for command transcribe");
       vad_silero_reset(ctx->vad_ctx);
       always_on_processing_complete(ctx);
       return;
@@ -411,7 +411,7 @@ static void dispatch_cmd_transcribe(always_on_ctx_t *ctx, ws_connection_t *conn)
 
    cmd_transcribe_work_t *work = malloc(sizeof(cmd_transcribe_work_t));
    if (!work) {
-      LOG_ERROR("Always-on: failed to allocate cmd transcribe work");
+      OLOG_ERROR("Always-on: failed to allocate cmd transcribe work");
       free(pcm_data);
       vad_silero_reset(ctx->vad_ctx);
       always_on_processing_complete(ctx);
@@ -438,7 +438,7 @@ static void dispatch_cmd_transcribe(always_on_ctx_t *ctx, ws_connection_t *conn)
    pthread_attr_destroy(&attr);
 
    if (ret != 0) {
-      LOG_ERROR("Always-on: failed to create cmd transcribe thread: %d", ret);
+      OLOG_ERROR("Always-on: failed to create cmd transcribe thread: %d", ret);
       atomic_fetch_sub(&ctx->refcount, 1);
       session_release(work->session);
       free(pcm_data);
@@ -483,7 +483,7 @@ bool always_on_valid_sample_rate(uint32_t sample_rate) {
 always_on_ctx_t *always_on_create(uint32_t client_sample_rate, struct lws *wsi) {
    always_on_ctx_t *ctx = calloc(1, sizeof(always_on_ctx_t));
    if (!ctx) {
-      LOG_ERROR("Always-on: failed to allocate context");
+      OLOG_ERROR("Always-on: failed to allocate context");
       return NULL;
    }
 
@@ -496,14 +496,14 @@ always_on_ctx_t *always_on_create(uint32_t client_sample_rate, struct lws *wsi) 
    /* Allocate circular buffer */
    ctx->audio_buffer = calloc(1, ALWAYS_ON_BUFFER_SIZE);
    if (!ctx->audio_buffer) {
-      LOG_ERROR("Always-on: failed to allocate %d byte audio buffer", ALWAYS_ON_BUFFER_SIZE);
+      OLOG_ERROR("Always-on: failed to allocate %d byte audio buffer", ALWAYS_ON_BUFFER_SIZE);
       goto fail;
    }
 
    /* Create per-connection VAD context */
    ctx->vad_ctx = vad_silero_init("models/silero_vad_16k_op15.onnx", NULL);
    if (!ctx->vad_ctx) {
-      LOG_ERROR("Always-on: failed to create VAD context");
+      OLOG_ERROR("Always-on: failed to create VAD context");
       goto fail;
    }
 
@@ -511,7 +511,7 @@ always_on_ctx_t *always_on_create(uint32_t client_sample_rate, struct lws *wsi) 
    int opus_err;
    ctx->opus_decoder = opus_decoder_create(OPUS_SAMPLE_RATE, 1, &opus_err);
    if (opus_err != OPUS_OK) {
-      LOG_ERROR("Always-on: failed to create Opus decoder: %s", opus_strerror(opus_err));
+      OLOG_ERROR("Always-on: failed to create Opus decoder: %s", opus_strerror(opus_err));
       goto fail;
    }
 
@@ -525,7 +525,7 @@ always_on_ctx_t *always_on_create(uint32_t client_sample_rate, struct lws *wsi) 
 
    set_state(ctx, ALWAYS_ON_LISTENING);
 
-   LOG_INFO("Always-on: context created (sample_rate=%u)", client_sample_rate);
+   OLOG_INFO("Always-on: context created (sample_rate=%u)", client_sample_rate);
 
    return ctx;
 
@@ -538,7 +538,7 @@ fail:
  * Internal: free all resources. Called when refcount reaches 0.
  */
 static void always_on_free(always_on_ctx_t *ctx) {
-   LOG_INFO("Always-on: freeing context (refcount reached 0)");
+   OLOG_INFO("Always-on: freeing context (refcount reached 0)");
 
    if (ctx->resampler) {
       resampler_destroy(ctx->resampler);
@@ -574,7 +574,7 @@ void always_on_destroy(always_on_ctx_t *ctx) {
       return;
    }
 
-   LOG_INFO("Always-on: destroying context");
+   OLOG_INFO("Always-on: destroying context");
 
    /* Mark as disabled so in-flight workers abort early */
    atomic_store(&ctx->state, ALWAYS_ON_DISABLED);
@@ -597,7 +597,7 @@ void always_on_consume_wake_result(always_on_ctx_t *ctx, void *conn_ptr) {
    vad_silero_reset(ctx->vad_ctx);
 
    if (ctx->wake_detected) {
-      LOG_INFO("Always-on: wake word confirmed (has_command=%d)", ctx->wake_has_command);
+      OLOG_INFO("Always-on: wake word confirmed (has_command=%d)", ctx->wake_has_command);
 
       if (ctx->wake_has_command && ctx->wake_command) {
          /* Wake word + command — process through LLM */
@@ -633,7 +633,7 @@ void always_on_consume_wake_result(always_on_ctx_t *ctx, void *conn_ptr) {
       }
    } else {
       /* No wake word — return to listening */
-      LOG_INFO("Always-on: no wake word found, returning to LISTENING");
+      OLOG_INFO("Always-on: no wake word found, returning to LISTENING");
       free(ctx->wake_command);
       ctx->wake_command = NULL;
       set_state(ctx, ALWAYS_ON_LISTENING);
@@ -703,7 +703,7 @@ int always_on_process_audio(always_on_ctx_t *ctx,
    /* Rate limiting */
    if (rate_limit_check(ctx, len)) {
       pthread_mutex_unlock(&ctx->mutex);
-      LOG_WARNING("Always-on: rate limit exceeded, dropping frame (%zu bytes)", len);
+      OLOG_WARNING("Always-on: rate limit exceeded, dropping frame (%zu bytes)", len);
       return 0;
    }
 
@@ -873,15 +873,15 @@ bool always_on_check_timeouts(always_on_ctx_t *ctx, void *conn) {
          if (elapsed >= ALWAYS_ON_WAKE_CHECK_TIMEOUT_MS) {
             /* Timeout — dispatch ASR with whatever audio we have instead of
              * discarding. The buffer may contain a valid wake word phrase. */
-            LOG_INFO("Always-on: WAKE_CHECK timeout (%lld ms), dispatching ASR",
-                     (long long)elapsed);
+            OLOG_INFO("Always-on: WAKE_CHECK timeout (%lld ms), dispatching ASR",
+                      (long long)elapsed);
             dispatch_wake_check(ctx, (ws_connection_t *)conn);
          }
          break;
 
       case ALWAYS_ON_WAKE_PENDING:
          if (elapsed >= ALWAYS_ON_WAKE_PENDING_TIMEOUT_MS) {
-            LOG_ERROR(
+            OLOG_ERROR(
                 "Always-on: WAKE_PENDING timeout (ASR worker stalled), returning to LISTENING");
             vad_silero_reset(ctx->vad_ctx);
             ctx->valid_len = 0;
@@ -893,8 +893,8 @@ bool always_on_check_timeouts(always_on_ctx_t *ctx, void *conn) {
 
       case ALWAYS_ON_RECORDING:
          if (elapsed >= ALWAYS_ON_RECORDING_TIMEOUT_MS) {
-            LOG_WARNING("Always-on: RECORDING timeout (%lld ms), dispatching ASR",
-                        (long long)elapsed);
+            OLOG_WARNING("Always-on: RECORDING timeout (%lld ms), dispatching ASR",
+                         (long long)elapsed);
             send_always_on_state(ctx->wsi, "processing");
             dispatch_cmd_transcribe(ctx, (ws_connection_t *)conn);
          }
@@ -902,7 +902,7 @@ bool always_on_check_timeouts(always_on_ctx_t *ctx, void *conn) {
 
       case ALWAYS_ON_PROCESSING:
          if (elapsed >= ALWAYS_ON_PROCESSING_TIMEOUT_MS) {
-            LOG_ERROR("Always-on: PROCESSING timeout (LLM stalled), returning to LISTENING");
+            OLOG_ERROR("Always-on: PROCESSING timeout (LLM stalled), returning to LISTENING");
             vad_silero_reset(ctx->vad_ctx);
             set_state(ctx, ALWAYS_ON_LISTENING);
          }
@@ -917,8 +917,8 @@ bool always_on_check_timeouts(always_on_ctx_t *ctx, void *conn) {
     * so silence is expected. The PROCESSING timeout above handles stalled LLM. */
    if (state != ALWAYS_ON_DISABLED && state != ALWAYS_ON_PROCESSING &&
        (now - ctx->last_audio_ms) >= ALWAYS_ON_NO_AUDIO_TIMEOUT_MS) {
-      LOG_WARNING("Always-on: no audio for %lld ms, auto-disabling",
-                  (long long)(now - ctx->last_audio_ms));
+      OLOG_WARNING("Always-on: no audio for %lld ms, auto-disabling",
+                   (long long)(now - ctx->last_audio_ms));
       set_state(ctx, ALWAYS_ON_DISABLED);
       pthread_mutex_unlock(&ctx->mutex);
       return true; /* Caller should free ctx and notify client */

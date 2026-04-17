@@ -96,7 +96,7 @@ int satellite_db_upsert(const satellite_mapping_t *mapping) {
    AUTH_DB_UNLOCK();
 
    if (rc != SQLITE_DONE) {
-      LOG_ERROR("satellite_db_upsert: failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("satellite_db_upsert: failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -145,7 +145,7 @@ int satellite_db_delete(const char *uuid) {
    AUTH_DB_UNLOCK();
 
    if (rc != SQLITE_DONE) {
-      LOG_ERROR("satellite_db_delete: failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("satellite_db_delete: failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -173,7 +173,7 @@ int satellite_db_update_user(const char *uuid, int user_id) {
    AUTH_DB_UNLOCK();
 
    if (rc != SQLITE_DONE) {
-      LOG_ERROR("satellite_db_update_user: failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("satellite_db_update_user: failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -201,7 +201,7 @@ int satellite_db_update_location(const char *uuid, const char *location, const c
    AUTH_DB_UNLOCK();
 
    if (rc != SQLITE_DONE) {
-      LOG_ERROR("satellite_db_update_location: failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("satellite_db_update_location: failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -226,7 +226,7 @@ int satellite_db_set_enabled(const char *uuid, bool enabled) {
    AUTH_DB_UNLOCK();
 
    if (rc != SQLITE_DONE) {
-      LOG_ERROR("satellite_db_set_enabled: failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("satellite_db_set_enabled: failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 
@@ -250,7 +250,7 @@ int satellite_db_update_last_seen(const char *uuid) {
    AUTH_DB_UNLOCK();
 
    if (rc != SQLITE_DONE) {
-      LOG_ERROR("satellite_db_update_last_seen: failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("satellite_db_update_last_seen: failed: %s", sqlite3_errmsg(s_db.db));
       return AUTH_DB_FAILURE;
    }
 

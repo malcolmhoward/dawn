@@ -76,7 +76,7 @@ bool path_expand_tilde(const char *path, char *expanded, size_t expanded_size) {
    }
 
    if (!home) {
-      LOG_ERROR("path_expand_tilde: HOME not set and getpwuid failed");
+      OLOG_ERROR("path_expand_tilde: HOME not set and getpwuid failed");
       return false;
    }
 
@@ -84,7 +84,7 @@ bool path_expand_tilde(const char *path, char *expanded, size_t expanded_size) {
    const char *suffix = (path[1] == '/') ? path + 2 : "";
    int written = snprintf(expanded, expanded_size, "%s/%s", home, suffix);
    if (written < 0 || (size_t)written >= expanded_size) {
-      LOG_ERROR("path_expand_tilde: Expanded path too long");
+      OLOG_ERROR("path_expand_tilde: Expanded path too long");
       return false;
    }
 
@@ -116,7 +116,7 @@ bool path_canonicalize(const char *path, char *canonical, size_t canonical_size)
    /* Check if result fits in output buffer */
    size_t len = strlen(resolved);
    if (len >= canonical_size) {
-      LOG_ERROR("path_canonicalize: Canonical path too long for buffer");
+      OLOG_ERROR("path_canonicalize: Canonical path too long for buffer");
       return false;
    }
 
@@ -176,7 +176,7 @@ bool path_ensure_parent_dir_mode(const char *file_path, mode_t mode) {
    /* dirname() may modify its argument, so make a copy */
    char *path_copy = strdup(file_path);
    if (!path_copy) {
-      LOG_ERROR("path_ensure_parent_dir: strdup failed");
+      OLOG_ERROR("path_ensure_parent_dir: strdup failed");
       return false;
    }
 
@@ -185,7 +185,7 @@ bool path_ensure_parent_dir_mode(const char *file_path, mode_t mode) {
    /* Fast path: try creating the leaf directory first (common case where only
     * the final component is missing, avoids walking the entire path) */
    if (mkdir(dir, mode) == 0) {
-      LOG_INFO("Created directory: %s", dir);
+      OLOG_INFO("Created directory: %s", dir);
       free(path_copy);
       return true;
    }
@@ -197,7 +197,7 @@ bool path_ensure_parent_dir_mode(const char *file_path, mode_t mode) {
          free(path_copy);
          return true;
       }
-      LOG_ERROR("path_ensure_parent_dir: '%s' exists but is not a directory", dir);
+      OLOG_ERROR("path_ensure_parent_dir: '%s' exists but is not a directory", dir);
       free(path_copy);
       return false;
    }
@@ -214,7 +214,7 @@ bool path_ensure_parent_dir_mode(const char *file_path, mode_t mode) {
       if (*p == '/') {
          *p = '\0';
          if (mkdir(dir, mode) != 0 && errno != EEXIST) {
-            LOG_ERROR("path_ensure_parent_dir: failed to create '%s': %s", dir, strerror(errno));
+            OLOG_ERROR("path_ensure_parent_dir: failed to create '%s': %s", dir, strerror(errno));
             free(path_copy);
             return false;
          }
@@ -224,12 +224,12 @@ bool path_ensure_parent_dir_mode(const char *file_path, mode_t mode) {
 
    /* Create the final component */
    if (mkdir(dir, mode) != 0 && errno != EEXIST) {
-      LOG_ERROR("path_ensure_parent_dir: failed to create '%s': %s", dir, strerror(errno));
+      OLOG_ERROR("path_ensure_parent_dir: failed to create '%s': %s", dir, strerror(errno));
       free(path_copy);
       return false;
    }
 
-   LOG_INFO("Created directory: %s", dir);
+   OLOG_INFO("Created directory: %s", dir);
    free(path_copy);
    return true;
 }

@@ -62,7 +62,7 @@ int music_queue_db_init(const char *db_path) {
 
    int rc = sqlite3_open(db_path, &s_db);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("Music queue DB: Failed to open %s: %s", db_path, sqlite3_errmsg(s_db));
+      OLOG_ERROR("Music queue DB: Failed to open %s: %s", db_path, sqlite3_errmsg(s_db));
       sqlite3_close(s_db);
       s_db = NULL;
       return 1;
@@ -77,14 +77,14 @@ int music_queue_db_init(const char *db_path) {
    char *err_msg = NULL;
    rc = sqlite3_exec(s_db, SCHEMA_SQL, NULL, NULL, &err_msg);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("Music queue DB: Schema creation failed: %s", err_msg);
+      OLOG_ERROR("Music queue DB: Schema creation failed: %s", err_msg);
       sqlite3_free(err_msg);
       sqlite3_close(s_db);
       s_db = NULL;
       return 1;
    }
 
-   LOG_INFO("Music queue DB: Initialized at %s", db_path);
+   OLOG_INFO("Music queue DB: Initialized at %s", db_path);
    return 0;
 }
 
@@ -92,7 +92,7 @@ void music_queue_db_cleanup(void) {
    if (s_db) {
       sqlite3_close(s_db);
       s_db = NULL;
-      LOG_INFO("Music queue DB: Closed");
+      OLOG_INFO("Music queue DB: Closed");
    }
 }
 
@@ -107,7 +107,7 @@ int music_queue_db_save(int user_id, const user_music_queue_t *uq) {
 
    /* Begin transaction */
    if (sqlite3_exec(s_db, "BEGIN", NULL, NULL, NULL) != SQLITE_OK) {
-      LOG_ERROR("Music queue DB: BEGIN failed: %s", sqlite3_errmsg(s_db));
+      OLOG_ERROR("Music queue DB: BEGIN failed: %s", sqlite3_errmsg(s_db));
       return 1;
    }
 
@@ -116,7 +116,7 @@ int music_queue_db_save(int user_id, const user_music_queue_t *uq) {
    int rc = sqlite3_prepare_v2(s_db, "DELETE FROM user_queue WHERE user_id = ?", -1, &del_stmt,
                                NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("Music queue DB: Prepare DELETE failed: %s", sqlite3_errmsg(s_db));
+      OLOG_ERROR("Music queue DB: Prepare DELETE failed: %s", sqlite3_errmsg(s_db));
       sqlite3_exec(s_db, "ROLLBACK", NULL, NULL, NULL);
       return 1;
    }
@@ -132,7 +132,7 @@ int music_queue_db_save(int user_id, const user_music_queue_t *uq) {
        "VALUES (?, ?, ?, ?, ?, ?, ?)",
        -1, &ins_stmt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("Music queue DB: Prepare INSERT failed: %s", sqlite3_errmsg(s_db));
+      OLOG_ERROR("Music queue DB: Prepare INSERT failed: %s", sqlite3_errmsg(s_db));
       sqlite3_exec(s_db, "ROLLBACK", NULL, NULL, NULL);
       return 1;
    }
@@ -149,7 +149,7 @@ int music_queue_db_save(int user_id, const user_music_queue_t *uq) {
 
       rc = sqlite3_step(ins_stmt);
       if (rc != SQLITE_DONE) {
-         LOG_ERROR("Music queue DB: INSERT step failed at pos %d: %s", i, sqlite3_errmsg(s_db));
+         OLOG_ERROR("Music queue DB: INSERT step failed at pos %d: %s", i, sqlite3_errmsg(s_db));
          sqlite3_finalize(ins_stmt);
          sqlite3_exec(s_db, "ROLLBACK", NULL, NULL, NULL);
          return 1;
@@ -167,7 +167,7 @@ int music_queue_db_save(int user_id, const user_music_queue_t *uq) {
        "repeat_mode = excluded.repeat_mode",
        -1, &state_stmt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("Music queue DB: Prepare UPSERT state failed: %s", sqlite3_errmsg(s_db));
+      OLOG_ERROR("Music queue DB: Prepare UPSERT state failed: %s", sqlite3_errmsg(s_db));
       sqlite3_exec(s_db, "ROLLBACK", NULL, NULL, NULL);
       return 1;
    }
@@ -179,7 +179,7 @@ int music_queue_db_save(int user_id, const user_music_queue_t *uq) {
 
    /* Commit */
    if (sqlite3_exec(s_db, "COMMIT", NULL, NULL, NULL) != SQLITE_OK) {
-      LOG_ERROR("Music queue DB: COMMIT failed: %s", sqlite3_errmsg(s_db));
+      OLOG_ERROR("Music queue DB: COMMIT failed: %s", sqlite3_errmsg(s_db));
       sqlite3_exec(s_db, "ROLLBACK", NULL, NULL, NULL);
       return 1;
    }
@@ -204,7 +204,7 @@ int music_queue_db_save_state(int user_id, const user_music_queue_t *uq) {
        "repeat_mode = excluded.repeat_mode",
        -1, &stmt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("Music queue DB: Prepare UPSERT state failed: %s", sqlite3_errmsg(s_db));
+      OLOG_ERROR("Music queue DB: Prepare UPSERT state failed: %s", sqlite3_errmsg(s_db));
       return 1;
    }
    sqlite3_bind_int(stmt, 1, user_id);
@@ -234,7 +234,7 @@ int music_queue_db_load(int user_id, user_music_queue_t *uq) {
                                "WHERE user_id = ? ORDER BY position",
                                -1, &sel_stmt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("Music queue DB: Prepare SELECT queue failed: %s", sqlite3_errmsg(s_db));
+      OLOG_ERROR("Music queue DB: Prepare SELECT queue failed: %s", sqlite3_errmsg(s_db));
       return 1;
    }
    sqlite3_bind_int(sel_stmt, 1, user_id);
@@ -264,7 +264,7 @@ int music_queue_db_load(int user_id, user_music_queue_t *uq) {
                            "SELECT shuffle, repeat_mode FROM user_queue_state WHERE user_id = ?",
                            -1, &state_stmt, NULL);
    if (rc != SQLITE_OK) {
-      LOG_ERROR("Music queue DB: Prepare SELECT state failed: %s", sqlite3_errmsg(s_db));
+      OLOG_ERROR("Music queue DB: Prepare SELECT state failed: %s", sqlite3_errmsg(s_db));
       return 1;
    }
    sqlite3_bind_int(state_stmt, 1, user_id);
@@ -276,8 +276,8 @@ int music_queue_db_load(int user_id, user_music_queue_t *uq) {
    sqlite3_finalize(state_stmt);
 
    if (uq->queue_length > 0) {
-      LOG_INFO("Music queue DB: Loaded %d tracks for user %d (shuffle=%d, repeat=%d)",
-               uq->queue_length, user_id, uq->shuffle, (int)uq->repeat_mode);
+      OLOG_INFO("Music queue DB: Loaded %d tracks for user %d (shuffle=%d, repeat=%d)",
+                uq->queue_length, user_id, uq->shuffle, (int)uq->repeat_mode);
    }
 
    return 0;
@@ -309,6 +309,6 @@ int music_queue_db_delete_user(int user_id) {
       sqlite3_finalize(stmt);
    }
 
-   LOG_INFO("Music queue DB: Deleted queue data for user %d", user_id);
+   OLOG_INFO("Music queue DB: Deleted queue data for user %d", user_id);
    return 0;
 }

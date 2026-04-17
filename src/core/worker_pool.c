@@ -94,12 +94,12 @@ static void *worker_thread(void *arg);
 
 int worker_pool_init(asr_engine_type_t engine_type, const char *model_path) {
    if (pool_initialized) {
-      LOG_WARNING("Worker pool already initialized");
+      OLOG_WARNING("Worker pool already initialized");
       return 0;
    }
 
    if (!model_path) {
-      LOG_ERROR("Worker pool init: model_path is NULL");
+      OLOG_ERROR("Worker pool init: model_path is NULL");
       return 1;
    }
 
@@ -108,15 +108,15 @@ int worker_pool_init(asr_engine_type_t engine_type, const char *model_path) {
    if (config_workers <= 0) {
       actual_worker_count = WORKER_POOL_DEFAULT_SIZE;
    } else if (config_workers > WORKER_POOL_MAX_SIZE) {
-      LOG_WARNING("Config network.workers=%d exceeds max %d, clamping", config_workers,
-                  WORKER_POOL_MAX_SIZE);
+      OLOG_WARNING("Config network.workers=%d exceeds max %d, clamping", config_workers,
+                   WORKER_POOL_MAX_SIZE);
       actual_worker_count = WORKER_POOL_MAX_SIZE;
    } else {
       actual_worker_count = config_workers;
    }
 
-   LOG_INFO("Initializing worker pool with %d workers (%s engine)", actual_worker_count,
-            asr_engine_name(engine_type));
+   OLOG_INFO("Initializing worker pool with %d workers (%s engine)", actual_worker_count,
+             asr_engine_name(engine_type));
 
    // Initialize all worker contexts
    for (int i = 0; i < actual_worker_count; i++) {
@@ -129,12 +129,12 @@ int worker_pool_init(asr_engine_type_t engine_type, const char *model_path) {
 
       // Initialize synchronization primitives
       if (pthread_mutex_init(&w->mutex, NULL) != 0) {
-         LOG_ERROR("Worker %d: Failed to init mutex", i);
+         OLOG_ERROR("Worker %d: Failed to init mutex", i);
          goto cleanup_workers;
       }
 
       if (pthread_cond_init(&w->client_ready_cond, NULL) != 0) {
-         LOG_ERROR("Worker %d: Failed to init condition variable", i);
+         OLOG_ERROR("Worker %d: Failed to init condition variable", i);
          pthread_mutex_destroy(&w->mutex);
          goto cleanup_workers;
       }
@@ -142,7 +142,7 @@ int worker_pool_init(asr_engine_type_t engine_type, const char *model_path) {
       // EAGER: Create ASR context now (fail fast)
       w->asr_ctx = asr_init(engine_type, model_path, 16000);
       if (!w->asr_ctx) {
-         LOG_ERROR("Worker %d: Failed to initialize ASR context", i);
+         OLOG_ERROR("Worker %d: Failed to initialize ASR context", i);
          pthread_cond_destroy(&w->client_ready_cond);
          pthread_mutex_destroy(&w->mutex);
          goto cleanup_workers;
@@ -150,7 +150,7 @@ int worker_pool_init(asr_engine_type_t engine_type, const char *model_path) {
 
       // Spawn worker thread
       if (pthread_create(&w->thread, NULL, worker_thread, w) != 0) {
-         LOG_ERROR("Worker %d: Failed to create thread", i);
+         OLOG_ERROR("Worker %d: Failed to create thread", i);
          asr_cleanup(w->asr_ctx);
          w->asr_ctx = NULL;
          pthread_cond_destroy(&w->client_ready_cond);
@@ -158,11 +158,11 @@ int worker_pool_init(asr_engine_type_t engine_type, const char *model_path) {
          goto cleanup_workers;
       }
 
-      LOG_INFO("Worker %d: Initialized and started", i);
+      OLOG_INFO("Worker %d: Initialized and started", i);
    }
 
    pool_initialized = true;
-   LOG_INFO("Worker pool initialized: %d workers ready", actual_worker_count);
+   OLOG_INFO("Worker pool initialized: %d workers ready", actual_worker_count);
    return 0;
 
 cleanup_workers:
@@ -195,7 +195,7 @@ void worker_pool_shutdown(void) {
       return;
    }
 
-   LOG_INFO("Shutting down worker pool...");
+   OLOG_INFO("Shutting down worker pool...");
 
    // Wake any threads waiting to borrow ASR contexts so they can fail gracefully
    pthread_mutex_lock(&pool_mutex);
@@ -230,11 +230,11 @@ void worker_pool_shutdown(void) {
       int result = pthread_timedjoin_np(w->thread, NULL, &deadline);
 
       if (result == ETIMEDOUT) {
-         LOG_WARNING("Worker %d: Timeout waiting for shutdown, canceling", i);
+         OLOG_WARNING("Worker %d: Timeout waiting for shutdown, canceling", i);
          pthread_cancel(w->thread);
          pthread_join(w->thread, NULL);
       } else if (result != 0) {
-         LOG_ERROR("Worker %d: pthread_timedjoin_np failed: %d", i, result);
+         OLOG_ERROR("Worker %d: pthread_timedjoin_np failed: %d", i, result);
          pthread_cancel(w->thread);
          pthread_join(w->thread, NULL);
       }
@@ -254,11 +254,11 @@ void worker_pool_shutdown(void) {
       pthread_cond_destroy(&w->client_ready_cond);
       pthread_mutex_destroy(&w->mutex);
 
-      LOG_INFO("Worker %d: Shutdown complete", i);
+      OLOG_INFO("Worker %d: Shutdown complete", i);
    }
 
    pool_initialized = false;
-   LOG_INFO("Worker pool shutdown complete");
+   OLOG_INFO("Worker pool shutdown complete");
 }
 
 // =============================================================================
@@ -267,12 +267,12 @@ void worker_pool_shutdown(void) {
 
 int worker_pool_assign_client(int client_fd, session_t *session) {
    if (!pool_initialized) {
-      LOG_ERROR("Cannot assign client: worker pool not initialized");
+      OLOG_ERROR("Cannot assign client: worker pool not initialized");
       return 1;
    }
 
    if (client_fd < 0 || !session) {
-      LOG_ERROR("Invalid client assignment: fd=%d, session=%p", client_fd, (void *)session);
+      OLOG_ERROR("Invalid client assignment: fd=%d, session=%p", client_fd, (void *)session);
       return 1;
    }
 
@@ -289,7 +289,7 @@ int worker_pool_assign_client(int client_fd, session_t *session) {
 
    if (!available) {
       pthread_mutex_unlock(&pool_mutex);
-      LOG_WARNING("All workers busy, cannot accept client (fd=%d)", client_fd);
+      OLOG_WARNING("All workers busy, cannot accept client (fd=%d)", client_fd);
       return 1;
    }
 
@@ -306,7 +306,7 @@ int worker_pool_assign_client(int client_fd, session_t *session) {
 
    pthread_mutex_unlock(&pool_mutex);
 
-   LOG_INFO("Client (fd=%d) assigned to worker %d", client_fd, available->worker_id);
+   OLOG_INFO("Client (fd=%d) assigned to worker %d", client_fd, available->worker_id);
    return 0;
 }
 
@@ -316,7 +316,7 @@ int worker_pool_assign_client(int client_fd, session_t *session) {
 
 asr_context_t *worker_pool_borrow_asr(void) {
    if (!pool_initialized) {
-      LOG_ERROR("Cannot borrow ASR: worker pool not initialized");
+      OLOG_ERROR("Cannot borrow ASR: worker pool not initialized");
       return NULL;
    }
 
@@ -344,23 +344,23 @@ asr_context_t *worker_pool_borrow_asr(void) {
 
       if (!available) {
          // Wait for a worker to become available (with timeout)
-         LOG_INFO("All workers busy, waiting up to %dms for availability...",
-                  WORKER_BORROW_TIMEOUT_MS);
+         OLOG_INFO("All workers busy, waiting up to %dms for availability...",
+                   WORKER_BORROW_TIMEOUT_MS);
          int wait_result = pthread_cond_timedwait(&pool_available_cond, &pool_mutex, &timeout);
          if (wait_result == ETIMEDOUT) {
             pthread_mutex_unlock(&pool_mutex);
-            LOG_WARNING("Timed out waiting for ASR worker (all busy for %dms)",
-                        WORKER_BORROW_TIMEOUT_MS);
+            OLOG_WARNING("Timed out waiting for ASR worker (all busy for %dms)",
+                         WORKER_BORROW_TIMEOUT_MS);
             return NULL;
          } else if (wait_result != 0) {
             pthread_mutex_unlock(&pool_mutex);
-            LOG_ERROR("Error waiting for ASR worker: %s", strerror(wait_result));
+            OLOG_ERROR("Error waiting for ASR worker: %s", strerror(wait_result));
             return NULL;
          }
          // Check if pool is shutting down (broadcast wakes us during shutdown)
          if (!pool_initialized) {
             pthread_mutex_unlock(&pool_mutex);
-            LOG_INFO("Worker pool shutting down, aborting ASR borrow");
+            OLOG_INFO("Worker pool shutting down, aborting ASR borrow");
             return NULL;
          }
          // Loop back to check for available worker
@@ -376,7 +376,7 @@ asr_context_t *worker_pool_borrow_asr(void) {
 
    pthread_mutex_unlock(&pool_mutex);
 
-   LOG_INFO("Borrowed ASR context from worker %d", available->worker_id);
+   OLOG_INFO("Borrowed ASR context from worker %d", available->worker_id);
    return ctx;
 }
 
@@ -394,7 +394,7 @@ void worker_pool_return_asr(asr_context_t *ctx) {
          workers[i].state = WORKER_STATE_IDLE;
          pthread_mutex_unlock(&workers[i].mutex);
 
-         LOG_INFO("Returned ASR context to worker %d", i);
+         OLOG_INFO("Returned ASR context to worker %d", i);
 
          // Signal any threads waiting for a worker
          pthread_cond_signal(&pool_available_cond);
@@ -464,7 +464,7 @@ struct mosquitto *worker_pool_get_mosq(void) {
 static void worker_cleanup_handler(void *arg) {
    worker_context_t *ctx = (worker_context_t *)arg;
 
-   LOG_INFO("Worker %d: Cleanup handler invoked (cancellation)", ctx->worker_id);
+   OLOG_INFO("Worker %d: Cleanup handler invoked (cancellation)", ctx->worker_id);
 
    // Close client socket if open
    if (ctx->client_fd >= 0) {
@@ -506,7 +506,7 @@ static void worker_cleanup_handler(void *arg) {
 static void *worker_thread(void *arg) {
    worker_context_t *ctx = (worker_context_t *)arg;
 
-   LOG_INFO("Worker %d: Thread started", ctx->worker_id);
+   OLOG_INFO("Worker %d: Thread started", ctx->worker_id);
 
    while (1) {
       pthread_mutex_lock(&ctx->mutex);
@@ -519,7 +519,7 @@ static void *worker_thread(void *arg) {
       // Check for shutdown
       if (ctx->state == WORKER_STATE_SHUTDOWN) {
          pthread_mutex_unlock(&ctx->mutex);
-         LOG_INFO("Worker %d: Shutdown signal received", ctx->worker_id);
+         OLOG_INFO("Worker %d: Shutdown signal received", ctx->worker_id);
          break;
       }
 
@@ -530,7 +530,7 @@ static void *worker_thread(void *arg) {
       pthread_cleanup_push(worker_cleanup_handler, ctx);
 
       // Process the client (state is BUSY)
-      LOG_INFO("Worker %d: Processing client (fd=%d)", ctx->worker_id, ctx->client_fd);
+      OLOG_INFO("Worker %d: Processing client (fd=%d)", ctx->worker_id, ctx->client_fd);
 
       // Clean up and return to idle
       pthread_mutex_lock(&ctx->mutex);
@@ -559,9 +559,9 @@ static void *worker_thread(void *arg) {
       // Unregister cleanup handler (execute=0 since we did manual cleanup)
       pthread_cleanup_pop(0);
 
-      LOG_INFO("Worker %d: Returned to idle", ctx->worker_id);
+      OLOG_INFO("Worker %d: Returned to idle", ctx->worker_id);
    }
 
-   LOG_INFO("Worker %d: Thread exiting", ctx->worker_id);
+   OLOG_INFO("Worker %d: Thread exiting", ctx->worker_id);
    return NULL;
 }

@@ -50,7 +50,7 @@ void *voiceAmplificationThread(void *arg) {
 
    // Check that audio backend is initialized
    if (audio_backend_get_type() == AUDIO_BACKEND_NONE) {
-      LOG_ERROR("Audio backend not initialized. Call audio_backend_init() first.");
+      OLOG_ERROR("Audio backend not initialized. Call audio_backend_init() first.");
       return NULL;
    }
 
@@ -60,12 +60,12 @@ void *voiceAmplificationThread(void *arg) {
 
    // Validate device availability
    if (!pcmCaptureDevice || !pcmPlaybackDevice) {
-      LOG_ERROR("Unable to find audio devices for voice amplification.");
+      OLOG_ERROR("Unable to find audio devices for voice amplification.");
       return NULL;
    }
 
-   LOG_INFO("Voice amplification: capture=%s, playback=%s (backend: %s)", pcmCaptureDevice,
-            pcmPlaybackDevice, audio_backend_type_name(audio_backend_get_type()));
+   OLOG_INFO("Voice amplification: capture=%s, playback=%s (backend: %s)", pcmCaptureDevice,
+             pcmPlaybackDevice, audio_backend_type_name(audio_backend_get_type()));
 
    // Stream parameters for voice amplification
    audio_stream_params_t capture_params = { .sample_rate = VA_SAMPLE_RATE,
@@ -88,7 +88,7 @@ void *voiceAmplificationThread(void *arg) {
                                                                              &capture_params,
                                                                              &capture_hw_params);
    if (!capture_handle) {
-      LOG_ERROR("Error opening capture device for voice amplification: %s", pcmCaptureDevice);
+      OLOG_ERROR("Error opening capture device for voice amplification: %s", pcmCaptureDevice);
       return NULL;
    }
 
@@ -96,13 +96,13 @@ void *voiceAmplificationThread(void *arg) {
    audio_stream_playback_handle_t *playback_handle = audio_stream_playback_open(
        pcmPlaybackDevice, &playback_params, &playback_hw_params);
    if (!playback_handle) {
-      LOG_ERROR("Error opening playback device for voice amplification: %s", pcmPlaybackDevice);
+      OLOG_ERROR("Error opening playback device for voice amplification: %s", pcmPlaybackDevice);
       audio_stream_capture_close(capture_handle);
       return NULL;
    }
 
-   LOG_INFO("Voice amplification started: rate=%u ch=%u", capture_hw_params.sample_rate,
-            capture_hw_params.channels);
+   OLOG_INFO("Voice amplification started: rate=%u ch=%u", capture_hw_params.sample_rate,
+             capture_hw_params.channels);
 
    running = 1;
 
@@ -117,11 +117,11 @@ void *voiceAmplificationThread(void *arg) {
       if (frames_read < 0) {
          int err = (int)(-frames_read);
          if (err == AUDIO_ERR_OVERRUN) {
-            LOG_WARNING("Voice amp capture overrun, recovering...");
+            OLOG_WARNING("Voice amp capture overrun, recovering...");
             audio_stream_capture_recover(capture_handle, err);
             continue;
          }
-         LOG_ERROR("Voice amp read error: %s", audio_error_string((audio_error_t)err));
+         OLOG_ERROR("Voice amp read error: %s", audio_error_string((audio_error_t)err));
          break;
       }
 
@@ -135,16 +135,16 @@ void *voiceAmplificationThread(void *arg) {
       if (frames_written < 0) {
          int err = (int)(-frames_written);
          if (err == AUDIO_ERR_UNDERRUN) {
-            LOG_WARNING("Voice amp playback underrun, recovering...");
+            OLOG_WARNING("Voice amp playback underrun, recovering...");
             audio_stream_playback_recover(playback_handle, err);
             continue;
          }
-         LOG_ERROR("Voice amp write error: %s", audio_error_string((audio_error_t)err));
+         OLOG_ERROR("Voice amp write error: %s", audio_error_string((audio_error_t)err));
          break;
       }
    }
 
-   LOG_INFO("Voice amplification stopped.");
+   OLOG_INFO("Voice amplification stopped.");
 
    // Cleanup
    audio_stream_playback_close(playback_handle);

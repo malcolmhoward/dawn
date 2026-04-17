@@ -172,7 +172,7 @@ void handle_set_my_settings(ws_connection_t *conn, struct json_object *payload) 
          char *new_prompt = build_user_prompt(conn->auth_user_id);
          if (new_prompt) {
             session_update_system_prompt(conn->session, new_prompt);
-            LOG_INFO("WebUI: Refreshed system prompt for user %s", conn->username);
+            OLOG_INFO("WebUI: Refreshed system prompt for user %s", conn->username);
 
             /* Queue updated prompt to client so debug view refreshes.
              * Must go through queue — the settings response below is already

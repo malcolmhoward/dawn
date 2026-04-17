@@ -81,7 +81,7 @@ static char *voice_amplifier_callback(const char *actionName, char *value, int *
 
    if (strcmp(actionName, "enable") == 0) {
       if ((voice_thread != (pthread_t)-1) && (pthread_kill(voice_thread, 0) == 0)) {
-         LOG_WARNING("Voice amplification thread already running.");
+         OLOG_WARNING("Voice amplification thread already running.");
          if (command_processing_mode != CMD_MODE_DIRECT_ONLY) {
             return strdup("Voice amplifier is already enabled");
          }
@@ -90,7 +90,7 @@ static char *voice_amplifier_callback(const char *actionName, char *value, int *
       }
 
       if (pthread_create(&voice_thread, NULL, voiceAmplificationThread, NULL)) {
-         LOG_ERROR("Error creating voice thread");
+         OLOG_ERROR("Error creating voice thread");
          if (command_processing_mode != CMD_MODE_DIRECT_ONLY) {
             return strdup("Failed to enable voice amplifier");
          }
@@ -111,7 +111,7 @@ static char *voice_amplifier_callback(const char *actionName, char *value, int *
             return strdup("Voice amplifier disabled");
          }
       } else {
-         LOG_WARNING("Voice amplification thread not running.");
+         OLOG_WARNING("Voice amplification thread not running.");
          if (command_processing_mode != CMD_MODE_DIRECT_ONLY) {
             return strdup("Voice amplifier was not running");
          }

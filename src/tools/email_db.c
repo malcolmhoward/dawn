@@ -45,7 +45,7 @@ int email_encrypt_password(const char *plaintext, email_account_t *acct) {
    size_t out_written = 0;
    if (crypto_store_encrypt(plaintext, pt_len, acct->encrypted_password,
                             sizeof(acct->encrypted_password), &out_written) != 0) {
-      LOG_ERROR("email_db: failed to encrypt password");
+      OLOG_ERROR("email_db: failed to encrypt password");
       return 1;
    }
    acct->encrypted_password_len = (int)out_written;
@@ -60,7 +60,7 @@ int email_decrypt_password(const email_account_t *acct, char *out, size_t out_le
    size_t dec_written = 0;
    if (crypto_store_decrypt(acct->encrypted_password, (size_t)acct->encrypted_password_len, out,
                             out_len - 1, &dec_written) != 0) {
-      LOG_ERROR("email_db: failed to decrypt password");
+      OLOG_ERROR("email_db: failed to decrypt password");
       return 1;
    }
    out[dec_written] = '\0';
@@ -158,7 +158,7 @@ int64_t email_db_account_create(const email_account_t *acct) {
    if (rc == SQLITE_DONE) {
       id = sqlite3_last_insert_rowid(s_db.db);
    } else {
-      LOG_ERROR("email_db: account create failed: %s", sqlite3_errmsg(s_db.db));
+      OLOG_ERROR("email_db: account create failed: %s", sqlite3_errmsg(s_db.db));
    }
    sqlite3_reset(st);
 

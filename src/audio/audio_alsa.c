@@ -250,14 +250,14 @@ static int configure_hw_params(snd_pcm_t *pcm,
 
    rc = snd_pcm_hw_params_any(pcm, hw_params);
    if (rc < 0) {
-      LOG_ERROR("ALSA: Cannot get hardware parameters: %s", snd_strerror(rc));
+      OLOG_ERROR("ALSA: Cannot get hardware parameters: %s", snd_strerror(rc));
       return rc;
    }
 
    /* Access type: interleaved */
    rc = snd_pcm_hw_params_set_access(pcm, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED);
    if (rc < 0) {
-      LOG_ERROR("ALSA: Cannot set access type: %s", snd_strerror(rc));
+      OLOG_ERROR("ALSA: Cannot set access type: %s", snd_strerror(rc));
       return rc;
    }
 
@@ -265,14 +265,14 @@ static int configure_hw_params(snd_pcm_t *pcm,
    snd_pcm_format_t format = format_to_alsa(params->format);
    rc = snd_pcm_hw_params_set_format(pcm, hw_params, format);
    if (rc < 0) {
-      LOG_ERROR("ALSA: Cannot set format: %s", snd_strerror(rc));
+      OLOG_ERROR("ALSA: Cannot set format: %s", snd_strerror(rc));
       return rc;
    }
 
    /* Channels */
    rc = snd_pcm_hw_params_set_channels(pcm, hw_params, params->channels);
    if (rc < 0) {
-      LOG_ERROR("ALSA: Cannot set channels to %u: %s", params->channels, snd_strerror(rc));
+      OLOG_ERROR("ALSA: Cannot set channels to %u: %s", params->channels, snd_strerror(rc));
       return rc;
    }
 
@@ -280,18 +280,18 @@ static int configure_hw_params(snd_pcm_t *pcm,
    unsigned int rate = params->sample_rate;
    rc = snd_pcm_hw_params_set_rate_near(pcm, hw_params, &rate, &dir);
    if (rc < 0) {
-      LOG_ERROR("ALSA: Cannot set rate: %s", snd_strerror(rc));
+      OLOG_ERROR("ALSA: Cannot set rate: %s", snd_strerror(rc));
       return rc;
    }
    if (rate != params->sample_rate) {
-      LOG_WARNING("ALSA: Rate %u not supported, using %u", params->sample_rate, rate);
+      OLOG_WARNING("ALSA: Rate %u not supported, using %u", params->sample_rate, rate);
    }
 
    /* Period size */
    snd_pcm_uframes_t period_frames = params->period_frames;
    rc = snd_pcm_hw_params_set_period_size_near(pcm, hw_params, &period_frames, &dir);
    if (rc < 0) {
-      LOG_ERROR("ALSA: Cannot set period size: %s", snd_strerror(rc));
+      OLOG_ERROR("ALSA: Cannot set period size: %s", snd_strerror(rc));
       return rc;
    }
 
@@ -300,14 +300,14 @@ static int configure_hw_params(snd_pcm_t *pcm,
    if (buffer_frames > 0) {
       rc = snd_pcm_hw_params_set_buffer_size_near(pcm, hw_params, &buffer_frames);
       if (rc < 0) {
-         LOG_WARNING("ALSA: Cannot set buffer size, using default: %s", snd_strerror(rc));
+         OLOG_WARNING("ALSA: Cannot set buffer size, using default: %s", snd_strerror(rc));
       }
    }
 
    /* Apply parameters */
    rc = snd_pcm_hw_params(pcm, hw_params);
    if (rc < 0) {
-      LOG_ERROR("ALSA: Cannot set hardware parameters: %s", snd_strerror(rc));
+      OLOG_ERROR("ALSA: Cannot set hardware parameters: %s", snd_strerror(rc));
       return rc;
    }
 
@@ -324,9 +324,9 @@ static int configure_hw_params(snd_pcm_t *pcm,
       snd_pcm_hw_params_get_format(hw_params, &actual_format);
       hw_out->format = alsa_to_format(actual_format);
 
-      LOG_INFO("ALSA %s: rate=%u ch=%u period=%zu buffer=%zu",
-               stream_type == SND_PCM_STREAM_CAPTURE ? "capture" : "playback", hw_out->sample_rate,
-               hw_out->channels, hw_out->period_frames, hw_out->buffer_frames);
+      OLOG_INFO("ALSA %s: rate=%u ch=%u period=%zu buffer=%zu",
+                stream_type == SND_PCM_STREAM_CAPTURE ? "capture" : "playback", hw_out->sample_rate,
+                hw_out->channels, hw_out->period_frames, hw_out->buffer_frames);
    }
 
    return 0;
@@ -347,15 +347,15 @@ audio_stream_capture_handle_t *alsa_capture_open(const char *device,
 
    audio_stream_capture_handle_t *handle = alloc_capture_handle();
    if (!handle) {
-      LOG_ERROR("ALSA: No free capture handles available");
+      OLOG_ERROR("ALSA: No free capture handles available");
       return NULL;
    }
 
-   LOG_INFO("ALSA: Opening capture device: %s", device);
+   OLOG_INFO("ALSA: Opening capture device: %s", device);
 
    rc = snd_pcm_open(&handle->pcm, device, SND_PCM_STREAM_CAPTURE, 0);
    if (rc < 0) {
-      LOG_ERROR("ALSA: Cannot open capture device '%s': %s", device, snd_strerror(rc));
+      OLOG_ERROR("ALSA: Cannot open capture device '%s': %s", device, snd_strerror(rc));
       free_capture_handle(handle);
       return NULL;
    }
@@ -413,16 +413,16 @@ int alsa_capture_recover(audio_stream_capture_handle_t *handle, int err) {
 
    if (err == AUDIO_ERR_OVERRUN) {
       /* Overrun */
-      LOG_WARNING("ALSA capture: overrun, recovering");
+      OLOG_WARNING("ALSA capture: overrun, recovering");
       int rc = snd_pcm_prepare(handle->pcm);
       if (rc < 0) {
-         LOG_ERROR("ALSA capture: prepare failed: %s", snd_strerror(rc));
+         OLOG_ERROR("ALSA capture: prepare failed: %s", snd_strerror(rc));
          return alsa_error_to_audio_error(rc);
       }
       return AUDIO_SUCCESS;
    } else if (err == AUDIO_ERR_SUSPENDED) {
       /* Suspended */
-      LOG_WARNING("ALSA capture: suspended, resuming");
+      OLOG_WARNING("ALSA capture: suspended, resuming");
       int rc;
       while ((rc = snd_pcm_resume(handle->pcm)) == -EAGAIN) {
          usleep(100000); /* 100ms */
@@ -430,7 +430,7 @@ int alsa_capture_recover(audio_stream_capture_handle_t *handle, int err) {
       if (rc < 0) {
          rc = snd_pcm_prepare(handle->pcm);
          if (rc < 0) {
-            LOG_ERROR("ALSA capture: prepare after suspend failed: %s", snd_strerror(rc));
+            OLOG_ERROR("ALSA capture: prepare after suspend failed: %s", snd_strerror(rc));
             return alsa_error_to_audio_error(rc);
          }
       }
@@ -451,7 +451,7 @@ void alsa_capture_close(audio_stream_capture_handle_t *handle) {
    }
 
    free_capture_handle(handle);
-   LOG_INFO("ALSA capture closed");
+   OLOG_INFO("ALSA capture closed");
 }
 
 /* =============================================================================
@@ -469,15 +469,15 @@ audio_stream_playback_handle_t *alsa_playback_open(const char *device,
 
    audio_stream_playback_handle_t *handle = alloc_playback_handle();
    if (!handle) {
-      LOG_ERROR("ALSA: No free playback handles available");
+      OLOG_ERROR("ALSA: No free playback handles available");
       return NULL;
    }
 
-   LOG_INFO("ALSA: Opening playback device: %s", device);
+   OLOG_INFO("ALSA: Opening playback device: %s", device);
 
    rc = snd_pcm_open(&handle->pcm, device, SND_PCM_STREAM_PLAYBACK, 0);
    if (rc < 0) {
-      LOG_ERROR("ALSA: Cannot open playback device '%s': %s", device, snd_strerror(rc));
+      OLOG_ERROR("ALSA: Cannot open playback device '%s': %s", device, snd_strerror(rc));
       free_playback_handle(handle);
       return NULL;
    }
@@ -540,7 +540,7 @@ int alsa_playback_drain(audio_stream_playback_handle_t *handle) {
 
    int rc = snd_pcm_drain(handle->pcm);
    if (rc < 0) {
-      LOG_ERROR("ALSA playback: drain failed: %s", snd_strerror(rc));
+      OLOG_ERROR("ALSA playback: drain failed: %s", snd_strerror(rc));
       return alsa_error_to_audio_error(rc);
    }
 
@@ -549,7 +549,7 @@ int alsa_playback_drain(audio_stream_playback_handle_t *handle) {
     * and cannot accept writes until snd_pcm_prepare() is called. */
    rc = snd_pcm_prepare(handle->pcm);
    if (rc < 0) {
-      LOG_ERROR("ALSA playback: prepare after drain failed: %s", snd_strerror(rc));
+      OLOG_ERROR("ALSA playback: prepare after drain failed: %s", snd_strerror(rc));
       return alsa_error_to_audio_error(rc);
    }
 
@@ -563,7 +563,7 @@ int alsa_playback_drop(audio_stream_playback_handle_t *handle) {
 
    int rc = snd_pcm_drop(handle->pcm);
    if (rc < 0) {
-      LOG_ERROR("ALSA playback: drop failed: %s", snd_strerror(rc));
+      OLOG_ERROR("ALSA playback: drop failed: %s", snd_strerror(rc));
       return alsa_error_to_audio_error(rc);
    }
 
@@ -580,16 +580,16 @@ int alsa_playback_recover(audio_stream_playback_handle_t *handle, int err) {
 
    if (err == AUDIO_ERR_UNDERRUN) {
       /* Underrun */
-      LOG_WARNING("ALSA playback: underrun, recovering");
+      OLOG_WARNING("ALSA playback: underrun, recovering");
       int rc = snd_pcm_prepare(handle->pcm);
       if (rc < 0) {
-         LOG_ERROR("ALSA playback: prepare failed: %s", snd_strerror(rc));
+         OLOG_ERROR("ALSA playback: prepare failed: %s", snd_strerror(rc));
          return alsa_error_to_audio_error(rc);
       }
       return AUDIO_SUCCESS;
    } else if (err == AUDIO_ERR_SUSPENDED) {
       /* Suspended */
-      LOG_WARNING("ALSA playback: suspended, resuming");
+      OLOG_WARNING("ALSA playback: suspended, resuming");
       int rc;
       while ((rc = snd_pcm_resume(handle->pcm)) == -EAGAIN) {
          usleep(100000); /* 100ms */
@@ -597,7 +597,7 @@ int alsa_playback_recover(audio_stream_playback_handle_t *handle, int err) {
       if (rc < 0) {
          rc = snd_pcm_prepare(handle->pcm);
          if (rc < 0) {
-            LOG_ERROR("ALSA playback: prepare after suspend failed: %s", snd_strerror(rc));
+            OLOG_ERROR("ALSA playback: prepare after suspend failed: %s", snd_strerror(rc));
             return alsa_error_to_audio_error(rc);
          }
       }
@@ -617,12 +617,12 @@ void alsa_playback_close(audio_stream_playback_handle_t *handle) {
       if (handle->drain_on_close) {
          int rc = snd_pcm_drain(handle->pcm);
          if (rc < 0) {
-            LOG_WARNING("ALSA playback: drain on close failed: %s", snd_strerror(rc));
+            OLOG_WARNING("ALSA playback: drain on close failed: %s", snd_strerror(rc));
          }
       }
       snd_pcm_close(handle->pcm);
    }
 
    free_playback_handle(handle);
-   LOG_INFO("ALSA playback closed");
+   OLOG_INFO("ALSA playback closed");
 }

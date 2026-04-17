@@ -194,7 +194,7 @@ static bool ha_tool_is_available(void) {
 static int ha_tool_init(void) {
    const char *token = tool_registry_get_secret("home_assistant", "home_assistant_token");
    if (!s_config.url[0] || !token) {
-      LOG_INFO("Home Assistant tool: Not configured (url or token missing)");
+      OLOG_INFO("Home Assistant tool: Not configured (url or token missing)");
       return 0; /* Not configured, not an error */
    }
    return homeassistant_init(s_config.url, token) == HA_OK ? 0 : 1;
@@ -208,8 +208,8 @@ int homeassistant_tool_update_config(const char *url, int enabled, int led_hue_c
    if (url) {
       /* Validate URL scheme (SSRF prevention) */
       if (strncmp(url, "http://", 7) != 0 && strncmp(url, "https://", 8) != 0) {
-         LOG_ERROR("Home Assistant: Invalid URL scheme (must be http:// or https://): %.32s...",
-                   url);
+         OLOG_ERROR("Home Assistant: Invalid URL scheme (must be http:// or https://): %.32s...",
+                    url);
          return 1;
       }
       strncpy(s_config.url, url, sizeof(s_config.url) - 1);
@@ -235,11 +235,11 @@ int homeassistant_tool_update_config(const char *url, int enabled, int led_hue_c
 
    int result = 0;
    if (!s_config.enabled || !s_config.url[0]) {
-      LOG_INFO("Home Assistant: Disabled or URL not configured");
+      OLOG_INFO("Home Assistant: Disabled or URL not configured");
    } else {
       const char *token = tool_registry_get_secret("home_assistant", "home_assistant_token");
       if (!token) {
-         LOG_INFO("Home Assistant: Token not configured");
+         OLOG_INFO("Home Assistant: Token not configured");
       } else {
          result = homeassistant_init(s_config.url, token) == HA_OK ? 0 : 1;
       }

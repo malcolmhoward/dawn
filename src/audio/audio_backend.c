@@ -242,15 +242,15 @@ int audio_backend_init(audio_backend_type_t type) {
    pthread_mutex_lock(&g_init_mutex);
 
    if (g_backend_initialized) {
-      LOG_WARNING("Audio backend already initialized (type=%s)",
-                  audio_backend_type_name(g_backend_type));
+      OLOG_WARNING("Audio backend already initialized (type=%s)",
+                   audio_backend_type_name(g_backend_type));
       pthread_mutex_unlock(&g_init_mutex);
       return AUDIO_SUCCESS;
    }
 
-   LOG_INFO("Audio backend detection: ALSA=%s, PulseAudio=%s",
-            g_alsa_available ? "available" : "not found",
-            g_pulse_available ? "available" : "not found");
+   OLOG_INFO("Audio backend detection: ALSA=%s, PulseAudio=%s",
+             g_alsa_available ? "available" : "not found",
+             g_pulse_available ? "available" : "not found");
 
    audio_backend_type_t selected = type;
 
@@ -260,15 +260,15 @@ int audio_backend_init(audio_backend_type_t type) {
       /* But if PulseAudio is running, use it for desktop integration */
       if (g_pulse_available && detect_pulse_running()) {
          selected = AUDIO_BACKEND_PULSE;
-         LOG_INFO("Auto-detected: PulseAudio (daemon running)");
+         OLOG_INFO("Auto-detected: PulseAudio (daemon running)");
       } else if (g_alsa_available) {
          selected = AUDIO_BACKEND_ALSA;
-         LOG_INFO("Auto-detected: ALSA (direct hardware access)");
+         OLOG_INFO("Auto-detected: ALSA (direct hardware access)");
       } else if (g_pulse_available) {
          selected = AUDIO_BACKEND_PULSE;
-         LOG_INFO("Auto-detected: PulseAudio (fallback)");
+         OLOG_INFO("Auto-detected: PulseAudio (fallback)");
       } else {
-         LOG_ERROR("No audio backend available");
+         OLOG_ERROR("No audio backend available");
          result = AUDIO_ERR_NO_DEVICE;
          goto done;
       }
@@ -276,12 +276,12 @@ int audio_backend_init(audio_backend_type_t type) {
 
    /* Validate selected backend */
    if (selected == AUDIO_BACKEND_ALSA && !g_alsa_available) {
-      LOG_ERROR("ALSA backend requested but not available");
+      OLOG_ERROR("ALSA backend requested but not available");
       result = AUDIO_ERR_NO_DEVICE;
       goto done;
    }
    if (selected == AUDIO_BACKEND_PULSE && !g_pulse_available) {
-      LOG_ERROR("PulseAudio backend requested but not available");
+      OLOG_ERROR("PulseAudio backend requested but not available");
       result = AUDIO_ERR_NO_DEVICE;
       goto done;
    }
@@ -298,7 +298,7 @@ int audio_backend_init(audio_backend_type_t type) {
          g_vtable = NULL;
          break;
       default:
-         LOG_ERROR("Unknown backend type: %d", selected);
+         OLOG_ERROR("Unknown backend type: %d", selected);
          result = AUDIO_ERR_INVALID;
          goto done;
    }
@@ -306,7 +306,7 @@ int audio_backend_init(audio_backend_type_t type) {
    g_backend_type = selected;
    g_backend_initialized = true;
 
-   LOG_INFO("Audio backend initialized: %s", audio_backend_type_name(g_backend_type));
+   OLOG_INFO("Audio backend initialized: %s", audio_backend_type_name(g_backend_type));
 
 done:
    pthread_mutex_unlock(&g_init_mutex);
@@ -325,7 +325,7 @@ void audio_backend_cleanup(void) {
    g_backend_type = AUDIO_BACKEND_NONE;
    g_backend_initialized = false;
 
-   LOG_INFO("Audio backend cleaned up");
+   OLOG_INFO("Audio backend cleaned up");
 
    pthread_mutex_unlock(&g_init_mutex);
 }
@@ -364,7 +364,7 @@ audio_backend_type_t audio_backend_parse_type(const char *name) {
       return AUDIO_BACKEND_NONE;
    }
 
-   LOG_WARNING("Unknown audio backend '%s', defaulting to auto", name);
+   OLOG_WARNING("Unknown audio backend '%s', defaulting to auto", name);
    return AUDIO_BACKEND_AUTO;
 }
 
@@ -391,11 +391,11 @@ audio_stream_capture_handle_t *audio_stream_capture_open(const char *device,
                                                          const audio_stream_params_t *params,
                                                          audio_hw_params_t *hw_params) {
    if (!g_backend_initialized) {
-      LOG_ERROR("Audio backend not initialized");
+      OLOG_ERROR("Audio backend not initialized");
       return NULL;
    }
    if (!g_vtable || !g_vtable->capture_open) {
-      LOG_ERROR("Capture not supported by backend");
+      OLOG_ERROR("Capture not supported by backend");
       return NULL;
    }
 
@@ -446,11 +446,11 @@ audio_stream_playback_handle_t *audio_stream_playback_open(const char *device,
                                                            const audio_stream_params_t *params,
                                                            audio_hw_params_t *hw_params) {
    if (!g_backend_initialized) {
-      LOG_ERROR("Audio backend not initialized");
+      OLOG_ERROR("Audio backend not initialized");
       return NULL;
    }
    if (!g_vtable || !g_vtable->playback_open) {
-      LOG_ERROR("Playback not supported by backend");
+      OLOG_ERROR("Playback not supported by backend");
       return NULL;
    }
 

@@ -66,7 +66,7 @@ static bool router_initialized = false;
 
 int command_router_init(void) {
    if (router_initialized) {
-      LOG_WARNING("Command router already initialized");
+      OLOG_WARNING("Command router already initialized");
       return 0;
    }
 
@@ -84,13 +84,13 @@ int command_router_init(void) {
       req->timed_out = false;
 
       if (pthread_mutex_init(&req->mutex, NULL) != 0) {
-         LOG_ERROR("Command router: Failed to init mutex for slot %d", i);
+         OLOG_ERROR("Command router: Failed to init mutex for slot %d", i);
          pthread_mutex_unlock(&registry_mutex);
          return 1;
       }
 
       if (pthread_cond_init(&req->result_ready, NULL) != 0) {
-         LOG_ERROR("Command router: Failed to init cond for slot %d", i);
+         OLOG_ERROR("Command router: Failed to init cond for slot %d", i);
          pthread_mutex_destroy(&req->mutex);
          pthread_mutex_unlock(&registry_mutex);
          return 1;
@@ -100,7 +100,7 @@ int command_router_init(void) {
    router_initialized = true;
    pthread_mutex_unlock(&registry_mutex);
 
-   LOG_INFO("Command router initialized with %d slots", MAX_PENDING_REQUESTS);
+   OLOG_INFO("Command router initialized with %d slots", MAX_PENDING_REQUESTS);
    return 0;
 }
 
@@ -135,7 +135,7 @@ void command_router_shutdown(void) {
    router_initialized = false;
    pthread_mutex_unlock(&registry_mutex);
 
-   LOG_INFO("Command router shutdown complete");
+   OLOG_INFO("Command router shutdown complete");
 }
 
 // =============================================================================
@@ -144,7 +144,7 @@ void command_router_shutdown(void) {
 
 pending_request_t *command_router_register(int worker_id) {
    if (!router_initialized) {
-      LOG_ERROR("Command router not initialized");
+      OLOG_ERROR("Command router not initialized");
       return NULL;
    }
 
@@ -161,7 +161,7 @@ pending_request_t *command_router_register(int worker_id) {
 
    if (!req) {
       pthread_mutex_unlock(&registry_mutex);
-      LOG_WARNING("Command router: Registry full, cannot register request");
+      OLOG_WARNING("Command router: Registry full, cannot register request");
       return NULL;
    }
 
@@ -179,7 +179,7 @@ pending_request_t *command_router_register(int worker_id) {
 
    pthread_mutex_unlock(&registry_mutex);
 
-   LOG_INFO("Command router: Registered request %s", req->request_id);
+   OLOG_INFO("Command router: Registered request %s", req->request_id);
    return req;
 }
 
@@ -214,11 +214,11 @@ char *command_router_wait(pending_request_t *req, int timeout_ms) {
       int rc = pthread_cond_timedwait(&req->result_ready, &req->mutex, &abstime);
       if (rc == ETIMEDOUT) {
          req->timed_out = true;
-         LOG_WARNING("Command router: Request %s timed out after %dms", req->request_id,
-                     timeout_ms);
+         OLOG_WARNING("Command router: Request %s timed out after %dms", req->request_id,
+                      timeout_ms);
          break;
       } else if (rc != 0 && rc != EINTR) {
-         LOG_ERROR("Command router: pthread_cond_timedwait failed: %d", rc);
+         OLOG_ERROR("Command router: pthread_cond_timedwait failed: %d", rc);
          req->timed_out = true;
          break;
       }
@@ -228,7 +228,7 @@ char *command_router_wait(pending_request_t *req, int timeout_ms) {
    if (req->completed && req->result) {
       result = req->result;
       req->result = NULL;  // Transfer ownership to caller
-      LOG_INFO("Command router: Request %s completed with result", req->request_id);
+      OLOG_INFO("Command router: Request %s completed with result", req->request_id);
    }
 
    pthread_mutex_unlock(&req->mutex);
@@ -266,7 +266,7 @@ void command_router_cancel(pending_request_t *req) {
    memset(req->request_id, 0, sizeof(req->request_id));
    pthread_mutex_unlock(&registry_mutex);
 
-   LOG_INFO("Command router: Request cancelled");
+   OLOG_INFO("Command router: Request cancelled");
 }
 
 void command_router_cancel_all_for_worker(int worker_id) {
@@ -296,7 +296,7 @@ void command_router_cancel_all_for_worker(int worker_id) {
          req->worker_id = -1;
          memset(req->request_id, 0, sizeof(req->request_id));
 
-         LOG_INFO("Command router: Cancelled request for worker %d", worker_id);
+         OLOG_INFO("Command router: Cancelled request for worker %d", worker_id);
       }
    }
 
@@ -327,7 +327,7 @@ bool command_router_deliver(const char *request_id, const char *result) {
 
    if (!req) {
       pthread_mutex_unlock(&registry_mutex);
-      LOG_WARNING("Command router: Request %s not found (timed out or never existed)", request_id);
+      OLOG_WARNING("Command router: Request %s not found (timed out or never existed)", request_id);
       return false;
    }
 
@@ -340,15 +340,15 @@ bool command_router_deliver(const char *request_id, const char *result) {
       if (result) {
          req->result = strdup(result);
          if (!req->result) {
-            LOG_ERROR("Command router: Failed to strdup result");
+            OLOG_ERROR("Command router: Failed to strdup result");
          }
       }
       req->completed = true;
       pthread_cond_signal(&req->result_ready);
-      LOG_INFO("Command router: Delivered result for request %s", request_id);
+      OLOG_INFO("Command router: Delivered result for request %s", request_id);
    } else {
       // Worker already timed out, discard result
-      LOG_WARNING("Command router: Request %s already timed out, discarding result", request_id);
+      OLOG_WARNING("Command router: Request %s already timed out, discarding result", request_id);
    }
 
    pthread_mutex_unlock(&req->mutex);

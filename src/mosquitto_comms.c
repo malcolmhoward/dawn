@@ -98,11 +98,11 @@ static void executeJsonCommand(struct json_object *parsedJson, struct mosquitto 
       // Extract the text value as a C string
       deviceName = json_object_get_string(deviceObject);
       if (deviceName == NULL) {
-         LOG_ERROR("Error: Unable to get device name from json command.");
+         OLOG_ERROR("Error: Unable to get device name from json command.");
          return;
       }
    } else {
-      LOG_ERROR("Error: 'device' field not found in JSON.");
+      OLOG_ERROR("Error: 'device' field not found in JSON.");
       return;
    }
 
@@ -111,11 +111,11 @@ static void executeJsonCommand(struct json_object *parsedJson, struct mosquitto 
       // Extract the text value as a C string
       actionName = json_object_get_string(actionObject);
       if (actionName == NULL) {
-         LOG_ERROR("Error: Unable to get action name from json command.");
+         OLOG_ERROR("Error: Unable to get action name from json command.");
          return;
       }
    } else {
-      LOG_ERROR("Error: 'action' field not found in JSON.");
+      OLOG_ERROR("Error: 'action' field not found in JSON.");
       return;
    }
 
@@ -124,7 +124,7 @@ static void executeJsonCommand(struct json_object *parsedJson, struct mosquitto 
       // Extract the text value as a C string
       value = json_object_get_string(valueObject);
       if (value == NULL) {
-         LOG_WARNING("Notice: Unable to get value name from json command.");
+         OLOG_WARNING("Notice: Unable to get value name from json command.");
       }
    }
 
@@ -168,8 +168,8 @@ static void executeJsonCommand(struct json_object *parsedJson, struct mosquitto 
       }
    }
 
-   LOG_INFO("Command result for AI: %s",
-            pending_command_result ? pending_command_result : "(null)");
+   OLOG_INFO("Command result for AI: %s",
+             pending_command_result ? pending_command_result : "(null)");
 
    // Log device callback data to TUI for debugging (sanitized for display)
    if (pending_command_result) {
@@ -220,11 +220,11 @@ static void executeJsonCommand(struct json_object *parsedJson, struct mosquitto 
    response_text = llm_chat_completion(conversation_history, gpt_response, NULL, NULL, 0, true);
    if (response_text != NULL) {
       // AI returned successfully, vocalize response.
-      LOG_WARNING("AI: %s\n", response_text);
+      OLOG_WARNING("AI: %s\n", response_text);
       char *match = NULL;
       if ((match = strstr(response_text, "<end_of_turn>")) != NULL) {
          *match = '\0';
-         LOG_INFO("AI: %s\n", response_text);
+         OLOG_INFO("AI: %s\n", response_text);
       }
 
       // Process any commands in the LLM follow-up response (chained commands)
@@ -232,7 +232,7 @@ static void executeJsonCommand(struct json_object *parsedJson, struct mosquitto 
           command_processing_mode == CMD_MODE_DIRECT_FIRST) {
          int cmds_processed = parse_llm_response_for_commands(response_text, mosq);
          if (cmds_processed > 0) {
-            LOG_INFO("Processed %d chained commands from LLM follow-up", cmds_processed);
+            OLOG_INFO("Processed %d chained commands from LLM follow-up", cmds_processed);
          }
       }
 
@@ -294,7 +294,7 @@ static void executeJsonCommand(struct json_object *parsedJson, struct mosquitto 
       response_text = NULL;
    } else {
       // Error on AI response
-      LOG_ERROR("GPT error.\n");
+      OLOG_ERROR("GPT error.\n");
       text_to_speech("I'm sorry but I'm currently unavailable boss.");
    }
    free(pending_command_result);
@@ -324,8 +324,8 @@ void parseJsonCommandandExecute(const char *input, struct mosquitto *mosq) {
       } else {
          strncpy(preview, input, len + 1);
       }
-      LOG_ERROR("Unable to parse MQTT JSON command. Payload preview: %.200s%s", preview,
-                len > 200 ? "..." : "");
+      OLOG_ERROR("Unable to parse MQTT JSON command. Payload preview: %.200s%s", preview,
+                 len > 200 ? "..." : "");
       return;
    }
 
@@ -338,10 +338,10 @@ void parseJsonCommandandExecute(const char *input, struct mosquitto *mosq) {
 void on_connect(struct mosquitto *mosq, void *obj, int reason_code) {
    int rc;
 
-   LOG_INFO("MQTT Connecting.");
+   OLOG_INFO("MQTT Connecting.");
 
    if (reason_code != 0) {
-      LOG_WARNING("MQTT disconnecting?");
+      OLOG_WARNING("MQTT disconnecting?");
       mosquitto_disconnect(mosq);
       return;
    }
@@ -349,14 +349,14 @@ void on_connect(struct mosquitto *mosq, void *obj, int reason_code) {
    // Subscribe in the on_connect callback
    rc = mosquitto_subscribe(mosq, NULL, APPLICATION_NAME, 0);
    if (rc != MOSQ_ERR_SUCCESS) {
-      LOG_ERROR("Error on mosquitto_subscribe(): %s", mosquitto_strerror(rc));
+      OLOG_ERROR("Error on mosquitto_subscribe(): %s", mosquitto_strerror(rc));
    } else {
-      LOG_INFO("Subscribed to \"%s\" MQTT.", APPLICATION_NAME);
+      OLOG_INFO("Subscribed to \"%s\" MQTT.", APPLICATION_NAME);
    }
 
    /* Initialize component status (subscribes to hud/status, publishes dawn/status) */
    if (component_status_init(mosq) != 0) {
-      LOG_WARNING("Component status initialization failed");
+      OLOG_WARNING("Component status initialization failed");
    }
 
    /* Subscribe to ECHO modem topics for phone service */
@@ -364,12 +364,12 @@ void on_connect(struct mosquitto *mosq, void *obj, int reason_code) {
    mosquitto_subscribe(mosq, NULL, "echo/events", 1);
    mosquitto_subscribe(mosq, NULL, "echo/response", 1);
    mosquitto_subscribe(mosq, NULL, "echo/status", 1);
-   LOG_INFO("Subscribed to echo/events, echo/response, echo/status");
+   OLOG_INFO("Subscribed to echo/events, echo/response, echo/status");
 #endif
 
    /* Initialize HUD discovery (subscribes to hud/discovery/# and requests state) */
    if (hud_discovery_init(mosq) != 0) {
-      LOG_WARNING("HUD discovery initialization failed - using defaults");
+      OLOG_WARNING("HUD discovery initialization failed - using defaults");
    }
 }
 
@@ -382,7 +382,7 @@ void on_subscribe(struct mosquitto *mosq,
    int i;
    bool have_subscription = false;
 
-   LOG_INFO("MQTT subscribed.");
+   OLOG_INFO("MQTT subscribed.");
 
    for (i = 0; i < qos_count; i++) {
       if (granted_qos[i] <= 2) {
@@ -390,7 +390,7 @@ void on_subscribe(struct mosquitto *mosq,
       }
    }
    if (have_subscription == false) {
-      LOG_ERROR("Error: All subscriptions rejected.");
+      OLOG_ERROR("Error: All subscriptions rejected.");
       mosquitto_disconnect(mosq);
    }
 }
@@ -429,7 +429,7 @@ static void execute_command_for_worker(struct json_object *parsed_json, const ch
 
    // Get the "device" object from the JSON
    if (!json_object_object_get_ex(parsed_json, "device", &deviceObject)) {
-      LOG_ERROR("Worker command missing 'device' field");
+      OLOG_ERROR("Worker command missing 'device' field");
       command_router_deliver(request_id, "");
       return;
    }
@@ -437,7 +437,7 @@ static void execute_command_for_worker(struct json_object *parsed_json, const ch
 
    // Get the "action" object from the JSON
    if (!json_object_object_get_ex(parsed_json, "action", &actionObject)) {
-      LOG_ERROR("Worker command missing 'action' field");
+      OLOG_ERROR("Worker command missing 'action' field");
       command_router_deliver(request_id, "");
       return;
    }
@@ -448,8 +448,8 @@ static void execute_command_for_worker(struct json_object *parsed_json, const ch
       value = json_object_get_string(valueObject);
    }
 
-   LOG_INFO("Executing command for worker: device=%s, action=%s, request_id=%s", deviceName,
-            actionName, request_id);
+   OLOG_INFO("Executing command for worker: device=%s, action=%s, request_id=%s", deviceName,
+             actionName, request_id);
 
    /* OCP: Check status field for error responses */
    struct json_object *status_obj = NULL;
@@ -473,7 +473,7 @@ static void execute_command_for_worker(struct json_object *parsed_json, const ch
             }
          }
 
-         LOG_ERROR("OCP error response from %s: [%s] %s", deviceName, error_code, error_message);
+         OLOG_ERROR("OCP error response from %s: [%s] %s", deviceName, error_code, error_message);
 
          /* Deliver error to waiting worker with formatted error string */
          char error_result[512];
@@ -507,12 +507,12 @@ static void execute_command_for_worker(struct json_object *parsed_json, const ch
 
                /* OCP v1.1: Validate checksum - fail-closed policy */
                if (!ocp_validate_inline_checksum(base64_content, encoding, checksum)) {
-                  LOG_ERROR("OCP: Rejecting viewing response due to checksum mismatch");
+                  OLOG_ERROR("OCP: Rejecting viewing response due to checksum mismatch");
                   command_router_deliver(request_id, "");
                   return;
                }
 
-               LOG_INFO("Viewing response contains inline data, delivering directly");
+               OLOG_INFO("Viewing response contains inline data, delivering directly");
                command_router_deliver(request_id, base64_content);
                return;
             }
@@ -527,13 +527,13 @@ static void execute_command_for_worker(struct json_object *parsed_json, const ch
             const char *checksum = json_object_get_string(checksum_obj);
             /* Validate checksum - fail-closed policy, no path restriction for viewing */
             if (!ocp_validate_file_checksum(value, checksum, NULL)) {
-               LOG_ERROR("OCP: Rejecting viewing response due to file checksum mismatch");
+               OLOG_ERROR("OCP: Rejecting viewing response due to file checksum mismatch");
                command_router_deliver(request_id, "");
                return;
             }
          }
       }
-      LOG_INFO("Viewing response using file path: %s", value ? value : "(null)");
+      OLOG_INFO("Viewing response using file path: %s", value ? value : "(null)");
    }
 
    // Get session_id if present (for per-session LLM config)
@@ -566,11 +566,11 @@ static void execute_command_for_worker(struct json_object *parsed_json, const ch
    // Deliver result to waiting worker
    if (callback_result && should_respond) {
       command_router_deliver(request_id, callback_result);
-      LOG_INFO("Delivered result to worker: %s", callback_result);
+      OLOG_INFO("Delivered result to worker: %s", callback_result);
    } else {
       // Command executed but no data returned
       command_router_deliver(request_id, "");
-      LOG_INFO("Delivered empty result to worker (command executed, no data)");
+      OLOG_INFO("Delivered empty result to worker (command executed, no data)");
    }
 
    // Free callback result (callbacks return heap-allocated strings)
@@ -581,7 +581,7 @@ static void execute_command_for_worker(struct json_object *parsed_json, const ch
 
 /* Callback called when the client receives a message. */
 void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_message *msg) {
-   LOG_INFO("%s %d %s", msg->topic, msg->qos, (char *)msg->payload);
+   OLOG_INFO("%s %d %s", msg->topic, msg->qos, (char *)msg->payload);
 
    /* Check for component status messages (hud/status) */
    if (strcmp(msg->topic, STATUS_TOPIC_HUD) == 0) {
@@ -627,7 +627,7 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
    // Parse the JSON to check for request_id
    struct json_object *parsed_json = json_tokener_parse((char *)msg->payload);
    if (parsed_json == NULL) {
-      LOG_ERROR("Failed to parse MQTT message as JSON");
+      OLOG_ERROR("Failed to parse MQTT message as JSON");
       return;
    }
 

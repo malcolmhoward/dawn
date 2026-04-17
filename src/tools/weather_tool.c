@@ -121,22 +121,22 @@ static char *weather_tool_callback(const char *action, char *value, int *should_
    if (value == NULL || strlen(value) == 0) {
       if (g_config.localization.location[0] != '\0') {
          location = g_config.localization.location;
-         LOG_INFO("weather_tool_callback: Using default location from config: %s", location);
+         OLOG_INFO("weather_tool_callback: Using default location from config: %s", location);
       } else {
-         LOG_WARNING("weather_tool_callback: No location provided and no default configured");
+         OLOG_WARNING("weather_tool_callback: No location provided and no default configured");
          return strdup("Please specify a location for the weather request.");
       }
    }
 
-   LOG_INFO("weather_tool_callback: Fetching %s weather for '%s'",
-            forecast == FORECAST_WEEK ? "week"
-                                      : (forecast == FORECAST_TOMORROW ? "tomorrow" : "today"),
-            location);
+   OLOG_INFO("weather_tool_callback: Fetching %s weather for '%s'",
+             forecast == FORECAST_WEEK ? "week"
+                                       : (forecast == FORECAST_TOMORROW ? "tomorrow" : "today"),
+             location);
 
    weather_response_t *response = weather_get(location, forecast);
    if (response) {
       if (response->error) {
-         LOG_ERROR("weather_tool_callback: Weather error: %s", response->error);
+         OLOG_ERROR("weather_tool_callback: Weather error: %s", response->error);
          char *result = malloc(256);
          if (result) {
             snprintf(result, 256, "Weather lookup failed: %s", response->error);
@@ -149,14 +149,14 @@ static char *weather_tool_callback(const char *action, char *value, int *should_
       if (result) {
          int formatted_len = weather_format_for_llm(response, result, WEATHER_RESULT_BUFFER_SIZE);
          if (formatted_len < 0 || (size_t)formatted_len >= WEATHER_RESULT_BUFFER_SIZE) {
-            LOG_ERROR("weather_tool_callback: Weather data truncated (needed %d bytes, have %d)",
-                      formatted_len, WEATHER_RESULT_BUFFER_SIZE);
+            OLOG_ERROR("weather_tool_callback: Weather data truncated (needed %d bytes, have %d)",
+                       formatted_len, WEATHER_RESULT_BUFFER_SIZE);
             free(result);
             weather_free_response(response);
             return strdup("Weather data too large to format.");
          }
-         LOG_INFO("weather_tool_callback: Weather data retrieved successfully (%d bytes)",
-                  formatted_len);
+         OLOG_INFO("weather_tool_callback: Weather data retrieved successfully (%d bytes)",
+                   formatted_len);
       }
       weather_free_response(response);
       return result ? result : strdup("Failed to format weather data.");

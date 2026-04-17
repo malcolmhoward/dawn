@@ -121,7 +121,7 @@ int embedding_engine_init(void) {
 
    /* Empty or disabled */
    if (!provider_name || provider_name[0] == '\0') {
-      LOG_INFO("embedding_engine: disabled (no provider configured)");
+      OLOG_INFO("embedding_engine: disabled (no provider configured)");
       return 0;
    }
 
@@ -133,7 +133,7 @@ int embedding_engine_init(void) {
    } else if (strcmp(provider_name, "openai") == 0) {
       s_provider = &embedding_provider_openai;
    } else {
-      LOG_WARNING("embedding_engine: unknown provider '%s', disabling", provider_name);
+      OLOG_WARNING("embedding_engine: unknown provider '%s', disabling", provider_name);
       return 0;
    }
 
@@ -147,7 +147,7 @@ int embedding_engine_init(void) {
    int rc = s_provider->init(g_config.memory.embedding_endpoint, g_config.memory.embedding_model,
                              api_key);
    if (rc != 0) {
-      LOG_WARNING("embedding_engine: provider '%s' init failed", provider_name);
+      OLOG_WARNING("embedding_engine: provider '%s' init failed", provider_name);
       s_provider = NULL;
       return rc;
    }
@@ -157,14 +157,14 @@ int embedding_engine_init(void) {
    int dims = 0;
    rc = s_provider->embed("test", test_buf, EMBEDDING_MAX_DIMS, &dims);
    if (rc != 0 || dims <= 0) {
-      LOG_WARNING("embedding_engine: dimension probe failed, disabling");
+      OLOG_WARNING("embedding_engine: dimension probe failed, disabling");
       s_provider->cleanup();
       s_provider = NULL;
       return -1;
    }
 
    s_dims = dims;
-   LOG_INFO("embedding_engine: initialized provider '%s' (%d dimensions)", provider_name, dims);
+   OLOG_INFO("embedding_engine: initialized provider '%s' (%d dimensions)", provider_name, dims);
 
    return 0;
 }

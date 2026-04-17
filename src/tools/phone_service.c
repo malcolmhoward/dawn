@@ -272,7 +272,7 @@ static int publish_echo_cmd(const char *action,
                             const char *data_json) {
    struct mosquitto *mosq = worker_pool_get_mosq();
    if (!mosq) {
-      LOG_ERROR("phone_service: no MQTT connection");
+      OLOG_ERROR("phone_service: no MQTT connection");
       return 1;
    }
 
@@ -299,7 +299,7 @@ static int publish_echo_cmd(const char *action,
    json_object_put(cmd);
 
    if (rc != MOSQ_ERR_SUCCESS) {
-      LOG_ERROR("phone_service: echo/cmd publish failed: %s", mosquitto_strerror(rc));
+      OLOG_ERROR("phone_service: echo/cmd publish failed: %s", mosquitto_strerror(rc));
       return 1;
    }
 
@@ -544,8 +544,8 @@ void phone_service_handle_event(const char *payload, int payload_len) {
       }
       publish_hud("incoming_call", hud);
 
-      LOG_INFO("phone_service: incoming call from %s (%s)", number,
-               contact_name[0] ? contact_name : "unknown");
+      OLOG_INFO("phone_service: incoming call from %s (%s)", number,
+                contact_name[0] ? contact_name : "unknown");
    }
 
    /* --- ring (subsequent rings while ringing) --- */
@@ -596,7 +596,7 @@ void phone_service_handle_event(const char *payload, int payload_len) {
          inject_local_context(ctx);
       }
 
-      LOG_INFO("phone_service: call connected");
+      OLOG_INFO("phone_service: call connected");
    }
 
    /* --- call_ended --- */
@@ -648,7 +648,7 @@ void phone_service_handle_event(const char *payload, int payload_len) {
          inject_local_context(ctx);
       }
 
-      LOG_INFO("phone_service: call ended (duration=%ds, reason=%s)", duration, reason);
+      OLOG_INFO("phone_service: call ended (duration=%ds, reason=%s)", duration, reason);
    }
 
    /* --- sms_received --- */
@@ -728,15 +728,15 @@ void phone_service_handle_event(const char *payload, int payload_len) {
          inject_local_context(ctx);
       }
 
-      LOG_INFO("phone_service: SMS from %s (%s): %zu bytes", sender,
-               contact_name[0] ? contact_name : "unknown", body_len);
+      OLOG_INFO("phone_service: SMS from %s (%s): %zu bytes", sender,
+                contact_name[0] ? contact_name : "unknown", body_len);
 
       /* Delete from SIM after all processing (fire-and-forget — SMS is already in DB) */
       if (sms_id >= 0 && sms_index >= 0) {
          char idx_str[8];
          snprintf(idx_str, sizeof(idx_str), "%d", sms_index);
          if (publish_echo_cmd("delete_sms", idx_str, "fire_and_forget", NULL) != 0) {
-            LOG_WARNING("phone_service: failed to send delete_sms for index %d", sms_index);
+            OLOG_WARNING("phone_service: failed to send delete_sms for index %d", sms_index);
          }
       }
    }
@@ -757,7 +757,7 @@ void phone_service_handle_event(const char *payload, int payload_len) {
          s_active_contact[0] = '\0';
       }
       pthread_mutex_unlock(&s_state_mutex);
-      LOG_WARNING("phone_service: modem lost");
+      OLOG_WARNING("phone_service: modem lost");
    }
 
    /* --- modem_reconnected --- */
@@ -765,7 +765,7 @@ void phone_service_handle_event(const char *payload, int payload_len) {
       pthread_mutex_lock(&s_state_mutex);
       s_echo_online = true;
       pthread_mutex_unlock(&s_state_mutex);
-      LOG_INFO("phone_service: modem reconnected");
+      OLOG_INFO("phone_service: modem reconnected");
    }
 
    json_object_put(root);
@@ -1090,13 +1090,13 @@ int phone_service_init(void) {
    /* MQTT subscriptions for echo/events, echo/response, echo/status are done
     * in mosquitto_comms.c on_connect callback (tool init runs before MQTT connects) */
    s_echo_online = true; /* assume online until status says otherwise */
-   LOG_INFO("phone_service: initialized");
+   OLOG_INFO("phone_service: initialized");
    return 0;
 }
 
 void phone_service_shutdown(void) {
    set_state(PHONE_STATE_IDLE);
-   LOG_INFO("phone_service: shutdown");
+   OLOG_INFO("phone_service: shutdown");
 }
 
 bool phone_service_available(void) {
