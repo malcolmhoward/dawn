@@ -41,6 +41,8 @@ source "$LIB_DIR/services.sh"
 source "$LIB_DIR/verify.sh"
 # shellcheck source=lib/uninstall.sh
 source "$LIB_DIR/uninstall.sh"
+# shellcheck source=lib/satellite.sh
+source "$LIB_DIR/satellite.sh"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Default settings
@@ -60,7 +62,9 @@ INSTALL_ADMIN_PASS=""
 SETTINGS_LOADED=false
 
 # User preferences (set via CLI, config file, or interactive prompts)
-INSTALL_TARGET="${INSTALL_TARGET:-server}"
+# Leave INSTALL_TARGET empty by default so main() can prompt in interactive
+# mode. --target, install.conf, and load_state all populate it explicitly.
+INSTALL_TARGET="${INSTALL_TARGET:-}"
 LLM_PROVIDER="${LLM_PROVIDER:-}"
 PRIMARY_PROVIDER="${PRIMARY_PROVIDER:-}"
 OPENAI_KEY="${OPENAI_KEY:-}"
@@ -84,10 +88,12 @@ DAWN Installation Script
 Usage: $(basename "$0") [OPTIONS]
 
 Options:
+  --target VALUE         Install target: server (default) or satellite (Raspberry Pi)
   --provider VALUE       LLM provider(s), comma-separated (openai,claude,gemini,local)
-  --whisper-model VALUE  Whisper model size (tiny, base, small)
-  --preset VALUE         Build preset (default, local, debug, server)
-  --features VALUE       Features, comma-separated or "all"
+                         [server only]
+  --whisper-model VALUE  Whisper model size (tiny, base, small)  [server only]
+  --preset VALUE         Build preset (default, local, debug, server)  [server only]
+  --features VALUE       Features, comma-separated or "all"  [server only]
                          (ssl,mqtt,searxng,flaresolverr,plex,homeassistant)
   --config FILE          Config file for unattended installation
   --unattended           Disable interactive prompts (use defaults)
@@ -101,11 +107,16 @@ Options:
   -h, --help             Show this help
 
 Phases (for --resume-from):
-  discovery, deps, libs, build, models, configure, apikeys, ssl, admin, services, verify
+  discovery, deps, libs, build, models, configure, apikeys, ssl, admin,
+  services, verify, deploy
+  (satellite skips apikeys, ssl, admin, services)
 
 Examples:
-  # Interactive install with defaults
+  # Interactive install with defaults (server/daemon)
   ./scripts/install.sh
+
+  # Install a Tier 1 satellite on Raspberry Pi
+  ./scripts/install.sh --target satellite
 
   # Unattended with Claude as primary provider
   ./scripts/install.sh --config scripts/install.conf.example
@@ -133,6 +144,13 @@ EOF
 parse_args() {
    while [ $# -gt 0 ]; do
       case "$1" in
+         --target)
+            case "$2" in
+               server | satellite) INSTALL_TARGET="$2" ;;
+               *) error "Invalid --target value: $2 (must be 'server' or 'satellite')" ;;
+            esac
+            shift 2
+            ;;
          --provider)
             LLM_PROVIDER="$2"
             PRIMARY_PROVIDER="${LLM_PROVIDER%%,*}"
@@ -636,6 +654,19 @@ run_deploy() {
          if [ -d "$PROJECT_ROOT/models" ]; then
             deploy_args+=(--models-dir "$PROJECT_ROOT/models")
          fi
+         # If run_configure_satellite has written a configured satellite.toml
+         # in the build tree, pass it to the service installer. Otherwise the
+         # installer falls back to the default template (which has
+         # host=localhost and engine=vosk — almost never what the user wants).
+         local configured_toml="$PROJECT_ROOT/dawn_satellite/build/satellite.toml"
+         if [ -f "$configured_toml" ]; then
+            deploy_args+=(--config "$configured_toml")
+         fi
+         # Pass through the daemon's ca.crt when SSL + verify are on.
+         # Service installer copies this to /etc/dawn/ca.crt.
+         if [ -n "${SAT_CA_CERT_SRC:-}" ] && [ -f "$SAT_CA_CERT_SRC" ]; then
+            deploy_args+=(--ca-cert "$SAT_CA_CERT_SRC")
+         fi
 
          log "Running: sudo $script ${deploy_args[*]}"
 
@@ -870,6 +901,7 @@ main() {
       SETTINGS_LOADED=false
    elif load_state; then
       echo -e "${BLUE}[INFO]${NC} Loaded settings from previous install (last phase: ${LAST_COMPLETED_PHASE:-none})"
+      echo -e "       Target: ${INSTALL_TARGET:-unset}"
       echo -e "       Provider: ${LLM_PROVIDER:-unset}, Whisper: ${WHISPER_MODEL:-unset}, Preset: ${BUILD_PRESET:-unset}"
       echo -e "       Features: ${FEATURES:-none}"
       echo ""
@@ -877,8 +909,13 @@ main() {
       if [ "$INTERACTIVE" = true ] && [ "${LAST_COMPLETED_PHASE:-}" = "verify" ]; then
          if ! ask_yes_no "Use these cached settings?"; then
             info "Re-entering installation options..."
-            # Clear loaded settings so present_choices will re-prompt
+            # Clear loaded settings so the target prompt + present_choices
+            # re-run. Using `unset ${!SAT_*}` means we don't have to keep
+            # this list in sync with save_state's SAT_* block manually.
+            INSTALL_TARGET=""
             LLM_PROVIDER="" PRIMARY_PROVIDER="" WHISPER_MODEL="" BUILD_PRESET="" FEATURES=""
+            # shellcheck disable=SC2086
+            unset ${!SAT_*}
             SETTINGS_LOADED=false
             rm -f "$STATE_FILE"
          fi
@@ -893,26 +930,63 @@ main() {
       warn "No state file found — running from $RESUME_FROM anyway"
    fi
 
+   # Resolve install target. Source of truth order:
+   #   1. --target CLI flag (set by parse_args)
+   #   2. INSTALL_TARGET from config file (loaded via --config)
+   #   3. INSTALL_TARGET from cached state (load_state)
+   #   4. Interactive prompt (if none of the above set it and --unattended is off)
+   #   5. Fall back to "server" in unattended mode
+   if [ -z "${INSTALL_TARGET:-}" ]; then
+      if [ "$INTERACTIVE" = true ]; then
+         echo ""
+         echo "Install target:"
+         echo "  server     Full DAWN daemon — LLM, WebUI, tools, MQTT. The main device."
+         echo "  satellite  Tier 1 voice satellite for Raspberry Pi. Connects to a running server."
+         echo ""
+         INSTALL_TARGET=$(ask_value "Target" "server")
+         case "$INSTALL_TARGET" in
+            server | satellite) ;;
+            *) error "Invalid target: $INSTALL_TARGET (must be 'server' or 'satellite')" ;;
+         esac
+         echo ""
+      else
+         INSTALL_TARGET="server"
+         info "No --target specified — defaulting to 'server'"
+      fi
+   fi
+
    # Phase 0: Discovery
    run_discovery
 
    # Interactive preferences (skip if settings already loaded from cache/config/CLI)
    if [ "$INTERACTIVE" = true ] && [ -z "$RESUME_FROM" ] && [ "$SETTINGS_LOADED" = false ]; then
-      present_choices
+      if [ "$INSTALL_TARGET" = "satellite" ]; then
+         run_satellite_discovery
+         present_satellite_choices
+      else
+         present_choices
+      fi
    fi
 
-   # Set defaults for any unset preferences
-   : "${LLM_PROVIDER:=claude}"
-   : "${PRIMARY_PROVIDER:=${LLM_PROVIDER%%,*}}"
-   : "${WHISPER_MODEL:=base}"
-   : "${BUILD_PRESET:=default}"
-   : "${FEATURES:=ssl,mqtt}"
+   # Set defaults for any unset preferences (server-only — satellite sets its
+   # own SAT_* defaults inside present_satellite_choices)
+   if [ "$INSTALL_TARGET" != "satellite" ]; then
+      : "${LLM_PROVIDER:=claude}"
+      : "${PRIMARY_PROVIDER:=${LLM_PROVIDER%%,*}}"
+      : "${WHISPER_MODEL:=base}"
+      : "${BUILD_PRESET:=default}"
+      : "${FEATURES:=ssl,mqtt}"
+   fi
 
    save_state "discovery"
 
    # Phase 1: System Dependencies
    if should_run_phase "deps"; then
-      run_deps
+      if [ "$INSTALL_TARGET" = "satellite" ]; then
+         run_deps_satellite
+      else
+         run_deps
+      fi
       save_state "deps"
    else
       info "Skipping Phase 1 (deps)"
@@ -920,7 +994,11 @@ main() {
 
    # Phase 2: Core Libraries
    if should_run_phase "libs"; then
-      run_libs
+      if [ "$INSTALL_TARGET" = "satellite" ]; then
+         run_libs_satellite
+      else
+         run_libs
+      fi
       save_state "libs"
    else
       info "Skipping Phase 2 (libs)"
@@ -928,7 +1006,11 @@ main() {
 
    # Phase 3: Build
    if should_run_phase "build"; then
-      run_build
+      if [ "$INSTALL_TARGET" = "satellite" ]; then
+         run_build_satellite
+      else
+         run_build
+      fi
       save_state "build"
    else
       info "Skipping Phase 3 (build)"
@@ -936,7 +1018,11 @@ main() {
 
    # Phase 4: Models
    if should_run_phase "models"; then
-      run_models
+      if [ "$INSTALL_TARGET" = "satellite" ]; then
+         run_models_satellite
+      else
+         run_models
+      fi
       save_state "models"
    else
       info "Skipping Phase 4 (models)"
@@ -944,72 +1030,95 @@ main() {
 
    # Phase 5: Configure
    if should_run_phase "configure"; then
-      run_configure
+      if [ "$INSTALL_TARGET" = "satellite" ]; then
+         run_configure_satellite
+      else
+         run_configure
+      fi
       save_state "configure"
    else
       info "Skipping Phase 5 (configure)"
    fi
 
-   # Phase 6: API Key Validation
-   if should_run_phase "apikeys"; then
-      run_apikeys
-      save_state "apikeys"
-   else
-      info "Skipping Phase 6 (apikeys)"
-   fi
+   # Phases 6–9 are server-only (apikeys, ssl, admin, services).
+   if [ "$INSTALL_TARGET" != "satellite" ]; then
+      # Phase 6: API Key Validation
+      if should_run_phase "apikeys"; then
+         run_apikeys
+         save_state "apikeys"
+      else
+         info "Skipping Phase 6 (apikeys)"
+      fi
 
-   # Phase 7: SSL
-   if should_run_phase "ssl"; then
-      run_ssl
-      save_state "ssl"
-   else
-      info "Skipping Phase 7 (ssl)"
-   fi
+      # Phase 7: SSL
+      if should_run_phase "ssl"; then
+         run_ssl
+         save_state "ssl"
+      else
+         info "Skipping Phase 7 (ssl)"
+      fi
 
-   # Phase 8: Admin Account
-   if should_run_phase "admin"; then
-      run_admin
-      save_state "admin"
-   else
-      info "Skipping Phase 8 (admin)"
-   fi
+      # Phase 8: Admin Account
+      if should_run_phase "admin"; then
+         run_admin
+         save_state "admin"
+      else
+         info "Skipping Phase 8 (admin)"
+      fi
 
-   # Phase 9: Optional Features
-   if should_run_phase "services"; then
-      run_services
-      save_state "services"
+      # Phase 9: Optional Features
+      if should_run_phase "services"; then
+         run_services
+         save_state "services"
+      else
+         info "Skipping Phase 9 (services)"
+      fi
    else
-      info "Skipping Phase 9 (services)"
+      info "Skipping Phases 6–9 (apikeys/ssl/admin/services — not applicable to satellites)"
    fi
 
    # Phase 10: Verification
    if should_run_phase "verify"; then
-      run_verify || true
+      if [ "$INSTALL_TARGET" = "satellite" ]; then
+         run_verify_satellite || true
+      else
+         run_verify || true
+      fi
       save_state "verify"
    fi
 
-   # Offer to deploy as service
-   if [ "$INTERACTIVE" = true ]; then
+   # Phase 11: Deploy (systemd service install)
+   #   - Satellite: always run (satellite is useless without deploy)
+   #   - Server interactive: ask
+   #   - Server unattended: skip (preserve prior behavior — dev-install via binary)
+   if should_run_phase "deploy"; then
       echo ""
       echo -e "${BOLD}═══════════════════════════════════════════════${NC}"
       echo ""
-      if ask_yes_no "Deploy DAWN as a systemd service?"; then
-         run_deploy "server"
-         # Reprint admin credentials so user doesn't have to scroll up
-         if [ -n "${INSTALL_ADMIN_PASS:-}" ]; then
+      if [ "$INSTALL_TARGET" = "satellite" ]; then
+         run_deploy "satellite"
+      elif [ "$INTERACTIVE" = true ]; then
+         if ask_yes_no "Deploy DAWN as a systemd service?"; then
+            run_deploy "server"
+            # Reprint admin credentials so user doesn't have to scroll up
+            if [ -n "${INSTALL_ADMIN_PASS:-}" ]; then
+               echo ""
+               log "Admin credentials (same as Phase 8):"
+               log "  Username: admin"
+               log "  Password: $INSTALL_ADMIN_PASS"
+               echo ""
+               warn "Save this password now — it will not be shown again."
+            fi
+         else
             echo ""
-            log "Admin credentials (same as Phase 8):"
-            log "  Username: admin"
-            log "  Password: $INSTALL_ADMIN_PASS"
-            echo ""
-            warn "Save this password now — it will not be shown again."
+            log "To deploy as a service later:"
+            echo "  ./scripts/install.sh --deploy server"
+            echo "  # or: sudo ./services/dawn-server/install.sh"
          fi
       else
-         echo ""
-         log "To deploy as a service later:"
-         echo "  ./scripts/install.sh --deploy server"
-         echo "  # or: sudo ./services/dawn-server/install.sh"
+         info "Skipping deploy in unattended mode — run: ./scripts/install.sh --deploy server"
       fi
+      save_state "deploy"
    fi
 
    echo ""

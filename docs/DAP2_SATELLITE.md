@@ -4,52 +4,42 @@ This document describes the DAP2 (Dawn Audio Protocol 2.0) satellite architectur
 
 ## Quick Start (Raspberry Pi)
 
+On a fresh Pi OS Lite (64-bit) install, from the repository root:
+
 ```bash
-# 1. Install dependencies
-sudo apt update
-sudo apt install -y build-essential cmake pkg-config \
-  libasound2-dev libwebsockets-dev libjson-c-dev git
-
-# 2. Clone and build
-git clone https://github.com/YOUR_REPO/dawn.git
-cd dawn/dawn_satellite
-mkdir build && cd build
-cmake .. -DENABLE_DAP2=ON -DENABLE_NEOPIXEL=OFF -DCMAKE_BUILD_TYPE=Release
-make -j2  # Use -j2 on Pi Zero 2 W (512MB RAM), -j4 on Pi 3/4/5
-
-# 3. Install
-sudo make install
-
-# 4. Configure (set your daemon IP)
-sudo nano /etc/dawn/satellite.toml
-# Edit: host = "192.168.1.100"  (your DAWN daemon IP)
-# Edit: name = "Kitchen"        (this satellite's name)
-# Edit: location = "kitchen"    (room location)
-
-# 5. Test connection
-dawn_satellite --keyboard --verbose
-
-# 6. Set up auto-start
-sudo tee /etc/systemd/system/dawn-satellite.service << 'EOF'
-[Unit]
-Description=DAWN Voice Satellite
-After=network-online.target sound.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=pi
-ExecStart=/usr/local/bin/dawn_satellite
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-sudo systemctl enable dawn-satellite
-sudo systemctl start dawn-satellite
+git clone --recursive https://github.com/The-OASIS-Project/dawn.git
+cd dawn
+./scripts/install.sh --target satellite
 ```
+
+The unified installer walks you through an interactive setup:
+
+1. **Discovery** — detects your Pi model, architecture, RAM, and audio devices; recommends an ASR engine based on available memory
+2. **Dependencies** — installs apt packages and builds ONNX Runtime, libvosk, espeak-ng (rhasspy fork), and piper-phonemize
+3. **Models** — downloads Vosk (and optionally Whisper) models via `setup_models.sh`
+4. **Build & configure** — builds `dawn_satellite` with your chosen feature set and writes `satellite.toml`
+5. **Deploy** — installs the systemd service via `services/dawn-satellite/install.sh`
+
+**Before running the installer** — if your daemon uses SSL (the default) the installer will prompt for the path to the daemon's `ca.crt` on this Pi. Copy it over first:
+
+```bash
+scp user@daemon:/path/to/dawn/ssl/ca.crt /tmp/ca.crt
+```
+
+Then give `/tmp/ca.crt` at the prompt. The installer stages it at `/etc/dawn/ca.crt` and points `satellite.toml` at that path. You can skip the prompt and set `ca_cert_path` manually later if you prefer.
+
+### Useful installer flags
+
+| Flag | Purpose |
+|---|---|
+| `--target satellite` | Required for a satellite install (default is `server`). |
+| `--resume-from PHASE` | Pick up from a specific phase after a failure. Phases: `deps`, `libs`, `build`, `models`, `configure`, `verify`, `deploy`. |
+| `--fresh` | Ignore cached settings and re-run the prompts from scratch. |
+| `--verify` | Run post-install verification only. |
+| `--deploy satellite` | Run only the deploy phase (re-stage binary/config/models/service). |
+| `--uninstall` | Interactive uninstall — stops the service, removes files, prompts before deleting config. |
+
+For a manual step-by-step install (no installer script), jump to [Building for Raspberry Pi](#building-for-raspberry-pi). For the detailed build/config reference, read on.
 
 ## Overview
 
@@ -429,133 +419,339 @@ export DAWN_SATELLITE_KEY="your-64-char-hex-key-here"
 
 ### Step 1: Raspberry Pi OS Setup
 
-**Flash Raspberry Pi OS Lite (64-bit)** - or Desktop if using a touchscreen display.
+Flash **Pi OS Lite (64-bit)** using the [Raspberry Pi Imager](https://www.raspberrypi.com/software/). Pi OS Lite is required for SDL2 KMSDRM touchscreen support; the Desktop variant brings X11 which conflicts with direct DRM rendering.
+
+**Preferred: configure via the Imager** (click the gear icon before writing the SD card):
+
+- Hostname: `kitchen-satellite` (or `bedroom-satellite`, `office-satellite`, etc.)
+- Enable SSH with key or password auth
+- Set username and password
+- Configure WiFi SSID and password
+
+<details>
+<summary>Alternative: configure WiFi manually on the SD card</summary>
+
+After flashing, with the boot partition mounted (`/boot` on older images, `/bootfs` on newer):
 
 ```bash
-# Use Raspberry Pi Imager or:
-# Download: https://www.raspberrypi.com/software/operating-systems/
+# Enable SSH on first boot
+touch /boot/ssh
 
-# Before first boot, enable SSH and configure WiFi:
-# In /boot (or /bootfs on newer images):
-touch ssh
-cat > wpa_supplicant.conf << 'EOF'
+# Configure WiFi — replace with your actual SSID and password
+cat > /boot/wpa_supplicant.conf << 'EOF'
 country=US
 ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev
 update_config=1
 
 network={
-    ssid="YOUR_WIFI_SSID"
-    psk="YOUR_WIFI_PASSWORD"
+    ssid="MyHomeWiFi"
+    psk="mySecretPassword123"
 }
 EOF
 ```
 
-**First boot setup:**
+</details>
+
+**First boot:**
 ```bash
-# SSH into the Pi (default: pi@raspberrypi.local)
-ssh pi@raspberrypi.local
+# SSH into the Pi
+ssh pi@kitchen-satellite.local
 
 # Update system
-sudo apt update && sudo apt upgrade -y
+sudo apt update && sudo apt full-upgrade -y
 
-# Set hostname for easy identification
-sudo hostnamectl set-hostname kitchen-satellite  # or bedroom, office, etc.
+# Add your user to the groups needed for audio, video, and GPIO access
+sudo usermod -aG video,render,audio,input,spi,gpio $USER
 
-# Expand filesystem if needed
-sudo raspi-config --expand-rootfs
-
-# Reboot
+# Reboot to apply group changes
 sudo reboot
 ```
 
 ### Step 2: Install Dependencies
 
-```bash
-# Build tools
-sudo apt install -y \
-  build-essential \
-  cmake \
-  pkg-config \
-  git
+> **Tip**: `./scripts/install.sh --target satellite` installs everything in this section and the next automatically. The manual procedure is here for reference and for advanced setups.
 
-# Required libraries
+**Required apt packages** — all satellites need these:
+
+```bash
 sudo apt install -y \
+  build-essential cmake git pkg-config \
   libasound2-dev \
   libwebsockets-dev \
-  libjson-c-dev
+  libjson-c-dev \
+  libspdlog-dev \
+  libopus-dev
+```
 
-# Optional: GPIO support (for Tier 2 push-to-talk or development)
+**Optional apt packages** — install only if you want the matching feature:
+
+```bash
+# SDL2 touchscreen UI (orb, transcript, music panel, screensaver, themes)
+sudo apt install -y libsdl2-dev libsdl2-ttf-dev libsdl2-gfx-dev libdrm-dev
+
+# GPIO support (push-to-talk button, custom LED setups)
 sudo apt install -y libgpiod-dev
-
-# Optional: SDL2 touchscreen UI (7" display with themes, music, screensaver)
-sudo apt install -y libsdl2-dev libsdl2-ttf-dev libsdl2-gfx-dev
 ```
 
 **Dependency versions (Raspberry Pi OS Bookworm):**
-| Package | Version | Notes |
-|---------|---------|-------|
-| cmake | 3.25+ | Sufficient for project |
-| libwebsockets | 4.3+ | WebSocket client |
-| libjson-c | 0.16+ | JSON parsing |
-| libasound2 | 1.2+ | ALSA audio |
-| libsdl2 | 2.0.20+ | Optional: touchscreen UI |
-| libsdl2-ttf | 2.0.18+ | Optional: UI text rendering |
-| libsdl2-gfx | 1.0.4+ | Optional: smooth circle primitives (fallback: scanline fill) |
 
-### Step 3: Clone and Build
+| Package | Version | Required? | Notes |
+|---------|---------|-----------|-------|
+| cmake | 3.25+ | Yes | Build system |
+| libwebsockets | 4.3+ | Yes | WebSocket client (DAP2) |
+| libjson-c | 0.16+ | Yes | JSON message parsing |
+| libasound2 | 1.2+ | Yes | ALSA audio capture/playback |
+| libspdlog | 1.10+ | Yes | Required by piper-phonemize at build time |
+| libopus | 1.3+ | Yes | Music streaming audio codec |
+| libsdl2 | 2.0.20+ | Optional | Touchscreen UI |
+| libsdl2-ttf | 2.0.18+ | Optional | UI text rendering |
+| libsdl2-gfx | 1.0.4+ | Optional | Smooth circle primitives (fallback: scanline fill) |
+| libgpiod | 1.6+ | Optional | GPIO button / LED control |
+
+### Step 2.5: Voice Processing Dependencies
+
+Tier 1 satellites run local VAD (Silero), ASR (Vosk or Whisper), and TTS (Piper). These require four libraries that aren't packaged in apt: **ONNX Runtime**, **libvosk**, **espeak-ng (rhasspy fork)**, and **piper-phonemize**. All are built or downloaded once and live in `/usr/local/`.
+
+If you skip any of these, CMake will silently disable the feature and your satellite will start with missing capabilities. Watch for these lines in the CMake output — all must be `ON`:
+
+```
+VAD (Silero): ON
+ASR (Vosk): ON
+TTS (Piper): ON
+Music (Opus): ON
+```
+
+#### ONNX Runtime (required for VAD and TTS)
+
+Download the prebuilt aarch64 release:
 
 ```bash
-# Clone the repository
-git clone https://github.com/YOUR_REPO/dawn.git
-cd dawn/dawn_satellite
+cd ~
+wget https://github.com/microsoft/onnxruntime/releases/download/v1.19.2/onnxruntime-linux-aarch64-1.19.2.tgz
+tar xzf onnxruntime-linux-aarch64-1.19.2.tgz
+cd onnxruntime-linux-aarch64-1.19.2
+sudo cp -a lib/libonnxruntime.so* /usr/local/lib/
+sudo cp include/*.h /usr/local/include/
+sudo ldconfig
+cd ~
+```
 
-# Create build directory
+Check https://github.com/microsoft/onnxruntime/releases for newer versions. Building from source on a Pi takes 30–60 minutes and is rarely necessary.
+
+#### libvosk (required for Vosk ASR — the default)
+
+```bash
+cd ~
+wget https://github.com/alphacep/vosk-api/releases/download/v0.3.45/vosk-linux-aarch64-0.3.45.zip
+unzip vosk-linux-aarch64-0.3.45.zip
+cd vosk-linux-aarch64-0.3.45
+sudo cp libvosk.so /usr/local/lib/
+sudo cp vosk_api.h /usr/local/include/
+sudo ldconfig
+cd ~
+```
+
+See https://alphacephei.com/vosk/install for latest versions and other architectures.
+
+#### espeak-ng (rhasspy fork — required for Piper TTS)
+
+Piper's phonemizer uses a specific fork of espeak-ng. The apt version won't work.
+
+```bash
+# Remove apt version if previously installed
+sudo apt purge -y espeak-ng-data libespeak-ng1 2>/dev/null || true
+
+# Install build tools
+sudo apt install -y autoconf automake libtool
+
+# Build the rhasspy fork
+cd ~
+git clone https://github.com/rhasspy/espeak-ng.git
+cd espeak-ng
+./autogen.sh && ./configure --prefix=/usr
+make -j$(nproc)
+sudo make LIBDIR=/usr/lib/$(dpkg-architecture -qDEB_HOST_MULTIARCH) install
+cd ~
+```
+
+#### piper-phonemize (required for TTS)
+
+Depends on both ONNX Runtime (above) and espeak-ng (above).
+
+```bash
+cd ~
+git clone https://github.com/rhasspy/piper-phonemize.git
+cd piper-phonemize
+mkdir build && cd build
+cmake .. -DONNXRUNTIME_DIR=/usr/local -DESPEAK_NG_DIR=/usr
+make -j$(nproc)
+
+# Manual install — piper-phonemize's `make install` has broken rules for system deps
+sudo cp -a libpiper_phonemize.so* /usr/local/lib/
+sudo mkdir -p /usr/local/include/piper-phonemize
+sudo cp ../src/*.hpp /usr/local/include/piper-phonemize/
+sudo cp ../src/uni_algo.h /usr/local/include/piper-phonemize/
+sudo ldconfig
+cd ~
+```
+
+### Step 3: Clone the Repository
+
+```bash
+git clone --recursive https://github.com/The-OASIS-Project/dawn.git
+cd dawn
+```
+
+The `--recursive` flag fetches the whisper.cpp submodule. The build system links against whisper.cpp even when only Vosk ASR is enabled, so the submodule must be present.
+
+### Step 3.5: Download Models
+
+Run the project-root helper to download ASR models. The script places models under `models/` and handles both Vosk and Whisper.
+
+```bash
+# Recommended starting point for most Pis (Vosk small, ~40MB)
+./setup_models.sh --vosk-small
+
+# Add Whisper tiny if you also want Whisper as an option (Pi 4 can handle it)
+./setup_models.sh --vosk-small --whisper-model tiny-q5_1
+
+# Full Vosk model for higher accuracy (~1.8GB — Pi 4 with 4GB+ RAM only)
+./setup_models.sh --vosk
+
+# See all options
+./setup_models.sh --help
+```
+
+**Model recommendations by hardware** (the installer picks these automatically from `/proc/meminfo` and the Pi model):
+
+| Hardware | Recommended | Why |
+|---|---|---|
+| Pi Zero / Zero 2 W | Not supported | 512MB RAM is too tight for simultaneous VAD + ASR + TTS |
+| Pi 3B (1GB) | Not recommended | CPU is too slow for a responsive voice pipeline |
+| Pi 4 (2GB) | Vosk small | `vosk-small` fits the memory budget; Whisper tiny pushes RAM too close to the limit |
+| Pi 4 (4–8GB) | Vosk small (default), Whisper tiny-q5_1 (optional) | Pi 4 CPU limits whisper.cpp tiny-q5_1 to RTF ~0.9 (≈4s finalize). Vosk streaming is noticeably snappier |
+| Pi 5 (4GB) | Whisper tiny-q5_1 | Pi 5 CPU hits RTF ~0.3 (≈1s finalize for a 3s utterance); quality beats Vosk small |
+| Pi 5 (8GB) | Whisper tiny-q5_1 (default) or base | `tiny-q5_1` is the installer default; `base` is viable on 8GB — measured RTF 0.65 (JFK, beam=5) / 0.20 (greedy, 15s real speech). Sustained continuous transcription can thermal-throttle per [ACM 2025](https://dl.acm.org/doi/10.1145/3769102.3774244); intermittent voice-command workloads are fine with active cooling |
+
+Benchmark sources: [ACM 2025 Whisper-on-Pi evaluation](https://dl.acm.org/doi/10.1145/3769102.3774244), [whisper.cpp Pi 4 issue #89](https://github.com/ggml-org/whisper.cpp/issues/89). RTF = real-time factor; lower is faster (&lt; 1.0 means faster than realtime).
+
+**Measured performance (Raspberry Pi 5, 8GB, 4 threads, active cooling):**
+
+| Config | Sample | Wall time | RTF | Notes |
+|---|---|---|---|---|
+| Whisper base, beam=5 best_of=5 | JFK 11s (whisper.cpp reference) | 7196 ms | **0.65** | `whisper-cli` defaults — directly comparable to published numbers |
+| Whisper base, greedy | 8-15s real speech | 2.5-3.0 s | **0.19-0.28** | Satellite runtime config (greedy decode) |
+| Whisper base, greedy | 2-3s short utterances | 2.0-2.1 s | **0.70-0.85** | Fixed encoder cost dominates on short audio |
+
+Encoder is ~85% of wall time on CPU. Beam search (the `whisper-cli` default) roughly halves effective RTF by fanning out decode paths; the satellite uses greedy decode for latency, so real-world numbers are faster than the JFK figure.
+
+Sustained continuous transcription (not typical for voice-command workloads) can thermal-throttle `whisper base` on Pi 5 per the ACM 2025 paper — the numbers above reflect intermittent utterance workloads with active cooling.
+
+Reproduce with:
+```bash
+cd ~/dawn/whisper.cpp && cmake -B build -DWHISPER_BUILD_EXAMPLES=ON -DGGML_NATIVE=ON
+cmake --build build -j4 --target whisper-cli
+./build/bin/whisper-cli -m /var/lib/dawn-satellite/models/whisper.cpp/ggml-base.en.bin \
+  -f samples/jfk.wav -t 4
+```
+
+Silero VAD and Piper voice models ship with the repository under `models/` — no download needed:
+
+| Model | Path | Purpose |
+|---|---|---|
+| Silero VAD | `models/silero_vad_16k_op15.onnx` | Voice activity detection |
+| Alba (en_GB) | `models/en_GB-alba-medium.onnx` | TTS (Friday persona) |
+| Northern English Male | `models/en_GB-northern_english_male-medium.onnx` | TTS (Jarvis persona) |
+
+### Step 4: Build the Satellite
+
+```bash
+cd dawn_satellite
 mkdir build && cd build
 
-# Configure (Tier 1, no NeoPixels)
 cmake .. \
   -DENABLE_DAP2=ON \
   -DENABLE_NEOPIXEL=OFF \
   -DCMAKE_BUILD_TYPE=Release
 
-# Build
-# Pi Zero 2 W: use -j2 to avoid OOM (512MB RAM)
-# Pi 3/4/5: use -j4
-make -j2
+# Pi 3/4/5: -j4   |  Pi Zero 2 W: -j2 (avoid OOM)
+make -j4
 ```
 
+Confirm the CMake summary shows all voice features enabled:
+
+```
+-- === DAWN Satellite Configuration ===
+-- VAD (Silero): ON       ← required
+-- ASR (Whisper): OFF     ← OK to leave OFF unless you chose Whisper
+-- ASR (Vosk): ON         ← required (default ASR)
+-- TTS (Piper): ON        ← required
+-- Music (Opus): ON       ← required for music streaming
+-- =====================================
+```
+
+If any required feature shows `OFF`, revisit [Step 2.5](#step-25-voice-processing-dependencies) — the matching library is missing. See [Troubleshooting → Build fails with DISABLED warnings](#build-fails-with-disabled-warnings) for specific package-to-feature mapping.
+
 **Build times (approximate):**
+
 | Model | Build Time |
 |-------|------------|
-| Pi Zero 2 W | ~8-10 minutes |
-| Pi 3B+ | ~3-4 minutes |
-| Pi 4B | ~1-2 minutes |
+| Pi Zero 2 W | 8–10 minutes |
+| Pi 3B+ | 3–4 minutes |
+| Pi 4B | 1–2 minutes |
+| Pi 5 | ~1 minute |
 
-### Step 4: Install
+### Step 5: Install as a Service
+
+Use the service installer — it creates a dedicated `dawn` system user, installs the binary and models to standard paths, deploys the systemd unit, and sets up logrotate:
 
 ```bash
-sudo make install
+sudo ./services/dawn-satellite/install.sh
 ```
 
 This installs:
-- `/usr/local/bin/dawn_satellite` - Main binary
-- `/etc/dawn/satellite.toml` - Configuration file
+
+- `/usr/local/bin/dawn_satellite` — main binary
+- `/usr/local/etc/dawn-satellite/satellite.toml` — configuration (edit this after install)
+- `/var/lib/dawn-satellite/` — runtime state (UUID, reconnect secret)
+- `/var/log/dawn-satellite/` — logs with logrotate
+- `/etc/systemd/system/dawn-satellite.service` — systemd unit
+
+See [`services/dawn-satellite/README.md`](../services/dawn-satellite/README.md) for the manual install steps, path customization, and troubleshooting.
 
 ### Build Options
 
 | Option | Default | Description |
-|--------|---------|-------------|
+|---|---|---|
+| `ENABLE_DAP2` | ON | WebSocket text protocol (required for Tier 1) |
 | `ENABLE_VAD` | ON | Silero VAD (requires ONNX Runtime) |
-| `ENABLE_VOSK_ASR` | ON | Vosk streaming ASR (default, lightweight) |
-| `ENABLE_WHISPER_ASR` | OFF | Whisper batch ASR (heavier, more accurate) |
-| `ENABLE_TTS` | ON | Piper TTS (requires ONNX Runtime) |
-| `ENABLE_DAP2` | ON | WebSocket text protocol (Tier 1) |
-| `ENABLE_NEOPIXEL` | OFF | NeoPixel LED support (optional) |
-| `ENABLE_SDL_UI` | OFF | SDL2 touchscreen UI with 5-theme system (requires libsdl2-dev, libsdl2-ttf-dev; libsdl2-gfx-dev optional for smooth circles) |
-| `ENABLE_DISPLAY` | OFF | Framebuffer display support (optional) |
+| `ENABLE_VOSK_ASR` | ON | Vosk streaming ASR (default, low-latency) |
+| `ENABLE_WHISPER_ASR` | OFF | Whisper batch ASR (optional, slightly more accurate, ~4s inference on Pi 4) |
+| `ENABLE_TTS` | ON | Piper TTS (requires ONNX Runtime + piper-phonemize) |
+| `ENABLE_NEOPIXEL` | ON | NeoPixel/WS2812 LED support via SPI (pass `OFF` for headless builds) |
+| `ENABLE_SDL_UI` | OFF | SDL2 touchscreen UI with 5-theme system |
+| `ENABLE_DISPLAY` | OFF | SPI framebuffer display support |
 | `CMAKE_BUILD_TYPE` | Release | Use `Debug` for development |
 
-Default `cmake ..` gives: VAD + Vosk + TTS (no Whisper compile).
+Default `cmake ..` gives: VAD + Vosk + TTS + NeoPixel (no Whisper, no SDL UI).
+
+Add Whisper alongside Vosk (runtime-selectable via config):
+
+```bash
+cmake .. -DENABLE_WHISPER_ASR=ON -DENABLE_NEOPIXEL=OFF
+```
+
+Text-only mode for debugging (keyboard input, no mic/speaker):
+
+```bash
+cmake .. -DENABLE_VAD=OFF -DENABLE_VOSK_ASR=OFF -DENABLE_TTS=OFF
+```
+
+Enable the touchscreen UI:
+
+```bash
+cmake .. -DENABLE_SDL_UI=ON
+```
 
 ### Cross-Compilation (Optional)
 
@@ -599,7 +795,8 @@ aplay -l    # Playback devices
 #   Subdevice #0: subdevice #0
 ```
 
-Configure in `/etc/dawn/satellite.toml`:
+Configure in `/usr/local/etc/dawn-satellite/satellite.toml` (after running the service installer):
+
 ```toml
 [audio]
 capture_device = "plughw:1,0"   # USB mic
@@ -645,38 +842,24 @@ playback_device = "plughw:0,0"
 
 ### Systemd Service
 
-Create `/etc/systemd/system/dawn-satellite.service`:
+[Step 5](#step-5-install-as-a-service) above covers the standard install via `services/dawn-satellite/install.sh`. That script creates a dedicated `dawn` user, deploys the binary + config + systemd unit + logrotate in one call. See [`services/dawn-satellite/README.md`](../services/dawn-satellite/README.md) for service-level details (file paths, logrotate, manual steps, troubleshooting).
 
-```ini
-[Unit]
-Description=DAWN Voice Satellite
-After=network-online.target sound.target
-Wants=network-online.target
+After install, manage the service with standard systemd commands:
 
-[Service]
-Type=simple
-User=pi
-ExecStart=/usr/local/bin/dawn_satellite --config /etc/dawn/satellite.toml
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Enable and start:
 ```bash
-sudo systemctl enable dawn-satellite
-sudo systemctl start dawn-satellite
+sudo systemctl enable --now dawn-satellite    # enable at boot + start now
+sudo systemctl restart dawn-satellite         # after editing satellite.toml
+journalctl -u dawn-satellite -f               # follow logs
 ```
 
 ### Multi-Satellite Deployment
 
 **Strategy 1: Per-device config files**
 ```bash
-# On each satellite, customize identity:
-sudo nano /etc/dawn/satellite.toml
+# On each satellite, customize identity after service install:
+sudo nano /usr/local/etc/dawn-satellite/satellite.toml
 # Set: name = "Kitchen", location = "kitchen"
+sudo systemctl restart dawn-satellite
 ```
 
 **Strategy 2: Base config + service overrides**
@@ -831,6 +1014,60 @@ wscat -c ws://localhost:3000
 
 ## Troubleshooting
 
+### Build fails with DISABLED warnings
+
+If `cmake ..` reports warnings like the ones below, the matching library is missing. Each line maps to an apt package or a step in [Step 2.5](#step-25-voice-processing-dependencies):
+
+```
+CMake Warning: ONNX Runtime not found - VAD support disabled
+CMake Warning: ONNX Runtime not found - TTS support disabled
+CMake Warning: libvosk not found - Vosk ASR support disabled
+CMake Warning: piper-phonemize not found - TTS support disabled
+Music streaming (Opus): DISABLED (install libopus-dev to enable)
+GPIO support: DISABLED (install libgpiod-dev to enable)
+```
+
+| Warning | Fix |
+|---|---|
+| `ONNX Runtime not found` | [Install ONNX Runtime prebuilt aarch64](#onnx-runtime-required-for-vad-and-tts) |
+| `libvosk not found` | [Install libvosk prebuilt aarch64](#libvosk-required-for-vosk-asr--the-default) |
+| `piper-phonemize not found` | [Install piper-phonemize from source](#piper-phonemize-required-for-tts) — requires ONNX Runtime + espeak-ng rhasspy fork first |
+| `Music streaming (Opus): DISABLED` | `sudo apt install libopus-dev`, then re-run cmake |
+| `GPIO support: DISABLED` | Only needed for push-to-talk or custom GPIO LEDs — ignore for typical Tier 1 builds |
+| `spdlog not found` | `sudo apt install libspdlog-dev`, then re-run cmake |
+
+After installing missing libraries, delete the build directory and re-configure from scratch:
+
+```bash
+cd dawn_satellite
+rm -rf build && mkdir build && cd build
+cmake .. -DENABLE_DAP2=ON -DENABLE_NEOPIXEL=OFF -DCMAKE_BUILD_TYPE=Release
+```
+
+CMake caches its detection results, so adding a library after the first `cmake ..` requires a fresh build directory (or at minimum `rm build/CMakeCache.txt`).
+
+### Models not found at runtime
+
+If the satellite starts but logs `Failed to load model` or `[vosk] ERROR: failed to open`:
+
+```bash
+# From the dawn repo root, not the build directory
+./setup_models.sh --help
+./setup_models.sh --vosk-small   # for default Vosk ASR
+```
+
+After the service installer has run, models also need to be accessible to the `dawn` service user. `services/dawn-satellite/install.sh` handles this by default (symlinks models into `/usr/local/share/dawn-satellite/models/`). Verify with:
+
+```bash
+ls -la /usr/local/share/dawn-satellite/models/
+```
+
+Check the paths in your config match what's on disk:
+
+```bash
+grep -E 'model_path|config_path' /usr/local/etc/dawn-satellite/satellite.toml
+```
+
 ### Connection Issues
 
 ```bash
@@ -871,7 +1108,7 @@ which dawn_satellite
 ls -la /usr/local/bin/dawn_satellite
 
 # Check config file
-cat /etc/dawn/satellite.toml
+cat /usr/local/etc/dawn-satellite/satellite.toml
 ```
 
 ### Memory Issues (Pi Zero 2 W)

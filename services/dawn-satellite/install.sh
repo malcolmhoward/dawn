@@ -10,6 +10,8 @@ set -e
 BINARY_PATH=""
 MODELS_DIR=""
 FONTS_DIR=""
+CONFIG_SRC=""
+CA_CERT_SRC=""
 SYMLINK_MODELS=false
 NO_DISPLAY=false
 UNINSTALL=false
@@ -101,15 +103,26 @@ uninstall() {
         fi
     fi
 
-    # 8. Remove ld.so.conf.d entry (only if server is not installed)
-    if [ -f "/etc/ld.so.conf.d/dawn.conf" ]; then
-        if [ ! -f "/etc/systemd/system/dawn-server.service" ]; then
+    # 8. Remove whisper/ggml libs and ld.so.conf.d entry — only if the
+    #    server is not installed (it may share these libraries).
+    if [ ! -f "/etc/systemd/system/dawn-server.service" ]; then
+        local removed=0
+        for lib in /usr/local/lib/libwhisper.so* /usr/local/lib/libggml*.so*; do
+            [ -e "$lib" ] || continue
+            rm -f "$lib"
+            removed=$((removed + 1))
+        done
+        if [ "$removed" -gt 0 ]; then
+            log "Removed $removed whisper/ggml library file(s) from /usr/local/lib"
+        fi
+
+        if [ -f "/etc/ld.so.conf.d/dawn.conf" ]; then
             log "Removing /etc/ld.so.conf.d/dawn.conf"
             rm -f "/etc/ld.so.conf.d/dawn.conf"
-            ldconfig
-        else
-            log "Keeping /etc/ld.so.conf.d/dawn.conf (dawn-server is still installed)"
         fi
+        ldconfig
+    else
+        log "Keeping /etc/ld.so.conf.d/dawn.conf and whisper/ggml libs (dawn-server is still installed)"
     fi
 
     log ""
@@ -134,6 +147,14 @@ parse_args() {
                 FONTS_DIR="$2"
                 shift 2
                 ;;
+            --config)
+                CONFIG_SRC="$2"
+                shift 2
+                ;;
+            --ca-cert)
+                CA_CERT_SRC="$2"
+                shift 2
+                ;;
             --symlink-models)
                 SYMLINK_MODELS=true
                 shift
@@ -156,6 +177,10 @@ parse_args() {
                 echo "                       (default: dawn_satellite/models/)"
                 echo "  --fonts-dir PATH     Path to fonts directory"
                 echo "                       (default: dawn_satellite/assets/fonts/)"
+                echo "  --config PATH        Path to a pre-configured satellite.toml to install"
+                echo "                       (default: the template at $SCRIPT_DIR/satellite.toml)"
+                echo "  --ca-cert PATH       Daemon's ca.crt to install at /etc/dawn/ca.crt"
+                echo "                       (required when the satellite config has ssl_verify=true)"
                 echo "  --symlink-models     Symlink models instead of copying (saves disk)"
                 echo "  --no-display         Skip video/render/input groups (headless satellite)"
                 echo "  -u, --uninstall      Remove installed dawn-satellite components"
@@ -230,6 +255,106 @@ find_models() {
     done
 
     warn "No models directory found. You will need to copy models manually to $DATA_DIR/models/"
+}
+
+# Extract a TOML string value for KEY under [SECTION] from FILE.
+# Prints the unquoted value, or nothing if not found.
+parse_toml_str() {
+    local section="$1" key="$2" file="$3"
+    awk -v want_section="[$section]" -v key="$key" '
+        /^\[.*\][[:space:]]*$/ { in_section = ($0 == want_section); next }
+        in_section && $1 == key && $2 == "=" {
+            # everything after the =
+            v = substr($0, index($0, "=") + 1)
+            # strip leading/trailing whitespace
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
+            # strip surrounding double quotes if present
+            gsub(/^"|"$/, "", v)
+            print v
+            exit
+        }
+    ' "$file"
+}
+
+# Copy only the model files/dirs that the satellite config actually
+# references (VAD, ASR, TTS model, TTS config). Avoids dragging in ~2GB
+# of unused Vosk data or broken symlinks for models the user never
+# downloaded. Source paths are relative to $MODELS_DIR; config paths
+# are expected to look like "models/foo/bar".
+install_selected_models() {
+    local cfg="$1"
+
+    local -a model_paths=()
+    local vad_path asr_path tts_model tts_config
+    vad_path=$(parse_toml_str vad model_path "$cfg")
+    asr_path=$(parse_toml_str asr model_path "$cfg")
+    tts_model=$(parse_toml_str tts model_path "$cfg")
+    tts_config=$(parse_toml_str tts config_path "$cfg")
+
+    [ -n "$vad_path" ] && model_paths+=("$vad_path")
+    [ -n "$asr_path" ] && model_paths+=("$asr_path")
+    [ -n "$tts_model" ] && model_paths+=("$tts_model")
+    [ -n "$tts_config" ] && model_paths+=("$tts_config")
+
+    if [ ${#model_paths[@]} -eq 0 ]; then
+        warn "No model paths found in config — skipping model install"
+        return 0
+    fi
+
+    local installed=0 missing=0
+    for path in "${model_paths[@]}"; do
+        # Expect "models/..." — anything else is either absolute or ~/-style,
+        # which won't resolve at runtime anyway. Log and skip.
+        if [[ "$path" != models/* ]]; then
+            warn "Skipping non-relative model path: $path"
+            continue
+        fi
+        local rel="${path#models/}"
+        # Reject any ../ component — a hostile satellite.toml with
+        # model_path = "models/../../etc/shadow" would otherwise be
+        # cp'd as root from /etc/shadow to /var/lib/dawn-satellite/etc/shadow.
+        case "/$rel/" in
+            */../*|*/..) warn "Skipping model path with parent traversal: $path"; continue ;;
+        esac
+        local src="$MODELS_DIR/$rel"
+        local dst="$DATA_DIR/models/$rel"
+
+        if [ ! -e "$src" ]; then
+            warn "Referenced model not found in source: $path"
+            missing=$((missing + 1))
+            continue
+        fi
+
+        # Refuse symlinks: we run as root and chmod -R 755 below — a symlink
+        # (at any level of $src) could dereference a sensitive file and
+        # expose it via $DATA_DIR.
+        if [ -L "$src" ]; then
+            warn "Refusing symlink model path: $path"
+            continue
+        fi
+        if [ -d "$src" ] && [ -n "$(find "$src" -type l -print -quit 2>/dev/null)" ]; then
+            warn "Refusing model directory containing symlinks: $path"
+            continue
+        fi
+
+        mkdir -p "$(dirname "$dst")"
+        if [ -d "$src" ]; then
+            # Vosk model is a directory bundle — copy recursively.
+            # --no-dereference preserves any symlinks that slipped past
+            # the pre-check above (defense in depth).
+            rm -rf "$dst"
+            cp -r --no-dereference "$src" "$dst"
+        else
+            cp -f --no-dereference "$src" "$dst"
+        fi
+        log "  + ${rel}"
+        installed=$((installed + 1))
+    done
+
+    log "Installed $installed referenced model(s)${missing:+, $missing missing}"
+    if [ "$missing" -gt 0 ]; then
+        warn "Some referenced models were missing — run setup_models.sh on the source host and re-deploy"
+    fi
 }
 
 # Find fonts directory
@@ -319,10 +444,66 @@ mkdir -p "$DATA_DIR/assets/fonts"
 mkdir -p "$CONFIG_DIR"
 mkdir -p "$LOG_DIR"
 
+# Resolve config source early — model install below reads it to pick
+# the correct subset of models to copy. --config wins if given;
+# otherwise fall back to the shipped template.
+CONFIG_EXPLICIT=false
+if [ -n "$CONFIG_SRC" ]; then
+    if [ ! -f "$CONFIG_SRC" ]; then
+        error "Config source not found: $CONFIG_SRC"
+    fi
+    CONFIG_EXPLICIT=true
+    log "Using custom config: $CONFIG_SRC"
+else
+    CONFIG_SRC="$SCRIPT_DIR/satellite.toml"
+fi
+
+# Stop the running service before touching binaries / libraries. Linux
+# refuses `cp` over a running executable (Text file busy), and stopping
+# here also means we don't have to worry about the service reloading a
+# half-installed library set between steps.
+if systemctl is-active --quiet "$SERVICE_NAME.service" 2>/dev/null; then
+    log "Stopping running $SERVICE_NAME service before replacing files"
+    systemctl stop "$SERVICE_NAME.service"
+fi
+
 # Install binary
 log "Installing binary to /usr/local/bin/dawn_satellite"
 cp "$BINARY_PATH" /usr/local/bin/dawn_satellite
 chmod 755 /usr/local/bin/dawn_satellite
+
+# Install whisper.cpp / ggml shared libraries.
+#
+# These are built inside the satellite build tree (dawn_satellite/build/
+# contains whisper.cpp/src/libwhisper.so* and ggml/src/libggml*.so*) and
+# the binary links against them dynamically. Without this step the service
+# fails on startup with:
+#   "libwhisper.so.1: cannot open shared object file"
+# even though the binary itself is installed.
+#
+# Only required when the build actually uses Whisper. For vosk-only builds
+# these libs aren't produced and their absence is expected — quiet the
+# "no libs found" warning in that case to avoid false alarms.
+BUILD_DIR="$(dirname "$BINARY_PATH")"
+configured_engine=$(parse_toml_str asr engine "$CONFIG_SRC" 2>/dev/null || echo "")
+log "Installing whisper/ggml shared libraries from $BUILD_DIR"
+installed_libs=0
+while IFS= read -r -d '' lib; do
+    cp -a "$lib" /usr/local/lib/
+    installed_libs=$((installed_libs + 1))
+done < <(find "$BUILD_DIR" \
+    \( -name 'libwhisper.so*' -o -name 'libggml*.so*' \) \
+    -print0 2>/dev/null)
+if [ "$installed_libs" -eq 0 ]; then
+    if [ "$configured_engine" = "whisper" ]; then
+        warn "No whisper/ggml shared libraries found under $BUILD_DIR"
+        warn "This build claims Whisper ASR but the libs are missing — the service will fail to start."
+    else
+        log "No whisper/ggml libs to install (expected for vosk-only builds)"
+    fi
+else
+    log "Installed $installed_libs whisper/ggml library file(s)"
+fi
 
 # Install models
 if [ -n "$MODELS_DIR" ]; then
@@ -334,8 +515,21 @@ if [ -n "$MODELS_DIR" ]; then
         fi
         ln -sfn "$MODELS_DIR" "$DATA_DIR/models"
     else
-        log "Copying models from $MODELS_DIR"
-        cp -r "$MODELS_DIR"/. "$DATA_DIR/models/"
+        # Selective model install: read the satellite config and copy only
+        # the models it references (VAD, ASR, TTS model+config). This skips
+        # the other TTS voice, any unused Vosk/Whisper variants, the
+        # embedding model (not used by satellites), and any broken
+        # symlinks left behind by previous setup_models.sh runs.
+        #
+        # Wipe the destination models dir first — stale broken symlinks
+        # from earlier `cp -r` deploys would otherwise block the copy
+        # ("cannot overwrite non-directory with directory").
+        if [ -d "$DATA_DIR/models" ]; then
+            find "$DATA_DIR/models" -mindepth 1 -delete 2>/dev/null || true
+        fi
+
+        log "Installing models referenced by $CONFIG_SRC"
+        install_selected_models "$CONFIG_SRC"
     fi
 fi
 
@@ -345,14 +539,87 @@ if [ -n "$FONTS_DIR" ]; then
     cp -r "$FONTS_DIR"/. "$DATA_DIR/assets/fonts/"
 fi
 
-# Install configuration (never overwrite existing)
-if [ -f "$CONFIG_DIR/satellite.toml" ]; then
+# Install the daemon's CA certificate at /etc/dawn/ca.crt if provided.
+# The satellite config's ca_cert_path is expected to point at this path.
+#
+# Security: this script runs as root. Without the checks below, a non-root
+# caller (who owns their install-state.env or writes install.conf) could
+# set SAT_CA_CERT_SRC=/root/.ssh/id_rsa (or a symlink into /etc/shadow)
+# and have the root `cp` stage that file at /etc/dawn/ca.crt with mode
+# 644 (world-readable) — a root-level arbitrary file disclosure.
+# Mitigations:
+#  1. Reject symlinks outright (-L check before -f).
+#  2. Canonicalize via realpath to catch ../ traversal surprises.
+#  3. Require the source to be owned by the invoking non-root user (the
+#     user who ran sudo to get here). Prevents a compromised local
+#     account from laundering root-owned files through this path.
+#  4. Sanity-check that it looks like a PEM CA cert.
+if [ -n "$CA_CERT_SRC" ]; then
+    if [ -L "$CA_CERT_SRC" ]; then
+        error "CA cert source is a symlink (refused): $CA_CERT_SRC"
+    fi
+    if [ ! -f "$CA_CERT_SRC" ]; then
+        error "CA cert source not found or not a regular file: $CA_CERT_SRC"
+    fi
+    ca_src_real=$(realpath -e --no-symlinks "$CA_CERT_SRC" 2>/dev/null) || ca_src_real=""
+    if [ -z "$ca_src_real" ]; then
+        error "CA cert source path could not be canonicalized: $CA_CERT_SRC"
+    fi
+    # Short-circuit: source already IS the installed destination. Happens on
+    # re-installs where the state file still points at /etc/dawn/ca.crt from
+    # the original run. No copy needed, and no privilege-laundering risk
+    # since the root-owned file is already in its intended location.
+    ca_dst_real=$(realpath -e --no-symlinks /etc/dawn/ca.crt 2>/dev/null || true)
+    if [ -n "$ca_dst_real" ] && [ "$ca_src_real" = "$ca_dst_real" ]; then
+        log "CA cert already installed at /etc/dawn/ca.crt — skipping copy"
+        CA_CERT_SRC=""  # skip the copy block below
+    fi
+    # Ownership check: block root-owned files (privilege laundering).
+    # SUDO_UID is set by sudo; if unset, we're invoked directly as root,
+    # in which case skip the check.
+    if [ -n "$CA_CERT_SRC" ] && [ -n "${SUDO_UID:-}" ]; then
+        src_uid=$(stat -c '%u' "$ca_src_real")
+        if [ "$src_uid" != "$SUDO_UID" ] && [ "$src_uid" != 0 ]; then
+            error "CA cert source is owned by uid=$src_uid (expected $SUDO_UID) — refusing"
+        fi
+        # Extra: if source is root-owned but SUDO_UID is set, that's
+        # exactly the privilege-laundering case we want to block.
+        if [ "$src_uid" = 0 ] && [ "$SUDO_UID" != 0 ]; then
+            error "CA cert source is owned by root; refuse to stage it when invoked via sudo from uid=$SUDO_UID"
+        fi
+    fi
+    if [ -n "$CA_CERT_SRC" ]; then
+        # Content sanity — refuse anything that doesn't look like a PEM cert.
+        if ! head -n 1 "$ca_src_real" | grep -q '^-----BEGIN CERTIFICATE-----'; then
+            error "CA cert source doesn't look like a PEM certificate: $ca_src_real"
+        fi
+        log "Installing daemon CA certificate to /etc/dawn/ca.crt"
+        mkdir -p /etc/dawn
+        # cp --no-dereference is belt-and-braces after the symlink check above.
+        cp --no-dereference "$ca_src_real" /etc/dawn/ca.crt
+        chmod 644 /etc/dawn/ca.crt
+        chown root:root /etc/dawn/ca.crt
+    fi
+fi
+
+# Install configuration. Default rule: preserve an existing satellite.toml
+# (manual edits shouldn't be clobbered by a bare re-run of this script).
+# Exception: when --config was explicitly passed, the caller is the top-level
+# installer feeding us a freshly-generated TOML — overwrite and back up the
+# old one. Otherwise a fresh `--target satellite` flow would write config
+# choices to .toml.new where nothing picks them up.
+if [ -f "$CONFIG_DIR/satellite.toml" ] && [ "$CONFIG_EXPLICIT" = false ]; then
     warn "Config file already exists: $CONFIG_DIR/satellite.toml (not overwriting)"
-    warn "New template saved to: $CONFIG_DIR/satellite.toml.new"
-    cp "$SCRIPT_DIR/satellite.toml" "$CONFIG_DIR/satellite.toml.new"
+    warn "New version saved to: $CONFIG_DIR/satellite.toml.new"
+    cp "$CONFIG_SRC" "$CONFIG_DIR/satellite.toml.new"
 else
-    log "Installing satellite.toml"
-    cp "$SCRIPT_DIR/satellite.toml" "$CONFIG_DIR/satellite.toml"
+    if [ -f "$CONFIG_DIR/satellite.toml" ]; then
+        backup="$CONFIG_DIR/satellite.toml.bak.$(date +%s)"
+        cp "$CONFIG_DIR/satellite.toml" "$backup"
+        log "Backed up existing config to $backup"
+    fi
+    log "Installing satellite.toml from $CONFIG_SRC"
+    cp "$CONFIG_SRC" "$CONFIG_DIR/satellite.toml"
 fi
 # Config must be writable by dawn user (satellite saves UI prefs back)
 chmod 664 "$CONFIG_DIR/satellite.toml"
@@ -376,9 +643,11 @@ chown "$SERVICE_USER:$SERVICE_USER" "$CONFIG_DIR/satellite.toml"
 log "Configuring library path"
 if [ ! -f /etc/ld.so.conf.d/dawn.conf ]; then
     echo "/usr/local/lib" > /etc/ld.so.conf.d/dawn.conf
-    ldconfig
     log "Added /usr/local/lib to library path"
 fi
+# Always rebuild the linker cache — we may have just installed new
+# libwhisper.so* / libggml*.so* files above.
+ldconfig
 
 # Install systemd service
 log "Installing systemd service"
