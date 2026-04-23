@@ -48,7 +48,27 @@ Cold = first request after server start. Warm = subsequent requests (prompt cach
 | Model | Params | Size | Quality | Speed | Vision | Notes |
 |-------|--------|------|---------|-------|--------|-------|
 | Qwen3.5 27B | 26.9B | 15.9 GB | 91.4% (A) | 7.2 tok/s | Yes | Too slow for voice |
+| Qwen3.6 27B | 27B | 17.5 GB | 92.2% (A) | 7.0 tok/s | Yes | Qwen's flagship 27B coder |
+| Qwen3-Coder-Next | 80B/3B MoE | 42.2 GB | 92.2% (A) | 28.2 tok/s | No | Coding specialist, 256K ctx |
 | Gemma 4 31B | 30.7B | 18.2 GB | 100% (A) | 6.8 tok/s | Yes | Highest quality, thinking leaks |
+
+### Cloud Baseline Comparison (Claude API)
+
+For reference — how local Jetson models compare to cloud flagships on the same
+13-test FRIDAY instruction-following suite:
+
+| Model | Quality | Type |
+|-------|---------|------|
+| Claude Opus 4.7 | 99.1% | Cloud flagship |
+| Claude Haiku 4.5 | 96.5% | Cloud |
+| Claude Sonnet 4.6 | 96.5% | Cloud |
+| **Qwen3.5 35B-A3B (local)** | **94.8%** | **Jetson AGX Orin 64GB** |
+| Gemma 4 26B-A4B (local) | 94.8% | Jetson (pending fix) |
+| Qwen3 4B (local) | 94.8% | Jetson — any hardware |
+
+The best local model runs within 1.7% of Claude Haiku/Sonnet and 4.3% of Opus,
+at zero cost, fully offline. Gap between best local and best cloud is smaller
+than the gap between Opus and Sonnet (2.6%).
 
 ### Context Scaling: Qwen3.5 35B-A3B on AGX Orin 64GB MAXN
 
@@ -470,19 +490,17 @@ sudo journalctl -u llama-server -n 100
 
 ## Performance Comparison
 
-### AGX Orin 64GB at MAXN (60W)
+### AGX Orin 64GB at MAXN (60W) vs Claude Cloud
 
-| Metric | Cloud (GPT-4o) | Qwen3 4B | Gemma 3 4B | Qwen3.5 35B-A3B | Gemma 4 26B-A4B |
-|--------|----------------|----------|------------|-----------------|----------------|
-| Quality | 100% | 94.8% (A) | 89.7% (B) | 94.8% (A) | 94.8% (A) |
-| Speed | ~50 tok/s | 35.1 tok/s | 36.3 tok/s | 29.6 tok/s | 32.2 tok/s |
-| Prompt eval | N/A | 220 tok/s | 128 tok/s | 78 tok/s | 110 tok/s |
-| Vision | Yes | No | Yes | Yes | Yes |
-| Thinking | Yes | No | N/A | Clean disable | Leaks (blocking) |
-| Offline | No | Yes | Yes | Yes | Yes |
-| Privacy | Data sent | Local | Local | Local | Local |
-| Cost | ~$0.01/query | Free | Free | Free | Free |
-| Best for | - | Voice only | Helmet/16GB | Home/64GB | Pending fix |
+| Metric | Claude Opus 4.7 | Claude Sonnet 4.6 | Qwen3.5 35B-A3B (local) | Qwen3 4B (local) | Gemma 3 4B (local) |
+|--------|-----------------|-------------------|-------------------------|------------------|---------------------|
+| Quality | 99.1% | 96.5% | 94.8% (A) | 94.8% (A) | 89.7% (B) |
+| Speed | cloud | cloud | 29.6 tok/s | 35.1 tok/s | 36.3 tok/s |
+| Vision | Yes | Yes | Yes | No | Yes |
+| Offline | No | No | Yes | Yes | Yes |
+| Privacy | Data sent | Data sent | Fully local | Fully local | Fully local |
+| Cost | ~$0.05/query | ~$0.01/query | Free | Free | Free |
+| Best for | Quality-first | Quality-first | Home/64GB | Voice-only | Helmet/16GB |
 
 ### Power Mode Impact (Qwen3-4B baseline)
 

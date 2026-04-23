@@ -8,6 +8,7 @@ with default_remote=true tools. Updated April 2025 to match the live tool regist
 """
 
 import json
+import os
 import re
 import sys
 import time
@@ -414,8 +415,14 @@ def check_clarification(text: str) -> bool:
     return '?' in text
 
 
-def query_llm(prompt: str, max_tokens: int = 150) -> Tuple[str, float, Dict]:
-    """Query the local LLM and return response, timing, and usage stats"""
+# Backend selection (set by main block)
+BACKEND = "local"   # "local" | "claude" | "openai"
+CLOUD_MODEL = None
+CLOUD_API_KEY = None
+
+
+def query_llm_local(prompt: str, max_tokens: int) -> Tuple[str, float, Dict]:
+    """Query the local llama-server via OpenAI-compatible API"""
     try:
         start = time.time()
         response = requests.post(
@@ -445,6 +452,92 @@ def query_llm(prompt: str, max_tokens: int = 150) -> Tuple[str, float, Dict]:
         return content, elapsed, {**timing, **usage}
     except Exception as e:
         return None, 0, {"error": str(e)}
+
+
+def query_llm_claude(prompt: str, max_tokens: int) -> Tuple[str, float, Dict]:
+    """Query Anthropic Claude API"""
+    try:
+        start = time.time()
+        payload = {
+            "model": CLOUD_MODEL,
+            "max_tokens": max_tokens,
+            "system": SYSTEM_PROMPT,
+            "messages": [{"role": "user", "content": prompt}]
+        }
+        # Newer Claude models (Opus 4.7+) deprecated temperature — omit for those
+        if "opus" not in CLOUD_MODEL.lower():
+            payload["temperature"] = 0.7
+
+        response = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": CLOUD_API_KEY,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json"
+            },
+            json=payload,
+            timeout=120
+        )
+        elapsed = time.time() - start
+
+        if response.status_code != 200:
+            return None, elapsed, {"error": f"HTTP {response.status_code}: {response.text[:200]}"}
+
+        data = response.json()
+        # Claude returns content as a list of blocks
+        content = ""
+        for block in data.get("content", []):
+            if block.get("type") == "text":
+                content += block.get("text", "")
+        usage = data.get("usage", {})
+        return content, elapsed, {"prompt_tokens": usage.get("input_tokens", 0),
+                                   "completion_tokens": usage.get("output_tokens", 0)}
+    except Exception as e:
+        return None, 0, {"error": str(e)}
+
+
+def query_llm_openai(prompt: str, max_tokens: int) -> Tuple[str, float, Dict]:
+    """Query OpenAI-compatible cloud API"""
+    try:
+        start = time.time()
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {CLOUD_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": CLOUD_MODEL,
+                "max_tokens": max_tokens,
+                "temperature": 0.7,
+                "messages": [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt}
+                ]
+            },
+            timeout=120
+        )
+        elapsed = time.time() - start
+
+        if response.status_code != 200:
+            return None, elapsed, {"error": f"HTTP {response.status_code}: {response.text[:200]}"}
+
+        data = response.json()
+        content = data['choices'][0]['message']['content']
+        usage = data.get('usage', {})
+        return content, elapsed, usage
+    except Exception as e:
+        return None, 0, {"error": str(e)}
+
+
+def query_llm(prompt: str, max_tokens: int = 150) -> Tuple[str, float, Dict]:
+    """Query the selected backend and return response, timing, and usage stats"""
+    if BACKEND == "claude":
+        return query_llm_claude(prompt, max_tokens)
+    elif BACKEND == "openai":
+        return query_llm_openai(prompt, max_tokens)
+    else:
+        return query_llm_local(prompt, max_tokens)
 
 
 # =============================================================================
@@ -744,33 +837,86 @@ def run_quality_test(model_name: str = "Current Model") -> Dict:
     return summary
 
 
-if __name__ == "__main__":
-    # Check if server is running
+def load_api_key_from_secrets(provider: str) -> str:
+    """Load API key from dawn/secrets.toml as fallback"""
+    secrets_path = os.path.expanduser("~/code/dawn/secrets.toml")
+    if not os.path.exists(secrets_path):
+        return ""
     try:
-        response = requests.get(f"{SERVER}/health", timeout=2)
-        if response.status_code != 200:
-            print(f"❌ ERROR: llama-server not responding at {SERVER}")
-            print("Start llama-server first!")
-            sys.exit(1)
-    except:
-        print(f"❌ ERROR: Cannot connect to {SERVER}")
-        print("Make sure llama-server is running!")
-        sys.exit(1)
+        key_name = {"claude": "claude_api_key", "openai": "openai_api_key"}.get(provider)
+        if not key_name:
+            return ""
+        with open(secrets_path) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith(f"{key_name}") and "=" in line:
+                    value = line.split("=", 1)[1].strip().strip('"').strip("'")
+                    return value
+    except Exception:
+        pass
+    return ""
 
-    # Get model name from server
-    try:
-        props = requests.get(f"{SERVER}/props", timeout=2).json()
-        model_name = props.get('default_generation_settings', {}).get('model', 'Unknown')
-        if '/' in model_name:
-            model_name = model_name.split('/')[-1]
-    except:
-        model_name = "Current Model"
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="DAWN LLM quality test")
+    parser.add_argument("--cloud", choices=["claude", "openai"],
+                        help="Run against a cloud provider instead of the local server")
+    parser.add_argument("--model", help="Cloud model name (required with --cloud)")
+    parser.add_argument("--api-key",
+                        help="API key (fallback: env vars or ~/code/dawn/secrets.toml)")
+    args = parser.parse_args()
+
+    if args.cloud:
+        if not args.model:
+            print("❌ ERROR: --model required when using --cloud")
+            sys.exit(1)
+
+        globals()["BACKEND"] = args.cloud
+        globals()["CLOUD_MODEL"] = args.model
+
+        # Resolve API key: CLI arg > env var > secrets.toml
+        env_name = "ANTHROPIC_API_KEY" if args.cloud == "claude" else "OPENAI_API_KEY"
+        globals()["CLOUD_API_KEY"] = (args.api_key or os.getenv(env_name)
+                                       or load_api_key_from_secrets(args.cloud))
+        CLOUD_API_KEY = globals()["CLOUD_API_KEY"]
+
+        if not CLOUD_API_KEY:
+            print(f"❌ ERROR: No API key. Set {env_name}, pass --api-key, or add to secrets.toml")
+            sys.exit(1)
+
+        model_name = f"{args.cloud}:{args.model}"
+        print(f"Running cloud test: {model_name}")
+    else:
+        # Local mode: verify server is up
+        try:
+            response = requests.get(f"{SERVER}/health", timeout=2)
+            if response.status_code != 200:
+                print(f"❌ ERROR: llama-server not responding at {SERVER}")
+                print("Start llama-server first!")
+                sys.exit(1)
+        except:
+            print(f"❌ ERROR: Cannot connect to {SERVER}")
+            print("Make sure llama-server is running!")
+            sys.exit(1)
+
+        # Get model name from server
+        try:
+            props = requests.get(f"{SERVER}/props", timeout=2).json()
+            model_name = props.get('default_generation_settings', {}).get('model', 'Unknown')
+            if '/' in model_name:
+                model_name = model_name.split('/')[-1]
+        except:
+            model_name = "Current Model"
 
     # Run tests
     results = run_quality_test(model_name)
 
     # Save results to file
-    output_file = f"quality_test_results_{int(time.time())}.json"
+    suffix = f"_{args.cloud}_{args.model}" if args.cloud else ""
+    safe_suffix = re.sub(r'[^A-Za-z0-9_.-]', '_', suffix)
+    output_file = f"quality_test_results_{int(time.time())}{safe_suffix}.json"
     with open(output_file, 'w') as f:
         json.dump(results, f, indent=2)
 

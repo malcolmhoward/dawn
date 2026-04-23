@@ -298,7 +298,31 @@ define_presets() {
     PRESET_H_SIZE="42.2 GB"
     PRESET_H_NOTES="Coding model, no vision"
 
-    ALL_PRESETS="A A2 A3 B C D E F G H"
+    # Preset I: Qwen 3.6 27B Vision, dense (WebUI quality, coding)
+    PRESET_I_LABEL="Qwen 3.6 27B Vision"
+    PRESET_I_MODEL="Qwen_Qwen3.6-27B-Q4_K_M.gguf"
+    PRESET_I_HF_REPO="bartowski/Qwen_Qwen3.6-27B-GGUF"
+    PRESET_I_HF_FILE="Qwen_Qwen3.6-27B-Q4_K_M.gguf"
+    PRESET_I_MMPROJ="mmproj-Qwen_Qwen3.6-27B-f16.gguf"
+    PRESET_I_MMPROJ_REPO="bartowski/Qwen_Qwen3.6-27B-GGUF"
+    PRESET_I_MMPROJ_FILE="mmproj-Qwen_Qwen3.6-27B-f16.gguf"
+    PRESET_I_TEMPLATE=""
+    PRESET_I_REASONING="deepseek"
+    PRESET_I_CTX=32768
+    PRESET_I_BATCH=768
+    PRESET_I_TEMP="0.7"
+    PRESET_I_TOP_P="0.8"
+    PRESET_I_TOP_K=20
+    PRESET_I_MIN_P=0
+    PRESET_I_REPEAT="1.0"
+    PRESET_I_MIN_MEM=24
+    PRESET_I_SPEED="7.0"
+    PRESET_I_QUALITY="92.2% (A)"
+    PRESET_I_VISION=1
+    PRESET_I_SIZE="17.5 GB"
+    PRESET_I_NOTES="Coding + vision, WebUI tier"
+
+    ALL_PRESETS="A A2 A3 B C D E F G H I"
 }
 
 # Get a preset variable by name: get_preset_var F LABEL -> value
@@ -730,6 +754,7 @@ parse_args() {
                 echo "  F   Qwen3.5 35B-A3B MoE      19.9 GB   Recommended for 64GB"
                 echo "  G   Gemma 4 26B-A4B MoE      15.9 GB   Pending thinking fix"
                 echo "  H   Qwen3-Coder-Next 80B     42.2 GB   Coding model, no vision"
+                echo "  I   Qwen 3.6 27B Vision      17.5 GB   Coding + vision, WebUI tier"
                 echo ""
                 echo "Examples:"
                 echo "  $0                     # Interactive preset selection"
@@ -841,7 +866,7 @@ if [ -n "$CLI_MODEL_PATH" ]; then
 elif [ -n "$CLI_PRESET" ]; then
     # Non-interactive preset mode
     if [[ ! " $ALL_PRESETS " == *" $CLI_PRESET "* ]]; then
-        error "Invalid preset: $CLI_PRESET (valid: A A2 A3 B C D E F G H)"
+        error "Invalid preset: $CLI_PRESET (valid: A A2 A3 B C D E F G H I)"
     fi
     SELECTED_PRESET="$CLI_PRESET"
     log "Preset $SELECTED_PRESET: $(get_preset_var "$SELECTED_PRESET" LABEL)"
