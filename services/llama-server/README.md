@@ -85,15 +85,24 @@ context size, and with only 2 KV heads per layer the cost is minimal.
 128K is the recommended context for Preset F on AGX Orin 64GB. Zero performance
 penalty vs 32K, with 4x the usable context for heavy tool workflows.
 
-### Gemma 4 Thinking Leak Issue
+### Gemma 4 Status (April 2026)
 
-As of April 2025, all Gemma 4 models (dense and MoE) leak thinking content into
-responses via llama.cpp. The `<|channel>thought` content appears in
-`reasoning_content` with `--reasoning-format deepseek`, but the model spends its
-entire token budget on thinking and produces empty `content`. Neither
-`--reasoning off` nor `--chat-template-kwargs '{"enable_thinking":false}'`
-reliably suppresses this. Monitor `ggml-org/llama.cpp` issues for fixes.
-Gemma **3** models do not have this issue.
+**Thinking leak: mostly fixed** on CUDA in llama.cpp b8738+ (PRs #21326, #21327,
+#21343, #21390, #21566 merged early April). Use `--reasoning off` or
+`--chat-template-kwargs '{"enable_thinking":false}'` with a quantized GGUF
+(Q4/Q5/Q8 — F16 may still loop).
+
+**Still blocking for DAWN:**
+- **Vision (mmproj) on CUDA crashes** — issue #21402 still open. DAWN uses
+  vision on the home Orin, so this alone blocks production use.
+- **Tool calling loops** — issue #21375 (peg-gemma4 parser) still open.
+  DAWN relies heavily on tool calling.
+
+Once #21402 and #21375 close, Gemma 4 26B-A4B becomes the top pick (94.8%
+quality, 32.2 tok/s — ties Qwen 3.5 35B-A3B on quality and runs faster).
+
+**Current recommendation:** Use **Qwen 3.5 35B-A3B** (Preset F) for production.
+Gemma **3** models do not have any of these issues.
 
 ### Hardware: Jetson AGX Orin 64GB Developer Kit
 
