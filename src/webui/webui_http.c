@@ -31,6 +31,7 @@
 
 #include <pthread.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
 
 #include "config/dawn_config.h"
@@ -208,6 +209,117 @@ void webui_security_headers_init(void) {
 
    OLOG_INFO("WebUI: Security headers initialized (%d bytes, HSTS=%s)",
              s_static_security_headers_len, g_config.webui.https ? "on" : "off");
+}
+
+/* =============================================================================
+ * Static Asset Caching — ETag + Cache-Control
+ *
+ * HTML responses use Cache-Control: no-store so a fresh deploy is visible on
+ * the user's next load without a hard refresh. Every other static asset gets
+ * a strong ETag derived from mtime+size plus Cache-Control: no-cache — the
+ * browser revalidates on every request and we return 304 Not Modified when
+ * the ETag still matches. First-visit bandwidth is unchanged; every
+ * subsequent page load collapses the ~1.4 MB asset bundle into a handful of
+ * ~200-byte 304s.
+ * ============================================================================= */
+
+/* Strong ETag fingerprint of a static-asset file. mtime+size+inode so two
+ * different files can never collide even if mtime and size happen to match. */
+static void format_etag(const struct stat *st, char *out, size_t out_size) {
+   snprintf(out, out_size, "\"%lx-%lx-%lx\"", (unsigned long)st->st_mtime,
+            (unsigned long)st->st_size, (unsigned long)st->st_ino);
+}
+
+/* HTML is always served fresh — skip the ETag path so a new deploy takes
+ * effect without a user-side refresh. Covers index.html, login.html, etc. */
+static bool mime_is_html(const char *mime_type) {
+   return mime_type && strncmp(mime_type, "text/html", 9) == 0;
+}
+
+/* True for assets whose identity is encoded in the filename and that change
+ * rarely: fonts (woff2/woff/ttf — IBM Plex Mono, Source Sans 3) and minified
+ * vendor libraries (marked.min.js, purify.min.js — updated via curl -o which
+ * bumps mtime → ETag still protects a revalidating client). These get
+ * public + max-age + immutable to kill the revalidation RTT on slow links
+ * (LTE satellites), where it causes perceptible FOUT on fonts. */
+static bool path_is_immutable_asset(const char *path) {
+   if (!path)
+      return false;
+   size_t len = strlen(path);
+   static const char *const suffixes[] = { ".woff2", ".woff", ".ttf", ".min.js" };
+   for (size_t i = 0; i < sizeof(suffixes) / sizeof(suffixes[0]); i++) {
+      size_t slen = strlen(suffixes[i]);
+      if (len > slen && strcmp(path + len - slen, suffixes[i]) == 0)
+         return true;
+   }
+   return false;
+}
+
+/* Build the per-request additional-headers string passed to
+ * lws_serve_http_file(): the shared security-headers blob + the cache policy
+ * for this file. Three tiers:
+ *   - HTML                   → Cache-Control: no-store (no ETag).
+ *   - Fonts + vendor min.js  → public, max-age=30d, immutable + ETag.
+ *   - Everything else        → no-cache + ETag (revalidate every request).
+ * Returns bytes written, or 0 on overflow (caller falls back to
+ * security-headers-only so CSP/X-Frame-Options are never dropped). */
+static int build_static_cache_headers(char *buf,
+                                      size_t buf_size,
+                                      const char *path,
+                                      const char *mime_type,
+                                      const char *etag) {
+   int sec_len;
+   const char *sec_hdrs = webui_get_static_security_headers(&sec_len);
+   if (sec_len <= 0 || (size_t)sec_len >= buf_size)
+      return 0;
+   memcpy(buf, sec_hdrs, sec_len);
+
+   int remain = (int)buf_size - sec_len;
+   int n;
+   if (mime_is_html(mime_type)) {
+      n = snprintf(buf + sec_len, remain, "Cache-Control: no-store\x0d\x0a");
+   } else if (path_is_immutable_asset(path)) {
+      n = snprintf(buf + sec_len, remain,
+                   "ETag: %s\x0d\x0a"
+                   "Cache-Control: public, max-age=2592000, immutable\x0d\x0a",
+                   etag);
+   } else {
+      n = snprintf(buf + sec_len, remain,
+                   "ETag: %s\x0d\x0a"
+                   "Cache-Control: no-cache\x0d\x0a",
+                   etag);
+   }
+   if (n < 0 || n >= remain)
+      return 0;
+   return sec_len + n;
+}
+
+/* Write a 304 Not Modified response (headers only). The header set here is
+ * intentionally the same shape as the 200 path's per-request block — ETag,
+ * Cache-Control, and the full security-header set — so the browser's cached
+ * representation gets the same CSP/X-Frame-Options/etc. it saw originally.
+ * Keeping these in sync is load-bearing: diverging between 200 and 304 would
+ * make intermediate caches treat the representation as stale. */
+static int send_304_not_modified(struct lws *wsi, const char *etag) {
+   unsigned char buffer[LWS_PRE + 1024];
+   unsigned char *start = &buffer[LWS_PRE];
+   unsigned char *p = start;
+   unsigned char *end = &buffer[sizeof(buffer) - 1];
+
+   if (lws_add_http_header_status(wsi, HTTP_STATUS_NOT_MODIFIED, &p, end))
+      return -1;
+   if (lws_add_http_header_by_name(wsi, (const unsigned char *)"ETag:", (const unsigned char *)etag,
+                                   (int)strlen(etag), &p, end))
+      return -1;
+   if (lws_add_http_header_by_name(wsi, (const unsigned char *)"Cache-Control:",
+                                   (const unsigned char *)"no-cache", 8, &p, end))
+      return -1;
+   if (webui_add_security_headers(wsi, &p, end))
+      return -1;
+   if (lws_finalize_http_header(wsi, &p, end))
+      return -1;
+
+   return lws_write(wsi, start, (size_t)(p - start), LWS_WRITE_HTTP_HEADERS);
 }
 
 /* =============================================================================
@@ -1189,9 +1301,59 @@ int callback_http(struct lws *wsi,
          /* Get MIME type */
          mime_type = get_mime_type(filepath);
 
-         /* Serve file with security headers */
+         /* Stat the file for ETag-based revalidation. A failure here (missing
+          * file, symlink, etc.) falls through to lws_serve_http_file() which
+          * handles the 404 path below. */
+         struct stat st;
+         /* 3 x up to 16 hex digits + 2 dashes + 2 quotes + NUL = ~54; 64 is
+          * headroom. */
+         char etag[64] = "";
+         bool have_etag = false;
+         if (stat(filepath, &st) == 0 && S_ISREG(st.st_mode) && !mime_is_html(mime_type)) {
+            format_etag(&st, etag, sizeof(etag));
+            have_etag = true;
+
+            /* If-None-Match may be a comma-separated list per RFC 7232 §3.2;
+             * tokenize and match each entry. "*" matches any current
+             * representation (client says "304 if resource exists"). 256 bytes
+             * holds ~10 tokens' worth so this stays robust against browsers
+             * that accumulate cached variants. */
+            char inm[256];
+            int inm_len = lws_hdr_copy(wsi, inm, sizeof(inm), WSI_TOKEN_HTTP_IF_NONE_MATCH);
+            if (inm_len > 0) {
+               char *saveptr = NULL;
+               char *tok = strtok_r(inm, ",", &saveptr);
+               while (tok) {
+                  while (*tok == ' ' || *tok == '\t')
+                     tok++;
+                  char *tok_end = tok + strlen(tok);
+                  while (tok_end > tok && (tok_end[-1] == ' ' || tok_end[-1] == '\t'))
+                     tok_end--;
+                  *tok_end = '\0';
+                  if (strcmp(tok, "*") == 0 || strcmp(tok, etag) == 0) {
+                     send_304_not_modified(wsi, etag);
+                     return -1;
+                  }
+                  tok = strtok_r(NULL, ",", &saveptr);
+               }
+            }
+         }
+
+         /* Build per-request headers = security headers + cache policy [+ ETag].
+          * Falls back to security-headers-only on formatting overflow so we
+          * never drop CSP/X-Frame-Options. */
+         char per_req_headers[1536];
+         int per_req_len = build_static_cache_headers(per_req_headers, sizeof(per_req_headers),
+                                                      filepath, mime_type, have_etag ? etag : "");
+         const char *sec_hdrs;
          int sec_hdr_len;
-         const char *sec_hdrs = webui_get_static_security_headers(&sec_hdr_len);
+         if (per_req_len > 0) {
+            sec_hdrs = per_req_headers;
+            sec_hdr_len = per_req_len;
+         } else {
+            sec_hdrs = webui_get_static_security_headers(&sec_hdr_len);
+         }
+
          n = lws_serve_http_file(wsi, filepath, mime_type, sec_hdrs, sec_hdr_len);
          if (n < 0) {
             /* File not found or error */
