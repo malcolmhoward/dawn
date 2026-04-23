@@ -590,23 +590,31 @@ phone_tool.c, phone_service.c, phone_db.c, config, systemd. MIRAGE LTE signal ba
 ### Phase 5: Audio Bridge + End-to-End
 Audio bridge thread, crossover cable + USB sound card setup, bidirectional audio across client types, SMS end-to-end, rate limiting, edge cases.
 
-### Phase 5.5: PDU Mode + Concatenated SMS
+### Phase 5.5: PDU Mode + Concatenated SMS ✓ (April 2026)
 
-Switch ECHO from text mode (`AT+CMGF=1`) to PDU mode (`AT+CMGF=0`) for SMS send. Text mode limits UCS2 messages to 70 characters — the modem returns `CMS ERROR` for anything longer because it cannot auto-concatenate in text mode. Verified 2026-04-15.
+Flipped ECHO from text mode (`AT+CMGF=1`) to PDU mode (`AT+CMGF=0`) so SMS send/receive handle messages of any length. Text mode had capped UCS2 at 70 characters (modem returned `CMS ERROR` for anything longer; verified 2026-04-15). PDU mode gives the daemon full control of the 3GPP TS 23.040 binary frame, including UDH-based concatenation across segments.
 
-**How cell phones handle this**: PDU mode gives the sender full control over the SMS binary frame. Long messages are split into segments with a UDH (User Data Header) that carries a reference ID, segment count, and segment index. The receiving phone reassembles segments transparently. Each segment carries 67 UCS2 characters or 153 GSM7 characters (slightly less than single-SMS limits because the UDH consumes a few bytes).
+**Shipped (ECHO)**:
+- `include/pdu.h` + `src/pdu.c` — UCS2 SMS-SUBMIT encoder with 8-bit-reference UDH concat; SMS-DELIVER decoder handling both UCS2 and GSM7 (most handsets default to GSM7 for plain ASCII, so decode has to support it even though outbound is UCS2-only in v1). Hardened bounds checks at every length prefix, hex-alphabet validation, and Unicode sanitization stripping NULs, bidi overrides (U+202A–U+202E, U+2066–U+2069), zero-width / formatting chars (U+200B–U+200F, U+2060, U+FEFF, U+061C, U+180E), variation selectors (U+FE00–U+FE0F, U+E0100–U+E01EF), and the Unicode Tag block (U+E0000–U+E007F — prompt-injection smuggling vector). `pdu_new_ref_id()` seeded from `getrandom()` so the outbound ref_id isn't predictable from passive observation.
+- `include/sms_reassembly.h` + `src/sms_reassembly.c` — bounded inline store: 8 slots, 2-per-sender cap, 10-min TTL, LRU eviction weighted by fragment count (so a persistent attacker can't evict honest mid-message slots). Duplicate detection via bitmask check *before* copy so a double-send can't corrupt slot state.
+- `include/sms_io.h` + `src/sms_io.c` — orchestrator extracted from `oasis-echo.c`; `sms_io_send_and_respond()` owns the error-code → MQTT-response mapping. Inter-segment pacing (150ms default, configurable) avoids SIM7600 wedging on back-to-back concat sends.
+- New `at_command_send_pdu()` — two-phase `AT+CMGS=<octets>` + hex + Ctrl-Z with a re-validation of the hex alphabet before bytes hit the serial port (defence-in-depth).
+- Rate-limiter rewrite: ring-buffer-with-64-entries → leaky-bucket counter. The old ring silently stopped enforcing at limits > 64, so the new 200/hr segment budget wouldn't have worked without this fix. `rate_bucket_take_n()` debits N tokens atomically for multi-segment sends.
+- Concurrency improvement: CMTI/CALL_CONNECTED events pushed to a dedicated `g_deferred_queue` drained *after* MQTT commands, so a 10-segment inbound burst can't stall a concurrent hangup/dial. CMGR/CMGD also use a tight 500ms timeout (down from 2s) because they hit local modem storage, not the network. Combined effect: worst-case MQTT-command latency during an SMS burst dropped from ~40s to ~1s.
+- CMGR failure path now issues CMGD fire-and-forget so a transient modem read failure doesn't pin an inbox slot forever.
+- `mqtt_publish_response()` schema gains an optional pre-serialized `data_json` merged under the `"data"` key; for `send_sms` it carries `{segments_sent, segments_total}` so consumers can surface partial-send observability. Existing consumers ignore unknown fields.
+- Modem init now takes `pdu_mode` flag; `--legacy-sms` / `PDU_MODE=0` env restores text-mode as a rollback. `AT+CSMP` only sent in text mode (PDU carries DCS per-frame).
+- Tests: 19 PDU (encode, decode, UDH, malformed rejection, UCS2 sanitization, GSM7 round-trip with real iPhone-style fixture) + 8 reassembly (LRU, per-sender cap, duplicate, timeout, total-mismatch). All 6 suites pass.
 
-**Required work (ECHO side)** — new `src/pdu.c` module (~200-300 lines):
-- PDU frame builder: destination number in BCD, TP-MTI/TP-MR/TP-DA/TP-PID/TP-DCS/TP-UDL/TP-UD fields
-- Data coding scheme selection: GSM7 (DCS=0x00) for ASCII-only bodies, UCS2 (DCS=0x08) when non-ASCII present
-- Concatenation: split body into segments, prepend UDH (IE 0x00: ref_id, total, seq) to each segment
-- Send each segment as a separate `AT+CMGS=<pdu_length>` in PDU mode
-- Update `modem_init()`: change `AT+CMGF=1` to `AT+CMGF=0`
-- SMS receive also switches to PDU mode: parse incoming PDU frames, extract sender/body/UDH
+**Shipped (DAWN)** — PR #9 earlier in the cycle widened `phone_sms_log.body` from 1024 → 2048 bytes and added a segment-hint helper in `phone_tool.c` so the send-confirmation prompt tells the user when a message will send as multiple parts.
 
-**Benefit**: ASCII messages get 153 chars/segment (up from 70 in UCS2 text mode). Unicode messages get 67 chars/segment with automatic concatenation instead of hard failure. Multi-segment messages work transparently.
+**Validated on real SIM7600G-H (2026-04-22)**: single + multi-segment outbound (up to 5 segments), emoji and surrogate pairs round-trip intact, receiving phone shows one conversation bubble. Multi-segment inbound with 🤔🇨🇦😎 (including a compound flag emoji) reassembles cleanly. Message rate limit and segment rate limit both reject correctly. Voice calls unaffected. Legacy `--legacy-sms` rollback confirmed — long inbound messages fragment into multiple `sms_received` events as pre-PDU, single-segment send still works.
 
-**Complexity**: Medium. PDU encoding is well-documented (3GPP TS 23.040). The main work is the frame builder and segment splitter. SMS receive parsing is straightforward since we already handle UCS2 decoding.
+**Deferred to v2**: GSM7 *encode* for outbound (UCS2-only v1, so ASCII messages use 67 chars/segment instead of the 153 GSM7 packing would allow). Add once bandwidth metrics justify the packing code.
+
+**v2 follow-ups tracked**:
+- Phone routing to active user — currently incoming-call chimes fan out to every session equally, and the local speaker plays regardless of which satellite/browser the user is actually at. Paused `satellite_mappings` work in memory. Surfaced concrete failures 2026-04-22: WebUI refused to answer an actively-ringing call because that session's LLM context didn't reflect the ring state; satellite + local both tried `phone.answer` for the same call and raced. See `docs/TODO.md` High Impact.
+- MIRAGE long-SMS overflow — HUD notification frame doesn't wrap/clip long bodies, and PDU mode suddenly makes long inbound common. See `docs/TODO.md` High Impact.
 
 ### Phase 6: MMS Support (Future)
 Receive and send multimedia messages (images, video, contacts). The SIM7600G-H supports MMS via AT commands (`AT+CMMSINIT`, `AT+CMMSDOWN`, `AT+CMMSVIEW`, `AT+CMMSSEND`). MMS uses a WAP/HTTP data channel to the carrier's MMSC (Multimedia Messaging Service Center) — the image payload is not delivered inline like SMS text.
@@ -668,12 +676,12 @@ The original tech-debt gap (no way for the LLM to delete SMS/call records) is re
 
 - `phone_db.c` / `phone_db.h`: new `PHONE_DB_SUCCESS`/`FAILURE`/`NOT_FOUND` return codes, seven new functions — `phone_db_sms_log_delete`, `_delete_by_number`, `_count_by_number`, `phone_db_call_log_delete`, `_delete_older_than`, `_count_older_than` — plus a shared `phone_number_normalize()` helper so LLM-supplied formats (`"+1-555-..."`, `"(555) ..."`, bare 10-digit US) match stored E.164 rows. Every DELETE is `user_id`-scoped.
 - `phone_tool.c`: four new actions — `delete_sms`, `confirm_delete_sms`, `delete_call`, `confirm_delete_call`. Two-step confirmation with a **120-second TTL** on pending state plus a per-user delete rate limit (10/hour default). Matches the `send_sms`/`confirm_sms` and email-tool pattern — the LLM previews, the user says "confirm" on the next turn. TTL bounds replay windows; rate limit caps prompt-injection-coerced bulk deletes.
-- `phone_sms_log_t.body` widened from `[1024]` → `[2048]` so multi-segment inbound SMS (from the upcoming ECHO PDU work) doesn't truncate. Stack cost held constant by capping recent-query arrays at 10 entries (down from 20) in `handle_read_sms`/`handle_sms_log`.
+- `phone_sms_log_t.body` widened from `[1024]` → `[2048]` so multi-segment inbound SMS (from the ECHO PDU work, now shipped — see Phase 5.5 above) doesn't truncate. Stack cost held constant by capping recent-query arrays at 10 entries (down from 20) in `handle_read_sms`/`handle_sms_log`.
 - SMS segment-hint added to the `send_sms` confirmation prompt — "This will send as N text messages" when the body exceeds one segment. Gated on `warn_on_multi_segment` config (default `true`).
 - Delete criteria in v1: `id`, `number`, or `older_than_days` — exactly one required. No by-contact-name (LLM pre-resolves). Bulk older-than-days is wired for the **call log** but not yet for SMS (follow-up).
+- **Send/call pending-state TTL backport (April 2026)**: applied the same 120s TTL from the delete path to the older `send_sms`/`confirm_sms` and `call`/`confirm_call` pairs. Previously those globals (`s_pending_call_*`, `s_pending_sms_*`) had no expiry — a stale "confirm" minutes later would still trigger. Now arm stamps `time(NULL)`, confirm checks against `PHONE_TOOL_PENDING_TTL_SEC`, clears state, and returns "Error: confirmation expired. Please retry the ... request." Live-validated on WebUI: `confirm_sms` called 135s after arm correctly rejected instead of sending.
 
 **Still open** — tracked in `docs/TODO.md`:
-- Back-port the 120s TTL to existing `send_sms`/`confirm_sms`.
 - Migrate all `phone_tool` pending state from globals to session-scoped.
 - Clean up `phone_db.c`'s legacy `-1` error returns across insert/update/query.
 - SMS bulk delete by `older_than_days`.

@@ -151,10 +151,13 @@ static bool check_delete_rate_limit(int user_id) {
    return true;
 }
 
-/* Pending confirmation state (per-session would be ideal, but single user for now) */
+/* Pending confirmation state (per-session would be ideal, but single user for now).
+ * Timestamps bound the replay window — matches the delete pending-state TTL below. */
 static char s_pending_call_number[24] = "";
+static time_t s_pending_call_at = 0;
 static char s_pending_sms_number[24] = "";
 static char s_pending_sms_body[1024] = "";
+static time_t s_pending_sms_at = 0;
 
 /* Pending deletion state with TTL.
  *
@@ -296,6 +299,7 @@ static char *handle_call(struct json_object *details, int user_id) {
    if (s_config.confirm_outbound) {
       /* Store target for confirmation — service layer resolves on confirm */
       snprintf(s_pending_call_number, sizeof(s_pending_call_number), "%s", target);
+      s_pending_call_at = time(NULL);
       char buf[256];
       snprintf(buf, sizeof(buf), "About to call %s. Say 'confirm' to proceed.", target);
       return strdup(buf);
@@ -311,11 +315,17 @@ static char *handle_confirm_call(int user_id) {
    if (s_pending_call_number[0] == '\0') {
       return strdup("Error: no pending call to confirm");
    }
+   if (time(NULL) - s_pending_call_at > PHONE_TOOL_PENDING_TTL_SEC) {
+      s_pending_call_number[0] = '\0';
+      s_pending_call_at = 0;
+      return strdup("Error: confirmation expired. Please retry the call request.");
+   }
 
    char result[RESULT_BUF_SIZE];
    phone_service_call(user_id, s_pending_call_number, result, sizeof(result));
 
    s_pending_call_number[0] = '\0';
+   s_pending_call_at = 0;
    return strdup(result);
 }
 
@@ -346,6 +356,7 @@ static char *handle_send_sms(struct json_object *details, int user_id) {
       /* Store target and body for confirmation — service layer resolves on confirm */
       snprintf(s_pending_sms_number, sizeof(s_pending_sms_number), "%s", target);
       snprintf(s_pending_sms_body, sizeof(s_pending_sms_body), "%s", body);
+      s_pending_sms_at = time(NULL);
 
       int segs = s_config.warn_on_multi_segment ? estimate_sms_segments(body) : 1;
       char buf[768];
@@ -370,6 +381,12 @@ static char *handle_confirm_sms(int user_id) {
    if (s_pending_sms_number[0] == '\0') {
       return strdup("Error: no pending SMS to confirm");
    }
+   if (time(NULL) - s_pending_sms_at > PHONE_TOOL_PENDING_TTL_SEC) {
+      s_pending_sms_number[0] = '\0';
+      s_pending_sms_body[0] = '\0';
+      s_pending_sms_at = 0;
+      return strdup("Error: confirmation expired. Please retry the send request.");
+   }
 
    char result[RESULT_BUF_SIZE];
    phone_service_send_sms(user_id, s_pending_sms_number, s_pending_sms_body, result,
@@ -377,6 +394,7 @@ static char *handle_confirm_sms(int user_id) {
 
    s_pending_sms_number[0] = '\0';
    s_pending_sms_body[0] = '\0';
+   s_pending_sms_at = 0;
    return strdup(result);
 }
 
