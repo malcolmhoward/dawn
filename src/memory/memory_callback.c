@@ -56,18 +56,27 @@
  * ============================================================================= */
 
 static const char *MEMORY_BLOCKED_PATTERNS[] = {
-   /* Imperative/instruction patterns */
-   "whenever", "always", "never", "you should", "you must", "you need to", "you shall",
-   "you have to", "you will", "you are to", "make sure", "ensure that", "be sure to",
-   "don't forget",
-   /* Negation/override patterns */
-   "ignore", "forget", "disregard", "pretend", "act as if", "override", "bypass", "skip", "disable",
-   /* System manipulation */
-   "system prompt", "instructions", "guidelines", "rules", "constraints", "from now on",
-   "in future", "going forward", "henceforth",
-   /* Credential patterns */
-   "password", "api key", "apikey", "token", "secret", "credential", "private key", "auth",
-   "bearer",
+   /* Imperative patterns addressing the AI */
+   "you should", "you must", "you need to", "you shall", "you have to", "you will", "you are to",
+   "make sure", "ensure that", "be sure to", "don't forget",
+   /* "always/never/whenever" + imperative verb — blocks instructions, allows descriptions
+    * like "user always prefers dark mode" or "never eats gluten" */
+   "always respond", "always answer", "always say", "always reply", "always act", "always include",
+   "always add", "always use", "always be ", "never refuse", "never deny", "never reject",
+   "never decline", "never say", "never mention", "never reveal", "never tell", "whenever you",
+   "whenever asked", "whenever i ",
+   /* Negation/override — multi-word to allow "user ignores notifications" etc. */
+   "ignore your", "ignore previous", "ignore above", "ignore all ", "ignore the ", "forget your",
+   "forget previous", "forget above", "forget all ", "forget everything", "disregard", "pretend",
+   "act as if", "override", "bypass", "disable safe", "disable filter", "disable guard",
+   "disable content", "disable check", "skip check", "skip verif", "skip valid", "skip safe",
+   /* System manipulation — "your X" catches injection; bare words blocked legitimate facts
+    * like "dietary constraints" or "assembly instructions" */
+   "system prompt", "your instructions", "your guidelines", "your rules", "your constraints",
+   "from now on", "going forward", "henceforth",
+   /* Credential patterns — multi-word to avoid blocking "token consumption" etc. */
+   "password", "api key", "apikey", "api token", "access token", "auth token", "session token",
+   "secret key", "credential", "private key", "bearer",
    /* Role/persona manipulation */
    "you are", "your role", "your purpose", "your job", "your task", "act like", "behave as",
    "respond as", NULL
