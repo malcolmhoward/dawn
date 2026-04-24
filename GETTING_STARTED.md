@@ -557,6 +557,16 @@ engines:
     disabled: false
   - name: duckduckgo images
     disabled: false
+
+  # IT category deprioritization.
+  # The default SearXNG 'it' category is dominated by DockerHub and MDN matches
+  # for any query containing "release", "benchmark", "model", "image", etc., which
+  # drowns out the actually-useful Stack Overflow / GitHub / news results. Lower
+  # their weight so they only surface when nothing better matches.
+  - name: docker hub
+    weight: 0.2
+  - name: mdn
+    weight: 0.4
 EOF
 
 # Start SearXNG

@@ -48,10 +48,20 @@ static bool search_tool_is_available(void);
 static const treg_param_t search_params[] = {
    {
        .name = "category",
-       .description = "Search category: 'web' (general), 'news' (current events), "
-                      "'science' (scientific), 'social' (Reddit/Twitter), "
-                      "'it' (tech/programming), 'dictionary' (definitions), "
-                      "'papers' (academic)",
+       .description =
+           "Search category. Pick the one that matches your INTENT:\n"
+           "  'news'    — current events, headlines, product launches, releases. Best for "
+           "anything time-sensitive ('latest X', 'who released Y', 'what happened with Z').\n"
+           "  'social'  — opinions, comparisons, community sentiment, recommendations, "
+           "discussions. Hits Reddit/Twitter. Use for 'best X for Y', 'X vs Y', 'what do "
+           "people think about Z', or any subjective/qualitative query.\n"
+           "  'web'     — general-purpose fallback when no specialty fits.\n"
+           "  'science' — peer-reviewed scientific search.\n"
+           "  'papers'  — academic papers (arxiv, scholar).\n"
+           "  'it'      — package registries, container images, tech docs (DockerHub, MDN, "
+           "GitHub). Use ONLY for finding a specific package/library/image, NOT for "
+           "benchmarks, releases, or model comparisons (use 'news' or 'social' for those).\n"
+           "  'dictionary' — word definitions.",
        .type = TOOL_PARAM_TYPE_ENUM,
        .required = false,
        .maps_to = TOOL_MAPS_TO_ACTION,
@@ -60,7 +70,11 @@ static const treg_param_t search_params[] = {
    },
    {
        .name = "query",
-       .description = "The search query text",
+       .description = "Short keyword query (3-6 words). Do NOT write full sentences — "
+                      "search engines (especially social/Reddit) return zero results on "
+                      "long natural-language queries. Good: 'GPT-5.5 vs Claude coding'. "
+                      "Bad: 'what do developers think about GPT-5.5 compared to Claude "
+                      "for coding tasks'.",
        .type = TOOL_PARAM_TYPE_STRING,
        .required = true,
        .maps_to = TOOL_MAPS_TO_VALUE,
@@ -89,12 +103,21 @@ static const tool_metadata_t search_metadata = {
    .aliases = { NULL },
    .alias_count = 0,
 
-   .description = "Search the web for information. ALWAYS use this tool for current events, "
-                  "recent news, prices, scores, or any time-sensitive question — do NOT guess "
-                  "from training data. Choose category: 'news' for events/headlines, 'web' for "
-                  "general queries, 'it' for programming/tech, 'science' for research, 'papers' "
-                  "for academic sources. Use time_range='day' or 'week' for breaking/recent news. "
-                  "Write specific queries.",
+   .description =
+       "Search the web for information. ALWAYS use this tool for current events, recent news, "
+       "prices, scores, or any time-sensitive question — do NOT guess from training data.\n"
+       "Category quick-guide:\n"
+       "  - Time-sensitive 'what happened / latest / launched' → 'news' + time_range\n"
+       "  - 'best X' / 'X vs Y' / community opinion / recommendations → 'social'\n"
+       "  - Benchmarks, model comparisons, product reviews → 'social' (community results) plus a "
+       "second 'news' call for press coverage\n"
+       "  - General lookup with no better fit → 'web'\n"
+       "  - Finding a specific Docker image / package / API doc → 'it'\n"
+       "  - Scientific research → 'science'; peer-reviewed papers → 'papers'\n"
+       "AVOID 'it' for opinion/benchmark/release queries — it returns package registries, not "
+       "articles. Use time_range='day' or 'week' for breaking/recent news.\n"
+       "QUERY STYLE: use short keyword phrases (3-6 words), NOT full sentences. "
+       "Social/Reddit search returns ZERO results on long natural-language queries.",
    .params = search_params,
    .param_count = 3,
 
