@@ -294,6 +294,49 @@ int memory_db_fact_update_category(int64_t fact_id, const char *category) {
    return (rc == SQLITE_DONE) ? MEMORY_DB_SUCCESS : MEMORY_DB_FAILURE;
 }
 
+int memory_db_fact_list_general(int user_id,
+                                int64_t cursor_id,
+                                memory_fact_t *out_facts,
+                                int max_facts) {
+   if (!out_facts || max_facts <= 0)
+      return -1;
+
+   AUTH_DB_LOCK_OR_RETURN(-1);
+
+   sqlite3_stmt *stmt = s_db.stmt_memory_fact_list_general;
+   sqlite3_reset(stmt);
+   sqlite3_bind_int(stmt, 1, user_id);
+   sqlite3_bind_int64(stmt, 2, cursor_id);
+   sqlite3_bind_int(stmt, 3, max_facts);
+
+   int count = 0;
+   while (count < max_facts && sqlite3_step(stmt) == SQLITE_ROW) {
+      populate_fact_from_row(stmt, &out_facts[count]);
+      count++;
+   }
+
+   sqlite3_reset(stmt);
+   AUTH_DB_UNLOCK();
+   return count;
+}
+
+int memory_db_fact_count_general(int user_id) {
+   AUTH_DB_LOCK_OR_RETURN(-1);
+
+   sqlite3_stmt *stmt = s_db.stmt_memory_fact_count_general;
+   sqlite3_reset(stmt);
+   sqlite3_bind_int(stmt, 1, user_id);
+
+   int count = -1;
+   if (sqlite3_step(stmt) == SQLITE_ROW) {
+      count = sqlite3_column_int(stmt, 0);
+   }
+
+   sqlite3_reset(stmt);
+   AUTH_DB_UNLOCK();
+   return count;
+}
+
 int memory_db_fact_get(int64_t fact_id, memory_fact_t *out_fact) {
    if (!out_fact) {
       return MEMORY_DB_FAILURE;

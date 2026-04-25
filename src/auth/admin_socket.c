@@ -48,6 +48,8 @@
 #include "auth/auth_db.h"
 #include "core/path_utils.h"
 #include "logging.h"
+#include "memory/memory_db.h"
+#include "memory/memory_recategorize.h"
 #ifdef ENABLE_WEBUI
 #include "webui/webui_server.h"
 #endif
@@ -109,6 +111,7 @@ static int handle_get_metrics_totals(int client_fd, const char *payload, uint16_
 static int handle_list_conversations(int client_fd, const char *payload, uint16_t payload_len);
 static int handle_get_conversation(int client_fd, const char *payload, uint16_t payload_len);
 static int handle_delete_conversation(int client_fd, const char *payload, uint16_t payload_len);
+static int handle_memory_recategorize(int client_fd, const char *payload, uint16_t payload_len);
 static int send_response(int client_fd, admin_resp_code_t code);
 static int send_text_response(int client_fd, admin_resp_code_t code, const char *text);
 static int send_list_response(int client_fd,
@@ -2205,6 +2208,44 @@ static int handle_music_rescan(int client_fd) {
    return send_text_response(client_fd, ADMIN_RESP_SUCCESS, "Rescan triggered");
 }
 
+static int handle_memory_recategorize(int client_fd, const char *payload, uint16_t payload_len) {
+   if (payload_len == 0 || payload_len >= AUTH_USERNAME_MAX) {
+      return send_text_response(client_fd, ADMIN_RESP_FAILURE, "Invalid username");
+   }
+
+   char username[AUTH_USERNAME_MAX];
+   memcpy(username, payload, payload_len);
+   username[payload_len] = '\0';
+
+   auth_user_t user;
+   if (auth_db_get_user(username, &user) != AUTH_DB_SUCCESS) {
+      return send_text_response(client_fd, ADMIN_RESP_FAILURE, "User not found");
+   }
+
+   if (memory_recategorize_is_running()) {
+      return send_text_response(client_fd, ADMIN_RESP_FAILURE, "Recategorization already running");
+   }
+
+   int count = memory_db_fact_count_general(user.id);
+   if (count < 0) {
+      return send_text_response(client_fd, ADMIN_RESP_SERVICE_ERROR,
+                                "Failed to query general facts");
+   }
+   if (count == 0) {
+      return send_text_response(client_fd, ADMIN_RESP_SUCCESS, "No general facts to recategorize");
+   }
+
+   if (memory_recategorize_start(user.id) != 0) {
+      return send_text_response(client_fd, ADMIN_RESP_SERVICE_ERROR,
+                                "Failed to start recategorization thread");
+   }
+
+   char msg[256];
+   snprintf(msg, sizeof(msg), "Recategorization started for user %s (%d general facts)", username,
+            count);
+   return send_text_response(client_fd, ADMIN_RESP_SUCCESS, msg);
+}
+
 /* =============================================================================
  * Client Handler
  * =============================================================================
@@ -2339,6 +2380,10 @@ static int handle_client(int client_fd) {
 
       case ADMIN_MSG_MUSIC_RESCAN:
          return handle_music_rescan(client_fd);
+
+      /* Phase 6: Memory */
+      case ADMIN_MSG_MEMORY_RECATEGORIZE:
+         return handle_memory_recategorize(client_fd, payload, header.payload_len);
 
       default:
          OLOG_WARNING("Unknown message type: 0x%02x", header.msg_type);

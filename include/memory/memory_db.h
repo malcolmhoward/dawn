@@ -90,6 +90,30 @@ int memory_db_fact_search_by_category(int user_id,
 int memory_db_fact_update_category(int64_t fact_id, const char *category);
 
 /**
+ * @brief List facts with category='general' for a user, paginated by id.
+ *
+ * Used by LLM recategorization to fetch batches of uncategorized facts.
+ *
+ * @param user_id     User ID
+ * @param cursor_id   Return facts with id > cursor_id (0 for first batch)
+ * @param out_facts   Output array (caller allocates)
+ * @param max_facts   Size of out_facts array
+ * @return Number of facts fetched, or -1 on error
+ */
+int memory_db_fact_list_general(int user_id,
+                                int64_t cursor_id,
+                                memory_fact_t *out_facts,
+                                int max_facts);
+
+/**
+ * @brief Count non-superseded facts with category='general' for a user.
+ *
+ * @param user_id User ID
+ * @return Count of general facts, or -1 on error
+ */
+int memory_db_fact_count_general(int user_id);
+
+/**
  * @brief Get a fact by ID
  *
  * @param fact_id Fact ID to retrieve

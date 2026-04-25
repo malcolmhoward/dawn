@@ -263,7 +263,7 @@ static char *build_existing_profile(int user_id) {
  * This function extracts the JSON object from such responses.
  * ============================================================================= */
 
-static struct json_object *extract_json_from_response(const char *response) {
+struct json_object *memory_extraction_parse_json(const char *response) {
    if (!response || response[0] == '\0') {
       return NULL;
    }
@@ -309,10 +309,19 @@ static struct json_object *extract_json_from_response(const char *response) {
       }
    }
 
-   /* Last resort: find first '{' and try to parse from there */
+   /* Last resort: find first '{' or '[' and try to parse from there */
    const char *brace = strchr(response, '{');
-   if (brace) {
-      root = json_tokener_parse(brace);
+   const char *bracket = strchr(response, '[');
+   const char *start = NULL;
+   if (brace && bracket)
+      start = (brace < bracket) ? brace : bracket;
+   else if (brace)
+      start = brace;
+   else
+      start = bracket;
+
+   if (start) {
+      root = json_tokener_parse(start);
       if (root) {
          return root;
       }
@@ -418,7 +427,7 @@ static void process_extraction_response(int user_id,
    }
 
    /* Extract JSON from response (handles markdown blocks, preamble text, etc.) */
-   struct json_object *root = extract_json_from_response(response_text);
+   struct json_object *root = memory_extraction_parse_json(response_text);
    if (!root) {
       OLOG_WARNING("memory_extraction: Failed to parse LLM response as JSON");
       OLOG_WARNING("memory_extraction: Response preview: %.200s...", response_text);

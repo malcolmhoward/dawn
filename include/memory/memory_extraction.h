@@ -97,6 +97,17 @@ int memory_trigger_extraction(int user_id,
  */
 bool memory_extraction_in_progress(int user_id);
 
+/**
+ * @brief Parse a JSON response from an LLM, handling common formatting variants.
+ *
+ * Tries direct parse, markdown code block extraction, and brace/bracket fallback.
+ * Caller owns the returned object and must call json_object_put().
+ *
+ * @param response Raw LLM response text
+ * @return Parsed json_object, or NULL on failure
+ */
+struct json_object *memory_extraction_parse_json(const char *response);
+
 #ifdef __cplusplus
 }
 #endif

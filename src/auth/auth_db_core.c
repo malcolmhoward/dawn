@@ -2398,6 +2398,29 @@ static int prepare_statements(void) {
    }
 
    rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT id, user_id, fact_text, confidence, source, "
+                           "  created_at, last_accessed, access_count, superseded_by, category "
+                           "FROM memory_facts "
+                           "WHERE user_id = ? AND superseded_by IS NULL "
+                           "  AND category = 'general' AND id > ? "
+                           "ORDER BY id ASC LIMIT ?",
+                           -1, &s_db.stmt_memory_fact_list_general, NULL);
+   if (rc != SQLITE_OK) {
+      OLOG_ERROR("auth_db: prepare memory_fact_list_general failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
+                           "SELECT COUNT(*) FROM memory_facts "
+                           "WHERE user_id = ? AND superseded_by IS NULL "
+                           "  AND category = 'general'",
+                           -1, &s_db.stmt_memory_fact_count_general, NULL);
+   if (rc != SQLITE_OK) {
+      OLOG_ERROR("auth_db: prepare memory_fact_count_general failed: %s", sqlite3_errmsg(s_db.db));
+      return AUTH_DB_FAILURE;
+   }
+
+   rc = sqlite3_prepare_v2(s_db.db,
                            "UPDATE memory_facts SET last_accessed = ?,"
                            "  access_count = access_count + 1,"
                            "  confidence = CASE"
@@ -3698,6 +3721,10 @@ static void finalize_statements(void) {
       sqlite3_finalize(s_db.stmt_memory_fact_search_by_category);
    if (s_db.stmt_memory_fact_update_category)
       sqlite3_finalize(s_db.stmt_memory_fact_update_category);
+   if (s_db.stmt_memory_fact_list_general)
+      sqlite3_finalize(s_db.stmt_memory_fact_list_general);
+   if (s_db.stmt_memory_fact_count_general)
+      sqlite3_finalize(s_db.stmt_memory_fact_count_general);
 
    /* Deduplication and pruning statements */
    if (s_db.stmt_memory_fact_find_by_hash)

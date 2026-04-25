@@ -157,6 +157,9 @@ typedef enum {
    ADMIN_MSG_MUSIC_SEARCH = 0x71, /**< Search music by artist/title/album */
    ADMIN_MSG_MUSIC_LIST = 0x72,   /**< List tracks in database */
    ADMIN_MSG_MUSIC_RESCAN = 0x73, /**< Trigger immediate library rescan */
+
+   /* Phase 6: Memory Management */
+   ADMIN_MSG_MEMORY_RECATEGORIZE = 0x80, /**< LLM-classify general facts for a user */
 } admin_msg_type_t;
 
 /**

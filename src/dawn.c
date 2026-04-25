@@ -102,6 +102,7 @@
 #endif
 #include "auth/auth_db.h"
 #include "memory/memory_embeddings.h"
+#include "memory/memory_recategorize.h"
 #ifdef ENABLE_AUTH
 #include "auth/admin_socket.h"
 #include "auth/auth_crypto.h"
@@ -3812,6 +3813,8 @@ server_shutdown:
    OLOG_INFO("Shutdown: auth_crypto_shutdown");
    auth_crypto_shutdown();
 #endif
+   OLOG_INFO("Shutdown: memory_recategorize_stop");
+   memory_recategorize_stop();
    OLOG_INFO("Shutdown: memory_embeddings_cleanup");
    memory_embeddings_cleanup();
    OLOG_INFO("Shutdown: embedding_engine_cleanup");
