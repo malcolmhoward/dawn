@@ -282,6 +282,7 @@ void config_set_defaults(dawn_config_t *config) {
     * at weight=0.20; plateau at 0.30. Zero cost on queries without temporal
     * expressions (parser returns "not found", no boost applied).  Safe default. */
    config->memory.temporal_weight = 0.20f;
+   config->memory.category_threshold = 0.25f;
 
    /* Shutdown - disabled by default for security */
    config->shutdown.enabled = false;

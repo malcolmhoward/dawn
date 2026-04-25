@@ -116,6 +116,11 @@ int config_validate(const dawn_config_t *config,
    /* ===== TTS Length Scale (0.5 - 2.0) ===== */
    VALIDATE_RANGE_FLOAT("tts.length_scale", config->tts.length_scale, 0.5f, 2.0f);
 
+   /* ===== Memory Embedding Weights ===== */
+   VALIDATE_RANGE_FLOAT("memory.temporal_weight", config->memory.temporal_weight, 0.0f, 1.0f);
+   VALIDATE_RANGE_FLOAT("memory.category_threshold", config->memory.category_threshold, 0.05f,
+                        0.95f);
+
    /* ===== Port Numbers (1 - 65535) ===== */
    VALIDATE_RANGE_INT("mqtt.port", config->mqtt.port, 1, 65535);
 

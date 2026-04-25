@@ -145,7 +145,7 @@ Trigger phrases: "code review", "review my changes", "run the agents", "run the 
 2. Launch review agents in **parallel**:
    - **Big three** (code review / run the big three): `architecture-reviewer`, `embedded-efficiency-reviewer`, `security-auditor`.
    - **All four** (full review / run all four): above + `ui-design-architect` (when UI changes present).
-3. Synthesize into a consolidated table with severity and action (fix / skip / ask).
+3. Synthesize into a consolidated table with severity and action (fix / skip / ask). **Fix pre-existing issues when found** — triage on merit (severity + fix effort), not on when introduced.
 4. Apply approved fixes; re-verify format and tests.
 
 ## Design Docs

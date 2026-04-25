@@ -20,15 +20,17 @@
  * search queries.  Used by retrieval to boost facts/chunks whose created_at
  * is near the user's referenced point in time.
  *
- * Recognized expressions (case-insensitive, looked up anywhere in query):
- *   absolute year         "in 2020", "during 2021", "back in 2019"
+ * Recognized expressions (in specificity order — first match wins):
  *   month + year          "September 2022", "in May 2020", "January 2019"
  *   season + year         "summer 2021", "winter 2020", "fall 2022"
- *   relative durations    "last week", "last month", "last year"
- *   today/yesterday       "today", "yesterday"
- *   recently              "recently", "the other day"
- *
- * The first match wins (top-down precedence: absolute date > relative > vague).
+ *   ISO-8601 dates        "2020-03-15" (±1 day), "2022-11" (±15 days)
+ *   N units ago           "5 days ago", "two weeks ago", "in the past 30 days"
+ *   how many ago          "how many days ago" (recency hint, no explicit N)
+ *   absolute year         "in 2020", "during 2021" (±180 days)
+ *   yesterday / today     "yesterday", "today"
+ *   last/this unit        "last week", "last month", "this year"
+ *   bare month            "in September", "in May" (most recent past occurrence)
+ *   vague                 "recently", "the other day"
  *
  * Returns a target timestamp (midpoint of the referenced window) plus the
  * window width so callers can score by Gaussian decay or hard-window match.

@@ -26,7 +26,7 @@
 
 #define _GNU_SOURCE /* timegm */
 
-#include "tools/time_query_parser.h"
+#include "core/time_query_parser.h"
 
 #include <ctype.h>
 #include <math.h>
@@ -196,6 +196,62 @@ static bool try_season_year(const char *q, time_query_t *out) {
       out->target_ts = make_ts(mid_year, mid_month, 15);
       out->window_seconds = 45 * DAY_SEC;
       snprintf(out->matched, sizeof(out->matched), "%s %d", SEASONS[i].name, year);
+      return true;
+   }
+   return false;
+}
+
+/* ISO-8601 dates: "2020-03-15" (±1 day) or "2020-03" (±15 days).
+ * Must come before try_year() so "2020-03-15" isn't consumed as bare "2020". */
+static bool try_iso_date(const char *q, time_query_t *out) {
+   for (const char *p = q; *p; p++) {
+      if (!isdigit((unsigned char)p[0]))
+         continue;
+      /* Left boundary: not preceded by alnum or underscore */
+      if (p > q && (isalnum((unsigned char)p[-1]) || p[-1] == '_'))
+         continue;
+      /* Need 4 digits + hyphen */
+      if (!isdigit((unsigned char)p[1]) || !isdigit((unsigned char)p[2]) ||
+          !isdigit((unsigned char)p[3]) || p[4] != '-')
+         continue;
+      int year = (p[0] - '0') * 1000 + (p[1] - '0') * 100 + (p[2] - '0') * 10 + (p[3] - '0');
+      if (year < 1900 || year > 2099)
+         continue;
+      /* Need 2 month digits */
+      if (!isdigit((unsigned char)p[5]) || !isdigit((unsigned char)p[6]))
+         continue;
+      int month = (p[5] - '0') * 10 + (p[6] - '0');
+      if (month < 1 || month > 12)
+         continue;
+      /* YYYY-MM-DD */
+      static const int MAX_DAYS[] = { 31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+      if (p[7] == '-' && isdigit((unsigned char)p[8]) && isdigit((unsigned char)p[9])) {
+         int day = (p[8] - '0') * 10 + (p[9] - '0');
+         if (day < 1 || day > MAX_DAYS[month - 1])
+            continue;
+         /* Right boundary: accept T (datetime), reject alnum/underscore */
+         char after = p[10];
+         if (after != '\0' && after != 'T' && (isalnum((unsigned char)after) || after == '_'))
+            continue;
+         out->found = true;
+         out->kind = TQP_ABSOLUTE;
+         out->target_ts = make_ts(year, month - 1, day);
+         out->window_seconds = DAY_SEC;
+         snprintf(out->matched, sizeof(out->matched), "%04d-%02d-%02d", year, month, day);
+         return true;
+      }
+      /* YYYY-MM only — reject trailing hyphen (partial date) */
+      if (p[7] == '-')
+         continue;
+      /* Right boundary: accept T, reject alnum/underscore */
+      char after = p[7];
+      if (after != '\0' && after != 'T' && (isalnum((unsigned char)after) || after == '_'))
+         continue;
+      out->found = true;
+      out->kind = TQP_ABSOLUTE;
+      out->target_ts = make_ts(year, month - 1, 15);
+      out->window_seconds = 15 * DAY_SEC;
+      snprintf(out->matched, sizeof(out->matched), "%04d-%02d", year, month);
       return true;
    }
    return false;
@@ -404,10 +460,35 @@ static bool try_bare_month(const char *q, int64_t now_ts, time_query_t *out) {
       size_t mlen = strlen(MONTHS[i].name);
       if (!is_word_boundary(q, match, mlen))
          continue;
-      /* Skip "may" as bare match — too noisy as a verb (pure "may" without year
-       * is the only month/auxiliary collision; treat MAY-only as no-match). */
-      if (strcmp(MONTHS[i].name, "may") == 0)
-         continue;
+      /* "may" is ambiguous — auxiliary verb ("I may visit") vs month name
+       * ("in May").  Allow only when preceded by a temporal preposition or
+       * modifier that makes the month reading unambiguous. */
+      if (strcmp(MONTHS[i].name, "may") == 0) {
+         static const char *const TEMPORAL_PREPS[] = { "in",    "last",  "this",   "during",
+                                                       "since", "until", "before", "after",
+                                                       "of",    "next",  "by",     "early",
+                                                       "late",  "mid",   NULL };
+         const char *end = match;
+         while (end > q && (end[-1] == ' ' || end[-1] == '\t'))
+            end--;
+         if (end == q) {
+            continue; /* "may" at start of query — verb sense */
+         }
+         const char *wstart = end;
+         while (wstart > q && wstart[-1] != ' ' && wstart[-1] != '\t')
+            wstart--;
+         size_t wlen = (size_t)(end - wstart);
+         bool allowed = false;
+         for (int j = 0; TEMPORAL_PREPS[j]; j++) {
+            if (wlen == strlen(TEMPORAL_PREPS[j]) &&
+                strncasecmp(wstart, TEMPORAL_PREPS[j], wlen) == 0) {
+               allowed = true;
+               break;
+            }
+         }
+         if (!allowed)
+            continue;
+      }
       /* Skip if year follows — already handled by try_month_year. */
       if (scan_year_after(match, mlen) != 0)
          continue;
@@ -503,6 +584,8 @@ int time_query_parse(const char *query, int64_t now_ts, time_query_t *out) {
    if (try_month_year(query, out))
       return SUCCESS;
    if (try_season_year(query, out))
+      return SUCCESS;
+   if (try_iso_date(query, out)) /* "2020-03-15", "2022-11" */
       return SUCCESS;
    if (try_n_units_ago(query, now_ts, out)) /* "5 days ago", "two weeks ago" */
       return SUCCESS;

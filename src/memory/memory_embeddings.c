@@ -39,10 +39,10 @@
 #include "auth/auth_db_internal.h"
 #include "config/dawn_config.h"
 #include "core/embedding_engine.h"
+#include "core/time_query_parser.h"
 #include "logging.h"
 #include "memory/memory_db.h"
 #include "memory/memory_types.h"
-#include "tools/time_query_parser.h"
 
 /* In-memory embedding cache for fast cosine search.
  * created_ats added in #3 — per-fact origin timestamps used by temporal-query
@@ -100,17 +100,8 @@ static int s_backfill_user_id;
  * non-zero = already done, skip.
  * ============================================================================= */
 
-/* Calibrated against live DAWN memory (1122 facts, all-MiniLM-L6-v2-int8):
- *   0.45 → 0.3%  classified (almost nothing — model compresses cosines heavily)
- *   0.30 → 7.4% classified (too conservative)
- *   0.25 → 15.7% classified — reasonable working default.
- *
- * MiniLM typically produces cosines in [0.10, 0.45] even for strongly related
- * content.  Non-match cosines cluster around 0.10-0.18, so 0.25 still separates
- * signal from noise while catching directionally-correct matches.  Going lower
- * (0.20) mostly inflates already-dominant categories rather than bringing in
- * the sparser ones — those are seed-quality issues, not threshold issues. */
-#define CATEGORY_BACKFILL_THRESHOLD 0.25f
+/* Category backfill threshold is read from g_config.memory.category_threshold
+ * (default 0.25, calibrated for MiniLM-L6-v2-int8). */
 #define CATEGORY_BACKFILL_BATCH_SIZE 25
 #define CATEGORY_BACKFILL_FETCH 200
 
@@ -376,6 +367,7 @@ static int categorize_user_facts(int user_id, const float *centroids, int dims) 
        * would block unrelated DB traffic (session writes, fact updates, etc.)
        * for ~1ms × batch_size. */
       const char *assigned_cat[CATEGORY_BACKFILL_FETCH]; /* parallel to rows[] */
+      const float threshold = g_config.memory.category_threshold;
       for (int i = 0; i < batch_count && !atomic_load(&s_backfill_shutdown); i++) {
          /* One-time diagnostic on the very first fact — logs raw cosines against
           * each centroid so the threshold can be tuned from real data.  Fires
@@ -397,12 +389,11 @@ static int categorize_user_facts(int user_id, const float *centroids, int dims) 
             }
             OLOG_INFO("memory_embeddings: sample best=%s @ %.4f (threshold=%.2f)",
                       best_idx >= 0 ? CATEGORY_SEEDS[best_idx].category : "(none)", best,
-                      CATEGORY_BACKFILL_THRESHOLD);
+                      threshold);
             sample_logged = true;
          }
 
-         assigned_cat[i] = classify_fact_embedding(rows[i].emb, centroids, dims,
-                                                   CATEGORY_BACKFILL_THRESHOLD);
+         assigned_cat[i] = classify_fact_embedding(rows[i].emb, centroids, dims, threshold);
          touched++;
       }
 

@@ -1708,6 +1708,28 @@ static int create_schema(const char *db_path) {
       }
    }
 
+   /* v37 migration: backfill document_chunks.created_at from parent document.
+    * Legacy chunks (ingested before v35 added created_at) have created_at = 0,
+    * which forfeits temporal-query scoring.  Inherit the parent document's
+    * created_at as a reasonable proxy.  Idempotent (WHERE created_at = 0).
+    * Lower bound >= 35: the created_at column only exists from v35 onward. */
+   if (current_version >= 35 && current_version < 37) {
+      const char *v37_sql = "UPDATE document_chunks SET created_at = "
+                            "(SELECT d.created_at FROM documents d "
+                            "WHERE d.id = document_chunks.document_id) "
+                            "WHERE created_at = 0;";
+      rc = sqlite3_exec(s_db.db, v37_sql, NULL, NULL, &errmsg);
+      if (rc != SQLITE_OK) {
+         OLOG_WARNING("auth_db: v37 migration (chunk created_at backfill): %s",
+                      errmsg ? errmsg : "unknown");
+         sqlite3_free(errmsg);
+         errmsg = NULL;
+      } else {
+         int affected = sqlite3_changes(s_db.db);
+         OLOG_INFO("auth_db: backfilled created_at on %d document chunks (v37)", affected);
+      }
+   }
+
    /* Create indexes that depend on migration-added columns.
     * Runs for both fresh installs and migrations — must come after all migrations. */
    rc = sqlite3_exec(s_db.db,

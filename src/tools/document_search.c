@@ -35,9 +35,9 @@
 
 #include "config/dawn_config.h"
 #include "core/embedding_engine.h"
+#include "core/time_query_parser.h"
 #include "logging.h"
 #include "tools/document_db.h"
-#include "tools/time_query_parser.h"
 #include "tools/tool_registry.h"
 
 /* =============================================================================

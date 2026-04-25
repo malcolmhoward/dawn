@@ -162,6 +162,7 @@ Layer 1 (Core Infrastructure)
 ├── src/core/session_manager.c/h   - Session lifecycle (deps: logging, config)
 ├── src/core/worker_pool.c/h       - Concurrent tool execution (deps: logging)
 ├── src/core/wake_word.c/h         - Wake-word matching (shared daemon + satellites)
+├── src/core/time_query_parser.c/h - Stateless temporal-expression recognizer (deps: libc, math)
 └── src/input_queue.c/h            - Thread-safe input queue (deps: logging)
 
 Layer 2 (Services)

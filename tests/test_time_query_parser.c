@@ -27,7 +27,7 @@
 #include <string.h>
 #include <time.h>
 
-#include "tools/time_query_parser.h"
+#include "core/time_query_parser.h"
 
 static int tests_passed = 0;
 static int tests_failed = 0;
@@ -283,9 +283,102 @@ static void test_bare_month(void) {
    TEST_ASSERT(tq.found && llabs(tq.target_ts - june_2023) < 86400,
                "bare June → June 2023 (most recent)");
 
-   /* "may" as bare match is intentionally skipped (verb collision). */
+   /* "may" with temporal preposition → month */
+   time_query_parse("in may", now, &tq);
+   TEST_ASSERT(tq.found, "'in may' → found (month)");
+   int64_t may_2023 = make_ref(2023, 4, 15);
+   TEST_ASSERT(llabs(tq.target_ts - may_2023) < 86400, "'in may' → May 2023 (most recent)");
+
+   time_query_parse("last may was warm", now, &tq);
+   TEST_ASSERT(tq.found, "'last may' → found");
+
+   time_query_parse("during may", now, &tq);
+   TEST_ASSERT(tq.found, "'during may' → found");
+
+   time_query_parse("early may", now, &tq);
+   TEST_ASSERT(tq.found, "'early may' → found");
+
+   time_query_parse("by may we should finish", now, &tq);
+   TEST_ASSERT(tq.found, "'by may' → found");
+
+   /* "may" without temporal context → verb, not matched */
    time_query_parse("I may visit Paris", now, &tq);
    TEST_ASSERT(!tq.found, "bare 'may' → not matched (verb)");
+
+   time_query_parse("may I help you", now, &tq);
+   TEST_ASSERT(!tq.found, "'may' at start → not matched");
+
+   time_query_parse("he may decide", now, &tq);
+   TEST_ASSERT(!tq.found, "'he may' → not matched");
+}
+
+/* ============================================================================
+ * ISO-8601 dates
+ * ============================================================================ */
+
+static void test_iso_date(void) {
+   printf("\n--- test_iso_date ---\n");
+
+   time_query_t tq;
+
+   /* YYYY-MM-DD — exact day, ±1 day window */
+   time_query_parse("2020-03-15", pin_now(), &tq);
+   TEST_ASSERT(tq.found && tq.kind == TQP_ABSOLUTE, "2020-03-15 → found ABSOLUTE");
+   int64_t mar15 = make_ref(2020, 2, 15);
+   TEST_ASSERT(llabs(tq.target_ts - mar15) < 86400, "2020-03-15 → target near March 15");
+   TEST_ASSERT(tq.window_seconds == 86400, "2020-03-15 → window = 1 day");
+   TEST_ASSERT(strcmp(tq.matched, "2020-03-15") == 0, "2020-03-15 → matched string");
+
+   /* YYYY-MM — month-level, ±15 day window */
+   time_query_parse("2022-11", pin_now(), &tq);
+   TEST_ASSERT(tq.found && tq.kind == TQP_ABSOLUTE, "2022-11 → found ABSOLUTE");
+   int64_t nov15 = make_ref(2022, 10, 15);
+   TEST_ASSERT(llabs(tq.target_ts - nov15) < 86400, "2022-11 → target near Nov 15");
+   TEST_ASSERT(tq.window_seconds == 15 * 86400, "2022-11 → window = 15 days");
+
+   /* Embedded in sentence */
+   time_query_parse("documents from 2022-11-05", pin_now(), &tq);
+   TEST_ASSERT(tq.found, "embedded ISO date → found");
+   TEST_ASSERT(strcmp(tq.matched, "2022-11-05") == 0, "embedded → matched string");
+
+   /* Invalid month — falls through to try_year (matches "2020" with 180d window) */
+   time_query_parse("2020-13-01", pin_now(), &tq);
+   TEST_ASSERT(!tq.found || tq.window_seconds != 86400, "month 13 → not matched as ISO date");
+
+   /* Invalid day — falls through to try_year */
+   time_query_parse("2020-03-32", pin_now(), &tq);
+   TEST_ASSERT(!tq.found || tq.window_seconds != 86400, "day 32 → not matched as ISO date");
+
+   /* Year out of range */
+   time_query_parse("1850-06-15", pin_now(), &tq);
+   TEST_ASSERT(!tq.found, "year 1850 → not found");
+
+   /* No left word boundary */
+   time_query_parse("abc2020-03-15", pin_now(), &tq);
+   TEST_ASSERT(!tq.found, "no left boundary → not found");
+
+   /* No right word boundary — try_year may still match "2020" */
+   time_query_parse("2020-03-15abc", pin_now(), &tq);
+   TEST_ASSERT(!tq.found || tq.window_seconds != 86400,
+               "no right boundary → not matched as ISO date");
+
+   /* Precedence: ISO date beats bare year */
+   time_query_parse("what happened 2020-03-15", pin_now(), &tq);
+   TEST_ASSERT(tq.found && tq.window_seconds == 86400,
+               "ISO date beats bare year (window = 1 day, not 180 days)");
+
+   /* Datetime with T accepted as right boundary */
+   time_query_parse("2020-03-15T14:30:00Z", pin_now(), &tq);
+   TEST_ASSERT(tq.found, "datetime with T → found (date portion)");
+   TEST_ASSERT(strcmp(tq.matched, "2020-03-15") == 0, "datetime with T → matched date only");
+
+   /* Slash separator is NOT ISO-8601 */
+   time_query_parse("2020/03/15", pin_now(), &tq);
+   TEST_ASSERT(!tq.found || tq.window_seconds != 86400, "slash separator → not ISO date");
+
+   /* Single-digit month not valid strict ISO */
+   time_query_parse("2020-3-15", pin_now(), &tq);
+   TEST_ASSERT(!tq.found || tq.window_seconds != 86400, "single-digit month → not strict ISO date");
 }
 
 /* ============================================================================
@@ -323,6 +416,7 @@ int main(void) {
    test_no_match();
    test_n_units_ago();
    test_bare_month();
+   test_iso_date();
    test_proximity();
    test_locomo_cat3_samples();
 
