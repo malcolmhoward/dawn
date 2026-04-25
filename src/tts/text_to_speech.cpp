@@ -817,7 +817,7 @@ void initialize_text_to_speech(char *pcm_device) {
  *
  * @param text The text to be converted to speech.
  */
-void text_to_speech(char *text) {
+void text_to_speech(const char *text) {
    if (!tts_handle.is_initialized) {
       OLOG_WARNING("TTS not yet initialized — dropping speech request");
       return;

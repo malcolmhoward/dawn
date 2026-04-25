@@ -344,7 +344,7 @@ static char *sfx_callback(const char *action, char *value, int *should_respond) 
       closedir(dir);
 
       if (count == 0) {
-         snprintf(result, 2048, "No sound effect files found in %s", sfx_config.sound_path);
+         snprintf(result, 2048, "No sound effect files found in %.1980s", sfx_config.sound_path);
       }
 
       return result;
