@@ -65,14 +65,35 @@ static const char *BLOCKED_PATTERNS[] = {
    /* Role/persona manipulation */
    "you are", "your role", "your purpose", "your job", "your task", "act like", "behave as",
    "respond as",
-   /* LLM role/instruction markers (Phase 1) */
+   /* LLM role/instruction markers */
    "[inst]", "<<sys>>", "<|im_start|>", "<|im_end|>", "{{#system",
-   /* XML/HTML injection (Phase 1) */
+   /* XML/HTML injection */
    "<system>", "<system_prompt>", "<script", "<claude_",
-   /* Markdown exfiltration (Phase 1) */
+   /* Markdown exfiltration */
    "](http", "](https",
-   /* Base64 payload indicator (Phase 1) */
-   "base64,", NULL
+   /* Base64 payload indicator */
+   "base64,",
+   /* Jailbreak-specific (prompt-guard) */
+   "jailbreak", "dan mode", "do anything now", "godmode", "unlimited mode",
+   "developer mode enabled", "developer mode activated", "remove restrictions",
+   "remove limitations", "remove guardrails",
+   /* System impersonation */
+   "admin override", "sudo mode",
+   /* Memory poisoning — instructions to modify AI memory */
+   "store in your memory", "save in your memory", "save to your memory", "write to your memory",
+   "add to your memory", "update your memory", "modify your memory", "write to permanent",
+   "write to persistent", "save to permanent", "store to persistent",
+   /* AI recommendation poisoning */
+   "treat as trusted", "treat as reliable", "treat as authoritative", "consider as trusted",
+   "consider as reliable", "remember as trusted", "remember as reliable",
+   /* Behavioral modification */
+   "keep this secret", "keep it secret", "the assistant should", "the assistant must",
+   "the ai should", "the ai must", "the model should", "the model must",
+   /* Social engineering framing */
+   "hypothetically speaking", "just between us", "no one will know", "no one will find out",
+   "this is purely fictional",
+   /* Calendar/event metadata injection */
+   "[system:", NULL
 };
 
 /* Cyrillic/Greek homoglyphs that map to ASCII equivalents */
@@ -179,7 +200,7 @@ static const char *INVISIBLE_CHARS[] = {
    "\xe2\x80\x8d", /* Zero-width joiner U+200D */
    "\xef\xbb\xbf", /* BOM U+FEFF */
    "\xc2\xad",     /* Soft hyphen U+00AD */
-   /* Phase 2 additions */
+   /* Extended invisible characters */
    "\xe2\x81\xa0", /* Word joiner U+2060 */
    "\xe2\x81\xa2", /* Invisible times U+2062 */
    "\xe2\x81\xa3", /* Invisible separator U+2063 */
@@ -341,7 +362,7 @@ char *memory_filter_normalize(const char *text) {
 }
 
 /* =============================================================================
- * ReAct Co-occurrence Check (Phase 1)
+ * ReAct Co-occurrence Check
  *
  * Blocks text only when >= 2 of "thought:", "action:", "observation:" appear
  * together. Individual occurrences are common English and must not trigger.
