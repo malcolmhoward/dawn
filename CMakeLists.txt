@@ -480,6 +480,8 @@ set(DAWN_SOURCES
     # LLM subsystem
     src/llm/llm_interface.c
     src/llm/llm_openai.c
+    src/llm/llm_openai_chat_completions.c
+    src/llm/llm_openai_history.c
     src/llm/llm_openai_responses.c
     src/llm/llm_claude.c
     src/llm/llm_claude_format.c

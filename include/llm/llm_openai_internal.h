@@ -16,17 +16,24 @@
  * under the GPLv3 (or any later version) or any future licenses chosen by
  * the project author(s).
  *
- * Internal helpers shared between the OpenAI chat-completions implementation
- * (llm_openai.c) and the OpenAI Responses API implementation
- * (llm_openai_responses.c). Not part of the public LLM API; do not include
- * outside the OpenAI provider module.
+ * Internal helpers shared between the OpenAI provider files (llm_openai.c,
+ * llm_openai_chat_completions.c, llm_openai_history.c, llm_openai_responses.c).
+ * Not part of the public LLM API; do not include outside the OpenAI provider
+ * module.
  */
 
 #ifndef LLM_OPENAI_INTERNAL_H
 #define LLM_OPENAI_INTERNAL_H
 
 #include <curl/curl.h>
+#include <json-c/json.h>
 #include <stdbool.h>
+#include <stddef.h>
+
+#include "llm/llm_openai.h"
+
+/* Forward declaration for single-shot result type (defined in llm_tools.h) */
+typedef struct llm_tool_response llm_tool_response_t;
 
 /**
  * @brief Build standard OpenAI HTTP headers (Content-Type + optional Bearer auth).
@@ -83,5 +90,73 @@ bool llm_openai_model_prefers_responses_api(const char *model_name);
  * pointer; do not free.
  */
 const char *llm_openai_clamp_effort_for_model(const char *model_name, const char *effort);
+
+/* ── History conversion (llm_openai_history.c) ──────────────────────────── */
+
+/**
+ * @brief Prepare conversation history for a /v1/chat/completions request.
+ *
+ * Filters orphaned tool messages (from restored conversations), converts
+ * Claude-format tool/image blocks to OpenAI format, and strips vision content
+ * when the target LLM lacks vision support.
+ *
+ * @param conversation_history Original conversation history (not modified).
+ * @return Converted history (new object, caller frees with json_object_put).
+ */
+json_object *llm_openai_prepare_chat_history(struct json_object *conversation_history);
+
+/* ── Chat-completions implementation (llm_openai_chat_completions.c) ────── */
+
+/**
+ * @brief Non-streaming /v1/chat/completions request.
+ *
+ * Pure implementation — the public llm_openai_chat_completion() entry point
+ * in llm_openai.c guards against Responses-only models before calling this.
+ */
+char *llm_openai_cc_chat_completion(struct json_object *conversation_history,
+                                    const char *input_text,
+                                    const char **vision_images,
+                                    const size_t *vision_image_sizes,
+                                    int vision_image_count,
+                                    const char *base_url,
+                                    const char *api_key,
+                                    const char *model);
+
+/**
+ * @brief Streaming /v1/chat/completions with recursive tool execution.
+ *
+ * Used by the legacy llm_openai_chat_completion_streaming() wrapper.
+ */
+char *llm_openai_cc_streaming(struct json_object *conversation_history,
+                              const char *input_text,
+                              const char **vision_images,
+                              const size_t *vision_image_sizes,
+                              int vision_image_count,
+                              const char *base_url,
+                              const char *api_key,
+                              const char *model,
+                              llm_openai_text_chunk_callback chunk_callback,
+                              void *callback_userdata);
+
+/**
+ * @brief Single-shot /v1/chat/completions streaming call (no tool loop).
+ *
+ * Makes exactly one HTTP call and returns structured results. Does NOT
+ * execute tools, append to history, or recurse. The public
+ * llm_openai_streaming_single_shot() dispatches here after deciding not
+ * to route to the /v1/responses implementation.
+ */
+int llm_openai_cc_streaming_single_shot(struct json_object *conversation_history,
+                                        const char *input_text,
+                                        const char **vision_images,
+                                        const size_t *vision_image_sizes,
+                                        int vision_image_count,
+                                        const char *base_url,
+                                        const char *api_key,
+                                        const char *model,
+                                        llm_openai_text_chunk_callback chunk_callback,
+                                        void *callback_userdata,
+                                        int iteration,
+                                        llm_tool_response_t *result);
 
 #endif /* LLM_OPENAI_INTERNAL_H */
