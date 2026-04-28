@@ -1388,6 +1388,94 @@ int conv_db_get_messages_paginated(int64_t conv_id,
 int conv_db_get_messages_admin(int64_t conv_id, message_callback_t callback, void *ctx);
 
 /**
+ * @brief Get message IDs for a conversation (ordered by creation)
+ *
+ * Returns an array of message database IDs. Used by LCM Phase 3 to map
+ * in-memory array indices to DB IDs at compaction time.
+ *
+ * @param conv_id Conversation ID
+ * @param user_id User ID (for ownership check)
+ * @param ids_out Output: heap-allocated array of message IDs (caller frees)
+ * @param count_out Output: number of IDs in the array
+ * @return AUTH_DB_SUCCESS, AUTH_DB_FORBIDDEN, or AUTH_DB_FAILURE
+ */
+int conv_db_get_message_ids(int64_t conv_id, int user_id, int64_t **ids_out, int *count_out);
+
+/**
+ * @brief Get messages by ID range (for context expansion)
+ *
+ * Same as conv_db_get_messages but filtered to a specific ID range.
+ * Used by the context_expand tool to retrieve compacted messages.
+ *
+ * @param conv_id Conversation ID
+ * @param user_id User ID (for ownership check)
+ * @param start_id First message ID (inclusive)
+ * @param end_id Last message ID (inclusive)
+ * @param callback Function called for each message
+ * @param ctx User context passed to callback
+ * @return AUTH_DB_SUCCESS, AUTH_DB_FORBIDDEN, or AUTH_DB_FAILURE
+ */
+int conv_db_get_messages_by_range(int64_t conv_id,
+                                  int user_id,
+                                  int64_t start_id,
+                                  int64_t end_id,
+                                  message_callback_t callback,
+                                  void *ctx);
+
+/* =============================================================================
+ * Summary Nodes (LCM Phase 4 — hierarchical summaries)
+ * ============================================================================= */
+
+typedef struct {
+   int64_t id;
+   int64_t conversation_id;
+   int64_t prior_node_id;
+   int depth;
+   int64_t msg_id_start;
+   int64_t msg_id_end;
+   int level;
+   char *summary_text;
+   int token_count;
+   time_t created_at;
+} summary_node_t;
+
+/**
+ * @brief Create a summary node after compaction
+ *
+ * @param node Node data (id field is ignored, set on output)
+ * @param node_id_out Output: inserted node ID
+ * @return AUTH_DB_SUCCESS or AUTH_DB_FAILURE
+ */
+int summary_node_create(const summary_node_t *node, int64_t *node_id_out);
+
+/**
+ * @brief Get a summary node by ID
+ *
+ * @param node_id Node ID
+ * @param node_out Output: node data (summary_text is heap-allocated, caller frees)
+ * @return AUTH_DB_SUCCESS, AUTH_DB_NOT_FOUND, or AUTH_DB_FAILURE
+ */
+int summary_node_get(int64_t node_id, summary_node_t *node_out);
+
+/**
+ * @brief Get the most recent summary node for a conversation
+ *
+ * Queries summary_nodes for the given conversation ID only.
+ * The caller (llm_context_compact) handles continuation chain
+ * traversal via continued_from if no node is found.
+ *
+ * @param conv_id Conversation ID to query
+ * @param node_out Output: latest node (summary_text is heap-allocated, caller frees)
+ * @return AUTH_DB_SUCCESS, AUTH_DB_NOT_FOUND, or AUTH_DB_FAILURE
+ */
+int summary_node_get_latest(int64_t conv_id, summary_node_t *node_out);
+
+/**
+ * @brief Free heap-allocated fields in a summary_node_t
+ */
+void summary_node_free(summary_node_t *node);
+
+/**
  * @brief Count conversations for a user
  *
  * @param user_id User ID

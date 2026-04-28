@@ -49,8 +49,21 @@ extern "C" {
 #define LLM_CONTEXT_DEFAULT_OPENAI 128000  /* GPT-4o default */
 #define LLM_CONTEXT_DEFAULT_CLAUDE 200000  /* Claude default */
 #define LLM_CONTEXT_DEFAULT_GEMINI 1048576 /* Gemini default (1M) */
-#define LLM_CONTEXT_SUMMARY_TARGET 500     /* Target tokens for summary */
+#define LLM_CONTEXT_SUMMARY_TARGET_L1 500  /* Target tokens for L1 normal summary */
+#define LLM_CONTEXT_SUMMARY_TARGET_L2 250  /* Target tokens for L2 aggressive summary */
+#define LLM_CONTEXT_SUMMARY_TARGET_L3 150  /* Hard budget for L3 deterministic truncation */
 #define LLM_CONTEXT_KEEP_EXCHANGES 2       /* Keep last N user/assistant pairs */
+
+/**
+ * @brief Compaction escalation levels — guaranteed convergence
+ */
+typedef enum {
+   LLM_COMPACT_NORMAL = 0,       /* Detailed summary via LLM (~500 tokens) */
+   LLM_COMPACT_AGGRESSIVE = 1,   /* Bullet-point summary via LLM (~250 tokens) */
+   LLM_COMPACT_DETERMINISTIC = 2 /* Mechanical truncation, no LLM call */
+} llm_compaction_level_t;
+
+#define LLM_COMPACT_MAX_LEVEL LLM_COMPACT_DETERMINISTIC
 
 /* =============================================================================
  * Types
@@ -70,12 +83,13 @@ typedef struct {
  * @brief Result of a compaction operation
  */
 typedef struct {
-   bool performed;          /* True if compaction was performed */
-   int tokens_before;       /* Token count before compaction */
-   int tokens_after;        /* Token count after compaction */
-   int messages_summarized; /* Number of messages summarized */
-   char log_filename[256];  /* Saved conversation log (if logging enabled) */
-   char *summary;           /* Generated summary (heap-allocated) */
+   bool performed;               /* True if compaction was performed */
+   llm_compaction_level_t level; /* Escalation level used (L1/L2/L3) */
+   int tokens_before;            /* Token count before compaction */
+   int tokens_after;             /* Token count after compaction */
+   int messages_summarized;      /* Number of messages summarized */
+   char log_filename[256];       /* Saved conversation log (if logging enabled) */
+   char *summary;                /* Generated summary (heap-allocated) */
 } llm_compaction_result_t;
 
 /**
@@ -227,7 +241,7 @@ bool llm_context_needs_compaction_for_switch(uint32_t session_id,
 /**
  * @brief Check if compaction is needed based on threshold
  *
- * Uses configured summarize_threshold (default 80%).
+ * Uses configured compact_hard_threshold (default 80%).
  *
  * @param session_id Session to check
  * @param history Current conversation history
@@ -255,6 +269,7 @@ bool llm_context_needs_compaction(uint32_t session_id,
  * @param type Current LLM type (used for summarization call)
  * @param provider Current cloud provider
  * @param model Current model
+ * @param conv_id Database conversation ID (0 = skip message ID tracking)
  * @param result Output: compaction result details
  * @return 0 on success, non-zero on failure
  */
@@ -263,6 +278,7 @@ int llm_context_compact(uint32_t session_id,
                         llm_type_t type,
                         cloud_provider_t provider,
                         const char *model,
+                        int64_t conv_id,
                         llm_compaction_result_t *result);
 
 /**
@@ -304,7 +320,7 @@ int llm_context_compact_for_switch(uint32_t session_id,
  * @brief Check and perform auto-compaction before LLM call
  *
  * Should be called before making LLM requests. Checks if the conversation
- * history exceeds the summarize_threshold and compacts if needed.
+ * history exceeds the compact_hard_threshold and compacts if needed.
  *
  * Uses global LLM configuration. For session-specific config, use
  * llm_context_auto_compact_with_config() instead.
@@ -334,6 +350,45 @@ int llm_context_auto_compact_with_config(struct json_object *history,
                                          llm_type_t type,
                                          cloud_provider_t provider,
                                          const char *model);
+
+/* =============================================================================
+ * Async Compaction (LCM Phase 2 — background compaction between turns)
+ * ============================================================================= */
+
+struct session; /* Forward declaration — avoids circular include */
+
+/**
+ * @brief Trigger async compaction after a turn completes
+ *
+ * Checks soft threshold; if exceeded, deep-copies history and spawns a
+ * background thread to compact it. Result is merged by llm_context_async_merge()
+ * before the next LLM call. Skips for session 0 (local mic) and non-WebUI.
+ *
+ * @param session Session (must be retained by caller)
+ * @param history Current conversation history
+ * @param type LLM type for compaction call
+ * @param provider Cloud provider
+ * @param model Model name
+ * @return 0 on success or skip, 1 on error
+ */
+int llm_context_async_trigger(struct session *session,
+                              struct json_object *history,
+                              llm_type_t type,
+                              cloud_provider_t provider,
+                              const char *model);
+
+/**
+ * @brief Merge a completed async compaction result into live history
+ *
+ * Called before each LLM call. If a background compaction completed (state READY),
+ * validates the snapshot and replaces the compacted portion of history while
+ * preserving any messages added after the snapshot.
+ *
+ * @param session Session to check
+ * @param history Live conversation history (modified in place if merged)
+ * @return 1 if merged, 0 if nothing to merge or result discarded
+ */
+int llm_context_async_merge(struct session *session, struct json_object *history);
 
 /* =============================================================================
  * Utility Functions
@@ -369,6 +424,16 @@ int llm_context_save_conversation(uint32_t session_id,
                                   const char *suffix,
                                   char *filename_out,
                                   size_t filename_len);
+
+/* =============================================================================
+ * Test-only API (exposed for unit testing)
+ * ============================================================================= */
+
+#ifdef DAWN_TESTING
+char *llm_context_compact_deterministic(struct json_object *to_summarize, int token_budget);
+int llm_context_calculate_compaction_target(int context_size, float threshold);
+int llm_context_estimate_tokens_range(struct json_object *history, int start_idx, int end_idx);
+#endif
 
 #ifdef __cplusplus
 }

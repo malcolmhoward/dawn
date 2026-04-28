@@ -1176,13 +1176,15 @@ static void send_compaction_impl(struct lws *wsi,
                                  int tokens_before,
                                  int tokens_after,
                                  int messages_summarized,
-                                 const char *summary) {
+                                 const char *summary,
+                                 int level) {
    struct json_object *obj = json_object_new_object();
    struct json_object *payload = json_object_new_object();
 
    json_object_object_add(payload, "tokens_before", json_object_new_int(tokens_before));
    json_object_object_add(payload, "tokens_after", json_object_new_int(tokens_after));
    json_object_object_add(payload, "messages_summarized", json_object_new_int(messages_summarized));
+   json_object_object_add(payload, "level", json_object_new_int(level));
    if (summary) {
       json_object_object_add(payload, "summary", json_object_new_string(summary));
    }
@@ -1461,7 +1463,7 @@ static void process_one_response(void) {
       case WS_RESP_COMPACTION_COMPLETE:
          send_compaction_impl(conn->wsi, resp.compaction.tokens_before,
                               resp.compaction.tokens_after, resp.compaction.messages_summarized,
-                              resp.compaction.summary);
+                              resp.compaction.summary, resp.compaction.level);
          free(resp.compaction.summary);
          break;
       case WS_RESP_THINKING_START:
@@ -2843,7 +2845,7 @@ static void handle_json_message(ws_connection_t *conn, const char *data, size_t 
                ctx_current = ctx_usage.current_tokens;
             }
             webui_send_context(conn->session, ctx_current, ctx_max,
-                               g_config.llm.summarize_threshold);
+                               g_config.llm.compact_hard_threshold);
          }
       }
    } else if (strcmp(type, "reconnect") == 0) {
@@ -4722,7 +4724,8 @@ void webui_send_compaction_complete(session_t *session,
                                     int tokens_before,
                                     int tokens_after,
                                     int messages_summarized,
-                                    const char *summary) {
+                                    const char *summary,
+                                    int level) {
    if (!session || session->type != SESSION_TYPE_WEBUI) {
       return;
    }
@@ -4733,6 +4736,7 @@ void webui_send_compaction_complete(session_t *session,
                               .tokens_before = tokens_before,
                               .tokens_after = tokens_after,
                               .messages_summarized = messages_summarized,
+                              .level = level,
                               .summary = summary ? strdup(summary) : NULL,
                           } };
 
@@ -5212,6 +5216,13 @@ void webui_detach_session(session_t *session) {
 /* =============================================================================
  * Plan Progress (session-targeted)
  * ============================================================================= */
+
+int64_t webui_get_active_conversation_id(session_t *session) {
+   if (!session || session->type != SESSION_TYPE_WEBUI || !session->client_data)
+      return 0;
+   ws_connection_t *conn = (ws_connection_t *)session->client_data;
+   return conn->active_conversation_id;
+}
 
 void webui_broadcast_plan_progress(session_t *session, const char *json_str) {
    if (!session || session->type != SESSION_TYPE_WEBUI || !json_str)

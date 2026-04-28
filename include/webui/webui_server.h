@@ -321,6 +321,7 @@ void webui_send_error(struct session *session, const char *code, const char *mes
  * @param tokens_after Token count after compaction
  * @param messages_summarized Number of messages that were summarized
  * @param summary The generated summary text (for continuation)
+ * @param level Compaction escalation level used (0=normal, 1=aggressive, 2=deterministic)
  *
  * @note Thread-safe - can be called from any thread
  */
@@ -328,7 +329,8 @@ void webui_send_compaction_complete(struct session *session,
                                     int tokens_before,
                                     int tokens_after,
                                     int messages_summarized,
-                                    const char *summary);
+                                    const char *summary,
+                                    int level);
 
 /* =============================================================================
  * LLM Streaming Functions (ChatGPT-style real-time text)
@@ -551,6 +553,17 @@ void webui_detach_session(struct session *session);
  * @note Thread-safe - can be called from any thread
  */
 void webui_broadcast_plan_progress(struct session *session, const char *json_str);
+
+/**
+ * @brief Get the active conversation ID for a WebUI session
+ *
+ * Returns the conversation ID from the session's WebSocket connection.
+ * Returns 0 for non-WebUI sessions or if no conversation is active.
+ *
+ * @param session Session to query
+ * @return Active conversation ID, or 0 if unavailable
+ */
+int64_t webui_get_active_conversation_id(struct session *session);
 
 /**
  * @brief Broadcast a conversation title change to all connections for a given user

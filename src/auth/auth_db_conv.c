@@ -1544,3 +1544,273 @@ void conv_generate_title(const char *content, char *title_out, size_t max_len) {
       title_out[cut_pos + 3] = '\0';
    }
 }
+
+/* =============================================================================
+ * LCM Phase 3 — Message ID Resolution and Range Retrieval
+ * ============================================================================= */
+
+int conv_db_get_message_ids(int64_t conv_id, int user_id, int64_t **ids_out, int *count_out) {
+   if (conv_id <= 0 || !ids_out || !count_out)
+      return AUTH_DB_INVALID;
+
+   *ids_out = NULL;
+   *count_out = 0;
+
+   AUTH_DB_LOCK_OR_FAIL();
+
+   const char *sql = "SELECT m.id FROM messages m "
+                     "INNER JOIN conversations c ON m.conversation_id = c.id "
+                     "WHERE m.conversation_id = ? AND c.user_id = ? ORDER BY m.id ASC";
+
+   sqlite3_stmt *stmt = NULL;
+   int rc = sqlite3_prepare_v2(s_db.db, sql, -1, &stmt, NULL);
+   if (rc != SQLITE_OK) {
+      OLOG_ERROR("conv_db_get_message_ids: prepare failed: %s", sqlite3_errmsg(s_db.db));
+      AUTH_DB_UNLOCK();
+      return AUTH_DB_FAILURE;
+   }
+
+   sqlite3_bind_int64(stmt, 1, conv_id);
+   sqlite3_bind_int(stmt, 2, user_id);
+
+   int capacity = 64;
+   int count = 0;
+   int64_t *ids = malloc(capacity * sizeof(int64_t));
+   if (!ids) {
+      sqlite3_finalize(stmt);
+      AUTH_DB_UNLOCK();
+      return AUTH_DB_FAILURE;
+   }
+
+   while (sqlite3_step(stmt) == SQLITE_ROW) {
+      if (count >= capacity) {
+         capacity *= 2;
+         int64_t *tmp = realloc(ids, capacity * sizeof(int64_t));
+         if (!tmp) {
+            free(ids);
+            sqlite3_finalize(stmt);
+            AUTH_DB_UNLOCK();
+            return AUTH_DB_FAILURE;
+         }
+         ids = tmp;
+      }
+      ids[count++] = sqlite3_column_int64(stmt, 0);
+   }
+
+   sqlite3_finalize(stmt);
+   AUTH_DB_UNLOCK();
+
+   *ids_out = ids;
+   *count_out = count;
+   return AUTH_DB_SUCCESS;
+}
+
+int conv_db_get_messages_by_range(int64_t conv_id,
+                                  int user_id,
+                                  int64_t start_id,
+                                  int64_t end_id,
+                                  message_callback_t callback,
+                                  void *ctx) {
+   if (conv_id <= 0 || !callback || start_id <= 0 || end_id <= 0)
+      return AUTH_DB_INVALID;
+
+   AUTH_DB_LOCK_OR_FAIL();
+
+   /* Explicit ownership check — return FORBIDDEN rather than silent empty result */
+   sqlite3_reset(s_db.stmt_conv_get);
+   sqlite3_bind_int64(s_db.stmt_conv_get, 1, conv_id);
+   sqlite3_bind_int(s_db.stmt_conv_get, 2, user_id);
+   int rc = sqlite3_step(s_db.stmt_conv_get);
+   sqlite3_reset(s_db.stmt_conv_get);
+   if (rc != SQLITE_ROW) {
+      AUTH_DB_UNLOCK();
+      return AUTH_DB_FORBIDDEN;
+   }
+
+   const char *sql = "SELECT m.id, m.conversation_id, m.role, m.content, m.created_at "
+                     "FROM messages m "
+                     "INNER JOIN conversations c ON m.conversation_id = c.id "
+                     "WHERE m.conversation_id = ? AND c.user_id = ? "
+                     "AND m.id BETWEEN ? AND ? ORDER BY m.id ASC";
+
+   sqlite3_stmt *stmt = NULL;
+   rc = sqlite3_prepare_v2(s_db.db, sql, -1, &stmt, NULL);
+   if (rc != SQLITE_OK) {
+      OLOG_ERROR("conv_db_get_messages_by_range: prepare failed: %s", sqlite3_errmsg(s_db.db));
+      AUTH_DB_UNLOCK();
+      return AUTH_DB_FAILURE;
+   }
+
+   sqlite3_bind_int64(stmt, 1, conv_id);
+   sqlite3_bind_int(stmt, 2, user_id);
+   sqlite3_bind_int64(stmt, 3, start_id);
+   sqlite3_bind_int64(stmt, 4, end_id);
+
+   while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+      conversation_message_t msg = { 0 };
+      msg.id = sqlite3_column_int64(stmt, 0);
+      msg.conversation_id = sqlite3_column_int64(stmt, 1);
+
+      const char *role = (const char *)sqlite3_column_text(stmt, 2);
+      if (role) {
+         strncpy(msg.role, role, CONV_ROLE_MAX - 1);
+         msg.role[CONV_ROLE_MAX - 1] = '\0';
+      }
+
+      msg.content = (char *)sqlite3_column_text(stmt, 3);
+      msg.created_at = (time_t)sqlite3_column_int64(stmt, 4);
+
+      if (callback(&msg, ctx) != 0)
+         break;
+   }
+
+   sqlite3_finalize(stmt);
+   AUTH_DB_UNLOCK();
+
+   return AUTH_DB_SUCCESS;
+}
+
+/* =============================================================================
+ * Summary Nodes (LCM Phase 4 — hierarchical summaries)
+ * ============================================================================= */
+
+void summary_node_free(summary_node_t *node) {
+   if (node) {
+      free(node->summary_text);
+      node->summary_text = NULL;
+   }
+}
+
+int summary_node_create(const summary_node_t *node, int64_t *node_id_out) {
+   if (!node || !node_id_out || !node->summary_text)
+      return AUTH_DB_INVALID;
+
+   AUTH_DB_LOCK_OR_FAIL();
+
+   const char *sql = "INSERT INTO summary_nodes "
+                     "(conversation_id, prior_node_id, depth, msg_id_start, msg_id_end, "
+                     "level, summary_text, token_count, created_at) "
+                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
+
+   sqlite3_stmt *stmt = NULL;
+   int rc = sqlite3_prepare_v2(s_db.db, sql, -1, &stmt, NULL);
+   if (rc != SQLITE_OK) {
+      OLOG_ERROR("summary_node_create: prepare failed: %s", sqlite3_errmsg(s_db.db));
+      AUTH_DB_UNLOCK();
+      return AUTH_DB_FAILURE;
+   }
+
+   sqlite3_bind_int64(stmt, 1, node->conversation_id);
+   if (node->prior_node_id > 0)
+      sqlite3_bind_int64(stmt, 2, node->prior_node_id);
+   else
+      sqlite3_bind_null(stmt, 2);
+   sqlite3_bind_int(stmt, 3, node->depth);
+   sqlite3_bind_int64(stmt, 4, node->msg_id_start);
+   sqlite3_bind_int64(stmt, 5, node->msg_id_end);
+   sqlite3_bind_int(stmt, 6, node->level);
+   sqlite3_bind_text(stmt, 7, node->summary_text, -1, SQLITE_TRANSIENT);
+   sqlite3_bind_int(stmt, 8, node->token_count);
+   sqlite3_bind_int64(stmt, 9, (int64_t)time(NULL));
+
+   rc = sqlite3_step(stmt);
+   if (rc != SQLITE_DONE) {
+      OLOG_ERROR("summary_node_create: insert failed: %s", sqlite3_errmsg(s_db.db));
+      sqlite3_finalize(stmt);
+      AUTH_DB_UNLOCK();
+      return AUTH_DB_FAILURE;
+   }
+
+   *node_id_out = sqlite3_last_insert_rowid(s_db.db);
+   sqlite3_finalize(stmt);
+   AUTH_DB_UNLOCK();
+
+   OLOG_INFO("summary_node: created node %lld (conv=%lld, depth=%d, msgs=%lld-%lld)",
+             (long long)*node_id_out, (long long)node->conversation_id, node->depth,
+             (long long)node->msg_id_start, (long long)node->msg_id_end);
+
+   return AUTH_DB_SUCCESS;
+}
+
+static void summary_node_from_row(sqlite3_stmt *stmt, summary_node_t *node) {
+   node->id = sqlite3_column_int64(stmt, 0);
+   node->conversation_id = sqlite3_column_int64(stmt, 1);
+   node->prior_node_id = sqlite3_column_type(stmt, 2) == SQLITE_NULL
+                             ? 0
+                             : sqlite3_column_int64(stmt, 2);
+   node->depth = sqlite3_column_int(stmt, 3);
+   node->msg_id_start = sqlite3_column_int64(stmt, 4);
+   node->msg_id_end = sqlite3_column_int64(stmt, 5);
+   node->level = sqlite3_column_int(stmt, 6);
+   const char *text = (const char *)sqlite3_column_text(stmt, 7);
+   node->summary_text = text ? strdup(text) : NULL;
+   node->token_count = sqlite3_column_int(stmt, 8);
+   node->created_at = (time_t)sqlite3_column_int64(stmt, 9);
+}
+
+int summary_node_get(int64_t node_id, summary_node_t *node_out) {
+   if (node_id <= 0 || !node_out)
+      return AUTH_DB_INVALID;
+
+   memset(node_out, 0, sizeof(*node_out));
+   AUTH_DB_LOCK_OR_FAIL();
+
+   const char *sql = "SELECT id, conversation_id, prior_node_id, depth, "
+                     "msg_id_start, msg_id_end, level, summary_text, token_count, created_at "
+                     "FROM summary_nodes WHERE id = ?";
+
+   sqlite3_stmt *s = NULL;
+   int rc = sqlite3_prepare_v2(s_db.db, sql, -1, &s, NULL);
+   if (rc != SQLITE_OK) {
+      AUTH_DB_UNLOCK();
+      return AUTH_DB_FAILURE;
+   }
+
+   sqlite3_bind_int64(s, 1, node_id);
+   rc = sqlite3_step(s);
+
+   if (rc == SQLITE_ROW) {
+      summary_node_from_row(s, node_out);
+      sqlite3_finalize(s);
+      AUTH_DB_UNLOCK();
+      return AUTH_DB_SUCCESS;
+   }
+
+   sqlite3_finalize(s);
+   AUTH_DB_UNLOCK();
+   return AUTH_DB_NOT_FOUND;
+}
+
+int summary_node_get_latest(int64_t conv_id, summary_node_t *node_out) {
+   if (conv_id <= 0 || !node_out)
+      return AUTH_DB_INVALID;
+
+   memset(node_out, 0, sizeof(*node_out));
+   AUTH_DB_LOCK_OR_FAIL();
+
+   const char *sql = "SELECT id, conversation_id, prior_node_id, depth, "
+                     "msg_id_start, msg_id_end, level, summary_text, token_count, created_at "
+                     "FROM summary_nodes WHERE conversation_id = ? "
+                     "ORDER BY id DESC LIMIT 1";
+
+   sqlite3_stmt *s = NULL;
+   int rc = sqlite3_prepare_v2(s_db.db, sql, -1, &s, NULL);
+   if (rc != SQLITE_OK) {
+      AUTH_DB_UNLOCK();
+      return AUTH_DB_FAILURE;
+   }
+
+   sqlite3_bind_int64(s, 1, conv_id);
+   rc = sqlite3_step(s);
+
+   if (rc == SQLITE_ROW) {
+      summary_node_from_row(s, node_out);
+      sqlite3_finalize(s);
+      AUTH_DB_UNLOCK();
+      return AUTH_DB_SUCCESS;
+   }
+
+   sqlite3_finalize(s);
+   AUTH_DB_UNLOCK();
+   return AUTH_DB_NOT_FOUND;
+}
