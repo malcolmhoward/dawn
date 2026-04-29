@@ -12,7 +12,7 @@ At 30W mode, speeds are ~3x slower.
 
 | Use Case | Model | Preset | Speed | Quality | Vision |
 |----------|-------|--------|-------|---------|--------|
-| **Home (64GB Orin)** | Qwen3.5 35B-A3B MoE | F | 29.6 tok/s | 94.8% (A) | Yes |
+| **Home (64GB Orin)** | Qwen3.6 35B-A3B MoE | J | 32.07 tok/s | 94.8% (A) | Yes |
 | **Helmet (16GB Orin)** | Gemma 3 4B IT | A3 | 13.9 tok/s (28W) | 89.7% (B) | Yes |
 | **Voice only (any)** | Qwen3 4B Instruct | A | 35.1 tok/s | 94.8% (A) | No |
 
@@ -40,7 +40,8 @@ Cold = first request after server start. Warm = subsequent requests (prompt cach
 
 | Model | Active/Total | Size | Quality | Speed | Cold TTFT | Warm TTFT | Vision | Notes |
 |-------|-------------|------|---------|-------|-----------|-----------|--------|-------|
-| **Qwen3.5 35B-A3B** | 3B/35B | 19.9 GB | 94.8% (A) | 29.6 tok/s | 1894 ms | 1302 ms | Yes | **Home recommended**, 128K ctx |
+| **Qwen3.6 35B-A3B** | ~3B/35B | 20.1 GB | 94.8% (A) | 32.07 tok/s | 1863 ms | 1256 ms | Yes | **Home recommended** (Preset J), 128K ctx |
+| Qwen3.5 35B-A3B | 3B/35B | 19.9 GB | 94.8% (A) | 29.6 tok/s | 1894 ms | 1302 ms | Yes | Stable alt (Preset F), 128K ctx |
 | Gemma 4 26B-A4B | 4B/25B | 15.9 GB | 94.8% (A) | 32.2 tok/s | 1467 ms | 1396 ms | Yes | Pending thinking fix |
 
 **Dense large (WebUI only on 64GB):**
@@ -62,7 +63,8 @@ For reference — how local Jetson models compare to cloud flagships on the same
 | Claude Opus 4.7 | 99.1% | Cloud flagship |
 | Claude Haiku 4.5 | 96.5% | Cloud |
 | Claude Sonnet 4.6 | 96.5% | Cloud |
-| **Qwen3.5 35B-A3B (local)** | **94.8%** | **Jetson AGX Orin 64GB** |
+| **Qwen3.6 35B-A3B (local)** | **94.8%** | **Jetson AGX Orin 64GB (Preset J)** |
+| Qwen3.5 35B-A3B (local) | 94.8% | Jetson — stable alt (Preset F) |
 | Gemma 4 26B-A4B (local) | 94.8% | Jetson (pending fix) |
 | Qwen3 4B (local) | 94.8% | Jetson — any hardware |
 
@@ -70,11 +72,15 @@ The best local model runs within 1.7% of Claude Haiku/Sonnet and 4.3% of Opus,
 at zero cost, fully offline. Gap between best local and best cloud is smaller
 than the gap between Opus and Sonnet (2.6%).
 
-### Context Scaling: Qwen3.5 35B-A3B on AGX Orin 64GB MAXN
+### Context Scaling: Qwen3.5/3.6 35B-A3B on AGX Orin 64GB MAXN
 
 The hybrid SSM+Transformer architecture (30 SSM + 10 attention layers) makes
 context scaling nearly free. Only the 10 attention layers grow KV cache with
 context size, and with only 2 KV heads per layer the cost is minimal.
+
+Numbers below are measured on **Qwen 3.5 35B-A3B (Preset F)**. **Qwen 3.6
+35B-A3B (Preset J)** inherits the same architecture and shows the same flat
+scaling — 128K context confirmed working in production.
 
 | Context | KV Cache | Gen Speed | TTFT | Free Memory |
 |---------|----------|-----------|------|-------------|
@@ -82,8 +88,8 @@ context size, and with only 2 KV heads per layer the cost is minimal.
 | 64K | 680 MB | 30.1 tok/s | 171 ms | ~29.7 GB |
 | **128K** | **1360 MB** | **30.2 tok/s** | **168 ms** | **~29 GB** |
 
-128K is the recommended context for Preset F on AGX Orin 64GB. Zero performance
-penalty vs 32K, with 4x the usable context for heavy tool workflows.
+128K is the recommended context for Presets F and J on AGX Orin 64GB. Zero
+performance penalty vs 32K, with 4x the usable context for heavy tool workflows.
 
 ### Gemma 4 Status (April 2026)
 
@@ -98,11 +104,12 @@ penalty vs 32K, with 4x the usable context for heavy tool workflows.
 - **Tool calling loops** — issue #21375 (peg-gemma4 parser) still open.
   DAWN relies heavily on tool calling.
 
-Once #21402 and #21375 close, Gemma 4 26B-A4B becomes the top pick (94.8%
-quality, 32.2 tok/s — ties Qwen 3.5 35B-A3B on quality and runs faster).
+Once #21402 and #21375 close, Gemma 4 26B-A4B is in the same speed/quality
+class as Qwen 3.6 35B-A3B (94.8% quality, 32.2 vs 32.07 tok/s).
 
-**Current recommendation:** Use **Qwen 3.5 35B-A3B** (Preset F) for production.
-Gemma **3** models do not have any of these issues.
+**Current recommendation:** Use **Qwen 3.6 35B-A3B** (Preset J) for production
+on AGX Orin 64GB. Qwen 3.5 35B-A3B (Preset F) is the stable alt. Gemma **3**
+models do not have any of the Gemma 4 issues.
 
 ### Hardware: Jetson AGX Orin 64GB Developer Kit
 
@@ -127,10 +134,10 @@ sudo ./install.sh
 Or install a specific preset non-interactively:
 
 ```bash
-# AGX Orin 64GB: Qwen 3.5 35B-A3B MoE (recommended — 93.3% quality, 29.6 tok/s, vision)
-sudo ./install.sh -P F
+# AGX Orin 64GB: Qwen 3.6 35B-A3B MoE (recommended — 94.8% quality, 32.07 tok/s, vision)
+sudo ./install.sh -P J
 
-# Small hardware: Qwen3 4B Instruct (84.8% quality, 35.5 tok/s, no vision)
+# Small hardware: Qwen3 4B Instruct (94.8% quality, 35.1 tok/s, no vision)
 sudo ./install.sh -P A
 ```
 
@@ -139,7 +146,16 @@ The installer will download model files automatically if they're missing (requir
 ### Manual Download (if needed)
 
 ```bash
-# Preset F: Qwen 3.5 35B-A3B MoE
+# Preset J: Qwen 3.6 35B-A3B MoE (recommended)
+hf download bartowski/Qwen_Qwen3.6-35B-A3B-GGUF \
+  Qwen_Qwen3.6-35B-A3B-Q4_K_M.gguf \
+  --local-dir /var/lib/llama-cpp/models/
+
+hf download bartowski/Qwen_Qwen3.6-35B-A3B-GGUF \
+  mmproj-Qwen_Qwen3.6-35B-A3B-f16.gguf \
+  --local-dir /var/lib/llama-cpp/models/
+
+# Preset F: Qwen 3.5 35B-A3B MoE (stable alt)
 hf download bartowski/Qwen_Qwen3.5-35B-A3B-GGUF \
   Qwen_Qwen3.5-35B-A3B-Q4_K_M.gguf \
   --local-dir /var/lib/llama-cpp/models/
@@ -212,13 +228,29 @@ REASONING_FORMAT=deepseek
 MMPROJ=
 ```
 
-### For Qwen 3.5 35B-A3B Vision MoE (AGX Orin 64GB, recommended):
+### For Qwen 3.6 35B-A3B Vision MoE (AGX Orin 64GB, ⭐ recommended):
+```bash
+MODEL="/var/lib/llama-cpp/models/Qwen_Qwen3.6-35B-A3B-Q4_K_M.gguf"
+TEMPLATE=
+REASONING_FORMAT=deepseek
+LLAMA_CHAT_TEMPLATE_KWARGS="{\"enable_thinking\":false}"
+MMPROJ="/var/lib/llama-cpp/models/mmproj-Qwen_Qwen3.6-35B-A3B-f16.gguf"
+CONTEXT_SIZE=131072
+```
+
+Qwen 3.6 ships with thinking ON by default; the `LLAMA_CHAT_TEMPLATE_KWARGS`
+line is required to disable it. Inner double quotes must be escaped as `\"`
+because systemd's `EnvironmentFile` parses C-style escapes inside double-quoted
+values. Do not use single quotes around this value — sh-argv passing via
+`${VAR:+...}` strips the inner quotes and the JSON parse fails.
+
+### For Qwen 3.5 35B-A3B Vision MoE (AGX Orin 64GB, stable alt):
 ```bash
 MODEL="/var/lib/llama-cpp/models/Qwen_Qwen3.5-35B-A3B-Q4_K_M.gguf"
 TEMPLATE=
 REASONING_FORMAT=deepseek
 MMPROJ="/var/lib/llama-cpp/models/mmproj-Qwen_Qwen3.5-35B-A3B-f16.gguf"
-CONTEXT_SIZE=32768
+CONTEXT_SIZE=131072
 ```
 
 ### For Gemma 4 26B-A4B Vision MoE (AGX Orin 64GB):
@@ -501,10 +533,10 @@ sudo journalctl -u llama-server -n 100
 
 ### AGX Orin 64GB at MAXN (60W) vs Claude Cloud
 
-| Metric | Claude Opus 4.7 | Claude Sonnet 4.6 | Qwen3.5 35B-A3B (local) | Qwen3 4B (local) | Gemma 3 4B (local) |
+| Metric | Claude Opus 4.7 | Claude Sonnet 4.6 | Qwen3.6 35B-A3B (local) | Qwen3 4B (local) | Gemma 3 4B (local) |
 |--------|-----------------|-------------------|-------------------------|------------------|---------------------|
 | Quality | 99.1% | 96.5% | 94.8% (A) | 94.8% (A) | 89.7% (B) |
-| Speed | cloud | cloud | 29.6 tok/s | 35.1 tok/s | 36.3 tok/s |
+| Speed | cloud | cloud | 32.07 tok/s | 35.1 tok/s | 36.3 tok/s |
 | Vision | Yes | Yes | Yes | No | Yes |
 | Offline | No | No | Yes | Yes | Yes |
 | Privacy | Data sent | Data sent | Fully local | Fully local | Fully local |
