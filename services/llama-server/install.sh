@@ -685,7 +685,10 @@ generate_config() {
     # Sourcing argv from sh -c via ${VAR:+...} mangles the inner quotes; the
     # env-var path bypasses sh entirely (verified against llama.cpp help text:
     # "--chat-template-kwargs ... (env: LLAMA_CHAT_TEMPLATE_KWARGS)").
-    local kwargs_line="LLAMA_CHAT_TEMPLATE_KWARGS="
+    #
+    # Omit the line entirely when unset — llama-server attempts to parse an
+    # exported empty string as JSON and exits with parse_error.101.
+    local kwargs_line=""
     if [ -n "$SEL_CHAT_TEMPLATE_KWARGS" ]; then
         local escaped="${SEL_CHAT_TEMPLATE_KWARGS//\"/\\\"}"
         kwargs_line="LLAMA_CHAT_TEMPLATE_KWARGS=\"$escaped\""
