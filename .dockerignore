@@ -6,11 +6,13 @@ cmake-build-*/
 .git
 .gitmodules
 
-# Data and models (mount as volumes)
+# Data and models (mount as volumes; large model files managed at runtime)
 data/
 models/
 vosk-model-*/
+whisper.cpp/models/*.bin
 *.db
+*.zip
 
 # Secrets
 secrets.toml
@@ -33,6 +35,11 @@ node_modules/
 *.swp
 *.swo
 *~
+.DS_Store
+
+# Working files / development-only data
+scratch/
+llm_testing/
 
 # Docs (not needed in image)
 docs/
